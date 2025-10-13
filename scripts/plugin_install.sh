@@ -13,7 +13,7 @@ if [ -z "$PLUGIN_REPO" ]; then
   echo "Usage: ./scripts/plugin_install.sh <plugin-repo-url>"
   echo ""
   echo "Example:"
-  echo "  ./scripts/plugin_install.sh https://github.com/yourorg/blueprint-ai-distribution-flutter"
+  echo "  ./scripts/plugin_install.sh https://github.com/Mohamed50/blueprint-ai-distribution-flutter"
   exit 1
 fi
 
@@ -103,7 +103,7 @@ data['plugins'].append({
     'version': '$PLUGIN_VERSION',
     'repo': '$PLUGIN_REPO',
     'installed_at': '$INSTALL_DATE',
-    'capabilities': ['$CAPABILITIES'.split(',')]
+    'capabilities': '$CAPABILITIES'.split(',') if '$CAPABILITIES' else []
 })
 data['last_updated'] = '$INSTALL_DATE'
 json.dump(data, sys.stdout, indent=2)

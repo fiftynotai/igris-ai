@@ -38,8 +38,12 @@ for p in data['plugins']:
     print(f'📦 {p[\"name\"]} v{p[\"version\"]}')
     print(f'   Installed: {p[\"installed_at\"]}')
     if 'capabilities' in p and p['capabilities']:
-        caps = ', '.join(p['capabilities'])
-        print(f'   Capabilities: {caps}')
+        # Handle both nested list (old format) and flat list (new format)
+        caps = p['capabilities']
+        if isinstance(caps[0], list):
+            caps = caps[0]  # Flatten nested list
+        caps_str = ', '.join(caps)
+        print(f'   Capabilities: {caps_str}')
     print(f'   Repository: {p[\"repo\"]}')
     print()
 "
