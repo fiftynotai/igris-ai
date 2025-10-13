@@ -1,0 +1,401 @@
+# Blueprint AI Setup Guide
+
+Complete guide to setting up Blueprint AI in your project.
+
+---
+
+## Prerequisites
+
+Before you begin, ensure you have:
+
+- ✅ **Git** - Version control system
+- ✅ **Claude AI** - Access to Claude (Claude Code CLI or Claude.ai)
+- ✅ **Python 3** - For JSON manipulation (usually pre-installed on Mac/Linux)
+- ✅ **Bash** - Shell environment (Mac/Linux/WSL on Windows)
+
+---
+
+## Installation
+
+### Step 1: Clone Blueprint AI
+
+```bash
+# Navigate to your projects directory
+cd /path/to/projects/
+
+# Clone Blueprint AI
+git clone https://github.com/yourorg/blueprint-ai
+```
+
+This creates a `blueprint-ai` directory you'll reference for all projects.
+
+### Step 2: Initialize in Your Project
+
+```bash
+# Navigate to your project
+cd /path/to/your-project/
+
+# Run Blueprint AI initialization
+../blueprint-ai/scripts/blueprint_init.sh
+```
+
+**What this does:**
+- Creates `ai/` directory with all templates
+- Copies core scripts to `scripts/`
+- Creates empty session files
+- Sets up plugin registry
+
+**Output:**
+```
+🎯 Blueprint AI - Project Initialization
+========================================
+
+📁 Target directory: /path/to/your-project
+📦 Creating directory structure...
+📄 Copying templates...
+📝 Creating session files...
+🔧 Installing Blueprint AI scripts...
+
+✅ Blueprint AI initialized successfully!
+```
+
+### Step 3: Verify Installation
+
+```bash
+# Check that ai/ directory exists
+ls -la ai/
+
+# Expected output:
+# ai/
+# ├── briefs/
+# ├── context/
+# ├── prompts/
+# ├── session/
+# ├── checks/
+# ├── templates/
+# └── plugins/
+```
+
+---
+
+## Configuration
+
+### Generate Architecture Documentation
+
+After installation, generate project-specific documentation:
+
+**Ask Claude:**
+```
+Please analyze this project using the prompt in ai/prompts/generate_architecture_docs.md
+```
+
+**Claude will:**
+1. Scan your project structure
+2. Ask clarifying questions about your architecture
+3. Generate 4 documentation files in `ai/context/`:
+   - `architecture_map.md` - Architecture overview
+   - `api_pattern.md` - API interaction patterns
+   - `coding_guidelines.md` - Code style and conventions
+   - `module_catalog.md` - Module inventory
+
+**Example interaction:**
+```
+Claude: I can see this is a Flutter project using MVVM + GetX.
+
+Let me ask a few questions:
+
+1. Are you using the Actions layer pattern consistently?
+2. How do you handle API state (loading/success/error)?
+3. What's your dependency injection strategy?
+
+[After answering...]
+
+Great! I'll generate the documentation files now.
+
+[Creates 4 files in ai/context/]
+
+✅ Architecture documentation generated!
+```
+
+---
+
+## Analyze Your Codebase
+
+Generate migration tasks and identify issues:
+
+**Ask Claude:**
+```
+Please analyze this codebase using ai/prompts/migration_analysis.md
+```
+
+**Claude will:**
+1. Scan all source files
+2. Identify architecture violations
+3. Find code quality issues
+4. Detect testing gaps
+5. Generate categorized briefs:
+   - **MG-XXX** - Migration tasks
+   - **BR-XXX** - Bugs found
+   - **TD-XXX** - Technical debt
+   - **TS-XXX** - Testing gaps
+
+**Output:**
+```
+📊 Codebase Analysis Complete
+
+Found 25 issues:
+- 🔴 2 Critical (P0)
+- 🟠 6 High (P1)
+- 🟡 12 Medium (P2)
+- 🟢 5 Low (P3)
+
+Created 25 briefs in ai/briefs/
+Created migration roadmap in ai/session/MIGRATION_ROADMAP.md
+
+Estimated migration time: 3-4 weeks
+```
+
+---
+
+## First Brief
+
+Now that you have generated briefs, let's work on one:
+
+### List Briefs
+
+**Ask Claude:**
+```
+List all bugs
+```
+
+**Claude shows:**
+```
+## Bug Briefs (5 total)
+
+| ID | Title | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| BR-001 | Memory leak in ViewModel | P0 | Ready | S |
+| BR-002 | Null pointer exception | P1 | Ready | S |
+| BR-003 | UI overflow on tablet | P2 | Ready | M |
+```
+
+### Implement a Brief
+
+**Ask Claude:**
+```
+Implement BR-001
+```
+
+**Claude will:**
+1. Read the brief from `ai/briefs/BR-001-*.md`
+2. Load architecture context
+3. Create session in `ai/session/CURRENT_SESSION.md`
+4. Plan → Code → Test → Commit workflow
+5. Mark brief as Done
+
+---
+
+## Daily Workflow
+
+### Morning: Check Status
+
+```bash
+# See all active work
+cat ai/session/CURRENT_SESSION.md
+
+# List pending briefs
+# Ask Claude: "List all bugs in Ready status"
+```
+
+### Register New Work
+
+```bash
+# Bug found during testing
+# Ask Claude:
+"Register a bug (don't implement):
+Module: user profile
+Issue: Profile picture doesn't update after upload
+Steps: 1) Upload new picture, 2) Check profile page
+Expected: New picture shows
+Actual: Old picture still visible
+Priority: P1
+
+Create brief BR-XXX for this."
+```
+
+### Implement Work
+
+```bash
+# Start work on highest priority
+# Ask Claude: "What should I work on next?"
+
+# Implement the recommendation
+# Ask Claude: "Implement BR-005"
+```
+
+### End of Day: Archive Session
+
+```bash
+# If session is complete
+# Ask Claude: "Archive current session"
+
+# This moves CURRENT_SESSION.md to ai/session/archive/
+```
+
+---
+
+## Plugin Installation
+
+### Install a Plugin
+
+```bash
+# Example: Installing Flutter distribution plugin
+./scripts/plugin_install.sh https://github.com/yourorg/blueprint-ai-distribution-flutter
+```
+
+**Plugin installer will:**
+1. Clone the plugin
+2. Run plugin's install script
+3. Copy plugin files to your project
+4. Register in `ai/plugins/installed.json`
+
+### List Installed Plugins
+
+```bash
+./scripts/plugin_list.sh
+```
+
+**Output:**
+```
+🔌 Blueprint AI Installed Plugins
+==================================
+
+Found 1 plugin(s):
+
+📦 blueprint-ai-distribution-flutter v1.0.0
+   Installed: 2025-10-13T15:30:00Z
+   Capabilities: distribution, versioning, release_notes
+   Repository: https://github.com/yourorg/blueprint-ai-distribution-flutter
+```
+
+### Uninstall a Plugin
+
+```bash
+./scripts/plugin_uninstall.sh blueprint-ai-distribution-flutter
+```
+
+---
+
+## File Structure Reference
+
+After setup, your project will have:
+
+```
+your-project/
+├── ai/                                # Blueprint AI
+│   ├── briefs/                        # Work items
+│   │   ├── BR-TEMPLATE.md             # Bug/feature template
+│   │   ├── MG-TEMPLATE.md             # Migration template
+│   │   ├── TD-TEMPLATE.md             # Technical debt template
+│   │   ├── TS-TEMPLATE.md             # Testing template
+│   │   └── [generated briefs]
+│   ├── context/                       # Architecture docs (generated)
+│   │   ├── architecture_map.md
+│   │   ├── api_pattern.md
+│   │   ├── coding_guidelines.md
+│   │   └── module_catalog.md
+│   ├── prompts/                       # AI prompts
+│   │   ├── bug_prompts.md
+│   │   ├── feature_prompts.md
+│   │   ├── claude_bootstrap.md
+│   │   ├── generate_architecture_docs.md
+│   │   └── migration_analysis.md
+│   ├── session/                       # Session tracking
+│   │   ├── CURRENT_SESSION.md         # Active work
+│   │   ├── BLOCKERS.md                # Blocking issues
+│   │   ├── DECISIONS.md               # Decisions log
+│   │   ├── LEARNINGS.md               # Patterns discovered
+│   │   └── archive/                   # Completed sessions
+│   ├── checks/                        # QA checklists
+│   │   └── qa_runbook.md
+│   ├── templates/                     # Templates
+│   │   ├── commit_message.md
+│   │   └── pr_description.md
+│   ├── plugins/                       # Plugin system
+│   │   ├── README.md
+│   │   └── installed.json
+│   └── CONTRIBUTING.md                # Usage guide
+│
+├── scripts/                           # Scripts
+│   ├── blueprint_init.sh              # (from Blueprint AI)
+│   ├── plugin_install.sh              # (from Blueprint AI)
+│   ├── plugin_uninstall.sh            # (from Blueprint AI)
+│   ├── plugin_list.sh                 # (from Blueprint AI)
+│   └── [plugin scripts if installed]
+│
+└── [your project files...]
+```
+
+---
+
+## Troubleshooting
+
+### Issue: "Blueprint AI not initialized"
+
+**Solution:**
+```bash
+# Run initialization script
+../blueprint-ai/scripts/blueprint_init.sh
+```
+
+### Issue: "Permission denied" when running scripts
+
+**Solution:**
+```bash
+# Make scripts executable
+chmod +x scripts/*.sh
+```
+
+### Issue: Python not found
+
+**Solution:**
+```bash
+# Install Python 3
+# Mac: brew install python3
+# Ubuntu: sudo apt-get install python3
+```
+
+### Issue: Can't find Blueprint AI directory
+
+**Solution:**
+```bash
+# Clone Blueprint AI first
+git clone https://github.com/yourorg/blueprint-ai
+
+# Then reference it with correct path
+/full/path/to/blueprint-ai/scripts/blueprint_init.sh
+```
+
+---
+
+## Next Steps
+
+After setup:
+
+1. **Generate architecture docs** - Run `generate_architecture_docs.md` prompt
+2. **Analyze codebase** - Run `migration_analysis.md` prompt
+3. **Review generated briefs** - Ask Claude to "List all briefs"
+4. **Start implementing** - Ask Claude to "Implement BR-XXX"
+5. **Install plugins** - Add distribution, CI/CD, or custom plugins
+
+---
+
+## Getting Help
+
+- **Documentation:** See `ai/CONTRIBUTING.md` for detailed usage
+- **Issues:** https://github.com/yourorg/blueprint-ai/issues
+- **Discussions:** https://github.com/yourorg/blueprint-ai/discussions
+
+---
+
+**Setup complete! You're ready to use Blueprint AI. 🎉**

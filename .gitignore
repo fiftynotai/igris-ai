@@ -1,0 +1,39 @@
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Temporary files
+*.tmp
+*.temp
+.temp/
+temp/
+
+# Logs
+*.log
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+
+# Node
+node_modules/
+
+# Build artifacts
+dist/
+build/
+*.zip
+*.tar.gz
+
+# Test files
+.test/
+test-output/
