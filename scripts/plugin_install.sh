@@ -70,11 +70,15 @@ fi
 
 # Run plugin installation script
 echo "🔧 Running plugin installation..."
+
+# Get current project directory
+PROJECT_DIR=$(pwd)
+
 cd "$TEMP_DIR"
 chmod +x install.sh
 
-# Pass current project directory to plugin installer
-bash install.sh "$(dirname "$TEMP_DIR")" "$TARGET_DIR"
+# Pass plugin temp directory and project directory to plugin installer
+bash install.sh "$TEMP_DIR" "$PROJECT_DIR"
 
 # Register plugin
 echo "📝 Registering plugin..."
@@ -84,7 +88,7 @@ INSTALL_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 CAPABILITIES=$(cat plugin.json | grep '"capabilities"' -A 10 | grep -v "capabilities" | grep '"' | sed 's/.*"\(.*\)".*/\1/' | tr '\n' ',' | sed 's/,$//')
 
 # Update installed.json
-cd "$TARGET_DIR"
+cd "$PROJECT_DIR"
 
 # Simple JSON update (create temp file, update, replace)
 TEMP_JSON=$(mktemp)
