@@ -173,70 +173,18 @@ cat > ai/plugins/installed.json <<'EOF'
 }
 EOF
 
-# Create Claude Code integration (.claude/prompt.md)
+# Create Claude Code integration (hooks + CLAUDE.md)
 echo "🤖 Setting up Claude Code integration..."
-mkdir -p .claude
+mkdir -p .claude/hooks
 
-cat > .claude/prompt.md <<'EOF'
-# Blueprint AI - Automatic Bootstrap
+# Copy startup hook
+cp "$BLUEPRINT_DIR/scripts/templates/startup.sh.template" .claude/hooks/startup.sh
+chmod +x .claude/hooks/startup.sh
 
-🚀 **Welcome to Blueprint AI on Claude Code**
-
-You are working in a Blueprint AI-enabled project.
-
-## Initialization Sequence (Execute Immediately)
-
-1. **Load Operating System:**
-   - Read: `ai/prompts/claude_bootstrap.md`
-   - Apply all rules: session management, context loading, workflow, brief operations
-
-2. **Check for Coding Guidelines:**
-   - Check: `ai/context/coding_guidelines.md`
-   - If missing: Offer to generate using `ai/prompts/generate_coding_guidelines.md`
-   - If exists: Load as primary architecture standard
-
-3. **Load Project Context:**
-   - Read (if exists):
-     - `ai/context/architecture_map.md`
-     - `ai/context/api_pattern.md`
-     - `ai/context/module_catalog.md`
-
-4. **Check Session State:**
-   - Read: `ai/session/CURRENT_SESSION.md`
-   - If incomplete session exists:
-     - Summarize current state
-     - Show "Next Steps When Resuming"
-     - Ask: "Resume session or start new?"
-   - If no active session: Ready for new task
-
-5. **Show Project Summary:**
-   Display:
-   ```
-   📊 Project Status
-   ────────────────
-   Briefs: [count by type: BR/MG/TD/TS]
-   Status: [count by status: Ready/In Progress/Done]
-   Blockers: [count from ai/session/BLOCKERS.md]
-
-   💡 Recommended Next Task:
-   [Highest priority Ready brief with reasoning]
-   ```
-
-Then say: **"Ready for your command!"**
-
----
-
-## Operating Mode
-
-After initialization, follow **Blueprint AI Mode**:
-- All workflows from `claude_bootstrap.md`
-- Maintain session state in `CURRENT_SESSION.md`
-- Track decisions, blockers, learnings
-- Enforce architecture from `coding_guidelines.md`
-- Use TodoWrite for task tracking
-
-**You are now ready to assist with Blueprint AI workflows.**
-EOF
+# Create CLAUDE.md with variable substitution
+sed -e "s/{{BLUEPRINT_VERSION}}/$BLUEPRINT_VERSION/g" \
+    -e "s/{{INSTALL_DATE}}/$(date -u +"%Y-%m-%d")/g" \
+    "$BLUEPRINT_DIR/scripts/templates/CLAUDE.md.template" > CLAUDE.md
 
 # Copy core scripts
 echo "🔧 Installing Blueprint AI scripts..."
@@ -276,22 +224,24 @@ echo ""
 echo "✅ Blueprint AI initialized successfully!"
 echo ""
 echo "🤖 Claude Code Integration:"
-echo "   ✓ Automatic bootstrap loading enabled (.claude/prompt.md)"
-echo "   ✓ Claude will auto-initialize on every session start"
+echo "   ✓ Startup hook enabled (.claude/hooks/startup.sh)"
+echo "   ✓ Context file created (CLAUDE.md)"
+echo "   ✓ True zero-configuration - works immediately!"
 echo ""
 echo "📚 Getting Started:"
 echo ""
 echo "1. Launch Claude Code:"
 echo "   $ claude"
 echo ""
-echo "   Claude will automatically:"
-echo "   - Load Blueprint AI configuration"
-echo "   - Show project summary"
-echo "   - Be ready for your commands"
+echo "   BEFORE YOU TYPE, you'll see:"
+echo "   🚀 Welcome to Blueprint AI on Claude Code"
+echo "   📊 Project Status: [briefs, status, blockers]"
+echo "   💡 Recommended Next Task: [highest priority]"
+echo "   Ready for your command!"
 echo ""
 echo "2. (Optional) Install shell integration for terminal notifications:"
 echo "   $ ./scripts/install_shell_integration.sh"
-echo "   This will show a notification when entering Blueprint AI projects"
+echo "   This will show Blueprint AI version when entering the project"
 echo ""
 echo "📚 Next Steps:"
 echo ""
