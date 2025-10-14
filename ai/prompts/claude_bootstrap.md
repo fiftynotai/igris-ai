@@ -151,6 +151,10 @@ Read these files in order:
 - Use Conventional Commits format (see `ai/templates/commit_message.md`)
 - Reference brief in commit body
 - Include "closes #BR-XXX" if applicable
+- ❌ **DO NOT** add AI signatures or co-author tags
+- ❌ **DO NOT** add "Generated with Claude Code" footers
+
+**Clean commits only** - Let the work speak for itself.
 
 ---
 
@@ -580,7 +584,7 @@ Examples of what to include:
 ---
 
 **Last Updated:** 2025-10-14
-**Blueprint AI Version:** 1.0.1
+**Blueprint AI Version:** 1.0.2
 **Documentation:** https://github.com/Mohamed50/blueprint-ai
 
 **Tip:** Customize this prompt for your project by adding project-specific patterns to the "Project-Specific Notes" section.

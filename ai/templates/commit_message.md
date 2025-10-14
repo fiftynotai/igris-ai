@@ -108,7 +108,19 @@ closes #BR-089
 2. **Body:** Optional, wrap at 72 chars, explain *what* and *why* (not *how*)
 3. **Footer:** Use `closes #BR-XXX` or `fixes #BR-XXX` to link to brief
 4. **Breaking changes:** Use `BREAKING CHANGE:` in footer with description
+5. **No AI signatures:** Do not add "Generated with Claude Code" or co-author tags
 
 ---
 
-**Last Updated:** 2025-10-13
+## Important: No AI Signatures
+
+❌ **DO NOT** include:
+- "🤖 Generated with [Claude Code]" footers
+- "Co-Authored-By: Claude" tags
+- Any AI assistant attribution
+
+✅ **Clean commit messages only** - The code quality speaks for itself.
+
+---
+
+**Last Updated:** 2025-10-14
