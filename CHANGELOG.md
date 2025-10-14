@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.4] - 2025-10-15
+
+### Enhanced
+
+- **Workflow Enforcement** - Based on production testing feedback
+  - Added mandatory first action protocol to CLAUDE.md (prevents skipped initialization)
+  - Added context reset detection (treats all resets as new conversations)
+  - Added session state validation checklist (5 items to verify before work)
+  - Added checkpoint system to claude_bootstrap.md (5 explicit checkpoints)
+  - Clarified TodoWrite vs CURRENT_SESSION.md relationship (both required)
+  - Specified exact brief status update timing (immediately after completion)
+  - Session management now enforced as critical path, not optional documentation
+
+### Added
+
+- **session_protocol.md** - Quick reference guide for checkpoint protocols
+  - Checkpoint 1: Before Starting Work (validation checklist)
+  - Checkpoint 2: After Starting TodoWrite Task (update session state)
+  - Checkpoint 3: After Completing TodoWrite Task (update session + brief if done)
+  - Checkpoint 4: After Brief Completion (IMMEDIATE status update)
+  - Checkpoint 5: Before Ending Conversation (save final state)
+  - Examples of correct usage and common mistakes to avoid
+  - Mental model shift explanation (session = critical path)
+
+- **README.md Session Management Section** - Documents automatic recovery and progress tracking
+  - Automatic recovery after context resets
+  - Continuous progress tracking
+  - Context preservation via "Next Steps When Resuming"
+  - Blocker tracking
+
+### Technical Details
+
+**Problem:** Real production testing revealed Claude skipped Blueprint AI protocols:
+- Initialization not executed on context resets
+- Session files not updated continuously
+- Brief statuses not updated after completion
+- Pattern-matched to standard workflow instead of Blueprint AI workflow
+
+**Root Cause:** Session management felt optional (not critical path)
+
+**Solution:** Made it "in your face":
+```
+CLAUDE.md:
+- Mandatory first action (top of file, unmissable)
+- Context reset detection (specific signals to watch for)
+- Validation checklist (verify before starting work)
+
+claude_bootstrap.md:
+- Critical mental model section (session IS the work)
+- TodoWrite + CURRENT_SESSION.md clarification (both required)
+- 5-checkpoint system (explicit WHEN/THEN protocols)
+
+session_protocol.md:
+- Quick reference for all 5 checkpoints
+- Examples and anti-patterns
+```
+
+**User Experience:**
+
+Context resets now ALWAYS trigger re-initialization:
+```
+User: "continue with phase 2"
+Claude: [Detects context reset]
+Claude: [Reads CURRENT_SESSION.md FIRST]
+Claude: "📊 Current Session Status: Active"
+Claude: "📋 Next Steps When Resuming: Update CHANGELOG.md"
+Claude: "✅ Blueprint AI initialized. Ready for your command!"
+Claude: [THEN proceeds with user's request]
+```
+
+Task completion now updates BOTH TodoWrite AND session files immediately.
+
+### Breaking Changes
+
+None - fully backwards compatible with v1.0.3
+
+### Migration from v1.0.3
+
+Run update script to get enhanced workflow enforcement:
+```bash
+./scripts/blueprint_update.sh
+```
+
+The new protocols take effect immediately in next Claude conversation.
+
+---
+
 ## [1.0.3] - 2025-10-14
 
 ### Fixed

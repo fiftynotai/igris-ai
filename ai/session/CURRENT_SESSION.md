@@ -1,89 +1,118 @@
-# Current Session: Bug & Feature Management System
+# Current Session: TD-002 - Workflow Enforcement Enhancement
 
 ## Session Goal
-Add comprehensive bug and feature management prompts and documentation to Blueprint AI
+Implement workflow enforcement enhancements based on production testing feedback to ensure Claude follows Blueprint AI protocols consistently.
 
-## Status: ✅ Completed
+## Status: 🔄 In Progress
 
 ---
 
 ## Todo List
 
 ### Completed ✅
-- [x] Create ai/prompts/bug_prompts.md with 9 operations
-- [x] Create ai/prompts/feature_prompts.md with 9 operations
-- [x] Create ai/CONTRIBUTING.md with overview
-- [x] Update ai/prompts/claude_bootstrap.md with AI instructions
-- [x] Update README.md Blueprint AI section
-- [x] Create archive folder structure
-- [x] Run git status and commit changes
-- [x] Update CURRENT_SESSION.md
+- [x] Create feature branch (feature/workflow-enforcement)
+- [x] Register TD-002 brief (ai/briefs/TD-002-workflow-enforcement.md)
+- [x] Update CLAUDE.md.template with mandatory first action at top
+- [x] Update claude_bootstrap.md with critical path + checkpoint sections
+- [x] Create session_protocol.md quick reference
+- [x] Update README.md with session management note
+- [x] Update CHANGELOG.md with v1.0.4 entry
+- [x] Update version.txt to 1.0.4
+- [x] Review all changes (8 files total)
+
+### In Progress 🔄
+- [ ] Commit changes with clean message
+
+### Pending ⏳
+- [ ] Commit changes with clean message
+- [ ] Merge to main
+- [ ] Mark TD-002 as Done
 
 ---
 
 ## Session Context
 
-### What Was Accomplished
-- Created comprehensive bug & feature management system for Blueprint AI
-- Added 2 complete prompt files with 9 operations each
-- Created CONTRIBUTING.md guide with quick reference
-- Updated claude_bootstrap.md with detailed AI instructions
-- Created archive folder structure for completed work
-- Updated README.md with bug/feature management section
+### What Was Accomplished So Far
+- Created TD-002 brief documenting workflow enforcement improvements
+- Added mandatory first action protocol to CLAUDE.md (top of file)
+- Added context reset detection to CLAUDE.md
+- Added session state validation checklist to CLAUDE.md
+- Updated claude_bootstrap.md with critical mental model section
+- Updated claude_bootstrap.md with 5-checkpoint system
+- Created session_protocol.md as quick reference for checkpoints
 
 ### Current State
-**Last action taken:** Updating CURRENT_SESSION.md
-**Working directory:** /Users/m.elamin/StudioProjects/opaala_admin_app_v3
-**Current branch:** feature/blueprint-ai-pilot
-**Uncommitted changes:** No (all committed in e484763)
+**Last action taken:** Reviewed all changes - ready to commit (complete)
+**Working directory:** /Users/m.elamin/StudioProjects/blueprint-ai
+**Current branch:** feature/workflow-enforcement
+**Uncommitted changes:** Yes (8 files total: 6 modified + 2 created)
+
+**Modified files:**
+- scripts/templates/CLAUDE.md.template
+- ai/prompts/claude_bootstrap.md
+- README.md
+- CHANGELOG.md
+- version.txt
+- ai/session/CURRENT_SESSION.md
+
+**Created files:**
+- ai/briefs/TD-002-workflow-enforcement.md
+- ai/prompts/session_protocol.md
 
 ### Next Steps When Resuming
-1. Test the new prompts by registering a bug or feature
-2. Consider creating example briefs (BR-002, BR-003) for reference
-3. May want to push branch to remote
+1. Commit changes with clean conventional format (about to do)
+2. Merge to main
+3. Mark TD-002 as Done
+8. Update TD-002 status to "Done"
 
 ### Important Notes
-- System supports complete lifecycle: register → list → prioritize → implement → archive
-- Separates registration (brief creation) from implementation (actual work)
-- 9 operations per type: register, list, remove, implement, prioritize, update status, show next, status report, archive
-- Startup and mid-conversation prompts for both bugs and features
-- Archive structure created: ai/session/archive/briefs/ and ai/session/archive/sessions/
-- P0/P1 bugs automatically added to BLOCKERS.md
+- **Core problem:** Claude skips initialization on context resets, doesn't update session files
+- **Root cause:** Session management feels optional, not critical path
+- **Solution:** Make it "in your face" with mandatory first action, checkpoints, validation
+- **Based on:** Real production feedback from Claude's self-assessment
+- **Implementation:** Using Blueprint AI workflow to dogfood the system itself
 
-### Files Created This Session
-- ai/prompts/bug_prompts.md (450 lines, 9 operations)
-- ai/prompts/feature_prompts.md (460 lines, 9 operations)
-- ai/CONTRIBUTING.md (350 lines, quick reference guide)
-- ai/session/archive/README.md (archive documentation)
-- ai/session/archive/briefs/ (folder)
-- ai/session/archive/sessions/ (folder)
+### Key Changes Made
 
-### Files Modified This Session
-- ai/prompts/claude_bootstrap.md (added 300+ lines of AI instructions)
-- README.md (added Bug & Feature Management section)
-- ai/session/CURRENT_SESSION.md (this file)
+**CLAUDE.md.template:**
+- Added mandatory first action at very top (unmissable)
+- Added context reset detection (treats all resets as new conversations)
+- Added validation checklist (5 items to check before work)
 
----
+**claude_bootstrap.md:**
+- Added "Critical Mental Model" section (session = critical path)
+- Added TodoWrite vs CURRENT_SESSION.md clarification (both required)
+- Added 5-checkpoint system with exact WHEN/THEN protocols
 
-## Session History (Previous Sessions)
-
-### Session 2025-10-13-001: Blueprint AI Setup
-- Created /ai folder structure (14 files)
-- Setup architecture references and templates
-- Created BR-001 brief
-- Duration: ~18 minutes
-- Status: Completed
-
-### Session 2025-10-13-002: BR-001 Implementation
-- Implemented printer connection status indicator
-- Created PrinterStatusIndicator widget
-- Added status checking logic in SettingsViewModel
-- Added i18n keys and translations
-- Duration: ~45 minutes
-- Status: Completed
+**session_protocol.md (NEW):**
+- Quick reference for all 5 checkpoints
+- Examples of correct usage
+- Common mistakes to avoid
+- Mental model shift explanation
 
 ---
 
-**Last Updated:** 2025-10-13 18:45
-**Session Duration:** ~2 hours
-**Session ID:** 2025-10-13-003
+## Testing Plan
+
+1. Start fresh conversation with "continue phase 2"
+2. Verify initialization happens BEFORE execution
+3. Verify session status displayed
+4. Complete a task → verify CURRENT_SESSION.md updated immediately
+5. Complete a brief → verify status changes to "Done" immediately
+6. Simulate context reset → verify re-initialization happens
+
+---
+
+## Brief Reference
+
+**Brief:** TD-002-workflow-enforcement.md
+**Priority:** P1-High
+**Effort:** M-Medium (1-2d)
+**Type:** Technical Debt
+**Status:** In Progress
+
+---
+
+**Last Updated:** 2025-10-15
+**Session Duration:** ~1 hour (so far)
+**Session ID:** 2025-10-15-001

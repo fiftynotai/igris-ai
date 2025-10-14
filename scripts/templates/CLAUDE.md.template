@@ -1,3 +1,57 @@
+# ⚠️ MANDATORY FIRST ACTION IN EVERY CONVERSATION ⚠️
+
+**STOP - Before responding to ANYTHING (even "continue with X"):**
+
+This applies to:
+- ✅ New conversations
+- ✅ Context resets (even with continuation summary)
+- ✅ Session resumes
+- ✅ First message in a fresh conversation window
+
+**Execute this EXACT sequence:**
+
+1. Read: `ai/session/CURRENT_SESSION.md`
+2. Display: "📊 Current Session Status: [Active/Paused/None]"
+3. Display: "📋 Next Steps When Resuming: [from file]"
+4. Load: `ai/prompts/claude_bootstrap.md`
+5. IF coding_guidelines.md exists → Load it
+6. Display: "✅ Blueprint AI initialized. Ready for your command!"
+
+**ONLY AFTER THIS SEQUENCE** → proceed with user's request.
+
+---
+
+## 🚨 Context Reset Detection 🚨
+
+**IF you see ANY of these:**
+- TodoWrite state in system reminders
+- OR conversation summary about "previous work"
+- OR user says "continue with X"
+
+**BUT you have NOT read CURRENT_SESSION.md yet:**
+
+🚨 **STOP IMMEDIATELY** 🚨
+
+This is a context reset. You MUST execute the initialization sequence above FIRST.
+
+**DO NOT proceed with "continue" requests until initialized.**
+
+---
+
+## Session State Validation Checklist
+
+**Before starting ANY work, validate:**
+
+- [ ] Have I read CURRENT_SESSION.md?
+- [ ] Have I loaded coding_guidelines.md?
+- [ ] Have I read the current brief (if implementing one)?
+- [ ] Have I updated "Next Steps When Resuming"?
+- [ ] Do I know what happens if context resets now?
+
+**If any checkbox is unchecked → pause and load missing context.**
+
+---
+
 # Blueprint AI - Project Instructions
 
 **Version:** {{BLUEPRINT_VERSION}}
