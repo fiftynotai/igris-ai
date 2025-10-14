@@ -173,6 +173,71 @@ cat > ai/plugins/installed.json <<'EOF'
 }
 EOF
 
+# Create Claude Code integration (.claude/prompt.md)
+echo "🤖 Setting up Claude Code integration..."
+mkdir -p .claude
+
+cat > .claude/prompt.md <<'EOF'
+# Blueprint AI - Automatic Bootstrap
+
+🚀 **Welcome to Blueprint AI on Claude Code**
+
+You are working in a Blueprint AI-enabled project.
+
+## Initialization Sequence (Execute Immediately)
+
+1. **Load Operating System:**
+   - Read: `ai/prompts/claude_bootstrap.md`
+   - Apply all rules: session management, context loading, workflow, brief operations
+
+2. **Check for Coding Guidelines:**
+   - Check: `ai/context/coding_guidelines.md`
+   - If missing: Offer to generate using `ai/prompts/generate_coding_guidelines.md`
+   - If exists: Load as primary architecture standard
+
+3. **Load Project Context:**
+   - Read (if exists):
+     - `ai/context/architecture_map.md`
+     - `ai/context/api_pattern.md`
+     - `ai/context/module_catalog.md`
+
+4. **Check Session State:**
+   - Read: `ai/session/CURRENT_SESSION.md`
+   - If incomplete session exists:
+     - Summarize current state
+     - Show "Next Steps When Resuming"
+     - Ask: "Resume session or start new?"
+   - If no active session: Ready for new task
+
+5. **Show Project Summary:**
+   Display:
+   ```
+   📊 Project Status
+   ────────────────
+   Briefs: [count by type: BR/MG/TD/TS]
+   Status: [count by status: Ready/In Progress/Done]
+   Blockers: [count from ai/session/BLOCKERS.md]
+
+   💡 Recommended Next Task:
+   [Highest priority Ready brief with reasoning]
+   ```
+
+Then say: **"Ready for your command!"**
+
+---
+
+## Operating Mode
+
+After initialization, follow **Blueprint AI Mode**:
+- All workflows from `claude_bootstrap.md`
+- Maintain session state in `CURRENT_SESSION.md`
+- Track decisions, blockers, learnings
+- Enforce architecture from `coding_guidelines.md`
+- Use TodoWrite for task tracking
+
+**You are now ready to assist with Blueprint AI workflows.**
+EOF
+
 # Copy core scripts
 echo "🔧 Installing Blueprint AI scripts..."
 cp "$BLUEPRINT_DIR/scripts/plugin_install.sh" scripts/
@@ -207,20 +272,38 @@ EOF
 echo ""
 echo "✅ Blueprint AI initialized successfully!"
 echo ""
+echo "🤖 Claude Code Integration:"
+echo "   ✓ Automatic bootstrap loading enabled (.claude/prompt.md)"
+echo "   ✓ Claude will auto-initialize on every session start"
+echo ""
+echo "📚 Getting Started:"
+echo ""
+echo "1. Launch Claude Code:"
+echo "   $ claude"
+echo ""
+echo "   Claude will automatically:"
+echo "   - Load Blueprint AI configuration"
+echo "   - Show project summary"
+echo "   - Be ready for your commands"
+echo ""
+echo "2. (Optional) Install shell integration for terminal notifications:"
+echo "   $ ./scripts/install_shell_integration.sh"
+echo "   This will show a notification when entering Blueprint AI projects"
+echo ""
 echo "📚 Next Steps:"
 echo ""
-echo "1. Generate architecture documentation:"
-echo "   Ask Claude to analyze your project using:"
-echo "   'ai/prompts/generate_architecture_docs.md'"
+echo "1. Generate coding guidelines (recommended first):"
+echo "   'Please generate coding guidelines using ai/prompts/generate_coding_guidelines.md'"
 echo ""
-echo "2. Analyze your codebase for migration tasks:"
-echo "   Ask Claude to run: 'ai/prompts/migration_analysis.md'"
+echo "2. Generate architecture documentation:"
+echo "   'Please analyze this project using ai/prompts/generate_architecture_docs.md'"
 echo ""
-echo "3. Install plugins (optional):"
-echo "   ./scripts/plugin_install.sh <plugin-repo-url>"
+echo "3. Analyze your codebase for migration tasks:"
+echo "   'Please analyze this codebase using ai/prompts/migration_analysis.md'"
 echo ""
-echo "4. Start managing bugs and features:"
-echo "   See ai/prompts/bug_prompts.md and ai/prompts/feature_prompts.md"
+echo "4. Install plugins (optional):"
+echo "   $ ./scripts/plugin_install.sh <plugin-repo-url>"
 echo ""
 echo "📖 Documentation: ai/CONTRIBUTING.md"
+echo "🔗 More info: https://github.com/Mohamed50/blueprint-ai"
 echo ""

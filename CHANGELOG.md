@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.2] - 2025-10-14
+
+### Added
+
+- **Automatic Claude Code Integration** - Zero-configuration startup for Claude Code CLI
+  - `.claude/prompt.md` automatically created during `blueprint_init.sh`
+  - Claude automatically loads Blueprint AI configuration on every session start
+  - Auto-displays project summary (briefs, blockers, status)
+  - Auto-recommends next task based on priority
+  - Completely automatic - no user action required
+  - **Perfect for "safe vibe coding"** - architecture enforcement from day one
+
+- **Optional Shell Integration** - Terminal notifications for Blueprint AI projects
+  - New script: `scripts/install_shell_integration.sh`
+  - Shows notification when entering Blueprint AI projects
+  - Displays Blueprint AI version in terminal
+  - Visual context awareness across multiple projects
+  - **User controlled** - choose to install via script or manually
+  - **Security conscious** - never modifies shell without explicit permission
+  - Supports bash and zsh
+  - Provides backup before modification
+  - Option to view code or install manually
+
+### Improved
+
+- **blueprint_init.sh Enhanced**
+  - Now creates `.claude/prompt.md` for automatic loading
+  - Updated success message with Claude Code integration status
+  - Added instructions for optional shell integration
+  - Better getting started guidance
+
+- **README.md Updated**
+  - Added "Start Using Claude (Automatic!)" section
+  - Documented zero-configuration experience
+  - Added "Optional: Shell Integration" section
+  - Clear security messaging about shell modifications
+  - Improved Quick Start flow
+
+### User Experience
+
+**Before v1.0.2:**
+```bash
+$ claude
+User: "Use ai/prompts/claude_bootstrap.md and implement BR-001"
+```
+
+**After v1.0.2:**
+```bash
+$ claude
+
+🚀 Welcome to Blueprint AI on Claude Code
+Project: my-project
+[Auto-loaded, ready to work]
+Ready for your command!
+
+User: "Implement BR-001"
+```
+
+**Result:** Zero manual steps. Perfect developer experience.
+
+### Philosophy
+
+This release completes the vision of "safe vibe coding" by:
+1. **Eliminating friction** - No manual bootstrap loading
+2. **Enforcing quality** - Architecture rules load automatically
+3. **Maintaining security** - User controls shell integration
+4. **Providing visibility** - Clear project status on startup
+
+### Breaking Changes
+
+None - fully backwards compatible with v1.0.1
+
+---
+
 ## [1.0.1] - 2025-10-14
 
 ### Added

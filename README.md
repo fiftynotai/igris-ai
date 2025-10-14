@@ -38,8 +38,45 @@ cd your-project
 
 This creates:
 - `ai/` - Blueprint AI directory with templates
+- `.claude/prompt.md` - Automatic Claude Code integration
 - `scripts/` - Core Blueprint AI scripts
 - Documentation and guides
+
+### Start Using Claude (Automatic!)
+
+```bash
+$ claude
+```
+
+**That's it!** Claude will automatically:
+- 🚀 Load Blueprint AI configuration
+- 📊 Show project summary (briefs, blockers, status)
+- 💡 Recommend next task
+- ✅ Be ready for your commands
+
+**Zero configuration. Completely automatic.**
+
+### Optional: Shell Integration
+
+Want terminal notifications when entering Blueprint AI projects?
+
+```bash
+$ ./scripts/install_shell_integration.sh
+```
+
+This adds a notification to your shell (bash/zsh):
+```bash
+$ cd my-project
+📘 Blueprint AI detected (v1.0.1)
+   Claude will auto-initialize with Blueprint AI configuration
+```
+
+**Benefits:**
+- Visual context awareness
+- See Blueprint AI version
+- Know which projects use Blueprint AI
+
+**Security:** You choose to install, use the script, or add manually. We never modify your shell without permission.
 
 ### Generate Architecture Documentation
 
