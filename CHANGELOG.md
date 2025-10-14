@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.3] - 2025-10-14
+
+### Fixed
+
+- **True Zero-Configuration Startup** - Complete reimplementation using Claude Code CLI hooks
+  - Now uses `.claude/hooks/startup.sh` for automatic initialization
+  - Welcome message displays BEFORE any user input (true auto-execution)
+  - Uses `CLAUDE.md` for context (correct Claude Code CLI convention)
+  - Removed `.claude/prompt.md` creation (incorrect approach from v1.0.2)
+  - Added detection mechanism ("Is Blueprint AI loaded?" responds with confirmation)
+
+- **Script Installation** - Fixed incomplete script copying during initialization
+  - `blueprint_update.sh` now copied (update Blueprint AI core)
+  - `plugin_update.sh` now copied (update installed plugins)
+  - `install_shell_integration.sh` now copied (optional shell notifications)
+  - All 6 user-facing scripts now installed correctly
+
+### Changed
+
+- Startup behavior now truly automatic via hooks system
+- `CLAUDE.md` provides context on first message
+- Hooks are shipped via git (committed to repo, work for all users automatically)
+- Project structure updated to show `.claude/hooks/` and `CLAUDE.md`
+
+### Technical Details
+
+**Hooks Architecture:**
+```
+.claude/
+  hooks/
+    startup.sh          # Auto-runs when CLI starts
+CLAUDE.md              # Context loaded with first message
+```
+
+**User Experience:**
+```bash
+$ claude
+
+🚀 Welcome to Blueprint AI on Claude Code
+
+📊 Project Status
+────────────────
+Briefs: None yet (ready for first task)
+Blockers: 0
+
+Ready for your command!
+```
+
+Welcome message appears BEFORE user types anything. No manual configuration required.
+
+### Migration from v1.0.2
+
+Run update script to get hooks:
+```bash
+./scripts/blueprint_update.sh
+```
+
+Or re-initialize (if no briefs/work created yet):
+```bash
+/path/to/blueprint-ai/scripts/blueprint_init.sh .
+```
+
+### Breaking Changes
+
+None - fully backwards compatible with v1.0.2
+
+---
+
 ## [1.0.2] - 2025-10-14
 
 ### Added
