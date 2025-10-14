@@ -1,6 +1,6 @@
-# Claude Bootstrap Prompt — Blueprint AI (Flutter Edition)
+# Claude Bootstrap Prompt — Blueprint AI
 
-Use this prompt when starting ANY new task on Opaala Admin App v3.
+Use this prompt when starting ANY new task on your project.
 
 ---
 
@@ -46,49 +46,76 @@ Update `CURRENT_SESSION.md` every time you:
 
 ---
 
-## Context Loading (Automatic)
+## Context Loading (Recommended)
 
-You are working on **Opaala Admin App v3** (Flutter + GetX + MVVM + Actions).
+**Step 1: Check for Coding Guidelines**
 
-**Read these files in order:**
+```bash
+ls ai/context/coding_guidelines.md
+```
 
-1. **Base Architecture:** https://github.com/KalvadTech/flutter-mvvm-actions-arch (canonical reference)
-2. **Repo Adaptations:** `ai/context/architecture_map.md`
-3. **API Flow:** `ai/context/api_pattern.md`
-4. **Coding Style:** `ai/context/coding_guidelines.md`
-5. **Module Reference:** `ai/context/module_catalog.md`
+If the file doesn't exist, generate it first:
+```
+Please generate coding guidelines using ai/prompts/generate_coding_guidelines.md
+```
 
-**Then read the brief:**
-- Brief path: `ai/briefs/BR-XXX-<title>.md`
+Claude will ask:
+- Do you have a base architecture repository? (optional)
+- Should I analyze your current project?
+- What platform? (Flutter/React/Vue/etc.)
+
+**Step 2: Load Project Context**
+
+Read these files in order:
+
+1. **Coding Guidelines:** `ai/context/coding_guidelines.md` (your architecture standards)
+2. **Architecture Map:** `ai/context/architecture_map.md` (if exists)
+3. **API Patterns:** `ai/context/api_pattern.md` (if exists)
+4. **Module Catalog:** `ai/context/module_catalog.md` (if exists)
+
+**Step 3: Read the Brief**
+
+- Brief path: `ai/briefs/[TYPE]-XXX-<title>.md`
+  - BR-XXX: Bug fixes and features
+  - MG-XXX: Migration tasks
+  - TD-XXX: Technical debt
+  - TS-XXX: Testing tasks
 
 ---
 
 ## Operating Rules
 
 ### Architecture Enforcement
-- ✅ **DO:** Respect layer boundaries (View → Actions → ViewModel → Service → Model)
-- ❌ **DON'T:** Skip layers (View calling Service directly)
-- ✅ **DO:** Use `ActionPresenter.actionHandler()` for async actions with loaders
-- ❌ **DON'T:** Put UI logic (dialogs, navigation) in ViewModel
+- ✅ **DO:** Respect layer boundaries defined in `coding_guidelines.md`
+- ❌ **DON'T:** Skip architectural layers (violates separation of concerns)
+- ✅ **DO:** Follow patterns documented in `architecture_map.md`
+- ❌ **DON'T:** Put UI logic in business logic layers
+- ✅ **DO:** Use dependency injection for testability
+- ❌ **DON'T:** Create tight coupling between modules
+
+**Note:** Specific architecture patterns (MVVM, MVC, Clean Architecture, etc.) are defined in your project's `coding_guidelines.md`.
 
 ### Code Quality
-- ✅ **DO:** Add structured Dart doc-comments to all public APIs
-- ✅ **DO:** Use `ApiResponse<T>` + `apiFetch()` for API calls
-- ✅ **DO:** Make models immutable (`final` fields, `const` constructors)
-- ✅ **DO:** Run `flutter analyze` and fix all issues
+- ✅ **DO:** Add documentation comments to all public APIs
+- ✅ **DO:** Follow API patterns defined in `api_pattern.md` (if exists)
+- ✅ **DO:** Make models immutable (follow language best practices)
+- ✅ **DO:** Run linter/analyzer and fix all issues
 - ❌ **DON'T:** Commit code with lint errors
+- ✅ **DO:** Follow naming conventions from `coding_guidelines.md`
 
 ### Testing
-- ✅ **DO:** Write unit tests for ViewModels (mock services)
-- ✅ **DO:** Test state transitions (idle → loading → success/fail)
-- ✅ **DO:** Run `flutter test` and ensure all pass
-- ❌ **DON'T:** Skip tests for business logic
+- ✅ **DO:** Write unit tests for business logic (mock dependencies)
+- ✅ **DO:** Test state transitions and edge cases
+- ✅ **DO:** Run test suite and ensure all tests pass
+- ❌ **DON'T:** Skip tests for critical business logic
+- ✅ **DO:** Follow testing standards from `coding_guidelines.md`
 
 ### Documentation
 - ✅ **DO:** Update `README.md` if adding user-facing features
-- ✅ **DO:** Add i18n keys to `lib/src/config/keys.dart` and translations
-- ✅ **DO:** Update module catalog if adding new module
+- ✅ **DO:** Add internationalization keys for user-facing strings
+- ✅ **DO:** Update `module_catalog.md` if adding new modules
 - ❌ **DON'T:** Leave hardcoded strings in UI
+- ✅ **DO:** Document architectural decisions in `DECISIONS.md`
 
 ---
 
@@ -103,22 +130,22 @@ You are working on **Opaala Admin App v3** (Flutter + GetX + MVVM + Actions).
 - Create TodoWrite list
 
 ### 2. PATCH
-- Implement changes respecting architecture
-- Add doc-comments to all new public APIs
-- Follow naming conventions from guidelines
-- Use GetX bindings for dependency injection
+- Implement changes respecting architecture from `coding_guidelines.md`
+- Add documentation comments to all new public APIs
+- Follow naming conventions from `coding_guidelines.md`
+- Use dependency injection patterns from your architecture
 - Update CURRENT_SESSION.md as you progress
 
 ### 3. TESTS
-- Write unit tests for ViewModels
-- Write widget tests for complex UI (if applicable)
-- Ensure `flutter test` passes
+- Write unit tests for business logic
+- Write integration/UI tests for complex flows (if applicable)
+- Ensure test suite passes (all tests green)
 - Document test results in `ai/session/TEST_RESULTS.md`
 
 ### 4. RUN STEPS
-- `flutter analyze` (must pass)
-- `flutter test` (must pass)
-- `flutter run` (smoke test manually if UI changes)
+- Run linter/analyzer (must pass)
+- Run test suite (must pass)
+- Manual smoke test if UI/behavior changes
 
 ### 5. COMMIT
 - Use Conventional Commits format (see `ai/templates/commit_message.md`)
@@ -265,10 +292,10 @@ Removed from BLOCKERS.md
 - "start working on BR-XXX"
 
 **Actions:**
-1. ✅ Read brief from `ai/briefs/BR-XXX-*.md`
+1. ✅ Read brief from `ai/briefs/[TYPE]-XXX-*.md`
 2. ✅ Update Status: "Ready" → "In Progress"
 3. ✅ Save updated brief
-4. ✅ Load context files (architecture_map, api_pattern, coding_guidelines, module_catalog)
+4. ✅ Load context files (coding_guidelines → architecture_map → api_pattern → module_catalog)
 5. ✅ Create/update `CURRENT_SESSION.md` with session goal
 6. ✅ Create TodoWrite tasks from acceptance criteria
 7. ✅ Follow normal workflow: **Plan → Patch → Tests → Run → Commit**
@@ -461,28 +488,30 @@ To mark as Done: "Mark BR-XXX as Done"
 
 Before submitting PR:
 - [ ] Brief path referenced in PR description
-- [ ] `flutter analyze` passes (zero issues)
-- [ ] `flutter test` passes (all tests green)
-- [ ] New code has doc-comments (public APIs)
-- [ ] UI strings use i18n (no hardcoded text)
+- [ ] Linter/analyzer passes (zero issues)
+- [ ] Test suite passes (all tests green)
+- [ ] New code has documentation comments (public APIs)
+- [ ] UI strings use internationalization (no hardcoded text)
 - [ ] Tests added/updated for logic changes
 - [ ] README updated if user-facing feature
 - [ ] Conventional Commit message format
+- [ ] Follows `coding_guidelines.md` standards
 - [ ] Session archived to `ai/session/archive/`
 
 ---
 
-## Common Gotchas (This Repo)
+## Project-Specific Notes
 
-1. **Folder naming inconsistency:** Some modules use `data/service/` (singular), new code uses `data/services/` (plural). Follow plural for new modules.
+**Document your project's specific gotchas, patterns, and conventions here.**
 
-2. **Socket lifecycle:** If using Phoenix Socket, connect in `onInit()`, disconnect in `onClose()` of ViewModel.
+Examples of what to include:
+- Common mistakes or anti-patterns specific to your codebase
+- Special lifecycle considerations
+- Authentication/authorization patterns
+- Performance optimization notes
+- Module-specific conventions
 
-3. **Token refresh:** ApiService handles 401 auto-refresh, but ensure MemoryService has valid refresh token.
-
-4. **Printer role-based routing (v2.6.0):** Use `printerRole` field in PrinterConfig (KOT → kitchen, BILL → front desk).
-
-5. **History module separation (v2.6.0):** Use `HistoryViewModel` for historical data, not `EventsViewModel` (memory optimization).
+**Tip:** Reference sections in `coding_guidelines.md` and `architecture_map.md` for detailed patterns.
 
 ---
 
@@ -500,7 +529,7 @@ Before submitting PR:
 
 ## Example: Starting a New Task
 
-**Scenario:** Implementing BR-001: Add Printer Connection Status Indicator
+**Scenario:** Implementing BR-001: Add Authentication Feature
 
 **Steps:**
 
@@ -510,36 +539,48 @@ Before submitting PR:
    # If empty or completed, create new session
    ```
 
-2. **Create session:**
-   - Session Goal: "Implement BR-001: Printer Connection Status Indicator"
+2. **Check for coding guidelines:**
+   ```bash
+   ls ai/context/coding_guidelines.md
+   # If missing, generate first: "Please generate coding guidelines..."
+   ```
+
+3. **Create session:**
+   - Session Goal: "Implement BR-001: Add Authentication Feature"
    - Status: In Progress
-   - Break down into tasks:
+   - Break down into tasks (using TodoWrite):
      - [ ] Read BR-001 brief
-     - [ ] Create PrinterStatusIndicator widget
-     - [ ] Add checkPrinterStatus() in SettingsViewModel
-     - [ ] Add status refresh timer
-     - [ ] Write unit tests
-     - [ ] Run analyze/test
+     - [ ] Load context files (coding_guidelines, architecture_map, etc.)
+     - [ ] Create authentication module per architecture
+     - [ ] Implement business logic
+     - [ ] Add tests
+     - [ ] Run linter and tests
      - [ ] Commit changes
 
-3. **Load context:**
-   - Read `ai/context/architecture_map.md`
-   - Read `ai/context/api_pattern.md`
-   - Read `ai/briefs/BR-001-printer-status.md`
+4. **Load context:**
+   - Read `ai/context/coding_guidelines.md` (architecture standards)
+   - Read `ai/context/architecture_map.md` (if exists)
+   - Read `ai/context/api_pattern.md` (if exists)
+   - Read `ai/briefs/BR-001-*.md`
 
-4. **Start implementing:**
+5. **Start implementing:**
    - Mark first task as in_progress
    - Update "Next Steps When Resuming" continuously
    - Document decisions in DECISIONS.md
    - Document blockers in BLOCKERS.md
+   - Follow patterns from coding_guidelines.md
 
-5. **Complete:**
-   - Run analyze/test
+6. **Complete:**
+   - Run linter/analyzer
+   - Run test suite
    - Commit with conventional format
-   - Archive session to `ai/session/archive/2025-10-13-001.md`
+   - Update brief status to "Done"
+   - Archive session to `ai/session/archive/[date]-001.md`
 
 ---
 
-**Last Updated:** 2025-10-13
-**Repo:** Opaala Admin App v3 (v2.6.0+215)
-**Base Architecture:** https://github.com/KalvadTech/flutter-mvvm-actions-arch
+**Last Updated:** 2025-10-14
+**Blueprint AI Version:** 1.0.1
+**Documentation:** https://github.com/Mohamed50/blueprint-ai
+
+**Tip:** Customize this prompt for your project by adding project-specific patterns to the "Project-Specific Notes" section.
