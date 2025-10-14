@@ -163,11 +163,12 @@ echo ""
 
 # Run plugin installation script (it handles updates)
 echo "🔧 Running plugin update..."
+
+# Get current project directory before changing directories
+PROJECT_DIR=$(pwd)
+
 cd "$TEMP_DIR"
 chmod +x install.sh
-
-# Get current project directory
-PROJECT_DIR=$(cd .. && pwd)
 
 # Pass plugin temp directory and project directory to plugin installer
 bash install.sh "$TEMP_DIR" "$PROJECT_DIR"
