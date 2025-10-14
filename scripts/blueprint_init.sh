@@ -243,6 +243,7 @@ echo "🔧 Installing Blueprint AI scripts..."
 cp "$BLUEPRINT_DIR/scripts/plugin_install.sh" scripts/
 cp "$BLUEPRINT_DIR/scripts/plugin_uninstall.sh" scripts/
 cp "$BLUEPRINT_DIR/scripts/plugin_list.sh" scripts/
+cp "$BLUEPRINT_DIR/scripts/install_shell_integration.sh" scripts/
 chmod +x scripts/*.sh
 
 # Create archive README
