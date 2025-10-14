@@ -206,9 +206,59 @@ See [Plugin Development Guide](docs/PLUGIN_DEVELOPMENT.md)
 
 ---
 
+## Updating Blueprint AI
+
+### Check Your Version
+
+```bash
+cat .blueprint_version
+```
+
+### Update Core
+
+```bash
+# Check what would be updated
+./scripts/blueprint_update.sh --dry-run
+
+# Update to latest version
+./scripts/blueprint_update.sh
+```
+
+### Update Plugins
+
+```bash
+# Update a specific plugin
+./scripts/plugin_update.sh blueprint-ai-distribution-flutter
+
+# Check what would be updated first
+./scripts/plugin_update.sh blueprint-ai-distribution-flutter --dry-run
+```
+
+### What Gets Updated
+
+**Updated:**
+- System prompts (`ai/prompts/`)
+- Templates (`ai/templates/`)
+- Checks (`ai/checks/`)
+- Documentation (`ai/CONTRIBUTING.md`)
+- Scripts (`scripts/`)
+
+**Preserved:**
+- Your briefs (`ai/briefs/`)
+- Your session data (`ai/session/`)
+- Your architecture docs (`ai/context/`)
+- Plugin registry
+
+**Automatic backups** are created in `.blueprint_backup/` before every update.
+
+**[→ Full Update Guide](docs/UPDATE_GUIDE.md)**
+
+---
+
 ## Documentation
 
 - **[Setup Guide](docs/SETUP_GUIDE.md)** - Complete installation and setup
+- **[Update Guide](docs/UPDATE_GUIDE.md)** - Updating Blueprint AI and plugins
 - **[Migration Guide](docs/MIGRATION_GUIDE.md)** - Onboarding existing projects
 - **[Plugin Development](docs/PLUGIN_DEVELOPMENT.md)** - Building plugins
 - **[Contributing Guide](ai/CONTRIBUTING.md)** - How to use Blueprint AI

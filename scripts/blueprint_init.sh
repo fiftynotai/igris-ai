@@ -42,6 +42,9 @@ mkdir -p docs
 # Get the Blueprint AI installation directory
 BLUEPRINT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 
+# Get Blueprint AI version
+BLUEPRINT_VERSION=$(cat "$BLUEPRINT_DIR/version.txt" 2>/dev/null || echo "unknown")
+
 # Copy templates
 echo "📄 Copying templates..."
 cp "$BLUEPRINT_DIR/ai/briefs/BR-TEMPLATE.md" ai/briefs/
@@ -188,6 +191,17 @@ Completed sessions are archived here for reference.
 `YYYY-MM-DD-NNN.md` where NNN is a session number for that day.
 
 Example: `2025-10-13-001.md`
+EOF
+
+# Create version tracking file
+echo "📌 Creating version tracking..."
+cat > .blueprint_version <<EOF
+{
+  "blueprint_ai_version": "$BLUEPRINT_VERSION",
+  "installed_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "last_updated": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "plugins": {}
+}
 EOF
 
 echo ""

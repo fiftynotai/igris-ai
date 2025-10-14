@@ -124,6 +124,41 @@ else
     rm -f "$TEMP_JSON"
 fi
 
+# Update .blueprint_version if it exists
+if [ -f ".blueprint_version" ]; then
+    TEMP_VERSION=$(mktemp)
+    python3 <<VERSION_EOF > "$TEMP_VERSION"
+import json
+
+try:
+    with open('.blueprint_version', 'r') as f:
+        data = json.load(f)
+
+    # Update plugin version
+    if 'plugins' not in data:
+        data['plugins'] = {}
+
+    data['plugins']['$PLUGIN_NAME'] = {
+        'version': '$PLUGIN_VERSION',
+        'installed_at': '$INSTALL_DATE',
+        'repo': '$PLUGIN_REPO'
+    }
+    data['last_updated'] = '$INSTALL_DATE'
+
+    print(json.dumps(data, indent=2))
+except Exception as e:
+    # If error, output original file
+    with open('.blueprint_version', 'r') as f:
+        print(f.read())
+VERSION_EOF
+
+    if [ $? -eq 0 ] && [ -s "$TEMP_VERSION" ]; then
+        mv "$TEMP_VERSION" .blueprint_version
+    else
+        rm -f "$TEMP_VERSION"
+    fi
+fi
+
 # Cleanup
 rm -rf "$TEMP_DIR"
 
