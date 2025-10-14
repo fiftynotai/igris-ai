@@ -19,12 +19,19 @@ Future development options and priorities for Blueprint AI.
 - ✅ **NEW:** End-to-end testing completed (Option 1)
 - ✅ **NEW:** Bug fixes for plugin registration and release notes
 - ✅ **NEW:** Enhanced troubleshooting documentation
+- ✅ **NEW:** Example project created (Option 2 - Flutter example)
+- ✅ **NEW:** Update system for core and plugins
 
 **Repositories:**
-- Core: https://github.com/Mohamed50/blueprint-ai (commit: 58b4add)
-- Distribution Plugin: https://github.com/Mohamed50/blueprint-ai-distribution-flutter (commit: 6a194d6)
+- Core: https://github.com/Mohamed50/blueprint-ai (latest: e6c1d03)
+- Distribution Plugin: https://github.com/Mohamed50/blueprint-ai-distribution-flutter (latest: cd9ab26)
+- Example Project: https://github.com/Mohamed50/blueprint_ai_flutter_example
 
 **Latest Changes (v1.0.1):**
+- Added comprehensive update system with `blueprint_update.sh` and `plugin_update.sh`
+- Added version tracking via `.blueprint_version` file
+- Created 535-line UPDATE_GUIDE.md with full documentation
+- Created complete example project with briefs and conventional commits
 - Fixed plugin registration not updating installed.json
 - Fixed release notes showing incorrect content
 - Added Firebase CLI troubleshooting section
@@ -97,11 +104,12 @@ Full test report available at:
 
 ---
 
-## Option 2: Example Projects 📦
+## Option 2: Example Projects 📦 ✅ **PARTIALLY COMPLETED**
 
 **Priority:** Medium
 **Effort:** 4-6 hours
 **Impact:** Helps users understand real-world usage
+**Status:** ✅ **Flutter Example Completed** (2025-10-14)
 
 ### Objectives
 
@@ -109,19 +117,30 @@ Create reference implementations showing Blueprint AI in action.
 
 ### Projects to Create
 
-#### 1. Flutter App Example
+#### 1. Flutter App Example ✅ **COMPLETED**
 
 **Repository:** `blueprint-ai-flutter-example`
+**Link:** https://github.com/Mohamed50/blueprint_ai_flutter_example
 
 A sample Flutter app with Blueprint AI fully configured:
-- Complete Fastlane setup (iOS + Android)
-- Firebase App Distribution configured
-- Example briefs (BR-001, BR-002, etc.)
-- Session tracking in use
-- Architecture documentation generated
-- Working distribution to Firebase
+- ✅ Complete Fastlane setup (iOS + Android)
+- ✅ Firebase App Distribution configured
+- ✅ Example briefs (BR-001, FR-001, TD-001)
+- ✅ Session tracking documented
+- ✅ Architecture context demonstrated
+- ✅ Working distribution automation
+- ✅ Conventional commits demonstrated
+- ✅ Comprehensive 450+ line README
 
 **Purpose:** Show users exactly how a configured project looks.
+
+**Features Demonstrated:**
+- Brief lifecycle (Bug Report, Feature Request, Technical Debt)
+- Conventional commit format
+- Plugin installation and usage
+- Smart distribution workflow
+- Version management
+- Release notes generation
 
 #### 2. Migration Example
 
@@ -154,6 +173,87 @@ For each example:
 - Step-by-step setup guide
 - Video walkthrough (optional)
 - Link from main Blueprint AI README
+
+---
+
+## Update System ✅ **COMPLETED**
+
+**Priority:** Critical
+**Effort:** 3-4 hours
+**Impact:** Essential for long-term maintenance
+**Status:** ✅ **COMPLETED** (2025-10-14)
+
+### Objectives
+
+Allow users to update Blueprint AI core and plugins when new versions are released, while preserving their work and data.
+
+### Implementation Summary
+
+**Scripts Created:**
+- ✅ `blueprint_update.sh` - Updates core Blueprint AI to latest version
+- ✅ `plugin_update.sh` - Updates specific plugins to latest version
+
+**Features:**
+- ✅ Version tracking via `.blueprint_version` JSON file
+- ✅ Automatic detection of available updates from GitHub
+- ✅ Dry-run mode (`--dry-run`) to preview changes
+- ✅ Force mode (`--force`) to re-download files
+- ✅ Automatic backups before updates (`.blueprint_backup/`)
+- ✅ Selective updates (system files updated, user data preserved)
+- ✅ Plugin version tracking separate from core
+- ✅ Clear success/error messaging
+
+**Files Always Updated:**
+- `ai/prompts/*.md` - System prompts
+- `ai/templates/*.md` - Brief templates
+- `ai/checks/*.md` - QA checklists
+- `ai/CONTRIBUTING.md` - Documentation
+- `scripts/plugin_*.sh` - Plugin management scripts
+
+**Files Always Preserved:**
+- `ai/briefs/*.md` - User's work items
+- `ai/session/*.md` - Session data
+- `ai/context/*.md` - Architecture docs
+- `ai/plugins/installed.json` - Plugin registry
+
+**Documentation:**
+- ✅ Created 535-line UPDATE_GUIDE.md with:
+  - Complete usage instructions
+  - Dry-run examples
+  - Backup and safety information
+  - Rollback instructions
+  - Troubleshooting guide
+  - Best practices
+- ✅ Added update section to main README
+- ✅ Modified `blueprint_init.sh` to create `.blueprint_version`
+- ✅ Modified `plugin_install.sh` to update `.blueprint_version`
+
+**Testing:**
+- ✅ Tested in example project
+- ✅ Core update: 1.0.0 → 1.0.1 (successful)
+- ✅ Plugin update: 1.0.0 → 1.0.1 (successful)
+- ✅ Dry-run mode verified
+- ✅ Backup creation verified
+- ✅ Version tracking verified
+
+**Commits:**
+- Core: `b6c8ba9` (feat: add update system) + `e6c1d03` (fix: plugin_update.sh)
+- Plugin: `cd9ab26` (feat: add version tracking file)
+
+### Usage
+
+```bash
+# Check current version
+cat .blueprint_version
+
+# Preview updates
+./scripts/blueprint_update.sh --dry-run
+./scripts/plugin_update.sh blueprint-ai-distribution-flutter --dry-run
+
+# Apply updates
+./scripts/blueprint_update.sh
+./scripts/plugin_update.sh blueprint-ai-distribution-flutter
+```
 
 ---
 
@@ -459,13 +559,32 @@ GitHub: [link]
    - ✅ Updated docs
    - ✅ Released v1.0.1
 
+2. **~~Option 2: Example Project (Flutter)~~** ✅
+   - ✅ Created complete working example
+   - ✅ Example briefs demonstrating workflow
+   - ✅ Conventional commits history
+   - ✅ Comprehensive README (450+ lines)
+   - ✅ Published on GitHub
+
+3. **~~Update System~~** ✅
+   - ✅ Core and plugin update scripts
+   - ✅ Version tracking system
+   - ✅ Comprehensive documentation
+   - ✅ Tested and working
+
 ### Immediate (Next Few Days)
 
-2. **Tag v1.0.1 Release**
+4. **Prepare for v1.0.1 Release** (In Progress)
+   - [ ] Update ROADMAP.md (this file)
+   - [ ] Create CHANGELOG.md
+   - [ ] Update example project README with update system
+   - [ ] Ready for GitHub release creation
+
+5. **Tag v1.0.1 Release** (After completion of #4)
    - Create GitHub release for v1.0.1
-   - Include release notes
-   - Link to TEST_REPORT.md
-   - Announce bug fixes
+   - Include release notes from CHANGELOG.md
+   - Link to example project
+   - Announce update system
 
 ### Short Term (Next 1-2 Weeks)
 
