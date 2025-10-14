@@ -92,24 +92,37 @@ cd "$PROJECT_DIR"
 
 # Simple JSON update (create temp file, update, replace)
 TEMP_JSON=$(mktemp)
-cat ai/plugins/installed.json | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
+python3 <<EOF > "$TEMP_JSON"
+import json
+
+# Read current installed.json
+with open('ai/plugins/installed.json', 'r') as f:
+    data = json.load(f)
+
 # Remove if already exists
 data['plugins'] = [p for p in data['plugins'] if p['name'] != '$PLUGIN_NAME']
+
 # Add new entry
-data['plugins'].append({
+plugin_entry = {
     'name': '$PLUGIN_NAME',
     'version': '$PLUGIN_VERSION',
     'repo': '$PLUGIN_REPO',
     'installed_at': '$INSTALL_DATE',
-    'capabilities': '$CAPABILITIES'.split(',') if '$CAPABILITIES' else []
-})
+    'capabilities': [c.strip() for c in '$CAPABILITIES'.split(',') if c.strip()]
+}
+data['plugins'].append(plugin_entry)
 data['last_updated'] = '$INSTALL_DATE'
-json.dump(data, sys.stdout, indent=2)
-" > "$TEMP_JSON"
 
-mv "$TEMP_JSON" ai/plugins/installed.json
+# Write updated JSON
+print(json.dumps(data, indent=2))
+EOF
+
+if [ $? -eq 0 ] && [ -s "$TEMP_JSON" ]; then
+    mv "$TEMP_JSON" ai/plugins/installed.json
+else
+    echo "⚠️  Warning: Failed to update plugin registry"
+    rm -f "$TEMP_JSON"
+fi
 
 # Cleanup
 rm -rf "$TEMP_DIR"
