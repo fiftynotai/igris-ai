@@ -24,6 +24,13 @@ Test the new workflow enforcement protocols implemented in v1.0.4, specifically 
 - [x] Mark TD-002 as Done (Status: Done, Completed: 2025-10-15)
 - [x] Commit brief status update (f66efd2)
 
+### Completed ✅ (Dogfooding - Apply Fixes to Core Repo)
+- [x] Create CLAUDE.md with v1.0.4 protocols (root of repo)
+- [x] Create .claude/hooks/startup.sh (auto-initialization)
+- [x] Remove old .claude/prompt.md (v1.0.2 broken approach)
+- [x] Test startup hook works (displays welcome message)
+- [x] Commit dogfooding changes (21d4b39)
+
 ### Test Plan for Tomorrow 🧪
 - [ ] User starts fresh conversation
 - [ ] Claude should detect context reset
@@ -46,24 +53,27 @@ Test the new workflow enforcement protocols implemented in v1.0.4, specifically 
 - Created session_protocol.md as quick reference for checkpoints
 
 ### Current State
-**Last action taken:** Paused session for v1.0.4 workflow test tomorrow
+**Last action taken:** Applied v1.0.4 fixes to core repo (dogfooding complete!)
 **Working directory:** /Users/m.elamin/StudioProjects/blueprint-ai
 **Current branch:** main
-**Version:** 1.0.4 (workflow enforcement implemented)
+**Version:** 1.0.4 (NOW ACTIVE IN THIS REPO!)
 **Uncommitted changes:** Yes (1 file: session state - will commit when saving)
 
 **What was accomplished today:**
 - ✅ TD-002 completed (workflow enforcement enhancement)
-- ✅ Implemented mandatory first action in CLAUDE.md
+- ✅ Implemented mandatory first action in CLAUDE.md template
 - ✅ Implemented 5-checkpoint system in claude_bootstrap.md
 - ✅ Created session_protocol.md quick reference
 - ✅ All changes committed and merged to main
 - ✅ TD-002 marked as Done
+- ✅ **Applied v1.0.4 to core repo itself (dogfooding!)**
 
 **Commits made:**
 - f1ca3b8 - feat: enhance workflow enforcement based on production feedback
 - [merge] - feat: enhance workflow enforcement (TD-002)
 - f66efd2 - docs: mark TD-002 as Done
+- 67966d9 - test: save session state for v1.0.4 workflow enforcement test
+- 21d4b39 - feat: apply v1.0.4 fixes to core repo (dogfooding)
 
 **What to test tomorrow:**
 The new v1.0.4 protocols should ensure Claude:
