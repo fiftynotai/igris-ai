@@ -2,7 +2,7 @@
 
 **Intelligent code quality and architecture management system powered by AI**
 
-**Version:** 1.0.2 | **Status:** ✅ Production Ready
+**Version:** 1.0.3 | **Status:** ✅ Production Ready
 
 Blueprint AI helps teams maintain high code quality and architectural standards by providing:
 - 🎯 Systematic bug and feature tracking
@@ -40,23 +40,35 @@ cd your-project
 
 This creates:
 - `ai/` - Blueprint AI directory with templates
-- `.claude/prompt.md` - Automatic Claude Code integration
-- `scripts/` - Core Blueprint AI scripts
+- `.claude/hooks/` - Startup hook for automatic initialization
+- `CLAUDE.md` - Context for Claude Code CLI
+- `scripts/` - Core Blueprint AI scripts (6 scripts including update system)
 - Documentation and guides
 
-### Start Using Claude (Automatic!)
+### Start Using Claude (Truly Automatic!)
 
 ```bash
 $ claude
 ```
 
-**That's it!** Claude will automatically:
-- 🚀 Load Blueprint AI configuration
-- 📊 Show project summary (briefs, blockers, status)
-- 💡 Recommend next task
-- ✅ Be ready for your commands
+**BEFORE you type anything**, you'll see:
 
-**Zero configuration. Completely automatic.**
+```
+🚀 Welcome to Blueprint AI on Claude Code
+
+📊 Project Status
+────────────────
+Briefs: None yet (ready for first task)
+Blockers: 0
+
+Ready for your command!
+```
+
+**How it works:**
+- `.claude/hooks/startup.sh` runs automatically when Claude starts
+- Shows welcome message and project summary before any input
+- `CLAUDE.md` loads as context when you send your first message
+- True zero-configuration - works immediately after installation
 
 ### Optional: Shell Integration
 
@@ -351,6 +363,10 @@ cat .blueprint_version
 
 ```
 your-project/
+├── .claude/                     # Claude Code CLI integration
+│   └── hooks/
+│       └── startup.sh           # Auto-runs on Claude start
+├── CLAUDE.md                    # Context loaded on first message
 ├── ai/                          # Blueprint AI
 │   ├── briefs/                  # Work items
 │   ├── context/                 # Architecture docs
@@ -361,7 +377,9 @@ your-project/
 │   └── plugins/                 # Plugin registry
 ├── scripts/
 │   ├── blueprint_init.sh        # Initialize Blueprint AI
+│   ├── blueprint_update.sh      # Update Blueprint AI
 │   ├── plugin_install.sh        # Install plugins
+│   ├── plugin_update.sh         # Update plugins
 │   └── ...
 └── docs/                        # Project documentation
 ```
