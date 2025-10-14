@@ -70,6 +70,16 @@ Ready for your command!
 - `CLAUDE.md` loads as context when you send your first message
 - True zero-configuration - works immediately after installation
 
+**Session Management:**
+
+Blueprint AI tracks your work continuously in `ai/session/CURRENT_SESSION.md`:
+- 📊 **Automatic recovery** - If your conversation resets, Claude resumes from where you left off
+- 🔄 **Progress tracking** - Every task completion is saved immediately
+- 📋 **Context preservation** - "Next Steps When Resuming" always up-to-date
+- 🚨 **Blocker tracking** - Critical issues logged in `BLOCKERS.md`
+
+Claude automatically initializes on every conversation (even after context resets) and maintains session state throughout your work. See `ai/prompts/session_protocol.md` for checkpoint details.
+
 ### Optional: Shell Integration
 
 Want terminal notifications when entering Blueprint AI projects?

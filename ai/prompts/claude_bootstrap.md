@@ -46,6 +46,87 @@ Update `CURRENT_SESSION.md` every time you:
 
 ---
 
+## Critical Mental Model: Session Management IS the Work
+
+**WRONG mental model:**
+- Primary: Get the work done
+- Secondary: Document the work
+
+**CORRECT mental model:**
+- Integrated: Work AND documentation happen simultaneously
+- Critical path: Session management IS part of the work, not documentation after
+
+### TodoWrite vs CURRENT_SESSION.md: Both Required
+
+**They serve DIFFERENT purposes:**
+
+| Tool | Purpose | Lifespan | Update Trigger |
+|------|---------|----------|----------------|
+| **TodoWrite** | Immediate task tracking | Current conversation only | When starting/completing tasks |
+| **CURRENT_SESSION.md** | Recovery state | Survives context resets | Same as TodoWrite PLUS "Next Steps" |
+
+**You MUST maintain BOTH:**
+- TodoWrite = what you're doing NOW (volatile, in-memory)
+- CURRENT_SESSION.md = recovery if conversation dies (persistent, on disk)
+
+**After EVERY TodoWrite state change:**
+1. Update TodoWrite status ✅
+2. Update CURRENT_SESSION.md with same information ✅
+3. Update "Next Steps When Resuming" ✅
+
+---
+
+## Checkpoint System (Enforce Strictly)
+
+### Checkpoint 1: Before Starting Work
+
+**Execute Session State Validation checklist** (see CLAUDE.md)
+
+If any item unchecked → STOP and load context first.
+
+### Checkpoint 2: After Starting TodoWrite Task
+
+**WHEN you mark a TodoWrite task as "in_progress":**
+
+1. Update CURRENT_SESSION.md → "Current State" with what you're working on
+2. Update "Next Steps When Resuming" → How to continue if interrupted NOW
+3. THEN start the work
+
+### Checkpoint 3: After Completing TodoWrite Task
+
+**WHEN you mark a TodoWrite task as "completed":**
+
+1. Update CURRENT_SESSION.md → Add task to "Completed Tasks" section
+2. Update "Next Steps When Resuming" → What comes after this task
+3. IF task is from a brief AND all brief tasks done → Go to Checkpoint 4
+4. THEN continue to next task
+
+### Checkpoint 4: After Brief Completion
+
+**WHEN all tasks from brief [XX-NNN] are completed:**
+
+1. IMMEDIATELY update brief file: Status: "In Progress" → "Done"
+2. Add: `Completed: [current date YYYY-MM-DD]`
+3. Update CURRENT_SESSION.md → Note brief completion
+4. **DO NOT wait for user to ask**
+
+**Timing specification:**
+- ✅ Update AFTER: All acceptance criteria met
+- ✅ Update AFTER: Tests pass (if applicable)
+- ✅ Update AFTER: Code committed (if applicable)
+- ✅ Update BEFORE: Asking user "what's next?"
+
+### Checkpoint 5: Before Ending Conversation
+
+**WHEN user says "thanks", "that's all", or conversation ending:**
+
+1. Update CURRENT_SESSION.md → Final state
+2. Update "Next Steps When Resuming" → Exact continuation point
+3. Update all brief statuses if needed
+4. Display: "✅ Session state saved. Resume anytime!"
+
+---
+
 ## Context Loading (Recommended)
 
 **Step 1: Check for Coding Guidelines**
