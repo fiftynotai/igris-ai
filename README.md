@@ -29,7 +29,7 @@ Blueprint AI is a project management system designed to work seamlessly with Cla
 
 ```bash
 # Clone Blueprint AI
-git clone https://github.com/yourorg/blueprint-ai
+git clone https://github.com/Mohamed50/blueprint-ai
 cd your-project
 
 # Initialize Blueprint AI in your project
@@ -81,6 +81,30 @@ Claude will:
 ```
 
 See `ai/prompts/bug_prompts.md` and `ai/prompts/feature_prompts.md` for complete workflows.
+
+---
+
+## 📦 Example Project
+
+**Want to see Blueprint AI in action?**
+
+Check out our complete working example:
+
+**[blueprint-ai-flutter-example](https://github.com/Mohamed50/blueprint_ai_flutter_example)** - A fully configured Flutter project demonstrating:
+- ✅ Complete Blueprint AI setup
+- ✅ Example briefs (BR, FR, TD)
+- ✅ Conventional commits
+- ✅ Automated workflows
+- ✅ Distribution plugin integration
+- ✅ Real commit history showing workflow
+
+Perfect for:
+- Learning how to use Blueprint AI
+- Seeing real-world usage
+- Copy-paste examples
+- Validating your setup
+
+**[→ View Example Project](https://github.com/Mohamed50/blueprint_ai_flutter_example)**
 
 ---
 
@@ -169,7 +193,12 @@ Draft → Ready → In Progress → In Review → Done → Archived
 
 ### Available Plugins
 
-- **[blueprint-ai-distribution-flutter](https://github.com/yourorg/blueprint-ai-distribution-flutter)** - Smart release automation for Flutter
+- **[blueprint-ai-distribution-flutter](https://github.com/Mohamed50/blueprint-ai-distribution-flutter)** - Smart release automation for Flutter
+  - Automated version bumping
+  - Release notes generation
+  - Firebase App Distribution
+  - Fastlane integration
+  - **[See it in action →](https://github.com/Mohamed50/blueprint_ai_flutter_example)**
 
 ### Creating Plugins
 
@@ -271,8 +300,9 @@ Claude will:
 
 ## Community
 
-- **Issues:** [GitHub Issues](https://github.com/yourorg/blueprint-ai/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/yourorg/blueprint-ai/discussions)
+- **Issues:** [GitHub Issues](https://github.com/Mohamed50/blueprint-ai/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/Mohamed50/blueprint-ai/discussions)
+- **Example Project:** [blueprint-ai-flutter-example](https://github.com/Mohamed50/blueprint_ai_flutter_example)
 - **Contributing:** See [CONTRIBUTING.md](ai/CONTRIBUTING.md)
 
 ---
