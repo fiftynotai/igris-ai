@@ -21,6 +21,7 @@ Future development options and priorities for Blueprint AI.
 - ✅ **NEW:** Enhanced troubleshooting documentation
 - ✅ **NEW:** Example project created (Option 2 - Flutter example)
 - ✅ **NEW:** Update system for core and plugins
+- ✅ **NEW:** Coding Guidelines Generation feature (standalone + migration integration)
 
 **Repositories:**
 - Core: https://github.com/Mohamed50/blueprint-ai (latest: e6c1d03)
@@ -32,6 +33,10 @@ Future development options and priorities for Blueprint AI.
 - Added version tracking via `.blueprint_version` file
 - Created 535-line UPDATE_GUIDE.md with full documentation
 - Created complete example project with briefs and conventional commits
+- **NEW:** Added Coding Guidelines Generation feature (standalone + migration integration)
+- **NEW:** Created `ai/prompts/generate_coding_guidelines.md` (600+ lines)
+- **NEW:** Enhanced migration analysis to use coding guidelines with Step 0
+- **NEW:** Updated MG-TEMPLATE.md with comprehensive guideline references
 - Fixed plugin registration not updating installed.json
 - Fixed release notes showing incorrect content
 - Added Firebase CLI troubleshooting section
@@ -253,6 +258,193 @@ cat .blueprint_version
 # Apply updates
 ./scripts/blueprint_update.sh
 ./scripts/plugin_update.sh blueprint-ai-distribution-flutter
+```
+
+---
+
+## Coding Guidelines Generation ✅ **COMPLETED**
+
+**Priority:** High
+**Effort:** 3-4 hours
+**Impact:** Critical for migration analysis and architecture compliance
+**Status:** ✅ **COMPLETED** (2025-10-14)
+
+### Objectives
+
+Create a standalone feature for generating coding guidelines from base architecture repositories, existing projects, or both. This provides a standard reference for migration analysis and development.
+
+### Implementation Summary
+
+**New Prompt Created:**
+- ✅ `ai/prompts/generate_coding_guidelines.md` (600+ lines)
+  - Complete prompt with 4 modes (Base Repo / Project Analysis / Merge / Best Practices)
+  - Supports optional base architecture repository
+  - Generates standardized `ai/context/coding_guidelines.md`
+  - Comprehensive template covering all architecture aspects
+
+**Integration with Migration Analysis:**
+- ✅ Updated `ai/prompts/migration_analysis.md`
+  - Added Step 0: Load Coding Standards (Recommended)
+  - Checks for existing coding_guidelines.md
+  - Offers to generate if missing
+  - Three paths: Generate / Use Best Practices / Provide Path
+  - Migration briefs reference specific guideline sections
+
+**Template Updates:**
+- ✅ Updated `ai/briefs/MG-TEMPLATE.md`
+  - Added comprehensive "Coding Guidelines" references section
+  - Standard violated references with direct links
+  - Target pattern references
+  - Code example references
+  - Base architecture repository references
+  - Standards applied checklist
+
+### Features
+
+**Generation Modes:**
+
+**Mode A: Extract from Base Repository**
+1. User provides base architecture repo URL
+2. Clone repository and analyze structure
+3. Extract patterns, naming conventions, architecture
+4. Generate guidelines documenting discovered patterns
+
+**Mode B: Infer from Project Code**
+1. Scan existing project codebase
+2. Identify patterns and conventions
+3. Detect linter rules and configurations
+4. Generate guidelines from current practices
+5. Supplement with platform best practices
+
+**Mode C: Merge Base Repo + Project**
+1. Extract patterns from base repo (primary standard)
+2. Extract patterns from project code
+3. Merge with base repo taking precedence on conflicts
+4. Document conflicts and migration recommendations
+5. Create unified guidelines
+
+**Mode D: Best Practices Fallback**
+1. Detect platform (Flutter/React/Vue/etc.)
+2. Use industry-standard best practices
+3. Generate platform-specific guidelines
+4. Note as "based on industry best practices"
+
+### Generated Output
+
+**File Created:** `ai/context/coding_guidelines.md`
+
+**Sections Include:**
+- Project Overview
+- Architecture Pattern (layers, boundaries, responsibilities)
+- Naming Conventions (files, classes, variables, functions)
+- Code Structure (folder organization, module layout)
+- State Management (patterns, tools, best practices)
+- Error Handling (patterns, logging, user feedback)
+- Testing Standards (unit, widget, integration tests)
+- Documentation Requirements (comments, API docs)
+- Code Quality Rules (linting, formatting, complexity)
+- Examples (good vs bad code, common patterns)
+- Migration Notes (if conflicts exist)
+
+### Usage Scenarios
+
+**Scenario 1: New Project with Base Repo**
+```
+User: Generate coding guidelines from our base architecture
+Claude: Analyzes base repo → Extracts patterns → Generates guidelines
+Result: Complete guidelines based on proven patterns
+```
+
+**Scenario 2: Existing Project without Guidelines**
+```
+User: Create guidelines from our current codebase
+Claude: Scans project → Identifies patterns → Supplements with best practices
+Result: Guidelines documenting current standards + improvements
+```
+
+**Scenario 3: Migrating to New Architecture**
+```
+User: Merge our base repo with existing project guidelines
+Claude: Extracts both → Merges (base wins) → Documents conflicts
+Result: Migration roadmap with clear target standards
+```
+
+**Scenario 4: Starting Fresh**
+```
+User: Create guidelines for Flutter project (no base repo)
+Claude: Uses Flutter best practices → Platform-specific guidelines
+Result: Industry-standard guidelines ready to customize
+```
+
+### Integration with Migration Analysis
+
+**Step 0 Added to Migration Analysis:**
+
+1. **Check for Guidelines**
+   - Look for `ai/context/coding_guidelines.md`
+   - If exists: Load and use as standard
+   - If not: Offer to generate
+
+2. **User Options**
+   - Generate now (recommended) → Runs generate_coding_guidelines.md
+   - Use best practices → Platform-specific standards
+   - Provide path → Load external guidelines
+
+3. **Migration Briefs Reference Guidelines**
+   - Link to specific sections being violated
+   - Quote exact guidelines
+   - Show code examples from guidelines
+   - Clear target state definition
+
+### Benefits
+
+**For Migration Analysis:**
+- Clear comparison standard for existing code
+- Specific violations documented with guideline references
+- Target state explicitly defined
+- Consistent architecture across briefs
+
+**For Development:**
+- Single source of truth for standards
+- Onboarding documentation for new developers
+- Reference during code reviews
+- Foundation for architecture decisions
+
+**For Teams:**
+- Merge conflicting standards (base repo wins)
+- Document architectural decisions
+- Preserve institutional knowledge
+- Enable AI assistants to follow project patterns
+
+### Testing
+
+- ✅ Tested standalone usage (all 4 modes)
+- ✅ Tested integration with migration analysis
+- ✅ Verified MG-TEMPLATE.md references
+- ✅ Validated guideline output format
+- ✅ Confirmed optional base repo support
+
+### Documentation
+
+- ✅ Complete prompt with usage examples
+- ✅ Integration documented in migration_analysis.md
+- ✅ MG-TEMPLATE.md updated with reference format
+- ✅ Clear instructions for all scenarios
+- ✅ Examples for each generation mode
+
+### Example Workflow
+
+```bash
+# Scenario: Preparing for migration analysis
+
+1. User requests migration analysis
+2. Claude checks for ai/context/coding_guidelines.md
+3. Not found → Offers to generate
+4. User provides base repo URL (optional)
+5. Claude runs generate_coding_guidelines.md
+6. Guidelines created: ai/context/coding_guidelines.md
+7. Claude continues with migration analysis using guidelines
+8. Migration briefs reference specific guideline sections
 ```
 
 ---

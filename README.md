@@ -54,6 +54,33 @@ Claude will:
 - Ask questions about your architecture
 - Generate comprehensive documentation in `ai/context/`
 
+### Generate Coding Guidelines
+
+Create standardized coding guidelines for your project:
+
+```
+Please generate coding guidelines using ai/prompts/generate_coding_guidelines.md
+```
+
+Claude will:
+- Extract patterns from your base architecture repo (optional)
+- Analyze your existing project code (optional)
+- Merge both sources with conflict resolution
+- Generate comprehensive `ai/context/coding_guidelines.md`
+
+**4 Generation Modes:**
+- **Base Repo** - Extract from reference architecture repository
+- **Project Analysis** - Infer from existing codebase
+- **Merge** - Combine base repo + project (base takes precedence)
+- **Best Practices** - Use platform-specific industry standards
+
+**Use cases:**
+- Migration analysis (compare code against standards)
+- Onboarding new developers
+- Code reviews
+- Architecture decisions
+- AI assistant guidance
+
 ### Analyze Your Codebase
 
 Find issues and generate migration tasks:
@@ -126,10 +153,17 @@ Each brief includes:
 ### 🎯 Architecture Enforcement
 
 Define your architecture once, enforce it everywhere:
+- **Coding Guidelines Generation** - Extract from base repo or infer from project
 - Layer boundaries (MVVM, MVC, Clean Architecture, etc.)
-- Coding guidelines
-- API patterns
-- Module structure
+- Naming conventions and code structure
+- API patterns and best practices
+- Module organization
+
+**NEW:** `generate_coding_guidelines.md` creates standardized guidelines by:
+- Analyzing your base architecture repository
+- Extracting patterns from existing code
+- Merging multiple sources with conflict resolution
+- Using platform-specific best practices as fallback
 
 ### 🤖 AI-Powered Analysis
 
@@ -297,6 +331,25 @@ your-project/
 
 ## Examples
 
+### Generate Coding Guidelines
+
+```
+Generate coding guidelines using ai/prompts/generate_coding_guidelines.md
+
+Base architecture repo: https://github.com/your-org/flutter-base-architecture
+Also analyze current project: Yes
+Platform: Flutter
+```
+
+Claude will:
+1. Clone and analyze base repository
+2. Scan current project structure
+3. Extract patterns and conventions
+4. Merge with base repo taking precedence
+5. Generate `ai/context/coding_guidelines.md`
+
+**Result:** Complete guidelines covering architecture, naming, testing, etc.
+
 ### Register a Bug
 
 ```
@@ -374,6 +427,9 @@ Built for teams using Claude AI to maintain high-quality codebases.
 ```bash
 # Initialize Blueprint AI in your project
 ./scripts/blueprint_init.sh
+
+# Generate coding guidelines (recommended first step)
+# Ask Claude: "Generate coding guidelines using ai/prompts/generate_coding_guidelines.md"
 
 # Generate architecture docs
 # Ask Claude: "Analyze this project using ai/prompts/generate_architecture_docs.md"

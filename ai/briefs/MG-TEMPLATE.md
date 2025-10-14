@@ -127,16 +127,39 @@
 
 ## References
 
+**Coding Guidelines:**
+- Standard violated: `ai/context/coding_guidelines.md#[section-name]`
+- Specific guideline:
+  > [Quote the exact guideline being violated from coding_guidelines.md]
+
+- Target pattern: `ai/context/coding_guidelines.md#[target-section]`
+- Code examples: `ai/context/coding_guidelines.md#[examples-section]`
+
+**Note:** If coding guidelines don't exist yet, run `ai/prompts/generate_coding_guidelines.md` first.
+
 **Architecture Documentation:**
-- [Link to architecture_map.md section]
-- [Link to coding_guidelines.md section]
+- Architecture pattern: `ai/context/architecture_map.md#[section]`
+- Module structure: `ai/context/module_catalog.md#[module-name]`
+
+**Base Architecture Repository:**
+- Reference implementation: [URL to base repo if available]
+- Example file: [Specific file showing correct pattern]
+- Pattern documentation: [Link to pattern explanation]
 
 **Related Briefs:**
-- [MG-XXX, BR-XXX if related]
+- Depends on: [MG-XXX, BR-XXX if any]
+- Related migrations: [MG-XXX if part of larger refactoring]
+- Blocked by: [MG-XXX, BR-XXX if any]
+
+**Standards Applied:**
+- [ ] Based on project coding guidelines (`ai/context/coding_guidelines.md`)
+- [ ] Based on base architecture repository ([repo URL])
+- [ ] Based on industry best practices (no guidelines exist yet)
 
 **External References:**
-- [Link to base architecture repo if applicable]
-- [Link to style guide if applicable]
+- Platform docs: [Link to Flutter/React/etc docs if relevant]
+- Package docs: [Link to specific package documentation]
+- Architecture patterns: [Link to pattern explanation if needed]
 
 ---
 

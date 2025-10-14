@@ -168,16 +168,85 @@ Fix: Add _socket.close() in onClose() method
 
 ## Scanning Process
 
+### Step 0: Load Coding Standards (Recommended)
+
+Before analyzing the codebase, establish the standards to compare against.
+
+**Check for existing coding guidelines:**
+```bash
+ls ai/context/coding_guidelines.md
+```
+
+#### If coding_guidelines.md EXISTS:
+✅ Load and use these guidelines as the comparison standard
+- Read `ai/context/coding_guidelines.md`
+- Use defined architecture patterns, naming conventions, and best practices
+- Briefs will reference specific guideline sections
+- Proceed to Step 1
+
+#### If coding_guidelines.md DOES NOT EXIST:
+⚠️ **Recommended:** Generate coding guidelines first for more accurate analysis
+
+**Ask user:**
+```
+I notice you don't have coding guidelines defined yet.
+
+For the most accurate migration analysis, I recommend generating
+coding guidelines first. This will:
+- Define your architecture standards
+- Establish naming conventions
+- Set code quality benchmarks
+- Provide specific targets for migration
+
+Would you like to generate coding guidelines first?
+
+Options:
+1. Yes - Generate guidelines now (recommended)
+   → Use: ai/prompts/generate_coding_guidelines.md
+
+2. No - Proceed with best practices mode
+   → I'll use general platform best practices
+   → Analysis will be less specific to your standards
+
+3. I have guidelines elsewhere
+   → Please provide the file path or URL
+```
+
+**User Response Handling:**
+
+**If "Yes" (Generate guidelines):**
+1. Run `ai/prompts/generate_coding_guidelines.md` prompt
+2. This will create `ai/context/coding_guidelines.md`
+3. Once generated, return to this migration analysis
+4. Proceed to Step 1 with guidelines loaded
+
+**If "No" (Best practices mode):**
+1. Inform user: "I'll use general best practices for [detected platform]"
+2. Detect platform (Flutter/React/Web/etc.) from project structure
+3. Use platform-specific best practices as standards
+4. Note in all briefs: "Based on industry best practices"
+5. Recommend creating guidelines after migration
+6. Proceed to Step 1
+
+**If "I have guidelines elsewhere":**
+1. Ask for file path or URL
+2. Read the provided guidelines
+3. Proceed to Step 1 with those guidelines
+
+---
+
 ### Step 1: Quick Scan
 1. Use Glob to list all source files
 2. Count total files, modules, tests
 3. Identify file types and structure
 
 ### Step 2: Deep Analysis
-1. Read architecture documentation (if exists in ai/context/)
-2. Sample 3-5 modules for detailed review
-3. Check key infrastructure files
-4. Review test files
+1. Read coding guidelines (loaded in Step 0)
+2. Read architecture_map.md (if exists in ai/context/)
+3. Use guidelines as comparison standard
+4. Sample 3-5 modules for detailed review
+5. Check key infrastructure files
+6. Review test files
 
 ### Step 3: Pattern Detection
 1. Identify common violations
@@ -189,6 +258,11 @@ Fix: Add _socket.close() in onClose() method
 2. Group related issues
 3. Assign priorities and efforts
 4. Add clear descriptions and fix steps
+5. **Include guideline references:**
+   - Link to specific sections in `ai/context/coding_guidelines.md`
+   - Quote relevant standards being violated
+   - Show code examples from guidelines (if available)
+   - Note if using "industry best practices" (when no guidelines exist)
 
 ### Step 5: Roadmap Creation
 1. Create MIGRATION_ROADMAP.md
@@ -373,5 +447,5 @@ Ready to start migration. Recommend beginning with Phase 1 (critical fixes).
 
 ---
 
-**Last Updated:** 2025-10-13
-**Version:** 1.0.0
+**Last Updated:** 2025-10-14
+**Version:** 1.0.1
