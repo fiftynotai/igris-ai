@@ -16,8 +16,8 @@ You are continuing development of **Igris AI** - an AI-powered code quality and 
 - First plugin: Flutter distribution automation with Firebase + Fastlane
 
 **Repositories:**
-- **Core:** https://github.com/Fifty50ai/igris-ai
-- **Distribution Plugin:** https://github.com/Fifty50ai/igris-ai-distribution-flutter
+- **Core:** https://github.com/fiftynotai/igris-ai
+- **Distribution Plugin:** https://github.com/fiftynotai/igris-ai-distribution-flutter
 
 ---
 
@@ -93,9 +93,9 @@ flutter create test-distribution-demo
 cd test-distribution-demo
 
 # Test installation
-git clone https://github.com/Fifty50ai/igris-ai.git ../igris-ai
+git clone https://github.com/fiftynotai/igris-ai.git ../igris-ai
 ../igris-ai/scripts/igris_init.sh
-./scripts/plugin_install.sh https://github.com/Fifty50ai/igris-ai-distribution-flutter
+./scripts/plugin_install.sh https://github.com/fiftynotai/igris-ai-distribution-flutter
 
 # Test automation scripts
 ./scripts/generate_fastlane.sh

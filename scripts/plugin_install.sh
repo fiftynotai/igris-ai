@@ -13,7 +13,7 @@ if [ -z "$PLUGIN_REPO" ]; then
   echo "Usage: ./scripts/plugin_install.sh <plugin-repo-url>"
   echo ""
   echo "Example:"
-  echo "  ./scripts/plugin_install.sh https://github.com/Fifty50ai/igris-ai-distribution-flutter"
+  echo "  ./scripts/plugin_install.sh https://github.com/fiftynotai/igris-ai-distribution-flutter"
   exit 1
 fi
 

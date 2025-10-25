@@ -56,7 +56,7 @@ TEMP_DIR=$(mktemp -d)
 
 # Fetch latest version from GitHub
 echo "🌐 Checking for updates..."
-IGRIS_REPO="https://github.com/Fifty50ai/igris-ai"
+IGRIS_REPO="https://github.com/fiftynotai/igris-ai"
 git clone --depth 1 --quiet "$IGRIS_REPO" "$TEMP_DIR" 2>&1 | grep -v "^Cloning" || true
 
 if [ ! -f "$TEMP_DIR/version.txt" ]; then
@@ -234,7 +234,7 @@ echo "💾 Backup saved at: $BACKUP_DIR"
 echo ""
 echo "📝 What's new in $REMOTE_VERSION:"
 echo "  See CHANGELOG.md or visit:"
-echo "  https://github.com/Fifty50ai/igris-ai/releases"
+echo "  https://github.com/fiftynotai/igris-ai/releases"
 echo ""
 echo "⚠️  Note: If you have plugins installed, update them separately:"
 echo "  ./scripts/plugin_update.sh <plugin-name>"

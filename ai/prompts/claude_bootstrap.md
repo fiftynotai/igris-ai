@@ -666,6 +666,6 @@ Examples of what to include:
 
 **Last Updated:** 2025-10-25
 **Igris AI Version:** 1.0.4
-**Documentation:** https://github.com/Fifty50ai/igris-ai
+**Documentation:** https://github.com/fiftynotai/igris-ai
 
 **Tip:** Customize this prompt for your project by adding project-specific patterns to the "Project-Specific Notes" section.

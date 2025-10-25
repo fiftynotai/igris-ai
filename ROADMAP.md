@@ -38,9 +38,9 @@ Future development options and priorities for Igris AI.
 - ✅ **v1.0.5:** Automatic CLAUDE.md regeneration on plugin install
 
 **Repositories:**
-- Core: https://github.com/Fifty50ai/igris-ai (latest: 83d63af)
-- Distribution Plugin: https://github.com/Fifty50ai/igris-ai-distribution-flutter (latest: cd9ab26)
-- Example Project: https://github.com/Fifty50ai/igris_ai_flutter_example (latest: f800515)
+- Core: https://github.com/fiftynotai/igris-ai (latest: 83d63af)
+- Distribution Plugin: https://github.com/fiftynotai/igris-ai-distribution-flutter (latest: cd9ab26)
+- Example Project: https://github.com/fiftynotai/igris_ai_flutter_example (latest: f800515)
 
 **Latest Changes (v1.0.5):**
 - **Plugin Hook System** - Enable plugins to inject content into core prompts (TD-003)
@@ -159,7 +159,7 @@ Create reference implementations showing Igris AI in action.
 #### 1. Flutter App Example ✅ **COMPLETED**
 
 **Repository:** `igris-ai-flutter-example`
-**Link:** https://github.com/Fifty50ai/igris_ai_flutter_example
+**Link:** https://github.com/fiftynotai/igris_ai_flutter_example
 
 A sample Flutter app with Igris AI fully configured:
 - ✅ Complete Fastlane setup (iOS + Android)

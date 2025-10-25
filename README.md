@@ -31,7 +31,7 @@ Igris AI is a project management system designed to work seamlessly with Claude 
 
 ```bash
 # Clone Igris AI
-git clone https://github.com/Fifty50ai/igris-ai
+git clone https://github.com/fiftynotai/igris-ai
 cd your-project
 
 # Initialize Igris AI in your project
@@ -178,7 +178,7 @@ See `ai/prompts/bug_prompts.md` and `ai/prompts/feature_prompts.md` for complete
 
 Check out our complete working example:
 
-**[igris-ai-flutter-example](https://github.com/Fifty50ai/igris_ai_flutter_example)** - A fully configured Flutter project demonstrating:
+**[igris-ai-flutter-example](https://github.com/fiftynotai/igris_ai_flutter_example)** - A fully configured Flutter project demonstrating:
 - ✅ Complete Igris AI setup
 - ✅ Example briefs (BR, FR, TD)
 - ✅ Conventional commits
@@ -192,7 +192,7 @@ Perfect for:
 - Copy-paste examples
 - Validating your setup
 
-**[→ View Example Project](https://github.com/Fifty50ai/igris_ai_flutter_example)**
+**[→ View Example Project](https://github.com/fiftynotai/igris_ai_flutter_example)**
 
 ---
 
@@ -288,12 +288,12 @@ Draft → Ready → In Progress → In Review → Done → Archived
 
 ### Available Plugins
 
-- **[igris-ai-distribution-flutter](https://github.com/Fifty50ai/igris-ai-distribution-flutter)** - Smart release automation for Flutter
+- **[igris-ai-distribution-flutter](https://github.com/fiftynotai/igris-ai-distribution-flutter)** - Smart release automation for Flutter
   - Automated version bumping
   - Release notes generation
   - Firebase App Distribution
   - Fastlane integration
-  - **[See it in action →](https://github.com/Fifty50ai/igris_ai_flutter_example)**
+  - **[See it in action →](https://github.com/fiftynotai/igris_ai_flutter_example)**
 
 ### Creating Plugins
 
@@ -470,9 +470,9 @@ Claude will:
 
 ## Community
 
-- **Issues:** [GitHub Issues](https://github.com/Fifty50ai/igris-ai/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/Fifty50ai/igris-ai/discussions)
-- **Example Project:** [igris-ai-flutter-example](https://github.com/Fifty50ai/igris_ai_flutter_example)
+- **Issues:** [GitHub Issues](https://github.com/fiftynotai/igris-ai/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/fiftynotai/igris-ai/discussions)
+- **Example Project:** [igris-ai-flutter-example](https://github.com/fiftynotai/igris_ai_flutter_example)
 - **Contributing:** See [CONTRIBUTING.md](ai/CONTRIBUTING.md)
 
 ---

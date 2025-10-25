@@ -36,7 +36,7 @@ Complete persona packs plugin development after implementing TD-003 hook system.
 - [x] Create annotated git tag v1.0.4
 - [x] Push tag to remote repository
 - [x] Create GitHub release with full changelog
-- [x] Release URL: https://github.com/Fifty50ai/igris-ai/releases/tag/v1.0.4
+- [x] Release URL: https://github.com/fiftynotai/igris-ai/releases/tag/v1.0.4
 - [x] Update README.md version from 1.0.3 to 1.0.4
 - [x] Review and verify CHANGELOG.md accuracy
 - [x] Update ROADMAP.md to version 1.0.4 with v1.0.3 and v1.0.4 achievements
@@ -99,7 +99,7 @@ Complete persona packs plugin development after implementing TD-003 hook system.
 ### Completed ✅ (Releases)
 - [x] Released Igris AI v1.0.5
   - Tag: v1.0.5
-  - GitHub release: https://github.com/Fifty50ai/igris-ai/releases/tag/v1.0.5
+  - GitHub release: https://github.com/fiftynotai/igris-ai/releases/tag/v1.0.5
   - Includes: Plugin hook system + bug fix
 - [x] Created persona plugin git repository (/tmp/persona-plugin-test)
 - [x] Created initial commit for persona plugin
@@ -129,7 +129,7 @@ Complete persona packs plugin development after implementing TD-003 hook system.
    - Create GitHub release
 
 2. **TD-005**: Publish Igris Plugin to GitHub
-   - Create repo at github.com/Fifty50ai/igris-ai-persona-igris
+   - Create repo at github.com/fiftynotai/igris-ai-persona-igris
    - Push plugin source from /tmp/persona-plugin-test
    - Create v1.0.0 release
    - Update Igris AI README

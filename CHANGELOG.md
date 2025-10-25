@@ -18,7 +18,7 @@ This is a major version bump due to comprehensive rebranding affecting all aspec
 ### Changed
 
 - **Project Name:** Blueprint AI → Igris AI
-- **Repository:** blueprint-ai → igris-ai (https://github.com/Fifty50ai/igris-ai)
+- **Repository:** blueprint-ai → igris-ai (https://github.com/fiftynotai/igris-ai)
 - **Scripts:**
   - `blueprint_init.sh` → `igris_init.sh`
   - `blueprint_update.sh` → `igris_update.sh`
@@ -458,7 +458,7 @@ None - fully backwards compatible with v1.0.1
   - Plugin metadata system via `plugin.json`
 
 - **Distribution Plugin for Flutter**
-  - Repository: https://github.com/Fifty50ai/igris-ai-distribution-flutter
+  - Repository: https://github.com/fiftynotai/igris-ai-distribution-flutter
   - Automated version bumping based on conventional commits
   - Semantic versioning (MAJOR.MINOR.PATCH+BUILD)
   - Release notes generation from commit history
@@ -536,8 +536,8 @@ None - fully backwards compatible with v1.0.1
 This is the first official release of Igris AI, built from production experience managing 210+ releases of a Flutter application. The system has been battle-tested in real-world scenarios and is ready for use by development teams.
 
 **Core Repositories:**
-- Igris AI Core: https://github.com/Fifty50ai/igris-ai
-- Distribution Plugin: https://github.com/Fifty50ai/igris-ai-distribution-flutter
+- Igris AI Core: https://github.com/fiftynotai/igris-ai
+- Distribution Plugin: https://github.com/fiftynotai/igris-ai-distribution-flutter
 
 ---
 
@@ -570,7 +570,7 @@ Igris AI follows semantic versioning:
 ## Contributing
 
 Found a bug or have a feature request? Please open an issue on GitHub:
-- Core: https://github.com/Fifty50ai/igris-ai/issues
+- Core: https://github.com/fiftynotai/igris-ai/issues
 - Plugins: Open issue in respective plugin repository
 
 Want to contribute? See [CONTRIBUTING.md](ai/CONTRIBUTING.md) for guidelines.
@@ -579,9 +579,9 @@ Want to contribute? See [CONTRIBUTING.md](ai/CONTRIBUTING.md) for guidelines.
 
 ## Links
 
-- **GitHub Repository:** https://github.com/Fifty50ai/igris-ai
+- **GitHub Repository:** https://github.com/fiftynotai/igris-ai
 - **Example Project:** https://github.com/Mohamed50/igris_ai_flutter_example
-- **Distribution Plugin:** https://github.com/Fifty50ai/igris-ai-distribution-flutter
+- **Distribution Plugin:** https://github.com/fiftynotai/igris-ai-distribution-flutter
 - **Documentation:** See [README.md](README.md) and [docs/](docs/) directory
 
 ---

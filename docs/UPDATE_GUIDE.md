@@ -32,7 +32,7 @@ Igris AI automatically tracks versions in your project using the `.igris_version
     "igris-ai-distribution-flutter": {
       "version": "1.0.1",
       "installed_at": "2025-10-14T07:39:23Z",
-      "repo": "https://github.com/Fifty50ai/igris-ai-distribution-flutter"
+      "repo": "https://github.com/fiftynotai/igris-ai-distribution-flutter"
     }
   }
 }
@@ -75,7 +75,7 @@ This shows all installed plugins with their versions:
 📦 igris-ai-distribution-flutter
    Version: 1.0.1
    Installed: 2025-10-14T07:39:23Z
-   Repository: https://github.com/Fifty50ai/igris-ai-distribution-flutter
+   Repository: https://github.com/fiftynotai/igris-ai-distribution-flutter
    Capabilities: distribution, version-management, firebase
 ```
 
@@ -173,7 +173,7 @@ Continue with update? [y/N]: y
 
 📝 What's new in 1.0.1:
   See CHANGELOG.md or visit:
-  https://github.com/Fifty50ai/igris-ai/releases
+  https://github.com/fiftynotai/igris-ai/releases
 
 ⚠️  Note: If you have plugins installed, update them separately:
   ./scripts/plugin_update.sh <plugin-name>
@@ -220,7 +220,7 @@ $ ./scripts/plugin_update.sh igris-ai-distribution-flutter
 ==============================
 
 📦 Plugin: igris-ai-distribution-flutter
-📍 Repository: https://github.com/Fifty50ai/igris-ai-distribution-flutter
+📍 Repository: https://github.com/fiftynotai/igris-ai-distribution-flutter
 📌 Current version: 1.0.0
 
 🌐 Checking for updates...
@@ -250,7 +250,7 @@ Continue with update? [y/N]: y
 
 📝 What's new in 1.0.1:
   Check the plugin repository for changelog:
-  https://github.com/Fifty50ai/igris-ai-distribution-flutter
+  https://github.com/fiftynotai/igris-ai-distribution-flutter
 ```
 
 ### Update All Plugins
@@ -356,7 +356,7 @@ cp "$BACKUP/.igris_version" .
 
 # Re-run plugin uninstall and install with old version
 ./scripts/plugin_uninstall.sh igris-ai-distribution-flutter
-./scripts/plugin_install.sh https://github.com/Fifty50ai/igris-ai-distribution-flutter --version 1.0.0
+./scripts/plugin_install.sh https://github.com/fiftynotai/igris-ai-distribution-flutter --version 1.0.0
 
 echo "✅ Plugin rollback complete"
 ```
@@ -396,7 +396,7 @@ You're not in a Igris AI project directory. Make sure:
 ping github.com
 
 # Try accessing repository directly
-curl -I https://github.com/Fifty50ai/igris-ai
+curl -I https://github.com/fiftynotai/igris-ai
 
 # Wait and retry
 ./scripts/igris_update.sh
@@ -456,7 +456,7 @@ If still having issues, rollback and report the issue on GitHub.
    ```
 
 3. **Read the changelog:**
-   - Visit: https://github.com/Fifty50ai/igris-ai/releases
+   - Visit: https://github.com/fiftynotai/igris-ai/releases
    - Check breaking changes
    - Note new features
 
@@ -508,7 +508,7 @@ If you need to stay on a specific version:
 
 ### Watch for Updates
 
-- **GitHub Releases:** https://github.com/Fifty50ai/igris-ai/releases
+- **GitHub Releases:** https://github.com/fiftynotai/igris-ai/releases
 - **Star the repo** to get notifications
 - **Watch releases** to get emails about new versions
 
@@ -526,9 +526,9 @@ Each release includes:
 
 ## Need Help?
 
-- **Issues:** [GitHub Issues](https://github.com/Fifty50ai/igris-ai/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/Fifty50ai/igris-ai/discussions)
-- **Documentation:** [Igris AI Docs](https://github.com/Fifty50ai/igris-ai)
+- **Issues:** [GitHub Issues](https://github.com/fiftynotai/igris-ai/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/fiftynotai/igris-ai/discussions)
+- **Documentation:** [Igris AI Docs](https://github.com/fiftynotai/igris-ai)
 
 ---
 

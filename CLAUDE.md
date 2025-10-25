@@ -69,7 +69,7 @@ This is a context reset. You MUST execute the initialization sequence above FIRS
 **Version:** 2.0.0
 **Installed:** 2025-10-25
 
-This project uses [Igris AI](https://github.com/Fifty50ai/igris-ai) for code quality and architecture management.
+This project uses [Igris AI](https://github.com/fiftynotai/igris-ai) for code quality and architecture management.
 
 ---
 
@@ -258,7 +258,7 @@ Claude will analyze your codebase and merge findings with these Igris AI instruc
 - **Bug workflow:** `ai/prompts/bug_prompts.md`
 - **Feature workflow:** `ai/prompts/feature_prompts.md`
 - **Contributing guide:** `ai/CONTRIBUTING.md`
-- **Main repository:** https://github.com/Fifty50ai/igris-ai
+- **Main repository:** https://github.com/fiftynotai/igris-ai
 
 ---
 
