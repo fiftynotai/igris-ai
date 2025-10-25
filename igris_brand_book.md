@@ -47,6 +47,50 @@ IGRIS rose from that collapse: not as a chat bot, not as a code vending machine,
 
 ---
 
+## ✦ IGRIS vs CLAUDE: THE CRITICAL DISTINCTION
+
+**IGRIS is not a model. It is an AI Engineering System that orchestrates Claude Code to produce structured, high-quality software. Claude provides intelligence; IGRIS provides process, workflow, and engineering discipline.**
+
+### The Relationship
+
+**Claude** (the model)
+- Large language model from Anthropic
+- Provides intelligence and code generation
+- Understands natural language and context
+- Generates solutions
+
+**IGRIS** (the system)
+- AI Engineering Platform built on top of Claude Code
+- Provides structured workflows and playbooks
+- Enforces architecture and quality standards
+- Manages session state and recovery
+- Tracks briefs, decisions, and learnings
+- Ensures repeatable engineering processes
+
+### The Architecture
+
+```
+IGRIS (System)
+    ↓
+Orchestrates
+    ↓
+Claude Code (CLI)
+    ↓
+Powered by
+    ↓
+Claude (Model)
+```
+
+**Analogy:**
+- Claude is the engine
+- IGRIS is the vehicle with steering, GPS, safety systems, and dashboard
+- You drive with confidence, knowing the system keeps you on track
+
+**Without IGRIS:** Claude generates code based on prompts (random outputs)
+**With IGRIS:** Claude engineers outcomes following structured playbooks (disciplined execution)
+
+---
+
 ## ✦ THE OPEN‑SOURCE PRINCIPLE
 Open source is humanity’s greatest multiplier. IGRIS empowers:
 

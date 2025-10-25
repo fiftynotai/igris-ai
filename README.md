@@ -79,6 +79,48 @@ AI made coding faster — but not better. Speed without structure created:
 
 ---
 
+## ✦ IGRIS vs Claude: Understanding the Architecture
+
+**IGRIS is not a model. It is an AI Engineering System that orchestrates Claude Code to produce structured, high-quality software. Claude provides intelligence; IGRIS provides process, workflow, and engineering discipline.**
+
+### The Relationship
+
+```
+┌─────────────────────────────────────┐
+│   IGRIS (Engineering System)        │
+│   - Workflows & Playbooks            │
+│   - Architecture Enforcement         │
+│   - Session Management               │
+│   - Quality Standards                │
+└──────────────┬──────────────────────┘
+               │ Orchestrates
+               ↓
+┌─────────────────────────────────────┐
+│   Claude Code (CLI)                  │
+│   - Command-line interface           │
+│   - Context loading                  │
+│   - Tool execution                   │
+└──────────────┬──────────────────────┘
+               │ Powered by
+               ↓
+┌─────────────────────────────────────┐
+│   Claude (AI Model)                  │
+│   - Intelligence                     │
+│   - Code generation                  │
+│   - Natural language understanding   │
+└─────────────────────────────────────┘
+```
+
+**Think of it this way:**
+- **Claude** = The engine (intelligence)
+- **IGRIS** = The vehicle (structure, steering, navigation, safety)
+- **You** = The driver (direction and decisions)
+
+**Without IGRIS:** Claude generates code based on prompts → random outputs
+**With IGRIS:** Claude engineers outcomes following structured playbooks → disciplined execution
+
+---
+
 ## ✦ Quick Start
 
 ### The Engineering Workflow
