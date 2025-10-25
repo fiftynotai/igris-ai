@@ -184,10 +184,18 @@ chmod +x .claude/hooks/startup.sh
 
 # Resolve persona hook (if plugin provides one)
 PERSONA_INJECTION=""
-if [ -f "ai/plugins/installed.json" ] && command -v jq &> /dev/null; then
-  PERSONA_HOOK=$(jq -r '.plugins[] | select(.hooks.persona_injection) | .hooks.persona_injection' ai/plugins/installed.json 2>/dev/null || echo "")
-  if [ -n "$PERSONA_HOOK" ] && [ -f "$PERSONA_HOOK" ]; then
-    PERSONA_INJECTION=$(cat "$PERSONA_HOOK")
+if [ -f "ai/plugins/installed.json" ]; then
+  if command -v jq &> /dev/null; then
+    PERSONA_HOOK=$(jq -r '.plugins[] | select(.hooks.persona_injection) | .hooks.persona_injection' ai/plugins/installed.json 2>/dev/null || echo "")
+    if [ -n "$PERSONA_HOOK" ] && [ -f "$PERSONA_HOOK" ]; then
+      PERSONA_INJECTION=$(cat "$PERSONA_HOOK")
+    fi
+  else
+    echo "⚠️  Note: jq not found - plugin hooks will not be processed"
+    echo "   Install for full plugin support:"
+    echo "   macOS: brew install jq"
+    echo "   Ubuntu/Debian: sudo apt install jq"
+    echo ""
   fi
 fi
 

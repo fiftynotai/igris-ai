@@ -524,10 +524,27 @@ cat .igris_version
 
 ## ✦ Requirements
 
-- **Git** - Version control
-- **Claude AI** - AI assistant (Claude Code CLI or Claude.ai)
-- **Python 3** - For JSON manipulation in scripts
-- **Bash** - Shell scripts (Mac/Linux/WSL)
+- **Git** - Version control (required)
+- **Claude AI** - AI assistant (Claude Code CLI or Claude.ai) (required)
+- **Python 3** - For JSON manipulation in scripts (required)
+- **Bash** - Shell scripts (Mac/Linux/WSL) (required)
+- **jq** - JSON processor (optional - needed for plugin hooks)
+
+### Installing jq (Optional)
+
+jq is used to process plugin hooks (persona plugins, custom workflows). Igris AI works without it, but plugin hook features will be disabled.
+
+**macOS:**
+```bash
+brew install jq
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt install jq
+```
+
+**Download:** [https://jqlang.github.io/jq/](https://jqlang.github.io/jq/)
 
 ---
 
