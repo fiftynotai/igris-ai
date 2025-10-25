@@ -1,9 +1,69 @@
 # Changelog
 
-All notable changes to Blueprint AI will be documented in this file.
+All notable changes to Igris AI will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
+
+## [2.0.0] - 2025-10-25
+
+### BREAKING CHANGES
+
+**Complete rebrand from Blueprint AI to Igris AI**
+
+This is a major version bump due to comprehensive rebranding affecting all aspects of the project:
+
+### Changed
+
+- **Project Name:** Blueprint AI → Igris AI
+- **Repository:** blueprint-ai → igris-ai (https://github.com/Fifty50ai/igris-ai)
+- **Scripts:**
+  - `blueprint_init.sh` → `igris_init.sh`
+  - `blueprint_update.sh` → `igris_update.sh`
+  - All script references updated
+- **Version Files:** `.blueprint_version` → `.igris_version`
+- **Backup Directories:** `.blueprint_backup` → `.igris_backup`
+- **Environment Variables:** `BLUEPRINT_*` → `IGRIS_*`
+- **All Documentation:** Comprehensive updates across 36+ files
+
+### Branding Updates
+
+- New identity: Igris AI - Shadow Knight brand
+- Updated all references in:
+  - README.md and all documentation
+  - All prompts and templates
+  - Scripts and configuration files
+  - Session files and briefs
+  - Plugin system references
+  - CLAUDE.md template
+
+### Migration from 1.x
+
+**For existing projects:**
+
+1. Update your Igris AI installation:
+   ```bash
+   # If you have Blueprint AI installed
+   git pull  # In the igris-ai repo
+   ```
+
+2. Projects initialized with Blueprint AI will continue to work, but to fully migrate:
+   - Version tracking file will be `.blueprint_version` (legacy)
+   - Run `igris_init.sh --force` to regenerate with new branding
+   - Or manually rename `.blueprint_version` to `.igris_version` and update contents
+
+**Breaking:** Script names changed. Update any automation:
+- `blueprint_init.sh` → `igris_init.sh`
+- `blueprint_update.sh` → `igris_update.sh`
+
+### Compatibility
+
+- Core functionality unchanged - all features work identically
+- Existing briefs, sessions, and context files compatible
+- Plugin system unchanged (works with both old and new plugins)
+- CLAUDE.md format unchanged (content updated only)
 
 ---
 
@@ -14,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Plugin Hook System** - Enable plugins to inject content into core prompts (TD-003)
   - Added `{{PERSONA_INJECTION}}` hook to CLAUDE.md.template
   - Plugins can now define `hooks` in plugin.json
-  - Hook resolution in blueprint_init.sh (resolves to empty string if no plugin)
+  - Hook resolution in igris_init.sh (resolves to empty string if no plugin)
   - Automatic CLAUDE.md regeneration when plugin with hooks is installed
   - Documented hook system in PLUGIN_DEVELOPMENT.md
   - Enables upcoming persona packs plugin and future enhancement plugins
@@ -29,7 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Multi-line Hook Injection** - Fixed sed newline handling bug
-  - blueprint_init.sh now uses perl for multi-line PERSONA_INJECTION replacement
+  - igris_init.sh now uses perl for multi-line PERSONA_INJECTION replacement
   - Enables proper persona plugin installation and mask switching
   - Hook content with newlines now correctly injected into CLAUDE.md
   - No impact on plugins without hooks
@@ -57,7 +117,7 @@ None - fully backward compatible with v1.0.4
 ### Migration from v1.0.4
 
 ```bash
-./scripts/blueprint_update.sh
+./scripts/igris_update.sh
 ```
 
 No action required. Existing projects and plugins continue working normally.
@@ -96,11 +156,11 @@ No action required. Existing projects and plugins continue working normally.
 
 ### Technical Details
 
-**Problem:** Real production testing revealed Claude skipped Blueprint AI protocols:
+**Problem:** Real production testing revealed Claude skipped Igris AI protocols:
 - Initialization not executed on context resets
 - Session files not updated continuously
 - Brief statuses not updated after completion
-- Pattern-matched to standard workflow instead of Blueprint AI workflow
+- Pattern-matched to standard workflow instead of Igris AI workflow
 
 **Root Cause:** Session management felt optional (not critical path)
 
@@ -130,7 +190,7 @@ Claude: [Detects context reset]
 Claude: [Reads CURRENT_SESSION.md FIRST]
 Claude: "📊 Current Session Status: Active"
 Claude: "📋 Next Steps When Resuming: Update CHANGELOG.md"
-Claude: "✅ Blueprint AI initialized. Ready for your command!"
+Claude: "✅ Igris AI initialized. Ready for your command!"
 Claude: [THEN proceeds with user's request]
 ```
 
@@ -144,7 +204,7 @@ None - fully backwards compatible with v1.0.3
 
 Run update script to get enhanced workflow enforcement:
 ```bash
-./scripts/blueprint_update.sh
+./scripts/igris_update.sh
 ```
 
 The new protocols take effect immediately in next Claude conversation.
@@ -160,10 +220,10 @@ The new protocols take effect immediately in next Claude conversation.
   - Welcome message displays BEFORE any user input (true auto-execution)
   - Uses `CLAUDE.md` for context (correct Claude Code CLI convention)
   - Removed `.claude/prompt.md` creation (incorrect approach from v1.0.2)
-  - Added detection mechanism ("Is Blueprint AI loaded?" responds with confirmation)
+  - Added detection mechanism ("Is Igris AI loaded?" responds with confirmation)
 
 - **Script Installation** - Fixed incomplete script copying during initialization
-  - `blueprint_update.sh` now copied (update Blueprint AI core)
+  - `igris_update.sh` now copied (update Igris AI core)
   - `plugin_update.sh` now copied (update installed plugins)
   - `install_shell_integration.sh` now copied (optional shell notifications)
   - All 6 user-facing scripts now installed correctly
@@ -189,7 +249,7 @@ CLAUDE.md              # Context loaded with first message
 ```bash
 $ claude
 
-🚀 Welcome to Blueprint AI on Claude Code
+🚀 Welcome to Igris AI on Claude Code
 
 📊 Project Status
 ────────────────
@@ -205,12 +265,12 @@ Welcome message appears BEFORE user types anything. No manual configuration requ
 
 Run update script to get hooks:
 ```bash
-./scripts/blueprint_update.sh
+./scripts/igris_update.sh
 ```
 
 Or re-initialize (if no briefs/work created yet):
 ```bash
-/path/to/blueprint-ai/scripts/blueprint_init.sh .
+/path/to/igris-ai/scripts/igris_init.sh .
 ```
 
 ### Breaking Changes
@@ -224,17 +284,17 @@ None - fully backwards compatible with v1.0.2
 ### Added
 
 - **Automatic Claude Code Integration** - Zero-configuration startup for Claude Code CLI
-  - `.claude/prompt.md` automatically created during `blueprint_init.sh`
-  - Claude automatically loads Blueprint AI configuration on every session start
+  - `.claude/prompt.md` automatically created during `igris_init.sh`
+  - Claude automatically loads Igris AI configuration on every session start
   - Auto-displays project summary (briefs, blockers, status)
   - Auto-recommends next task based on priority
   - Completely automatic - no user action required
   - **Perfect for "safe vibe coding"** - architecture enforcement from day one
 
-- **Optional Shell Integration** - Terminal notifications for Blueprint AI projects
+- **Optional Shell Integration** - Terminal notifications for Igris AI projects
   - New script: `scripts/install_shell_integration.sh`
-  - Shows notification when entering Blueprint AI projects
-  - Displays Blueprint AI version in terminal
+  - Shows notification when entering Igris AI projects
+  - Displays Igris AI version in terminal
   - Visual context awareness across multiple projects
   - **User controlled** - choose to install via script or manually
   - **Security conscious** - never modifies shell without explicit permission
@@ -244,7 +304,7 @@ None - fully backwards compatible with v1.0.2
 
 ### Improved
 
-- **blueprint_init.sh Enhanced**
+- **igris_init.sh Enhanced**
   - Now creates `.claude/prompt.md` for automatic loading
   - Updated success message with Claude Code integration status
   - Added instructions for optional shell integration
@@ -269,7 +329,7 @@ User: "Use ai/prompts/claude_bootstrap.md and implement BR-001"
 ```bash
 $ claude
 
-🚀 Welcome to Blueprint AI on Claude Code
+🚀 Welcome to Igris AI on Claude Code
 Project: my-project
 [Auto-loaded, ready to work]
 Ready for your command!
@@ -297,31 +357,31 @@ None - fully backwards compatible with v1.0.1
 
 ### Added
 
-- **Update System** - Comprehensive update mechanism for Blueprint AI core and plugins
-  - `blueprint_update.sh` script for updating core to latest version
+- **Update System** - Comprehensive update mechanism for Igris AI core and plugins
+  - `igris_update.sh` script for updating core to latest version
   - `plugin_update.sh` script for updating individual plugins
-  - Version tracking via `.blueprint_version` JSON file
-  - Automatic backup creation in `.blueprint_backup/` before updates
+  - Version tracking via `.igris_version` JSON file
+  - Automatic backup creation in `.igris_backup/` before updates
   - Dry-run mode (`--dry-run`) to preview changes without applying
   - Force mode (`--force`) to re-download files even if versions match
   - Selective updates: system files updated, user data preserved
   - UPDATE_GUIDE.md documentation (535 lines)
   - Update instructions in main README
 
-- **Version Tracking** - Track Blueprint AI and plugin versions in user projects
+- **Version Tracking** - Track Igris AI and plugin versions in user projects
   - `version.txt` files in both core and plugin repositories
-  - `.blueprint_version` file created during initialization
+  - `.igris_version` file created during initialization
   - Automatic version updates during plugin installation
   - Timestamp tracking for installations and updates
 
 - **Example Project** - Complete working reference implementation
-  - Repository: https://github.com/Mohamed50/blueprint_ai_flutter_example
+  - Repository: https://github.com/Mohamed50/igris_ai_flutter_example
   - Example briefs: BR-001 (bug), FR-001 (feature), TD-001 (technical debt)
   - Conventional commits demonstrating workflow
   - Complete Fastlane setup for iOS and Android
   - Firebase App Distribution configuration
   - Comprehensive 450+ line README
-  - Real commit history showing Blueprint AI in action
+  - Real commit history showing Igris AI in action
 
 ### Fixed
 
@@ -367,8 +427,8 @@ None - fully backwards compatible with v1.0.1
 
 ### Changed
 
-- `blueprint_init.sh` now creates `.blueprint_version` file during initialization
-- `plugin_install.sh` now updates `.blueprint_version` with plugin information
+- `igris_init.sh` now creates `.igris_version` file during initialization
+- `plugin_install.sh` now updates `.igris_version` with plugin information
 - Modified scripts to support version tracking system
 
 ---
@@ -398,7 +458,7 @@ None - fully backwards compatible with v1.0.1
   - Plugin metadata system via `plugin.json`
 
 - **Distribution Plugin for Flutter**
-  - Repository: https://github.com/Mohamed50/blueprint-ai-distribution-flutter
+  - Repository: https://github.com/Fifty50ai/igris-ai-distribution-flutter
   - Automated version bumping based on conventional commits
   - Semantic versioning (MAJOR.MINOR.PATCH+BUILD)
   - Release notes generation from commit history
@@ -409,7 +469,7 @@ None - fully backwards compatible with v1.0.1
   - Multi-platform support (iOS, Android, both)
 
 - **Initialization System**
-  - `blueprint_init.sh` for project setup
+  - `igris_init.sh` for project setup
   - Automatic directory structure creation
   - Template copying and configuration
   - Plugin system setup
@@ -426,7 +486,7 @@ None - fully backwards compatible with v1.0.1
   - SETUP_GUIDE.md for installation
   - MIGRATION_GUIDE.md for onboarding existing projects
   - PLUGIN_DEVELOPMENT.md for creating plugins
-  - CONTRIBUTING.md for using Blueprint AI
+  - CONTRIBUTING.md for using Igris AI
   - TROUBLESHOOTING.md in distribution plugin
   - ROADMAP.md for future development
 
@@ -473,17 +533,17 @@ None - fully backwards compatible with v1.0.1
 
 ### Initial Release
 
-This is the first official release of Blueprint AI, built from production experience managing 210+ releases of a Flutter application. The system has been battle-tested in real-world scenarios and is ready for use by development teams.
+This is the first official release of Igris AI, built from production experience managing 210+ releases of a Flutter application. The system has been battle-tested in real-world scenarios and is ready for use by development teams.
 
 **Core Repositories:**
-- Blueprint AI Core: https://github.com/Mohamed50/blueprint-ai
-- Distribution Plugin: https://github.com/Mohamed50/blueprint-ai-distribution-flutter
+- Igris AI Core: https://github.com/Fifty50ai/igris-ai
+- Distribution Plugin: https://github.com/Fifty50ai/igris-ai-distribution-flutter
 
 ---
 
 ## Release Philosophy
 
-Blueprint AI follows semantic versioning:
+Igris AI follows semantic versioning:
 
 - **MAJOR** version: Incompatible API changes
 - **MINOR** version: Backwards-compatible functionality additions
@@ -491,7 +551,7 @@ Blueprint AI follows semantic versioning:
 
 ### What's Tracked
 
-- Core system changes (Blueprint AI)
+- Core system changes (Igris AI)
 - Plugin changes (tracked separately in plugin repositories)
 - Documentation improvements
 - Bug fixes
@@ -510,7 +570,7 @@ Blueprint AI follows semantic versioning:
 ## Contributing
 
 Found a bug or have a feature request? Please open an issue on GitHub:
-- Core: https://github.com/Mohamed50/blueprint-ai/issues
+- Core: https://github.com/Fifty50ai/igris-ai/issues
 - Plugins: Open issue in respective plugin repository
 
 Want to contribute? See [CONTRIBUTING.md](ai/CONTRIBUTING.md) for guidelines.
@@ -519,9 +579,9 @@ Want to contribute? See [CONTRIBUTING.md](ai/CONTRIBUTING.md) for guidelines.
 
 ## Links
 
-- **GitHub Repository:** https://github.com/Mohamed50/blueprint-ai
-- **Example Project:** https://github.com/Mohamed50/blueprint_ai_flutter_example
-- **Distribution Plugin:** https://github.com/Mohamed50/blueprint-ai-distribution-flutter
+- **GitHub Repository:** https://github.com/Fifty50ai/igris-ai
+- **Example Project:** https://github.com/Mohamed50/igris_ai_flutter_example
+- **Distribution Plugin:** https://github.com/Fifty50ai/igris-ai-distribution-flutter
 - **Documentation:** See [README.md](README.md) and [docs/](docs/) directory
 
 ---

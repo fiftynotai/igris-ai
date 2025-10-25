@@ -1,10 +1,10 @@
-# Blueprint AI
+# Igris AI
 
 **Intelligent code quality and architecture management system powered by AI**
 
-**Version:** 1.0.4 | **Status:** ✅ Production Ready
+**Version:** 2.0.0 | **Status:** ✅ Production Ready
 
-Blueprint AI helps teams maintain high code quality and architectural standards by providing:
+Igris AI helps teams maintain high code quality and architectural standards by providing:
 - 🎯 Systematic bug and feature tracking
 - 📋 Architecture compliance enforcement
 - 🤖 AI-powered code analysis and migration planning
@@ -13,9 +13,9 @@ Blueprint AI helps teams maintain high code quality and architectural standards 
 
 ---
 
-## What is Blueprint AI?
+## What is Igris AI?
 
-Blueprint AI is a project management system designed to work seamlessly with Claude AI to help you:
+Igris AI is a project management system designed to work seamlessly with Claude AI to help you:
 
 1. **Maintain Architecture Standards** - Define and enforce your project's architecture patterns
 2. **Track Bugs & Features** - Manage development work with structured briefs
@@ -30,19 +30,19 @@ Blueprint AI is a project management system designed to work seamlessly with Cla
 ### Installation
 
 ```bash
-# Clone Blueprint AI
-git clone https://github.com/Mohamed50/blueprint-ai
+# Clone Igris AI
+git clone https://github.com/Fifty50ai/igris-ai
 cd your-project
 
-# Initialize Blueprint AI in your project
-../blueprint-ai/scripts/blueprint_init.sh
+# Initialize Igris AI in your project
+../igris-ai/scripts/igris_init.sh
 ```
 
 This creates:
-- `ai/` - Blueprint AI directory with templates
+- `ai/` - Igris AI directory with templates
 - `.claude/hooks/` - Startup hook for automatic initialization
 - `CLAUDE.md` - Context for Claude Code CLI
-- `scripts/` - Core Blueprint AI scripts (6 scripts including update system)
+- `scripts/` - Core Igris AI scripts (6 scripts including update system)
 - Documentation and guides
 
 ### Start Using Claude (Truly Automatic!)
@@ -54,7 +54,7 @@ $ claude
 **BEFORE you type anything**, you'll see:
 
 ```
-🚀 Welcome to Blueprint AI on Claude Code
+🚀 Welcome to Igris AI on Claude Code
 
 📊 Project Status
 ────────────────
@@ -72,7 +72,7 @@ Ready for your command!
 
 **Session Management:**
 
-Blueprint AI tracks your work continuously in `ai/session/CURRENT_SESSION.md`:
+Igris AI tracks your work continuously in `ai/session/CURRENT_SESSION.md`:
 - 📊 **Automatic recovery** - If your conversation resets, Claude resumes from where you left off
 - 🔄 **Progress tracking** - Every task completion is saved immediately
 - 📋 **Context preservation** - "Next Steps When Resuming" always up-to-date
@@ -82,7 +82,7 @@ Claude automatically initializes on every conversation (even after context reset
 
 ### Optional: Shell Integration
 
-Want terminal notifications when entering Blueprint AI projects?
+Want terminal notifications when entering Igris AI projects?
 
 ```bash
 $ ./scripts/install_shell_integration.sh
@@ -91,14 +91,14 @@ $ ./scripts/install_shell_integration.sh
 This adds a notification to your shell (bash/zsh):
 ```bash
 $ cd my-project
-📘 Blueprint AI detected (v1.0.4)
-   Claude will auto-initialize with Blueprint AI configuration
+📘 Igris AI detected (v1.0.4)
+   Claude will auto-initialize with Igris AI configuration
 ```
 
 **Benefits:**
 - Visual context awareness
-- See Blueprint AI version
-- Know which projects use Blueprint AI
+- See Igris AI version
+- Know which projects use Igris AI
 
 **Security:** You choose to install, use the script, or add manually. We never modify your shell without permission.
 
@@ -174,12 +174,12 @@ See `ai/prompts/bug_prompts.md` and `ai/prompts/feature_prompts.md` for complete
 
 ## 📦 Example Project
 
-**Want to see Blueprint AI in action?**
+**Want to see Igris AI in action?**
 
 Check out our complete working example:
 
-**[blueprint-ai-flutter-example](https://github.com/Mohamed50/blueprint_ai_flutter_example)** - A fully configured Flutter project demonstrating:
-- ✅ Complete Blueprint AI setup
+**[igris-ai-flutter-example](https://github.com/Mohamed50/igris_ai_flutter_example)** - A fully configured Flutter project demonstrating:
+- ✅ Complete Igris AI setup
 - ✅ Example briefs (BR, FR, TD)
 - ✅ Conventional commits
 - ✅ Automated workflows
@@ -187,12 +187,12 @@ Check out our complete working example:
 - ✅ Real commit history showing workflow
 
 Perfect for:
-- Learning how to use Blueprint AI
+- Learning how to use Igris AI
 - Seeing real-world usage
 - Copy-paste examples
 - Validating your setup
 
-**[→ View Example Project](https://github.com/Mohamed50/blueprint_ai_flutter_example)**
+**[→ View Example Project](https://github.com/Mohamed50/igris_ai_flutter_example)**
 
 ---
 
@@ -237,7 +237,7 @@ Claude analyzes your code to find:
 
 ### 🔌 Plugin System
 
-Extend Blueprint AI with plugins for:
+Extend Igris AI with plugins for:
 - Distribution automation (Flutter, React Native, etc.)
 - CI/CD integration
 - Custom workflows
@@ -257,7 +257,7 @@ Briefs are structured work items that capture:
 
 ### Session Tracking
 
-Blueprint AI tracks your work:
+Igris AI tracks your work:
 - **CURRENT_SESSION.md** - Active work
 - **BLOCKERS.md** - Blocking issues
 - **DECISIONS.md** - Architectural decisions
@@ -288,12 +288,12 @@ Draft → Ready → In Progress → In Review → Done → Archived
 
 ### Available Plugins
 
-- **[blueprint-ai-distribution-flutter](https://github.com/Mohamed50/blueprint-ai-distribution-flutter)** - Smart release automation for Flutter
+- **[igris-ai-distribution-flutter](https://github.com/Fifty50ai/igris-ai-distribution-flutter)** - Smart release automation for Flutter
   - Automated version bumping
   - Release notes generation
   - Firebase App Distribution
   - Fastlane integration
-  - **[See it in action →](https://github.com/Mohamed50/blueprint_ai_flutter_example)**
+  - **[See it in action →](https://github.com/Mohamed50/igris_ai_flutter_example)**
 
 ### Creating Plugins
 
@@ -301,32 +301,32 @@ See [Plugin Development Guide](docs/PLUGIN_DEVELOPMENT.md)
 
 ---
 
-## Updating Blueprint AI
+## Updating Igris AI
 
 ### Check Your Version
 
 ```bash
-cat .blueprint_version
+cat .igris_version
 ```
 
 ### Update Core
 
 ```bash
 # Check what would be updated
-./scripts/blueprint_update.sh --dry-run
+./scripts/igris_update.sh --dry-run
 
 # Update to latest version
-./scripts/blueprint_update.sh
+./scripts/igris_update.sh
 ```
 
 ### Update Plugins
 
 ```bash
 # Update a specific plugin
-./scripts/plugin_update.sh blueprint-ai-distribution-flutter
+./scripts/plugin_update.sh igris-ai-distribution-flutter
 
 # Check what would be updated first
-./scripts/plugin_update.sh blueprint-ai-distribution-flutter --dry-run
+./scripts/plugin_update.sh igris-ai-distribution-flutter --dry-run
 ```
 
 ### What Gets Updated
@@ -344,7 +344,7 @@ cat .blueprint_version
 - Your architecture docs (`ai/context/`)
 - Plugin registry
 
-**Automatic backups** are created in `.blueprint_backup/` before every update.
+**Automatic backups** are created in `.igris_backup/` before every update.
 
 **[→ Full Update Guide](docs/UPDATE_GUIDE.md)**
 
@@ -353,10 +353,10 @@ cat .blueprint_version
 ## Documentation
 
 - **[Setup Guide](docs/SETUP_GUIDE.md)** - Complete installation and setup
-- **[Update Guide](docs/UPDATE_GUIDE.md)** - Updating Blueprint AI and plugins
+- **[Update Guide](docs/UPDATE_GUIDE.md)** - Updating Igris AI and plugins
 - **[Migration Guide](docs/MIGRATION_GUIDE.md)** - Onboarding existing projects
 - **[Plugin Development](docs/PLUGIN_DEVELOPMENT.md)** - Building plugins
-- **[Contributing Guide](ai/CONTRIBUTING.md)** - How to use Blueprint AI
+- **[Contributing Guide](ai/CONTRIBUTING.md)** - How to use Igris AI
 
 ---
 
@@ -377,7 +377,7 @@ your-project/
 │   └── hooks/
 │       └── startup.sh           # Auto-runs on Claude start
 ├── CLAUDE.md                    # Context loaded on first message
-├── ai/                          # Blueprint AI
+├── ai/                          # Igris AI
 │   ├── briefs/                  # Work items
 │   ├── context/                 # Architecture docs
 │   ├── prompts/                 # AI prompts
@@ -386,8 +386,8 @@ your-project/
 │   ├── templates/               # Templates
 │   └── plugins/                 # Plugin registry
 ├── scripts/
-│   ├── blueprint_init.sh        # Initialize Blueprint AI
-│   ├── blueprint_update.sh      # Update Blueprint AI
+│   ├── igris_init.sh        # Initialize Igris AI
+│   ├── igris_update.sh      # Update Igris AI
 │   ├── plugin_install.sh        # Install plugins
 │   ├── plugin_update.sh         # Update plugins
 │   └── ...
@@ -450,16 +450,16 @@ Claude will:
 
 ---
 
-## Why Blueprint AI?
+## Why Igris AI?
 
-### Without Blueprint AI
+### Without Igris AI
 - ❌ Architecture violations go unnoticed
 - ❌ Technical debt accumulates
 - ❌ Inconsistent code quality
 - ❌ Manual tracking in spreadsheets
 - ❌ Tribal knowledge, no documentation
 
-### With Blueprint AI
+### With Igris AI
 - ✅ Enforce architecture automatically
 - ✅ Track and pay down tech debt systematically
 - ✅ Consistent code quality across team
@@ -470,9 +470,9 @@ Claude will:
 
 ## Community
 
-- **Issues:** [GitHub Issues](https://github.com/Mohamed50/blueprint-ai/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/Mohamed50/blueprint-ai/discussions)
-- **Example Project:** [blueprint-ai-flutter-example](https://github.com/Mohamed50/blueprint_ai_flutter_example)
+- **Issues:** [GitHub Issues](https://github.com/Fifty50ai/igris-ai/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/Fifty50ai/igris-ai/discussions)
+- **Example Project:** [igris-ai-flutter-example](https://github.com/Mohamed50/igris_ai_flutter_example)
 - **Contributing:** See [CONTRIBUTING.md](ai/CONTRIBUTING.md)
 
 ---
@@ -492,8 +492,8 @@ Built for teams using Claude AI to maintain high-quality codebases.
 **Ready to get started?**
 
 ```bash
-# Initialize Blueprint AI in your project
-./scripts/blueprint_init.sh
+# Initialize Igris AI in your project
+./scripts/igris_init.sh
 
 # Generate coding guidelines (recommended first step)
 # Ask Claude: "Generate coding guidelines using ai/prompts/generate_coding_guidelines.md"

@@ -1,8 +1,8 @@
-# Blueprint AI Update Guide
+# Igris AI Update Guide
 
-**Keep Blueprint AI and its plugins up to date**
+**Keep Igris AI and its plugins up to date**
 
-This guide explains how to update Blueprint AI core and its plugins to the latest versions.
+This guide explains how to update Igris AI core and its plugins to the latest versions.
 
 ---
 
@@ -10,7 +10,7 @@ This guide explains how to update Blueprint AI core and its plugins to the lates
 
 - [Version Tracking](#version-tracking)
 - [Checking Your Version](#checking-your-version)
-- [Updating Blueprint AI Core](#updating-blueprint-ai-core)
+- [Updating Igris AI Core](#updating-igris-ai-core)
 - [Updating Plugins](#updating-plugins)
 - [Backup and Safety](#backup-and-safety)
 - [Rollback Instructions](#rollback-instructions)
@@ -21,43 +21,43 @@ This guide explains how to update Blueprint AI core and its plugins to the lates
 
 ## Version Tracking
 
-Blueprint AI automatically tracks versions in your project using the `.blueprint_version` file:
+Igris AI automatically tracks versions in your project using the `.igris_version` file:
 
 ```json
 {
-  "blueprint_ai_version": "1.0.1",
+  "igris_ai_version": "1.0.1",
   "installed_at": "2025-10-14T07:39:23Z",
   "last_updated": "2025-10-14T07:39:23Z",
   "plugins": {
-    "blueprint-ai-distribution-flutter": {
+    "igris-ai-distribution-flutter": {
       "version": "1.0.1",
       "installed_at": "2025-10-14T07:39:23Z",
-      "repo": "https://github.com/Mohamed50/blueprint-ai-distribution-flutter"
+      "repo": "https://github.com/Fifty50ai/igris-ai-distribution-flutter"
     }
   }
 }
 ```
 
 This file is automatically created during initialization and updated when you:
-- Install Blueprint AI (`blueprint_init.sh`)
+- Install Igris AI (`igris_init.sh`)
 - Install plugins (`plugin_install.sh`)
-- Update Blueprint AI (`blueprint_update.sh`)
+- Update Igris AI (`igris_update.sh`)
 - Update plugins (`plugin_update.sh`)
 
 ---
 
 ## Checking Your Version
 
-### Check Blueprint AI Core Version
+### Check Igris AI Core Version
 
 ```bash
-cat .blueprint_version | grep blueprint_ai_version
+cat .igris_version | grep igris_ai_version
 ```
 
 Or view the full version file:
 
 ```bash
-cat .blueprint_version
+cat .igris_version
 ```
 
 ### Check Installed Plugins
@@ -69,43 +69,43 @@ cat .blueprint_version
 This shows all installed plugins with their versions:
 
 ```
-🔌 Installed Blueprint AI Plugins
+🔌 Installed Igris AI Plugins
 ==================================
 
-📦 blueprint-ai-distribution-flutter
+📦 igris-ai-distribution-flutter
    Version: 1.0.1
    Installed: 2025-10-14T07:39:23Z
-   Repository: https://github.com/Mohamed50/blueprint-ai-distribution-flutter
+   Repository: https://github.com/Fifty50ai/igris-ai-distribution-flutter
    Capabilities: distribution, version-management, firebase
 ```
 
 ---
 
-## Updating Blueprint AI Core
+## Updating Igris AI Core
 
 ### Standard Update
 
 Update to the latest version:
 
 ```bash
-./scripts/blueprint_update.sh
+./scripts/igris_update.sh
 ```
 
 **What happens:**
 1. Checks current version against latest release
 2. Shows what will be updated
 3. Asks for confirmation
-4. Creates backup in `.blueprint_backup/`
+4. Creates backup in `.igris_backup/`
 5. Updates system files (prompts, templates, checks, scripts)
 6. Preserves your data (briefs, session, context, plugins)
-7. Updates `.blueprint_version`
+7. Updates `.igris_version`
 
 ### Dry Run Mode
 
 Preview what would be updated without making changes:
 
 ```bash
-./scripts/blueprint_update.sh --dry-run
+./scripts/igris_update.sh --dry-run
 ```
 
 **Use this to:**
@@ -118,15 +118,15 @@ Preview what would be updated without making changes:
 Force update even if versions are the same (useful for fixing corrupted files):
 
 ```bash
-./scripts/blueprint_update.sh --force
+./scripts/igris_update.sh --force
 ```
 
 ### Example Update Session
 
 ```bash
-$ ./scripts/blueprint_update.sh
+$ ./scripts/igris_update.sh
 
-🔄 Blueprint AI Update Manager
+🔄 Igris AI Update Manager
 ==============================
 
 📦 Current version: 1.0.0
@@ -155,7 +155,7 @@ Continue with update? [y/N]: y
 
 📦 Starting update...
 
-💾 Creating backup at .blueprint_backup/20251014_083045...
+💾 Creating backup at .igris_backup/20251014_083045...
 ✅ Backup created
 
 📝 Updating system files...
@@ -166,14 +166,14 @@ Continue with update? [y/N]: y
   - Updating plugin management scripts...
   - Updating version tracking...
 
-✅ Blueprint AI updated successfully!
+✅ Igris AI updated successfully!
 
 📦 Updated to version: 1.0.1
-💾 Backup saved at: .blueprint_backup/20251014_083045
+💾 Backup saved at: .igris_backup/20251014_083045
 
 📝 What's new in 1.0.1:
   See CHANGELOG.md or visit:
-  https://github.com/Mohamed50/blueprint-ai/releases
+  https://github.com/Fifty50ai/igris-ai/releases
 
 ⚠️  Note: If you have plugins installed, update them separately:
   ./scripts/plugin_update.sh <plugin-name>
@@ -192,7 +192,7 @@ Continue with update? [y/N]: y
 **Example:**
 
 ```bash
-./scripts/plugin_update.sh blueprint-ai-distribution-flutter
+./scripts/plugin_update.sh igris-ai-distribution-flutter
 ```
 
 ### Dry Run Mode
@@ -200,7 +200,7 @@ Continue with update? [y/N]: y
 Preview plugin update:
 
 ```bash
-./scripts/plugin_update.sh blueprint-ai-distribution-flutter --dry-run
+./scripts/plugin_update.sh igris-ai-distribution-flutter --dry-run
 ```
 
 ### Force Update
@@ -208,19 +208,19 @@ Preview plugin update:
 Force plugin update:
 
 ```bash
-./scripts/plugin_update.sh blueprint-ai-distribution-flutter --force
+./scripts/plugin_update.sh igris-ai-distribution-flutter --force
 ```
 
 ### Example Plugin Update Session
 
 ```bash
-$ ./scripts/plugin_update.sh blueprint-ai-distribution-flutter
+$ ./scripts/plugin_update.sh igris-ai-distribution-flutter
 
-🔄 Blueprint AI Plugin Updater
+🔄 Igris AI Plugin Updater
 ==============================
 
-📦 Plugin: blueprint-ai-distribution-flutter
-📍 Repository: https://github.com/Mohamed50/blueprint-ai-distribution-flutter
+📦 Plugin: igris-ai-distribution-flutter
+📍 Repository: https://github.com/Fifty50ai/igris-ai-distribution-flutter
 📌 Current version: 1.0.0
 
 🌐 Checking for updates...
@@ -234,7 +234,7 @@ Continue with update? [y/N]: y
 
 📦 Starting plugin update...
 
-💾 Creating backup at .blueprint_backup/plugins/20251014_083530_blueprint-ai-distribution-flutter...
+💾 Creating backup at .igris_backup/plugins/20251014_083530_igris-ai-distribution-flutter...
 ✅ Backup created
 
 🔧 Running plugin update...
@@ -244,13 +244,13 @@ Continue with update? [y/N]: y
 
 ✅ Plugin updated successfully!
 
-📦 Plugin: blueprint-ai-distribution-flutter
+📦 Plugin: igris-ai-distribution-flutter
 📌 Updated to version: 1.0.1
-💾 Backup saved at: .blueprint_backup/plugins/20251014_083530_blueprint-ai-distribution-flutter
+💾 Backup saved at: .igris_backup/plugins/20251014_083530_igris-ai-distribution-flutter
 
 📝 What's new in 1.0.1:
   Check the plugin repository for changelog:
-  https://github.com/Mohamed50/blueprint-ai-distribution-flutter
+  https://github.com/Fifty50ai/igris-ai-distribution-flutter
 ```
 
 ### Update All Plugins
@@ -262,7 +262,7 @@ Currently there's no "update all" command. To update all plugins:
 ./scripts/plugin_list.sh
 
 # Update each one
-./scripts/plugin_update.sh blueprint-ai-distribution-flutter
+./scripts/plugin_update.sh igris-ai-distribution-flutter
 ./scripts/plugin_update.sh other-plugin
 ```
 
@@ -275,18 +275,18 @@ Currently there's no "update all" command. To update all plugins:
 Every update creates a timestamped backup:
 
 ```
-.blueprint_backup/
+.igris_backup/
 ├── 20251014_083045/              # Core update backup
 │   ├── prompts/
 │   ├── templates/
 │   ├── checks/
 │   ├── CONTRIBUTING.md
 │   ├── plugin_*.sh
-│   └── .blueprint_version
+│   └── .igris_version
 └── plugins/
-    └── 20251014_083530_blueprint-ai-distribution-flutter/
+    └── 20251014_083530_igris-ai-distribution-flutter/
         ├── installed.json
-        └── .blueprint_version
+        └── .igris_version
 ```
 
 ### What Gets Backed Up
@@ -298,11 +298,11 @@ Every update creates a timestamped backup:
 - Checks (`ai/checks/`)
 - Documentation (`ai/CONTRIBUTING.md`)
 - Plugin scripts (`scripts/plugin_*.sh`)
-- Version file (`.blueprint_version`)
+- Version file (`.igris_version`)
 
 **Plugin Updates:**
 - Plugin registry (`ai/plugins/installed.json`)
-- Version file (`.blueprint_version`)
+- Version file (`.igris_version`)
 - Plugin-specific files (varies by plugin)
 
 ### What Never Gets Modified
@@ -321,14 +321,14 @@ These files are **always preserved** during updates:
 
 If an update causes issues, you can rollback using the backup.
 
-### Rollback Blueprint AI Core
+### Rollback Igris AI Core
 
 ```bash
 # Find your backup
-ls -la .blueprint_backup/
+ls -la .igris_backup/
 
 # Example: Rollback to backup from Oct 14, 08:30:45
-BACKUP=".blueprint_backup/20251014_083045"
+BACKUP=".igris_backup/20251014_083045"
 
 # Restore files
 cp -r "$BACKUP/prompts/"* ai/prompts/
@@ -336,7 +336,7 @@ cp -r "$BACKUP/templates/"* ai/templates/
 cp -r "$BACKUP/checks/"* ai/checks/
 cp "$BACKUP/CONTRIBUTING.md" ai/
 cp "$BACKUP/plugin_"*.sh scripts/
-cp "$BACKUP/.blueprint_version" .
+cp "$BACKUP/.igris_version" .
 
 echo "✅ Rollback complete"
 ```
@@ -345,18 +345,18 @@ echo "✅ Rollback complete"
 
 ```bash
 # Find plugin backup
-ls -la .blueprint_backup/plugins/
+ls -la .igris_backup/plugins/
 
 # Example: Rollback distribution plugin update
-BACKUP=".blueprint_backup/plugins/20251014_083530_blueprint-ai-distribution-flutter"
+BACKUP=".igris_backup/plugins/20251014_083530_igris-ai-distribution-flutter"
 
 # Restore registry
 cp "$BACKUP/installed.json" ai/plugins/
-cp "$BACKUP/.blueprint_version" .
+cp "$BACKUP/.igris_version" .
 
 # Re-run plugin uninstall and install with old version
-./scripts/plugin_uninstall.sh blueprint-ai-distribution-flutter
-./scripts/plugin_install.sh https://github.com/Mohamed50/blueprint-ai-distribution-flutter --version 1.0.0
+./scripts/plugin_uninstall.sh igris-ai-distribution-flutter
+./scripts/plugin_install.sh https://github.com/Fifty50ai/igris-ai-distribution-flutter --version 1.0.0
 
 echo "✅ Plugin rollback complete"
 ```
@@ -365,18 +365,18 @@ echo "✅ Plugin rollback complete"
 
 ## Troubleshooting
 
-### "Blueprint AI not initialized"
+### "Igris AI not initialized"
 
 **Error:**
 ```
-❌ Error: Blueprint AI not initialized in this directory
+❌ Error: Igris AI not initialized in this directory
 ```
 
 **Solution:**
-You're not in a Blueprint AI project directory. Make sure:
+You're not in a Igris AI project directory. Make sure:
 1. You're in the correct project directory
-2. Blueprint AI is initialized (`.blueprint_version` exists)
-3. If not initialized, run `./scripts/blueprint_init.sh`
+2. Igris AI is initialized (`.igris_version` exists)
+3. If not initialized, run `./scripts/igris_init.sh`
 
 ### "Could not fetch remote version"
 
@@ -396,10 +396,10 @@ You're not in a Blueprint AI project directory. Make sure:
 ping github.com
 
 # Try accessing repository directly
-curl -I https://github.com/Mohamed50/blueprint-ai
+curl -I https://github.com/Fifty50ai/igris-ai
 
 # Wait and retry
-./scripts/blueprint_update.sh
+./scripts/igris_update.sh
 ```
 
 ### "Plugin is not installed"
@@ -423,7 +423,7 @@ curl -I https://github.com/Mohamed50/blueprint-ai
 **Problem:** Update script crashed or was interrupted.
 
 **Solution:**
-1. Check backup exists: `ls .blueprint_backup/`
+1. Check backup exists: `ls .igris_backup/`
 2. Rollback using instructions above
 3. Check error message for specific issue
 4. Try update again, or use `--dry-run` first
@@ -433,7 +433,7 @@ curl -I https://github.com/Mohamed50/blueprint-ai
 **Solution:**
 ```bash
 # Use --force to re-download all files
-./scripts/blueprint_update.sh --force
+./scripts/igris_update.sh --force
 ```
 
 If still having issues, rollback and report the issue on GitHub.
@@ -447,16 +447,16 @@ If still having issues, rollback and report the issue on GitHub.
 1. **Commit your work:**
    ```bash
    git add .
-   git commit -m "chore: save work before Blueprint AI update"
+   git commit -m "chore: save work before Igris AI update"
    ```
 
 2. **Check what will change:**
    ```bash
-   ./scripts/blueprint_update.sh --dry-run
+   ./scripts/igris_update.sh --dry-run
    ```
 
 3. **Read the changelog:**
-   - Visit: https://github.com/Mohamed50/blueprint-ai/releases
+   - Visit: https://github.com/Fifty50ai/igris-ai/releases
    - Check breaking changes
    - Note new features
 
@@ -464,7 +464,7 @@ If still having issues, rollback and report the issue on GitHub.
 
 1. **Update core first:**
    ```bash
-   ./scripts/blueprint_update.sh
+   ./scripts/igris_update.sh
    ```
 
 2. **Then update plugins:**
@@ -482,7 +482,7 @@ If still having issues, rollback and report the issue on GitHub.
 **Recommended:**
 - Check for updates monthly
 - Update before starting major features
-- Update after Blueprint AI releases (watch GitHub)
+- Update after Igris AI releases (watch GitHub)
 
 **When NOT to update:**
 - In the middle of critical features
@@ -497,7 +497,7 @@ If you need to stay on a specific version:
 2. **Document your version in README:**
    ```markdown
    ## Dependencies
-   - Blueprint AI: 1.0.1 (pinned)
+   - Igris AI: 1.0.1 (pinned)
    ```
 
 3. **Test thoroughly before updating**
@@ -508,7 +508,7 @@ If you need to stay on a specific version:
 
 ### Watch for Updates
 
-- **GitHub Releases:** https://github.com/Mohamed50/blueprint-ai/releases
+- **GitHub Releases:** https://github.com/Fifty50ai/igris-ai/releases
 - **Star the repo** to get notifications
 - **Watch releases** to get emails about new versions
 
@@ -526,9 +526,9 @@ Each release includes:
 
 ## Need Help?
 
-- **Issues:** [GitHub Issues](https://github.com/Mohamed50/blueprint-ai/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/Mohamed50/blueprint-ai/discussions)
-- **Documentation:** [Blueprint AI Docs](https://github.com/Mohamed50/blueprint-ai)
+- **Issues:** [GitHub Issues](https://github.com/Fifty50ai/igris-ai/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/Fifty50ai/igris-ai/discussions)
+- **Documentation:** [Igris AI Docs](https://github.com/Fifty50ai/igris-ai)
 
 ---
 

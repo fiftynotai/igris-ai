@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Blueprint AI Plugin Uninstaller
-# Removes an installed Blueprint AI plugin
+# Igris AI Plugin Uninstaller
+# Removes an installed Igris AI plugin
 
 set -e
 
@@ -17,13 +17,13 @@ if [ -z "$PLUGIN_NAME" ]; then
   exit 1
 fi
 
-echo "🔌 Blueprint AI Plugin Uninstaller"
+echo "🔌 Igris AI Plugin Uninstaller"
 echo "==================================="
 echo ""
 
-# Check if Blueprint AI is initialized
+# Check if Igris AI is initialized
 if [ ! -d "ai" ] || [ ! -f "ai/plugins/installed.json" ]; then
-  echo "❌ Error: Blueprint AI not initialized in this directory"
+  echo "❌ Error: Igris AI not initialized in this directory"
   exit 1
 fi
 

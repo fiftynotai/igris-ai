@@ -13,7 +13,7 @@
 
 **Current situation:**
 
-Blueprint AI currently has a plugin system that allows installation of plugins (like `blueprint-ai-distribution-flutter`), but plugins can only add files - they cannot inject content into core Blueprint AI prompts or configuration files.
+Igris AI currently has a plugin system that allows installation of plugins (like `igris-ai-distribution-flutter`), but plugins can only add files - they cannot inject content into core Igris AI prompts or configuration files.
 
 The `CLAUDE.md` template is static and doesn't support content injection from plugins.
 
@@ -28,12 +28,12 @@ The `CLAUDE.md` template is static and doesn't support content injection from pl
 ```markdown
 # Current CLAUDE.md.template (static, no injection points)
 
-# Blueprint AI - Project Instructions
+# Igris AI - Project Instructions
 
-**Version:** {{BLUEPRINT_VERSION}}
+**Version:** {{IGRIS_VERSION}}
 **Installed:** {{INSTALL_DATE}}
 
-This project uses Blueprint AI for code quality...
+This project uses Igris AI for code quality...
 
 # (No way for plugins to inject here)
 ```
@@ -67,7 +67,7 @@ Without this, we cannot support:
 
 1. [x] Design hook system contract
 2. [ ] Add hook placeholder to `CLAUDE.md.template`
-3. [ ] Create hook injection logic in `blueprint_init.sh`
+3. [ ] Create hook injection logic in `igris_init.sh`
 4. [ ] Update plugin.json schema to support hooks
 5. [ ] Update `plugin_install.sh` to process hooks
 6. [ ] Document hook system in `PLUGIN_DEVELOPMENT.md`
@@ -101,7 +101,7 @@ This unblocks the persona packs feature and future enhancement plugins.
 - `scripts/templates/CLAUDE.md.template` - Add `{{PERSONA_INJECTION}}` hook
 
 **Scripts:**
-- `scripts/blueprint_init.sh` - Add hook processing (default to empty string)
+- `scripts/igris_init.sh` - Add hook processing (default to empty string)
 - `scripts/plugin_install.sh` - Add hook injection when plugin provides hooks
 
 **Documentation:**
@@ -124,11 +124,11 @@ This unblocks the persona packs feature and future enhancement plugins.
 ```markdown
 # In CLAUDE.md.template
 
-# Blueprint AI - Project Instructions
+# Igris AI - Project Instructions
 
 {{PERSONA_INJECTION}}
 
-**Version:** {{BLUEPRINT_VERSION}}
+**Version:** {{IGRIS_VERSION}}
 **Installed:** {{INSTALL_DATE}}
 ```
 
@@ -136,7 +136,7 @@ This unblocks the persona packs feature and future enhancement plugins.
 
 ```json
 {
-  "name": "blueprint-ai-persona-packs",
+  "name": "igris-ai-persona-packs",
   "version": "1.0.0",
   "hooks": {
     "persona_injection": "ai/prompts/persona_loader.md"
@@ -147,7 +147,7 @@ This unblocks the persona packs feature and future enhancement plugins.
 ### Hook Resolution Logic
 
 ```bash
-# In blueprint_init.sh
+# In igris_init.sh
 
 PERSONA_INJECTION=""
 
@@ -168,7 +168,7 @@ sed "s|{{PERSONA_INJECTION}}|$PERSONA_INJECTION|g" templates/CLAUDE.md.template 
 ## Testing
 
 ### Regression Testing
-- [ ] Blueprint AI works normally without any plugins
+- [ ] Igris AI works normally without any plugins
 - [ ] Existing plugins (distribution-flutter) still work
 - [ ] No functionality changes to core workflows
 
@@ -212,7 +212,7 @@ sed "s|{{PERSONA_INJECTION}}|$PERSONA_INJECTION|g" templates/CLAUDE.md.template 
 - Document in PLUGIN_DEVELOPMENT.md
 
 ### Phase 2: Persona Plugin (separate repo)
-- Create `blueprint-ai-persona-packs` repository
+- Create `igris-ai-persona-packs` repository
 - Use hook system for persona injection
 - Test integration with v1.0.5+
 
@@ -241,7 +241,7 @@ sed "s|{{PERSONA_INJECTION}}|$PERSONA_INJECTION|g" templates/CLAUDE.md.template 
 **Design Decisions:**
 
 1. **Why {{PLACEHOLDER}} format?**
-   - Already used for {{BLUEPRINT_VERSION}}, consistent pattern
+   - Already used for {{IGRIS_VERSION}}, consistent pattern
    - Easy to identify in templates
    - Simple string replacement
 
@@ -270,4 +270,4 @@ sed "s|{{PERSONA_INJECTION}}|$PERSONA_INJECTION|g" templates/CLAUDE.md.template 
 
 **Created:** 2025-10-25
 **Last Updated:** 2025-10-25
-**Brief Owner:** Blueprint AI Core Team
+**Brief Owner:** Igris AI Core Team

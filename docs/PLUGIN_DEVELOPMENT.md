@@ -1,12 +1,12 @@
 # Plugin Development Guide
 
-Guide for creating Blueprint AI plugins.
+Guide for creating Igris AI plugins.
 
 ---
 
 ## What is a Plugin?
 
-A Blueprint AI plugin extends functionality by adding:
+A Igris AI plugin extends functionality by adding:
 - Platform-specific tools (Flutter, React Native, etc.)
 - Distribution automation (build, version, deploy)
 - CI/CD integration
@@ -31,7 +31,7 @@ your-plugin/
 ### Example: Full Plugin Structure
 
 ```
-blueprint-ai-distribution-flutter/
+igris-ai-distribution-flutter/
 ├── plugin.json
 ├── install.sh
 ├── uninstall.sh
@@ -58,7 +58,7 @@ blueprint-ai-distribution-flutter/
 
 ```json
 {
-  "name": "blueprint-ai-your-plugin",
+  "name": "igris-ai-your-plugin",
   "version": "1.0.0",
   "description": "Short description of what the plugin does",
   "capabilities": ["capability1", "capability2"],
@@ -70,14 +70,14 @@ blueprint-ai-distribution-flutter/
 
 ```json
 {
-  "name": "blueprint-ai-distribution-flutter",
+  "name": "igris-ai-distribution-flutter",
   "version": "1.0.0",
   "description": "Smart release automation for Flutter projects",
   "author": "Your Name",
-  "repository": "https://github.com/yourorg/blueprint-ai-distribution-flutter",
+  "repository": "https://github.com/yourorg/igris-ai-distribution-flutter",
   "homepage": "https://docs.yourorg.com/plugins/distribution-flutter",
   "license": "MIT",
-  "blueprint_ai_version": ">=1.0.0",
+  "igris_ai_version": ">=1.0.0",
   "capabilities": [
     "distribution",
     "versioning",
@@ -102,13 +102,13 @@ blueprint-ai-distribution-flutter/
 
 **Available since:** v1.0.5
 
-Plugins can inject content into Blueprint AI's core prompts using hooks. This allows plugins to modify Claude's behavior, tone, or add custom instructions.
+Plugins can inject content into Igris AI's core prompts using hooks. This allows plugins to modify Claude's behavior, tone, or add custom instructions.
 
 ```json
 {
-  "name": "blueprint-ai-persona-packs",
+  "name": "igris-ai-persona-packs",
   "version": "1.0.0",
-  "description": "Optional persona system for Blueprint AI",
+  "description": "Optional persona system for Igris AI",
   "hooks": {
     "persona_injection": "ai/prompts/persona_loader.md"
   }
@@ -125,8 +125,8 @@ Plugins can inject content into Blueprint AI's core prompts using hooks. This al
 
 1. Plugin defines hook in `plugin.json`
 2. Hook points to a markdown file in the plugin
-3. During plugin installation, Blueprint AI reads the hook path
-4. When generating `CLAUDE.md`, Blueprint AI injects the content
+3. During plugin installation, Igris AI reads the hook path
+4. When generating `CLAUDE.md`, Igris AI injects the content
 5. Claude receives the injected content as part of its instructions
 
 **Example Hook File (`ai/prompts/persona_loader.md`):**
@@ -145,7 +145,7 @@ Use commanding language and epic metaphors when describing code operations.
 - Hooks are optional - plugins without hooks work normally
 - Hook content is injected as-is (raw markdown)
 - Multiple plugins can provide the same hook (last installed wins)
-- Hooks are processed during `blueprint_init.sh` and `plugin_install.sh`
+- Hooks are processed during `igris_init.sh` and `plugin_install.sh`
 - Removing a plugin removes its hooks (regenerate CLAUDE.md)
 
 **Use Cases for Hooks:**
@@ -172,9 +172,9 @@ TARGET_DIR=$2    # Target project directory
 ### Required Checks
 
 ```bash
-# 1. Check Blueprint AI is initialized
+# 1. Check Igris AI is initialized
 if [ ! -d "$TARGET_DIR/ai" ]; then
-  echo "❌ Error: Blueprint AI not initialized"
+  echo "❌ Error: Igris AI not initialized"
   exit 1
 fi
 
@@ -224,7 +224,7 @@ echo ""
 
 ```bash
 #!/bin/bash
-# Blueprint AI Distribution Plugin Installer
+# Igris AI Distribution Plugin Installer
 
 set -e
 
@@ -235,12 +235,12 @@ if [ -z "$TARGET_DIR" ]; then
   TARGET_DIR=$(pwd)
 fi
 
-echo "📦 Installing Blueprint AI Distribution Plugin"
+echo "📦 Installing Igris AI Distribution Plugin"
 echo ""
 
-# Check Blueprint AI initialized
+# Check Igris AI initialized
 if [ ! -d "$TARGET_DIR/ai" ]; then
-  echo "❌ Error: Blueprint AI not initialized"
+  echo "❌ Error: Igris AI not initialized"
   exit 1
 fi
 
@@ -344,8 +344,8 @@ Declare supported platforms:
 mkdir test-project
 cd test-project
 
-# 2. Initialize Blueprint AI
-../../blueprint-ai/scripts/blueprint_init.sh
+# 2. Initialize Igris AI
+../../igris-ai/scripts/igris_init.sh
 
 # 3. Install your plugin locally
 ./scripts/plugin_install.sh /path/to/your-plugin
@@ -363,7 +363,7 @@ cd test-project
 - [ ] Plugin functionality works end-to-end
 - [ ] Uninstall works correctly
 - [ ] Works on fresh project
-- [ ] Works with existing Blueprint AI setup
+- [ ] Works with existing Igris AI setup
 
 ---
 
@@ -405,8 +405,8 @@ Include in README.md:
 ### 4. Submit to Registry (Future)
 
 ```bash
-# Submit to Blueprint AI plugin registry
-blueprint-ai plugin submit https://github.com/yourorg/your-plugin
+# Submit to Igris AI plugin registry
+igris-ai plugin submit https://github.com/yourorg/your-plugin
 ```
 
 ---
@@ -418,7 +418,7 @@ blueprint-ai plugin submit https://github.com/yourorg/your-plugin
 **plugin.json:**
 ```json
 {
-  "name": "blueprint-ai-hello",
+  "name": "igris-ai-hello",
   "version": "1.0.0",
   "description": "Simple hello world plugin",
   "capabilities": ["greeting"],
@@ -434,7 +434,7 @@ TARGET_DIR=${2:-.}
 # Create hello script
 cat > "$TARGET_DIR/scripts/hello.sh" <<'EOF'
 #!/bin/bash
-echo "👋 Hello from Blueprint AI plugin!"
+echo "👋 Hello from Igris AI plugin!"
 EOF
 
 chmod +x "$TARGET_DIR/scripts/hello.sh"
@@ -445,13 +445,13 @@ echo "Run: ./scripts/hello.sh"
 
 **README.md:**
 ```markdown
-# Blueprint AI Hello Plugin
+# Igris AI Hello Plugin
 
 Simple example plugin.
 
 ## Installation
 
-./scripts/plugin_install.sh https://github.com/yourorg/blueprint-ai-hello
+./scripts/plugin_install.sh https://github.com/yourorg/igris-ai-hello
 
 ## Usage
 
@@ -464,7 +464,7 @@ Simple example plugin.
 
 ### Do's
 
-✅ **Check prerequisites** - Verify Blueprint AI initialized
+✅ **Check prerequisites** - Verify Igris AI initialized
 ✅ **Validate compatibility** - Check platform before installing
 ✅ **Make scripts executable** - `chmod +x` after copying
 ✅ **Provide examples** - Include example configs
@@ -520,9 +520,9 @@ Simple example plugin.
 
 ## Getting Help
 
-- **Examples:** See [blueprint-ai-distribution-flutter](https://github.com/yourorg/blueprint-ai-distribution-flutter)
-- **Issues:** https://github.com/yourorg/blueprint-ai/issues
-- **Discussions:** https://github.com/yourorg/blueprint-ai/discussions
+- **Examples:** See [igris-ai-distribution-flutter](https://github.com/yourorg/igris-ai-distribution-flutter)
+- **Issues:** https://github.com/yourorg/igris-ai/issues
+- **Discussions:** https://github.com/yourorg/igris-ai/discussions
 
 ---
 

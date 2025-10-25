@@ -75,13 +75,13 @@ refactor(venue): extract zone picker to separate widget
 ### Example 4: Documentation
 
 ```
-docs: add Blueprint AI pilot structure
+docs: add Igris AI pilot structure
 
 - Add /ai folder with context, prompts, briefs, checks, templates, session
 - Add architecture_map.md referencing flutter-mvvm-actions-arch
 - Add claude_bootstrap.md with session management
 - Add BR-001 pilot brief
-- Update README with Blueprint AI section
+- Update README with Igris AI section
 ```
 
 ### Example 5: Breaking Change

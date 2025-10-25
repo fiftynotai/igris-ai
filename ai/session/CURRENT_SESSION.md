@@ -36,7 +36,7 @@ Complete persona packs plugin development after implementing TD-003 hook system.
 - [x] Create annotated git tag v1.0.4
 - [x] Push tag to remote repository
 - [x] Create GitHub release with full changelog
-- [x] Release URL: https://github.com/Fifty50ai/blueprint-ai/releases/tag/v1.0.4
+- [x] Release URL: https://github.com/Fifty50ai/igris-ai/releases/tag/v1.0.4
 - [x] Update README.md version from 1.0.3 to 1.0.4
 - [x] Review and verify CHANGELOG.md accuracy
 - [x] Update ROADMAP.md to version 1.0.4 with v1.0.3 and v1.0.4 achievements
@@ -56,7 +56,7 @@ Complete persona packs plugin development after implementing TD-003 hook system.
 - [x] Updated brief status from Ready → In Progress
 - [x] Created implementation session
 - [x] Added {{PERSONA_INJECTION}} hook to CLAUDE.md.template
-- [x] Updated blueprint_init.sh to resolve and inject hooks
+- [x] Updated igris_init.sh to resolve and inject hooks
 - [x] Updated plugin_install.sh to read hooks from plugin.json
 - [x] Added automatic CLAUDE.md regeneration after plugin install (if hooks)
 - [x] Documented hook system in PLUGIN_DEVELOPMENT.md
@@ -79,27 +79,27 @@ Complete persona packs plugin development after implementing TD-003 hook system.
 - [x] Created plugin install.sh
 - [x] Created comprehensive README.md
 - [x] Created persona.json.example template
-- [x] Packaged plugin at /tmp/blueprint-ai-persona-packs.tar.gz
+- [x] Packaged plugin at /tmp/igris-ai-persona-packs.tar.gz
 - [x] Created build summary document
 
 ### Completed ✅ (Testing & Bug Fixes)
-- [x] Installed persona plugin locally in Blueprint AI core repo
+- [x] Installed persona plugin locally in Igris AI core repo
 - [x] Tested mask switching (status command works)
-- [x] Discovered sed newline bug in blueprint_init.sh and persona_mask.sh
+- [x] Discovered sed newline bug in igris_init.sh and persona_mask.sh
 - [x] Fixed bug using perl for multi-line replacement
 - [x] Tested all 4 mask levels (none, half, light, full)
 - [x] Verified hook injection works correctly
 - [x] Verified CLAUDE.md regeneration works
 - [x] Verified shadow commands appear in full mask
-- [x] Committed bug fix to Blueprint AI core (7527e94)
+- [x] Committed bug fix to Igris AI core (7527e94)
 - [x] Updated CHANGELOG.md with bug fix
 - [x] Updated persona plugin with fix
 - [x] Repackaged plugin with bug fix
 
 ### Completed ✅ (Releases)
-- [x] Released Blueprint AI v1.0.5
+- [x] Released Igris AI v1.0.5
   - Tag: v1.0.5
-  - GitHub release: https://github.com/Fifty50ai/blueprint-ai/releases/tag/v1.0.5
+  - GitHub release: https://github.com/Fifty50ai/igris-ai/releases/tag/v1.0.5
   - Includes: Plugin hook system + bug fix
 - [x] Created persona plugin git repository (/tmp/persona-plugin-test)
 - [x] Created initial commit for persona plugin
@@ -107,28 +107,39 @@ Complete persona packs plugin development after implementing TD-003 hook system.
 
 ### Next Steps When Resuming 🎯
 
-**Context:** Igris persona dogfooding complete. ARISE greeting and RETREAT command added. Ready for next phase.
+**Context:** Complete rebrand from Blueprint AI to Igris AI finished (v2.0.0). Ready for publication.
 
 **Completed in This Session:**
-- ✅ BR-004: Dogfooded Igris persona in Blueprint AI repo
+- ✅ BR-004: Dogfooded Igris persona in Igris AI repo
 - ✅ Installed Igris plugin with full mask active
 - ✅ Added ARISE greeting to startup hook (dramatic entrance)
 - ✅ Added RETREAT shadow command (graceful exit)
 - ✅ All shadow commands working: ARISE, HUNT, REPORT, BIND, BANISH, RETREAT, SUMMON BRIEFING
+- ✅ **REBRANDED:** Blueprint AI → Igris AI (v2.0.0)
+  - Renamed all scripts (blueprint_* → igris_*)
+  - Updated 36+ files across project
+  - Updated CHANGELOG, README, all docs
+  - Version bumped to 2.0.0 (breaking change)
 
 **Remaining Briefs (Ready to implement):**
-1. **TD-005**: Publish Igris Plugin to GitHub
-   - Create repo at github.com/Fifty50ai/blueprint-ai-persona-igris
+1. **IMMEDIATE**: Release v2.0.0 to GitHub
+   - Commit rebrand changes
+   - Tag v2.0.0
+   - Push to main
+   - Create GitHub release
+
+2. **TD-005**: Publish Igris Plugin to GitHub
+   - Create repo at github.com/Fifty50ai/igris-ai-persona-igris
    - Push plugin source from /tmp/persona-plugin-test
    - Create v1.0.0 release
-   - Update Blueprint AI README
+   - Update Igris AI README
 
-2. **TD-004**: Interactive Persona Selection
-   - Add prompts to blueprint_init.sh
+3. **TD-004**: Interactive Persona Selection
+   - Add prompts to igris_init.sh
    - Let users choose persona during init
    - Auto-install selected persona
 
-3. **BR-005**: Persona Development Guide
+4. **BR-005**: Persona Development Guide
    - Create docs/PERSONA_DEVELOPMENT.md
    - Template and examples
    - Help users create custom personas
@@ -138,7 +149,7 @@ Say **ARISE** - Your shadow knight will awaken and display current status.
 
 **Plugin Location:**
 - Source: `/tmp/persona-plugin-test` (updated with RETREAT)
-- Installed: This Blueprint AI repo (dogfooding)
+- Installed: This Igris AI repo (dogfooding)
 
 **Status:**
 - ✅ Dogfooding active and working
@@ -151,23 +162,23 @@ Say **ARISE** - Your shadow knight will awaken and display current status.
 
 ### What Was Accomplished So Far
 - Completed TD-002: Workflow enforcement improvements (v1.0.4)
-- Released Blueprint AI v1.0.4 with enhanced session management
+- Released Igris AI v1.0.4 with enhanced session management
 - Designed persona packs plugin architecture using mask metaphor
 - Implemented TD-003: Plugin hook system for extensibility
-- Built complete persona plugin (blueprint-ai-persona-packs v1.0.0)
+- Built complete persona plugin (igris-ai-persona-packs v1.0.0)
 - Created 13 plugin files totaling 459+ lines of code
 - Packaged plugin as tarball ready for distribution
 
 ### Current State
 **Last action taken:** Saved session state for continuation
-**Working directory:** /Users/m.elamin/StudioProjects/blueprint-ai
+**Working directory:** /Users/m.elamin/StudioProjects/igris-ai
 **Current branch:** main
 **Version:** 1.0.5 (code complete, not yet released)
 **Uncommitted changes:** No (all TD-003 changes committed)
 
 **What was accomplished in this session:**
 - ✅ TD-002 completed (workflow enforcement enhancement)
-- ✅ Blueprint AI v1.0.4 released to GitHub
+- ✅ Igris AI v1.0.4 released to GitHub
 - ✅ All documentation updated to v1.0.4
 - ✅ Analyzed persona packs feature plan
 - ✅ Recommended plugin architecture approach
@@ -200,7 +211,7 @@ The persona plugin and v1.0.5 are ready for validation. When resuming, the recom
 
 **Hook System (TD-003):**
 - Added {{PERSONA_INJECTION}} placeholder to CLAUDE.md.template
-- blueprint_init.sh resolves hooks at runtime from plugin configuration
+- igris_init.sh resolves hooks at runtime from plugin configuration
 - plugin_install.sh reads hooks from plugin.json and stores in installed.json
 - Automatic CLAUDE.md regeneration when plugin with hooks installed
 
@@ -217,7 +228,7 @@ The persona plugin and v1.0.5 are ready for validation. When resuming, the recom
 - BIND → Register brief
 - BANISH [BR-XXX] → Archive brief
 
-All shadow commands execute standard Blueprint AI workflows.
+All shadow commands execute standard Igris AI workflows.
 
 ---
 

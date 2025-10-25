@@ -1,12 +1,12 @@
 # Migration Analysis Prompt
 
-This prompt guides Claude to analyze an existing codebase and generate categorized migration tasks as Blueprint AI briefs.
+This prompt guides Claude to analyze an existing codebase and generate categorized migration tasks as Igris AI briefs.
 
 ---
 
 ## Purpose
 
-When bringing Blueprint AI into an existing project, analyze the codebase to:
+When bringing Igris AI into an existing project, analyze the codebase to:
 1. Identify architecture violations
 2. Find existing bugs
 3. Detect technical debt

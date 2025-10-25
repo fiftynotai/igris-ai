@@ -1,6 +1,6 @@
 # Generate Coding Guidelines Prompt
 
-This prompt analyzes your codebase and/or base architecture repository to create comprehensive coding guidelines for Blueprint AI.
+This prompt analyzes your codebase and/or base architecture repository to create comprehensive coding guidelines for Igris AI.
 
 ---
 

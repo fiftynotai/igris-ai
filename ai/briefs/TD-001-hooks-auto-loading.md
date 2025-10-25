@@ -36,7 +36,7 @@ Claude: [loads .claude/prompt.md context]
 
 # What was advertised in v1.0.2 release
 $ claude
-🚀 Welcome to Blueprint AI...  # Should show BEFORE user input
+🚀 Welcome to Igris AI...  # Should show BEFORE user input
 Ready for your command!
 ```
 
@@ -47,7 +47,7 @@ Ready for your command!
 **Consequences of not fixing:**
 
 - [x] **User Experience:** Users get misleading documentation, feature doesn't work as described
-- [x] **Reliability:** Update system broken (missing scripts can't update Blueprint AI)
+- [x] **Reliability:** Update system broken (missing scripts can't update Igris AI)
 - [x] **Adoption:** Users won't trust "automatic" features if they don't work
 - [x] **Maintainability:** Wrong architecture makes future improvements difficult
 - [x] **Reputation:** v1.0.2 release has fundamental bugs found by first real user
@@ -56,7 +56,7 @@ Ready for your command!
 
 First production test revealed:
 1. install_shell_integration.sh not copied
-2. blueprint_update.sh not copied
+2. igris_update.sh not copied
 3. plugin_update.sh not copied
 4. .claude/prompt.md doesn't work (wrong file)
 5. No true auto-initialization
@@ -70,7 +70,7 @@ First production test revealed:
 1. [x] Research Claude Code CLI conventions (DONE - user discovered CLAUDE.md + hooks)
 2. [ ] Create `.claude/hooks/startup.sh` template
 3. [ ] Create `CLAUDE.md` template with detection mechanism
-4. [ ] Update `blueprint_init.sh` to create hooks
+4. [ ] Update `igris_init.sh` to create hooks
 5. [ ] Remove `.claude/prompt.md` creation
 6. [ ] Fix script copying (add missing 3 scripts)
 7. [ ] Test in fresh installation
@@ -91,7 +91,7 @@ First production test revealed:
 - ✅ Accurate documentation matching actual behavior
 - ✅ Complete script installation (update system works)
 - ✅ Proper Claude Code CLI integration
-- ✅ Detection mechanism ("Is Blueprint AI loaded?")
+- ✅ Detection mechanism ("Is Igris AI loaded?")
 - ✅ Ships via git (committed hooks work for all users)
 - ✅ Validated by real production usage
 
@@ -108,7 +108,7 @@ This is the core v1.0.2 feature - must work correctly.
 - `scripts/templates/CLAUDE.md.template` - NEW
 
 ### Files to Modify
-- `scripts/blueprint_init.sh` - Add hooks creation, fix script copying
+- `scripts/igris_init.sh` - Add hooks creation, fix script copying
 - `README.md` - Correct automatic loading description
 - `CHANGELOG.md` - Add v1.0.3 fixes
 - `ROADMAP.md` - Update automatic loading section
@@ -126,7 +126,7 @@ This is the core v1.0.2 feature - must work correctly.
 ## Testing
 
 ### Regression Testing
-- [ ] All existing Blueprint AI workflows still work
+- [ ] All existing Igris AI workflows still work
 - [ ] Brief registration works
 - [ ] Session tracking works
 - [ ] Plugin system works
@@ -136,7 +136,7 @@ This is the core v1.0.2 feature - must work correctly.
 - [ ] startup.sh runs automatically on `claude` command
 - [ ] Welcome message appears before user input
 - [ ] CLAUDE.md loads on first message
-- [ ] Detection works ("Is Blueprint AI loaded?")
+- [ ] Detection works ("Is Igris AI loaded?")
 - [ ] Project summary accurate (briefs, status, blockers)
 - [ ] Hooks ship via git (committed to repo)
 
@@ -145,8 +145,8 @@ This is the core v1.0.2 feature - must work correctly.
 
 1. Fresh installation in /tmp directory
 2. Run `claude` - verify welcome message appears before typing
-3. Send first message - verify Blueprint AI context loads
-4. Ask "Is Blueprint AI loaded?" - verify detection works
+3. Send first message - verify Igris AI context loads
+4. Ask "Is Igris AI loaded?" - verify detection works
 5. Check all 6 scripts exist in scripts/
 6. Git commit .claude/ - verify hooks are committed
 7. Clone to new location - verify hooks work automatically
@@ -157,10 +157,10 @@ This is the core v1.0.2 feature - must work correctly.
 
 **The debt is paid off when:**
 
-1. [ ] `.claude/hooks/startup.sh` created by blueprint_init.sh
+1. [ ] `.claude/hooks/startup.sh` created by igris_init.sh
 2. [ ] startup.sh shows welcome message automatically (before user input)
 3. [ ] startup.sh displays accurate project summary
-4. [ ] `CLAUDE.md` created with Blueprint AI initialization instructions
+4. [ ] `CLAUDE.md` created with Igris AI initialization instructions
 5. [ ] `CLAUDE.md` includes detection mechanism
 6. [ ] All 6 scripts copied during installation
 7. [ ] `.claude/prompt.md` creation removed
@@ -178,7 +178,7 @@ This is the core v1.0.2 feature - must work correctly.
 
 **Coding Guidelines:**
 - `ai/templates/commit_message.md` - No AI signatures rule
-- `ai/prompts/claude_bootstrap.md` - Blueprint AI workflow
+- `ai/prompts/claude_bootstrap.md` - Igris AI workflow
 
 **Claude Code CLI Documentation:**
 - CLAUDE.md - Context file (loaded on first message)
@@ -199,7 +199,7 @@ This is the core v1.0.2 feature - must work correctly.
 ### Discovery Process
 
 This technical debt was discovered through first real-world production test. User found:
-1. Missing scripts (install_shell_integration, blueprint_update, plugin_update)
+1. Missing scripts (install_shell_integration, igris_update, plugin_update)
 2. .claude/prompt.md doesn't work
 3. Ran `/init` and discovered CLAUDE.md convention
 4. Researched and found hooks system for true auto-execution
@@ -214,7 +214,7 @@ This technical debt was discovered through first real-world production test. Use
 
 **Context File:**
 - `CLAUDE.md` - Loaded when user sends first message
-- Contains Blueprint AI initialization instructions
+- Contains Igris AI initialization instructions
 - Includes detection mechanism
 - Can be enhanced with `/init` for project-specific analysis
 

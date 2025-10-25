@@ -1,12 +1,12 @@
 # Migration Guide
 
-Guide for bringing existing projects up to architecture standards using Blueprint AI.
+Guide for bringing existing projects up to architecture standards using Igris AI.
 
 ---
 
 ## Overview
 
-When you have an existing codebase that doesn't follow your architecture standards, Blueprint AI helps you:
+When you have an existing codebase that doesn't follow your architecture standards, Igris AI helps you:
 
 1. **Analyze** - Identify all violations and issues
 2. **Plan** - Create a prioritized migration roadmap
@@ -17,11 +17,11 @@ When you have an existing codebase that doesn't follow your architecture standar
 
 ## Migration Process
 
-### Phase 0: Setup Blueprint AI
+### Phase 0: Setup Igris AI
 
 ```bash
-# Initialize Blueprint AI
-../blueprint-ai/scripts/blueprint_init.sh
+# Initialize Igris AI
+../igris-ai/scripts/igris_init.sh
 
 # Generate architecture documentation
 # Ask Claude: "Analyze this project using ai/prompts/generate_architecture_docs.md"
@@ -296,8 +296,8 @@ Example roadmap structure:
 ### Week 0: Setup & Analysis
 
 ```bash
-# Initialize Blueprint AI
-../blueprint-ai/scripts/blueprint_init.sh
+# Initialize Igris AI
+../igris-ai/scripts/igris_init.sh
 
 # Generate docs (30 min)
 # Ask Claude: "Generate architecture docs"

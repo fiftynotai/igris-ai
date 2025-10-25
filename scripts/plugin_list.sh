@@ -1,15 +1,15 @@
 #!/bin/bash
 
-# Blueprint AI Plugin Lister
-# Lists all installed Blueprint AI plugins
+# Igris AI Plugin Lister
+# Lists all installed Igris AI plugins
 
-echo "🔌 Blueprint AI Installed Plugins"
+echo "🔌 Igris AI Installed Plugins"
 echo "=================================="
 echo ""
 
-# Check if Blueprint AI is initialized
+# Check if Igris AI is initialized
 if [ ! -d "ai" ] || [ ! -f "ai/plugins/installed.json" ]; then
-  echo "❌ Error: Blueprint AI not initialized in this directory"
+  echo "❌ Error: Igris AI not initialized in this directory"
   exit 1
 fi
 

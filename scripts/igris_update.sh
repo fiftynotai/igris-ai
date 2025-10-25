@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Blueprint AI Update Script
-# Updates Blueprint AI core to the latest version
+# Igris AI Update Script
+# Updates Igris AI core to the latest version
 
 set -e
 
@@ -22,7 +22,7 @@ while [[ $# -gt 0 ]]; do
     *)
       echo "❌ Unknown option: $1"
       echo ""
-      echo "Usage: ./scripts/blueprint_update.sh [--dry-run] [--force]"
+      echo "Usage: ./scripts/igris_update.sh [--dry-run] [--force]"
       echo ""
       echo "Options:"
       echo "  --dry-run   Show what would be updated without making changes"
@@ -32,21 +32,21 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-echo "🔄 Blueprint AI Update Manager"
+echo "⚔️  Igris AI Update Manager"
 echo "=============================="
 echo ""
 
-# Check if Blueprint AI is initialized
-if [ ! -f ".blueprint_version" ]; then
-  echo "❌ Error: Blueprint AI not initialized in this directory"
+# Check if Igris AI is initialized
+if [ ! -f ".igris_version" ]; then
+  echo "❌ Error: Igris AI not initialized in this directory"
   echo ""
-  echo "This doesn't appear to be a Blueprint AI project."
-  echo "Please run: ./scripts/blueprint_init.sh"
+  echo "This doesn't appear to be an Igris AI project."
+  echo "Please run: ./scripts/igris_init.sh"
   exit 1
 fi
 
 # Read current version
-CURRENT_VERSION=$(cat .blueprint_version | grep '"blueprint_ai_version"' | sed 's/.*"blueprint_ai_version": "\([^"]*\)".*/\1/')
+CURRENT_VERSION=$(cat .igris_version | grep '"igris_ai_version"' | sed 's/.*"igris_ai_version": "\([^"]*\)".*/\1/')
 
 echo "📦 Current version: $CURRENT_VERSION"
 echo ""
@@ -56,8 +56,8 @@ TEMP_DIR=$(mktemp -d)
 
 # Fetch latest version from GitHub
 echo "🌐 Checking for updates..."
-BLUEPRINT_REPO="https://github.com/Mohamed50/blueprint-ai"
-git clone --depth 1 --quiet "$BLUEPRINT_REPO" "$TEMP_DIR" 2>&1 | grep -v "^Cloning" || true
+IGRIS_REPO="https://github.com/Fifty50ai/igris-ai"
+git clone --depth 1 --quiet "$IGRIS_REPO" "$TEMP_DIR" 2>&1 | grep -v "^Cloning" || true
 
 if [ ! -f "$TEMP_DIR/version.txt" ]; then
   echo "❌ Error: Could not fetch remote version"
@@ -72,7 +72,7 @@ echo ""
 
 # Compare versions
 if [ "$CURRENT_VERSION" = "$REMOTE_VERSION" ] && [ "$FORCE" = false ]; then
-  echo "✅ Blueprint AI is already up to date!"
+  echo "✅ Igris AI is already up to date!"
   rm -rf "$TEMP_DIR"
   exit 0
 fi
@@ -147,7 +147,7 @@ echo "📦 Starting update..."
 echo ""
 
 # Create backup
-BACKUP_DIR=".blueprint_backup/$(date +%Y%m%d_%H%M%S)"
+BACKUP_DIR=".igris_backup/$(date +%Y%m%d_%H%M%S)"
 echo "💾 Creating backup at $BACKUP_DIR..."
 mkdir -p "$BACKUP_DIR"
 
@@ -157,7 +157,7 @@ cp -r ai/templates "$BACKUP_DIR/" 2>/dev/null || true
 cp -r ai/checks "$BACKUP_DIR/" 2>/dev/null || true
 cp ai/CONTRIBUTING.md "$BACKUP_DIR/" 2>/dev/null || true
 cp scripts/plugin_*.sh "$BACKUP_DIR/" 2>/dev/null || true
-cp .blueprint_version "$BACKUP_DIR/" 2>/dev/null || true
+cp .igris_version "$BACKUP_DIR/" 2>/dev/null || true
 
 echo "✅ Backup created"
 echo ""
@@ -198,7 +198,7 @@ if [ -f "$TEMP_DIR/scripts/plugin_install.sh" ]; then
   chmod +x scripts/plugin_*.sh
 fi
 
-# Update .blueprint_version
+# Update .igris_version
 echo "  - Updating version tracking..."
 UPDATE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
@@ -206,18 +206,18 @@ TEMP_VERSION=$(mktemp)
 python3 <<EOF > "$TEMP_VERSION"
 import json
 
-with open('.blueprint_version', 'r') as f:
+with open('.igris_version', 'r') as f:
     data = json.load(f)
 
 # Update version
-data['blueprint_ai_version'] = '$REMOTE_VERSION'
+data['igris_ai_version'] = '$REMOTE_VERSION'
 data['last_updated'] = '$UPDATE_DATE'
 
 print(json.dumps(data, indent=2))
 EOF
 
 if [ $? -eq 0 ] && [ -s "$TEMP_VERSION" ]; then
-    mv "$TEMP_VERSION" .blueprint_version
+    mv "$TEMP_VERSION" .igris_version
 else
     echo "⚠️  Warning: Failed to update version tracking"
     rm -f "$TEMP_VERSION"
@@ -227,14 +227,14 @@ fi
 rm -rf "$TEMP_DIR"
 
 echo ""
-echo "✅ Blueprint AI updated successfully!"
+echo "✅ Igris AI updated successfully!"
 echo ""
 echo "📦 Updated to version: $REMOTE_VERSION"
 echo "💾 Backup saved at: $BACKUP_DIR"
 echo ""
 echo "📝 What's new in $REMOTE_VERSION:"
 echo "  See CHANGELOG.md or visit:"
-echo "  https://github.com/Mohamed50/blueprint-ai/releases"
+echo "  https://github.com/Fifty50ai/igris-ai/releases"
 echo ""
 echo "⚠️  Note: If you have plugins installed, update them separately:"
 echo "  ./scripts/plugin_update.sh <plugin-name>"

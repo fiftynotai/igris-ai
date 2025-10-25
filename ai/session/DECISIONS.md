@@ -6,7 +6,7 @@ Tracks architectural and technical decisions made during implementation.
 
 ## [2025-10-13] - Decision: Use flutter-mvvm-actions-arch as canonical reference
 
-**Context:** Need to document architecture for Blueprint AI without duplicating docs
+**Context:** Need to document architecture for Igris AI without duplicating docs
 
 **Options:**
 1. Document full architecture in repo
@@ -56,7 +56,7 @@ Tracks architectural and technical decisions made during implementation.
 
 ## [2025-10-13] - Decision: Create pilot task BR-001 (Printer Status Indicator)
 
-**Context:** Need real task to test Blueprint AI workflow
+**Context:** Need real task to test Igris AI workflow
 
 **Options:**
 1. Simple UI-only task

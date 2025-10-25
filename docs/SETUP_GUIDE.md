@@ -1,6 +1,6 @@
-# Blueprint AI Setup Guide
+# Igris AI Setup Guide
 
-Complete guide to setting up Blueprint AI in your project.
+Complete guide to setting up Igris AI in your project.
 
 ---
 
@@ -17,17 +17,17 @@ Before you begin, ensure you have:
 
 ## Installation
 
-### Step 1: Clone Blueprint AI
+### Step 1: Clone Igris AI
 
 ```bash
 # Navigate to your projects directory
 cd /path/to/projects/
 
-# Clone Blueprint AI
-git clone https://github.com/yourorg/blueprint-ai
+# Clone Igris AI
+git clone https://github.com/yourorg/igris-ai
 ```
 
-This creates a `blueprint-ai` directory you'll reference for all projects.
+This creates a `igris-ai` directory you'll reference for all projects.
 
 ### Step 2: Initialize in Your Project
 
@@ -35,8 +35,8 @@ This creates a `blueprint-ai` directory you'll reference for all projects.
 # Navigate to your project
 cd /path/to/your-project/
 
-# Run Blueprint AI initialization
-../blueprint-ai/scripts/blueprint_init.sh
+# Run Igris AI initialization
+../igris-ai/scripts/igris_init.sh
 ```
 
 **What this does:**
@@ -47,16 +47,16 @@ cd /path/to/your-project/
 
 **Output:**
 ```
-🎯 Blueprint AI - Project Initialization
+🎯 Igris AI - Project Initialization
 ========================================
 
 📁 Target directory: /path/to/your-project
 📦 Creating directory structure...
 📄 Copying templates...
 📝 Creating session files...
-🔧 Installing Blueprint AI scripts...
+🔧 Installing Igris AI scripts...
 
-✅ Blueprint AI initialized successfully!
+✅ Igris AI initialized successfully!
 ```
 
 ### Step 3: Verify Installation
@@ -250,7 +250,7 @@ Create brief BR-XXX for this."
 
 ```bash
 # Example: Installing Flutter distribution plugin
-./scripts/plugin_install.sh https://github.com/yourorg/blueprint-ai-distribution-flutter
+./scripts/plugin_install.sh https://github.com/yourorg/igris-ai-distribution-flutter
 ```
 
 **Plugin installer will:**
@@ -267,21 +267,21 @@ Create brief BR-XXX for this."
 
 **Output:**
 ```
-🔌 Blueprint AI Installed Plugins
+🔌 Igris AI Installed Plugins
 ==================================
 
 Found 1 plugin(s):
 
-📦 blueprint-ai-distribution-flutter v1.0.0
+📦 igris-ai-distribution-flutter v1.0.0
    Installed: 2025-10-13T15:30:00Z
    Capabilities: distribution, versioning, release_notes
-   Repository: https://github.com/yourorg/blueprint-ai-distribution-flutter
+   Repository: https://github.com/yourorg/igris-ai-distribution-flutter
 ```
 
 ### Uninstall a Plugin
 
 ```bash
-./scripts/plugin_uninstall.sh blueprint-ai-distribution-flutter
+./scripts/plugin_uninstall.sh igris-ai-distribution-flutter
 ```
 
 ---
@@ -292,7 +292,7 @@ After setup, your project will have:
 
 ```
 your-project/
-├── ai/                                # Blueprint AI
+├── ai/                                # Igris AI
 │   ├── briefs/                        # Work items
 │   │   ├── BR-TEMPLATE.md             # Bug/feature template
 │   │   ├── MG-TEMPLATE.md             # Migration template
@@ -327,10 +327,10 @@ your-project/
 │   └── CONTRIBUTING.md                # Usage guide
 │
 ├── scripts/                           # Scripts
-│   ├── blueprint_init.sh              # (from Blueprint AI)
-│   ├── plugin_install.sh              # (from Blueprint AI)
-│   ├── plugin_uninstall.sh            # (from Blueprint AI)
-│   ├── plugin_list.sh                 # (from Blueprint AI)
+│   ├── igris_init.sh              # (from Igris AI)
+│   ├── plugin_install.sh              # (from Igris AI)
+│   ├── plugin_uninstall.sh            # (from Igris AI)
+│   ├── plugin_list.sh                 # (from Igris AI)
 │   └── [plugin scripts if installed]
 │
 └── [your project files...]
@@ -340,12 +340,12 @@ your-project/
 
 ## Troubleshooting
 
-### Issue: "Blueprint AI not initialized"
+### Issue: "Igris AI not initialized"
 
 **Solution:**
 ```bash
 # Run initialization script
-../blueprint-ai/scripts/blueprint_init.sh
+../igris-ai/scripts/igris_init.sh
 ```
 
 ### Issue: "Permission denied" when running scripts
@@ -365,15 +365,15 @@ chmod +x scripts/*.sh
 # Ubuntu: sudo apt-get install python3
 ```
 
-### Issue: Can't find Blueprint AI directory
+### Issue: Can't find Igris AI directory
 
 **Solution:**
 ```bash
-# Clone Blueprint AI first
-git clone https://github.com/yourorg/blueprint-ai
+# Clone Igris AI first
+git clone https://github.com/yourorg/igris-ai
 
 # Then reference it with correct path
-/full/path/to/blueprint-ai/scripts/blueprint_init.sh
+/full/path/to/igris-ai/scripts/igris_init.sh
 ```
 
 ---
@@ -393,9 +393,9 @@ After setup:
 ## Getting Help
 
 - **Documentation:** See `ai/CONTRIBUTING.md` for detailed usage
-- **Issues:** https://github.com/yourorg/blueprint-ai/issues
-- **Discussions:** https://github.com/yourorg/blueprint-ai/discussions
+- **Issues:** https://github.com/yourorg/igris-ai/issues
+- **Discussions:** https://github.com/yourorg/igris-ai/discussions
 
 ---
 
-**Setup complete! You're ready to use Blueprint AI. 🎉**
+**Setup complete! You're ready to use Igris AI. 🎉**

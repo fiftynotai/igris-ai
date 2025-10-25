@@ -1,4 +1,4 @@
-# Resume Session - Blueprint AI Development
+# Resume Session - Igris AI Development
 
 **Date Created:** 2025-10-13
 **Status:** Paused after completing Options A, B, and C
@@ -8,7 +8,7 @@
 
 ## Quick Context
 
-You are continuing development of **Blueprint AI** - an AI-powered code quality and architecture management system with a modular plugin architecture.
+You are continuing development of **Igris AI** - an AI-powered code quality and architecture management system with a modular plugin architecture.
 
 **What it is:**
 - Core system for managing briefs (BR, MG, TD, TS), sessions, and architecture
@@ -16,15 +16,15 @@ You are continuing development of **Blueprint AI** - an AI-powered code quality 
 - First plugin: Flutter distribution automation with Firebase + Fastlane
 
 **Repositories:**
-- **Core:** https://github.com/Mohamed50/blueprint-ai
-- **Distribution Plugin:** https://github.com/Mohamed50/blueprint-ai-distribution-flutter
+- **Core:** https://github.com/Fifty50ai/igris-ai
+- **Distribution Plugin:** https://github.com/Fifty50ai/igris-ai-distribution-flutter
 
 ---
 
 ## What Was Completed
 
 ### Phase 1: Initial Build (Day 1)
-- ✅ Built core Blueprint AI system (27 files, 6,433 lines)
+- ✅ Built core Igris AI system (27 files, 6,433 lines)
 - ✅ Built distribution plugin for Flutter (23 files, 2,195 lines)
 - ✅ Published both to GitHub (v1.0.0)
 - ✅ Tested installation in opaala_admin_app_v3
@@ -63,18 +63,18 @@ You are continuing development of **Blueprint AI** - an AI-powered code quality 
 
 ### Working Directories
 ```
-/Users/m.elamin/StudioProjects/blueprint-ai/
-/Users/m.elamin/StudioProjects/blueprint-ai-distribution-flutter/
+/Users/m.elamin/StudioProjects/igris-ai/
+/Users/m.elamin/StudioProjects/igris-ai-distribution-flutter/
 /Users/m.elamin/StudioProjects/opaala_admin_app_v3/
 ```
 
 ### Latest Commits
-- **blueprint-ai:** `5c43e4b` (fix: plugin system improvements)
+- **igris-ai:** `5c43e4b` (fix: plugin system improvements)
 - **distribution-flutter:** `caf1f4f` (feat: add automation scripts)
 
 ### Files Ready to Push
-- `/Users/m.elamin/StudioProjects/blueprint-ai/ROADMAP.md`
-- `/Users/m.elamin/StudioProjects/blueprint-ai/RESUME_SESSION.md`
+- `/Users/m.elamin/StudioProjects/igris-ai/ROADMAP.md`
+- `/Users/m.elamin/StudioProjects/igris-ai/RESUME_SESSION.md`
 
 ---
 
@@ -93,9 +93,9 @@ flutter create test-distribution-demo
 cd test-distribution-demo
 
 # Test installation
-git clone https://github.com/Mohamed50/blueprint-ai.git ../blueprint-ai
-../blueprint-ai/scripts/blueprint_init.sh
-./scripts/plugin_install.sh https://github.com/Mohamed50/blueprint-ai-distribution-flutter
+git clone https://github.com/Fifty50ai/igris-ai.git ../igris-ai
+../igris-ai/scripts/igris_init.sh
+./scripts/plugin_install.sh https://github.com/Fifty50ai/igris-ai-distribution-flutter
 
 # Test automation scripts
 ./scripts/generate_fastlane.sh
@@ -109,8 +109,8 @@ git clone https://github.com/Mohamed50/blueprint-ai.git ../blueprint-ai
 **Time:** 4-6 hours | **Priority:** Medium
 
 Create reference implementations:
-- `blueprint-ai-flutter-example` - Fully configured Flutter app
-- `blueprint-ai-migration-example` - Before/after migration demo
+- `igris-ai-flutter-example` - Fully configured Flutter app
+- `igris-ai-migration-example` - Before/after migration demo
 
 ### Option 3: Community & Marketing 📢
 **Time:** 6-8 hours | **Priority:** Medium
@@ -161,12 +161,12 @@ Improve existing features:
 
 ### Core System
 ```
-/Users/m.elamin/StudioProjects/blueprint-ai/
+/Users/m.elamin/StudioProjects/igris-ai/
 ├── README.md                    # Main introduction
 ├── ROADMAP.md                   # Future plans (NEW)
 ├── RESUME_SESSION.md            # This file (NEW)
 ├── scripts/
-│   ├── blueprint_init.sh        # Initialize Blueprint AI
+│   ├── igris_init.sh        # Initialize Igris AI
 │   ├── plugin_install.sh        # Install plugins
 │   ├── plugin_list.sh           # List installed plugins
 │   └── plugin_uninstall.sh      # Uninstall plugins
@@ -183,7 +183,7 @@ Improve existing features:
 
 ### Distribution Plugin
 ```
-/Users/m.elamin/StudioProjects/blueprint-ai-distribution-flutter/
+/Users/m.elamin/StudioProjects/igris-ai-distribution-flutter/
 ├── README.md                    # Plugin documentation
 ├── docs/
 │   ├── INSTALLATION.md         # Setup guide (~600 lines)
@@ -252,18 +252,18 @@ Improve existing features:
 
 ### 1. Check Current Status
 ```bash
-cd /Users/m.elamin/StudioProjects/blueprint-ai
+cd /Users/m.elamin/StudioProjects/igris-ai
 git status
 git log --oneline -5
 
-cd /Users/m.elamin/StudioProjects/blueprint-ai-distribution-flutter
+cd /Users/m.elamin/StudioProjects/igris-ai-distribution-flutter
 git status
 git log --oneline -5
 ```
 
 ### 2. Push Pending Documentation
 ```bash
-cd /Users/m.elamin/StudioProjects/blueprint-ai
+cd /Users/m.elamin/StudioProjects/igris-ai
 git add ROADMAP.md RESUME_SESSION.md
 git commit -m "docs: add roadmap and session resume guide"
 git push origin main
@@ -309,9 +309,9 @@ cd test-distribution-demo
 **Paste this into Claude Code CLI to resume:**
 
 ```
-I'm resuming work on Blueprint AI. Please read:
-1. /Users/m.elamin/StudioProjects/blueprint-ai/RESUME_SESSION.md
-2. /Users/m.elamin/StudioProjects/blueprint-ai/ROADMAP.md
+I'm resuming work on Igris AI. Please read:
+1. /Users/m.elamin/StudioProjects/igris-ai/RESUME_SESSION.md
+2. /Users/m.elamin/StudioProjects/igris-ai/ROADMAP.md
 
 Context:
 - Completed Options A, B, C (bug fixes, docs, enhancements)

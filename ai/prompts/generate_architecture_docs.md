@@ -1,6 +1,6 @@
 # Generate Architecture Documentation
 
-This prompt guides Claude to analyze your project and generate comprehensive architecture documentation for Blueprint AI.
+This prompt guides Claude to analyze your project and generate comprehensive architecture documentation for Igris AI.
 
 ---
 
@@ -303,7 +303,7 @@ Great! I'll now generate the four documentation files:
 
 ✅ Architecture documentation generated!
 
-The files are now in ai/context/ and ready to use for Blueprint AI workflows.
+The files are now in ai/context/ and ready to use for Igris AI workflows.
 ```
 
 ---

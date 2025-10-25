@@ -177,4 +177,4 @@ Session management is INTEGRATED with work, not AFTER work.
 ---
 
 **Last Updated:** 2025-10-15
-**Blueprint AI Version:** 1.0.4
+**Igris AI Version:** 1.0.4

@@ -15,7 +15,7 @@ This applies to:
 3. Display: "📋 Next Steps When Resuming: [from file]"
 4. Load: `ai/prompts/claude_bootstrap.md`
 5. IF coding_guidelines.md exists → Load it
-6. Display: "✅ Blueprint AI initialized. Ready for your command!"
+6. Display: "✅ Igris AI initialized. Ready for your command!"
 
 **ONLY AFTER THIS SEQUENCE** → proceed with user's request.
 
@@ -52,24 +52,26 @@ This is a context reset. You MUST execute the initialization sequence above FIRS
 
 ---
 
-# Blueprint AI - Project Instructions
+# Igris AI - Project Instructions
 
 {{PERSONA_INJECTION}}
 
-**Version:** {{BLUEPRINT_VERSION}}
+---
+
+**Version:** {{IGRIS_VERSION}}
 **Installed:** {{INSTALL_DATE}}
 
-This project uses [Blueprint AI](https://github.com/Mohamed50/blueprint-ai) for code quality and architecture management.
+This project uses [Igris AI](https://github.com/Fifty50ai/igris-ai) for code quality and architecture management.
 
 ---
 
 ## Detection
 
-**If asked "Is Blueprint AI loaded?" or "What mode are you in?":**
+**If asked "Is Igris AI loaded?" or "What mode are you in?":**
 
 Respond:
 ```
-✅ Blueprint AI {{BLUEPRINT_VERSION}} is active
+✅ Igris AI {{IGRIS_VERSION}} is active
 
 Current configuration:
 - Session tracking: Enabled (ai/session/CURRENT_SESSION.md)

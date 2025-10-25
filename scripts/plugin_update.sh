@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Blueprint AI Plugin Update Script
+# Igris AI Plugin Update Script
 # Updates an installed plugin to the latest version
 
 set -e
@@ -36,22 +36,22 @@ if [ -z "$PLUGIN_NAME" ]; then
   echo "Usage: ./scripts/plugin_update.sh <plugin-name> [--dry-run] [--force]"
   echo ""
   echo "Example:"
-  echo "  ./scripts/plugin_update.sh blueprint-ai-distribution-flutter"
+  echo "  ./scripts/plugin_update.sh igris-ai-distribution-flutter"
   echo ""
   echo "To see installed plugins:"
   echo "  ./scripts/plugin_list.sh"
   exit 1
 fi
 
-echo "🔄 Blueprint AI Plugin Updater"
+echo "🔄 Igris AI Plugin Updater"
 echo "=============================="
 echo ""
 
-# Check if Blueprint AI is initialized
+# Check if Igris AI is initialized
 if [ ! -f "ai/plugins/installed.json" ]; then
-  echo "❌ Error: Blueprint AI not initialized in this directory"
+  echo "❌ Error: Igris AI not initialized in this directory"
   echo ""
-  echo "Please run: ./scripts/blueprint_init.sh"
+  echo "Please run: ./scripts/igris_init.sh"
   exit 1
 fi
 
@@ -149,13 +149,13 @@ echo "📦 Starting plugin update..."
 echo ""
 
 # Create backup
-BACKUP_DIR=".blueprint_backup/plugins/$(date +%Y%m%d_%H%M%S)_${PLUGIN_NAME}"
+BACKUP_DIR=".igris_backup/plugins/$(date +%Y%m%d_%H%M%S)_${PLUGIN_NAME}"
 echo "💾 Creating backup at $BACKUP_DIR..."
 mkdir -p "$BACKUP_DIR"
 
 # Note: Plugin files location depends on plugin implementation
 # We backup the version tracking
-cp .blueprint_version "$BACKUP_DIR/" 2>/dev/null || true
+cp .igris_version "$BACKUP_DIR/" 2>/dev/null || true
 cp ai/plugins/installed.json "$BACKUP_DIR/" 2>/dev/null || true
 
 echo "✅ Backup created"
@@ -206,13 +206,13 @@ else
     rm -f "$TEMP_JSON"
 fi
 
-# Update .blueprint_version
-if [ -f ".blueprint_version" ]; then
+# Update .igris_version
+if [ -f ".igris_version" ]; then
     TEMP_VERSION=$(mktemp)
     python3 <<VERSION_EOF > "$TEMP_VERSION"
 import json
 
-with open('.blueprint_version', 'r') as f:
+with open('.igris_version', 'r') as f:
     data = json.load(f)
 
 # Update plugin version
@@ -229,7 +229,7 @@ print(json.dumps(data, indent=2))
 VERSION_EOF
 
     if [ $? -eq 0 ] && [ -s "$TEMP_VERSION" ]; then
-        mv "$TEMP_VERSION" .blueprint_version
+        mv "$TEMP_VERSION" .igris_version
     else
         rm -f "$TEMP_VERSION"
     fi

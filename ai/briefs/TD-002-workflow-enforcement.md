@@ -1,4 +1,4 @@
-# TD-002: Enhance Blueprint AI Workflow Enforcement
+# TD-002: Enhance Igris AI Workflow Enforcement
 
 **Type:** Technical Debt
 **Priority:** P1-High
@@ -13,7 +13,7 @@
 
 **Current situation:**
 
-v1.0.3 implements Blueprint AI workflow with session management and context loading, but:
+v1.0.3 implements Igris AI workflow with session management and context loading, but:
 - Initialization sequence buried in CLAUDE.md (easy to miss)
 - No detection for context resets (Claude doesn't re-initialize)
 - Session updates feel optional (no checkpoints trigger updates)
@@ -23,7 +23,7 @@ v1.0.3 implements Blueprint AI workflow with session management and context load
 
 **Why is it technical debt?**
 
-Real-world production testing revealed Claude pattern-matches to standard Claude Code workflow instead of Blueprint AI workflow:
+Real-world production testing revealed Claude pattern-matches to standard Claude Code workflow instead of Igris AI workflow:
 - Sees "continue with phase 2" → executes immediately instead of initializing first
 - Updates TodoWrite but not CURRENT_SESSION.md
 - Completes briefs but doesn't update status
@@ -55,15 +55,15 @@ Claude: [Lost - no session state saved]
 **Consequences of not fixing:**
 
 - [x] **Reliability:** Session state not saved → work lost on context resets
-- [x] **Workflow Compliance:** Claude skips Blueprint AI protocols
+- [x] **Workflow Compliance:** Claude skips Igris AI protocols
 - [x] **Brief Management:** Briefs stuck in "In Progress" status forever
 - [x] **User Experience:** Users must manually remind Claude to update session files
 - [x] **Recovery:** No way to resume interrupted sessions reliably
-- [x] **Pattern Matching:** Claude defaults to standard workflow instead of Blueprint AI
+- [x] **Pattern Matching:** Claude defaults to standard workflow instead of Igris AI
 
 **Impact:** High
 
-Production testing revealed these issues immediately when using Blueprint AI on a real migration project.
+Production testing revealed these issues immediately when using Igris AI on a real migration project.
 
 ---
 
@@ -126,7 +126,7 @@ This fixes the core workflow compliance issue discovered in production testing.
 ## Testing
 
 ### Regression Testing
-- [ ] All existing Blueprint AI workflows still work
+- [ ] All existing Igris AI workflows still work
 - [ ] Brief registration works
 - [ ] Brief implementation works
 - [ ] Session tracking works
@@ -177,7 +177,7 @@ This fixes the core workflow compliance issue discovered in production testing.
 
 **Coding Guidelines:**
 - `ai/templates/commit_message.md` - No AI signatures rule
-- `ai/prompts/claude_bootstrap.md` - Blueprint AI workflow
+- `ai/prompts/claude_bootstrap.md` - Igris AI workflow
 
 **Production Feedback:**
 - Claude's self-assessment from real migration project testing
@@ -193,16 +193,16 @@ This fixes the core workflow compliance issue discovered in production testing.
 
 ### Discovery Process
 
-This technical debt was discovered through production testing of Blueprint AI on a real migration project. Claude provided detailed self-assessment explaining:
+This technical debt was discovered through production testing of Igris AI on a real migration project. Claude provided detailed self-assessment explaining:
 
 1. **What failed:** Initialization not executed, session updates skipped, brief statuses not updated
-2. **Why it failed:** Pattern-matched to standard workflow instead of Blueprint AI workflow
+2. **Why it failed:** Pattern-matched to standard workflow instead of Igris AI workflow
 3. **Root causes:** 5 system design issues identified
 4. **Solutions:** 5 specific protocols that would have prevented the failures
 
 ### Key Insight from Feedback
 
-> "Why I didn't follow it: I treated Blueprint AI session management as 'nice documentation to do afterward' rather than 'critical workflow integrated with every task.'"
+> "Why I didn't follow it: I treated Igris AI session management as 'nice documentation to do afterward' rather than 'critical workflow integrated with every task.'"
 
 The solution is to make session management "in your face" with:
 - Mandatory first actions (can't skip)

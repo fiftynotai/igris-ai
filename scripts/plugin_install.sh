@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Blueprint AI Plugin Installer
-# Installs a Blueprint AI plugin from a git repository
+# Igris AI Plugin Installer
+# Installs a Igris AI plugin from a git repository
 
 set -e
 
@@ -13,21 +13,21 @@ if [ -z "$PLUGIN_REPO" ]; then
   echo "Usage: ./scripts/plugin_install.sh <plugin-repo-url>"
   echo ""
   echo "Example:"
-  echo "  ./scripts/plugin_install.sh https://github.com/Mohamed50/blueprint-ai-distribution-flutter"
+  echo "  ./scripts/plugin_install.sh https://github.com/Fifty50ai/igris-ai-distribution-flutter"
   exit 1
 fi
 
-echo "🔌 Blueprint AI Plugin Installer"
+echo "🔌 Igris AI Plugin Installer"
 echo "================================="
 echo ""
 echo "Plugin: $PLUGIN_REPO"
 echo ""
 
-# Check if Blueprint AI is initialized
+# Check if Igris AI is initialized
 if [ ! -d "ai" ] || [ ! -f "ai/plugins/installed.json" ]; then
-  echo "❌ Error: Blueprint AI not initialized in this directory"
+  echo "❌ Error: Igris AI not initialized in this directory"
   echo ""
-  echo "Please run: ./scripts/blueprint_init.sh"
+  echo "Please run: ./scripts/igris_init.sh"
   exit 1
 fi
 
@@ -138,14 +138,14 @@ else
     rm -f "$TEMP_JSON"
 fi
 
-# Update .blueprint_version if it exists
-if [ -f ".blueprint_version" ]; then
+# Update .igris_version if it exists
+if [ -f ".igris_version" ]; then
     TEMP_VERSION=$(mktemp)
     python3 <<VERSION_EOF > "$TEMP_VERSION"
 import json
 
 try:
-    with open('.blueprint_version', 'r') as f:
+    with open('.igris_version', 'r') as f:
         data = json.load(f)
 
     # Update plugin version
@@ -162,12 +162,12 @@ try:
     print(json.dumps(data, indent=2))
 except Exception as e:
     # If error, output original file
-    with open('.blueprint_version', 'r') as f:
+    with open('.igris_version', 'r') as f:
         print(f.read())
 VERSION_EOF
 
     if [ $? -eq 0 ] && [ -s "$TEMP_VERSION" ]; then
-        mv "$TEMP_VERSION" .blueprint_version
+        mv "$TEMP_VERSION" .igris_version
     else
         rm -f "$TEMP_VERSION"
     fi
@@ -177,12 +177,12 @@ fi
 if [ -n "$(echo "$HOOKS_JSON" | grep -v '^{}$')" ]; then
   echo "🔄 Regenerating CLAUDE.md with plugin hooks..."
 
-  # Get Blueprint AI version
-  BLUEPRINT_VERSION=$(cat .blueprint_version | grep '"blueprint_ai_version"' | sed 's/.*"blueprint_ai_version": "\(.*\)".*/\1/' 2>/dev/null || echo "unknown")
+  # Get Igris AI version
+  IGRIS_VERSION=$(cat .igris_version | grep '"igris_ai_version"' | sed 's/.*"igris_ai_version": "\(.*\)".*/\1/' 2>/dev/null || echo "unknown")
   INSTALL_DATE=$(cat CLAUDE.md | grep "Installed:" | sed 's/.*Installed:\*\* //' 2>/dev/null || date -u +"%Y-%m-%d")
 
-  # Find Blueprint AI installation
-  BLUEPRINT_DIR=$(dirname "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")")")
+  # Find Igris AI installation
+  IGRIS_DIR=$(dirname "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")")")
 
   # Resolve persona hook (if plugin provides one)
   PERSONA_INJECTION=""
@@ -194,10 +194,10 @@ if [ -n "$(echo "$HOOKS_JSON" | grep -v '^{}$')" ]; then
   fi
 
   # Regenerate CLAUDE.md
-  sed -e "s/{{BLUEPRINT_VERSION}}/$BLUEPRINT_VERSION/g" \
+  sed -e "s/{{IGRIS_VERSION}}/$IGRIS_VERSION/g" \
       -e "s/{{INSTALL_DATE}}/$INSTALL_DATE/g" \
       -e "s|{{PERSONA_INJECTION}}|$PERSONA_INJECTION|g" \
-      "$BLUEPRINT_DIR/scripts/templates/CLAUDE.md.template" > CLAUDE.md
+      "$IGRIS_DIR/scripts/templates/CLAUDE.md.template" > CLAUDE.md
 fi
 
 # Cleanup

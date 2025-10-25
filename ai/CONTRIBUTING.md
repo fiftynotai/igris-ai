@@ -1,6 +1,6 @@
 # Contributing to Opaala Admin App v3
 
-Guide for managing bugs and features using Blueprint AI workflow.
+Guide for managing bugs and features using Igris AI workflow.
 
 ---
 
@@ -424,7 +424,7 @@ A: For very small changes (< 30 min), you can skip briefs. But tracking improves
 - **[ai/prompts/claude_bootstrap.md](prompts/claude_bootstrap.md)** - AI session startup guide
 - **[ai/briefs/BR-TEMPLATE.md](briefs/BR-TEMPLATE.md)** - Brief template with all fields
 - **[ai/checks/qa_runbook.md](checks/qa_runbook.md)** - QA verification checklist
-- **[README.md](../README.md#blueprint-ai-pilot)** - Blueprint AI overview
+- **[README.md](../README.md#igris-ai-pilot)** - Igris AI overview
 
 ---
 

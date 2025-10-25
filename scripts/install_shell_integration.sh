@@ -1,25 +1,25 @@
 #!/bin/bash
 
-# Blueprint AI - Shell Integration Installer
-# Adds terminal notifications when entering Blueprint AI projects
+# Igris AI - Shell Integration Installer
+# Adds terminal notifications when entering Igris AI projects
 # This script ONLY adds code to your shell config - you maintain full control
 
 set -e
 
-echo "📘 Blueprint AI - Shell Integration Installer"
+echo "📘 Igris AI - Shell Integration Installer"
 echo "============================================="
 echo ""
-echo "This will add Blueprint AI detection to your shell."
+echo "This will add Igris AI detection to your shell."
 echo ""
 echo "What it does:"
-echo "  ✓ Shows a notification when you cd into a Blueprint AI project"
-echo "  ✓ Displays the Blueprint AI version"
+echo "  ✓ Shows a notification when you cd into a Igris AI project"
+echo "  ✓ Displays the Igris AI version"
 echo "  ✓ Reminds you that Claude will auto-initialize"
 echo ""
 echo "What it does NOT do:"
-echo "  ✗ Does NOT modify any Blueprint AI behavior"
+echo "  ✗ Does NOT modify any Igris AI behavior"
 echo "  ✗ Does NOT send data anywhere"
-echo "  ✗ Does NOT run on non-Blueprint AI projects"
+echo "  ✗ Does NOT run on non-Igris AI projects"
 echo ""
 
 # Detect shell
@@ -51,30 +51,30 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 cat << 'PREVIEW'
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Blueprint AI Auto-Detection
+# Igris AI Auto-Detection
 # Added by: scripts/install_shell_integration.sh
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-blueprint_check() {
-    # Only check if .blueprint_version exists in current directory
-    if [ -f ".blueprint_version" ]; then
-        # Get Blueprint AI version
-        BP_VERSION=$(python3 -c "import json; print(json.load(open('.blueprint_version'))['blueprint_ai_version'])" 2>/dev/null || echo "unknown")
+igris_check() {
+    # Only check if .igris_version exists in current directory
+    if [ -f ".igris_version" ]; then
+        # Get Igris AI version
+        BP_VERSION=$(python3 -c "import json; print(json.load(open('.igris_version'))['igris_ai_version'])" 2>/dev/null || echo "unknown")
 
         # Show notification
-        echo "📘 Blueprint AI detected (v$BP_VERSION)"
-        echo "   Claude will auto-initialize with Blueprint AI configuration"
+        echo "📘 Igris AI detected (v$BP_VERSION)"
+        echo "   Claude will auto-initialize with Igris AI configuration"
     fi
 }
 
 # Hook into cd command to check on directory change
 cd() {
     builtin cd "$@"
-    blueprint_check
+    igris_check
 }
 
-# Check on shell start (in case already in a Blueprint AI directory)
-blueprint_check
+# Check on shell start (in case already in a Igris AI directory)
+igris_check
 
 # Igris Shadow Commands (if persona active)
 # ARISE - Launch Claude Code with dramatic flair
@@ -87,8 +87,8 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 # Check if already installed
-if grep -q "Blueprint AI Auto-Detection" "$SHELL_RC" 2>/dev/null; then
-    echo "⚠️  Blueprint AI shell integration is already installed"
+if grep -q "Igris AI Auto-Detection" "$SHELL_RC" 2>/dev/null; then
+    echo "⚠️  Igris AI shell integration is already installed"
     echo ""
     read -p "Reinstall (this will add duplicate code)? [y/N]: " REINSTALL
     if [[ ! "$REINSTALL" =~ ^[Yy]$ ]]; then
@@ -119,30 +119,30 @@ case $CHOICE in
         cat << 'INTEGRATION' >> "$SHELL_RC"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Blueprint AI Auto-Detection
+# Igris AI Auto-Detection
 # Added by: scripts/install_shell_integration.sh
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-blueprint_check() {
-    # Only check if .blueprint_version exists in current directory
-    if [ -f ".blueprint_version" ]; then
-        # Get Blueprint AI version
-        BP_VERSION=$(python3 -c "import json; print(json.load(open('.blueprint_version'))['blueprint_ai_version'])" 2>/dev/null || echo "unknown")
+igris_check() {
+    # Only check if .igris_version exists in current directory
+    if [ -f ".igris_version" ]; then
+        # Get Igris AI version
+        BP_VERSION=$(python3 -c "import json; print(json.load(open('.igris_version'))['igris_ai_version'])" 2>/dev/null || echo "unknown")
 
         # Show notification
-        echo "📘 Blueprint AI detected (v$BP_VERSION)"
-        echo "   Claude will auto-initialize with Blueprint AI configuration"
+        echo "📘 Igris AI detected (v$BP_VERSION)"
+        echo "   Claude will auto-initialize with Igris AI configuration"
     fi
 }
 
 # Hook into cd command to check on directory change
 cd() {
     builtin cd "$@"
-    blueprint_check
+    igris_check
 }
 
-# Check on shell start (in case already in a Blueprint AI directory)
-blueprint_check
+# Check on shell start (in case already in a Igris AI directory)
+igris_check
 
 # Igris Shadow Commands (if persona active)
 # ARISE - Launch Claude Code with dramatic flair
@@ -162,7 +162,7 @@ INTEGRATION
         echo "Or simply open a new terminal window."
         echo ""
         echo "To remove later:"
-        echo "  Edit $SHELL_RC and delete the Blueprint AI section"
+        echo "  Edit $SHELL_RC and delete the Igris AI section"
         echo "  Or restore backup: mv $BACKUP_FILE $SHELL_RC"
         echo ""
         ;;
@@ -185,7 +185,7 @@ INTEGRATION
         echo "5. Reload your shell config:"
         echo "   $ source $SHELL_RC"
         echo ""
-        echo "6. Test it by cd'ing into a Blueprint AI project"
+        echo "6. Test it by cd'ing into a Igris AI project"
         echo ""
         ;;
 

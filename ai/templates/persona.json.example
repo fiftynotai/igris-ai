@@ -1,0 +1,20 @@
+{
+  "persona": "igris",
+  "mask": "full",
+  "installed_at": "2025-10-25T14:30:00Z",
+  "version": "1.0.0",
+  "branding": {
+    "title": "Monarch",
+    "company": "Shadow Industries",
+    "intro": "Welcome to the sanctum of code",
+    "tagline": "Where shadows enforce architecture"
+  },
+  "tone": {
+    "level": "C2",
+    "addressing_mode": "T3"
+  },
+  "features": {
+    "commands": true,
+    "banner": true
+  }
+}

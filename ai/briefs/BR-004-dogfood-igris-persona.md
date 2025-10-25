@@ -1,4 +1,4 @@
-# BR-004: Dogfood Igris Persona in Blueprint AI Repo
+# BR-004: Dogfood Igris Persona in Igris AI Repo
 
 **Type:** Spike
 **Priority:** P1-High
@@ -11,11 +11,11 @@
 
 ## Problem
 
-We built the Igris persona plugin but haven't installed it in the actual Blueprint AI repository. We need to dogfood our own persona system.
+We built the Igris persona plugin but haven't installed it in the actual Igris AI repository. We need to dogfood our own persona system.
 
 ## Goal
 
-Install Igris persona plugin in this Blueprint AI repository and test all mask levels.
+Install Igris persona plugin in this Igris AI repository and test all mask levels.
 
 ## Acceptance Criteria
 

@@ -1,6 +1,6 @@
-# Blueprint AI - Roadmap
+# Igris AI - Roadmap
 
-Future development options and priorities for Blueprint AI.
+Future development options and priorities for Igris AI.
 
 ---
 
@@ -38,9 +38,9 @@ Future development options and priorities for Blueprint AI.
 - ✅ **v1.0.5:** Automatic CLAUDE.md regeneration on plugin install
 
 **Repositories:**
-- Core: https://github.com/Mohamed50/blueprint-ai (latest: 83d63af)
-- Distribution Plugin: https://github.com/Mohamed50/blueprint-ai-distribution-flutter (latest: cd9ab26)
-- Example Project: https://github.com/Mohamed50/blueprint_ai_flutter_example (latest: f800515)
+- Core: https://github.com/Fifty50ai/igris-ai (latest: 83d63af)
+- Distribution Plugin: https://github.com/Fifty50ai/igris-ai-distribution-flutter (latest: cd9ab26)
+- Example Project: https://github.com/Mohamed50/igris_ai_flutter_example (latest: f800515)
 
 **Latest Changes (v1.0.5):**
 - **Plugin Hook System** - Enable plugins to inject content into core prompts (TD-003)
@@ -152,16 +152,16 @@ Full test report available at:
 
 ### Objectives
 
-Create reference implementations showing Blueprint AI in action.
+Create reference implementations showing Igris AI in action.
 
 ### Projects to Create
 
 #### 1. Flutter App Example ✅ **COMPLETED**
 
-**Repository:** `blueprint-ai-flutter-example`
-**Link:** https://github.com/Mohamed50/blueprint_ai_flutter_example
+**Repository:** `igris-ai-flutter-example`
+**Link:** https://github.com/Mohamed50/igris_ai_flutter_example
 
-A sample Flutter app with Blueprint AI fully configured:
+A sample Flutter app with Igris AI fully configured:
 - ✅ Complete Fastlane setup (iOS + Android)
 - ✅ Firebase App Distribution configured
 - ✅ Example briefs (BR-001, FR-001, TD-001)
@@ -183,11 +183,11 @@ A sample Flutter app with Blueprint AI fully configured:
 
 #### 2. Migration Example
 
-**Repository:** `blueprint-ai-migration-example`
+**Repository:** `igris-ai-migration-example`
 
 Two branches showing before/after:
 - `before` - Legacy Flutter app (poor architecture)
-- `after` - Same app after Blueprint AI migration
+- `after` - Same app after Igris AI migration
 - Migration briefs (MG-001, MG-002, etc.)
 - Documented migration process
 - Before/after metrics
@@ -196,14 +196,14 @@ Two branches showing before/after:
 
 #### 3. React Native Example (Future)
 
-**Repository:** `blueprint-ai-react-native-example`
+**Repository:** `igris-ai-react-native-example`
 
-Blueprint AI applied to React Native:
+Igris AI applied to React Native:
 - Show platform-agnostic core
 - Custom distribution plugin for React Native
 - Demonstrate extensibility
 
-**Purpose:** Prove Blueprint AI works beyond Flutter.
+**Purpose:** Prove Igris AI works beyond Flutter.
 
 ### Documentation
 
@@ -211,7 +211,7 @@ For each example:
 - Complete README
 - Step-by-step setup guide
 - Video walkthrough (optional)
-- Link from main Blueprint AI README
+- Link from main Igris AI README
 
 ---
 
@@ -224,20 +224,20 @@ For each example:
 
 ### Objectives
 
-Allow users to update Blueprint AI core and plugins when new versions are released, while preserving their work and data.
+Allow users to update Igris AI core and plugins when new versions are released, while preserving their work and data.
 
 ### Implementation Summary
 
 **Scripts Created:**
-- ✅ `blueprint_update.sh` - Updates core Blueprint AI to latest version
+- ✅ `igris_update.sh` - Updates core Igris AI to latest version
 - ✅ `plugin_update.sh` - Updates specific plugins to latest version
 
 **Features:**
-- ✅ Version tracking via `.blueprint_version` JSON file
+- ✅ Version tracking via `.igris_version` JSON file
 - ✅ Automatic detection of available updates from GitHub
 - ✅ Dry-run mode (`--dry-run`) to preview changes
 - ✅ Force mode (`--force`) to re-download files
-- ✅ Automatic backups before updates (`.blueprint_backup/`)
+- ✅ Automatic backups before updates (`.igris_backup/`)
 - ✅ Selective updates (system files updated, user data preserved)
 - ✅ Plugin version tracking separate from core
 - ✅ Clear success/error messaging
@@ -264,8 +264,8 @@ Allow users to update Blueprint AI core and plugins when new versions are releas
   - Troubleshooting guide
   - Best practices
 - ✅ Added update section to main README
-- ✅ Modified `blueprint_init.sh` to create `.blueprint_version`
-- ✅ Modified `plugin_install.sh` to update `.blueprint_version`
+- ✅ Modified `igris_init.sh` to create `.igris_version`
+- ✅ Modified `plugin_install.sh` to update `.igris_version`
 
 **Testing:**
 - ✅ Tested in example project
@@ -283,15 +283,15 @@ Allow users to update Blueprint AI core and plugins when new versions are releas
 
 ```bash
 # Check current version
-cat .blueprint_version
+cat .igris_version
 
 # Preview updates
-./scripts/blueprint_update.sh --dry-run
-./scripts/plugin_update.sh blueprint-ai-distribution-flutter --dry-run
+./scripts/igris_update.sh --dry-run
+./scripts/plugin_update.sh igris-ai-distribution-flutter --dry-run
 
 # Apply updates
-./scripts/blueprint_update.sh
-./scripts/plugin_update.sh blueprint-ai-distribution-flutter
+./scripts/igris_update.sh
+./scripts/plugin_update.sh igris-ai-distribution-flutter
 ```
 
 ---
@@ -492,7 +492,7 @@ Result: Industry-standard guidelines ready to customize
 
 ### Objectives
 
-Eliminate manual friction by automatically loading Blueprint AI configuration when Claude Code starts. Achieve zero-configuration startup experience where architecture enforcement happens automatically from day one.
+Eliminate manual friction by automatically loading Igris AI configuration when Claude Code starts. Achieve zero-configuration startup experience where architecture enforcement happens automatically from day one.
 
 ### Problem Statement
 
@@ -509,15 +509,15 @@ Eliminate manual friction by automatically loading Blueprint AI configuration wh
 
 **Solution 1: Automatic Loading via .claude/prompt.md**
 - ✅ Leveraged Claude Code CLI's built-in `.claude/prompt.md` feature
-- ✅ Modified `blueprint_init.sh` to create `.claude/prompt.md`
+- ✅ Modified `igris_init.sh` to create `.claude/prompt.md`
 - ✅ Prompt automatically loads on every Claude session start
 - ✅ Zero user action required - completely automatic
 
 **File Created:** `.claude/prompt.md`
 ```markdown
-# Blueprint AI - Automatic Bootstrap
+# Igris AI - Automatic Bootstrap
 
-🚀 **Welcome to Blueprint AI on Claude Code**
+🚀 **Welcome to Igris AI on Claude Code**
 
 ## Initialization Sequence (Execute Immediately)
 
@@ -533,7 +533,7 @@ Then say: **"Ready for your command!"**
 **Solution 2: Optional Shell Integration**
 - ✅ Created separate `install_shell_integration.sh` script
 - ✅ User-controlled (security-conscious approach)
-- ✅ Shows notification when entering Blueprint AI projects
+- ✅ Shows notification when entering Igris AI projects
 - ✅ Three options: automatic install / manual install / cancel
 - ✅ Creates backup before modifying shell config
 - ✅ Supports bash and zsh
@@ -553,8 +553,8 @@ Then say: **"Ready for your command!"**
 - Shows welcoming message
 
 **Shell Integration (Optional):**
-- Terminal notification when `cd` into Blueprint AI project
-- Shows Blueprint AI version
+- Terminal notification when `cd` into Igris AI project
+- Shows Igris AI version
 - Visual context awareness
 - Completely optional - user decides
 - Security-conscious design
@@ -573,7 +573,7 @@ User: "Use ai/prompts/claude_bootstrap.md and implement BR-001"
 ```bash
 $ claude
 
-🚀 Welcome to Blueprint AI on Claude Code
+🚀 Welcome to Igris AI on Claude Code
 
 📊 Project Status
 ────────────────
@@ -594,11 +594,11 @@ User: "Implement BR-003"
 **With Shell Integration:**
 ```bash
 $ cd my-flutter-project
-📘 Blueprint AI detected (v1.0.2)
-   Claude will auto-initialize with Blueprint AI configuration
+📘 Igris AI detected (v1.0.2)
+   Claude will auto-initialize with Igris AI configuration
 
 $ claude
-[Automatically loads Blueprint AI...]
+[Automatically loads Igris AI...]
 Ready for your command!
 ```
 
@@ -631,7 +631,7 @@ This release completes the "safe vibe coding" vision:
 ### Files Modified/Created
 
 **Core Changes:**
-- ✅ `scripts/blueprint_init.sh` - Added .claude/prompt.md creation
+- ✅ `scripts/igris_init.sh` - Added .claude/prompt.md creation
 - ✅ `scripts/install_shell_integration.sh` - NEW (200+ lines)
 - ✅ `.claude/prompt.md` - NEW (automatic loader template)
 - ✅ `ai/prompts/claude_bootstrap.md` - Made platform-agnostic
@@ -675,7 +675,7 @@ This release completes the "safe vibe coding" vision:
 
 ### Community Impact
 
-This feature makes Blueprint AI:
+This feature makes Igris AI:
 - **Easier to adopt** - No learning curve for startup
 - **Safer to use** - Architecture always enforced
 - **More delightful** - Welcoming experience
@@ -684,8 +684,8 @@ This feature makes Blueprint AI:
 ### Example Workflow
 
 ```bash
-# Developer installs Blueprint AI (first time)
-$ ../blueprint-ai/scripts/blueprint_init.sh
+# Developer installs Igris AI (first time)
+$ ../igris-ai/scripts/igris_init.sh
 
 # Output includes:
 # ✓ Automatic bootstrap loading enabled (.claude/prompt.md)
@@ -707,7 +707,7 @@ $ cd project && claude
 
 - Core: `19f0608` (feat: add automatic Claude Code integration)
 - Core: `83d63af` (docs: update README to reflect v1.0.2)
-- Example: `f800515` (chore: update to Blueprint AI v1.0.2)
+- Example: `f800515` (chore: update to Igris AI v1.0.2)
 
 ---
 
@@ -726,10 +726,10 @@ Prepare for public launch and community building.
 #### 1. Content Creation
 
 **Blog Post** (2-3 hours)
-- Title: "Introducing Blueprint AI: AI-Powered Code Quality for Flutter"
+- Title: "Introducing Igris AI: AI-Powered Code Quality for Flutter"
 - Sections:
   - The problem (maintaining code quality at scale)
-  - The solution (Blueprint AI system)
+  - The solution (Igris AI system)
   - How it works (briefs, sessions, plugins)
   - Real results (from opaala_admin_app_v3)
   - Getting started
@@ -753,7 +753,7 @@ Prepare for public launch and community building.
 
 **Twitter/X Announcement**
 ```
-🚀 Introducing Blueprint AI - AI-powered code quality system
+🚀 Introducing Igris AI - AI-powered code quality system
 
 ✅ Automated release management
 ✅ Smart version bumping
@@ -772,7 +772,7 @@ GitHub: [link]
 - r/opensource
 
 **Hacker News**
-- Submit as "Show HN: Blueprint AI"
+- Submit as "Show HN: Igris AI"
 - Prepare for discussion
 
 #### 3. Community Setup
@@ -808,7 +808,7 @@ GitHub: [link]
 
 ### Overview
 
-First enhancement-type plugin using the new hook system (v1.0.5). Enables users to customize Claude's tone, voice, and commands without modifying Blueprint AI core.
+First enhancement-type plugin using the new hook system (v1.0.5). Enables users to customize Claude's tone, voice, and commands without modifying Igris AI core.
 
 ### Mask System
 
@@ -845,7 +845,7 @@ First enhancement-type plugin using the new hook system (v1.0.5). Enables users 
 ### Repository Structure
 
 ```
-blueprint-ai-persona-packs/
+igris-ai-persona-packs/
 ├── plugin.json (with persona_injection hook)
 ├── ai/
 │   └── personas/
@@ -895,12 +895,12 @@ blueprint-ai-persona-packs/
 
 **Phase 4: Release**
 - [ ] Release v1.0.0 of persona plugin
-- [ ] Update Blueprint AI README with link
+- [ ] Update Igris AI README with link
 - [ ] Announce as optional enhancement
 
 ### Success Criteria
 
-- [ ] Works with Blueprint AI v1.0.5+
+- [ ] Works with Igris AI v1.0.5+
 - [ ] All 4 mask levels functional
 - [ ] Mask switching preserves persona config
 - [ ] Easy to create custom personas
@@ -925,7 +925,7 @@ blueprint-ai-persona-packs/
 
 ### Plugin Ideas
 
-#### 1. blueprint-ai-ci-cd
+#### 1. igris-ai-ci-cd
 
 **Purpose:** CI/CD templates and automation
 
@@ -940,7 +940,7 @@ blueprint-ai-persona-packs/
 
 **Platforms:** All (platform-agnostic)
 
-#### 2. blueprint-ai-testing
+#### 2. igris-ai-testing
 
 **Purpose:** Automated test generation and management
 
@@ -954,7 +954,7 @@ blueprint-ai-persona-packs/
 
 **Platforms:** Flutter, React Native, web
 
-#### 3. blueprint-ai-analytics
+#### 3. igris-ai-analytics
 
 **Purpose:** Code metrics and quality reports
 
@@ -968,7 +968,7 @@ blueprint-ai-persona-packs/
 
 **Platforms:** All
 
-#### 4. blueprint-ai-react-native
+#### 4. igris-ai-react-native
 
 **Purpose:** Distribution automation for React Native
 
@@ -981,7 +981,7 @@ blueprint-ai-persona-packs/
 
 **Platforms:** React Native
 
-#### 5. blueprint-ai-web
+#### 5. igris-ai-web
 
 **Purpose:** Distribution for web applications
 

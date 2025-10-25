@@ -1,9 +1,9 @@
-# Blueprint AI Persona Packs - Design Document
+# Igris AI Persona Packs - Design Document
 
 **Version:** 1.0.0-draft
 **Last Updated:** 2025-10-25
 **Status:** Design Phase
-**Repository:** blueprint-ai-persona-packs (to be created)
+**Repository:** igris-ai-persona-packs (to be created)
 
 ---
 
@@ -11,14 +11,14 @@
 
 ### Purpose
 
-Enable users to customize Claude's tone, voice, and command language without modifying Blueprint AI core. Uses the plugin hook system (v1.0.5+) to inject persona content.
+Enable users to customize Claude's tone, voice, and command language without modifying Igris AI core. Uses the plugin hook system (v1.0.5+) to inject persona content.
 
 ### Goals
 
 - ✅ Optional, non-invasive persona system
 - ✅ Multiple intensity levels (mask system)
 - ✅ Easy to create custom personas
-- ✅ Works seamlessly with Blueprint AI workflows
+- ✅ Works seamlessly with Igris AI workflows
 - ✅ Dynamic switching without reinstall
 
 ### Non-Goals
@@ -26,7 +26,7 @@ Enable users to customize Claude's tone, voice, and command language without mod
 - ❌ Modify core Brief management (BR/MG/TD/TS)
 - ❌ Change architecture enforcement rules
 - ❌ Affect code quality or test requirements
-- ❌ Require Blueprint AI core modifications
+- ❌ Require Igris AI core modifications
 
 ---
 
@@ -70,7 +70,7 @@ Users "wear masks" to control how much of the persona is active. This metaphor i
 
 **Effect:**
 - Persona plugin installed but completely inactive
-- Blueprint AI operates in default mode
+- Igris AI operates in default mode
 - CLAUDE.md has no persona content
 
 **Use Case:**
@@ -99,7 +99,7 @@ Users "wear masks" to control how much of the persona is active. This metaphor i
 ```markdown
 ## Shadow Industries
 
-**Monarch**, this project uses Blueprint AI for code quality and architecture management.
+**Monarch**, this project uses Igris AI for code quality and architecture management.
 
 ---
 ```
@@ -108,7 +108,7 @@ Users "wear masks" to control how much of the persona is active. This metaphor i
 - Displays company branding
 - Uses title once in intro
 - **NO tone changes** - Claude stays professional
-- **NO shadow commands** - Standard Blueprint AI commands
+- **NO shadow commands** - Standard Igris AI commands
 - **NO banner**
 
 **Example Interaction:**
@@ -148,12 +148,12 @@ Claude: "Here are the bug briefs currently tracked..."
 ```markdown
 ## Shadow Industries
 
-⚔️ Welcome, Monarch. Your architecture shall be defended by Blueprint AI.
+⚔️ Welcome, Monarch. Your architecture shall be defended by Igris AI.
 
 **Addressing:** You will be addressed as "Monarch"
 **Tone:** Knight Ledger (professional with subtle flair)
 
-**Commands:** Standard Blueprint AI commands
+**Commands:** Standard Igris AI commands
 
 ---
 ```
@@ -227,7 +227,7 @@ Monarch, your loyal shadow knight Igris stands ready to serve.
 
 ## Shadow Commands
 
-In addition to standard Blueprint AI commands, you may use shadow commands:
+In addition to standard Igris AI commands, you may use shadow commands:
 
 | Shadow Command | Canonical Action | Description |
 |----------------|------------------|-------------|
@@ -237,7 +237,7 @@ In addition to standard Blueprint AI commands, you may use shadow commands:
 | **BIND [brief]** | Register brief | Capture new target |
 | **BANISH [BR-XXX]** | Archive brief | Send to the void |
 
-**Note:** Shadow commands execute the same Blueprint AI workflows - they are thematic aliases.
+**Note:** Shadow commands execute the same Igris AI workflows - they are thematic aliases.
 
 **Addressing:** You are the Monarch
 **Tone:** Shadow Scripture (dramatic, epic)
@@ -272,7 +272,7 @@ Session initialized. Your commands shall be executed without question.
 
 📊 Current Session Status: Active
 📋 Next Steps When Resuming: Continue phase 2
-✅ Blueprint AI initialized. Ready for your command!"
+✅ Igris AI initialized. Ready for your command!"
 
 User: "HUNT BR-001"
 Claude: "⚔️ **The hunt begins, Monarch.** ⚔️
@@ -308,7 +308,7 @@ Pursuing the brief..."
 
 ### Important Notes
 
-1. **Shadow commands execute standard Blueprint AI workflows**
+1. **Shadow commands execute standard Igris AI workflows**
    - No special logic or shortcuts
    - Same quality standards
    - Same testing requirements
@@ -377,7 +377,7 @@ Pursuing the brief..."
 ### Complete Repository Layout
 
 ```
-blueprint-ai-persona-packs/
+igris-ai-persona-packs/
 ├── plugin.json
 ├── install.sh
 ├── README.md
@@ -476,14 +476,14 @@ $ ./scripts/persona_mask.sh remove
 🎭 Removing mask...
 Persona: Igris (dormant)
 Mask Level: None
-✅ Reverted to standard Blueprint AI
+✅ Reverted to standard Igris AI
 ```
 
 **Logic:**
 1. Read `ai/persona.json`
 2. Update `mask` field
 3. Copy appropriate mask file to `ai/prompts/persona_loader.md`
-4. Regenerate CLAUDE.md using Blueprint AI template + hook
+4. Regenerate CLAUDE.md using Igris AI template + hook
 5. Save updated config
 
 ---
@@ -494,7 +494,7 @@ Mask Level: None
 ```bash
 $ ./scripts/persona_install.sh
 
-🎭 Blueprint AI Persona Installer
+🎭 Igris AI Persona Installer
 
 Choose a persona:
 [1] Igris - Shadow Knight (loyal, dramatic)
@@ -527,7 +527,7 @@ Choose your mask level:
 
 [4] ⚪ No Mask - Install but keep dormant
     • Persona ready but inactive
-    • Blueprint AI default mode
+    • Igris AI default mode
     • Can activate later
 
 Selection: 3
@@ -594,8 +594,8 @@ sed -i '' "s/{{COMPANY}}/$(jq -r '.branding.company' ai/persona.json)/g" ai/prom
 # ... etc
 
 # Regenerate CLAUDE.md
-BLUEPRINT_DIR=$(find_blueprint_ai_dir)
-$BLUEPRINT_DIR/scripts/blueprint_init.sh --regenerate-claude
+IGRIS_DIR=$(find_igris_ai_dir)
+$IGRIS_DIR/scripts/igris_init.sh --regenerate-claude
 ```
 
 ---
@@ -662,7 +662,7 @@ $BLUEPRINT_DIR/scripts/blueprint_init.sh --regenerate-claude
 - [ ] Test CLAUDE.md regeneration
 - [ ] Verify shadow commands work (full mask)
 - [ ] Verify standard commands still work (all masks)
-- [ ] Test with Blueprint AI workflows (brief lifecycle)
+- [ ] Test with Igris AI workflows (brief lifecycle)
 
 ### Phase 4: Documentation
 - [ ] Write CREATING_PERSONAS.md guide
@@ -674,7 +674,7 @@ $BLUEPRINT_DIR/scripts/blueprint_init.sh --regenerate-claude
 ### Phase 5: Release
 - [ ] Release v1.0.0 of persona plugin
 - [ ] Create GitHub release with notes
-- [ ] Update Blueprint AI README with link
+- [ ] Update Igris AI README with link
 - [ ] Announce on relevant channels
 - [ ] Gather user feedback
 
@@ -683,11 +683,11 @@ $BLUEPRINT_DIR/scripts/blueprint_init.sh --regenerate-claude
 ## XI. Success Metrics
 
 **Technical:**
-- [ ] Works with Blueprint AI v1.0.5+
+- [ ] Works with Igris AI v1.0.5+
 - [ ] All 4 mask levels functional
 - [ ] Hook injection verified
 - [ ] CLAUDE.md regenerates correctly
-- [ ] No impact on core Blueprint AI functionality
+- [ ] No impact on core Igris AI functionality
 
 **User Experience:**
 - [ ] Installation < 2 minutes
@@ -742,7 +742,7 @@ This is a fan-made project for educational and entertainment purposes.
 All trademarks and copyrights belong to their respective owners.
 ```
 
-**License:** MIT (same as Blueprint AI core)
+**License:** MIT (same as Igris AI core)
 
 ---
 
@@ -750,7 +750,7 @@ All trademarks and copyrights belong to their respective owners.
 
 **Estimated Time to v1.0.0:** 4-5 hours
 
-**Dependencies:** Blueprint AI v1.0.5+ (hook system)
+**Dependencies:** Igris AI v1.0.5+ (hook system)
 
 ---
 
