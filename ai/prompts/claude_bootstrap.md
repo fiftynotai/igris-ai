@@ -664,8 +664,8 @@ Examples of what to include:
 
 ---
 
-**Last Updated:** 2025-10-14
-**Blueprint AI Version:** 1.0.2
+**Last Updated:** 2025-10-25
+**Blueprint AI Version:** 1.0.4
 **Documentation:** https://github.com/Mohamed50/blueprint-ai
 
 **Tip:** Customize this prompt for your project by adding project-specific patterns to the "Project-Specific Notes" section.

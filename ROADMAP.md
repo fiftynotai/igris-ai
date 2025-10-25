@@ -6,7 +6,7 @@ Future development options and priorities for Blueprint AI.
 
 ## Current Status
 
-**Version:** 1.0.2 (Released 2025-10-14)
+**Version:** 1.0.4 (Released 2025-10-25)
 
 **Completed:**
 - ✅ Core brief management system (BR, MG, TD, TS)
@@ -25,29 +25,44 @@ Future development options and priorities for Blueprint AI.
 - ✅ **v1.0.2:** Automatic Claude Code Integration (.claude/prompt.md)
 - ✅ **v1.0.2:** Optional Shell Integration (install_shell_integration.sh)
 - ✅ **v1.0.2:** Zero-configuration startup experience
+- ✅ **v1.0.3:** Hooks-based auto-loading (.claude/hooks/startup.sh)
+- ✅ **v1.0.3:** Fixed CLAUDE.md context loading
+- ✅ **v1.0.3:** True zero-configuration with welcome message before input
+- ✅ **v1.0.4:** Mandatory first action protocol (prevents skipped initialization)
+- ✅ **v1.0.4:** Context reset detection
+- ✅ **v1.0.4:** Session state validation checklist
+- ✅ **v1.0.4:** 5-checkpoint workflow enforcement system
+- ✅ **v1.0.4:** session_protocol.md quick reference guide
 
 **Repositories:**
 - Core: https://github.com/Mohamed50/blueprint-ai (latest: 83d63af)
 - Distribution Plugin: https://github.com/Mohamed50/blueprint-ai-distribution-flutter (latest: cd9ab26)
 - Example Project: https://github.com/Mohamed50/blueprint_ai_flutter_example (latest: f800515)
 
-**Latest Changes (v1.0.2):**
-- **NEW:** Automatic Claude Code Integration via `.claude/prompt.md`
-  - Zero-configuration startup - Claude auto-loads Blueprint AI on every session
-  - Auto-displays project summary (briefs, blockers, status)
-  - Auto-recommends next task based on priority
-  - Perfect for "safe vibe coding" - architecture enforcement from day one
-- **NEW:** Optional Shell Integration via `install_shell_integration.sh`
-  - Terminal notifications when entering Blueprint AI projects
-  - Shows Blueprint AI version in terminal
-  - User-controlled installation (security conscious)
-  - Supports bash and zsh with automatic backup
-- **NEW:** Added Coding Guidelines Generation feature (standalone + migration integration)
-  - Created `ai/prompts/generate_coding_guidelines.md` (600+ lines)
-  - Enhanced migration analysis to use coding guidelines with Step 0
-  - Updated MG-TEMPLATE.md with comprehensive guideline references
-  - 4 generation modes: Base Repo / Project Analysis / Merge / Best Practices
-- Enhanced `blueprint_init.sh` to create `.claude/prompt.md` automatically
+**Latest Changes (v1.0.4):**
+- **Enhanced Workflow Enforcement** - Based on production testing feedback
+  - Mandatory first action protocol in CLAUDE.md (prevents skipped initialization)
+  - Context reset detection (treats all resets as new conversations)
+  - Session state validation checklist (5 items to verify before work)
+  - 5-checkpoint system in claude_bootstrap.md (explicit WHEN/THEN protocols)
+  - TodoWrite vs CURRENT_SESSION.md clarification (both required)
+  - Exact brief status update timing (immediately after completion)
+  - Session management now enforced as critical path, not optional documentation
+- **New Documentation** - session_protocol.md quick reference guide
+  - Checkpoint 1-5 examples and anti-patterns
+  - Mental model shift explanation (session IS the work)
+  - Recovery and continuation protocols
+
+**Previous Changes (v1.0.3):**
+- Fixed hooks-based auto-loading (.claude/hooks/startup.sh)
+- Corrected CLAUDE.md context loading
+- True zero-configuration with welcome message before any input
+- Removed broken .claude/prompt.md approach from v1.0.2
+
+**Previous Changes (v1.0.2):**
+- Automatic Claude Code Integration (later fixed in v1.0.3)
+- Optional Shell Integration (install_shell_integration.sh)
+- Coding Guidelines Generation feature
 - Updated claude_bootstrap.md to be platform-agnostic
 - Updated README with v1.0.2 features and version badge
 - Updated example project to demonstrate v1.0.2 features
