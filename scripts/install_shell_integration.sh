@@ -76,6 +76,10 @@ cd() {
 # Check on shell start (in case already in a Blueprint AI directory)
 blueprint_check
 
+# Igris Shadow Commands (if persona active)
+# ARISE - Launch Claude Code with dramatic flair
+alias arise='claude'
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 PREVIEW
@@ -139,6 +143,10 @@ cd() {
 
 # Check on shell start (in case already in a Blueprint AI directory)
 blueprint_check
+
+# Igris Shadow Commands (if persona active)
+# ARISE - Launch Claude Code with dramatic flair
+alias arise='claude'
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
