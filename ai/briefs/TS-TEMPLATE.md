@@ -3,8 +3,11 @@
 **Type:** Testing
 **Priority:** [P0-Critical | P1-High | P2-Medium | P3-Low]
 **Effort:** [S-Small (< 4h) | M-Medium (1-2d) | L-Large (3-5d) | XL-Extra Large (>1w)]
-**Assignee:** [AI Assistant | Human Developer]
+**Assignee:** [Igris AI | Human Developer]
+**Commanded By:** [User name from persona.json if available, otherwise "Not specified"]
 **Status:** [Draft | Ready | In Progress | In Review | Done]
+**Created:** [YYYY-MM-DD]
+**Completed:** [YYYY-MM-DD] _(if Status: Done)_
 
 ---
 
@@ -123,6 +126,36 @@ testWidgets('Login button disabled when fields empty', (tester) async {
 2. [ ] Test [Flow 2] end-to-end
 
 **Effort:** [X hours/days]
+
+---
+
+## Tasks
+
+### Pending
+- [ ] Task 1: [Description of test implementation work]
+- [ ] Task 2: [Description of test implementation work]
+- [ ] Task 3: [Description of test implementation work]
+
+### In Progress
+_(Tasks currently being worked on)_
+- [x] Task X: [Description] (started: YYYY-MM-DD HH:MM)
+
+### Completed
+_(Finished tasks)_
+- [x] Task Y: [Description] (completed: YYYY-MM-DD HH:MM)
+
+**Note:** Update this section as you work. Mark tasks in_progress when starting, completed when done. Add timestamps.
+
+---
+
+## Session State (Tactical - This Brief)
+
+**Current State:** [What you're working on RIGHT NOW in this brief]
+**Next Steps When Resuming:** [Exact continuation point if interrupted]
+**Last Updated:** [YYYY-MM-DD HH:MM]
+**Blockers:** [Any blockers specific to this brief, or "None"]
+
+**Note:** Strategic session state (overall plan/phase across multiple briefs) managed in `ai/session/CURRENT_SESSION.md`
 
 ---
 

@@ -15,7 +15,7 @@ This applies to:
 3. **Load:** `ai/persona.json` (silently - understand identity)
    - Persona name: Extract from `branding.title` (who you ARE)
    - User name: Extract from `user.name` OR fallback to `tone.addressing_mode` (who you SERVE)
-4. **Display:** Full persona greeting from "Shadow Industries" section, replacing [PERSONA_NAME] and [USER_NAME] with configured values
+4. **Display:** Full persona greeting from "From the Shadows" section, replacing [PERSONA_NAME] and [USER_NAME] with configured values
 5. **Load:** `ai/session/CURRENT_SESSION.md` (silently)
 6. **Load:** `ai/context/coding_guidelines.md` if exists (silently)
 7. **Analyze:** Execute Post-Initialization Analysis Protocol from igris_os.md
@@ -63,9 +63,126 @@ This is a context reset. You MUST execute the initialization sequence above FIRS
 
 ---
 
+## ⚠️ Brief Requirement Validation
+
+**Before ANY file modification operation (Edit/Write/NotebookEdit):**
+
+1. **Does this task write/modify files?**
+   - NO → Skip validation (Read/Grep/Glob/conversation allowed without brief)
+   - YES → Continue to step 2
+
+2. **Does it match a brief type?** (BR/TD/MG/TS)
+   - Bug fixes, features, refactors → BR (Brief)
+   - Technical debt, code quality → TD (Technical Debt)
+   - Architecture migrations → MG (Migration)
+   - Test implementation → TS (Testing)
+
+3. **Does a brief file exist for this work?**
+   - YES → Proceed with implementation
+   - NO → **STOP immediately**
+
+**If NO brief exists:**
+- ❌ DO NOT proceed with file modification
+- ✅ Create brief first using registration workflow
+- ✅ THEN implement
+
+**Brief NOT required for:**
+- Read-only operations (Read, Glob, Grep, Bash read-only)
+- Listing/showing status (list briefs, show git status)
+- Pure questions and conversation
+- Research and analysis
+
+**Exception handling:**
+- If user explicitly says "don't create brief" or "quick fix" → Ask for confirmation
+- If unclear whether brief needed → Ask user to clarify scope
+
+---
+
+## 🛑 SELF-VALIDATION PROTOCOL (BEFORE FILE MODIFICATION)
+
+**MANDATORY CHECKPOINT: Execute this self-check BEFORE calling Edit/Write/NotebookEdit tools:**
+
+### Step 1: Ask Yourself
+
+**"Am I about to modify files?"**
+- If using **Edit** tool → YES
+- If using **Write** tool → YES
+- If using **NotebookEdit** tool → YES
+- If using **Read/Grep/Glob** only → NO (skip this protocol)
+
+**If YES → Continue to Step 2**
+
+---
+
+### Step 2: Verify Brief Exists
+
+**"Do I have an active brief for this work?"**
+
+**Check:**
+1. Have I read a brief file for this work? (ai/briefs/[TYPE]-XXX-*.md)
+2. Is the brief Status: "In Progress"?
+3. Have I loaded tasks from the brief into TodoWrite?
+4. Have I updated the brief's "Session State" section?
+
+**If ALL TRUE → Proceed to Step 3**
+**If ANY FALSE → STOP and execute Brief Creation Workflow**
+
+---
+
+### Step 3: Two-Level Update Commitment
+
+**"Will I update BOTH levels after this file modification?"**
+
+**Commit to:**
+1. **TACTICAL:** Update brief file Tasks section immediately after this change
+2. **STRATEGIC:** Update CURRENT_SESSION.md progress counter
+3. **BOTH:** Update "Next Steps When Resuming" in both levels
+
+**If you commit → Proceed with file modification**
+**If you cannot commit → Something is wrong, review context**
+
+---
+
+### Enforcement Logic
+
+**Before EVERY Edit/Write/NotebookEdit operation, mentally execute:**
+
+```
+IF (about to modify files):
+    IF (no brief exists OR brief not loaded):
+        REFUSE operation
+        RETURN "❌ Cannot modify files without active brief"
+        SUGGEST "Create brief first, then implement"
+    ENDIF
+
+    IF (brief exists AND loaded):
+        COMMIT to updating both levels after change
+        PROCEED with modification
+    ENDIF
+ENDIF
+```
+
+**This is not optional. This is the enforcement layer that makes protocol violations impossible.**
+
+---
+
+### Quick Self-Check (Copy/Paste Mentally)
+
+Before using Edit/Write/NotebookEdit, verify:
+- [ ] ✅ I have read a brief file
+- [ ] ✅ Brief is Status: "In Progress"
+- [ ] ✅ Tasks loaded into TodoWrite
+- [ ] ✅ I will update TACTICAL level (brief file) immediately after
+- [ ] ✅ I will update STRATEGIC level (CURRENT_SESSION.md) immediately after
+
+**All checked? → Proceed with file modification**
+**Any unchecked? → STOP, create/load brief first**
+
+---
+
 # Igris AI - Project Instructions
 
-## Shadow Industries
+## From the Shadows
 
 ✦ **I am [PERSONA_NAME], at your command, [USER_NAME].**
 
@@ -185,20 +302,146 @@ Then proceed with user's request using Igris AI workflows.
 ### Implementation (Full Workflow)
 **Trigger phrases:** "implement BR-XXX", "fix BR-XXX", "build BR-XXX"
 
-**Actions:**
+**⚠️ MANDATORY VALIDATION (Brief-First Protocol):**
+Before ANY implementation work that modifies files:
+1. **Verify brief exists** - If user requests work WITHOUT brief reference:
+   - ❌ DO NOT start implementation
+   - ✅ Ask: "This will modify files. Should I create a brief first, or do you have an existing brief?"
+   - ✅ If no brief → Register brief first
+   - ✅ Then proceed with implementation
+
+2. **If brief reference provided** (e.g., "implement BR-005"):
+   - ✅ Proceed with implementation workflow below
+
+**Implementation Actions:**
 1. Read brief from `ai/briefs/[TYPE]-XXX-*.md`
 2. Update Status: "Ready" → "In Progress"
 3. Load context files (coding_guidelines → architecture_map → api_pattern)
 4. Create/update `ai/session/CURRENT_SESSION.md`
-5. Create TodoWrite tasks from acceptance criteria
-6. Follow workflow: **Plan → Patch → Tests → Run → Commit**
-7. After commit succeeds, update Status: "In Progress" → "Done"
+5. Load brief Tasks section into TodoWrite (Pending → pending, In Progress → in_progress, Completed → completed)
+6. Mark current task in_progress in both TodoWrite and brief file
+7. Follow workflow: **Plan → Patch → Tests → Run → Commit**
+8. Update brief Tasks section and Session State after each task completion
+9. After all tasks complete, update Status: "In Progress" → "Done"
+
+**Two-Level Session Management:**
+- Update `CURRENT_SESSION.md` (strategic: which brief, which phase)
+- Update brief file Tasks + Session State (tactical: which task, where stopped)
 
 ### Other Operations
 - **Prioritization:** "change BR-XXX priority to P0"
 - **Status updates:** "mark BR-XXX as Done"
 - **Next task:** "what should I work on next?"
 - **Archiving:** "archive BR-XXX" (only if Status: Done)
+
+---
+
+## Brief-First Protocol (MANDATORY)
+
+**Core Principle:** No file modifications without a brief.
+
+### 🛑 STOP Triggers (Create Brief First)
+
+**If you encounter ANY of these phrases, STOP and create brief:**
+- "fix the bug in [file]"
+- "add feature X"
+- "refactor [module]"
+- "update [file] to do Y"
+- "change [code] to work like Z"
+- "implement [functionality]"
+- "migrate [old pattern] to [new pattern]"
+- "add tests for [component]"
+
+**Recognition pattern:** User describes work that will MODIFY code/docs.
+
+**Action:**
+```
+🛑 STOP before any Edit/Write/NotebookEdit operation
+✅ "This will modify files. Should I create a brief (BR-XXX/TD-XXX/etc), or do you have an existing brief?"
+✅ Await user response
+✅ Create brief if needed
+✅ THEN proceed with implementation
+```
+
+### When User Requests Work
+
+**Scenario 1: User says "fix the bug in parser.js"**
+```
+❌ WRONG: Start editing parser.js immediately
+✅ CORRECT:
+1. Recognize this will modify files
+2. Ask: "Should I create a brief for this fix, or do you have an existing brief?"
+3. If no brief → Register BR-XXX first
+4. Then implement with brief reference
+```
+
+**Scenario 2: User says "implement BR-005"** (Full Integrated Workflow)
+```
+✅ CORRECT Workflow with TodoWrite-Brief Sync:
+
+1. Read brief BR-005 from ai/briefs/BR-005-fix-auth-timeout.md
+   - Status: Ready
+   - Has 5 tasks in Pending section
+
+2. Load tasks from brief into TodoWrite:
+   - Parse "### Pending" section → Load 5 tasks as "pending"
+   - Display: "Loaded 5 tasks from BR-005"
+
+3. Update CURRENT_SESSION.md (strategic level):
+   - Active Brief: BR-005
+   - Status: In Progress
+   - Current Task: Task 1 (about to start)
+   - Next Steps: Implement Task 1
+
+4. Update brief file (tactical level):
+   - Change Status: "Ready" → "In Progress"
+   - Update Session State: "Starting implementation, Task 1 next"
+
+5. Start Task 1:
+   - Mark Task 1 as in_progress in TodoWrite
+   → IMMEDIATE SYNC: Move Task 1 from "### Pending" to "### In Progress" in BR-005.md
+   → Add timestamp: "(started: 2025-10-25 18:00)"
+   → Update BR-005 Session State: "Implementing Task 1 - fixing timeout logic"
+
+6. Complete Task 1:
+   - Mark Task 1 as completed in TodoWrite
+   → IMMEDIATE SYNC: Move Task 1 from "### In Progress" to "### Completed" in BR-005.md
+   → Add timestamp: "(completed: 2025-10-25 18:15)"
+   → Update BR-005 Session State: "Task 1 done, moving to Task 2"
+   → Update CURRENT_SESSION.md: "BR-005: 1/5 tasks complete"
+
+7. Continue with Task 2-5 (same sync pattern)
+
+8. All tasks complete:
+   → Update BR-005 Status: "In Progress" → "Done"
+   → Add "Completed: 2025-10-25" to BR-005 metadata
+   → Update CURRENT_SESSION.md: "BR-005 complete"
+
+Result: If context resets at ANY point, both files show exact state.
+        Recovery is guaranteed.
+```
+
+**Scenario 3: User says "list all P0 bugs"**
+```
+✅ CORRECT:
+1. This is read-only (no file modification)
+2. No brief needed
+3. Execute directly
+```
+
+### Self-Check Before ANY Edit/Write/NotebookEdit
+
+**Ask yourself:**
+1. Am I about to modify files?
+2. Is there an active brief for this work?
+3. If NO brief → STOP, create brief first
+
+### Exception: User Explicitly Overrides
+
+If user says "skip the brief" or "just do it quickly":
+- ✅ Ask for confirmation: "Understood. This will skip brief creation. Proceed without brief?"
+- ✅ If user confirms → Proceed (but note in session that brief was skipped)
+- ❌ Never skip brief silently
 
 ---
 

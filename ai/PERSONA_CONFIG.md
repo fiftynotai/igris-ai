@@ -31,7 +31,6 @@ jq '.branding.title = "Your Name"' ai/persona.json > temp.json && mv temp.json a
   "mask": "light",              // none | half | light | full
   "branding": {
     "title": "Monarch",         // ← What I call you
-    "company": "Shadow Industries",
     "intro": "Welcome message",
     "tagline": "Project tagline"
   },

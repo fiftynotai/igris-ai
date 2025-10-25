@@ -8,7 +8,6 @@ Quick reference for changing your Igris persona mask level.
 
 **Active Mask:** `light` (Cinematic Heroic)
 **Addressing:** "Fifty.ai" (private, in ai/persona.json)
-**Company:** Shadow Industries
 **Greeting Reference:** `ai/persona_greetings.md`
 
 ---
@@ -39,7 +38,7 @@ Change the `mask` field:
 ### Step 3: Update CLAUDE.md Greeting
 
 1. Open `CLAUDE.md`
-2. Navigate to the "Shadow Industries" section (around line 57)
+2. Navigate to the "From the Shadows" section (around line 57)
 3. Open `ai/persona_greetings.md`
 4. Copy the greeting block for your chosen mask level
 5. Replace the current greeting in CLAUDE.md

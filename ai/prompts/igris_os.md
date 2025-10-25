@@ -105,6 +105,161 @@ Update `CURRENT_SESSION.md` every time you:
 
 ---
 
+## TodoWrite ↔ Brief Integration Protocol
+
+**Core Principle:** Brief files are the persistent source of truth. TodoWrite is the in-memory execution layer that syncs with brief files.
+
+### Architecture
+
+```
+Brief File (ai/briefs/[TYPE]-XXX.md)
+  └─ Tasks section (Pending/In Progress/Completed)
+  └─ Session State (Current work, Next steps)
+         ↓ loads into
+TodoWrite Tool (In-Memory)
+  └─ Pending → pending
+  └─ In Progress → in_progress
+  └─ Completed → completed
+         ↓ syncs back immediately
+Brief File Updated
+  └─ Tasks moved between sections
+  └─ Timestamps added
+  └─ Session State updated
+```
+
+### Protocol: Loading Brief into TodoWrite
+
+**When starting brief implementation:**
+
+1. **Read brief file** - `ai/briefs/[TYPE]-XXX-*.md`
+2. **Parse Tasks section:**
+   - Extract all tasks from "### Pending" → Create TodoWrite tasks with status: "pending"
+   - Extract all tasks from "### In Progress" → Create TodoWrite tasks with status: "in_progress"
+   - Extract all tasks from "### Completed" → Create TodoWrite tasks with status: "completed"
+3. **Display confirmation:** "Loaded X tasks from [BRIEF-ID]"
+4. **Update CURRENT_SESSION.md** (strategic level):
+   - Active brief: [BRIEF-ID]
+   - Current task: First in_progress task or first pending task
+   - Next steps: What to do when resuming
+
+**Example:**
+```markdown
+# Brief file: TD-010.md
+## Tasks
+### Pending
+- [ ] Task 1: Create templates
+- [ ] Task 2: Update documentation
+
+### In Progress
+- [x] Task 3: Add validation (started: 2025-10-25 14:30)
+
+↓ loads into TodoWrite as:
+
+TodoWrite:
+1. [pending] Create templates
+2. [pending] Update documentation
+3. [in_progress] Add validation
+```
+
+### Protocol: Syncing TodoWrite → Brief
+
+**When task state changes (IMMEDIATE sync):**
+
+1. **TodoWrite marks task in_progress:**
+   - Move task from "### Pending" to "### In Progress" in brief file
+   - Add timestamp: `(started: YYYY-MM-DD HH:MM)`
+   - Update brief "Session State" → "Current State" with task description
+   - Update CURRENT_SESSION.md with current task
+
+2. **TodoWrite marks task completed:**
+   - Move task from "### In Progress" to "### Completed" in brief file
+   - Add timestamp: `(completed: YYYY-MM-DD HH:MM)`
+   - Update brief "Session State" → Update "Next Steps When Resuming"
+   - Update CURRENT_SESSION.md progress counter
+
+3. **All tasks completed:**
+   - Update brief Status: "In Progress" → "Done"
+   - Add "Completed: YYYY-MM-DD" to brief metadata
+   - Update CURRENT_SESSION.md to reflect completion
+
+**CRITICAL:** Sync happens IMMEDIATELY, not in batches. Each state change triggers a brief file update.
+
+### Protocol: Recovery on Context Reset
+
+**When context resets (conversation restart):**
+
+1. **Read CURRENT_SESSION.md** (strategic level):
+   - Which brief is active?
+   - Which phase/milestone?
+   - Overall status?
+
+2. **Read active brief file** (tactical level):
+   - What tasks are pending?
+   - What task was in_progress?
+   - Where did we stop exactly?
+
+3. **Load into TodoWrite:**
+   - Parse Tasks section
+   - Load all tasks with correct states
+   - Resume from "Session State" → "Next Steps When Resuming"
+
+4. **Continue work:**
+   - Exact continuation point known
+   - No context lost
+   - Pick up exactly where stopped
+
+**Example Recovery:**
+```
+Context reset occurs...
+
+1. Read CURRENT_SESSION.md:
+   - "Working on TD-010, Phase 2, Task 10"
+
+2. Read TD-010.md:
+   - Tasks section shows Task 10 in_progress
+   - Session State: "Implementing validation workflow"
+   - Next Steps: "Complete Edit tool validation, then Write tool"
+
+3. Load into TodoWrite:
+   - 9 tasks completed
+   - 1 task in_progress (Task 10)
+   - 12 tasks pending
+
+4. Continue:
+   - "Resuming TD-010 Phase 2, Task 10..."
+   - Execute from exact stopping point
+```
+
+### Two-Level Session Management
+
+**Strategic Level (CURRENT_SESSION.md):**
+- Overall session goal
+- Which brief(s) active (can be multiple)
+- Current phase/plan for each brief
+- Next steps for SESSION
+
+**Tactical Level (Brief Files):**
+- Tasks (Pending/In Progress/Completed) with timestamps
+- Brief-specific context
+- Where we stopped in THIS brief
+- Next steps for THIS BRIEF
+
+**TodoWrite (Execution):**
+- In-memory task tracking
+- Loads from brief (tactical level)
+- Syncs back to brief immediately
+- Derived state, not source of truth
+
+### Best Practices
+
+1. **Never skip brief file updates** - TodoWrite changes MUST sync to brief
+2. **Use timestamps** - Every state change gets a timestamp
+3. **Update both levels** - Strategic (CURRENT_SESSION.md) + Tactical (brief file)
+4. **Test recovery** - After each task, ask "if context resets now, can I resume?"
+5. **One task in_progress at a time** - Clear focus, clear recovery
+
+---
+
 ## Critical Mental Model: Session Management IS the Work
 
 **WRONG mental model:**
@@ -115,23 +270,35 @@ Update `CURRENT_SESSION.md` every time you:
 - Integrated: Work AND documentation happen simultaneously
 - Critical path: Session management IS part of the work, not documentation after
 
-### TodoWrite vs CURRENT_SESSION.md: Both Required
+### Three-Tier Architecture: TodoWrite → Brief → CURRENT_SESSION.md
 
-**They serve DIFFERENT purposes:**
+**All three serve DIFFERENT purposes:**
 
-| Tool | Purpose | Lifespan | Update Trigger |
-|------|---------|----------|----------------|
-| **TodoWrite** | Immediate task tracking | Current conversation only | When starting/completing tasks |
-| **CURRENT_SESSION.md** | Recovery state | Survives context resets | Same as TodoWrite PLUS "Next Steps" |
+| Layer | Level | Purpose | Lifespan | Update Trigger |
+|-------|-------|---------|----------|----------------|
+| **TodoWrite** | Execution | Immediate task tracking | Current conversation only | Starting/completing tasks |
+| **Brief Files** | TACTICAL | Task-specific recovery | Survives context resets | Every TodoWrite change (IMMEDIATE) |
+| **CURRENT_SESSION.md** | STRATEGIC | Session-wide recovery | Survives context resets | Task progress + phase changes |
 
-**You MUST maintain BOTH:**
+**You MUST maintain ALL THREE:**
 - TodoWrite = what you're doing NOW (volatile, in-memory)
-- CURRENT_SESSION.md = recovery if conversation dies (persistent, on disk)
+- Brief file = recovery for THIS BRIEF if conversation dies (persistent, tactical)
+- CURRENT_SESSION.md = recovery for overall SESSION (persistent, strategic)
 
 **After EVERY TodoWrite state change:**
 1. Update TodoWrite status ✅
-2. Update CURRENT_SESSION.md with same information ✅
-3. Update "Next Steps When Resuming" ✅
+2. **IMMEDIATELY** update brief file Tasks section + Session State ✅
+3. Update CURRENT_SESSION.md progress counters ✅
+4. Update "Next Steps When Resuming" in BOTH levels ✅
+
+**Information flow:**
+```
+TodoWrite (in-memory)
+   ↓ syncs to (IMMEDIATE)
+Brief File (tactical level - task details)
+   ↓ aggregates to
+CURRENT_SESSION.md (strategic level - overall status)
+```
 
 ---
 
@@ -147,27 +314,56 @@ If any item unchecked → STOP and load context first.
 
 **WHEN you mark a TodoWrite task as "in_progress":**
 
-1. Update CURRENT_SESSION.md → "Current State" with what you're working on
-2. Update "Next Steps When Resuming" → How to continue if interrupted NOW
-3. THEN start the work
+**Update BOTH levels:**
+
+1. **TACTICAL (Brief file) - IMMEDIATE:**
+   - Move task from "### Pending" to "### In Progress" in brief file
+   - Add timestamp: `(started: YYYY-MM-DD HH:MM)`
+   - Update brief "Session State" → "Current State"
+
+2. **STRATEGIC (CURRENT_SESSION.md):**
+   - Update "Current State" with what you're working on
+   - Update progress counter (e.g., "Phase 4: 1 in progress")
+   - Update "Next Steps When Resuming"
+
+3. **THEN start the work**
 
 ### Checkpoint 3: After Completing TodoWrite Task
 
 **WHEN you mark a TodoWrite task as "completed":**
 
-1. Update CURRENT_SESSION.md → Add task to "Completed Tasks" section
-2. Update "Next Steps When Resuming" → What comes after this task
-3. IF task is from a brief AND all brief tasks done → Go to Checkpoint 4
-4. THEN continue to next task
+**Update BOTH levels:**
+
+1. **TACTICAL (Brief file) - IMMEDIATE:**
+   - Move task from "### In Progress" to "### Completed" in brief file
+   - Add timestamp: `(completed: YYYY-MM-DD HH:MM)`
+   - Update brief "Session State" → "Next Steps When Resuming"
+
+2. **STRATEGIC (CURRENT_SESSION.md):**
+   - Update progress counter (e.g., "Phase 4: 1 of 5 tasks completed")
+   - Update "Next Steps When Resuming" → What comes after this task
+
+3. **IF task is from a brief AND all brief tasks done → Go to Checkpoint 4**
+
+4. **THEN continue to next task**
 
 ### Checkpoint 4: After Brief Completion
 
 **WHEN all tasks from brief [XX-NNN] are completed:**
 
-1. IMMEDIATELY update brief file: Status: "In Progress" → "Done"
-2. Add: `Completed: [current date YYYY-MM-DD]`
-3. Update CURRENT_SESSION.md → Note brief completion
-4. **DO NOT wait for user to ask**
+**Update BOTH levels IMMEDIATELY:**
+
+1. **TACTICAL (Brief file):**
+   - Update Status: "In Progress" → "Done"
+   - Add: `Completed: [current date YYYY-MM-DD]`
+   - Update "Session State" → Final state
+
+2. **STRATEGIC (CURRENT_SESSION.md):**
+   - Note brief completion in Active Briefs section
+   - Update session status if no other active briefs
+   - Update "Next Steps When Resuming"
+
+3. **DO NOT wait for user to ask**
 
 **Timing specification:**
 - ✅ Update AFTER: All acceptance criteria met
@@ -179,10 +375,19 @@ If any item unchecked → STOP and load context first.
 
 **WHEN user says "thanks", "that's all", or conversation ending:**
 
-1. Update CURRENT_SESSION.md → Final state
-2. Update "Next Steps When Resuming" → Exact continuation point
-3. Update all brief statuses if needed
-4. Display: "✅ Session state saved. Resume anytime!"
+**Update BOTH levels:**
+
+1. **TACTICAL (Brief files):**
+   - Update all active brief "Session State" sections
+   - Update "Next Steps When Resuming" → Exact continuation point for each brief
+   - Update all brief statuses if needed (mark Done if completed)
+
+2. **STRATEGIC (CURRENT_SESSION.md):**
+   - Update final state
+   - Update "Next Steps When Resuming" → Which brief to work on next
+   - Note any blockers or decisions
+
+3. **Display:** "✅ Session state saved. Resume anytime!"
 
 ---
 

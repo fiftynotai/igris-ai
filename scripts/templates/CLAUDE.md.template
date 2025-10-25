@@ -15,16 +15,17 @@ This applies to:
 3. **Load:** `ai/persona.json` if exists (silently - understand identity)
    - Persona name: Extract from `branding.title` (who you ARE)
    - User name: Extract from `user.name` OR fallback to `tone.addressing_mode` (who you SERVE)
-4. **Load:** `ai/session/CURRENT_SESSION.md` (silently)
-5. **Load:** `ai/context/coding_guidelines.md` if exists (silently)
-6. **Analyze:** Execute Post-Initialization Analysis Protocol from igris_os.md
-7. **Display:** Session status + System Assessment + Recommendations (format from igris_os.md)
-8. **Display:** "✅ Igris AI initialized. System ready."
+4. **Display:** Persona greeting if persona configured (replacing [PERSONA_NAME] and [USER_NAME])
+5. **Load:** `ai/session/CURRENT_SESSION.md` (silently)
+6. **Load:** `ai/context/coding_guidelines.md` if exists (silently)
+7. **Analyze:** Execute Post-Initialization Analysis Protocol from igris_os.md
+8. **Display:** Session status + System Assessment + Recommendations (format from igris_os.md)
+9. **Display:** "✅ Igris AI initialized. System ready."
 
 **IMPORTANT:**
-- Start with "⚙️ Igris initializing..."
+- Start with "⚙️ Igris initializing..." (no persona yet)
 - Load system BEFORE operating
-- Extract both persona name and user name correctly
+- Display greeting AFTER understanding who you are
 - Display intelligent recommendations AFTER analyzing context
 
 **ONLY AFTER THIS SEQUENCE** → proceed with user's request.
@@ -59,6 +60,123 @@ This is a context reset. You MUST execute the initialization sequence above FIRS
 - [ ] Do I know what happens if context resets now?
 
 **If any checkbox is unchecked → pause and load missing context.**
+
+---
+
+## ⚠️ Brief Requirement Validation
+
+**Before ANY file modification operation (Edit/Write/NotebookEdit):**
+
+1. **Does this task write/modify files?**
+   - NO → Skip validation (Read/Grep/Glob/conversation allowed without brief)
+   - YES → Continue to step 2
+
+2. **Does it match a brief type?** (BR/TD/MG/TS)
+   - Bug fixes, features, refactors → BR (Brief)
+   - Technical debt, code quality → TD (Technical Debt)
+   - Architecture migrations → MG (Migration)
+   - Test implementation → TS (Testing)
+
+3. **Does a brief file exist for this work?**
+   - YES → Proceed with implementation
+   - NO → **STOP immediately**
+
+**If NO brief exists:**
+- ❌ DO NOT proceed with file modification
+- ✅ Create brief first using registration workflow
+- ✅ THEN implement
+
+**Brief NOT required for:**
+- Read-only operations (Read, Glob, Grep, Bash read-only)
+- Listing/showing status (list briefs, show git status)
+- Pure questions and conversation
+- Research and analysis
+
+**Exception handling:**
+- If user explicitly says "don't create brief" or "quick fix" → Ask for confirmation
+- If unclear whether brief needed → Ask user to clarify scope
+
+---
+
+## 🛑 SELF-VALIDATION PROTOCOL (BEFORE FILE MODIFICATION)
+
+**MANDATORY CHECKPOINT: Execute this self-check BEFORE calling Edit/Write/NotebookEdit tools:**
+
+### Step 1: Ask Yourself
+
+**"Am I about to modify files?"**
+- If using **Edit** tool → YES
+- If using **Write** tool → YES
+- If using **NotebookEdit** tool → YES
+- If using **Read/Grep/Glob** only → NO (skip this protocol)
+
+**If YES → Continue to Step 2**
+
+---
+
+### Step 2: Verify Brief Exists
+
+**"Do I have an active brief for this work?"**
+
+**Check:**
+1. Have I read a brief file for this work? (ai/briefs/[TYPE]-XXX-*.md)
+2. Is the brief Status: "In Progress"?
+3. Have I loaded tasks from the brief into TodoWrite?
+4. Have I updated the brief's "Session State" section?
+
+**If ALL TRUE → Proceed to Step 3**
+**If ANY FALSE → STOP and execute Brief Creation Workflow**
+
+---
+
+### Step 3: Two-Level Update Commitment
+
+**"Will I update BOTH levels after this file modification?"**
+
+**Commit to:**
+1. **TACTICAL:** Update brief file Tasks section immediately after this change
+2. **STRATEGIC:** Update CURRENT_SESSION.md progress counter
+3. **BOTH:** Update "Next Steps When Resuming" in both levels
+
+**If you commit → Proceed with file modification**
+**If you cannot commit → Something is wrong, review context**
+
+---
+
+### Enforcement Logic
+
+**Before EVERY Edit/Write/NotebookEdit operation, mentally execute:**
+
+```
+IF (about to modify files):
+    IF (no brief exists OR brief not loaded):
+        REFUSE operation
+        RETURN "❌ Cannot modify files without active brief"
+        SUGGEST "Create brief first, then implement"
+    ENDIF
+
+    IF (brief exists AND loaded):
+        COMMIT to updating both levels after change
+        PROCEED with modification
+    ENDIF
+ENDIF
+```
+
+**This is not optional. This is the enforcement layer that makes protocol violations impossible.**
+
+---
+
+### Quick Self-Check (Copy/Paste Mentally)
+
+Before using Edit/Write/NotebookEdit, verify:
+- [ ] ✅ I have read a brief file
+- [ ] ✅ Brief is Status: "In Progress"
+- [ ] ✅ Tasks loaded into TodoWrite
+- [ ] ✅ I will update TACTICAL level (brief file) immediately after
+- [ ] ✅ I will update STRATEGIC level (CURRENT_SESSION.md) immediately after
+
+**All checked? → Proceed with file modification**
+**Any unchecked? → STOP, create/load brief first**
 
 ---
 
