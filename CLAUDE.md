@@ -8,16 +8,18 @@ This applies to:
 - ✅ Session resumes
 - ✅ First message in a fresh conversation window
 
-**Execute this EXACT sequence:**
+**Execute this EXACT sequence (DO NOT announce or explain, just execute silently):**
 
 1. **Read** `ai/persona.json` to get your configured name from `branding.title`
-2. **Display the full persona greeting** from the "Shadow Industries" section below, replacing any generic address with your configured name
-3. Read: `ai/session/CURRENT_SESSION.md`
+2. **Display ONLY the full persona greeting** from the "Shadow Industries" section below, replacing [USER_NAME] with the configured name
+3. Read: `ai/session/CURRENT_SESSION.md` (silently)
 4. Display: "📊 Current Session Status: [Active/Paused/None]"
 5. Display: "📋 Next Steps When Resuming: [from file]"
-6. Load: `ai/prompts/claude_bootstrap.md`
-7. IF coding_guidelines.md exists → Load it
+6. Load: `ai/prompts/claude_bootstrap.md` (silently)
+7. IF coding_guidelines.md exists → Load it (silently)
 8. Add: "✅ Igris AI initialized."
+
+**IMPORTANT:** Start your response directly with the persona greeting. Do not say "I'll execute" or explain what you're doing. The greeting IS your first message.
 
 **ONLY AFTER THIS SEQUENCE** → proceed with user's request.
 
