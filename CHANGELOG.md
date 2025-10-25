@@ -7,6 +7,138 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.2.0] - 2025-10-26
+
+### Added
+
+- **Comprehensive Protocol Enforcement System (TD-010)** - Eliminates protocol violations
+  - 5-phase implementation across 25 tasks
+  - **Phase 1:** Enhanced brief templates with integrated task tracking
+    - Tasks section (Pending/In Progress/Completed) with timestamps
+    - Session State section for tactical-level recovery
+    - Updated all 4 brief type templates (BR, TD, MG, TS)
+  - **Phase 2:** CLAUDE.md mandatory checkpoints
+    - Brief Requirement Validation section
+    - Self-Validation Protocol (3-step checkpoint before file modification)
+    - Enforcement logic with explicit REFUSE operations
+  - **Phase 3:** TodoWrite-Brief integration
+    - IMMEDIATE sync on every task state change
+    - Brief files become persistent source of truth
+    - Recovery process: Brief → TodoWrite on context reset
+  - **Phase 4:** Two-level session management architecture
+    - Strategic level: CURRENT_SESSION.md (overall session/phase tracking)
+    - Tactical level: Brief files (task-specific progress)
+    - Three-tier architecture: TodoWrite → Brief → CURRENT_SESSION.md
+    - Multiple briefs can be tracked simultaneously
+  - **Phase 5:** Validation & enforcement
+    - Self-validation protocol before Edit/Write/NotebookEdit operations
+    - Updated CLAUDE.md template for new projects
+    - Protocol violations now procedurally impossible
+  - Result: ~1900+ lines added/modified across 15 files
+
+- **Igris AI Coding Guidelines (TD-007)** - Dogfooding achievement
+  - Created `ai/context/coding_guidelines.md` (700+ lines)
+  - Comprehensive bash scripting standards for Igris AI itself
+  - 12 major sections covering all coding patterns:
+    - File structure and organization
+    - Naming conventions (scripts, functions, variables)
+    - Error handling and fail-fast with `set -e`
+    - Multi-line text handling (perl vs sed)
+    - JSON manipulation (python3, optional jq)
+    - User experience (clear messages, progress indicators)
+    - Testing requirements (bats framework)
+    - Documentation standards
+    - Security (quoted variables, path validation)
+    - Performance optimization
+    - Conventional commits format
+    - Code review checklist
+  - References to related briefs (BR-005, TD-004, TD-005, TD-006)
+  - Updated `ai/CONTRIBUTING.md` with prominent guidelines reference
+  - **Dogfooding:** Igris AI now practices what it preaches
+
+### Changed
+
+- **Brief workflow enforcement** - Read-only operations don't require briefs
+  - File modification tasks (Edit/Write/NotebookEdit) MUST have brief
+  - Research tasks (Read/Glob/Grep/Bash read-only) don't need brief
+  - Clear separation prevents over-bureaucracy
+
+- **Session management architecture** - Two-level approach
+  - CURRENT_SESSION.md = Strategic (overall session, multiple briefs, phases)
+  - Brief files = Tactical (task-specific progress, session state per brief)
+  - Both levels updated at checkpoints for guaranteed recovery
+
+- **CONTRIBUTING.md completely rewritten**
+  - Previous version was from different project (Opaala)
+  - Now properly reflects Igris AI development workflow
+  - 400+ lines of Igris-specific contribution guide
+  - Prominent coding guidelines reference
+  - Bash script development workflow
+  - Testing guidelines (shellcheck, bats)
+  - PR checklist aligned with coding standards
+
+### Improved
+
+- **Context reset recovery** - Guaranteed exact continuation
+  - CURRENT_SESSION.md → Brief file → TodoWrite → Continue exactly where stopped
+  - "Next Steps When Resuming" in both strategic and tactical levels
+  - Two-level architecture enables precise recovery
+
+- **Brief templates** - Now include persistent task tracking
+  - Replaces volatile TodoWrite with persistent brief-based tasks
+  - Timestamps for task state changes
+  - Session State section enables exact continuation
+
+- **System discipline** - Protocol violations procedurally impossible
+  - Cannot skip brief creation (validation prevents it)
+  - Cannot forget session updates (checkpoints enforce it)
+  - Cannot lose work on context reset (two-level persistence)
+  - Igris AI transformed from "guidelines + hope" to "enforced discipline"
+
+### Philosophy
+
+**TD-010 Achievement:** "Make the right thing easy, wrong thing hard"
+- Enforcement over documentation
+- Persistent over volatile
+- Automatic over manual
+- Impossible over discouraged
+
+**TD-007 Achievement:** "Practice what we preach"
+- Igris AI enforces coding_guidelines.md on user projects
+- Igris AI now has coding_guidelines.md for itself
+- Credibility through dogfooding
+- Clear standards for all contributors
+
+### Migration from 2.1.1
+
+No breaking changes. Enhanced protocol enforcement activates automatically:
+
+1. Run Igris AI update:
+   ```bash
+   ./scripts/igris_update.sh
+   ```
+
+2. New projects get enhanced templates automatically
+
+3. Existing briefs compatible (can add Tasks/Session State sections manually if desired)
+
+4. CURRENT_SESSION.md remains compatible (strategic level tracking)
+
+### Technical Details
+
+**Files affected:**
+- 15 files modified for TD-010 (templates, prompts, documentation)
+- 3 files created/modified for TD-007 (coding_guidelines.md, CONTRIBUTING.md, CHANGELOG.md)
+
+**Enforcement layers (TD-010):**
+1. CLAUDE.md initialization (load system before operating)
+2. Self-validation protocol (check before file modification)
+3. TodoWrite-Brief sync (immediate persistence)
+4. Checkpoint updates (both levels at every transition)
+5. Template enforcement (new projects get enhanced workflow)
+
+---
+
 ## [2.1.1] - 2025-10-25
 
 ### Fixed
