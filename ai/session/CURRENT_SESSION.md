@@ -1,9 +1,9 @@
-# Current Session: Completed TD-003 - Persona Hook System
+# Current Session: Persona Packs Plugin Development
 
 ## Session Goal
-Implement hook system in Blueprint AI core to enable plugin content injection, specifically for upcoming persona packs plugin.
+Complete persona packs plugin development after implementing TD-003 hook system.
 
-## Status: ✅ Completed
+## Status: 🔄 In Progress - Plugin Built, Ready for Testing
 
 ---
 
@@ -65,137 +65,168 @@ Implement hook system in Blueprint AI core to enable plugin content injection, s
 - [x] Tested hook system (placeholder exists, resolution works)
 - [x] Marked TD-003 as Done (Completed: 2025-10-25)
 
-### Test Plan for Tomorrow 🧪
-- [ ] User starts fresh conversation
-- [ ] Claude should detect context reset
-- [ ] Claude should execute mandatory initialization sequence
-- [ ] Claude should display session status BEFORE proceeding
-- [ ] Claude should show "Next Steps When Resuming"
-- [ ] Verify workflow compliance throughout conversation
+### Completed ✅ (Persona Packs Plugin - Build Phase)
+- [x] Updated ROADMAP.md with persona packs feature
+- [x] Created comprehensive design document (docs/PERSONA_PLUGIN_DESIGN.md - 757 lines)
+- [x] Designed mask system (none, half, light, full)
+- [x] Created plugin.json with persona_injection hook
+- [x] Created all 4 Igris mask files
+- [x] Created persona.md character definition
+- [x] Created commands.md shadow command mappings
+- [x] Created banner.txt ASCII banner
+- [x] Built persona_mask.sh control script (279 lines)
+- [x] Built persona_install.sh interactive installer (139 lines)
+- [x] Created plugin install.sh
+- [x] Created comprehensive README.md
+- [x] Created persona.json.example template
+- [x] Packaged plugin at /tmp/blueprint-ai-persona-packs.tar.gz
+- [x] Created build summary document
+
+### Next Steps When Resuming 🎯
+
+**Context:** We've completed TD-003 (hook system) and built the entire persona packs plugin. Plugin is packaged and ready for testing.
+
+**Immediate Next Steps:**
+
+1. **Test Persona Plugin Locally**
+   ```bash
+   # Install plugin from local package
+   ./scripts/plugin_install.sh file:///tmp/blueprint-ai-persona-packs
+
+   # Run interactive installer
+   ./scripts/persona_install.sh
+
+   # Test mask switching
+   ./scripts/persona_mask.sh status
+   ./scripts/persona_mask.sh wear igris full
+   ```
+
+2. **Fix Any Bugs Found**
+   - Verify hook injection works
+   - Test all 4 mask levels
+   - Verify CLAUDE.md regeneration
+   - Test shadow commands (if full mask)
+
+3. **Release v1.0.5 (Blueprint AI Core)**
+   ```bash
+   git tag -a v1.0.5 -m "Release v1.0.5 - Plugin Hook System"
+   git push origin v1.0.5
+   gh release create v1.0.5 --title "v1.0.5 - Plugin Hook System"
+   ```
+
+4. **Create Persona Plugin Repository**
+   ```bash
+   cd /tmp && tar -xzf blueprint-ai-persona-packs.tar.gz
+   cd blueprint-ai-persona-packs
+   # Initialize git, push to new repo
+   ```
+
+5. **Release v1.0.0 (Persona Plugin)**
+   - Tag v1.0.0
+   - Create GitHub release
+   - Update Blueprint AI README with link
+
+**Key Files:**
+- Plugin package: `/tmp/blueprint-ai-persona-packs.tar.gz`
+- Build summary: `PERSONA_PLUGIN_BUILD_SUMMARY.md`
+- Design doc: `docs/PERSONA_PLUGIN_DESIGN.md`
+
+**Status:**
+- ✅ v1.0.5 code complete (hook system)
+- ✅ Persona plugin built (13 files, 459+ LOC)
+- ⏳ Testing needed
+- ⏳ Releases pending
 
 ---
 
 ## Session Context
 
 ### What Was Accomplished So Far
-- Created TD-002 brief documenting workflow enforcement improvements
-- Added mandatory first action protocol to CLAUDE.md (top of file)
-- Added context reset detection to CLAUDE.md
-- Added session state validation checklist to CLAUDE.md
-- Updated claude_bootstrap.md with critical mental model section
-- Updated claude_bootstrap.md with 5-checkpoint system
-- Created session_protocol.md as quick reference for checkpoints
+- Completed TD-002: Workflow enforcement improvements (v1.0.4)
+- Released Blueprint AI v1.0.4 with enhanced session management
+- Designed persona packs plugin architecture using mask metaphor
+- Implemented TD-003: Plugin hook system for extensibility
+- Built complete persona plugin (blueprint-ai-persona-packs v1.0.0)
+- Created 13 plugin files totaling 459+ lines of code
+- Packaged plugin as tarball ready for distribution
 
 ### Current State
-**Last action taken:** Updated all documentation to reflect v1.0.4
+**Last action taken:** Saved session state for continuation
 **Working directory:** /Users/m.elamin/StudioProjects/blueprint-ai
 **Current branch:** main
-**Version:** 1.0.4 (RELEASED!)
-**Uncommitted changes:** Yes (3 files: ROADMAP.md, claude_bootstrap.md, session state)
+**Version:** 1.0.5 (code complete, not yet released)
+**Uncommitted changes:** No (all TD-003 changes committed)
 
-**What was accomplished today:**
+**What was accomplished in this session:**
 - ✅ TD-002 completed (workflow enforcement enhancement)
-- ✅ Implemented mandatory first action in CLAUDE.md template
-- ✅ Implemented 5-checkpoint system in claude_bootstrap.md
-- ✅ Created session_protocol.md quick reference
-- ✅ All changes committed and merged to main
-- ✅ TD-002 marked as Done
-- ✅ Applied v1.0.4 to core repo itself (dogfooding!)
-- ✅ **Created GitHub release v1.0.4**
-- ✅ **Updated all documentation to v1.0.4** (README, ROADMAP, claude_bootstrap)
+- ✅ Blueprint AI v1.0.4 released to GitHub
+- ✅ All documentation updated to v1.0.4
+- ✅ Analyzed persona packs feature plan
+- ✅ Recommended plugin architecture approach
+- ✅ Created TD-003 brief for persona hook system
+- ✅ Implemented TD-003 (plugin hook system)
+- ✅ Updated to v1.0.5 (code complete)
+- ✅ Designed complete persona plugin specification (757 lines)
+- ✅ Built entire persona plugin (13 files, 459+ LOC)
+- ✅ Created Igris persona with 4 mask levels
+- ✅ Built persona_mask.sh control script (279 lines)
+- ✅ Built persona_install.sh interactive installer (139 lines)
+- ✅ Packaged plugin as tarball
 
-**Commits made:**
-- f1ca3b8 - feat: enhance workflow enforcement based on production feedback
-- [merge] - feat: enhance workflow enforcement (TD-002)
-- f66efd2 - docs: mark TD-002 as Done
-- 67966d9 - test: save session state for v1.0.4 workflow enforcement test
-- 21d4b39 - feat: apply v1.0.4 fixes to core repo (dogfooding)
-- 4c8a55d - docs: update session state with dogfooding work
+**Key Commits:**
+- feat: enhance workflow enforcement (TD-002) - merged to main
+- docs: mark TD-002 as Done
+- feat: apply v1.0.4 fixes to core repo
+- feat: implement plugin hook system (TD-003)
 
-**Release created:**
-- Tag: v1.0.4
-- URL: https://github.com/Fifty50ai/blueprint-ai/releases/tag/v1.0.4
+**Releases:**
+- v1.0.4: Released (GitHub)
+- v1.0.5: Code complete, not yet released
+- Persona Plugin v1.0.0: Built, not yet released
 
-**What to test tomorrow:**
-The new v1.0.4 protocols should ensure Claude:
-1. Detects context reset automatically
-2. Reads CURRENT_SESSION.md FIRST (before proceeding)
-3. Displays session status
-4. Shows "Next Steps When Resuming"
-5. Then proceeds with user's request
+### What to Test
 
-### Next Steps When Resuming (FOR TOMORROW'S TEST)
+The persona plugin and v1.0.5 are ready for validation. When resuming, the recommended test sequence is documented in the "Next Steps When Resuming" section above.
 
-**Expected Claude behavior on resume:**
+### Technical Architecture
 
-When you start a new conversation tomorrow, Claude should:
+**Hook System (TD-003):**
+- Added {{PERSONA_INJECTION}} placeholder to CLAUDE.md.template
+- blueprint_init.sh resolves hooks at runtime from plugin configuration
+- plugin_install.sh reads hooks from plugin.json and stores in installed.json
+- Automatic CLAUDE.md regeneration when plugin with hooks installed
 
-1. **Detect context reset** (sees this file in a fresh conversation)
-2. **Execute mandatory first action sequence:**
-   - Read ai/session/CURRENT_SESSION.md ✓ (you're reading it now!)
-   - Display: "📊 Current Session Status: Paused (Awaiting Test)"
-   - Display: "📋 Next Steps When Resuming: [see below]"
-   - Load: ai/prompts/claude_bootstrap.md
-   - Display: "✅ Blueprint AI initialized. Ready for your command!"
-3. **THEN proceed** with whatever you ask
+**Mask System:**
+- 4 levels: none (dormant), half (branding), light (balanced), full (immersion)
+- Dynamic hook generation based on ai/persona.json config
+- persona_mask.sh handles wearing/adjusting/removing masks
+- CLAUDE.md regenerated whenever mask changes
 
-**What you should do after Claude initializes:**
+**Shadow Commands (Full Mask Only):**
+- ARISE → Start/resume session
+- HUNT [BR-XXX] → Implement brief
+- REPORT → Show status
+- BIND → Register brief
+- BANISH [BR-XXX] → Archive brief
 
-1. Test the migration project with v1.0.4
-2. ~~Or create GitHub release for v1.0.4~~ ✅ DONE!
-3. Or test TD-002 acceptance criteria in practice
-4. Archive this session when done
-
-**If Claude skips initialization:** That means v1.0.4 protocols didn't work - please share feedback!
-
-### Important Notes
-- **Core problem:** Claude skips initialization on context resets, doesn't update session files
-- **Root cause:** Session management feels optional, not critical path
-- **Solution:** Make it "in your face" with mandatory first action, checkpoints, validation
-- **Based on:** Real production feedback from Claude's self-assessment
-- **Implementation:** Using Blueprint AI workflow to dogfood the system itself
-
-### Key Changes Made
-
-**CLAUDE.md.template:**
-- Added mandatory first action at very top (unmissable)
-- Added context reset detection (treats all resets as new conversations)
-- Added validation checklist (5 items to check before work)
-
-**claude_bootstrap.md:**
-- Added "Critical Mental Model" section (session = critical path)
-- Added TodoWrite vs CURRENT_SESSION.md clarification (both required)
-- Added 5-checkpoint system with exact WHEN/THEN protocols
-
-**session_protocol.md (NEW):**
-- Quick reference for all 5 checkpoints
-- Examples of correct usage
-- Common mistakes to avoid
-- Mental model shift explanation
+All shadow commands execute standard Blueprint AI workflows.
 
 ---
 
-## Testing Plan
+## Briefs Worked On
 
-1. Start fresh conversation with "continue phase 2"
-2. Verify initialization happens BEFORE execution
-3. Verify session status displayed
-4. Complete a task → verify CURRENT_SESSION.md updated immediately
-5. Complete a brief → verify status changes to "Done" immediately
-6. Simulate context reset → verify re-initialization happens
+1. **TD-002: Workflow Enforcement Enhancement**
+   - Priority: P1-High
+   - Status: Done (Completed: 2025-10-15)
+   - Released in: v1.0.4
 
----
-
-## Brief Reference
-
-**Brief:** TD-002-workflow-enforcement.md
-**Priority:** P1-High
-**Effort:** M-Medium (1-2d)
-**Type:** Technical Debt
-**Status:** In Progress
+2. **TD-003: Plugin Hook System**
+   - Priority: P1-High
+   - Status: Done (Completed: 2025-10-25)
+   - Released in: v1.0.5 (pending release)
 
 ---
 
 **Last Updated:** 2025-10-25
-**Session Duration:** ~1.5 hours
-**Session ID:** 2025-10-15-001
+**Session Duration:** ~4 hours
+**Session ID:** 2025-10-25-persona-packs
