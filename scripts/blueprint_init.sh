@@ -191,10 +191,25 @@ if [ -f "ai/plugins/installed.json" ] && command -v jq &> /dev/null; then
 fi
 
 # Create CLAUDE.md with variable substitution
+# Use a two-step process to handle multi-line PERSONA_INJECTION
+INSTALL_DATE=$(date -u +"%Y-%m-%d")
+
+# First pass: Replace simple variables
 sed -e "s/{{BLUEPRINT_VERSION}}/$BLUEPRINT_VERSION/g" \
-    -e "s/{{INSTALL_DATE}}/$(date -u +"%Y-%m-%d")/g" \
-    -e "s|{{PERSONA_INJECTION}}|$PERSONA_INJECTION|g" \
-    "$BLUEPRINT_DIR/scripts/templates/CLAUDE.md.template" > CLAUDE.md
+    -e "s/{{INSTALL_DATE}}/$INSTALL_DATE/g" \
+    "$BLUEPRINT_DIR/scripts/templates/CLAUDE.md.template" > CLAUDE.md.tmp
+
+# Second pass: Replace persona injection using perl (handles newlines)
+if [ -n "$PERSONA_INJECTION" ]; then
+  # Escape special characters for perl regex
+  ESCAPED_INJECTION=$(printf '%s\n' "$PERSONA_INJECTION" | perl -pe 's/([\\\/\$])/\\$1/g')
+  perl -i -pe "s/\{\{PERSONA_INJECTION\}\}/$ESCAPED_INJECTION/g" CLAUDE.md.tmp
+else
+  # Remove the placeholder if no injection
+  perl -i -pe 's/\{\{PERSONA_INJECTION\}\}//g' CLAUDE.md.tmp
+fi
+
+mv CLAUDE.md.tmp CLAUDE.md
 
 # Copy core scripts
 echo "🔧 Installing Blueprint AI scripts..."

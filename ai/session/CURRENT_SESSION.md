@@ -84,58 +84,30 @@ Complete persona packs plugin development after implementing TD-003 hook system.
 
 ### Next Steps When Resuming 🎯
 
-**Context:** We've completed TD-003 (hook system) and built the entire persona packs plugin. Plugin is packaged and ready for testing.
+**Context:** Testing persona plugin. Found bug in sed command for multi-line replacement. Fixing now.
 
 **Immediate Next Steps:**
 
-1. **Test Persona Plugin Locally**
-   ```bash
-   # Install plugin from local package
-   ./scripts/plugin_install.sh file:///tmp/blueprint-ai-persona-packs
+1. **Fix sed newline bug** ✅ IN PROGRESS
+   - Bug location: scripts/blueprint_init.sh line 196, scripts/persona_mask.sh line 132
+   - Problem: sed cannot handle newlines in replacement pattern
+   - Solution: Use perl or awk for multi-line replacement
 
-   # Run interactive installer
-   ./scripts/persona_install.sh
-
-   # Test mask switching
-   ./scripts/persona_mask.sh status
-   ./scripts/persona_mask.sh wear igris full
-   ```
-
-2. **Fix Any Bugs Found**
-   - Verify hook injection works
+2. **Continue testing**
    - Test all 4 mask levels
-   - Verify CLAUDE.md regeneration
-   - Test shadow commands (if full mask)
+   - Verify CLAUDE.md regeneration works
+   - Test shadow commands (full mask)
 
 3. **Release v1.0.5 (Blueprint AI Core)**
-   ```bash
-   git tag -a v1.0.5 -m "Release v1.0.5 - Plugin Hook System"
-   git push origin v1.0.5
-   gh release create v1.0.5 --title "v1.0.5 - Plugin Hook System"
-   ```
 
 4. **Create Persona Plugin Repository**
-   ```bash
-   cd /tmp && tar -xzf blueprint-ai-persona-packs.tar.gz
-   cd blueprint-ai-persona-packs
-   # Initialize git, push to new repo
-   ```
 
 5. **Release v1.0.0 (Persona Plugin)**
-   - Tag v1.0.0
-   - Create GitHub release
-   - Update Blueprint AI README with link
 
-**Key Files:**
-- Plugin package: `/tmp/blueprint-ai-persona-packs.tar.gz`
-- Build summary: `PERSONA_PLUGIN_BUILD_SUMMARY.md`
-- Design doc: `docs/PERSONA_PLUGIN_DESIGN.md`
-
-**Status:**
-- ✅ v1.0.5 code complete (hook system)
-- ✅ Persona plugin built (13 files, 459+ LOC)
-- ⏳ Testing needed
-- ⏳ Releases pending
+**Bugs Found:**
+1. ❌ sed multi-line replacement fails in blueprint_init.sh and persona_mask.sh
+   - Status: Fixing
+   - Files affected: scripts/blueprint_init.sh, scripts/persona_mask.sh
 
 ---
 
