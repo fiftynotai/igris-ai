@@ -1,48 +1,112 @@
-# Igris AI
+# ✦ IGRIS — AI Engineering Platform
+> *From Vibe Coding → Vibe Engineering*
 
-**Intelligent code quality and architecture management system powered by AI**
-
-**Version:** 2.0.0 | **Status:** ✅ Production Ready
-
-Igris AI helps teams maintain high code quality and architectural standards by providing:
-- 🎯 Systematic bug and feature tracking
-- 📋 Architecture compliance enforcement
-- 🤖 AI-powered code analysis and migration planning
-- 📚 Comprehensive documentation generation
-- 🔌 Extensible plugin system
+**Version 2.0.0** | Production Ready
 
 ---
 
-## What is Igris AI?
+> *"AI made coding faster — but not better. IGRIS brings the discipline."*
 
-Igris AI is a project management system designed to work seamlessly with Claude AI to help you:
+**IGRIS** analyzes repositories, applies structured playbooks, and engineers features, fixes, migrations, and documentation with clarity.
 
-1. **Maintain Architecture Standards** - Define and enforce your project's architecture patterns
-2. **Track Bugs & Features** - Manage development work with structured briefs
-3. **Analyze Codebases** - Automatically identify technical debt and violations
-4. **Plan Migrations** - Generate actionable tasks to bring projects up to standard
-5. **Document Everything** - Auto-generate architecture documentation
+Not just code generation. **Engineering execution.**
+
+**Philosophy:** Plan · Build · Prove · Document · Share · Evolve
 
 ---
 
-## Quick Start
+## ✦ The Problem We Solve
+
+AI made coding faster — but not better. Speed without structure created:
+- Massive PRs with no context
+- Code without tests
+- Features without docs
+- Architecture violations everywhere
+- Technical debt accumulating
+- Unmaintainable codebases
+
+**This was not engineering — it was chaos.**
+
+---
+
+## ✦ IGRIS vs Typical AI Tools
+
+| Typical AI Tools | IGRIS |
+|------------------|-------|
+| Code generation | **Engineering execution** |
+| One-off snippets | **End-to-end playbooks** |
+| Reactive fixes | **Strategic planning** |
+| Random outputs | **Repeatable workflows** |
+| Closed approach | **Open-source oriented** |
+
+**IGRIS doesn't just write code — it engineers outcomes.**
+
+---
+
+## ✦ What is IGRIS?
+
+**IGRIS** is an AI Engineering Platform that transforms how you build software.
+
+**Category:** AI Engineering Platform
+**Core Promise:** Structure the Chaos
+
+### The System
+
+**1. Analyzer**
+- Understands your repository structure
+- Identifies architecture patterns
+- Detects violations and technical debt
+
+**2. Playbooks**
+- Repeatable engineering workflows
+- Brief management (bugs, features, migrations)
+- Structured planning before coding
+
+**3. Executor**
+- Minimal, focused changes
+- Automated testing
+- Documentation generation
+
+**4. Workflow Engine**
+- Session tracking and recovery
+- Decision logging
+- Learning capture
+
+**5. Open Ecosystem**
+- Plugin system
+- Extensible architecture
+- Community-driven
+
+---
+
+## ✦ Quick Start
+
+### The Engineering Workflow
+
+IGRIS guides you through disciplined engineering:
+
+1. **Plan** - Define briefs before coding
+2. **Build** - Implement with architecture enforcement
+3. **Prove** - Automated testing
+4. **Document** - Auto-generated docs
+5. **Share** - Open-source ready
 
 ### Installation
 
 ```bash
-# Clone Igris AI
+# Clone IGRIS
 git clone https://github.com/fiftynotai/igris-ai
 cd your-project
 
-# Initialize Igris AI in your project
+# Initialize IGRIS in your project
 ../igris-ai/scripts/igris_init.sh
 ```
 
 This creates:
-- `ai/` - Igris AI directory with templates
+- `ai/` - IGRIS directory with templates
 - `.claude/hooks/` - Startup hook for automatic initialization
 - `CLAUDE.md` - Context for Claude Code CLI
-- `scripts/` - Core Igris AI scripts (6 scripts including update system)
+- `scripts/` - Core IGRIS scripts (6 scripts including update system)
 - Documentation and guides
 
 ### Start Using Claude (Truly Automatic!)
@@ -54,7 +118,7 @@ $ claude
 **BEFORE you type anything**, you'll see:
 
 ```
-🚀 Welcome to Igris AI on Claude Code
+🚀 Welcome to IGRIS on Claude Code
 
 📊 Project Status
 ────────────────
@@ -72,7 +136,7 @@ Ready for your command!
 
 **Session Management:**
 
-Igris AI tracks your work continuously in `ai/session/CURRENT_SESSION.md`:
+IGRIS tracks your work continuously in `ai/session/CURRENT_SESSION.md`:
 - 📊 **Automatic recovery** - If your conversation resets, Claude resumes from where you left off
 - 🔄 **Progress tracking** - Every task completion is saved immediately
 - 📋 **Context preservation** - "Next Steps When Resuming" always up-to-date
@@ -82,7 +146,7 @@ Claude automatically initializes on every conversation (even after context reset
 
 ### Optional: Shell Integration
 
-Want terminal notifications when entering Igris AI projects?
+Want terminal notifications when entering IGRIS projects?
 
 ```bash
 $ ./scripts/install_shell_integration.sh
@@ -91,18 +155,72 @@ $ ./scripts/install_shell_integration.sh
 This adds a notification to your shell (bash/zsh):
 ```bash
 $ cd my-project
-📘 Igris AI detected (v1.0.4)
-   Claude will auto-initialize with Igris AI configuration
+📘 IGRIS detected (v2.0.0)
+   Claude will auto-initialize with IGRIS configuration
 ```
 
 **Benefits:**
 - Visual context awareness
-- See Igris AI version
-- Know which projects use Igris AI
+- See IGRIS version
+- Know which projects use IGRIS
 
 **Security:** You choose to install, use the script, or add manually. We never modify your shell without permission.
 
-### Generate Architecture Documentation
+---
+
+## ✦ Core Capabilities
+
+### 📊 Playbooks — Repeatable Engineering
+
+**Structured Brief Management**
+
+IGRIS uses structured briefs to plan work before coding:
+- **BR-XXX** - Bug fixes and features
+- **MG-XXX** - Migration tasks (architecture refactoring)
+- **TD-XXX** - Technical debt cleanup
+- **TS-XXX** - Testing tasks
+
+Each brief enforces:
+- Clear problem definition
+- Acceptance criteria
+- Test plans
+- Priority (P0-Critical → P3-Low)
+- Effort estimation (S/M/L/XL)
+
+**Brief Lifecycle**
+```
+Draft → Ready → In Progress → In Review → Done → Archived
+```
+
+**Quick Examples:**
+
+```bash
+# Register a bug (don't implement yet)
+"Register a bug: [description]"
+
+# List all bugs
+"List all bugs"
+
+# Implement a brief
+"Implement BR-001"
+```
+
+See `ai/prompts/bug_prompts.md` and `ai/prompts/feature_prompts.md` for complete workflows.
+
+---
+
+### 🔍 Analyzer — Repository Intelligence
+
+**Codebase Analysis**
+
+IGRIS analyzes your code to find:
+- Architecture violations
+- Code quality issues
+- Testing gaps
+- Performance problems
+- Security vulnerabilities
+
+**Architecture Documentation Generation**
 
 Ask Claude to analyze your project:
 
@@ -115,7 +233,7 @@ Claude will:
 - Ask questions about your architecture
 - Generate comprehensive documentation in `ai/context/`
 
-### Generate Coding Guidelines
+**Coding Guidelines Generation**
 
 Create standardized coding guidelines for your project:
 
@@ -142,7 +260,7 @@ Claude will:
 - Architecture decisions
 - AI assistant guidance
 
-### Analyze Your Codebase
+**Migration Analysis**
 
 Find issues and generate migration tasks:
 
@@ -155,138 +273,85 @@ Claude will:
 - Generate categorized briefs (Migration, Bugs, Technical Debt, Testing)
 - Create a migration roadmap with phases
 
-### Start Managing Work
-
-```
-# Register a bug (don't implement yet)
-"Register a bug: [description]"
-
-# List all bugs
-"List all bugs"
-
-# Implement a bug fix
-"Implement BR-001"
-```
-
-See `ai/prompts/bug_prompts.md` and `ai/prompts/feature_prompts.md` for complete workflows.
-
 ---
 
-## 📦 Example Project
+### ⚡ Executor — Disciplined Output
 
-**Want to see Igris AI in action?**
+**Code Generation with Discipline**
 
-Check out our complete working example:
+IGRIS doesn't just generate code — it engineers it:
+- **Minimal diffs** - Focused, reviewable changes
+- **Architecture-compliant** - Respects your standards
+- **Tested** - Automated test generation
+- **Documented** - Inline comments and docs
 
-**[igris-ai-flutter-example](https://github.com/fiftynotai/igris_ai_flutter_example)** - A fully configured Flutter project demonstrating:
-- ✅ Complete Igris AI setup
-- ✅ Example briefs (BR, FR, TD)
-- ✅ Conventional commits
-- ✅ Automated workflows
-- ✅ Distribution plugin integration
-- ✅ Real commit history showing workflow
+**Enforcement**
 
-Perfect for:
-- Learning how to use Igris AI
-- Seeing real-world usage
-- Copy-paste examples
-- Validating your setup
-
-**[→ View Example Project](https://github.com/fiftynotai/igris_ai_flutter_example)**
-
----
-
-## Features
-
-### 📋 Structured Brief Management
-
-- **BR-XXX** - Bug fixes and features
-- **MG-XXX** - Migration tasks (architecture refactoring)
-- **TD-XXX** - Technical debt cleanup
-- **TS-XXX** - Testing tasks
-
-Each brief includes:
-- Problem description
-- Acceptance criteria
-- Test plan
-- Priority and effort estimates
-
-### 🎯 Architecture Enforcement
-
-Define your architecture once, enforce it everywhere:
-- **Coding Guidelines Generation** - Extract from base repo or infer from project
+Every change validates against:
+- Coding guidelines (from `ai/context/coding_guidelines.md`)
 - Layer boundaries (MVVM, MVC, Clean Architecture, etc.)
-- Naming conventions and code structure
-- API patterns and best practices
-- Module organization
+- Naming conventions
+- API patterns
+- Best practices
 
-**NEW:** `generate_coding_guidelines.md` creates standardized guidelines by:
-- Analyzing your base architecture repository
-- Extracting patterns from existing code
-- Merging multiple sources with conflict resolution
-- Using platform-specific best practices as fallback
+**Workflow: Plan → Patch → Tests → Run → Commit**
 
-### 🤖 AI-Powered Analysis
-
-Claude analyzes your code to find:
-- Architecture violations
-- Code quality issues
-- Testing gaps
-- Performance problems
-- Security vulnerabilities
-
-### 🔌 Plugin System
-
-Extend Igris AI with plugins for:
-- Distribution automation (Flutter, React Native, etc.)
-- CI/CD integration
-- Custom workflows
-- Platform-specific tools
+1. **Plan** - Read brief, identify affected modules
+2. **Patch** - Implement with architecture enforcement
+3. **Tests** - Generate unit and integration tests
+4. **Run** - Validate linter, tests, build
+5. **Commit** - Conventional commits format
 
 ---
 
-## Core Concepts
+### 🔄 Workflow Engine — Session Management
 
-### Briefs
+**Automatic Recovery**
 
-Briefs are structured work items that capture:
-- What needs to be done
-- Why it's important
-- How to verify it's complete
-- Testing requirements
-
-### Session Tracking
-
-Igris AI tracks your work:
-- **CURRENT_SESSION.md** - Active work
+IGRIS tracks your work continuously:
+- **CURRENT_SESSION.md** - Active session state
 - **BLOCKERS.md** - Blocking issues
 - **DECISIONS.md** - Architectural decisions
 - **LEARNINGS.md** - Discovered patterns
 
-### Brief Lifecycle
+**Context Preservation**
 
-```
-Draft → Ready → In Progress → In Review → Done → Archived
-```
+If your Claude conversation resets, IGRIS automatically:
+- Loads previous session state
+- Shows "Next Steps When Resuming"
+- Continues from exact stopping point
+- Preserves all progress
 
-### Priority Levels
+**Session Tracking**
 
-- **P0 - Critical** - Blockers, crashes, security issues
-- **P1 - High** - Important features, major bugs
-- **P2 - Medium** - Standard work
-- **P3 - Low** - Nice-to-haves, polish
+Updated every time you:
+- ✅ Complete a task
+- 🔄 Start a task
+- 🚫 Encounter a blocker
+- 💡 Make a decision
+- 📚 Discover a pattern
+
+See `ai/prompts/session_protocol.md` for checkpoint details.
 
 ---
 
-## Plugin System
+### 🔌 Open Ecosystem — Plugin System
 
-### Installing Plugins
+**Extensibility**
+
+IGRIS supports plugins for:
+- Platform-specific tools (Flutter, React Native, etc.)
+- Distribution automation (build, version, deploy)
+- CI/CD integration
+- Custom workflows
+
+**Installing Plugins**
 
 ```bash
 ./scripts/plugin_install.sh <plugin-repo-url>
 ```
 
-### Available Plugins
+**Available Plugins**
 
 - **[igris-ai-distribution-flutter](https://github.com/fiftynotai/igris-ai-distribution-flutter)** - Smart release automation for Flutter
   - Automated version bumping
@@ -295,13 +360,68 @@ Draft → Ready → In Progress → In Review → Done → Archived
   - Fastlane integration
   - **[See it in action →](https://github.com/fiftynotai/igris_ai_flutter_example)**
 
-### Creating Plugins
+**Creating Plugins**
 
 See [Plugin Development Guide](docs/PLUGIN_DEVELOPMENT.md)
 
 ---
 
-## Updating Igris AI
+## ✦ Engineering Principles
+
+IGRIS enforces 5 core principles:
+
+### 1. Plan before Code
+- Define briefs with clear acceptance criteria
+- Set priority and effort estimates
+- Identify affected modules and dependencies
+
+### 2. Explain before Execute
+- Load architecture context
+- Document design decisions
+- State implementation approach
+
+### 3. Prove before Merge
+- Run automated tests
+- Validate linter compliance
+- Check architecture conformance
+
+### 4. Document before Done
+- Add code comments to public APIs
+- Update architecture docs
+- Log decisions in DECISIONS.md
+
+### 5. Open before Private
+- Write release-ready code
+- Include proper licensing
+- Enable community contribution
+
+---
+
+## 📦 Example Project
+
+**Want to see IGRIS in action?**
+
+Check out our complete working example:
+
+**[igris-ai-flutter-example](https://github.com/fiftynotai/igris_ai_flutter_example)** - A fully configured Flutter project demonstrating:
+- ✅ Complete IGRIS setup
+- ✅ Example briefs (BR, FR, TD)
+- ✅ Conventional commits
+- ✅ Automated workflows
+- ✅ Distribution plugin integration
+- ✅ Real commit history showing workflow
+
+Perfect for:
+- Learning how to use IGRIS
+- Seeing real-world usage
+- Copy-paste examples
+- Validating your setup
+
+**[→ View Example Project](https://github.com/fiftynotai/igris_ai_flutter_example)**
+
+---
+
+## ✦ Updating IGRIS
 
 ### Check Your Version
 
@@ -350,17 +470,17 @@ cat .igris_version
 
 ---
 
-## Documentation
+## ✦ Documentation
 
 - **[Setup Guide](docs/SETUP_GUIDE.md)** - Complete installation and setup
-- **[Update Guide](docs/UPDATE_GUIDE.md)** - Updating Igris AI and plugins
+- **[Update Guide](docs/UPDATE_GUIDE.md)** - Updating IGRIS and plugins
 - **[Migration Guide](docs/MIGRATION_GUIDE.md)** - Onboarding existing projects
 - **[Plugin Development](docs/PLUGIN_DEVELOPMENT.md)** - Building plugins
-- **[Contributing Guide](ai/CONTRIBUTING.md)** - How to use Igris AI
+- **[Contributing Guide](ai/CONTRIBUTING.md)** - How to use IGRIS
 
 ---
 
-## Requirements
+## ✦ Requirements
 
 - **Git** - Version control
 - **Claude AI** - AI assistant (Claude Code CLI or Claude.ai)
@@ -369,7 +489,7 @@ cat .igris_version
 
 ---
 
-## Project Structure
+## ✦ Project Structure
 
 ```
 your-project/
@@ -377,7 +497,7 @@ your-project/
 │   └── hooks/
 │       └── startup.sh           # Auto-runs on Claude start
 ├── CLAUDE.md                    # Context loaded on first message
-├── ai/                          # Igris AI
+├── ai/                          # IGRIS
 │   ├── briefs/                  # Work items
 │   ├── context/                 # Architecture docs
 │   ├── prompts/                 # AI prompts
@@ -386,8 +506,8 @@ your-project/
 │   ├── templates/               # Templates
 │   └── plugins/                 # Plugin registry
 ├── scripts/
-│   ├── igris_init.sh        # Initialize Igris AI
-│   ├── igris_update.sh      # Update Igris AI
+│   ├── igris_init.sh            # Initialize IGRIS
+│   ├── igris_update.sh          # Update IGRIS
 │   ├── plugin_install.sh        # Install plugins
 │   ├── plugin_update.sh         # Update plugins
 │   └── ...
@@ -396,7 +516,7 @@ your-project/
 
 ---
 
-## Examples
+## ✦ Examples
 
 ### Generate Coding Guidelines
 
@@ -450,59 +570,73 @@ Claude will:
 
 ---
 
-## Why Igris AI?
+## ✦ Why IGRIS?
 
-### Without Igris AI
+### Without IGRIS
 - ❌ Architecture violations go unnoticed
 - ❌ Technical debt accumulates
 - ❌ Inconsistent code quality
 - ❌ Manual tracking in spreadsheets
 - ❌ Tribal knowledge, no documentation
+- ❌ Random AI outputs, no structure
 
-### With Igris AI
+### With IGRIS
 - ✅ Enforce architecture automatically
 - ✅ Track and pay down tech debt systematically
 - ✅ Consistent code quality across team
 - ✅ Structured work items with Claude AI
 - ✅ Auto-generated, always-up-to-date documentation
+- ✅ Repeatable workflows, disciplined engineering
 
 ---
 
-## Community
+## ✦ The Open Engineering Era
 
-- **Issues:** [GitHub Issues](https://github.com/fiftynotai/igris-ai/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/fiftynotai/igris-ai/discussions)
+**Create boldly. Release openly. Engineer with discipline.**
+
+IGRIS exists to merge imagination with structure — the spark *and* the system — so ideas become reality through craft, clarity, and open collaboration.
+
+Open source is humanity's greatest multiplier. IGRIS empowers:
+- **Abundance** — More creators, more releases, more shared knowledge
+- **Quality** — Tests, docs, clarity, maintainability
+
+**The Open Source Call:**
+> *Create boldly. Release openly. Engineer with discipline.*
+
+---
+
+## ✦ Community
+
+- **GitHub:** [fiftynotai/igris-ai](https://github.com/fiftynotai/igris-ai)
+- **Issues:** [Report bugs, request features](https://github.com/fiftynotai/igris-ai/issues)
+- **Discussions:** [Share ideas, get help](https://github.com/fiftynotai/igris-ai/discussions)
 - **Example Project:** [igris-ai-flutter-example](https://github.com/fiftynotai/igris_ai_flutter_example)
 - **Contributing:** See [CONTRIBUTING.md](ai/CONTRIBUTING.md)
 
 ---
 
-## License
+## ✦ License
 
-[MIT License](LICENSE)
-
----
-
-## Acknowledgments
-
-Built for teams using Claude AI to maintain high-quality codebases.
+[MIT License](LICENSE) - Build freely, share openly.
 
 ---
 
-**Ready to get started?**
+## ✦ Acknowledgments
+
+Built for developers and teams using Claude AI to engineer high-quality software with discipline.
+
+---
+
+> **IGRIS — Where Creativity Meets Discipline, and Open Source Thrives.**
 
 ```bash
-# Initialize Igris AI in your project
+# Ready to engineer?
 ./scripts/igris_init.sh
 
-# Generate coding guidelines (recommended first step)
-# Ask Claude: "Generate coding guidelines using ai/prompts/generate_coding_guidelines.md"
-
-# Generate architecture docs
-# Ask Claude: "Analyze this project using ai/prompts/generate_architecture_docs.md"
-
-# Analyze codebase
-# Ask Claude: "Analyze codebase using ai/prompts/migration_analysis.md"
+# Ask Claude:
+# "Generate coding guidelines using ai/prompts/generate_coding_guidelines.md"
+# "Analyze this project using ai/prompts/generate_architecture_docs.md"
+# "Analyze codebase using ai/prompts/migration_analysis.md"
 ```
 
-**Happy coding! 🚀**
+**From Vibe Coding → Vibe Engineering.**
