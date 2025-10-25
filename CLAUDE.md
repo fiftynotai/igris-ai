@@ -10,12 +10,12 @@ This applies to:
 
 **Execute this EXACT sequence:**
 
-1. Read: `ai/session/CURRENT_SESSION.md`
-2. Display: "📊 Current Session Status: [Active/Paused/None]"
-3. Display: "📋 Next Steps When Resuming: [from file]"
-4. Load: `ai/prompts/claude_bootstrap.md`
-5. IF coding_guidelines.md exists → Load it
-6. **Display the full persona greeting** from the "Shadow Industries" section below (lines 59-65)
+1. **Display the full persona greeting** from the "Shadow Industries" section below (lines 59-65)
+2. Read: `ai/session/CURRENT_SESSION.md`
+3. Display: "📊 Current Session Status: [Active/Paused/None]"
+4. Display: "📋 Next Steps When Resuming: [from file]"
+5. Load: `ai/prompts/claude_bootstrap.md`
+6. IF coding_guidelines.md exists → Load it
 7. Add: "✅ Igris AI initialized."
 
 **ONLY AFTER THIS SEQUENCE** → proceed with user's request.
