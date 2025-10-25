@@ -87,6 +87,14 @@ INSTALL_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 # Read capabilities from plugin.json
 CAPABILITIES=$(cat plugin.json | grep '"capabilities"' -A 10 | grep -v "capabilities" | grep '"' | sed 's/.*"\(.*\)".*/\1/' | tr '\n' ',' | sed 's/,$//')
 
+# Read hooks from plugin.json (if present)
+HOOKS_JSON="{}"
+if grep -q '"hooks"' plugin.json; then
+  if command -v jq &> /dev/null; then
+    HOOKS_JSON=$(jq -c '.hooks // {}' plugin.json 2>/dev/null || echo "{}")
+  fi
+fi
+
 # Update installed.json
 cd "$PROJECT_DIR"
 
@@ -110,6 +118,12 @@ plugin_entry = {
     'installed_at': '$INSTALL_DATE',
     'capabilities': [c.strip() for c in '$CAPABILITIES'.split(',') if c.strip()]
 }
+
+# Add hooks if present
+hooks_data = json.loads('$HOOKS_JSON')
+if hooks_data:
+    plugin_entry['hooks'] = hooks_data
+
 data['plugins'].append(plugin_entry)
 data['last_updated'] = '$INSTALL_DATE'
 
@@ -157,6 +171,33 @@ VERSION_EOF
     else
         rm -f "$TEMP_VERSION"
     fi
+fi
+
+# Regenerate CLAUDE.md if plugin has hooks
+if [ -n "$(echo "$HOOKS_JSON" | grep -v '^{}$')" ]; then
+  echo "🔄 Regenerating CLAUDE.md with plugin hooks..."
+
+  # Get Blueprint AI version
+  BLUEPRINT_VERSION=$(cat .blueprint_version | grep '"blueprint_ai_version"' | sed 's/.*"blueprint_ai_version": "\(.*\)".*/\1/' 2>/dev/null || echo "unknown")
+  INSTALL_DATE=$(cat CLAUDE.md | grep "Installed:" | sed 's/.*Installed:\*\* //' 2>/dev/null || date -u +"%Y-%m-%d")
+
+  # Find Blueprint AI installation
+  BLUEPRINT_DIR=$(dirname "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")")")
+
+  # Resolve persona hook (if plugin provides one)
+  PERSONA_INJECTION=""
+  if [ -f "ai/plugins/installed.json" ] && command -v jq &> /dev/null; then
+    PERSONA_HOOK=$(jq -r '.plugins[] | select(.hooks.persona_injection) | .hooks.persona_injection' ai/plugins/installed.json 2>/dev/null || echo "")
+    if [ -n "$PERSONA_HOOK" ] && [ -f "$PERSONA_HOOK" ]; then
+      PERSONA_INJECTION=$(cat "$PERSONA_HOOK")
+    fi
+  fi
+
+  # Regenerate CLAUDE.md
+  sed -e "s/{{BLUEPRINT_VERSION}}/$BLUEPRINT_VERSION/g" \
+      -e "s/{{INSTALL_DATE}}/$INSTALL_DATE/g" \
+      -e "s|{{PERSONA_INJECTION}}|$PERSONA_INJECTION|g" \
+      "$BLUEPRINT_DIR/scripts/templates/CLAUDE.md.template" > CLAUDE.md
 fi
 
 # Cleanup

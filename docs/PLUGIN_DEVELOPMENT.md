@@ -98,6 +98,63 @@ blueprint-ai-distribution-flutter/
 }
 ```
 
+### Hooks (Optional)
+
+**Available since:** v1.0.5
+
+Plugins can inject content into Blueprint AI's core prompts using hooks. This allows plugins to modify Claude's behavior, tone, or add custom instructions.
+
+```json
+{
+  "name": "blueprint-ai-persona-packs",
+  "version": "1.0.0",
+  "description": "Optional persona system for Blueprint AI",
+  "hooks": {
+    "persona_injection": "ai/prompts/persona_loader.md"
+  }
+}
+```
+
+**Available Hooks:**
+
+| Hook Name | Injection Point | Purpose | Since |
+|-----------|-----------------|---------|-------|
+| `persona_injection` | Top of CLAUDE.md (after title) | Modify Claude's tone, voice, or add custom instructions | v1.0.5 |
+
+**How Hooks Work:**
+
+1. Plugin defines hook in `plugin.json`
+2. Hook points to a markdown file in the plugin
+3. During plugin installation, Blueprint AI reads the hook path
+4. When generating `CLAUDE.md`, Blueprint AI injects the content
+5. Claude receives the injected content as part of its instructions
+
+**Example Hook File (`ai/prompts/persona_loader.md`):**
+
+```markdown
+## Active Persona: Igris
+
+**Addressing Mode:** Address user as "Monarch"
+**Tone:** Dramatic, loyal shadow knight
+
+Use commanding language and epic metaphors when describing code operations.
+```
+
+**Important Notes:**
+
+- Hooks are optional - plugins without hooks work normally
+- Hook content is injected as-is (raw markdown)
+- Multiple plugins can provide the same hook (last installed wins)
+- Hooks are processed during `blueprint_init.sh` and `plugin_install.sh`
+- Removing a plugin removes its hooks (regenerate CLAUDE.md)
+
+**Use Cases for Hooks:**
+
+- Persona systems (change Claude's tone/voice)
+- Team-specific conventions (add company-specific guidelines)
+- Custom workflows (inject additional commands)
+- Branding (add company intro/context)
+
 ---
 
 ## install.sh Contract

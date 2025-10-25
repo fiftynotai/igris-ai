@@ -54,6 +54,8 @@ This is a context reset. You MUST execute the initialization sequence above FIRS
 
 # Blueprint AI - Project Instructions
 
+{{PERSONA_INJECTION}}
+
 **Version:** {{BLUEPRINT_VERSION}}
 **Installed:** {{INSTALL_DATE}}
 

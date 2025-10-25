@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.5] - 2025-10-25
+
+### Added
+
+- **Plugin Hook System** - Enable plugins to inject content into core prompts (TD-003)
+  - Added `{{PERSONA_INJECTION}}` hook to CLAUDE.md.template
+  - Plugins can now define `hooks` in plugin.json
+  - Hook resolution in blueprint_init.sh (resolves to empty string if no plugin)
+  - Automatic CLAUDE.md regeneration when plugin with hooks is installed
+  - Documented hook system in PLUGIN_DEVELOPMENT.md
+  - Enables upcoming persona packs plugin and future enhancement plugins
+
+### Changed
+
+- **Plugin System Enhancement**
+  - plugin_install.sh now reads and stores hooks from plugin.json
+  - installed.json now includes hooks field for plugins that provide them
+  - CLAUDE.md regenerates automatically after plugin installation if hooks present
+
+### Technical Details
+
+**Purpose:** Extend plugin system to support content injection, enabling enhancement-type plugins like persona packs.
+
+**Implementation:**
+- Template now includes `{{PERSONA_INJECTION}}` placeholder
+- Init and install scripts resolve hooks from installed.json
+- Hook content injected as raw markdown
+- Backward compatible - plugins without hooks work normally
+
+**Use Cases:**
+- Persona systems (modify Claude's tone/voice)
+- Team-specific conventions (inject company guidelines)
+- Custom workflows (add specialized instructions)
+- Branding (add company context)
+
+### Breaking Changes
+
+None - fully backward compatible with v1.0.4
+
+### Migration from v1.0.4
+
+```bash
+./scripts/blueprint_update.sh
+```
+
+No action required. Existing projects and plugins continue working normally.
+
+---
+
 ## [1.0.4] - 2025-10-15
 
 ### Enhanced
