@@ -40,7 +40,7 @@ Future development options and priorities for Igris AI.
 **Repositories:**
 - Core: https://github.com/Fifty50ai/igris-ai (latest: 83d63af)
 - Distribution Plugin: https://github.com/Fifty50ai/igris-ai-distribution-flutter (latest: cd9ab26)
-- Example Project: https://github.com/Mohamed50/igris_ai_flutter_example (latest: f800515)
+- Example Project: https://github.com/Fifty50ai/igris_ai_flutter_example (latest: f800515)
 
 **Latest Changes (v1.0.5):**
 - **Plugin Hook System** - Enable plugins to inject content into core prompts (TD-003)
@@ -159,7 +159,7 @@ Create reference implementations showing Igris AI in action.
 #### 1. Flutter App Example ✅ **COMPLETED**
 
 **Repository:** `igris-ai-flutter-example`
-**Link:** https://github.com/Mohamed50/igris_ai_flutter_example
+**Link:** https://github.com/Fifty50ai/igris_ai_flutter_example
 
 A sample Flutter app with Igris AI fully configured:
 - ✅ Complete Fastlane setup (iOS + Android)
@@ -503,7 +503,7 @@ Eliminate manual friction by automatically loading Igris AI configuration when C
 - Poor onboarding experience
 
 **User's Vision:**
-> "my idea of blueprint it's a safe way to use vibe coding on production code. so what i need is if blueprint is installed and you run claude in the project i need claude to reply with a welcoming message saying welcome to blueprint running on claude or something load the bootstrap and give summary of the project. i wanna reach this with the least amount of steps for developer"
+> "my idea of igris it's a safe way to use vibe coding on production code. so what i need is if igris is installed and you run claude in the project i need claude to reply with a welcoming message saying welcome to igris running on claude or something load the bootstrap and give summary of the project. i wanna reach this with the least amount of steps for developer"
 
 ### Implementation Summary
 
@@ -1103,7 +1103,7 @@ igris-ai-persona-packs/
 
 **Flexibility**
 - More customization options
-- Configuration file (.blueprintrc)
+- Configuration file (.igrisrc)
 - Per-project overrides
 - Template customization
 

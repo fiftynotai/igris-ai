@@ -178,7 +178,7 @@ See `ai/prompts/bug_prompts.md` and `ai/prompts/feature_prompts.md` for complete
 
 Check out our complete working example:
 
-**[igris-ai-flutter-example](https://github.com/Mohamed50/igris_ai_flutter_example)** - A fully configured Flutter project demonstrating:
+**[igris-ai-flutter-example](https://github.com/Fifty50ai/igris_ai_flutter_example)** - A fully configured Flutter project demonstrating:
 - ✅ Complete Igris AI setup
 - ✅ Example briefs (BR, FR, TD)
 - ✅ Conventional commits
@@ -192,7 +192,7 @@ Perfect for:
 - Copy-paste examples
 - Validating your setup
 
-**[→ View Example Project](https://github.com/Mohamed50/igris_ai_flutter_example)**
+**[→ View Example Project](https://github.com/Fifty50ai/igris_ai_flutter_example)**
 
 ---
 
@@ -293,7 +293,7 @@ Draft → Ready → In Progress → In Review → Done → Archived
   - Release notes generation
   - Firebase App Distribution
   - Fastlane integration
-  - **[See it in action →](https://github.com/Mohamed50/igris_ai_flutter_example)**
+  - **[See it in action →](https://github.com/Fifty50ai/igris_ai_flutter_example)**
 
 ### Creating Plugins
 
@@ -472,7 +472,7 @@ Claude will:
 
 - **Issues:** [GitHub Issues](https://github.com/Fifty50ai/igris-ai/issues)
 - **Discussions:** [GitHub Discussions](https://github.com/Fifty50ai/igris-ai/discussions)
-- **Example Project:** [igris-ai-flutter-example](https://github.com/Mohamed50/igris_ai_flutter_example)
+- **Example Project:** [igris-ai-flutter-example](https://github.com/Fifty50ai/igris_ai_flutter_example)
 - **Contributing:** See [CONTRIBUTING.md](ai/CONTRIBUTING.md)
 
 ---
