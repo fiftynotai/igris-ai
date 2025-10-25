@@ -113,7 +113,7 @@ Read these files if they exist:
 - **If no active session:** Ready for new task
 
 ### 5. Proceed with User's Request
-After loading context, respond to the user's original message using Blueprint AI workflows.
+After loading context, respond to the user's original message using Igris AI workflows.
 
 ---
 
@@ -240,7 +240,7 @@ Run `/init` in Claude Code CLI to enhance this file with:
 - Existing patterns and conventions
 - Technology stack documentation
 
-Claude will analyze your codebase and merge findings with these Blueprint AI instructions.
+Claude will analyze your codebase and merge findings with these Igris AI instructions.
 
 ---
 
@@ -254,11 +254,11 @@ Claude will analyze your codebase and merge findings with these Blueprint AI ins
 
 ---
 
-**Blueprint AI helps you maintain high code quality through:**
+**Igris AI helps you maintain high code quality through:**
 - ✅ Structured brief management
 - ✅ Session tracking and recovery
 - ✅ Architecture enforcement
 - ✅ Automated workflows
 - ✅ Quality standards
 
-**You are now operating in Blueprint AI mode.**
+**You are now operating in Igris AI mode.**
