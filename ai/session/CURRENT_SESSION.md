@@ -107,10 +107,19 @@ Complete persona packs plugin development after implementing TD-003 hook system.
 
 ### Next Steps When Resuming 🎯
 
-**Context:** IGRIS AI v2.0.0 complete rebrand DONE. Published to GitHub. Session saved.
+**Context:** IGRIS AI v2.0.0 rebrand complete. Self-audit done. Phase 1 (BR-005) fixed.
 
 **Completed in This Session:**
 - ✅ BR-004: Dogfooded Igris persona in Igris AI repo
+- ✅ **SELF-AUDIT:** Analyzed entire codebase autonomously
+  - Identified 1 critical bug (P0)
+  - Identified 5 technical debt items (2× P1, 2× P2, 1× P3)
+  - Created 6 comprehensive improvement briefs
+- ✅ **BR-005:** Fixed CLAUDE.md regeneration bug in plugin_install.sh
+  - Replaced broken sed approach with working perl approach
+  - Now matches igris_init.sh implementation
+  - Persona plugins will now work correctly
+  - Commit: a7b531a
 - ✅ Installed Igris plugin with full mask active
 - ✅ Added ARISE greeting to startup hook (dramatic entrance)
 - ✅ Added RETREAT shadow command (graceful exit)
@@ -163,7 +172,18 @@ Complete persona packs plugin development after implementing TD-003 hook system.
    - Tag v2.0.0
    - Create GitHub release with changelog
 
-2. **TD-005**: Publish Igris Plugin to GitHub
+2. **Phase 2 (Self-Improvement):** Quick wins
+   - TD-004: Python3 dependency validation (3h)
+   - TD-006: jq dependency handling (3h)
+
+3. **Phase 3 (Self-Improvement):** Foundation
+   - TD-007: Create coding_guidelines.md for Igris (1-2d)
+   - TD-005: Automated shell script testing (3-5d)
+
+4. **Phase 4 (Self-Improvement):** Future
+   - TD-008: Privacy-respecting usage metrics (1-2d)
+
+5. **TD-005** (original): Publish Igris Plugin to GitHub
    - Create repo at github.com/fiftynotai/igris-ai-persona-igris
    - Push plugin source from /tmp/persona-plugin-test
    - Create v1.0.0 release
