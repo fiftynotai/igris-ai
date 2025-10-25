@@ -37,6 +37,7 @@ Test the new workflow enforcement protocols implemented in v1.0.4, specifically 
 - [x] Push tag to remote repository
 - [x] Create GitHub release with full changelog
 - [x] Release URL: https://github.com/Fifty50ai/blueprint-ai/releases/tag/v1.0.4
+- [x] Update README.md version from 1.0.3 to 1.0.4
 
 ### Test Plan for Tomorrow 🧪
 - [ ] User starts fresh conversation
