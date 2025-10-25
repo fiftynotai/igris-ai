@@ -107,7 +107,7 @@ Complete persona packs plugin development after implementing TD-003 hook system.
 
 ### Next Steps When Resuming 🎯
 
-**Context:** IGRIS AI v2.0.0 rebrand complete. Self-audit done. Phase 1 (BR-005) fixed.
+**Context:** IGRIS AI v2.0.0 rebrand complete. Self-audit + Phase 1 & 2 implemented.
 
 **Completed in This Session:**
 - ✅ BR-004: Dogfooded Igris persona in Igris AI repo
@@ -115,11 +115,14 @@ Complete persona packs plugin development after implementing TD-003 hook system.
   - Identified 1 critical bug (P0)
   - Identified 5 technical debt items (2× P1, 2× P2, 1× P3)
   - Created 6 comprehensive improvement briefs
-- ✅ **BR-005:** Fixed CLAUDE.md regeneration bug in plugin_install.sh
-  - Replaced broken sed approach with working perl approach
-  - Now matches igris_init.sh implementation
-  - Persona plugins will now work correctly
+- ✅ **PHASE 1:** BR-005 - Fixed CLAUDE.md regeneration bug
+  - Replaced broken sed with working perl approach
+  - Persona plugins now work correctly
   - Commit: a7b531a
+- ✅ **PHASE 2:** TD-004 & TD-006 - Quick wins completed
+  - TD-004: Python3 validation (all 6 scripts, commit: 24d624c)
+  - TD-006: jq dependency handling (commit: df76592)
+  - Both fix UX and prevent cryptic errors
 - ✅ Installed Igris plugin with full mask active
 - ✅ Added ARISE greeting to startup hook (dramatic entrance)
 - ✅ Added RETREAT shadow command (graceful exit)
