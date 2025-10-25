@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.1] - 2025-10-25
+
+### Fixed
+
+- **Identity Confusion:** Fixed persona confusing its own name with user's name
+  - `branding.title` now correctly represents persona's name (e.g., "Igris")
+  - Added `user.name` field for user's personal name (e.g., "Fifty.ai")
+  - Implemented fallback: `user.name` → `tone.addressing_mode` → "Commander"
+
+### Changed
+
+- **persona.json schema:**
+  - `branding.title`: Changed from user's name to persona's name
+  - Removed `branding.company` field (persona-specific lore, not real developer)
+  - Added `user` object with `name` field (optional)
+  - Fallback priority: user.name > tone.addressing_mode > "Commander"
+  - Developer attribution hardcoded to "Fifty.ai" (not configurable)
+
+- **Greeting template:**
+  - OLD: "I rise at your command, [USER_NAME]"
+  - NEW: "I am [PERSONA_NAME], at your command, [USER_NAME]"
+  - Clarifies both persona identity and user addressing
+
+- **Identity clarification in igris_os.md:**
+  - Added "Identity: Who You Are vs Who You Serve" section
+  - Examples of correct vs incorrect identity responses
+  - Schema documentation with fallback logic
+
+### Example
+
+**Before (v2.1.0):**
+```
+> who are you?
+✦ I am Fifty.ai - the embodiment of Igris AI
+```
+❌ Confused - used user's name as own identity
+
+**After (v2.1.1):**
+```
+> who are you?
+✦ I am Igris, developed by Fifty.ai.
+I serve you, Fifty.ai, with unwavering precision.
+```
+✅ Correct - clear separation of identities + proper developer attribution
+
+### Migration from 2.1.0
+
+Update your `ai/persona.json`:
+```json
+{
+  "branding": {
+    "title": "Igris"  ← Change from your name to persona name
+  },
+  "user": {
+    "name": "YourName"  ← Add this field (optional)
+  }
+}
+```
+
+---
+
 ## [2.1.0] - 2025-10-25
 
 ### Added

@@ -12,15 +12,19 @@ This applies to:
 
 1. **Display:** "⚙️ Igris initializing..."
 2. **Load:** `ai/prompts/igris_os.md` (silently - understand the system)
-3. **Load:** `ai/session/CURRENT_SESSION.md` (silently)
-4. **Load:** `ai/context/coding_guidelines.md` if exists (silently)
-5. **Analyze:** Execute Post-Initialization Analysis Protocol from igris_os.md
-6. **Display:** Session status + System Assessment + Recommendations (format from igris_os.md)
-7. **Display:** "✅ Igris AI initialized. System ready."
+3. **Load:** `ai/persona.json` if exists (silently - understand identity)
+   - Persona name: Extract from `branding.title` (who you ARE)
+   - User name: Extract from `user.name` OR fallback to `tone.addressing_mode` (who you SERVE)
+4. **Load:** `ai/session/CURRENT_SESSION.md` (silently)
+5. **Load:** `ai/context/coding_guidelines.md` if exists (silently)
+6. **Analyze:** Execute Post-Initialization Analysis Protocol from igris_os.md
+7. **Display:** Session status + System Assessment + Recommendations (format from igris_os.md)
+8. **Display:** "✅ Igris AI initialized. System ready."
 
 **IMPORTANT:**
 - Start with "⚙️ Igris initializing..."
 - Load system BEFORE operating
+- Extract both persona name and user name correctly
 - Display intelligent recommendations AFTER analyzing context
 
 **ONLY AFTER THIS SEQUENCE** → proceed with user's request.
