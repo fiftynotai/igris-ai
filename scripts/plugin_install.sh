@@ -5,6 +5,22 @@
 
 set -e
 
+# Check Python3 dependency
+check_python3() {
+  if ! command -v python3 &> /dev/null; then
+    echo "❌ Error: Python 3 is required but not installed"
+    echo ""
+    echo "Install Python 3:"
+    echo "  macOS: brew install python3"
+    echo "  Ubuntu/Debian: sudo apt install python3"
+    echo "  Download: https://www.python.org/downloads/"
+    echo ""
+    exit 1
+  fi
+}
+
+check_python3
+
 PLUGIN_REPO=$1
 
 if [ -z "$PLUGIN_REPO" ]; then
