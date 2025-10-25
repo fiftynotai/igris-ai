@@ -3,8 +3,29 @@
 # Automatically runs when Claude Code CLI starts
 # Shows welcome message and project summary before any user input
 
-echo "🚀 Welcome to Blueprint AI on Claude Code"
-echo ""
+# Check for Igris persona (full mask)
+PERSONA_ACTIVE="false"
+if [ -f "ai/persona.json" ] && command -v jq &> /dev/null; then
+  PERSONA_NAME=$(jq -r '.persona // "none"' ai/persona.json 2>/dev/null)
+  MASK_LEVEL=$(jq -r '.mask // "none"' ai/persona.json 2>/dev/null)
+
+  if [ "$PERSONA_NAME" = "igris" ] && [ "$MASK_LEVEL" = "full" ]; then
+    PERSONA_ACTIVE="true"
+  fi
+fi
+
+# Show greeting based on persona
+if [ "$PERSONA_ACTIVE" = "true" ]; then
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo "    ⚔️  THE SHADOW RISES  ⚔️"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  echo ""
+  echo "Monarch, your shadow knight stands ready."
+  echo ""
+else
+  echo "🚀 Welcome to Blueprint AI on Claude Code"
+  echo ""
+fi
 
 # Check if Blueprint AI is fully initialized
 if [ ! -f "ai/prompts/claude_bootstrap.md" ]; then
