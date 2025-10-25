@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - installed.json now includes hooks field for plugins that provide them
   - CLAUDE.md regenerates automatically after plugin installation if hooks present
 
+### Fixed
+
+- **Multi-line Hook Injection** - Fixed sed newline handling bug
+  - blueprint_init.sh now uses perl for multi-line PERSONA_INJECTION replacement
+  - Enables proper persona plugin installation and mask switching
+  - Hook content with newlines now correctly injected into CLAUDE.md
+  - No impact on plugins without hooks
+
 ### Technical Details
 
 **Purpose:** Extend plugin system to support content injection, enabling enhancement-type plugins like persona packs.
