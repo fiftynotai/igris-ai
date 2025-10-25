@@ -75,8 +75,8 @@ Production testing revealed these issues immediately when using Igris AI on a re
 2. [ ] Update CLAUDE.md.template with mandatory first action (top of file)
 3. [ ] Add context reset detection to CLAUDE.md.template
 4. [ ] Add session state validation checklist to CLAUDE.md.template
-5. [ ] Update claude_bootstrap.md with critical path clarification
-6. [ ] Add checkpoint system to claude_bootstrap.md
+5. [ ] Update igris_os.md with critical path clarification
+6. [ ] Add checkpoint system to igris_os.md
 7. [ ] Create session_protocol.md quick reference
 8. [ ] Update README.md with session management note
 9. [ ] Update CHANGELOG.md (v1.0.4)
@@ -109,7 +109,7 @@ This fixes the core workflow compliance issue discovered in production testing.
 
 ### Files to Modify
 - `scripts/templates/CLAUDE.md.template` - Add mandatory first action at top
-- `ai/prompts/claude_bootstrap.md` - Add critical path + checkpoint sections
+- `ai/prompts/igris_os.md` - Add critical path + checkpoint sections
 - `README.md` - Add session management note
 - `CHANGELOG.md` - Add v1.0.4 entry
 - `version.txt` - Update to 1.0.4
@@ -159,8 +159,8 @@ This fixes the core workflow compliance issue discovered in production testing.
 1. [ ] CLAUDE.md has mandatory first action at top (unmissable)
 2. [ ] Context reset detection added to CLAUDE.md
 3. [ ] Session state validation checklist added to CLAUDE.md
-4. [ ] claude_bootstrap.md has critical path clarification
-5. [ ] claude_bootstrap.md has 5 checkpoint protocols
+4. [ ] igris_os.md has critical path clarification
+5. [ ] igris_os.md has 5 checkpoint protocols
 6. [ ] session_protocol.md created as quick reference
 7. [ ] README.md mentions session management
 8. [ ] CHANGELOG.md documents v1.0.4 enhancements
@@ -177,7 +177,7 @@ This fixes the core workflow compliance issue discovered in production testing.
 
 **Coding Guidelines:**
 - `ai/templates/commit_message.md` - No AI signatures rule
-- `ai/prompts/claude_bootstrap.md` - Igris AI workflow
+- `ai/prompts/igris_os.md` - Igris AI workflow
 
 **Production Feedback:**
 - Claude's self-assessment from real migration project testing

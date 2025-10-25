@@ -220,7 +220,7 @@ ai/
 └── prompts/
     ├── bug_prompts.md               # Bug management guide
     ├── feature_prompts.md           # Feature management guide
-    └── claude_bootstrap.md          # AI session startup guide
+    └── igris_os.md                  # Igris AI operating system (core)
 ```
 
 ---
@@ -421,7 +421,7 @@ A: For very small changes (< 30 min), you can skip briefs. But tracking improves
 
 - **[ai/prompts/bug_prompts.md](prompts/bug_prompts.md)** - Complete bug management guide
 - **[ai/prompts/feature_prompts.md](prompts/feature_prompts.md)** - Complete feature management guide
-- **[ai/prompts/claude_bootstrap.md](prompts/claude_bootstrap.md)** - AI session startup guide
+- **[ai/prompts/igris_os.md](prompts/igris_os.md)** - Igris AI operating system (core protocols)
 - **[ai/briefs/BR-TEMPLATE.md](briefs/BR-TEMPLATE.md)** - Brief template with all fields
 - **[ai/checks/qa_runbook.md](checks/qa_runbook.md)** - QA verification checklist
 - **[README.md](../README.md#igris-ai-pilot)** - Igris AI overview

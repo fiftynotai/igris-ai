@@ -307,7 +307,7 @@ your-project/
 │   ├── prompts/                       # AI prompts
 │   │   ├── bug_prompts.md
 │   │   ├── feature_prompts.md
-│   │   ├── claude_bootstrap.md
+│   │   ├── igris_os.md
 │   │   ├── generate_architecture_docs.md
 │   │   └── migration_analysis.md
 │   ├── session/                       # Session tracking

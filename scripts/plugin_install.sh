@@ -193,11 +193,23 @@ if [ -n "$(echo "$HOOKS_JSON" | grep -v '^{}$')" ]; then
     fi
   fi
 
-  # Regenerate CLAUDE.md
+  # Regenerate CLAUDE.md with two-step process (handles multi-line PERSONA_INJECTION)
+  # First pass: Replace simple variables
   sed -e "s/{{IGRIS_VERSION}}/$IGRIS_VERSION/g" \
       -e "s/{{INSTALL_DATE}}/$INSTALL_DATE/g" \
-      -e "s|{{PERSONA_INJECTION}}|$PERSONA_INJECTION|g" \
-      "$IGRIS_DIR/scripts/templates/CLAUDE.md.template" > CLAUDE.md
+      "$IGRIS_DIR/scripts/templates/CLAUDE.md.template" > CLAUDE.md.tmp
+
+  # Second pass: Replace persona injection using perl (handles newlines)
+  if [ -n "$PERSONA_INJECTION" ]; then
+    # Escape special characters for perl regex
+    ESCAPED_INJECTION=$(printf '%s\n' "$PERSONA_INJECTION" | perl -pe 's/([\\\/\$])/\\$1/g')
+    perl -i -pe "s/\{\{PERSONA_INJECTION\}\}/$ESCAPED_INJECTION/g" CLAUDE.md.tmp
+  else
+    # Remove the placeholder if no injection
+    perl -i -pe 's/\{\{PERSONA_INJECTION\}\}//g' CLAUDE.md.tmp
+  fi
+
+  mv CLAUDE.md.tmp CLAUDE.md
 fi
 
 # Cleanup

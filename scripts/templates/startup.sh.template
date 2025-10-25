@@ -1,5 +1,5 @@
 #!/bin/bash
-# Blueprint AI - Startup Hook
+# Igris AI - Startup Hook
 # Automatically runs when Claude Code CLI starts
 # Shows welcome message and project summary before any user input
 
@@ -23,13 +23,13 @@ if [ "$PERSONA_ACTIVE" = "true" ]; then
   echo "Monarch, your shadow knight stands ready."
   echo ""
 else
-  echo "🚀 Welcome to Blueprint AI on Claude Code"
+  echo "🚀 Welcome to Igris AI on Claude Code"
   echo ""
 fi
 
-# Check if Blueprint AI is fully initialized
-if [ ! -f "ai/prompts/claude_bootstrap.md" ]; then
-  echo "⚠️  Blueprint AI not fully initialized"
+# Check if Igris AI is fully initialized
+if [ ! -f "ai/prompts/igris_os.md" ]; then
+  echo "⚠️  Igris AI not fully initialized"
   echo "   Run initialization script to complete setup"
   echo ""
   exit 0

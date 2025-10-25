@@ -79,7 +79,7 @@ docs: add Igris AI pilot structure
 
 - Add /ai folder with context, prompts, briefs, checks, templates, session
 - Add architecture_map.md referencing flutter-mvvm-actions-arch
-- Add claude_bootstrap.md with session management
+- Add igris_os.md with session management
 - Add BR-001 pilot brief
 - Update README with Igris AI section
 ```

@@ -178,7 +178,7 @@ This is the core v1.0.2 feature - must work correctly.
 
 **Coding Guidelines:**
 - `ai/templates/commit_message.md` - No AI signatures rule
-- `ai/prompts/claude_bootstrap.md` - Igris AI workflow
+- `ai/prompts/igris_os.md` - Igris AI workflow
 
 **Claude Code CLI Documentation:**
 - CLAUDE.md - Context file (loaded on first message)

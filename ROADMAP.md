@@ -72,7 +72,7 @@ Future development options and priorities for Igris AI.
 - Automatic Claude Code Integration (later fixed in v1.0.3)
 - Optional Shell Integration (install_shell_integration.sh)
 - Coding Guidelines Generation feature
-- Updated claude_bootstrap.md to be platform-agnostic
+- Updated igris_os.md to be platform-agnostic
 - Updated README with v1.0.2 features and version badge
 - Updated example project to demonstrate v1.0.2 features
 
@@ -497,7 +497,7 @@ Eliminate manual friction by automatically loading Igris AI configuration when C
 ### Problem Statement
 
 **Before v1.0.2:**
-- Users had to manually type: "Use ai/prompts/claude_bootstrap.md" every session
+- Users had to manually type: "Use ai/prompts/igris_os.md" every session
 - Manual step = friction = users might skip it
 - No automatic architecture enforcement
 - Poor onboarding experience
@@ -521,7 +521,7 @@ Eliminate manual friction by automatically loading Igris AI configuration when C
 
 ## Initialization Sequence (Execute Immediately)
 
-1. Load Operating System: ai/prompts/claude_bootstrap.md
+1. Load Operating System: ai/prompts/igris_os.md
 2. Check for Coding Guidelines: ai/context/coding_guidelines.md
 3. Load Project Context: architecture docs, API patterns
 4. Check Session State: ai/session/CURRENT_SESSION.md
@@ -545,7 +545,7 @@ Then say: **"Ready for your command!"**
 
 **Automatic Loading:**
 - Runs immediately when Claude Code starts
-- Loads claude_bootstrap.md operating system
+- Loads igris_os.md operating system
 - Checks for and offers to generate coding guidelines
 - Loads architecture context automatically
 - Displays project summary (briefs by type/status, blockers)
@@ -566,7 +566,7 @@ Then say: **"Ready for your command!"**
 **Before v1.0.2:**
 ```bash
 $ claude
-User: "Use ai/prompts/claude_bootstrap.md and implement BR-001"
+User: "Use ai/prompts/igris_os.md and implement BR-001"
 ```
 
 **After v1.0.2:**
@@ -634,7 +634,7 @@ This release completes the "safe vibe coding" vision:
 - ✅ `scripts/igris_init.sh` - Added .claude/prompt.md creation
 - ✅ `scripts/install_shell_integration.sh` - NEW (200+ lines)
 - ✅ `.claude/prompt.md` - NEW (automatic loader template)
-- ✅ `ai/prompts/claude_bootstrap.md` - Made platform-agnostic
+- ✅ `ai/prompts/igris_os.md` - Made platform-agnostic
 - ✅ `README.md` - Added automatic loading documentation
 - ✅ `CHANGELOG.md` - Documented v1.0.2 features
 

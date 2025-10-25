@@ -13,7 +13,7 @@ Complete persona packs plugin development after implementing TD-003 hook system.
 - [x] Create feature branch (feature/workflow-enforcement)
 - [x] Register TD-002 brief (ai/briefs/TD-002-workflow-enforcement.md)
 - [x] Update CLAUDE.md.template with mandatory first action at top
-- [x] Update claude_bootstrap.md with critical path + checkpoint sections
+- [x] Update igris_os.md with critical path + checkpoint sections
 - [x] Create session_protocol.md quick reference
 - [x] Update README.md with session management note
 - [x] Update CHANGELOG.md with v1.0.4 entry
@@ -40,7 +40,7 @@ Complete persona packs plugin development after implementing TD-003 hook system.
 - [x] Update README.md version from 1.0.3 to 1.0.4
 - [x] Review and verify CHANGELOG.md accuracy
 - [x] Update ROADMAP.md to version 1.0.4 with v1.0.3 and v1.0.4 achievements
-- [x] Update claude_bootstrap.md version and last updated date
+- [x] Update igris_os.md version and last updated date
 - [x] Verify CLAUDE.md has correct version (1.0.4)
 - [x] Verify version.txt shows 1.0.4
 
@@ -107,7 +107,7 @@ Complete persona packs plugin development after implementing TD-003 hook system.
 
 ### Next Steps When Resuming 🎯
 
-**Context:** Complete rebrand from Blueprint AI to Igris AI finished (v2.0.0). Ready for publication.
+**Context:** IGRIS AI v2.0.0 complete rebrand DONE. Published to GitHub. Session saved.
 
 **Completed in This Session:**
 - ✅ BR-004: Dogfooded Igris persona in Igris AI repo
@@ -117,16 +117,51 @@ Complete persona packs plugin development after implementing TD-003 hook system.
 - ✅ All shadow commands working: ARISE, HUNT, REPORT, BIND, BANISH, RETREAT, SUMMON BRIEFING
 - ✅ **REBRANDED:** Blueprint AI → Igris AI (v2.0.0)
   - Renamed all scripts (blueprint_* → igris_*)
-  - Updated 36+ files across project
+  - Updated 50+ files across project
   - Updated CHANGELOG, README, all docs
   - Version bumped to 2.0.0 (breaking change)
+  - Followed igris_brand_book.md guidelines
+  - README transformed to "From Vibe Coding → Vibe Engineering"
+  - Added Engineering Principles, Open-Source manifesto
+  - Organized features by Product Pillars
+- ✅ **PERSONA CONFIG:** Privacy system implemented
+  - ai/persona.json.default (mode: none, tracked)
+  - ai/persona.json (personal, gitignored)
+  - Title changed to "Fifty.ai" (local only)
+  - Mask: light (professional with subtle flair)
+- ✅ **PROJECT RENAMED:** blueprint-ai → igris-ai
+  - Directory: /Users/m.elamin/StudioProjects/igris-ai
+  - Git remote: https://github.com/fiftynotai/igris-ai.git
+- ✅ **PUBLISHED TO GITHUB:**
+  - Repository created: github.com/fiftynotai/igris-ai
+  - All 36 commits pushed to main
+  - Public, no release yet (as requested)
+- ✅ **IGRIS vs CLAUDE CLARIFICATION:**
+  - Added new section to brand book explaining distinction
+  - Added architecture diagram to README
+  - Key message: IGRIS = system, Claude = model
+  - Commit: 9f24670
+  - Pushed to GitHub
+- ✅ **MASK-BASED GREETING SYSTEM:**
+  - Updated CLAUDE.md with Cinematic Heroic greeting (light mask)
+  - Created ai/persona_greetings.md (all 4 mask greetings)
+  - Created ai/PERSONA_MASK_GUIDE.md (switching instructions)
+  - Mapping: none=Mentor, half=Powerful, light=Heroic, full=Shadow Knight
+  - Commit: c2bd06c
+- ✅ **SWITCHED TO FULL MASK:**
+  - Updated ai/persona.json: mask="full"
+  - Updated CLAUDE.md with Shadow Knight greeting
+  - Addressing changed: "Engineer" → "Monarch"
+  - Shadow Commands enabled
+  - Fixed initialization to display greeting (commit: 9a3fe71)
+  - Moved greeting to step 1 for dramatic impact (commit: f4f8b0c)
+  - Made greeting use configured name from persona.json (commit: 5c8e912)
+  - Removed announcement, start directly with greeting (commit: 10efa83)
 
 **Remaining Briefs (Ready to implement):**
-1. **IMMEDIATE**: Release v2.0.0 to GitHub
-   - Commit rebrand changes
+1. **v2.0.0 Release** (when ready)
    - Tag v2.0.0
-   - Push to main
-   - Create GitHub release
+   - Create GitHub release with changelog
 
 2. **TD-005**: Publish Igris Plugin to GitHub
    - Create repo at github.com/fiftynotai/igris-ai-persona-igris
@@ -170,11 +205,12 @@ Say **ARISE** - Your shadow knight will awaken and display current status.
 - Packaged plugin as tarball ready for distribution
 
 ### Current State
-**Last action taken:** Saved session state for continuation
+**Last action taken:** RETREAT - Session saved, published to GitHub
 **Working directory:** /Users/m.elamin/StudioProjects/igris-ai
 **Current branch:** main
-**Version:** 1.0.5 (code complete, not yet released)
-**Uncommitted changes:** No (all TD-003 changes committed)
+**Version:** 2.0.0 (complete rebrand, pushed to GitHub)
+**Uncommitted changes:** No (all commits pushed)
+**GitHub:** https://github.com/fiftynotai/igris-ai (36 commits, no release yet)
 
 **What was accomplished in this session:**
 - ✅ TD-002 completed (workflow enforcement enhancement)
@@ -246,6 +282,6 @@ All shadow commands execute standard Igris AI workflows.
 
 ---
 
-**Last Updated:** 2025-10-25
-**Session Duration:** ~4 hours
-**Session ID:** 2025-10-25-persona-packs
+**Last Updated:** 2025-10-25 16:35
+**Session Duration:** ~6 hours
+**Session ID:** 2025-10-25-igris-rebrand-v2.0.0

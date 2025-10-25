@@ -170,7 +170,7 @@ Session management is INTEGRATED with work, not AFTER work.
 
 ## Reference
 
-**Full details:** `ai/prompts/claude_bootstrap.md`
+**Full details:** `ai/prompts/igris_os.md`
 **Mandatory first action:** `CLAUDE.md` (top of file)
 **Template:** `ai/session/CURRENT_SESSION.md`
 

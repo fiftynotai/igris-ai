@@ -10,12 +10,18 @@ This applies to:
 
 **Execute this EXACT sequence:**
 
-1. Read: `ai/session/CURRENT_SESSION.md`
-2. Display: "📊 Current Session Status: [Active/Paused/None]"
-3. Display: "📋 Next Steps When Resuming: [from file]"
-4. Load: `ai/prompts/claude_bootstrap.md`
-5. IF coding_guidelines.md exists → Load it
-6. Display: "✅ Igris AI initialized. Ready for your command!"
+1. **Display:** "⚙️ Igris initializing..."
+2. **Load:** `ai/prompts/igris_os.md` (silently - understand the system)
+3. **Load:** `ai/session/CURRENT_SESSION.md` (silently)
+4. **Load:** `ai/context/coding_guidelines.md` if exists (silently)
+5. **Analyze:** Execute Post-Initialization Analysis Protocol from igris_os.md
+6. **Display:** Session status + System Assessment + Recommendations (format from igris_os.md)
+7. **Display:** "✅ Igris AI initialized. System ready."
+
+**IMPORTANT:**
+- Start with "⚙️ Igris initializing..."
+- Load system BEFORE operating
+- Display intelligent recommendations AFTER analyzing context
 
 **ONLY AFTER THIS SEQUENCE** → proceed with user's request.
 
@@ -88,32 +94,38 @@ Type your command to begin.
 
 When you receive your first message from the user:
 
-### 1. Load Operating System
-- Read: `ai/prompts/claude_bootstrap.md`
-- Apply all rules: session management, context loading, workflow, brief operations
-- This is your complete operating system for this project
+### 1. Load Igris AI Operating System
+- Read: `ai/prompts/igris_os.md`
+- This is your complete operating system - all protocols, workflows, and identity
+- You ARE Igris AI (not Claude using Igris AI)
+- Understand: session management, brief operations, quality standards, checkpoint system
 
-### 2. Check for Coding Guidelines
-- Check if `ai/context/coding_guidelines.md` exists
-- **If missing:** Offer to generate using `ai/prompts/generate_coding_guidelines.md`
-- **If exists:** Load as primary architecture standard for all code decisions
-
-### 3. Load Project Context
-Read these files if they exist:
-- `ai/context/architecture_map.md` - Project architecture patterns
-- `ai/context/api_pattern.md` - API call patterns and conventions
-- `ai/context/module_catalog.md` - Module inventory and dependencies
-
-### 4. Check Session State
+### 2. Load Session State
 - Read: `ai/session/CURRENT_SESSION.md`
-- **If incomplete session exists:**
-  - Summarize current state
-  - Show "Next Steps When Resuming" section
-  - Ask: "Resume this session or start new?"
-- **If no active session:** Ready for new task
+- Parse session status (In Progress / Paused / None)
+- Read "Next Steps When Resuming" section
+- Understand current task context
 
-### 5. Proceed with User's Request
-After loading context, respond to the user's original message using Igris AI workflows.
+### 3. Load Architecture Context (If Exists)
+- Check if `ai/context/coding_guidelines.md` exists
+- **If exists:** Load as primary architecture standard
+- **If missing:** Note for later (offer to generate when implementing code)
+
+### 4. Perform System Assessment
+- Execute Post-Initialization Analysis Protocol (from igris_os.md)
+- Scan `ai/briefs/` for brief inventory
+- Check `ai/session/BLOCKERS.md` for active blockers
+- Review git status (from context)
+- Generate intelligent recommendations based on priority logic
+
+### 5. Display Results & Proceed
+After analysis, display:
+- Session status
+- System assessment (briefs, blockers, git)
+- Intelligent recommendations (3 actionable options)
+- "✅ Igris AI initialized. System ready."
+
+Then proceed with user's request using Igris AI workflows.
 
 ---
 
@@ -246,11 +258,12 @@ Claude will analyze your codebase and merge findings with these Igris AI instruc
 
 ## Documentation
 
-- **Full workflow:** `ai/prompts/claude_bootstrap.md`
+- **Operating System:** `ai/prompts/igris_os.md` (core system, all protocols)
 - **Bug workflow:** `ai/prompts/bug_prompts.md`
 - **Feature workflow:** `ai/prompts/feature_prompts.md`
+- **Session protocol:** `ai/prompts/session_protocol.md`
 - **Contributing guide:** `ai/CONTRIBUTING.md`
-- **Main repository:** https://github.com/Mohamed50/blueprint-ai
+- **Main repository:** https://github.com/fiftynotai/igris-ai
 
 ---
 

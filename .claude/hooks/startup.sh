@@ -28,7 +28,7 @@ else
 fi
 
 # Check if Igris AI is fully initialized
-if [ ! -f "ai/prompts/claude_bootstrap.md" ]; then
+if [ ! -f "ai/prompts/igris_os.md" ]; then
   echo "⚠️  Igris AI not fully initialized"
   echo "   Run initialization script to complete setup"
   echo ""

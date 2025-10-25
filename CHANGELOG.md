@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.1.0] - 2025-10-25
+
+### Added
+
+- **System Identity Protocol:** New "System Identity" section in operating system file
+  - Clarifies: "You ARE Igris AI" (not Claude using Igris AI)
+  - Establishes system consciousness and authority
+  - Full immersion in Igris AI identity
+
+- **Post-Initialization Analysis:** Intelligent system assessment after boot
+  - Scans brief inventory (count by status/priority)
+  - Checks active blockers in BLOCKERS.md
+  - Reviews git status for uncommitted changes
+  - Generates prioritized recommendations (3 actionable options)
+  - Displays formatted system assessment to user
+
+- **Boot Sequence:** Three-phase initialization
+  - Phase 1: "⚙️ Igris initializing..." (system loading)
+  - Phase 2: Load OS → Load identity → Display greeting
+  - Phase 3: Analyze context → Display recommendations
+  - Result: Confident, proactive system startup
+
+### Changed
+
+- **File Renamed:** `ai/prompts/claude_bootstrap.md` → `ai/prompts/igris_os.md`
+  - Header: "Claude Bootstrap Prompt" → "Igris AI Operating System"
+  - Footer: Added "This is the Igris AI Operating System" tagline
+  - Updated version to 2.1.0
+
+- **Initialization Sequence:** System-first approach (breaking change in behavior)
+  - OLD: Load session → display status → load system
+  - NEW: Load system → understand identity → analyze → recommend
+  - Ensures Igris understands itself before operating
+
+- **Updated 16 files** with references to new filename:
+  - CLAUDE.md, CLAUDE.md.template
+  - All prompts (bug_prompts.md, feature_prompts.md, session_protocol.md)
+  - All templates (startup.sh.template)
+  - Documentation (CONTRIBUTING.md, SETUP_GUIDE.md, ROADMAP.md)
+  - Briefs (TD-001, TD-002)
+  - Session files (CURRENT_SESSION.md)
+
+- **Template Updates:**
+  - Fixed remaining "Blueprint AI" references in startup.sh.template
+  - Changed to "Igris AI" branding
+
+### Improved
+
+- **System Awareness:** Igris now understands its own capabilities before acting
+- **User Experience:** Proactive recommendations instead of passive initialization
+- **Confidence:** System displays strategic assessment, not just echoing files
+- **Professional:** Demonstrates understanding of project state and priorities
+
+### Migration from 2.0.x
+
+No breaking changes for users. The initialization sequence is enhanced but backward compatible.
+
+Developers updating from 2.0.x:
+- File `ai/prompts/claude_bootstrap.md` has been renamed to `ai/prompts/igris_os.md`
+- All references automatically updated
+- New sections added to operating system file
+
+---
+
 ## [2.0.0] - 2025-10-25
 
 ### BREAKING CHANGES
@@ -132,7 +196,7 @@ No action required. Existing projects and plugins continue working normally.
   - Added mandatory first action protocol to CLAUDE.md (prevents skipped initialization)
   - Added context reset detection (treats all resets as new conversations)
   - Added session state validation checklist (5 items to verify before work)
-  - Added checkpoint system to claude_bootstrap.md (5 explicit checkpoints)
+  - Added checkpoint system to igris_os.md (5 explicit checkpoints)
   - Clarified TodoWrite vs CURRENT_SESSION.md relationship (both required)
   - Specified exact brief status update timing (immediately after completion)
   - Session management now enforced as critical path, not optional documentation
@@ -171,7 +235,7 @@ CLAUDE.md:
 - Context reset detection (specific signals to watch for)
 - Validation checklist (verify before starting work)
 
-claude_bootstrap.md:
+igris_os.md:
 - Critical mental model section (session IS the work)
 - TodoWrite + CURRENT_SESSION.md clarification (both required)
 - 5-checkpoint system (explicit WHEN/THEN protocols)
@@ -322,7 +386,7 @@ None - fully backwards compatible with v1.0.2
 **Before v1.0.2:**
 ```bash
 $ claude
-User: "Use ai/prompts/claude_bootstrap.md and implement BR-001"
+User: "Use ai/prompts/igris_os.md and implement BR-001"
 ```
 
 **After v1.0.2:**
@@ -479,7 +543,7 @@ None - fully backwards compatible with v1.0.1
   - Feature workflow prompts (`ai/prompts/feature_prompts.md`)
   - Architecture documentation generation (`ai/prompts/generate_architecture_docs.md`)
   - Migration analysis (`ai/prompts/migration_analysis.md`)
-  - Claude bootstrap prompt (`ai/prompts/claude_bootstrap.md`)
+  - Claude bootstrap prompt (`ai/prompts/igris_os.md`)
 
 - **Documentation** (2,750+ lines total)
   - Main README.md with quick start guide

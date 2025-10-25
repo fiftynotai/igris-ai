@@ -609,4 +609,4 @@ Manual updates are useful for:
 
 **Created:** 2025-10-13
 **Last Updated:** 2025-10-13
-**Related:** [bug_prompts.md](bug_prompts.md), [claude_bootstrap.md](claude_bootstrap.md), [CONTRIBUTING.md](../CONTRIBUTING.md)
+**Related:** [bug_prompts.md](bug_prompts.md), [igris_os.md](igris_os.md), [CONTRIBUTING.md](../CONTRIBUTING.md)
