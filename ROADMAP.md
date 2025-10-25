@@ -6,7 +6,7 @@ Future development options and priorities for Blueprint AI.
 
 ## Current Status
 
-**Version:** 1.0.4 (Released 2025-10-25)
+**Version:** 1.0.5 (Released 2025-10-25)
 
 **Completed:**
 - ✅ Core brief management system (BR, MG, TD, TS)
@@ -33,25 +33,34 @@ Future development options and priorities for Blueprint AI.
 - ✅ **v1.0.4:** Session state validation checklist
 - ✅ **v1.0.4:** 5-checkpoint workflow enforcement system
 - ✅ **v1.0.4:** session_protocol.md quick reference guide
+- ✅ **v1.0.5:** Plugin hook system (enables content injection)
+- ✅ **v1.0.5:** {{PERSONA_INJECTION}} hook in CLAUDE.md template
+- ✅ **v1.0.5:** Automatic CLAUDE.md regeneration on plugin install
 
 **Repositories:**
 - Core: https://github.com/Mohamed50/blueprint-ai (latest: 83d63af)
 - Distribution Plugin: https://github.com/Mohamed50/blueprint-ai-distribution-flutter (latest: cd9ab26)
 - Example Project: https://github.com/Mohamed50/blueprint_ai_flutter_example (latest: f800515)
 
-**Latest Changes (v1.0.4):**
-- **Enhanced Workflow Enforcement** - Based on production testing feedback
-  - Mandatory first action protocol in CLAUDE.md (prevents skipped initialization)
-  - Context reset detection (treats all resets as new conversations)
-  - Session state validation checklist (5 items to verify before work)
-  - 5-checkpoint system in claude_bootstrap.md (explicit WHEN/THEN protocols)
-  - TodoWrite vs CURRENT_SESSION.md clarification (both required)
-  - Exact brief status update timing (immediately after completion)
-  - Session management now enforced as critical path, not optional documentation
-- **New Documentation** - session_protocol.md quick reference guide
-  - Checkpoint 1-5 examples and anti-patterns
-  - Mental model shift explanation (session IS the work)
-  - Recovery and continuation protocols
+**Latest Changes (v1.0.5):**
+- **Plugin Hook System** - Enable plugins to inject content into core prompts (TD-003)
+  - Added {{PERSONA_INJECTION}} hook to CLAUDE.md template
+  - Plugins can define hooks in plugin.json
+  - Automatic CLAUDE.md regeneration when plugin with hooks installed
+  - Documented in PLUGIN_DEVELOPMENT.md
+  - Enables upcoming persona packs plugin
+- **Use Cases:**
+  - Persona systems (modify Claude's tone/voice)
+  - Team-specific conventions (inject company guidelines)
+  - Custom workflows (add specialized instructions)
+  - Branding (add company context)
+
+**Previous Changes (v1.0.4):**
+- Enhanced workflow enforcement based on production testing
+- Mandatory first action protocol and context reset detection
+- Session state validation checklist (5 items)
+- 5-checkpoint workflow enforcement system
+- session_protocol.md quick reference guide
 
 **Previous Changes (v1.0.3):**
 - Fixed hooks-based auto-loading (.claude/hooks/startup.sh)
@@ -790,7 +799,125 @@ GitHub: [link]
 
 ---
 
-## Option 4: More Plugins 🔌
+## Option 4: Persona Packs Plugin 🎭 ✅ **IN PROGRESS**
+
+**Priority:** High
+**Effort:** 2-3 hours
+**Impact:** Demonstrates hook system, enables UX customization
+**Status:** 🔄 Design phase (TD-003 completed, plugin design in progress)
+
+### Overview
+
+First enhancement-type plugin using the new hook system (v1.0.5). Enables users to customize Claude's tone, voice, and commands without modifying Blueprint AI core.
+
+### Mask System
+
+**Concept:** Users "wear masks" to control persona intensity
+
+| Mask Level | Branding | Tone | Commands | Banner | Use Case |
+|------------|----------|------|----------|--------|----------|
+| **No Mask** | ❌ | ❌ | Standard | ❌ | Persona dormant |
+| **Half Mask** | ✅ | ❌ | Standard | ❌ | Corporate/Professional |
+| **Light Mask** | ✅ | ✅ Subtle | Standard | ❌ | Balanced personality |
+| **Full Mask** | ✅ | ✅ Dramatic | Shadow | ✅ | Complete immersion |
+
+### Features
+
+**Core:**
+- Mask-based activation system
+- Multiple persona support (starting with Igris)
+- Dynamic mask switching without reinstall
+- Template for creating custom personas
+
+**Igris Persona (Reference Implementation):**
+- Shadow knight theme
+- Customizable title/addressing (e.g., "Monarch")
+- Shadow commands (ARISE, HUNT, REPORT, BANISH)
+- Epic banners and dramatic language
+- 3 tone levels (C1-Restrained, C2-Dramatic, C3-Epic)
+- 3 addressing modes (T1-Summon, T2-Always, T3-Hybrid)
+
+**Scripts:**
+- `persona_mask.sh` - Main control (wear, adjust, remove, status)
+- `persona_install.sh` - Interactive installation
+- `persona_helpers.sh` - Utility functions
+
+### Repository Structure
+
+```
+blueprint-ai-persona-packs/
+├── plugin.json (with persona_injection hook)
+├── ai/
+│   └── personas/
+│       ├── igris/
+│       │   ├── persona.md
+│       │   ├── masks/
+│       │   │   ├── none.md
+│       │   │   ├── half.md
+│       │   │   ├── light.md
+│       │   │   └── full.md
+│       │   ├── commands.md
+│       │   └── banner.txt
+│       └── _TEMPLATE_/
+│           └── masks/
+├── scripts/
+│   ├── persona_mask.sh
+│   ├── persona_install.sh
+│   └── persona_helpers.sh
+└── docs/
+    ├── README.md
+    ├── CREATING_PERSONAS.md
+    └── IGRIS.md
+```
+
+### Implementation Phases
+
+**Phase 1: Design (Current)** ✅
+- [x] TD-003: Plugin hook system implemented
+- [x] Mask metaphor designed
+- [ ] Detailed design document created
+- [ ] Example mask files written
+
+**Phase 2: Build**
+- [ ] Create repository
+- [ ] Implement plugin.json with hook
+- [ ] Create Igris persona with all 4 mask levels
+- [ ] Build persona_mask.sh script
+- [ ] Build persona_install.sh script
+- [ ] Write documentation
+
+**Phase 3: Test**
+- [ ] Install in test project
+- [ ] Verify hook injection works
+- [ ] Test all mask levels
+- [ ] Test mask switching
+- [ ] Verify CLAUDE.md regeneration
+
+**Phase 4: Release**
+- [ ] Release v1.0.0 of persona plugin
+- [ ] Update Blueprint AI README with link
+- [ ] Announce as optional enhancement
+
+### Success Criteria
+
+- [ ] Works with Blueprint AI v1.0.5+
+- [ ] All 4 mask levels functional
+- [ ] Mask switching preserves persona config
+- [ ] Easy to create custom personas
+- [ ] Complete documentation
+- [ ] 10+ users adopt persona plugin
+
+### Timeline
+
+- Design: 1 hour
+- Implementation: 2-3 hours
+- Testing: 30 minutes
+- Documentation: 1 hour
+- **Total: ~5 hours**
+
+---
+
+## Option 5: More Plugins 🔌
 
 **Priority:** Low (wait for user feedback)
 **Effort:** Varies
