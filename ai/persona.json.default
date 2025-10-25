@@ -1,0 +1,20 @@
+{
+  "persona": "none",
+  "mask": "none",
+  "installed_at": null,
+  "version": "1.0.0",
+  "branding": {
+    "title": "User",
+    "company": "Your Company",
+    "intro": "Welcome",
+    "tagline": "Code quality and architecture management"
+  },
+  "tone": {
+    "level": "C1",
+    "addressing_mode": "T1"
+  },
+  "features": {
+    "commands": false,
+    "banner": false
+  }
+}

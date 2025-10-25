@@ -38,9 +38,13 @@ build/
 .test/
 test-output/
 
-# Persona system (dogfooding - local only)
+# Persona system - Personal configuration (local only, never commit)
 ai/personas/
 ai/persona.json
 ai/prompts/persona_loader.md
 scripts/persona_install.sh
 scripts/persona_mask.sh
+
+# Persona system - Tracked files (safe to commit)
+!ai/persona.json.default
+!ai/templates/persona.json.example
