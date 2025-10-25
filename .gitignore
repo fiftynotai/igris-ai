@@ -37,3 +37,10 @@ build/
 # Test files
 .test/
 test-output/
+
+# Persona system (dogfooding - local only)
+ai/personas/
+ai/persona.json
+ai/prompts/persona_loader.md
+scripts/persona_install.sh
+scripts/persona_mask.sh
