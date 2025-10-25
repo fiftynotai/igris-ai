@@ -107,45 +107,43 @@ Complete persona packs plugin development after implementing TD-003 hook system.
 
 ### Next Steps When Resuming 🎯
 
-**Context:** All development and testing complete. Ready to push persona plugin to GitHub.
+**Context:** Igris persona dogfooding complete. ARISE greeting and RETREAT command added. Ready for next phase.
 
-**Remaining Steps:**
+**Completed in This Session:**
+- ✅ BR-004: Dogfooded Igris persona in Blueprint AI repo
+- ✅ Installed Igris plugin with full mask active
+- ✅ Added ARISE greeting to startup hook (dramatic entrance)
+- ✅ Added RETREAT shadow command (graceful exit)
+- ✅ All shadow commands working: ARISE, HUNT, REPORT, BIND, BANISH, RETREAT, SUMMON BRIEFING
 
-1. **Create GitHub Repository for Persona Plugin**
-   ```bash
-   # Create repo at: https://github.com/Fifty50ai/blueprint-ai-persona-packs
-   # Or use: gh repo create Fifty50ai/blueprint-ai-persona-packs --public
-   ```
+**Remaining Briefs (Ready to implement):**
+1. **TD-005**: Publish Igris Plugin to GitHub
+   - Create repo at github.com/Fifty50ai/blueprint-ai-persona-igris
+   - Push plugin source from /tmp/persona-plugin-test
+   - Create v1.0.0 release
+   - Update Blueprint AI README
 
-2. **Push Persona Plugin to GitHub**
-   ```bash
-   cd /tmp/persona-plugin-test
-   git remote add origin https://github.com/Fifty50ai/blueprint-ai-persona-packs.git
-   git push -u origin main
-   git push origin v1.0.0
-   ```
+2. **TD-004**: Interactive Persona Selection
+   - Add prompts to blueprint_init.sh
+   - Let users choose persona during init
+   - Auto-install selected persona
 
-3. **Create GitHub Release for Persona Plugin v1.0.0**
-   ```bash
-   cd /tmp/persona-plugin-test
-   gh release create v1.0.0 --title "v1.0.0 - Initial Release" --notes "..."
-   ```
+3. **BR-005**: Persona Development Guide
+   - Create docs/PERSONA_DEVELOPMENT.md
+   - Template and examples
+   - Help users create custom personas
 
-4. **Update Blueprint AI README with Plugin Link**
-   - Add persona packs plugin to plugins section
-   - Link to new repository
+**To Resume:**
+Say **ARISE** - Your shadow knight will awaken and display current status.
 
-5. **Push All Blueprint AI Changes**
-   ```bash
-   cd /Users/m.elamin/StudioProjects/blueprint-ai
-   git push origin main
-   ```
+**Plugin Location:**
+- Source: `/tmp/persona-plugin-test` (updated with RETREAT)
+- Installed: This Blueprint AI repo (dogfooding)
 
 **Status:**
-- ✅ Blueprint AI v1.0.5 released
-- ✅ Persona plugin built and tested
-- ✅ All bugs fixed
-- ⏳ Waiting for GitHub repo creation and push
+- ✅ Dogfooding active and working
+- ✅ ARISE + RETREAT commands tested
+- ⏳ Ready to publish plugin (TD-005)
 
 ---
 
