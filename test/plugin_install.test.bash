@@ -287,7 +287,7 @@ EOF
   assert_failure
 
   # Should mention JSON or validation error
-  assert_output_contains "invalid\|JSON\|parse"
+  assert_output_contains "invalid|JSON|parse"
 }
 
 @test "plugin_install requires Python3" {
@@ -373,7 +373,7 @@ EOF
   assert_success
 
   # Should indicate success
-  assert_output_contains "installed\|success\|complete"
+  assert_output_contains "installed|success|complete"
 }
 
 @test "plugin_install shows plugin name in output" {

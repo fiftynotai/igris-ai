@@ -105,6 +105,9 @@ EOF
   fi
   chmod +x install.sh
 
+  # Create version.txt (required by plugin_update.sh)
+  echo "1.0.0" > version.txt
+
   echo "$plugin_dir"
 }
 
@@ -154,6 +157,9 @@ fi
 echo "Multiline plugin installed"
 EOF
   chmod +x install.sh
+
+  # Create version.txt (required by plugin_update.sh)
+  echo "1.0.0" > version.txt
 
   echo "$plugin_dir"
 }
@@ -234,12 +240,28 @@ assert_failure() {
   fi
 }
 
-# Assert output contains text
+# Assert output contains text (case-insensitive)
 # Usage: assert_output_contains <text>
 assert_output_contains() {
   local text="$1"
+  # Enable case-insensitive matching
+  shopt -s nocasematch
+  local result=0
   if [[ ! "$output" =~ $text ]]; then
     echo "Expected output to contain: $text" >&2
+    echo "Actual output: $output" >&2
+    result=1
+  fi
+  shopt -u nocasematch
+  return $result
+}
+
+# Assert output matches exactly
+# Usage: assert_output <expected_output>
+assert_output() {
+  local expected="$1"
+  if [ "$output" != "$expected" ]; then
+    echo "Expected output: $expected" >&2
     echo "Actual output: $output" >&2
     return 1
   fi

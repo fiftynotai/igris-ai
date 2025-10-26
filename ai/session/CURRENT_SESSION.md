@@ -6,7 +6,10 @@ Implement TD-005: Add comprehensive automated testing for all Igris AI shell scr
 ## Status: 🔄 In Progress
 
 ## Active Briefs
-_(None - TD-005 complete)_
+1. **TD-005** - Automated Shell Script Testing (MAJOR PROGRESS)
+   - Status: In Progress (84.6% pass rate)
+   - Current Task: Paused for commit - 115/136 tests passing
+   - Progress: Fixed all P0/P1 blockers, +44 tests fixed, plugin_install at 100%
 
 ## Completed Briefs (Recent)
 1. **TD-005** - Implement Automated Testing for Shell Scripts ✅ DONE

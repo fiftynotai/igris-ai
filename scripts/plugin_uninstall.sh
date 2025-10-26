@@ -42,12 +42,30 @@ validate_json() {
   return 0
 }
 
-PLUGIN_NAME=$1
+# Parse arguments
+PLUGIN_NAME=""
+AUTO_CONFIRM=false
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -y|--yes)
+      AUTO_CONFIRM=true
+      shift
+      ;;
+    *)
+      PLUGIN_NAME="$1"
+      shift
+      ;;
+  esac
+done
 
 if [ -z "$PLUGIN_NAME" ]; then
   echo "❌ Error: Plugin name not provided"
   echo ""
-  echo "Usage: ./scripts/plugin_uninstall.sh <plugin-name>"
+  echo "Usage: ./scripts/plugin_uninstall.sh <plugin-name> [-y|--yes]"
+  echo ""
+  echo "Options:"
+  echo "  -y, --yes    Skip confirmation prompt"
   echo ""
   echo "To see installed plugins:"
   echo "  ./scripts/plugin_list.sh"
@@ -94,12 +112,16 @@ for p in data['plugins']:
 
 echo "📋 Plugin: $PLUGIN_NAME v$PLUGIN_VERSION"
 echo ""
-echo "⚠️  This will remove the plugin from your project"
-read -p "Continue? [y/N]: " CONFIRM
 
-if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-  echo "Uninstall cancelled"
-  exit 0
+# Confirmation prompt (skip if auto-confirm enabled)
+if [ "$AUTO_CONFIRM" = false ]; then
+  echo "⚠️  This will remove the plugin from your project"
+  read -p "Continue? [y/N]: " CONFIRM
+
+  if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+    echo "Uninstall cancelled"
+    exit 0
+  fi
 fi
 
 echo ""

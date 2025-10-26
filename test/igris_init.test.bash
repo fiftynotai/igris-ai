@@ -245,11 +245,10 @@ load test_helper
   run jq -e '.branding' "$TEST_PROJECT_DIR/ai/persona.json.default"
   assert_success
 
-  run jq -e '.user' "$TEST_PROJECT_DIR/ai/persona.json.default"
-  assert_success
-
   run jq -e '.tone' "$TEST_PROJECT_DIR/ai/persona.json.default"
   assert_success
+
+  # Note: .user field is personal config, not in defaults
 }
 
 # =============================================================================

@@ -23,7 +23,7 @@ load test_helper
   "$SCRIPTS_DIR/plugin_install.sh" "$plugin_dir"
 
   # Uninstall plugin
-  run "$SCRIPTS_DIR/plugin_uninstall.sh" "test-plugin"
+  run "$SCRIPTS_DIR/plugin_uninstall.sh" -y "test-plugin"
 
   assert_success
 }
@@ -32,11 +32,11 @@ load test_helper
   init_igris_in_test_project
 
   # Try to uninstall non-existent plugin
-  run "$SCRIPTS_DIR/plugin_uninstall.sh" "nonexistent-plugin"
+  run "$SCRIPTS_DIR/plugin_uninstall.sh" -y "nonexistent-plugin"
 
   # Should fail with clear error
   assert_failure
-  assert_output_contains "not installed\|not found"
+  assert_output_contains "not installed|not found"
 }
 
 @test "plugin_uninstall requires plugin name argument" {
@@ -46,7 +46,7 @@ load test_helper
   run "$SCRIPTS_DIR/plugin_uninstall.sh"
 
   assert_failure
-  assert_output_contains "usage\|required\|plugin name"
+  assert_output_contains "usage|required|plugin name"
 }
 
 # =============================================================================
@@ -66,7 +66,7 @@ load test_helper
   assert_success
 
   # Uninstall plugin
-  "$SCRIPTS_DIR/plugin_uninstall.sh" "test-plugin"
+  "$SCRIPTS_DIR/plugin_uninstall.sh" -y "test-plugin"
 
   # Verify plugin removed from registry
   run jq -e '.plugins[] | select(.name == "test-plugin")' "$TEST_PROJECT_DIR/ai/plugins/installed.json"
@@ -90,7 +90,7 @@ load test_helper
   assert_output "3"
 
   # Uninstall plugin-2
-  "$SCRIPTS_DIR/plugin_uninstall.sh" "plugin-2"
+  "$SCRIPTS_DIR/plugin_uninstall.sh" -y "plugin-2"
 
   # Verify plugin-1 and plugin-3 still present
   run jq -e '.plugins[] | select(.name == "plugin-1")' "$TEST_PROJECT_DIR/ai/plugins/installed.json"
@@ -141,7 +141,7 @@ load test_helper
   sleep 1
 
   # Uninstall plugin
-  "$SCRIPTS_DIR/plugin_uninstall.sh" "test-plugin-hooks"
+  "$SCRIPTS_DIR/plugin_uninstall.sh" -y "test-plugin-hooks"
 
   # Verify CLAUDE.md regenerated
   new_time=$(stat -f %m "$TEST_PROJECT_DIR/CLAUDE.md" 2>/dev/null || stat -c %Y "$TEST_PROJECT_DIR/CLAUDE.md")
@@ -164,7 +164,7 @@ load test_helper
   sleep 1
 
   # Uninstall plugin
-  "$SCRIPTS_DIR/plugin_uninstall.sh" "test-plugin"
+  "$SCRIPTS_DIR/plugin_uninstall.sh" -y "test-plugin"
 
   # Verify CLAUDE.md NOT regenerated (same timestamp)
   new_time=$(stat -f %m "$TEST_PROJECT_DIR/CLAUDE.md" 2>/dev/null || stat -c %Y "$TEST_PROJECT_DIR/CLAUDE.md")
@@ -184,7 +184,7 @@ load test_helper
   assert_file_contains "$TEST_PROJECT_DIR/CLAUDE.md" "Mock Persona"
 
   # Uninstall plugin-1
-  "$SCRIPTS_DIR/plugin_uninstall.sh" "plugin-1-hooks"
+  "$SCRIPTS_DIR/plugin_uninstall.sh" -y "plugin-1-hooks"
 
   # CLAUDE.md should still contain plugin-2's hooks
   # (This test may need adjustment based on mock content)
@@ -206,11 +206,11 @@ load test_helper
   echo "{ invalid json" > "$TEST_PROJECT_DIR/ai/plugins/installed.json"
 
   # Try to uninstall
-  run "$SCRIPTS_DIR/plugin_uninstall.sh" "test-plugin"
+  run "$SCRIPTS_DIR/plugin_uninstall.sh" -y "test-plugin"
 
   # Should fail gracefully
   assert_failure
-  assert_output_contains "invalid\|corrupted\|parse"
+  assert_output_contains "invalid|corrupted|parse"
 }
 
 @test "plugin_uninstall handles missing installed.json" {
@@ -220,7 +220,7 @@ load test_helper
   rm -f "$TEST_PROJECT_DIR/ai/plugins/installed.json"
 
   # Try to uninstall
-  run "$SCRIPTS_DIR/plugin_uninstall.sh" "test-plugin"
+  run "$SCRIPTS_DIR/plugin_uninstall.sh" -y "test-plugin"
 
   # Should fail (no plugins installed)
   assert_failure
@@ -233,7 +233,7 @@ load test_helper
   # Install and uninstall plugin
   plugin_dir=$(create_mock_plugin "test-plugin" false)
   "$SCRIPTS_DIR/plugin_install.sh" "$plugin_dir"
-  run "$SCRIPTS_DIR/plugin_uninstall.sh" "test-plugin"
+  run "$SCRIPTS_DIR/plugin_uninstall.sh" -y "test-plugin"
 
   # Should succeed with Python3 available
   assert_success
@@ -256,7 +256,7 @@ load test_helper
   assert_success
 
   # Uninstall plugin
-  run "$SCRIPTS_DIR/plugin_uninstall.sh" "integration-test"
+  run "$SCRIPTS_DIR/plugin_uninstall.sh" -y "integration-test"
   assert_success
 
   # Verify removed
@@ -276,7 +276,7 @@ load test_helper
   assert_file_contains "$TEST_PROJECT_DIR/CLAUDE.md" "Mock Persona"
 
   # Uninstall plugin
-  run "$SCRIPTS_DIR/plugin_uninstall.sh" "integration-test-hooks"
+  run "$SCRIPTS_DIR/plugin_uninstall.sh" -y "integration-test-hooks"
   assert_success
 
   # Verify removed from registry
@@ -300,7 +300,7 @@ load test_helper
   assert_success
 
   # Uninstall
-  "$SCRIPTS_DIR/plugin_uninstall.sh" "cycle-test"
+  "$SCRIPTS_DIR/plugin_uninstall.sh" -y "cycle-test"
 
   # Verify removed
   run jq -e '.plugins[] | select(.name == "cycle-test")' "$TEST_PROJECT_DIR/ai/plugins/installed.json"
@@ -331,9 +331,9 @@ load test_helper
   assert_output "3"
 
   # Uninstall all
-  "$SCRIPTS_DIR/plugin_uninstall.sh" "plugin-1"
-  "$SCRIPTS_DIR/plugin_uninstall.sh" "plugin-2"
-  "$SCRIPTS_DIR/plugin_uninstall.sh" "plugin-3"
+  "$SCRIPTS_DIR/plugin_uninstall.sh" -y "plugin-1"
+  "$SCRIPTS_DIR/plugin_uninstall.sh" -y "plugin-2"
+  "$SCRIPTS_DIR/plugin_uninstall.sh" -y "plugin-3"
 
   # Verify none remain
   run jq -e '.plugins | length' "$TEST_PROJECT_DIR/ai/plugins/installed.json"
@@ -350,10 +350,10 @@ load test_helper
   # Install and uninstall plugin
   plugin_dir=$(create_mock_plugin "test-plugin" false)
   "$SCRIPTS_DIR/plugin_install.sh" "$plugin_dir"
-  run "$SCRIPTS_DIR/plugin_uninstall.sh" "test-plugin"
+  run "$SCRIPTS_DIR/plugin_uninstall.sh" -y "test-plugin"
 
   assert_success
-  assert_output_contains "uninstalled\|removed\|success"
+  assert_output_contains "uninstalled|removed|success"
 }
 
 @test "plugin_uninstall shows plugin name in output" {
@@ -362,7 +362,7 @@ load test_helper
   # Install and uninstall plugin
   plugin_dir=$(create_mock_plugin "my-test-plugin" false)
   "$SCRIPTS_DIR/plugin_install.sh" "$plugin_dir"
-  run "$SCRIPTS_DIR/plugin_uninstall.sh" "my-test-plugin"
+  run "$SCRIPTS_DIR/plugin_uninstall.sh" -y "my-test-plugin"
 
   assert_success
   assert_output_contains "my-test-plugin"
@@ -387,7 +387,7 @@ load test_helper
   "$SCRIPTS_DIR/plugin_install.sh" "$plugin_dir"
 
   # Uninstall it
-  "$SCRIPTS_DIR/plugin_uninstall.sh" "only-plugin"
+  "$SCRIPTS_DIR/plugin_uninstall.sh" -y "only-plugin"
 
   # Verify registry is empty but valid
   run jq -e '.plugins' "$TEST_PROJECT_DIR/ai/plugins/installed.json"

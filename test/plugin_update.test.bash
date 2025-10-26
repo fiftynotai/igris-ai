@@ -38,7 +38,7 @@ load test_helper
 
   # Should fail with clear error
   assert_failure
-  assert_output_contains "not installed\|not found"
+  assert_output_contains "not installed|not found"
 }
 
 @test "plugin_update validates plugin exists" {
@@ -288,7 +288,7 @@ load test_helper
   run "$SCRIPTS_DIR/plugin_update.sh"
 
   assert_failure
-  assert_output_contains "usage\|required\|plugin name"
+  assert_output_contains "usage|required|plugin name"
 }
 
 @test "plugin_update fails gracefully with corrupted registry" {
@@ -306,7 +306,7 @@ load test_helper
 
   # Should fail gracefully
   assert_failure
-  assert_output_contains "invalid\|corrupted\|parse"
+  assert_output_contains "invalid|corrupted|parse"
 }
 
 # =============================================================================
@@ -370,7 +370,7 @@ load test_helper
   run "$SCRIPTS_DIR/plugin_update.sh" "test-plugin"
 
   assert_success
-  assert_output_contains "updated\|success\|complete"
+  assert_output_contains "updated|success|complete"
 }
 
 @test "plugin_update shows version change" {
