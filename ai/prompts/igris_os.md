@@ -1057,7 +1057,90 @@ Examples of what to include:
 
 ---
 
-**Last Updated:** 2025-10-25
+## Self-Maintenance Operations
+
+Igris AI can perform 10 maintenance operations on ANY project (not just Igris AI itself). These operations analyze code, identify issues, and create appropriate briefs for tracking improvements.
+
+**Complete documentation:** See `ai/prompts/self_maintenance.md`
+
+### Available Operations
+
+1. **CODE_QUALITY_AUDIT** - Analyze codebase for technical debt
+   - Creates: TD-XXX briefs
+   - Trigger: "Run code quality audit"
+
+2. **BUG_HUNT** - Find potential bugs and logic errors
+   - Creates: BR-XXX briefs
+   - Trigger: "Run bug hunt"
+
+3. **STANDARDS_COMPLIANCE_CHECK** - Verify code follows guidelines
+   - Creates: TD-XXX briefs (if violations)
+   - Trigger: "Check standards compliance"
+
+4. **BRIEF_ANALYSIS** - Analyze briefs and recommend priorities
+   - Creates: Recommendations only
+   - Trigger: "Analyze briefs" or "What should I do next?"
+
+5. **FEATURE_IDEATION** - Imagine useful new features
+   - Creates: FR-XXX briefs
+   - Trigger: "Suggest new features"
+
+6. **PROCESS_AUDIT** - Check if protocols are working
+   - Creates: PI-XXX briefs
+   - Trigger: "Audit our process"
+
+7. **DEPENDENCY_AUDIT** - Check dependencies for updates/security
+   - Creates: DU-XXX briefs
+   - Trigger: "Check dependencies"
+
+8. **TEST_COVERAGE_ANALYSIS** - Find untested code
+   - Creates: TS-XXX briefs
+   - Trigger: "Analyze test coverage"
+
+9. **PERFORMANCE_ANALYSIS** - Find bottlenecks
+   - Creates: PF-XXX briefs
+   - Trigger: "Analyze performance"
+
+10. **ARCHITECTURE_REVIEW** - Find redundancies and unused code
+    - Creates: AC-XXX briefs
+    - Trigger: "Review architecture"
+
+### Brief Types
+
+All operations create specific brief types:
+- **BR-XXX** - Bug/Feature (existing)
+- **TD-XXX** - Technical Debt (existing)
+- **MG-XXX** - Migration (existing)
+- **TS-XXX** - Testing (existing)
+- **PI-XXX** - Process Improvement (new)
+- **FR-XXX** - Feature Request (new)
+- **DU-XXX** - Dependency Update (new)
+- **PF-XXX** - Performance (new)
+- **AC-XXX** - Architecture Cleanup (new)
+
+Each type has independent numbering (PI-001, FR-001, etc.)
+
+### When to Run Operations
+
+**Before Major Release:**
+1. DEPENDENCY_AUDIT (security first)
+2. BUG_HUNT (find issues before users)
+3. CODE_QUALITY_AUDIT (technical debt check)
+4. TEST_COVERAGE_ANALYSIS (quality gate)
+
+**Quarterly Maintenance:**
+1. PROCESS_AUDIT (workflow effectiveness)
+2. ARCHITECTURE_REVIEW (cleanup opportunities)
+3. FEATURE_IDEATION (innovation planning)
+
+**Monthly Routine:**
+1. DEPENDENCY_AUDIT (keep current)
+2. CODE_QUALITY_AUDIT (prevent debt)
+3. STANDARDS_COMPLIANCE_CHECK (maintain standards)
+
+---
+
+**Last Updated:** 2025-10-26
 **Igris AI Version:** 2.1.0
 **Documentation:** https://github.com/fiftynotai/igris-ai
 

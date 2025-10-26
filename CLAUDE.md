@@ -514,6 +514,54 @@ Update `ai/session/CURRENT_SESSION.md` when you:
 
 ---
 
+## Self-Maintenance Operations
+
+Igris AI can perform 10 maintenance operations on ANY project to identify issues and create briefs:
+
+### Quick Reference
+
+| Operation | Trigger Phrase | Creates | Use Case |
+|-----------|----------------|---------|----------|
+| **CODE_QUALITY_AUDIT** | "Run code quality audit" | TD-XXX | Find technical debt |
+| **BUG_HUNT** | "Run bug hunt" | BR-XXX | Find potential bugs |
+| **STANDARDS_COMPLIANCE_CHECK** | "Check standards compliance" | TD-XXX | Verify guidelines |
+| **BRIEF_ANALYSIS** | "Analyze briefs" | Recommendations | Plan next work |
+| **FEATURE_IDEATION** | "Suggest new features" | FR-XXX | Brainstorm features |
+| **PROCESS_AUDIT** | "Audit our process" | PI-XXX | Check workflow |
+| **DEPENDENCY_AUDIT** | "Check dependencies" | DU-XXX | Update/security |
+| **TEST_COVERAGE_ANALYSIS** | "Analyze test coverage" | TS-XXX | Find untested code |
+| **PERFORMANCE_ANALYSIS** | "Analyze performance" | PF-XXX | Find bottlenecks |
+| **ARCHITECTURE_REVIEW** | "Review architecture" | AC-XXX | Find redundancies |
+
+**Complete documentation:** `ai/prompts/self_maintenance.md`
+
+### Common Workflows
+
+**Before Major Release:**
+```
+"Check dependencies"           → Fix security issues first
+"Run bug hunt"                 → Find issues before users
+"Run code quality audit"       → Clean up technical debt
+"Analyze test coverage"        → Ensure quality gate
+"Check standards compliance"   → Final polish
+```
+
+**Monthly Maintenance:**
+```
+"Check dependencies"           → Keep current
+"Run code quality audit"       → Prevent debt
+"Check standards compliance"   → Maintain standards
+```
+
+**Strategic Planning:**
+```
+"Analyze briefs"              → Decide next priority
+"Suggest new features"        → Innovation ideas
+"Audit our process"           → Workflow improvements
+```
+
+---
+
 ## Enhancement
 
 **Want project-specific analysis?**
