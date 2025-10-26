@@ -61,11 +61,17 @@ echo "Plugin: $PLUGIN_REPO"
 echo ""
 
 # Check if Igris AI is initialized
-if [ ! -d "ai" ] || [ ! -f "ai/plugins/installed.json" ]; then
+if [ ! -d "ai" ]; then
   echo "❌ Error: Igris AI not initialized in this directory"
   echo ""
   echo "Please run: ./scripts/igris_init.sh"
   exit 1
+fi
+
+# Create installed.json if it doesn't exist
+if [ ! -f "ai/plugins/installed.json" ]; then
+  mkdir -p "ai/plugins"
+  echo '{"plugins": [], "last_updated": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"}' > "ai/plugins/installed.json"
 fi
 
 # Create temporary directory
@@ -159,6 +165,7 @@ plugin_entry = {
     'name': '$PLUGIN_NAME',
     'version': '$PLUGIN_VERSION',
     'repo': '$PLUGIN_REPO',
+    'location': '$PLUGIN_REPO',
     'installed_at': '$INSTALL_DATE',
     'capabilities': [c.strip() for c in '$CAPABILITIES'.split(',') if c.strip()]
 }
