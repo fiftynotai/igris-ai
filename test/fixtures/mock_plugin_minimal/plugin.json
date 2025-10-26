@@ -1,0 +1,5 @@
+{
+  "name": "mock-plugin-minimal",
+  "version": "1.0.0",
+  "description": "Minimal mock plugin for testing (no hooks)"
+}

@@ -47,13 +47,16 @@ IGRIS_VERSION=$(cat "$IGRIS_DIR/version.txt" 2>/dev/null || echo "unknown")
 
 # Copy templates
 echo "📄 Copying templates..."
-cp "$IGRIS_DIR/ai/briefs/BR-TEMPLATE.md" ai/briefs/
+cp "$IGRIS_DIR/ai/briefs/"*-TEMPLATE.md ai/briefs/
 cp "$IGRIS_DIR/ai/prompts/"*.md ai/prompts/
 cp "$IGRIS_DIR/ai/checks/"*.md ai/checks/
 cp "$IGRIS_DIR/ai/templates/"*.md ai/templates/
 
 # Copy CONTRIBUTING guide
 cp "$IGRIS_DIR/ai/CONTRIBUTING.md" ai/
+
+# Copy persona.json.default
+cp "$IGRIS_DIR/ai/persona.json.default" ai/
 
 # Create empty session files
 echo "📝 Creating session files..."

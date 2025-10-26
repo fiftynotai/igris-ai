@@ -1,0 +1,6 @@
+{
+  "name": "mock-plugin-invalid",
+  "version": "1.0.0"
+  // Missing comma - intentionally malformed JSON
+  "description": "Invalid plugin for error testing"
+}

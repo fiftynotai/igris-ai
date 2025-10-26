@@ -1,0 +1,3 @@
+# Mock project with git initialized
+
+This fixture includes .git directory for testing git-aware operations.

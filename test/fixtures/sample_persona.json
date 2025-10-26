@@ -1,0 +1,14 @@
+{
+  "branding": {
+    "title": "Test Persona",
+    "tagline": "Testing Framework"
+  },
+  "user": {
+    "name": "Test User"
+  },
+  "tone": {
+    "style": "professional",
+    "addressing_mode": "Tester"
+  },
+  "mask": "none"
+}

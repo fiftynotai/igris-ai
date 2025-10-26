@@ -1,0 +1,19 @@
+{
+  "plugins": [
+    {
+      "name": "mock-plugin-minimal",
+      "version": "1.0.0",
+      "installed_at": "2025-10-26T15:00:00Z",
+      "location": "/tmp/test-plugins/mock-plugin-minimal"
+    },
+    {
+      "name": "mock-plugin-with-hooks",
+      "version": "1.0.0",
+      "installed_at": "2025-10-26T15:05:00Z",
+      "location": "/tmp/test-plugins/mock-plugin-with-hooks",
+      "hooks": {
+        "persona_injection": "ai/prompts/mock_persona.md"
+      }
+    }
+  ]
+}

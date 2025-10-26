@@ -96,7 +96,14 @@ TEMP_DIR=$(mktemp -d)
 
 # Fetch latest version from plugin repo
 echo "🌐 Checking for updates..."
-git clone --depth 1 --quiet "$PLUGIN_REPO" "$TEMP_DIR" 2>&1 | grep -v "^Cloning" || true
+
+# Test mode: allow local directories (for bats testing)
+if [ "$IGRIS_TEST_MODE" = "1" ] && [ -d "$PLUGIN_REPO" ]; then
+  echo "📦 Copying plugin from local directory (test mode)..."
+  cp -r "$PLUGIN_REPO"/* "$TEMP_DIR/"
+else
+  git clone --depth 1 --quiet "$PLUGIN_REPO" "$TEMP_DIR" 2>&1 | grep -v "^Cloning" || true
+fi
 
 if [ ! -f "$TEMP_DIR/version.txt" ]; then
   echo "❌ Error: Could not fetch remote version"

@@ -49,8 +49,15 @@ fi
 
 # Create temporary directory
 TEMP_DIR=$(mktemp -d)
-echo "📦 Cloning plugin to temporary directory..."
-git clone "$PLUGIN_REPO" "$TEMP_DIR" 2>&1 | grep -v "^Cloning" || true
+
+# Test mode: allow local directories (for bats testing)
+if [ "$IGRIS_TEST_MODE" = "1" ] && [ -d "$PLUGIN_REPO" ]; then
+  echo "📦 Copying plugin from local directory (test mode)..."
+  cp -r "$PLUGIN_REPO"/* "$TEMP_DIR/"
+else
+  echo "📦 Cloning plugin to temporary directory..."
+  git clone "$PLUGIN_REPO" "$TEMP_DIR" 2>&1 | grep -v "^Cloning" || true
+fi
 
 if [ ! -d "$TEMP_DIR" ] || [ ! -f "$TEMP_DIR/install.sh" ]; then
   echo "❌ Error: Invalid plugin repository"

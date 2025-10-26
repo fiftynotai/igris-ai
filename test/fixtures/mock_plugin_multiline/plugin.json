@@ -1,0 +1,8 @@
+{
+  "name": "mock-plugin-multiline",
+  "version": "1.0.0",
+  "description": "Mock plugin with multi-line persona content (tests BR-005 fix)",
+  "hooks": {
+    "persona_injection": "ai/prompts/multiline_persona.md"
+  }
+}

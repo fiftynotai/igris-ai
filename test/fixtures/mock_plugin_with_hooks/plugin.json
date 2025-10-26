@@ -1,0 +1,8 @@
+{
+  "name": "mock-plugin-with-hooks",
+  "version": "1.0.0",
+  "description": "Mock plugin with persona injection hook",
+  "hooks": {
+    "persona_injection": "ai/prompts/mock_persona.md"
+  }
+}
