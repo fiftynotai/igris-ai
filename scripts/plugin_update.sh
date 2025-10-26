@@ -102,9 +102,19 @@ if [ -z "$PLUGIN_ENTRY" ]; then
   exit 1
 fi
 
-# Extract plugin info from installed.json
-PLUGIN_REPO=$(cat ai/plugins/installed.json | grep -A 5 "\"name\": \"$PLUGIN_NAME\"" | grep '"repo"' | sed 's/.*"repo": "\([^"]*\)".*/\1/')
-CURRENT_VERSION=$(cat ai/plugins/installed.json | grep -A 5 "\"name\": \"$PLUGIN_NAME\"" | grep '"version"' | sed 's/.*"version": "\([^"]*\)".*/\1/')
+# Extract plugin info from installed.json using python3 (reliable JSON parsing)
+PLUGIN_INFO=$(python3 -c "
+import json
+with open('ai/plugins/installed.json', 'r') as f:
+    data = json.load(f)
+    for plugin in data['plugins']:
+        if plugin['name'] == '$PLUGIN_NAME':
+            print(plugin.get('repo', ''))
+            print(plugin.get('version', ''))
+            break
+")
+PLUGIN_REPO=$(echo "$PLUGIN_INFO" | sed -n '1p')
+CURRENT_VERSION=$(echo "$PLUGIN_INFO" | sed -n '2p')
 
 echo "📦 Plugin: $PLUGIN_NAME"
 echo "📍 Repository: $PLUGIN_REPO"
@@ -125,14 +135,27 @@ else
   git clone --depth 1 --quiet "$PLUGIN_REPO" "$TEMP_DIR" 2>&1 | grep -v "^Cloning" || true
 fi
 
-if [ ! -f "$TEMP_DIR/version.txt" ]; then
-  echo "❌ Error: Could not fetch remote version"
-  echo "   Plugin repository may not have version.txt file"
+if [ ! -f "$TEMP_DIR/plugin.json" ]; then
+  echo "❌ Error: Could not fetch plugin.json"
+  echo "   Plugin repository is missing plugin.json file"
   rm -rf "$TEMP_DIR"
   exit 1
 fi
 
-REMOTE_VERSION=$(cat "$TEMP_DIR/version.txt")
+# Extract version from plugin.json using python3 (reliable JSON parsing)
+REMOTE_VERSION=$(python3 -c "
+import json
+with open('$TEMP_DIR/plugin.json', 'r') as f:
+    data = json.load(f)
+    print(data.get('version', ''))
+" 2>/dev/null)
+
+if [ -z "$REMOTE_VERSION" ]; then
+  echo "❌ Error: Could not extract version from plugin.json"
+  echo "   Check that plugin.json has a 'version' field"
+  rm -rf "$TEMP_DIR"
+  exit 1
+fi
 
 echo "📡 Latest version: $REMOTE_VERSION"
 echo ""

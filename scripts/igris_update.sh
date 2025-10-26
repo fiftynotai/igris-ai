@@ -61,8 +61,13 @@ if [ ! -f ".igris_version" ]; then
   exit 1
 fi
 
-# Read current version
-CURRENT_VERSION=$(cat .igris_version | grep '"igris_ai_version"' | sed 's/.*"igris_ai_version": "\([^"]*\)".*/\1/')
+# Read current version using python3 (reliable JSON parsing)
+CURRENT_VERSION=$(python3 -c "
+import json
+with open('.igris_version', 'r') as f:
+    data = json.load(f)
+    print(data.get('igris_ai_version', ''))
+")
 
 echo "📦 Current version: $CURRENT_VERSION"
 echo ""

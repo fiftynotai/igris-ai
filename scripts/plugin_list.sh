@@ -3,6 +3,8 @@
 # Igris AI Plugin Lister
 # Lists all installed Igris AI plugins
 
+set -e
+
 # Check Python3 dependency
 check_python3() {
   if ! command -v python3 &> /dev/null; then
@@ -56,7 +58,7 @@ for p in data['plugins']:
     if 'capabilities' in p and p['capabilities']:
         # Handle both nested list (old format) and flat list (new format)
         caps = p['capabilities']
-        if isinstance(caps[0], list):
+        if caps and isinstance(caps[0], list):
             caps = caps[0]  # Flatten nested list
         caps_str = ', '.join(caps)
         print(f'   Capabilities: {caps_str}')

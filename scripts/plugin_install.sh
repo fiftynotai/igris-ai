@@ -100,8 +100,16 @@ if ! validate_json "$TEMP_DIR/plugin.json" "plugin.json"; then
   exit 1
 fi
 
-PLUGIN_NAME=$(cat "$TEMP_DIR/plugin.json" | grep '"name"' | head -1 | sed 's/.*"name": "\(.*\)".*/\1/')
-PLUGIN_VERSION=$(cat "$TEMP_DIR/plugin.json" | grep '"version"' | head -1 | sed 's/.*"version": "\(.*\)".*/\1/')
+# Extract name and version using python3 (reliable JSON parsing)
+PLUGIN_METADATA=$(python3 -c "
+import json
+with open('$TEMP_DIR/plugin.json', 'r') as f:
+    data = json.load(f)
+    print(data.get('name', ''))
+    print(data.get('version', ''))
+")
+PLUGIN_NAME=$(echo "$PLUGIN_METADATA" | sed -n '1p')
+PLUGIN_VERSION=$(echo "$PLUGIN_METADATA" | sed -n '2p')
 
 # Validate plugin name is not empty
 if [ -z "$PLUGIN_NAME" ]; then
