@@ -4,7 +4,9 @@
 **Priority:** P3-Low
 **Effort:** M-Medium (1-2d)
 **Assignee:** AI Assistant
-**Status:** Ready
+**Status:** Deferred
+**Deferred:** 2025-10-26
+**Reason:** Small user base - defer until v3.0 or 1000+ installs
 
 ---
 
