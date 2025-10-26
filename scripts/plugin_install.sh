@@ -103,6 +103,14 @@ fi
 PLUGIN_NAME=$(cat "$TEMP_DIR/plugin.json" | grep '"name"' | head -1 | sed 's/.*"name": "\(.*\)".*/\1/')
 PLUGIN_VERSION=$(cat "$TEMP_DIR/plugin.json" | grep '"version"' | head -1 | sed 's/.*"version": "\(.*\)".*/\1/')
 
+# Validate plugin name is not empty
+if [ -z "$PLUGIN_NAME" ]; then
+  echo "❌ Error: Plugin name cannot be empty"
+  echo "   Check plugin.json 'name' field"
+  rm -rf "$TEMP_DIR"
+  exit 1
+fi
+
 echo "📋 Plugin: $PLUGIN_NAME v$PLUGIN_VERSION"
 echo ""
 
