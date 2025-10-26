@@ -138,6 +138,12 @@ EOF
 
   cat > "$TEST_TEMP_DIR/blank-lines-plugin/install.sh" <<'EOF'
 #!/bin/bash
+PLUGIN_DIR="$1"
+PROJECT_DIR="$2"
+# Copy plugin hook files to project
+if [ -d "$PLUGIN_DIR/ai" ]; then
+  cp -r "$PLUGIN_DIR/ai"/* "$PROJECT_DIR/ai/" 2>/dev/null || true
+fi
 echo "Install"
 EOF
   chmod +x "$TEST_TEMP_DIR/blank-lines-plugin/install.sh"
@@ -185,6 +191,12 @@ EOF
 
   cat > "$TEST_TEMP_DIR/markdown-plugin/install.sh" <<'EOF'
 #!/bin/bash
+PLUGIN_DIR="$1"
+PROJECT_DIR="$2"
+# Copy plugin hook files to project
+if [ -d "$PLUGIN_DIR/ai" ]; then
+  cp -r "$PLUGIN_DIR/ai"/* "$PROJECT_DIR/ai/" 2>/dev/null || true
+fi
 echo "Install"
 EOF
   chmod +x "$TEST_TEMP_DIR/markdown-plugin/install.sh"
@@ -252,6 +264,12 @@ EOF
 
   cat > "$TEST_TEMP_DIR/unicode-persona-plugin/install.sh" <<'EOF'
 #!/bin/bash
+PLUGIN_DIR="$1"
+PROJECT_DIR="$2"
+# Copy plugin hook files to project
+if [ -d "$PLUGIN_DIR/ai" ]; then
+  cp -r "$PLUGIN_DIR/ai"/* "$PROJECT_DIR/ai/" 2>/dev/null || true
+fi
 echo "Install"
 EOF
   chmod +x "$TEST_TEMP_DIR/unicode-persona-plugin/install.sh"

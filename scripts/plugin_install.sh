@@ -224,23 +224,42 @@ if [ -n "$(echo "$HOOKS_JSON" | grep -v '^{}$')" ]; then
     fi
   fi
 
-  # Regenerate CLAUDE.md with two-step process (handles multi-line PERSONA_INJECTION)
-  # First pass: Replace simple variables
-  sed -e "s/{{IGRIS_VERSION}}/$IGRIS_VERSION/g" \
-      -e "s/{{INSTALL_DATE}}/$INSTALL_DATE/g" \
-      "$IGRIS_DIR/scripts/templates/CLAUDE.md.template" > CLAUDE.md.tmp
+  # Regenerate CLAUDE.md with proper multi-line persona injection
+  # Use Python to handle multi-line content correctly
 
-  # Second pass: Replace persona injection using perl (handles newlines)
+  # Write persona content to temp file if present (preserves all formatting)
+  PERSONA_TEMP=""
   if [ -n "$PERSONA_INJECTION" ]; then
-    # Escape special characters for perl regex
-    ESCAPED_INJECTION=$(printf '%s\n' "$PERSONA_INJECTION" | perl -pe 's/([\\\/\$])/\\$1/g')
-    perl -i -pe "s/\{\{PERSONA_INJECTION\}\}/$ESCAPED_INJECTION/g" CLAUDE.md.tmp
-  else
-    # Remove the placeholder if no injection
-    perl -i -pe 's/\{\{PERSONA_INJECTION\}\}//g' CLAUDE.md.tmp
+    PERSONA_TEMP=$(mktemp)
+    printf '%s' "$PERSONA_INJECTION" > "$PERSONA_TEMP"
   fi
 
-  mv CLAUDE.md.tmp CLAUDE.md
+  python3 <<PYTHON_EOF
+# Read template
+with open("$IGRIS_DIR/scripts/templates/CLAUDE.md.template", 'r') as f:
+    content = f.read()
+
+# Replace simple variables
+content = content.replace('{{IGRIS_VERSION}}', '$IGRIS_VERSION')
+content = content.replace('{{INSTALL_DATE}}', '$INSTALL_DATE')
+
+# Replace persona injection (multi-line safe)
+persona_content = ""
+persona_file = "$PERSONA_TEMP"
+if persona_file:
+    with open(persona_file, 'r') as f:
+        persona_content = f.read()
+content = content.replace('{{PERSONA_INJECTION}}', persona_content)
+
+# Write result
+with open('CLAUDE.md', 'w') as f:
+    f.write(content)
+PYTHON_EOF
+
+  # Cleanup temp file
+  if [ -n "$PERSONA_TEMP" ]; then
+    rm -f "$PERSONA_TEMP"
+  fi
 fi
 
 # Cleanup

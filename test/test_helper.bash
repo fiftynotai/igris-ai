@@ -83,11 +83,26 @@ EOF
 EOF
   fi
 
-  # Create install.sh
-  cat > install.sh <<'EOF'
+  # Create install.sh that copies hook files to project
+  if [ "$with_hooks" = "true" ]; then
+    cat > install.sh <<'EOF'
+#!/bin/bash
+PLUGIN_DIR="$1"
+PROJECT_DIR="$2"
+
+# Copy plugin hook files to project
+if [ -d "$PLUGIN_DIR/ai" ]; then
+  cp -r "$PLUGIN_DIR/ai"/* "$PROJECT_DIR/ai/" 2>/dev/null || true
+fi
+
+echo "Mock plugin installed"
+EOF
+  else
+    cat > install.sh <<'EOF'
 #!/bin/bash
 echo "Mock plugin installed"
 EOF
+  fi
   chmod +x install.sh
 
   echo "$plugin_dir"
@@ -125,9 +140,17 @@ Line 3: Third line of persona
 **This tests newline handling.**
 EOF
 
-  # Create install.sh
+  # Create install.sh that copies hook files to project
   cat > install.sh <<'EOF'
 #!/bin/bash
+PLUGIN_DIR="$1"
+PROJECT_DIR="$2"
+
+# Copy plugin hook files to project
+if [ -d "$PLUGIN_DIR/ai" ]; then
+  cp -r "$PLUGIN_DIR/ai"/* "$PROJECT_DIR/ai/" 2>/dev/null || true
+fi
+
 echo "Multiline plugin installed"
 EOF
   chmod +x install.sh
