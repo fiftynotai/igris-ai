@@ -278,6 +278,125 @@ echo ""
 
 ---
 
+## uninstall.sh Contract (Optional)
+
+**Since:** v2.2.0
+
+Plugins can optionally provide an `uninstall.sh` script to clean up files installed during installation. If provided, the core uninstaller will call this script before removing the plugin from the registry.
+
+### Input Parameters
+
+```bash
+#!/bin/bash
+# Your plugin uninstaller
+
+TARGET_DIR=$1    # Target project directory
+```
+
+### Required Behavior
+
+```bash
+# 1. Remove plugin files
+# Remove only files YOUR plugin installed
+rm -f "$TARGET_DIR/scripts/your-plugin-script.sh"
+rm -f "$TARGET_DIR/scripts/another-plugin-script.sh"
+rm -rf "$TARGET_DIR/templates/your-plugin-templates/"
+
+# 2. Remove plugin data (if any)
+rm -rf "$TARGET_DIR/ai/plugins/your-plugin-data/"
+
+# 3. Clean up configs (optional)
+if [ -f "$TARGET_DIR/your-plugin-config.json" ]; then
+  rm -f "$TARGET_DIR/your-plugin-config.json"
+fi
+
+echo "✅ Plugin files removed"
+```
+
+### Best Practices
+
+✅ **Only remove YOUR files** - Don't touch files from other plugins
+✅ **Be defensive** - Check files exist before removing (`[ -f ... ]`)
+✅ **Exit cleanly** - Use `set -e` and exit 0 on success
+✅ **No user interaction** - Uninstall runs with `-y` flag (non-interactive)
+
+❌ **Don't remove shared directories** - Don't `rm -rf scripts/` (removes ALL scripts!)
+❌ **Don't remove Igris AI core files** - Don't touch `ai/prompts/`, `ai/briefs/`, etc.
+❌ **Don't fail on missing files** - If file already gone, that's OK
+
+### What Happens If You Don't Provide uninstall.sh?
+
+If your plugin doesn't have `uninstall.sh`:
+- Core uninstaller removes plugin from registry
+- Core uninstaller removes hooks (if any)
+- User gets warning: "Manual cleanup may be required"
+- User must manually remove plugin files
+
+**When to provide uninstall.sh:**
+- If your plugin installs files (scripts, templates, configs)
+- If your plugin creates directories
+- If you want clean uninstall experience
+
+**When you can skip it:**
+- If your plugin only provides hooks (no files)
+- If your plugin files are clearly labeled and user can remove manually
+
+### Full Example
+
+```bash
+#!/bin/bash
+# Igris AI Distribution Plugin Uninstaller
+
+set -e
+
+TARGET_DIR=$1
+
+if [ -z "$TARGET_DIR" ]; then
+  TARGET_DIR=$(pwd)
+fi
+
+echo "🗑️  Removing plugin files..."
+
+# Remove scripts
+rm -f "$TARGET_DIR/scripts/smart_distribute.sh"
+rm -f "$TARGET_DIR/scripts/bump_version.sh"
+rm -f "$TARGET_DIR/scripts/generate_release_notes.sh"
+rm -f "$TARGET_DIR/scripts/generate_fastlane.sh"
+
+# Remove templates
+rm -rf "$TARGET_DIR/templates/release_notes_template.md"
+rm -rf "$TARGET_DIR/templates/changelog_template.md"
+
+# Remove config
+if [ -f "$TARGET_DIR/distribution-config.json" ]; then
+  rm -f "$TARGET_DIR/distribution-config.json"
+fi
+
+# Remove plugin data
+rm -rf "$TARGET_DIR/ai/plugins/distribution-data/"
+
+echo "✅ Plugin files removed"
+```
+
+### Testing Your uninstall.sh
+
+```bash
+# 1. Install plugin
+./scripts/plugin_install.sh /path/to/your-plugin
+
+# 2. Verify files installed
+ls scripts/your-plugin-*.sh
+ls templates/your-plugin-*
+
+# 3. Uninstall
+./scripts/plugin_uninstall.sh -y your-plugin-name
+
+# 4. Verify files gone
+ls scripts/your-plugin-*.sh  # Should error "No such file"
+```
+
+---
+
 ## Capabilities
 
 ### Standard Capabilities
