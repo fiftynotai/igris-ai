@@ -629,6 +629,91 @@ Claude will:
 
 ---
 
+## ✦ Testing
+
+IGRIS includes a comprehensive test suite ensuring reliability across all core scripts.
+
+### Test Framework
+
+- **Framework:** [bats-core](https://github.com/bats-core/bats-core) (Bash Automated Testing System)
+- **Coverage:** 166 tests across 7 test files
+- **CI/CD:** GitHub Actions (Ubuntu + macOS)
+
+### Test Categories
+
+1. **igris_init.test.bash** (25 tests)
+   - Directory creation
+   - CLAUDE.md generation
+   - Startup hook creation
+   - Existing installation handling
+
+2. **plugin_install.test.bash** (27 tests)
+   - Plugin validation
+   - Registry management
+   - Hook injection (includes BR-005 regression tests)
+   - Multi-line content handling
+
+3. **plugin_update.test.bash** (24 tests)
+   - Version updates
+   - Backup creation
+   - Hook updates
+   - Registry updates
+
+4. **plugin_uninstall.test.bash** (24 tests)
+   - Registry cleanup
+   - File removal
+   - CLAUDE.md regeneration
+   - Install/uninstall cycles
+
+5. **error_handling.test.bash** (31 tests)
+   - Missing dependencies
+   - Corrupted files
+   - Invalid inputs
+   - Permission errors
+
+6. **edge_cases.test.bash** (35 tests)
+   - Special characters
+   - Multi-line content
+   - Unicode handling
+   - Whitespace edge cases
+
+### Running Tests
+
+**Install bats:**
+```bash
+# macOS
+brew install bats-core
+
+# Ubuntu/Debian
+sudo apt install bats
+```
+
+**Run all tests:**
+```bash
+bats test/
+```
+
+**Run specific test file:**
+```bash
+bats test/igris_init.test.bash
+```
+
+**Run with verbose output:**
+```bash
+bats test/ --tap
+```
+
+### Continuous Integration
+
+Tests run automatically on:
+- Every push to `main` branch
+- Every pull request
+- Both Ubuntu and macOS environments
+
+See `.github/workflows/test.yml` for CI/CD configuration.
+
+---
+
 ## ✦ Why IGRIS?
 
 ### Without IGRIS

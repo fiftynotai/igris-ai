@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.3.0] - 2025-10-26
+
+### Added
+
+- **Comprehensive Automated Testing Suite (TD-005)** - Shell script testing infrastructure
+  - **Test Framework:** bats-core (Bash Automated Testing System)
+  - **Coverage:** 166 tests across 7 test files
+    - `igris_init.test.bash` (25 tests) - Project initialization
+    - `plugin_install.test.bash` (27 tests) - Plugin installation & hooks
+    - `plugin_update.test.bash` (24 tests) - Plugin updates
+    - `plugin_uninstall.test.bash` (24 tests) - Plugin removal
+    - `error_handling.test.bash` (31 tests) - Missing dependencies & corruption
+    - `edge_cases.test.bash` (35 tests) - Special characters & multi-line content
+  - **Test Infrastructure:**
+    - `test_helper.bash` (250+ lines) - Shared utilities & assertions
+    - `test/fixtures/` - Mock plugins, projects, and configurations
+    - Comprehensive test documentation in `test/README.md`
+  - **CI/CD:** GitHub Actions workflow (`.github/workflows/test.yml`)
+    - Runs on Ubuntu + macOS
+    - Executes on every push to main and pull requests
+  - **Regression Testing:** Includes BR-005 regression tests for multi-line content handling
+  - **Coverage Goals:** Critical paths 100%, error handling 80%, edge cases 60%, overall 75%+
+  - Result: ~2500+ lines of test code, continuous quality assurance
+
+### Changed
+
+- **README.md** - Added comprehensive Testing section
+- **CONTRIBUTING.md** - Updated with testing guidelines and requirements
+  - How to run tests
+  - Writing new tests
+  - Test coverage requirements
+  - CI/CD integration details
+
+---
+
 ## [2.2.0] - 2025-10-26
 
 ### Added

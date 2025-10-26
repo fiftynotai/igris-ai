@@ -210,6 +210,73 @@ How was this tested?
 
 ## 🧪 Testing
 
+### Automated Testing
+
+Igris AI has a comprehensive test suite with 166 tests across 7 test files.
+
+**Test Framework:** [bats-core](https://github.com/bats-core/bats-core)
+
+**Install bats:**
+
+```bash
+# macOS
+brew install bats-core
+
+# Ubuntu/Debian
+sudo apt install bats
+```
+
+**Run all tests:**
+
+```bash
+bats test/
+```
+
+**Run specific test file:**
+
+```bash
+bats test/igris_init.test.bash
+bats test/plugin_install.test.bash
+```
+
+**Run with verbose output:**
+
+```bash
+bats test/ --tap
+```
+
+### Writing Tests
+
+When adding new functionality:
+
+1. **Add tests for new scripts** - Create `test/script_name.test.bash`
+2. **Use test helpers** - Load `test_helper.bash` for common utilities
+3. **Follow test patterns** - See existing tests for examples
+4. **Test error handling** - Add negative test cases
+5. **Test edge cases** - Special characters, empty inputs, etc.
+
+**Test helper utilities:**
+
+```bash
+load test_helper
+
+@test "example test" {
+  # Setup
+  setup_test_project
+  init_igris_in_test_project
+
+  # Execute
+  run "$SCRIPTS_DIR/your_script.sh" "args"
+
+  # Assert
+  assert_success
+  assert_file_exists "$TEST_PROJECT_DIR/some/file"
+  assert_file_contains "$TEST_PROJECT_DIR/file" "content"
+}
+```
+
+See `test/README.md` for full testing documentation.
+
 ### Manual Testing
 
 Test your changes on a real project:
@@ -227,20 +294,26 @@ git init
 # ...
 ```
 
-### Automated Testing
+### Test Coverage Requirements
 
-**Once TD-005 is implemented**, run the test suite:
+**For new scripts:**
+- ✅ Critical paths: 100% coverage
+- ✅ Error handling: 80% coverage
+- ✅ Edge cases: 60% coverage
 
-```bash
-# Install bats
-npm install -g bats
+**For modified scripts:**
+- ✅ Add tests for new functionality
+- ✅ Ensure existing tests still pass
+- ✅ Add regression tests if fixing bugs
 
-# Run all tests
-bats test/
+### CI/CD
 
-# Run specific test file
-bats test/igris_init.bats
-```
+Tests run automatically on:
+- Every push to `main` branch
+- Every pull request
+- Both Ubuntu and macOS environments
+
+See `.github/workflows/test.yml` for CI configuration.
 
 ---
 
