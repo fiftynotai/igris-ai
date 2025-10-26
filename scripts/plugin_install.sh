@@ -21,6 +21,27 @@ check_python3() {
 
 check_python3
 
+# Validate JSON file
+validate_json() {
+  local file="$1"
+  local desc="${2:-JSON file}"
+
+  # Check if file exists
+  if [ ! -f "$file" ]; then
+    echo "❌ Error: $desc not found: $file"
+    return 1
+  fi
+
+  # Validate JSON syntax
+  if ! python3 -c "import json; json.load(open('$file'))" 2>/dev/null; then
+    echo "❌ Error: $desc is corrupted or contains invalid JSON"
+    echo "   File: $file"
+    return 1
+  fi
+
+  return 0
+}
+
 PLUGIN_REPO=$1
 
 if [ -z "$PLUGIN_REPO" ]; then
@@ -67,8 +88,8 @@ if [ ! -d "$TEMP_DIR" ] || [ ! -f "$TEMP_DIR/install.sh" ]; then
 fi
 
 # Read plugin metadata
-if [ ! -f "$TEMP_DIR/plugin.json" ]; then
-  echo "❌ Error: Plugin missing plugin.json metadata file"
+# Validate plugin.json exists and has valid JSON syntax
+if ! validate_json "$TEMP_DIR/plugin.json" "plugin.json"; then
   rm -rf "$TEMP_DIR"
   exit 1
 fi

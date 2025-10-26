@@ -87,7 +87,7 @@ load test_helper
   run "$SCRIPTS_DIR/plugin_install.sh" "$TEST_TEMP_DIR/not-a-directory"
 
   assert_failure
-  assert_output_contains "not a directory\|invalid\|does not exist"
+  assert_output_contains "not a directory|invalid|does not exist"
 }
 
 @test "plugin_update rejects empty plugin name" {
@@ -117,7 +117,7 @@ load test_helper
   run "$SCRIPTS_DIR/plugin_install.sh" "$BATS_TEST_DIRNAME/fixtures/mock_plugin_invalid"
 
   assert_failure
-  assert_output_contains "invalid\|JSON\|parse\|malformed"
+  assert_output_contains "invalid|JSON|parse|malformed"
 }
 
 @test "plugin_install handles missing plugin.json" {
@@ -129,7 +129,7 @@ load test_helper
   run "$SCRIPTS_DIR/plugin_install.sh" "$TEST_TEMP_DIR/no-manifest-plugin"
 
   assert_failure
-  assert_output_contains "plugin.json\|manifest\|not found"
+  assert_output_contains "plugin.json|manifest|not found"
 }
 
 @test "plugin_update handles corrupted installed.json" {
@@ -146,7 +146,7 @@ load test_helper
   run "$SCRIPTS_DIR/plugin_update.sh" "test-plugin"
 
   assert_failure
-  assert_output_contains "invalid\|corrupted\|parse"
+  assert_output_contains "invalid|corrupted|parse"
 }
 
 @test "plugin_uninstall handles corrupted installed.json" {
@@ -163,7 +163,7 @@ load test_helper
   run "$SCRIPTS_DIR/plugin_uninstall.sh" "test-plugin"
 
   assert_failure
-  assert_output_contains "invalid\|corrupted\|parse"
+  assert_output_contains "invalid|corrupted|parse"
 }
 
 @test "plugin_uninstall handles missing installed.json" {
@@ -176,7 +176,7 @@ load test_helper
   run "$SCRIPTS_DIR/plugin_uninstall.sh" "test-plugin"
 
   assert_failure
-  assert_output_contains "not installed\|no plugins\|not found"
+  assert_output_contains "not installed|no plugins|not found"
 }
 
 # =============================================================================

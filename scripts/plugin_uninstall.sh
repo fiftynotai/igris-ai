@@ -21,6 +21,27 @@ check_python3() {
 
 check_python3
 
+# Validate JSON file
+validate_json() {
+  local file="$1"
+  local desc="${2:-JSON file}"
+
+  # Check if file exists
+  if [ ! -f "$file" ]; then
+    echo "❌ Error: $desc not found: $file"
+    return 1
+  fi
+
+  # Validate JSON syntax
+  if ! python3 -c "import json; json.load(open('$file'))" 2>/dev/null; then
+    echo "❌ Error: $desc is corrupted or contains invalid JSON"
+    echo "   File: $file"
+    return 1
+  fi
+
+  return 0
+}
+
 PLUGIN_NAME=$1
 
 if [ -z "$PLUGIN_NAME" ]; then
@@ -37,9 +58,17 @@ echo "🔌 Igris AI Plugin Uninstaller"
 echo "==================================="
 echo ""
 
-# Check if Igris AI is initialized
-if [ ! -d "ai" ] || [ ! -f "ai/plugins/installed.json" ]; then
+# Check if Igris AI is initialized and validate installed.json
+if [ ! -d "ai" ]; then
   echo "❌ Error: Igris AI not initialized in this directory"
+  echo ""
+  echo "Please run: ./scripts/igris_init.sh"
+  exit 1
+fi
+
+if ! validate_json "ai/plugins/installed.json" "installed.json"; then
+  echo ""
+  echo "Please run: ./scripts/igris_init.sh"
   exit 1
 fi
 
