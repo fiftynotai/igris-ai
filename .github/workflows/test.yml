@@ -1,0 +1,54 @@
+name: Test Shell Scripts
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install bats-core (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats
+
+      - name: Install bats-core (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install bats-core
+
+      - name: Verify Python3 installed
+        run: |
+          python3 --version
+
+      - name: Verify jq installed
+        run: |
+          jq --version
+
+      - name: Verify git installed
+        run: |
+          git --version
+
+      - name: Run test suite
+        run: |
+          bats test/*.test.bash
+
+      - name: Test results summary
+        if: always()
+        run: |
+          echo "Test suite completed"
+          echo "OS: ${{ matrix.os }}"
