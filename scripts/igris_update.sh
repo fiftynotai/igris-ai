@@ -52,6 +52,91 @@ echo "⚔️  Igris AI Update Manager"
 echo "=============================="
 echo ""
 
+# Function to migrate from Blueprint AI to Igris AI
+migrate_from_blueprint() {
+  echo "🔄 Detected Blueprint AI project - starting migration to Igris AI..."
+  echo ""
+
+  # 1. Validate blueprint version file
+  if ! python3 -c "import json; json.load(open('.blueprint_version'))" 2>/dev/null; then
+    echo "❌ Error: Invalid .blueprint_version file"
+    echo ""
+    echo "The version file appears to be corrupted."
+    echo "Please restore from backup or reinitialize."
+    exit 1
+  fi
+
+  # 2. Create backup
+  BACKUP_DIR=".igris_backup/blueprint_migration_$(date +%Y%m%d_%H%M%S)"
+  mkdir -p "$BACKUP_DIR"
+  cp .blueprint_version "$BACKUP_DIR/"
+  echo "💾 Backup created: $BACKUP_DIR/.blueprint_version"
+  echo ""
+
+  # 3. Migrate version file (rename key)
+  echo "📝 Migrating version file..."
+  python3 <<EOF
+import json
+with open('.blueprint_version', 'r') as f:
+    data = json.load(f)
+
+# Migrate key name: blueprint_ai_version → igris_ai_version
+if 'blueprint_ai_version' in data:
+    data['igris_ai_version'] = data.pop('blueprint_ai_version')
+
+with open('.igris_version', 'w') as f:
+    json.dump(data, f, indent=2)
+EOF
+
+  if [ ! -f ".igris_version" ]; then
+    echo "❌ Error: Migration failed - could not create .igris_version"
+    exit 1
+  fi
+
+  # 4. Remove old file
+  rm .blueprint_version
+
+  # 5. Show success message
+  echo "✅ Migration complete!"
+  echo ""
+  echo "📋 What was migrated:"
+  echo "  - .blueprint_version → .igris_version"
+  echo "  - All briefs, session data, and context preserved"
+  echo "  - Plugins configuration preserved"
+  echo ""
+  echo "🔄 Continuing with update to latest Igris AI..."
+  echo ""
+}
+
+# Check for Blueprint AI project and migrate if needed
+if [ -f ".blueprint_version" ] && [ ! -f ".igris_version" ]; then
+  migrate_from_blueprint
+fi
+
+# Check if both files exist (unusual state)
+if [ -f ".blueprint_version" ] && [ -f ".igris_version" ]; then
+  echo "⚠️  Warning: Both .blueprint_version and .igris_version exist"
+  echo ""
+  echo "This is an unusual state. Please choose:"
+  echo "  1) Keep .igris_version (recommended if already migrated)"
+  echo "  2) Re-migrate from .blueprint_version (will backup and overwrite)"
+  echo ""
+  read -p "Choice [1/2]: " CHOICE
+  if [ "$CHOICE" = "2" ]; then
+    rm .igris_version
+    migrate_from_blueprint
+  else
+    echo ""
+    echo "✅ Using existing .igris_version"
+    echo "   (Removing .blueprint_version)"
+    BACKUP_DIR=".igris_backup/cleanup_$(date +%Y%m%d_%H%M%S)"
+    mkdir -p "$BACKUP_DIR"
+    mv .blueprint_version "$BACKUP_DIR/"
+    echo "   (Old file backed up to $BACKUP_DIR)"
+    echo ""
+  fi
+fi
+
 # Check if Igris AI is initialized
 if [ ! -f ".igris_version" ]; then
   echo "❌ Error: Igris AI not initialized in this directory"

@@ -151,6 +151,31 @@ This creates:
 - `scripts/` - Core IGRIS scripts (6 scripts including update system)
 - Documentation and guides
 
+### Upgrading from Blueprint AI
+
+**If you have an existing Blueprint AI project (v1.x)**, upgrading is seamless:
+
+```bash
+# In your Blueprint AI project directory
+./scripts/igris_update.sh
+```
+
+**What happens automatically:**
+- ✅ Detects your Blueprint AI project (looks for `.blueprint_version`)
+- ✅ Creates backup at `.igris_backup/blueprint_migration_<timestamp>/`
+- ✅ Migrates version file (preserves all data)
+- ✅ Updates to latest Igris AI
+
+**Your data is preserved:**
+- All briefs (`ai/briefs/`)
+- Session history (`ai/session/`)
+- Architecture docs (`ai/context/`)
+- Installed plugins (`ai/plugins/`)
+
+**One command. Zero data loss. Automatic backup.**
+
+See [CHANGELOG.md](CHANGELOG.md#migration-from-1x-blueprint-ai) for details.
+
 ### Start Using Claude (Truly Automatic!)
 
 ```bash

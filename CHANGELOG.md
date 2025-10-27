@@ -31,6 +31,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - User decision flow (CANCEL/OVERRIDE/ANALYZE)
   - Ready for future implementation (registered as brief, not yet implemented)
 
+- **Automatic Blueprint AI → Igris AI Migration (TD-011)** - Seamless upgrade path
+  - **One-Command Upgrade:** Run `./scripts/igris_update.sh` - migration happens automatically
+  - **Auto-Detection:** Recognizes `.blueprint_version` file and triggers migration
+  - **Safe Migration:**
+    - Validates JSON structure before migrating
+    - Creates backup at `.igris_backup/blueprint_migration_<timestamp>/`
+    - Preserves all user data (briefs, session, context, plugins)
+    - Only changes version file key: `blueprint_ai_version` → `igris_ai_version`
+  - **Edge Case Handling:** If both `.blueprint_version` and `.igris_version` exist, prompts user to choose
+  - **Clear Feedback:** Shows what was migrated and confirms data preservation
+  - **Zero Data Loss:** Tested end-to-end with Blueprint v1.0.5
+  - Result: Blueprint users can now upgrade to Igris AI with confidence
+
 ### Fixed
 
 - **BR-007 (P0-Critical):** plugin_update.sh version extraction broken
@@ -390,20 +403,34 @@ This is a major version bump due to comprehensive rebranding affecting all aspec
   - Plugin system references
   - CLAUDE.md template
 
-### Migration from 1.x
+### Migration from 1.x (Blueprint AI)
 
-**For existing projects:**
+**⚡ Automatic Migration Available (as of v2.4.0):**
 
-1. Update your Igris AI installation:
-   ```bash
-   # If you have Blueprint AI installed
-   git pull  # In the igris-ai repo
-   ```
+Simply run the update script - migration happens automatically!
 
-2. Projects initialized with Blueprint AI will continue to work, but to fully migrate:
-   - Version tracking file will be `.blueprint_version` (legacy)
-   - Run `igris_init.sh --force` to regenerate with new branding
-   - Or manually rename `.blueprint_version` to `.igris_version` and update contents
+```bash
+./scripts/igris_update.sh
+```
+
+The script will:
+- ✅ Detect your Blueprint AI project automatically
+- ✅ Create backup of `.blueprint_version`
+- ✅ Migrate to `.igris_version` (preserving all data)
+- ✅ Continue with update to latest Igris AI
+
+**What gets preserved:**
+- All briefs (`ai/briefs/`)
+- Session data (`ai/session/`)
+- Architecture docs (`ai/context/`)
+- Installed plugins (`ai/plugins/`)
+
+**Manual migration (v2.0.0 - v2.3.0 only):**
+
+If you're on v2.0.0-v2.3.0 without automatic migration:
+1. Rename: `mv .blueprint_version .igris_version`
+2. Edit `.igris_version`: Change key `blueprint_ai_version` to `igris_ai_version`
+3. Run: `./scripts/igris_update.sh`
 
 **Breaking:** Script names changed. Update any automation:
 - `blueprint_init.sh` → `igris_init.sh`
