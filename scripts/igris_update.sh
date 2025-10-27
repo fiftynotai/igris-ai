@@ -193,6 +193,7 @@ echo "  From: $CURRENT_VERSION"
 echo "  To:   $REMOTE_VERSION"
 echo ""
 echo "📝 Files that will be updated:"
+echo "  - CLAUDE.md (Claude Code context file)"
 echo "  - ai/prompts/*.md (system prompts)"
 echo "  - ai/templates/*.md (brief templates)"
 echo "  - ai/checks/*.md (QA checklists)"
@@ -210,6 +211,13 @@ if [ "$DRY_RUN" = true ]; then
   echo "🔍 DRY RUN MODE - No changes will be made"
   echo ""
   echo "Files that would be updated:"
+
+  # CLAUDE.md
+  if [ -f "$TEMP_DIR/scripts/templates/CLAUDE.md.template" ]; then
+    echo ""
+    echo "Context:"
+    echo "  - CLAUDE.md (regenerated from template)"
+  fi
 
   # List files that would be updated
   if [ -d "$TEMP_DIR/ai/prompts" ]; then
@@ -258,6 +266,7 @@ echo "💾 Creating backup at $BACKUP_DIR..."
 mkdir -p "$BACKUP_DIR"
 
 # Backup files that will be updated
+cp CLAUDE.md "$BACKUP_DIR/" 2>/dev/null || true
 cp -r ai/prompts "$BACKUP_DIR/" 2>/dev/null || true
 cp -r ai/templates "$BACKUP_DIR/" 2>/dev/null || true
 cp -r ai/checks "$BACKUP_DIR/" 2>/dev/null || true
@@ -302,6 +311,56 @@ if [ -f "$TEMP_DIR/scripts/plugin_install.sh" ]; then
   cp "$TEMP_DIR/scripts/plugin_uninstall.sh" scripts/
   cp "$TEMP_DIR/scripts/plugin_list.sh" scripts/
   chmod +x scripts/plugin_*.sh
+fi
+
+# Regenerate CLAUDE.md with latest template
+if [ -f "$TEMP_DIR/scripts/templates/CLAUDE.md.template" ]; then
+  echo "  - Regenerating CLAUDE.md..."
+
+  # Read persona injection from installed plugins (if any)
+  PERSONA_INJECTION=""
+  if [ -f "ai/plugins/installed.json" ]; then
+    PERSONA_INJECTION=$(python3 <<'PYEOF'
+import json
+import sys
+
+try:
+    with open('ai/plugins/installed.json', 'r') as f:
+        data = json.load(f)
+
+    injection_parts = []
+    for plugin_name, plugin_data in data.get('plugins', {}).items():
+        hooks = plugin_data.get('hooks', {})
+        if 'persona_injection' in hooks:
+            injection_parts.append(hooks['persona_injection'])
+
+    if injection_parts:
+        print('\n\n'.join(injection_parts))
+except:
+    pass
+PYEOF
+    )
+  fi
+
+  # Generate CLAUDE.md with variable substitution
+  INSTALL_DATE=$(date -u +"%Y-%m-%d")
+
+  # First pass: Replace simple variables
+  sed -e "s/{{IGRIS_VERSION}}/$REMOTE_VERSION/g" \
+      -e "s/{{INSTALL_DATE}}/$INSTALL_DATE/g" \
+      "$TEMP_DIR/scripts/templates/CLAUDE.md.template" > CLAUDE.md.tmp
+
+  # Second pass: Replace persona injection using perl (handles newlines)
+  if [ -n "$PERSONA_INJECTION" ]; then
+    # Escape special characters for perl regex
+    ESCAPED_INJECTION=$(printf '%s\n' "$PERSONA_INJECTION" | perl -pe 's/([\\\/\$])/\\$1/g')
+    perl -i -pe "s/\{\{PERSONA_INJECTION\}\}/$ESCAPED_INJECTION/g" CLAUDE.md.tmp
+  else
+    # Remove the placeholder if no injection
+    perl -i -pe 's/\{\{PERSONA_INJECTION\}\}//g' CLAUDE.md.tmp
+  fi
+
+  mv CLAUDE.md.tmp CLAUDE.md
 fi
 
 # Update .igris_version
