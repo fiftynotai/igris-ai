@@ -93,6 +93,7 @@ Update `CURRENT_SESSION.md` every time you:
 - 🚫 Encounter a blocker (add to `BLOCKERS.md`)
 - 💡 Make a decision (add to `DECISIONS.md`)
 - 📚 Discover a pattern (add to `LEARNINGS.md`)
+- ⚠️ Violate a protocol (add to `PROTOCOL_VIOLATIONS.md`)
 
 **Always keep "Next Steps When Resuming" current** - this is your crash recovery mechanism.
 
@@ -1001,6 +1002,7 @@ Examples of what to include:
 | `DECISIONS.md` | Architectural decisions log | When making decisions |
 | `BLOCKERS.md` | Active blockers/questions | When blocked |
 | `LEARNINGS.md` | Discoveries and patterns | When learning something |
+| `PROTOCOL_VIOLATIONS.md` | Protocol violation tracking and pattern analysis | When violating protocols |
 | `TEST_RESULTS.md` | Test outcomes | After running tests |
 
 ---
