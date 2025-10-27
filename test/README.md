@@ -55,6 +55,7 @@ bats test/igris_init.test.bash
 
 ### Run with Verbose Output
 ```bash
+
 bats test/ --tap
 ```
 

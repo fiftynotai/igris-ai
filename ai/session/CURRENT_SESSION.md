@@ -6,7 +6,13 @@ Implement TD-005: Add comprehensive automated testing for all Igris AI shell scr
 ## Status: 🔄 In Progress
 
 ## Active Briefs
-1. **TD-005** - Automated Shell Script Testing (MAJOR PROGRESS)
+1. **BUG HUNT COMPLETE** - Self-Maintenance Operation #2 ✅✅✅
+   - Bugs Found: 4 (1 P0, 2 P1, 1 P2)
+   - Bugs Fixed: ALL 4 (BR-007, BR-009, BR-010, BR-008)
+   - Status: 100% complete
+   - Commits: 7a527cc (quick wins), 36173c0 (BR-008 complete)
+
+2. **TD-005** - Automated Shell Script Testing (MAJOR PROGRESS)
    - Status: In Progress (84.6% pass rate)
    - Current Task: Paused for commit - 115/136 tests passing
    - Progress: Fixed all P0/P1 blockers, +44 tests fixed, plugin_install at 100%
@@ -38,9 +44,19 @@ Implement TD-005: Add comprehensive automated testing for all Igris AI shell scr
    - Result: Brand clarity achieved
 
 ## Next Steps When Resuming
-1. Consider implementing TD-008 (Usage Metrics and Error Tracking) - deferred brief
-2. Or start new self-maintenance operation (see ai/prompts/self_maintenance.md)
-3. Or work on new feature/bug as needed
+1. **TD-005 Options:**
+   - Continue to 100%: Fix remaining 21 test failures (hook handling, markdown formatting)
+   - Close at 84.6%: Document known limitations, ship current state
+   - Strategic choice: 84.6% covers all critical paths
+2. Consider implementing TD-008 (Usage Metrics and Error Tracking) - deferred brief
+3. Or start new self-maintenance operation (see ai/prompts/self_maintenance.md)
+4. Or work on new feature/bug as needed
+
+**Last Session Work:**
+- Fixed 44 test failures (52% → 84.6%)
+- Eliminated all P0/P1 blockers
+- Achieved 100% pass rate on plugin_install tests
+- Committed: 1db8e38
 
 ---
 
