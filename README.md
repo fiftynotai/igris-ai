@@ -1,7 +1,7 @@
 # ✦ IGRIS — AI Engineering Platform
 > *From Vibe Coding → Vibe Engineering*
 
-**Version 2.0.0** | Production Ready
+**Version 2.4.0** | Production Ready
 
 ---
 
@@ -197,7 +197,7 @@ $ ./scripts/install_shell_integration.sh
 This adds a notification to your shell (bash/zsh):
 ```bash
 $ cd my-project
-📘 IGRIS detected (v2.0.0)
+📘 IGRIS detected (v2.4.0)
    Claude will auto-initialize with IGRIS configuration
 ```
 

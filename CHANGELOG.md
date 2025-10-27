@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.4.0] - 2025-10-26
+
+### Added
+
+- **Complete Plugin Uninstall System (BR-008)** - Plugin cleanup now fully functional
+  - **Phase 1:** Plugin-specific cleanup via optional `uninstall.sh` script
+  - **Phase 2:** Core cleanup (hooks removal, CLAUDE.md regeneration)
+  - **Backup system:** Creates backup before removal (`.igris_backup/uninstall/<timestamp>_<plugin_name>/`)
+  - **Smart detection:** Checks if plugin provides uninstall.sh, runs it if exists
+  - **Hook management:** Removes plugin hooks, regenerates CLAUDE.md without them (preserves other plugins' hooks)
+  - **Clear feedback:** Summary shows what was removed, warns if files remain
+  - **Documentation:** Added comprehensive "uninstall.sh Contract" section to `docs/PLUGIN_DEVELOPMENT.md`
+    - Input parameters, required behavior, best practices
+    - Full example with testing instructions
+    - When to provide vs when to skip
+  - Result: Clean uninstall experience with safety backups
+
+- **Multi-Instance Workflow Brief (PI-001)** - Process improvement registered
+  - Documented strategy for running multiple Igris AI instances on different briefs simultaneously
+  - Registry-based conflict detection design (`ai/session/INSTANCE_REGISTRY.json`)
+  - Automatic file overlap analysis (prevents concurrent modification conflicts)
+  - User decision flow (CANCEL/OVERRIDE/ANALYZE)
+  - Ready for future implementation (registered as brief, not yet implemented)
+
+### Fixed
+
+- **BR-007 (P0-Critical):** plugin_update.sh version extraction broken
+  - **Problem:** Was reading non-existent `version.txt` from plugin repos
+  - **Fix:** Now correctly reads `plugin.json` (consistent with plugin_install.sh)
+  - **Implementation:** Uses python3 for reliable JSON parsing
+  - **Impact:** Unblocks all plugin update operations (was 100% broken - no plugins have version.txt)
+  - Files: `scripts/plugin_update.sh:128-148`
+
+- **BR-009 (P1-High):** plugin_list.sh missing error handling
+  - **Problem 1:** Only script without `set -e` (violates coding guidelines)
+  - **Problem 2:** IndexError on empty capabilities list (`caps[0]` without checking)
+  - **Fix 1:** Added mandatory `set -e` on line 6 (fail-fast principle)
+  - **Fix 2:** Safe list access with `if caps and isinstance(caps[0], list)`
+  - **Impact:** No more crashes, proper error handling enforced
+  - Files: `scripts/plugin_list.sh:6, 61`
+
+- **BR-010 (P2-Medium):** Fragile JSON parsing with grep+sed across scripts
+  - **Problem:** Multiple scripts used brittle `grep | sed` patterns that break on formatting
+  - **Fix:** Replaced all JSON extraction with python3 in:
+    - `scripts/plugin_install.sh:103-112` (name/version extraction)
+    - `scripts/plugin_update.sh:105-117` (repo/version from registry)
+    - `scripts/igris_update.sh:64-70` (version extraction)
+  - **Impact:** Handles any valid JSON formatting, follows coding_guidelines.md standards
+  - **Technical:** More reliable, maintainable, and consistent
+
+### Changed
+
+- **Plugin system:** Now fully functional end-to-end (install ✅, update ✅, uninstall ✅, list ✅)
+- **Error handling:** Enforced `set -e` across all scripts (coding standards compliance)
+- **JSON parsing:** Standardized on python3 for all JSON operations (no more grep+sed)
+- **Code quality:** Bug hunt eliminated 4 bugs (1 P0, 2 P1, 1 P2) - 100% resolution rate
+
+---
+
 ## [2.3.0] - 2025-10-26
 
 ### Added
