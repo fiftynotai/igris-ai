@@ -307,6 +307,10 @@ fi
 # Update plugin management scripts
 if [ -f "$TEMP_DIR/scripts/plugin_install.sh" ]; then
   echo "  - Updating plugin management scripts..."
+
+  # Create scripts directory if it doesn't exist (for old installations)
+  mkdir -p scripts
+
   cp "$TEMP_DIR/scripts/plugin_install.sh" scripts/
   cp "$TEMP_DIR/scripts/plugin_uninstall.sh" scripts/
   cp "$TEMP_DIR/scripts/plugin_list.sh" scripts/
