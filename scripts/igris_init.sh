@@ -62,6 +62,34 @@ cp "$IGRIS_DIR/ai/persona.json.default" ai/
 if [ -d "$IGRIS_DIR/ai/personas/igris" ]; then
   mkdir -p ai/personas
   cp -r "$IGRIS_DIR/ai/personas/igris" ai/personas/
+
+  # Create active persona.json with Igris half mask as default
+  cat > ai/persona.json <<'EOF'
+{
+  "persona": "igris",
+  "mask": "half",
+  "installed_at": null,
+  "version": "1.0.0",
+  "branding": {
+    "title": "Igris",
+    "intro": "Welcome to the sanctum of code",
+    "tagline": "Where shadows enforce architecture"
+  },
+  "user": {
+    "name": ""
+  },
+  "tone": {
+    "level": "Shadow Knight",
+    "description": "Dramatic Persona - Complete immersion",
+    "addressing_mode": "Monarch"
+  },
+  "features": {
+    "commands": true,
+    "banner": true,
+    "shadow_commands": true
+  }
+}
+EOF
 fi
 
 # Create empty session files
@@ -193,6 +221,21 @@ chmod +x .claude/hooks/startup.sh
 
 # Resolve persona hook (if plugin provides one)
 PERSONA_INJECTION=""
+
+# Check if bundled persona is active
+if [ -f "ai/persona.json" ]; then
+  PERSONA_NAME=$(python3 -c "import json, sys; data=json.load(open('ai/persona.json')); print(data.get('persona', 'none'))" 2>/dev/null || echo "none")
+  PERSONA_MASK=$(python3 -c "import json, sys; data=json.load(open('ai/persona.json')); print(data.get('mask', 'none'))" 2>/dev/null || echo "none")
+
+  if [ "$PERSONA_NAME" != "none" ] && [ "$PERSONA_MASK" != "none" ]; then
+    PERSONA_MASK_FILE="ai/personas/$PERSONA_NAME/masks/${PERSONA_MASK}.md"
+    if [ -f "$PERSONA_MASK_FILE" ]; then
+      PERSONA_INJECTION=$(cat "$PERSONA_MASK_FILE")
+    fi
+  fi
+fi
+
+# Plugin hooks override bundled persona (if both exist)
 if [ -f "ai/plugins/installed.json" ]; then
   if command -v jq &> /dev/null; then
     PERSONA_HOOK=$(jq -r '.plugins[] | select(.hooks.persona_injection) | .hooks.persona_injection' ai/plugins/installed.json 2>/dev/null || echo "")
