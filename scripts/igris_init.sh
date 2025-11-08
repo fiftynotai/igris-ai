@@ -58,6 +58,12 @@ cp "$IGRIS_DIR/ai/CONTRIBUTING.md" ai/
 # Copy persona.json.default
 cp "$IGRIS_DIR/ai/persona.json.default" ai/
 
+# Copy bundled Igris persona
+if [ -d "$IGRIS_DIR/ai/personas/igris" ]; then
+  mkdir -p ai/personas
+  cp -r "$IGRIS_DIR/ai/personas/igris" ai/personas/
+fi
+
 # Create empty session files
 echo "📝 Creating session files..."
 cat > ai/session/CURRENT_SESSION.md <<'EOF'
@@ -231,6 +237,14 @@ cp "$IGRIS_DIR/scripts/plugin_list.sh" scripts/
 cp "$IGRIS_DIR/scripts/plugin_update.sh" scripts/
 cp "$IGRIS_DIR/scripts/igris_update.sh" scripts/
 cp "$IGRIS_DIR/scripts/install_shell_integration.sh" scripts/
+
+# Copy persona management scripts (if they exist)
+if [ -f "$IGRIS_DIR/scripts/persona_install.sh" ]; then
+  cp "$IGRIS_DIR/scripts/persona_install.sh" scripts/
+fi
+if [ -f "$IGRIS_DIR/scripts/persona_mask.sh" ]; then
+  cp "$IGRIS_DIR/scripts/persona_mask.sh" scripts/
+fi
 chmod +x scripts/*.sh
 
 # Create archive README
