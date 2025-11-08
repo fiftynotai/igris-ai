@@ -76,7 +76,7 @@ if [ -d "$IGRIS_DIR/ai/personas/igris" ]; then
     "tagline": "Where shadows enforce architecture"
   },
   "user": {
-    "name": "Fifty.ai"
+    "name": ""
   },
   "tone": {
     "level": "Shadow Knight",
