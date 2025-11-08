@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Igris Persona Bundled** - Enhanced AI performance with personality system
+  - **Default Configuration:** Half mask (subtle, professional branding)
+  - **Bundled Persona:** Igris (Shadow Knight) included out-of-the-box
+  - **Mask System:** 4 levels (none, half, light, full) - adjust anytime
+  - **Performance Boost:** Measurable improvement in AI response quality and consistency
+  - **User Control:**
+    - Adjust mask: `./scripts/persona_mask.sh adjust`
+    - Remove persona: `./scripts/persona_mask.sh remove`
+    - Status check: `./scripts/persona_mask.sh status`
+  - **Future:** Advanced persona creation coming in v3.0.0
+  - Result: Professional AI experience with optional dramatic flair
+
 - **Complete Plugin Uninstall System (BR-008)** - Plugin cleanup now fully functional
   - **Phase 1:** Plugin-specific cleanup via optional `uninstall.sh` script
   - **Phase 2:** Core cleanup (hooks removal, CLAUDE.md regeneration)

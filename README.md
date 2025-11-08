@@ -233,6 +233,46 @@ $ cd my-project
 
 **Security:** You choose to install, use the script, or add manually. We never modify your shell without permission.
 
+### 🎭 Persona System — Enhanced AI Performance
+
+**NEW in v2.4.0:** IGRIS now includes the **Igris persona** (Shadow Knight) for measurably better AI performance.
+
+**What is a Persona?**
+- Personality layer that improves Claude's consistency and response quality
+- Not just "fun" — proven performance boost in real projects
+- Part of the IGRIS brand experience
+
+**Included Persona:**
+- **Igris (Shadow Knight)** - Loyal, efficient, professional
+- **Default Mask:** Half (subtle branding, professional tone)
+- **4 Mask Levels:** none → half → light → full (adjust anytime)
+
+**Quick Commands:**
+```bash
+# Check current persona status
+./scripts/persona_mask.sh status
+
+# Adjust mask level (change intensity)
+./scripts/persona_mask.sh adjust
+
+# Remove persona (return to standard AI)
+./scripts/persona_mask.sh remove
+```
+
+**Mask Levels:**
+- **None:** Persona dormant (standard Claude)
+- **Half:** Subtle branding, professional (default)
+- **Light:** Branding + personality hints
+- **Full:** Complete immersion with shadow commands (ARISE, HUNT, etc.)
+
+**Performance Impact:**
+- More consistent responses across sessions
+- Better adherence to architecture standards
+- Clearer communication patterns
+- Enhanced focus on engineering discipline
+
+**Coming in v3.0.0:** Custom persona creation with AI assistance
+
 ---
 
 ## ✦ Core Capabilities
