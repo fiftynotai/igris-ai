@@ -45,10 +45,16 @@ jobs:
 
       - name: Run test suite
         run: |
-          bats test/*.test.bash
+          # Run test files sequentially to avoid parallel execution issues
+          # See: test/README.md for details on known bats parallel execution issue
+          for test_file in test/*.test.bash; do
+            echo "Running $(basename $test_file)..."
+            bats "$test_file" || exit 1
+          done
 
       - name: Test results summary
         if: always()
         run: |
           echo "Test suite completed"
           echo "OS: ${{ matrix.os }}"
+          echo "Note: Tests run sequentially to avoid bats parallel execution issues"

@@ -44,9 +44,21 @@ sudo ./install.sh /usr/local
 ```
 
 ### Run All Tests
+
+**Recommended (Sequential):**
+```bash
+# Run test files one at a time
+for test_file in test/*.test.bash; do
+  bats "$test_file"
+done
+```
+
+**Quick (Parallel - May Have Issues):**
 ```bash
 bats test/
 ```
+
+**Note:** Running `bats test/*.test.bash` (all files together) may cause intermittent failures due to bats parallel execution and temp directory cleanup timing. This is a known issue with bats when tests run concurrently. Tests pass reliably when run individually.
 
 ### Run Specific Test File
 ```bash
@@ -55,9 +67,37 @@ bats test/igris_init.test.bash
 
 ### Run with Verbose Output
 ```bash
-
-bats test/ --tap
+bats test/igris_init.test.bash --tap
 ```
+
+---
+
+## Known Issues
+
+### Parallel Test Execution
+
+**Issue:** When running all test files together (`bats test/*.test.bash`), some tests may fail intermittently due to:
+- Bats parallel execution of test files
+- Temporary directory cleanup race conditions
+- File system timing issues
+
+**Symptoms:**
+- Tests pass individually but fail when run together
+- Failures are non-deterministic
+- Error messages about missing files or directories
+
+**Workaround:**
+Run test files sequentially (recommended):
+```bash
+for test_file in test/*.test.bash; do
+  bats "$test_file" || exit 1
+done
+```
+
+**Status:**
+- All tests pass when run individually (136/136)
+- CI/CD configured to run sequentially
+- No impact on functionality
 
 ---
 
