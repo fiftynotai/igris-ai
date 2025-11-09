@@ -151,6 +151,37 @@ This creates:
 - `scripts/` - Core IGRIS scripts (6 scripts including update system)
 - Documentation and guides
 
+### Your First 5 Minutes
+
+```bash
+# 1. Install IGRIS (see above)
+../igris-ai/scripts/igris_init.sh
+
+# 2. Launch Claude
+claude
+```
+
+**You'll see:** Igris greeting + system assessment + recommended actions
+
+```bash
+# 3. Generate your project's coding guidelines
+```
+"Generate coding guidelines for this project"
+```
+
+# 4. Register your first task
+```
+"Register a bug: Users can't login with special characters"
+```
+
+# 5. Start engineering
+```
+"Implement BR-001"
+```
+```
+
+**That's it.** IGRIS handles architecture enforcement, testing, session tracking, and quality gates automatically.
+
 ### Upgrading from Blueprint AI
 
 **If you have an existing Blueprint AI project (v1.x)**, upgrading is seamless:
@@ -252,8 +283,12 @@ $ cd my-project
 # Check current persona status
 ./scripts/persona_mask.sh status
 
-# Adjust mask level (change intensity)
-./scripts/persona_mask.sh adjust
+# Adjust mask level (specify: none, half, light, full)
+./scripts/persona_mask.sh adjust [level]
+
+# Examples:
+./scripts/persona_mask.sh adjust full    # Maximum immersion
+./scripts/persona_mask.sh adjust half    # Subtle professional
 
 # Remove persona (return to standard AI)
 ./scripts/persona_mask.sh remove
@@ -283,9 +318,14 @@ $ cd my-project
 
 IGRIS uses structured briefs to plan work before coding:
 - **BR-XXX** - Bug fixes and features
-- **MG-XXX** - Migration tasks (architecture refactoring)
 - **TD-XXX** - Technical debt cleanup
+- **MG-XXX** - Migration tasks (architecture refactoring)
 - **TS-XXX** - Testing tasks
+- **PI-XXX** - Process improvements
+- **FR-XXX** - Feature requests
+- **DU-XXX** - Dependency updates
+- **PF-XXX** - Performance optimizations
+- **AC-XXX** - Architecture cleanup
 
 Each brief enforces:
 - Clear problem definition
@@ -420,6 +460,7 @@ IGRIS tracks your work continuously:
 - **BLOCKERS.md** - Blocking issues
 - **DECISIONS.md** - Architectural decisions
 - **LEARNINGS.md** - Discovered patterns
+- **PROTOCOL_VIOLATIONS.md** - Protocol violation tracking and pattern analysis
 
 **Context Preservation**
 
@@ -442,6 +483,47 @@ See `ai/prompts/session_protocol.md` for checkpoint details.
 
 ---
 
+### 🔧 Self-Maintenance — Autonomous Quality Assurance
+
+**NEW in v2.3.0:** IGRIS can audit itself and your codebase autonomously.
+
+**10 Maintenance Operations:**
+
+| Operation | Trigger Command | Creates | Use Case |
+|-----------|----------------|---------|----------|
+| CODE_QUALITY_AUDIT | "Run code quality audit" | TD-XXX briefs | Find technical debt |
+| BUG_HUNT | "Run bug hunt" | BR-XXX briefs | Discover potential bugs |
+| STANDARDS_COMPLIANCE_CHECK | "Check standards compliance" | TD-XXX briefs | Verify coding guidelines |
+| TEST_COVERAGE_ANALYSIS | "Analyze test coverage" | TS-XXX briefs | Find untested code |
+| DEPENDENCY_AUDIT | "Check dependencies" | DU-XXX briefs | Updates & security |
+| PERFORMANCE_ANALYSIS | "Analyze performance" | PF-XXX briefs | Find bottlenecks |
+| ARCHITECTURE_REVIEW | "Review architecture" | AC-XXX briefs | Find redundancies |
+| FEATURE_IDEATION | "Suggest new features" | FR-XXX briefs | Innovation ideas |
+| PROCESS_AUDIT | "Audit our process" | PI-XXX briefs | Workflow improvements |
+| BRIEF_ANALYSIS | "What should I work on next?" | Recommendations | Prioritize work |
+
+**Common Workflows:**
+
+```bash
+# Before major release
+"Check dependencies"           # Security & updates first
+"Run bug hunt"                 # Find issues before users
+"Analyze test coverage"        # Quality gate
+"Check standards compliance"   # Final polish
+
+# Monthly maintenance
+"Check dependencies"           # Stay current
+"Run code quality audit"       # Prevent debt accumulation
+
+# Strategic planning
+"Analyze briefs"              # Decide priorities
+"Suggest new features"        # Innovation pipeline
+```
+
+See `ai/prompts/self_maintenance.md` for complete documentation.
+
+---
+
 ### 🔌 Open Ecosystem — Plugin System
 
 **Extensibility**
@@ -452,10 +534,20 @@ IGRIS supports plugins for:
 - CI/CD integration
 - Custom workflows
 
-**Installing Plugins**
+**Plugin Commands**
 
 ```bash
+# Install a plugin
 ./scripts/plugin_install.sh <plugin-repo-url>
+
+# List installed plugins
+./scripts/plugin_list.sh
+
+# Update a plugin
+./scripts/plugin_update.sh <plugin-name>
+
+# Uninstall a plugin (creates automatic backup)
+./scripts/plugin_uninstall.sh <plugin-name>
 ```
 
 **Available Plugins**
