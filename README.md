@@ -908,6 +908,113 @@ IGRIS amplifies discipline. Clear communication + structure = exceptional result
 
 ---
 
+### You Drive, IGRIS Assists
+
+**The biggest problem with "vibe coding":** People rely on AI too much and lose control.
+
+**The difference between vibe coding and vibe engineering:**
+- **Vibe Coding:** AI in charge → "Just build me a login feature" → Hope it works
+- **Vibe Engineering:** You in charge → "Register BR-015, analyze requirements, propose architecture" → You decide, AI executes
+
+**IGRIS enforces the correct relationship:**
+
+**User-Driven Workflow Examples:**
+
+**Example 1: Discovering Blockers**
+```
+# You're implementing BR-012 (frontend feature)
+# You discover a backend API issue
+
+"Igris, we're blocked on BR-012. The /api/users endpoint returns
+500 error instead of user data. Record this in BLOCKERS.md and note
+it in the BR-012 brief. We need backend team to fix this first."
+
+IGRIS will:
+- Add blocker to BLOCKERS.md
+- Update BR-012 brief with blocker info
+- Update session state
+- Ask if you want to create a new brief for backend team
+
+# Later, backend fixes the issue
+"Igris, BR-012 blocker resolved. Backend team fixed the endpoint.
+Update BLOCKERS.md and resume BR-012 implementation."
+
+IGRIS will:
+- Mark blocker as resolved
+- Resume BR-012 from where you stopped
+- Continue implementation
+```
+
+**Example 2: Adapting to Changes**
+```
+# Mid-implementation, backend changes API response format
+
+"Igris, backend developer changed the endpoint response format
+for BR-012. New format is { user: {...}, metadata: {...} } instead
+of just {...}. Update the brief with this context and adjust our
+implementation."
+
+IGRIS will:
+- Update BR-012 brief with API change note
+- Add to DECISIONS.md (API format change)
+- Adjust implementation to new format
+- Update tests to match new structure
+```
+
+**Example 3: Changing Priorities**
+```
+# P2 bug becomes critical
+
+"Igris, BR-018 just caused production outage. Change priority
+to P0-Critical, add to BLOCKERS.md, and tell me what we need
+to do to fix it immediately."
+
+IGRIS will:
+- Update BR-018 priority
+- Add to BLOCKERS.md
+- Read the brief
+- Recommend immediate action plan
+- Ask if you want to pause current work
+```
+
+**Example 4: Context Handoff**
+```
+# You need to hand off work to teammate
+
+"Igris, I'm going offline. Update CURRENT_SESSION.md with exact
+stopping point for BR-025. What should the next person know to
+continue this work?"
+
+IGRIS will:
+- Update session state
+- Write clear "Next Steps When Resuming"
+- List uncommitted changes
+- Note any blockers or decisions
+- Provide context summary for handoff
+
+# Teammate continues later
+"Igris, what was the last person working on?"
+IGRIS: *Reads session, explains BR-025 status, shows next steps*
+```
+
+**The Pattern:**
+- ✅ **You** notice issues, make decisions, set priorities, guide direction
+- ✅ **IGRIS** records, tracks, executes, and reminds
+- ✅ **You** stay in control of architecture and strategy
+- ❌ Don't wait for IGRIS to notice problems (it won't — you notice, you tell it)
+- ❌ Don't let IGRIS make strategic decisions (it shouldn't — you decide, it executes)
+
+**This is vibe engineering:**
+You are the architect with vision and judgment.
+IGRIS is the discipline that turns vision into reality.
+
+**Not vibe coding:**
+AI guesses what you want and hopes for the best.
+
+**You are in charge. Always.**
+
+---
+
 ## 📦 Example Project
 
 **Want to see IGRIS in action?**
