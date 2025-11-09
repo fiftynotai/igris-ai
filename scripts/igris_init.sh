@@ -52,6 +52,9 @@ cp "$IGRIS_DIR/ai/prompts/"*.md ai/prompts/
 cp "$IGRIS_DIR/ai/checks/"*.md ai/checks/
 cp "$IGRIS_DIR/ai/templates/"*.md ai/templates/
 
+# Copy CLAUDE.md template for persona regeneration
+cp "$IGRIS_DIR/scripts/templates/CLAUDE.md.template" scripts/
+
 # Copy CONTRIBUTING guide
 cp "$IGRIS_DIR/ai/CONTRIBUTING.md" ai/
 

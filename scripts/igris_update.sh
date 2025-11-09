@@ -314,11 +314,26 @@ if [ -f "$TEMP_DIR/scripts/plugin_install.sh" ]; then
   cp "$TEMP_DIR/scripts/plugin_install.sh" scripts/
   cp "$TEMP_DIR/scripts/plugin_uninstall.sh" scripts/
   cp "$TEMP_DIR/scripts/plugin_list.sh" scripts/
-  chmod +x scripts/plugin_*.sh
+
+  # Copy persona management scripts (if they exist)
+  if [ -f "$TEMP_DIR/scripts/persona_install.sh" ]; then
+    cp "$TEMP_DIR/scripts/persona_install.sh" scripts/
+  fi
+  if [ -f "$TEMP_DIR/scripts/persona_mask.sh" ]; then
+    cp "$TEMP_DIR/scripts/persona_mask.sh" scripts/
+  fi
+
+  chmod +x scripts/*.sh
+fi
+
+# Copy CLAUDE.md template for local use
+if [ -f "$TEMP_DIR/scripts/templates/CLAUDE.md.template" ]; then
+  echo "  - Copying CLAUDE.md template..."
+  cp "$TEMP_DIR/scripts/templates/CLAUDE.md.template" scripts/
 fi
 
 # Regenerate CLAUDE.md with latest template
-if [ -f "$TEMP_DIR/scripts/templates/CLAUDE.md.template" ]; then
+if [ -f "scripts/CLAUDE.md.template" ]; then
   echo "  - Regenerating CLAUDE.md..."
 
   # Read persona injection from installed plugins (if any)

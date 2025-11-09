@@ -107,18 +107,16 @@ regenerate_hook() {
 regenerate_claude() {
   echo "🔄 Regenerating CLAUDE.md..."
 
-  # Find Igris AI directory
-  IGRIS_DIR=$(dirname "$(dirname "$(find . -name "igris_init.sh" -type f | head -1)")")
-
-  if [ -z "$IGRIS_DIR" ] || [ ! -f "$IGRIS_DIR/scripts/igris_init.sh" ]; then
-    echo -e "${YELLOW}⚠️  Warning: Could not find Igris AI scripts${NC}"
-    echo "Please regenerate CLAUDE.md manually or run igris_init.sh"
+  # Check if CLAUDE.md template exists locally
+  if [ ! -f "scripts/CLAUDE.md.template" ]; then
+    echo -e "${YELLOW}⚠️  Warning: CLAUDE.md template not found${NC}"
+    echo "Please run igris_update.sh to get the latest template"
     return
   fi
 
   # Get version and date
-  IGRIS_VERSION=$(cat version.txt 2>/dev/null || cat .igris_version 2>/dev/null | jq -r '.igris_ai_version' || echo "unknown")
-  INSTALL_DATE=$(grep "Installed:" CLAUDE.md 2>/dev/null | sed 's/.*Installed:\*\* //' || date -u +"%Y-%m-%d")
+  IGRIS_VERSION=$(cat .igris_version 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('igris_ai_version','unknown'))" 2>/dev/null || echo "unknown")
+  INSTALL_DATE=$(cat .igris_version 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('installed_at',''))" 2>/dev/null | cut -d'T' -f1 || date -u +"%Y-%m-%d")
 
   # Resolve persona hook
   PERSONA_INJECTION=""
@@ -132,7 +130,7 @@ regenerate_claude() {
   # First pass: Replace simple variables
   sed -e "s/{{IGRIS_VERSION}}/$IGRIS_VERSION/g" \
       -e "s/{{INSTALL_DATE}}/$INSTALL_DATE/g" \
-      "$IGRIS_DIR/scripts/templates/CLAUDE.md.template" > CLAUDE.md.tmp
+      "scripts/CLAUDE.md.template" > CLAUDE.md.tmp
 
   # Second pass: Replace persona injection using perl (handles newlines)
   if [ -n "$PERSONA_INJECTION" ]; then
