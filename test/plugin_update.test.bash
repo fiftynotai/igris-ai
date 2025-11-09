@@ -25,7 +25,7 @@ load test_helper
   echo '{"name": "test-plugin", "version": "2.0.0", "description": "Updated"}' > "$plugin_dir/plugin.json"
 
   # Update plugin
-  run "$SCRIPTS_DIR/plugin_update.sh" "test-plugin"
+  run "$SCRIPTS_DIR/plugin_update.sh" "test-plugin" --yes
 
   assert_success
 }
@@ -34,7 +34,7 @@ load test_helper
   init_igris_in_test_project
 
   # Try to update non-existent plugin
-  run "$SCRIPTS_DIR/plugin_update.sh" "nonexistent-plugin"
+  run "$SCRIPTS_DIR/plugin_update.sh" "nonexistent-plugin" --yes
 
   # Should fail with clear error
   assert_failure
@@ -53,7 +53,7 @@ load test_helper
   rm -rf "$plugin_dir"
 
   # Try to update
-  run "$SCRIPTS_DIR/plugin_update.sh" "test-plugin"
+  run "$SCRIPTS_DIR/plugin_update.sh" "test-plugin" --yes
 
   # Should handle gracefully (exact behavior TBD)
   [ "$status" -ne 127 ]
@@ -75,7 +75,7 @@ load test_helper
   echo '{"name": "test-plugin", "version": "2.0.0", "description": "Updated"}' > "$plugin_dir/plugin.json"
 
   # Update plugin
-  "$SCRIPTS_DIR/plugin_update.sh" "test-plugin"
+  "$SCRIPTS_DIR/plugin_update.sh" "test-plugin" --yes
 
   # Verify version updated in registry
   run jq -r '.plugins[] | select(.name == "test-plugin") | .version' "$TEST_PROJECT_DIR/ai/plugins/installed.json"
@@ -91,7 +91,7 @@ load test_helper
   "$SCRIPTS_DIR/plugin_install.sh" "$plugin_dir"
 
   # Try to update (same version)
-  run "$SCRIPTS_DIR/plugin_update.sh" "test-plugin"
+  run "$SCRIPTS_DIR/plugin_update.sh" "test-plugin" --yes
 
   # Should detect no update needed
   # (exact behavior TBD - skip or message)
@@ -113,7 +113,7 @@ load test_helper
   echo '{"name": "test-plugin", "version": "2.0.0", "description": "Updated"}' > "$plugin_dir/plugin.json"
 
   # Update plugin
-  "$SCRIPTS_DIR/plugin_update.sh" "test-plugin"
+  "$SCRIPTS_DIR/plugin_update.sh" "test-plugin" --yes
 
   # Verify backup created (location TBD - check common backup locations)
   # This test may need adjustment based on actual backup implementation
@@ -173,7 +173,7 @@ load test_helper
   echo '{"name": "test-plugin", "version": "2.0.0", "description": "Updated"}' > "$plugin_dir/plugin.json"
 
   # Update plugin
-  "$SCRIPTS_DIR/plugin_update.sh" "test-plugin"
+  "$SCRIPTS_DIR/plugin_update.sh" "test-plugin" --yes
 
   # Get new timestamp (may be updated_at field instead)
   # This test assumes timestamp is updated - adjust based on actual behavior
@@ -194,7 +194,7 @@ load test_helper
 
   # Update plugin-1
   echo '{"name": "plugin-1", "version": "2.0.0", "description": "Updated"}' > "$plugin1/plugin.json"
-  "$SCRIPTS_DIR/plugin_update.sh" "plugin-1"
+  "$SCRIPTS_DIR/plugin_update.sh" "plugin-1" --yes
 
   # Verify plugin-2 still in registry
   run jq -e '.plugins[] | select(.name == "plugin-2")' "$TEST_PROJECT_DIR/ai/plugins/installed.json"
@@ -227,7 +227,7 @@ load test_helper
   echo '{"name": "test-plugin-hooks", "version": "2.0.0", "description": "Updated", "hooks": {"persona_injection": "ai/prompts/mock_persona.md"}}' > "$plugin_dir/plugin.json"
 
   # Update plugin
-  "$SCRIPTS_DIR/plugin_update.sh" "test-plugin-hooks"
+  "$SCRIPTS_DIR/plugin_update.sh" "test-plugin-hooks" --yes
 
   # Verify CLAUDE.md regenerated
   new_time=$(stat -f %m "$TEST_PROJECT_DIR/CLAUDE.md" 2>/dev/null || stat -c %Y "$TEST_PROJECT_DIR/CLAUDE.md")
@@ -250,7 +250,7 @@ load test_helper
   echo '{"name": "test-plugin", "version": "2.0.0", "description": "Now with hooks", "hooks": {"persona_injection": "ai/prompts/persona.md"}}' > "$plugin_dir/plugin.json"
 
   # Update plugin
-  "$SCRIPTS_DIR/plugin_update.sh" "test-plugin"
+  "$SCRIPTS_DIR/plugin_update.sh" "test-plugin" --yes
 
   # Verify hooks registered and CLAUDE.md regenerated
   assert_file_contains "$TEST_PROJECT_DIR/CLAUDE.md" "New Persona"
@@ -268,7 +268,7 @@ load test_helper
   echo '{"name": "test-plugin-hooks", "version": "2.0.0", "description": "Hooks removed"}' > "$plugin_dir/plugin.json"
 
   # Update plugin
-  "$SCRIPTS_DIR/plugin_update.sh" "test-plugin-hooks"
+  "$SCRIPTS_DIR/plugin_update.sh" "test-plugin-hooks" --yes
 
   # Verify hooks removed from registry
   run jq -e '.plugins[] | select(.name == "test-plugin-hooks") | .hooks' "$TEST_PROJECT_DIR/ai/plugins/installed.json"
@@ -302,7 +302,7 @@ load test_helper
   echo "{ invalid json" > "$TEST_PROJECT_DIR/ai/plugins/installed.json"
 
   # Try to update
-  run "$SCRIPTS_DIR/plugin_update.sh" "test-plugin"
+  run "$SCRIPTS_DIR/plugin_update.sh" "test-plugin" --yes
 
   # Should fail gracefully
   assert_failure
@@ -327,7 +327,7 @@ load test_helper
 
   # Update to v2.0.0
   echo '{"name": "integration-test", "version": "2.0.0", "description": "Updated version"}' > "$plugin_dir/plugin.json"
-  "$SCRIPTS_DIR/plugin_update.sh" "integration-test"
+  "$SCRIPTS_DIR/plugin_update.sh" "integration-test" --yes
 
   # Verify v2.0.0 now installed
   run jq -r '.plugins[] | select(.name == "integration-test") | .version' "$TEST_PROJECT_DIR/ai/plugins/installed.json"
@@ -344,11 +344,11 @@ load test_helper
 
   # Update to v2.0.0
   echo '{"name": "test-plugin", "version": "2.0.0", "description": "v2"}' > "$plugin_dir/plugin.json"
-  "$SCRIPTS_DIR/plugin_update.sh" "test-plugin"
+  "$SCRIPTS_DIR/plugin_update.sh" "test-plugin" --yes
 
   # Update to v3.0.0
   echo '{"name": "test-plugin", "version": "3.0.0", "description": "v3"}' > "$plugin_dir/plugin.json"
-  "$SCRIPTS_DIR/plugin_update.sh" "test-plugin"
+  "$SCRIPTS_DIR/plugin_update.sh" "test-plugin" --yes
 
   # Verify v3.0.0
   run jq -r '.plugins[] | select(.name == "test-plugin") | .version' "$TEST_PROJECT_DIR/ai/plugins/installed.json"
@@ -367,7 +367,7 @@ load test_helper
   "$SCRIPTS_DIR/plugin_install.sh" "$plugin_dir"
 
   echo '{"name": "test-plugin", "version": "2.0.0", "description": "Updated"}' > "$plugin_dir/plugin.json"
-  run "$SCRIPTS_DIR/plugin_update.sh" "test-plugin"
+  run "$SCRIPTS_DIR/plugin_update.sh" "test-plugin" --yes
 
   assert_success
   assert_output_contains "updated|success|complete"
@@ -382,7 +382,7 @@ load test_helper
 
   # Update to v2.0.0
   echo '{"name": "test-plugin", "version": "2.0.0", "description": "Updated"}' > "$plugin_dir/plugin.json"
-  run "$SCRIPTS_DIR/plugin_update.sh" "test-plugin"
+  run "$SCRIPTS_DIR/plugin_update.sh" "test-plugin" --yes
 
   # Should show version change (1.0.0 → 2.0.0)
   assert_success

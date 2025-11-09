@@ -45,6 +45,7 @@ validate_json() {
 PLUGIN_NAME=$1
 DRY_RUN=false
 FORCE=false
+AUTO_YES=false
 
 # Parse arguments
 shift || true
@@ -58,10 +59,14 @@ while [[ $# -gt 0 ]]; do
       FORCE=true
       shift
       ;;
+    --yes|-y)
+      AUTO_YES=true
+      shift
+      ;;
     *)
       echo "❌ Unknown option: $1"
       echo ""
-      echo "Usage: ./scripts/plugin_update.sh <plugin-name> [--dry-run] [--force]"
+      echo "Usage: ./scripts/plugin_update.sh <plugin-name> [--dry-run] [--force] [--yes]"
       exit 1
       ;;
   esac
@@ -202,12 +207,14 @@ if [ "$DRY_RUN" = true ]; then
   exit 0
 fi
 
-# Confirm update
-read -p "Continue with update? [y/N]: " CONFIRM
-if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-  echo "❌ Update cancelled"
-  rm -rf "$TEMP_DIR"
-  exit 0
+# Confirm update (skip if --yes flag)
+if [ "$AUTO_YES" = false ]; then
+  read -p "Continue with update? [y/N]: " CONFIRM
+  if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+    echo "❌ Update cancelled"
+    rm -rf "$TEMP_DIR"
+    exit 0
+  fi
 fi
 
 echo ""
