@@ -343,7 +343,7 @@ $ cd my-project
 
 ### 🎭 Persona System — Enhanced AI Performance
 
-**NEW in v2.4.0:** IGRIS now includes the **Igris persona** (Shadow Knight) for measurably better AI performance.
+IGRIS includes the **Igris persona** (Shadow Knight) for measurably better AI performance.
 
 **What is a Persona?**
 - Personality layer that improves Claude's consistency and response quality
@@ -562,7 +562,7 @@ See `ai/prompts/session_protocol.md` for checkpoint details.
 
 ### 🔧 Self-Maintenance — Autonomous Quality Assurance
 
-**NEW in v2.3.0:** IGRIS can audit itself and your codebase autonomously.
+IGRIS can audit itself and your codebase autonomously.
 
 **10 Maintenance Operations:**
 
