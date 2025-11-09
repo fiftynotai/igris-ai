@@ -673,6 +673,241 @@ IGRIS enforces 5 core principles:
 
 ---
 
+## ✦ Working with IGRIS — Best Practices
+
+### Clear Communication = Best Results
+
+IGRIS works perfectly with clear, structured communication. The system is reliable — but AI interpretation varies with prompt quality.
+
+**Best Practices:**
+
+**1. Be Explicit About Your Intent**
+```bash
+✅ GOOD: "Register a bug: Login fails with special characters in password"
+❌ VAGUE: "Fix the login thing"
+
+✅ GOOD: "Implement BR-005"
+❌ UNCLEAR: "Do that authentication task we talked about"
+```
+
+**2. Work in Focused Sessions**
+```bash
+# Small, focused sessions work best
+✅ One brief per session (BR-005 → implement → commit → done)
+✅ Clear session boundaries (ARISE → work → RETREAT)
+❌ Multiple briefs in one long conversation (context degrades)
+```
+
+**3. Reset After Big Briefs**
+```bash
+# After completing a major brief:
+1. Verify brief marked "Done"
+2. Commit all changes
+3. Start fresh conversation
+4. Say "ARISE" to reinitialize
+
+# Why: Fresh context = better performance
+```
+
+**4. Monitor and Correct**
+```bash
+# If IGRIS bypasses protocol:
+"Igris, you violated the protocol by modifying files without a brief.
+Record this violation in PROTOCOL_VIOLATIONS.md and create the missing brief."
+
+# IGRIS will:
+- Self-document the violation
+- Analyze what went wrong
+- Create the brief retroactively
+- Suggest process improvements
+```
+
+---
+
+### When Violations Happen
+
+**Common violation scenarios:**
+
+**Scenario 1: Time Pressure**
+```
+User: "Quick fix, no brief needed, we're shipping in 30 min"
+IGRIS: *Modifies files directly*
+
+✅ Fix: "Create brief BR-XXX first (takes 2 min), mark P0-Critical, then implement"
+```
+
+**Scenario 2: Vague Instructions**
+```
+User: "Make it better"
+IGRIS: *Guesses what 'better' means, modifies random files*
+
+✅ Fix: "Describe specific improvement → IGRIS asks clarifying questions → Brief created → Implementation"
+```
+
+**Scenario 3: Exploration Mode — Learning IGRIS**
+```
+User: "Let's try different ways to communicate and see what works best"
+User: *Tests various prompt styles, monitors IGRIS behavior*
+
+✅ This is ENCOURAGED! Every user has a different communication style.
+
+Experiment with:
+- Formal vs casual language
+- Detailed vs brief instructions
+- Step-by-step vs high-level goals
+- Questions vs commands
+
+Monitor IGRIS responses:
+- Does it ask clarifying questions? (prompt was unclear)
+- Does it create briefs proactively? (good)
+- Does it bypass protocols? (prompt was too permissive)
+- Does it follow your intent accurately? (communication aligned)
+
+Find your communication style that gets the best results.
+
+Once you find what works:
+- Use those prompt patterns consistently
+- Share with your team (standardize communication)
+- Document in project README if helpful
+```
+
+**The Rule:**
+- **Exploring IGRIS?** Experiment with prompts, find your style
+- **Shipping code?** Use clear prompts, follow structure
+
+---
+
+### Recording Protocol Violations
+
+**You don't need to manually edit files.** Just tell IGRIS:
+
+```bash
+"Igris, you violated the protocol. Record the violation."
+
+"You modified files without a brief. Document this in PROTOCOL_VIOLATIONS.md and create the missing brief."
+```
+
+IGRIS will:
+1. Analyze what happened
+2. Record violation in `ai/session/PROTOCOL_VIOLATIONS.md`
+3. Identify root cause (time pressure? vague prompt? bug?)
+4. Suggest prevention strategy
+5. Create brief if needed
+
+**Self-improvement loop:**
+```
+Violation → Record → Pattern Analysis → Process Improvement (PI-XXX) → Protocol Update
+```
+
+---
+
+### Why the Brief System Matters
+
+**Briefs aren't bureaucracy — they're memory, accountability, and intelligence.**
+
+**What Briefs Enable:**
+
+**1. Track What Was Done**
+```
+"List all briefs we completed this month"
+"Show me P0 bugs we fixed"
+"What did we accomplish this week?"
+```
+
+**Result:** Complete audit trail of your work
+
+**2. Understand Past Decisions**
+```
+"We did a feature about user authentication — which brief was that?"
+
+"Check briefs and tell me: why did we implement BR-015 before BR-012?"
+```
+
+IGRIS finds the brief, shows:
+- Problem definition
+- Architecture decisions made
+- Why it was prioritized
+- What was tested
+- Complete implementation context
+
+**3. Generate Reports**
+```
+"Create a summary report of our work this week"
+
+"Analyze completed briefs and show what we accomplished this sprint"
+
+"Generate a status report for the team: what's done, what's in progress, what's blocked"
+```
+
+IGRIS will:
+- Read all completed briefs from date range
+- Categorize by type (bugs, features, tech debt)
+- Show metrics (velocity, priority distribution, effort)
+- Highlight accomplishments and blockers
+- Format as professional report
+
+**4. Onboard New Developers**
+```
+"Show me all briefs related to the authentication module"
+
+"What technical debt exists in the payment system?"
+
+"Give me a summary of all architecture decisions in MG-XXX briefs"
+```
+
+New developer gets:
+- Complete context on past work
+- Understanding of current issues
+- Prioritized task list
+- Architecture evolution history
+
+**5. Plan Future Work**
+```
+"Analyze briefs and recommend what to work on next"
+
+"Show P1 bugs that are blocking features"
+
+"What should we prioritize this sprint based on brief analysis?"
+```
+
+IGRIS provides data-driven recommendations based on:
+- Priority levels
+- Effort estimates
+- Dependencies between briefs
+- Current blockers
+
+**Without briefs:** "What did I do last week?" → Can't remember
+**With briefs:** "Show last week's work" → Instant detailed report
+
+---
+
+### The Sweet Spot
+
+**IGRIS works best when you:**
+- ✅ Use clear, explicit prompts
+- ✅ Work in small, focused sessions (1-2 briefs)
+- ✅ Create briefs for all shipped code
+- ✅ Monitor and correct violations when they happen
+- ✅ Reset context after completing major briefs
+- ✅ Experiment to find your communication style
+
+**IGRIS works okay when you:**
+- ⚠️ Use vague prompts (IGRIS asks clarifying questions, takes longer)
+- ⚠️ Long sessions (context degrades, but session tracking helps recovery)
+- ⚠️ Exploration without briefs (fine for prototyping, create brief when shipping)
+
+**IGRIS struggles when you:**
+- ❌ Constantly bypass protocols ("skip the brief, just do it" repeatedly)
+- ❌ Never reset context (200+ message conversations lose coherence)
+- ❌ Ignore violation warnings (patterns repeat)
+
+**The Truth:**
+IGRIS amplifies discipline. Clear communication + structure = exceptional results. Vague prompts + protocol resistance = standard AI chaos.
+
+**You control the outcome.**
+
+---
+
 ## 📦 Example Project
 
 **Want to see IGRIS in action?**
@@ -1283,7 +1518,7 @@ Built for developers and teams using Claude AI to engineer high-quality software
 # Ready to engineer?
 ./scripts/igris_init.sh
 
-# Ask Claude:
+# Ask Igris:
 # "Generate coding guidelines using ai/prompts/generate_coding_guidelines.md"
 # "Analyze this project using ai/prompts/generate_architecture_docs.md"
 # "Analyze codebase using ai/prompts/migration_analysis.md"
