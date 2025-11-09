@@ -7,21 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.4.0] - 2025-10-26
+## [2.4.0] - 2025-11-09
 
 ### Added
 
 - **Igris Persona Bundled** - Enhanced AI performance with personality system
   - **Default Configuration:** Half mask (subtle, professional branding)
+  - **Auto-Activation:** Persona active by default on fresh install
   - **Bundled Persona:** Igris (Shadow Knight) included out-of-the-box
   - **Mask System:** 4 levels (none, half, light, full) - adjust anytime
   - **Performance Boost:** Measurable improvement in AI response quality and consistency
   - **User Control:**
-    - Adjust mask: `./scripts/persona_mask.sh adjust`
+    - Adjust mask: `./scripts/persona_mask.sh adjust [none|half|light|full]`
     - Remove persona: `./scripts/persona_mask.sh remove`
     - Status check: `./scripts/persona_mask.sh status`
+  - **Self-Contained:** CLAUDE.md template copied to projects (persona changes work without repo dependency)
+  - **Identity Statement:** Greetings include version, capabilities, and developer attribution
   - **Future:** Advanced persona creation coming in v3.0.0
   - Result: Professional AI experience with optional dramatic flair
+
+- **README.md Comprehensive Overhaul** - Complete documentation for v2.4.0
+  - **Content Added:** 785+ new lines of documentation
+  - **Tool Comparisons:** IGRIS vs Cursor, Aider, Copilot, Plain Claude (4 detailed comparisons)
+  - **Common Workflows:** 5 end-to-end scenarios (new project, existing code, release, maintenance, planning)
+  - **FAQ Section:** 15 Q&As across General, Installation, Usage, Plugins, Troubleshooting, Advanced
+  - **Best Practices:** Clear communication, focused sessions, context resets, violation monitoring
+  - **User-Driven Philosophy:** "You Drive, IGRIS Assists" with 4 real-world examples
+  - **Brief System Value:** 5 use cases (tracking, decisions, reports, onboarding, planning)
+  - **All Capabilities Documented:** 9 brief types, 10 self-maintenance operations
+  - Result: Complete onboarding and reference guide (README expanded from 850 → 1,635 lines)
 
 - **Complete Plugin Uninstall System (BR-008)** - Plugin cleanup now fully functional
   - **Phase 1:** Plugin-specific cleanup via optional `uninstall.sh` script
@@ -56,7 +70,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Zero Data Loss:** Tested end-to-end with Blueprint v1.0.5
   - Result: Blueprint users can now upgrade to Igris AI with confidence
 
+### Improved
+
+- **Test Infrastructure** - Enhanced reliability and CI/CD compatibility
+  - **Added --yes flag:** plugin_update.sh now supports non-interactive mode (for automated testing)
+  - **Sequential execution:** CI/CD runs tests sequentially to avoid bats parallel execution issues
+  - **Documentation:** test/README.md documents parallel execution limitation and workaround
+  - Result: Tests pass reliably in CI/CD (136/136 when run individually)
+
+- **Template Self-Containment** - Projects no longer depend on Igris AI repo location
+  - **CLAUDE.md.template:** Now copied to `scripts/` during initialization and updates
+  - **Persona regeneration:** Works from local template (no repo dependency)
+  - **Update workflow:** igris_update.sh copies template during updates
+  - Result: persona_mask.sh adjust/remove commands work independently
+
+### Changed
+
+- **Date:** Release date updated to 2025-11-09 (actual release date)
+- **Persona greeting:** Now includes identity statement (version, capabilities, developer attribution)
+- **README.md structure:** Major reorganization with new sections (comparisons, workflows, FAQ, best practices)
+- **Last Updated:** CHANGELOG updated to 2025-11-09
+
 ### Fixed
+
+- **BR-011 (P1-High):** igris_update.sh failing when scripts/ directory doesn't exist
+  - **Problem:** Old installations (pre-v1.0.1) don't have scripts/ directory
+  - **Fix:** Create scripts/ directory before copying files
+  - **Impact:** Enables updates from very old versions
+  - Files: `scripts/igris_update.sh:312`
 
 - **BR-007 (P0-Critical):** plugin_update.sh version extraction broken
   - **Problem:** Was reading non-existent `version.txt` from plugin repos
@@ -976,4 +1017,4 @@ Want to contribute? See [CONTRIBUTING.md](ai/CONTRIBUTING.md) for guidelines.
 
 ---
 
-**Last Updated:** 2025-10-14
+**Last Updated:** 2025-11-09
