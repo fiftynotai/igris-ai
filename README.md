@@ -43,6 +43,83 @@ AI made coding faster — but not better. Speed without structure created:
 
 ---
 
+## ✦ How IGRIS Compares
+
+### IGRIS vs Cursor AI
+
+| Feature | Cursor AI | IGRIS |
+|---------|-----------|-------|
+| **Approach** | Editor-integrated AI | System-level engineering framework |
+| **Focus** | Fast code completion | Structured engineering workflow |
+| **Quality Control** | Manual | Automated (briefs, tests, guidelines) |
+| **Session Recovery** | None | Automatic (CURRENT_SESSION.md) |
+| **Architecture Enforcement** | No | Yes (coding_guidelines.md) |
+| **Brief Management** | No | Yes (9 brief types, priorities) |
+| **Testing** | Manual | Automated workflow |
+| **Best For** | Quick edits, autocomplete | Full feature development, architecture |
+
+---
+
+### IGRIS vs Aider
+
+| Feature | Aider | IGRIS |
+|---------|-------|-------|
+| **Approach** | CLI chat for code edits | Engineering system with playbooks |
+| **Focus** | File editing, git integration | End-to-end engineering (plan → test → commit) |
+| **Quality Control** | Commit messages | Briefs, tests, architecture enforcement |
+| **Session Tracking** | Git commits only | Multi-level (session, briefs, decisions) |
+| **Architecture** | No enforcement | Enforced via coding_guidelines.md |
+| **Self-Maintenance** | No | Yes (10 autonomous operations) |
+| **Best For** | Quick fixes, pair programming | Enterprise development, team workflows |
+
+---
+
+### IGRIS vs GitHub Copilot
+
+| Feature | GitHub Copilot | IGRIS |
+|---------|----------------|-------|
+| **Approach** | Autocomplete | Structured engineering system |
+| **Focus** | Line/function suggestions | Full features with architecture |
+| **Planning** | None | Brief-first workflow (required) |
+| **Testing** | No | Automated test generation |
+| **Session Recovery** | None | Full context preservation |
+| **Team Workflows** | Limited | Built-in (briefs, priorities, handoffs) |
+| **Best For** | Individual coding, boilerplate | Teams, complex features, quality focus |
+
+---
+
+### IGRIS vs Plain Claude
+
+| Feature | Plain Claude | IGRIS + Claude |
+|---------|--------------|----------------|
+| **Context** | Manual prompt loading | Automatic (CLAUDE.md + hooks) |
+| **Quality** | Varies by prompt | Enforced (coding guidelines, tests) |
+| **Recovery** | Lose context on reset | Automatic recovery (session tracking) |
+| **Workflow** | Ad-hoc | Structured (Plan → Patch → Test → Commit) |
+| **Accountability** | None | Full audit trail (briefs, decisions, learnings) |
+| **Best For** | Quick questions | Production software development |
+
+---
+
+### When to Use IGRIS
+
+**IGRIS is ideal for:**
+- ✅ Building production software with quality standards
+- ✅ Team development (structured handoffs, clear priorities)
+- ✅ Complex features requiring architecture compliance
+- ✅ Projects with technical debt to manage
+- ✅ Open-source projects (docs, tests, release quality)
+
+**Skip IGRIS if:**
+- ❌ Prototyping/throwaway code
+- ❌ Single-file scripts
+- ❌ No architecture standards needed
+- ❌ Just learning/experimenting
+
+**The Rule:** If you're shipping it → use IGRIS. If you're exploring → plain Claude is fine.
+
+---
+
 ## ✦ What is IGRIS?
 
 **IGRIS** is an AI Engineering Platform that transforms how you build software.
@@ -679,6 +756,100 @@ cat .igris_version
 
 ---
 
+## ✦ FAQ
+
+### General
+
+**Q: What's the difference between IGRIS and Claude?**
+A: IGRIS is an engineering system that orchestrates Claude Code. Claude provides intelligence; IGRIS provides process, workflows, and discipline. Think: Claude = engine, IGRIS = vehicle.
+
+**Q: Does IGRIS work with Claude.ai (web interface)?**
+A: Yes, but with limitations. Startup hooks won't auto-run, so you'll need to manually follow initialization steps from `CLAUDE.md`. Claude Code CLI is recommended for the full experience.
+
+**Q: Does IGRIS track my data or send anything online?**
+A: No. IGRIS is 100% local. All data stays in your project's `ai/` directory. No telemetry, no tracking, no external calls (except git clone for updates).
+
+**Q: Can I use IGRIS without personas?**
+A: Yes. Personas are optional. Run `./scripts/persona_mask.sh remove` to use standard mode.
+
+---
+
+### Installation & Setup
+
+**Q: Do I need to keep the igris-ai repo cloned?**
+A: Currently yes (v2.4.0). The init script copies files from the cloned repo. v3.0.0 will have a CLI with global installation.
+
+**Q: Can I install IGRIS in multiple projects?**
+A: Yes! Each project gets its own `ai/` directory with independent briefs, sessions, and configuration.
+
+**Q: How do I uninstall IGRIS from a project?**
+A: Delete these directories: `ai/`, `.claude/`, `scripts/`, and the `CLAUDE.md` file. That's it.
+
+---
+
+### Usage
+
+**Q: Do I need to create briefs for everything?**
+A: Only for file modifications (code changes). Read-only operations (questions, analysis, listing) don't require briefs.
+
+**Q: Can I skip the brief workflow for quick fixes?**
+A: IGRIS enforces brief-first workflow to prevent technical debt. For urgent P0 fixes, create a brief first (takes 2 minutes), then implement.
+
+**Q: What if my conversation resets mid-task?**
+A: IGRIS automatically resumes from where you left off. Session state is saved in `CURRENT_SESSION.md` and brief files. Just say "ARISE" or start a new conversation.
+
+**Q: How do I switch personas or adjust the mask?**
+A: Run `./scripts/persona_mask.sh adjust [none|half|light|full]` anytime. CLAUDE.md regenerates automatically.
+
+---
+
+### Plugins
+
+**Q: Can I create my own plugins?**
+A: Yes! See [Plugin Development Guide](docs/PLUGIN_DEVELOPMENT.md). Plugins can add platform-specific tools, workflows, or even custom personas.
+
+**Q: Do plugins require jq?**
+A: Only if they use hooks (persona injection, custom prompts). Basic plugins work without jq.
+
+**Q: Will plugins break when I update IGRIS?**
+A: No. Plugin API is stable. Update plugins separately with `./scripts/plugin_update.sh <plugin-name>`.
+
+---
+
+### Troubleshooting
+
+**Q: "Warning: jq not found" — Do I need it?**
+A: jq is optional. Required only for plugin hooks (personas, custom workflows). IGRIS core works fine without it.
+- macOS: `brew install jq`
+- Ubuntu: `sudo apt install jq`
+
+**Q: CLAUDE.md not updating after mask change?**
+A: Ensure `scripts/CLAUDE.md.template` exists. If missing, run `./scripts/igris_update.sh` to get it.
+
+**Q: Persona not activating?**
+A: Check `ai/persona.json` exists and has `"mask": "half"` (or higher). Run `./scripts/persona_mask.sh status` to verify.
+
+**Q: Tests failing?**
+A: Ensure dependencies installed:
+- `python3 --version` (required)
+- `git --version` (required)
+- `bats --version` (for running tests)
+
+---
+
+### Advanced
+
+**Q: Can I run multiple IGRIS instances on different briefs?**
+A: Not yet. PI-001 brief tracks this feature for v3.0.0+ (multi-instance workflow with conflict detection).
+
+**Q: How do I customize IGRIS for my team?**
+A: Edit `ai/context/coding_guidelines.md` with your team's standards. IGRIS enforces whatever guidelines you define.
+
+**Q: Can I use IGRIS with other AI models (not Claude)?**
+A: Currently optimized for Claude. The system is model-agnostic in theory, but workflows assume Claude Code CLI integration.
+
+---
+
 ## ✦ Requirements
 
 - **Git** - Version control (required)
@@ -729,6 +900,184 @@ your-project/
 │   └── ...
 └── docs/                        # Project documentation
 ```
+
+---
+
+## ✦ Common Workflows
+
+### Starting a New Project
+
+**Goal:** Set up IGRIS and establish architecture standards
+
+```bash
+# 1. Install IGRIS
+../igris-ai/scripts/igris_init.sh
+
+# 2. Launch Claude
+claude
+
+# 3. Generate coding guidelines
+```
+"Generate coding guidelines for this project"
+```
+
+Claude asks:
+- Base architecture repo? (optional)
+- Analyze current project? (yes/no)
+- Platform? (Flutter/React/etc.)
+
+Result: `ai/context/coding_guidelines.md` created
+
+# 4. Generate architecture documentation
+```
+"Analyze this project using ai/prompts/generate_architecture_docs.md"
+```
+
+Result: Complete architecture map in `ai/context/`
+
+# 5. Start engineering
+```
+"Register a bug: [describe issue]"
+"Implement BR-001"
+```
+```
+
+**Result:** Professional setup in < 10 minutes
+
+---
+
+### Onboarding an Existing Codebase
+
+**Goal:** Understand existing code and plan improvements
+
+```bash
+# 1. Install IGRIS in existing project
+cd existing-project
+../igris-ai/scripts/igris_init.sh
+
+# 2. Launch Claude and analyze
+claude
+```
+"Analyze this codebase using ai/prompts/migration_analysis.md"
+```
+
+Claude will:
+- Scan entire codebase
+- Identify architecture violations
+- Generate briefs: MG-XXX (migrations), TD-XXX (tech debt), BR-XXX (bugs)
+- Create prioritized roadmap
+
+# 3. Review generated briefs
+```
+"List all briefs"
+```
+
+# 4. Start with high-priority items
+```
+"What should I work on next?"
+"Implement BR-005"  # Fix critical bug first
+```
+```
+
+**Result:** Systematic modernization plan
+
+---
+
+### Before Major Release
+
+**Goal:** Ensure quality and security before shipping
+
+```bash
+claude
+```
+"Check dependencies"              # Security vulnerabilities first
+"Run bug hunt"                    # Find issues before users
+"Analyze test coverage"           # Quality gate
+"Check standards compliance"      # Final polish
+```
+
+IGRIS will:
+- Scan dependencies for CVEs and updates → DU-XXX briefs
+- Analyze code for potential bugs → BR-XXX briefs
+- Find untested code paths → TS-XXX briefs
+- Check coding guidelines compliance → TD-XXX briefs
+
+# Review findings
+```
+"List P0 bugs"                    # Critical issues first
+```
+
+# Fix systematically
+```
+"Implement BR-008"                # Fix critical bugs
+"Implement DU-003"                # Update vulnerable deps
+"Implement TS-012"                # Add missing tests
+```
+```
+
+**Result:** Confident, quality release
+
+---
+
+### Monthly Maintenance Routine
+
+**Goal:** Prevent technical debt accumulation
+
+```bash
+# First Monday of the month
+claude
+```
+"Check dependencies"              # Stay current
+"Run code quality audit"          # Find new tech debt
+"Check standards compliance"      # Maintain standards
+```
+
+# Review and prioritize
+```
+"List TD briefs by priority"
+```
+
+# Dedicate time to pay down debt
+```
+"Implement TD-015"                # Refactor authentication module
+"Implement DU-007"                # Update outdated packages
+```
+```
+
+**Result:** Clean, maintainable codebase
+
+---
+
+### Strategic Planning Session
+
+**Goal:** Decide what to build next
+
+```bash
+claude
+```
+"Analyze briefs"                  # Review current backlog
+"Suggest new features"            # AI-powered ideation
+```
+
+IGRIS will:
+- Analyze existing briefs by priority and effort
+- Recommend next task based on impact
+- Generate feature ideas → FR-XXX briefs
+- Suggest process improvements → PI-XXX briefs
+
+# Decide priorities
+```
+"Show feature briefs"
+"Change FR-005 priority to P1"    # Promote important feature
+```
+
+# Execute
+```
+"Implement FR-005"
+```
+```
+
+**Result:** Data-driven roadmap
 
 ---
 
