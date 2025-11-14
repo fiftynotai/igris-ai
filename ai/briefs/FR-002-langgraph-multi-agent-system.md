@@ -573,13 +573,14 @@ igris-ai-langgraph/
 - [x] Human approval checkpoints (completed: 2025-11-15 01:15)
 - [x] Command integration (completed: 2025-11-15 01:20)
 
-### Phase 3: Strategic Agents (Weeks 5-6)
-- [ ] Implement brief planner agent
-- [ ] Implement self-healer agent
-- [ ] Implement conversational refiner agent
-- [ ] Implement maintenance bot
-- [ ] State persistence (resume long workflows)
-- [ ] Cost tracking and limits
+### Phase 3: Strategic Agents (Weeks 5-6) ✅ CORE COMPLETE
+- [x] Implement brief planner agent (completed: 2025-11-15 01:30)
+- [x] Implement self-healer agent (completed: 2025-11-15 01:35)
+- [x] Create planning state graph (completed: 2025-11-15 01:40)
+- [x] Create healing state graph with retry loops (completed: 2025-11-15 01:45)
+- [x] Command integration (plan-sprint, heal) (completed: 2025-11-15 01:50)
+- [ ] Conversational refiner agent (deferred to Phase 4)
+- [ ] Maintenance bot (deferred to Phase 4)
 
 ### Phase 4: Polish + Release (Weeks 7-8)
 - [ ] Comprehensive testing (all agents)
