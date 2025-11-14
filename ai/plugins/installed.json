@@ -1,0 +1,55 @@
+{
+  "plugins": [
+    {
+      "name": "igris-langchain",
+      "version": "1.0.0-alpha",
+      "repo": "/Users/m.elamin/StudioProjects/igris-ai-langchain",
+      "location": "/Users/m.elamin/StudioProjects/igris-ai-langchain",
+      "installed_at": "2025-11-14T19:03:27Z",
+      "capabilities": [
+        "brief-generation",
+        "ai-powered-analysis",
+        "code-review",
+        "test-generation",
+        "codebase-rag",
+        "dependencies",
+        ">=3.9",
+        "packages",
+        "langchain>=0.1.0"
+      ],
+      "hooks": {
+        "BRIEF_GENERATOR": "ai/langchain/hooks/generate_brief.sh",
+        "SYSTEM_ASSESSMENT": "ai/langchain/hooks/assess.sh",
+        "CODE_REVIEWER": "ai/langchain/hooks/review.sh",
+        "TEST_GENERATOR": "ai/langchain/hooks/generate_tests.sh"
+      }
+    },
+    {
+      "name": "igris-langgraph",
+      "version": "1.0.0",
+      "repo": "/Users/m.elamin/StudioProjects/igris-ai-langgraph",
+      "location": "/Users/m.elamin/StudioProjects/igris-ai-langgraph",
+      "installed_at": "2025-11-14T19:04:17Z",
+      "capabilities": [
+        "autonomous-implementation",
+        "multi-agent-review",
+        "strategic-planning",
+        "self-healing",
+        "conversational-workflows",
+        "autonomous-maintenance",
+        "dependencies",
+        ">=3.10",
+        "packages"
+      ],
+      "hooks": {
+        "MULTI_AGENT_REVIEWER": "ai/langgraph/hooks/multi_review.sh",
+        "AUTONOMOUS_IMPLEMENTER": "ai/langgraph/hooks/autonomous_implement.sh",
+        "BRIEF_PLANNER": "ai/langgraph/hooks/plan_briefs.sh",
+        "SELF_HEALER": "ai/langgraph/hooks/self_heal.sh",
+        "CONVERSATIONAL_REFINER": "ai/langgraph/hooks/refine_brief.sh",
+        "MAINTENANCE_AGENT": "ai/langgraph/hooks/maintain.sh"
+      }
+    }
+  ],
+  "last_updated": "2025-11-14T19:04:17Z"
+}
