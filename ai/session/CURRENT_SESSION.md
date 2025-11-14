@@ -6,12 +6,12 @@ Implement FR-001: LangChain Integration for Enhanced Intelligence
 ## Status: 🔄 In Progress
 
 ## Active Briefs
-1. **FR-001** - LangChain Integration for Enhanced Intelligence 🎯 READY TO START
-   - Status: Ready
+1. **FR-001** - LangChain Integration for Enhanced Intelligence 🚧 PHASE 1 COMPLETE
+   - Status: In Progress (Phase 1 done, Phase 2-4 pending)
    - Priority: P1-High
    - Effort: XL-Extra Large (multi-phase, ~1 month)
-   - Dependencies: TD-012 ✅ (complete)
-   - Next: Begin Phase 1 - LangChain plugin architecture design
+   - Phase 1: ✅ Complete (v1.0.0-alpha)
+   - Next: Test with API key, then begin Phase 2 - Codebase RAG
 
 ## Completed Briefs (Recent)
 1. **TD-012** - Enhancement Hook System ✅ COMPLETE
@@ -108,12 +108,13 @@ Implement FR-001: LangChain Integration for Enhanced Intelligence
   - Foundation ready for AI integrations
 
 **Current Work:**
-- 🎯 FR-001 Phase 1 Planning (complete)
-  - Created detailed 5-day implementation plan
-  - File structure designed
-  - Dependencies identified
-  - Success metrics defined
-  - Ready to begin implementation
+- ✅ FR-001 Phase 1 Implementation (complete)
+  - Plugin architecture built (20 files, ~1,200 LOC)
+  - LangChain brief generation chain implemented
+  - Command integration (igris_generate_brief.sh)
+  - Complete documentation (installation, usage)
+  - Tagged v1.0.0-alpha
+  - Status: MVP ready for API testing
 
 **Implementation Plan:**
 - Phase 1 (Week 1): Plugin architecture + brief generation MVP
