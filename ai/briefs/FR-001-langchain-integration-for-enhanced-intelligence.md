@@ -373,37 +373,49 @@ igris langchain assess
 
 ## Tasks
 
-### Pending
-- [ ] Task 1: Create TD-012 brief (Enhancement Hook System)
-- [ ] Task 2: Implement TD-012 (hook system in core)
-- [ ] Task 3: Design LangChain plugin architecture
-- [ ] Task 4: Setup Python package structure
-- [ ] Task 5: Implement brief generation chain
-- [ ] Task 6: Implement codebase RAG (ChromaDB embeddings)
-- [ ] Task 7: Implement code review chain
-- [ ] Task 8: Implement test generation chain
-- [ ] Task 9: Create bash wrapper scripts
-- [ ] Task 10: Write plugin documentation
-- [ ] Task 11: Create example configuration
-- [ ] Task 12: Write tests for all chains
-- [ ] Task 13: Test end-to-end workflows
-- [ ] Task 14: Dogfood on Igris AI itself
-- [ ] Task 15: Update README and CHANGELOG
+**Note:** Implementation broken into 4 phases. See `FR-001-PHASE-1-PLAN.md` for detailed Phase 1 plan.
 
-### In Progress
-_(No tasks in progress yet)_
+### Phase 1: Plugin Architecture + Brief Generation (Week 1)
+- [ ] Day 1: Plugin structure + dependencies setup
+- [ ] Day 2: Brief generation chain implementation
+- [ ] Day 3: Command integration + testing
+- [ ] Day 4: Polish + documentation
+- [ ] Day 5: Packaging + dogfooding
+
+### Phase 2: Codebase RAG + Recommendations (Week 2)
+- [ ] Setup ChromaDB for vector storage
+- [ ] Implement codebase embedding pipeline
+- [ ] Create SYSTEM_ASSESSMENT hook
+- [ ] Integrate RAG with brief generation
+- [ ] Test context-aware recommendations
+
+### Phase 3: Code Review + Test Generation (Week 3)
+- [ ] Implement CODE_REVIEWER hook
+- [ ] Implement TEST_GENERATOR hook
+- [ ] Create review chains with RAG
+- [ ] Test generation from implementation
+- [ ] Integration with git workflows
+
+### Phase 4: Polish + Release (Week 4)
+- [ ] Comprehensive testing
+- [ ] Documentation completion
+- [ ] Performance optimization
+- [ ] Security review
+- [ ] v1.0.0 release
 
 ### Completed
-_(No tasks completed yet)_
+- [x] Task 1: Create TD-012 brief (Enhancement Hook System) (completed: 2025-11-14)
+- [x] Task 2: Implement TD-012 (hook system in core) (completed: 2025-11-14)
+- [x] Phase 1 implementation plan created (FR-001-PHASE-1-PLAN.md)
 
 ---
 
 ## Session State (Tactical - This Brief)
 
-**Current State:** Brief creation complete, ready for implementation
-**Next Steps When Resuming:** Create TD-012 brief for hook system
-**Last Updated:** 2025-11-14
-**Blockers:** None - TD-012 must be completed first before FR-001 implementation
+**Current State:** Phase 1 implementation plan complete (FR-001-PHASE-1-PLAN.md)
+**Next Steps When Resuming:** Begin Day 1 of Phase 1 - plugin structure + dependencies setup
+**Last Updated:** 2025-11-14 20:30
+**Blockers:** None - TD-012 complete, ready to begin implementation
 
 ---
 
