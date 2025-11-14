@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Enhancement Hook System (v2.5.0)** - Extensible architecture for AI and tool integrations
+  - 6 hook types: SYSTEM_ASSESSMENT, BRIEF_GENERATOR, CODE_REVIEWER, TEST_GENERATOR, PRE_ANALYSIS, POST_ANALYSIS
+  - Hook contract specification with input/output formats and exit codes
+  - Hook discovery and execution functions in igris_init.sh
+  - Plugin registration system for enhancement hooks
+  - Hook status display in CLAUDE.md
+  - Comprehensive documentation in ai/hooks/HOOKS_SPEC.md
+  - Test suite for hook system (test/hooks.test.bash)
+  - Foundation for FR-001 (LangChain Integration)
+
+### Changed
+- Updated CLAUDE.md.template to display installed enhancement plugins
+- Enhanced plugin_install.sh to register enhancement hooks
+- Improved CLAUDE.md regeneration to include hook status
+
+---
+
 ## [2.4.0] - 2025-11-09
 
 ### Added

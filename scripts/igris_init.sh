@@ -214,6 +214,124 @@ cat > ai/plugins/installed.json <<'EOF'
 }
 EOF
 
+# ============================================================================
+# Hook System Functions (Enhancement Hooks - v2.5.0)
+# ============================================================================
+# These functions enable plugins to extend Igris AI with AI capabilities,
+# code analysis tools, and workflow augmentations.
+#
+# Specification: ai/hooks/HOOKS_SPEC.md
+# ============================================================================
+
+# Resolve hook script path for a given hook type
+# Usage: resolve_hooks "HOOK_TYPE"
+# Returns: Hook script path (exit 0) or nothing (exit 1)
+resolve_hooks() {
+  local hook_type="$1"
+
+  # Check if installed_plugins.json exists
+  if [ ! -f "ai/plugins/installed.json" ]; then
+    return 1  # No plugins installed
+  fi
+
+  # Use Python3 for JSON parsing (jq fallback if available)
+  local hook_script=""
+
+  if command -v jq &> /dev/null; then
+    # Use jq if available (faster)
+    hook_script=$(jq -r ".plugins[] | select(.hooks.$hook_type != null) | .hooks.$hook_type | select(. != null)" ai/plugins/installed.json 2>/dev/null | head -n 1)
+  else
+    # Fallback to Python3 (always available)
+    hook_script=$(python3 <<EOF 2>/dev/null
+import json, sys
+try:
+    with open('ai/plugins/installed.json', 'r') as f:
+        data = json.load(f)
+    for plugin in data.get('plugins', []):
+        if '$hook_type' in plugin.get('hooks', {}):
+            print(plugin['hooks']['$hook_type'])
+            break
+except:
+    pass
+EOF
+)
+  fi
+
+  # Validate hook script exists and is executable
+  if [ -n "$hook_script" ] && [ -f "$hook_script" ] && [ -x "$hook_script" ]; then
+    echo "$hook_script"
+    return 0
+  fi
+
+  # No valid hook found
+  return 1
+}
+
+# Execute a hook with input data
+# Usage: execute_hook "HOOK_TYPE" "input_data"
+# Returns: Hook output (stdout) and exit code (0=success, 1=error, 2=skip)
+execute_hook() {
+  local hook_type="$1"
+  local input_data="$2"
+
+  # Resolve hook script
+  local hook_script
+  hook_script=$(resolve_hooks "$hook_type")
+  if [ $? -ne 0 ]; then
+    # No hook registered - skip silently
+    return 2
+  fi
+
+  # Set environment variables for hook
+  export IGRIS_HOOK_TYPE="$hook_type"
+  export IGRIS_PROJECT_ROOT="$(pwd)"
+  export IGRIS_VERSION="$IGRIS_VERSION"
+
+  # Optional: Set brief-specific variables if available
+  if [ -n "$IGRIS_BRIEF_ID" ]; then
+    export IGRIS_BRIEF_ID
+  fi
+
+  if [ -f "ai/session/CURRENT_SESSION.md" ]; then
+    export IGRIS_SESSION_FILE="ai/session/CURRENT_SESSION.md"
+  fi
+
+  # Execute hook with input
+  local output
+  local exit_code
+  output=$(echo "$input_data" | "$hook_script" 2>&1)
+  exit_code=$?
+
+  # Handle exit codes according to spec
+  case $exit_code in
+    0)
+      # Success - return output
+      echo "$output"
+      return 0
+      ;;
+    1)
+      # Error - show output to stderr, return error
+      echo "⚠️ Hook $hook_type failed:" >&2
+      echo "$output" >&2
+      return 1
+      ;;
+    2)
+      # Skip - not applicable, continue silently
+      return 2
+      ;;
+    *)
+      # Unknown exit code - treat as error
+      echo "⚠️ Hook $hook_type returned unexpected exit code: $exit_code" >&2
+      echo "$output" >&2
+      return 1
+      ;;
+  esac
+}
+
+# ============================================================================
+# End Hook System Functions
+# ============================================================================
+
 # Create Claude Code integration (hooks + CLAUDE.md)
 echo "🤖 Setting up Claude Code integration..."
 mkdir -p .claude/hooks
@@ -258,9 +376,52 @@ fi
 # Use a two-step process to handle multi-line PERSONA_INJECTION
 INSTALL_DATE=$(date -u +"%Y-%m-%d")
 
+# Determine hook status
+HOOK_STATUS="No enhancement hooks installed"
+INSTALLED_ENHANCEMENT_PLUGINS="None"
+
+if [ -f "ai/plugins/installed.json" ]; then
+  # Count plugins with hooks
+  if command -v jq &> /dev/null; then
+    PLUGIN_COUNT=$(jq '.plugins | length' ai/plugins/installed.json 2>/dev/null || echo "0")
+    if [ "$PLUGIN_COUNT" -gt 0 ]; then
+      HOOK_STATUS="$PLUGIN_COUNT plugin(s) with enhancement hooks installed"
+      INSTALLED_ENHANCEMENT_PLUGINS=$(jq -r '.plugins[].name' ai/plugins/installed.json 2>/dev/null | paste -sd ", " -)
+    fi
+  else
+    # Python fallback
+    PLUGIN_COUNT=$(python3 <<EOF 2>/dev/null
+import json
+try:
+    with open('ai/plugins/installed.json', 'r') as f:
+        data = json.load(f)
+    print(len(data.get('plugins', [])))
+except:
+    print('0')
+EOF
+)
+    if [ "$PLUGIN_COUNT" != "0" ] && [ -n "$PLUGIN_COUNT" ]; then
+      HOOK_STATUS="$PLUGIN_COUNT plugin(s) with enhancement hooks installed"
+      INSTALLED_ENHANCEMENT_PLUGINS=$(python3 <<EOF 2>/dev/null
+import json
+try:
+    with open('ai/plugins/installed.json', 'r') as f:
+        data = json.load(f)
+    names = [p.get('name', 'unknown') for p in data.get('plugins', [])]
+    print(', '.join(names))
+except:
+    pass
+EOF
+)
+    fi
+  fi
+fi
+
 # First pass: Replace simple variables
 sed -e "s/{{IGRIS_VERSION}}/$IGRIS_VERSION/g" \
     -e "s/{{INSTALL_DATE}}/$INSTALL_DATE/g" \
+    -e "s/{{HOOK_STATUS}}/$HOOK_STATUS/g" \
+    -e "s/{{INSTALLED_ENHANCEMENT_PLUGINS}}/$INSTALLED_ENHANCEMENT_PLUGINS/g" \
     "$IGRIS_DIR/scripts/templates/CLAUDE.md.template" > CLAUDE.md.tmp
 
 # Second pass: Replace persona injection using perl (handles newlines)

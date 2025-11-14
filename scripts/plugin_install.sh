@@ -279,6 +279,8 @@ if [ -n "$(echo "$HOOKS_JSON" | grep -v '^{}$')" ]; then
   fi
 
   python3 <<PYTHON_EOF
+import json
+
 # Read template
 with open("$IGRIS_DIR/scripts/templates/CLAUDE.md.template", 'r') as f:
     content = f.read()
@@ -286,6 +288,24 @@ with open("$IGRIS_DIR/scripts/templates/CLAUDE.md.template", 'r') as f:
 # Replace simple variables
 content = content.replace('{{IGRIS_VERSION}}', '$IGRIS_VERSION')
 content = content.replace('{{INSTALL_DATE}}', '$INSTALL_DATE')
+
+# Determine hook status
+hook_status = "No enhancement hooks installed"
+installed_plugins = "None"
+
+try:
+    with open('ai/plugins/installed.json', 'r') as f:
+        plugins_data = json.load(f)
+    plugin_count = len(plugins_data.get('plugins', []))
+    if plugin_count > 0:
+        hook_status = f"{plugin_count} plugin(s) with enhancement hooks installed"
+        names = [p.get('name', 'unknown') for p in plugins_data.get('plugins', [])]
+        installed_plugins = ', '.join(names)
+except:
+    pass
+
+content = content.replace('{{HOOK_STATUS}}', hook_status)
+content = content.replace('{{INSTALLED_ENHANCEMENT_PLUGINS}}', installed_plugins)
 
 # Replace persona injection (multi-line safe)
 persona_content = ""

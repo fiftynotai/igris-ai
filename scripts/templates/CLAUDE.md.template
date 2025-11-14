@@ -228,7 +228,27 @@ Before using Edit/Write/NotebookEdit, verify:
 **Version:** {{IGRIS_VERSION}}
 **Installed:** {{INSTALL_DATE}}
 
-This project uses [Igris AI](https://github.com/Fifty50ai/igris-ai) for code quality and architecture management.
+This project uses [Igris AI](https://github.com/fiftynotai/igris-ai) for code quality and architecture management.
+
+---
+
+## Enhancement Hooks
+
+Igris AI supports **enhancement hooks** - plugins can extend workflows with AI capabilities, code analysis tools, and custom integrations.
+
+**Available Hook Types:**
+- `SYSTEM_ASSESSMENT` - Enhance ARISE recommendations with AI analysis
+- `BRIEF_GENERATOR` - Auto-generate briefs from git diffs or natural language
+- `CODE_REVIEWER` - Review code against guidelines before commit
+- `TEST_GENERATOR` - Auto-generate test scaffolding from implementation
+- `PRE_ANALYSIS` - Analyze codebase before implementation starts
+- `POST_ANALYSIS` - Verify acceptance criteria after implementation
+
+**Hook Status:** {{HOOK_STATUS}}
+
+**Installed Enhancement Plugins:** {{INSTALLED_ENHANCEMENT_PLUGINS}}
+
+**Learn more:** `ai/hooks/HOOKS_SPEC.md` - Complete hook specification and examples
 
 ---
 
