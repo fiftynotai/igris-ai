@@ -820,15 +820,282 @@ Test hooks within workflows:
 
 ---
 
-## Future Enhancements
+## LangGraph Agent Hooks (Stateful - v3.0.0)
 
-Out of scope for v1.0.0, potential future additions:
+### AUTONOMOUS_IMPLEMENTER
+**Category:** LangGraph Agent
+**Plugin:** igris-ai-langgraph
+**Purpose:** Implement entire brief autonomously with human checkpoints
+**Input:** Brief ID and metadata (JSON via stdin)
+**Output:** Implementation status, changed files, commit message
+**State:** Checkpointed (resumes on context reset)
 
-- **Hook Priorities:** Multiple plugins can register same hook, priority determines order
-- **Hook Composition:** Chain multiple hooks together
-- **Async Hooks:** Long-running hooks don't block workflows
-- **Hook Marketplace:** Discover and install enhancement plugins
-- **Hook Analytics:** Track hook usage and performance
+**Workflow:**
+```
+Plan → Code → Test → Review → Fix (loop) → Document → Human Approve
+```
+
+**Exit Codes:**
+- `0`: Implementation complete, awaiting human approval
+- `1`: Implementation failed (show error, human intervention needed)
+- `2`: Brief not suitable for autonomous implementation
+
+---
+
+### MULTI_AGENT_REVIEWER
+**Category:** LangGraph Agent
+**Plugin:** igris-ai-langgraph
+**Purpose:** Parallel multi-expert code review (5 specialized agents)
+**Input:** Changed files list (via stdin)
+**Output:** Comprehensive multi-perspective review report
+**State:** Parallel execution, synthesis at end
+
+**Agents:**
+- Architecture Agent
+- Security Agent
+- Performance Agent
+- Testing Agent
+- Documentation Agent
+
+**Exit Codes:**
+- `0`: Review complete, approved
+- `1`: Issues found (categorized by severity)
+- `2`: No reviewable changes
+
+---
+
+### BRIEF_PLANNER
+**Category:** LangGraph Agent
+**Plugin:** igris-ai-langgraph
+**Purpose:** Analyze brief backlog, suggest optimal work order
+**Input:** Planning parameters (JSON: days available, focus areas)
+**Output:** Prioritized work plan with dependencies mapped
+**State:** Analysis state preserved
+
+**Exit Codes:**
+- `0`: Plan generated successfully
+- `1`: Planning failed (insufficient data)
+- `2`: No briefs to plan
+
+---
+
+### SELF_HEALER
+**Category:** LangGraph Agent
+**Plugin:** igris-ai-langgraph
+**Purpose:** Auto-fix failing tests/builds with retry loops
+**Input:** Test failure output or build errors (via stdin)
+**Output:** Fix applied + test results
+**State:** Retry count, attempted fixes
+
+**Workflow:**
+```
+Analyze Error → Generate Fix → Apply → Test → [Pass?]
+                                        ↓
+                                    Retry (max 3)
+```
+
+**Exit Codes:**
+- `0`: Fixed successfully (tests now pass)
+- `1`: Could not fix (human intervention needed)
+- `2`: No failures to fix
+
+---
+
+### CONVERSATIONAL_REFINER
+**Category:** LangGraph Agent
+**Plugin:** igris-ai-langgraph
+**Purpose:** Interactive brief creation through AI-guided questions
+**Input:** Initial task description (via stdin)
+**Output:** Comprehensive brief after conversation
+**State:** Conversation history, answers collected
+
+**Workflow:**
+```
+Initial Input → Ask Questions → Collect Answers → Generate Brief → Validate → [Complete?]
+                                                                            ↓
+                                                                      Ask More Questions (loop)
+```
+
+**Exit Codes:**
+- `0`: Brief created successfully
+- `1`: Conversation failed or cancelled
+- `2`: Invalid initial input
+
+---
+
+### MAINTENANCE_AGENT
+**Category:** LangGraph Agent
+**Plugin:** igris-ai-langgraph
+**Purpose:** Autonomous technical debt scanning and fixing
+**Input:** Scan parameters (scope, auto-fix limits)
+**Output:** PR with batched fixes, or analysis report
+**State:** Scan results, fix attempts, test results
+
+**Workflow:**
+```
+Scan Codebase → Categorize Issues → Identify Auto-Fixable → Fix → Test → [Pass?]
+                                                                     ↓
+                                                                  Retry or Skip
+                                                                     ↓
+                                                                Create PR
+```
+
+**Exit Codes:**
+- `0`: Fixes applied successfully (PR created)
+- `1`: Some fixes failed (partial PR or report only)
+- `2`: No fixable issues found
+
+---
+
+## Hook Type Comparison
+
+| Aspect | Stateless Hooks (LangChain) | Stateful Hooks (LangGraph) |
+|--------|----------------------------|---------------------------|
+| **Execution** | One-shot | Multi-step with loops |
+| **State** | None | Checkpointed |
+| **Duration** | 10-30 seconds | 1-10 minutes |
+| **Cost** | $0.01-0.10 | $0.50-5.00 |
+| **Resumability** | No | Yes (checkpoint restore) |
+| **Human Input** | Before only | During (checkpoints) |
+| **Parallelization** | No | Yes (multi-agent) |
+| **Error Handling** | Fail and report | Retry loops |
+
+---
+
+## Plugin Interaction Protocol
+
+### Shared Resources
+
+**Both plugins can:**
+- Use same RAG embeddings (`.igris/chroma_db/`)
+- Read same config format (similar structure)
+- Access same Igris AI context (briefs, sessions, guidelines)
+
+**Coordination:**
+```bash
+# LangChain creates embeddings
+igris embed-codebase  # via langchain plugin
+
+# LangGraph reuses them
+igris implement BR-005 --autonomous  # uses same embeddings
+```
+
+---
+
+### Hook Conflicts (How to Handle)
+
+**Scenario:** Both plugins provide CODE_REVIEWER hook
+
+**Resolution Options:**
+
+**Option 1: Explicit Selection**
+```bash
+igris review --plugin langchain  # Use simple review
+igris review --plugin langgraph  # Use multi-agent review
+```
+
+**Option 2: Hook Aliasing**
+```json
+{
+  "hooks": {
+    "CODE_REVIEWER": "ai/langchain/hooks/review.sh",
+    "CODE_REVIEWER_DEEP": "ai/langgraph/hooks/multi_review.sh"
+  }
+}
+```
+
+Commands:
+```bash
+igris review        # Uses CODE_REVIEWER
+igris review --deep # Uses CODE_REVIEWER_DEEP
+```
+
+**Option 3: Priority System** (Future)
+```json
+{
+  "hooks": {
+    "CODE_REVIEWER": {
+      "script": "...",
+      "priority": 1  // Lower number = higher priority
+    }
+  }
+}
+```
+
+**Recommended:** Option 2 (aliasing) - Clearest UX
+
+---
+
+## Version Strategy
+
+### Coordinated Releases
+
+**Core + Plugins versioned together conceptually:**
+
+- **Igris AI v2.5.0** - Enhancement hook system
+  - Compatible: igris-ai-langchain v1.x
+
+- **Igris AI v3.0.0** - LangGraph hooks added to spec
+  - Compatible: igris-ai-langchain v1.x, igris-ai-langgraph v1.x
+
+- **Igris AI v4.0.0** - Advanced hook features
+  - Compatible: All plugins v2.x
+
+**Plugin Compatibility Matrix:**
+
+| Core Version | LangChain | LangGraph | Security | Performance |
+|--------------|-----------|-----------|----------|-------------|
+| v2.5.0 | ✅ v1.x | ❌ | ❌ | ❌ |
+| v3.0.0 | ✅ v1-2.x | ✅ v1.x | ❌ | ❌ |
+| v4.0.0 | ✅ v2-3.x | ✅ v1-2.x | ✅ v1.x | ✅ v1.x |
+
+---
+
+## Success Metrics
+
+### Ecosystem Health
+
+- **Plugin Count:** 5+ official plugins by end of 2025
+- **Community Plugins:** 10+ community-contributed plugins
+- **Downloads:** 1000+ plugin installations
+- **User Satisfaction:** 90%+ would recommend
+
+### Feature Adoption
+
+- **LangChain:** 80% of Igris users (basic features)
+- **LangGraph:** 30% of Igris users (power users)
+- **Combined:** 25% use both (maximum productivity)
+
+---
+
+## Future Vision
+
+**2026: The Plugin Marketplace**
+
+```bash
+# Discover plugins
+igris plugin search "security"
+
+# See ratings and reviews
+igris plugin info igris-ai-security
+  ★★★★★ 4.8/5.0 (234 reviews)
+  "Caught 3 critical vulnerabilities in first scan!"
+
+# Install from marketplace
+igris plugin install igris-ai-security
+
+# Auto-updates
+igris plugin update --all
+```
+
+**The Plugin Empire Grows.**
+
+---
+
+**Created:** 2025-11-14
+**Maintained by:** Igris AI / Fifty.ai
+**Vision:** Extensible AI platform for software engineering
+
 
 ---
 
