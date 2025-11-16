@@ -5,7 +5,7 @@
 **Effort:** M-Medium (3-5 days)
 **Assignee:** Igris AI + Fifty.ai
 **Commanded By:** Fifty.ai
-**Status:** Partial - Phase 1 Complete
+**Status:** Ready - Scope Revised (Pure Data Dashboard)
 **Created:** 2025-11-15
 **Completed:** _Partial - Phase 1 done, Phase 2 deferred_
 
@@ -35,28 +35,40 @@ This is:
 
 ## Target State
 
-**Goal:** Desktop UI becomes a proper MCP client
+**Goal:** Desktop UI becomes pure data dashboard (MCP client for data, not AI chat)
 
+**Strategic Decision (2025-11-16):**
+- ❌ NO AI chat in Desktop UI (that's Terminal/Claude Code)
+- ✅ Pure data display via MCP tools
+- ✅ No Claude API costs
+- ✅ Clean separation: Terminal = AI, Desktop = Data
+
+**Desktop UI becomes:**
 ```dart
-// Target (MCP protocol)
+// Pure MCP data client
 final mcpClient = MCPClient(
   transport: StdioTransport('igris-mcp-server'),
 );
 
-await mcpClient.initialize();
+// Display briefs
+final briefs = await mcpClient.callTool('igris_brief_list', {'status': 'In Progress'});
+// Show in UI
 
-final result = await mcpClient.callTool('igris_chat', {
-  'message': message,
-  'session_id': sessionId,
-});
+// Display git status
+final gitStatus = await mcpClient.callTool('igris_git_status', {});
+// Show in UI
+
+// Display session
+final session = await mcpClient.callTool('igris_session_get', {});
+// Show in UI
 ```
 
 **Benefits:**
-- ✅ Industry-standard protocol
-- ✅ Works with ANY MCP server
-- ✅ Type-safe tool calling
-- ✅ Auto schema validation
-- ✅ Can use Claude Code's MCP servers too!
+- ✅ No AI API costs (saves $360/year)
+- ✅ Simpler implementation (just data display)
+- ✅ Clean architecture (Terminal = AI, Desktop = Dashboard)
+- ✅ Full MCP tool access (17 tools for data)
+- ✅ Fast and responsive (no AI latency)
 
 ---
 
@@ -100,25 +112,27 @@ _(None)_
 - [x] Strategic decision: Desktop HTTP wrapper, Mobile MCP client (completed: 2025-11-16 12:22)
 - [x] **Reality check:** Desktop UI uses OLD bridge (direct API), NOT new MCP (completed: 2025-11-16 12:30)
 
-**Phase 2: Actual MCP Integration - DEFERRED**
-- [ ] Desktop UI currently: HTTP → igris_chat_server.py → Claude API (direct)
-- [ ] Desktop UI NOT using: Igris MCP server or Claude Code with MCP context
-- [ ] Needs: Refactor bridge to call Igris MCP tools OR replace with MCP client
-- [ ] Deferred to: Separate session (proper implementation)
+**Phase 2: MCP Data Dashboard Implementation - DEFERRED**
+- [ ] Strategic pivot: Desktop = Data Dashboard, NOT AI chat (decided: 2025-11-16 12:45)
+- [ ] Build Dart MCP client for Flutter
+- [ ] Create pure data UI (briefs, git, session display)
+- [ ] Remove AI chat entirely (Terminal has that!)
+- [ ] Deferred to: Separate session (proper data dashboard implementation)
 
 ---
 
 ## Session State
 
-**Current State:** Phase 1 complete (planning/validation). Desktop UI works but uses OLD direct API, not new MCP architecture.
-**Next Steps:** Phase 2 - Actually refactor Desktop bridge to use Igris MCP server (separate session)
-**Last Updated:** 2025-11-16 12:35
-**Blockers:** None (MG-001 & MG-002 provide foundation, just need implementation time)
+**Current State:** Strategic pivot complete - Desktop UI redefined as pure data dashboard (no AI chat)
+**Next Steps:** Build Dart MCP client + pure data UI (brief list, git status, session monitor) - separate session
+**Last Updated:** 2025-11-16 12:50
+**Blockers:** None
 
-**Reality:**
-- Desktop UI functional: ✅ (uses old bridge)
-- Desktop UI uses MCP: ❌ (still direct Claude API)
-- Needs Phase 2: Refactor igris_chat_server.py to call MCP tools instead of direct API
+**Revised Scope:**
+- Desktop UI will be: Data dashboard (MCP client for data tools)
+- Desktop UI will NOT be: AI chat interface (that's Terminal/Claude Code!)
+- Cost savings: Achieved ($360/year by eliminating Desktop AI)
+- Implementation: Deferred to dedicated session (proper dashboard build)
 
 ---
 

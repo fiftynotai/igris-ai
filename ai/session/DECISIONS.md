@@ -251,4 +251,68 @@ server.tool('igris_analyze_code', async (args) => {
 
 ---
 
+## [2025-11-16] - Decision: Desktop UI as Data Dashboard (No AI Chat)
+
+**Context:** MG-003 implementation - deciding Desktop UI architecture after realizing Claude Code can't be "used" by Desktop (they're both MCP clients).
+
+**Problem:**
+- Desktop UI needs AI chat → requires Claude API → costs money
+- Can't "use" Claude Code from Desktop (they're separate clients)
+- Trying to eliminate duplicate API costs
+
+**Options:**
+1. **Desktop with AI chat** - Keep Claude API wrapper (costs $20-30/month)
+2. **Desktop as pure data UI** - No AI, just MCP tools (no extra cost)
+3. **Hybrid** - Some AI features, some pure data
+
+**Decision:** Option 2 - Desktop UI as Pure Data Dashboard
+
+**Rationale:**
+- ✅ **Terminal has AI** - Claude Code (ME!) provides conversational interface
+- ✅ **Desktop shows data** - Briefs, git status, session, metrics
+- ✅ **No duplicate costs** - Only Claude Code Max ($100/month)
+- ✅ **Clean separation** - AI = Terminal, Data = Desktop
+- ✅ **Optimal workflow** - Chat in terminal, view dashboard on Desktop
+- ✅ **True MCP usage** - Desktop calls MCP tools directly (no AI wrapper)
+
+**Desktop UI becomes:**
+- 📊 Brief management (list, create, update, archive via MCP)
+- 📈 Session dashboard (current work, progress, metrics)
+- 🔧 Git status display (uncommitted files, recent commits)
+- 📁 File browser (via MCP tools)
+- 🎯 Quick actions (buttons to call MCP tools)
+
+**NOT on Desktop:**
+- ❌ AI chat conversation (use Terminal with Claude Code for that!)
+- ❌ Claude API calls
+- ❌ LangChain/LangGraph conversations
+
+**User Workflow:**
+1. **Terminal (Claude Code):** "Crimson, what should I work on?" → AI analyzes, recommends
+2. **Desktop UI:** See brief list, click to view, update status
+3. **Terminal:** "Implement BR-055" → AI does the work
+4. **Desktop UI:** Watch progress, see git changes update live
+
+**Cost Impact:**
+- Before: Terminal API + Desktop API = $130+/month
+- After: Claude Code Max only = $100/month
+- **Savings: $360+/year** (less than hoped, but still significant!)
+
+**Implementation:**
+- Desktop UI: Pure Flutter MCP client (Dart)
+- Calls MCP tools directly (no AI wrapper)
+- Displays data beautifully
+- No LangChain/ChatAnthropic imports needed!
+
+**Consequences:**
+- Desktop UI simpler (no AI complexity)
+- Terminal becomes primary interface for AI
+- Desktop becomes visual command center
+- Better separation of concerns
+- Achieves cost savings goal
+
+**Status:** Decided - Desktop as Data Dashboard
+
+---
+
 _Add new decisions as they are made during implementation_
