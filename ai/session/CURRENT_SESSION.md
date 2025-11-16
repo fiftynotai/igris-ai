@@ -109,18 +109,31 @@ Major architectural pivot: Transform Igris from custom protocols to industry-sta
 
 ## 🎯 Next Steps When Resuming
 
-**Current State:** MG-001 in progress - Researching MCP SDKs
+**Current State:** MG-001 & MG-002 COMPLETE! MG-003 strategic decisions made, implementation deferred.
 
-**Current Task:** Research MCP SDK options (TypeScript vs Python), make decision
+**What's DONE:**
+- ✅ Igris MCP Server (17 tools operational)
+- ✅ Claude Code integration (Terminal has full Igris access)
+- ✅ Strategic architecture decisions documented
 
-**Next Actions:**
-1. Complete SDK research and make decision
-2. Set up igris-mcp-server project structure
-3. Implement stdio transport layer
-4. Create first tool (igris_brief_list)
-5. Test with MCP inspector
+**What's NEXT (Separate Session):**
+1. **Build Desktop Data Dashboard** (MG-003 Phase 2)
+   - Build Dart MCP client package (`fifty_mcp_client`)
+   - Create pure data UI (no AI chat)
+   - Brief management interface
+   - Git status display
+   - Session monitor
+   - Estimated: 2-3 days
 
-**After MG-001 Phase 1:** Continue with tools implementation (Week 2)
+2. **Mobile Companion** (FR-004 - Future)
+   - Add `igris_chat` tool to MCP server
+   - Build mobile app with MCP client
+   - AI companion on the go
+
+**Architecture Now Clear:**
+- Terminal (Claude Code) = AI conversation ✅
+- Desktop UI = Data dashboard ✅
+- Mobile = Companion (future) ⏳
 
 ---
 
