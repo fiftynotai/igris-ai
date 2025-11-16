@@ -117,4 +117,138 @@ class PrinterStatus {
 
 ---
 
+## [2025-11-15] - Decision: Architectural Pivot - Igris as MCP Server with Claude Code Brain
+
+**Context:** Built Igris Desktop UI + Python bridge using Claude API directly. Realized this deviates from core vision and wastes Claude Code Max subscription.
+
+**Original Vision:**
+- Igris as universal MCP server
+- Claude Code as the brain (using existing Max subscription)
+- Connect from anywhere: Desktop, Terminal, Phone, Web
+- LangChain/LangGraph as specialized agent chain
+- Multiple MCP connections (GitHub, FS, Git, etc.)
+
+**What Was Built (Wrong Direction):**
+- Python HTTP server (not MCP protocol)
+- Claude API direct calls (bypassing Claude Code, duplicate cost)
+- Desktop UI standalone (not MCP client)
+- LangChain isolated (not integrated with Claude Code)
+
+**Options Evaluated:**
+1. **Keep current** - Python bridge + Claude API (works but wrong architecture, wastes money)
+2. **Full Claude Code** - Everything through Claude Code (pure but inflexible)
+3. **Igris MCP + Claude Code brain** - Igris exposes MCP tools, uses Claude Code as execution engine (BEST)
+
+**Decision:** Option 3 - Build Igris as proper MCP server with Claude Code as brain
+
+**Rationale:**
+- ✅ Uses Claude Code Max subscription (no duplicate API costs)
+- ✅ True MCP architecture (future-proof for multi-client)
+- ✅ Claude Code's full power (Read, Write, Edit, Bash tools)
+- ✅ LangChain/LangGraph as MCP tools within Igris
+- ✅ Can connect from Desktop, Phone, Web, Terminal
+- ✅ Aligns with industry direction (MCP is the standard)
+- ✅ Orchestrated intelligence (smart routing to best tool)
+
+**Implementation Plan:**
+1. Build Igris MCP server (TypeScript/Python with MCP SDK)
+2. Expose 50+ tools: briefs, sessions, code analysis, LangChain chains, LangGraph workflows
+3. Integrate Claude Code as execution engine (not just another client)
+4. Desktop UI becomes MCP client
+5. Future: Phone, Web, VS Code extensions (all MCP clients)
+
+**Cost Impact:**
+- Before: Claude Code Max ($100) + API calls ($X) = Paying twice
+- After: Claude Code Max ($100) only = One subscription, full power
+
+**Technical Benefits:**
+- Shared context across all interfaces
+- Unified API usage tracking
+- No duplicate logic
+- Industry-standard protocol (MCP)
+- Easier to add new clients
+
+**Consequences:**
+- Current Python bridge becomes legacy (archive/reference)
+- Desktop UI needs MCP client refactor (worth it)
+- More upfront work but better long-term architecture
+- Aligns system with original vision
+
+**Status:** Decision approved, pivot in progress
+
+---
+
+## [2025-11-16] - Decision: TypeScript for Igris MCP Server (not Python)
+
+**Context:** MG-001 requires choosing SDK for building Igris as MCP server. Two official SDKs: TypeScript and Python.
+
+**Research Summary:**
+- **TypeScript SDK:** v1.22.0, 16,366 projects using it, mature, type-safe, Zod validation built-in
+- **Python SDK:** v1.21.1, FastMCP for quick setup, asyncio event loop, good for data science
+
+**Both Options:**
+
+**TypeScript Pros:**
+- Type safety catches errors at compile time
+- Single-threaded non-blocking event loop excels at I/O-bound MCP server tasks
+- Richest VS Code UX for generated servers
+- Most mature official SDK (official reference implementation)
+- Zod schemas baked into SDK (robust validation out of the box)
+- Production-ready (used to build official reference servers)
+- Better tooling for protocol itself
+- OAuth support just added (production requirement)
+- Easy npm publishing/distribution
+
+**TypeScript Cons:**
+- Can't directly import Python LangChain/LangGraph code
+- Need subprocess calls to Python for AI chains
+- Team less familiar with TypeScript vs Python
+
+**Python Pros:**
+- Can directly import LangChain/LangGraph modules (same language)
+- Familiar to team (already using Python)
+- FastMCP provides quick setup
+- Good for data science workloads
+- Asyncio event loop suitable for I/O
+
+**Python Cons:**
+- Less type safety (runtime errors vs compile-time)
+- Smaller ecosystem for MCP specifically
+- Less mature OAuth support
+- Not ideal for long-running server processes
+
+**Decision:** **TypeScript** for Igris MCP Server
+
+**Rationale:**
+1. **Production maturity** - TypeScript SDK is reference implementation, most battle-tested
+2. **Type safety** - Critical for 50+ tools with complex schemas
+3. **Performance** - Event loop perfect for I/O-bound MCP server workload
+4. **Industry standard** - Most MCP servers in wild use TypeScript
+5. **Future-proof** - Better tooling, OAuth support, ecosystem momentum
+6. **Clean separation** - MCP server (TypeScript) calls Python modules via subprocess
+   - Forces clean API boundaries
+   - Python stays focused on AI logic
+   - TypeScript stays focused on protocol/tools
+7. **VS Code integration** - Best dev experience for MCP development
+
+**Implementation Approach:**
+```typescript
+// Igris MCP server (TypeScript)
+server.tool('igris_analyze_code', async (args) => {
+  // Call Python LangChain via subprocess
+  const result = await execPython('langchain/analyze.py', args);
+  return result;
+});
+```
+
+**Consequences:**
+- Need Node.js/npm in deployment (acceptable)
+- Python modules become subprocess calls (actually cleaner!)
+- Learning curve for TypeScript (worth it for quality)
+- Can publish as npm package later (`npx igris-mcp-server`)
+
+**Status:** Decided - TypeScript MCP Server
+
+---
+
 _Add new decisions as they are made during implementation_

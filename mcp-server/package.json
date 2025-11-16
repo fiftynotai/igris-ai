@@ -1,0 +1,39 @@
+{
+  "name": "igris-mcp-server",
+  "version": "3.0.0",
+  "description": "Igris AI MCP Server - Code quality and architecture management via Model Context Protocol",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "igris-mcp-server": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
+    "test": "vitest"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "igris",
+    "ai",
+    "code-quality",
+    "architecture"
+  ],
+  "author": "Fifty.ai",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.22.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
