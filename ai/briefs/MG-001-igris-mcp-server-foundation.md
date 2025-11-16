@@ -5,9 +5,9 @@
 **Effort:** XL-Extra Large (2 weeks)
 **Assignee:** Igris AI + Fifty.ai
 **Commanded By:** Fifty.ai
-**Status:** In Progress
+**Status:** Done
 **Created:** 2025-11-15
-**Completed:** _TBD_
+**Completed:** 2025-11-16
 
 ---
 
@@ -147,7 +147,7 @@ let briefs = try await igrisClient.call("igris_brief_list", ["status": "Ready"])
 - [ ] Document: Tool catalog with examples
 
 ### In Progress
-_(None - Phase 1 complete!)_
+_(None - Both phases complete!)_
 
 ### Completed
 
@@ -161,13 +161,23 @@ _(None - Phase 1 complete!)_
 - [x] Test: MCP inspector validation (user confirmed working) (completed: 2025-11-16 11:00)
 - [x] Document: MCP inspector usage guide (completed: 2025-11-16 11:05)
 
+**Phase 2: Core Tools (Week 2) - COMPLETE ✅**
+- [x] Add brief update/archive tools (2 tools) (completed: 2025-11-16 11:20)
+- [x] Add git operations tools (4 tools: status, diff, log, commit) (completed: 2025-11-16 11:25)
+- [x] Integrate LangChain as MCP tools (2 tools: generate_brief, analyze_code) (completed: 2025-11-16 11:30)
+- [x] Integrate LangGraph as MCP tools (3 tools: code_review, implementation, planning) (completed: 2025-11-16 11:35)
+- [x] Update index.ts with all 17 tools (completed: 2025-11-16 11:40)
+- [x] Build and validate all tools (clean compilation, tools registered) (completed: 2025-11-16 11:45)
+- [x] Test git tools (igris_git_status, igris_git_log validated) (completed: 2025-11-16 11:50)
+- [x] Update README with complete tool catalog (completed: 2025-11-16 11:55)
+
 ---
 
 ## Session State (Tactical - This Brief)
 
-**Current State:** ✅ Phase 1 COMPLETE! MCP server built and validated. Ready for Phase 2.
-**Next Steps When Resuming:** Phase 2 - Add more tools (brief update/archive, git ops, LangChain/LangGraph integration)
-**Last Updated:** 2025-11-16 11:10
+**Current State:** ✅ Phase 1 & 2 COMPLETE! 17 tools operational. Ready for MG-002 (Claude Code integration).
+**Next Steps When Resuming:** Start MG-002 - Integrate with Claude Code as execution brain
+**Last Updated:** 2025-11-16 12:00
 **Blockers:** None
 
 ---

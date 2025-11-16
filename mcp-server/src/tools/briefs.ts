@@ -252,6 +252,108 @@ _(None yet)_
 }
 
 /**
+ * Update an existing brief (status, priority, etc.)
+ */
+async function updateBrief(args: any) {
+  const { brief_id, status, priority } = args;
+
+  try {
+    // Find brief file
+    const files = await fs.readdir(BRIEFS_DIR);
+    const briefFile = files.find((f) => f.startsWith(brief_id));
+
+    if (!briefFile) {
+      throw new Error(`Brief ${brief_id} not found`);
+    }
+
+    const filePath = path.join(BRIEFS_DIR, briefFile);
+    let content = await fs.readFile(filePath, 'utf-8');
+
+    // Update status if provided
+    if (status) {
+      content = content.replace(
+        /^\*\*Status:\*\*.*$/m,
+        `**Status:** ${status}`
+      );
+
+      // If marking as Done, add completion date
+      if (status === 'Done' && !content.includes('**Completed:** 202')) {
+        content = content.replace(
+          /^\*\*Completed:\*\*.*$/m,
+          `**Completed:** ${new Date().toISOString().split('T')[0]}`
+        );
+      }
+    }
+
+    // Update priority if provided
+    if (priority) {
+      content = content.replace(
+        /^\*\*Priority:\*\*.*$/m,
+        `**Priority:** ${priority}`
+      );
+    }
+
+    // Write updated content
+    await fs.writeFile(filePath, content, 'utf-8');
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `✅ Brief updated: ${brief_id}\n${status ? `\nStatus: ${status}` : ''}${priority ? `\nPriority: ${priority}` : ''}`,
+        },
+      ],
+    };
+  } catch (error) {
+    throw new Error(`Failed to update brief ${brief_id}: ${error}`);
+  }
+}
+
+/**
+ * Archive a completed brief
+ */
+async function archiveBrief(args: any) {
+  const { brief_id } = args;
+
+  try {
+    // Find brief file
+    const files = await fs.readdir(BRIEFS_DIR);
+    const briefFile = files.find((f) => f.startsWith(brief_id));
+
+    if (!briefFile) {
+      throw new Error(`Brief ${brief_id} not found`);
+    }
+
+    // Check if status is Done
+    const filePath = path.join(BRIEFS_DIR, briefFile);
+    const content = await fs.readFile(filePath, 'utf-8');
+
+    if (!content.includes('**Status:** Done')) {
+      throw new Error(`Cannot archive ${brief_id}: Status must be "Done"`);
+    }
+
+    // Create archive directory if needed
+    const archiveDir = path.join(process.cwd(), 'ai', 'session', 'archive', 'briefs');
+    await fs.mkdir(archiveDir, { recursive: true });
+
+    // Move file to archive
+    const archivePath = path.join(archiveDir, briefFile);
+    await fs.rename(filePath, archivePath);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `✅ Archived: ${brief_id}\n\nMoved from: ai/briefs/${briefFile}\nMoved to: ai/session/archive/briefs/${briefFile}\n\nStatus: Done`,
+        },
+      ],
+    };
+  } catch (error) {
+    throw new Error(`Failed to archive brief ${brief_id}: ${error}`);
+  }
+}
+
+/**
  * Register brief tool handlers
  */
 export function registerBriefTools() {
@@ -259,5 +361,7 @@ export function registerBriefTools() {
     list: listBriefs,
     read: readBrief,
     create: createBrief,
+    update: updateBrief,
+    archive: archiveBrief,
   };
 }

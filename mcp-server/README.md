@@ -52,53 +52,84 @@ npx @modelcontextprotocol/inspector node dist/index.js
 
 ---
 
-## Available Tools
+## Available Tools (17 Total)
 
-### Brief Management
+### Brief Management (5 tools)
 
-**`igris_brief_list`**
-List briefs with optional filters
-
-Parameters:
+**`igris_brief_list`** - List briefs with filters
 - `type` (optional): BR, FR, TD, MG, TS, PI, DU, PF, AC
 - `status` (optional): Ready, In Progress, Done, Draft
 - `priority` (optional): P0, P1, P2, P3
 
-**`igris_brief_read`**
-Read a specific brief by ID
-
-Parameters:
+**`igris_brief_read`** - Read specific brief
 - `brief_id` (required): e.g., BR-001, MG-002
 
-**`igris_brief_create`**
-Create a new brief
-
-Parameters:
-- `type` (required): Brief type
+**`igris_brief_create`** - Create new brief
+- `type` (required): BR, FR, TD, MG, TS
 - `title` (required): Brief title
 - `priority` (required): P0-P3
 - `problem` (required): Problem description
 - `goal` (required): Expected outcome
 
-### Session Management
+**`igris_brief_update`** - Update brief status/priority
+- `brief_id` (required): Brief to update
+- `status` (optional): Ready, In Progress, Done, Draft
+- `priority` (optional): P0, P1, P2, P3
 
-**`igris_session_get`**
-Get current session state (reads CURRENT_SESSION.md)
+**`igris_brief_archive`** - Archive completed brief
+- `brief_id` (required): Brief to archive (must be Done)
 
-**`igris_session_update`**
-Update session state
+### Session Management (2 tools)
 
-Parameters:
+**`igris_session_get`** - Get current session state
+
+**`igris_session_update`** - Update session state
 - `status` (optional): Session status
 - `next_steps` (optional): Next steps when resuming
 
-### File Operations
+### File Operations (1 tool)
 
-**`igris_file_read`**
-Read a file from the project
-
-Parameters:
+**`igris_file_read`** - Read project file
 - `path` (required): Relative path from project root
+
+### Git Operations (4 tools)
+
+**`igris_git_status`** - Get git status (short format)
+
+**`igris_git_diff`** - Get git diff
+- `file` (optional): Specific file to diff
+- `staged` (optional): Show staged changes
+
+**`igris_git_log`** - Get commit history
+- `limit` (optional): Number of commits (default: 10)
+
+**`igris_git_commit`** - Create git commit
+- `message` (required): Commit message
+- `files` (optional): Files to stage
+
+### LangChain AI Tools (2 tools)
+
+**`igris_langchain_generate_brief`** - AI-generated brief
+- `description` (required): Natural language description
+- `type` (optional): BR, FR, TD (default: BR)
+
+**`igris_langchain_analyze_code`** - Code analysis with RAG
+- `file_path` (required): File to analyze
+- `question` (required): Question about the code
+
+### LangGraph Agent Tools (3 tools)
+
+**`igris_langgraph_code_review`** - Autonomous code review
+- `files` (required): Files to review
+- `guidelines_path` (optional): Coding guidelines path
+
+**`igris_langgraph_implementation`** - Autonomous implementation
+- `brief_id` (required): Brief to implement
+- `instructions` (optional): Additional instructions
+
+**`igris_langgraph_planning`** - Autonomous planning
+- `goal` (required): Planning goal
+- `context` (optional): Additional context
 
 ---
 
@@ -180,18 +211,19 @@ Claude: [calls igris_brief_list with priority=P0]
 
 ## Roadmap
 
-**Phase 1: Foundation** (MG-001 - Week 1)
+**Phase 1: Foundation** (MG-001 - Week 1) ✅ COMPLETE
 - [x] TypeScript SDK setup
 - [x] stdio transport
 - [x] First 6 tools (brief list/read/create, session get/update, file read)
-- [ ] Test with MCP inspector
-- [ ] Documentation
+- [x] Test with MCP inspector
+- [x] Documentation
 
-**Phase 2: Core Tools** (Week 2)
-- [ ] Add brief update/archive tools
-- [ ] Add git operations tools
-- [ ] Integrate LangChain as MCP tools
-- [ ] Integrate LangGraph as MCP tools
+**Phase 2: Core Tools** (Week 2) ✅ COMPLETE
+- [x] Add brief update/archive tools (2 tools)
+- [x] Add git operations tools (4 tools)
+- [x] Integrate LangChain as MCP tools (2 tools)
+- [x] Integrate LangGraph as MCP tools (3 tools)
+- [x] **Total: 17 tools operational!**
 
 **Phase 3: Claude Code Integration** (MG-002)
 - [ ] Claude Code as execution brain
