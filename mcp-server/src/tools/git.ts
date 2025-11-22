@@ -8,6 +8,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
+const PROJECT_ROOT = process.env.IGRIS_PROJECT_PATH || process.cwd();
 
 /**
  * Get git status
@@ -15,7 +16,7 @@ const execAsync = promisify(exec);
 async function gitStatus(_args: any) {
   try {
     const { stdout } = await execAsync('git status --short', {
-      cwd: process.cwd(),
+      cwd: PROJECT_ROOT,
     });
 
     return {

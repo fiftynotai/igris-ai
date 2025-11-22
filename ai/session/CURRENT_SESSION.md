@@ -1,9 +1,9 @@
-# Current Session: ARCHITECTURAL PIVOT - Igris AI v3.0 (MCP + Claude Code)
+# Current Session: MG-003 Phase 2C - Desktop Dashboard Build
 
 ## Session Goal
-Major architectural pivot: Transform Igris from custom protocols to industry-standard MCP server with Claude Code as brain
+Complete fifty_mcp_client integration into igris_desktop with production dashboard UI
 
-## Status: ✅ MAJOR WIN - MG-001 & MG-002 Done, MG-003 Phase 2B COMPLETE!
+## Status: ✅ MASSIVE PROGRESS - fifty_mcp_client built, integrated, dashboard screens created!
 
 ---
 
@@ -111,36 +111,41 @@ Major architectural pivot: Transform Igris from custom protocols to industry-sta
 
 ## 🎯 Next Steps When Resuming
 
-**Current State:** MG-001 & MG-002 COMPLETE! MG-003 Phase 2B COMPLETE! 🔥
+**Current State (2025-11-17):** Dashboard screens built, needs final testing + commit
 
-**What's DONE:**
-- ✅ Igris MCP Server (17 tools operational)
-- ✅ Claude Code integration (Terminal has full Igris access)
-- ✅ Strategic architecture decisions documented
-- ✅ **fifty_mcp_client v0.1.0 - WORKING MCP client in Dart!** 🔥
-- ✅ Live tested against igris-mcp-server - SUCCESS!
-- ✅ 1,274+ lines of production code in 1 hour!
+**What's DONE THIS SESSION:**
+- ✅ fifty_mcp_client v0.1.0 built (1,274+ lines)
+- ✅ Integrated into igris_desktop
+- ✅ MCPService wrapper created
+- ✅ BriefsScreen, GitScreen, SessionScreen built
+- ✅ Dashboard navigation with sidebar
+- ✅ MCP server updated with IGRIS_PROJECT_PATH env var
+- ✅ macOS sandbox issue documented
+- ✅ FR-003 brief created (Tools Control Panel)
+- ✅ 3 repositories, 6+ commits, 8,000+ lines total!
 
-**What's NEXT (Phase 3 - Separate Session):**
-1. **Integrate MCP Client into igris_desktop** (MG-003 Phase 3)
-   - Add fifty_mcp_client dependency
-   - Create MCPService wrapper
-   - Build BriefListScreen (data dashboard)
-   - Build GitStatusScreen (data dashboard)
-   - Build SessionScreen (data dashboard)
-   - Remove AI chat UI (Terminal has that!)
-   - Remove Python bridge
-   - Estimated: 1-2 days
+**What's NEXT:**
+1. **Test Current Dashboard** (15 mins)
+   - Verify Briefs screen shows real briefs
+   - Verify Git screen shows real status
+   - Verify Session screen works
+   - Hot reload and validate
 
-2. **Mobile Companion** (FR-004 - Future)
-   - Reuse fifty_mcp_client package!
-   - Build mobile UI
-   - AI companion on the go
+2. **Commit Final State** (5 mins)
+   - Commit dashboard screens
+   - Commit MCP server updates
+   - Update MG-003 brief status
 
-**Architecture Now Clear:**
-- Terminal (Claude Code) = AI conversation ✅
-- Desktop UI = Data dashboard (via fifty_mcp_client) ✅
-- Mobile = Companion (future, same client!) ⏳
+3. **Future: Implement FR-003** (1-2 days)
+   - Build Tools Control Panel
+   - Dynamic form generation from JSON Schema
+   - Manual MCP tool execution
+
+**Architecture Achieved:**
+- ✅ fifty_mcp_client: Dart MCP client (reusable!)
+- ✅ igris-mcp-server: 17 tools with env var support
+- ✅ igris_desktop: Dashboard with 3 screens
+- ⏳ Tools Control Panel (FR-003 queued)
 
 ---
 
@@ -239,16 +244,18 @@ Major architectural pivot: Transform Igris from custom protocols to industry-sta
 
 ---
 
-**Last Updated:** 2025-11-17 14:00
+**Last Updated:** 2025-11-22 05:15
 **Session Owner:** Crimson (Fifty.ai)
 **Mode:** Digimon Battle Mode - REST MODE 🔥
 
 **Session Summary (2025-11-17):**
-- ✅ Built fifty_mcp_client v0.1.0 (1,274+ lines)
-- ✅ Integrated into igris_desktop (MCP works!)
-- ✅ 3 repositories, 4 commits, 7,473+ lines total
-- ⚠️ Discovered macOS sandbox blocks Process.start (documented)
-- ✅ Workaround: Sandbox disabled for development
-- 📋 Remaining: Build production dashboard UI (Phase 3)
+- ✅ Built fifty_mcp_client v0.1.0 (1,274+ lines, 2 commits)
+- ✅ Integrated into igris_desktop (1 commit, 6,199 lines)
+- ✅ Built 3 dashboard screens (Briefs, Git, Session)
+- ✅ Fixed MCP server project path (env var support)
+- ✅ Fixed macOS sandbox (disabled for development)
+- ✅ Created FR-003 brief (Tools Control Panel)
+- ✅ 3 repositories, 7+ commits, 8,000+ lines total
+- 📋 Remaining: Test dashboard, commit final state
 
-**Resume Command:** "HUNT" - Continue with dashboard UI build
+**Resume Command:** "Test dashboard then commit" - Validate screens work, then commit all changes

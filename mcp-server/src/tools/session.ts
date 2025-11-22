@@ -7,7 +7,8 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
 
-const SESSION_FILE = path.join(process.cwd(), 'ai', 'session', 'CURRENT_SESSION.md');
+const PROJECT_ROOT = process.env.IGRIS_PROJECT_PATH || process.cwd();
+const SESSION_FILE = path.join(PROJECT_ROOT, 'ai', 'session', 'CURRENT_SESSION.md');
 
 /**
  * Get current session state

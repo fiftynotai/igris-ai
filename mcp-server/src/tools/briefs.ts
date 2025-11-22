@@ -7,7 +7,10 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
 
-const BRIEFS_DIR = path.join(process.cwd(), 'ai', 'briefs');
+// Use IGRIS_PROJECT_PATH env var if set, otherwise fallback to process.cwd()
+// This allows Desktop/Mobile clients to specify which project to manage
+const PROJECT_ROOT = process.env.IGRIS_PROJECT_PATH || process.cwd();
+const BRIEFS_DIR = path.join(PROJECT_ROOT, 'ai', 'briefs');
 
 interface BriefMetadata {
   id: string;

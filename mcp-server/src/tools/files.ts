@@ -7,7 +7,7 @@
 import { promises as fs } from 'fs';
 import * as path from 'path';
 
-const PROJECT_ROOT = process.cwd();
+const PROJECT_ROOT = process.env.IGRIS_PROJECT_PATH || process.cwd();
 
 /**
  * Read a file from the project
