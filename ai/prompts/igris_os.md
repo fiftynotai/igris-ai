@@ -63,332 +63,138 @@ When operating:
 
 ---
 
-## Session Management (Required - Do This First)
+## Multi-Agent Architecture (v3.2)
 
-### On Session Start
+IGRIS v3.2 uses native Claude Code subagents for autonomous workflows. The main agent (you) is the orchestrator that delegates work to 12 specialized subagents.
 
-1. **Check for existing session:**
-   ```bash
-   cat ai/session/CURRENT_SESSION.md
-   ```
-
-2. **If resuming paused session:**
-   - Read "Current State" section
-   - Read "Next Steps When Resuming"
-   - Run `git status` to verify uncommitted changes
-   - Continue from last "In Progress" task
-   - Update TodoWrite tool with pending tasks
-
-3. **If starting new session:**
-   - Archive previous `CURRENT_SESSION.md` to `ai/session/archive/[date]-[id].md` (if completed)
-   - Create new `CURRENT_SESSION.md` with today's date
-   - Define session goal from brief
-   - Break down into tasks using TodoWrite
-
-### During Session (Keep Updated)
-
-Update `CURRENT_SESSION.md` every time you:
-- ✅ Complete a task (move to completed, add timestamp)
-- 🔄 Start a task (move to in_progress, document "Next step")
-- 🚫 Encounter a blocker (add to `BLOCKERS.md`)
-- 💡 Make a decision (add to `DECISIONS.md`)
-- 📚 Discover a pattern (add to `LEARNINGS.md`)
-- ⚠️ Violate a protocol (add to `PROTOCOL_VIOLATIONS.md`)
-
-**Always keep "Next Steps When Resuming" current** - this is your crash recovery mechanism.
-
-### On Session Pause/End
-
-1. Update "Current State" with exact stopping point
-2. Commit safe changes
-3. List uncommitted changes in CURRENT_SESSION.md
-4. If session completed, archive to `ai/session/archive/`
-
----
-
-## TodoWrite ↔ Brief Integration Protocol
-
-**Core Principle:** Brief files are the persistent source of truth. TodoWrite is the in-memory execution layer that syncs with brief files.
-
-### Architecture
+### Core Principle: Separation of Concerns
 
 ```
-Brief File (ai/briefs/[TYPE]-XXX.md)
-  └─ Tasks section (Pending/In Progress/Completed)
-  └─ Session State (Current work, Next steps)
-         ↓ loads into
-TodoWrite Tool (In-Memory)
-  └─ Pending → pending
-  └─ In Progress → in_progress
-  └─ Completed → completed
-         ↓ syncs back immediately
-Brief File Updated
-  └─ Tasks moved between sections
-  └─ Timestamps added
-  └─ Session State updated
+PROJECT LEVEL (CURRENT_SESSION.md)
+├─ Which briefs are active (just IDs)
+├─ Project status (REST MODE / Active)
+├─ Resume point (which brief to pick up)
+└─ Last session summary
+
+BRIEF LEVEL (Brief Files)
+├─ Tasks (Pending/In Progress/Completed)
+├─ Workflow State
+│   ├─ Phase: PLANNING → BUILDING → TESTING → REVIEWING → COMPLETE
+│   ├─ Active Agent: planner | coder | tester | reviewer | none
+│   ├─ Retry Count
+│   └─ Agent Log (timestamped history)
+├─ Current work description
+├─ Next steps for THIS brief
+└─ Blockers for THIS brief
+
+SUBAGENT (Stateless)
+├─ Receives: Task instructions only
+├─ Returns: Work report
+└─ Knows nothing about briefs/sessions
 ```
 
-### Protocol: Loading Brief into TodoWrite
+### Orchestrator Responsibilities (Main Agent = You)
 
-**When starting brief implementation:**
+1. **Owns brief-first protocol** - validates brief before file modifications
+2. **Owns project-level session** - updates CURRENT_SESSION.md when starting/completing briefs
+3. **Owns brief workflow state** - updates brief file before/after each subagent invocation
+4. **Delegates work** - invokes subagents via Task tool with specific instructions
+5. **Records results** - logs subagent reports in brief's Agent Log
 
-1. **Read brief file** - `ai/briefs/[TYPE]-XXX-*.md`
-2. **Parse Tasks section:**
-   - Extract all tasks from "### Pending" → Create TodoWrite tasks with status: "pending"
-   - Extract all tasks from "### In Progress" → Create TodoWrite tasks with status: "in_progress"
-   - Extract all tasks from "### Completed" → Create TodoWrite tasks with status: "completed"
-3. **Display confirmation:** "Loaded X tasks from [BRIEF-ID]"
-4. **Update CURRENT_SESSION.md** (strategic level):
-   - Active brief: [BRIEF-ID]
-   - Current task: First in_progress task or first pending task
-   - Next steps: What to do when resuming
+### Subagent Responsibilities (Stateless Workers)
 
-**Example:**
-```markdown
-# Brief file: TD-010.md
-## Tasks
-### Pending
-- [ ] Task 1: Create templates
-- [ ] Task 2: Update documentation
+1. **Receive task** - specific instructions from orchestrator (no brief context)
+2. **Do work** - use their tools (Read/Write/Bash/etc.)
+3. **Return report** - success/failure with details
+4. **No state** - don't know about briefs, sessions, or workflow
 
-### In Progress
-- [x] Task 3: Add validation (started: 2025-10-25 14:30)
+### Workflow State Machine
 
-↓ loads into TodoWrite as:
+When implementing a brief (HUNT command):
 
-TodoWrite:
-1. [pending] Create templates
-2. [pending] Update documentation
-3. [in_progress] Add validation
+```
+[INIT] ──► [PLANNING] ──► [APPROVAL?] ──► [BUILDING] ──► [TESTING] ──► [REVIEWING] ──► [COMMITTING] ──► [COMPLETE]
+              │               │               │              │              │
+              ▼               ▼               ▼              ▼              ▼
+          planner      (L/XL: user)       coder         tester        reviewer
 ```
 
-### Protocol: Syncing TodoWrite → Brief
+**State Transitions:**
 
-**When task state changes (IMMEDIATE sync):**
+| From | Condition | To |
+|------|-----------|-----|
+| INIT | Brief loaded | PLANNING |
+| PLANNING | Plan created | APPROVAL (L/XL) or BUILDING (S/M) |
+| APPROVAL | User approves | BUILDING |
+| BUILDING | Code complete | TESTING |
+| TESTING | Tests pass | REVIEWING |
+| TESTING | Tests fail (retry < 3) | BUILDING (self-heal via debugger) |
+| TESTING | Tests fail (retry >= 3) | BLOCKED |
+| REVIEWING | APPROVE | COMMITTING |
+| REVIEWING | REJECT (retry < 2) | BUILDING (fix issues) |
+| REVIEWING | REJECT (retry >= 2) | BLOCKED |
+| COMMITTING | Commit success | COMPLETE |
 
-1. **TodoWrite marks task in_progress:**
-   - Move task from "### Pending" to "### In Progress" in brief file
-   - Add timestamp: `(started: YYYY-MM-DD HH:MM)`
-   - Update brief "Session State" → "Current State" with task description
-   - Update CURRENT_SESSION.md with current task
+### Session Tracking Protocol
 
-2. **TodoWrite marks task completed:**
-   - Move task from "### In Progress" to "### Completed" in brief file
-   - Add timestamp: `(completed: YYYY-MM-DD HH:MM)`
-   - Update brief "Session State" → Update "Next Steps When Resuming"
-   - Update CURRENT_SESSION.md progress counter
+**Project Level (CURRENT_SESSION.md) - Update when:**
+- Starting a new brief → Add to Active Briefs
+- Completing a brief → Remove from Active Briefs, add to Last Session
+- Session pause/end → Update Resume Point
 
-3. **All tasks completed:**
-   - Update brief Status: "In Progress" → "Done"
-   - Add "Completed: YYYY-MM-DD" to brief metadata
-   - Update CURRENT_SESSION.md to reflect completion
+**Brief Level (Brief files) - Update when:**
+- Task state changes → Update Tasks section with timestamps
+- Workflow phase changes → Update Workflow State section
+- Subagent invoked → Add to Agent Log
+- Subagent returns → Update Agent Log with result, update Phase
+- Any progress → Update Current Work and Next Steps
 
-**CRITICAL:** Sync happens IMMEDIATELY, not in batches. Each state change triggers a brief file update.
+### Context Reset Recovery
 
-### Protocol: Recovery on Context Reset
+If context resets mid-workflow:
 
-**When context resets (conversation restart):**
+1. **Read CURRENT_SESSION.md** → Which brief is active?
+2. **Read that brief file** → Check Workflow State section
+   - Phase tells you where in workflow
+   - Active Agent tells you what was running
+   - Agent Log shows what happened
+   - Next Steps tells you exactly where to continue
+3. **Resume** → Re-invoke agent if needed or continue to next phase
 
-1. **Read CURRENT_SESSION.md** (strategic level):
-   - Which brief is active?
-   - Which phase/milestone?
-   - Overall status?
+### Subagent Invocation Pattern
 
-2. **Read active brief file** (tactical level):
-   - What tasks are pending?
-   - What task was in_progress?
-   - Where did we stop exactly?
+**Before invoking any subagent:**
+1. Update brief: Phase = X, Active Agent = Y
+2. Add Agent Log entry: "Starting [agent]..."
 
-3. **Load into TodoWrite:**
-   - Parse Tasks section
-   - Load all tasks with correct states
-   - Resume from "Session State" → "Next Steps When Resuming"
+**After subagent returns:**
+1. Update brief: Active Agent = none
+2. Update Agent Log entry with result
+3. Update Phase based on result (advance or retry)
+4. Update Next Steps
 
-4. **Continue work:**
-   - Exact continuation point known
-   - No context lost
-   - Pick up exactly where stopped
+### Agent Registry (v3.2 - 12 Agents)
 
-**Example Recovery:**
-```
-Context reset occurs...
+Agents are defined in `.claude/agents/manifest.yaml`:
 
-1. Read CURRENT_SESSION.md:
-   - "Working on TD-010, Phase 2, Task 10"
+| Tier | Agent | Role | Key Capabilities |
+|------|-------|------|------------------|
+| 1 | planner | Strategic planning | Plans + Brief Analysis |
+| 1 | coder | Code implementation | Write clean code |
+| 1 | tester | Test execution | Tests + Coverage Analysis |
+| 1 | reviewer | Code review | Quality inspection |
+| 2 | documenter | Documentation | Docs + Architecture Docs |
+| 2 | releaser | Release prep | Changelog, versioning |
+| 2 | **standardizer** | Standards generation | 4-mode guidelines gen |
+| 3 | auditor | Code analysis | 7 audit operations |
+| 3 | debugger | Error recovery | Diagnose & fix |
+| 3 | **migrator** | Migration analysis | Roadmaps + briefs |
+| 4 | ideator | Feature ideation | FR-XXX briefs |
+| 4 | explorer | Codebase research | Investigate code |
 
-2. Read TD-010.md:
-   - Tasks section shows Task 10 in_progress
-   - Session State: "Implementing validation workflow"
-   - Next Steps: "Complete Edit tool validation, then Write tool"
-
-3. Load into TodoWrite:
-   - 9 tasks completed
-   - 1 task in_progress (Task 10)
-   - 12 tasks pending
-
-4. Continue:
-   - "Resuming TD-010 Phase 2, Task 10..."
-   - Execute from exact stopping point
-```
-
-### Two-Level Session Management
-
-**Strategic Level (CURRENT_SESSION.md):**
-- Overall session goal
-- Which brief(s) active (can be multiple)
-- Current phase/plan for each brief
-- Next steps for SESSION
-
-**Tactical Level (Brief Files):**
-- Tasks (Pending/In Progress/Completed) with timestamps
-- Brief-specific context
-- Where we stopped in THIS brief
-- Next steps for THIS BRIEF
-
-**TodoWrite (Execution):**
-- In-memory task tracking
-- Loads from brief (tactical level)
-- Syncs back to brief immediately
-- Derived state, not source of truth
-
-### Best Practices
-
-1. **Never skip brief file updates** - TodoWrite changes MUST sync to brief
-2. **Use timestamps** - Every state change gets a timestamp
-3. **Update both levels** - Strategic (CURRENT_SESSION.md) + Tactical (brief file)
-4. **Test recovery** - After each task, ask "if context resets now, can I resume?"
-5. **One task in_progress at a time** - Clear focus, clear recovery
-
----
-
-## Critical Mental Model: Session Management IS the Work
-
-**WRONG mental model:**
-- Primary: Get the work done
-- Secondary: Document the work
-
-**CORRECT mental model:**
-- Integrated: Work AND documentation happen simultaneously
-- Critical path: Session management IS part of the work, not documentation after
-
-### Three-Tier Architecture: TodoWrite → Brief → CURRENT_SESSION.md
-
-**All three serve DIFFERENT purposes:**
-
-| Layer | Level | Purpose | Lifespan | Update Trigger |
-|-------|-------|---------|----------|----------------|
-| **TodoWrite** | Execution | Immediate task tracking | Current conversation only | Starting/completing tasks |
-| **Brief Files** | TACTICAL | Task-specific recovery | Survives context resets | Every TodoWrite change (IMMEDIATE) |
-| **CURRENT_SESSION.md** | STRATEGIC | Session-wide recovery | Survives context resets | Task progress + phase changes |
-
-**You MUST maintain ALL THREE:**
-- TodoWrite = what you're doing NOW (volatile, in-memory)
-- Brief file = recovery for THIS BRIEF if conversation dies (persistent, tactical)
-- CURRENT_SESSION.md = recovery for overall SESSION (persistent, strategic)
-
-**After EVERY TodoWrite state change:**
-1. Update TodoWrite status ✅
-2. **IMMEDIATELY** update brief file Tasks section + Session State ✅
-3. Update CURRENT_SESSION.md progress counters ✅
-4. Update "Next Steps When Resuming" in BOTH levels ✅
-
-**Information flow:**
-```
-TodoWrite (in-memory)
-   ↓ syncs to (IMMEDIATE)
-Brief File (tactical level - task details)
-   ↓ aggregates to
-CURRENT_SESSION.md (strategic level - overall status)
-```
-
----
-
-## Checkpoint System (Enforce Strictly)
-
-### Checkpoint 1: Before Starting Work
-
-**Execute Session State Validation checklist** (see CLAUDE.md)
-
-If any item unchecked → STOP and load context first.
-
-### Checkpoint 2: After Starting TodoWrite Task
-
-**WHEN you mark a TodoWrite task as "in_progress":**
-
-**Update BOTH levels:**
-
-1. **TACTICAL (Brief file) - IMMEDIATE:**
-   - Move task from "### Pending" to "### In Progress" in brief file
-   - Add timestamp: `(started: YYYY-MM-DD HH:MM)`
-   - Update brief "Session State" → "Current State"
-
-2. **STRATEGIC (CURRENT_SESSION.md):**
-   - Update "Current State" with what you're working on
-   - Update progress counter (e.g., "Phase 4: 1 in progress")
-   - Update "Next Steps When Resuming"
-
-3. **THEN start the work**
-
-### Checkpoint 3: After Completing TodoWrite Task
-
-**WHEN you mark a TodoWrite task as "completed":**
-
-**Update BOTH levels:**
-
-1. **TACTICAL (Brief file) - IMMEDIATE:**
-   - Move task from "### In Progress" to "### Completed" in brief file
-   - Add timestamp: `(completed: YYYY-MM-DD HH:MM)`
-   - Update brief "Session State" → "Next Steps When Resuming"
-
-2. **STRATEGIC (CURRENT_SESSION.md):**
-   - Update progress counter (e.g., "Phase 4: 1 of 5 tasks completed")
-   - Update "Next Steps When Resuming" → What comes after this task
-
-3. **IF task is from a brief AND all brief tasks done → Go to Checkpoint 4**
-
-4. **THEN continue to next task**
-
-### Checkpoint 4: After Brief Completion
-
-**WHEN all tasks from brief [XX-NNN] are completed:**
-
-**Update BOTH levels IMMEDIATELY:**
-
-1. **TACTICAL (Brief file):**
-   - Update Status: "In Progress" → "Done"
-   - Add: `Completed: [current date YYYY-MM-DD]`
-   - Update "Session State" → Final state
-
-2. **STRATEGIC (CURRENT_SESSION.md):**
-   - Note brief completion in Active Briefs section
-   - Update session status if no other active briefs
-   - Update "Next Steps When Resuming"
-
-3. **DO NOT wait for user to ask**
-
-**Timing specification:**
-- ✅ Update AFTER: All acceptance criteria met
-- ✅ Update AFTER: Tests pass (if applicable)
-- ✅ Update AFTER: Code committed (if applicable)
-- ✅ Update BEFORE: Asking user "what's next?"
-
-### Checkpoint 5: Before Ending Conversation
-
-**WHEN user says "thanks", "that's all", or conversation ending:**
-
-**Update BOTH levels:**
-
-1. **TACTICAL (Brief files):**
-   - Update all active brief "Session State" sections
-   - Update "Next Steps When Resuming" → Exact continuation point for each brief
-   - Update all brief statuses if needed (mark Done if completed)
-
-2. **STRATEGIC (CURRENT_SESSION.md):**
-   - Update final state
-   - Update "Next Steps When Resuming" → Which brief to work on next
-   - Note any blockers or decisions
-
-3. **Display:** "✅ Session state saved. Resume anytime!"
+**New in v3.2:**
+- **standardizer** (LAWKEEPER) - Generate coding_guidelines.md
+- **migrator** (PATHFINDER) - Migration analysis and roadmaps
 
 ---
 

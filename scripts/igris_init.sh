@@ -35,7 +35,7 @@ fi
 
 # Create directory structure
 echo "📦 Creating directory structure..."
-mkdir -p ai/{briefs,prompts,checks,templates,session/archive,context,plugins}
+mkdir -p ai/{briefs,prompts,templates,session/archive,context,plugins}
 mkdir -p scripts
 mkdir -p docs
 
@@ -49,7 +49,6 @@ IGRIS_VERSION=$(cat "$IGRIS_DIR/version.txt" 2>/dev/null || echo "unknown")
 echo "📄 Copying templates..."
 cp "$IGRIS_DIR/ai/briefs/"*-TEMPLATE.md ai/briefs/
 cp "$IGRIS_DIR/ai/prompts/"*.md ai/prompts/
-cp "$IGRIS_DIR/ai/checks/"*.md ai/checks/
 cp "$IGRIS_DIR/ai/templates/"*.md ai/templates/
 
 # Copy CLAUDE.md template for persona regeneration

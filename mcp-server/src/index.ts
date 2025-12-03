@@ -7,9 +7,11 @@
  * - Session tracking and recovery
  * - File operations (via stdio)
  * - Git operations
- * - LangChain/LangGraph workflows
  *
- * @version 3.0.0
+ * Note: LangChain/LangGraph tools removed in v3.1.0
+ * These capabilities are now handled by native Claude Code subagents.
+ *
+ * @version 3.1.0
  * @author Fifty.ai
  */
 
@@ -25,8 +27,7 @@ import { registerBriefTools } from './tools/briefs.js';
 import { registerSessionTools } from './tools/session.js';
 import { registerFileTools } from './tools/files.js';
 import { registerGitTools } from './tools/git.js';
-import { registerLangChainTools } from './tools/langchain.js';
-import { registerLangGraphTools } from './tools/langgraph.js';
+// LangChain/LangGraph removed in v3.1.0 - replaced by native subagents
 
 /**
  * Main MCP Server instance
@@ -38,7 +39,7 @@ class IgrisMCPServer {
     this.server = new Server(
       {
         name: 'igris-ai',
-        version: '3.0.0',
+        version: '3.1.0',
       },
       {
         capabilities: {
@@ -270,101 +271,9 @@ class IgrisMCPServer {
             },
           },
 
-          // LangChain AI tools
-          {
-            name: 'igris_langchain_generate_brief',
-            description: 'Generate brief using LangChain AI analysis',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                description: {
-                  type: 'string',
-                  description: 'Natural language description of the issue/feature',
-                },
-                type: {
-                  type: 'string',
-                  enum: ['BR', 'FR', 'TD'],
-                  description: 'Brief type (default: BR)',
-                },
-              },
-              required: ['description'],
-            },
-          },
-          {
-            name: 'igris_langchain_analyze_code',
-            description: 'Analyze code using LangChain RAG',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                file_path: {
-                  type: 'string',
-                  description: 'Path to file to analyze',
-                },
-                question: {
-                  type: 'string',
-                  description: 'Question about the code',
-                },
-              },
-              required: ['file_path', 'question'],
-            },
-          },
-
-          // LangGraph agent tools
-          {
-            name: 'igris_langgraph_code_review',
-            description: 'Run autonomous code review agent',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                files: {
-                  type: 'array',
-                  items: { type: 'string' },
-                  description: 'Files to review',
-                },
-                guidelines_path: {
-                  type: 'string',
-                  description: 'Path to coding guidelines',
-                },
-              },
-              required: ['files'],
-            },
-          },
-          {
-            name: 'igris_langgraph_implementation',
-            description: 'Run autonomous implementation agent',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                brief_id: {
-                  type: 'string',
-                  description: 'Brief to implement',
-                },
-                instructions: {
-                  type: 'string',
-                  description: 'Additional implementation instructions',
-                },
-              },
-              required: ['brief_id'],
-            },
-          },
-          {
-            name: 'igris_langgraph_planning',
-            description: 'Run autonomous planning agent',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                goal: {
-                  type: 'string',
-                  description: 'Planning goal',
-                },
-                context: {
-                  type: 'string',
-                  description: 'Additional context',
-                },
-              },
-              required: ['goal'],
-            },
-          },
+          // LangChain/LangGraph tools removed in v3.1.0
+          // These capabilities are now handled by native Claude Code subagents
+          // See .claude/agents/ for the new agent ecosystem
         ],
       };
     });
@@ -378,8 +287,6 @@ class IgrisMCPServer {
         const sessionTools = registerSessionTools();
         const fileTools = registerFileTools();
         const gitTools = registerGitTools();
-        const langchainTools = registerLangChainTools();
-        const langgraphTools = registerLangGraphTools();
 
         switch (name) {
           // Brief tools
@@ -414,19 +321,8 @@ class IgrisMCPServer {
           case 'igris_git_commit':
             return await gitTools.commit(args);
 
-          // LangChain tools
-          case 'igris_langchain_generate_brief':
-            return await langchainTools.generateBrief(args);
-          case 'igris_langchain_analyze_code':
-            return await langchainTools.analyzeCode(args);
-
-          // LangGraph tools
-          case 'igris_langgraph_code_review':
-            return await langgraphTools.codeReview(args);
-          case 'igris_langgraph_implementation':
-            return await langgraphTools.implementation(args);
-          case 'igris_langgraph_planning':
-            return await langgraphTools.planning(args);
+          // LangChain/LangGraph tools removed in v3.1.0
+          // Use native Claude Code subagents instead
 
           default:
             throw new Error(`Unknown tool: ${name}`);
@@ -454,7 +350,7 @@ class IgrisMCPServer {
     await this.server.connect(transport);
 
     // Server is now running and listening on stdio
-    console.error('Igris AI MCP Server v3.0.0 started');
+    console.error('Igris AI MCP Server v3.1.0 started');
   }
 }
 

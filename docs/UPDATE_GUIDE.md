@@ -141,7 +141,6 @@ $ ./scripts/igris_update.sh
 📝 Files that will be updated:
   - ai/prompts/*.md (system prompts)
   - ai/templates/*.md (brief templates)
-  - ai/checks/*.md (QA checklists)
   - ai/CONTRIBUTING.md (documentation)
   - scripts/plugin_*.sh (plugin management scripts)
 
@@ -161,7 +160,6 @@ Continue with update? [y/N]: y
 📝 Updating system files...
   - Updating prompts...
   - Updating templates...
-  - Updating checks...
   - Updating CONTRIBUTING.md...
   - Updating plugin management scripts...
   - Updating version tracking...
@@ -279,7 +277,6 @@ Every update creates a timestamped backup:
 ├── 20251014_083045/              # Core update backup
 │   ├── prompts/
 │   ├── templates/
-│   ├── checks/
 │   ├── CONTRIBUTING.md
 │   ├── plugin_*.sh
 │   └── .igris_version
@@ -295,7 +292,6 @@ Every update creates a timestamped backup:
 - All files that will be modified
 - System prompts (`ai/prompts/`)
 - Templates (`ai/templates/`)
-- Checks (`ai/checks/`)
 - Documentation (`ai/CONTRIBUTING.md`)
 - Plugin scripts (`scripts/plugin_*.sh`)
 - Version file (`.igris_version`)
@@ -333,7 +329,6 @@ BACKUP=".igris_backup/20251014_083045"
 # Restore files
 cp -r "$BACKUP/prompts/"* ai/prompts/
 cp -r "$BACKUP/templates/"* ai/templates/
-cp -r "$BACKUP/checks/"* ai/checks/
 cp "$BACKUP/CONTRIBUTING.md" ai/
 cp "$BACKUP/plugin_"*.sh scripts/
 cp "$BACKUP/.igris_version" .

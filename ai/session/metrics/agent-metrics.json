@@ -1,0 +1,92 @@
+{
+  "version": "1.0.0",
+  "last_updated": "2025-12-03T00:00:00Z",
+  "agents": {
+    "planner": {
+      "invocations": 0,
+      "last_used": null,
+      "avg_duration_seconds": 0,
+      "success_rate": 1.0,
+      "total_duration_seconds": 0,
+      "success_count": 0
+    },
+    "coder": {
+      "invocations": 0,
+      "last_used": null,
+      "avg_duration_seconds": 0,
+      "success_rate": 1.0,
+      "total_duration_seconds": 0,
+      "success_count": 0
+    },
+    "tester": {
+      "invocations": 0,
+      "last_used": null,
+      "avg_duration_seconds": 0,
+      "success_rate": 1.0,
+      "total_duration_seconds": 0,
+      "success_count": 0
+    },
+    "reviewer": {
+      "invocations": 0,
+      "last_used": null,
+      "avg_duration_seconds": 0,
+      "success_rate": 1.0,
+      "total_duration_seconds": 0,
+      "success_count": 0
+    },
+    "documenter": {
+      "invocations": 0,
+      "last_used": null,
+      "avg_duration_seconds": 0,
+      "success_rate": 1.0,
+      "total_duration_seconds": 0,
+      "success_count": 0
+    },
+    "releaser": {
+      "invocations": 0,
+      "last_used": null,
+      "avg_duration_seconds": 0,
+      "success_rate": 1.0,
+      "total_duration_seconds": 0,
+      "success_count": 0
+    },
+    "auditor": {
+      "invocations": 0,
+      "last_used": null,
+      "avg_duration_seconds": 0,
+      "success_rate": 1.0,
+      "total_duration_seconds": 0,
+      "success_count": 0
+    },
+    "debugger": {
+      "invocations": 0,
+      "last_used": null,
+      "avg_duration_seconds": 0,
+      "success_rate": 1.0,
+      "total_duration_seconds": 0,
+      "success_count": 0
+    },
+    "ideator": {
+      "invocations": 0,
+      "last_used": null,
+      "avg_duration_seconds": 0,
+      "success_rate": 1.0,
+      "total_duration_seconds": 0,
+      "success_count": 0
+    },
+    "explorer": {
+      "invocations": 0,
+      "last_used": null,
+      "avg_duration_seconds": 0,
+      "success_rate": 1.0,
+      "total_duration_seconds": 0,
+      "success_count": 0
+    }
+  },
+  "totals": {
+    "total_invocations": 0,
+    "total_duration_seconds": 0,
+    "most_used_agent": null,
+    "least_used_agent": null
+  }
+}

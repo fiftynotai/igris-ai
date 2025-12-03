@@ -205,14 +205,25 @@ _(Finished tasks)_
 
 ---
 
-## Session State (Tactical - This Brief)
+## Workflow State
 
-**Current State:** [What you're working on RIGHT NOW in this brief]
-**Next Steps When Resuming:** [Exact continuation point if interrupted]
-**Last Updated:** [YYYY-MM-DD HH:MM]
-**Blockers:** [Any blockers specific to this brief, or "None"]
+**Phase:** INIT | PLANNING | APPROVAL | BUILDING | TESTING | REVIEWING | COMMITTING | COMPLETE | BLOCKED
+**Active Agent:** none | planner | coder | tester | reviewer | debugger | documenter | releaser
+**Retry Count:** 0
 
-**Note:** Strategic session state (overall plan/phase across multiple briefs) managed in `ai/session/CURRENT_SESSION.md`
+### Current Work
+[What's happening right now in this brief]
+
+### Next Steps
+[Exact continuation point if interrupted]
+
+### Agent Log
+| Time | Agent | Action | Result |
+|------|-------|--------|--------|
+| YYYY-MM-DD HH:MM | agent | action | result |
+
+### Blockers
+[Any blockers for this brief, or "None"]
 
 ---
 

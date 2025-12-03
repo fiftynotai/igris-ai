@@ -1,6 +1,6 @@
 # Igris AI MCP Server
 
-**Version:** 3.0.0
+**Version:** 3.2.0
 **Protocol:** Model Context Protocol (MCP)
 **Transport:** stdio
 **Built with:** TypeScript + @modelcontextprotocol/sdk
@@ -14,7 +14,7 @@ Igris AI MCP Server exposes Igris AI capabilities via the Model Context Protocol
 - **Brief management** (BR, FR, TD, MG, TS briefs)
 - **Session tracking** and recovery
 - **File operations**
-- **LangChain/LangGraph** workflows (future)
+- **Git operations**
 
 This is the **foundational migration** (MG-001) transforming Igris from custom HTTP protocols to industry-standard MCP architecture.
 
@@ -52,7 +52,7 @@ npx @modelcontextprotocol/inspector node dist/index.js
 
 ---
 
-## Available Tools (17 Total)
+## Available Tools (12 Total)
 
 ### Brief Management (5 tools)
 
@@ -107,30 +107,6 @@ npx @modelcontextprotocol/inspector node dist/index.js
 - `message` (required): Commit message
 - `files` (optional): Files to stage
 
-### LangChain AI Tools (2 tools)
-
-**`igris_langchain_generate_brief`** - AI-generated brief
-- `description` (required): Natural language description
-- `type` (optional): BR, FR, TD (default: BR)
-
-**`igris_langchain_analyze_code`** - Code analysis with RAG
-- `file_path` (required): File to analyze
-- `question` (required): Question about the code
-
-### LangGraph Agent Tools (3 tools)
-
-**`igris_langgraph_code_review`** - Autonomous code review
-- `files` (required): Files to review
-- `guidelines_path` (optional): Coding guidelines path
-
-**`igris_langgraph_implementation`** - Autonomous implementation
-- `brief_id` (required): Brief to implement
-- `instructions` (optional): Additional instructions
-
-**`igris_langgraph_planning`** - Autonomous planning
-- `goal` (required): Planning goal
-- `context` (optional): Additional context
-
 ---
 
 ## Architecture
@@ -148,9 +124,9 @@ Igris MCP Server (TypeScript)
 **Key Design Decisions:**
 
 1. **TypeScript chosen over Python** (see ai/session/DECISIONS.md)
-   - Type safety for 50+ tools
+   - Type safety for tools
    - Production-ready SDK
-   - Clean separation: TS = protocol, Python = AI logic
+   - Clean architecture
 
 2. **stdio transport** (not HTTP)
    - MCP standard
@@ -159,6 +135,22 @@ Igris MCP Server (TypeScript)
 3. **Tool-based architecture**
    - Each category = separate module
    - Easy to extend with new tools
+
+---
+
+## v3.2 Changes
+
+**What Changed:**
+
+In v3.2, Igris AI moved from external LangChain/LangGraph plugins to **native Claude Code subagents**. This affects the MCP server:
+
+- **Removed:** LangChain AI tools (2 tools) - now handled by native subagents
+- **Removed:** LangGraph Agent tools (3 tools) - now handled by native subagents
+- **Kept:** Core brief, session, file, and git operations (12 tools)
+
+**Why:**
+
+Native Claude Code subagents provide the same functionality at zero additional cost. The MCP server focuses on data operations while Claude Code handles AI workflows directly.
 
 ---
 
@@ -178,8 +170,6 @@ TypeScript will recompile on file changes.
 npm test
 ```
 
-(Tests coming in Phase 2)
-
 ---
 
 ## Integration with Claude Code
@@ -191,7 +181,7 @@ npm test
   "mcpServers": {
     "igris-ai": {
       "command": "node",
-      "args": ["/path/to/igris-ai/dist/index.js"]
+      "args": ["/path/to/igris-ai/mcp-server/dist/index.js"]
     }
   }
 }
@@ -211,28 +201,29 @@ Claude: [calls igris_brief_list with priority=P0]
 
 ## Roadmap
 
-**Phase 1: Foundation** (MG-001 - Week 1) ✅ COMPLETE
+**Phase 1: Foundation** (MG-001) ✅ COMPLETE
 - [x] TypeScript SDK setup
 - [x] stdio transport
-- [x] First 6 tools (brief list/read/create, session get/update, file read)
-- [x] Test with MCP inspector
+- [x] Brief management tools
+- [x] Session and file tools
 - [x] Documentation
 
-**Phase 2: Core Tools** (Week 2) ✅ COMPLETE
-- [x] Add brief update/archive tools (2 tools)
-- [x] Add git operations tools (4 tools)
-- [x] Integrate LangChain as MCP tools (2 tools)
-- [x] Integrate LangGraph as MCP tools (3 tools)
-- [x] **Total: 17 tools operational!**
+**Phase 2: Core Tools** ✅ COMPLETE
+- [x] Add brief update/archive tools
+- [x] Add git operations tools
 
-**Phase 3: Claude Code Integration** (MG-002)
-- [ ] Claude Code as execution brain
-- [ ] Route file ops through Claude Code tools
-- [ ] Shared context
+**Phase 3: Claude Code Integration** (MG-002) ✅ COMPLETE
+- [x] Claude Code as execution brain
+- [x] Shared context via MCP
 
-**Phase 4: Desktop UI** (MG-003)
-- [ ] Refactor Flutter UI to MCP client
-- [ ] Test multi-client scenarios
+**Phase 4: Desktop UI** (MG-003) ✅ COMPLETE
+- [x] Flutter UI as MCP client
+- [x] Multi-client support
+
+**Phase 5: Native Subagents** (v3.2) ✅ CURRENT
+- [x] 12 native Claude Code subagents
+- [x] Zero-cost AI operations
+- [x] Simplified MCP (data only, AI via Claude Code)
 
 ---
 

@@ -2,19 +2,34 @@
 
 **Status:** ✅ COMPLETE
 **Completed:** 2025-11-16
+**Updated:** 2025-12-03 (v3.2)
 **Brief:** MG-002
 
 ---
 
 ## Overview
 
-Igris MCP Server is now integrated with Claude Code, enabling Claude to access all 17 Igris tools directly!
+Igris MCP Server is integrated with Claude Code, enabling Claude to access Igris tools directly!
 
 **What this means:**
 - Claude Code can list, read, create, update briefs
 - Claude Code has git operations (status, diff, log, commit)
-- Claude Code can trigger LangChain/LangGraph AI workflows
 - All through industry-standard MCP protocol
+
+---
+
+## v3.2 Update
+
+In v3.2, Igris AI moved from external LangChain/LangGraph plugins to **native Claude Code subagents**:
+
+| Old Approach (v2.5) | New Approach (v3.2) |
+|---------------------|---------------------|
+| LangChain via MCP tools | Native Claude Code |
+| LangGraph via MCP tools | Native subagents |
+| External API calls | Zero additional cost |
+| 17 MCP tools | 12 MCP tools (data) + 12 subagents (AI) |
+
+**Result:** Same capabilities, simpler architecture, zero external AI costs.
 
 ---
 
@@ -23,7 +38,7 @@ Igris MCP Server is now integrated with Claude Code, enabling Claude to access a
 ### Setup Command
 
 ```bash
-claude mcp add --transport stdio igris-ai -- node /Users/m.elamin/StudioProjects/igris-ai/mcp-server/dist/index.js
+claude mcp add --transport stdio igris-ai -- node /path/to/igris-ai/mcp-server/dist/index.js
 ```
 
 ### Verify Connection
@@ -39,9 +54,9 @@ igris-ai: node /Users/.../mcp-server/dist/index.js - ✓ Connected
 
 ---
 
-## Available Tools in Claude Code
+## Available Tools in Claude Code (12)
 
-Once configured, Claude Code has access to **17 Igris tools**:
+Once configured, Claude Code has access to **12 Igris MCP tools**:
 
 ### Brief Management (5)
 - `igris_brief_list` - List all briefs
@@ -63,14 +78,20 @@ Once configured, Claude Code has access to **17 Igris tools**:
 - `igris_git_log` - Git log
 - `igris_git_commit` - Create commits
 
-### LangChain AI (2)
-- `igris_langchain_generate_brief` - AI brief generation
-- `igris_langchain_analyze_code` - Code analysis with RAG
+---
 
-### LangGraph Agents (3)
-- `igris_langgraph_code_review` - Autonomous code review
-- `igris_langgraph_implementation` - Autonomous implementation
-- `igris_langgraph_planning` - Autonomous planning
+## Native Subagents (12)
+
+AI workflows are now handled by native Claude Code subagents instead of MCP tools:
+
+| Tier | Agents |
+|------|--------|
+| 1 - Core | ARCHITECT (planner), FORGER (coder), SENTINEL (tester), WARDEN (reviewer) |
+| 2 - Docs | CHRONICLER (documenter), HERALD (releaser), LAWKEEPER (standardizer) |
+| 3 - Maintenance | INQUISITOR (auditor), MENDER (debugger), PATHFINDER (migrator) |
+| 4 - Innovation | ORACLE (ideator), SEEKER (explorer) |
+
+**Trigger:** Use HUNT workflow or DIGIVOLVE command to invoke subagents.
 
 ---
 
@@ -103,31 +124,14 @@ Once configured, Claude Code has access to **17 Igris tools**:
 2. Gets git status output
 3. Shows modified/untracked files
 
----
+### Example 4: Code Review (v3.2 Native)
 
-## Testing
+**You ask:** "Review my changes"
 
-### Test 1: Connection ✅ PASSED
-
-```bash
-claude mcp list
-# Result: igris-ai ✓ Connected
-```
-
-### Test 2: Tool Calling ✅ PASSED
-
-Called `igris_brief_list`:
-- Returned 29 briefs
-- Correct formatting
-- All metadata parsed
-
-### Test 3: Live Integration ✅ PASSED
-
-Asked Claude Code to "List my Igris briefs":
-- Claude called igris_brief_list tool
-- Returned full brief table
-- Shows MG-001: Done, MG-002: In Progress
-- **IT WORKS!!!**
+**Claude Code:**
+1. Uses native `reviewer` subagent (WARDEN)
+2. Analyzes code against coding_guidelines.md
+3. Provides feedback directly
 
 ---
 
@@ -138,43 +142,48 @@ You (in Claude Code CLI)
     ↓
 Claude Code (with Igris MCP loaded)
     ↓
-Igris MCP Server (stdio transport)
+┌─────────────────────────────────────┐
+│  For DATA operations:               │
+│  Igris MCP Server (stdio)           │
+│    → briefs, session, git, files    │
+├─────────────────────────────────────┤
+│  For AI operations:                 │
+│  Native Claude Code subagents       │
+│    → review, test, plan, implement  │
+└─────────────────────────────────────┘
     ↓
-Tool Handlers (TypeScript)
-    ↓
-File System / Git / Python Subprocesses
-    ↓
-Response back through MCP
-    ↓
-Claude Code formats and displays
+Response formatted and displayed
 ```
 
 ---
 
 ## Benefits Achieved
 
-✅ **Cost Savings:** Claude Code Max subscription now fully utilized
+✅ **Cost Savings:** Claude Code Max subscription fully utilized
 ✅ **No Duplicate API Calls:** All AI through Claude Code
 ✅ **Shared Context:** Briefs accessible in all Claude sessions
 ✅ **Standard Protocol:** MCP enables any client to connect
-✅ **Full Tool Access:** 17 tools + Claude's built-in tools
+✅ **Simplified Architecture:** Data via MCP, AI via native subagents
 ✅ **Future-Proof:** Easy to add more tools
 
 ---
 
-## Next Steps
+## Migration from v2.5
 
-**MG-002: COMPLETE** ✅
+If you were using LangChain/LangGraph MCP tools:
 
-**Next Migration:**
-- MG-003: Desktop UI as MCP Client
-- Refactor Flutter UI to connect via MCP
-- Same tools, same protocol, different client!
+| Old Tool | v3.2 Replacement |
+|----------|------------------|
+| `igris_langchain_generate_brief` | Use main agent: "Register a brief for..." |
+| `igris_langchain_analyze_code` | Use native subagents |
+| `igris_langgraph_code_review` | WARDEN (reviewer) subagent |
+| `igris_langgraph_implementation` | HUNT workflow |
+| `igris_langgraph_planning` | ARCHITECT (planner) subagent |
 
 ---
 
 **Integration Time:** 10 minutes
 **Result:** Full Claude Code + Igris MCP working!
-**Cost Impact:** Eliminates need for separate API subscriptions
+**Cost Impact:** Zero external AI costs with native subagents
 
-**🔥 The pivot is REAL. The architecture WORKS. Igris v3.0 is LIVE!** 🚀
+**🔥 The pivot is REAL. The architecture WORKS. Igris v3.2 is LIVE!** 🚀

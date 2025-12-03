@@ -1304,7 +1304,6 @@ cat .igris_version
 **Updated:**
 - System prompts (`ai/prompts/`)
 - Templates (`ai/templates/`)
-- Checks (`ai/checks/`)
 - Documentation (`ai/CONTRIBUTING.md`)
 - Scripts (`scripts/`)
 

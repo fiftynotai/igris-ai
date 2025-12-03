@@ -196,7 +196,6 @@ echo "📝 Files that will be updated:"
 echo "  - CLAUDE.md (Claude Code context file)"
 echo "  - ai/prompts/*.md (system prompts)"
 echo "  - ai/templates/*.md (brief templates)"
-echo "  - ai/checks/*.md (QA checklists)"
 echo "  - ai/CONTRIBUTING.md (documentation)"
 echo "  - scripts/plugin_*.sh (plugin management scripts)"
 echo ""
@@ -232,12 +231,6 @@ if [ "$DRY_RUN" = true ]; then
     ls "$TEMP_DIR/ai/templates/"*.md 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
   fi
 
-  if [ -d "$TEMP_DIR/ai/checks" ]; then
-    echo ""
-    echo "Checks:"
-    ls "$TEMP_DIR/ai/checks/"*.md 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
-  fi
-
   echo ""
   echo "Scripts:"
   ls "$TEMP_DIR/scripts/plugin_"*.sh 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
@@ -269,7 +262,6 @@ mkdir -p "$BACKUP_DIR"
 cp CLAUDE.md "$BACKUP_DIR/" 2>/dev/null || true
 cp -r ai/prompts "$BACKUP_DIR/" 2>/dev/null || true
 cp -r ai/templates "$BACKUP_DIR/" 2>/dev/null || true
-cp -r ai/checks "$BACKUP_DIR/" 2>/dev/null || true
 cp ai/CONTRIBUTING.md "$BACKUP_DIR/" 2>/dev/null || true
 cp scripts/plugin_*.sh "$BACKUP_DIR/" 2>/dev/null || true
 cp .igris_version "$BACKUP_DIR/" 2>/dev/null || true
@@ -290,12 +282,6 @@ fi
 if [ -d "$TEMP_DIR/ai/templates" ]; then
   echo "  - Updating templates..."
   cp "$TEMP_DIR/ai/templates/"*.md ai/templates/
-fi
-
-# Update checks
-if [ -d "$TEMP_DIR/ai/checks" ]; then
-  echo "  - Updating checks..."
-  cp "$TEMP_DIR/ai/checks/"*.md ai/checks/
 fi
 
 # Update CONTRIBUTING.md

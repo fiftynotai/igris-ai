@@ -1,44 +1,45 @@
-# Igris AI Enhancement Hook System Specification
+# Igris AI Hook System Specification
 
-**Version:** 1.0.0
-**Last Updated:** 2025-11-14
-**Status:** Official Specification
-
----
-
-## Table of Contents
-
-1. [Overview](#overview)
-2. [Hook Types](#hook-types)
-3. [Hook Contract](#hook-contract)
-4. [Hook Discovery and Registration](#hook-discovery-and-registration)
-5. [Hook Execution](#hook-execution)
-6. [Environment Variables](#environment-variables)
-7. [Exit Codes](#exit-codes)
-8. [Error Handling](#error-handling)
-9. [Security Model](#security-model)
-10. [Plugin Integration](#plugin-integration)
-11. [Examples](#examples)
-12. [Testing Hooks](#testing-hooks)
+**Version:** 2.0.0
+**Last Updated:** 2025-12-03
+**Status:** v3.2 - Simplified for Native Subagents
 
 ---
 
 ## Overview
 
-The **Enhancement Hook System** allows plugins to extend Igris AI workflows with custom functionality. Hooks are scripts that execute at specific points in the Igris AI lifecycle, enabling AI integrations, code analysis tools, and workflow augmentations.
+The **Hook System** allows optional extensions to Igris AI workflows. With v3.2's native subagent architecture, most AI functionality is now built-in. Hooks remain for:
 
-### Design Principles
+1. **Persona customization** (greetings, theming)
+2. **Startup enhancements** (system assessment)
+3. **Git workflow hooks** (pre-commit, post-commit)
 
-1. **Optional** - Igris AI works perfectly without any enhancement hooks
-2. **Composable** - Multiple plugins can register different hooks
-3. **Fail-safe** - Hook errors don't break core workflows
-4. **Discoverable** - Clear which hooks are available and registered
-5. **Testable** - Hooks follow contracts, easy to test
+---
 
-### Hook Categories
+## What Changed in v3.2
 
-**Static Content Hooks** - Inject content at init time (existing: `PERSONA_INJECTION`)
-**Execution Hooks** - Run scripts dynamically during workflows (new in v2.5.0)
+### Deprecated Hooks (Replaced by Native Subagents)
+
+| Old Hook | Replacement |
+|----------|-------------|
+| BRIEF_GENERATOR | Main agent handles brief creation |
+| CODE_REVIEWER | `reviewer` subagent |
+| TEST_GENERATOR | `tester` subagent |
+| AUTONOMOUS_IMPLEMENTER | HUNT workflow with orchestration |
+| MULTI_AGENT_REVIEWER | `reviewer` subagent |
+| SELF_HEALER | `debugger` subagent |
+| BRIEF_PLANNER | `planner` subagent |
+| CONVERSATIONAL_REFINER | Main agent interaction |
+| MAINTENANCE_AGENT | `auditor` subagent |
+
+### Active Hooks
+
+| Hook | Purpose | Still Used |
+|------|---------|------------|
+| PERSONA_INJECTION | Inject persona content | Yes |
+| SYSTEM_ASSESSMENT | Startup recommendations | Yes |
+| PRE_COMMIT | Pre-commit checks | Yes |
+| POST_COMMIT | Post-commit actions | Yes |
 
 ---
 
@@ -47,163 +48,53 @@ The **Enhancement Hook System** allows plugins to extend Igris AI workflows with
 ### Static Content Hooks
 
 #### `PERSONA_INJECTION`
-**Category:** Static Content
-**Introduced:** v1.0.5 (TD-003)
-**Purpose:** Inject persona greetings and shadow commands into CLAUDE.md
+**Purpose:** Inject persona greetings into CLAUDE.md
 **Resolved:** At init time by igris_init.sh
 **Format:** Markdown content (no execution)
+
+```markdown
+## From the Shadows
+Your persona greeting content here...
+```
 
 ---
 
 ### Execution Hooks
 
 #### `SYSTEM_ASSESSMENT`
-**Category:** Execution
-**Purpose:** Enhance system assessment during ARISE/initialization
-**Input:** None (empty stdin)
-**Output:** Enhanced recommendations (markdown format)
-**Called by:** `.claude/hooks/startup.sh` or session initialization
-**Use cases:**
-- Analyze recent commits for patterns
-- Suggest briefs based on codebase analysis
-- Identify technical debt accumulation
-- Provide context-aware recommendations
+**Purpose:** Enhance startup recommendations
+**Input:** None
+**Output:** Enhanced recommendations (markdown)
+**Called by:** `.claude/hooks/startup.sh`
 
 **Example output:**
 ```markdown
-💡 Enhanced Recommendations:
-- BR-007 similar to recently completed BR-005 (auth module)
-- Technical debt increasing in UserService (3 TODOs added this week)
-- Blocker in TD-005 resolved 2 commits ago - safe to resume
+Enhanced Recommendations:
+- High priority brief BR-007 ready
+- 3 TODOs added this week in UserService
 ```
 
 ---
 
-#### `BRIEF_GENERATOR`
-**Category:** Execution
-**Purpose:** Auto-generate briefs from input (git diffs or natural language)
-**Input:** Git diff (via stdin) or natural language description
-**Output:** Complete brief markdown (BR-XXX format)
-**Called by:** New command `igris generate-brief`
-**Use cases:**
-- Generate brief from git diff between branches
-- Generate brief from natural language ("add JWT authentication")
-- Analyze changes and populate problem/context/acceptance criteria
-
-**Example usage:**
-```bash
-# From git diff
-git diff main...feature-branch | igris generate-brief
-
-# From natural language
-igris generate-brief "add user authentication with JWT tokens"
-```
-
-**Expected output:**
-```markdown
-# BR-XXX: Add User Authentication with JWT
-
-**Type:** Feature
-**Priority:** P1-High
-...
-[Complete brief generated by AI]
-```
+#### `PRE_COMMIT`
+**Purpose:** Run checks before commit
+**Input:** Staged files list
+**Output:** Pass/fail with messages
+**Exit codes:** 0 = pass, 1 = fail (block commit)
 
 ---
 
-#### `CODE_REVIEWER`
-**Category:** Execution
-**Purpose:** Review code changes against coding guidelines
-**Input:** List of changed files (via stdin)
-**Output:** Review findings (markdown format)
-**Called by:** Pre-commit hook or manual `igris review` command
-**Use cases:**
-- Verify code follows architecture from coding_guidelines.md
-- Compare against similar patterns in codebase
-- Identify potential bugs based on BLOCKERS.md history
-- Check dependency injection, naming conventions, etc.
-
-**Example usage:**
-```bash
-# Review before commit
-git diff --name-only | igris review
-
-# Review specific files
-echo "src/auth/LoginService.ts" | igris review
-```
-
-**Expected output:**
-```markdown
-✅ Architecture compliant
-⚠️ Consider dependency injection (see UserService.ts:45 for pattern)
-❌ Missing error handling (similar bug fixed in BR-008)
-```
-
----
-
-#### `TEST_GENERATOR`
-**Category:** Execution
-**Purpose:** Generate tests from implementation files
-**Input:** Target file path (via stdin)
-**Output:** Test file content (code format)
-**Called by:** New command `igris generate-tests <file>`
-**Use cases:**
-- Generate unit tests for business logic
-- Generate integration tests for API endpoints
-- Identify edge cases from similar code patterns
-- Follow existing test patterns in codebase
-
-**Example usage:**
-```bash
-# Generate tests for file
-igris generate-tests src/auth/LoginService.ts
-```
-
-**Expected output:**
-```typescript
-// test/auth/LoginService.test.ts
-import { LoginService } from '../../src/auth/LoginService';
-
-describe('LoginService', () => {
-  // [Generated test cases]
-});
-```
-
----
-
-#### `PRE_ANALYSIS`
-**Category:** Execution
-**Purpose:** Execute before brief implementation starts
-**Input:** Brief ID and metadata (JSON via stdin)
-**Output:** Analysis notes or recommendations (markdown)
-**Called by:** Brief implementation workflow
-**Use cases:**
-- Analyze codebase before starting work
-- Identify related files or patterns
-- Suggest implementation approach
-- Warn about potential conflicts
-
----
-
-#### `POST_ANALYSIS`
-**Category:** Execution
-**Purpose:** Execute after code changes, before commit
-**Input:** Changed files and git diff (via stdin)
-**Output:** Analysis results or warnings (markdown)
-**Called by:** Post-implementation workflow, before commit
-**Use cases:**
-- Verify acceptance criteria met
-- Check test coverage
-- Identify missing documentation
-- Suggest follow-up work
+#### `POST_COMMIT`
+**Purpose:** Run actions after commit
+**Input:** Commit hash
+**Output:** Status messages
+**Exit codes:** 0 = success, 1 = warning (non-blocking)
 
 ---
 
 ## Hook Contract
 
-All execution hooks MUST follow this contract:
-
-### Input/Output
+All execution hooks must follow:
 
 ```bash
 #!/bin/bash
@@ -212,435 +103,77 @@ set -e
 # Input: Read from stdin
 input_data=$(cat)
 
-# Process input
-# ... hook logic ...
+# Process...
 
 # Output: Write to stdout
-echo "Hook output here"
+echo "Hook output"
 
-# Exit with status code
-exit 0
+# Exit with status
+exit 0  # 0=success, 1=error, 2=skip
 ```
 
 ### Requirements
 
-1. **Shebang:** First line must be `#!/bin/bash` (or other interpreter)
-2. **Executable:** Hook script must have execute permissions (`chmod +x`)
-3. **stdin:** All input data passed via stdin (JSON or plain text)
-4. **stdout:** All output written to stdout (will be captured)
-5. **stderr:** Errors written to stderr (will be shown to user)
-6. **Exit codes:** Must exit with 0, 1, or 2 (see Exit Codes section)
-
-### File Location
-
-Hook scripts live in plugin directory:
-```
-ai/langchain/hooks/
-├── generate_brief.sh
-├── review.sh
-├── generate_tests.sh
-└── assess.sh
-```
-
----
-
-## Hook Discovery and Registration
-
-### Plugin Declaration
-
-Plugins declare hooks in `plugin.json`:
-
-```json
-{
-  "name": "igris-langchain",
-  "version": "1.0.0",
-  "description": "LangChain AI enhancements for Igris AI",
-  "hooks": {
-    "SYSTEM_ASSESSMENT": "ai/langchain/hooks/assess.sh",
-    "BRIEF_GENERATOR": "ai/langchain/hooks/generate_brief.sh",
-    "CODE_REVIEWER": "ai/langchain/hooks/review.sh",
-    "TEST_GENERATOR": "ai/langchain/hooks/generate_tests.sh"
-  }
-}
-```
-
-### Registration Process
-
-1. User runs: `igris plugin install igris-langchain.tar.gz`
-2. `plugin_install.sh` reads `plugin.json`
-3. Hooks extracted and registered in `.igris/installed_plugins.json`
-4. Hook scripts validated (exist, executable)
-5. Next `igris_init.sh` run will resolve registered hooks
-
-### Installed Plugins Format
-
-`.igris/installed_plugins.json`:
-```json
-[
-  {
-    "name": "igris-langchain",
-    "version": "1.0.0",
-    "installed_at": "2025-11-14T19:00:00Z",
-    "hooks": {
-      "SYSTEM_ASSESSMENT": "ai/langchain/hooks/assess.sh",
-      "BRIEF_GENERATOR": "ai/langchain/hooks/generate_brief.sh",
-      "CODE_REVIEWER": "ai/langchain/hooks/review.sh",
-      "TEST_GENERATOR": "ai/langchain/hooks/generate_tests.sh"
-    }
-  }
-]
-```
-
----
-
-## Hook Execution
-
-### Resolution Logic
-
-```bash
-resolve_hooks() {
-  local hook_type="$1"
-
-  # Check if installed_plugins.json exists
-  if [ ! -f .igris/installed_plugins.json ]; then
-    return 1  # No plugins installed
-  fi
-
-  # Use Python3 for JSON parsing (jq fallback if available)
-  if command -v jq &> /dev/null; then
-    hook_script=$(jq -r ".[] | select(.hooks.$hook_type != null) | .hooks.$hook_type | select(. != null)" .igris/installed_plugins.json | head -n 1)
-  else
-    hook_script=$(python3 <<EOF
-import json, sys
-with open('.igris/installed_plugins.json', 'r') as f:
-    plugins = json.load(f)
-for plugin in plugins:
-    if '$hook_type' in plugin.get('hooks', {}):
-        print(plugin['hooks']['$hook_type'])
-        break
-EOF
-)
-  fi
-
-  # Validate hook script exists and is executable
-  if [ -n "$hook_script" ] && [ -f "$hook_script" ] && [ -x "$hook_script" ]; then
-    echo "$hook_script"
-    return 0
-  fi
-
-  # No valid hook found
-  return 1
-}
-```
-
-### Execution Logic
-
-```bash
-execute_hook() {
-  local hook_type="$1"
-  local input_data="$2"
-
-  # Resolve hook script
-  hook_script=$(resolve_hooks "$hook_type")
-  if [ $? -ne 0 ]; then
-    # No hook registered - skip silently
-    return 2
-  fi
-
-  # Set environment variables
-  export IGRIS_HOOK_TYPE="$hook_type"
-  export IGRIS_PROJECT_ROOT="$(pwd)"
-  export IGRIS_VERSION="$(cat version.txt 2>/dev/null || echo 'unknown')"
-
-  # Optional: Set brief-specific variables
-  if [ -n "$IGRIS_BRIEF_ID" ]; then
-    export IGRIS_BRIEF_ID
-  fi
-
-  # Execute hook with input
-  output=$(echo "$input_data" | "$hook_script" 2>&1)
-  exit_code=$?
-
-  # Handle exit codes
-  case $exit_code in
-    0)
-      # Success - return output
-      echo "$output"
-      return 0
-      ;;
-    1)
-      # Error - show output, return error
-      echo "⚠️ Hook $hook_type failed:" >&2
-      echo "$output" >&2
-      return 1
-      ;;
-    2)
-      # Skip - not applicable, continue silently
-      return 2
-      ;;
-    *)
-      # Unknown exit code - treat as error
-      echo "⚠️ Hook $hook_type returned unexpected exit code: $exit_code" >&2
-      echo "$output" >&2
-      return 1
-      ;;
-  esac
-}
-```
-
----
-
-## Environment Variables
-
-All hooks have access to these environment variables:
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `IGRIS_HOOK_TYPE` | Which hook is executing | `CODE_REVIEWER` |
-| `IGRIS_PROJECT_ROOT` | Absolute path to project root | `/Users/name/project` |
-| `IGRIS_VERSION` | Igris AI version | `2.5.0` |
-| `IGRIS_BRIEF_ID` | Current brief (if applicable) | `BR-005` |
-| `IGRIS_SESSION_FILE` | Path to CURRENT_SESSION.md | `ai/session/CURRENT_SESSION.md` |
-
-### Optional Variables
-
-These are set only in specific contexts:
-
-| Variable | Description | Set When |
-|----------|-------------|----------|
-| `IGRIS_COMMIT_HASH` | Current git commit | Pre/post analysis hooks |
-| `IGRIS_BRANCH_NAME` | Current git branch | Pre/post analysis hooks |
-
-### Usage Example
-
-```bash
-#!/bin/bash
-# Hook script
-
-echo "Executing hook: $IGRIS_HOOK_TYPE"
-echo "Project root: $IGRIS_PROJECT_ROOT"
-echo "Igris version: $IGRIS_VERSION"
-
-# Read input
-input=$(cat)
-
-# Process...
-```
+1. First line: `#!/bin/bash`
+2. Executable: `chmod +x`
+3. Input via stdin
+4. Output to stdout
+5. Exit codes: 0, 1, or 2
 
 ---
 
 ## Exit Codes
 
-Hooks MUST exit with one of these codes:
-
-### Exit Code 0: Success
-
-**Meaning:** Hook executed successfully, use output
-**Workflow behavior:** Continue with hook output
-**Use when:** Hook completed its work and produced useful output
-
-```bash
-# Example: Brief generated successfully
-echo "# BR-005: Authentication Feature"
-echo ""
-echo "**Type:** Feature"
-exit 0
-```
+| Code | Meaning | Workflow Behavior |
+|------|---------|-------------------|
+| 0 | Success | Use output, continue |
+| 1 | Error | Show error, continue (non-blocking) |
+| 2 | Skip | Continue silently |
 
 ---
 
-### Exit Code 1: Error
+## Environment Variables
 
-**Meaning:** Hook encountered an error
-**Workflow behavior:** Show error to user, continue workflow (non-blocking)
-**Use when:** Hook failed but workflow should continue
-
-```bash
-# Example: API key missing
-echo "❌ Error: ANTHROPIC_API_KEY not set" >&2
-echo "Set environment variable and try again" >&2
-exit 1
-```
-
-**Note:** Exit code 1 does NOT stop the workflow. It shows the error and continues. For blocking errors (must fix before proceeding), the calling script should check exit code and decide.
-
----
-
-### Exit Code 2: Skip
-
-**Meaning:** Hook not applicable, skip silently
-**Workflow behavior:** Continue workflow as if hook doesn't exist
-**Use when:** Hook can't run in current context (e.g., no git diff available)
-
-```bash
-# Example: No changes to review
-if [ -z "$changed_files" ]; then
-  exit 2  # Nothing to review, skip silently
-fi
-```
-
----
-
-### Exit Code 3+: Reserved
-
-**Meaning:** Undefined, treated as error (exit 1)
-**Workflow behavior:** Same as exit 1
-**Use:** Reserved for future use
-
----
-
-## Error Handling
-
-### Hook Failures
-
-When hook returns exit 1:
-
-```bash
-# Workflow continues, error shown
-⚠️ Hook CODE_REVIEWER failed:
-❌ Error: Unable to connect to API
-Continuing without code review...
-```
-
-### Hook Not Found
-
-When no hook registered:
-
-```bash
-# Workflow continues silently (exit 2)
-# User sees no output - optional enhancement not installed
-```
-
-### Hook Script Missing
-
-When registered hook script doesn't exist:
-
-```bash
-# Treated as error
-⚠️ Hook CODE_REVIEWER registered but script not found: ai/langchain/hooks/review.sh
-Continuing without code review...
-```
-
-### Hook Not Executable
-
-When hook script exists but not executable:
-
-```bash
-# Treated as error
-⚠️ Hook CODE_REVIEWER script not executable: ai/langchain/hooks/review.sh
-Run: chmod +x ai/langchain/hooks/review.sh
-Continuing without code review...
-```
-
----
-
-## Security Model
-
-### Execution Permissions
-
-- Hooks execute with **same permissions as user** running Igris AI
-- Hooks can read/write any file user can access
-- Hooks can execute any command user can run
-- **No sandboxing** - hooks are trusted code
-
-### Trust Model
-
-**Trusted:** Hooks from official Igris AI plugins
-**Review Required:** Hooks from third-party plugins
-**User Responsibility:** Review hook scripts before installing plugins
-
-### Security Best Practices
-
-1. **Inspect before installing:** Read hook scripts in plugin before `plugin install`
-2. **Validate sources:** Only install plugins from trusted sources
-3. **Check permissions:** Ensure hook scripts don't request unnecessary permissions
-4. **Monitor execution:** Review what hooks do during execution
-5. **Uninstall if suspicious:** `igris plugin uninstall <name>` removes hooks
-
-### Security Warnings
-
-**⚠️ Hooks can:**
-- Read sensitive files (API keys, credentials)
-- Send data to external APIs
-- Modify project files
-- Execute arbitrary commands
-
-**✅ Mitigation:**
-- Review source code before installing
-- Use local-only models when possible (no external API calls)
-- Check plugin reputation and reviews
-- Monitor network activity during hook execution
+| Variable | Description |
+|----------|-------------|
+| `IGRIS_HOOK_TYPE` | Which hook is executing |
+| `IGRIS_PROJECT_ROOT` | Project root path |
+| `IGRIS_VERSION` | Igris AI version |
 
 ---
 
 ## Plugin Integration
 
-### Creating a Plugin with Hooks
+### Declaring Hooks
 
-**Step 1: Create plugin structure**
-```
-my-enhancement-plugin/
-├── plugin.json
-├── README.md
-├── ai/
-│   └── my-plugin/
-│       └── hooks/
-│           ├── assess.sh
-│           └── review.sh
-└── install.sh
-```
+In `plugin.json`:
 
-**Step 2: Declare hooks in plugin.json**
 ```json
 {
-  "name": "my-enhancement",
+  "name": "my-plugin",
   "version": "1.0.0",
   "hooks": {
-    "SYSTEM_ASSESSMENT": "ai/my-plugin/hooks/assess.sh",
-    "CODE_REVIEWER": "ai/my-plugin/hooks/review.sh"
+    "SYSTEM_ASSESSMENT": "ai/my-plugin/hooks/assess.sh"
   }
 }
 ```
 
-**Step 3: Implement hook scripts**
+### Registration
+
+Hooks are registered in `.igris/installed_plugins.json` when plugin is installed.
+
+---
+
+## Creating Custom Hooks
+
+### Example: Simple Assessment Hook
+
 ```bash
 #!/bin/bash
 # ai/my-plugin/hooks/assess.sh
 set -e
 
-echo "🔍 Enhanced Assessment Active"
-echo ""
-echo "Recent activity:"
-git log --oneline -5
-echo ""
-
-exit 0
-```
-
-**Step 4: Make executable**
-```bash
-chmod +x ai/my-plugin/hooks/*.sh
-```
-
-**Step 5: Package and install**
-```bash
-tar -czf my-enhancement.tar.gz plugin.json ai/ install.sh
-igris plugin install my-enhancement.tar.gz
-```
-
----
-
-## Examples
-
-### Example 1: Simple System Assessment Hook
-
-```bash
-#!/bin/bash
-# ai/simple-stats/hooks/assess.sh
-
-set -e
-
-echo "📊 Project Statistics"
+echo "Project Statistics"
 echo ""
 
 # Count briefs
@@ -655,450 +188,38 @@ git log --oneline -3
 exit 0
 ```
 
-### Example 2: Brief Generator Hook
+---
 
-```bash
-#!/bin/bash
-# ai/langchain/hooks/generate_brief.sh
+## Security Model
 
-set -e
-
-# Read git diff from stdin
-diff_content=$(cat)
-
-if [ -z "$diff_content" ]; then
-  echo "❌ No git diff provided" >&2
-  exit 1
-fi
-
-# Call Python LangChain script
-python3 ai/langchain/brief_generator.py <<EOF
-$diff_content
-EOF
-
-exit $?
-```
-
-### Example 3: Code Review Hook
-
-```bash
-#!/bin/bash
-# ai/langchain/hooks/review.sh
-
-set -e
-
-# Read changed files from stdin
-changed_files=$(cat)
-
-if [ -z "$changed_files" ]; then
-  # No files changed, skip review
-  exit 2
-fi
-
-echo "🔍 Reviewing changed files..."
-echo "$changed_files" | while read -r file; do
-  echo "  - $file"
-done
-echo ""
-
-# Call review logic
-python3 ai/langchain/code_review.py "$changed_files"
-exit_code=$?
-
-if [ $exit_code -eq 0 ]; then
-  echo "✅ Code review passed"
-else
-  echo "⚠️ Code review found issues (see above)"
-fi
-
-exit $exit_code
-```
+- Hooks execute with user permissions
+- No sandboxing - hooks are trusted code
+- Review hook scripts before installing plugins
 
 ---
 
-## Testing Hooks
+## Migration from v2.5
 
-### Unit Testing
+If you have custom hooks for deprecated types:
 
-Test hook execution in isolation:
+1. **BRIEF_GENERATOR** → Use main agent: "Create a brief for..."
+2. **CODE_REVIEWER** → Use `reviewer` subagent or HUNT workflow
+3. **TEST_GENERATOR** → Use `tester` subagent
+4. **AUTONOMOUS_IMPLEMENTER** → Use `HUNT {brief-id}`
 
-```bash
-#!/bin/bash
-# test/hooks.test.bash
-
-@test "execute_hook runs script with correct environment" {
-  # Create test hook
-  cat > test_hook.sh <<'HOOK'
-#!/bin/bash
-echo "Hook: $IGRIS_HOOK_TYPE"
-echo "Project: $IGRIS_PROJECT_ROOT"
-exit 0
-HOOK
-  chmod +x test_hook.sh
-
-  # Register hook
-  mkdir -p .igris
-  cat > .igris/installed_plugins.json <<'JSON'
-[{"name":"test","hooks":{"TEST_HOOK":"test_hook.sh"}}]
-JSON
-
-  # Execute
-  output=$(execute_hook "TEST_HOOK" "input")
-
-  # Verify
-  [[ "$output" =~ "Hook: TEST_HOOK" ]]
-  [[ "$output" =~ "Project:" ]]
-}
-
-@test "hook exit code 0 returns success" {
-  echo '#!/bin/bash' > success_hook.sh
-  echo 'echo "success"' >> success_hook.sh
-  echo 'exit 0' >> success_hook.sh
-  chmod +x success_hook.sh
-
-  # Register and execute
-  mkdir -p .igris
-  echo '[{"name":"test","hooks":{"SUCCESS":"success_hook.sh"}}]' > .igris/installed_plugins.json
-
-  run execute_hook "SUCCESS" ""
-  [ "$status" -eq 0 ]
-  [[ "$output" =~ "success" ]]
-}
-
-@test "hook exit code 1 returns error" {
-  echo '#!/bin/bash' > error_hook.sh
-  echo 'echo "error"' >> error_hook.sh
-  echo 'exit 1' >> error_hook.sh
-  chmod +x error_hook.sh
-
-  mkdir -p .igris
-  echo '[{"name":"test","hooks":{"ERROR":"error_hook.sh"}}]' > .igris/installed_plugins.json
-
-  run execute_hook "ERROR" ""
-  [ "$status" -eq 1 ]
-}
-
-@test "hook exit code 2 returns skip" {
-  echo '#!/bin/bash' > skip_hook.sh
-  echo 'exit 2' >> skip_hook.sh
-  chmod +x skip_hook.sh
-
-  mkdir -p .igris
-  echo '[{"name":"test","hooks":{"SKIP":"skip_hook.sh"}}]' > .igris/installed_plugins.json
-
-  run execute_hook "SKIP" ""
-  [ "$status" -eq 2 ]
-}
-```
-
-### Integration Testing
-
-Test hooks within workflows:
-
-```bash
-@test "SYSTEM_ASSESSMENT hook enhances ARISE output" {
-  # Install plugin with assessment hook
-  install_test_plugin_with_assessment
-
-  # Run ARISE
-  run .claude/hooks/startup.sh
-
-  # Verify hook output appears
-  [[ "$output" =~ "Enhanced Assessment" ]]
-}
-```
+The native subagents provide the same functionality at zero additional cost.
 
 ---
 
 ## Version History
 
+- **v2.0.0** (2025-12-03): Simplified for v3.2 native subagents
+  - Deprecated 9 LangChain/LangGraph hooks
+  - Retained core hooks (PERSONA, SYSTEM_ASSESSMENT, commit hooks)
+
 - **v1.0.0** (2025-11-14): Initial specification
-  - Defined 6 execution hook types
-  - Established hook contract (input/output/exit codes)
-  - Documented security model
-  - Added examples and testing guidelines
+  - Defined hook system for LangChain/LangGraph integration
 
 ---
 
-## LangGraph Agent Hooks (Stateful - v3.0.0)
-
-### AUTONOMOUS_IMPLEMENTER
-**Category:** LangGraph Agent
-**Plugin:** igris-ai-langgraph
-**Purpose:** Implement entire brief autonomously with human checkpoints
-**Input:** Brief ID and metadata (JSON via stdin)
-**Output:** Implementation status, changed files, commit message
-**State:** Checkpointed (resumes on context reset)
-
-**Workflow:**
-```
-Plan → Code → Test → Review → Fix (loop) → Document → Human Approve
-```
-
-**Exit Codes:**
-- `0`: Implementation complete, awaiting human approval
-- `1`: Implementation failed (show error, human intervention needed)
-- `2`: Brief not suitable for autonomous implementation
-
----
-
-### MULTI_AGENT_REVIEWER
-**Category:** LangGraph Agent
-**Plugin:** igris-ai-langgraph
-**Purpose:** Parallel multi-expert code review (5 specialized agents)
-**Input:** Changed files list (via stdin)
-**Output:** Comprehensive multi-perspective review report
-**State:** Parallel execution, synthesis at end
-
-**Agents:**
-- Architecture Agent
-- Security Agent
-- Performance Agent
-- Testing Agent
-- Documentation Agent
-
-**Exit Codes:**
-- `0`: Review complete, approved
-- `1`: Issues found (categorized by severity)
-- `2`: No reviewable changes
-
----
-
-### BRIEF_PLANNER
-**Category:** LangGraph Agent
-**Plugin:** igris-ai-langgraph
-**Purpose:** Analyze brief backlog, suggest optimal work order
-**Input:** Planning parameters (JSON: days available, focus areas)
-**Output:** Prioritized work plan with dependencies mapped
-**State:** Analysis state preserved
-
-**Exit Codes:**
-- `0`: Plan generated successfully
-- `1`: Planning failed (insufficient data)
-- `2`: No briefs to plan
-
----
-
-### SELF_HEALER
-**Category:** LangGraph Agent
-**Plugin:** igris-ai-langgraph
-**Purpose:** Auto-fix failing tests/builds with retry loops
-**Input:** Test failure output or build errors (via stdin)
-**Output:** Fix applied + test results
-**State:** Retry count, attempted fixes
-
-**Workflow:**
-```
-Analyze Error → Generate Fix → Apply → Test → [Pass?]
-                                        ↓
-                                    Retry (max 3)
-```
-
-**Exit Codes:**
-- `0`: Fixed successfully (tests now pass)
-- `1`: Could not fix (human intervention needed)
-- `2`: No failures to fix
-
----
-
-### CONVERSATIONAL_REFINER
-**Category:** LangGraph Agent
-**Plugin:** igris-ai-langgraph
-**Purpose:** Interactive brief creation through AI-guided questions
-**Input:** Initial task description (via stdin)
-**Output:** Comprehensive brief after conversation
-**State:** Conversation history, answers collected
-
-**Workflow:**
-```
-Initial Input → Ask Questions → Collect Answers → Generate Brief → Validate → [Complete?]
-                                                                            ↓
-                                                                      Ask More Questions (loop)
-```
-
-**Exit Codes:**
-- `0`: Brief created successfully
-- `1`: Conversation failed or cancelled
-- `2`: Invalid initial input
-
----
-
-### MAINTENANCE_AGENT
-**Category:** LangGraph Agent
-**Plugin:** igris-ai-langgraph
-**Purpose:** Autonomous technical debt scanning and fixing
-**Input:** Scan parameters (scope, auto-fix limits)
-**Output:** PR with batched fixes, or analysis report
-**State:** Scan results, fix attempts, test results
-
-**Workflow:**
-```
-Scan Codebase → Categorize Issues → Identify Auto-Fixable → Fix → Test → [Pass?]
-                                                                     ↓
-                                                                  Retry or Skip
-                                                                     ↓
-                                                                Create PR
-```
-
-**Exit Codes:**
-- `0`: Fixes applied successfully (PR created)
-- `1`: Some fixes failed (partial PR or report only)
-- `2`: No fixable issues found
-
----
-
-## Hook Type Comparison
-
-| Aspect | Stateless Hooks (LangChain) | Stateful Hooks (LangGraph) |
-|--------|----------------------------|---------------------------|
-| **Execution** | One-shot | Multi-step with loops |
-| **State** | None | Checkpointed |
-| **Duration** | 10-30 seconds | 1-10 minutes |
-| **Cost** | $0.01-0.10 | $0.50-5.00 |
-| **Resumability** | No | Yes (checkpoint restore) |
-| **Human Input** | Before only | During (checkpoints) |
-| **Parallelization** | No | Yes (multi-agent) |
-| **Error Handling** | Fail and report | Retry loops |
-
----
-
-## Plugin Interaction Protocol
-
-### Shared Resources
-
-**Both plugins can:**
-- Use same RAG embeddings (`.igris/chroma_db/`)
-- Read same config format (similar structure)
-- Access same Igris AI context (briefs, sessions, guidelines)
-
-**Coordination:**
-```bash
-# LangChain creates embeddings
-igris embed-codebase  # via langchain plugin
-
-# LangGraph reuses them
-igris implement BR-005 --autonomous  # uses same embeddings
-```
-
----
-
-### Hook Conflicts (How to Handle)
-
-**Scenario:** Both plugins provide CODE_REVIEWER hook
-
-**Resolution Options:**
-
-**Option 1: Explicit Selection**
-```bash
-igris review --plugin langchain  # Use simple review
-igris review --plugin langgraph  # Use multi-agent review
-```
-
-**Option 2: Hook Aliasing**
-```json
-{
-  "hooks": {
-    "CODE_REVIEWER": "ai/langchain/hooks/review.sh",
-    "CODE_REVIEWER_DEEP": "ai/langgraph/hooks/multi_review.sh"
-  }
-}
-```
-
-Commands:
-```bash
-igris review        # Uses CODE_REVIEWER
-igris review --deep # Uses CODE_REVIEWER_DEEP
-```
-
-**Option 3: Priority System** (Future)
-```json
-{
-  "hooks": {
-    "CODE_REVIEWER": {
-      "script": "...",
-      "priority": 1  // Lower number = higher priority
-    }
-  }
-}
-```
-
-**Recommended:** Option 2 (aliasing) - Clearest UX
-
----
-
-## Version Strategy
-
-### Coordinated Releases
-
-**Core + Plugins versioned together conceptually:**
-
-- **Igris AI v2.5.0** - Enhancement hook system
-  - Compatible: igris-ai-langchain v1.x
-
-- **Igris AI v3.0.0** - LangGraph hooks added to spec
-  - Compatible: igris-ai-langchain v1.x, igris-ai-langgraph v1.x
-
-- **Igris AI v4.0.0** - Advanced hook features
-  - Compatible: All plugins v2.x
-
-**Plugin Compatibility Matrix:**
-
-| Core Version | LangChain | LangGraph | Security | Performance |
-|--------------|-----------|-----------|----------|-------------|
-| v2.5.0 | ✅ v1.x | ❌ | ❌ | ❌ |
-| v3.0.0 | ✅ v1-2.x | ✅ v1.x | ❌ | ❌ |
-| v4.0.0 | ✅ v2-3.x | ✅ v1-2.x | ✅ v1.x | ✅ v1.x |
-
----
-
-## Success Metrics
-
-### Ecosystem Health
-
-- **Plugin Count:** 5+ official plugins by end of 2025
-- **Community Plugins:** 10+ community-contributed plugins
-- **Downloads:** 1000+ plugin installations
-- **User Satisfaction:** 90%+ would recommend
-
-### Feature Adoption
-
-- **LangChain:** 80% of Igris users (basic features)
-- **LangGraph:** 30% of Igris users (power users)
-- **Combined:** 25% use both (maximum productivity)
-
----
-
-## Future Vision
-
-**2026: The Plugin Marketplace**
-
-```bash
-# Discover plugins
-igris plugin search "security"
-
-# See ratings and reviews
-igris plugin info igris-ai-security
-  ★★★★★ 4.8/5.0 (234 reviews)
-  "Caught 3 critical vulnerabilities in first scan!"
-
-# Install from marketplace
-igris plugin install igris-ai-security
-
-# Auto-updates
-igris plugin update --all
-```
-
-**The Plugin Empire Grows.**
-
----
-
-**Created:** 2025-11-14
 **Maintained by:** Igris AI / Fifty.ai
-**Vision:** Extensible AI platform for software engineering
-
-
----
-
-**Specification maintained by:** Igris AI Team
-**Questions:** Open issue at https://github.com/fiftynotai/igris-ai/issues
-**Contributing:** See `ai/CONTRIBUTING.md`

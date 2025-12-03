@@ -1,0 +1,39 @@
+# Fifty Design Language (FDL) v1.0 - Crimson Theme with Background
+# Maintainer: Mohamed Elamin (fifty.dev)
+# CRIMSON AGUMON CHARACTER BACKGROUND VERSION
+#
+# Installation:
+# 1. Generate Crimson Agumon image (see CRIMSON_AGUMON_PROMPT.md)
+# 2. Save image as: ~/.warp/themes/crimson_agumon.jpg
+# 3. Copy this file to: ~/.warp/themes/fdl_crimson_bg.yaml
+# 4. Restart Warp
+# 5. Settings > Appearance > Theme > "FDL Crimson BG"
+
+name: FDL Crimson BG
+accent: '#960E29'
+cursor: '#960E29'
+background: '#0E0E0F'
+foreground: '#E5E5E7'
+details: darker
+background_image:
+  path: crimson_agumon.jpg
+  opacity: 20
+terminal_colors:
+  normal:
+    black: '#161617'
+    red: '#960E29'
+    green: '#00BA33'
+    yellow: '#F7A100'
+    blue: '#960E29'
+    magenta: '#B31337'
+    cyan: '#B31337'
+    white: '#E5E5E7'
+  bright:
+    black: '#2C2C2E'
+    red: '#B31337'
+    green: '#00BA33'
+    yellow: '#F7A100'
+    blue: '#B31337'
+    magenta: '#B31337'
+    cyan: '#B31337'
+    white: '#FFFFFF'
