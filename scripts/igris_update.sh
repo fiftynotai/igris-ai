@@ -196,7 +196,7 @@ echo "📝 Files that will be updated:"
 echo "  - CLAUDE.md (Claude Code context file)"
 echo "  - ai/prompts/*.md (system prompts)"
 echo "  - ai/templates/*.md (brief templates)"
-echo "  - ai/CONTRIBUTING.md (documentation)"
+echo "  - .claude/agents/*.md (native subagents)"
 echo "  - scripts/plugin_*.sh (plugin management scripts)"
 echo ""
 echo "🔒 Files that will be preserved:"
@@ -231,6 +231,13 @@ if [ "$DRY_RUN" = true ]; then
     ls "$TEMP_DIR/ai/templates/"*.md 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
   fi
 
+  if [ -d "$TEMP_DIR/.claude/agents" ]; then
+    echo ""
+    echo "Native Subagents:"
+    ls "$TEMP_DIR/.claude/agents/"*.md 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
+    echo "  - manifest.yaml"
+  fi
+
   echo ""
   echo "Scripts:"
   ls "$TEMP_DIR/scripts/plugin_"*.sh 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
@@ -262,7 +269,7 @@ mkdir -p "$BACKUP_DIR"
 cp CLAUDE.md "$BACKUP_DIR/" 2>/dev/null || true
 cp -r ai/prompts "$BACKUP_DIR/" 2>/dev/null || true
 cp -r ai/templates "$BACKUP_DIR/" 2>/dev/null || true
-cp ai/CONTRIBUTING.md "$BACKUP_DIR/" 2>/dev/null || true
+cp -r .claude/agents "$BACKUP_DIR/" 2>/dev/null || true
 cp scripts/plugin_*.sh "$BACKUP_DIR/" 2>/dev/null || true
 cp .igris_version "$BACKUP_DIR/" 2>/dev/null || true
 
@@ -284,10 +291,12 @@ if [ -d "$TEMP_DIR/ai/templates" ]; then
   cp "$TEMP_DIR/ai/templates/"*.md ai/templates/
 fi
 
-# Update CONTRIBUTING.md
-if [ -f "$TEMP_DIR/ai/CONTRIBUTING.md" ]; then
-  echo "  - Updating CONTRIBUTING.md..."
-  cp "$TEMP_DIR/ai/CONTRIBUTING.md" ai/
+# Update native subagents (v3.2)
+if [ -d "$TEMP_DIR/.claude/agents" ]; then
+  echo "  - Updating native subagents..."
+  mkdir -p .claude/agents
+  cp "$TEMP_DIR/.claude/agents/"*.md .claude/agents/ 2>/dev/null || true
+  cp "$TEMP_DIR/.claude/agents/manifest.yaml" .claude/agents/ 2>/dev/null || true
 fi
 
 # Update plugin management scripts

@@ -54,9 +54,6 @@ cp "$IGRIS_DIR/ai/templates/"*.md ai/templates/
 # Copy CLAUDE.md template for persona regeneration
 cp "$IGRIS_DIR/scripts/templates/CLAUDE.md.template" scripts/
 
-# Copy CONTRIBUTING guide
-cp "$IGRIS_DIR/ai/CONTRIBUTING.md" ai/
-
 # Copy persona.json.default
 cp "$IGRIS_DIR/ai/persona.json.default" ai/
 
@@ -213,124 +210,6 @@ cat > ai/plugins/installed.json <<'EOF'
 }
 EOF
 
-# ============================================================================
-# Hook System Functions (Enhancement Hooks - v2.5.0)
-# ============================================================================
-# These functions enable plugins to extend Igris AI with AI capabilities,
-# code analysis tools, and workflow augmentations.
-#
-# Specification: ai/hooks/HOOKS_SPEC.md
-# ============================================================================
-
-# Resolve hook script path for a given hook type
-# Usage: resolve_hooks "HOOK_TYPE"
-# Returns: Hook script path (exit 0) or nothing (exit 1)
-resolve_hooks() {
-  local hook_type="$1"
-
-  # Check if installed_plugins.json exists
-  if [ ! -f "ai/plugins/installed.json" ]; then
-    return 1  # No plugins installed
-  fi
-
-  # Use Python3 for JSON parsing (jq fallback if available)
-  local hook_script=""
-
-  if command -v jq &> /dev/null; then
-    # Use jq if available (faster)
-    hook_script=$(jq -r ".plugins[] | select(.hooks.$hook_type != null) | .hooks.$hook_type | select(. != null)" ai/plugins/installed.json 2>/dev/null | head -n 1)
-  else
-    # Fallback to Python3 (always available)
-    hook_script=$(python3 <<EOF 2>/dev/null
-import json, sys
-try:
-    with open('ai/plugins/installed.json', 'r') as f:
-        data = json.load(f)
-    for plugin in data.get('plugins', []):
-        if '$hook_type' in plugin.get('hooks', {}):
-            print(plugin['hooks']['$hook_type'])
-            break
-except:
-    pass
-EOF
-)
-  fi
-
-  # Validate hook script exists and is executable
-  if [ -n "$hook_script" ] && [ -f "$hook_script" ] && [ -x "$hook_script" ]; then
-    echo "$hook_script"
-    return 0
-  fi
-
-  # No valid hook found
-  return 1
-}
-
-# Execute a hook with input data
-# Usage: execute_hook "HOOK_TYPE" "input_data"
-# Returns: Hook output (stdout) and exit code (0=success, 1=error, 2=skip)
-execute_hook() {
-  local hook_type="$1"
-  local input_data="$2"
-
-  # Resolve hook script
-  local hook_script
-  hook_script=$(resolve_hooks "$hook_type")
-  if [ $? -ne 0 ]; then
-    # No hook registered - skip silently
-    return 2
-  fi
-
-  # Set environment variables for hook
-  export IGRIS_HOOK_TYPE="$hook_type"
-  export IGRIS_PROJECT_ROOT="$(pwd)"
-  export IGRIS_VERSION="$IGRIS_VERSION"
-
-  # Optional: Set brief-specific variables if available
-  if [ -n "$IGRIS_BRIEF_ID" ]; then
-    export IGRIS_BRIEF_ID
-  fi
-
-  if [ -f "ai/session/CURRENT_SESSION.md" ]; then
-    export IGRIS_SESSION_FILE="ai/session/CURRENT_SESSION.md"
-  fi
-
-  # Execute hook with input
-  local output
-  local exit_code
-  output=$(echo "$input_data" | "$hook_script" 2>&1)
-  exit_code=$?
-
-  # Handle exit codes according to spec
-  case $exit_code in
-    0)
-      # Success - return output
-      echo "$output"
-      return 0
-      ;;
-    1)
-      # Error - show output to stderr, return error
-      echo "⚠️ Hook $hook_type failed:" >&2
-      echo "$output" >&2
-      return 1
-      ;;
-    2)
-      # Skip - not applicable, continue silently
-      return 2
-      ;;
-    *)
-      # Unknown exit code - treat as error
-      echo "⚠️ Hook $hook_type returned unexpected exit code: $exit_code" >&2
-      echo "$output" >&2
-      return 1
-      ;;
-  esac
-}
-
-# ============================================================================
-# End Hook System Functions
-# ============================================================================
-
 # Create Claude Code integration (hooks + CLAUDE.md)
 echo "🤖 Setting up Claude Code integration..."
 mkdir -p .claude/hooks
@@ -338,6 +217,14 @@ mkdir -p .claude/hooks
 # Copy startup hook
 cp "$IGRIS_DIR/scripts/templates/startup.sh.template" .claude/hooks/startup.sh
 chmod +x .claude/hooks/startup.sh
+
+# Install native subagents (v3.2)
+echo "🤖 Installing native subagents..."
+mkdir -p .claude/agents
+if [ -d "$IGRIS_DIR/.claude/agents" ]; then
+  cp "$IGRIS_DIR/.claude/agents/"*.md .claude/agents/ 2>/dev/null || true
+  cp "$IGRIS_DIR/.claude/agents/manifest.yaml" .claude/agents/ 2>/dev/null || true
+fi
 
 # Resolve persona hook (if plugin provides one)
 PERSONA_INJECTION=""
@@ -478,11 +365,12 @@ cat > .igris_version <<EOF
 EOF
 
 echo ""
-echo "✅ Igris AI initialized successfully!"
+echo "✅ Igris AI v3.2 initialized successfully!"
 echo ""
 echo "🤖 Claude Code Integration:"
 echo "   ✓ Startup hook enabled (.claude/hooks/startup.sh)"
 echo "   ✓ Context file created (CLAUDE.md)"
+echo "   ✓ 12 native subagents installed (.claude/agents/)"
 echo "   ✓ True zero-configuration - works immediately!"
 echo ""
 echo "📚 Getting Started:"
@@ -490,30 +378,26 @@ echo ""
 echo "1. Launch Claude Code:"
 echo "   $ claude"
 echo ""
-echo "   BEFORE YOU TYPE, you'll see:"
-echo "   ⚔️  Welcome to Igris AI on Claude Code"
-echo "   📊 Project Status: [briefs, status, blockers]"
-echo "   💡 Recommended Next Task: [highest priority]"
-echo "   Ready for your command!"
+echo "   Igris AI will auto-initialize and show:"
+echo "   - System assessment (briefs, blockers, git status)"
+echo "   - Intelligent recommendations"
+echo "   - Ready for your command!"
 echo ""
-echo "2. (Optional) Install shell integration for terminal notifications:"
+echo "2. (Optional) Install shell integration:"
 echo "   $ ./scripts/install_shell_integration.sh"
-echo "   This will show Igris AI version when entering the project"
 echo ""
-echo "📚 Next Steps:"
+echo "📚 v3.2 Commands:"
 echo ""
-echo "1. Generate coding guidelines (recommended first):"
-echo "   'Please generate coding guidelines using ai/prompts/generate_coding_guidelines.md'"
+echo "   STANDARDIZE    - Generate coding_guidelines.md"
+echo "   HUNT <brief>   - Autonomous implementation"
+echo "   DIGIVOLVE      - Multi-agent orchestration"
+echo "   SCAN           - Show status report"
 echo ""
-echo "2. Generate architecture documentation:"
-echo "   'Please analyze this project using ai/prompts/generate_architecture_docs.md'"
+echo "📚 Quick Start:"
 echo ""
-echo "3. Analyze your codebase for migration tasks:"
-echo "   'Please analyze this codebase using ai/prompts/migration_analysis.md'"
+echo "   'Generate coding guidelines for this project'"
+echo "   'What should I work on next?'"
+echo "   'Register a bug: [description]'"
 echo ""
-echo "4. Install plugins (optional):"
-echo "   $ ./scripts/plugin_install.sh <plugin-repo-url>"
-echo ""
-echo "📖 Documentation: ai/CONTRIBUTING.md"
-echo "🔗 More info: https://github.com/fiftynotai/igris-ai"
+echo "🔗 Docs: https://github.com/fiftynotai/igris-ai"
 echo ""
