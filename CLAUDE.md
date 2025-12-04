@@ -747,10 +747,8 @@ Claude will analyze your codebase and merge findings with these Igris AI instruc
 ## Documentation
 
 - **Operating System:** `ai/prompts/igris_os.md` (core system, all protocols)
-- **Bug workflow:** `ai/prompts/bug_prompts.md`
-- **Feature workflow:** `ai/prompts/feature_prompts.md`
-- **Session protocol:** `ai/prompts/session_protocol.md`
-- **Contributing guide:** `ai/CONTRIBUTING.md`
+- **Session Protocol:** `ai/prompts/session_protocol.md` (session tracking)
+- **Agent Registry:** `.claude/agents/manifest.yaml` (12 native subagents)
 - **Main repository:** https://github.com/fiftynotai/igris-ai
 
 ---

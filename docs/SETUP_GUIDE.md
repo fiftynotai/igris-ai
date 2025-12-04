@@ -84,12 +84,12 @@ ls -la ai/
 
 After installation, generate project-specific documentation:
 
-**Ask Claude:**
+**Use the DOCUMENT command:**
 ```
-Please analyze this project using the prompt in ai/prompts/generate_architecture_docs.md
+DOCUMENT architecture
 ```
 
-**Claude will:**
+**The documenter agent will:**
 1. Scan your project structure
 2. Ask clarifying questions about your architecture
 3. Generate 4 documentation files in `ai/context/`:
@@ -123,12 +123,12 @@ Great! I'll generate the documentation files now.
 
 Generate migration tasks and identify issues:
 
-**Ask Claude:**
+**Use the MIGRATE command:**
 ```
-Please analyze this codebase using ai/prompts/migration_analysis.md
+MIGRATE analyze
 ```
 
-**Claude will:**
+**The migrator agent will:**
 1. Scan all source files
 2. Identify architecture violations
 3. Find code quality issues
@@ -304,12 +304,9 @@ your-project/
 │   │   ├── api_pattern.md
 │   │   ├── coding_guidelines.md
 │   │   └── module_catalog.md
-│   ├── prompts/                       # AI prompts
-│   │   ├── bug_prompts.md
-│   │   ├── feature_prompts.md
-│   │   ├── igris_os.md
-│   │   ├── generate_architecture_docs.md
-│   │   └── migration_analysis.md
+│   ├── prompts/                       # AI prompts (v3.2 consolidated)
+│   │   ├── igris_os.md                 # Core operating system
+│   │   └── session_protocol.md         # Session tracking protocol
 │   ├── session/                       # Session tracking
 │   │   ├── CURRENT_SESSION.md         # Active work
 │   │   ├── BLOCKERS.md                # Blocking issues
@@ -382,10 +379,10 @@ git clone https://github.com/yourorg/igris-ai
 
 After setup:
 
-1. **Generate architecture docs** - Run `generate_architecture_docs.md` prompt
-2. **Analyze codebase** - Run `migration_analysis.md` prompt
+1. **Generate architecture docs** - Run `DOCUMENT architecture`
+2. **Analyze codebase** - Run `MIGRATE analyze`
 3. **Review generated briefs** - Ask Claude to "List all briefs"
-4. **Start implementing** - Ask Claude to "Implement BR-XXX"
+4. **Start implementing** - Ask Claude to "HUNT BR-XXX"
 5. **Install plugins** - Add distribution, CI/CD, or custom plugins
 
 ---

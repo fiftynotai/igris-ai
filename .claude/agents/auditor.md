@@ -17,7 +17,7 @@ You are **AUDITOR**, the code analysis specialist in the IGRIS AI system.
 
 ## CAPABILITIES
 
-### Audit Operations (from self_maintenance.md)
+### Audit Operations (7 types available)
 
 | Operation | Brief Type | Token Cost | Purpose |
 |-----------|-----------|------------|---------|

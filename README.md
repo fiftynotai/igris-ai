@@ -429,7 +429,7 @@ Draft → Ready → In Progress → In Review → Done → Archived
 "Implement BR-001"
 ```
 
-See `ai/prompts/bug_prompts.md` and `ai/prompts/feature_prompts.md` for complete workflows.
+See `ai/prompts/igris_os.md` for complete brief management workflows.
 
 ---
 
@@ -444,38 +444,39 @@ IGRIS analyzes your code to find:
 - Performance problems
 - Security vulnerabilities
 
-**Architecture Documentation Generation**
+**Architecture Documentation Generation (v3.2)**
 
-Ask Claude to analyze your project:
+Use the **documenter** agent to analyze your project:
 
 ```
-Please analyze this project using ai/prompts/generate_architecture_docs.md
+DOCUMENT architecture
 ```
 
-Claude will:
+Or ask naturally:
+```
+"Generate architecture documentation for this project"
+```
+
+The documenter agent will:
 - Analyze your project structure
 - Ask questions about your architecture
 - Generate comprehensive documentation in `ai/context/`
 
-**Coding Guidelines Generation**
+**Coding Guidelines Generation (v3.2)**
 
-Create standardized coding guidelines for your project:
+Use the **standardizer** agent to create coding guidelines:
 
 ```
-Please generate coding guidelines using ai/prompts/generate_coding_guidelines.md
+STANDARDIZE analyze
 ```
-
-Claude will:
-- Extract patterns from your base architecture repo (optional)
-- Analyze your existing project code (optional)
-- Merge both sources with conflict resolution
-- Generate comprehensive `ai/context/coding_guidelines.md`
 
 **4 Generation Modes:**
-- **Base Repo** - Extract from reference architecture repository
-- **Project Analysis** - Infer from existing codebase
-- **Merge** - Combine base repo + project (base takes precedence)
-- **Best Practices** - Use platform-specific industry standards
+- `STANDARDIZE analyze` - Infer from existing codebase
+- `STANDARDIZE from-base` - Extract from reference architecture repository
+- `STANDARDIZE hybrid` - Combine base repo + project (base takes precedence)
+- `STANDARDIZE minimal` - Use platform-specific industry standards
+
+The standardizer agent will generate comprehensive `ai/context/coding_guidelines.md`
 
 **Use cases:**
 - Migration analysis (compare code against standards)
@@ -484,15 +485,15 @@ Claude will:
 - Architecture decisions
 - AI assistant guidance
 
-**Migration Analysis**
+**Migration Analysis (v3.2)**
 
-Find issues and generate migration tasks:
+Use the **migrator** agent to find issues and generate migration tasks:
 
 ```
-Please analyze this codebase using ai/prompts/migration_analysis.md
+MIGRATE analyze
 ```
 
-Claude will:
+The migrator agent will:
 - Scan your code for violations
 - Generate categorized briefs (Migration, Bugs, Technical Debt, Testing)
 - Create a migration roadmap with phases
@@ -597,7 +598,7 @@ IGRIS can audit itself and your codebase autonomously.
 "Suggest new features"        # Innovation pipeline
 ```
 
-See `ai/prompts/self_maintenance.md` for complete documentation.
+See `ai/prompts/igris_os.md` for complete Self-Maintenance Operations documentation.
 
 ---
 
@@ -1064,9 +1065,9 @@ Claude asks:
 
 Result: `ai/context/coding_guidelines.md` created
 
-# 4. Generate architecture documentation
+# 4. Generate architecture documentation (v3.2)
 ```
-"Analyze this project using ai/prompts/generate_architecture_docs.md"
+"DOCUMENT architecture"
 ```
 
 Result: Complete architecture map in `ai/context/`
@@ -1091,13 +1092,13 @@ Result: Complete architecture map in `ai/context/`
 cd existing-project
 ../igris-ai/scripts/igris_init.sh
 
-# 2. Launch Claude and analyze
+# 2. Launch Claude and analyze (v3.2)
 claude
 ```
-"Analyze this codebase using ai/prompts/migration_analysis.md"
+"MIGRATE analyze"
 ```
 
-Claude will:
+The migrator agent will:
 - Scan entire codebase
 - Identify architecture violations
 - Generate briefs: MG-XXX (migrations), TD-XXX (tech debt), BR-XXX (bugs)
@@ -1219,17 +1220,17 @@ IGRIS will:
 
 ## ✦ Examples
 
-### Generate Coding Guidelines
+### Generate Coding Guidelines (v3.2)
 
 ```
-Generate coding guidelines using ai/prompts/generate_coding_guidelines.md
+STANDARDIZE hybrid
 
 Base architecture repo: https://github.com/your-org/flutter-base-architecture
 Also analyze current project: Yes
 Platform: Flutter
 ```
 
-Claude will:
+The standardizer agent will:
 1. Clone and analyze base repository
 2. Scan current project structure
 3. Extract patterns and conventions
@@ -1604,10 +1605,11 @@ Built for developers and teams using Claude AI to engineer high-quality software
 # Ready to engineer?
 ./scripts/igris_init.sh
 
-# Ask Igris:
-# "Generate coding guidelines using ai/prompts/generate_coding_guidelines.md"
-# "Analyze this project using ai/prompts/generate_architecture_docs.md"
-# "Analyze codebase using ai/prompts/migration_analysis.md"
+# v3.2 Commands:
+# STANDARDIZE analyze   - Generate coding guidelines
+# DOCUMENT architecture - Generate architecture docs
+# MIGRATE analyze       - Analyze codebase for migrations
+# HUNT BR-001           - Autonomous implementation
 ```
 
 **From Vibe Coding → Vibe Engineering.**

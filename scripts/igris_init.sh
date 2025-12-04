@@ -167,13 +167,13 @@ This directory should contain project-specific architecture documentation:
 
 ## How to Generate
 
-Use the `generate_architecture_docs.md` prompt to have Claude analyze your project and create these files:
+Use the DOCUMENT command to have Claude analyze your project and create these files:
 
 ```
-Please analyze this project using ai/prompts/generate_architecture_docs.md
+DOCUMENT architecture
 ```
 
-Claude will ask questions about your architecture and generate comprehensive documentation.
+The documenter agent will ask questions about your architecture and generate comprehensive documentation.
 EOF
 
 # Create plugins README

@@ -337,8 +337,9 @@ ls ai/context/coding_guidelines.md
 
 If the file doesn't exist, generate it first:
 ```
-Please generate coding guidelines using ai/prompts/generate_coding_guidelines.md
+STANDARDIZE analyze
 ```
+This will invoke the standardizer agent to generate coding guidelines.
 
 Claude will ask:
 - Do you have a base architecture repository? (optional)
@@ -454,9 +455,8 @@ Every brief MUST have:
 
 ## Handling Brief Management Operations
 
-User can manage bugs and features using prompts from:
-- **Bug Management:** `ai/prompts/bug_prompts.md`
-- **Feature Management:** `ai/prompts/feature_prompts.md`
+Brief management workflows are integrated directly into this operating system (igris_os.md).
+Use the trigger phrases below or commands like REGISTER, HUNT, ARCHIVE.
 
 ### 1. Registration (Create Brief Only)
 
@@ -869,7 +869,12 @@ Examples of what to include:
 
 Igris AI can perform 10 maintenance operations on ANY project (not just Igris AI itself). These operations analyze code, identify issues, and create appropriate briefs for tracking improvements.
 
-**Complete documentation:** See `ai/prompts/self_maintenance.md`
+**In v3.2, these operations are distributed across specialized agents:**
+- **auditor** - CODE_QUALITY_AUDIT, BUG_HUNT, STANDARDS_COMPLIANCE_CHECK, PROCESS_AUDIT, DEPENDENCY_AUDIT
+- **tester** - TEST_COVERAGE_ANALYSIS
+- **ideator** - FEATURE_IDEATION
+- **planner** - BRIEF_ANALYSIS
+- **explorer** - ARCHITECTURE_REVIEW, PERFORMANCE_ANALYSIS
 
 ### Available Operations
 
@@ -948,8 +953,8 @@ Each type has independent numbering (PI-001, FR-001, etc.)
 
 ---
 
-**Last Updated:** 2025-10-26
-**Igris AI Version:** 2.1.0
+**Last Updated:** 2025-12-04
+**Igris AI Version:** 3.2.0
 **Documentation:** https://github.com/fiftynotai/igris-ai
 
 **Tip:** Customize this prompt for your project by adding project-specific patterns to the "Project-Specific Notes" section.

@@ -7,23 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [3.2.0] - 2025-12-04
 
 ### Added
-- **Enhancement Hook System (v2.5.0)** - Extensible architecture for AI and tool integrations
-  - 6 hook types: SYSTEM_ASSESSMENT, BRIEF_GENERATOR, CODE_REVIEWER, TEST_GENERATOR, PRE_ANALYSIS, POST_ANALYSIS
-  - Hook contract specification with input/output formats and exit codes
-  - Hook discovery and execution functions in igris_init.sh
-  - Plugin registration system for enhancement hooks
-  - Hook status display in CLAUDE.md
-  - Comprehensive documentation in ai/hooks/HOOKS_SPEC.md
-  - Test suite for hook system (test/hooks.test.bash)
-  - Foundation for FR-001 (LangChain Integration)
+
+- **Native Multi-Agent Architecture** - 12 specialized Claude Code subagents
+  - **Tier 1 - Core:** planner, coder, tester, reviewer
+  - **Tier 2 - Documentation:** documenter, releaser, standardizer (NEW)
+  - **Tier 3 - Maintenance:** auditor, debugger, migrator (NEW)
+  - **Tier 4 - Innovation:** ideator, explorer
+  - Agent manifest at `.claude/agents/manifest.yaml`
+  - Stateless workers with orchestrator pattern
+  - Persona-aware agent aliases (e.g., planner → ARCHITECT)
+
+- **New Agents (v3.2)**
+  - **standardizer (LAWKEEPER):** Generate coding_guidelines.md with 4 modes
+    - Trigger: `STANDARDIZE {mode}` where mode = analyze|from-base|hybrid|minimal
+  - **migrator (PATHFINDER):** Migration analysis and roadmap generation
+    - Trigger: `MIGRATE analyze`
+
+- **Workflow State Machine** - Autonomous implementation pipeline
+  - States: INIT → PLANNING → APPROVAL → BUILDING → TESTING → REVIEWING → COMMITTING → COMPLETE
+  - Automatic retry with self-healing (max 3 test failures, max 2 review rejections)
+  - Approval gate for L/XL complexity or P0/P1 priority
+  - Brief-level state tracking (phase, active agent, retry count, agent log)
+
+- **DIGIVOLVE Protocol** - Dynamic agent management
+  - `DIGIVOLVE status` - List all agents with usage stats
+  - `DIGIVOLVE add` - Create custom Tier 5 agents
+  - `DIGIVOLVE upgrade/disable/enable/remove` - Agent lifecycle management
+  - Agent metrics tracking in `ai/session/metrics/agent-metrics.json`
+
+- **Test Coverage for igris_update.sh** - 20 new tests (TD-015)
+  - Validation, dry-run, version checking, migration, error handling
+  - Total test count: 164 tests across 8 test files
 
 ### Changed
-- Updated CLAUDE.md.template to display installed enhancement plugins
-- Enhanced plugin_install.sh to register enhancement hooks
-- Improved CLAUDE.md regeneration to include hook status
+
+- **Prompts Consolidated** - Reduced from 7+ files to 2 core files
+  - `ai/prompts/igris_os.md` - Complete operating system (all protocols)
+  - `ai/prompts/session_protocol.md` - Session tracking details
+  - Old prompts absorbed into native subagent capabilities
+
+- **Scripts Updated for v3.2** (TD-015)
+  - `igris_init.sh`: Removed ~115 lines dead hook code, added `.claude/agents/` copy
+  - `igris_update.sh`: Added agents backup/update, removed CONTRIBUTING.md refs
+  - Updated Getting Started messages with v3.2 commands
+
+- **Init Output** - Now shows v3.2 commands (STANDARDIZE, HUNT, DIGIVOLVE, SCAN)
+
+### Removed
+
+- **Dead Hook Functions** - `resolve_hooks()` and `execute_hook()` removed from igris_init.sh
+  - These were defined but never called (legacy from LangChain/LangGraph exploration)
+  - Plugin hooks still work via installed.json and CLAUDE.md regeneration
+
+- **Obsolete Prompt Files** - Consolidated into agents and igris_os.md
+  - `generate_coding_guidelines.md` → standardizer agent
+  - `generate_architecture_docs.md` → documenter agent
+  - `migration_analysis.md` → migrator agent
+  - `bug_prompts.md`, `feature_prompts.md` → igris_os.md
+
+### Fixed
+
+- **Test Assertions** - Fixed existing installation detection test (exit code 1 is correct)
+- **Prompt File Assertions** - Updated tests for v3.2 consolidated structure
+
+---
+
+## [Unreleased]
+
+_Nothing yet - v3.2.0 just released!_
 
 ---
 

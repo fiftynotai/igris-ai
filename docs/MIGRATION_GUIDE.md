@@ -24,7 +24,7 @@ When you have an existing codebase that doesn't follow your architecture standar
 ../igris-ai/scripts/igris_init.sh
 
 # Generate architecture documentation
-# Ask Claude: "Analyze this project using ai/prompts/generate_architecture_docs.md"
+# Use command: DOCUMENT architecture
 ```
 
 This creates your architecture baseline.
@@ -34,7 +34,7 @@ This creates your architecture baseline.
 **Run codebase analysis:**
 
 ```
-Ask Claude: "Analyze this codebase using ai/prompts/migration_analysis.md"
+MIGRATE analyze
 ```
 
 **What Claude does:**
@@ -448,7 +448,7 @@ After initial migration:
 
 ```bash
 # Start your migration journey
-# Ask Claude: "Analyze this codebase using ai/prompts/migration_analysis.md"
+MIGRATE analyze
 ```
 
 Good luck! 🚀

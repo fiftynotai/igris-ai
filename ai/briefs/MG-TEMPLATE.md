@@ -179,7 +179,7 @@ _(Finished tasks)_
 - Target pattern: `ai/context/coding_guidelines.md#[target-section]`
 - Code examples: `ai/context/coding_guidelines.md#[examples-section]`
 
-**Note:** If coding guidelines don't exist yet, run `ai/prompts/generate_coding_guidelines.md` first.
+**Note:** If coding guidelines don't exist yet, run `STANDARDIZE analyze` first.
 
 **Architecture Documentation:**
 - Architecture pattern: `ai/context/architecture_map.md#[section]`
