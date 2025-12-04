@@ -199,12 +199,13 @@ load test_helper
   setup_test_project
   "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y" > /dev/null
 
-  # Try to initialize again
+  # Try to initialize again, decline overwrite
   run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "n"
 
-  # Should detect existing installation
-  # (behavior depends on implementation - either prompt or skip)
-  assert_success
+  # Should detect existing installation and show warning
+  assert_output_contains "already exists"
+  # Exit code 1 is correct when user declines overwrite
+  [ "$status" -eq 1 ]
 }
 
 @test "igris_init can overwrite existing installation" {
