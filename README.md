@@ -1258,7 +1258,7 @@ Create brief BR-XXX for this.
 ### Implement a Feature
 
 ```
-HUNT BR-005
+Implement BR-005
 ```
 
 IGRIS will:
@@ -1609,7 +1609,7 @@ Built for developers and teams using Claude AI to engineer high-quality software
 # STANDARDIZE analyze   - Generate coding guidelines
 # DOCUMENT architecture - Generate architecture docs
 # MIGRATE analyze       - Analyze codebase for migrations
-# HUNT BR-001           - Autonomous implementation
+# Implement BR-001      - Autonomous implementation
 ```
 
 **From Vibe Coding → Vibe Engineering.**

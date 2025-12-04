@@ -183,7 +183,7 @@ List all bugs
 
 **Command:**
 ```
-HUNT BR-001
+Implement BR-001
 ```
 
 **IGRIS will:**
@@ -227,7 +227,7 @@ Priority: P1
 What should I work on next?
 
 # Implement the recommendation
-HUNT BR-005
+Implement BR-005
 ```
 
 ### End of Day: Archive Session
@@ -379,7 +379,7 @@ After setup:
 1. **Generate architecture docs** - Run `DOCUMENT architecture`
 2. **Analyze codebase** - Run `MIGRATE analyze`
 3. **Review generated briefs** - Run `List all briefs`
-4. **Start implementing** - Run `HUNT BR-XXX`
+4. **Start implementing** - Run `Implement BR-XXX`
 5. **Install plugins** - Add distribution, CI/CD, or custom plugins
 
 ---

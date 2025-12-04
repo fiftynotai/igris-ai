@@ -109,19 +109,19 @@ Example roadmap structure:
 
 ```bash
 # Week 1: Critical fixes
-HUNT BR-001   # Fix memory leak
-HUNT BR-003   # Fix security issue
+Implement BR-001   # Fix memory leak
+Implement BR-003   # Fix security issue
 
 # Week 2-3: Architecture migration
-HUNT MG-001   # Refactor to Actions
-HUNT MG-005   # Immutable models
+Implement MG-001   # Refactor to Actions
+Implement MG-005   # Immutable models
 
 # Week 4: Technical debt
-HUNT TD-001   # Remove magic numbers
-HUNT TD-005   # Add doc comments
+Implement TD-001   # Remove magic numbers
+Implement TD-005   # Add doc comments
 
 # Week 5: Testing
-HUNT TS-001   # Add unit tests
+Implement TS-001   # Add unit tests
 ```
 
 **Track progress:**
@@ -318,13 +318,13 @@ cat ai/session/MIGRATION_ROADMAP.md
 List P0 bugs
 # Found: BR-001 (memory leak), BR-003 (security)
 
-HUNT BR-001
+Implement BR-001
 # 2 hours, fixed, tested, committed
 ```
 
 **Tuesday-Friday:**
 ```bash
-# HUNT BR-003, BR-005, BR-007
+# Implement BR-003, BR-005, BR-007
 # All P0 bugs resolved
 ```
 
@@ -338,7 +338,7 @@ HUNT BR-001
 List all MG briefs for auth module
 # Found: MG-001, MG-003, MG-005
 
-# HUNT each one
+# Implement each one
 # End of week: Auth module 100% compliant ✅
 ```
 
@@ -353,7 +353,7 @@ List all MG briefs for auth module
 
 ```bash
 List all TD briefs P1-P2
-# HUNT top 10 debt items
+# Implement top 10 debt items
 # End of week: Major debt paid off ✅
 ```
 

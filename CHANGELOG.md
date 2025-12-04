@@ -54,7 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `igris_update.sh`: Added agents backup/update, removed CONTRIBUTING.md refs
   - Updated Getting Started messages with v3.2 commands
 
-- **Init Output** - Now shows v3.2 commands (STANDARDIZE, HUNT, DIGIVOLVE, SCAN)
+- **Init Output** - Now shows v3.2 commands (STANDARDIZE, DOCUMENT, MIGRATE, Implement)
 
 ### Removed
 
