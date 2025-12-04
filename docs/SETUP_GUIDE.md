@@ -100,7 +100,7 @@ DOCUMENT architecture
 
 **Example interaction:**
 ```
-Claude: I can see this is a Flutter project using MVVM + GetX.
+IGRIS: I can see this is a Flutter project using MVVM + GetX.
 
 Let me ask a few questions:
 
@@ -163,12 +163,12 @@ Now that you have generated briefs, let's work on one:
 
 ### List Briefs
 
-**Ask Claude:**
+**Command:**
 ```
 List all bugs
 ```
 
-**Claude shows:**
+**IGRIS shows:**
 ```
 ## Bug Briefs (5 total)
 
@@ -181,12 +181,12 @@ List all bugs
 
 ### Implement a Brief
 
-**Ask Claude:**
+**Command:**
 ```
-Implement BR-001
+HUNT BR-001
 ```
 
-**Claude will:**
+**IGRIS will:**
 1. Read the brief from `ai/briefs/BR-001-*.md`
 2. Load architecture context
 3. Create session in `ai/session/CURRENT_SESSION.md`
@@ -201,43 +201,40 @@ Implement BR-001
 
 ```bash
 # See all active work
-cat ai/session/CURRENT_SESSION.md
+SCAN  # or: cat ai/session/CURRENT_SESSION.md
 
 # List pending briefs
-# Ask Claude: "List all bugs in Ready status"
+List all bugs in Ready status
 ```
 
 ### Register New Work
 
 ```bash
 # Bug found during testing
-# Ask Claude:
-"Register a bug (don't implement):
+REGISTER bug:
 Module: user profile
 Issue: Profile picture doesn't update after upload
 Steps: 1) Upload new picture, 2) Check profile page
 Expected: New picture shows
 Actual: Old picture still visible
 Priority: P1
-
-Create brief BR-XXX for this."
 ```
 
 ### Implement Work
 
 ```bash
 # Start work on highest priority
-# Ask Claude: "What should I work on next?"
+What should I work on next?
 
 # Implement the recommendation
-# Ask Claude: "Implement BR-005"
+HUNT BR-005
 ```
 
 ### End of Day: Archive Session
 
 ```bash
 # If session is complete
-# Ask Claude: "Archive current session"
+REST  # or: Archive current session
 
 # This moves CURRENT_SESSION.md to ai/session/archive/
 ```
@@ -381,8 +378,8 @@ After setup:
 
 1. **Generate architecture docs** - Run `DOCUMENT architecture`
 2. **Analyze codebase** - Run `MIGRATE analyze`
-3. **Review generated briefs** - Ask Claude to "List all briefs"
-4. **Start implementing** - Ask Claude to "HUNT BR-XXX"
+3. **Review generated briefs** - Run `List all briefs`
+4. **Start implementing** - Run `HUNT BR-XXX`
 5. **Install plugins** - Add distribution, CI/CD, or custom plugins
 
 ---

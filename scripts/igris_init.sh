@@ -167,7 +167,7 @@ This directory should contain project-specific architecture documentation:
 
 ## How to Generate
 
-Use the DOCUMENT command to have Claude analyze your project and create these files:
+Use the DOCUMENT command to have IGRIS analyze your project and create these files:
 
 ```
 DOCUMENT architecture

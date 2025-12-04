@@ -341,7 +341,7 @@ STANDARDIZE analyze
 ```
 This will invoke the standardizer agent to generate coding guidelines.
 
-Claude will ask:
+IGRIS will ask:
 - Do you have a base architecture repository? (optional)
 - Should I analyze your current project?
 - What platform? (Flutter/React/Vue/etc.)

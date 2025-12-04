@@ -37,7 +37,7 @@ This creates your architecture baseline.
 MIGRATE analyze
 ```
 
-**What Claude does:**
+**What IGRIS does:**
 1. Scans all source files
 2. Compares against architecture standards (from `ai/context/`)
 3. Identifies violations, bugs, debt, and testing gaps
@@ -66,16 +66,16 @@ Estimated migration time: 4-5 weeks
 **Review generated briefs:**
 
 ```bash
-# Ask Claude: "List all migration briefs"
-# Ask Claude: "List all P0 bugs"
-# Ask Claude: "Show migration roadmap"
+List all migration briefs
+List all P0 bugs
+Show migration roadmap
 ```
 
 **Adjust priorities if needed:**
 
 ```bash
-# Ask Claude: "Change MG-005 to P0"  # Critical for release
-# Ask Claude: "Change TD-003 to P3"  # Can wait
+Change MG-005 to P0   # Critical for release
+Change TD-003 to P3   # Can wait
 ```
 
 **Review the roadmap:**
@@ -109,26 +109,26 @@ Example roadmap structure:
 
 ```bash
 # Week 1: Critical fixes
-# Ask Claude: "Implement BR-001"  # Fix memory leak
-# Ask Claude: "Implement BR-003"  # Fix security issue
+HUNT BR-001   # Fix memory leak
+HUNT BR-003   # Fix security issue
 
 # Week 2-3: Architecture migration
-# Ask Claude: "Implement MG-001"  # Refactor to Actions
-# Ask Claude: "Implement MG-005"  # Immutable models
+HUNT MG-001   # Refactor to Actions
+HUNT MG-005   # Immutable models
 
 # Week 4: Technical debt
-# Ask Claude: "Implement TD-001"  # Remove magic numbers
-# Ask Claude: "Implement TD-005"  # Add doc comments
+HUNT TD-001   # Remove magic numbers
+HUNT TD-005   # Add doc comments
 
 # Week 5: Testing
-# Ask Claude: "Implement TS-001"  # Add unit tests
+HUNT TS-001   # Add unit tests
 ```
 
 **Track progress:**
 
 ```bash
-# Ask Claude: "Show migration status"
-# Ask Claude: "How many P0/P1 briefs remain?"
+Show migration status
+How many P0/P1 briefs remain?
 ```
 
 ### Phase 4: Verification
@@ -300,10 +300,10 @@ Example roadmap structure:
 ../igris-ai/scripts/igris_init.sh
 
 # Generate docs (30 min)
-# Ask Claude: "Generate architecture docs"
+DOCUMENT architecture
 
 # Analyze codebase (45 min)
-# Ask Claude: "Analyze codebase for migration"
+MIGRATE analyze
 
 # Review results (30 min)
 cat ai/session/MIGRATION_ROADMAP.md
@@ -315,16 +315,16 @@ cat ai/session/MIGRATION_ROADMAP.md
 
 **Monday:**
 ```bash
-# Ask Claude: "List P0 bugs"
+List P0 bugs
 # Found: BR-001 (memory leak), BR-003 (security)
 
-# Ask Claude: "Implement BR-001"
+HUNT BR-001
 # 2 hours, fixed, tested, committed
 ```
 
 **Tuesday-Friday:**
 ```bash
-# Implement BR-003, BR-005, BR-007
+# HUNT BR-003, BR-005, BR-007
 # All P0 bugs resolved
 ```
 
@@ -335,10 +335,10 @@ cat ai/session/MIGRATION_ROADMAP.md
 **Week 2:**
 ```bash
 # Migrate "auth" module
-# Ask Claude: "List all MG briefs for auth module"
+List all MG briefs for auth module
 # Found: MG-001, MG-003, MG-005
 
-# Implement each one
+# HUNT each one
 # End of week: Auth module 100% compliant ✅
 ```
 
@@ -352,15 +352,15 @@ cat ai/session/MIGRATION_ROADMAP.md
 ### Week 4: Technical Debt
 
 ```bash
-# Ask Claude: "List all TD briefs P1-P2"
-# Implement top 10 debt items
+List all TD briefs P1-P2
+# HUNT top 10 debt items
 # End of week: Major debt paid off ✅
 ```
 
 ### Week 5: Testing
 
 ```bash
-# Ask Claude: "List all TS briefs P1"
+List all TS briefs P1
 # Add tests for critical ViewModels
 # End of week: Core modules have 80%+ coverage ✅
 ```

@@ -740,7 +740,7 @@ Run `/init` in Claude Code CLI to enhance this file with:
 - Existing patterns and conventions
 - Technology stack documentation
 
-Claude will analyze your codebase and merge findings with these Igris AI instructions.
+IGRIS will analyze your codebase and merge findings with these Igris AI instructions.
 
 ---
 

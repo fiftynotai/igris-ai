@@ -211,8 +211,8 @@ $ ./scripts/install_shell_integration.sh
 This adds a notification to your shell (bash/zsh):
 ```bash
 $ cd my-project
-📘 IGRIS detected (v2.4.0)
-   Claude will auto-initialize with IGRIS configuration
+📘 IGRIS detected (v3.2.0)
+   IGRIS will auto-initialize on first message
 ```
 
 **Benefits:**
@@ -1258,10 +1258,10 @@ Create brief BR-XXX for this.
 ### Implement a Feature
 
 ```
-Implement BR-005
+HUNT BR-005
 ```
 
-Claude will:
+IGRIS will:
 1. Read the brief
 2. Load architecture context
 3. Plan the implementation
