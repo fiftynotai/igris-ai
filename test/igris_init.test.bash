@@ -41,6 +41,23 @@ load test_helper
   assert_success
   assert_dir_exists "$TEST_PROJECT_DIR/.claude"
   assert_dir_exists "$TEST_PROJECT_DIR/.claude/hooks"
+  assert_dir_exists "$TEST_PROJECT_DIR/.claude/agents"
+}
+
+@test "igris_init installs native subagents" {
+  setup_test_project
+
+  run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"
+
+  assert_success
+  assert_dir_exists "$TEST_PROJECT_DIR/.claude/agents"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/manifest.yaml"
+
+  # Verify core agents installed
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/planner.md"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/coder.md"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/tester.md"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/reviewer.md"
 }
 
 # =============================================================================
@@ -218,12 +235,9 @@ load test_helper
 
   assert_success
 
-  # Check core prompts exist
+  # Check core prompts exist (v3.2 - consolidated to 2 files)
   assert_file_exists "$TEST_PROJECT_DIR/ai/prompts/igris_os.md"
   assert_file_exists "$TEST_PROJECT_DIR/ai/prompts/session_protocol.md"
-  assert_file_exists "$TEST_PROJECT_DIR/ai/prompts/bug_prompts.md"
-  assert_file_exists "$TEST_PROJECT_DIR/ai/prompts/feature_prompts.md"
-  assert_file_exists "$TEST_PROJECT_DIR/ai/prompts/self_maintenance.md"
 }
 
 # =============================================================================
