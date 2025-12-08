@@ -262,6 +262,13 @@ fi
 # Use a two-step process to handle multi-line PERSONA_INJECTION
 INSTALL_DATE=$(date -u +"%Y-%m-%d")
 
+# Set INSTALLED_PERSONA display text
+if [ "$PERSONA_NAME" != "none" ] && [ -n "$PERSONA_NAME" ]; then
+  INSTALLED_PERSONA="**Installed Persona:** $PERSONA_NAME"
+else
+  INSTALLED_PERSONA=""
+fi
+
 # Determine hook status
 HOOK_STATUS="No enhancement hooks installed"
 INSTALLED_ENHANCEMENT_PLUGINS="None"
@@ -308,6 +315,7 @@ sed -e "s/{{IGRIS_VERSION}}/$IGRIS_VERSION/g" \
     -e "s/{{INSTALL_DATE}}/$INSTALL_DATE/g" \
     -e "s/{{HOOK_STATUS}}/$HOOK_STATUS/g" \
     -e "s/{{INSTALLED_ENHANCEMENT_PLUGINS}}/$INSTALLED_ENHANCEMENT_PLUGINS/g" \
+    -e "s/{{INSTALLED_PERSONA}}/$INSTALLED_PERSONA/g" \
     "$IGRIS_DIR/scripts/templates/CLAUDE.md.template" > CLAUDE.md.tmp
 
 # Second pass: Replace persona injection using perl (handles newlines)
