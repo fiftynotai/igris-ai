@@ -116,10 +116,14 @@ with open('ai/plugins/installed.json', 'r') as f:
         if plugin['name'] == '$PLUGIN_NAME':
             print(plugin.get('repo', ''))
             print(plugin.get('version', ''))
+            # Output hooks as JSON string (or empty)
+            hooks = plugin.get('hooks', {})
+            print(json.dumps(hooks) if hooks else '{}')
             break
 ")
 PLUGIN_REPO=$(echo "$PLUGIN_INFO" | sed -n '1p')
 CURRENT_VERSION=$(echo "$PLUGIN_INFO" | sed -n '2p')
+OLD_HOOKS=$(echo "$PLUGIN_INFO" | sed -n '3p')
 
 echo "📦 Plugin: $PLUGIN_NAME"
 echo "📍 Repository: $PLUGIN_REPO"
@@ -147,13 +151,17 @@ if [ ! -f "$TEMP_DIR/plugin.json" ]; then
   exit 1
 fi
 
-# Extract version from plugin.json using python3 (reliable JSON parsing)
-REMOTE_VERSION=$(python3 -c "
+# Extract version and hooks from plugin.json using python3 (reliable JSON parsing)
+REMOTE_INFO=$(python3 -c "
 import json
 with open('$TEMP_DIR/plugin.json', 'r') as f:
     data = json.load(f)
     print(data.get('version', ''))
+    hooks = data.get('hooks', {})
+    print(json.dumps(hooks) if hooks else '{}')
 " 2>/dev/null)
+REMOTE_VERSION=$(echo "$REMOTE_INFO" | sed -n '1p')
+NEW_HOOKS=$(echo "$REMOTE_INFO" | sed -n '2p')
 
 if [ -z "$REMOTE_VERSION" ]; then
   echo "❌ Error: Could not extract version from plugin.json"
@@ -252,7 +260,7 @@ UPDATE_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 cd "$PROJECT_DIR"
 
-# Update installed.json
+# Update installed.json (including hooks)
 TEMP_JSON=$(mktemp)
 python3 <<EOF > "$TEMP_JSON"
 import json
@@ -260,11 +268,19 @@ import json
 with open('ai/plugins/installed.json', 'r') as f:
     data = json.load(f)
 
+# Parse new hooks
+new_hooks = json.loads('$NEW_HOOKS') if '$NEW_HOOKS' and '$NEW_HOOKS' != '{}' else {}
+
 # Find and update plugin entry
 for plugin in data['plugins']:
     if plugin['name'] == '$PLUGIN_NAME':
         plugin['version'] = '$REMOTE_VERSION'
         plugin['installed_at'] = '$UPDATE_DATE'
+        # Update hooks (add if present, remove if empty)
+        if new_hooks:
+            plugin['hooks'] = new_hooks
+        elif 'hooks' in plugin:
+            del plugin['hooks']
         break
 
 data['last_updated'] = '$UPDATE_DATE'
@@ -277,6 +293,131 @@ if [ $? -eq 0 ] && [ -s "$TEMP_JSON" ]; then
 else
     echo "⚠️  Warning: Failed to update plugin registry"
     rm -f "$TEMP_JSON"
+fi
+
+# Regenerate CLAUDE.md if hooks exist (old or new) - content may have changed
+# Always regenerate when hooks are involved to ensure CLAUDE.md reflects current state
+if [ "$OLD_HOOKS" != "{}" ] || [ "$NEW_HOOKS" != "{}" ]; then
+  echo "🔄 Regenerating CLAUDE.md (hooks changed)..."
+
+  # Get Igris AI version
+  IGRIS_VERSION=$(cat .igris_version | grep '"igris_ai_version"' | sed 's/.*"igris_ai_version": "\(.*\)".*/\1/' 2>/dev/null || echo "unknown")
+  INSTALL_DATE=$(cat CLAUDE.md | grep "Installed:" | sed 's/.*Installed:\*\* //' 2>/dev/null || date -u +"%Y-%m-%d")
+
+  # Find Igris AI installation (for template)
+  IGRIS_DIR=$(dirname "$(dirname "$(readlink -f "$0" 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")")")
+
+  # Resolve persona hook (if plugin provides one)
+  PERSONA_INJECTION=""
+  if [ -f "ai/plugins/installed.json" ]; then
+    if command -v jq &> /dev/null; then
+      PERSONA_HOOK=$(jq -r '.plugins[] | select(.hooks.persona_injection) | .hooks.persona_injection' ai/plugins/installed.json 2>/dev/null || echo "")
+      if [ -n "$PERSONA_HOOK" ] && [ -f "$PERSONA_HOOK" ]; then
+        PERSONA_INJECTION=$(cat "$PERSONA_HOOK")
+      fi
+    else
+      # Python fallback for jq
+      PERSONA_HOOK=$(python3 <<HOOK_EOF 2>/dev/null
+import json
+try:
+    with open('ai/plugins/installed.json', 'r') as f:
+        data = json.load(f)
+    for plugin in data.get('plugins', []):
+        hooks = plugin.get('hooks', {})
+        if 'persona_injection' in hooks:
+            print(hooks['persona_injection'])
+            break
+except:
+    pass
+HOOK_EOF
+)
+      if [ -n "$PERSONA_HOOK" ] && [ -f "$PERSONA_HOOK" ]; then
+        PERSONA_INJECTION=$(cat "$PERSONA_HOOK")
+      fi
+    fi
+  fi
+
+  # Check for bundled persona (fallback if no plugin hook)
+  if [ -z "$PERSONA_INJECTION" ] && [ -f "ai/persona.json" ]; then
+    PERSONA_NAME=$(python3 -c "import json; data=json.load(open('ai/persona.json')); print(data.get('persona', 'none'))" 2>/dev/null || echo "none")
+    PERSONA_MASK=$(python3 -c "import json; data=json.load(open('ai/persona.json')); print(data.get('mask', 'none'))" 2>/dev/null || echo "none")
+
+    if [ "$PERSONA_NAME" != "none" ] && [ "$PERSONA_MASK" != "none" ]; then
+      PERSONA_MASK_FILE="ai/personas/$PERSONA_NAME/masks/${PERSONA_MASK}.md"
+      if [ -f "$PERSONA_MASK_FILE" ]; then
+        PERSONA_INJECTION=$(cat "$PERSONA_MASK_FILE")
+      fi
+    fi
+  fi
+
+  # Set INSTALLED_PERSONA display text
+  INSTALLED_PERSONA=""
+  if [ -f "ai/persona.json" ]; then
+    PERSONA_NAME_DISPLAY=$(python3 -c "import json; data=json.load(open('ai/persona.json')); print(data.get('persona', ''))" 2>/dev/null || echo "")
+    if [ -n "$PERSONA_NAME_DISPLAY" ] && [ "$PERSONA_NAME_DISPLAY" != "none" ]; then
+      INSTALLED_PERSONA="**Installed Persona:** $PERSONA_NAME_DISPLAY"
+    fi
+  fi
+
+  # Write persona content to temp file if present (preserves all formatting)
+  PERSONA_TEMP=""
+  if [ -n "$PERSONA_INJECTION" ]; then
+    PERSONA_TEMP=$(mktemp)
+    printf '%s' "$PERSONA_INJECTION" > "$PERSONA_TEMP"
+  fi
+
+  python3 <<PYTHON_EOF
+import json
+
+# Read template
+with open("$IGRIS_DIR/scripts/templates/CLAUDE.md.template", 'r') as f:
+    content = f.read()
+
+# Replace simple variables
+content = content.replace('{{IGRIS_VERSION}}', '$IGRIS_VERSION')
+content = content.replace('{{INSTALL_DATE}}', '$INSTALL_DATE')
+content = content.replace('{{INSTALLED_PERSONA}}', '$INSTALLED_PERSONA')
+
+# Determine hook status
+hook_status = "No enhancement hooks installed"
+installed_plugins = "None"
+
+try:
+    with open('ai/plugins/installed.json', 'r') as f:
+        plugins_data = json.load(f)
+    plugin_count = len(plugins_data.get('plugins', []))
+    if plugin_count > 0:
+        hook_status = f"{plugin_count} plugin(s) with enhancement hooks installed"
+        names = [p.get('name', 'unknown') for p in plugins_data.get('plugins', [])]
+        installed_plugins = ', '.join(names)
+except:
+    pass
+
+content = content.replace('{{HOOK_STATUS}}', hook_status)
+content = content.replace('{{INSTALLED_ENHANCEMENT_PLUGINS}}', installed_plugins)
+
+# Replace persona injection (multi-line safe)
+persona_content = ""
+persona_file = "$PERSONA_TEMP"
+if persona_file:
+    try:
+        with open(persona_file, 'r') as f:
+            persona_content = f.read()
+    except:
+        pass
+content = content.replace('{{PERSONA_INJECTION}}', persona_content)
+
+# Write result
+with open('CLAUDE.md', 'w') as f:
+    f.write(content)
+PYTHON_EOF
+
+  # Cleanup temp file
+  if [ -n "$PERSONA_TEMP" ]; then
+    rm -f "$PERSONA_TEMP"
+  fi
+
+  echo "✅ CLAUDE.md regenerated"
 fi
 
 # Update .igris_version

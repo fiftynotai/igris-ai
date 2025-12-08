@@ -244,10 +244,25 @@ load test_helper
   plugin_dir=$(create_mock_plugin "test-plugin" false)
   "$SCRIPTS_DIR/plugin_install.sh" "$plugin_dir"
 
-  # Add hooks to plugin
+  # Add hooks to plugin (update both plugin.json and install.sh)
   mkdir -p "$plugin_dir/ai/prompts"
   echo "# New Persona" > "$plugin_dir/ai/prompts/persona.md"
   echo '{"name": "test-plugin", "version": "2.0.0", "description": "Now with hooks", "hooks": {"persona_injection": "ai/prompts/persona.md"}}' > "$plugin_dir/plugin.json"
+
+  # Update install.sh to copy hook files (simulates real plugin behavior)
+  cat > "$plugin_dir/install.sh" <<'EOF'
+#!/bin/bash
+PLUGIN_DIR="$1"
+PROJECT_DIR="$2"
+
+# Copy plugin hook files to project
+if [ -d "$PLUGIN_DIR/ai" ]; then
+  cp -r "$PLUGIN_DIR/ai"/* "$PROJECT_DIR/ai/" 2>/dev/null || true
+fi
+
+echo "Mock plugin installed"
+EOF
+  chmod +x "$plugin_dir/install.sh"
 
   # Update plugin
   "$SCRIPTS_DIR/plugin_update.sh" "test-plugin" --yes
