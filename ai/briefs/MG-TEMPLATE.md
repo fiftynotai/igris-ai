@@ -161,7 +161,7 @@ _(Finished tasks)_
 
 1. [ ] Code follows architecture pattern (layers respected)
 2. [ ] All affected tests pass
-3. [ ] `flutter analyze` passes (zero issues)
+3. [ ] Linter/analyzer passes (zero issues)
 4. [ ] Manual smoke test performed
 5. [ ] Code reviewed and approved
 6. [ ] Documentation updated (if needed)

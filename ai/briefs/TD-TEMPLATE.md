@@ -149,7 +149,7 @@ _(Finished tasks)_
 1. [ ] Code follows best practices
 2. [ ] All affected files updated
 3. [ ] No hardcoded values / magic numbers / duplication (whatever the debt was)
-4. [ ] `flutter analyze` passes (zero issues)
+4. [ ] Linter/analyzer passes (zero issues)
 5. [ ] All existing tests pass
 6. [ ] No functionality changes (refactoring only)
 7. [ ] Code is more maintainable/readable

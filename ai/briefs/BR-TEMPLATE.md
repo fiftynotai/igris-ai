@@ -34,24 +34,16 @@
 ## Context & Inputs
 
 ### Affected Modules
-- [ ] `auth`
-- [ ] `event`
-- [ ] `venue`
-- [ ] `details`
-- [ ] `kds`
-- [ ] `settings`
-- [ ] `history`
-- [ ] `home`
-- [ ] `app_version`
-- [ ] `connections`
+- [ ] [Module 1]
+- [ ] [Module 2]
+- [ ] [Module 3]
 - [ ] Other: [specify]
 
 ### Layers Touched
-- [ ] View (UI widgets)
-- [ ] Actions (UX orchestration)
-- [ ] ViewModel (business logic)
-- [ ] Service (data layer)
-- [ ] Model (domain objects)
+- [ ] Presentation (UI/Views)
+- [ ] Business Logic (Controllers/ViewModels/Services)
+- [ ] Data Layer (Repositories/APIs)
+- [ ] Domain (Models/Entities)
 
 ### API Changes
 - [ ] New endpoint: [URL, method, payload]
@@ -71,10 +63,10 @@
 ## Constraints
 
 ### Architecture Rules
-- Must follow MVVM + Actions pattern (View → Actions → ViewModel → Service → Model)
-- No skipping layers
-- Use `ApiResponse<T>` for async operations
-- Use `actionHandler()` for user-triggered actions
+- Must follow project architecture pattern (see coding_guidelines.md)
+- Respect layer boundaries
+- Follow established patterns for async operations
+- Follow established patterns for user interactions
 
 ### Technical Constraints
 - [e.g., Must support offline mode, Max 2s response time, etc.]
@@ -136,8 +128,8 @@ _(Finished tasks)_
 1. [ ] [Testable outcome 1]
 2. [ ] [Testable outcome 2]
 3. [ ] [Testable outcome 3]
-4. [ ] `flutter analyze` passes (zero issues)
-5. [ ] `flutter test` passes (all existing + new tests green)
+4. [ ] Linter/analyzer passes (zero issues)
+5. [ ] Test suite passes (all existing + new tests green)
 6. [ ] Manual smoke test performed (if UI changes)
 7. [ ] Documentation updated (README, API docs, etc.)
 

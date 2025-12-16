@@ -50,43 +50,33 @@
 **Then:** [Expected outcome]
 
 **Example:**
-```dart
-test('fetchEvents updates state to success when API succeeds', () async {
-  // Given: ViewModel initialized with mock service
-  when(mockService.getEvents()).thenAnswer((_) async => [EventModel(...)]);
-
-  // When: fetchEvents called
-  await viewModel.fetchEvents();
-
-  // Then: State is success with events
-  expect(viewModel.eventsResponse.hasData(), true);
-  expect(viewModel.events.length, 1);
+```
+// Example unit test (syntax varies by language/framework)
+test('fetchData updates state to success when API succeeds', () {
+  // Given: Service initialized with mock dependencies
+  // When: fetchData called
+  // Then: State is success with expected data
 });
 ```
 
 #### Scenario 2: [Test Name]
 [Repeat structure above]
 
-### Widget Tests
+### UI/Component Tests
 
 #### Scenario 1: [Test Name]
-**Widget:** [Widget name]
+**Component:** [Component name]
 **Given:** [Initial conditions]
 **When:** [User interaction]
 **Then:** [Expected UI state]
 
 **Example:**
-```dart
-testWidgets('Login button disabled when fields empty', (tester) async {
-  // Given: Login page loaded
-  await tester.pumpWidget(LoginPage());
-
-  // When: Fields are empty
-  // (default state)
-
-  // Then: Login button is disabled
-  final button = find.byType(ElevatedButton);
-  expect(tester.widget<ElevatedButton>(button).onPressed, null);
+```
+// Example UI test (syntax varies by framework)
+test('Submit button disabled when form invalid', () {
+  // Given: Form component rendered
+  // When: Required fields are empty
+  // Then: Submit button is disabled
 });
 ```
 
@@ -114,10 +104,10 @@ testWidgets('Login button disabled when fields empty', (tester) async {
 
 **Effort:** [X hours/days]
 
-### Phase 2: Widget Tests
-1. [ ] Test [Widget 1] renders correctly
-2. [ ] Test [Widget 2] user interactions
-3. [ ] Test [Widget 3] state changes
+### Phase 2: UI/Component Tests
+1. [ ] Test [Component 1] renders correctly
+2. [ ] Test [Component 2] user interactions
+3. [ ] Test [Component 3] state changes
 
 **Effort:** [X hours/days]
 
@@ -187,13 +177,13 @@ _(Finished tasks)_
 ## Dependencies
 
 ### Testing Libraries
-- [ ] `flutter_test` - Already included
-- [ ] `mockito` - [Version] (if needed)
-- [ ] `bloc_test` / `mocktail` / `etc.` - [Version] (if needed)
+- [ ] [Test framework] - [Version] (built-in or needs install)
+- [ ] [Mocking library] - [Version] (if needed)
+- [ ] [Additional test utilities] - [Version] (if needed)
 
 ### Setup Required
-- [ ] Add dependencies to pubspec.yaml
-- [ ] Generate mocks (if using mockito)
+- [ ] Add test dependencies to project configuration
+- [ ] Generate mocks (if using mock generation)
 - [ ] Create test fixtures directory
 
 ---
@@ -204,7 +194,7 @@ _(Finished tasks)_
 
 1. [ ] All identified test scenarios implemented
 2. [ ] Test coverage >= [target %]
-3. [ ] All tests pass (`flutter test`)
+3. [ ] All tests pass (run test command)
 4. [ ] Tests are maintainable (clear, not flaky)
 5. [ ] Tests follow project conventions
 6. [ ] Edge cases covered
