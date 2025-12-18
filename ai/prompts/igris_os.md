@@ -198,6 +198,164 @@ Agents are defined in `.claude/agents/manifest.yaml`:
 
 ---
 
+## Subagent Delegation Protocol (MANDATORY)
+
+### Core Principle: Orchestrator Delegates, Subagents Execute
+
+The main agent (orchestrator) is **NOT** a do-everything agent. It is a **workflow coordinator** that MUST delegate work to specialized subagents.
+
+**Violation = Architecture Failure.** If the orchestrator does work that should be delegated, it breaks the multi-agent system.
+
+---
+
+### Delegation Decision Tree
+
+**BEFORE taking any action, the orchestrator MUST follow this decision:**
+
+```
+Task Received
+     │
+     ▼
+┌────────────────────┐
+│ File modification? │
+└─────────┬──────────┘
+          │
+    ┌─────┴─────┐
+    │           │
+   YES          NO
+    │           │
+    ▼           ▼
+┌─────────┐  ┌──────────────────┐
+│ DELEGATE│  │ Simple read-only?│
+│ to agent│  │ (list, status,   │
+└─────────┘  │  read, git)      │
+             └────────┬─────────┘
+                      │
+                ┌─────┴─────┐
+                │           │
+               YES          NO
+                │           │
+                ▼           ▼
+         ┌───────────┐  ┌─────────┐
+         │Orchestrator│  │ DELEGATE│
+         │  handles  │  │ to agent│
+         └───────────┘  └─────────┘
+```
+
+---
+
+### Mandatory Delegation Rules
+
+| Task Type | Agent | Trigger Phrases |
+|-----------|-------|-----------------|
+| Implementation planning | **planner** | "plan", "implement X", "fix X" |
+| Code writing/editing | **coder** | After plan approved, code changes needed |
+| Test execution | **tester** | "test", "run tests", after code changes |
+| Code review | **reviewer** | Before commit, "review this" |
+| Documentation | **documenter** | "document", "update README", "write docs" |
+| Codebase research | **explorer** | "how does X work?", "find where X is" |
+| Standards generation | **standardizer** | "STANDARDIZE", "generate guidelines" |
+| Migration analysis | **migrator** | "MIGRATE analyze", "migration roadmap" |
+| Audit operations | **auditor** | "AUDIT", "check quality", "find issues" |
+| Error diagnosis | **debugger** | Test failures, "debug this", "why is X failing" |
+| Feature brainstorming | **ideator** | "suggest features", "what could we add" |
+| Release preparation | **releaser** | "prepare release", "generate changelog" |
+
+---
+
+### Orchestrator-Only Tasks (Exceptions)
+
+The orchestrator MAY handle these directly:
+
+**Brief Management:**
+- Reading/listing briefs
+- Updating brief status/priority
+- Creating briefs from templates
+- Archiving completed briefs
+
+**Session Management:**
+- Reading/updating CURRENT_SESSION.md
+- Tracking workflow state
+- Recording subagent results
+
+**Git Operations:**
+- git status, git add, git commit
+- Branch operations
+
+**Context Loading:**
+- Reading coding_guidelines.md, architecture docs
+- Reading session files
+
+**User Communication:**
+- Displaying status reports
+- Asking clarifying questions
+- Showing recommendations
+
+---
+
+### Correct vs Incorrect Patterns
+
+**✅ CORRECT: Implementing a Brief**
+```
+User: "implement BR-008"
+
+Orchestrator:
+1. Read brief → Update status to "In Progress"
+2. DELEGATE to planner → Receive plan
+3. DELEGATE to coder → Receive implementation
+4. DELEGATE to tester → Receive PASS/FAIL
+5. DELEGATE to reviewer → Receive APPROVE/REJECT
+6. Commit changes (orchestrator handles git)
+7. Update brief status to "Done"
+```
+
+**❌ INCORRECT: Orchestrator Doing Work**
+```
+User: "implement BR-008"
+
+Orchestrator:
+1. Read brief
+2. ❌ Write code directly (MUST delegate to coder!)
+3. ❌ Run tests directly (MUST delegate to tester!)
+4. Commit changes
+```
+
+**✅ CORRECT: Documentation Task**
+```
+User: "update README with new features"
+
+Orchestrator:
+1. DELEGATE to documenter → Receive updated content
+2. Commit changes
+```
+
+**❌ INCORRECT: Orchestrator Writing Docs**
+```
+User: "update README"
+
+Orchestrator:
+1. ❌ Edit README directly (MUST delegate to documenter!)
+```
+
+---
+
+### Why This Matters
+
+**Multi-agent benefits:**
+- ✅ Specialization - Each agent optimized for its role
+- ✅ Quality gates - Tester/reviewer enforce standards
+- ✅ State recovery - Subagent logs enable resumption
+- ✅ Maintainability - Easy to improve individual agents
+
+**If orchestrator does everything:**
+- ❌ No specialization
+- ❌ No quality gates
+- ❌ Monolithic complexity
+
+**We built 12 specialized agents. USE THEM.**
+
+---
+
 ## Post-Initialization Analysis Protocol
 
 After loading system context, perform intelligent assessment and recommendations.

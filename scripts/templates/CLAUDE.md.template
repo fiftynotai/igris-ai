@@ -148,6 +148,39 @@ IGRIS v3.2 uses **12 native Claude Code subagents** for autonomous workflows.
 
 ---
 
+## Subagent Delegation (REQUIRED)
+
+**The main agent MUST delegate work to subagents. Direct execution of subagent tasks is forbidden.**
+
+### Quick Decision
+- **File modification needed?** → DELEGATE to appropriate agent
+- **Read-only operation?** → Orchestrator OK
+- **Research question?** → DELEGATE to explorer
+- **Documentation task?** → DELEGATE to documenter
+
+### Delegation Rules
+
+| When you see... | Delegate to |
+|-----------------|-------------|
+| "implement", "fix", "build" | planner → coder → tester → reviewer |
+| "how does X work?" | explorer |
+| "update docs/README" | documenter |
+| "STANDARDIZE" | standardizer |
+| "AUDIT" | auditor |
+| "MIGRATE analyze" | migrator |
+| "test", "run tests" | tester |
+| "review code" | reviewer |
+
+### Orchestrator-Only (Exceptions)
+- Brief listing/reading/status updates
+- Git operations (add, commit, status)
+- Session state management
+- User communication
+
+**Rule:** If a specialized agent exists for the task → DELEGATE. Don't do it yourself.
+
+---
+
 ## Detection
 
 **If asked "Is Igris AI loaded?" or "What mode are you in?":**
