@@ -1,7 +1,7 @@
 # ✦ IGRIS — AI Engineering Platform
 > *From Vibe Coding → Vibe Engineering*
 
-**Version 2.4.0** | Production Ready
+**Version 3.2.0** | Production Ready
 
 ---
 
@@ -105,9 +105,18 @@ cd your-project
 This creates:
 - `ai/` - IGRIS directory with templates
 - `.claude/hooks/` - Startup hook for automatic initialization
+- `.claude/agents/` - 12 native subagents for autonomous workflows
 - `CLAUDE.md` - Context for Claude Code CLI
 - `scripts/` - Core IGRIS scripts (6 scripts including update system)
 - Documentation and guides
+
+**MCP Server Setup (Optional):**
+
+During initialization, if Node.js 20+ is detected, you'll be prompted to:
+1. Build the MCP server for enhanced tool integration
+2. Configure Claude Code to use the MCP server
+
+This is optional — IGRIS works fully without MCP. MCP adds shortcut tools for brief management, session tracking, and git operations.
 
 ### Your First 5 Minutes
 
@@ -1411,7 +1420,25 @@ See `.github/workflows/test.yml` for CI/CD configuration.
 - **Claude AI** - AI assistant (Claude Code CLI or Claude.ai) (required)
 - **Python 3** - For JSON manipulation in scripts (required)
 - **Bash** - Shell scripts (Mac/Linux/WSL) (required)
+- **Node.js 20+** - For MCP server (optional - enables enhanced tool integration)
 - **jq** - JSON processor (optional - needed for plugin hooks)
+
+### Installing Node.js (Optional)
+
+Node.js 20+ enables the MCP (Model Context Protocol) server for enhanced Claude Code integration. IGRIS works without it, but MCP tools won't be available.
+
+**macOS:**
+```bash
+brew install node
+```
+
+**Ubuntu/Debian:**
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+**Download:** [https://nodejs.org/](https://nodejs.org/) (LTS version 20+)
 
 ### Installing jq (Optional)
 
