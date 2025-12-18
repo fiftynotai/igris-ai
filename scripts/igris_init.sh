@@ -372,6 +372,144 @@ cat > .igris_version <<EOF
 }
 EOF
 
+# ============================================================
+# MCP Server Setup (Optional Enhancement)
+# ============================================================
+echo ""
+echo "🔌 MCP Server Setup (Optional)"
+echo "--------------------------------"
+
+MCP_AVAILABLE=false
+MCP_CONFIGURED=false
+
+# Check for Node.js
+if command -v node &> /dev/null; then
+  NODE_VERSION=$(node --version 2>/dev/null | sed 's/v//')
+  NODE_MAJOR=$(echo "$NODE_VERSION" | cut -d. -f1)
+
+  if [ "$NODE_MAJOR" -ge 20 ]; then
+    echo "✅ Node.js $NODE_VERSION detected (required: 20+)"
+    MCP_AVAILABLE=true
+  else
+    echo "⚠️  Node.js $NODE_VERSION detected (required: 20+)"
+    echo "   MCP server requires Node.js 20 or higher."
+    echo "   Upgrade: https://nodejs.org/"
+  fi
+else
+  echo "⚠️  Node.js not found"
+  echo "   MCP server provides enhanced tool integration but is optional."
+  echo "   Install: https://nodejs.org/ (version 20+)"
+fi
+
+# If Node.js available, offer to build MCP server
+if [ "$MCP_AVAILABLE" = true ]; then
+  MCP_SERVER_DIR="$IGRIS_DIR/mcp-server"
+
+  if [ -d "$MCP_SERVER_DIR" ]; then
+    # Check if running interactively
+    if [ -t 0 ]; then
+      echo ""
+      read -p "Build MCP server for enhanced tool integration? [Y/n]: " BUILD_MCP
+      BUILD_MCP=${BUILD_MCP:-Y}
+    else
+      # Non-interactive mode: skip MCP setup
+      echo "   (Non-interactive mode: skipping MCP setup)"
+      BUILD_MCP="n"
+    fi
+
+    if [[ "$BUILD_MCP" =~ ^[Yy]$ ]]; then
+      echo "📦 Building MCP server..."
+
+      # Check if already built
+      if [ -f "$MCP_SERVER_DIR/dist/index.js" ]; then
+        echo "   MCP server already built."
+      else
+        # Build MCP server
+        cd "$MCP_SERVER_DIR"
+        if npm install --silent 2>/dev/null && npm run build --silent 2>/dev/null; then
+          echo "   ✅ MCP server built successfully."
+        else
+          echo "   ⚠️  MCP server build failed. You can build manually later:"
+          echo "      cd $MCP_SERVER_DIR && npm install && npm run build"
+        fi
+        cd "$TARGET_DIR"
+      fi
+
+      # Offer to configure Claude Code
+      if [ -f "$MCP_SERVER_DIR/dist/index.js" ]; then
+        CLAUDE_CONFIG_DIR="$HOME/.claude"
+        CLAUDE_CONFIG_FILE="$CLAUDE_CONFIG_DIR/config.json"
+
+        echo ""
+        read -p "Configure Claude Code to use MCP server? [Y/n]: " CONFIGURE_MCP
+        CONFIGURE_MCP=${CONFIGURE_MCP:-Y}
+
+        if [[ "$CONFIGURE_MCP" =~ ^[Yy]$ ]]; then
+          mkdir -p "$CLAUDE_CONFIG_DIR"
+
+          MCP_SERVER_PATH="$MCP_SERVER_DIR/dist/index.js"
+
+          if [ -f "$CLAUDE_CONFIG_FILE" ]; then
+            # Config exists - check if igris-ai already configured
+            if grep -q '"igris-ai"' "$CLAUDE_CONFIG_FILE" 2>/dev/null; then
+              echo "   ✅ Claude Code already configured for Igris MCP."
+              MCP_CONFIGURED=true
+            else
+              # Add to existing config using Python (safe JSON manipulation)
+              python3 <<PYEOF
+import json
+import sys
+
+config_file = "$CLAUDE_CONFIG_FILE"
+mcp_path = "$MCP_SERVER_PATH"
+
+try:
+    with open(config_file, 'r') as f:
+        config = json.load(f)
+except:
+    config = {}
+
+if 'mcpServers' not in config:
+    config['mcpServers'] = {}
+
+config['mcpServers']['igris-ai'] = {
+    "command": "node",
+    "args": [mcp_path]
+}
+
+with open(config_file, 'w') as f:
+    json.dump(config, f, indent=2)
+
+print("   ✅ Added igris-ai to Claude Code config.")
+PYEOF
+              MCP_CONFIGURED=true
+            fi
+          else
+            # Create new config
+            cat > "$CLAUDE_CONFIG_FILE" <<MCPEOF
+{
+  "mcpServers": {
+    "igris-ai": {
+      "command": "node",
+      "args": ["$MCP_SERVER_PATH"]
+    }
+  }
+}
+MCPEOF
+            echo "   ✅ Created Claude Code config with Igris MCP."
+            MCP_CONFIGURED=true
+          fi
+        fi
+      fi
+    else
+      echo "   Skipping MCP setup. You can set it up later:"
+      echo "   cd $MCP_SERVER_DIR && npm install && npm run build"
+    fi
+  else
+    echo "⚠️  MCP server directory not found at $MCP_SERVER_DIR"
+  fi
+fi
+
 echo ""
 echo "✅ Igris AI v3.2 initialized successfully!"
 echo ""
@@ -379,6 +517,13 @@ echo "🤖 Claude Code Integration:"
 echo "   ✓ Startup hook enabled (.claude/hooks/startup.sh)"
 echo "   ✓ Context file created (CLAUDE.md)"
 echo "   ✓ 12 native subagents installed (.claude/agents/)"
+if [ "$MCP_CONFIGURED" = true ]; then
+  echo "   ✓ MCP server configured (enhanced tool integration)"
+elif [ "$MCP_AVAILABLE" = true ]; then
+  echo "   ○ MCP server available but not configured"
+else
+  echo "   ○ MCP server skipped (Node.js 20+ not found)"
+fi
 echo "   ✓ True zero-configuration - works immediately!"
 echo ""
 echo "📚 Getting Started:"
