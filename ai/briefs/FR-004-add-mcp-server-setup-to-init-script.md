@@ -3,9 +3,9 @@
 **Type:** FR
 **Priority:** P2
 **Effort:** TBD
-**Status:** In Progress
+**Status:** Done
 **Created:** 2025-12-18
-**Completed:** _TBD_
+**Completed:** 2025-12-18
 
 ---
 
