@@ -6,10 +6,10 @@ schema: "https://igris.ai/schemas/agent-manifest.yaml"
 
 metadata:
   name: "IGRIS Agent Ecosystem"
-  description: "Subagent definitions for IGRIS v3.2 - 12 agents across 5 tiers"
+  description: "Subagent definitions for IGRIS v3.2 - 13 agents across 5 tiers"
   created: "2025-12-03"
   updated: "2025-12-03"
-  agent_count: 12
+  agent_count: 13
 
 tiers:
   1:
@@ -244,3 +244,25 @@ agents:
 
   # Tier 5: Custom (Dynamic via Digivolve)
   # User-defined agents registered here
+
+  - name: flutter-mvvm-actions-expert
+    file: flutter-mvvm-actions-expert.md
+    tier: 5
+    role: "Flutter MVVM + Actions architecture"
+    description: "Expert Flutter specialist mastering Kalvad's MVVM + Actions Layer architecture with GetX. Enforces clean layer separation, reactive state, and type-safe patterns."
+    tools:
+      - Read
+      - Write
+      - Edit
+      - Bash
+      - Glob
+      - Grep
+    triggers:
+      - "flutter"
+      - "mvvm"
+      - "actions layer"
+      - "getx"
+      - "kalvad"
+      - "sage"
+      - "dart"
+      - "widget"

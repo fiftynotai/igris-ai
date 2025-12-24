@@ -8,7 +8,7 @@
 
 > *"AI made coding faster — but not better. IGRIS brings the discipline."*
 
-**IGRIS** is a multi-agent AI engineering system that orchestrates Claude Code through 12 specialized subagents to build high-quality software with structure, testing, and documentation.
+**IGRIS** is a multi-agent AI engineering system that orchestrates Claude Code through 13 specialized subagents to build high-quality software with structure, testing, and documentation.
 
 Not just code generation. **Autonomous engineering execution.**
 
@@ -39,7 +39,7 @@ AI made coding faster — but not better. Speed without structure created:
 
 ### The v3.2 Architecture
 
-**12 Native Subagents Across 4 Tiers:**
+**13 Native Subagents Across 5 Tiers:**
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -60,8 +60,11 @@ AI made coding faster — but not better. Speed without structure created:
                    ├─► TIER 3 (Maintenance): auditor, debugger, migrator
                    │                          Analyze   Fix      Migrate
                    │
-                   └─► TIER 4 (Innovation): ideator, explorer
-                                            Imagine   Research
+                   ├─► TIER 4 (Innovation): ideator, explorer
+                   │                            Imagine   Research
+                   │
+                   └─► TIER 5 (Custom): user-defined domain experts
+                                            Specialized Knowledge
 ```
 
 ### How It Works
@@ -111,7 +114,7 @@ cd your-project
 
 This creates:
 - `ai/` - IGRIS directory with templates and prompts
-- `.claude/agents/` - 12 native subagents
+- `.claude/agents/` - 13 native subagents
 - `.claude/hooks/` - Startup hook for auto-initialization
 - `CLAUDE.md` - Context for Claude Code CLI
 - `scripts/` - Core IGRIS scripts
@@ -184,7 +187,7 @@ claude
 ```
 ┌─────────────────────────────────────┐
 │   IGRIS (Multi-Agent System)        │
-│   - 12 Specialized Subagents         │
+│   - 13 Specialized Subagents         │
 │   - Workflow Orchestration           │
 │   - Architecture Enforcement         │
 │   - Session Management               │
@@ -215,7 +218,7 @@ claude
 - **You** = The architect (strategic decisions, priorities)
 
 **Without IGRIS:** Claude generates code based on prompts → random outputs
-**With IGRIS:** 12 specialized agents engineer outcomes autonomously → disciplined execution
+**With IGRIS:** 13 specialized agents engineer outcomes autonomously → disciplined execution
 
 ---
 
@@ -299,7 +302,7 @@ When you invoke `HUNT BR-005`:
 
 ---
 
-## ✦ The 12 Agents
+## ✦ The 13 Agents
 
 ### Tier 1: Core Workflow (Required)
 
@@ -332,6 +335,12 @@ When you invoke `HUNT BR-005`:
 |-------|------|------------------|-------|
 | **ideator** | Feature ideation | Brainstorms features, creates FR-XXX briefs | Read, Grep, Glob |
 | **explorer** | Codebase research | Investigates and explains codebase | Read, Grep, Glob, Bash |
+
+### Tier 5: Custom (User-Defined)
+
+| Agent | Role | Responsibilities | Tools |
+|-------|------|------------------|-------|
+| **flutter-mvvm-actions-expert** | Flutter architecture | Kalvad MVVM + Actions Layer patterns, GetX | Read, Write, Edit, Bash, Glob, Grep |
 
 ---
 
@@ -494,7 +503,7 @@ If Claude context resets mid-workflow:
 |---------|-----------|-------|
 | **Approach** | Editor-integrated AI | Multi-agent engineering system |
 | **Focus** | Fast code completion | Autonomous end-to-end workflows |
-| **Quality Control** | Manual | Automated (12 agents, quality gates) |
+| **Quality Control** | Manual | Automated (13 agents, quality gates) |
 | **Session Recovery** | None | Automatic (multi-level tracking) |
 | **Architecture Enforcement** | No | Yes (coding_guidelines.md) |
 | **Brief Management** | No | Yes (9 brief types, priorities) |
@@ -532,7 +541,7 @@ If Claude context resets mid-workflow:
 |---------|--------------|----------------|
 | **Context** | Manual prompt loading | Automatic (CLAUDE.md + hooks) |
 | **Workflow** | Ad-hoc | Autonomous (HUNT command) |
-| **Agents** | Single Claude | 12 specialized subagents |
+| **Agents** | Single Claude | 13 specialized subagents |
 | **Quality** | Varies by prompt | Enforced (guidelines, tests, review) |
 | **Recovery** | Lose context on reset | Automatic (session tracking) |
 | **Accountability** | None | Full audit trail (briefs, decisions) |
@@ -794,7 +803,7 @@ cat .igris_version
 ```
 your-project/
 ├── .claude/
-│   ├── agents/                  # 12 native subagents
+│   ├── agents/                  # 13 native subagents
 │   │   ├── manifest.yaml        # Agent registry
 │   │   ├── planner.md
 │   │   ├── coder.md
@@ -853,7 +862,7 @@ your-project/
 ## ✦ FAQ
 
 **Q: What's the difference between IGRIS and Claude?**
-A: IGRIS is a multi-agent engineering system that orchestrates Claude Code through 12 specialized subagents. Claude provides intelligence; IGRIS provides process, agents, and discipline.
+A: IGRIS is a multi-agent engineering system that orchestrates Claude Code through 13 specialized subagents. Claude provides intelligence; IGRIS provides process, agents, and discipline.
 
 **Q: Does IGRIS work with Claude.ai (web interface)?**
 A: Yes, but with limitations. Startup hooks won't auto-run, and Task tool (subagents) may not be available. Claude Code CLI is recommended.
@@ -913,7 +922,7 @@ IGRIS exists to merge imagination with structure — the spark *and* the system 
 Open source is humanity's greatest multiplier. IGRIS empowers:
 - **Abundance** — More creators, more releases, more shared knowledge
 - **Quality** — Tests, docs, clarity, maintainability
-- **Autonomy** — 12 agents working together to ship quality software
+- **Autonomy** — 13 agents working together to ship quality software
 
 **The Open Source Call:**
 > *Create boldly. Release openly. Engineer with discipline.*
@@ -932,7 +941,7 @@ Built for developers and teams using Claude AI to engineer high-quality software
 
 ---
 
-> **IGRIS — Where Creativity Meets Discipline, Powered by 12 Autonomous Agents.**
+> **IGRIS — Where Creativity Meets Discipline, Powered by 13 Autonomous Agents.**
 
 ```bash
 # Ready to engineer?

@@ -516,7 +516,7 @@ echo ""
 echo "🤖 Claude Code Integration:"
 echo "   ✓ Startup hook enabled (.claude/hooks/startup.sh)"
 echo "   ✓ Context file created (CLAUDE.md)"
-echo "   ✓ 12 native subagents installed (.claude/agents/)"
+echo "   ✓ 13 native subagents installed (.claude/agents/)"
 if [ "$MCP_CONFIGURED" = true ]; then
   echo "   ✓ MCP server configured (enhanced tool integration)"
 elif [ "$MCP_AVAILABLE" = true ]; then

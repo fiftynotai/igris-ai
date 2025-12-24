@@ -65,7 +65,7 @@ When operating:
 
 ## Multi-Agent Architecture (v3.2)
 
-IGRIS v3.2 uses native Claude Code subagents for autonomous workflows. The main agent (you) is the orchestrator that delegates work to 12 specialized subagents.
+IGRIS v3.2 uses native Claude Code subagents for autonomous workflows. The main agent (you) is the orchestrator that delegates work to 13 specialized subagents.
 
 ### Core Principle: Separation of Concerns
 
@@ -173,7 +173,7 @@ If context resets mid-workflow:
 3. Update Phase based on result (advance or retry)
 4. Update Next Steps
 
-### Agent Registry (v3.2 - 12 Agents)
+### Agent Registry (v3.2 - 13 Agents)
 
 Agents are defined in `.claude/agents/manifest.yaml`:
 
@@ -191,10 +191,12 @@ Agents are defined in `.claude/agents/manifest.yaml`:
 | 3 | **migrator** | Migration analysis | Roadmaps + briefs |
 | 4 | ideator | Feature ideation | FR-XXX briefs |
 | 4 | explorer | Codebase research | Investigate code |
+| 5 | **flutter-mvvm-actions-expert** | Flutter architecture | Kalvad MVVM + Actions patterns |
 
 **New in v3.2:**
 - **standardizer** (LAWKEEPER) - Generate coding_guidelines.md
 - **migrator** (PATHFINDER) - Migration analysis and roadmaps
+- **flutter-mvvm-actions-expert** (SAGE) - Kalvad MVVM + Actions Layer architecture
 
 ---
 

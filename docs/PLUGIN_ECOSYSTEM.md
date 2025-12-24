@@ -41,8 +41,9 @@ IGRIS now uses **native Claude Code subagents** instead of external LangChain/La
 | 2 - Docs | documenter, releaser, standardizer | Documentation & releases |
 | 3 - Maintenance | auditor, debugger, migrator | Quality & migration |
 | 4 - Innovation | ideator, explorer | Research & ideas |
+| 5 - Custom | flutter-mvvm-actions-expert (SAGE) | Domain expertise |
 
-**Total: 12 agents** defined in `.claude/agents/manifest.yaml`
+**Total: 13 agents** defined in `.claude/agents/manifest.yaml`
 
 ---
 

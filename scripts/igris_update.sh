@@ -295,8 +295,118 @@ fi
 if [ -d "$TEMP_DIR/.claude/agents" ]; then
   echo "  - Updating native subagents..."
   mkdir -p .claude/agents
+
+  # Copy all agent .md files (preserves local custom agents, adds new ones)
   cp "$TEMP_DIR/.claude/agents/"*.md .claude/agents/ 2>/dev/null || true
-  cp "$TEMP_DIR/.claude/agents/manifest.yaml" .claude/agents/ 2>/dev/null || true
+
+  # Merge manifest.yaml to preserve local Tier 5 custom agents
+  if [ -f ".claude/agents/manifest.yaml" ] && [ -f "$TEMP_DIR/.claude/agents/manifest.yaml" ]; then
+    echo "  - Merging agent manifest (preserving custom Tier 5 agents)..."
+
+    TEMP_DIR="$TEMP_DIR" python3 <<'MERGE_MANIFEST'
+import re
+import os
+
+LOCAL_MANIFEST = ".claude/agents/manifest.yaml"
+REMOTE_MANIFEST = os.environ.get('TEMP_DIR', '/tmp') + "/.claude/agents/manifest.yaml"
+
+def parse_yaml_agents(content):
+    """Simple YAML parser for agent entries."""
+    agents = []
+    in_agents = False
+    current_agent = {}
+    indent_level = 0
+
+    for line in content.split('\n'):
+        if line.strip() == 'agents:':
+            in_agents = True
+            continue
+
+        if not in_agents:
+            continue
+
+        # New agent entry (starts with "  - name:")
+        if re.match(r'^  - name:', line):
+            if current_agent:
+                agents.append(current_agent)
+            current_agent = {'name': line.split(':', 1)[1].strip()}
+        elif current_agent and re.match(r'^    \w+:', line):
+            # Agent property
+            key, value = line.strip().split(':', 1)
+            value = value.strip().strip('"').strip("'")
+            if key == 'tier':
+                current_agent['tier'] = int(value) if value.isdigit() else value
+            else:
+                current_agent[key] = value
+
+    if current_agent:
+        agents.append(current_agent)
+
+    return agents
+
+def get_tier5_agents(agents):
+    """Get Tier 5 custom agents."""
+    return [a for a in agents if a.get('tier') == 5]
+
+try:
+    # Read local manifest
+    with open(LOCAL_MANIFEST, 'r') as f:
+        local_content = f.read()
+    local_agents = parse_yaml_agents(local_content)
+    local_tier5 = get_tier5_agents(local_agents)
+
+    # Read remote manifest
+    with open(REMOTE_MANIFEST, 'r') as f:
+        remote_content = f.read()
+    remote_agents = parse_yaml_agents(remote_content)
+    remote_names = {a['name'] for a in remote_agents}
+
+    # Find custom Tier 5 agents not in remote
+    custom_agents = [a for a in local_tier5 if a['name'] not in remote_names]
+
+    if custom_agents:
+        print(f"    Preserving {len(custom_agents)} custom Tier 5 agent(s):")
+        for agent in custom_agents:
+            print(f"      - {agent['name']}")
+
+        # Read the original local manifest to extract full agent definitions
+        # Find and append custom agent blocks to remote manifest
+        for agent in custom_agents:
+            # Find the agent block in local manifest
+            pattern = rf'^  - name: {re.escape(agent["name"])}.*?(?=^  - name:|\Z)'
+            match = re.search(pattern, local_content, re.MULTILINE | re.DOTALL)
+            if match:
+                agent_block = match.group(0).rstrip()
+                # Append to remote content before the final newline
+                remote_content = remote_content.rstrip() + '\n\n' + agent_block + '\n'
+
+        # Update agent_count in metadata
+        new_count = len(remote_agents) + len(custom_agents)
+        remote_content = re.sub(
+            r'agent_count: \d+',
+            f'agent_count: {new_count}',
+            remote_content
+        )
+
+        # Write merged manifest
+        with open(LOCAL_MANIFEST, 'w') as f:
+            f.write(remote_content)
+
+        print(f"    Updated agent_count to {new_count}")
+    else:
+        # No custom agents to preserve, just copy remote
+        with open(LOCAL_MANIFEST, 'w') as f:
+            f.write(remote_content)
+
+except Exception as e:
+    print(f"    Warning: Manifest merge failed ({e}), using remote manifest")
+    import shutil
+    shutil.copy(REMOTE_MANIFEST, LOCAL_MANIFEST)
+MERGE_MANIFEST
+  else
+    # No local manifest, just copy remote
+    cp "$TEMP_DIR/.claude/agents/manifest.yaml" .claude/agents/ 2>/dev/null || true
+  fi
 fi
 
 # Update plugin management scripts

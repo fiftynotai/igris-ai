@@ -167,7 +167,7 @@ This project uses [Igris AI](https://github.com/fiftynotai/igris-ai) for code qu
 
 ## Multi-Agent Ecosystem (v3.2)
 
-IGRIS v3.2 uses **12 native Claude Code subagents** for autonomous workflows.
+IGRIS v3.2 uses **13 native Claude Code subagents** for autonomous workflows.
 
 **Agent Tiers:**
 
@@ -748,7 +748,7 @@ IGRIS will analyze your codebase and merge findings with these Igris AI instruct
 
 - **Operating System:** `ai/prompts/igris_os.md` (core system, all protocols)
 - **Session Protocol:** `ai/prompts/session_protocol.md` (session tracking)
-- **Agent Registry:** `.claude/agents/manifest.yaml` (12 native subagents)
+- **Agent Registry:** `.claude/agents/manifest.yaml` (13 native subagents)
 - **Main repository:** https://github.com/fiftynotai/igris-ai
 
 ---
