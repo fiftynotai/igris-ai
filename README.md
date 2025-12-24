@@ -2,13 +2,13 @@
 
 > *From Vibe Coding → Vibe Engineering*
 
-**Version 3.2.0** | Production Ready
+**Version 3.3.0** | Production Ready
 
 ---
 
 > *"AI made coding faster — but not better. IGRIS brings the discipline."*
 
-**IGRIS** is a multi-agent AI engineering system that orchestrates Claude Code through 13 specialized subagents to build high-quality software with structure, testing, and documentation.
+**IGRIS** is a multi-agent AI engineering system that orchestrates Claude Code through 18 specialized subagents to build high-quality software with structure, testing, and documentation.
 
 Not just code generation. **Autonomous engineering execution.**
 
@@ -114,7 +114,7 @@ cd your-project
 
 This creates:
 - `ai/` - IGRIS directory with templates and prompts
-- `.claude/agents/` - 13 native subagents
+- `.claude/agents/` - 18 native subagents
 - `.claude/hooks/` - Startup hook for auto-initialization
 - `CLAUDE.md` - Context for Claude Code CLI
 - `scripts/` - Core IGRIS scripts
@@ -187,7 +187,7 @@ claude
 ```
 ┌─────────────────────────────────────┐
 │   IGRIS (Multi-Agent System)        │
-│   - 13 Specialized Subagents         │
+│   - 18 Specialized Subagents         │
 │   - Workflow Orchestration           │
 │   - Architecture Enforcement         │
 │   - Session Management               │
@@ -218,7 +218,7 @@ claude
 - **You** = The architect (strategic decisions, priorities)
 
 **Without IGRIS:** Claude generates code based on prompts → random outputs
-**With IGRIS:** 13 specialized agents engineer outcomes autonomously → disciplined execution
+**With IGRIS:** 18 specialized agents engineer outcomes autonomously → disciplined execution
 
 ---
 
@@ -302,7 +302,7 @@ When you invoke `HUNT BR-005`:
 
 ---
 
-## ✦ The 13 Agents
+## ✦ The 18 Agents
 
 ### Tier 1: Core Workflow (Required)
 
@@ -312,6 +312,7 @@ When you invoke `HUNT BR-005`:
 | **coder** | Code implementation | Writes clean code following architecture | Read, Write, Edit, Bash |
 | **tester** | Test execution | Generates tests, runs test suite, validates | Read, Bash, Grep |
 | **reviewer** | Code review | Quality inspection, security checks | Read, Grep, Glob |
+| **ui-designer** | Visual design | UI specs, design systems, accessibility | Read, Write, Edit, Bash, Glob, Grep |
 
 ### Tier 2: Documentation
 
@@ -341,6 +342,15 @@ When you invoke `HUNT BR-005`:
 | Agent | Role | Responsibilities | Tools |
 |-------|------|------------------|-------|
 | **flutter-mvvm-actions-expert** | Flutter architecture | Kalvad MVVM + Actions Layer patterns, GetX | Read, Write, Edit, Bash, Glob, Grep |
+
+### Tier 6: Meta-Orchestration
+
+| Agent | Role | Responsibilities | Tools |
+|-------|------|------------------|-------|
+| **multi-agent-coordinator** | Workflow orchestration | Complex multi-agent choreography, parallel execution | Read, Write, Edit, Glob, Grep |
+| **agent-organizer** | Team assembly | Agent capability assessment, optimal team selection | Read, Write, Edit, Glob, Grep |
+| **context-manager** | State management | Cross-agent context, recovery points, sync | Read, Write, Edit, Glob, Grep |
+| **task-distributor** | Task scheduling | Queue management, load balancing, priority scheduling | Read, Write, Edit, Glob, Grep |
 
 ---
 
@@ -516,7 +526,7 @@ If Claude context resets mid-workflow:
 |---------|-------|-------|
 | **Approach** | CLI chat for code edits | Multi-agent autonomous system |
 | **Focus** | File editing, git integration | End-to-end engineering (plan → test → commit) |
-| **Agents** | Single agent | 12 specialized agents |
+| **Agents** | Single agent | 18 specialized agents |
 | **Quality Control** | Commit messages | Briefs, tests, architecture, review agent |
 | **Session Tracking** | Git commits only | Multi-level (session, briefs, workflow, agents) |
 | **Self-Healing** | No | Yes (test failures loop to coder) |
@@ -541,7 +551,7 @@ If Claude context resets mid-workflow:
 |---------|--------------|----------------|
 | **Context** | Manual prompt loading | Automatic (CLAUDE.md + hooks) |
 | **Workflow** | Ad-hoc | Autonomous (HUNT command) |
-| **Agents** | Single Claude | 13 specialized subagents |
+| **Agents** | Single Claude | 18 specialized subagents |
 | **Quality** | Varies by prompt | Enforced (guidelines, tests, review) |
 | **Recovery** | Lose context on reset | Automatic (session tracking) |
 | **Accountability** | None | Full audit trail (briefs, decisions) |
@@ -862,7 +872,7 @@ your-project/
 ## ✦ FAQ
 
 **Q: What's the difference between IGRIS and Claude?**
-A: IGRIS is a multi-agent engineering system that orchestrates Claude Code through 13 specialized subagents. Claude provides intelligence; IGRIS provides process, agents, and discipline.
+A: IGRIS is a multi-agent engineering system that orchestrates Claude Code through 18 specialized subagents. Claude provides intelligence; IGRIS provides process, agents, and discipline.
 
 **Q: Does IGRIS work with Claude.ai (web interface)?**
 A: Yes, but with limitations. Startup hooks won't auto-run, and Task tool (subagents) may not be available. Claude Code CLI is recommended.
@@ -922,7 +932,7 @@ IGRIS exists to merge imagination with structure — the spark *and* the system 
 Open source is humanity's greatest multiplier. IGRIS empowers:
 - **Abundance** — More creators, more releases, more shared knowledge
 - **Quality** — Tests, docs, clarity, maintainability
-- **Autonomy** — 13 agents working together to ship quality software
+- **Autonomy** — 18 agents working together to ship quality software
 
 **The Open Source Call:**
 > *Create boldly. Release openly. Engineer with discipline.*
@@ -941,13 +951,13 @@ Built for developers and teams using Claude AI to engineer high-quality software
 
 ---
 
-> **IGRIS — Where Creativity Meets Discipline, Powered by 13 Autonomous Agents.**
+> **IGRIS — Where Creativity Meets Discipline, Powered by 18 Autonomous Agents.**
 
 ```bash
 # Ready to engineer?
 ./scripts/igris_init.sh
 
-# v3.2 Commands:
+# v3.3 Commands:
 # HUNT BR-001           - Autonomous implementation
 # STANDARDIZE analyze   - Generate coding guidelines
 # DOCUMENT architecture - Generate architecture docs

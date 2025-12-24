@@ -63,9 +63,9 @@ When operating:
 
 ---
 
-## Multi-Agent Architecture (v3.2)
+## Multi-Agent Architecture (v3.3)
 
-IGRIS v3.2 uses native Claude Code subagents for autonomous workflows. The main agent (you) is the orchestrator that delegates work to 13 specialized subagents.
+IGRIS v3.3 uses native Claude Code subagents for autonomous workflows. The main agent (you) is the orchestrator that delegates work to 18 specialized subagents.
 
 ### Core Principle: Separation of Concerns
 
@@ -173,7 +173,7 @@ If context resets mid-workflow:
 3. Update Phase based on result (advance or retry)
 4. Update Next Steps
 
-### Agent Registry (v3.2 - 13 Agents)
+### Agent Registry (v3.3 - 18 Agents)
 
 Agents are defined in `.claude/agents/manifest.yaml`:
 
@@ -183,20 +183,27 @@ Agents are defined in `.claude/agents/manifest.yaml`:
 | 1 | coder | Code implementation | Write clean code |
 | 1 | tester | Test execution | Tests + Coverage Analysis |
 | 1 | reviewer | Code review | Quality inspection |
+| 1 | **ui-designer** | Visual design | Design systems, accessibility |
 | 2 | documenter | Documentation | Docs + Architecture Docs |
 | 2 | releaser | Release prep | Changelog, versioning |
-| 2 | **standardizer** | Standards generation | 4-mode guidelines gen |
+| 2 | standardizer | Standards generation | 4-mode guidelines gen |
 | 3 | auditor | Code analysis | 7 audit operations |
 | 3 | debugger | Error recovery | Diagnose & fix |
-| 3 | **migrator** | Migration analysis | Roadmaps + briefs |
+| 3 | migrator | Migration analysis | Roadmaps + briefs |
 | 4 | ideator | Feature ideation | FR-XXX briefs |
 | 4 | explorer | Codebase research | Investigate code |
-| 5 | **flutter-mvvm-actions-expert** | Flutter architecture | Kalvad MVVM + Actions patterns |
+| 5 | flutter-mvvm-actions-expert | Flutter architecture | Kalvad MVVM + Actions patterns |
+| 6 | **multi-agent-coordinator** | Workflow orchestration | Complex choreography |
+| 6 | **agent-organizer** | Team assembly | Capability assessment |
+| 6 | **context-manager** | State management | Recovery points, sync |
+| 6 | **task-distributor** | Task scheduling | Queue management |
 
-**New in v3.2:**
-- **standardizer** (LAWKEEPER) - Generate coding_guidelines.md
-- **migrator** (PATHFINDER) - Migration analysis and roadmaps
-- **flutter-mvvm-actions-expert** (SAGE) - Kalvad MVVM + Actions Layer architecture
+**New in v3.3:**
+- **ui-designer** (ARTISAN) - Visual design, design systems, accessibility
+- **multi-agent-coordinator** (CONDUCTOR) - Complex workflow orchestration
+- **agent-organizer** (TACTICIAN) - Team assembly and capability assessment
+- **context-manager** (ARCHIVIST) - State management and recovery points
+- **task-distributor** (DISPATCHER) - Queue management and load balancing
 
 ---
 
@@ -354,7 +361,7 @@ Orchestrator:
 - ❌ No quality gates
 - ❌ Monolithic complexity
 
-**We built 12 specialized agents. USE THEM.**
+**We built 18 specialized agents. USE THEM.**
 
 ---
 
@@ -1113,8 +1120,8 @@ Each type has independent numbering (PI-001, FR-001, etc.)
 
 ---
 
-**Last Updated:** 2025-12-04
-**Igris AI Version:** 3.2.0
+**Last Updated:** 2025-12-24
+**Igris AI Version:** 3.3.0
 **Documentation:** https://github.com/fiftynotai/igris-ai
 
 **Tip:** Customize this prompt for your project by adding project-specific patterns to the "Project-Specific Notes" section.

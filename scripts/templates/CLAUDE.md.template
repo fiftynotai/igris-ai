@@ -120,22 +120,27 @@ This project uses [Igris AI](https://github.com/fiftynotai/igris-ai) for code qu
 
 ---
 
-## Multi-Agent Ecosystem (v3.2)
+## Multi-Agent Ecosystem (v3.3)
 
-IGRIS v3.2 uses **13 native Claude Code subagents** for autonomous workflows.
+IGRIS v3.3 uses **18 native Claude Code subagents** for autonomous workflows.
 
 **Agent Tiers:**
 
 | Tier | Agents | Purpose |
 |------|--------|---------|
-| 1 - Core | planner, coder, tester, reviewer | Development workflow |
-| 2 - Docs | documenter, releaser, **standardizer** | Documentation & releases |
-| 3 - Maintenance | auditor, debugger, **migrator** | Quality & migration |
+| 1 - Core | planner, coder, tester, reviewer, **ui-designer** | Development workflow |
+| 2 - Docs | documenter, releaser, standardizer | Documentation & releases |
+| 3 - Maintenance | auditor, debugger, migrator | Quality & migration |
 | 4 - Innovation | ideator, explorer | Research & ideas |
+| 5 - Custom | user-defined domain experts | Domain expertise |
+| 6 - Meta | coordinator, organizer, context-manager, task-distributor | Orchestration |
 
-**New Agents in v3.2:**
-- **standardizer** (LAWKEEPER) - Generate coding_guidelines.md (4 modes)
-- **migrator** (PATHFINDER) - Migration analysis and roadmaps
+**New Agents in v3.3:**
+- **ui-designer** (ARTISAN) - Visual design, design systems, accessibility
+- **multi-agent-coordinator** (CONDUCTOR) - Complex workflow orchestration
+- **agent-organizer** (TACTICIAN) - Team assembly and capability assessment
+- **context-manager** (ARCHIVIST) - State management and recovery points
+- **task-distributor** (DISPATCHER) - Queue management and load balancing
 
 **Key Triggers:**
 - `STANDARDIZE {mode}` - Generate coding guidelines
@@ -544,7 +549,7 @@ IGRIS will analyze your codebase and merge findings with these Igris AI instruct
 
 - **Operating System:** `ai/prompts/igris_os.md` (core system, all protocols)
 - **Session Protocol:** `ai/prompts/session_protocol.md` (session tracking)
-- **Agent Registry:** `.claude/agents/manifest.yaml` (13 native subagents)
+- **Agent Registry:** `.claude/agents/manifest.yaml` (18 native subagents)
 - **Main repository:** https://github.com/fiftynotai/igris-ai
 
 ---

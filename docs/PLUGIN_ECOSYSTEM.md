@@ -2,8 +2,8 @@
 
 **Vision:** Modular enhancement system with specialized plugins for different capabilities.
 
-**Last Updated:** 2025-12-03
-**Status:** v3.2 - Native Subagent Architecture
+**Last Updated:** 2025-12-24
+**Status:** v3.3 - Native Subagent Architecture
 
 ---
 
@@ -11,9 +11,9 @@
 
 ### Core Principle: Native Subagents + Optional Plugins
 
-**IGRIS v3.2** uses a hybrid approach:
+**IGRIS v3.3** uses a hybrid approach:
 
-1. **Native Subagents (Built-in):** 12 Claude Code subagents for core development workflows
+1. **Native Subagents (Built-in):** 18 Claude Code subagents for core development workflows
 2. **Persona Plugins:** Customize appearance, tone, and commands
 3. **Future Plugins:** Domain-specific extensions (security, performance, integrations)
 
@@ -37,13 +37,14 @@ IGRIS now uses **native Claude Code subagents** instead of external LangChain/La
 
 | Tier | Agents | Purpose |
 |------|--------|---------|
-| 1 - Core | planner, coder, tester, reviewer | Development workflow |
+| 1 - Core | planner, coder, tester, reviewer, ui-designer | Development workflow |
 | 2 - Docs | documenter, releaser, standardizer | Documentation & releases |
 | 3 - Maintenance | auditor, debugger, migrator | Quality & migration |
 | 4 - Innovation | ideator, explorer | Research & ideas |
 | 5 - Custom | flutter-mvvm-actions-expert (SAGE) | Domain expertise |
+| 6 - Meta | coordinator, organizer, context-manager, task-distributor | Orchestration |
 
-**Total: 13 agents** defined in `.claude/agents/manifest.yaml`
+**Total: 18 agents** defined in `.claude/agents/manifest.yaml`
 
 ---
 
@@ -156,7 +157,7 @@ Framework for integration plugins is planned. Will support:
 
 ---
 
-## Key Changes in v3.2
+## Key Changes in v3.3
 
 ### Removed
 - LangChain plugin dependency
@@ -165,10 +166,18 @@ Framework for integration plugins is planned. Will support:
 - Complex hook-based workflows
 
 ### Added
-- 12 native Claude Code subagents
+- 18 native Claude Code subagents (5 new in v3.3)
+- Tier 6: Meta-Orchestration agents
 - Zero-cost AI operations
 - Instant agent availability
 - Simplified architecture
+
+### New Agents in v3.3
+- **ui-designer** (ARTISAN) - Visual design and accessibility
+- **multi-agent-coordinator** (CONDUCTOR) - Workflow orchestration
+- **agent-organizer** (TACTICIAN) - Team assembly
+- **context-manager** (ARCHIVIST) - State management
+- **task-distributor** (DISPATCHER) - Queue management
 
 ### Kept
 - Persona plugin system
@@ -179,5 +188,5 @@ Framework for integration plugins is planned. Will support:
 ---
 
 **Created:** 2025-11-14
-**Updated:** 2025-12-03
-**Version:** 3.2
+**Updated:** 2025-12-24
+**Version:** 3.3

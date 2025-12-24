@@ -1,15 +1,15 @@
 # .claude/agents/manifest.yaml
-# IGRIS v3.2 Agent Ecosystem Registry
+# IGRIS v3.3 Agent Ecosystem Registry
 
-version: "3.2"
+version: "3.3"
 schema: "https://igris.ai/schemas/agent-manifest.yaml"
 
 metadata:
   name: "IGRIS Agent Ecosystem"
-  description: "Subagent definitions for IGRIS v3.2 - 13 agents across 5 tiers"
+  description: "Subagent definitions for IGRIS v3.3 - 18 agents across 6 tiers"
   created: "2025-12-03"
-  updated: "2025-12-03"
-  agent_count: 13
+  updated: "2025-12-24"
+  agent_count: 18
 
 tiers:
   1:
@@ -31,6 +31,10 @@ tiers:
   5:
     name: "Custom"
     description: "User-defined agents"
+    required: false
+  6:
+    name: "Meta-Orchestration"
+    description: "Agents for coordinating other agents and managing workflows"
     required: false
 
 agents:
@@ -97,6 +101,27 @@ agents:
       - "review"
       - "audit"
       - "inspect"
+
+  - name: ui-designer
+    file: ui-designer.md
+    tier: 1
+    role: "Visual design"
+    description: "Creates intuitive, accessible user interfaces with design systems and interaction patterns"
+    tools:
+      - Read
+      - Write
+      - Edit
+      - Bash
+      - Glob
+      - Grep
+    triggers:
+      - "design"
+      - "ui"
+      - "ux"
+      - "visual"
+      - "accessibility"
+      - "artisan"
+      - "component"
 
   # Tier 2: Documentation
   - name: documenter
@@ -266,3 +291,78 @@ agents:
       - "sage"
       - "dart"
       - "widget"
+
+  # Tier 6: Meta-Orchestration
+  - name: multi-agent-coordinator
+    file: multi-agent-coordinator.md
+    tier: 6
+    role: "Workflow orchestration"
+    description: "Orchestrates complex multi-agent workflows, manages inter-agent communication, and enables parallel execution"
+    tools:
+      - Read
+      - Write
+      - Edit
+      - Glob
+      - Grep
+    triggers:
+      - "coordinate"
+      - "parallel"
+      - "orchestrate"
+      - "conductor"
+      - "workflow"
+
+  - name: agent-organizer
+    file: agent-organizer.md
+    tier: 6
+    role: "Team assembly"
+    description: "Assesses agent capabilities and assembles optimal teams for specific tasks"
+    tools:
+      - Read
+      - Write
+      - Edit
+      - Glob
+      - Grep
+    triggers:
+      - "organize"
+      - "team"
+      - "assemble"
+      - "tactician"
+      - "capability"
+
+  - name: context-manager
+    file: context-manager.md
+    tier: 6
+    role: "State management"
+    description: "Manages shared context, state synchronization, and recovery points across agents"
+    tools:
+      - Read
+      - Write
+      - Edit
+      - Glob
+      - Grep
+    triggers:
+      - "context"
+      - "state"
+      - "sync"
+      - "archivist"
+      - "checkpoint"
+      - "recover"
+
+  - name: task-distributor
+    file: task-distributor.md
+    tier: 6
+    role: "Task scheduling"
+    description: "Distributes tasks, manages queues, load balances, and schedules priorities across agents"
+    tools:
+      - Read
+      - Write
+      - Edit
+      - Glob
+      - Grep
+    triggers:
+      - "distribute"
+      - "queue"
+      - "schedule"
+      - "dispatcher"
+      - "balance"
+      - "priority"

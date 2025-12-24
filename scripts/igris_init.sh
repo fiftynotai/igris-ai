@@ -511,12 +511,12 @@ MCPEOF
 fi
 
 echo ""
-echo "✅ Igris AI v3.2 initialized successfully!"
+echo "✅ Igris AI v3.3 initialized successfully!"
 echo ""
 echo "🤖 Claude Code Integration:"
 echo "   ✓ Startup hook enabled (.claude/hooks/startup.sh)"
 echo "   ✓ Context file created (CLAUDE.md)"
-echo "   ✓ 13 native subagents installed (.claude/agents/)"
+echo "   ✓ 18 native subagents installed (.claude/agents/)"
 if [ "$MCP_CONFIGURED" = true ]; then
   echo "   ✓ MCP server configured (enhanced tool integration)"
 elif [ "$MCP_AVAILABLE" = true ]; then
@@ -539,7 +539,7 @@ echo ""
 echo "2. (Optional) Install shell integration:"
 echo "   $ ./scripts/install_shell_integration.sh"
 echo ""
-echo "📚 v3.2 Commands:"
+echo "📚 v3.3 Commands:"
 echo ""
 echo "   STANDARDIZE    - Generate coding_guidelines.md"
 echo "   HUNT <brief>   - Autonomous implementation"
