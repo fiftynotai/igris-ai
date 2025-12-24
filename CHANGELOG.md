@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.3.0] - 2025-12-24
+
+### Added
+
+- **New Tier 6: Meta-Orchestration** - 4 agents for advanced workflow coordination
+  - **multi-agent-coordinator (CONDUCTOR):** Orchestrates complex multi-agent workflows, manages inter-agent communication, and enables parallel execution
+    - Triggers: `coordinate`, `parallel`, `orchestrate`, `conductor`, `workflow`
+  - **agent-organizer (TACTICIAN):** Assesses agent capabilities and assembles optimal teams for specific tasks
+    - Triggers: `organize`, `team`, `assemble`, `tactician`, `capability`
+  - **context-manager (ARCHIVIST):** Manages shared context, state synchronization, and recovery points across agents
+    - Triggers: `context`, `state`, `sync`, `archivist`, `checkpoint`, `recover`
+  - **task-distributor (DISPATCHER):** Distributes tasks, manages queues, load balances, and schedules priorities across agents
+    - Triggers: `distribute`, `queue`, `schedule`, `dispatcher`, `balance`, `priority`
+
+- **New Tier 1 Agent: ui-designer (ARTISAN)** - Visual design specialist
+  - Creates intuitive, accessible user interfaces with design systems and interaction patterns
+  - Triggers: `design`, `ui`, `ux`, `visual`, `accessibility`, `artisan`, `component`
+  - Full read/write access for creating UI components
+
+- **Flutter MVVM Actions Expert (SAGE)** - Tier 5 custom agent
+  - Expert Flutter specialist mastering Kalvad's MVVM + Actions Layer architecture with GetX
+  - Enforces clean layer separation, reactive state, and type-safe patterns
+  - Triggers: `flutter`, `mvvm`, `actions layer`, `getx`, `kalvad`, `sage`, `dart`, `widget`
+
+### Changed
+
+- **Agent Count Expanded** - 13 agents to 18 agents across 6 tiers
+  - Tier 1 (Core): 4 → 5 agents (+ui-designer)
+  - Tier 5 (Custom): 0 → 1 agent (+flutter-mvvm-actions-expert)
+  - Tier 6 (Meta-Orchestration): NEW tier with 4 agents
+
+- **Manifest Updated** - `.claude/agents/manifest.yaml` now v3.3
+  - Added Tier 6 definition for meta-orchestration agents
+  - Updated agent count metadata
+  - All 18 agents registered with full trigger phrases
+
+- **igris_os.md Updated** - Operating system now references v3.3 architecture
+  - Agent registry table updated with 18 agents
+  - Tier 6 documentation added
+  - New agent capabilities documented
+
+### Improved
+
+- **Mandatory Subagent Delegation Protocol** - Stricter enforcement of orchestrator pattern
+  - Decision tree for when to delegate vs handle directly
+  - Clear rules for which agent handles which task type
+  - "We built 18 specialized agents. USE THEM." principle
+
+- **MCP Server Setup** - Improved init script with MCP configuration (FR-004)
+  - MCP server setup now part of initialization workflow
+  - Better documentation for Claude integration
+
+---
+
 ## [3.2.0] - 2025-12-04
 
 ### Added
@@ -77,7 +131,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet - v3.2.0 just released!_
+_Nothing yet - v3.3.0 just released!_
 
 ---
 
@@ -199,7 +253,7 @@ _Nothing yet - v3.2.0 just released!_
 
 ### Changed
 
-- **Plugin system:** Now fully functional end-to-end (install ✅, update ✅, uninstall ✅, list ✅)
+- **Plugin system:** Now fully functional end-to-end (install, update, uninstall, list)
 - **Error handling:** Enforced `set -e` across all scripts (coding standards compliance)
 - **JSON parsing:** Standardized on python3 for all JSON operations (no more grep+sed)
 - **Code quality:** Bug hunt eliminated 4 bugs (1 P0, 2 P1, 1 P2) - 100% resolution rate
@@ -408,7 +462,7 @@ No breaking changes. Enhanced protocol enforcement activates automatically:
 > who are you?
 ✦ I am Fifty.ai - the embodiment of Igris AI
 ```
-❌ Confused - used user's name as own identity
+Confused - used user's name as own identity
 
 **After (v2.1.1):**
 ```
@@ -416,7 +470,7 @@ No breaking changes. Enhanced protocol enforcement activates automatically:
 ✦ I am Igris, developed by Fifty.ai.
 I serve you, Fifty.ai, with unwavering precision.
 ```
-✅ Correct - clear separation of identities + proper developer attribution
+Correct - clear separation of identities + proper developer attribution
 
 ### Migration from 2.1.0
 
@@ -532,7 +586,7 @@ This is a major version bump due to comprehensive rebranding affecting all aspec
 
 ### Migration from 1.x (Blueprint AI)
 
-**⚡ Automatic Migration Available (as of v2.4.0):**
+**Automatic Migration Available (as of v2.4.0):**
 
 Simply run the update script - migration happens automatically!
 
@@ -541,10 +595,10 @@ Simply run the update script - migration happens automatically!
 ```
 
 The script will:
-- ✅ Detect your Blueprint AI project automatically
-- ✅ Create backup of `.blueprint_version`
-- ✅ Migrate to `.igris_version` (preserving all data)
-- ✅ Continue with update to latest Igris AI
+- Detect your Blueprint AI project automatically
+- Create backup of `.blueprint_version`
+- Migrate to `.igris_version` (preserving all data)
+- Continue with update to latest Igris AI
 
 **What gets preserved:**
 - All briefs (`ai/briefs/`)
@@ -693,9 +747,9 @@ Context resets now ALWAYS trigger re-initialization:
 User: "continue with phase 2"
 Claude: [Detects context reset]
 Claude: [Reads CURRENT_SESSION.md FIRST]
-Claude: "📊 Current Session Status: Active"
-Claude: "📋 Next Steps When Resuming: Update CHANGELOG.md"
-Claude: "✅ Igris AI initialized. Ready for your command!"
+Claude: "Current Session Status: Active"
+Claude: "Next Steps When Resuming: Update CHANGELOG.md"
+Claude: "Igris AI initialized. Ready for your command!"
 Claude: [THEN proceeds with user's request]
 ```
 
@@ -754,10 +808,10 @@ CLAUDE.md              # Context loaded with first message
 ```bash
 $ claude
 
-🚀 Welcome to Igris AI on Claude Code
+Welcome to Igris AI on Claude Code
 
-📊 Project Status
-────────────────
+Project Status
+----------------
 Briefs: None yet (ready for first task)
 Blockers: 0
 
@@ -834,7 +888,7 @@ User: "Use ai/prompts/igris_os.md and implement BR-001"
 ```bash
 $ claude
 
-🚀 Welcome to Igris AI on Claude Code
+Welcome to Igris AI on Claude Code
 Project: my-project
 [Auto-loaded, ready to work]
 Ready for your command!
@@ -1091,4 +1145,4 @@ Want to contribute? See [CONTRIBUTING.md](ai/CONTRIBUTING.md) for guidelines.
 
 ---
 
-**Last Updated:** 2025-11-09
+**Last Updated:** 2025-12-24
