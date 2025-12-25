@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.3.1] - 2025-12-25
+
+### Fixed
+
+- **Corrupted Agent Files Restored** - 5 custom agents recovered and standardized
+  - Files had been overwritten with "404: Not Found" text (14 bytes each)
+  - Affected agents:
+    - **ui-designer (ARTISAN)** - Tier 1 visual design specialist
+    - **multi-agent-coordinator (CONDUCTOR)** - Tier 6 workflow orchestration
+    - **agent-organizer (TACTICIAN)** - Tier 6 team assembly
+    - **context-manager (ARCHIVIST)** - Tier 6 state management
+    - **task-distributor (DISPATCHER)** - Tier 6 task scheduling
+  - All agents restored via `git restore` from last good commit
+
+---
+
 ## [3.3.0] - 2025-12-24
 
 ### Added
