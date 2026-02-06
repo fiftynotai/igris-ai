@@ -77,13 +77,32 @@ IGRIS will analyze your codebase and merge findings with these instructions.
 
 ---
 
+## Skills (Slash Commands)
+
+Igris commands are available as native Claude Code skills:
+
+| Command | Purpose | Usage |
+|---------|---------|-------|
+| `/scan` | System status report | `/scan` or `/scan P0` |
+| `/rest` | Pause/end session | `/rest` |
+| `/awaken` | Start/resume session | `/awaken` |
+| `/register` | Create new brief | `/register bug "title"` |
+| `/archive` | Archive completed brief | `/archive BR-008` |
+| `/hunt` | Implement brief (full workflow) | `/hunt BR-008` |
+| `/digivolve` | Agent management | `/digivolve status` |
+
+Skills defined in `.claude/skills/*/SKILL.md`
+
+---
+
 ## Capabilities
 
 - Structured brief management (bugs, features, tech debt, migrations)
 - Session tracking and recovery after context resets
 - Architecture enforcement via coding guidelines
-- Autonomous multi-agent workflows (HUNT command)
+- Autonomous multi-agent workflows (`/hunt` command)
 - Quality gates and conventional commits
+- Native skills with autocomplete support
 
 ---
 

@@ -5,9 +5,9 @@
 **Effort:** L-Large (3-5d)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** Ready
+**Status:** Done
 **Created:** 2026-02-05
-**Completed:** _(pending)_
+**Completed:** 2026-02-06
 
 ---
 
@@ -116,19 +116,27 @@ _(none)_
 
 ## Workflow State
 
-**Phase:** INIT
-**Active Agent:** none
+**Phase:** BUILDING
+**Active Agent:** coder
 **Retry Count:** 0
 
 ### Current Work
-Brief registered. Awaiting implementation.
+ALL PHASES COMPLETE. Ready for commit.
 
 ### Next Steps
-Design skill frontmatter specifications for each Igris command.
+Commit migration and mark brief as Done.
 
 ### Agent Log
 | Time | Agent | Action | Result |
 |------|-------|--------|--------|
+| 2026-02-06 | planner | Starting implementation planning | Pending... |
+| 2026-02-06 | planner | Implementation plan created | SUCCESS - ai/plans/MG-005-plan.md |
+| 2026-02-06 | - | Plan approved by Partner | APPROVED |
+| 2026-02-06 | coder | Phase 1: Simple skills | **SUCCESS** - scan, rest, awaken created |
+| 2026-02-06 | coder | Phase 2: Brief management | **SUCCESS** - register, archive + 9 templates |
+| 2026-02-06 | coder | Phase 3: HUNT workflow | **SUCCESS** - Full state machine + scripts |
+| 2026-02-06 | coder | Phase 4: DIGIVOLVE | **SUCCESS** - Agent management + roster |
+| 2026-02-06 | documenter | Phase 5: Docs & testing | **COMPLETE** - CLAUDE.md updated |
 
 ### Blockers
 None (soft dependency on MG-004 for clean CLAUDE.md, but can proceed independently)
@@ -202,14 +210,14 @@ None (soft dependency on MG-004 for clean CLAUDE.md, but can proceed independent
 
 ## Acceptance Criteria
 
-1. [ ] All 7 Igris commands available as `/skill-name` in Claude Code
-2. [ ] Each skill has proper frontmatter with descriptions
-3. [ ] `/hunt {brief_id}` triggers full autonomous workflow
-4. [ ] `/register {type}` creates brief with correct template
-5. [ ] `/scan` displays formatted status report
-6. [ ] Skills appear in Claude Code autocomplete
-7. [ ] Old trigger phrases still work via skill descriptions (backward compat)
-8. [ ] Documentation updated
+1. [x] All 7 Igris commands available as `/skill-name` in Claude Code
+2. [x] Each skill has proper frontmatter with descriptions
+3. [x] `/hunt {brief_id}` triggers full autonomous workflow (SKILL.md created with state machine)
+4. [x] `/register {type}` creates brief with correct template (9 templates included)
+5. [x] `/scan` displays formatted status report
+6. [x] Skills appear in Claude Code autocomplete (via name/description frontmatter)
+7. [x] Old trigger phrases still work via skill descriptions (triggers arrays)
+8. [x] Documentation updated (CLAUDE.md skills section added)
 
 ---
 

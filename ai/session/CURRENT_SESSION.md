@@ -11,7 +11,8 @@
 
 | Brief | Title | Status |
 |-------|-------|--------|
-| MG-004 | Memory Architecture Migration | In Progress |
+| MG-004 | Memory Architecture Migration | Done |
+| MG-005 | Skills Migration | Done |
 | MG-006 | Hooks Integration — Automated Session & Quality | Done |
 
 ---
@@ -25,31 +26,39 @@
 
 ## Resume Point
 
-**Current:** MG-004 — Memory Architecture Migration
+**Current:** MG-005 — Skills Migration
 **Phase:** COMPLETE - Ready for commit
 
 ---
 
 ## Progress Update (2026-02-06)
 
-**ALL PHASES COMPLETE:**
-- ✅ Phase 1: Created 5 modular rule files in `.claude/rules/` (855 lines)
-- ✅ Phase 2: Rewrote CLAUDE.md from 769 → 96 lines (87.5% reduction)
-- ✅ Phase 3: Fresh session init test PASSED (@import + rules auto-load verified)
-- ✅ Phase 4: Context reset recovery test PASSED
-- ✅ Phase 5: Documentation updated (igris_os.md - Modular Rules Architecture section)
+**MG-004 Completed:** Memory Architecture Migration
+- ✅ CLAUDE.md: 769 → 96 lines (87.5% reduction)
+- ✅ 5 modular rule files in `.claude/rules/`
+- ✅ @import + rules auto-loading verified
 
-**Acceptance Criteria (6/6):**
-1. ✅ CLAUDE.md under 150 lines (96 lines)
-2. ✅ Modular rules auto-load correctly
-3. ✅ Initialization identical to previous behavior
-4. ✅ Context reset recovery works
-5. ✅ No regression in brief workflows
-6. ✅ Documentation updated
+**MG-005 Completed:** Skills Migration
+- ✅ Phase 1: /scan, /rest, /awaken (simple skills)
+- ✅ Phase 2: /register, /archive + 9 templates
+- ✅ Phase 3: /hunt (full workflow state machine)
+- ✅ Phase 4: /digivolve (agent management)
+- ✅ Phase 5: Documentation (CLAUDE.md skills section)
+
+**Skills Created (7):**
+| Skill | Purpose |
+|-------|---------|
+| `/scan` | System status report |
+| `/rest` | Pause/end session |
+| `/awaken` | Start/resume session |
+| `/register` | Create new brief |
+| `/archive` | Archive completed brief |
+| `/hunt` | Implement brief (full workflow) |
+| `/digivolve` | Agent management |
 
 **Next Steps:**
-- Commit MG-004 migration
-- Archive brief
+- Commit MG-005 migration
+- Archive briefs
 
 ---
 
