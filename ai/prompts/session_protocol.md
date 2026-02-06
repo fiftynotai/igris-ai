@@ -38,7 +38,7 @@ Purpose: Track all work happening within a specific brief.
 - Tasks (Pending/In Progress/Completed) with timestamps
 - Workflow State section:
   - Phase: INIT → PLANNING → BUILDING → TESTING → REVIEWING → COMPLETE
-  - Active Agent: none | planner | coder | tester | reviewer | etc.
+  - Active Agent: none | architect | forger | sentinel | warden | etc.
   - Retry Count
   - Agent Log (timestamped history of subagent runs)
 - Current Work description

@@ -5,9 +5,9 @@
 **Effort:** L-Large (3-5d)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** Ready
+**Status:** Done
 **Created:** 2026-02-05
-**Completed:** _(pending)_
+**Completed:** 2026-02-06
 
 ---
 
@@ -138,19 +138,25 @@ _(none)_
 
 ## Workflow State
 
-**Phase:** INIT
+**Phase:** COMMITTING
 **Active Agent:** none
 **Retry Count:** 0
 
 ### Current Work
-Brief registered. Awaiting implementation.
+Implementation complete. All tests pass. Review approved. Ready to commit.
 
 ### Next Steps
-Design system prompt template, starting with Tier 1 core agents.
+Commit and mark brief as Done.
 
 ### Agent Log
 | Time | Agent | Action | Result |
 |------|-------|--------|--------|
+| 2026-02-06 | architect | Create implementation plan | SUCCESS |
+| 2026-02-06 | forger | Build all 18 agent files | SUCCESS |
+| 2026-02-06 | forger | Delete 18 old agent files | SUCCESS |
+| 2026-02-06 | forger | Update 20+ reference files | SUCCESS |
+| 2026-02-06 | sentinel | Verify implementation | PASS (5 fixes applied) |
+| 2026-02-06 | warden | Code review | APPROVE |
 
 ### Blockers
 None (soft dependency on MG-005 for skill preloading)

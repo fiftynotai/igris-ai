@@ -20,47 +20,49 @@ The main agent (orchestrator) is NOT a do-everything agent. It is a workflow coo
 
 | Agent | Alias | Role | Key Capabilities |
 |-------|-------|------|------------------|
-| planner | (persona-defined) | Strategic planning | Plans + Brief Analysis |
-| coder | (persona-defined) | Code implementation | Write clean code |
-| tester | (persona-defined) | Test execution | Tests + Coverage Analysis |
-| reviewer | (persona-defined) | Code review | Quality inspection |
-| ui-designer | (persona-defined) | Visual design | Design systems, accessibility |
+| architect | ARCHITECT | Strategic planning | Plans + Brief Analysis |
+| forger | FORGER | Code implementation | Write clean code |
+| sentinel | SENTINEL | Test execution | Tests + Coverage Analysis |
+| warden | WARDEN | Code review | Quality inspection |
+| artisan | ARTISAN | Visual design | Design systems, accessibility |
 
 ### Tier 2: Documentation
 
 | Agent | Alias | Role |
 |-------|-------|------|
-| documenter | (persona-defined) | Documentation |
-| releaser | (persona-defined) | Release prep |
-| standardizer | (persona-defined) | Standards generation |
+| chronicler | CHRONICLER | Documentation |
+| herald | HERALD | Release prep |
+| lawkeeper | LAWKEEPER | Standards generation |
 
 ### Tier 3: Maintenance
 
 | Agent | Alias | Role |
 |-------|-------|------|
-| auditor | (persona-defined) | Code analysis |
-| debugger | (persona-defined) | Error recovery |
-| migrator | (persona-defined) | Migration analysis |
+| inquisitor | INQUISITOR | Code analysis |
+| mender | MENDER | Error recovery |
+| pathfinder | PATHFINDER | Migration analysis |
 
 ### Tier 4: Innovation
 
 | Agent | Alias | Role |
 |-------|-------|------|
-| ideator | (persona-defined) | Feature ideation |
-| explorer | (persona-defined) | Codebase research |
+| oracle | ORACLE | Feature ideation |
+| seeker | SEEKER | Codebase research |
 
 ### Tier 5: Custom
 
-User-defined agents registered in `.claude/agents/manifest.yaml`
+| Agent | Alias | Role |
+|-------|-------|------|
+| sage | SAGE | Flutter MVVM + Actions |
 
 ### Tier 6: Meta (Orchestration)
 
 | Agent | Alias | Role |
 |-------|-------|------|
-| multi-agent-coordinator | (persona-defined) | Complex workflow orchestration |
-| agent-organizer | (persona-defined) | Team assembly |
-| context-manager | (persona-defined) | State management |
-| task-distributor | (persona-defined) | Queue management |
+| conductor | CONDUCTOR | Complex workflow orchestration |
+| tactician | TACTICIAN | Team assembly |
+| archivist | ARCHIVIST | State management |
+| dispatcher | DISPATCHER | Queue management |
 
 ---
 
@@ -68,18 +70,18 @@ User-defined agents registered in `.claude/agents/manifest.yaml`
 
 | Task Type | Agent | Trigger Phrases |
 |-----------|-------|-----------------|
-| Implementation planning | **planner** | "plan", "implement X", "fix X" |
-| Code writing/editing | **coder** | After plan approved, code changes needed |
-| Test execution | **tester** | "test", "run tests", after code changes |
-| Code review | **reviewer** | Before commit, "review this" |
-| Documentation | **documenter** | "document", "update README", "write docs" |
-| Codebase research | **explorer** | "how does X work?", "find where X is" |
-| Standards generation | **standardizer** | "STANDARDIZE", "generate guidelines" |
-| Migration analysis | **migrator** | "MIGRATE analyze", "migration roadmap" |
-| Audit operations | **auditor** | "AUDIT", "check quality", "find issues" |
-| Error diagnosis | **debugger** | Test failures, "debug this", "why is X failing" |
-| Feature brainstorming | **ideator** | "suggest features", "what could we add" |
-| Release preparation | **releaser** | "prepare release", "generate changelog" |
+| Implementation planning | **architect** | "plan", "implement X", "fix X" |
+| Code writing/editing | **forger** | After plan approved, code changes needed |
+| Test execution | **sentinel** | "test", "run tests", after code changes |
+| Code review | **warden** | Before commit, "review this" |
+| Documentation | **chronicler** | "document", "update README", "write docs" |
+| Codebase research | **seeker** | "how does X work?", "find where X is" |
+| Standards generation | **lawkeeper** | "STANDARDIZE", "generate guidelines" |
+| Migration analysis | **pathfinder** | "MIGRATE analyze", "migration roadmap" |
+| Audit operations | **inquisitor** | "AUDIT", "check quality", "find issues" |
+| Error diagnosis | **mender** | Test failures, "debug this", "why is X failing" |
+| Feature brainstorming | **oracle** | "suggest features", "what could we add" |
+| Release preparation | **herald** | "prepare release", "generate changelog" |
 
 ---
 
@@ -122,10 +124,10 @@ User: "implement BR-008"
 
 Orchestrator:
 1. Read brief -> Update status to "In Progress"
-2. DELEGATE to planner -> Receive plan
-3. DELEGATE to coder -> Receive implementation
-4. DELEGATE to tester -> Receive PASS/FAIL
-5. DELEGATE to reviewer -> Receive APPROVE/REJECT
+2. DELEGATE to architect -> Receive plan
+3. DELEGATE to forger -> Receive implementation
+4. DELEGATE to sentinel -> Receive PASS/FAIL
+5. DELEGATE to warden -> Receive APPROVE/REJECT
 6. Commit changes (orchestrator handles git)
 7. Update brief status to "Done"
 ```
@@ -137,8 +139,8 @@ User: "implement BR-008"
 
 Orchestrator:
 1. Read brief
-2. [X] Write code directly (MUST delegate to coder!)
-3. [X] Run tests directly (MUST delegate to tester!)
+2. [X] Write code directly (MUST delegate to forger!)
+3. [X] Run tests directly (MUST delegate to sentinel!)
 4. Commit changes
 ```
 
@@ -166,7 +168,7 @@ When implementing a brief:
 [INIT] --> [PLANNING] --> [APPROVAL?] --> [BUILDING] --> [TESTING] --> [REVIEWING] --> [COMMITTING] --> [COMPLETE]
               |               |               |              |              |
               v               v               v              v              v
-          planner      (L/XL: user)       coder         tester        reviewer
+          architect    (L/XL: user)       forger        sentinel       warden
 ```
 
 **State Transitions:**
@@ -178,7 +180,7 @@ When implementing a brief:
 | APPROVAL | User approves | BUILDING |
 | BUILDING | Code complete | TESTING |
 | TESTING | Tests pass | REVIEWING |
-| TESTING | Tests fail (retry < 3) | BUILDING (self-heal via debugger) |
+| TESTING | Tests fail (retry < 3) | BUILDING (self-heal via mender) |
 | TESTING | Tests fail (retry >= 3) | BLOCKED |
 | REVIEWING | APPROVE | COMMITTING |
 | REVIEWING | REJECT (retry < 2) | BUILDING (fix issues) |

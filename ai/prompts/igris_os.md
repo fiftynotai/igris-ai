@@ -80,7 +80,7 @@ BRIEF LEVEL (Brief Files)
 ├─ Tasks (Pending/In Progress/Completed)
 ├─ Workflow State
 │   ├─ Phase: PLANNING → BUILDING → TESTING → REVIEWING → COMPLETE
-│   ├─ Active Agent: planner | coder | tester | reviewer | none
+│   ├─ Active Agent: architect | forger | sentinel | warden | none
 │   ├─ Retry Count
 │   └─ Agent Log (timestamped history)
 ├─ Current work description
@@ -116,7 +116,7 @@ When implementing a brief (HUNT command):
 [INIT] ──► [PLANNING] ──► [APPROVAL?] ──► [BUILDING] ──► [TESTING] ──► [REVIEWING] ──► [COMMITTING] ──► [COMPLETE]
               │               │               │              │              │
               ▼               ▼               ▼              ▼              ▼
-          planner      (L/XL: user)       coder         tester        reviewer
+          architect    (L/XL: user)       forger        sentinel       warden
 ```
 
 **State Transitions:**
@@ -128,7 +128,7 @@ When implementing a brief (HUNT command):
 | APPROVAL | User approves | BUILDING |
 | BUILDING | Code complete | TESTING |
 | TESTING | Tests pass | REVIEWING |
-| TESTING | Tests fail (retry < 3) | BUILDING (self-heal via debugger) |
+| TESTING | Tests fail (retry < 3) | BUILDING (self-heal via mender) |
 | TESTING | Tests fail (retry >= 3) | BLOCKED |
 | REVIEWING | APPROVE | COMMITTING |
 | REVIEWING | REJECT (retry < 2) | BUILDING (fix issues) |
@@ -179,31 +179,24 @@ Agents are defined in `.claude/agents/manifest.yaml`:
 
 | Tier | Agent | Role | Key Capabilities |
 |------|-------|------|------------------|
-| 1 | planner | Strategic planning | Plans + Brief Analysis |
-| 1 | coder | Code implementation | Write clean code |
-| 1 | tester | Test execution | Tests + Coverage Analysis |
-| 1 | reviewer | Code review | Quality inspection |
-| 1 | **ui-designer** | Visual design | Design systems, accessibility |
-| 2 | documenter | Documentation | Docs + Architecture Docs |
-| 2 | releaser | Release prep | Changelog, versioning |
-| 2 | standardizer | Standards generation | 4-mode guidelines gen |
-| 3 | auditor | Code analysis | 7 audit operations |
-| 3 | debugger | Error recovery | Diagnose & fix |
-| 3 | migrator | Migration analysis | Roadmaps + briefs |
-| 4 | ideator | Feature ideation | FR-XXX briefs |
-| 4 | explorer | Codebase research | Investigate code |
-| 5 | flutter-mvvm-actions-expert | Flutter architecture | Kalvad MVVM + Actions patterns |
-| 6 | **multi-agent-coordinator** | Workflow orchestration | Complex choreography |
-| 6 | **agent-organizer** | Team assembly | Capability assessment |
-| 6 | **context-manager** | State management | Recovery points, sync |
-| 6 | **task-distributor** | Task scheduling | Queue management |
-
-**New in v3.3:**
-- **ui-designer** (ARTISAN) - Visual design, design systems, accessibility
-- **multi-agent-coordinator** (CONDUCTOR) - Complex workflow orchestration
-- **agent-organizer** (TACTICIAN) - Team assembly and capability assessment
-- **context-manager** (ARCHIVIST) - State management and recovery points
-- **task-distributor** (DISPATCHER) - Queue management and load balancing
+| 1 | architect | Strategic planning | Plans + Brief Analysis |
+| 1 | forger | Code implementation | Write clean code |
+| 1 | sentinel | Test execution | Tests + Coverage Analysis |
+| 1 | warden | Code review | Quality inspection |
+| 1 | artisan | Visual design | Design systems, accessibility |
+| 2 | chronicler | Documentation | Docs + Architecture Docs |
+| 2 | herald | Release prep | Changelog, versioning |
+| 2 | lawkeeper | Standards generation | 4-mode guidelines gen |
+| 3 | inquisitor | Code analysis | 7 audit operations |
+| 3 | mender | Error recovery | Diagnose & fix |
+| 3 | pathfinder | Migration analysis | Roadmaps + briefs |
+| 4 | oracle | Feature ideation | FR-XXX briefs |
+| 4 | seeker | Codebase research | Investigate code |
+| 5 | sage | Flutter architecture | Kalvad MVVM + Actions patterns |
+| 6 | conductor | Workflow orchestration | Complex choreography |
+| 6 | tactician | Team assembly | Capability assessment |
+| 6 | archivist | State management | Recovery points, sync |
+| 6 | dispatcher | Task scheduling | Queue management |
 
 ---
 
@@ -257,18 +250,18 @@ Task Received
 
 | Task Type | Agent | Trigger Phrases |
 |-----------|-------|-----------------|
-| Implementation planning | **planner** | "plan", "implement X", "fix X" |
-| Code writing/editing | **coder** | After plan approved, code changes needed |
-| Test execution | **tester** | "test", "run tests", after code changes |
-| Code review | **reviewer** | Before commit, "review this" |
-| Documentation | **documenter** | "document", "update README", "write docs" |
-| Codebase research | **explorer** | "how does X work?", "find where X is" |
-| Standards generation | **standardizer** | "STANDARDIZE", "generate guidelines" |
-| Migration analysis | **migrator** | "MIGRATE analyze", "migration roadmap" |
-| Audit operations | **auditor** | "AUDIT", "check quality", "find issues" |
-| Error diagnosis | **debugger** | Test failures, "debug this", "why is X failing" |
-| Feature brainstorming | **ideator** | "suggest features", "what could we add" |
-| Release preparation | **releaser** | "prepare release", "generate changelog" |
+| Implementation planning | **architect** | "plan", "implement X", "fix X" |
+| Code writing/editing | **forger** | After plan approved, code changes needed |
+| Test execution | **sentinel** | "test", "run tests", after code changes |
+| Code review | **warden** | Before commit, "review this" |
+| Documentation | **chronicler** | "document", "update README", "write docs" |
+| Codebase research | **seeker** | "how does X work?", "find where X is" |
+| Standards generation | **lawkeeper** | "STANDARDIZE", "generate guidelines" |
+| Migration analysis | **pathfinder** | "MIGRATE analyze", "migration roadmap" |
+| Audit operations | **inquisitor** | "AUDIT", "check quality", "find issues" |
+| Error diagnosis | **mender** | Test failures, "debug this", "why is X failing" |
+| Feature brainstorming | **oracle** | "suggest features", "what could we add" |
+| Release preparation | **herald** | "prepare release", "generate changelog" |
 
 ---
 
@@ -310,10 +303,10 @@ User: "implement BR-008"
 
 Orchestrator:
 1. Read brief → Update status to "In Progress"
-2. DELEGATE to planner → Receive plan
-3. DELEGATE to coder → Receive implementation
-4. DELEGATE to tester → Receive PASS/FAIL
-5. DELEGATE to reviewer → Receive APPROVE/REJECT
+2. DELEGATE to architect → Receive plan
+3. DELEGATE to forger → Receive implementation
+4. DELEGATE to sentinel → Receive PASS/FAIL
+5. DELEGATE to warden → Receive APPROVE/REJECT
 6. Commit changes (orchestrator handles git)
 7. Update brief status to "Done"
 ```
@@ -324,8 +317,8 @@ User: "implement BR-008"
 
 Orchestrator:
 1. Read brief
-2. ❌ Write code directly (MUST delegate to coder!)
-3. ❌ Run tests directly (MUST delegate to tester!)
+2. ❌ Write code directly (MUST delegate to forger!)
+3. ❌ Run tests directly (MUST delegate to sentinel!)
 4. Commit changes
 ```
 
@@ -334,7 +327,7 @@ Orchestrator:
 User: "update README with new features"
 
 Orchestrator:
-1. DELEGATE to documenter → Receive updated content
+1. DELEGATE to chronicler → Receive updated content
 2. Commit changes
 ```
 
@@ -343,7 +336,7 @@ Orchestrator:
 User: "update README"
 
 Orchestrator:
-1. ❌ Edit README directly (MUST delegate to documenter!)
+1. ❌ Edit README directly (MUST delegate to chronicler!)
 ```
 
 ---
@@ -352,7 +345,7 @@ Orchestrator:
 
 **Multi-agent benefits:**
 - ✅ Specialization - Each agent optimized for its role
-- ✅ Quality gates - Tester/reviewer enforce standards
+- ✅ Quality gates - Sentinel/Warden enforce standards
 - ✅ State recovery - Subagent logs enable resumption
 - ✅ Maintainability - Easy to improve individual agents
 
@@ -506,7 +499,7 @@ If the file doesn't exist, generate it first:
 ```
 STANDARDIZE analyze
 ```
-This will invoke the standardizer agent to generate coding guidelines.
+This will invoke the lawkeeper agent to generate coding guidelines.
 
 IGRIS will ask:
 - Do you have a base architecture repository? (optional)
@@ -1058,11 +1051,11 @@ Igris AI uses modular rules in `.claude/rules/` for protocol enforcement. These 
 Igris AI can perform 10 maintenance operations on ANY project (not just Igris AI itself). These operations analyze code, identify issues, and create appropriate briefs for tracking improvements.
 
 **In v3.2, these operations are distributed across specialized agents:**
-- **auditor** - CODE_QUALITY_AUDIT, BUG_HUNT, STANDARDS_COMPLIANCE_CHECK, PROCESS_AUDIT, DEPENDENCY_AUDIT
-- **tester** - TEST_COVERAGE_ANALYSIS
-- **ideator** - FEATURE_IDEATION
-- **planner** - BRIEF_ANALYSIS
-- **explorer** - ARCHITECTURE_REVIEW, PERFORMANCE_ANALYSIS
+- **inquisitor** - CODE_QUALITY_AUDIT, BUG_HUNT, STANDARDS_COMPLIANCE_CHECK, PROCESS_AUDIT, DEPENDENCY_AUDIT
+- **sentinel** - TEST_COVERAGE_ANALYSIS
+- **oracle** - FEATURE_IDEATION
+- **architect** - BRIEF_ANALYSIS
+- **seeker** - ARCHITECTURE_REVIEW, PERFORMANCE_ANALYSIS
 
 ### Available Operations
 

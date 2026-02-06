@@ -42,7 +42,7 @@ Execute the complete implementation workflow for a brief, from planning through 
 [INIT] --> [PLANNING] --> [APPROVAL?] --> [BUILDING] --> [TESTING] --> [REVIEWING] --> [COMMITTING] --> [COMPLETE]
               |               |               |              |              |
               v               v               v              v              v
-          planner      (L/XL: user)       coder         tester        reviewer
+          architect    (L/XL: user)       forger        sentinel       warden
 ```
 
 ## State Transitions
@@ -54,7 +54,7 @@ Execute the complete implementation workflow for a brief, from planning through 
 | APPROVAL | User approves | BUILDING |
 | BUILDING | Code complete | TESTING |
 | TESTING | Tests pass | REVIEWING |
-| TESTING | Tests fail (retry < 3) | BUILDING (self-heal via debugger) |
+| TESTING | Tests fail (retry < 3) | BUILDING (self-heal via mender) |
 | TESTING | Tests fail (retry >= 3) | BLOCKED |
 | REVIEWING | APPROVE | COMMITTING |
 | REVIEWING | REJECT (retry < 2) | BUILDING (fix issues) |
@@ -91,13 +91,13 @@ Proceed to PLANNING phase.
 
 ### Phase 2: PLANNING
 
-1. Update brief: Phase = PLANNING, Active Agent = planner
-2. Add Agent Log entry: "Starting planner..."
-3. **Delegate to planner agent** using Task tool:
+1. Update brief: Phase = PLANNING, Active Agent = architect
+2. Add Agent Log entry: "Starting architect..."
+3. **Delegate to architect agent** using Task tool:
 
 ```
 Task tool parameters:
-- subagent_type: "planner"
+- subagent_type: "architect"
 - description: "Plan implementation for {BRIEF_ID}"
 - prompt: "Create implementation plan for brief {BRIEF_ID}.
   Brief content: [include brief content]
@@ -111,7 +111,7 @@ Task tool parameters:
   Write plan to ai/plans/{BRIEF_ID}-plan.md"
 ```
 
-4. After planner returns:
+4. After architect returns:
    - Update brief: Active Agent = none
    - Update Agent Log with result
    - Check brief Effort field
@@ -127,13 +127,13 @@ Task tool parameters:
 
 ### Phase 3: BUILDING
 
-1. Update brief: Phase = BUILDING, Active Agent = coder
-2. Add Agent Log entry: "Starting coder..."
-3. **Delegate to coder agent** using Task tool:
+1. Update brief: Phase = BUILDING, Active Agent = forger
+2. Add Agent Log entry: "Starting forger..."
+3. **Delegate to forger agent** using Task tool:
 
 ```
 Task tool parameters:
-- subagent_type: "coder"
+- subagent_type: "forger"
 - description: "Implement {BRIEF_ID}"
 - prompt: "Implement the following brief according to the plan.
 
@@ -146,20 +146,20 @@ Task tool parameters:
   Add documentation comments to public APIs."
 ```
 
-4. After coder returns:
+4. After forger returns:
    - Update brief: Active Agent = none
    - Update Agent Log with result
    - Proceed to TESTING
 
 ### Phase 4: TESTING
 
-1. Update brief: Phase = TESTING, Active Agent = tester
-2. Add Agent Log entry: "Starting tester..."
-3. **Delegate to tester agent** using Task tool:
+1. Update brief: Phase = TESTING, Active Agent = sentinel
+2. Add Agent Log entry: "Starting sentinel..."
+3. **Delegate to sentinel agent** using Task tool:
 
 ```
 Task tool parameters:
-- subagent_type: "tester"
+- subagent_type: "sentinel"
 - description: "Test {BRIEF_ID} implementation"
 - prompt: "Run tests for the implementation.
 
@@ -171,7 +171,7 @@ Task tool parameters:
   Report PASS or FAIL with details."
 ```
 
-4. After tester returns:
+4. After sentinel returns:
    - Update brief: Active Agent = none
    - Update Agent Log with result
 
@@ -180,7 +180,7 @@ Task tool parameters:
 
 6. **If FAIL and Retry Count < 3:**
    - Increment Retry Count
-   - Delegate to debugger agent for diagnosis
+   - Delegate to mender agent for diagnosis
    - Return to BUILDING with fix instructions
 
 7. **If FAIL and Retry Count >= 3:**
@@ -191,13 +191,13 @@ Task tool parameters:
 
 ### Phase 5: REVIEWING
 
-1. Update brief: Phase = REVIEWING, Active Agent = reviewer
-2. Add Agent Log entry: "Starting reviewer..."
-3. **Delegate to reviewer agent** using Task tool:
+1. Update brief: Phase = REVIEWING, Active Agent = warden
+2. Add Agent Log entry: "Starting warden..."
+3. **Delegate to warden agent** using Task tool:
 
 ```
 Task tool parameters:
-- subagent_type: "reviewer"
+- subagent_type: "warden"
 - description: "Review {BRIEF_ID} implementation"
 - prompt: "Review the implementation for quality.
 
@@ -210,7 +210,7 @@ Task tool parameters:
   Output: APPROVE or REJECT with feedback."
 ```
 
-4. After reviewer returns:
+4. After warden returns:
    - Update brief: Active Agent = none
    - Update Agent Log with result
 
@@ -285,8 +285,8 @@ Maintain in brief file under Workflow State:
 ### Agent Log
 | Time | Agent | Action | Result |
 |------|-------|--------|--------|
-| 2026-02-06 10:00 | planner | Create implementation plan | SUCCESS |
-| 2026-02-06 10:15 | coder | Implement changes | SUCCESS |
-| 2026-02-06 10:30 | tester | Run test suite | PASS |
-| 2026-02-06 10:35 | reviewer | Code review | APPROVE |
+| 2026-02-06 10:00 | architect | Create implementation plan | SUCCESS |
+| 2026-02-06 10:15 | forger | Implement changes | SUCCESS |
+| 2026-02-06 10:30 | sentinel | Run test suite | PASS |
+| 2026-02-06 10:35 | warden | Code review | APPROVE |
 ```

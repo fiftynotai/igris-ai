@@ -33,14 +33,14 @@ IGRIS v3.3 uses **18 native Claude Code subagents** for autonomous workflows.
 
 | Tier | Purpose |
 |------|---------|
-| 1 - Core | planner, coder, tester, reviewer, ui-designer |
-| 2 - Docs | documenter, releaser, standardizer |
-| 3 - Maintenance | auditor, debugger, migrator |
-| 4 - Innovation | ideator, explorer |
-| 5 - Custom | User-defined domain experts |
-| 6 - Meta | coordinator, organizer, context-manager, task-distributor |
+| 1 - Core | architect, forger, sentinel, warden, artisan |
+| 2 - Docs | chronicler, herald, lawkeeper |
+| 3 - Maintenance | inquisitor, mender, pathfinder |
+| 4 - Innovation | oracle, seeker |
+| 5 - Custom | sage (Flutter MVVM + Actions) |
+| 6 - Meta | conductor, tactician, archivist, dispatcher |
 
-**Registry:** `.claude/agents/manifest.yaml`
+**Definitions:** `.claude/agents/*.md`
 
 ---
 
@@ -63,7 +63,7 @@ IGRIS will analyze your codebase and merge findings with these instructions.
 |----------|----------|
 | Operating System | `ai/prompts/igris_os.md` |
 | Session Protocol | `ai/prompts/session_protocol.md` |
-| Agent Registry | `.claude/agents/manifest.yaml` |
+| Agent Definitions | `.claude/agents/*.md` |
 | Modular Rules | `.claude/rules/*.md` |
 | Main Repository | https://github.com/fiftynotai/igris-ai |
 

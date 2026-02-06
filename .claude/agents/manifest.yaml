@@ -1,5 +1,9 @@
 # .claude/agents/manifest.yaml
-# IGRIS v3.3 Agent Ecosystem Registry
+# DEPRECATED: Agent definitions have moved to native .claude/agents/*.md files.
+# This file is kept for reference only. The source of truth is now the individual
+# agent definition files (architect.md, forger.md, sentinel.md, etc.)
+#
+# IGRIS v3.3 Agent Ecosystem Registry (REFERENCE ONLY)
 
 version: "3.3"
 schema: "https://igris.ai/schemas/agent-manifest.yaml"

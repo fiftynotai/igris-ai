@@ -42,28 +42,28 @@ If empty, defaults to `status`.
 
 ## Agent Registry
 
-Agents are defined in `.claude/agents/manifest.yaml`:
+Agents are defined as individual files in `.claude/agents/*.md`:
 
 | Tier | Agent | Alias | Role |
 |------|-------|-------|------|
-| 1 | planner | ARCHITECT | Strategic planning |
-| 1 | coder | FORGER | Code implementation |
-| 1 | tester | SENTINEL | Test execution |
-| 1 | reviewer | WARDEN | Code review |
-| 1 | ui-designer | ARTISAN | Visual design |
-| 2 | documenter | CHRONICLER | Documentation |
-| 2 | releaser | HERALD | Release prep |
-| 2 | standardizer | LAWKEEPER | Standards generation |
-| 3 | auditor | INQUISITOR | Code analysis |
-| 3 | debugger | MENDER | Error recovery |
-| 3 | migrator | PATHFINDER | Migration analysis |
-| 4 | ideator | ORACLE | Feature ideation |
-| 4 | explorer | SEEKER | Codebase research |
-| 5 | (custom) | (custom) | User-defined |
-| 6 | multi-agent-coordinator | CONDUCTOR | Workflow orchestration |
-| 6 | agent-organizer | TACTICIAN | Team assembly |
-| 6 | context-manager | ARCHIVIST | State management |
-| 6 | task-distributor | DISPATCHER | Queue management |
+| 1 | architect | ARCHITECT | Strategic planning |
+| 1 | forger | FORGER | Code implementation |
+| 1 | sentinel | SENTINEL | Test execution |
+| 1 | warden | WARDEN | Code review |
+| 1 | artisan | ARTISAN | Visual design |
+| 2 | chronicler | CHRONICLER | Documentation |
+| 2 | herald | HERALD | Release prep |
+| 2 | lawkeeper | LAWKEEPER | Standards generation |
+| 3 | inquisitor | INQUISITOR | Code analysis |
+| 3 | mender | MENDER | Error recovery |
+| 3 | pathfinder | PATHFINDER | Migration analysis |
+| 4 | oracle | ORACLE | Feature ideation |
+| 4 | seeker | SEEKER | Codebase research |
+| 5 | sage | SAGE | Flutter MVVM + Actions |
+| 6 | conductor | CONDUCTOR | Workflow orchestration |
+| 6 | tactician | TACTICIAN | Team assembly |
+| 6 | archivist | ARCHIVIST | State management |
+| 6 | dispatcher | DISPATCHER | Queue management |
 
 ## Subcommands
 
@@ -82,11 +82,11 @@ Output format:
 ### Tier 1: Core Workflow
 | Agent | Alias | Status | Invocations | Last Used |
 |-------|-------|--------|-------------|-----------|
-| planner | ARCHITECT | Active | 42 | 2026-02-06 |
-| coder | FORGER | Active | 38 | 2026-02-06 |
-| tester | SENTINEL | Active | 35 | 2026-02-06 |
-| reviewer | WARDEN | Active | 30 | 2026-02-06 |
-| ui-designer | ARTISAN | Active | 5 | 2026-02-05 |
+| architect | ARCHITECT | Active | 42 | 2026-02-06 |
+| forger | FORGER | Active | 38 | 2026-02-06 |
+| sentinel | SENTINEL | Active | 35 | 2026-02-06 |
+| warden | WARDEN | Active | 30 | 2026-02-06 |
+| artisan | ARTISAN | Active | 5 | 2026-02-05 |
 
 ### Tier 2: Documentation
 [...]

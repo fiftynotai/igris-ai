@@ -128,26 +128,19 @@ IGRIS v3.3 uses **18 native Claude Code subagents** for autonomous workflows.
 
 | Tier | Agents | Purpose |
 |------|--------|---------|
-| 1 - Core | planner, coder, tester, reviewer, **ui-designer** | Development workflow |
-| 2 - Docs | documenter, releaser, standardizer | Documentation & releases |
-| 3 - Maintenance | auditor, debugger, migrator | Quality & migration |
-| 4 - Innovation | ideator, explorer | Research & ideas |
-| 5 - Custom | user-defined domain experts | Domain expertise |
-| 6 - Meta | coordinator, organizer, context-manager, task-distributor | Orchestration |
-
-**New Agents in v3.3:**
-- **ui-designer** (ARTISAN) - Visual design, design systems, accessibility
-- **multi-agent-coordinator** (CONDUCTOR) - Complex workflow orchestration
-- **agent-organizer** (TACTICIAN) - Team assembly and capability assessment
-- **context-manager** (ARCHIVIST) - State management and recovery points
-- **task-distributor** (DISPATCHER) - Queue management and load balancing
+| 1 - Core | architect, forger, sentinel, warden, artisan | Development workflow |
+| 2 - Docs | chronicler, herald, lawkeeper | Documentation & releases |
+| 3 - Maintenance | inquisitor, mender, pathfinder | Quality & migration |
+| 4 - Innovation | oracle, seeker | Research & ideas |
+| 5 - Custom | sage (Flutter MVVM + Actions) | Domain expertise |
+| 6 - Meta | conductor, tactician, archivist, dispatcher | Orchestration |
 
 **Key Triggers:**
 - `STANDARDIZE {mode}` - Generate coding guidelines
 - `MIGRATE analyze` - Run migration analysis
 - `AUDIT {type}` - Run one of 7 audit operations
 
-**Agent Registry:** `.claude/agents/manifest.yaml`
+**Agent Definitions:** `.claude/agents/*.md`
 
 {{INSTALLED_PERSONA}}
 
@@ -167,14 +160,14 @@ IGRIS v3.3 uses **18 native Claude Code subagents** for autonomous workflows.
 
 | When you see... | Delegate to |
 |-----------------|-------------|
-| "implement", "fix", "build" | planner → coder → tester → reviewer |
-| "how does X work?" | explorer |
-| "update docs/README" | documenter |
-| "STANDARDIZE" | standardizer |
-| "AUDIT" | auditor |
-| "MIGRATE analyze" | migrator |
-| "test", "run tests" | tester |
-| "review code" | reviewer |
+| "implement", "fix", "build" | architect → forger → sentinel → warden |
+| "how does X work?" | seeker |
+| "update docs/README" | chronicler |
+| "STANDARDIZE" | lawkeeper |
+| "AUDIT" | inquisitor |
+| "MIGRATE analyze" | pathfinder |
+| "test", "run tests" | sentinel |
+| "review code" | warden |
 
 ### Orchestrator-Only (Exceptions)
 - Brief listing/reading/status updates
@@ -252,19 +245,21 @@ IGRIS uses native Claude Code subagents for autonomous workflows.
 
 | Tier | Agents | Purpose |
 |------|--------|---------|
-| 1 - Core | planner, coder, tester, reviewer | Development workflow |
-| 2 - Docs | documenter, releaser, standardizer | Documentation pipeline |
-| 3 - Maintenance | auditor, debugger, migrator | Quality & recovery |
-| 4 - Innovation | ideator, explorer | Research & ideas |
-| 5 - Custom | user-defined | Extensibility |
+| 1 - Core | architect, forger, sentinel, warden, artisan | Development workflow |
+| 2 - Docs | chronicler, herald, lawkeeper | Documentation pipeline |
+| 3 - Maintenance | inquisitor, mender, pathfinder | Quality & recovery |
+| 4 - Innovation | oracle, seeker | Research & ideas |
+| 5 - Custom | sage (Flutter MVVM + Actions) | Extensibility |
+| 6 - Meta | conductor, tactician, archivist, dispatcher | Orchestration |
 
 ### Agent Manifest
 
-All agents are registered in `.claude/agents/manifest.yaml`. Each agent has:
-- Static name (internal identifier)
+All agents are defined in `.claude/agents/*.md`. Each agent has:
+- Name (matches subagent_type for Task tool invocation)
 - Persona alias (display name from persona.json)
 - Tools available
-- Trigger phrases
+- Model selection (inherit/haiku/sonnet/opus)
+- Project memory (persistent across sessions)
 
 ### Persona Alias Resolution
 
@@ -273,9 +268,9 @@ Personas define agent display names in their `persona.json`:
 ```json
 {
   "agent_aliases": {
-    "planner": "ARCHITECT",
-    "coder": "FORGER",
-    "tester": "SENTINEL",
+    "architect": "ARCHITECT",
+    "forger": "FORGER",
+    "sentinel": "SENTINEL",
     ...
   },
   "agent_phrases": {
@@ -318,7 +313,7 @@ STATES:
 [INIT] --> [PLANNING] --> [APPROVAL?] --> [BUILDING] --> [TESTING] --> [REVIEWING] --> [COMMITTING] --> [COMPLETE]
               |               |               |              |              |
               v               v               v              v              v
-          planner      (L/XL: user)       coder         tester        reviewer
+          architect    (L/XL: user)       forger        sentinel       warden
 
 ERROR STATES:
 [BLOCKED] - Max retries exceeded
@@ -337,26 +332,26 @@ ERROR STATES:
    - Security-related -> require approval
    - Otherwise -> auto-approve
 
-#### PHASE 1: PLANNING (planner agent)
+#### PHASE 1: PLANNING (architect agent)
 1. Prepare context: Brief content, Coding guidelines, Project structure
-2. Invoke: `Task(subagent_type="planner", prompt=context)`
+2. Invoke: `Task(subagent_type="architect", prompt=context)`
 3. Receive: Plan markdown
 4. Save: `ai/plans/{brief_id}-plan.md`
 
-#### PHASE 2: BUILDING (coder agent)
+#### PHASE 2: BUILDING (forger agent)
 1. Prepare context: Plan content, Coding guidelines
-2. Invoke: `Task(subagent_type="coder", prompt=context)`
+2. Invoke: `Task(subagent_type="forger", prompt=context)`
 3. Receive: Implementation summary
 4. Verify: git status shows changes
 
-#### PHASE 3: TESTING (tester agent)
-- Invoke tester agent
-- On FAIL: Retry up to 3 times with coder fixes
+#### PHASE 3: TESTING (sentinel agent)
+- Invoke sentinel agent
+- On FAIL: Retry up to 3 times with forger fixes
 - On max retries: Enter BLOCKED state
 
-#### PHASE 4: REVIEWING (reviewer agent)
-- Invoke reviewer agent
-- On REJECT: Retry up to 2 times with coder fixes
+#### PHASE 4: REVIEWING (warden agent)
+- Invoke warden agent
+- On REJECT: Retry up to 2 times with forger fixes
 - On max rejects: Enter BLOCKED state
 
 #### PHASE 5: COMMITTING (Main Agent)
@@ -410,7 +405,7 @@ Metrics are tracked in `ai/session/metrics/agent-metrics.json`:
 {
   "version": "1.0.0",
   "agents": {
-    "planner": {
+    "architect": {
       "invocations": 47,
       "last_used": "2025-12-03T10:00:00Z",
       "success_rate": 0.98
@@ -549,7 +544,7 @@ IGRIS will analyze your codebase and merge findings with these Igris AI instruct
 
 - **Operating System:** `ai/prompts/igris_os.md` (core system, all protocols)
 - **Session Protocol:** `ai/prompts/session_protocol.md` (session tracking)
-- **Agent Registry:** `.claude/agents/manifest.yaml` (18 native subagents)
+- **Agent Definitions:** `.claude/agents/*.md` (18 native subagents)
 - **Main repository:** https://github.com/fiftynotai/igris-ai
 
 ---

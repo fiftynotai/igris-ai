@@ -1,9 +1,9 @@
 # Current Session
 
 ## Status
-**Mode:** REST MODE
+**Mode:** HUNT MODE (completing)
 **Updated:** 2026-02-06
-**Active Brief:** None (all complete)
+**Active Brief:** MG-007 — Native Agent Definitions (Done)
 
 ---
 

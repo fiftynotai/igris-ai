@@ -19,7 +19,7 @@
                   └──────────┘                          │ │              │ │
                                                         │ │              │ │
                        ┌────────────────────────────────┘ │              │ │
-                       │ (fail, retry<3: debugger)        │              │ │
+                       │ (fail, retry<3: mender)        │              │ │
                        ▼                                  │              │ │
                   ┌──────────┐                            │              │ │
                   │ DEBUGGER │────────────────────────────┘              │ │
@@ -48,7 +48,7 @@
 - Update session state
 
 ### PLANNING
-- Delegate to planner agent
+- Delegate to architect agent
 - Create implementation plan
 - Save to ai/plans/{BRIEF_ID}-plan.md
 
@@ -58,17 +58,17 @@
 - Skip for S/M efforts
 
 ### BUILDING
-- Delegate to coder agent
+- Delegate to forger agent
 - Implement according to plan
 - Follow coding_guidelines.md
 
 ### TESTING
-- Delegate to tester agent
+- Delegate to sentinel agent
 - Run linter, tests
-- Self-heal via debugger (max 3 retries)
+- Self-heal via mender (max 3 retries)
 
 ### REVIEWING
-- Delegate to reviewer agent
+- Delegate to warden agent
 - Quality gate check
 - Can reject back to building (max 2 retries)
 
