@@ -2,6 +2,8 @@
 # Igris AI - Startup Hook
 # Automatically runs when Claude Code CLI starts
 # Shows welcome message and project summary before any user input
+# NOTE: This script provides visual terminal greeting only.
+# Session context injection is handled by session_start.sh via Claude Code hooks.
 
 # Fifty Design Language (FDL) v1.0 - ANSI Color Codes
 # Maintained by: Mohamed Elamin (fifty.dev)
