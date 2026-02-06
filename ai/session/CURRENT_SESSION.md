@@ -1,8 +1,8 @@
 # Current Session
 
 ## Status
-**Mode:** REST MODE
-**Updated:** 2025-12-03
+**Mode:** ACTIVE
+**Updated:** 2026-02-05
 
 ---
 
@@ -10,21 +10,21 @@
 
 | Brief | Title | Status |
 |-------|-------|--------|
-| (none) | - | - |
+| MG-006 | Hooks Integration — Automated Session & Quality | Done |
 
 ---
 
 ## Last Session Summary
-**Date:** 2025-12-03
-**Completed:** TD-014 - Prompts Restructure - Subagent Integration
-**Summary:** Restructured prompts directory for v3.2 multi-agent architecture. Deleted 7 obsolete/duplicate prompt files. Created 2 new agents (PATHFINDER, LAWKEEPER). Enhanced 5 existing agents with new capabilities. Updated manifest.yaml to 12 agents. ai/prompts/ now contains only igris_os.md and session_protocol.md.
+**Date:** 2026-02-05
+**Completed:** MG-006 - Hooks Integration — Automated Session & Quality Management
+**Summary:** Implemented 7 Claude Code lifecycle hooks for session automation. Added session_start.sh (auto-inject state), session_end.sh (auto-save REST MODE), pre_compact.sh (preserve state), brief_gate.sh (enforce brief-first), post_edit_lint.sh (shellcheck), agent_metrics.sh (track subagents). All macOS compatible, graceful error handling.
 
 ---
 
 ## Resume Point
 
-**Next:** None active
-**Action:** Ready for new work
+**Next:** MG-004 — Memory Architecture Migration
+**Action:** Ready to start. Remaining migrations: MG-004 → MG-005 → MG-007
 
 ---
 
