@@ -1,9 +1,9 @@
 # Current Session
 
 ## Status
-**Mode:** HUNT MODE
+**Mode:** REST MODE
 **Updated:** 2026-02-06
-**Active Brief:** MG-004
+**Active Brief:** None (all complete)
 
 ---
 
@@ -26,39 +26,34 @@
 
 ## Resume Point
 
-**Current:** MG-005 — Skills Migration
-**Phase:** COMPLETE - Ready for commit
+**Next:** MG-007 — Native Agent Definitions
+**Status:** Ready to start
 
 ---
 
-## Progress Update (2026-02-06)
+## Last Session Summary (2026-02-06)
 
-**MG-004 Completed:** Memory Architecture Migration
-- ✅ CLAUDE.md: 769 → 96 lines (87.5% reduction)
-- ✅ 5 modular rule files in `.claude/rules/`
-- ✅ @import + rules auto-loading verified
+**Two major migrations completed:**
 
-**MG-005 Completed:** Skills Migration
-- ✅ Phase 1: /scan, /rest, /awaken (simple skills)
-- ✅ Phase 2: /register, /archive + 9 templates
-- ✅ Phase 3: /hunt (full workflow state machine)
-- ✅ Phase 4: /digivolve (agent management)
-- ✅ Phase 5: Documentation (CLAUDE.md skills section)
+### MG-004: Memory Architecture Migration ✅
+- Commit: `4b311fc`
+- CLAUDE.md: 769 → 96 lines (87.5% reduction)
+- Created 5 modular rule files in `.claude/rules/`
+- @import + rules auto-loading verified
 
-**Skills Created (7):**
-| Skill | Purpose |
-|-------|---------|
-| `/scan` | System status report |
-| `/rest` | Pause/end session |
-| `/awaken` | Start/resume session |
-| `/register` | Create new brief |
-| `/archive` | Archive completed brief |
-| `/hunt` | Implement brief (full workflow) |
-| `/digivolve` | Agent management |
+### MG-005: Skills Migration ✅
+- Commit: `2d633e6`
+- Created 7 native skills in `.claude/skills/`:
+  - `/scan`, `/rest`, `/awaken` (session management)
+  - `/register`, `/archive` (brief management)
+  - `/hunt` (full workflow with subagent delegation)
+  - `/digivolve` (agent management)
+- 19 files total (7 skills + 9 templates + 3 supporting files)
 
-**Next Steps:**
-- Commit MG-005 migration
-- Archive briefs
+**Pending:**
+- Push commits to remote: `git push`
+- Archive completed briefs: MG-004, MG-005
+- Start MG-007: Native Agent Definitions
 
 ---
 
