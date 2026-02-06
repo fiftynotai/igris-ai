@@ -1,43 +1,43 @@
 {
   "version": "1.0.0",
-  "last_updated": "2026-02-06T11:19:53Z",
+  "last_updated": "2026-02-06T12:42:17Z",
   "agents": {
     "planner": {
-      "invocations": 2,
-      "last_used": "2026-02-06T10:52:50Z",
-      "avg_duration_seconds": 93.58,
+      "invocations": 3,
+      "last_used": "2026-02-06T11:45:22Z",
+      "avg_duration_seconds": 116.56,
       "success_rate": 1.0,
       "total_duration_seconds": 0,
       "success_count": 0
     },
     "coder": {
-      "invocations": 7,
-      "last_used": "2026-02-06T11:18:55Z",
+      "invocations": 10,
+      "last_used": "2026-02-06T11:51:10Z",
       "avg_duration_seconds": 2987.16,
       "success_rate": 1.0,
       "total_duration_seconds": 0,
       "success_count": 0
     },
     "tester": {
-      "invocations": 2,
-      "last_used": "2026-02-06T04:29:03Z",
-      "avg_duration_seconds": 168.47,
+      "invocations": 3,
+      "last_used": "2026-02-06T12:15:40Z",
+      "avg_duration_seconds": 173.6,
       "success_rate": 1.0,
       "total_duration_seconds": 0,
       "success_count": 0
     },
     "reviewer": {
-      "invocations": 0,
-      "last_used": null,
-      "avg_duration_seconds": 0,
+      "invocations": 1,
+      "last_used": "2026-02-06T12:19:37Z",
+      "avg_duration_seconds": 49.83,
       "success_rate": 1.0,
       "total_duration_seconds": 0,
       "success_count": 0
     },
     "documenter": {
-      "invocations": 0,
-      "last_used": null,
-      "avg_duration_seconds": 0,
+      "invocations": 1,
+      "last_used": "2026-02-06T12:28:33Z",
+      "avg_duration_seconds": 127.0,
       "success_rate": 1.0,
       "total_duration_seconds": 0,
       "success_count": 0
@@ -75,18 +75,30 @@
       "success_count": 0
     },
     "explorer": {
-      "invocations": 0,
-      "last_used": null,
-      "avg_duration_seconds": 0,
+      "invocations": 1,
+      "last_used": "2026-02-06T12:38:12Z",
+      "avg_duration_seconds": 122.39,
       "success_rate": 1.0,
       "total_duration_seconds": 0,
       "success_count": 0
+    },
+    "claude-code-guide": {
+      "invocations": 1,
+      "last_used": "2026-02-06T11:31:57Z",
+      "avg_duration_seconds": 20.96,
+      "success_rate": 1.0
+    },
+    "Explore": {
+      "invocations": 1,
+      "last_used": "2026-02-06T12:07:56Z",
+      "avg_duration_seconds": 16.58,
+      "success_rate": 1.0
     }
   },
   "totals": {
-    "total_invocations": 11,
+    "total_invocations": 21,
     "total_duration_seconds": 0,
     "most_used_agent": "coder",
-    "least_used_agent": "explorer"
+    "least_used_agent": "ideator"
   }
 }

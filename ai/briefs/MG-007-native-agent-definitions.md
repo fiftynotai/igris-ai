@@ -138,7 +138,7 @@ _(none)_
 
 ## Workflow State
 
-**Phase:** COMMITTING
+**Phase:** COMPLETE
 **Active Agent:** none
 **Retry Count:** 0
 

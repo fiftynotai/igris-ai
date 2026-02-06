@@ -30,16 +30,16 @@ AI made coding faster — but not better. Speed without structure created:
 
 ---
 
-## ✦ What is IGRIS v3.2?
+## ✦ What is IGRIS v3.3?
 
 **IGRIS** is a multi-agent AI engineering system powered by Claude Code that transforms how you build software through autonomous workflows.
 
 **Category:** Multi-Agent AI Engineering Platform
 **Core Promise:** Autonomous Quality Execution
 
-### The v3.2 Architecture
+### The v3.3 Architecture
 
-**13 Native Subagents Across 5 Tiers:**
+**18 Native Subagents Across 6 Tiers:**
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -51,20 +51,23 @@ AI made coding faster — but not better. Speed without structure created:
 │  IGRIS MAIN AGENT - Workflow orchestration & validation     │
 └──────────────────┬──────────────────────────────────────────┘
                    │
-                   ├─► TIER 1 (Core): planner → coder → tester → reviewer
-                   │                    Plan     Build    Test     Review
+                   ├─► TIER 1 (Core): architect → forger → sentinel → warden
+                   │                    Plan       Build     Test      Review
                    │
-                   ├─► TIER 2 (Docs): documenter, releaser, standardizer
+                   ├─► TIER 2 (Docs): chronicler, herald, lawkeeper
                    │                   Write Docs   Releases   Guidelines
                    │
-                   ├─► TIER 3 (Maintenance): auditor, debugger, migrator
-                   │                          Analyze   Fix      Migrate
+                   ├─► TIER 3 (Maintenance): inquisitor, mender, pathfinder
+                   │                          Analyze      Fix     Migrate
                    │
-                   ├─► TIER 4 (Innovation): ideator, explorer
-                   │                            Imagine   Research
+                   ├─► TIER 4 (Innovation): oracle, seeker
+                   │                         Imagine  Research
                    │
-                   └─► TIER 5 (Custom): user-defined domain experts
-                                            Specialized Knowledge
+                   ├─► TIER 5 (Custom): sage (user-defined domain experts)
+                   │                     Specialized Knowledge
+                   │
+                   └─► TIER 6 (Meta): conductor, tactician, archivist, dispatcher
+                                       Orchestrate  Assemble   State     Queue
 ```
 
 ### How It Works
@@ -77,19 +80,19 @@ AI made coding faster — but not better. Speed without structure created:
 **2. Autonomous Workflows**
 - `HUNT {brief_id}` triggers full autonomous implementation
 - Workflow: PLANNING → BUILDING → TESTING → REVIEWING → COMMITTING
-- Self-healing: Test failures loop back to coder (max 3 retries)
+- Self-healing: Test failures loop back to forger (max 3 retries)
 - Auto-approval for S/M tasks, user approval for L/XL
 
 **3. Multi-Agent Orchestration**
 - Main agent delegates work to specialized subagents
 - Each subagent focuses on one role (planning, coding, testing, etc.)
-- Stateless agents receive tasks, return results
+- Agents have persistent memory in `.claude/agent-memory/<name>/`
 - Main agent tracks workflow state and session recovery
 
 **4. Quality Enforcement**
 - Architecture standards enforced via `coding_guidelines.md`
 - Automated testing before commits
-- Code review by reviewer agent
+- Code review by warden agent
 - Conventional commits (no AI signatures)
 
 **5. Session Recovery**
@@ -150,10 +153,10 @@ claude
 ```
 
 **That's it.** IGRIS autonomously:
-- Creates implementation plan (planner agent)
-- Writes code following architecture (coder agent)
-- Generates and runs tests (tester agent)
-- Reviews quality and security (reviewer agent)
+- Creates implementation plan (architect agent)
+- Writes code following architecture (forger agent)
+- Generates and runs tests (sentinel agent)
+- Reviews quality and security (warden agent)
 - Commits with conventional format (main agent)
 
 ### Commands Reference
@@ -161,10 +164,10 @@ claude
 | Command | Description | Agent Used |
 |---------|-------------|------------|
 | `HUNT {brief_id}` | Autonomous implementation | All Tier 1 |
-| `STANDARDIZE {mode}` | Generate coding guidelines | standardizer |
-| `MIGRATE analyze` | Migration analysis + briefs | migrator |
-| `AUDIT {type}` | Code quality analysis | auditor |
-| `DOCUMENT architecture` | Generate architecture docs | documenter |
+| `STANDARDIZE {mode}` | Generate coding guidelines | lawkeeper |
+| `MIGRATE analyze` | Migration analysis + briefs | pathfinder |
+| `AUDIT {type}` | Code quality analysis | inquisitor |
+| `DOCUMENT architecture` | Generate architecture docs | chronicler |
 | `DIGIVOLVE status` | List all agents | - |
 
 **Modes for STANDARDIZE:**
@@ -239,7 +242,7 @@ When you invoke `HUNT BR-005`:
                  │
                  ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ PLANNING (planner agent)                                     │
+│ PLANNING (architect agent)                                   │
 │ ├─ Analyze brief requirements                                │
 │ ├─ Load coding_guidelines.md                                 │
 │ ├─ Create implementation plan                                │
@@ -256,7 +259,7 @@ When you invoke `HUNT BR-005`:
                  │ approved
                  ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ BUILDING (coder agent)                                       │
+│ BUILDING (forger agent)                                      │
 │ ├─ Read plan                                                 │
 │ ├─ Follow architecture standards                             │
 │ ├─ Write clean, documented code                              │
@@ -265,21 +268,21 @@ When you invoke `HUNT BR-005`:
                  │
                  ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ TESTING (tester agent) - Max 3 retries                       │
+│ TESTING (sentinel agent) - Max 3 retries                     │
 │ ├─ Generate test cases                                       │
 │ ├─ Run test suite                                            │
 │ ├─ Parse result: PASS | FAIL                                 │
-│ └─ If FAIL → send failure back to coder → retry              │
+│ └─ If FAIL → send failure back to forger → retry             │
 └────────────────┬─────────────────────────────────────────────┘
                  │ pass
                  ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ REVIEWING (reviewer agent) - Max 2 rejects                   │
+│ REVIEWING (warden agent) - Max 2 rejects                     │
 │ ├─ Code quality inspection                                   │
 │ ├─ Security vulnerability check                              │
 │ ├─ Architecture compliance                                   │
 │ ├─ Verdict: APPROVE | REJECT                                 │
-│ └─ If REJECT → send feedback to coder → fix → retry          │
+│ └─ If REJECT → send feedback to forger → fix → retry         │
 └────────────────┬─────────────────────────────────────────────┘
                  │ approve
                  ▼
@@ -296,7 +299,7 @@ When you invoke `HUNT BR-005`:
 ```
 
 **Self-Healing:**
-- Test failures automatically loop back to coder (max 3 attempts)
+- Test failures automatically loop back to forger (max 3 attempts)
 - Code review rejections trigger fixes (max 2 rejects)
 - If max retries exceeded → BLOCKED state → human intervention
 
@@ -304,53 +307,109 @@ When you invoke `HUNT BR-005`:
 
 ## ✦ The 18 Agents
 
+As of v3.3, all agents are defined as **native Claude Code agent files** in `.claude/agents/`. Each agent has a persona-themed name, custom system prompt, tool restrictions, model selection, and persistent memory.
+
+### Agent Definition Format
+
+Each `.claude/agents/<name>.md` file uses YAML frontmatter:
+
+```yaml
+---
+name: architect
+description: Strategic implementation planner for Igris AI...
+tools: Read, Grep, Glob
+model: inherit
+memory: project
+---
+```
+
+| Field | Purpose | Values |
+|-------|---------|--------|
+| `name` | Agent identifier used in `subagent_type` | Persona name (e.g., `architect`) |
+| `description` | When to invoke this agent | Free text |
+| `tools` | Allowed tools (restricts agent capabilities) | Comma-separated tool names |
+| `model` | Which Claude model powers this agent | `inherit` (same as parent) or `haiku` (fast/cheap) |
+| `memory` | Persistent memory scope | `project` (stored in `.claude/agent-memory/<name>/`) |
+
+### Agent Name Mapping (v3.2 → v3.3)
+
+All agents were renamed from generic identifiers to persona-themed names in MG-007. Each agent retains a "(formerly X)" note in its system prompt for traceability.
+
+| v3.2 Name (generic) | v3.3 Name (persona) | Tier | Role |
+|---|---|---|---|
+| planner | **architect** | 1 | Strategic planning |
+| coder | **forger** | 1 | Code implementation |
+| tester | **sentinel** | 1 | Test execution |
+| reviewer | **warden** | 1 | Code review |
+| ui-designer | **artisan** | 1 | Visual design |
+| documenter | **chronicler** | 2 | Documentation |
+| releaser | **herald** | 2 | Release prep |
+| standardizer | **lawkeeper** | 2 | Standards generation |
+| auditor | **inquisitor** | 3 | Code analysis |
+| debugger | **mender** | 3 | Error recovery |
+| migrator | **pathfinder** | 3 | Migration analysis |
+| ideator | **oracle** | 4 | Feature ideation |
+| explorer | **seeker** | 4 | Codebase research |
+| flutter-mvvm-actions-expert | **sage** | 5 | Flutter MVVM + Actions |
+| multi-agent-coordinator | **conductor** | 6 | Workflow orchestration |
+| agent-organizer | **tactician** | 6 | Team assembly |
+| context-manager | **archivist** | 6 | State management |
+| task-distributor | **dispatcher** | 6 | Queue management |
+
 ### Tier 1: Core Workflow (Required)
 
-| Agent | Role | Responsibilities | Tools |
-|-------|------|------------------|-------|
-| **planner** | Strategic planning | Creates implementation plans, analyzes briefs | Read, Grep, Glob |
-| **coder** | Code implementation | Writes clean code following architecture | Read, Write, Edit, Bash |
-| **tester** | Test execution | Generates tests, runs test suite, validates | Read, Bash, Grep |
-| **reviewer** | Code review | Quality inspection, security checks | Read, Grep, Glob |
-| **ui-designer** | Visual design | UI specs, design systems, accessibility | Read, Write, Edit, Bash, Glob, Grep |
+| Agent | Role | Responsibilities | Tools | Model |
+|-------|------|------------------|-------|-------|
+| **architect** | Strategic planning | Creates implementation plans, analyzes briefs | Read, Grep, Glob | inherit |
+| **forger** | Code implementation | Writes clean code following architecture | Read, Write, Edit, Bash, Grep, Glob | inherit |
+| **sentinel** | Test execution | Generates tests, runs test suite, validates | Read, Bash, Grep | inherit |
+| **warden** | Code review | Quality inspection, security checks | Read, Grep, Glob | inherit |
+| **artisan** | Visual design | UI specs, design systems, accessibility | Read, Write, Edit, Bash, Glob, Grep | inherit |
 
 ### Tier 2: Documentation
 
-| Agent | Role | Responsibilities | Tools |
-|-------|------|------------------|-------|
-| **documenter** | Documentation | Writes/updates docs, README, code comments | Read, Write, Grep, Glob |
-| **releaser** | Release prep | Generates changelog, versions, release notes | Read, Write, Bash, Grep |
-| **standardizer** | Standards gen | Generates coding_guidelines.md (4 modes) | Read, Write, Grep, Glob, Bash |
+| Agent | Role | Responsibilities | Tools | Model |
+|-------|------|------------------|-------|-------|
+| **chronicler** | Documentation | Writes/updates docs, README, code comments | Read, Write, Grep, Glob | inherit |
+| **herald** | Release prep | Generates changelog, versions, release notes | Read, Write, Bash, Grep | inherit |
+| **lawkeeper** | Standards gen | Generates coding_guidelines.md (4 modes) | Read, Write, Grep, Glob, Bash | inherit |
 
 ### Tier 3: Maintenance
 
-| Agent | Role | Responsibilities | Tools |
-|-------|------|------------------|-------|
-| **auditor** | Code analysis | 7 audit operations, creates briefs for findings | Read, Grep, Glob, Bash |
-| **debugger** | Error recovery | Diagnoses errors, suggests fixes | Read, Grep, Glob, Bash |
-| **migrator** | Migration analysis | Analyzes code vs standards, creates migration briefs | Read, Grep, Glob, Bash |
+| Agent | Role | Responsibilities | Tools | Model |
+|-------|------|------------------|-------|-------|
+| **inquisitor** | Code analysis | 7 audit operations, creates briefs for findings | Read, Grep, Glob, Bash | inherit |
+| **mender** | Error recovery | Diagnoses errors, suggests fixes | Read, Grep, Glob, Bash | inherit |
+| **pathfinder** | Migration analysis | Analyzes code vs standards, creates migration briefs | Read, Grep, Glob, Bash | inherit |
 
 ### Tier 4: Innovation
 
-| Agent | Role | Responsibilities | Tools |
-|-------|------|------------------|-------|
-| **ideator** | Feature ideation | Brainstorms features, creates FR-XXX briefs | Read, Grep, Glob |
-| **explorer** | Codebase research | Investigates and explains codebase | Read, Grep, Glob, Bash |
+| Agent | Role | Responsibilities | Tools | Model |
+|-------|------|------------------|-------|-------|
+| **oracle** | Feature ideation | Brainstorms features, creates FR-XXX briefs | Read, Grep, Glob | inherit |
+| **seeker** | Codebase research | Investigates and explains codebase | Read, Grep, Glob, Bash | haiku |
 
 ### Tier 5: Custom (User-Defined)
 
-| Agent | Role | Responsibilities | Tools |
-|-------|------|------------------|-------|
-| **flutter-mvvm-actions-expert** | Flutter architecture | Kalvad MVVM + Actions Layer patterns, GetX | Read, Write, Edit, Bash, Glob, Grep |
+| Agent | Role | Responsibilities | Tools | Model |
+|-------|------|------------------|-------|-------|
+| **sage** | Flutter architecture | Kalvad MVVM + Actions Layer patterns, GetX | Read, Write, Edit, Bash, Glob, Grep | inherit |
 
 ### Tier 6: Meta-Orchestration
 
-| Agent | Role | Responsibilities | Tools |
-|-------|------|------------------|-------|
-| **multi-agent-coordinator** | Workflow orchestration | Complex multi-agent choreography, parallel execution | Read, Write, Edit, Glob, Grep |
-| **agent-organizer** | Team assembly | Agent capability assessment, optimal team selection | Read, Write, Edit, Glob, Grep |
-| **context-manager** | State management | Cross-agent context, recovery points, sync | Read, Write, Edit, Glob, Grep |
-| **task-distributor** | Task scheduling | Queue management, load balancing, priority scheduling | Read, Write, Edit, Glob, Grep |
+| Agent | Role | Responsibilities | Tools | Model |
+|-------|------|------------------|-------|-------|
+| **conductor** | Workflow orchestration | Complex multi-agent choreography, parallel execution | Read, Write, Edit, Glob, Grep | inherit |
+| **tactician** | Team assembly | Agent capability assessment, optimal team selection | Read, Write, Edit, Glob, Grep | inherit |
+| **archivist** | State management | Cross-agent context, recovery points, sync | Read, Write, Edit, Glob, Grep | inherit |
+| **dispatcher** | Task scheduling | Queue management, load balancing, priority scheduling | Read, Write, Edit, Glob, Grep | inherit |
+
+### Key Agent Features (v3.3)
+
+- **Persistent Memory:** All agents have `memory: project`, storing learned context in `.claude/agent-memory/<name>/` across sessions.
+- **Tool Restrictions:** Read-only agents (architect, warden, oracle) cannot write files. Implementation agents (forger, artisan, sage) have full Read/Write/Edit/Bash access.
+- **Model Selection:** Most agents use `model: inherit` (same model as the orchestrator). The seeker agent uses `model: haiku` for fast, low-cost codebase exploration.
+- **Traceability:** Each agent's system prompt includes `(formerly <old-name>)` to maintain backward compatibility understanding.
 
 ---
 
@@ -392,7 +451,7 @@ Draft → Ready → In Progress → In Review → Done → Archived
 "Archive BR-001"
 ```
 
-### 2. Autonomous Quality Assurance (Auditor Agent)
+### 2. Autonomous Quality Assurance (Inquisitor Agent)
 
 **7 Audit Operations:**
 
@@ -419,7 +478,7 @@ Draft → Ready → In Progress → In Review → Done → Archived
 "Audit code_quality"       # Prevent debt accumulation
 ```
 
-### 3. Architecture Standards Generation (Standardizer Agent)
+### 3. Architecture Standards Generation (Lawkeeper Agent)
 
 **4 Generation Modes:**
 
@@ -442,7 +501,7 @@ Platform: Flutter
 
 **Output:** Comprehensive `ai/context/coding_guidelines.md` covering architecture, naming, testing, patterns.
 
-### 4. Migration Analysis (Migrator Agent)
+### 4. Migration Analysis (Pathfinder Agent)
 
 **Analyze entire codebase against standards:**
 
@@ -450,7 +509,7 @@ Platform: Flutter
 "MIGRATE analyze"
 ```
 
-**The migrator agent will:**
+**The pathfinder agent will:**
 1. Scan entire codebase
 2. Compare against `coding_guidelines.md`
 3. Identify architecture violations
@@ -482,7 +541,7 @@ BRIEF LEVEL (Brief Files)
 ├─ Tasks (Pending/In Progress/Completed)
 ├─ Workflow State
 │   ├─ Phase: PLANNING → BUILDING → TESTING → REVIEWING → COMPLETE
-│   ├─ Active Agent: planner | coder | tester | reviewer | none
+│   ├─ Active Agent: architect | forger | sentinel | warden | none
 │   ├─ Retry Count
 │   └─ Agent Log (timestamped history)
 ├─ Current work description
@@ -513,11 +572,11 @@ If Claude context resets mid-workflow:
 |---------|-----------|-------|
 | **Approach** | Editor-integrated AI | Multi-agent engineering system |
 | **Focus** | Fast code completion | Autonomous end-to-end workflows |
-| **Quality Control** | Manual | Automated (13 agents, quality gates) |
+| **Quality Control** | Manual | Automated (18 agents, quality gates) |
 | **Session Recovery** | None | Automatic (multi-level tracking) |
 | **Architecture Enforcement** | No | Yes (coding_guidelines.md) |
 | **Brief Management** | No | Yes (9 brief types, priorities) |
-| **Testing** | Manual | Automated (tester agent) |
+| **Testing** | Manual | Automated (sentinel agent) |
 | **Best For** | Quick edits, autocomplete | Full feature development, teams |
 
 ### IGRIS vs Aider
@@ -527,9 +586,9 @@ If Claude context resets mid-workflow:
 | **Approach** | CLI chat for code edits | Multi-agent autonomous system |
 | **Focus** | File editing, git integration | End-to-end engineering (plan → test → commit) |
 | **Agents** | Single agent | 18 specialized agents |
-| **Quality Control** | Commit messages | Briefs, tests, architecture, review agent |
+| **Quality Control** | Commit messages | Briefs, tests, architecture, warden agent |
 | **Session Tracking** | Git commits only | Multi-level (session, briefs, workflow, agents) |
-| **Self-Healing** | No | Yes (test failures loop to coder) |
+| **Self-Healing** | No | Yes (test failures loop to forger) |
 | **Best For** | Quick fixes, pair programming | Enterprise development, quality focus |
 
 ### IGRIS vs GitHub Copilot
@@ -538,9 +597,9 @@ If Claude context resets mid-workflow:
 |---------|----------------|-------|
 | **Approach** | Autocomplete | Multi-agent autonomous workflows |
 | **Focus** | Line/function suggestions | Full features with architecture |
-| **Planning** | None | planner agent creates plans |
-| **Testing** | No | tester agent generates + runs tests |
-| **Quality Assurance** | No | reviewer agent + auditor agent |
+| **Planning** | None | architect agent creates plans |
+| **Testing** | No | sentinel agent generates + runs tests |
+| **Quality Assurance** | No | warden agent + inquisitor agent |
 | **Session Recovery** | None | Full context preservation |
 | **Team Workflows** | Limited | Built-in (briefs, priorities, handoffs) |
 | **Best For** | Individual coding, boilerplate | Teams, complex features, quality |
@@ -617,7 +676,7 @@ claude
 # 3. Run migration analysis
 "MIGRATE analyze"
 
-# The migrator agent will:
+# The pathfinder agent will:
 # - Scan entire codebase
 # - Identify violations
 # - Generate briefs (MG-XXX, TD-XXX, BR-XXX, TS-XXX)
@@ -689,24 +748,34 @@ claude
 AGENT ROSTER
 
 Tier 1: Core Workflow
-✅ planner     | Implementation planning  | 47 runs
-✅ coder       | Code implementation      | 52 runs
-✅ tester      | Test execution           | 48 runs
-✅ reviewer    | Code review              | 41 runs
+✅ architect    | Implementation planning  | 47 runs
+✅ forger       | Code implementation      | 52 runs
+✅ sentinel     | Test execution           | 48 runs
+✅ warden       | Code review              | 41 runs
+✅ artisan      | Visual design            | 3 runs
 
 Tier 2: Documentation
-✅ documenter  | Documentation            | 12 runs
-✅ releaser    | Release preparation      | 3 runs
-✅ standardizer| Standards generation     | 5 runs
+✅ chronicler   | Documentation            | 12 runs
+✅ herald       | Release preparation      | 3 runs
+✅ lawkeeper    | Standards generation     | 5 runs
 
 Tier 3: Maintenance
-✅ auditor     | Code analysis            | 8 runs
-✅ debugger    | Error recovery           | 15 runs
-✅ migrator    | Migration analysis       | 2 runs
+✅ inquisitor   | Code analysis            | 8 runs
+✅ mender       | Error recovery           | 15 runs
+✅ pathfinder   | Migration analysis       | 2 runs
 
 Tier 4: Innovation
-✅ ideator     | Feature ideation         | 2 runs
-✅ explorer    | Codebase research        | 23 runs
+✅ oracle       | Feature ideation         | 2 runs
+✅ seeker       | Codebase research        | 23 runs
+
+Tier 5: Custom
+✅ sage         | Flutter MVVM + Actions   | 6 runs
+
+Tier 6: Meta-Orchestration
+✅ conductor    | Workflow orchestration    | 4 runs
+✅ tactician    | Team assembly            | 2 runs
+✅ archivist    | State management         | 5 runs
+✅ dispatcher   | Queue management         | 3 runs
 ```
 
 **Agent metrics tracked in:** `ai/session/metrics/agent-metrics.json`
@@ -813,20 +882,30 @@ cat .igris_version
 ```
 your-project/
 ├── .claude/
-│   ├── agents/                  # 13 native subagents
-│   │   ├── manifest.yaml        # Agent registry
-│   │   ├── planner.md
-│   │   ├── coder.md
-│   │   ├── tester.md
-│   │   ├── reviewer.md
-│   │   ├── documenter.md
-│   │   ├── releaser.md
-│   │   ├── standardizer.md
-│   │   ├── auditor.md
-│   │   ├── debugger.md
-│   │   ├── migrator.md
-│   │   ├── ideator.md
-│   │   └── explorer.md
+│   ├── agents/                  # 18 native subagents (.md files)
+│   │   ├── architect.md         # Tier 1: Strategic planning
+│   │   ├── forger.md            # Tier 1: Code implementation
+│   │   ├── sentinel.md          # Tier 1: Test execution
+│   │   ├── warden.md            # Tier 1: Code review
+│   │   ├── artisan.md           # Tier 1: Visual design
+│   │   ├── chronicler.md        # Tier 2: Documentation
+│   │   ├── herald.md            # Tier 2: Release prep
+│   │   ├── lawkeeper.md         # Tier 2: Standards generation
+│   │   ├── inquisitor.md        # Tier 3: Code analysis
+│   │   ├── mender.md            # Tier 3: Error recovery
+│   │   ├── pathfinder.md        # Tier 3: Migration analysis
+│   │   ├── oracle.md            # Tier 4: Feature ideation
+│   │   ├── seeker.md            # Tier 4: Codebase research
+│   │   ├── sage.md              # Tier 5: Flutter MVVM + Actions
+│   │   ├── conductor.md         # Tier 6: Workflow orchestration
+│   │   ├── tactician.md         # Tier 6: Team assembly
+│   │   ├── archivist.md         # Tier 6: State management
+│   │   ├── dispatcher.md        # Tier 6: Queue management
+│   │   └── manifest.yaml        # [DEPRECATED] Legacy agent registry
+│   ├── agent-memory/            # Persistent per-agent memory
+│   │   ├── architect/
+│   │   ├── forger/
+│   │   └── ...
 │   └── hooks/
 │       └── startup.sh           # Auto-runs on Claude start
 ├── CLAUDE.md                    # Context loaded on first message
@@ -857,6 +936,49 @@ your-project/
 
 ---
 
+## ✦ Migration Guide: v3.2 → v3.3 (MG-007)
+
+### Breaking Change: Agent Names
+
+In v3.3, all 18 agents were migrated from generic identifiers to persona-themed names defined as native Claude Code agent files. The legacy `manifest.yaml` registry is deprecated.
+
+**What changed:**
+- Agent files moved from generic names (e.g., `planner.md`) to persona names (e.g., `architect.md`)
+- `subagent_type` values in Task tool invocations must use the new names
+- `manifest.yaml` is deprecated (retained with header notice, no longer the source of truth)
+- Each agent now has a custom system prompt, tool restrictions, model selection, and persistent memory
+
+**If you have custom scripts or workflows that reference agent names, update them:**
+
+| Before (v3.2) | After (v3.3) |
+|---|---|
+| `subagent_type: "planner"` | `subagent_type: "architect"` |
+| `subagent_type: "coder"` | `subagent_type: "forger"` |
+| `subagent_type: "tester"` | `subagent_type: "sentinel"` |
+| `subagent_type: "reviewer"` | `subagent_type: "warden"` |
+| `subagent_type: "ui-designer"` | `subagent_type: "artisan"` |
+| `subagent_type: "documenter"` | `subagent_type: "chronicler"` |
+| `subagent_type: "releaser"` | `subagent_type: "herald"` |
+| `subagent_type: "standardizer"` | `subagent_type: "lawkeeper"` |
+| `subagent_type: "auditor"` | `subagent_type: "inquisitor"` |
+| `subagent_type: "debugger"` | `subagent_type: "mender"` |
+| `subagent_type: "migrator"` | `subagent_type: "pathfinder"` |
+| `subagent_type: "ideator"` | `subagent_type: "oracle"` |
+| `subagent_type: "explorer"` | `subagent_type: "seeker"` |
+| `subagent_type: "flutter-mvvm-actions-expert"` | `subagent_type: "sage"` |
+| `subagent_type: "multi-agent-coordinator"` | `subagent_type: "conductor"` |
+| `subagent_type: "agent-organizer"` | `subagent_type: "tactician"` |
+| `subagent_type: "context-manager"` | `subagent_type: "archivist"` |
+| `subagent_type: "task-distributor"` | `subagent_type: "dispatcher"` |
+
+**New capabilities per agent (v3.3):**
+- `memory: project` -- agents persist learned knowledge across sessions
+- Per-agent `tools` restrictions -- read-only agents cannot write files
+- `model` selection -- seeker uses `haiku` for fast exploration
+- Custom system prompts with persona identity, capabilities, constraints, and tagline
+
+---
+
 ## ✦ Documentation
 
 - **Operating System:** `ai/prompts/igris_os.md` (complete system, all protocols)
@@ -881,7 +1003,16 @@ A: Yes, but with limitations. Startup hooks won't auto-run, and Task tool (subag
 A: Main agent (orchestrator) delegates work to subagents via Task tool. Subagents are stateless — they receive task instructions, do work, return results. Main agent tracks workflow state.
 
 **Q: Can I disable specific agents?**
-A: Yes. Edit `.claude/agents/manifest.yaml` or use `DIGIVOLVE disable {agent}` (coming soon).
+A: Yes. Remove or rename the agent's `.md` file in `.claude/agents/`, or use `DIGIVOLVE disable {agent}`.
+
+**Q: What is the agent memory feature?**
+A: All agents have `memory: project` enabled, which stores persistent knowledge in `.claude/agent-memory/<name>/`. This allows agents to remember project-specific context across sessions.
+
+**Q: Why are some agents read-only?**
+A: Tool restrictions enforce the separation of concerns. For example, the architect agent (planning) and warden agent (review) should never write code -- they only analyze and advise. The forger agent (implementation) has full write access because its job is to produce code.
+
+**Q: Why does the seeker agent use a different model?**
+A: The seeker agent uses `model: haiku` for fast, low-cost codebase exploration. Since its role is research and investigation (not code generation), a lighter model provides faster responses without sacrificing quality.
 
 **Q: Do I need Node.js?**
 A: No. Node.js 20+ enables the optional MCP server for convenience tools. Core IGRIS works via CLAUDE.md + file operations.
