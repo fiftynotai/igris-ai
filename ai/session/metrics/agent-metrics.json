@@ -1,19 +1,19 @@
 {
   "version": "1.0.0",
-  "last_updated": "2026-02-06T04:29:03Z",
+  "last_updated": "2026-02-06T10:32:10Z",
   "agents": {
     "planner": {
-      "invocations": 0,
-      "last_used": null,
-      "avg_duration_seconds": 0,
+      "invocations": 1,
+      "last_used": "2026-02-06T04:41:07Z",
+      "avg_duration_seconds": 49.5,
       "success_rate": 1.0,
       "total_duration_seconds": 0,
       "success_count": 0
     },
     "coder": {
-      "invocations": 1,
-      "last_used": "2026-02-05T18:32:48Z",
-      "avg_duration_seconds": 0,
+      "invocations": 3,
+      "last_used": "2026-02-06T10:31:25Z",
+      "avg_duration_seconds": 6705.7,
       "success_rate": 1.0,
       "total_duration_seconds": 0,
       "success_count": 0
@@ -84,9 +84,9 @@
     }
   },
   "totals": {
-    "total_invocations": 3,
+    "total_invocations": 6,
     "total_duration_seconds": 0,
-    "most_used_agent": "tester",
+    "most_used_agent": "coder",
     "least_used_agent": "explorer"
   }
 }

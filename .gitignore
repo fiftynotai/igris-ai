@@ -42,6 +42,9 @@ test-output/
 ai/persona.json
 ai/prompts/persona_loader.md
 
+# Local overrides (developer-specific, never commit)
+CLAUDE.local.md
+
 # Persona system - Bundled personas and tools (tracked in repo)
 # ai/personas/igris/ - Bundled Igris persona (committed)
 # scripts/persona_*.sh - Persona management tools (committed)

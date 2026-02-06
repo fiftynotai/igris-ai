@@ -980,6 +980,27 @@ Examples of what to include:
 
 ---
 
+## Modular Rules Architecture
+
+Igris AI uses modular rules in `.claude/rules/` for protocol enforcement. These rules auto-load on every session.
+
+| File | Purpose |
+|------|---------|
+| `01-igris-init.md` | Boot sequence, context reset detection, initialization flow |
+| `02-igris-briefs.md` | Brief-first protocol, brief workflow operations |
+| `03-igris-commits.md` | Commit message format, quality standards checklist |
+| `04-igris-agents.md` | Agent delegation rules, Digivolve protocol |
+| `05-igris-persona.md` | Persona configuration, mask behavior, agent aliases |
+
+**Numeric prefixes** ensure consistent loading order.
+
+**Note:** CLAUDE.md uses `@import` to reference:
+- `ai/prompts/igris_os.md` (this file - operating system)
+- `ai/persona.json` (persona identity)
+- `ai/context/coding_guidelines.md` (architecture standards)
+
+---
+
 ## Example: Starting a New Task
 
 **Scenario:** Implementing BR-001: Add Authentication Feature

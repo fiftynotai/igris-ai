@@ -1,8 +1,9 @@
 # Current Session
 
 ## Status
-**Mode:** REST MODE
+**Mode:** HUNT MODE
 **Updated:** 2026-02-06
+**Active Brief:** MG-004
 
 ---
 
@@ -10,6 +11,7 @@
 
 | Brief | Title | Status |
 |-------|-------|--------|
+| MG-004 | Memory Architecture Migration | In Progress |
 | MG-006 | Hooks Integration — Automated Session & Quality | Done |
 
 ---
@@ -23,8 +25,31 @@
 
 ## Resume Point
 
-**Next:** MG-004 — Memory Architecture Migration
-**Action:** Ready to start. Remaining migrations: MG-004 → MG-005 → MG-007
+**Current:** MG-004 — Memory Architecture Migration
+**Phase:** COMPLETE - Ready for commit
+
+---
+
+## Progress Update (2026-02-06)
+
+**ALL PHASES COMPLETE:**
+- ✅ Phase 1: Created 5 modular rule files in `.claude/rules/` (855 lines)
+- ✅ Phase 2: Rewrote CLAUDE.md from 769 → 96 lines (87.5% reduction)
+- ✅ Phase 3: Fresh session init test PASSED (@import + rules auto-load verified)
+- ✅ Phase 4: Context reset recovery test PASSED
+- ✅ Phase 5: Documentation updated (igris_os.md - Modular Rules Architecture section)
+
+**Acceptance Criteria (6/6):**
+1. ✅ CLAUDE.md under 150 lines (96 lines)
+2. ✅ Modular rules auto-load correctly
+3. ✅ Initialization identical to previous behavior
+4. ✅ Context reset recovery works
+5. ✅ No regression in brief workflows
+6. ✅ Documentation updated
+
+**Next Steps:**
+- Commit MG-004 migration
+- Archive brief
 
 ---
 
