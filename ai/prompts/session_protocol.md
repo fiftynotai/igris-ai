@@ -54,6 +54,17 @@ Purpose: Track all work happening within a specific brief.
 
 ---
 
+## Context Types
+
+| Type | Location | Lifecycle |
+|------|----------|-----------|
+| Project | `ai/context/*.md` | Permanent |
+| Session | `ai/session/CURRENT_SESSION.md` | Per-session |
+| Agent | Brief file Agent Log | Per-brief |
+| Recovery | `ai/session/checkpoints/` | 7 days |
+
+---
+
 ## Recovery Protocol
 
 When context resets:
@@ -128,5 +139,5 @@ When context resets:
 
 ---
 
-**Last Updated:** 2025-12-03
-**IGRIS Version:** 3.1.0
+**Last Updated:** 2026-02-08
+**IGRIS Version:** 3.4.0
