@@ -88,12 +88,13 @@ Personas define agent display names in their persona.json:
 ```json
 {
   "agent_aliases": {
-    "planner": "ARCHITECT",
-    "coder": "FORGER",
-    "tester": "SENTINEL",
-    "reviewer": "WARDEN",
-    "documenter": "CHRONICLER",
-    "auditor": "INQUISITOR"
+    "architect": "ARCHITECT",
+    "forger": "FORGER",
+    "sentinel": "SENTINEL",
+    "warden": "WARDEN",
+    "mender": "MENDER",
+    "seeker": "SEEKER",
+    "sage": "SAGE"
   },
   "agent_phrases": {
     "summon": "Summoning {agent}...",

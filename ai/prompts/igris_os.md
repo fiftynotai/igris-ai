@@ -497,7 +497,7 @@ If the file doesn't exist, generate it first:
 ```
 STANDARDIZE analyze
 ```
-This will invoke the lawkeeper agent to generate coding guidelines.
+This will use the `/standardize` skill to generate coding guidelines.
 
 IGRIS will ask:
 - Do you have a base architecture repository? (optional)

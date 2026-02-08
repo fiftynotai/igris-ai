@@ -197,7 +197,7 @@ _(Finished tasks)_
 ## Workflow State
 
 **Phase:** INIT | PLANNING | APPROVAL | BUILDING | TESTING | REVIEWING | COMMITTING | COMPLETE | BLOCKED
-**Active Agent:** none | architect | forger | sentinel | warden | mender | chronicler | herald
+**Active Agent:** none | architect | forger | sentinel | warden | mender | seeker | sage
 **Retry Count:** 0
 
 ### Current Work
