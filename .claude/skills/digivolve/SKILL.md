@@ -19,7 +19,7 @@ triggers:
 
 # DIGIVOLVE - Agent Management
 
-Manage the Igris AI agent registry (18 native subagents).
+Manage the Igris AI agent registry (7 native subagents).
 
 ## Usage
 
@@ -49,21 +49,10 @@ Agents are defined as individual files in `.claude/agents/*.md`:
 | 1 | architect | ARCHITECT | Strategic planning |
 | 1 | forger | FORGER | Code implementation |
 | 1 | sentinel | SENTINEL | Test execution |
-| 1 | warden | WARDEN | Code review |
-| 1 | artisan | ARTISAN | Visual design |
-| 2 | chronicler | CHRONICLER | Documentation |
-| 2 | herald | HERALD | Release prep |
-| 2 | lawkeeper | LAWKEEPER | Standards generation |
-| 3 | inquisitor | INQUISITOR | Code analysis |
+| 1 | warden | WARDEN | Code review + auditing |
 | 3 | mender | MENDER | Error recovery |
-| 3 | pathfinder | PATHFINDER | Migration analysis |
-| 4 | oracle | ORACLE | Feature ideation |
 | 4 | seeker | SEEKER | Codebase research |
 | 5 | sage | SAGE | Flutter MVVM + Actions |
-| 6 | conductor | CONDUCTOR | Workflow orchestration |
-| 6 | tactician | TACTICIAN | Team assembly |
-| 6 | archivist | ARCHIVIST | State management |
-| 6 | dispatcher | DISPATCHER | Queue management |
 
 ## Subcommands
 
@@ -77,7 +66,7 @@ Display all agents with their status and usage metrics.
 
 Output format:
 ```
-## Agent Roster (18 Agents)
+## Agent Roster (7 Agents)
 
 ### Tier 1: Core Workflow
 | Agent | Alias | Status | Invocations | Last Used |
@@ -86,15 +75,18 @@ Output format:
 | forger | FORGER | Active | 38 | 2026-02-06 |
 | sentinel | SENTINEL | Active | 35 | 2026-02-06 |
 | warden | WARDEN | Active | 30 | 2026-02-06 |
-| artisan | ARTISAN | Active | 5 | 2026-02-05 |
 
-### Tier 2: Documentation
-[...]
+### Tier 3: Maintenance
+| Agent | Alias | Status | Invocations | Last Used |
+|-------|-------|--------|-------------|-----------|
+| mender | MENDER | Active | 12 | 2026-02-05 |
 
-### Tier 6: Meta (Orchestration)
-[...]
+### Tier 4: Research
+| Agent | Alias | Status | Invocations | Last Used |
+|-------|-------|--------|-------------|-----------|
+| seeker | SEEKER | Active | 8 | 2026-02-04 |
 
-### Custom Agents (Tier 5)
+### Tier 5: Custom
 [List any custom agents or "None defined"]
 
 Total invocations this session: X
@@ -155,10 +147,11 @@ Output: "Agent {name} enabled."
 Delete a custom agent (Tier 5 only).
 
 1. Verify agent is Tier 5 (Custom)
-2. If built-in (Tier 1-4, 6): Refuse with error
-3. Confirm with user
-4. Delete `.claude/agents/{name}.md`
-5. Remove from manifest
+2. If Tier 1 (Core): Refuse with error - built-in core agents cannot be removed
+3. Tier 3/4 agents can be disabled but not removed
+4. Confirm with user
+5. Delete `.claude/agents/{name}.md`
+6. Remove from manifest
 
 Output: "Agent {name} removed from registry."
 
@@ -176,4 +169,5 @@ Output: "Agent {name} reset to defaults."
 
 - Unknown subcommand: "Unknown command. Available: status, add, upgrade, disable, enable, remove, reset"
 - Agent not found: "Agent '{name}' not found. Run '/digivolve status' to see all agents."
-- Cannot remove built-in: "Cannot remove {name} - built-in agents can only be disabled."
+- Cannot remove Tier 1 agent: "Cannot remove {name} - Tier 1 core agents can only be disabled."
+- Cannot remove Tier 3/4 agent: "Cannot remove {name} - built-in agents can only be disabled. Use '/digivolve disable {name}' instead."

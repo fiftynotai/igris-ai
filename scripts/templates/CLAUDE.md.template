@@ -120,25 +120,23 @@ This project uses [Igris AI](https://github.com/fiftynotai/igris-ai) for code qu
 
 ---
 
-## Multi-Agent Ecosystem (v3.3)
+## Multi-Agent Ecosystem (v3.4)
 
-IGRIS v3.3 uses **18 native Claude Code subagents** for autonomous workflows.
+IGRIS v3.4 uses **7 native Claude Code subagents** for autonomous workflows.
 
 **Agent Tiers:**
 
 | Tier | Agents | Purpose |
 |------|--------|---------|
-| 1 - Core | architect, forger, sentinel, warden, artisan | Development workflow |
-| 2 - Docs | chronicler, herald, lawkeeper | Documentation & releases |
-| 3 - Maintenance | inquisitor, mender, pathfinder | Quality & migration |
-| 4 - Innovation | oracle, seeker | Research & ideas |
+| 1 - Core | architect, forger, sentinel, warden | Development workflow |
+| 3 - Maintenance | mender | Error recovery & debugging |
+| 4 - Research | seeker | Codebase exploration |
 | 5 - Custom | sage (Flutter MVVM + Actions) | Domain expertise |
-| 6 - Meta | conductor, tactician, archivist, dispatcher | Orchestration |
 
 **Key Triggers:**
-- `STANDARDIZE {mode}` - Generate coding guidelines
-- `MIGRATE analyze` - Run migration analysis
-- `AUDIT {type}` - Run one of 7 audit operations
+- `/standardize {mode}` - Generate coding guidelines (skill)
+- `/migrate-analyze` - Run migration analysis (skill)
+- `/audit {type}` - Run one of 7 audit operations (skill)
 
 **Agent Definitions:** `.claude/agents/*.md`
 
@@ -153,8 +151,8 @@ IGRIS v3.3 uses **18 native Claude Code subagents** for autonomous workflows.
 ### Quick Decision
 - **File modification needed?** → DELEGATE to appropriate agent
 - **Read-only operation?** → Orchestrator OK
-- **Research question?** → DELEGATE to explorer
-- **Documentation task?** → DELEGATE to documenter
+- **Research question?** → DELEGATE to seeker
+- **Documentation task?** → Use `/document` skill
 
 ### Delegation Rules
 
@@ -162,10 +160,10 @@ IGRIS v3.3 uses **18 native Claude Code subagents** for autonomous workflows.
 |-----------------|-------------|
 | "implement", "fix", "build" | architect → forger → sentinel → warden |
 | "how does X work?" | seeker |
-| "update docs/README" | chronicler |
-| "STANDARDIZE" | lawkeeper |
-| "AUDIT" | inquisitor |
-| "MIGRATE analyze" | pathfinder |
+| "update docs/README" | `/document` skill |
+| "STANDARDIZE" | `/standardize` skill |
+| "AUDIT" | `/audit` skill or warden |
+| "MIGRATE analyze" | `/migrate-analyze` skill |
 | "test", "run tests" | sentinel |
 | "review code" | warden |
 
@@ -245,12 +243,10 @@ IGRIS uses native Claude Code subagents for autonomous workflows.
 
 | Tier | Agents | Purpose |
 |------|--------|---------|
-| 1 - Core | architect, forger, sentinel, warden, artisan | Development workflow |
-| 2 - Docs | chronicler, herald, lawkeeper | Documentation pipeline |
-| 3 - Maintenance | inquisitor, mender, pathfinder | Quality & recovery |
-| 4 - Innovation | oracle, seeker | Research & ideas |
-| 5 - Custom | sage (Flutter MVVM + Actions) | Extensibility |
-| 6 - Meta | conductor, tactician, archivist, dispatcher | Orchestration |
+| 1 - Core | architect, forger, sentinel, warden | Development workflow |
+| 3 - Maintenance | mender | Error recovery & debugging |
+| 4 - Research | seeker | Codebase exploration |
+| 5 - Custom | sage (Flutter MVVM + Actions) | Domain expertise |
 
 ### Agent Manifest
 
@@ -544,7 +540,7 @@ IGRIS will analyze your codebase and merge findings with these Igris AI instruct
 
 - **Operating System:** `ai/prompts/igris_os.md` (core system, all protocols)
 - **Session Protocol:** `ai/prompts/session_protocol.md` (session tracking)
-- **Agent Definitions:** `.claude/agents/*.md` (18 native subagents)
+- **Agent Definitions:** `.claude/agents/*.md` (7 native subagents)
 - **Main repository:** https://github.com/fiftynotai/igris-ai
 
 ---

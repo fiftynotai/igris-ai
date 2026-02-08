@@ -3,42 +3,34 @@
 # This file is kept for reference only. The source of truth is now the individual
 # agent definition files (architect.md, forger.md, sentinel.md, etc.)
 #
-# IGRIS v3.3 Agent Ecosystem Registry (REFERENCE ONLY)
+# IGRIS v3.4 Agent Ecosystem Registry (REFERENCE ONLY)
 
-version: "3.3"
+version: "3.4"
 schema: "https://igris.ai/schemas/agent-manifest.yaml"
 
 metadata:
   name: "IGRIS Agent Ecosystem"
-  description: "Subagent definitions for IGRIS v3.3 - 18 agents across 6 tiers"
+  description: "Subagent definitions for IGRIS v3.4 - 7 agents across 4 tiers"
   created: "2025-12-03"
-  updated: "2025-12-24"
-  agent_count: 18
+  updated: "2026-02-08"
+  agent_count: 7
 
 tiers:
   1:
     name: "Core Workflow"
     description: "Essential agents for development workflow"
     required: true
-  2:
-    name: "Documentation"
-    description: "Agents for documentation and releases"
-    required: false
   3:
     name: "Maintenance"
-    description: "Agents for auditing and self-healing"
+    description: "Agents for debugging and self-healing"
     required: false
   4:
-    name: "Innovation"
-    description: "Agents for ideation and exploration"
+    name: "Research"
+    description: "Agents for codebase exploration"
     required: false
   5:
     name: "Custom"
     description: "User-defined agents"
-    required: false
-  6:
-    name: "Meta-Orchestration"
-    description: "Agents for coordinating other agents and managing workflows"
     required: false
 
 agents:
@@ -95,8 +87,8 @@ agents:
   - name: reviewer
     file: reviewer.md
     tier: 1
-    role: "Code review"
-    description: "Reviews code for quality and security"
+    role: "Code review + auditing"
+    description: "Reviews code for quality and security. Also performs audit operations."
     tools:
       - Read
       - Grep
@@ -106,102 +98,7 @@ agents:
       - "audit"
       - "inspect"
 
-  - name: ui-designer
-    file: ui-designer.md
-    tier: 1
-    role: "Visual design"
-    description: "Creates intuitive, accessible user interfaces with design systems and interaction patterns"
-    tools:
-      - Read
-      - Write
-      - Edit
-      - Bash
-      - Glob
-      - Grep
-    triggers:
-      - "design"
-      - "ui"
-      - "ux"
-      - "visual"
-      - "accessibility"
-      - "artisan"
-      - "component"
-
-  # Tier 2: Documentation
-  - name: documenter
-    file: documenter.md
-    tier: 2
-    role: "Documentation"
-    description: "Writes and maintains documentation"
-    tools:
-      - Read
-      - Write
-      - Grep
-      - Glob
-    triggers:
-      - "document"
-      - "update docs"
-      - "update readme"
-      - "add comments"
-      - "chronicle"
-
-  - name: releaser
-    file: releaser.md
-    tier: 2
-    role: "Release preparation"
-    description: "Generates changelog and prepares releases"
-    tools:
-      - Read
-      - Write
-      - Bash
-      - Grep
-    triggers:
-      - "release"
-      - "changelog"
-      - "version"
-      - "prepare release"
-      - "herald"
-
-  - name: standardizer
-    file: standardizer.md
-    tier: 2
-    role: "Standards generation"
-    description: "Generates coding_guidelines.md from codebase or base repo analysis. 4 modes supported."
-    tools:
-      - Read
-      - Write
-      - Grep
-      - Glob
-      - Bash
-    triggers:
-      - "standardize"
-      - "generate guidelines"
-      - "generate standards"
-      - "lawkeeper"
-
   # Tier 3: Maintenance
-  - name: auditor
-    file: auditor.md
-    tier: 3
-    role: "Code analysis"
-    description: "Runs 7 audit operations and detects issues. Creates briefs for findings."
-    tools:
-      - Read
-      - Grep
-      - Glob
-      - Bash
-    triggers:
-      - "audit"
-      - "audit code_quality"
-      - "audit bugs"
-      - "audit standards"
-      - "audit process"
-      - "audit dependencies"
-      - "audit performance"
-      - "audit architecture"
-      - "audit full"
-      - "inquisitor"
-
   - name: debugger
     file: debugger.md
     tier: 3
@@ -219,40 +116,7 @@ agents:
       - "fix error"
       - "mender"
 
-  - name: migrator
-    file: migrator.md
-    tier: 3
-    role: "Migration analysis"
-    description: "Analyzes codebases against standards and generates migration briefs and roadmaps"
-    tools:
-      - Read
-      - Grep
-      - Glob
-      - Bash
-    triggers:
-      - "migrate"
-      - "migrate analyze"
-      - "migration analysis"
-      - "pathfinder"
-
-  # Tier 4: Innovation
-  - name: ideator
-    file: ideator.md
-    tier: 4
-    role: "Feature ideation"
-    description: "Brainstorms features and improvements"
-    tools:
-      - Read
-      - Grep
-      - Glob
-    triggers:
-      - "suggest"
-      - "brainstorm"
-      - "ideate"
-      - "what if"
-      - "dream"
-      - "oracle"
-
+  # Tier 4: Research
   - name: explorer
     file: explorer.md
     tier: 4
@@ -295,78 +159,3 @@ agents:
       - "sage"
       - "dart"
       - "widget"
-
-  # Tier 6: Meta-Orchestration
-  - name: multi-agent-coordinator
-    file: multi-agent-coordinator.md
-    tier: 6
-    role: "Workflow orchestration"
-    description: "Orchestrates complex multi-agent workflows, manages inter-agent communication, and enables parallel execution"
-    tools:
-      - Read
-      - Write
-      - Edit
-      - Glob
-      - Grep
-    triggers:
-      - "coordinate"
-      - "parallel"
-      - "orchestrate"
-      - "conductor"
-      - "workflow"
-
-  - name: agent-organizer
-    file: agent-organizer.md
-    tier: 6
-    role: "Team assembly"
-    description: "Assesses agent capabilities and assembles optimal teams for specific tasks"
-    tools:
-      - Read
-      - Write
-      - Edit
-      - Glob
-      - Grep
-    triggers:
-      - "organize"
-      - "team"
-      - "assemble"
-      - "tactician"
-      - "capability"
-
-  - name: context-manager
-    file: context-manager.md
-    tier: 6
-    role: "State management"
-    description: "Manages shared context, state synchronization, and recovery points across agents"
-    tools:
-      - Read
-      - Write
-      - Edit
-      - Glob
-      - Grep
-    triggers:
-      - "context"
-      - "state"
-      - "sync"
-      - "archivist"
-      - "checkpoint"
-      - "recover"
-
-  - name: task-distributor
-    file: task-distributor.md
-    tier: 6
-    role: "Task scheduling"
-    description: "Distributes tasks, manages queues, load balances, and schedules priorities across agents"
-    tools:
-      - Read
-      - Write
-      - Edit
-      - Glob
-      - Grep
-    triggers:
-      - "distribute"
-      - "queue"
-      - "schedule"
-      - "dispatcher"
-      - "balance"
-      - "priority"

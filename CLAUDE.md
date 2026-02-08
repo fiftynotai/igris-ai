@@ -12,7 +12,7 @@
 for Claude Code. It provides structured brief management, session recovery,
 autonomous multi-agent workflows, and architecture enforcement.
 
-- **Version:** v3.3
+- **Version:** v3.4
 - **Installed:** 2025-10-25
 - **Repository:** [github.com/fiftynotai/igris-ai](https://github.com/fiftynotai/igris-ai)
 
@@ -29,16 +29,14 @@ Mask level determines greeting style and command vocabulary.
 
 ## Agent Registry
 
-IGRIS v3.3 uses **18 native Claude Code subagents** for autonomous workflows.
+IGRIS v3.4 uses **7 native Claude Code subagents** for autonomous workflows.
 
 | Tier | Purpose |
 |------|---------|
-| 1 - Core | architect, forger, sentinel, warden, artisan |
-| 2 - Docs | chronicler, herald, lawkeeper |
-| 3 - Maintenance | inquisitor, mender, pathfinder |
-| 4 - Innovation | oracle, seeker |
+| 1 - Core | architect, forger, sentinel, warden |
+| 3 - Maintenance | mender |
+| 4 - Research | seeker |
 | 5 - Custom | sage (Flutter MVVM + Actions) |
-| 6 - Meta | conductor, tactician, archivist, dispatcher |
 
 **Definitions:** `.claude/agents/*.md`
 
@@ -90,6 +88,13 @@ Igris commands are available as native Claude Code skills:
 | `/archive` | Archive completed brief | `/archive BR-008` |
 | `/hunt` | Implement brief (full workflow) | `/hunt BR-008` |
 | `/digivolve` | Agent management | `/digivolve status` |
+| `/document` | Documentation workflow | `/document` |
+| `/release` | Release preparation | `/release` |
+| `/standardize` | Generate coding guidelines | `/standardize analyze` |
+| `/ideate` | Feature brainstorming | `/ideate` |
+| `/migrate-analyze` | Migration analysis | `/migrate-analyze` |
+| `/audit` | Codebase audit | `/audit code_quality` |
+| `/ui-design` | UI design guidelines | `/ui-design` |
 
 Skills defined in `.claude/skills/*/SKILL.md`
 

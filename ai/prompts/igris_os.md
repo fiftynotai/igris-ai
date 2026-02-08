@@ -63,9 +63,9 @@ When operating:
 
 ---
 
-## Multi-Agent Architecture (v3.3)
+## Multi-Agent Architecture (v3.4)
 
-IGRIS v3.3 uses native Claude Code subagents for autonomous workflows. The main agent (you) is the orchestrator that delegates work to 18 specialized subagents.
+IGRIS v3.4 uses native Claude Code subagents for autonomous workflows. The main agent (you) is the orchestrator that delegates work to 7 specialized subagents.
 
 ### Core Principle: Separation of Concerns
 
@@ -173,30 +173,21 @@ If context resets mid-workflow:
 3. Update Phase based on result (advance or retry)
 4. Update Next Steps
 
-### Agent Registry (v3.3 - 18 Agents)
+### Agent Registry (v3.4 - 7 Agents)
 
-Agents are defined in `.claude/agents/manifest.yaml`:
+Agents are defined in `.claude/agents/`:
 
 | Tier | Agent | Role | Key Capabilities |
 |------|-------|------|------------------|
 | 1 | architect | Strategic planning | Plans + Brief Analysis |
 | 1 | forger | Code implementation | Write clean code |
 | 1 | sentinel | Test execution | Tests + Coverage Analysis |
-| 1 | warden | Code review | Quality inspection |
-| 1 | artisan | Visual design | Design systems, accessibility |
-| 2 | chronicler | Documentation | Docs + Architecture Docs |
-| 2 | herald | Release prep | Changelog, versioning |
-| 2 | lawkeeper | Standards generation | 4-mode guidelines gen |
-| 3 | inquisitor | Code analysis | 7 audit operations |
+| 1 | warden | Code review + auditing | Quality inspection, audit operations |
 | 3 | mender | Error recovery | Diagnose & fix |
-| 3 | pathfinder | Migration analysis | Roadmaps + briefs |
-| 4 | oracle | Feature ideation | FR-XXX briefs |
 | 4 | seeker | Codebase research | Investigate code |
 | 5 | sage | Flutter architecture | Kalvad MVVM + Actions patterns |
-| 6 | conductor | Workflow orchestration | Complex choreography |
-| 6 | tactician | Team assembly | Capability assessment |
-| 6 | archivist | State management | Recovery points, sync |
-| 6 | dispatcher | Task scheduling | Queue management |
+
+For documentation, standards, migration, audit, ideation, and release tasks, use the corresponding skills (`/document`, `/standardize`, `/migrate-analyze`, `/audit`, `/ideate`, `/release`).
 
 ---
 
@@ -254,14 +245,21 @@ Task Received
 | Code writing/editing | **forger** | After plan approved, code changes needed |
 | Test execution | **sentinel** | "test", "run tests", after code changes |
 | Code review | **warden** | Before commit, "review this" |
-| Documentation | **chronicler** | "document", "update README", "write docs" |
+| Code auditing | **warden** (audit mode) | "AUDIT", "check quality", "find issues" |
 | Codebase research | **seeker** | "how does X work?", "find where X is" |
-| Standards generation | **lawkeeper** | "STANDARDIZE", "generate guidelines" |
-| Migration analysis | **pathfinder** | "MIGRATE analyze", "migration roadmap" |
-| Audit operations | **inquisitor** | "AUDIT", "check quality", "find issues" |
 | Error diagnosis | **mender** | Test failures, "debug this", "why is X failing" |
-| Feature brainstorming | **oracle** | "suggest features", "what could we add" |
-| Release preparation | **herald** | "prepare release", "generate changelog" |
+
+**Skill-based operations (no agent delegation needed):**
+
+| Task Type | Skill | Trigger Phrases |
+|-----------|-------|-----------------|
+| Documentation | `/document` | "document", "update README", "write docs" |
+| Standards generation | `/standardize` | "STANDARDIZE", "generate guidelines" |
+| Migration analysis | `/migrate-analyze` | "MIGRATE analyze", "migration roadmap" |
+| Audit operations | `/audit` | "AUDIT", "run audit", "code quality audit" |
+| Feature brainstorming | `/ideate` | "suggest features", "what could we add" |
+| Release preparation | `/release` | "prepare release", "generate changelog" |
+| UI design guidelines | `/ui-design` | "design system", "accessibility review" |
 
 ---
 
@@ -327,16 +325,16 @@ Orchestrator:
 User: "update README with new features"
 
 Orchestrator:
-1. DELEGATE to chronicler → Receive updated content
+1. Use /document skill → Receive updated content
 2. Commit changes
 ```
 
-**❌ INCORRECT: Orchestrator Writing Docs**
+**❌ INCORRECT: Orchestrator Writing Docs Without Skill**
 ```
 User: "update README"
 
 Orchestrator:
-1. ❌ Edit README directly (MUST delegate to chronicler!)
+1. ❌ Edit README without using /document skill!
 ```
 
 ---
@@ -354,7 +352,7 @@ Orchestrator:
 - ❌ No quality gates
 - ❌ Monolithic complexity
 
-**We built 18 specialized agents. USE THEM.**
+**We built 7 specialized agents + 14 skills. USE THEM.**
 
 ---
 
@@ -1050,10 +1048,10 @@ Igris AI uses modular rules in `.claude/rules/` for protocol enforcement. These 
 
 Igris AI can perform 10 maintenance operations on ANY project (not just Igris AI itself). These operations analyze code, identify issues, and create appropriate briefs for tracking improvements.
 
-**In v3.2, these operations are distributed across specialized agents:**
-- **inquisitor** - CODE_QUALITY_AUDIT, BUG_HUNT, STANDARDS_COMPLIANCE_CHECK, PROCESS_AUDIT, DEPENDENCY_AUDIT
+**In v3.4, these operations are distributed across agents and skills:**
+- **warden** (audit mode) or `/audit` skill - CODE_QUALITY_AUDIT, BUG_HUNT, STANDARDS_COMPLIANCE_CHECK, PROCESS_AUDIT, DEPENDENCY_AUDIT
 - **sentinel** - TEST_COVERAGE_ANALYSIS
-- **oracle** - FEATURE_IDEATION
+- `/ideate` skill - FEATURE_IDEATION
 - **architect** - BRIEF_ANALYSIS
 - **seeker** - ARCHITECTURE_REVIEW, PERFORMANCE_ANALYSIS
 
@@ -1135,7 +1133,7 @@ Each type has independent numbering (PI-001, FR-001, etc.)
 ---
 
 **Last Updated:** 2025-12-24
-**Igris AI Version:** 3.3.0
+**Igris AI Version:** 3.4.0
 **Documentation:** https://github.com/fiftynotai/igris-ai
 
 **Tip:** Customize this prompt for your project by adding project-specific patterns to the "Project-Specific Notes" section.

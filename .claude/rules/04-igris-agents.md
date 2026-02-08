@@ -14,7 +14,7 @@ The main agent (orchestrator) is NOT a do-everything agent. It is a workflow coo
 
 ---
 
-## Agent Registry
+## Agent Registry (v3.4 - 7 Agents)
 
 ### Tier 1: Core Workflow
 
@@ -23,46 +23,25 @@ The main agent (orchestrator) is NOT a do-everything agent. It is a workflow coo
 | architect | ARCHITECT | Strategic planning | Plans + Brief Analysis |
 | forger | FORGER | Code implementation | Write clean code |
 | sentinel | SENTINEL | Test execution | Tests + Coverage Analysis |
-| warden | WARDEN | Code review | Quality inspection |
-| artisan | ARTISAN | Visual design | Design systems, accessibility |
-
-### Tier 2: Documentation
-
-| Agent | Alias | Role |
-|-------|-------|------|
-| chronicler | CHRONICLER | Documentation |
-| herald | HERALD | Release prep |
-| lawkeeper | LAWKEEPER | Standards generation |
+| warden | WARDEN | Code review + auditing | Quality inspection, audit operations |
 
 ### Tier 3: Maintenance
 
-| Agent | Alias | Role |
-|-------|-------|------|
-| inquisitor | INQUISITOR | Code analysis |
-| mender | MENDER | Error recovery |
-| pathfinder | PATHFINDER | Migration analysis |
+| Agent | Alias | Role | Key Capabilities |
+|-------|-------|------|------------------|
+| mender | MENDER | Error recovery | Diagnose & fix |
 
-### Tier 4: Innovation
+### Tier 4: Research
 
-| Agent | Alias | Role |
-|-------|-------|------|
-| oracle | ORACLE | Feature ideation |
-| seeker | SEEKER | Codebase research |
+| Agent | Alias | Role | Key Capabilities |
+|-------|-------|------|------------------|
+| seeker | SEEKER | Codebase research | Investigate code (haiku model) |
 
 ### Tier 5: Custom
 
-| Agent | Alias | Role |
-|-------|-------|------|
-| sage | SAGE | Flutter MVVM + Actions |
-
-### Tier 6: Meta (Orchestration)
-
-| Agent | Alias | Role |
-|-------|-------|------|
-| conductor | CONDUCTOR | Complex workflow orchestration |
-| tactician | TACTICIAN | Team assembly |
-| archivist | ARCHIVIST | State management |
-| dispatcher | DISPATCHER | Queue management |
+| Agent | Alias | Role | Key Capabilities |
+|-------|-------|------|------------------|
+| sage | SAGE | Flutter architecture | Kalvad MVVM + Actions patterns |
 
 ---
 
@@ -74,14 +53,27 @@ The main agent (orchestrator) is NOT a do-everything agent. It is a workflow coo
 | Code writing/editing | **forger** | After plan approved, code changes needed |
 | Test execution | **sentinel** | "test", "run tests", after code changes |
 | Code review | **warden** | Before commit, "review this" |
-| Documentation | **chronicler** | "document", "update README", "write docs" |
+| Code auditing | **warden** (audit mode) | "AUDIT", "check quality", "find issues" |
 | Codebase research | **seeker** | "how does X work?", "find where X is" |
-| Standards generation | **lawkeeper** | "STANDARDIZE", "generate guidelines" |
-| Migration analysis | **pathfinder** | "MIGRATE analyze", "migration roadmap" |
-| Audit operations | **inquisitor** | "AUDIT", "check quality", "find issues" |
 | Error diagnosis | **mender** | Test failures, "debug this", "why is X failing" |
-| Feature brainstorming | **oracle** | "suggest features", "what could we add" |
-| Release preparation | **herald** | "prepare release", "generate changelog" |
+
+---
+
+## Skill-Based Operations (No Delegation Needed)
+
+These tasks are handled by skills instead of subagents. The orchestrator invokes the skill directly.
+
+| Task Type | Skill | Trigger Phrases |
+|-----------|-------|-----------------|
+| Documentation | `/document` | "document", "update README", "write docs" |
+| Standards generation | `/standardize` | "STANDARDIZE", "generate guidelines" |
+| Migration analysis | `/migrate-analyze` | "MIGRATE analyze", "migration roadmap" |
+| Audit operations | `/audit` | "AUDIT", "run audit", "code quality audit" |
+| Feature brainstorming | `/ideate` | "suggest features", "what could we add" |
+| Release preparation | `/release` | "prepare release", "generate changelog" |
+| UI design guidelines | `/ui-design` | "design system", "accessibility review" |
+
+**Note:** The `/ui-design` skill can be preloaded by the forger agent when implementing UI-related code.
 
 ---
 
@@ -203,4 +195,4 @@ When implementing a brief:
 
 ---
 
-**Rule Purpose:** Ensure proper delegation to specialized agents for consistent, high-quality work.
+**Rule Purpose:** Ensure proper delegation to 7 specialized agents and 14 skills for consistent, high-quality work.

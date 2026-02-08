@@ -2,13 +2,13 @@
 
 > *From Vibe Coding → Vibe Engineering*
 
-**Version 3.3.0** | Production Ready
+**Version 3.4.0** | Production Ready
 
 ---
 
 > *"AI made coding faster — but not better. IGRIS brings the discipline."*
 
-**IGRIS** is a multi-agent AI engineering system that orchestrates Claude Code through 18 specialized subagents to build high-quality software with structure, testing, and documentation.
+**IGRIS** is a multi-agent AI engineering system that orchestrates Claude Code through 7 specialized subagents and 14 skills to build high-quality software with structure, testing, and documentation.
 
 Not just code generation. **Autonomous engineering execution.**
 
@@ -30,16 +30,16 @@ AI made coding faster — but not better. Speed without structure created:
 
 ---
 
-## ✦ What is IGRIS v3.3?
+## ✦ What is IGRIS v3.4?
 
 **IGRIS** is a multi-agent AI engineering system powered by Claude Code that transforms how you build software through autonomous workflows.
 
 **Category:** Multi-Agent AI Engineering Platform
 **Core Promise:** Autonomous Quality Execution
 
-### The v3.3 Architecture
+### The v3.4 Architecture
 
-**18 Native Subagents Across 6 Tiers:**
+**7 Specialized Subagents Across 4 Tiers + 14 Skills:**
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -52,22 +52,20 @@ AI made coding faster — but not better. Speed without structure created:
 └──────────────────┬──────────────────────────────────────────┘
                    │
                    ├─► TIER 1 (Core): architect → forger → sentinel → warden
-                   │                    Plan       Build     Test      Review
+                   │                    Plan       Build     Test      Review+Audit
                    │
-                   ├─► TIER 2 (Docs): chronicler, herald, lawkeeper
-                   │                   Write Docs   Releases   Guidelines
+                   ├─► TIER 3 (Maintenance): mender
+                   │                          Debug & Fix
                    │
-                   ├─► TIER 3 (Maintenance): inquisitor, mender, pathfinder
-                   │                          Analyze      Fix     Migrate
-                   │
-                   ├─► TIER 4 (Innovation): oracle, seeker
-                   │                         Imagine  Research
+                   ├─► TIER 4 (Research): seeker
+                   │                       Explore
                    │
                    ├─► TIER 5 (Custom): sage (user-defined domain experts)
                    │                     Specialized Knowledge
                    │
-                   └─► TIER 6 (Meta): conductor, tactician, archivist, dispatcher
-                                       Orchestrate  Assemble   State     Queue
+                   └─► 14 SKILLS: scan, rest, awaken, register, archive, hunt,
+                                  digivolve, ui-design, document, release,
+                                  standardize, ideate, migrate-analyze, audit
 ```
 
 ### How It Works
@@ -117,7 +115,7 @@ cd your-project
 
 This creates:
 - `ai/` - IGRIS directory with templates and prompts
-- `.claude/agents/` - 18 native subagents
+- `.claude/agents/` - 7 native subagents
 - `.claude/hooks/` - Startup hook for auto-initialization
 - `CLAUDE.md` - Context for Claude Code CLI
 - `scripts/` - Core IGRIS scripts
@@ -138,7 +136,7 @@ claude
 ```bash
 # 2. Generate coding guidelines (foundation first)
 ```
-"Generate coding guidelines for this project"
+"/standardize analyze"
 ```
 
 # 3. Register a task
@@ -161,22 +159,22 @@ claude
 
 ### Commands Reference
 
-| Command | Description | Agent Used |
+| Command | Description | Handled By |
 |---------|-------------|------------|
-| `HUNT {brief_id}` | Autonomous implementation | All Tier 1 |
-| `STANDARDIZE {mode}` | Generate coding guidelines | lawkeeper |
-| `MIGRATE analyze` | Migration analysis + briefs | pathfinder |
-| `AUDIT {type}` | Code quality analysis | inquisitor |
-| `DOCUMENT architecture` | Generate architecture docs | chronicler |
+| `HUNT {brief_id}` | Autonomous implementation | All Tier 1 agents |
+| `/standardize {mode}` | Generate coding guidelines | /standardize skill |
+| `/migrate-analyze` | Migration analysis + briefs | /migrate-analyze skill |
+| `/audit {type}` | Code quality analysis | /audit skill |
+| `/document` | Generate documentation | /document skill |
 | `DIGIVOLVE status` | List all agents | - |
 
-**Modes for STANDARDIZE:**
+**Modes for /standardize:**
 - `analyze` - Infer from current codebase
 - `from-base` - Extract from base architecture repo
 - `hybrid` - Combine base + project (base precedence)
 - `minimal` - Use platform-specific industry standards
 
-**AUDIT types:**
+**/audit types:**
 - `code_quality`, `bugs`, `standards`, `dependencies`, `test_coverage`, `performance`, `architecture`
 
 ---
@@ -190,7 +188,7 @@ claude
 ```
 ┌─────────────────────────────────────┐
 │   IGRIS (Multi-Agent System)        │
-│   - 18 Specialized Subagents         │
+│   - 7 Specialized Subagents + 14 Skills│
 │   - Workflow Orchestration           │
 │   - Architecture Enforcement         │
 │   - Session Management               │
@@ -221,7 +219,7 @@ claude
 - **You** = The architect (strategic decisions, priorities)
 
 **Without IGRIS:** Claude generates code based on prompts → random outputs
-**With IGRIS:** 18 specialized agents engineer outcomes autonomously → disciplined execution
+**With IGRIS:** 7 specialized agents + 14 skills engineer outcomes autonomously → disciplined execution
 
 ---
 
@@ -305,9 +303,9 @@ When you invoke `HUNT BR-005`:
 
 ---
 
-## ✦ The 18 Agents
+## ✦ The 7 Agents
 
-As of v3.3, all agents are defined as **native Claude Code agent files** in `.claude/agents/`. Each agent has a persona-themed name, custom system prompt, tool restrictions, model selection, and persistent memory.
+As of v3.4, IGRIS uses **7 focused subagents** defined as native Claude Code agent files in `.claude/agents/`. Procedural workflows previously handled by 11 retired agents have been consolidated into **14 skills** (slash commands), reducing complexity while maintaining full capability.
 
 ### Agent Definition Format
 
@@ -331,30 +329,19 @@ memory: project
 | `model` | Which Claude model powers this agent | `inherit` (same as parent) or `haiku` (fast/cheap) |
 | `memory` | Persistent memory scope | `project` (stored in `.claude/agent-memory/<name>/`) |
 
-### Agent Name Mapping (v3.2 → v3.3)
+### Agent Name Mapping (v3.2 → v3.4)
 
-All agents were renamed from generic identifiers to persona-themed names in MG-007. Each agent retains a "(formerly X)" note in its system prompt for traceability.
+Agents were renamed from generic identifiers to persona-themed names in MG-007. In v3.4, the roster was consolidated from 18 to 7 agents (MG-008).
 
-| v3.2 Name (generic) | v3.3 Name (persona) | Tier | Role |
+| v3.2 Name (generic) | v3.4 Name (persona) | Tier | Role |
 |---|---|---|---|
 | planner | **architect** | 1 | Strategic planning |
 | coder | **forger** | 1 | Code implementation |
 | tester | **sentinel** | 1 | Test execution |
-| reviewer | **warden** | 1 | Code review |
-| ui-designer | **artisan** | 1 | Visual design |
-| documenter | **chronicler** | 2 | Documentation |
-| releaser | **herald** | 2 | Release prep |
-| standardizer | **lawkeeper** | 2 | Standards generation |
-| auditor | **inquisitor** | 3 | Code analysis |
+| reviewer | **warden** | 1 | Code review + auditing |
 | debugger | **mender** | 3 | Error recovery |
-| migrator | **pathfinder** | 3 | Migration analysis |
-| ideator | **oracle** | 4 | Feature ideation |
 | explorer | **seeker** | 4 | Codebase research |
 | flutter-mvvm-actions-expert | **sage** | 5 | Flutter MVVM + Actions |
-| multi-agent-coordinator | **conductor** | 6 | Workflow orchestration |
-| agent-organizer | **tactician** | 6 | Team assembly |
-| context-manager | **archivist** | 6 | State management |
-| task-distributor | **dispatcher** | 6 | Queue management |
 
 ### Tier 1: Core Workflow (Required)
 
@@ -363,30 +350,18 @@ All agents were renamed from generic identifiers to persona-themed names in MG-0
 | **architect** | Strategic planning | Creates implementation plans, analyzes briefs | Read, Grep, Glob | inherit |
 | **forger** | Code implementation | Writes clean code following architecture | Read, Write, Edit, Bash, Grep, Glob | inherit |
 | **sentinel** | Test execution | Generates tests, runs test suite, validates | Read, Bash, Grep | inherit |
-| **warden** | Code review | Quality inspection, security checks | Read, Grep, Glob | inherit |
-| **artisan** | Visual design | UI specs, design systems, accessibility | Read, Write, Edit, Bash, Glob, Grep | inherit |
-
-### Tier 2: Documentation
-
-| Agent | Role | Responsibilities | Tools | Model |
-|-------|------|------------------|-------|-------|
-| **chronicler** | Documentation | Writes/updates docs, README, code comments | Read, Write, Grep, Glob | inherit |
-| **herald** | Release prep | Generates changelog, versions, release notes | Read, Write, Bash, Grep | inherit |
-| **lawkeeper** | Standards gen | Generates coding_guidelines.md (4 modes) | Read, Write, Grep, Glob, Bash | inherit |
+| **warden** | Code review + auditing | Quality inspection, security checks, architecture compliance | Read, Grep, Glob | inherit |
 
 ### Tier 3: Maintenance
 
 | Agent | Role | Responsibilities | Tools | Model |
 |-------|------|------------------|-------|-------|
-| **inquisitor** | Code analysis | 7 audit operations, creates briefs for findings | Read, Grep, Glob, Bash | inherit |
-| **mender** | Error recovery | Diagnoses errors, suggests fixes | Read, Grep, Glob, Bash | inherit |
-| **pathfinder** | Migration analysis | Analyzes code vs standards, creates migration briefs | Read, Grep, Glob, Bash | inherit |
+| **mender** | Error recovery | Diagnoses errors, suggests fixes, self-healing loops | Read, Grep, Glob, Bash | inherit |
 
-### Tier 4: Innovation
+### Tier 4: Research
 
 | Agent | Role | Responsibilities | Tools | Model |
 |-------|------|------------------|-------|-------|
-| **oracle** | Feature ideation | Brainstorms features, creates FR-XXX briefs | Read, Grep, Glob | inherit |
 | **seeker** | Codebase research | Investigates and explains codebase | Read, Grep, Glob, Bash | haiku |
 
 ### Tier 5: Custom (User-Defined)
@@ -395,21 +370,33 @@ All agents were renamed from generic identifiers to persona-themed names in MG-0
 |-------|------|------------------|-------|-------|
 | **sage** | Flutter architecture | Kalvad MVVM + Actions Layer patterns, GetX | Read, Write, Edit, Bash, Glob, Grep | inherit |
 
-### Tier 6: Meta-Orchestration
+### 14 Skills (Slash Commands)
 
-| Agent | Role | Responsibilities | Tools | Model |
-|-------|------|------------------|-------|-------|
-| **conductor** | Workflow orchestration | Complex multi-agent choreography, parallel execution | Read, Write, Edit, Glob, Grep | inherit |
-| **tactician** | Team assembly | Agent capability assessment, optimal team selection | Read, Write, Edit, Glob, Grep | inherit |
-| **archivist** | State management | Cross-agent context, recovery points, sync | Read, Write, Edit, Glob, Grep | inherit |
-| **dispatcher** | Task scheduling | Queue management, load balancing, priority scheduling | Read, Write, Edit, Glob, Grep | inherit |
+In v3.4, procedural workflows moved from dedicated agents to skills. Skills are defined in `.claude/skills/*/SKILL.md`.
 
-### Key Agent Features (v3.3)
+| Skill | Replaces | Purpose |
+|-------|----------|---------|
+| `/scan` | - | System status report |
+| `/rest` | - | Pause/end session |
+| `/awaken` | - | Start/resume session |
+| `/register` | - | Create new brief |
+| `/archive` | - | Archive completed brief |
+| `/hunt` | - | Implement brief (full workflow) |
+| `/digivolve` | - | Agent management |
+| `/ui-design` | artisan agent | UI specs, design systems, accessibility |
+| `/document` | chronicler agent | Documentation generation |
+| `/release` | herald agent | Release prep, changelog, versioning |
+| `/standardize` | lawkeeper agent | Generate coding guidelines (4 modes) |
+| `/ideate` | oracle agent | Feature brainstorming, FR-XXX briefs |
+| `/migrate-analyze` | pathfinder agent | Migration analysis, roadmap generation |
+| `/audit` | inquisitor agent | 7 audit operations, creates briefs |
+
+### Key Features (v3.4)
 
 - **Persistent Memory:** All agents have `memory: project`, storing learned context in `.claude/agent-memory/<name>/` across sessions.
-- **Tool Restrictions:** Read-only agents (architect, warden, oracle) cannot write files. Implementation agents (forger, artisan, sage) have full Read/Write/Edit/Bash access.
+- **Tool Restrictions:** Read-only agents (architect, warden) cannot write files. Implementation agents (forger, sage) have full Read/Write/Edit/Bash access.
 - **Model Selection:** Most agents use `model: inherit` (same model as the orchestrator). The seeker agent uses `model: haiku` for fast, low-cost codebase exploration.
-- **Traceability:** Each agent's system prompt includes `(formerly <old-name>)` to maintain backward compatibility understanding.
+- **Skills Over Agents:** Procedural workflows (docs, releases, standards, audits, migrations, ideation, UI design) are now skills, reducing agent overhead while preserving all capabilities.
 
 ---
 
@@ -451,65 +438,65 @@ Draft → Ready → In Progress → In Review → Done → Archived
 "Archive BR-001"
 ```
 
-### 2. Autonomous Quality Assurance (Inquisitor Agent)
+### 2. Autonomous Quality Assurance (/audit Skill)
 
 **7 Audit Operations:**
 
 | Operation | Creates | Trigger |
 |-----------|---------|---------|
-| CODE_QUALITY_AUDIT | TD-XXX briefs | "Audit code_quality" |
-| BUG_HUNT | BR-XXX briefs | "Audit bugs" |
-| STANDARDS_COMPLIANCE_CHECK | TD-XXX briefs | "Audit standards" |
-| TEST_COVERAGE_ANALYSIS | TS-XXX briefs | "Audit test_coverage" |
-| DEPENDENCY_AUDIT | DU-XXX briefs | "Audit dependencies" |
-| PERFORMANCE_ANALYSIS | PF-XXX briefs | "Audit performance" |
-| ARCHITECTURE_REVIEW | AC-XXX briefs | "Audit architecture" |
+| CODE_QUALITY_AUDIT | TD-XXX briefs | "/audit code_quality" |
+| BUG_HUNT | BR-XXX briefs | "/audit bugs" |
+| STANDARDS_COMPLIANCE_CHECK | TD-XXX briefs | "/audit standards" |
+| TEST_COVERAGE_ANALYSIS | TS-XXX briefs | "/audit test_coverage" |
+| DEPENDENCY_AUDIT | DU-XXX briefs | "/audit dependencies" |
+| PERFORMANCE_ANALYSIS | PF-XXX briefs | "/audit performance" |
+| ARCHITECTURE_REVIEW | AC-XXX briefs | "/audit architecture" |
 
 **Example Workflow:**
 ```bash
 # Before major release
-"Audit dependencies"        # Security first
-"Audit bugs"               # Find issues before users
-"Audit test_coverage"      # Quality gate
-"Audit standards"          # Final polish
+"/audit dependencies"       # Security first
+"/audit bugs"              # Find issues before users
+"/audit test_coverage"     # Quality gate
+"/audit standards"         # Final polish
 
 # Monthly maintenance
-"Audit dependencies"       # Stay current
-"Audit code_quality"       # Prevent debt accumulation
+"/audit dependencies"      # Stay current
+"/audit code_quality"      # Prevent debt accumulation
 ```
 
-### 3. Architecture Standards Generation (Lawkeeper Agent)
+### 3. Architecture Standards Generation (/standardize Skill)
 
 **4 Generation Modes:**
 
 ```bash
 # Mode 1: Analyze current codebase
-"STANDARDIZE analyze"
+"/standardize analyze"
 
 # Mode 2: Extract from base architecture repo
-"STANDARDIZE from-base"
+"/standardize from-base"
 Base repo: https://github.com/your-org/flutter-base
 
 # Mode 3: Hybrid (base + project, base precedence)
-"STANDARDIZE hybrid"
+"/standardize hybrid"
 Base repo: https://github.com/your-org/flutter-base
 
 # Mode 4: Minimal (platform-specific industry standards)
-"STANDARDIZE minimal"
+"/standardize minimal"
 Platform: Flutter
 ```
 
 **Output:** Comprehensive `ai/context/coding_guidelines.md` covering architecture, naming, testing, patterns.
 
-### 4. Migration Analysis (Pathfinder Agent)
+### 4. Migration Analysis (/migrate-analyze Skill)
 
 **Analyze entire codebase against standards:**
 
 ```bash
-"MIGRATE analyze"
+"/migrate-analyze"
 ```
 
-**The pathfinder agent will:**
+**The /migrate-analyze skill will:**
 1. Scan entire codebase
 2. Compare against `coding_guidelines.md`
 3. Identify architecture violations
@@ -572,7 +559,7 @@ If Claude context resets mid-workflow:
 |---------|-----------|-------|
 | **Approach** | Editor-integrated AI | Multi-agent engineering system |
 | **Focus** | Fast code completion | Autonomous end-to-end workflows |
-| **Quality Control** | Manual | Automated (18 agents, quality gates) |
+| **Quality Control** | Manual | Automated (7 agents + 14 skills, quality gates) |
 | **Session Recovery** | None | Automatic (multi-level tracking) |
 | **Architecture Enforcement** | No | Yes (coding_guidelines.md) |
 | **Brief Management** | No | Yes (9 brief types, priorities) |
@@ -585,7 +572,7 @@ If Claude context resets mid-workflow:
 |---------|-------|-------|
 | **Approach** | CLI chat for code edits | Multi-agent autonomous system |
 | **Focus** | File editing, git integration | End-to-end engineering (plan → test → commit) |
-| **Agents** | Single agent | 18 specialized agents |
+| **Agents** | Single agent | 7 agents + 14 skills |
 | **Quality Control** | Commit messages | Briefs, tests, architecture, warden agent |
 | **Session Tracking** | Git commits only | Multi-level (session, briefs, workflow, agents) |
 | **Self-Healing** | No | Yes (test failures loop to forger) |
@@ -599,7 +586,7 @@ If Claude context resets mid-workflow:
 | **Focus** | Line/function suggestions | Full features with architecture |
 | **Planning** | None | architect agent creates plans |
 | **Testing** | No | sentinel agent generates + runs tests |
-| **Quality Assurance** | No | warden agent + inquisitor agent |
+| **Quality Assurance** | No | warden agent + /audit skill |
 | **Session Recovery** | None | Full context preservation |
 | **Team Workflows** | Limited | Built-in (briefs, priorities, handoffs) |
 | **Best For** | Individual coding, boilerplate | Teams, complex features, quality |
@@ -610,7 +597,7 @@ If Claude context resets mid-workflow:
 |---------|--------------|----------------|
 | **Context** | Manual prompt loading | Automatic (CLAUDE.md + hooks) |
 | **Workflow** | Ad-hoc | Autonomous (HUNT command) |
-| **Agents** | Single Claude | 18 specialized subagents |
+| **Agents** | Single Claude | 7 agents + 14 skills |
 | **Quality** | Varies by prompt | Enforced (guidelines, tests, review) |
 | **Recovery** | Lose context on reset | Automatic (session tracking) |
 | **Accountability** | None | Full audit trail (briefs, decisions) |
@@ -650,10 +637,10 @@ If Claude context resets mid-workflow:
 claude
 
 # 3. Generate coding guidelines (foundation first)
-"STANDARDIZE analyze"
+"/standardize analyze"
 
 # 4. Generate architecture documentation
-"DOCUMENT architecture"
+"/document"
 
 # 5. Start engineering
 "Register a bug: [describe issue]"
@@ -671,12 +658,12 @@ cd existing-project
 
 # 2. Generate standards from codebase
 claude
-"STANDARDIZE analyze"
+"/standardize analyze"
 
 # 3. Run migration analysis
-"MIGRATE analyze"
+"/migrate-analyze"
 
-# The pathfinder agent will:
+# The /migrate-analyze skill will:
 # - Scan entire codebase
 # - Identify violations
 # - Generate briefs (MG-XXX, TD-XXX, BR-XXX, TS-XXX)
@@ -698,10 +685,10 @@ claude
 claude
 
 # Security and quality checks
-"Audit dependencies"              # Security vulnerabilities
-"Audit bugs"                      # Find issues before users
-"Audit test_coverage"             # Quality gate
-"Audit standards"                 # Final polish
+"/audit dependencies"             # Security vulnerabilities
+"/audit bugs"                     # Find issues before users
+"/audit test_coverage"            # Quality gate
+"/audit standards"                # Final polish
 
 # Review findings
 "List P0 bugs"                    # Critical issues
@@ -720,9 +707,9 @@ claude
 # First Monday of the month
 claude
 
-"Audit dependencies"              # Stay current
-"Audit code_quality"              # Find new tech debt
-"Audit standards"                 # Maintain standards
+"/audit dependencies"             # Stay current
+"/audit code_quality"             # Find new tech debt
+"/audit standards"                # Maintain standards
 
 # Review and prioritize
 "List TD briefs by priority"
@@ -745,37 +732,26 @@ claude
 
 **Output:**
 ```
-AGENT ROSTER
+AGENT ROSTER (7 agents)
 
 Tier 1: Core Workflow
 ✅ architect    | Implementation planning  | 47 runs
 ✅ forger       | Code implementation      | 52 runs
 ✅ sentinel     | Test execution           | 48 runs
-✅ warden       | Code review              | 41 runs
-✅ artisan      | Visual design            | 3 runs
-
-Tier 2: Documentation
-✅ chronicler   | Documentation            | 12 runs
-✅ herald       | Release preparation      | 3 runs
-✅ lawkeeper    | Standards generation     | 5 runs
+✅ warden       | Code review + auditing   | 41 runs
 
 Tier 3: Maintenance
-✅ inquisitor   | Code analysis            | 8 runs
 ✅ mender       | Error recovery           | 15 runs
-✅ pathfinder   | Migration analysis       | 2 runs
 
-Tier 4: Innovation
-✅ oracle       | Feature ideation         | 2 runs
+Tier 4: Research
 ✅ seeker       | Codebase research        | 23 runs
 
 Tier 5: Custom
 ✅ sage         | Flutter MVVM + Actions   | 6 runs
 
-Tier 6: Meta-Orchestration
-✅ conductor    | Workflow orchestration    | 4 runs
-✅ tactician    | Team assembly            | 2 runs
-✅ archivist    | State management         | 5 runs
-✅ dispatcher   | Queue management         | 3 runs
+SKILLS (14 total)
+  scan, rest, awaken, register, archive, hunt, digivolve,
+  ui-design, document, release, standardize, ideate, migrate-analyze, audit
 ```
 
 **Agent metrics tracked in:** `ai/session/metrics/agent-metrics.json`
@@ -882,26 +858,29 @@ cat .igris_version
 ```
 your-project/
 ├── .claude/
-│   ├── agents/                  # 18 native subagents (.md files)
+│   ├── agents/                  # 7 native subagents (.md files)
 │   │   ├── architect.md         # Tier 1: Strategic planning
 │   │   ├── forger.md            # Tier 1: Code implementation
 │   │   ├── sentinel.md          # Tier 1: Test execution
-│   │   ├── warden.md            # Tier 1: Code review
-│   │   ├── artisan.md           # Tier 1: Visual design
-│   │   ├── chronicler.md        # Tier 2: Documentation
-│   │   ├── herald.md            # Tier 2: Release prep
-│   │   ├── lawkeeper.md         # Tier 2: Standards generation
-│   │   ├── inquisitor.md        # Tier 3: Code analysis
+│   │   ├── warden.md            # Tier 1: Code review + auditing
 │   │   ├── mender.md            # Tier 3: Error recovery
-│   │   ├── pathfinder.md        # Tier 3: Migration analysis
-│   │   ├── oracle.md            # Tier 4: Feature ideation
 │   │   ├── seeker.md            # Tier 4: Codebase research
-│   │   ├── sage.md              # Tier 5: Flutter MVVM + Actions
-│   │   ├── conductor.md         # Tier 6: Workflow orchestration
-│   │   ├── tactician.md         # Tier 6: Team assembly
-│   │   ├── archivist.md         # Tier 6: State management
-│   │   ├── dispatcher.md        # Tier 6: Queue management
-│   │   └── manifest.yaml        # [DEPRECATED] Legacy agent registry
+│   │   └── sage.md              # Tier 5: Flutter MVVM + Actions
+│   ├── skills/                  # 14 native skills (slash commands)
+│   │   ├── scan/SKILL.md
+│   │   ├── rest/SKILL.md
+│   │   ├── awaken/SKILL.md
+│   │   ├── register/SKILL.md
+│   │   ├── archive/SKILL.md
+│   │   ├── hunt/SKILL.md
+│   │   ├── digivolve/SKILL.md
+│   │   ├── ui-design/SKILL.md
+│   │   ├── document/SKILL.md
+│   │   ├── release/SKILL.md
+│   │   ├── standardize/SKILL.md
+│   │   ├── ideate/SKILL.md
+│   │   ├── migrate-analyze/SKILL.md
+│   │   └── audit/SKILL.md
 │   ├── agent-memory/            # Persistent per-agent memory
 │   │   ├── architect/
 │   │   ├── forger/
@@ -936,42 +915,49 @@ your-project/
 
 ---
 
-## ✦ Migration Guide: v3.2 → v3.3 (MG-007)
+## ✦ Migration Guide
 
-### Breaking Change: Agent Names
+### v3.3 → v3.4: Agent Consolidation (MG-008)
 
-In v3.3, all 18 agents were migrated from generic identifiers to persona-themed names defined as native Claude Code agent files. The legacy `manifest.yaml` registry is deprecated.
+In v3.4, the agent roster was consolidated from 18 agents to 7 agents. Procedural workflows previously handled by dedicated agents were migrated to 14 skills (slash commands).
 
 **What changed:**
-- Agent files moved from generic names (e.g., `planner.md`) to persona names (e.g., `architect.md`)
-- `subagent_type` values in Task tool invocations must use the new names
-- `manifest.yaml` is deprecated (retained with header notice, no longer the source of truth)
-- Each agent now has a custom system prompt, tool restrictions, model selection, and persistent memory
+- 11 agents retired: artisan, chronicler, herald, lawkeeper, inquisitor, pathfinder, oracle, conductor, tactician, archivist, dispatcher
+- 7 new skills added: `/ui-design`, `/document`, `/release`, `/standardize`, `/ideate`, `/migrate-analyze`, `/audit`
+- Warden agent now handles auditing responsibilities (previously inquisitor)
+- Total skills: 14 (7 existing + 7 new)
 
-**If you have custom scripts or workflows that reference agent names, update them:**
+**Command changes:**
 
-| Before (v3.2) | After (v3.3) |
+| Before (v3.3) | After (v3.4) |
+|---|---|
+| `STANDARDIZE {mode}` (lawkeeper agent) | `/standardize {mode}` (skill) |
+| `MIGRATE analyze` (pathfinder agent) | `/migrate-analyze` (skill) |
+| `AUDIT {type}` (inquisitor agent) | `/audit {type}` (skill) |
+| `DOCUMENT architecture` (chronicler agent) | `/document` (skill) |
+
+**Agent file cleanup:**
+- Remove retired agent `.md` files from `.claude/agents/`
+- New skill files in `.claude/skills/*/SKILL.md`
+- Agent memory for retired agents can be safely removed from `.claude/agent-memory/`
+
+### v3.2 → v3.3: Agent Names (MG-007)
+
+In v3.3, all agents were migrated from generic identifiers to persona-themed names defined as native Claude Code agent files.
+
+**Key name changes (agents retained in v3.4):**
+
+| Before (v3.2) | After (v3.3+) |
 |---|---|
 | `subagent_type: "planner"` | `subagent_type: "architect"` |
 | `subagent_type: "coder"` | `subagent_type: "forger"` |
 | `subagent_type: "tester"` | `subagent_type: "sentinel"` |
 | `subagent_type: "reviewer"` | `subagent_type: "warden"` |
-| `subagent_type: "ui-designer"` | `subagent_type: "artisan"` |
-| `subagent_type: "documenter"` | `subagent_type: "chronicler"` |
-| `subagent_type: "releaser"` | `subagent_type: "herald"` |
-| `subagent_type: "standardizer"` | `subagent_type: "lawkeeper"` |
-| `subagent_type: "auditor"` | `subagent_type: "inquisitor"` |
 | `subagent_type: "debugger"` | `subagent_type: "mender"` |
-| `subagent_type: "migrator"` | `subagent_type: "pathfinder"` |
-| `subagent_type: "ideator"` | `subagent_type: "oracle"` |
 | `subagent_type: "explorer"` | `subagent_type: "seeker"` |
 | `subagent_type: "flutter-mvvm-actions-expert"` | `subagent_type: "sage"` |
-| `subagent_type: "multi-agent-coordinator"` | `subagent_type: "conductor"` |
-| `subagent_type: "agent-organizer"` | `subagent_type: "tactician"` |
-| `subagent_type: "context-manager"` | `subagent_type: "archivist"` |
-| `subagent_type: "task-distributor"` | `subagent_type: "dispatcher"` |
 
-**New capabilities per agent (v3.3):**
+**Capabilities per agent:**
 - `memory: project` -- agents persist learned knowledge across sessions
 - Per-agent `tools` restrictions -- read-only agents cannot write files
 - `model` selection -- seeker uses `haiku` for fast exploration
@@ -994,7 +980,7 @@ In v3.3, all 18 agents were migrated from generic identifiers to persona-themed 
 ## ✦ FAQ
 
 **Q: What's the difference between IGRIS and Claude?**
-A: IGRIS is a multi-agent engineering system that orchestrates Claude Code through 18 specialized subagents. Claude provides intelligence; IGRIS provides process, agents, and discipline.
+A: IGRIS is a multi-agent engineering system that orchestrates Claude Code through 7 specialized subagents and 14 skills. Claude provides intelligence; IGRIS provides process, agents, and discipline.
 
 **Q: Does IGRIS work with Claude.ai (web interface)?**
 A: Yes, but with limitations. Startup hooks won't auto-run, and Task tool (subagents) may not be available. Claude Code CLI is recommended.
@@ -1006,10 +992,10 @@ A: Main agent (orchestrator) delegates work to subagents via Task tool. Subagent
 A: Yes. Remove or rename the agent's `.md` file in `.claude/agents/`, or use `DIGIVOLVE disable {agent}`.
 
 **Q: What is the agent memory feature?**
-A: All agents have `memory: project` enabled, which stores persistent knowledge in `.claude/agent-memory/<name>/`. This allows agents to remember project-specific context across sessions.
+A: All 7 agents have `memory: project` enabled, which stores persistent knowledge in `.claude/agent-memory/<name>/`. This allows agents to remember project-specific context across sessions.
 
 **Q: Why are some agents read-only?**
-A: Tool restrictions enforce the separation of concerns. For example, the architect agent (planning) and warden agent (review) should never write code -- they only analyze and advise. The forger agent (implementation) has full write access because its job is to produce code.
+A: Tool restrictions enforce the separation of concerns. For example, the architect agent (planning) and warden agent (review + auditing) should never write code -- they only analyze and advise. The forger agent (implementation) has full write access because its job is to produce code.
 
 **Q: Why does the seeker agent use a different model?**
 A: The seeker agent uses `model: haiku` for fast, low-cost codebase exploration. Since its role is research and investigation (not code generation), a lighter model provides faster responses without sacrificing quality.
@@ -1063,7 +1049,7 @@ IGRIS exists to merge imagination with structure — the spark *and* the system 
 Open source is humanity's greatest multiplier. IGRIS empowers:
 - **Abundance** — More creators, more releases, more shared knowledge
 - **Quality** — Tests, docs, clarity, maintainability
-- **Autonomy** — 18 agents working together to ship quality software
+- **Autonomy** — 7 agents + 14 skills working together to ship quality software
 
 **The Open Source Call:**
 > *Create boldly. Release openly. Engineer with discipline.*
@@ -1082,18 +1068,18 @@ Built for developers and teams using Claude AI to engineer high-quality software
 
 ---
 
-> **IGRIS — Where Creativity Meets Discipline, Powered by 18 Autonomous Agents.**
+> **IGRIS — Where Creativity Meets Discipline, Powered by 7 Agents + 14 Skills.**
 
 ```bash
 # Ready to engineer?
 ./scripts/igris_init.sh
 
-# v3.3 Commands:
+# v3.4 Commands:
 # HUNT BR-001           - Autonomous implementation
-# STANDARDIZE analyze   - Generate coding guidelines
-# DOCUMENT architecture - Generate architecture docs
-# MIGRATE analyze       - Analyze codebase for migrations
-# AUDIT {type}          - Code quality analysis
+# /standardize analyze  - Generate coding guidelines
+# /document             - Generate documentation
+# /migrate-analyze      - Analyze codebase for migrations
+# /audit {type}         - Code quality analysis
 # DIGIVOLVE status      - List all agents
 ```
 
