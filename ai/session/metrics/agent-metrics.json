@@ -1,19 +1,19 @@
 {
   "version": "1.0.0",
-  "last_updated": "2026-02-06T12:42:17Z",
+  "last_updated": "2026-02-08T12:42:16Z",
   "agents": {
     "planner": {
-      "invocations": 3,
-      "last_used": "2026-02-06T11:45:22Z",
-      "avg_duration_seconds": 116.56,
+      "invocations": 4,
+      "last_used": "2026-02-08T12:18:02Z",
+      "avg_duration_seconds": 142.81,
       "success_rate": 1.0,
       "total_duration_seconds": 0,
       "success_count": 0
     },
     "coder": {
-      "invocations": 10,
-      "last_used": "2026-02-06T11:51:10Z",
-      "avg_duration_seconds": 2987.16,
+      "invocations": 16,
+      "last_used": "2026-02-08T12:36:00Z",
+      "avg_duration_seconds": 2373.26,
       "success_rate": 1.0,
       "total_duration_seconds": 0,
       "success_count": 0
@@ -96,7 +96,7 @@
     }
   },
   "totals": {
-    "total_invocations": 21,
+    "total_invocations": 28,
     "total_duration_seconds": 0,
     "most_used_agent": "coder",
     "least_used_agent": "ideator"
