@@ -1,7 +1,7 @@
 # Current Session
 
 ## Status
-**Mode:** ACTIVE
+**Mode:** REST MODE
 **Updated:** 2026-02-08
 **Active Brief:** MG-008 — Agent Consolidation (18 → 7 + 7 Skills)
 
