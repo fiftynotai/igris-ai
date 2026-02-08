@@ -32,9 +32,9 @@
 
 ## Resume Point
 
-**Next:** Testing and validation of v3.4 agent + skill architecture
-**Status:** MG-008 complete, ready to test
-**Notes:** 7 agents (architect, forger, sentinel, warden, mender, seeker, sage) + 14 skills operational. Brief templates still need Active Agent field update (step 17).
+**Next:** Validate v3.4 during normal usage
+**Status:** MG-008 complete, validation checklist created
+**Notes:** Test checklist at `ai/session/MG-008-test-checklist.md`. Reference integrity checks passed. Remaining items (core pipeline, new skills, existing skills) will be validated as features are built. Brief templates updated (step 17 done).
 
 ---
 
@@ -42,9 +42,7 @@
 
 - Push commits to remote: `git push` (develop ahead of origin)
 - Archive completed briefs: MG-004, MG-005, MG-006, MG-007, MG-008
-- Update brief templates Active Agent field (MG-008 step 17)
-- Test HUNT workflow end-to-end with 7-agent set
-- Test all 7 new skills
+- Validate v3.4 via checklist: `ai/session/MG-008-test-checklist.md`
 
 ---
 
