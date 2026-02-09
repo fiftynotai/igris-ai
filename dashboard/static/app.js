@@ -157,6 +157,7 @@ function ArenaClient() {
     this._prevContextUsed = 0;
     this._compacting = false;
     this._digiviceInitialized = false;
+    this._hpInitialized = false;
 }
 
 /**
@@ -167,6 +168,7 @@ ArenaClient.prototype.init = async function () {
     this._bindFilterToggle();
     this._updateFilterButtons();
     this._initDigiviceSegments();
+    this._initHpSegments();
     await this.fetchState();
     this.render();
     this.connectWebSocket();
@@ -509,6 +511,8 @@ ArenaClient.prototype.renderBudget = function () {
     var budget = get(this.state, ['budget'], null);
     if (!budget) return;
 
+    this._initHpSegments();
+
     var consumed = budget.consumed || 0;
     var ceiling = budget.ceiling || 1;
     var ratio = consumed / ceiling;
@@ -517,33 +521,46 @@ ArenaClient.prototype.renderBudget = function () {
     var warnThreshold = budget.warning_threshold || 0.75;
     var critThreshold = budget.critical_threshold || 0.90;
 
-    // Update text
-    var hpText = document.getElementById('hp-text');
-    if (hpText) {
-        hpText.textContent = formatNumber(consumed) + ' / ' + formatNumber(ceiling) +
-            ' tokens (' + percentage.toFixed(1) + '%)';
+    // Update percentage text
+    var pctEl = document.getElementById('hp-pct');
+    if (pctEl) pctEl.textContent = percentage.toFixed(1) + '%';
+
+    // Update count text
+    var countEl = document.getElementById('hp-count');
+    if (countEl) {
+        countEl.textContent = formatNumber(consumed) + ' / ' + formatNumber(ceiling) + ' tokens';
     }
 
-    // Update bar width
-    var hpFill = document.getElementById('hp-fill');
-    if (hpFill) {
-        hpFill.style.width = percentage + '%';
-        // Set color class based on thresholds
-        hpFill.className = 'hp-fill';
-        if (ratio >= critThreshold) {
-            hpFill.classList.add('hp-fill--critical');
-        } else if (ratio >= warnThreshold) {
-            hpFill.classList.add('hp-fill--warning');
-        } else {
-            hpFill.classList.add('hp-fill--full');
+    // Update segments (20 total)
+    var bar = document.getElementById('hp-bar');
+    if (bar) {
+        var segments = bar.children;
+        var filledCount = Math.round((percentage / 100) * 20);
+        for (var i = 0; i < segments.length; i++) {
+            if (i < filledCount) {
+                segments[i].className = 'digi-panel__segment digi-panel__segment--filled';
+            } else {
+                segments[i].className = 'digi-panel__segment';
+            }
         }
     }
 
-    // Position threshold markers
-    var warnMarker = document.getElementById('hp-warn-marker');
-    if (warnMarker) warnMarker.style.left = (warnThreshold * 100) + '%';
-    var critMarker = document.getElementById('hp-crit-marker');
-    if (critMarker) critMarker.style.left = (critThreshold * 100) + '%';
+    // Update label text based on threshold
+    var labelText = document.getElementById('hp-label-text');
+    if (labelText) {
+        labelText.textContent = ratio >= critThreshold ? 'HP CRITICAL' : 'SESSION HP';
+    }
+
+    // Update state classes on the hp-panel container
+    var panel = document.getElementById('hp-panel');
+    if (panel) {
+        panel.classList.remove('digi-panel--warning', 'digi-panel--overflow');
+        if (ratio >= critThreshold) {
+            panel.classList.add('digi-panel--overflow');
+        } else if (ratio >= warnThreshold) {
+            panel.classList.add('digi-panel--warning');
+        }
+    }
 };
 
 /* --------------------------------------------------------------------------
@@ -860,10 +877,25 @@ ArenaClient.prototype._initDigiviceSegments = function () {
     bar.innerHTML = '';
     for (var i = 0; i < 20; i++) {
         var seg = document.createElement('div');
-        seg.className = 'digivice__segment';
+        seg.className = 'digi-panel__segment';
         bar.appendChild(seg);
     }
     this._digiviceInitialized = true;
+};
+
+/**
+ * Create 20 segment divs inside the #hp-bar element.
+ */
+ArenaClient.prototype._initHpSegments = function () {
+    var bar = document.getElementById('hp-bar');
+    if (!bar || this._hpInitialized) return;
+    bar.innerHTML = '';
+    for (var i = 0; i < 20; i++) {
+        var seg = document.createElement('div');
+        seg.className = 'digi-panel__segment';
+        bar.appendChild(seg);
+    }
+    this._hpInitialized = true;
 };
 
 /**
@@ -894,9 +926,9 @@ ArenaClient.prototype.renderDigivice = function () {
         var filledCount = Math.round((percentage / 100) * 20);
         for (var i = 0; i < segments.length; i++) {
             if (i < filledCount) {
-                segments[i].className = 'digivice__segment digivice__segment--filled';
+                segments[i].className = 'digi-panel__segment digi-panel__segment--filled';
             } else {
-                segments[i].className = 'digivice__segment';
+                segments[i].className = 'digi-panel__segment';
             }
         }
     }
@@ -911,14 +943,14 @@ ArenaClient.prototype.renderDigivice = function () {
     var digivice = document.getElementById('digivice');
     if (digivice && !this._compacting) {
         // Clear all state classes
-        digivice.classList.remove('digivice--transition', 'digivice--warning', 'digivice--overflow');
+        digivice.classList.remove('digi-panel--transition', 'digi-panel--warning', 'digi-panel--overflow');
 
         if (percentage >= 90) {
-            digivice.classList.add('digivice--overflow');
+            digivice.classList.add('digi-panel--overflow');
         } else if (percentage >= 80) {
-            digivice.classList.add('digivice--warning');
+            digivice.classList.add('digi-panel--warning');
         } else if (percentage >= 60) {
-            digivice.classList.add('digivice--transition');
+            digivice.classList.add('digi-panel--transition');
         }
     }
 
@@ -942,9 +974,9 @@ ArenaClient.prototype._renderDigiviceTags = function () {
     var outputTokens = orch.total_output_tokens || 0;
 
     tagsEl.innerHTML =
-        '<span class="digivice__tag">[cache:' + escapeHtml(formatTokens(cacheRead)) + ']</span>' +
-        '<span class="digivice__tag">[in:' + escapeHtml(formatTokens(inputTokens)) + ']</span>' +
-        '<span class="digivice__tag">[out:' + escapeHtml(formatTokens(outputTokens)) + ']</span>';
+        '<span class="digi-panel__tag">[cache:' + escapeHtml(formatTokens(cacheRead)) + ']</span>' +
+        '<span class="digi-panel__tag">[in:' + escapeHtml(formatTokens(inputTokens)) + ']</span>' +
+        '<span class="digi-panel__tag">[out:' + escapeHtml(formatTokens(outputTokens)) + ']</span>';
 };
 
 /**
@@ -970,33 +1002,33 @@ ArenaClient.prototype._checkCompaction = function (event) {
 ArenaClient.prototype._triggerCompactionAnimation = function () {
     var self = this;
     var digivice = document.getElementById('digivice');
-    var screen = digivice ? digivice.querySelector('.digivice__screen') : null;
+    var screen = digivice ? digivice.querySelector('.digi-panel__screen') : null;
     if (!digivice) return;
 
     this._compacting = true;
 
     // Phase 1: Flicker (300ms)
-    digivice.classList.add('digivice--compacting');
+    digivice.classList.add('digi-panel--compacting');
 
     // Add compaction overlay text
     var overlay = document.createElement('div');
-    overlay.className = 'digivice__compaction-text';
+    overlay.className = 'digi-panel__compaction-text';
     overlay.textContent = '> REFORMATTING DATA...';
     if (screen) screen.appendChild(overlay);
 
     setTimeout(function () {
         // Phase 2: Drain (600ms)
-        digivice.classList.remove('digivice--compacting');
-        digivice.classList.add('digivice--draining');
+        digivice.classList.remove('digi-panel--compacting');
+        digivice.classList.add('digi-panel--draining');
 
         setTimeout(function () {
             // Phase 3: Flash (300ms)
-            digivice.classList.remove('digivice--draining');
-            digivice.classList.add('digivice--flash');
+            digivice.classList.remove('digi-panel--draining');
+            digivice.classList.add('digi-panel--flash');
 
             setTimeout(function () {
                 // Phase 4: Settle - remove animation classes, show confirmation
-                digivice.classList.remove('digivice--flash');
+                digivice.classList.remove('digi-panel--flash');
                 overlay.textContent = '> DATA REFORMATTED';
                 self._compacting = false;
                 // Re-render to apply correct state classes

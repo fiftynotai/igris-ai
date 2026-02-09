@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CRIMSON ARENA — Igris AI Agent Dashboard</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=6">
 </head>
 <body>
 
@@ -23,43 +23,52 @@
         <button class="filter-btn" data-range="all">All Time</button>
       </div>
     </div>
-    <div class="header__hp">
-      <div class="hp-label">
-        <span class="hp-label__title">SESSION HP</span>
-        <span class="hp-label__value" id="hp-text">0 / 0 tokens (0%)</span>
-      </div>
-      <div class="hp-bar">
-        <div class="hp-fill hp-fill--full" id="hp-fill" style="width: 0%"></div>
-      </div>
-      <div class="hp-thresholds">
-        <span class="hp-thresholds__warn" id="hp-warn-marker" style="left: 75%"></span>
-        <span class="hp-thresholds__crit" id="hp-crit-marker" style="left: 90%"></span>
-      </div>
-    </div>
-    <div class="digivice" id="digivice">
-      <div class="digivice__screen">
-        <div class="digivice__scanlines"></div>
-        <div class="digivice__readout">
-          <div class="digivice__label">&gt; <span id="digivice-label-text">DATA LOAD</span> <span class="digivice__dots">............</span> <span class="digivice__pct" id="digivice-pct">0.0%</span></div>
-          <div class="digivice__bar" id="digivice-bar"></div>
-          <div class="digivice__count mono" id="digivice-count">0 / 200,000 ctx</div>
-          <div class="digivice__tags" id="digivice-tags">
-            <span class="digivice__tag">[cache:0]</span>
-            <span class="digivice__tag">[in:0]</span>
-            <span class="digivice__tag">[out:0]</span>
-          </div>
-        </div>
-      </div>
-      <div class="digivice__bezel">
-        <span class="digivice__ridge"></span>
-        <span class="digivice__ridge"></span>
-        <span class="digivice__ridge"></span>
-      </div>
-    </div>
     <div class="header__meta">
       <span class="connection-status" id="connection-status" title="WebSocket status">OFFLINE</span>
     </div>
   </header>
+
+  <!-- ================================================================== -->
+  <!-- INSTRUMENT STRIP: War Room readout bar                              -->
+  <!-- ================================================================== -->
+  <div class="instrument-strip">
+    <div class="instrument-strip__hp" id="hp-panel">
+      <div class="digi-panel__screen">
+        <div class="digi-panel__scanlines"></div>
+        <div class="digi-panel__readout">
+          <div class="digi-panel__label">&gt; <span id="hp-label-text">SESSION HP</span> <span class="digi-panel__dots">............</span> <span class="digi-panel__pct" id="hp-pct">0.0%</span></div>
+          <div class="digi-panel__bar" id="hp-bar"></div>
+          <div class="digi-panel__count mono" id="hp-count">0 / 0 tokens</div>
+        </div>
+      </div>
+      <div class="digi-panel__bezel">
+        <span class="digi-panel__ridge"></span>
+        <span class="digi-panel__ridge"></span>
+        <span class="digi-panel__ridge"></span>
+      </div>
+    </div>
+    <div class="instrument-strip__divider"></div>
+    <div class="instrument-strip__ctx" id="digivice">
+      <div class="digi-panel__screen">
+        <div class="digi-panel__scanlines"></div>
+        <div class="digi-panel__readout">
+          <div class="digi-panel__label">&gt; <span id="digivice-label-text">DATA LOAD</span> <span class="digi-panel__dots">............</span> <span class="digi-panel__pct" id="digivice-pct">0.0%</span></div>
+          <div class="digi-panel__bar" id="digivice-bar"></div>
+          <div class="digi-panel__count mono" id="digivice-count">0 / 200,000 ctx</div>
+          <div class="digi-panel__tags" id="digivice-tags">
+            <span class="digi-panel__tag">[cache:0]</span>
+            <span class="digi-panel__tag">[in:0]</span>
+            <span class="digi-panel__tag">[out:0]</span>
+          </div>
+        </div>
+      </div>
+      <div class="digi-panel__bezel">
+        <span class="digi-panel__ridge"></span>
+        <span class="digi-panel__ridge"></span>
+        <span class="digi-panel__ridge"></span>
+      </div>
+    </div>
+  </div>
 
   <!-- ================================================================== -->
   <!-- MAIN CONTENT                                                        -->
@@ -247,6 +256,6 @@
     </div>
   </footer>
 
-  <script src="/static/app.js?v=4"></script>
+  <script src="/static/app.js?v=6"></script>
 </body>
 </html>
