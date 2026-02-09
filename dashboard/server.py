@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import os
+import urllib.request
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 import aiosqlite
@@ -49,6 +50,33 @@ METRICS_FILE = os.path.join(METRICS_DIR, "agent-metrics.json")
 EVENTS_FILE = os.path.join(METRICS_DIR, "events.jsonl")
 BUDGET_FILE = os.path.join(METRICS_DIR, "budget.json")
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+# ---------------------------------------------------------------------------
+# Pricing Data
+# ---------------------------------------------------------------------------
+
+LITELLM_URL = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+
+FALLBACK_PRICING = {
+    "claude-opus-4-6": {
+        "input_cost_per_token": 5e-06,
+        "output_cost_per_token": 2.5e-05,
+        "cache_read_input_token_cost": 5e-07,
+        "cache_creation_input_token_cost": 6.25e-06,
+    },
+    "claude-sonnet-4-5-20250514": {
+        "input_cost_per_token": 3e-06,
+        "output_cost_per_token": 1.5e-05,
+        "cache_read_input_token_cost": 3e-07,
+        "cache_creation_input_token_cost": 3.75e-06,
+    },
+    "claude-haiku-4-5-20250514": {
+        "input_cost_per_token": 1e-06,
+        "output_cost_per_token": 5e-06,
+        "cache_read_input_token_cost": 1e-07,
+        "cache_creation_input_token_cost": 1.25e-06,
+    },
+}
 
 # ---------------------------------------------------------------------------
 # Agent Leveling System
@@ -169,6 +197,52 @@ def load_budget_config() -> dict:
     except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
         logger.warning("Could not load budget.json (%s), using defaults", exc)
         return defaults
+
+
+async def fetch_pricing() -> dict:
+    """Fetch Claude model pricing from LiteLLM community registry.
+
+    Returns dict of claude model entries with 4 cost fields each.
+    Falls back to FALLBACK_PRICING on any error.
+    """
+    cost_fields = (
+        "input_cost_per_token",
+        "output_cost_per_token",
+        "cache_read_input_token_cost",
+        "cache_creation_input_token_cost",
+    )
+    try:
+        loop = asyncio.get_running_loop()
+
+        def _fetch():
+            req = urllib.request.Request(
+                LITELLM_URL,
+                headers={"User-Agent": "igris-ai-dashboard/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+
+        data = await loop.run_in_executor(None, _fetch)
+
+        pricing = {}
+        for key, entry in data.items():
+            if not key.startswith("claude-"):
+                continue
+            if not isinstance(entry, dict):
+                continue
+            if "input_cost_per_token" not in entry:
+                continue
+            pricing[key] = {field: entry.get(field, 0) for field in cost_fields}
+
+        if pricing:
+            logger.info("Fetched pricing for %d Claude models from LiteLLM", len(pricing))
+            return pricing, "litellm"
+        else:
+            logger.warning("No Claude entries in LiteLLM data, using fallback")
+            return dict(FALLBACK_PRICING), "fallback"
+    except Exception as exc:
+        logger.warning("Failed to fetch LiteLLM pricing (%s), using fallback", exc)
+        return dict(FALLBACK_PRICING), "fallback"
 
 
 # ---------------------------------------------------------------------------
@@ -617,6 +691,22 @@ async def watch_events_file(app: FastAPI):
         logger.error("File watcher error: %s", exc)
 
 
+async def refresh_pricing_periodically(app: FastAPI):
+    """Background task to refresh pricing cache every 24 hours."""
+    while True:
+        await asyncio.sleep(86400)
+        try:
+            pricing, source = await fetch_pricing()
+            app.state.pricing = pricing
+            app.state.pricing_source = source
+            app.state.pricing_fetched_at = datetime.now(timezone.utc).isoformat()
+            logger.info("Pricing cache refreshed (%d models, source=%s)", len(pricing), source)
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.error("Failed to refresh pricing: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # State Builders
 # ---------------------------------------------------------------------------
@@ -1050,8 +1140,14 @@ async def lifespan(app: FastAPI):
     # Backfill context_window from events file if table is empty
     await backfill_context_window(app.state.db)
 
+    # Fetch and cache pricing data
+    app.state.pricing, app.state.pricing_source = await fetch_pricing()
+    app.state.pricing_fetched_at = datetime.now(timezone.utc).isoformat()
+    logger.info("Pricing cache loaded (%d models, source=%s)", len(app.state.pricing), app.state.pricing_source)
+
     # Start file watcher background task
     watcher_task = asyncio.create_task(watch_events_file(app))
+    pricing_task = asyncio.create_task(refresh_pricing_periodically(app))
 
     logger.info("Crimson Arena server ready")
 
@@ -1059,8 +1155,13 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     watcher_task.cancel()
+    pricing_task.cancel()
     try:
         await watcher_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await pricing_task
     except asyncio.CancelledError:
         pass
     await app.state.db.close()
@@ -1157,6 +1258,19 @@ async def get_events(
     else:
         events = await build_filtered_recent_events(db, range, limit=limit)
     return JSONResponse(events)
+
+
+@app.get("/api/pricing")
+async def get_pricing():
+    """Return cached Claude model pricing map."""
+    pricing = getattr(app.state, "pricing", FALLBACK_PRICING)
+    fetched_at = getattr(app.state, "pricing_fetched_at", None)
+    source = getattr(app.state, "pricing_source", "fallback")
+    return JSONResponse({
+        "pricing": pricing,
+        "fetched_at": fetched_at,
+        "source": source,
+    })
 
 
 @app.post("/api/event")

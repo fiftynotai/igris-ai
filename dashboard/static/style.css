@@ -792,6 +792,81 @@ body {
 }
 
 /* --------------------------------------------------------------------------
+   COST ESTIMATE CARD
+   -------------------------------------------------------------------------- */
+.cost-card .section-title {
+  margin-bottom: var(--space-sm);
+}
+
+.cost-card__row {
+  display: grid;
+  grid-template-columns: 90px 1fr auto;
+  align-items: baseline;
+  gap: var(--space-sm);
+  padding: 4px 0;
+}
+
+.cost-card__label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.cost-card__rate {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.cost-card__amount {
+  font-size: 13px;
+  font-weight: 600;
+  text-align: right;
+  min-width: 60px;
+}
+
+.cost-card__amount--input       { color: var(--token-input); }
+.cost-card__amount--output      { color: var(--token-output); }
+.cost-card__amount--cache-read  { color: var(--token-cache-r); }
+.cost-card__amount--cache-create { color: var(--token-cache-c); }
+
+.cost-card__separator {
+  border-top: 1px dashed var(--divider);
+  margin: var(--space-xs) 0;
+}
+
+.cost-card__total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border);
+}
+
+.cost-card__total-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.cost-card__total-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--hp-warning);
+}
+
+.cost-card--no-pricing {
+  display: none;
+}
+
+.cost-card__empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  text-align: center;
+  padding: var(--space-sm);
+}
+
+/* --------------------------------------------------------------------------
    BATTLE LOG
    -------------------------------------------------------------------------- */
 .battle-log-panel {

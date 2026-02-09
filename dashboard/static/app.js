@@ -136,6 +136,28 @@ function get(obj, path, defaultValue) {
     return current != null ? current : defaultValue;
 }
 
+/**
+ * Format a per-token cost as per-MTok string.
+ * @param {number} costPerToken
+ * @returns {string}
+ */
+function formatRate(costPerToken) {
+    if (costPerToken == null || costPerToken === 0) return '$0.00/M';
+    var perMTok = costPerToken * 1000000;
+    return '$' + perMTok.toFixed(2) + '/M';
+}
+
+/**
+ * Format a dollar cost value.
+ * @param {number} dollars
+ * @returns {string}
+ */
+function formatCost(dollars) {
+    if (dollars == null || dollars === 0) return '$0.00';
+    if (dollars < 0.01) return '<$0.01';
+    return '$' + dollars.toFixed(2);
+}
+
 /* --------------------------------------------------------------------------
    ArenaClient Class
    -------------------------------------------------------------------------- */
@@ -158,6 +180,7 @@ function ArenaClient() {
     this._compacting = false;
     this._digiviceInitialized = false;
     this._hpInitialized = false;
+    this.pricing = null;
 }
 
 /**
@@ -169,6 +192,7 @@ ArenaClient.prototype.init = async function () {
     this._updateFilterButtons();
     this._initDigiviceSegments();
     this._initHpSegments();
+    await this._fetchPricing();
     await this.fetchState();
     this.render();
     this.connectWebSocket();
@@ -201,6 +225,92 @@ ArenaClient.prototype.fetchState = async function () {
     } catch (e) {
         console.error('Failed to fetch state:', e);
     }
+};
+
+/**
+ * Fetch pricing data from /api/pricing endpoint.
+ */
+ArenaClient.prototype._fetchPricing = async function () {
+    try {
+        var resp = await fetch('/api/pricing');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        var data = await resp.json();
+        this.pricing = data.pricing || null;
+    } catch (e) {
+        console.error('Failed to fetch pricing:', e);
+        this.pricing = null;
+    }
+};
+
+/**
+ * Extract short model name (Opus/Sonnet/Haiku) from model_id.
+ * @returns {string}
+ */
+ArenaClient.prototype._getModelShortName = function () {
+    var modelId = this.contextWindow ? this.contextWindow.model_id : '';
+    if (!modelId) return '';
+    if (modelId.indexOf('opus') !== -1) return 'Opus';
+    if (modelId.indexOf('sonnet') !== -1) return 'Sonnet';
+    if (modelId.indexOf('haiku') !== -1) return 'Haiku';
+    return modelId;
+};
+
+/**
+ * Look up pricing rates for the current model_id.
+ * @returns {object|null}
+ */
+ArenaClient.prototype._getModelPricing = function () {
+    if (!this.pricing) return null;
+    var modelId = this.contextWindow ? this.contextWindow.model_id : '';
+
+    if (modelId && this.pricing[modelId]) {
+        return this.pricing[modelId];
+    }
+
+    if (modelId) {
+        var keys = Object.keys(this.pricing);
+        for (var i = 0; i < keys.length; i++) {
+            if (keys[i].indexOf(modelId) !== -1 || modelId.indexOf(keys[i]) !== -1) {
+                return this.pricing[keys[i]];
+            }
+        }
+    }
+
+    var allKeys = Object.keys(this.pricing);
+    for (var i = 0; i < allKeys.length; i++) {
+        if (allKeys[i].indexOf('opus') !== -1) {
+            return this.pricing[allKeys[i]];
+        }
+    }
+
+    return allKeys.length > 0 ? this.pricing[allKeys[0]] : null;
+};
+
+/**
+ * Calculate cost estimate for the 4 token buckets.
+ * @param {number} input
+ * @param {number} output
+ * @param {number} cacheRead
+ * @param {number} cacheCreate
+ * @returns {object|null}
+ */
+ArenaClient.prototype.estimateCost = function (input, output, cacheRead, cacheCreate) {
+    var rates = this._getModelPricing();
+    if (!rates) return null;
+
+    var inputCost = input * (rates.input_cost_per_token || 0);
+    var outputCost = output * (rates.output_cost_per_token || 0);
+    var cacheReadCost = cacheRead * (rates.cache_read_input_token_cost || 0);
+    var cacheCreateCost = cacheCreate * (rates.cache_creation_input_token_cost || 0);
+
+    return {
+        input: inputCost,
+        output: outputCost,
+        cache_read: cacheReadCost,
+        cache_create: cacheCreateCost,
+        total: inputCost + outputCost + cacheReadCost + cacheCreateCost,
+        rates: rates
+    };
 };
 
 /* --------------------------------------------------------------------------
@@ -311,6 +421,7 @@ ArenaClient.prototype.handleEvent = function (event) {
     if (this._eventMatchesFilter(event)) {
         this.addBattleLogEntry(event);
         this.renderTokenBreakdown();
+        this.renderCostCard();
     }
 
     this.renderAgentPods();
@@ -496,6 +607,7 @@ ArenaClient.prototype.render = function () {
     this.renderDigivice();
     this.renderAgentPods();
     this.renderTokenBreakdown();
+    this.renderCostCard();
     this.renderBattleLog();
     this.renderPartyStats();
 };
@@ -723,6 +835,81 @@ ArenaClient.prototype._renderTokenBar = function (type, count, total) {
     if (barEl) barEl.style.width = percentage + '%';
     if (countEl) countEl.textContent = formatTokens(count);
     if (pctEl) pctEl.textContent = Math.round(percentage) + '%';
+};
+
+/**
+ * Render the cost estimate card in the sidebar.
+ */
+ArenaClient.prototype.renderCostCard = function () {
+    var container = document.getElementById('cost-card');
+    if (!container) return;
+
+    var agents = get(this.state, ['agents'], {});
+    var inputTokens = 0;
+    var outputTokens = 0;
+    var cacheRead = 0;
+    var cacheCreate = 0;
+
+    var agentKeys = Object.keys(agents);
+    for (var i = 0; i < agentKeys.length; i++) {
+        var a = agents[agentKeys[i]];
+        inputTokens += a.total_input_tokens || 0;
+        outputTokens += a.total_output_tokens || 0;
+        cacheRead += a.total_cache_read_tokens || 0;
+        cacheCreate += a.total_cache_create_tokens || 0;
+    }
+
+    var cost = this.estimateCost(inputTokens, outputTokens, cacheRead, cacheCreate);
+
+    if (!cost) {
+        container.classList.add('cost-card--no-pricing');
+        return;
+    }
+    container.classList.remove('cost-card--no-pricing');
+
+    var modelName = escapeHtml(this._getModelShortName() || 'Unknown');
+    var rangeLabels = { today: 'Today', week: 'This Week', all: 'All Time' };
+    var rangeText = escapeHtml(rangeLabels[this.currentRange] || 'Today');
+
+    var html = '<h2 class="section-title">Cost Estimate <span class="range-label">' +
+        '\u2014 ' + rangeText + ' (' + modelName + ')</span></h2>';
+
+    html += '<div class="cost-card__row">' +
+        '<span class="cost-card__label">Input</span>' +
+        '<span class="cost-card__rate mono">' + escapeHtml(formatTokens(inputTokens)) +
+            ' \u00D7 ' + escapeHtml(formatRate(cost.rates.input_cost_per_token)) + '</span>' +
+        '<span class="cost-card__amount cost-card__amount--input mono">' + escapeHtml(formatCost(cost.input)) + '</span>' +
+    '</div>';
+
+    html += '<div class="cost-card__row">' +
+        '<span class="cost-card__label">Output</span>' +
+        '<span class="cost-card__rate mono">' + escapeHtml(formatTokens(outputTokens)) +
+            ' \u00D7 ' + escapeHtml(formatRate(cost.rates.output_cost_per_token)) + '</span>' +
+        '<span class="cost-card__amount cost-card__amount--output mono">' + escapeHtml(formatCost(cost.output)) + '</span>' +
+    '</div>';
+
+    html += '<div class="cost-card__separator"></div>';
+
+    html += '<div class="cost-card__row">' +
+        '<span class="cost-card__label">Cache Rd</span>' +
+        '<span class="cost-card__rate mono">' + escapeHtml(formatTokens(cacheRead)) +
+            ' \u00D7 ' + escapeHtml(formatRate(cost.rates.cache_read_input_token_cost)) + '</span>' +
+        '<span class="cost-card__amount cost-card__amount--cache-read mono">' + escapeHtml(formatCost(cost.cache_read)) + '</span>' +
+    '</div>';
+
+    html += '<div class="cost-card__row">' +
+        '<span class="cost-card__label">Cache Wr</span>' +
+        '<span class="cost-card__rate mono">' + escapeHtml(formatTokens(cacheCreate)) +
+            ' \u00D7 ' + escapeHtml(formatRate(cost.rates.cache_creation_input_token_cost)) + '</span>' +
+        '<span class="cost-card__amount cost-card__amount--cache-create mono">' + escapeHtml(formatCost(cost.cache_create)) + '</span>' +
+    '</div>';
+
+    html += '<div class="cost-card__total">' +
+        '<span class="cost-card__total-label">Estimated Total</span>' +
+        '<span class="cost-card__total-value mono">' + escapeHtml(formatCost(cost.total)) + '</span>' +
+    '</div>';
+
+    container.innerHTML = html;
 };
 
 /* --------------------------------------------------------------------------
