@@ -1,104 +1,74 @@
 {
-  "version": "1.0.0",
-  "last_updated": "2026-02-08T12:42:16Z",
+  "version": "2.0.0",
+  "last_updated": "2026-02-09T08:19:07Z",
   "agents": {
-    "planner": {
+    "architect": {
+      "invocations": 7,
+      "last_used": "2026-02-08T20:48:38Z",
+      "avg_duration_seconds": 163.77,
+      "success_rate": 1.0,
+      "total_input_tokens": 0,
+      "total_output_tokens": 0,
+      "total_cache_read_tokens": 0,
+      "total_cache_create_tokens": 0
+    },
+    "forger": {
+      "invocations": 21,
+      "last_used": "2026-02-09T08:12:12Z",
+      "avg_duration_seconds": 1982.08,
+      "success_rate": 1.0,
+      "total_input_tokens": 180,
+      "total_output_tokens": 516,
+      "total_cache_read_tokens": 6866964,
+      "total_cache_create_tokens": 750520
+    },
+    "sentinel": {
       "invocations": 4,
-      "last_used": "2026-02-08T12:18:02Z",
-      "avg_duration_seconds": 142.81,
+      "last_used": "2026-02-09T08:00:53Z",
+      "avg_duration_seconds": 249.15,
       "success_rate": 1.0,
-      "total_duration_seconds": 0,
-      "success_count": 0
+      "total_input_tokens": 37,
+      "total_output_tokens": 321,
+      "total_cache_read_tokens": 1274231,
+      "total_cache_create_tokens": 160697
     },
-    "coder": {
-      "invocations": 16,
-      "last_used": "2026-02-08T12:36:00Z",
-      "avg_duration_seconds": 2373.26,
-      "success_rate": 1.0,
-      "total_duration_seconds": 0,
-      "success_count": 0
-    },
-    "tester": {
+    "warden": {
       "invocations": 3,
-      "last_used": "2026-02-06T12:15:40Z",
-      "avg_duration_seconds": 173.6,
+      "last_used": "2026-02-09T08:18:09Z",
+      "avg_duration_seconds": 64.23,
       "success_rate": 1.0,
-      "total_duration_seconds": 0,
-      "success_count": 0
+      "total_input_tokens": 34,
+      "total_output_tokens": 39,
+      "total_cache_read_tokens": 102320,
+      "total_cache_create_tokens": 330563
     },
-    "reviewer": {
-      "invocations": 1,
-      "last_used": "2026-02-06T12:19:37Z",
-      "avg_duration_seconds": 49.83,
-      "success_rate": 1.0,
-      "total_duration_seconds": 0,
-      "success_count": 0
-    },
-    "documenter": {
-      "invocations": 1,
-      "last_used": "2026-02-06T12:28:33Z",
-      "avg_duration_seconds": 127.0,
-      "success_rate": 1.0,
-      "total_duration_seconds": 0,
-      "success_count": 0
-    },
-    "releaser": {
+    "mender": {
       "invocations": 0,
       "last_used": null,
       "avg_duration_seconds": 0,
       "success_rate": 1.0,
-      "total_duration_seconds": 0,
-      "success_count": 0
+      "total_input_tokens": 0,
+      "total_output_tokens": 0,
+      "total_cache_read_tokens": 0,
+      "total_cache_create_tokens": 0
     },
-    "auditor": {
-      "invocations": 0,
-      "last_used": null,
-      "avg_duration_seconds": 0,
+    "seeker": {
+      "invocations": 6,
+      "last_used": "2026-02-08T20:13:20Z",
+      "avg_duration_seconds": 66.21,
       "success_rate": 1.0,
-      "total_duration_seconds": 0,
-      "success_count": 0
-    },
-    "debugger": {
-      "invocations": 0,
-      "last_used": null,
-      "avg_duration_seconds": 0,
-      "success_rate": 1.0,
-      "total_duration_seconds": 0,
-      "success_count": 0
-    },
-    "ideator": {
-      "invocations": 0,
-      "last_used": null,
-      "avg_duration_seconds": 0,
-      "success_rate": 1.0,
-      "total_duration_seconds": 0,
-      "success_count": 0
-    },
-    "explorer": {
-      "invocations": 1,
-      "last_used": "2026-02-06T12:38:12Z",
-      "avg_duration_seconds": 122.39,
-      "success_rate": 1.0,
-      "total_duration_seconds": 0,
-      "success_count": 0
-    },
-    "claude-code-guide": {
-      "invocations": 1,
-      "last_used": "2026-02-06T11:31:57Z",
-      "avg_duration_seconds": 20.96,
-      "success_rate": 1.0
-    },
-    "Explore": {
-      "invocations": 1,
-      "last_used": "2026-02-06T12:07:56Z",
-      "avg_duration_seconds": 16.58,
-      "success_rate": 1.0
+      "total_input_tokens": 0,
+      "total_output_tokens": 0,
+      "total_cache_read_tokens": 0,
+      "total_cache_create_tokens": 0
     }
   },
   "totals": {
-    "total_invocations": 28,
-    "total_duration_seconds": 0,
-    "most_used_agent": "coder",
-    "least_used_agent": "ideator"
+    "total_invocations": 41,
+    "most_used_agent": "forger",
+    "least_used_agent": "mender",
+    "total_input_tokens": 251,
+    "total_output_tokens": 876,
+    "total_cache_tokens": 9485295
   }
 }

@@ -1,0 +1,878 @@
+"""
+Igris AI - Crimson Arena Dashboard Server
+
+FastAPI server that receives agent events via WebSocket and REST,
+stores them in SQLite, and serves the static frontend.
+
+Usage:
+    uvicorn dashboard.server:app --host 127.0.0.1 --port 8001
+
+Dependencies:
+    fastapi, uvicorn, aiosqlite, watchfiles
+"""
+
+import asyncio
+import json
+import logging
+import os
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+import aiosqlite
+from pydantic import BaseModel, Field
+from typing import Optional
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("crimson-arena")
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+PROJECT_DIR = os.environ.get(
+    "CLAUDE_PROJECT_DIR",
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+)
+METRICS_DIR = os.path.join(PROJECT_DIR, "ai", "session", "metrics")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "arena.db")
+METRICS_FILE = os.path.join(METRICS_DIR, "agent-metrics.json")
+EVENTS_FILE = os.path.join(METRICS_DIR, "events.jsonl")
+BUDGET_FILE = os.path.join(METRICS_DIR, "budget.json")
+STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+# ---------------------------------------------------------------------------
+# Agent Leveling System
+# ---------------------------------------------------------------------------
+
+LEVEL_THRESHOLDS = [
+    (0, "Trainee", 0),
+    (5, "Novice", 1),
+    (15, "Adept", 2),
+    (30, "Expert", 3),
+    (50, "Master", 4),
+    (100, "Legend", 5),
+    (200, "Mythic", 6),
+]
+
+EVOLUTION_TIERS = {
+    0: "In-Training",
+    1: "In-Training",
+    2: "Rookie",
+    3: "Champion",
+    4: "Ultimate",
+    5: "Mega",
+    6: "Mega",
+}
+
+
+def get_level(invocations: int) -> dict:
+    """Compute level info from invocation count.
+
+    Returns dict with keys: name, tier, evolution, next_at, progress.
+    """
+    level_name = "Trainee"
+    level_tier = 0
+    current_threshold = 0
+
+    for threshold, name, tier in LEVEL_THRESHOLDS:
+        if invocations >= threshold:
+            level_name = name
+            level_tier = tier
+            current_threshold = threshold
+
+    # Find next threshold
+    next_threshold = None
+    for threshold, _name, _tier in LEVEL_THRESHOLDS:
+        if threshold > invocations:
+            next_threshold = threshold
+            break
+
+    # Progress toward next level
+    if next_threshold is not None:
+        span = next_threshold - current_threshold
+        progress = (invocations - current_threshold) / span if span > 0 else 1.0
+    else:
+        progress = 1.0
+
+    evolution = EVOLUTION_TIERS.get(level_tier, "In-Training")
+
+    return {
+        "name": level_name,
+        "tier": level_tier,
+        "evolution": evolution,
+        "next_at": next_threshold if next_threshold else current_threshold,
+        "progress": round(progress, 3),
+    }
+
+
+# ---------------------------------------------------------------------------
+# RPG Stat Derivation
+# ---------------------------------------------------------------------------
+
+
+def compute_rpg_stats(agent_data: dict, all_agents: dict) -> dict:
+    """Compute STR/INT/SPD/VIT from real agent data.
+
+    STR = output token volume (relative to max across agents)
+    INT = cache efficiency (cache_read ratio of total cache input)
+    SPD = speed (inverse of duration relative to slowest agent)
+    VIT = success rate as percentage
+    """
+    max_output = max(
+        (a.get("total_output_tokens", 0) for a in all_agents.values()), default=1
+    ) or 1
+    max_duration = max(
+        (a.get("avg_duration_seconds", 0) for a in all_agents.values()), default=1
+    ) or 1
+
+    total_input = agent_data.get("total_input_tokens", 0)
+    cache_read = agent_data.get("total_cache_read_tokens", 0)
+    cache_create = agent_data.get("total_cache_create_tokens", 0)
+    total_cache_input = total_input + cache_read + cache_create
+
+    str_val = round(agent_data.get("total_output_tokens", 0) / max_output * 100)
+    int_val = round(cache_read / total_cache_input * 100) if total_cache_input > 0 else 0
+    spd_val = round(
+        100 - min(agent_data.get("avg_duration_seconds", 0) / max_duration * 100, 100)
+    )
+    vit_val = round(agent_data.get("success_rate", 1.0) * 100)
+
+    return {"STR": str_val, "INT": int_val, "SPD": spd_val, "VIT": vit_val}
+
+
+# ---------------------------------------------------------------------------
+# Budget Config
+# ---------------------------------------------------------------------------
+
+
+def load_budget_config() -> dict:
+    """Load budget configuration from budget.json with sensible defaults."""
+    defaults = {
+        "daily_token_budget": 1000000,
+        "warning_threshold": 0.75,
+        "critical_threshold": 0.90,
+    }
+    try:
+        with open(BUDGET_FILE, "r") as f:
+            config = json.load(f)
+            return {**defaults, **config}
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+        logger.warning("Could not load budget.json (%s), using defaults", exc)
+        return defaults
+
+
+# ---------------------------------------------------------------------------
+# WebSocket Connection Manager
+# ---------------------------------------------------------------------------
+
+
+class ConnectionManager:
+    """Manages active WebSocket connections and broadcasts events."""
+
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        logger.info(
+            "WebSocket client connected (total: %d)", len(self.active_connections)
+        )
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+        logger.info(
+            "WebSocket client disconnected (total: %d)", len(self.active_connections)
+        )
+
+    async def broadcast(self, data: dict):
+        """Send data to all connected clients, removing dead connections."""
+        disconnected = []
+        for conn in self.active_connections:
+            try:
+                await conn.send_json(data)
+            except Exception:
+                disconnected.append(conn)
+        for conn in disconnected:
+            if conn in self.active_connections:
+                self.active_connections.remove(conn)
+
+
+manager = ConnectionManager()
+
+# ---------------------------------------------------------------------------
+# Database Initialization
+# ---------------------------------------------------------------------------
+
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    event TEXT NOT NULL,
+    agent TEXT NOT NULL,
+    agent_id TEXT NOT NULL DEFAULT '',
+    raw_type TEXT DEFAULT '',
+    duration_s REAL DEFAULT 0,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    cache_read INTEGER DEFAULT 0,
+    cache_create INTEGER DEFAULT 0,
+    session_date TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent);
+CREATE INDEX IF NOT EXISTS idx_events_session_date ON events(session_date);
+
+CREATE TABLE IF NOT EXISTS agent_levels (
+    agent TEXT PRIMARY KEY,
+    total_invocations INTEGER DEFAULT 0,
+    level_name TEXT DEFAULT 'Trainee',
+    level_tier INTEGER DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS daily_budget (
+    date TEXT PRIMARY KEY,
+    total_input_tokens INTEGER DEFAULT 0,
+    total_output_tokens INTEGER DEFAULT 0,
+    total_cache_read INTEGER DEFAULT 0,
+    total_cache_create INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS sync_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+"""
+
+
+async def init_db(db: aiosqlite.Connection):
+    """Create tables and indexes if they do not exist."""
+    await db.executescript(SCHEMA_SQL)
+    await db.commit()
+    logger.info("Database initialized at %s", DB_PATH)
+
+
+# ---------------------------------------------------------------------------
+# Metrics State Loading
+# ---------------------------------------------------------------------------
+
+
+async def load_metrics_state(db: aiosqlite.Connection):
+    """Load initial state from agent-metrics.json into agent_levels table.
+
+    Only inserts agents that are not already tracked so that runtime
+    updates are not overwritten on restart.
+    """
+    if not os.path.exists(METRICS_FILE):
+        logger.warning("agent-metrics.json not found at %s", METRICS_FILE)
+        return
+
+    try:
+        with open(METRICS_FILE, "r") as f:
+            metrics = json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Could not load agent-metrics.json: %s", exc)
+        return
+
+    agents = metrics.get("agents", {})
+    now = datetime.now(timezone.utc).isoformat()
+
+    for agent_name, agent_data in agents.items():
+        invocations = agent_data.get("invocations", 0)
+        level_info = get_level(invocations)
+
+        # Use INSERT OR REPLACE to always have fresh data on restart
+        await db.execute(
+            """INSERT OR REPLACE INTO agent_levels
+               (agent, total_invocations, level_name, level_tier, updated_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (agent_name, invocations, level_info["name"], level_info["tier"], now),
+        )
+
+    await db.commit()
+    logger.info("Loaded metrics state for %d agents", len(agents))
+
+
+# ---------------------------------------------------------------------------
+# Event Processing
+# ---------------------------------------------------------------------------
+
+
+def extract_session_date(ts_str: str) -> str:
+    """Extract YYYY-MM-DD date from an ISO timestamp string."""
+    try:
+        return ts_str[:10]
+    except (TypeError, IndexError):
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+async def insert_event(db: aiosqlite.Connection, event: dict):
+    """Insert a single event into the events table and update aggregates."""
+    ts = event.get("ts", datetime.now(timezone.utc).isoformat())
+    event_type = event.get("event", "unknown")
+    agent = event.get("agent", "unknown")
+    agent_id = event.get("agent_id", "")
+    raw_type = event.get("raw_type", "")
+    duration_s = float(event.get("duration_s", 0))
+    input_tokens = int(event.get("input_tokens", 0))
+    output_tokens = int(event.get("output_tokens", 0))
+    cache_read = int(event.get("cache_read", 0))
+    cache_create = int(event.get("cache_create", 0))
+    session_date = extract_session_date(ts)
+
+    await db.execute(
+        """INSERT INTO events
+           (ts, event, agent, agent_id, raw_type, duration_s,
+            input_tokens, output_tokens, cache_read, cache_create, session_date)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            ts,
+            event_type,
+            agent,
+            agent_id,
+            raw_type,
+            duration_s,
+            input_tokens,
+            output_tokens,
+            cache_read,
+            cache_create,
+            session_date,
+        ),
+    )
+
+    # Update daily_budget for stop events (which carry token data)
+    if event_type == "stop":
+        await db.execute(
+            """INSERT INTO daily_budget (date, total_input_tokens, total_output_tokens,
+                                        total_cache_read, total_cache_create)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(date) DO UPDATE SET
+                   total_input_tokens = total_input_tokens + excluded.total_input_tokens,
+                   total_output_tokens = total_output_tokens + excluded.total_output_tokens,
+                   total_cache_read = total_cache_read + excluded.total_cache_read,
+                   total_cache_create = total_cache_create + excluded.total_cache_create""",
+            (session_date, input_tokens, output_tokens, cache_read, cache_create),
+        )
+
+        # Update agent_levels
+        now = datetime.now(timezone.utc).isoformat()
+        async with db.execute(
+            "SELECT total_invocations FROM agent_levels WHERE agent = ?", (agent,)
+        ) as cursor:
+            row = await cursor.fetchone()
+
+        if row:
+            new_count = row[0] + 1
+        else:
+            new_count = 1
+
+        level_info = get_level(new_count)
+        await db.execute(
+            """INSERT OR REPLACE INTO agent_levels
+               (agent, total_invocations, level_name, level_tier, updated_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (agent, new_count, level_info["name"], level_info["tier"], now),
+        )
+
+    await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# File Watcher (events.jsonl sync)
+# ---------------------------------------------------------------------------
+
+
+async def sync_events_from_file(db: aiosqlite.Connection):
+    """Sync events from events.jsonl that were not received via POST.
+
+    Reads the file, skips already-processed lines based on sync_state,
+    and inserts new events into the database.
+    """
+    if not os.path.exists(EVENTS_FILE):
+        logger.info("events.jsonl not found, skipping file sync")
+        return
+
+    # Get last synced line count
+    async with db.execute(
+        "SELECT value FROM sync_state WHERE key = 'events_line_count'"
+    ) as cursor:
+        row = await cursor.fetchone()
+    last_count = int(row[0]) if row else 0
+
+    try:
+        with open(EVENTS_FILE, "r") as f:
+            lines = f.readlines()
+    except OSError as exc:
+        logger.warning("Could not read events.jsonl: %s", exc)
+        return
+
+    new_lines = lines[last_count:]
+    inserted = 0
+    for line in new_lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+            await insert_event(db, event)
+            inserted += 1
+        except json.JSONDecodeError:
+            logger.warning("Skipping malformed line in events.jsonl")
+            continue
+
+    new_count = len(lines)
+    await db.execute(
+        "INSERT OR REPLACE INTO sync_state (key, value) VALUES ('events_line_count', ?)",
+        (str(new_count),),
+    )
+    await db.commit()
+
+    if inserted > 0:
+        logger.info("Synced %d new events from events.jsonl (total lines: %d)", inserted, new_count)
+    else:
+        logger.info("events.jsonl up to date (total lines: %d)", new_count)
+
+
+async def watch_events_file(app: FastAPI):
+    """Background task that watches events.jsonl for new lines.
+
+    Uses polling (watchfiles) to detect file changes, then syncs
+    new lines into the database and broadcasts to WebSocket clients.
+    """
+    try:
+        from watchfiles import awatch, Change
+    except ImportError:
+        logger.warning("watchfiles not installed, file watching disabled")
+        return
+
+    logger.info("Starting file watcher on %s", EVENTS_FILE)
+
+    try:
+        async for changes in awatch(
+            os.path.dirname(EVENTS_FILE),
+            watch_filter=lambda change, path: path.endswith("events.jsonl"),
+        ):
+            for change_type, path in changes:
+                if change_type == Change.modified and path.endswith("events.jsonl"):
+                    db = app.state.db
+                    # Get current sync position
+                    async with db.execute(
+                        "SELECT value FROM sync_state WHERE key = 'events_line_count'"
+                    ) as cursor:
+                        row = await cursor.fetchone()
+                    last_count = int(row[0]) if row else 0
+
+                    try:
+                        with open(EVENTS_FILE, "r") as f:
+                            lines = f.readlines()
+                    except OSError:
+                        continue
+
+                    new_lines = lines[last_count:]
+                    for line in new_lines:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            event = json.loads(line)
+                            await insert_event(db, event)
+                            # Broadcast to WebSocket clients
+                            await manager.broadcast({"type": "event", "data": event})
+                        except json.JSONDecodeError:
+                            continue
+
+                    new_count = len(lines)
+                    await db.execute(
+                        "INSERT OR REPLACE INTO sync_state (key, value) "
+                        "VALUES ('events_line_count', ?)",
+                        (str(new_count),),
+                    )
+                    await db.commit()
+
+    except asyncio.CancelledError:
+        logger.info("File watcher stopped")
+    except Exception as exc:
+        logger.error("File watcher error: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# State Builders
+# ---------------------------------------------------------------------------
+
+
+async def build_agents_state(db: aiosqlite.Connection) -> dict:
+    """Build the agents state dict from agent-metrics.json and database.
+
+    Merges the file-based metrics with database-tracked levels.
+    """
+    agents = {}
+
+    # Load base data from agent-metrics.json
+    if os.path.exists(METRICS_FILE):
+        try:
+            with open(METRICS_FILE, "r") as f:
+                metrics = json.load(f)
+            for name, data in metrics.get("agents", {}).items():
+                agents[name] = {
+                    "invocations": data.get("invocations", 0),
+                    "total_input_tokens": data.get("total_input_tokens", 0),
+                    "total_output_tokens": data.get("total_output_tokens", 0),
+                    "total_cache_read_tokens": data.get("total_cache_read_tokens", 0),
+                    "total_cache_create_tokens": data.get("total_cache_create_tokens", 0),
+                    "avg_duration_seconds": data.get("avg_duration_seconds", 0),
+                    "success_rate": data.get("success_rate", 1.0),
+                    "last_used": data.get("last_used"),
+                    "active": False,
+                }
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Enrich with level data from database
+    async with db.execute(
+        "SELECT agent, total_invocations, level_name, level_tier FROM agent_levels"
+    ) as cursor:
+        async for row in cursor:
+            agent_name = row[0]
+            if agent_name in agents:
+                # Use the higher invocation count (file or db)
+                db_invocations = row[1]
+                file_invocations = agents[agent_name]["invocations"]
+                invocations = max(db_invocations, file_invocations)
+                agents[agent_name]["invocations"] = invocations
+
+    # Check for currently active agents (started but not stopped)
+    async with db.execute(
+        """SELECT agent, agent_id FROM events
+           WHERE event = 'start'
+           AND agent_id NOT IN (
+               SELECT agent_id FROM events WHERE event = 'stop' AND agent_id != ''
+           )
+           AND agent_id != ''
+           ORDER BY ts DESC"""
+    ) as cursor:
+        async for row in cursor:
+            agent_name = row[0]
+            if agent_name in agents:
+                agents[agent_name]["active"] = True
+
+    # Compute levels and RPG stats
+    for name, data in agents.items():
+        data["level"] = get_level(data["invocations"])
+        data["rpg_stats"] = compute_rpg_stats(data, agents)
+
+    return agents
+
+
+async def build_budget_state(db: aiosqlite.Connection, budget_config: dict) -> dict:
+    """Build budget state for today from daily_budget table."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    ceiling = budget_config.get("daily_token_budget", 1000000)
+
+    async with db.execute(
+        """SELECT total_input_tokens, total_output_tokens,
+                  total_cache_read, total_cache_create
+           FROM daily_budget WHERE date = ?""",
+        (today,),
+    ) as cursor:
+        row = await cursor.fetchone()
+
+    if row:
+        consumed = row[0] + row[1] + row[2] + row[3]
+    else:
+        consumed = 0
+
+    ratio = consumed / ceiling if ceiling > 0 else 0.0
+
+    return {
+        "consumed": consumed,
+        "ceiling": ceiling,
+        "ratio": round(ratio, 4),
+        "warning_threshold": budget_config.get("warning_threshold", 0.75),
+        "critical_threshold": budget_config.get("critical_threshold", 0.90),
+    }
+
+
+async def build_recent_events(db: aiosqlite.Connection, limit: int = 50) -> list:
+    """Fetch the most recent events from the database."""
+    events = []
+    async with db.execute(
+        """SELECT ts, event, agent, agent_id, raw_type, duration_s,
+                  input_tokens, output_tokens, cache_read, cache_create
+           FROM events ORDER BY id DESC LIMIT ?""",
+        (limit,),
+    ) as cursor:
+        async for row in cursor:
+            events.append(
+                {
+                    "ts": row[0],
+                    "event": row[1],
+                    "agent": row[2],
+                    "agent_id": row[3],
+                    "raw_type": row[4],
+                    "duration_s": row[5],
+                    "input_tokens": row[6],
+                    "output_tokens": row[7],
+                    "cache_read": row[8],
+                    "cache_create": row[9],
+                }
+            )
+    return events
+
+
+async def build_totals(db: aiosqlite.Connection) -> dict:
+    """Compute aggregate totals across all events."""
+    async with db.execute(
+        """SELECT COUNT(*) as total_events,
+                  COALESCE(SUM(input_tokens), 0),
+                  COALESCE(SUM(output_tokens), 0),
+                  COALESCE(SUM(cache_read), 0),
+                  COALESCE(SUM(cache_create), 0)
+           FROM events WHERE event = 'stop'"""
+    ) as cursor:
+        row = await cursor.fetchone()
+
+    # Count unique stop events as invocations
+    async with db.execute(
+        "SELECT COUNT(*) FROM events WHERE event = 'stop'"
+    ) as cursor:
+        stop_row = await cursor.fetchone()
+
+    return {
+        "total_invocations": stop_row[0] if stop_row else 0,
+        "total_input_tokens": row[1] if row else 0,
+        "total_output_tokens": row[2] if row else 0,
+        "total_cache_tokens": (row[3] + row[4]) if row else 0,
+    }
+
+
+async def build_full_state(app: FastAPI) -> dict:
+    """Build the complete state payload for API and WebSocket initial send."""
+    db = app.state.db
+    budget_config = app.state.budget_config
+
+    agents = await build_agents_state(db)
+    budget = await build_budget_state(db, budget_config)
+    recent_events = await build_recent_events(db)
+    totals = await build_totals(db)
+
+    return {
+        "agents": agents,
+        "budget": budget,
+        "recent_events": recent_events,
+        "totals": totals,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Lifespan (startup / shutdown)
+# ---------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan: initialize DB, load state, start watcher."""
+    # Initialize SQLite
+    logger.info("Connecting to database: %s", DB_PATH)
+    app.state.db = await aiosqlite.connect(DB_PATH)
+    await init_db(app.state.db)
+
+    # Load budget config
+    app.state.budget_config = load_budget_config()
+    logger.info(
+        "Budget config: ceiling=%d, warn=%.0f%%, crit=%.0f%%",
+        app.state.budget_config["daily_token_budget"],
+        app.state.budget_config["warning_threshold"] * 100,
+        app.state.budget_config["critical_threshold"] * 100,
+    )
+
+    # Load initial state from agent-metrics.json
+    await load_metrics_state(app.state.db)
+
+    # Sync from events.jsonl
+    await sync_events_from_file(app.state.db)
+
+    # Start file watcher background task
+    watcher_task = asyncio.create_task(watch_events_file(app))
+
+    logger.info("Crimson Arena server ready")
+
+    yield
+
+    # Shutdown
+    watcher_task.cancel()
+    try:
+        await watcher_task
+    except asyncio.CancelledError:
+        pass
+    await app.state.db.close()
+    logger.info("Crimson Arena server stopped")
+
+
+# ---------------------------------------------------------------------------
+# FastAPI Application
+# ---------------------------------------------------------------------------
+
+app = FastAPI(
+    title="Crimson Arena - Igris AI Agent Dashboard",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+
+# ---------------------------------------------------------------------------
+# Request Models
+# ---------------------------------------------------------------------------
+
+
+class AgentEvent(BaseModel):
+    """Validated event payload from agent_metrics.sh hook."""
+
+    ts: str
+    event: str = Field(..., pattern="^(start|stop)$")
+    agent: str
+    agent_id: str = ""
+    raw_type: str = ""
+    duration_s: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read: int = 0
+    cache_create: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+
+@app.get("/")
+async def serve_index():
+    """Serve the dashboard frontend."""
+    index_path = os.path.join(STATIC_DIR, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return JSONResponse(
+        {"status": "ok", "message": "Crimson Arena server running. No frontend deployed yet."},
+        status_code=200,
+    )
+
+
+@app.get("/api/state")
+async def get_state():
+    """Full current state: agents, budget, recent events, totals."""
+    state = await build_full_state(app)
+    return JSONResponse(state)
+
+
+@app.get("/api/agents")
+async def get_agents():
+    """Agent summary with levels and RPG stats."""
+    db = app.state.db
+    agents = await build_agents_state(db)
+    return JSONResponse(agents)
+
+
+@app.get("/api/budget")
+async def get_budget():
+    """Today's budget consumption vs ceiling."""
+    db = app.state.db
+    budget = await build_budget_state(db, app.state.budget_config)
+    return JSONResponse(budget)
+
+
+@app.get("/api/events")
+async def get_events(limit: int = Query(default=50, ge=1, le=500)):
+    """Recent events, paginated by limit."""
+    db = app.state.db
+    events = await build_recent_events(db, limit=limit)
+    return JSONResponse(events)
+
+
+@app.post("/api/event")
+async def post_event(event: AgentEvent):
+    """Receive an event from the agent_metrics.sh hook.
+
+    Inserts into SQLite, updates aggregates, and broadcasts
+    to all connected WebSocket clients.
+    """
+    db = app.state.db
+    event_dict = event.model_dump()
+
+    try:
+        await insert_event(db, event_dict)
+    except Exception as exc:
+        logger.error("Failed to insert event: %s", exc)
+        return JSONResponse(
+            {"status": "error", "message": "Failed to process event"},
+            status_code=500,
+        )
+
+    # Broadcast to WebSocket clients
+    await manager.broadcast({"type": "event", "data": event_dict})
+
+    return JSONResponse({"status": "ok"})
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for real-time dashboard updates.
+
+    On connect: sends full state as initial message.
+    On events: receives broadcasts from the ConnectionManager.
+    """
+    await manager.connect(websocket)
+
+    try:
+        # Send full state as initial bootstrap payload
+        state = await build_full_state(app)
+        await websocket.send_json({"type": "state", "data": state})
+
+        # Keep connection alive; read messages to detect disconnects
+        while True:
+            # Client may send ping/pong or other messages
+            data = await websocket.receive_text()
+            # Echo back pong for keepalive
+            if data == "ping":
+                await websocket.send_json({"type": "pong"})
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception:
+        manager.disconnect(websocket)
+
+
+# ---------------------------------------------------------------------------
+# Mount static files (after routes so /api/* takes precedence)
+# ---------------------------------------------------------------------------
+
+if os.path.isdir(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+# ---------------------------------------------------------------------------
+# Main entry point (for direct execution)
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(os.environ.get("DASHBOARD_PORT", "8001"))
+    logger.info("Starting Crimson Arena on port %d", port)
+    uvicorn.run(
+        "server:app",
+        host="127.0.0.1",
+        port=port,
+        reload=False,
+        log_level="info",
+    )

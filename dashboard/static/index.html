@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRIMSON ARENA — Igris AI Agent Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- ================================================================== -->
+  <!-- HEADER                                                              -->
+  <!-- ================================================================== -->
+  <header class="header">
+    <div class="header__brand">
+      <h1 class="header__title">CRIMSON ARENA</h1>
+      <span class="header__subtitle">Igris AI Agent Dashboard</span>
+    </div>
+    <div class="header__hp">
+      <div class="hp-label">
+        <span class="hp-label__title">SESSION HP</span>
+        <span class="hp-label__value" id="hp-text">0 / 0 tokens (0%)</span>
+      </div>
+      <div class="hp-bar">
+        <div class="hp-fill hp-fill--full" id="hp-fill" style="width: 0%"></div>
+      </div>
+      <div class="hp-thresholds">
+        <span class="hp-thresholds__warn" id="hp-warn-marker" style="left: 75%"></span>
+        <span class="hp-thresholds__crit" id="hp-crit-marker" style="left: 90%"></span>
+      </div>
+    </div>
+    <div class="header__meta">
+      <span class="connection-status" id="connection-status" title="WebSocket status">OFFLINE</span>
+    </div>
+  </header>
+
+  <!-- ================================================================== -->
+  <!-- MAIN CONTENT                                                        -->
+  <!-- ================================================================== -->
+  <main class="main">
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- AGENT PIPELINE (left)                                             -->
+    <!-- ---------------------------------------------------------------- -->
+    <section class="pipeline" aria-label="Agent Pipeline">
+      <h2 class="section-title">Agent Pipeline</h2>
+
+      <!-- Tier 1 Core row -->
+      <div class="pipeline__row pipeline__row--core">
+        <div class="agent-pod agent-pod--idle" id="pod-architect" data-agent="architect">
+          <div class="agent-pod__status-dot"></div>
+          <div class="agent-pod__name">ARCHITECT</div>
+          <div class="agent-pod__evolution" id="evo-architect">In-Training</div>
+          <div class="agent-pod__level" id="level-architect">Trainee</div>
+          <div class="xp-bar"><div class="xp-fill" id="xp-architect" style="width:0%"></div></div>
+          <div class="agent-pod__invocations"><span id="inv-architect">0</span> runs</div>
+          <div class="agent-pod__timer" id="timer-architect"></div>
+          <div class="agent-pod__last-used" id="last-architect">--</div>
+        </div>
+
+        <div class="pipeline__arrow">&rarr;</div>
+
+        <div class="agent-pod agent-pod--idle" id="pod-forger" data-agent="forger">
+          <div class="agent-pod__status-dot"></div>
+          <div class="agent-pod__name">FORGER</div>
+          <div class="agent-pod__evolution" id="evo-forger">In-Training</div>
+          <div class="agent-pod__level" id="level-forger">Trainee</div>
+          <div class="xp-bar"><div class="xp-fill" id="xp-forger" style="width:0%"></div></div>
+          <div class="agent-pod__invocations"><span id="inv-forger">0</span> runs</div>
+          <div class="agent-pod__timer" id="timer-forger"></div>
+          <div class="agent-pod__last-used" id="last-forger">--</div>
+        </div>
+
+        <div class="pipeline__arrow">&rarr;</div>
+
+        <div class="agent-pod agent-pod--idle" id="pod-sentinel" data-agent="sentinel">
+          <div class="agent-pod__status-dot"></div>
+          <div class="agent-pod__name">SENTINEL</div>
+          <div class="agent-pod__evolution" id="evo-sentinel">In-Training</div>
+          <div class="agent-pod__level" id="level-sentinel">Trainee</div>
+          <div class="xp-bar"><div class="xp-fill" id="xp-sentinel" style="width:0%"></div></div>
+          <div class="agent-pod__invocations"><span id="inv-sentinel">0</span> runs</div>
+          <div class="agent-pod__timer" id="timer-sentinel"></div>
+          <div class="agent-pod__last-used" id="last-sentinel">--</div>
+        </div>
+
+        <div class="pipeline__arrow">&rarr;</div>
+
+        <div class="agent-pod agent-pod--idle" id="pod-warden" data-agent="warden">
+          <div class="agent-pod__status-dot"></div>
+          <div class="agent-pod__name">WARDEN</div>
+          <div class="agent-pod__evolution" id="evo-warden">In-Training</div>
+          <div class="agent-pod__level" id="level-warden">Trainee</div>
+          <div class="xp-bar"><div class="xp-fill" id="xp-warden" style="width:0%"></div></div>
+          <div class="agent-pod__invocations"><span id="inv-warden">0</span> runs</div>
+          <div class="agent-pod__timer" id="timer-warden"></div>
+          <div class="agent-pod__last-used" id="last-warden">--</div>
+        </div>
+      </div>
+
+      <!-- Tier 3-5 Support row -->
+      <div class="pipeline__row pipeline__row--support">
+        <div class="agent-pod agent-pod--idle" id="pod-mender" data-agent="mender">
+          <div class="agent-pod__status-dot"></div>
+          <div class="agent-pod__name">MENDER</div>
+          <div class="agent-pod__evolution" id="evo-mender">In-Training</div>
+          <div class="agent-pod__level" id="level-mender">Trainee</div>
+          <div class="xp-bar"><div class="xp-fill" id="xp-mender" style="width:0%"></div></div>
+          <div class="agent-pod__invocations"><span id="inv-mender">0</span> runs</div>
+          <div class="agent-pod__timer" id="timer-mender"></div>
+          <div class="agent-pod__last-used" id="last-mender">--</div>
+        </div>
+
+        <div class="agent-pod agent-pod--idle" id="pod-seeker" data-agent="seeker">
+          <div class="agent-pod__status-dot"></div>
+          <div class="agent-pod__name">SEEKER</div>
+          <div class="agent-pod__evolution" id="evo-seeker">In-Training</div>
+          <div class="agent-pod__level" id="level-seeker">Trainee</div>
+          <div class="xp-bar"><div class="xp-fill" id="xp-seeker" style="width:0%"></div></div>
+          <div class="agent-pod__invocations"><span id="inv-seeker">0</span> runs</div>
+          <div class="agent-pod__timer" id="timer-seeker"></div>
+          <div class="agent-pod__last-used" id="last-seeker">--</div>
+        </div>
+
+        <div class="agent-pod agent-pod--idle" id="pod-sage" data-agent="sage">
+          <div class="agent-pod__status-dot"></div>
+          <div class="agent-pod__name">SAGE</div>
+          <div class="agent-pod__evolution" id="evo-sage">In-Training</div>
+          <div class="agent-pod__level" id="level-sage">Trainee</div>
+          <div class="xp-bar"><div class="xp-fill" id="xp-sage" style="width:0%"></div></div>
+          <div class="agent-pod__invocations"><span id="inv-sage">0</span> runs</div>
+          <div class="agent-pod__timer" id="timer-sage"></div>
+          <div class="agent-pod__last-used" id="last-sage">--</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------------- -->
+    <!-- SIDEBAR (right)                                                   -->
+    <!-- ---------------------------------------------------------------- -->
+    <aside class="sidebar">
+
+      <!-- Token Breakdown -->
+      <div class="panel token-breakdown">
+        <h2 class="section-title">Token Breakdown</h2>
+        <div class="token-total">
+          <span class="token-total__label">Total Tokens</span>
+          <span class="token-total__value mono" id="total-tokens">0</span>
+        </div>
+        <div class="token-bars" id="token-bars">
+          <div class="token-bar-row">
+            <span class="token-bar-row__label">Input</span>
+            <div class="token-bar-row__track"><div class="token-bar-row__fill token-bar-row__fill--input" id="bar-input" style="width:0%"></div></div>
+            <span class="token-bar-row__count mono" id="count-input">0</span>
+            <span class="token-bar-row__pct mono" id="pct-input">0%</span>
+          </div>
+          <div class="token-bar-row">
+            <span class="token-bar-row__label">Output</span>
+            <div class="token-bar-row__track"><div class="token-bar-row__fill token-bar-row__fill--output" id="bar-output" style="width:0%"></div></div>
+            <span class="token-bar-row__count mono" id="count-output">0</span>
+            <span class="token-bar-row__pct mono" id="pct-output">0%</span>
+          </div>
+          <div class="token-bar-row">
+            <span class="token-bar-row__label">Cache Read</span>
+            <div class="token-bar-row__track"><div class="token-bar-row__fill token-bar-row__fill--cache-read" id="bar-cache-read" style="width:0%"></div></div>
+            <span class="token-bar-row__count mono" id="count-cache-read">0</span>
+            <span class="token-bar-row__pct mono" id="pct-cache-read">0%</span>
+          </div>
+          <div class="token-bar-row">
+            <span class="token-bar-row__label">Cache Create</span>
+            <div class="token-bar-row__track"><div class="token-bar-row__fill token-bar-row__fill--cache-create" id="bar-cache-create" style="width:0%"></div></div>
+            <span class="token-bar-row__count mono" id="count-cache-create">0</span>
+            <span class="token-bar-row__pct mono" id="pct-cache-create">0%</span>
+          </div>
+        </div>
+        <div class="token-invocations">
+          <span class="token-invocations__label">Total Invocations</span>
+          <span class="token-invocations__value mono" id="total-invocations">0</span>
+        </div>
+      </div>
+
+      <!-- Battle Log -->
+      <div class="panel battle-log-panel">
+        <h2 class="section-title">Battle Log</h2>
+        <div class="battle-log" id="battle-log">
+          <div class="battle-log__empty">Awaiting agent activity...</div>
+        </div>
+      </div>
+
+    </aside>
+  </main>
+
+  <!-- ================================================================== -->
+  <!-- FOOTER: RPG Party Stats                                             -->
+  <!-- ================================================================== -->
+  <footer class="footer">
+    <div class="footer__header" id="party-toggle">
+      <h2 class="section-title">RPG Party Stats</h2>
+      <button class="footer__expand-btn" id="party-expand-btn" aria-label="Toggle party stats">
+        <span class="footer__expand-icon" id="party-expand-icon">&#9660;</span>
+      </button>
+    </div>
+    <div class="party-stats" id="party-stats">
+      <!-- Character cards are rendered by app.js -->
+    </div>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

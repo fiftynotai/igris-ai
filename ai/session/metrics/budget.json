@@ -1,0 +1,7 @@
+{
+  "daily_token_budget": 1000000,
+  "warning_threshold": 0.75,
+  "critical_threshold": 0.90,
+  "tokens_per_dollar_estimate": 3000000,
+  "reset_hour_utc": 0
+}

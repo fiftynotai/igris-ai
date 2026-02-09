@@ -1,9 +1,9 @@
 # Current Session
 
 ## Status
-**Mode:** REST MODE
-**Updated:** 2026-02-08
-**Active Brief:** MG-008 — Agent Consolidation (18 → 7 + 7 Skills)
+**Mode:** HUNT MODE
+**Updated:** 2026-02-09
+**Active Brief:** FR-007 (Agent Token Dashboard - Crimson Arena)
 
 ---
 
@@ -16,13 +16,21 @@
 | MG-006 | Hooks Integration — Automated Session & Quality | Done |
 | MG-007 | Native Agent Definitions | Done |
 | MG-008 | Agent Consolidation (18 → 7 + 7 Skills) | Done |
+| FR-007 | Agent Token Dashboard (Crimson Arena) | Ready |
 
 ---
 
 ## Last Session Summary (2026-02-08)
 
 **Completed:**
-- MG-008: Consolidated 18 agents to 7 agents + 7 new skills. Created skills: ui-design, document, release, standardize, ideate, migrate-analyze, audit. Merged inquisitor audit into warden. Deleted 11 agent files. Updated all references across igris_os.md, CLAUDE.md, 04-igris-agents.md, manifest.yaml, persona.json, digivolve, README.md, CLAUDE.md.template.
+- Fixed Stop hook JSON validation error: converted `type: "prompt"` to `type: "command"` with new `stop_session_check.sh`. Commit: `3e7aa34`.
+- Researched agent token visualization (2 rounds of parallel SEEKER + ideator agents).
+- Verified SubagentStop hook payload data model: tokens at `event.message.usage` in transcript JSONL (not in hook stdin).
+- Registered FR-007: Agent Token Dashboard (Crimson Arena) — full brief with 4 phases, verified data model, architecture, gaming UI spec.
+- Reviewed agent-metrics.json: 33 total invocations tracked, coder most used (16), zero token data (FR-007 Phase 0 will add).
+
+**Previous Session (2026-02-08 earlier):**
+- MG-008: Consolidated 18 agents to 7 agents + 7 new skills.
 
 **Previous Session (2026-02-06):**
 - MG-007: Migrated 18 agents to native `.claude/agents/*.md` files. Commit: `1d40041`.
@@ -32,14 +40,24 @@
 
 ## Resume Point
 
-**Next:** Validate v3.4 during normal usage
-**Status:** MG-008 complete, validation checklist created
-**Notes:** Test checklist at `ai/session/MG-008-test-checklist.md`. Reference integrity checks passed. Remaining items (core pipeline, new skills, existing skills) will be validated as features are built. Brief templates updated (step 17 done).
+**Last Active:** FR-007 (registered, not started)
+**Phase:** INIT (brief ready for implementation)
+
+**Next Steps:**
+1. `/hunt FR-007` to begin implementation (Phase 0: data pipeline first)
+2. Push commits to remote: `git push`
+3. Archive completed briefs: MG-004 through MG-008
+
+**Key Discovery (carry forward):**
+- Hook stdin does NOT include token fields
+- Tokens at `event.message.usage` in transcript JSONL at `agent_transcript_path`
+- Fields: `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`
 
 ---
 
 ## Pending
 
+- Implement FR-007: Agent Token Dashboard (Phase 0 → Phase 2)
 - Push commits to remote: `git push` (develop ahead of origin)
 - Archive completed briefs: MG-004, MG-005, MG-006, MG-007, MG-008
 - Validate v3.4 via checklist: `ai/session/MG-008-test-checklist.md`
