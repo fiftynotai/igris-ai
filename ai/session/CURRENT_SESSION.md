@@ -3,7 +3,7 @@
 ## Status
 **Mode:** HUNT MODE
 **Updated:** 2026-02-10
-**Active Brief:** FR-016
+**Active Brief:** FR-017
 
 ---
 
@@ -13,7 +13,8 @@
 |-------|-------|--------|
 | BR-015 | Token Breakdown Misleading Headline | Done |
 | FR-014 | Higgsfield Skill — Browser Automation Pivot | Ready |
-| FR-016 | DNA Digivolution Nexus — Agent Pods Redesign | In Progress |
+| FR-016 | DNA Digivolution Nexus — Agent Pods Redesign | Done |
+| FR-017 | Crest Hexframe — Agent Node Redesign | In Progress |
 
 **Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015
 
@@ -21,11 +22,12 @@
 
 ## Resume Point
 
-**Last Active:** FR-015 (Done)
+**Last Active:** FR-016 (Done)
 **Phase:** REST
 
 **Next Steps:**
 1. HUNT FR-014 (L-effort — Rewrite `/higgsfield` skill to use browser automation)
+2. Archive FR-016
 
 ---
 

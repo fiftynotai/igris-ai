@@ -33,6 +33,18 @@ var AGENT_MONOGRAMS = {
     sage: 'SA'
 };
 
+/** Crest watermark glyphs for hex-frame nodes. */
+var AGENT_CRESTS = {
+    orchestrator: '\u2B21',
+    architect: '\u2316',
+    forger: '\u2699',
+    sentinel: '\u25C8',
+    warden: '\u25C9',
+    mender: '\u2726',
+    seeker: '\u2295',
+    sage: '\u262F'
+};
+
 /** Pipeline order (for rendering). */
 var AGENT_ORDER = ['orchestrator', 'architect', 'forger', 'sentinel', 'warden', 'mender', 'seeker', 'sage'];
 
@@ -530,6 +542,8 @@ ArenaClient.prototype.onAgentStop = function (event) {
         var orchClass = (agent === 'orchestrator') ? ' nexus__core--orchestrator' : '';
         var supportClass = (agent === 'mender' || agent === 'seeker' || agent === 'sage') ? ' nexus__core--support' : '';
         pod.className = 'nexus__core nexus__core--complete' + orchClass + supportClass;
+        var hexOuterEl = pod.querySelector('.nexus__hex-outer');
+        if (hexOuterEl) hexOuterEl.style.setProperty('--xp-deg', '360deg');
         setTimeout(function () {
             if (pod.classList.contains('nexus__core--complete')) {
                 pod.className = 'nexus__core nexus__core--has-data' + orchClass + supportClass;
@@ -756,13 +770,12 @@ ArenaClient.prototype._renderSinglePod = function (name, data) {
     var levelEl = document.getElementById('level-' + name);
     if (levelEl) levelEl.textContent = get(data, ['level', 'name'], 'Trainee');
 
-    // XP ring (conic-gradient)
-    var ringEl = document.getElementById('xp-ring-' + name);
-    if (ringEl) {
+    // XP hex-outer edge segments (conic-gradient via CSS custom property)
+    var hexOuter = pod.querySelector('.nexus__hex-outer');
+    if (hexOuter) {
         var progress = get(data, ['level', 'progress'], 0);
         var degrees = Math.round(progress * 360);
-        ringEl.style.background =
-            'conic-gradient(var(--crimson) 0deg ' + degrees + 'deg, var(--surface-2) ' + degrees + 'deg 360deg)';
+        hexOuter.style.setProperty('--xp-deg', degrees + 'deg');
     }
 
     // Legacy XP bar (hidden, for compat)
@@ -802,9 +815,9 @@ ArenaClient.prototype._renderNexusOrbit = function (pod, name, data) {
     if (!orbit) {
         orbit = document.createElement('div');
         orbit.className = 'nexus__orbit';
-        var ring = pod.querySelector('.nexus__ring');
-        if (ring && ring.parentNode) {
-            ring.parentNode.insertBefore(orbit, ring.nextSibling);
+        var hexFrame = pod.querySelector('.nexus__hex-frame');
+        if (hexFrame && hexFrame.parentNode) {
+            hexFrame.parentNode.insertBefore(orbit, hexFrame.nextSibling);
         } else {
             pod.appendChild(orbit);
         }

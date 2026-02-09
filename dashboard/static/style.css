@@ -1102,54 +1102,135 @@ body {
 .nexus__core[data-agent="seeker"]       { left: 50%; top: 90%; }
 .nexus__core[data-agent="sage"]         { left: 75%; top: 90%; }
 
-.nexus__ring {
-  width: 64px;
-  height: 64px;
-  border-radius: 50%;
-  background: conic-gradient(var(--crimson) 0deg 0deg, var(--surface-2) 0deg 360deg);
+/* -- HEX FRAME -- */
+.nexus__hex-frame {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 4px;
-  transition: background 0.5s ease, box-shadow 0.3s ease;
 }
 
-.nexus__core--orchestrator .nexus__ring {
-  width: 84px;
-  height: 84px;
-  padding: 5px;
-  border: 2px solid var(--crimson);
+/* Outer hex: edge segments via conic-gradient */
+.nexus__hex-outer {
+  width: 76px;
+  height: 66px;
+  clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+  --xp-color: var(--border);
+  background: conic-gradient(
+    from 210deg,
+    var(--xp-color) 0deg,
+    var(--xp-color) var(--xp-deg, 0deg),
+    var(--border) var(--xp-deg, 0deg),
+    var(--border) 360deg
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  transition: filter 0.3s ease;
 }
 
-.nexus__core--support .nexus__ring {
-  width: 52px;
-  height: 52px;
+.nexus__core--orchestrator .nexus__hex-outer {
+  width: 100px;
+  height: 87px;
   padding: 3px;
 }
 
-.nexus__inner {
+.nexus__core--support .nexus__hex-outer {
+  width: 56px;
+  height: 48px;
+  padding: 1px;
+}
+
+/* Inner hex: content area */
+.nexus__hex-inner {
   width: 100%;
   height: 100%;
-  border-radius: 50%;
+  clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
   background: var(--surface-1);
   display: flex;
   align-items: center;
   justify-content: center;
+  position: relative;
+  overflow: hidden;
+  transition: background 0.3s ease;
+}
+
+/* Crest watermark glyph */
+.nexus__crest {
+  position: absolute;
+  font-size: 36px;
+  line-height: 1;
+  color: var(--text-primary);
+  opacity: 0.03;
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 0.5s ease, color 0.3s ease;
+  z-index: 0;
+}
+
+.nexus__core--orchestrator .nexus__crest {
+  font-size: 48px;
+}
+
+.nexus__core--support .nexus__crest {
+  font-size: 24px;
+}
+
+/* Monogram text */
+.nexus__monogram {
+  position: relative;
+  z-index: 1;
   font-family: var(--font-mono);
   font-size: 16px;
   font-weight: 800;
   letter-spacing: 2px;
   color: var(--text-muted);
-  transition: color 0.3s ease, background 0.3s ease;
+  transition: color 0.3s ease, text-shadow 0.3s ease;
 }
 
-.nexus__core--orchestrator .nexus__inner {
+.nexus__core--orchestrator .nexus__monogram {
   font-size: 20px;
   color: var(--tech-crimson);
 }
 
-.nexus__core--support .nexus__inner {
+.nexus__core--support .nexus__monogram {
   font-size: 13px;
+}
+
+/* Corner vertex diamonds */
+.nexus__vertex {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  background: var(--border);
+  --hex-radius: 38px;
+  top: 50%;
+  left: 50%;
+  margin-top: -2px;
+  margin-left: -2px;
+  transform:
+    rotate(calc(var(--v) * 60deg))
+    translateY(calc(-1 * var(--hex-radius)))
+    rotate(45deg);
+  transition: background 0.3s ease, box-shadow 0.3s ease;
+  z-index: 3;
+}
+
+.nexus__core--orchestrator .nexus__vertex {
+  --hex-radius: 50px;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  margin-left: -3px;
+}
+
+.nexus__core--support .nexus__vertex {
+  --hex-radius: 28px;
+  width: 2px;
+  height: 2px;
+  margin-top: -1px;
+  margin-left: -1px;
 }
 
 .nexus__label {
@@ -1214,32 +1295,94 @@ body {
   opacity: 1;
 }
 
-.nexus__core--active .nexus__ring {
-  box-shadow: 0 0 20px rgba(179, 19, 55, 0.6), 0 0 40px rgba(150, 14, 41, 0.3);
-  animation: nexus-core-pulse 2s ease-in-out infinite;
+/* -- ACTIVE: hex-specific -- */
+.nexus__core--active .nexus__hex-outer {
+  --xp-color: var(--tech-crimson);
+  filter: drop-shadow(0 0 12px rgba(179, 19, 55, 0.6));
+  animation: nexus-hex-glow 2s ease-in-out infinite;
 }
 
-.nexus__core--active .nexus__inner {
-  color: var(--tech-crimson);
+.nexus__core--active .nexus__hex-inner {
   background: var(--surface-0);
+}
+
+.nexus__core--active .nexus__hex-inner::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(179, 19, 55, 0.08) 40%,
+    rgba(179, 19, 55, 0.15) 50%,
+    rgba(179, 19, 55, 0.08) 60%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: nexus-hex-sweep 3s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.nexus__core--active .nexus__crest {
+  opacity: 0.12;
+  color: var(--tech-crimson);
+}
+
+.nexus__core--active .nexus__monogram {
+  color: var(--tech-crimson);
+  text-shadow: 0 0 8px rgba(179, 19, 55, 0.6);
+}
+
+.nexus__core--active .nexus__vertex {
+  background: var(--tech-crimson);
+  box-shadow: 0 0 6px rgba(179, 19, 55, 0.8);
+  animation: nexus-vertex-pulse 1.5s ease-in-out infinite;
 }
 
 .nexus__core--active .nexus__name {
   color: var(--tech-crimson);
 }
 
-/* COMPLETE */
+/* -- COMPLETE: hex-specific -- */
 .nexus__core--complete {
   opacity: 1;
 }
 
-.nexus__core--complete .nexus__ring {
-  box-shadow: 0 0 30px rgba(0, 186, 51, 0.8);
+.nexus__core--complete .nexus__hex-outer {
+  --xp-color: var(--success);
+  filter: drop-shadow(0 0 20px rgba(0, 186, 51, 0.8));
   animation: flash-green 0.5s ease-out forwards;
 }
 
-.nexus__core--complete .nexus__inner {
+.nexus__core--complete .nexus__crest {
+  opacity: 0.15;
   color: var(--success);
+}
+
+.nexus__core--complete .nexus__monogram {
+  color: var(--success);
+}
+
+.nexus__core--complete .nexus__vertex {
+  background: var(--success);
+  box-shadow: 0 0 8px rgba(0, 186, 51, 0.8);
+}
+
+/* -- HAS-DATA: hex-specific -- */
+.nexus__core--has-data .nexus__hex-outer {
+  --xp-color: var(--text-primary);
+}
+
+.nexus__core--has-data .nexus__crest {
+  opacity: 0.06;
+}
+
+.nexus__core--has-data .nexus__monogram {
+  color: var(--text-primary);
 }
 
 .nexus__core[data-agent="orchestrator"] { animation-delay: 0s; }
@@ -1303,9 +1446,24 @@ body {
   50%      { transform: translate(-50%, -50%) scale(1.03); }
 }
 
-@keyframes nexus-core-pulse {
-  0%, 100% { box-shadow: 0 0 15px rgba(179, 19, 55, 0.4); }
-  50%      { box-shadow: 0 0 35px rgba(179, 19, 55, 0.8); }
+@keyframes nexus-hex-glow {
+  0%, 100% { filter: drop-shadow(0 0 10px rgba(179, 19, 55, 0.4)); }
+  50%      { filter: drop-shadow(0 0 25px rgba(179, 19, 55, 0.8)); }
+}
+
+@keyframes nexus-vertex-pulse {
+  0%, 100% { box-shadow: 0 0 4px rgba(179, 19, 55, 0.6); }
+  50%      { box-shadow: 0 0 12px rgba(179, 19, 55, 1.0); }
+}
+
+@keyframes nexus-crest-pulse {
+  0%, 100% { opacity: 0.15; }
+  50%      { opacity: 0.25; }
+}
+
+@keyframes nexus-hex-sweep {
+  0%   { background-position: -100% 0; }
+  100% { background-position: 200% 0; }
 }
 
 @keyframes nexus-particle-flow {
@@ -1376,35 +1534,40 @@ body {
   .nexus__grid {
     height: 440px;
   }
-  .nexus__ring {
-    width: 52px;
+  .nexus__hex-outer {
+    width: 60px;
     height: 52px;
   }
-  .nexus__core--orchestrator .nexus__ring {
-    width: 68px;
-    height: 68px;
+  .nexus__core--orchestrator .nexus__hex-outer {
+    width: 80px;
+    height: 69px;
   }
-  .nexus__core--support .nexus__ring {
-    width: 44px;
-    height: 44px;
+  .nexus__core--support .nexus__hex-outer {
+    width: 46px;
+    height: 40px;
   }
-  .nexus__inner {
-    font-size: 13px;
-  }
+  .nexus__vertex { --hex-radius: 30px; }
+  .nexus__core--orchestrator .nexus__vertex { --hex-radius: 40px; }
+  .nexus__core--support .nexus__vertex { --hex-radius: 23px; }
+  .nexus__monogram { font-size: 13px; }
+  .nexus__crest { font-size: 28px; }
+  .nexus__core--orchestrator .nexus__crest { font-size: 38px; }
 }
 
 @media (max-width: 900px) {
   .nexus__grid {
     height: 380px;
   }
-  .nexus__ring {
-    width: 44px;
-    height: 44px;
+  .nexus__hex-outer {
+    width: 48px;
+    height: 42px;
   }
-  .nexus__core--orchestrator .nexus__ring {
-    width: 56px;
-    height: 56px;
+  .nexus__core--orchestrator .nexus__hex-outer {
+    width: 64px;
+    height: 55px;
   }
+  .nexus__vertex { --hex-radius: 24px; }
+  .nexus__core--orchestrator .nexus__vertex { --hex-radius: 32px; }
   .nexus__orbit {
     display: none;
   }
