@@ -1,9 +1,9 @@
 # Current Session
 
 ## Status
-**Mode:** REST MODE
+**Mode:** HUNT MODE
 **Updated:** 2026-02-09
-**Active Brief:** None
+**Active Brief:** BR-014 (Higgsfield MCP Server)
 
 ---
 
