@@ -562,6 +562,36 @@ async def build_agents_state(db: aiosqlite.Connection) -> dict:
         except (json.JSONDecodeError, OSError):
             pass
 
+    # Discover agents from events table that are not in agent-metrics.json
+    # (e.g. orchestrator, which only emits events and has no metrics JSON entry)
+    async with db.execute(
+        """SELECT agent,
+                  COUNT(*) as invocations,
+                  COALESCE(SUM(input_tokens), 0),
+                  COALESCE(SUM(output_tokens), 0),
+                  COALESCE(SUM(cache_read), 0),
+                  COALESCE(SUM(cache_create), 0),
+                  COALESCE(AVG(duration_s), 0),
+                  MAX(ts) as last_used
+           FROM events
+           WHERE event = 'stop'
+           GROUP BY agent"""
+    ) as cursor:
+        async for row in cursor:
+            agent_name = row[0]
+            if agent_name not in agents:
+                agents[agent_name] = {
+                    "invocations": row[1],
+                    "total_input_tokens": row[2],
+                    "total_output_tokens": row[3],
+                    "total_cache_read_tokens": row[4],
+                    "total_cache_create_tokens": row[5],
+                    "avg_duration_seconds": round(row[6], 2),
+                    "success_rate": 1.0,
+                    "last_used": row[7],
+                    "active": False,
+                }
+
     # Enrich with level data from database
     async with db.execute(
         "SELECT agent, total_invocations, level_name, level_tier FROM agent_levels"

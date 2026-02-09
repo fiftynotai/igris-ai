@@ -11,6 +11,7 @@
 
 /** Display names for the 7 agents, in pipeline order. */
 var AGENT_NAMES = {
+    orchestrator: 'IGRIS',
     architect: 'ARCHITECT',
     forger:    'FORGER',
     sentinel:  'SENTINEL',
@@ -21,7 +22,7 @@ var AGENT_NAMES = {
 };
 
 /** Pipeline order (for rendering). */
-var AGENT_ORDER = ['architect', 'forger', 'sentinel', 'warden', 'mender', 'seeker', 'sage'];
+var AGENT_ORDER = ['orchestrator', 'architect', 'forger', 'sentinel', 'warden', 'mender', 'seeker', 'sage'];
 
 /** Maximum battle log entries to keep in DOM. */
 var MAX_BATTLE_LOG = 50;
@@ -375,10 +376,11 @@ ArenaClient.prototype.onAgentStop = function (event) {
 
     var pod = document.getElementById('pod-' + agent);
     if (pod) {
-        pod.className = 'agent-pod agent-pod--complete';
+        var orchClass = (agent === 'orchestrator') ? ' agent-pod--orchestrator' : '';
+        pod.className = 'agent-pod agent-pod--complete' + orchClass;
         setTimeout(function () {
             if (pod.classList.contains('agent-pod--complete')) {
-                pod.className = 'agent-pod agent-pod--has-data';
+                pod.className = 'agent-pod agent-pod--has-data' + orchClass;
             }
         }, COMPLETE_FLASH_DURATION);
     }
@@ -542,8 +544,10 @@ ArenaClient.prototype._renderSinglePod = function (name, data) {
     var pod = document.getElementById('pod-' + name);
     if (!pod) return;
 
+    var orchClass = (name === 'orchestrator') ? ' agent-pod--orchestrator' : '';
+
     if (!data) {
-        pod.className = 'agent-pod agent-pod--idle';
+        pod.className = 'agent-pod agent-pod--idle' + orchClass;
         return;
     }
 
@@ -553,11 +557,11 @@ ArenaClient.prototype._renderSinglePod = function (name, data) {
     // Determine pod state class (unless currently in complete flash)
     if (!pod.classList.contains('agent-pod--complete')) {
         if (isActive) {
-            pod.className = 'agent-pod agent-pod--active';
+            pod.className = 'agent-pod agent-pod--active' + orchClass;
         } else if ((data.invocations || 0) > 0) {
-            pod.className = 'agent-pod agent-pod--has-data';
+            pod.className = 'agent-pod agent-pod--has-data' + orchClass;
         } else {
-            pod.className = 'agent-pod agent-pod--idle';
+            pod.className = 'agent-pod agent-pod--idle' + orchClass;
         }
     }
 
@@ -752,6 +756,8 @@ ArenaClient.prototype.renderPartyStats = function () {
         var totalTokens = (data.total_input_tokens || 0) + (data.total_output_tokens || 0) +
                           (data.total_cache_read_tokens || 0) + (data.total_cache_create_tokens || 0);
 
+        var runsLabel = (name === 'orchestrator') ? 'Turns' : 'Runs';
+
         html += '<div class="char-card">' +
             '<div class="char-card__header">' +
                 '<span class="char-card__name">' + displayName + '</span>' +
@@ -776,7 +782,7 @@ ArenaClient.prototype.renderPartyStats = function () {
                     '<div class="char-card__total-value">' + escapeHtml(formatTokens(totalTokens)) + '</div>' +
                 '</div>' +
                 '<div class="char-card__total-item">' +
-                    '<div class="char-card__total-label">Runs</div>' +
+                    '<div class="char-card__total-label">' + escapeHtml(runsLabel) + '</div>' +
                     '<div class="char-card__total-value">' + escapeHtml(invocations) + '</div>' +
                 '</div>' +
                 '<div class="char-card__total-item">' +

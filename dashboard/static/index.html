@@ -52,6 +52,21 @@
     <section class="pipeline" aria-label="Agent Pipeline">
       <h2 class="section-title">Agent Pipeline</h2>
 
+      <!-- Orchestrator -->
+      <div class="pipeline__row pipeline__row--orchestrator">
+        <div class="agent-pod agent-pod--idle agent-pod--orchestrator" id="pod-orchestrator" data-agent="orchestrator">
+          <div class="agent-pod__status-dot"></div>
+          <div class="agent-pod__name">IGRIS</div>
+          <div class="agent-pod__evolution" id="evo-orchestrator">In-Training</div>
+          <div class="agent-pod__level" id="level-orchestrator">Trainee</div>
+          <div class="xp-bar"><div class="xp-fill" id="xp-orchestrator" style="width:0%"></div></div>
+          <div class="agent-pod__invocations"><span id="inv-orchestrator">0</span> turns</div>
+          <div class="agent-pod__timer" id="timer-orchestrator"></div>
+          <div class="agent-pod__last-used" id="last-orchestrator">--</div>
+        </div>
+      </div>
+      <div class="pipeline__arrow-down">&darr;</div>
+
       <!-- Tier 1 Core row -->
       <div class="pipeline__row pipeline__row--core">
         <div class="agent-pod agent-pod--idle" id="pod-architect" data-agent="architect">

@@ -333,6 +333,19 @@ body {
   border-top: 1px solid var(--border);
 }
 
+.pipeline__row--orchestrator {
+  justify-content: center;
+  padding-bottom: var(--space-md);
+  margin-bottom: var(--space-sm);
+}
+
+.pipeline__arrow-down {
+  text-align: center;
+  color: var(--divider);
+  font-size: 20px;
+  margin: var(--space-xs) 0;
+}
+
 .pipeline__arrow {
   color: var(--divider);
   font-size: 20px;
@@ -354,6 +367,17 @@ body {
   min-width: 140px;
   max-width: 170px;
   flex: 1;
+}
+
+.agent-pod--orchestrator {
+  min-width: 180px;
+  max-width: 200px;
+  border-color: var(--crimson);
+}
+
+.agent-pod--orchestrator .agent-pod__name {
+  color: var(--tech-crimson);
+  font-size: 15px;
 }
 
 .agent-pod--idle {
