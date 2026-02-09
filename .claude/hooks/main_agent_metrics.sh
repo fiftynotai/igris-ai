@@ -136,6 +136,7 @@ try:
         last_budget_max = None
         last_budget_remaining = None
         last_model_id = ""
+        last_api_input = 0  # Fallback: estimate from API usage
 
         for line in new_data.splitlines():
             line_s = line.strip()
@@ -154,18 +155,30 @@ try:
                 last_budget_max = int(usage_match.group(2))
                 last_budget_remaining = int(usage_match.group(3))
 
-            # Extract model ID from transcript JSON entries
+            # Extract model ID and API usage from transcript JSON entries
             try:
                 entry_ctx = json.loads(line_s)
-                m = entry_ctx.get("message", {}).get("model", "")
+                msg = entry_ctx.get("message", {})
+                m = msg.get("model", "")
                 if m:
                     last_model_id = m
+                # Track last API input tokens as context fallback
+                # context_used = input_tokens + cache_read (excludes cache_creation)
+                # This matches Claude Code's /context calculation
+                u = msg.get("usage", {})
+                api_inp = u.get("input_tokens", 0) + u.get("cache_read_input_tokens", 0)
+                if api_inp > 0:
+                    last_api_input = api_inp
             except (json.JSONDecodeError, AttributeError):
                 pass
 
         # Apply last-seen usage values
         if last_budget_used is not None:
             context_used = last_budget_used
+        elif last_api_input > 0:
+            # Fallback: use last API turn's total input as context estimate
+            # This covers sessions that haven't hit compaction yet
+            context_used = last_api_input
         if last_budget_max is not None and last_budget_max > 0:
             context_max = last_budget_max
         if last_budget_remaining is not None:
