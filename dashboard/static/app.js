@@ -178,7 +178,15 @@ ArenaClient.prototype.fetchState = async function () {
         var url = '/api/state?range=' + encodeURIComponent(this.currentRange);
         var resp = await fetch(url);
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
-        this.state = await resp.json();
+        var newState = await resp.json();
+        // Override server active flags with local timer truth
+        if (newState && newState.agents) {
+            var agentKeys = Object.keys(newState.agents);
+            for (var i = 0; i < agentKeys.length; i++) {
+                newState.agents[agentKeys[i]].active = !!this.activeTimers[agentKeys[i]];
+            }
+        }
+        this.state = newState;
     } catch (e) {
         console.error('Failed to fetch state:', e);
     }
@@ -213,10 +221,15 @@ ArenaClient.prototype.connectWebSocket = function () {
         try {
             var msg = JSON.parse(evt.data);
             if (msg.type === 'state') {
-                // Re-fetch with current filter instead of using unfiltered WS state
-                self.fetchState().then(function () {
-                    self.render();
-                });
+                // Use WS state directly; override active flags with local timer truth
+                self.state = msg.data || msg;
+                if (self.state && self.state.agents) {
+                    var agentKeys = Object.keys(self.state.agents);
+                    for (var i = 0; i < agentKeys.length; i++) {
+                        self.state.agents[agentKeys[i]].active = !!self.activeTimers[agentKeys[i]];
+                    }
+                }
+                self.render();
             } else if (msg.type === 'event') {
                 var event = msg.data || msg;
                 self.handleEvent(event);
@@ -289,6 +302,12 @@ ArenaClient.prototype.onAgentStart = function (event) {
 
     if (this.state && this.state.agents && this.state.agents[agent]) {
         this.state.agents[agent].active = true;
+    }
+
+    // Clear any existing timer first to prevent interval leaks
+    if (this.activeTimers[agent]) {
+        clearInterval(this.activeTimers[agent].interval);
+        delete this.activeTimers[agent];
     }
 
     // Start a live duration timer
@@ -528,9 +547,12 @@ ArenaClient.prototype._renderSinglePod = function (name, data) {
         return;
     }
 
+    // Use local activeTimers as source of truth for active state
+    var isActive = !!this.activeTimers[name];
+
     // Determine pod state class (unless currently in complete flash)
     if (!pod.classList.contains('agent-pod--complete')) {
-        if (data.active) {
+        if (isActive) {
             pod.className = 'agent-pod agent-pod--active';
         } else if ((data.invocations || 0) > 0) {
             pod.className = 'agent-pod agent-pod--has-data';
@@ -570,13 +592,10 @@ ArenaClient.prototype._renderSinglePod = function (name, data) {
         lastEl.textContent = data.last_used ? timeAgo(data.last_used) : '--';
     }
 
-    // Timer: only show if active and we have a local timer running
+    // Timer: clear display if no local timer is running
     var timerEl = document.getElementById('timer-' + name);
-    if (timerEl && !data.active) {
-        // If not active and no timer running, clear it
-        if (!this.activeTimers[name]) {
-            timerEl.textContent = '';
-        }
+    if (timerEl && !isActive) {
+        timerEl.textContent = '';
     }
 };
 
