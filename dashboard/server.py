@@ -16,7 +16,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import aiosqlite
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -316,6 +316,29 @@ def extract_session_date(ts_str: str) -> str:
         return ts_str[:10]
     except (TypeError, IndexError):
         return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def get_date_range(range_key: str) -> tuple:
+    """Get start date string for the given range filter."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if range_key == "today":
+        return today
+    elif range_key == "week":
+        now = datetime.now(timezone.utc)
+        monday = now - timedelta(days=now.weekday())
+        return monday.strftime("%Y-%m-%d")
+    return None  # "all" = no filter
+
+
+def build_date_where(range_key: str) -> tuple:
+    """Return SQL WHERE clause fragment and params for date filtering."""
+    if range_key == "today":
+        start = get_date_range("today")
+        return "AND session_date = ?", (start,)
+    elif range_key == "week":
+        start = get_date_range("week")
+        return "AND session_date >= ?", (start,)
+    return "", ()  # "all" = no filter
 
 
 async def insert_event(db: aiosqlite.Connection, event: dict):
@@ -657,6 +680,182 @@ async def build_totals(db: aiosqlite.Connection) -> dict:
     }
 
 
+async def build_filtered_totals(db: aiosqlite.Connection, range_key: str) -> dict:
+    """Compute aggregate totals filtered by date range."""
+    date_clause, date_params = build_date_where(range_key)
+
+    async with db.execute(
+        f"""SELECT COUNT(*) as total_events,
+                  COALESCE(SUM(input_tokens), 0),
+                  COALESCE(SUM(output_tokens), 0),
+                  COALESCE(SUM(cache_read), 0),
+                  COALESCE(SUM(cache_create), 0)
+           FROM events WHERE event = 'stop' {date_clause}""",
+        date_params,
+    ) as cursor:
+        row = await cursor.fetchone()
+
+    async with db.execute(
+        f"SELECT COUNT(*) FROM events WHERE event = 'stop' {date_clause}",
+        date_params,
+    ) as cursor:
+        stop_row = await cursor.fetchone()
+
+    return {
+        "total_invocations": stop_row[0] if stop_row else 0,
+        "total_input_tokens": row[1] if row else 0,
+        "total_output_tokens": row[2] if row else 0,
+        "total_cache_tokens": (row[3] + row[4]) if row else 0,
+    }
+
+
+async def build_filtered_recent_events(
+    db: aiosqlite.Connection, range_key: str, limit: int = 50
+) -> list:
+    """Fetch recent events filtered by date range."""
+    date_clause, date_params = build_date_where(range_key)
+    events = []
+    async with db.execute(
+        f"""SELECT ts, event, agent, agent_id, raw_type, duration_s,
+                  input_tokens, output_tokens, cache_read, cache_create
+           FROM events WHERE 1=1 {date_clause}
+           ORDER BY id DESC LIMIT ?""",
+        (*date_params, limit),
+    ) as cursor:
+        async for row in cursor:
+            events.append(
+                {
+                    "ts": row[0],
+                    "event": row[1],
+                    "agent": row[2],
+                    "agent_id": row[3],
+                    "raw_type": row[4],
+                    "duration_s": row[5],
+                    "input_tokens": row[6],
+                    "output_tokens": row[7],
+                    "cache_read": row[8],
+                    "cache_create": row[9],
+                }
+            )
+    return events
+
+
+async def build_filtered_agents_state(
+    db: aiosqlite.Connection, range_key: str
+) -> dict:
+    """Build agents state with filtered stats but all-time levels."""
+    agents = {}
+
+    # Load base agent list from metrics file
+    if os.path.exists(METRICS_FILE):
+        try:
+            with open(METRICS_FILE, "r") as f:
+                metrics = json.load(f)
+            for name, data in metrics.get("agents", {}).items():
+                agents[name] = {
+                    "invocations": 0,
+                    "total_input_tokens": 0,
+                    "total_output_tokens": 0,
+                    "total_cache_read_tokens": 0,
+                    "total_cache_create_tokens": 0,
+                    "avg_duration_seconds": 0,
+                    "success_rate": data.get("success_rate", 1.0),
+                    "last_used": None,
+                    "active": False,
+                }
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Get filtered stats from events table
+    date_clause, date_params = build_date_where(range_key)
+    async with db.execute(
+        f"""SELECT agent,
+                  COUNT(*) as invocations,
+                  COALESCE(SUM(input_tokens), 0),
+                  COALESCE(SUM(output_tokens), 0),
+                  COALESCE(SUM(cache_read), 0),
+                  COALESCE(SUM(cache_create), 0),
+                  COALESCE(AVG(duration_s), 0),
+                  MAX(ts) as last_used
+           FROM events
+           WHERE event = 'stop' {date_clause}
+           GROUP BY agent""",
+        date_params,
+    ) as cursor:
+        async for row in cursor:
+            agent_name = row[0]
+            if agent_name not in agents:
+                agents[agent_name] = {
+                    "success_rate": 1.0,
+                    "active": False,
+                }
+            agents[agent_name]["invocations"] = row[1]
+            agents[agent_name]["total_input_tokens"] = row[2]
+            agents[agent_name]["total_output_tokens"] = row[3]
+            agents[agent_name]["total_cache_read_tokens"] = row[4]
+            agents[agent_name]["total_cache_create_tokens"] = row[5]
+            agents[agent_name]["avg_duration_seconds"] = round(row[6], 2)
+            agents[agent_name]["last_used"] = row[7]
+
+    # ALL-TIME levels from agent_levels table (never filtered)
+    async with db.execute(
+        "SELECT agent, total_invocations, level_name, level_tier FROM agent_levels"
+    ) as cursor:
+        async for row in cursor:
+            agent_name = row[0]
+            if agent_name in agents:
+                all_time_invocations = row[1]
+                agents[agent_name]["level"] = get_level(all_time_invocations)
+
+    # Check active agents (real-time, never filtered)
+    async with db.execute(
+        """SELECT agent, agent_id FROM events
+           WHERE event = 'start'
+           AND agent_id NOT IN (
+               SELECT agent_id FROM events WHERE event = 'stop' AND agent_id != ''
+           )
+           AND agent_id != ''
+           ORDER BY ts DESC"""
+    ) as cursor:
+        async for row in cursor:
+            agent_name = row[0]
+            if agent_name in agents:
+                agents[agent_name]["active"] = True
+
+    # Compute levels for agents without DB level data, and RPG stats
+    for name, data in agents.items():
+        if "level" not in data:
+            data["level"] = get_level(0)
+        data["rpg_stats"] = compute_rpg_stats(data, agents)
+
+    return agents
+
+
+async def build_filtered_state(app: FastAPI, range_key: str = "today") -> dict:
+    """Build complete state payload filtered by date range."""
+    db = app.state.db
+    budget_config = app.state.budget_config
+
+    if range_key == "all":
+        agents = await build_agents_state(db)
+        totals = await build_totals(db)
+        recent_events = await build_recent_events(db)
+    else:
+        agents = await build_filtered_agents_state(db, range_key)
+        totals = await build_filtered_totals(db, range_key)
+        recent_events = await build_filtered_recent_events(db, range_key)
+
+    budget = await build_budget_state(db, budget_config)  # Always daily
+
+    return {
+        "agents": agents,
+        "budget": budget,
+        "recent_events": recent_events,
+        "totals": totals,
+        "range": range_key,
+    }
+
+
 async def build_full_state(app: FastAPI) -> dict:
     """Build the complete state payload for API and WebSocket initial send."""
     db = app.state.db
@@ -769,17 +968,20 @@ async def serve_index():
 
 
 @app.get("/api/state")
-async def get_state():
-    """Full current state: agents, budget, recent events, totals."""
-    state = await build_full_state(app)
+async def get_state(range: str = Query(default="today", pattern="^(today|week|all)$")):
+    """Full current state filtered by time range."""
+    state = await build_filtered_state(app, range_key=range)
     return JSONResponse(state)
 
 
 @app.get("/api/agents")
-async def get_agents():
-    """Agent summary with levels and RPG stats."""
+async def get_agents(range: str = Query(default="today", pattern="^(today|week|all)$")):
+    """Agent summary with levels and RPG stats, filtered by time range."""
     db = app.state.db
-    agents = await build_agents_state(db)
+    if range == "all":
+        agents = await build_agents_state(db)
+    else:
+        agents = await build_filtered_agents_state(db, range)
     return JSONResponse(agents)
 
 
@@ -792,10 +994,16 @@ async def get_budget():
 
 
 @app.get("/api/events")
-async def get_events(limit: int = Query(default=50, ge=1, le=500)):
-    """Recent events, paginated by limit."""
+async def get_events(
+    limit: int = Query(default=50, ge=1, le=500),
+    range: str = Query(default="today", pattern="^(today|week|all)$"),
+):
+    """Recent events filtered by time range."""
     db = app.state.db
-    events = await build_recent_events(db, limit=limit)
+    if range == "all":
+        events = await build_recent_events(db, limit=limit)
+    else:
+        events = await build_filtered_recent_events(db, range, limit=limit)
     return JSONResponse(events)
 
 
@@ -835,7 +1043,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         # Send full state as initial bootstrap payload
-        state = await build_full_state(app)
+        state = await build_filtered_state(app, range_key="today")
         await websocket.send_json({"type": "state", "data": state})
 
         # Keep connection alive; read messages to detect disconnects

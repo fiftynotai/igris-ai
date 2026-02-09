@@ -151,6 +151,7 @@ function ArenaClient() {
     this.battleLogCount = 0;
     this.partyOpen = false;
     this._wsConnected = false;
+    this.currentRange = localStorage.getItem('arena-filter-range') || 'today';
 }
 
 /**
@@ -158,6 +159,8 @@ function ArenaClient() {
  */
 ArenaClient.prototype.init = async function () {
     this._bindPartyToggle();
+    this._bindFilterToggle();
+    this._updateFilterButtons();
     await this.fetchState();
     this.render();
     this.connectWebSocket();
@@ -172,7 +175,8 @@ ArenaClient.prototype.init = async function () {
  */
 ArenaClient.prototype.fetchState = async function () {
     try {
-        var resp = await fetch('/api/state');
+        var url = '/api/state?range=' + encodeURIComponent(this.currentRange);
+        var resp = await fetch(url);
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         this.state = await resp.json();
     } catch (e) {
@@ -209,9 +213,10 @@ ArenaClient.prototype.connectWebSocket = function () {
         try {
             var msg = JSON.parse(evt.data);
             if (msg.type === 'state') {
-                // Server sends full state wrapped in data property
-                self.state = msg.data || msg;
-                self.render();
+                // Re-fetch with current filter instead of using unfiltered WS state
+                self.fetchState().then(function () {
+                    self.render();
+                });
             } else if (msg.type === 'event') {
                 var event = msg.data || msg;
                 self.handleEvent(event);
@@ -265,10 +270,13 @@ ArenaClient.prototype.handleEvent = function (event) {
         this.onAgentStop(event);
     }
 
-    this.addBattleLogEntry(event);
+    if (this._eventMatchesFilter(event)) {
+        this.addBattleLogEntry(event);
+        this.renderTokenBreakdown();
+    }
+
     this.renderAgentPods();
     this.renderBudget();
-    this.renderTokenBreakdown();
 };
 
 /**
@@ -302,19 +310,7 @@ ArenaClient.prototype.onAgentStop = function (event) {
     var agent = event.agent;
     if (!agent) return;
 
-    // Update agent data in local state
-    if (this.state && this.state.agents && this.state.agents[agent]) {
-        var a = this.state.agents[agent];
-        a.active = false;
-        a.total_input_tokens = (a.total_input_tokens || 0) + (event.input_tokens || 0);
-        a.total_output_tokens = (a.total_output_tokens || 0) + (event.output_tokens || 0);
-        a.total_cache_read_tokens = (a.total_cache_read_tokens || 0) + (event.cache_read || 0);
-        a.total_cache_create_tokens = (a.total_cache_create_tokens || 0) + (event.cache_create || 0);
-        a.invocations = (a.invocations || 0) + 1;
-        a.last_used = event.ts || new Date().toISOString();
-    }
-
-    // Update budget consumed
+    // Always update budget (HP bar is always daily)
     if (this.state && this.state.budget) {
         var totalNew = (event.input_tokens || 0) + (event.output_tokens || 0) +
                        (event.cache_read || 0) + (event.cache_create || 0);
@@ -323,13 +319,30 @@ ArenaClient.prototype.onAgentStop = function (event) {
         this.state.budget.ratio = this.state.budget.consumed / ceiling;
     }
 
-    // Update totals
-    if (this.state && this.state.totals) {
-        this.state.totals.total_invocations = (this.state.totals.total_invocations || 0) + 1;
-        this.state.totals.total_input_tokens = (this.state.totals.total_input_tokens || 0) + (event.input_tokens || 0);
-        this.state.totals.total_output_tokens = (this.state.totals.total_output_tokens || 0) + (event.output_tokens || 0);
-        this.state.totals.total_cache_tokens = (this.state.totals.total_cache_tokens || 0) +
-            (event.cache_read || 0) + (event.cache_create || 0);
+    // Only update filtered state if event matches current filter
+    if (this._eventMatchesFilter(event)) {
+        if (this.state && this.state.agents && this.state.agents[agent]) {
+            var a = this.state.agents[agent];
+            a.total_input_tokens = (a.total_input_tokens || 0) + (event.input_tokens || 0);
+            a.total_output_tokens = (a.total_output_tokens || 0) + (event.output_tokens || 0);
+            a.total_cache_read_tokens = (a.total_cache_read_tokens || 0) + (event.cache_read || 0);
+            a.total_cache_create_tokens = (a.total_cache_create_tokens || 0) + (event.cache_create || 0);
+            a.invocations = (a.invocations || 0) + 1;
+            a.last_used = event.ts || new Date().toISOString();
+        }
+
+        if (this.state && this.state.totals) {
+            this.state.totals.total_invocations = (this.state.totals.total_invocations || 0) + 1;
+            this.state.totals.total_input_tokens = (this.state.totals.total_input_tokens || 0) + (event.input_tokens || 0);
+            this.state.totals.total_output_tokens = (this.state.totals.total_output_tokens || 0) + (event.output_tokens || 0);
+            this.state.totals.total_cache_tokens = (this.state.totals.total_cache_tokens || 0) +
+                (event.cache_read || 0) + (event.cache_create || 0);
+        }
+    }
+
+    // Always mark agent as inactive
+    if (this.state && this.state.agents && this.state.agents[agent]) {
+        this.state.agents[agent].active = false;
     }
 
     // Clear duration timer
@@ -338,16 +351,13 @@ ArenaClient.prototype.onAgentStop = function (event) {
         delete this.activeTimers[agent];
     }
 
-    // Clear the timer display
     var timerEl = document.getElementById('timer-' + agent);
     if (timerEl) timerEl.textContent = '';
 
-    // Add green flash state, then revert after timeout
     var pod = document.getElementById('pod-' + agent);
     if (pod) {
         pod.className = 'agent-pod agent-pod--complete';
         setTimeout(function () {
-            // If still in complete state (not reactivated), revert
             if (pod.classList.contains('agent-pod--complete')) {
                 pod.className = 'agent-pod agent-pod--has-data';
             }
@@ -813,6 +823,84 @@ ArenaClient.prototype._bindPartyToggle = function () {
             }
         }
     });
+};
+
+/* --------------------------------------------------------------------------
+   Filter Toggle
+   -------------------------------------------------------------------------- */
+
+/**
+ * Bind click handler for the time range filter toggle buttons.
+ */
+ArenaClient.prototype._bindFilterToggle = function () {
+    var self = this;
+    var toggle = document.getElementById('filter-toggle');
+    if (!toggle) return;
+
+    toggle.addEventListener('click', function (e) {
+        var btn = e.target.closest('.filter-btn');
+        if (!btn) return;
+
+        var range = btn.getAttribute('data-range');
+        if (!range || range === self.currentRange) return;
+
+        self.currentRange = range;
+        localStorage.setItem('arena-filter-range', range);
+        self._updateFilterButtons();
+        self.fetchState().then(function () {
+            self.render();
+        });
+    });
+};
+
+/**
+ * Update filter button active states and range label text.
+ */
+ArenaClient.prototype._updateFilterButtons = function () {
+    var buttons = document.querySelectorAll('.filter-btn');
+    for (var i = 0; i < buttons.length; i++) {
+        var btn = buttons[i];
+        if (btn.getAttribute('data-range') === this.currentRange) {
+            btn.classList.add('filter-btn--active');
+        } else {
+            btn.classList.remove('filter-btn--active');
+        }
+    }
+
+    var label = document.getElementById('range-label');
+    if (label) {
+        var labels = { today: 'Today', week: 'This Week', all: 'All Time' };
+        label.textContent = '\u2014 ' + (labels[this.currentRange] || 'Today');
+    }
+};
+
+/**
+ * Check if an event matches the current time range filter.
+ * @param {object} event
+ * @returns {boolean}
+ */
+ArenaClient.prototype._eventMatchesFilter = function (event) {
+    if (this.currentRange === 'all') return true;
+
+    var eventDate = event.ts ? event.ts.substring(0, 10) : '';
+    if (!eventDate) return true;
+
+    if (this.currentRange === 'today') {
+        var today = new Date().toISOString().substring(0, 10);
+        return eventDate === today;
+    }
+
+    if (this.currentRange === 'week') {
+        var now = new Date();
+        var dayOfWeek = now.getDay();
+        var diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+        var monday = new Date(now);
+        monday.setDate(now.getDate() - diff);
+        var mondayStr = monday.toISOString().substring(0, 10);
+        return eventDate >= mondayStr;
+    }
+
+    return true;
 };
 
 /* --------------------------------------------------------------------------

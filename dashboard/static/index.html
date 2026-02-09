@@ -16,6 +16,13 @@
       <h1 class="header__title">CRIMSON ARENA</h1>
       <span class="header__subtitle">Igris AI Agent Dashboard</span>
     </div>
+    <div class="header__filter">
+      <div class="filter-toggle" id="filter-toggle">
+        <button class="filter-btn filter-btn--active" data-range="today">Today</button>
+        <button class="filter-btn" data-range="week">This Week</button>
+        <button class="filter-btn" data-range="all">All Time</button>
+      </div>
+    </div>
     <div class="header__hp">
       <div class="hp-label">
         <span class="hp-label__title">SESSION HP</span>
@@ -142,7 +149,7 @@
 
       <!-- Token Breakdown -->
       <div class="panel token-breakdown">
-        <h2 class="section-title">Token Breakdown</h2>
+        <h2 class="section-title">Token Breakdown <span class="range-label" id="range-label">— Today</span></h2>
         <div class="token-total">
           <span class="token-total__label">Total Tokens</span>
           <span class="token-total__value mono" id="total-tokens">0</span>
