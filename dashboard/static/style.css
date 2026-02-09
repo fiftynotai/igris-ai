@@ -1102,7 +1102,23 @@ body {
 .nexus__core[data-agent="seeker"]       { left: 50%; top: 90%; }
 .nexus__core[data-agent="sage"]         { left: 75%; top: 90%; }
 
+/* -- PER-AGENT CREST COLORS -- */
+.nexus__core[data-agent="orchestrator"] { --agent-color: #FF1744; --agent-color-dim: rgba(255, 23, 68, 0.08); --agent-color-mid: rgba(255, 23, 68, 0.4); }
+.nexus__core[data-agent="architect"]    { --agent-color: #448AFF; --agent-color-dim: rgba(68, 138, 255, 0.08); --agent-color-mid: rgba(68, 138, 255, 0.4); }
+.nexus__core[data-agent="forger"]       { --agent-color: #FF6D00; --agent-color-dim: rgba(255, 109, 0, 0.08); --agent-color-mid: rgba(255, 109, 0, 0.4); }
+.nexus__core[data-agent="sentinel"]     { --agent-color: #00E676; --agent-color-dim: rgba(0, 230, 118, 0.08); --agent-color-mid: rgba(0, 230, 118, 0.4); }
+.nexus__core[data-agent="warden"]       { --agent-color: #7C4DFF; --agent-color-dim: rgba(124, 77, 255, 0.08); --agent-color-mid: rgba(124, 77, 255, 0.4); }
+.nexus__core[data-agent="mender"]       { --agent-color: #00BFA5; --agent-color-dim: rgba(0, 191, 165, 0.08); --agent-color-mid: rgba(0, 191, 165, 0.4); }
+.nexus__core[data-agent="seeker"]       { --agent-color: #FFD600; --agent-color-dim: rgba(255, 214, 0, 0.08); --agent-color-mid: rgba(255, 214, 0, 0.4); }
+.nexus__core[data-agent="sage"]         { --agent-color: #E040FB; --agent-color-dim: rgba(224, 64, 251, 0.08); --agent-color-mid: rgba(224, 64, 251, 0.4); }
+
 /* -- HEX FRAME -- */
+@property --aura-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
 .nexus__hex-frame {
   position: relative;
   display: flex;
@@ -1233,6 +1249,137 @@ body {
   margin-left: -1px;
 }
 
+/* -- AURA RINGS -- */
+.nexus__aura {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity 0.5s ease, transform 0.5s ease;
+}
+
+.nexus__aura--1 {
+  width: 88px;
+  height: 76px;
+  margin-top: -38px;
+  margin-left: -44px;
+  background: conic-gradient(
+    from 0deg,
+    var(--agent-color-mid, rgba(255,255,255,0.2)) 0deg,
+    transparent 30deg,
+    var(--agent-color-mid, rgba(255,255,255,0.2)) 60deg,
+    transparent 90deg,
+    var(--agent-color-mid, rgba(255,255,255,0.2)) 120deg,
+    transparent 150deg,
+    var(--agent-color-mid, rgba(255,255,255,0.2)) 180deg,
+    transparent 210deg,
+    var(--agent-color-mid, rgba(255,255,255,0.2)) 240deg,
+    transparent 270deg,
+    var(--agent-color-mid, rgba(255,255,255,0.2)) 300deg,
+    transparent 330deg,
+    var(--agent-color-mid, rgba(255,255,255,0.2)) 360deg
+  );
+}
+
+.nexus__aura--2 {
+  width: 99px;
+  height: 86px;
+  margin-top: -43px;
+  margin-left: -49.5px;
+  background: conic-gradient(
+    from 30deg,
+    var(--agent-color-dim, rgba(255,255,255,0.1)) 0deg,
+    transparent 60deg,
+    var(--agent-color-dim, rgba(255,255,255,0.1)) 120deg,
+    transparent 180deg,
+    var(--agent-color-dim, rgba(255,255,255,0.1)) 240deg,
+    transparent 300deg,
+    var(--agent-color-dim, rgba(255,255,255,0.1)) 360deg
+  );
+}
+
+/* Orchestrator: larger aura rings */
+.nexus__core--orchestrator .nexus__aura--1 {
+  width: 115px;
+  height: 100px;
+  margin-top: -50px;
+  margin-left: -57.5px;
+}
+
+.nexus__core--orchestrator .nexus__aura--2 {
+  width: 130px;
+  height: 113px;
+  margin-top: -56.5px;
+  margin-left: -65px;
+}
+
+/* Support: smaller aura rings */
+.nexus__core--support .nexus__aura--1 {
+  width: 64px;
+  height: 55px;
+  margin-top: -27.5px;
+  margin-left: -32px;
+}
+
+.nexus__core--support .nexus__aura--2 {
+  width: 73px;
+  height: 63px;
+  margin-top: -31.5px;
+  margin-left: -36.5px;
+}
+
+/* -- PARTICLE RING -- */
+.nexus__particles {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+
+/* -- EVOLUTION PILLAR -- */
+.nexus__hex-frame::before {
+  content: '';
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  width: 2px;
+  height: 0;
+  margin-left: -1px;
+  background: linear-gradient(to top, var(--agent-color, #FF1744), transparent);
+  opacity: 0;
+  transition: height 0.5s ease, opacity 0.5s ease;
+  z-index: 0;
+}
+
+/* -- SCAN LINES (inside hex-inner) -- */
+.nexus__hex-inner::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0px,
+    transparent 2px,
+    var(--agent-color-dim, rgba(255,255,255,0.03)) 2px,
+    var(--agent-color-dim, rgba(255,255,255,0.03)) 4px
+  );
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+  animation: scan-scroll 4s linear infinite paused;
+}
+
 .nexus__label {
   display: flex;
   flex-direction: column;
@@ -1274,36 +1421,76 @@ body {
   display: none;
 }
 
-/* IDLE */
+/* IDLE — dormant, minimal */
 .nexus__core--idle {
-  opacity: 0.5;
+  opacity: 0.45;
   animation: nexus-breathe 4s ease-in-out infinite;
 }
 
 .nexus__core--idle:hover {
-  opacity: 0.8;
+  opacity: 0.7;
 }
 
-/* HAS-DATA (has invocations, not active) */
+/* HAS-DATA — subtle agent color presence */
 .nexus__core--has-data {
-  opacity: 0.8;
+  opacity: 0.85;
   animation: nexus-breathe 4s ease-in-out infinite;
 }
 
-/* ACTIVE */
-.nexus__core--active {
-  opacity: 1;
+.nexus__core--has-data .nexus__hex-outer {
+  --xp-color: var(--agent-color, var(--text-primary));
 }
 
-/* -- ACTIVE: hex-specific -- */
+.nexus__core--has-data .nexus__crest {
+  opacity: 0.1;
+  color: var(--agent-color, var(--text-primary));
+  animation: crest-power-flash 6s ease-in-out infinite;
+}
+
+.nexus__core--has-data .nexus__monogram {
+  color: var(--agent-color, var(--text-primary));
+  text-shadow: 0 0 4px var(--agent-color-dim, rgba(255,255,255,0.1));
+}
+
+.nexus__core--has-data .nexus__vertex {
+  background: var(--agent-color, var(--text-primary));
+  opacity: 0.5;
+}
+
+.nexus__core--has-data .nexus__name {
+  color: var(--agent-color, var(--text-secondary));
+}
+
+.nexus__core--has-data .nexus__aura--1 {
+  opacity: 0.15;
+  animation: aura-breathe 4s ease-in-out infinite;
+}
+
+.nexus__core--has-data .nexus__hex-inner::before {
+  opacity: 0.4;
+}
+
+/* ACTIVE — full evolution aura */
+.nexus__core--active {
+  opacity: 1;
+  filter: drop-shadow(0 0 25px var(--agent-color-dim, rgba(255,255,255,0.1)));
+}
+
 .nexus__core--active .nexus__hex-outer {
-  --xp-color: var(--tech-crimson);
-  filter: drop-shadow(0 0 12px rgba(179, 19, 55, 0.6));
+  --xp-color: var(--agent-color, var(--tech-crimson));
+  filter: drop-shadow(0 0 12px var(--agent-color-mid, rgba(179, 19, 55, 0.6)));
   animation: nexus-hex-glow 2s ease-in-out infinite;
 }
 
 .nexus__core--active .nexus__hex-inner {
   background: var(--surface-0);
+  --aura-angle: 0deg;
+  animation: rotate-gradient 6s linear infinite;
+}
+
+.nexus__core--active .nexus__hex-inner::before {
+  opacity: 0.8;
+  animation-play-state: running;
 }
 
 .nexus__core--active .nexus__hex-inner::after {
@@ -1314,57 +1501,88 @@ body {
   right: 0;
   bottom: 0;
   background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(179, 19, 55, 0.08) 40%,
-    rgba(179, 19, 55, 0.15) 50%,
-    rgba(179, 19, 55, 0.08) 60%,
-    transparent 100%
+    var(--aura-angle, 0deg),
+    var(--agent-color-dim, rgba(179, 19, 55, 0.08)) 0%,
+    transparent 40%,
+    transparent 60%,
+    var(--agent-color-dim, rgba(179, 19, 55, 0.08)) 100%
   );
-  background-size: 200% 100%;
-  animation: nexus-hex-sweep 3s ease-in-out infinite;
   pointer-events: none;
   z-index: 0;
 }
 
 .nexus__core--active .nexus__crest {
-  opacity: 0.12;
-  color: var(--tech-crimson);
+  opacity: 0.45;
+  color: var(--agent-color, var(--tech-crimson));
+  filter: drop-shadow(0 0 8px var(--agent-color, var(--tech-crimson)));
+  animation: crest-power-flash 4s ease-in-out infinite;
 }
 
 .nexus__core--active .nexus__monogram {
-  color: var(--tech-crimson);
-  text-shadow: 0 0 8px rgba(179, 19, 55, 0.6);
+  color: var(--agent-color, var(--tech-crimson));
+  text-shadow: 0 0 8px var(--agent-color-mid, rgba(179, 19, 55, 0.6)), 0 0 20px var(--agent-color-dim, rgba(179, 19, 55, 0.3));
 }
 
 .nexus__core--active .nexus__vertex {
-  background: var(--tech-crimson);
-  box-shadow: 0 0 6px rgba(179, 19, 55, 0.8);
+  background: var(--agent-color, var(--tech-crimson));
+  box-shadow: 0 0 6px var(--agent-color, rgba(179, 19, 55, 0.8));
   animation: nexus-vertex-pulse 1.5s ease-in-out infinite;
 }
 
 .nexus__core--active .nexus__name {
-  color: var(--tech-crimson);
+  color: var(--agent-color, var(--tech-crimson));
+  text-shadow: 0 0 6px var(--agent-color-dim, rgba(179, 19, 55, 0.3));
 }
 
-/* -- COMPLETE: hex-specific -- */
+.nexus__core--active .nexus__aura--1 {
+  opacity: 0.35;
+  animation: aura-breathe 3s ease-in-out infinite;
+}
+
+.nexus__core--active .nexus__aura--2 {
+  opacity: 0.18;
+  animation: aura-breathe 3s ease-in-out infinite 1.5s;
+}
+
+.nexus__core--active .nexus__particles {
+  opacity: 1;
+  box-shadow:
+    0px -44px 0 1px var(--agent-color, #FF1744),
+    31px -31px 0 1px var(--agent-color, #FF1744),
+    44px 0px 0 1px var(--agent-color, #FF1744),
+    31px 31px 0 1px var(--agent-color, #FF1744),
+    0px 44px 0 1px var(--agent-color, #FF1744),
+    -31px 31px 0 1px var(--agent-color, #FF1744),
+    -44px 0px 0 1px var(--agent-color, #FF1744),
+    -31px -31px 0 1px var(--agent-color, #FF1744);
+  animation: particle-orbit 8s linear infinite;
+}
+
+.nexus__core--active .nexus__hex-frame::before {
+  height: 50px;
+  opacity: 0.7;
+  animation: pillar-pulse 2s ease-in-out infinite;
+}
+
+/* COMPLETE — evolution burst then settle green */
 .nexus__core--complete {
   opacity: 1;
+  filter: drop-shadow(0 0 30px rgba(0, 230, 118, 0.4));
 }
 
 .nexus__core--complete .nexus__hex-outer {
   --xp-color: var(--success);
   filter: drop-shadow(0 0 20px rgba(0, 186, 51, 0.8));
-  animation: flash-green 0.5s ease-out forwards;
 }
 
 .nexus__core--complete .nexus__crest {
-  opacity: 0.15;
+  opacity: 0.3;
   color: var(--success);
 }
 
 .nexus__core--complete .nexus__monogram {
   color: var(--success);
+  text-shadow: 0 0 8px rgba(0, 230, 118, 0.6);
 }
 
 .nexus__core--complete .nexus__vertex {
@@ -1372,17 +1590,37 @@ body {
   box-shadow: 0 0 8px rgba(0, 186, 51, 0.8);
 }
 
-/* -- HAS-DATA: hex-specific -- */
-.nexus__core--has-data .nexus__hex-outer {
-  --xp-color: var(--text-primary);
+.nexus__core--complete .nexus__name {
+  color: var(--success);
 }
 
-.nexus__core--has-data .nexus__crest {
-  opacity: 0.06;
+.nexus__core--complete .nexus__aura--1 {
+  opacity: 0.4;
+  animation: aura-burst 0.8s ease-out forwards;
 }
 
-.nexus__core--has-data .nexus__monogram {
-  color: var(--text-primary);
+.nexus__core--complete .nexus__aura--2 {
+  opacity: 0.25;
+  animation: aura-burst 0.8s ease-out 0.2s forwards;
+}
+
+.nexus__core--complete .nexus__particles {
+  opacity: 0.8;
+  box-shadow:
+    0px -44px 0 1px var(--success),
+    31px -31px 0 1px var(--success),
+    44px 0px 0 1px var(--success),
+    31px 31px 0 1px var(--success),
+    0px 44px 0 1px var(--success),
+    -31px 31px 0 1px var(--success),
+    -44px 0px 0 1px var(--success),
+    -31px -31px 0 1px var(--success);
+  animation: particle-explode 1s ease-out forwards;
+}
+
+.nexus__core--complete .nexus__hex-inner::before {
+  opacity: 0.5;
+  animation-play-state: paused;
 }
 
 .nexus__core[data-agent="orchestrator"] { animation-delay: 0s; }
@@ -1447,13 +1685,13 @@ body {
 }
 
 @keyframes nexus-hex-glow {
-  0%, 100% { filter: drop-shadow(0 0 10px rgba(179, 19, 55, 0.4)); }
-  50%      { filter: drop-shadow(0 0 25px rgba(179, 19, 55, 0.8)); }
+  0%, 100% { filter: drop-shadow(0 0 10px var(--agent-color-mid, rgba(179, 19, 55, 0.4))); }
+  50%      { filter: drop-shadow(0 0 25px var(--agent-color, rgba(179, 19, 55, 0.8))); }
 }
 
 @keyframes nexus-vertex-pulse {
-  0%, 100% { box-shadow: 0 0 4px rgba(179, 19, 55, 0.6); }
-  50%      { box-shadow: 0 0 12px rgba(179, 19, 55, 1.0); }
+  0%, 100% { box-shadow: 0 0 4px var(--agent-color-mid, rgba(179, 19, 55, 0.6)); }
+  50%      { box-shadow: 0 0 12px var(--agent-color, rgba(179, 19, 55, 1.0)); }
 }
 
 @keyframes nexus-crest-pulse {
@@ -1476,6 +1714,46 @@ body {
 @keyframes nexus-particle-reverse {
   0%   { right: 0%;   opacity: 1; }
   100% { right: 100%; opacity: 0; }
+}
+
+@keyframes aura-breathe {
+  0%, 100% { transform: scale(1.0); opacity: var(--aura-opacity, 0.3); }
+  50%      { transform: scale(1.06); opacity: calc(var(--aura-opacity, 0.3) * 0.6); }
+}
+
+@keyframes aura-burst {
+  0%   { transform: scale(1.0); opacity: 0.5; }
+  100% { transform: scale(1.8); opacity: 0; }
+}
+
+@keyframes particle-orbit {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes particle-explode {
+  0%   { transform: scale(1); opacity: 0.8; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+@keyframes crest-power-flash {
+  0%, 40%, 60%, 100% { opacity: var(--crest-base-opacity, 0.1); filter: none; }
+  50% { opacity: 0.5; filter: drop-shadow(0 0 6px var(--agent-color, #FF1744)); }
+}
+
+@keyframes rotate-gradient {
+  from { --aura-angle: 0deg; }
+  to   { --aura-angle: 360deg; }
+}
+
+@keyframes scan-scroll {
+  from { background-position: 0 0; }
+  to   { background-position: 0 -40px; }
+}
+
+@keyframes pillar-pulse {
+  0%, 100% { height: 40px; opacity: 0.5; }
+  50%      { height: 55px; opacity: 0.9; }
 }
 
 .nexus__orbit {
@@ -1552,6 +1830,13 @@ body {
   .nexus__monogram { font-size: 13px; }
   .nexus__crest { font-size: 28px; }
   .nexus__core--orchestrator .nexus__crest { font-size: 38px; }
+  .nexus__aura--1 { width: 69px; height: 60px; margin-top: -30px; margin-left: -34.5px; }
+  .nexus__aura--2 { width: 78px; height: 68px; margin-top: -34px; margin-left: -39px; }
+  .nexus__core--orchestrator .nexus__aura--1 { width: 92px; height: 80px; margin-top: -40px; margin-left: -46px; }
+  .nexus__core--orchestrator .nexus__aura--2 { width: 104px; height: 90px; margin-top: -45px; margin-left: -52px; }
+  .nexus__core--support .nexus__aura--1 { width: 53px; height: 46px; margin-top: -23px; margin-left: -26.5px; }
+  .nexus__core--support .nexus__aura--2 { width: 60px; height: 52px; margin-top: -26px; margin-left: -30px; }
+  .nexus__core--active .nexus__particles { box-shadow: 0px -35px 0 1px var(--agent-color, #FF1744), 25px -25px 0 1px var(--agent-color, #FF1744), 35px 0px 0 1px var(--agent-color, #FF1744), 25px 25px 0 1px var(--agent-color, #FF1744), 0px 35px 0 1px var(--agent-color, #FF1744), -25px 25px 0 1px var(--agent-color, #FF1744), -35px 0px 0 1px var(--agent-color, #FF1744), -25px -25px 0 1px var(--agent-color, #FF1744); }
 }
 
 @media (max-width: 900px) {
@@ -1571,4 +1856,6 @@ body {
   .nexus__orbit {
     display: none;
   }
+  .nexus__aura, .nexus__particles { display: none; }
+  .nexus__hex-frame::before { display: none; }
 }
