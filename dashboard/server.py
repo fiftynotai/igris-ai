@@ -233,6 +233,7 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent);
 CREATE INDEX IF NOT EXISTS idx_events_session_date ON events(session_date);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dedup ON events(ts, agent, event, input_tokens, output_tokens, cache_read, cache_create);
 
 CREATE TABLE IF NOT EXISTS agent_levels (
     agent TEXT PRIMARY KEY,
@@ -355,8 +356,8 @@ async def insert_event(db: aiosqlite.Connection, event: dict):
     cache_create = int(event.get("cache_create", 0))
     session_date = extract_session_date(ts)
 
-    await db.execute(
-        """INSERT INTO events
+    cursor = await db.execute(
+        """INSERT OR IGNORE INTO events
            (ts, event, agent, agent_id, raw_type, duration_s,
             input_tokens, output_tokens, cache_read, cache_create, session_date)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -374,6 +375,10 @@ async def insert_event(db: aiosqlite.Connection, event: dict):
             session_date,
         ),
     )
+
+    # Skip aggregate updates if this was a duplicate (already inserted)
+    if cursor.rowcount == 0:
+        return False
 
     # Update daily_budget for stop events (which carry token data)
     if event_type == "stop":
@@ -410,6 +415,7 @@ async def insert_event(db: aiosqlite.Connection, event: dict):
         )
 
     await db.commit()
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -510,7 +516,9 @@ async def watch_events_file(app: FastAPI):
                             continue
                         try:
                             event = json.loads(line)
-                            await insert_event(db, event)
+                            was_new = await insert_event(db, event)
+                            if was_new:
+                                await manager.broadcast({"type": "event", "data": event})
                         except json.JSONDecodeError:
                             continue
 

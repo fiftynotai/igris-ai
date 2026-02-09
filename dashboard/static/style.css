@@ -690,6 +690,11 @@ body {
   color: var(--token-input);
 }
 
+.battle-log__entry .entry-cache {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
 .battle-log__entry .entry-duration {
   color: var(--hp-warning);
 }

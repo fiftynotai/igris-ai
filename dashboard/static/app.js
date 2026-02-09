@@ -425,14 +425,18 @@ ArenaClient.prototype.addBattleLogEntry = function (event) {
             '<span class="entry-time">[' + time + ']</span> ' +
             '<span class="entry-agent">' + agentName + '</span> deployed to battle';
     } else if (event.event === 'stop') {
-        var totalTokens = (event.input_tokens || 0) + (event.output_tokens || 0) +
-                          (event.cache_read || 0) + (event.cache_create || 0);
+        var directTokens = (event.input_tokens || 0) + (event.output_tokens || 0);
+        var cachedTokens = (event.cache_read || 0) + (event.cache_create || 0);
         var dur = escapeHtml(event.duration_s ? formatDuration(event.duration_s) : '--');
+        var cacheStr = cachedTokens > 0
+            ? ' <span class="entry-cache">(+ ' + escapeHtml(formatNumber(cachedTokens)) + ' cached)</span>'
+            : '';
         entry.className = 'battle-log__entry battle-log__entry--stop';
         entry.innerHTML =
             '<span class="entry-time">[' + time + ']</span> ' +
             '<span class="entry-agent">' + agentName + '</span> completed &mdash; ' +
-            '<span class="entry-tokens">' + escapeHtml(formatNumber(totalTokens)) + ' tokens</span> ' +
+            '<span class="entry-tokens">' + escapeHtml(formatNumber(directTokens)) + ' tokens</span>' +
+            cacheStr + ' ' +
             '(<span class="entry-duration">' + dur + '</span>)';
     } else {
         entry.className = 'battle-log__entry';
@@ -696,14 +700,18 @@ ArenaClient.prototype.renderBattleLog = function () {
                 '<span class="entry-time">[' + time + ']</span> ' +
                 '<span class="entry-agent">' + agentName + '</span> deployed to battle';
         } else if (event.event === 'stop') {
-            var totalTokens = (event.input_tokens || 0) + (event.output_tokens || 0) +
-                              (event.cache_read || 0) + (event.cache_create || 0);
+            var directTokens = (event.input_tokens || 0) + (event.output_tokens || 0);
+            var cachedTokens = (event.cache_read || 0) + (event.cache_create || 0);
             var dur = escapeHtml(event.duration_s ? formatDuration(event.duration_s) : '--');
+            var cacheStr = cachedTokens > 0
+                ? ' <span class="entry-cache">(+ ' + escapeHtml(formatNumber(cachedTokens)) + ' cached)</span>'
+                : '';
             entry.className = 'battle-log__entry battle-log__entry--stop';
             entry.innerHTML =
                 '<span class="entry-time">[' + time + ']</span> ' +
                 '<span class="entry-agent">' + agentName + '</span> completed &mdash; ' +
-                '<span class="entry-tokens">' + escapeHtml(formatNumber(totalTokens)) + ' tokens</span> ' +
+                '<span class="entry-tokens">' + escapeHtml(formatNumber(directTokens)) + ' tokens</span>' +
+                cacheStr + ' ' +
                 '(<span class="entry-duration">' + dur + '</span>)';
         } else {
             entry.className = 'battle-log__entry';
