@@ -52,5 +52,12 @@ class HiggsfieldRestClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def speak(self, params: dict) -> dict:
+        resp = await self._client.post(
+            "/v1/speak/higgsfield", json={"params": params}
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     async def close(self) -> None:
         await self._client.aclose()

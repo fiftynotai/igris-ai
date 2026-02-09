@@ -8,7 +8,7 @@ from typing import Any
 from mcp.types import TextContent, Tool
 
 from higgsfield_client import AsyncClient
-from higgsfield_mcp.registry import SPEECH_MODELS
+from higgsfield_mcp.rest_client import HiggsfieldRestClient
 
 
 def list_tools() -> list[Tool]:
@@ -63,19 +63,19 @@ async def handle(
     name: str,
     arguments: dict[str, Any],
     client: AsyncClient,
-    rest_client: Any,
+    rest_client: HiggsfieldRestClient,
 ) -> list[TextContent]:
     wait = arguments.pop("wait_for_result", False)
-    spec = SPEECH_MODELS["speak"]
+
+    # Build params from remaining arguments (excludes wait_for_result)
+    params = {k: v for k, v in arguments.items()}
 
     try:
-        controller = await client.submit(
-            application=spec.application,
-            arguments=arguments,
-        )
+        response = await rest_client.speak(params)
+        request_id = response.get("request_id", "")
 
-        if wait:
-            result = await controller.get()
+        if wait and request_id:
+            result = await client.result(request_id)
             return [TextContent(
                 type="text",
                 text=json.dumps(result, indent=2),
@@ -84,7 +84,7 @@ async def handle(
         return [TextContent(
             type="text",
             text=json.dumps({
-                "request_id": controller.request_id,
+                "request_id": request_id,
                 "status": "submitted",
                 "message": (
                     "Speech job submitted. "

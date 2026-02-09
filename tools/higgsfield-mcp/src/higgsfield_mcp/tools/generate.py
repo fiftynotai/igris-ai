@@ -25,7 +25,10 @@ def list_tools() -> list[Tool]:
                 "properties": {
                     "model": {
                         "type": "string",
-                        "enum": list(IMAGE_MODELS.keys()),
+                        "enum": [
+                            "soul", "soul-reference", "soul-character",
+                            "reve", "seedream",
+                        ],
                         "description": "Image model to use",
                     },
                     "prompt": {
@@ -94,38 +97,33 @@ def list_tools() -> list[Tool]:
                 "properties": {
                     "model": {
                         "type": "string",
-                        "enum": list(VIDEO_MODELS.keys()),
+                        "enum": [
+                            "dop-lite", "dop", "dop-turbo",
+                            "dop-lite-flf", "dop-flf", "dop-turbo-flf",
+                            "kling-pro", "kling",
+                            "seedance-pro", "seedance-lite",
+                            "sora-2",
+                        ],
                         "description": "Video model to use",
                     },
                     "prompt": {
                         "type": "string",
                         "description": "Text description for the video",
                     },
-                    "input_image_url": {
+                    "image_url": {
                         "type": "string",
                         "description": (
                             "Source image URL (required for image-to-video "
-                            "models like DOP, Seedance)"
+                            "models like DOP, Kling, Seedance)"
                         ),
                     },
-                    "input_image_end_url": {
+                    "image_end_url": {
                         "type": "string",
-                        "description": "End frame image URL (DOP only)",
+                        "description": "End frame image URL (DOP first-last-frame models)",
                     },
-                    "motions": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "id": {"type": "string"},
-                                "strength": {
-                                    "type": "number",
-                                    "minimum": 0,
-                                    "maximum": 1,
-                                },
-                            },
-                        },
-                        "description": "Motion presets (DOP only)",
+                    "duration": {
+                        "type": "integer",
+                        "description": "Video duration in seconds",
                     },
                     "enhance_prompt": {
                         "type": "boolean",

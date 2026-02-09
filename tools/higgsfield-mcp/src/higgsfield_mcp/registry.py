@@ -17,22 +17,21 @@ class ModelSpec:
     supports_batch: bool = False
     supports_styles: bool = False
     supports_characters: bool = False
-    supports_motions: bool = False
     default_dimensions: str | None = None
     available_dimensions: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
-# Image Generation Models (8)
+# Image Generation Models (5)
 # ---------------------------------------------------------------------------
 
 IMAGE_MODELS: dict[str, ModelSpec] = {
     "soul": ModelSpec(
         name="soul",
-        application="higgsfield/soul/v2/text-to-image",
+        application="higgsfield-ai/soul/standard",
         category="image",
-        display_name="Soul v2",
-        description="Higgsfield flagship model with style and character reference support",
+        display_name="Soul",
+        description="Higgsfield flagship text-to-image",
         supports_batch=True,
         supports_styles=True,
         supports_characters=True,
@@ -43,210 +42,147 @@ IMAGE_MODELS: dict[str, ModelSpec] = {
             "1536x1152", "1696x960", "1152x1536", "1088x1632", "1632x1088",
         ],
     ),
-    "nano-banana-pro": ModelSpec(
-        name="nano-banana-pro",
-        application="google/gemini-3-pro/text-to-image",
+    "soul-reference": ModelSpec(
+        name="soul-reference",
+        application="higgsfield-ai/soul/reference",
         category="image",
-        display_name="Nano Banana Pro",
-        description="Google Gemini 3 Pro — 4K output, strong text rendering",
+        display_name="Soul Reference",
+        description="Soul with image reference guidance",
+        input_type="text+image",
     ),
-    "seedream-4.5": ModelSpec(
-        name="seedream-4.5",
-        application="bytedance/seedream/v4.5/text-to-image",
+    "soul-character": ModelSpec(
+        name="soul-character",
+        application="higgsfield-ai/soul/character",
         category="image",
-        display_name="Seedream 4.5",
-        description="ByteDance photorealistic image generation",
-    ),
-    "flux-2": ModelSpec(
-        name="flux-2",
-        application="black-forest-labs/flux/v2/text-to-image",
-        category="image",
-        display_name="FLUX.2",
-        description="Black Forest Labs creative image generation",
-    ),
-    "gpt-image-1.5": ModelSpec(
-        name="gpt-image-1.5",
-        application="openai/gpt-image/v1.5/text-to-image",
-        category="image",
-        display_name="GPT Image 1.5",
-        description="OpenAI versatile image generation",
+        display_name="Soul Character",
+        description="Soul with character reference for consistency",
+        supports_characters=True,
+        supports_styles=True,
     ),
     "reve": ModelSpec(
         name="reve",
-        application="reve/reve/v1/text-to-image",
+        application="reve/text-to-image",
         category="image",
         display_name="Reve",
-        description="Artistic image generation",
+        description="Artistic text-to-image generation",
     ),
-    "popcorn": ModelSpec(
-        name="popcorn",
-        application="bytedance/popcorn/v1/text-to-image",
+    "seedream": ModelSpec(
+        name="seedream",
+        application="bytedance/seedream/v4/text-to-image",
         category="image",
-        display_name="Popcorn",
-        description="ByteDance stylized image generation",
-    ),
-    "z-image-turbo": ModelSpec(
-        name="z-image-turbo",
-        application="z-image/turbo/v1/text-to-image",
-        category="image",
-        display_name="Z Image Turbo",
-        description="Fast image generation",
+        display_name="Seedream v4",
+        description="ByteDance photorealistic image generation",
     ),
 }
 
 # ---------------------------------------------------------------------------
-# Video Generation Models (7)
+# Video Generation Models (11)
 # ---------------------------------------------------------------------------
 
 VIDEO_MODELS: dict[str, ModelSpec] = {
+    "dop-lite": ModelSpec(
+        name="dop-lite",
+        application="higgsfield-ai/dop/lite",
+        category="video",
+        display_name="DOP Lite",
+        description="Fast image-to-video animation",
+        input_type="image",
+    ),
     "dop": ModelSpec(
         name="dop",
-        application="higgsfield/dop/v1/image-to-video",
+        application="higgsfield-ai/dop/standard",
         category="video",
-        display_name="DOP",
-        description="Image-to-video with motion presets",
+        display_name="DOP Standard",
+        description="Standard quality image-to-video",
         input_type="image",
-        supports_motions=True,
+    ),
+    "dop-turbo": ModelSpec(
+        name="dop-turbo",
+        application="higgsfield-ai/dop/turbo",
+        category="video",
+        display_name="DOP Turbo",
+        description="Highest quality image-to-video",
+        input_type="image",
+    ),
+    "dop-lite-flf": ModelSpec(
+        name="dop-lite-flf",
+        application="higgsfield-ai/dop/lite/first-last-frame",
+        category="video",
+        display_name="DOP Lite (First-Last Frame)",
+        description="Fast first-last frame interpolation",
+        input_type="image",
+    ),
+    "dop-flf": ModelSpec(
+        name="dop-flf",
+        application="higgsfield-ai/dop/standard/first-last-frame",
+        category="video",
+        display_name="DOP Standard (First-Last Frame)",
+        description="Standard first-last frame interpolation",
+        input_type="image",
+    ),
+    "dop-turbo-flf": ModelSpec(
+        name="dop-turbo-flf",
+        application="higgsfield-ai/dop/turbo/first-last-frame",
+        category="video",
+        display_name="DOP Turbo (First-Last Frame)",
+        description="Best quality first-last frame interpolation",
+        input_type="image",
+    ),
+    "kling-pro": ModelSpec(
+        name="kling-pro",
+        application="kling-video/v2.1/pro/image-to-video",
+        category="video",
+        display_name="Kling v2.1 Pro",
+        description="High-fidelity cinematic image-to-video",
+        input_type="image",
+    ),
+    "kling": ModelSpec(
+        name="kling",
+        application="kling-video/v2.1/standard/image-to-video",
+        category="video",
+        display_name="Kling v2.1 Standard",
+        description="Standard cinematic image-to-video",
+        input_type="image",
+    ),
+    "seedance-pro": ModelSpec(
+        name="seedance-pro",
+        application="bytedance/seedance/v1/pro/image-to-video",
+        category="video",
+        display_name="Seedance Pro",
+        description="ByteDance professional image-to-video",
+        input_type="image",
+    ),
+    "seedance-lite": ModelSpec(
+        name="seedance-lite",
+        application="bytedance/seedance/v1/lite/image-to-video",
+        category="video",
+        display_name="Seedance Lite",
+        description="ByteDance fast image-to-video",
+        input_type="image",
     ),
     "sora-2": ModelSpec(
         name="sora-2",
-        application="openai/sora/v2/text-to-video",
+        application="sora-2/text-to-video",
         category="video",
         display_name="Sora 2",
         description="OpenAI text-to-video generation",
     ),
-    "kling-2.6": ModelSpec(
-        name="kling-2.6",
-        application="kuaishou/kling/v2.6/text-to-video",
-        category="video",
-        display_name="Kling 2.6",
-        description="Kuaishou high-quality video generation",
-    ),
-    "veo-3.1": ModelSpec(
-        name="veo-3.1",
-        application="google/veo/v3.1/text-to-video",
-        category="video",
-        display_name="Veo 3.1",
-        description="Google long-form video generation",
-    ),
-    "wan-2.6": ModelSpec(
-        name="wan-2.6",
-        application="alibaba/wan/v2.6/text-to-video",
-        category="video",
-        display_name="Wan 2.6",
-        description="Alibaba diverse-style video generation",
-    ),
-    "minimax-02": ModelSpec(
-        name="minimax-02",
-        application="minimax/minimax/v02/text-to-video",
-        category="video",
-        display_name="Minimax 02",
-        description="Efficient video generation",
-    ),
-    "seedance-1.5-pro": ModelSpec(
-        name="seedance-1.5-pro",
-        application="bytedance/seedance/v1.5-pro/image-to-video",
-        category="video",
-        display_name="Seedance 1.5 Pro",
-        description="ByteDance image-to-video with dance/motion",
-        input_type="image",
-    ),
 }
 
 # ---------------------------------------------------------------------------
-# Editing Tools (10)
+# Editing Tools (1)
 # ---------------------------------------------------------------------------
 
 EDIT_TOOLS: dict[str, ModelSpec] = {
-    "inpaint": ModelSpec(
-        name="inpaint",
-        application="higgsfield/inpaint/v1/edit",
+    "seedream-edit": ModelSpec(
+        name="seedream-edit",
+        application="bytedance/seedream/v4/edit",
         category="edit",
-        display_name="Inpaint",
-        description="Edit regions of an image with mask-based inpainting",
-        input_type="image",
-    ),
-    "upscale": ModelSpec(
-        name="upscale",
-        application="higgsfield/upscale/v1/edit",
-        category="edit",
-        display_name="Upscale",
-        description="Upscale image resolution",
+        display_name="Seedream Edit",
+        description="AI-powered image editing",
         input_type="image",
         supports_enhance_prompt=False,
         supports_seed=False,
-    ),
-    "relight": ModelSpec(
-        name="relight",
-        application="higgsfield/relight/v1/edit",
-        category="edit",
-        display_name="Relight",
-        description="Change lighting conditions of an image",
-        input_type="image",
-    ),
-    "face-swap": ModelSpec(
-        name="face-swap",
-        application="higgsfield/face-swap/v1/edit",
-        category="edit",
-        display_name="Face Swap",
-        description="Swap faces between images",
-        input_type="image",
-        supports_enhance_prompt=False,
-        supports_seed=False,
-    ),
-    "character-swap": ModelSpec(
-        name="character-swap",
-        application="higgsfield/character-swap/v1/edit",
-        category="edit",
-        display_name="Character Swap",
-        description="Swap characters between images",
-        input_type="image",
-        supports_enhance_prompt=False,
-        supports_seed=False,
-    ),
-    "draw-to-edit": ModelSpec(
-        name="draw-to-edit",
-        application="higgsfield/draw-to-edit/v1/edit",
-        category="edit",
-        display_name="Draw to Edit",
-        description="Edit an image using drawn mask regions",
-        input_type="image",
-    ),
-    "video-upscale": ModelSpec(
-        name="video-upscale",
-        application="higgsfield/video-upscale/v1/edit",
-        category="edit",
-        display_name="Video Upscale",
-        description="Upscale video resolution",
-        input_type="image",
-        supports_enhance_prompt=False,
-        supports_seed=False,
-    ),
-    "lipsync": ModelSpec(
-        name="lipsync",
-        application="higgsfield/lipsync/v1/edit",
-        category="edit",
-        display_name="Lipsync",
-        description="Synchronize lip movements to audio",
-        input_type="image",
-        supports_enhance_prompt=False,
-        supports_seed=False,
-    ),
-    "cinema-studio": ModelSpec(
-        name="cinema-studio",
-        application="higgsfield/cinema-studio/v1/edit",
-        category="edit",
-        display_name="Cinema Studio",
-        description="Cinematic video editing and enhancement",
-        input_type="image",
-    ),
-    "motion-control": ModelSpec(
-        name="motion-control",
-        application="higgsfield/motion-control/v1/edit",
-        category="edit",
-        display_name="Motion Control",
-        description="Control motion trajectories in video",
-        input_type="image",
     ),
 }
 
@@ -257,7 +193,7 @@ EDIT_TOOLS: dict[str, ModelSpec] = {
 SPEECH_MODELS: dict[str, ModelSpec] = {
     "speak": ModelSpec(
         name="speak",
-        application="higgsfield/speak/v1/speech",
+        application="/v1/speak/higgsfield",
         category="speech",
         display_name="Speak",
         description="Text-to-speech talking-head video generation",
