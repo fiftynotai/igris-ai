@@ -21,6 +21,18 @@ var AGENT_NAMES = {
     sage:      'SAGE'
 };
 
+/** Two-letter monograms for the nexus cores. */
+var AGENT_MONOGRAMS = {
+    orchestrator: 'IG',
+    architect: 'AR',
+    forger: 'FO',
+    sentinel: 'SE',
+    warden: 'WA',
+    mender: 'ME',
+    seeker: 'SK',
+    sage: 'SA'
+};
+
 /** Pipeline order (for rendering). */
 var AGENT_ORDER = ['orchestrator', 'architect', 'forger', 'sentinel', 'warden', 'mender', 'seeker', 'sage'];
 
@@ -195,6 +207,9 @@ ArenaClient.prototype.init = async function () {
     await this._fetchPricing();
     await this.fetchState();
     this.render();
+    this._initNexusLines();
+    var self = this;
+    window.addEventListener('resize', function () { self._initNexusLines(); });
     this.connectWebSocket();
 };
 
@@ -512,14 +527,17 @@ ArenaClient.prototype.onAgentStop = function (event) {
 
     var pod = document.getElementById('pod-' + agent);
     if (pod) {
-        var orchClass = (agent === 'orchestrator') ? ' agent-pod--orchestrator' : '';
-        pod.className = 'agent-pod agent-pod--complete' + orchClass;
+        var orchClass = (agent === 'orchestrator') ? ' nexus__core--orchestrator' : '';
+        var supportClass = (agent === 'mender' || agent === 'seeker' || agent === 'sage') ? ' nexus__core--support' : '';
+        pod.className = 'nexus__core nexus__core--complete' + orchClass + supportClass;
         setTimeout(function () {
-            if (pod.classList.contains('agent-pod--complete')) {
-                pod.className = 'agent-pod agent-pod--has-data' + orchClass;
+            if (pod.classList.contains('nexus__core--complete')) {
+                pod.className = 'nexus__core nexus__core--has-data' + orchClass + supportClass;
             }
         }, COMPLETE_FLASH_DURATION);
     }
+
+    this._updateNexusLines();
 };
 
 /**
@@ -680,20 +698,20 @@ ArenaClient.prototype.renderBudget = function () {
    -------------------------------------------------------------------------- */
 
 /**
- * Update all 7 agent pods with current state data.
+ * Update all 8 agent pods with current state data.
  */
 ArenaClient.prototype.renderAgentPods = function () {
     var agents = get(this.state, ['agents'], {});
-
     for (var i = 0; i < AGENT_ORDER.length; i++) {
         var name = AGENT_ORDER[i];
         var data = agents[name];
         this._renderSinglePod(name, data);
     }
+    this._updateNexusLines();
 };
 
 /**
- * Render a single agent pod.
+ * Render a single agent pod (nexus core).
  * @param {string} name - agent key
  * @param {object|undefined} data - agent state data
  */
@@ -701,62 +719,185 @@ ArenaClient.prototype._renderSinglePod = function (name, data) {
     var pod = document.getElementById('pod-' + name);
     if (!pod) return;
 
-    var orchClass = (name === 'orchestrator') ? ' agent-pod--orchestrator' : '';
+    var isOrchestrator = (name === 'orchestrator');
+    var isSupport = (name === 'mender' || name === 'seeker' || name === 'sage');
 
     if (!data) {
-        pod.className = 'agent-pod agent-pod--idle' + orchClass;
+        var idleCls = 'nexus__core nexus__core--idle';
+        if (isOrchestrator) idleCls += ' nexus__core--orchestrator';
+        if (isSupport) idleCls += ' nexus__core--support';
+        pod.className = idleCls;
         return;
     }
 
-    // Use local activeTimers as source of truth for active state
     var isActive = !!this.activeTimers[name];
 
-    // Determine pod state class (unless currently in complete flash)
-    if (!pod.classList.contains('agent-pod--complete')) {
+    // Update state class (skip if in complete flash)
+    if (!pod.classList.contains('nexus__core--complete')) {
+        var cls = 'nexus__core';
+        if (isOrchestrator) cls += ' nexus__core--orchestrator';
+        if (isSupport) cls += ' nexus__core--support';
+
         if (isActive) {
-            pod.className = 'agent-pod agent-pod--active' + orchClass;
+            cls += ' nexus__core--active';
         } else if ((data.invocations || 0) > 0) {
-            pod.className = 'agent-pod agent-pod--has-data' + orchClass;
+            cls += ' nexus__core--has-data';
         } else {
-            pod.className = 'agent-pod agent-pod--idle' + orchClass;
+            cls += ' nexus__core--idle';
         }
+        pod.className = cls;
     }
 
     // Evolution badge
     var evoEl = document.getElementById('evo-' + name);
-    if (evoEl) {
-        evoEl.textContent = get(data, ['level', 'evolution'], 'In-Training');
-    }
+    if (evoEl) evoEl.textContent = get(data, ['level', 'evolution'], 'In-Training');
 
-    // Level name
+    // Level (hidden)
     var levelEl = document.getElementById('level-' + name);
-    if (levelEl) {
-        levelEl.textContent = get(data, ['level', 'name'], 'Trainee');
+    if (levelEl) levelEl.textContent = get(data, ['level', 'name'], 'Trainee');
+
+    // XP ring (conic-gradient)
+    var ringEl = document.getElementById('xp-ring-' + name);
+    if (ringEl) {
+        var progress = get(data, ['level', 'progress'], 0);
+        var degrees = Math.round(progress * 360);
+        ringEl.style.background =
+            'conic-gradient(var(--crimson) 0deg ' + degrees + 'deg, var(--surface-2) ' + degrees + 'deg 360deg)';
     }
 
-    // XP progress bar
+    // Legacy XP bar (hidden, for compat)
     var xpEl = document.getElementById('xp-' + name);
-    if (xpEl) {
-        var progress = get(data, ['level', 'progress'], 0);
-        xpEl.style.width = (progress * 100) + '%';
-    }
+    if (xpEl) xpEl.style.width = (get(data, ['level', 'progress'], 0) * 100) + '%';
 
     // Invocations
     var invEl = document.getElementById('inv-' + name);
     if (invEl) {
-        invEl.textContent = data.invocations || 0;
+        var label = isOrchestrator ? ' turns' : ' runs';
+        invEl.textContent = (data.invocations || 0) + label;
     }
 
-    // Last used
+    // Last used (hidden)
     var lastEl = document.getElementById('last-' + name);
-    if (lastEl) {
-        lastEl.textContent = data.last_used ? timeAgo(data.last_used) : '--';
+    if (lastEl) lastEl.textContent = data.last_used ? timeAgo(data.last_used) : '--';
+
+    // Timer (clear when not active)
+    var timerEl = document.getElementById('timer-' + name);
+    if (timerEl && !isActive) timerEl.textContent = '';
+
+    // Hover stat orbit
+    this._renderNexusOrbit(pod, name, data);
+};
+
+/**
+ * Render the hover stat orbit for a nexus core.
+ * @param {Element} pod - the core DOM element
+ * @param {string} name - agent key
+ * @param {object} data - agent state data
+ */
+ArenaClient.prototype._renderNexusOrbit = function (pod, name, data) {
+    var stats = get(data, ['rpg_stats'], null);
+    if (!stats) return;
+
+    var orbit = pod.querySelector('.nexus__orbit');
+    if (!orbit) {
+        orbit = document.createElement('div');
+        orbit.className = 'nexus__orbit';
+        var ring = pod.querySelector('.nexus__ring');
+        if (ring && ring.parentNode) {
+            ring.parentNode.insertBefore(orbit, ring.nextSibling);
+        } else {
+            pod.appendChild(orbit);
+        }
     }
 
-    // Timer: clear display if no local timer is running
-    var timerEl = document.getElementById('timer-' + name);
-    if (timerEl && !isActive) {
-        timerEl.textContent = '';
+    var statTypes = ['str', 'int', 'spd', 'vit'];
+    var statLabels = { str: 'STR', int: 'INT', spd: 'SPD', vit: 'VIT' };
+
+    orbit.innerHTML = '';
+    for (var i = 0; i < statTypes.length; i++) {
+        var key = statTypes[i];
+        var val = stats[key.toUpperCase()] || stats[key] || 0;
+        var statDiv = document.createElement('div');
+        statDiv.className = 'nexus__orbit-stat nexus__orbit-stat--' + key;
+        statDiv.innerHTML =
+            '<span>' + escapeHtml(String(statLabels[key])) + '</span>' +
+            '<span style="font-weight:700">' + escapeHtml(String(val)) + '</span>' +
+            '<div class="nexus__orbit-bar">' +
+            '<div class="nexus__orbit-bar-fill nexus__orbit-bar-fill--' + key +
+            '" style="width:' + Math.min(val, 100) + '%"></div>' +
+            '</div>';
+        orbit.appendChild(statDiv);
+    }
+};
+
+/**
+ * Update nexus connection line classes based on agent active/complete state.
+ */
+ArenaClient.prototype._updateNexusLines = function () {
+    var agentKeys = ['architect', 'forger', 'sentinel', 'warden', 'mender', 'seeker', 'sage'];
+
+    for (var i = 0; i < agentKeys.length; i++) {
+        var name = agentKeys[i];
+        var lineEl = document.getElementById('line-' + name);
+        if (!lineEl) continue;
+
+        var isActive = !!this.activeTimers[name];
+        var pod = document.getElementById('pod-' + name);
+        var isComplete = pod && pod.classList.contains('nexus__core--complete');
+
+        lineEl.classList.remove('nexus__line--active', 'nexus__line--complete');
+        if (isActive) {
+            lineEl.classList.add('nexus__line--active');
+        } else if (isComplete) {
+            lineEl.classList.add('nexus__line--complete');
+        }
+    }
+};
+
+/**
+ * Compute and apply line geometry from percentage positions for nexus connections.
+ */
+ArenaClient.prototype._initNexusLines = function () {
+    var grid = document.querySelector('.nexus__grid');
+    if (!grid) return;
+
+    var positions = {
+        orchestrator: { left: 50, top: 42 },
+        architect:    { left: 50, top: 12 },
+        forger:       { left: 80, top: 42 },
+        sentinel:     { left: 50, top: 72 },
+        warden:       { left: 20, top: 42 },
+        mender:       { left: 25, top: 90 },
+        seeker:       { left: 50, top: 90 },
+        sage:         { left: 75, top: 90 }
+    };
+
+    var orch = positions.orchestrator;
+    var w = grid.offsetWidth;
+    var h = grid.offsetHeight;
+    var ox = orch.left / 100 * w;
+    var oy = orch.top / 100 * h;
+
+    var agentKeys = ['architect', 'forger', 'sentinel', 'warden', 'mender', 'seeker', 'sage'];
+
+    for (var i = 0; i < agentKeys.length; i++) {
+        var name = agentKeys[i];
+        var pos = positions[name];
+        var lineEl = document.getElementById('line-' + name);
+        if (!lineEl) continue;
+
+        var ax = pos.left / 100 * w;
+        var ay = pos.top / 100 * h;
+
+        var dx = ax - ox;
+        var dy = ay - oy;
+        var length = Math.sqrt(dx * dx + dy * dy);
+        var angle = Math.atan2(dy, dx) * (180 / Math.PI);
+
+        lineEl.style.left = ox + 'px';
+        lineEl.style.top = oy + 'px';
+        lineEl.style.width = length + 'px';
+        lineEl.style.transform = 'rotate(' + angle + 'deg)';
     }
 };
 

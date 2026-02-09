@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CRIMSON ARENA — Igris AI Agent Dashboard</title>
-  <link rel="stylesheet" href="/static/style.css?v=7">
+  <link rel="stylesheet" href="/static/style.css?v=8">
 </head>
 <body>
 
@@ -78,113 +78,150 @@
     <!-- ---------------------------------------------------------------- -->
     <!-- AGENT PIPELINE (left)                                             -->
     <!-- ---------------------------------------------------------------- -->
-    <section class="pipeline" aria-label="Agent Pipeline">
-      <h2 class="section-title">Agent Pipeline</h2>
+      <section class="nexus" aria-label="Agent Nexus">
+        <h2 class="section-title">DNA Digivolution Nexus</h2>
 
-      <!-- Orchestrator -->
-      <div class="pipeline__row pipeline__row--orchestrator">
-        <div class="agent-pod agent-pod--idle agent-pod--orchestrator" id="pod-orchestrator" data-agent="orchestrator">
-          <div class="agent-pod__status-dot"></div>
-          <div class="agent-pod__name">IGRIS</div>
-          <div class="agent-pod__evolution" id="evo-orchestrator">In-Training</div>
-          <div class="agent-pod__level" id="level-orchestrator">Trainee</div>
-          <div class="xp-bar"><div class="xp-fill" id="xp-orchestrator" style="width:0%"></div></div>
-          <div class="agent-pod__invocations"><span id="inv-orchestrator">0</span> turns</div>
-          <div class="agent-pod__timer" id="timer-orchestrator"></div>
-          <div class="agent-pod__last-used" id="last-orchestrator">--</div>
+        <div class="nexus__grid">
+
+          <!-- Connection lines (behind cores) -->
+          <div class="nexus__line" id="line-architect"></div>
+          <div class="nexus__line" id="line-forger"></div>
+          <div class="nexus__line" id="line-sentinel"></div>
+          <div class="nexus__line" id="line-warden"></div>
+          <div class="nexus__line" id="line-mender"></div>
+          <div class="nexus__line" id="line-seeker"></div>
+          <div class="nexus__line" id="line-sage"></div>
+
+          <!-- Orchestrator (center) -->
+          <div class="nexus__core nexus__core--orchestrator nexus__core--idle"
+               id="pod-orchestrator" data-agent="orchestrator">
+            <div class="nexus__ring" id="xp-ring-orchestrator"></div>
+            <div class="nexus__inner">IG</div>
+            <div class="nexus__label">
+              <span class="nexus__name">IGRIS</span>
+              <span class="nexus__evo" id="evo-orchestrator">In-Training</span>
+              <span class="nexus__stats mono" id="inv-orchestrator">0 turns</span>
+            </div>
+            <div class="nexus__timer mono" id="timer-orchestrator"></div>
+            <span class="nexus__hidden" id="level-orchestrator"></span>
+            <span class="nexus__hidden" id="xp-orchestrator"></span>
+            <span class="nexus__hidden" id="last-orchestrator"></span>
+          </div>
+
+          <!-- ARCHITECT (top) -->
+          <div class="nexus__core nexus__core--idle"
+               id="pod-architect" data-agent="architect">
+            <div class="nexus__ring" id="xp-ring-architect"></div>
+            <div class="nexus__inner">AR</div>
+            <div class="nexus__label">
+              <span class="nexus__name">ARCHITECT</span>
+              <span class="nexus__evo" id="evo-architect">In-Training</span>
+              <span class="nexus__stats mono" id="inv-architect">0 runs</span>
+            </div>
+            <div class="nexus__timer mono" id="timer-architect"></div>
+            <span class="nexus__hidden" id="level-architect"></span>
+            <span class="nexus__hidden" id="xp-architect"></span>
+            <span class="nexus__hidden" id="last-architect"></span>
+          </div>
+
+          <!-- FORGER (right) -->
+          <div class="nexus__core nexus__core--idle"
+               id="pod-forger" data-agent="forger">
+            <div class="nexus__ring" id="xp-ring-forger"></div>
+            <div class="nexus__inner">FO</div>
+            <div class="nexus__label">
+              <span class="nexus__name">FORGER</span>
+              <span class="nexus__evo" id="evo-forger">In-Training</span>
+              <span class="nexus__stats mono" id="inv-forger">0 runs</span>
+            </div>
+            <div class="nexus__timer mono" id="timer-forger"></div>
+            <span class="nexus__hidden" id="level-forger"></span>
+            <span class="nexus__hidden" id="xp-forger"></span>
+            <span class="nexus__hidden" id="last-forger"></span>
+          </div>
+
+          <!-- SENTINEL (bottom) -->
+          <div class="nexus__core nexus__core--idle"
+               id="pod-sentinel" data-agent="sentinel">
+            <div class="nexus__ring" id="xp-ring-sentinel"></div>
+            <div class="nexus__inner">SE</div>
+            <div class="nexus__label">
+              <span class="nexus__name">SENTINEL</span>
+              <span class="nexus__evo" id="evo-sentinel">In-Training</span>
+              <span class="nexus__stats mono" id="inv-sentinel">0 runs</span>
+            </div>
+            <div class="nexus__timer mono" id="timer-sentinel"></div>
+            <span class="nexus__hidden" id="level-sentinel"></span>
+            <span class="nexus__hidden" id="xp-sentinel"></span>
+            <span class="nexus__hidden" id="last-sentinel"></span>
+          </div>
+
+          <!-- WARDEN (left) -->
+          <div class="nexus__core nexus__core--idle"
+               id="pod-warden" data-agent="warden">
+            <div class="nexus__ring" id="xp-ring-warden"></div>
+            <div class="nexus__inner">WA</div>
+            <div class="nexus__label">
+              <span class="nexus__name">WARDEN</span>
+              <span class="nexus__evo" id="evo-warden">In-Training</span>
+              <span class="nexus__stats mono" id="inv-warden">0 runs</span>
+            </div>
+            <div class="nexus__timer mono" id="timer-warden"></div>
+            <span class="nexus__hidden" id="level-warden"></span>
+            <span class="nexus__hidden" id="xp-warden"></span>
+            <span class="nexus__hidden" id="last-warden"></span>
+          </div>
+
+          <!-- MENDER (lower-left) -->
+          <div class="nexus__core nexus__core--support nexus__core--idle"
+               id="pod-mender" data-agent="mender">
+            <div class="nexus__ring" id="xp-ring-mender"></div>
+            <div class="nexus__inner">ME</div>
+            <div class="nexus__label">
+              <span class="nexus__name">MENDER</span>
+              <span class="nexus__evo" id="evo-mender">In-Training</span>
+              <span class="nexus__stats mono" id="inv-mender">0 runs</span>
+            </div>
+            <div class="nexus__timer mono" id="timer-mender"></div>
+            <span class="nexus__hidden" id="level-mender"></span>
+            <span class="nexus__hidden" id="xp-mender"></span>
+            <span class="nexus__hidden" id="last-mender"></span>
+          </div>
+
+          <!-- SEEKER (lower-center) -->
+          <div class="nexus__core nexus__core--support nexus__core--idle"
+               id="pod-seeker" data-agent="seeker">
+            <div class="nexus__ring" id="xp-ring-seeker"></div>
+            <div class="nexus__inner">SK</div>
+            <div class="nexus__label">
+              <span class="nexus__name">SEEKER</span>
+              <span class="nexus__evo" id="evo-seeker">In-Training</span>
+              <span class="nexus__stats mono" id="inv-seeker">0 runs</span>
+            </div>
+            <div class="nexus__timer mono" id="timer-seeker"></div>
+            <span class="nexus__hidden" id="level-seeker"></span>
+            <span class="nexus__hidden" id="xp-seeker"></span>
+            <span class="nexus__hidden" id="last-seeker"></span>
+          </div>
+
+          <!-- SAGE (lower-right) -->
+          <div class="nexus__core nexus__core--support nexus__core--idle"
+               id="pod-sage" data-agent="sage">
+            <div class="nexus__ring" id="xp-ring-sage"></div>
+            <div class="nexus__inner">SA</div>
+            <div class="nexus__label">
+              <span class="nexus__name">SAGE</span>
+              <span class="nexus__evo" id="evo-sage">In-Training</span>
+              <span class="nexus__stats mono" id="inv-sage">0 runs</span>
+            </div>
+            <div class="nexus__timer mono" id="timer-sage"></div>
+            <span class="nexus__hidden" id="level-sage"></span>
+            <span class="nexus__hidden" id="xp-sage"></span>
+            <span class="nexus__hidden" id="last-sage"></span>
+          </div>
+
         </div>
-      </div>
-      <div class="pipeline__arrow-down">&darr;</div>
-
-      <!-- Tier 1 Core row -->
-      <div class="pipeline__row pipeline__row--core">
-        <div class="agent-pod agent-pod--idle" id="pod-architect" data-agent="architect">
-          <div class="agent-pod__status-dot"></div>
-          <div class="agent-pod__name">ARCHITECT</div>
-          <div class="agent-pod__evolution" id="evo-architect">In-Training</div>
-          <div class="agent-pod__level" id="level-architect">Trainee</div>
-          <div class="xp-bar"><div class="xp-fill" id="xp-architect" style="width:0%"></div></div>
-          <div class="agent-pod__invocations"><span id="inv-architect">0</span> runs</div>
-          <div class="agent-pod__timer" id="timer-architect"></div>
-          <div class="agent-pod__last-used" id="last-architect">--</div>
-        </div>
-
-        <div class="pipeline__arrow">&rarr;</div>
-
-        <div class="agent-pod agent-pod--idle" id="pod-forger" data-agent="forger">
-          <div class="agent-pod__status-dot"></div>
-          <div class="agent-pod__name">FORGER</div>
-          <div class="agent-pod__evolution" id="evo-forger">In-Training</div>
-          <div class="agent-pod__level" id="level-forger">Trainee</div>
-          <div class="xp-bar"><div class="xp-fill" id="xp-forger" style="width:0%"></div></div>
-          <div class="agent-pod__invocations"><span id="inv-forger">0</span> runs</div>
-          <div class="agent-pod__timer" id="timer-forger"></div>
-          <div class="agent-pod__last-used" id="last-forger">--</div>
-        </div>
-
-        <div class="pipeline__arrow">&rarr;</div>
-
-        <div class="agent-pod agent-pod--idle" id="pod-sentinel" data-agent="sentinel">
-          <div class="agent-pod__status-dot"></div>
-          <div class="agent-pod__name">SENTINEL</div>
-          <div class="agent-pod__evolution" id="evo-sentinel">In-Training</div>
-          <div class="agent-pod__level" id="level-sentinel">Trainee</div>
-          <div class="xp-bar"><div class="xp-fill" id="xp-sentinel" style="width:0%"></div></div>
-          <div class="agent-pod__invocations"><span id="inv-sentinel">0</span> runs</div>
-          <div class="agent-pod__timer" id="timer-sentinel"></div>
-          <div class="agent-pod__last-used" id="last-sentinel">--</div>
-        </div>
-
-        <div class="pipeline__arrow">&rarr;</div>
-
-        <div class="agent-pod agent-pod--idle" id="pod-warden" data-agent="warden">
-          <div class="agent-pod__status-dot"></div>
-          <div class="agent-pod__name">WARDEN</div>
-          <div class="agent-pod__evolution" id="evo-warden">In-Training</div>
-          <div class="agent-pod__level" id="level-warden">Trainee</div>
-          <div class="xp-bar"><div class="xp-fill" id="xp-warden" style="width:0%"></div></div>
-          <div class="agent-pod__invocations"><span id="inv-warden">0</span> runs</div>
-          <div class="agent-pod__timer" id="timer-warden"></div>
-          <div class="agent-pod__last-used" id="last-warden">--</div>
-        </div>
-      </div>
-
-      <!-- Tier 3-5 Support row -->
-      <div class="pipeline__row pipeline__row--support">
-        <div class="agent-pod agent-pod--idle" id="pod-mender" data-agent="mender">
-          <div class="agent-pod__status-dot"></div>
-          <div class="agent-pod__name">MENDER</div>
-          <div class="agent-pod__evolution" id="evo-mender">In-Training</div>
-          <div class="agent-pod__level" id="level-mender">Trainee</div>
-          <div class="xp-bar"><div class="xp-fill" id="xp-mender" style="width:0%"></div></div>
-          <div class="agent-pod__invocations"><span id="inv-mender">0</span> runs</div>
-          <div class="agent-pod__timer" id="timer-mender"></div>
-          <div class="agent-pod__last-used" id="last-mender">--</div>
-        </div>
-
-        <div class="agent-pod agent-pod--idle" id="pod-seeker" data-agent="seeker">
-          <div class="agent-pod__status-dot"></div>
-          <div class="agent-pod__name">SEEKER</div>
-          <div class="agent-pod__evolution" id="evo-seeker">In-Training</div>
-          <div class="agent-pod__level" id="level-seeker">Trainee</div>
-          <div class="xp-bar"><div class="xp-fill" id="xp-seeker" style="width:0%"></div></div>
-          <div class="agent-pod__invocations"><span id="inv-seeker">0</span> runs</div>
-          <div class="agent-pod__timer" id="timer-seeker"></div>
-          <div class="agent-pod__last-used" id="last-seeker">--</div>
-        </div>
-
-        <div class="agent-pod agent-pod--idle" id="pod-sage" data-agent="sage">
-          <div class="agent-pod__status-dot"></div>
-          <div class="agent-pod__name">SAGE</div>
-          <div class="agent-pod__evolution" id="evo-sage">In-Training</div>
-          <div class="agent-pod__level" id="level-sage">Trainee</div>
-          <div class="xp-bar"><div class="xp-fill" id="xp-sage" style="width:0%"></div></div>
-          <div class="agent-pod__invocations"><span id="inv-sage">0</span> runs</div>
-          <div class="agent-pod__timer" id="timer-sage"></div>
-          <div class="agent-pod__last-used" id="last-sage">--</div>
-        </div>
-      </div>
-    </section>
+      </section>
 
     <!-- ---------------------------------------------------------------- -->
     <!-- SIDEBAR (right)                                                   -->
@@ -264,6 +301,6 @@
     </div>
   </footer>
 
-  <script src="/static/app.js?v=7"></script>
+  <script src="/static/app.js?v=8"></script>
 </body>
 </html>

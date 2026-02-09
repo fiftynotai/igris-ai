@@ -1,9 +1,9 @@
 # Current Session
 
 ## Status
-**Mode:** REST MODE
+**Mode:** HUNT MODE
 **Updated:** 2026-02-10
-**Active Brief:** None
+**Active Brief:** FR-016
 
 ---
 
@@ -12,11 +12,10 @@
 | Brief | Title | Status |
 |-------|-------|--------|
 | BR-015 | Token Breakdown Misleading Headline | Done |
-| BR-016 | Higgsfield MCP — Wrong Model Paths | Done |
 | FR-014 | Higgsfield Skill — Browser Automation Pivot | Ready |
-| FR-015 | Token Cost Estimation Dashboard | Done |
+| FR-016 | DNA Digivolution Nexus — Agent Pods Redesign | In Progress |
 
-**Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, FR-007, FR-008, FR-010
+**Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015
 
 ---
 
@@ -27,7 +26,6 @@
 
 **Next Steps:**
 1. HUNT FR-014 (L-effort — Rewrite `/higgsfield` skill to use browser automation)
-2. Archive BR-014, BR-016, FR-015
 
 ---
 
@@ -51,7 +49,6 @@
 ## Pending
 
 - HUNT FR-014 (Higgsfield browser automation)
-- Archive BR-014, BR-016
 - Validate v3.4 via checklist: `ai/session/MG-008-test-checklist.md`
 
 ---
