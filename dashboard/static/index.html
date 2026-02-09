@@ -195,9 +195,10 @@
       <div class="panel token-breakdown">
         <h2 class="section-title">Token Breakdown <span class="range-label" id="range-label">— Today</span></h2>
         <div class="token-total">
-          <span class="token-total__label">Total Tokens</span>
+          <span class="token-total__label">Direct Tokens</span>
           <span class="token-total__value mono" id="total-tokens">0</span>
         </div>
+        <div class="token-total__cached mono" id="total-cached"></div>
         <div class="token-bars" id="token-bars">
           <div class="token-bar-row">
             <span class="token-bar-row__label">Input</span>
@@ -211,6 +212,7 @@
             <span class="token-bar-row__count mono" id="count-output">0</span>
             <span class="token-bar-row__pct mono" id="pct-output">0%</span>
           </div>
+          <div class="token-bars__separator"></div>
           <div class="token-bar-row">
             <span class="token-bar-row__label">Cache Read</span>
             <div class="token-bar-row__track"><div class="token-bar-row__fill token-bar-row__fill--cache-read" id="bar-cache-read" style="width:0%"></div></div>

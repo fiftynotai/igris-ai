@@ -675,17 +675,32 @@ ArenaClient.prototype.renderTokenBreakdown = function () {
         cacheCreate += a.total_cache_create_tokens || 0;
     }
 
-    var grandTotal = inputTokens + outputTokens + cacheRead + cacheCreate;
+    var directTotal = inputTokens + outputTokens;
+    var cacheTotal = cacheRead + cacheCreate;
 
-    // Total tokens display
+    // Direct tokens headline
     var totalEl = document.getElementById('total-tokens');
-    if (totalEl) totalEl.textContent = formatNumber(grandTotal);
+    if (totalEl) totalEl.textContent = formatNumber(directTotal);
 
-    // Individual bars
-    this._renderTokenBar('input', inputTokens, grandTotal);
-    this._renderTokenBar('output', outputTokens, grandTotal);
-    this._renderTokenBar('cache-read', cacheRead, grandTotal);
-    this._renderTokenBar('cache-create', cacheCreate, grandTotal);
+    // Cached tokens parenthetical
+    var cachedEl = document.getElementById('total-cached');
+    if (cachedEl) {
+        if (cacheTotal > 0) {
+            cachedEl.innerHTML = '(+ <span style="color: var(--token-cache-r)">' + escapeHtml(formatTokens(cacheTotal)) + '</span> cached)';
+            cachedEl.style.display = '';
+        } else {
+            cachedEl.textContent = '';
+            cachedEl.style.display = 'none';
+        }
+    }
+
+    // Direct group: percentages relative to direct total
+    this._renderTokenBar('input', inputTokens, directTotal);
+    this._renderTokenBar('output', outputTokens, directTotal);
+
+    // Cache group: percentages relative to cache total
+    this._renderTokenBar('cache-read', cacheRead, cacheTotal);
+    this._renderTokenBar('cache-create', cacheCreate, cacheTotal);
 
     // Total invocations
     var invEl = document.getElementById('total-invocations');
