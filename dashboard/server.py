@@ -511,8 +511,6 @@ async def watch_events_file(app: FastAPI):
                         try:
                             event = json.loads(line)
                             await insert_event(db, event)
-                            # Broadcast to WebSocket clients
-                            await manager.broadcast({"type": "event", "data": event})
                         except json.JSONDecodeError:
                             continue
 
