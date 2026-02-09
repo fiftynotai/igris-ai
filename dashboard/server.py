@@ -255,6 +255,15 @@ CREATE TABLE IF NOT EXISTS sync_state (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS context_window (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    context_used INTEGER DEFAULT 0,
+    context_max INTEGER DEFAULT 200000,
+    context_remaining INTEGER DEFAULT 200000,
+    model_id TEXT DEFAULT '',
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -413,6 +422,20 @@ async def insert_event(db: aiosqlite.Connection, event: dict):
                VALUES (?, ?, ?, ?, ?)""",
             (agent, new_count, level_info["name"], level_info["tier"], now),
         )
+
+        # Update context_window for orchestrator stop events with context data
+        if agent == "orchestrator":
+            ctx_max = int(event.get("context_max", 0))
+            if ctx_max > 0:
+                ctx_used = int(event.get("context_used", 0))
+                ctx_remaining = int(event.get("context_remaining", 0))
+                model_id = event.get("model_id", "")
+                await db.execute(
+                    """INSERT OR REPLACE INTO context_window
+                       (id, context_used, context_max, context_remaining, model_id, updated_at)
+                       VALUES (1, ?, ?, ?, ?, ?)""",
+                    (ctx_used, ctx_max, ctx_remaining, model_id, now),
+                )
 
     await db.commit()
     return True
@@ -716,6 +739,30 @@ async def build_totals(db: aiosqlite.Connection) -> dict:
     }
 
 
+async def build_context_window_state(db: aiosqlite.Connection) -> dict:
+    """Build context window state from the context_window table."""
+    async with db.execute(
+        """SELECT context_used, context_max, context_remaining, model_id
+           FROM context_window WHERE id = 1"""
+    ) as cursor:
+        row = await cursor.fetchone()
+
+    if row:
+        return {
+            "context_used": row[0],
+            "context_max": row[1],
+            "context_remaining": row[2],
+            "model_id": row[3],
+        }
+
+    return {
+        "context_used": 0,
+        "context_max": 200000,
+        "context_remaining": 200000,
+        "model_id": "",
+    }
+
+
 async def build_filtered_totals(db: aiosqlite.Connection, range_key: str) -> dict:
     """Compute aggregate totals filtered by date range."""
     date_clause, date_params = build_date_where(range_key)
@@ -882,12 +929,14 @@ async def build_filtered_state(app: FastAPI, range_key: str = "today") -> dict:
         recent_events = await build_filtered_recent_events(db, range_key)
 
     budget = await build_budget_state(db, budget_config)  # Always daily
+    context_window = await build_context_window_state(db)
 
     return {
         "agents": agents,
         "budget": budget,
         "recent_events": recent_events,
         "totals": totals,
+        "context_window": context_window,
         "range": range_key,
     }
 
@@ -901,12 +950,14 @@ async def build_full_state(app: FastAPI) -> dict:
     budget = await build_budget_state(db, budget_config)
     recent_events = await build_recent_events(db)
     totals = await build_totals(db)
+    context_window = await build_context_window_state(db)
 
     return {
         "agents": agents,
         "budget": budget,
         "recent_events": recent_events,
         "totals": totals,
+        "context_window": context_window,
     }
 
 
@@ -984,6 +1035,10 @@ class AgentEvent(BaseModel):
     output_tokens: int = 0
     cache_read: int = 0
     cache_create: int = 0
+    context_used: int = 0
+    context_max: int = 0
+    context_remaining: int = 0
+    model_id: str = ""
 
 
 # ---------------------------------------------------------------------------

@@ -36,6 +36,26 @@
         <span class="hp-thresholds__crit" id="hp-crit-marker" style="left: 90%"></span>
       </div>
     </div>
+    <div class="digivice" id="digivice">
+      <div class="digivice__screen">
+        <div class="digivice__scanlines"></div>
+        <div class="digivice__readout">
+          <div class="digivice__label">&gt; <span id="digivice-label-text">DATA LOAD</span> <span class="digivice__dots">............</span> <span class="digivice__pct" id="digivice-pct">0.0%</span></div>
+          <div class="digivice__bar" id="digivice-bar"></div>
+          <div class="digivice__count mono" id="digivice-count">0 / 200,000 ctx</div>
+          <div class="digivice__tags" id="digivice-tags">
+            <span class="digivice__tag">[cache:0]</span>
+            <span class="digivice__tag">[in:0]</span>
+            <span class="digivice__tag">[out:0]</span>
+          </div>
+        </div>
+      </div>
+      <div class="digivice__bezel">
+        <span class="digivice__ridge"></span>
+        <span class="digivice__ridge"></span>
+        <span class="digivice__ridge"></span>
+      </div>
+    </div>
     <div class="header__meta">
       <span class="connection-status" id="connection-status" title="WebSocket status">OFFLINE</span>
     </div>
@@ -227,6 +247,6 @@
     </div>
   </footer>
 
-  <script src="/static/app.js?v=3"></script>
+  <script src="/static/app.js?v=4"></script>
 </body>
 </html>

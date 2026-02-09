@@ -153,6 +153,10 @@ function ArenaClient() {
     this.partyOpen = false;
     this._wsConnected = false;
     this.currentRange = localStorage.getItem('arena-filter-range') || 'today';
+    this.contextWindow = null;
+    this._prevContextUsed = 0;
+    this._compacting = false;
+    this._digiviceInitialized = false;
 }
 
 /**
@@ -162,6 +166,7 @@ ArenaClient.prototype.init = async function () {
     this._bindPartyToggle();
     this._bindFilterToggle();
     this._updateFilterButtons();
+    this._initDigiviceSegments();
     await this.fetchState();
     this.render();
     this.connectWebSocket();
@@ -188,6 +193,9 @@ ArenaClient.prototype.fetchState = async function () {
             }
         }
         this.state = newState;
+        if (newState && newState.context_window) {
+            this.contextWindow = newState.context_window;
+        }
     } catch (e) {
         console.error('Failed to fetch state:', e);
     }
@@ -229,6 +237,9 @@ ArenaClient.prototype.connectWebSocket = function () {
                     for (var i = 0; i < agentKeys.length; i++) {
                         self.state.agents[agentKeys[i]].active = !!self.activeTimers[agentKeys[i]];
                     }
+                }
+                if (self.state && self.state.context_window) {
+                    self.contextWindow = self.state.context_window;
                 }
                 self.render();
             } else if (msg.type === 'event') {
@@ -282,6 +293,17 @@ ArenaClient.prototype.handleEvent = function (event) {
         this.onAgentStart(event);
     } else if (event.event === 'stop') {
         this.onAgentStop(event);
+
+        // Update context window for orchestrator stop events with context data
+        if (event.agent === 'orchestrator' && (event.context_max || 0) > 0) {
+            this._checkCompaction(event);
+            this.contextWindow = {
+                context_used: event.context_used || 0,
+                context_max: event.context_max || 200000,
+                context_remaining: event.context_remaining || 0,
+                model_id: event.model_id || ''
+            };
+        }
     }
 
     if (this._eventMatchesFilter(event)) {
@@ -291,6 +313,7 @@ ArenaClient.prototype.handleEvent = function (event) {
 
     this.renderAgentPods();
     this.renderBudget();
+    this.renderDigivice();
 };
 
 /**
@@ -468,6 +491,7 @@ ArenaClient.prototype.addBattleLogEntry = function (event) {
 ArenaClient.prototype.render = function () {
     if (!this.state) return;
     this.renderBudget();
+    this.renderDigivice();
     this.renderAgentPods();
     this.renderTokenBreakdown();
     this.renderBattleLog();
@@ -821,6 +845,172 @@ ArenaClient.prototype._renderStatBadge = function (label, value, cssKey) {
             '<div class="stat-badge__bar-fill" style="width:' + escapeHtml(value) + '%"></div>' +
         '</div>' +
     '</div>';
+};
+
+/* --------------------------------------------------------------------------
+   Rendering: Digivice Context Window
+   -------------------------------------------------------------------------- */
+
+/**
+ * Create 20 segment divs inside the #digivice-bar element.
+ */
+ArenaClient.prototype._initDigiviceSegments = function () {
+    var bar = document.getElementById('digivice-bar');
+    if (!bar || this._digiviceInitialized) return;
+    bar.innerHTML = '';
+    for (var i = 0; i < 20; i++) {
+        var seg = document.createElement('div');
+        seg.className = 'digivice__segment';
+        bar.appendChild(seg);
+    }
+    this._digiviceInitialized = true;
+};
+
+/**
+ * Update the Digivice display with current context window state.
+ */
+ArenaClient.prototype.renderDigivice = function () {
+    var ctx = this.contextWindow;
+    if (!ctx) return;
+
+    var used = ctx.context_used || 0;
+    var max = ctx.context_max || 200000;
+    var remaining = ctx.context_remaining || 0;
+    var ratio = max > 0 ? used / max : 0;
+    var percentage = Math.min(ratio * 100, 100);
+
+    // Update percentage text
+    var pctEl = document.getElementById('digivice-pct');
+    if (pctEl) pctEl.textContent = percentage.toFixed(1) + '%';
+
+    // Update count text
+    var countEl = document.getElementById('digivice-count');
+    if (countEl) countEl.textContent = formatNumber(used) + ' / ' + formatNumber(max) + ' ctx';
+
+    // Update segments (20 total)
+    var bar = document.getElementById('digivice-bar');
+    if (bar) {
+        var segments = bar.children;
+        var filledCount = Math.round((percentage / 100) * 20);
+        for (var i = 0; i < segments.length; i++) {
+            if (i < filledCount) {
+                segments[i].className = 'digivice__segment digivice__segment--filled';
+            } else {
+                segments[i].className = 'digivice__segment';
+            }
+        }
+    }
+
+    // Update label text based on threshold
+    var labelText = document.getElementById('digivice-label-text');
+    if (labelText) {
+        labelText.textContent = percentage >= 90 ? 'DATA OVERFLOW' : 'DATA LOAD';
+    }
+
+    // Update state classes on the digivice container
+    var digivice = document.getElementById('digivice');
+    if (digivice && !this._compacting) {
+        // Clear all state classes
+        digivice.classList.remove('digivice--transition', 'digivice--warning', 'digivice--overflow');
+
+        if (percentage >= 90) {
+            digivice.classList.add('digivice--overflow');
+        } else if (percentage >= 80) {
+            digivice.classList.add('digivice--warning');
+        } else if (percentage >= 60) {
+            digivice.classList.add('digivice--transition');
+        }
+    }
+
+    // Update composition tags
+    this._renderDigiviceTags();
+};
+
+/**
+ * Update the composition tags below the bar from orchestrator data.
+ */
+ArenaClient.prototype._renderDigiviceTags = function () {
+    var tagsEl = document.getElementById('digivice-tags');
+    if (!tagsEl) return;
+
+    var agents = get(this.state, ['agents'], {});
+    var orch = agents.orchestrator;
+    if (!orch) return;
+
+    var cacheRead = orch.total_cache_read_tokens || 0;
+    var inputTokens = orch.total_input_tokens || 0;
+    var outputTokens = orch.total_output_tokens || 0;
+
+    tagsEl.innerHTML =
+        '<span class="digivice__tag">[cache:' + escapeHtml(formatTokens(cacheRead)) + ']</span>' +
+        '<span class="digivice__tag">[in:' + escapeHtml(formatTokens(inputTokens)) + ']</span>' +
+        '<span class="digivice__tag">[out:' + escapeHtml(formatTokens(outputTokens)) + ']</span>';
+};
+
+/**
+ * Detect context compaction: a drop of >30% between consecutive turns.
+ * @param {object} event - the incoming orchestrator stop event
+ */
+ArenaClient.prototype._checkCompaction = function (event) {
+    var newUsed = event.context_used || 0;
+    var prevUsed = this._prevContextUsed || 0;
+
+    // Update previous for next comparison
+    this._prevContextUsed = newUsed;
+
+    // Detect compaction: previous was > 0 and dropped by more than 30%
+    if (prevUsed > 0 && newUsed > 0 && newUsed < prevUsed * 0.7) {
+        this._triggerCompactionAnimation();
+    }
+};
+
+/**
+ * 4-phase compaction animation: flicker -> drain -> flash -> settle.
+ */
+ArenaClient.prototype._triggerCompactionAnimation = function () {
+    var self = this;
+    var digivice = document.getElementById('digivice');
+    var screen = digivice ? digivice.querySelector('.digivice__screen') : null;
+    if (!digivice) return;
+
+    this._compacting = true;
+
+    // Phase 1: Flicker (300ms)
+    digivice.classList.add('digivice--compacting');
+
+    // Add compaction overlay text
+    var overlay = document.createElement('div');
+    overlay.className = 'digivice__compaction-text';
+    overlay.textContent = '> REFORMATTING DATA...';
+    if (screen) screen.appendChild(overlay);
+
+    setTimeout(function () {
+        // Phase 2: Drain (600ms)
+        digivice.classList.remove('digivice--compacting');
+        digivice.classList.add('digivice--draining');
+
+        setTimeout(function () {
+            // Phase 3: Flash (300ms)
+            digivice.classList.remove('digivice--draining');
+            digivice.classList.add('digivice--flash');
+
+            setTimeout(function () {
+                // Phase 4: Settle - remove animation classes, show confirmation
+                digivice.classList.remove('digivice--flash');
+                overlay.textContent = '> DATA REFORMATTED';
+                self._compacting = false;
+                // Re-render to apply correct state classes
+                self.renderDigivice();
+
+                // Remove confirmation text after 3 seconds
+                setTimeout(function () {
+                    if (overlay && overlay.parentNode) {
+                        overlay.parentNode.removeChild(overlay);
+                    }
+                }, 3000);
+            }, 300);
+        }, 600);
+    }, 300);
 };
 
 /* --------------------------------------------------------------------------

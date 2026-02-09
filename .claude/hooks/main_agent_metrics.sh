@@ -57,6 +57,7 @@ process_transcript() {
   python3 << 'PYEOF'
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 
@@ -112,6 +113,102 @@ try:
         except json.JSONDecodeError:
             continue
 
+    # Context window awareness parsing (fail-safe)
+    context_used = 0
+    context_max = 0
+    context_remaining = 0
+    model_id = ""
+    try:
+        # Model context window defaults by model ID prefix
+        MODEL_CONTEXT_DEFAULTS = {
+            "claude-opus-4": 200000,
+            "claude-sonnet-4": 200000,
+            "claude-3-7-sonnet": 200000,
+            "claude-3-5-sonnet": 200000,
+            "claude-3-5-haiku": 200000,
+            "claude-3-opus": 200000,
+            "claude-3-sonnet": 200000,
+            "claude-3-haiku": 200000,
+        }
+
+        context_max_cache_file = f"/tmp/igris_context_max_{session_id}"
+        last_budget_used = None
+        last_budget_max = None
+        last_budget_remaining = None
+        last_model_id = ""
+
+        for line in new_data.splitlines():
+            line_s = line.strip()
+            if not line_s:
+                continue
+
+            # Parse budget:token_budget tag
+            budget_match = re.search(r"<budget:token_budget>(\d+)</budget:token_budget>", line_s)
+            if budget_match:
+                context_max = int(budget_match.group(1))
+
+            # Parse "Token usage: X/Y; Z remaining" — keep last occurrence
+            usage_match = re.search(r"Token usage:\s*(\d+)/(\d+);\s*(\d+)\s*remaining", line_s)
+            if usage_match:
+                last_budget_used = int(usage_match.group(1))
+                last_budget_max = int(usage_match.group(2))
+                last_budget_remaining = int(usage_match.group(3))
+
+            # Extract model ID from transcript JSON entries
+            try:
+                entry_ctx = json.loads(line_s)
+                m = entry_ctx.get("message", {}).get("model", "")
+                if m:
+                    last_model_id = m
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+        # Apply last-seen usage values
+        if last_budget_used is not None:
+            context_used = last_budget_used
+        if last_budget_max is not None and last_budget_max > 0:
+            context_max = last_budget_max
+        if last_budget_remaining is not None:
+            context_remaining = last_budget_remaining
+
+        if last_model_id:
+            model_id = last_model_id
+
+        # If context_max still unknown, try cached value or model lookup
+        if context_max == 0:
+            try:
+                with open(context_max_cache_file, "r") as cf:
+                    context_max = int(cf.read().strip())
+            except (FileNotFoundError, ValueError):
+                context_max = 0
+
+        if context_max == 0 and model_id:
+            for prefix, default_max in MODEL_CONTEXT_DEFAULTS.items():
+                if model_id.startswith(prefix):
+                    context_max = default_max
+                    break
+
+        if context_max == 0:
+            context_max = 200000
+
+        # Cache context_max for future invocations
+        try:
+            with open(context_max_cache_file, "w") as cf:
+                cf.write(str(context_max))
+        except Exception:
+            pass
+
+        # Derive remaining if not set from parsing
+        if context_remaining == 0 and context_used > 0:
+            context_remaining = max(0, context_max - context_used)
+
+    except Exception:
+        # Context parsing is best-effort; never crash the hook
+        context_used = 0
+        context_max = 200000
+        context_remaining = 200000
+        model_id = ""
+
     # Only emit event if tokens > 0
     total_all = sum(totals.values())
     if total_all == 0:
@@ -133,6 +230,10 @@ try:
         "output_tokens": totals["output_tokens"],
         "cache_read": totals["cache_read_input_tokens"],
         "cache_create": totals["cache_creation_input_tokens"],
+        "context_used": context_used,
+        "context_max": context_max,
+        "context_remaining": context_remaining,
+        "model_id": model_id,
     }
 
     # Append to events.jsonl
