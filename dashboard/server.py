@@ -497,6 +497,64 @@ async def sync_events_from_file(db: aiosqlite.Connection):
         logger.info("events.jsonl up to date (total lines: %d)", new_count)
 
 
+async def backfill_context_window(db: aiosqlite.Connection):
+    """One-time backfill of context_window table from events.jsonl.
+
+    Needed when events were synced before the context_window feature existed.
+    Scans the file in reverse for the latest orchestrator stop with context data.
+    """
+    async with db.execute("SELECT COUNT(*) FROM context_window") as cursor:
+        row = await cursor.fetchone()
+    if row and row[0] > 0:
+        return  # Already populated
+
+    if not os.path.exists(EVENTS_FILE):
+        return
+
+    try:
+        with open(EVENTS_FILE, "r") as f:
+            lines = f.readlines()
+    except OSError:
+        return
+
+    # Scan in reverse for the latest orchestrator stop with context data
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (
+            event.get("agent") == "orchestrator"
+            and event.get("event") == "stop"
+            and int(event.get("context_max", 0)) > 0
+        ):
+            now = datetime.now(timezone.utc).isoformat()
+            await db.execute(
+                """INSERT OR REPLACE INTO context_window
+                   (id, context_used, context_max, context_remaining, model_id, updated_at)
+                   VALUES (1, ?, ?, ?, ?, ?)""",
+                (
+                    int(event.get("context_used", 0)),
+                    int(event.get("context_max", 200000)),
+                    int(event.get("context_remaining", 0)),
+                    event.get("model_id", ""),
+                    now,
+                ),
+            )
+            await db.commit()
+            logger.info(
+                "Backfilled context_window: used=%d, max=%d",
+                int(event.get("context_used", 0)),
+                int(event.get("context_max", 200000)),
+            )
+            return
+
+    logger.info("No context data found in events.jsonl for backfill")
+
+
 async def watch_events_file(app: FastAPI):
     """Background task that watches events.jsonl for new lines.
 
@@ -988,6 +1046,9 @@ async def lifespan(app: FastAPI):
 
     # Sync from events.jsonl
     await sync_events_from_file(app.state.db)
+
+    # Backfill context_window from events file if table is empty
+    await backfill_context_window(app.state.db)
 
     # Start file watcher background task
     watcher_task = asyncio.create_task(watch_events_file(app))
