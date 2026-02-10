@@ -77,6 +77,43 @@ These tasks are handled by skills instead of subagents. The orchestrator invokes
 
 ---
 
+## Team-Based Operations (Parallel Execution)
+
+Agent Teams provides a parallel execution layer using Claude Code's experimental Agent Teams feature. Teams spawn independent Claude Code instances (teammates) instead of Task-tool subagents.
+
+### When to Use Teams vs Subagents
+
+| Scenario | Use Subagent | Use Team |
+|----------|-------------|----------|
+| Single brief, sequential workflow | `/hunt BR-XXX` | -- |
+| 2+ briefs in parallel | -- | `/team hunt BR-XXX BR-YYY` |
+| Single-angle code review | warden | -- |
+| Multi-angle code review | -- | `/team review` |
+| Simple codebase search | seeker | -- |
+| Competitive investigation | -- | `/team investigate BR-XXX` |
+| Single module refactor | forger | -- |
+| Multi-module parallel refactor | -- | `/team refactor mod-a mod-b` |
+
+### Team Delegation Rules
+
+| Task Type | Skill | Trigger Phrases |
+|-----------|-------|-----------------|
+| Parallel brief implementation | `/team hunt` | "implement these in parallel", "team hunt" |
+| Multi-angle review | `/team review` | "review from multiple angles", "team review" |
+| Competitive investigation | `/team investigate` | "investigate in parallel", "team investigate" |
+| Parallel refactoring | `/team refactor` | "refactor these modules in parallel", "team refactor" |
+| Team management | `/team status/shutdown` | "team status", "shutdown team" |
+
+### Teams Do NOT Replace Subagents
+
+- Subagents remain the **primary** execution model for all single-brief workflows
+- Teams are used **only** when true parallelism provides clear value
+- Single-brief workflows **always** use the standard `/hunt` pipeline
+- Teams have **higher token cost** -- use judiciously
+- The `/team` skill requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: 1`
+
+---
+
 ## Orchestrator-Only Tasks (Exceptions)
 
 The orchestrator MAY handle these directly:
@@ -195,4 +232,4 @@ When implementing a brief:
 
 ---
 
-**Rule Purpose:** Ensure proper delegation to 7 specialized agents and 14 skills for consistent, high-quality work.
+**Rule Purpose:** Ensure proper delegation to 7 specialized agents and 16 skills for consistent, high-quality work.

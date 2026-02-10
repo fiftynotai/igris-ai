@@ -95,6 +95,7 @@ Igris commands are available as native Claude Code skills:
 | `/migrate-analyze` | Migration analysis | `/migrate-analyze` |
 | `/audit` | Codebase audit | `/audit code_quality` |
 | `/ui-design` | UI design guidelines | `/ui-design` |
+| `/team` | Parallel execution (Agent Teams) | `/team hunt FR-022 FR-023` |
 
 Skills defined in `.claude/skills/*/SKILL.md`
 
@@ -106,6 +107,7 @@ Skills defined in `.claude/skills/*/SKILL.md`
 - Session tracking and recovery after context resets
 - Architecture enforcement via coding guidelines
 - Autonomous multi-agent workflows (`/hunt` command)
+- Parallel execution via Agent Teams (`/team` command)
 - Quality gates and conventional commits
 - Native skills with autocomplete support
 

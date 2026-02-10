@@ -65,7 +65,7 @@ When operating:
 
 ## Multi-Agent Architecture (v3.4)
 
-IGRIS v3.4 uses native Claude Code subagents for autonomous workflows. The main agent (you) is the orchestrator that delegates work to 7 specialized subagents.
+IGRIS v3.4 uses native Claude Code subagents for autonomous workflows, with an optional Agent Teams parallel execution layer. The main agent (you) is the orchestrator that delegates work to 7 specialized subagents, and can spawn independent teammate sessions for parallel workloads via `/team`.
 
 ### Core Principle: Separation of Concerns
 
@@ -188,6 +188,78 @@ Agents are defined in `.claude/agents/`:
 | 5 | sage | Flutter architecture | Kalvad MVVM + Actions patterns |
 
 For documentation, standards, migration, audit, ideation, and release tasks, use the corresponding skills (`/document`, `/standardize`, `/migrate-analyze`, `/audit`, `/ideate`, `/release`).
+
+## Agent Teams Protocol (Parallel Execution Layer)
+
+Agent Teams is an optional parallel execution layer that sits ABOVE the subagent system. While subagents run within a single session sequentially, Agent Teams spawns multiple independent Claude Code instances that work in parallel.
+
+### Architecture Layers
+
+```
+Layer 3: Agent Teams (/team command)
+  -- Multiple independent Claude Code sessions (teammates)
+  -- Shared task list, inter-agent messaging
+  -- Coordinated by Igris Lead (orchestrator)
+
+Layer 2: Subagents (/hunt command)
+  -- architect, forger, sentinel, warden, mender, seeker, sage
+  -- Run within a single session via Task tool
+  -- Stateless, report back to orchestrator
+
+Layer 1: Igris OS (core)
+  -- Brief management, session tracking
+  -- Quality gates, commit standards
+  -- Persona system
+```
+
+### When to Use Teams vs Subagents
+
+| Scenario | Use Subagent (/hunt) | Use Team (/team) |
+|----------|---------------------|-------------------|
+| Single brief implementation | Yes | -- |
+| 2+ briefs in parallel | -- | Yes |
+| Single-angle code review | warden | -- |
+| Multi-angle code review | -- | /team review |
+| Simple codebase search | seeker | -- |
+| Competitive investigation | -- | /team investigate |
+| Single module refactor | forger | -- |
+| Multi-module parallel refactor | -- | /team refactor |
+
+### Team Session Tracking
+
+When a team is active, CURRENT_SESSION.md includes:
+- **Mode:** TEAM HUNT | TEAM REVIEW | TEAM INVESTIGATE | TEAM REFACTOR
+- **Active Teammates:** List of teammate names and assignments
+- **Team Started:** Timestamp
+
+Team state is ephemeral -- not recoverable after context reset. Each teammate's committed work persists independently.
+
+### Requirements
+
+- `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: 1` must be set in `~/.claude/settings.json`
+- tmux or iTerm2 optional (only needed for split-pane display mode; in-process mode works without them)
+- One team per session (clean up before starting another)
+
+### Limitations
+
+- No session resume -- teammates lost if lead session ends
+- No nested teams -- teammates cannot spawn their own teams
+- File conflicts possible -- managed through ownership boundaries
+- Higher token cost -- each teammate is a full Claude Code session
+- Experimental feature -- may have breaking changes
+
+### Commands Reference
+
+| Command | Purpose |
+|---------|---------|
+| `/team hunt <briefs...>` | Parallel brief implementation |
+| `/team review [PR]` | Multi-angle code review |
+| `/team investigate <brief>` | Competitive hypothesis investigation |
+| `/team refactor <modules...>` | Parallel module refactoring |
+| `/team status` | Show team progress |
+| `/team message <name> <msg>` | Message a teammate |
+| `/team broadcast <msg>` | Message all teammates |
+| `/team shutdown` | Clean shutdown and results |
 
 ---
 
@@ -352,7 +424,7 @@ Orchestrator:
 - ❌ No quality gates
 - ❌ Monolithic complexity
 
-**We built 7 specialized agents + 14 skills. USE THEM.**
+**We built 7 specialized agents + 16 skills. USE THEM.**
 
 ---
 
