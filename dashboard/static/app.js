@@ -48,22 +48,22 @@ var AGENT_CRESTS = {
 /** Pipeline order (for rendering). */
 var AGENT_ORDER = ['orchestrator', 'architect', 'forger', 'sentinel', 'warden', 'mender', 'seeker', 'sage'];
 
-/** Agent tier mapping for confidant card sizing. */
+/** Agent tier mapping for roster row sizing. */
 var AGENT_TIERS = {
     orchestrator: 1, architect: 1, forger: 1, sentinel: 1, warden: 1,
     mender: 3, seeker: 4, sage: 5
 };
 
-/** Agent color schemes for confidant cards. */
+/** Agent color hex values for roster rows. */
 var AGENT_COLORS = {
-    orchestrator: { color: '#FF1744', dim: 'rgba(255,23,68,0.08)', mid: 'rgba(255,23,68,0.4)' },
-    architect:    { color: '#448AFF', dim: 'rgba(68,138,255,0.08)', mid: 'rgba(68,138,255,0.4)' },
-    forger:       { color: '#FF6D00', dim: 'rgba(255,109,0,0.08)', mid: 'rgba(255,109,0,0.4)' },
-    sentinel:     { color: '#00E676', dim: 'rgba(0,230,118,0.08)', mid: 'rgba(0,230,118,0.4)' },
-    warden:       { color: '#7C4DFF', dim: 'rgba(124,77,255,0.08)', mid: 'rgba(124,77,255,0.4)' },
-    mender:       { color: '#00BFA5', dim: 'rgba(0,191,165,0.08)', mid: 'rgba(0,191,165,0.4)' },
-    seeker:       { color: '#FFD600', dim: 'rgba(255,214,0,0.08)', mid: 'rgba(255,214,0,0.4)' },
-    sage:         { color: '#E040FB', dim: 'rgba(224,64,251,0.08)', mid: 'rgba(224,64,251,0.4)' }
+    orchestrator: '#FF1744',
+    architect:    '#448AFF',
+    forger:       '#FF6D00',
+    sentinel:     '#00E676',
+    warden:       '#7C4DFF',
+    mender:       '#00BFA5',
+    seeker:       '#FFD600',
+    sage:         '#E040FB'
 };
 
 /** Maximum battle log entries to keep in DOM. */
@@ -583,10 +583,10 @@ ArenaClient.prototype.onAgentStop = function (event) {
     var timerEl = document.getElementById('timer-' + agent);
     if (timerEl) timerEl.textContent = '';
 
-    var cardTimerEl = document.getElementById('card-timer-' + agent);
-    if (cardTimerEl) cardTimerEl.textContent = '';
+    var rosterTimerEl = document.getElementById('roster-timer-' + agent);
+    if (rosterTimerEl) rosterTimerEl.textContent = '';
 
-    this._updateCardActiveState(agent, false);
+    this._updateRowActiveState(agent, false);
 
     var pod = document.getElementById('pod-' + agent);
     if (pod) {
@@ -616,8 +616,8 @@ ArenaClient.prototype._updateActiveTimer = function (agent, startTime) {
     if (timerEl) {
         timerEl.textContent = formatDuration(elapsed);
     }
-    var cardTimerEl = document.getElementById('card-timer-' + agent);
-    if (cardTimerEl) cardTimerEl.textContent = formatDuration(elapsed);
+    var rosterTimerEl = document.getElementById('roster-timer-' + agent);
+    if (rosterTimerEl) rosterTimerEl.textContent = formatDuration(elapsed);
 };
 
 /* --------------------------------------------------------------------------
@@ -1188,185 +1188,360 @@ ArenaClient.prototype.renderBattleLog = function () {
    -------------------------------------------------------------------------- */
 
 /**
- * Render Persona 5-inspired Confidant Cards for all agents in the footer.
+ * Render Digimon World-inspired roster rows for all agents in the footer.
  */
 ArenaClient.prototype.renderPartyStats = function () {
-    var container = document.getElementById('party-stats');
-    if (!container) return;
+    var el = document.getElementById('party-stats');
+    if (!el) return;
 
     var agents = get(this.state, ['agents'], {});
-    var html = '';
+    var activeAgent = null;
+    var timerKeys = Object.keys(this.activeTimers);
+    if (timerKeys.length > 0) activeAgent = timerKeys[timerKeys.length - 1];
 
+    // Group agents by tier
+    var tier1Names = AGENT_ORDER.filter(function (n) { return AGENT_TIERS[n] === 1; });
+    var supportNames = AGENT_ORDER.filter(function (n) { return AGENT_TIERS[n] > 1; });
+
+    // Calculate summary
+    var totalRuns = 0, totalTokens = 0, activeCount = 0, totalXp = 0, agentCount = 0;
     for (var i = 0; i < AGENT_ORDER.length; i++) {
         var name = AGENT_ORDER[i];
-        var data = agents[name];
-        if (!data) continue;
-
-        var tier = AGENT_TIERS[name] || 1;
-        var isCompact = tier >= 3;
-        var isActive = !!this.activeTimers[name];
-        var colors = AGENT_COLORS[name] || { color: '#FF1744', dim: 'rgba(255,23,68,0.08)', mid: 'rgba(255,23,68,0.4)' };
-
-        var displayName = escapeHtml(AGENT_NAMES[name] || name.toUpperCase());
-        var monogram = escapeHtml(AGENT_MONOGRAMS[name] || name.substring(0, 2).toUpperCase());
-        var crest = escapeHtml(AGENT_CRESTS[name] || '\u2B21');
-
-        var level = data.level || {};
-        var stats = data.rpg_stats || {};
-        var evolution = escapeHtml(level.evolution || 'In-Training');
-        var progress = (level.progress || 0) * 100;
-        var invocations = data.invocations || 0;
-
-        var totalTokens = (data.total_input_tokens || 0) + (data.total_output_tokens || 0) +
-                          (data.total_cache_read_tokens || 0) + (data.total_cache_create_tokens || 0);
-        var runsLabel = (name === 'orchestrator') ? 'turns' : 'runs';
-
-        var starCount = evolutionStars(tier);
-        var starsStr = renderStars(starCount);
-
-        var cardClasses = 'confidant-card';
-        if (isCompact) cardClasses += ' confidant-card--compact';
-        if (isActive) cardClasses += ' confidant-card--active';
-
-        var styleAttr = '--agent-color:' + colors.color + ';--agent-color-dim:' + colors.dim + ';--agent-color-mid:' + colors.mid;
-
-        // Active badge and timer
-        var activeBadgeHtml = '';
-        var timerHtml = '';
-        if (isActive) {
-            activeBadgeHtml = '<span class="confidant-card__active-badge">ACTIVE</span>';
-            timerHtml = '<span class="confidant-card__timer" id="card-timer-' + escapeHtml(name) + '"></span>';
-        }
-
-        // Front face
-        var frontHtml =
-            '<div class="confidant-card__face confidant-card__front">' +
-                activeBadgeHtml +
-                '<div class="confidant-card__slash-zone">' +
-                    '<span class="confidant-card__crest">' + crest + '</span>' +
-                    '<div class="confidant-card__hex">' +
-                        '<span class="confidant-card__monogram">' + monogram + '</span>' +
-                    '</div>' +
-                '</div>' +
-                '<div class="confidant-card__info">' +
-                    '<div class="confidant-card__name">' + displayName + '</div>' +
-                    '<div class="confidant-card__stars">' + starsStr + '</div>' +
-                    '<div class="confidant-card__tier-row">' +
-                        '<span class="confidant-card__tier-badge">' + evolution + '</span>' +
-                        '<span class="confidant-card__xp-pct">' + escapeHtml(Math.round(progress)) + '%</span>' +
-                    '</div>' +
-                    '<div class="xp-bar"><div class="xp-fill" style="width:' + progress + '%"></div></div>' +
-                    '<div class="confidant-card__summary">' +
-                        '<span>' + escapeHtml(formatTokens(totalTokens)) + '</span>' +
-                        '<span>' + escapeHtml(invocations) + ' ' + escapeHtml(runsLabel) + '</span>' +
-                    '</div>' +
-                '</div>' +
-                timerHtml +
-            '</div>';
-
-        // Back face
-        var backHtml =
-            '<div class="confidant-card__face confidant-card__back">' +
-                '<div class="confidant-card__back-header">' +
-                    '<div class="confidant-card__back-name">' + displayName + '</div>' +
-                    '<div class="confidant-card__back-subtitle">Tier ' + escapeHtml(tier) + ' \u2022 ' + evolution + '</div>' +
-                '</div>' +
-                '<div class="confidant-card__stat-bars">' +
-                    this._renderStatBar('STR', stats.STR || 0, 'str') +
-                    this._renderStatBar('INT', stats.INT || 0, 'int') +
-                    this._renderStatBar('SPD', stats.SPD || 0, 'spd') +
-                    this._renderStatBar('VIT', stats.VIT || 0, 'vit') +
-                '</div>' +
-                '<div class="confidant-card__details">' +
-                    '<div class="confidant-card__detail-row">' +
-                        '<span>Tokens</span>' +
-                        '<span class="confidant-card__detail-value">' + escapeHtml(formatTokens(totalTokens)) + '</span>' +
-                    '</div>' +
-                    '<div class="confidant-card__detail-row">' +
-                        '<span>Avg Time</span>' +
-                        '<span class="confidant-card__detail-value">' + escapeHtml(formatDuration(data.avg_duration_seconds || 0)) + '</span>' +
-                    '</div>' +
-                    '<div class="confidant-card__detail-row">' +
-                        '<span>Last Used</span>' +
-                        '<span class="confidant-card__detail-value">' + escapeHtml(timeAgo(data.last_used)) + '</span>' +
-                    '</div>' +
-                '</div>' +
-            '</div>';
-
-        html += '<div class="' + cardClasses + '" data-agent="' + escapeHtml(name) + '" ' +
-            'style="' + styleAttr + '" ' +
-            'tabindex="0" role="button" ' +
-            'aria-label="' + displayName + ' agent card. Click to flip for details.">' +
-            '<div class="confidant-card__inner">' +
-                frontHtml +
-                backHtml +
-            '</div>' +
-        '</div>';
+        var d = agents[name] || {};
+        totalRuns += d.invocations || 0;
+        totalTokens += (d.total_input_tokens || 0) + (d.total_output_tokens || 0) +
+                       (d.total_cache_read_tokens || 0) + (d.total_cache_create_tokens || 0);
+        if (this.activeTimers[name]) activeCount++;
+        var level = d.level || {};
+        totalXp += Math.round((level.progress || 0) * 100);
+        agentCount++;
     }
+    var avgXp = agentCount ? Math.round(totalXp / agentCount) : 0;
 
-    container.innerHTML = html;
-    this._bindCardFlip();
+    var html = '';
+
+    // Tier 1 group
+    html += '<div class="roster-tier-group" data-tier="1">';
+    html += '<div class="roster-tier-header" tabindex="0" role="button" aria-expanded="true">';
+    html += '<span>TIER 1: CORE AGENTS</span>';
+    html += '<span class="roster-tier-header__toggle">&#9660;</span>';
+    html += '</div>';
+    html += '<div class="roster-tier-body">';
+    for (var j = 0; j < tier1Names.length; j++) {
+        var t1name = tier1Names[j];
+        var t1data = agents[t1name] || {};
+        var t1active = !!this.activeTimers[t1name];
+        html += this._renderFullRow(t1name, t1data, t1active);
+    }
+    html += '</div></div>';
+
+    // Support group
+    html += '<div class="roster-tier-group" data-tier="support">';
+    html += '<div class="roster-tier-header" tabindex="0" role="button" aria-expanded="true">';
+    html += '<span>TIER 3\u20135: SUPPORT</span>';
+    html += '<span class="roster-tier-header__toggle">&#9660;</span>';
+    html += '</div>';
+    html += '<div class="roster-tier-body">';
+    for (var k = 0; k < supportNames.length; k++) {
+        var sname = supportNames[k];
+        var sdata = agents[sname] || {};
+        var sactive = !!this.activeTimers[sname];
+        html += this._renderCompactRow(sname, sdata, sactive);
+    }
+    html += '</div></div>';
+
+    // Party summary footer
+    html += this._renderPartySummary(totalRuns, totalTokens, activeCount, agentCount, avgXp);
+
+    el.innerHTML = html;
+    this._bindRowExpand();
+    this._bindTierCollapse();
 };
 
 /**
- * Generate HTML for a single stat bar on the confidant card back.
+ * Render a full roster row for a Tier 1 agent.
+ * @param {string} name - agent key
+ * @param {object} data - agent state data
+ * @param {boolean} isActive
+ * @returns {string}
+ */
+ArenaClient.prototype._renderFullRow = function (name, data, isActive) {
+    var displayName = AGENT_NAMES[name] || name.toUpperCase();
+    var monogram = AGENT_MONOGRAMS[name] || name.slice(0, 2).toUpperCase();
+    var crest = AGENT_CRESTS[name] || '';
+    var color = AGENT_COLORS[name] || '#888';
+    var tier = AGENT_TIERS[name] || 1;
+    var invocations = data.invocations || 0;
+    var totalTokens = (data.total_input_tokens || 0) + (data.total_output_tokens || 0) +
+                      (data.total_cache_read_tokens || 0) + (data.total_cache_create_tokens || 0);
+    var lastUsed = data.last_used ? timeAgo(data.last_used) : 'never';
+    var level = data.level || {};
+    var xp = Math.round((level.progress || 0) * 100);
+    var evolution = level.evolution || 'In-Training';
+    var starCount = evolutionStars(tier);
+    var stars = renderStars(starCount);
+    var statusClass = isActive ? 'active' : 'idle';
+    var activeClass = isActive ? ' roster-row--active' : '';
+
+    // Compute stats from rpg_stats or derive
+    var stats = data.rpg_stats || {};
+    var str = stats.STR || stats.str || Math.min(100, Math.round((invocations / 200) * 100));
+    var int = stats.INT || stats.int || Math.min(100, Math.round((totalTokens / 100000) * 100));
+    var spd = stats.SPD || stats.spd || Math.min(100, Math.round(((data.avg_duration_seconds ? (60 / data.avg_duration_seconds) : 0.5)) * 100));
+    var vit = stats.VIT || stats.vit || 80;
+
+    // XP color
+    var xpColor = xp <= 50 ? 'var(--tech-crimson)' : xp <= 90 ? 'var(--hp-warning)' : 'var(--success)';
+
+    var html = '';
+    html += '<div class="roster-row' + activeClass + '" data-agent="' + escapeHtml(name) + '"';
+    html += ' style="--agent-color:' + color + ';--agent-color-dim:' + color + '18;--agent-color-mid:' + color + '66"';
+    html += ' tabindex="0" role="button" aria-expanded="false" aria-label="' + escapeHtml(displayName) + ' agent row">';
+
+    // Portrait
+    html += '<div class="roster-row__portrait">';
+    html += '<div class="roster-row__hex">';
+    html += '<span class="roster-row__crest">' + crest + '</span>';
+    html += '<span class="roster-row__monogram">' + escapeHtml(monogram) + '</span>';
+    html += '</div></div>';
+
+    // Body
+    html += '<div class="roster-row__body">';
+    // Header
+    html += '<div class="roster-row__header">';
+    html += '<span class="roster-row__name">' + escapeHtml(displayName) + '</span>';
+    html += '<span class="roster-row__tier-badge">T' + tier + '</span>';
+    html += '<span class="roster-row__evolution">' + escapeHtml(evolution) + '</span>';
+    html += '<span class="roster-row__stars">' + stars + '</span>';
+    html += '</div>';
+    // XP bar
+    html += '<div class="roster-row__xp-row">';
+    html += this._renderXpBar(xp, xpColor);
+    html += '<span class="roster-row__xp-pct">' + xp + '%</span>';
+    html += '</div>';
+    // Stat bars
+    html += '<div class="roster-row__stats">';
+    html += this._renderRosterStatBar('STR', str, 'str');
+    html += this._renderRosterStatBar('INT', int, 'int');
+    html += this._renderRosterStatBar('SPD', spd, 'spd');
+    html += this._renderRosterStatBar('VIT', vit, 'vit');
+    html += '</div>';
+    // Telemetry
+    html += '<div class="roster-row__telemetry">';
+    html += '<span>' + invocations + ' runs</span>';
+    html += '<span>' + formatTokens(totalTokens) + ' tkn</span>';
+    html += '<span>last: ' + escapeHtml(lastUsed) + '</span>';
+    html += '</div>';
+    html += '</div>';
+
+    // Meta (status + timer)
+    html += '<div class="roster-row__meta">';
+    html += '<span class="roster-row__status roster-row__status--' + statusClass + '"></span>';
+    html += '<span class="roster-row__timer" id="roster-timer-' + escapeHtml(name) + '"></span>';
+    html += '</div>';
+
+    // Expanded detail section
+    html += '<div class="roster-row__expanded">';
+    html += '<div class="roster-row__detail-grid">';
+    html += '<div class="roster-row__detail-item"><span class="roster-row__detail-label">Success Rate</span><span class="roster-row__detail-value">' + Math.round((data.success_rate || 0) * 100) + '%</span></div>';
+    html += '<div class="roster-row__detail-item"><span class="roster-row__detail-label">Avg Duration</span><span class="roster-row__detail-value">' + (data.avg_duration_seconds ? formatDuration(data.avg_duration_seconds) : '\u2014') + '</span></div>';
+    html += '<div class="roster-row__detail-item"><span class="roster-row__detail-label">Input Tokens</span><span class="roster-row__detail-value">' + formatTokens(data.total_input_tokens || 0) + '</span></div>';
+    html += '<div class="roster-row__detail-item"><span class="roster-row__detail-label">Output Tokens</span><span class="roster-row__detail-value">' + formatTokens(data.total_output_tokens || 0) + '</span></div>';
+    html += '<div class="roster-row__detail-item"><span class="roster-row__detail-label">Cache Read</span><span class="roster-row__detail-value">' + formatTokens(data.total_cache_read_tokens || 0) + '</span></div>';
+    html += '<div class="roster-row__detail-item"><span class="roster-row__detail-label">Cache Write</span><span class="roster-row__detail-value">' + formatTokens(data.total_cache_create_tokens || 0) + '</span></div>';
+    html += '</div></div>';
+
+    html += '</div>';
+    return html;
+};
+
+/**
+ * Render a compact roster row for a support agent (Tier 3-5).
+ * @param {string} name - agent key
+ * @param {object} data - agent state data
+ * @param {boolean} isActive
+ * @returns {string}
+ */
+ArenaClient.prototype._renderCompactRow = function (name, data, isActive) {
+    var displayName = AGENT_NAMES[name] || name.toUpperCase();
+    var monogram = AGENT_MONOGRAMS[name] || name.slice(0, 2).toUpperCase();
+    var crest = AGENT_CRESTS[name] || '';
+    var color = AGENT_COLORS[name] || '#888';
+    var tier = AGENT_TIERS[name] || 3;
+    var invocations = data.invocations || 0;
+    var totalTokens = (data.total_input_tokens || 0) + (data.total_output_tokens || 0) +
+                      (data.total_cache_read_tokens || 0) + (data.total_cache_create_tokens || 0);
+    var level = data.level || {};
+    var xp = Math.round((level.progress || 0) * 100);
+    var evolution = level.evolution || 'In-Training';
+    var statusClass = isActive ? 'active' : 'idle';
+    var activeClass = isActive ? ' roster-row--active' : '';
+
+    var html = '';
+    html += '<div class="roster-row roster-row--compact' + activeClass + '" data-agent="' + escapeHtml(name) + '"';
+    html += ' style="--agent-color:' + color + ';--agent-color-dim:' + color + '18;--agent-color-mid:' + color + '66"';
+    html += ' tabindex="0" role="button" aria-expanded="false" aria-label="' + escapeHtml(displayName) + ' agent row">';
+
+    // Portrait
+    html += '<div class="roster-row__portrait">';
+    html += '<div class="roster-row__hex">';
+    html += '<span class="roster-row__crest">' + crest + '</span>';
+    html += '<span class="roster-row__monogram">' + escapeHtml(monogram) + '</span>';
+    html += '</div></div>';
+
+    // Body (inline)
+    html += '<div class="roster-row__body">';
+    html += '<div class="roster-row__header">';
+    html += '<span class="roster-row__name">' + escapeHtml(displayName) + '</span>';
+    html += '<span class="roster-row__tier-badge">T' + tier + '</span>';
+    html += '<span class="roster-row__evolution">' + escapeHtml(evolution) + '</span>';
+    html += '<span class="roster-row__xp-inline">' + xp + '% XP</span>';
+    html += '</div>';
+    html += '<div class="roster-row__telemetry">';
+    html += '<span>' + invocations + ' runs</span>';
+    html += '<span>' + formatTokens(totalTokens) + ' tkn</span>';
+    html += '</div>';
+    html += '</div>';
+
+    // Meta
+    html += '<div class="roster-row__meta">';
+    html += '<span class="roster-row__status roster-row__status--' + statusClass + '"></span>';
+    html += '<span class="roster-row__timer" id="roster-timer-' + escapeHtml(name) + '"></span>';
+    html += '</div>';
+
+    // Expanded
+    html += '<div class="roster-row__expanded">';
+    html += '<div class="roster-row__detail-grid">';
+    html += '<div class="roster-row__detail-item"><span class="roster-row__detail-label">Success Rate</span><span class="roster-row__detail-value">' + Math.round((data.success_rate || 0) * 100) + '%</span></div>';
+    html += '<div class="roster-row__detail-item"><span class="roster-row__detail-label">Avg Duration</span><span class="roster-row__detail-value">' + (data.avg_duration_seconds ? formatDuration(data.avg_duration_seconds) : '\u2014') + '</span></div>';
+    html += '<div class="roster-row__detail-item"><span class="roster-row__detail-label">Total Tokens</span><span class="roster-row__detail-value">' + formatTokens(totalTokens) + '</span></div>';
+    html += '</div></div>';
+
+    html += '</div>';
+    return html;
+};
+
+/**
+ * Render a 10-segment XP bar with chevron shapes.
+ * @param {number} progress - 0-100
+ * @param {string} color - CSS color value
+ * @returns {string}
+ */
+ArenaClient.prototype._renderXpBar = function (progress, color) {
+    var totalSegments = 10;
+    var filledCount = Math.round((progress / 100) * totalSegments);
+    var html = '<div class="roster-row__xp-bar">';
+    for (var i = 0; i < totalSegments; i++) {
+        var filled = i < filledCount ? ' roster-row__xp-segment--filled' : '';
+        html += '<div class="roster-row__xp-segment' + filled + '" style="--xp-color:' + color + '"></div>';
+    }
+    html += '</div>';
+    return html;
+};
+
+/**
+ * Generate HTML for a single inline stat bar on a roster row.
  * @param {string} label - stat label (STR/INT/SPD/VIT)
  * @param {number} value - 0-100
  * @param {string} cssKey - str|int|spd|vit
  * @returns {string}
  */
-ArenaClient.prototype._renderStatBar = function (label, value, cssKey) {
-    return '<div class="confidant-card__stat-row">' +
-        '<span class="confidant-card__stat-label">' + escapeHtml(label) + '</span>' +
-        '<div class="confidant-card__stat-track">' +
-            '<div class="confidant-card__stat-fill confidant-card__stat-fill--' + cssKey + '" style="width:' + Math.min(100, Math.max(0, value)) + '%"></div>' +
-        '</div>' +
-        '<span class="confidant-card__stat-value">' + escapeHtml(value) + '</span>' +
-    '</div>';
+ArenaClient.prototype._renderRosterStatBar = function (label, value, cssKey) {
+    var pctVal = Math.min(100, Math.max(0, value));
+    return '<div class="roster-row__stat">' +
+        '<span class="roster-row__stat-label">' + escapeHtml(label) + '</span>' +
+        '<div class="roster-row__stat-track">' +
+        '<div class="roster-row__stat-fill roster-row__stat-fill--' + cssKey + '" style="width:' + pctVal + '%"></div>' +
+        '</div></div>';
 };
 
 /**
- * Bind click and keyboard event handlers for confidant card flip.
- * Uses event delegation on the container. Only binds once.
+ * Render the party summary footer row.
+ * @param {number} totalRuns
+ * @param {number} totalTokens
+ * @param {number} activeCount
+ * @param {number} agentCount
+ * @param {number} avgXp
+ * @returns {string}
  */
-ArenaClient.prototype._bindCardFlip = function () {
-    if (this._cardFlipBound) return;
-    this._cardFlipBound = true;
+ArenaClient.prototype._renderPartySummary = function (totalRuns, totalTokens, activeCount, agentCount, avgXp) {
+    return '<div class="roster-summary">' +
+        '<div class="roster-summary__item"><span class="roster-summary__label">Runs</span><span class="roster-summary__value">' + totalRuns + '</span></div>' +
+        '<div class="roster-summary__item"><span class="roster-summary__label">Tokens</span><span class="roster-summary__value">' + formatTokens(totalTokens) + '</span></div>' +
+        '<div class="roster-summary__item"><span class="roster-summary__label">Active</span><span class="roster-summary__value">' + activeCount + '/' + agentCount + '</span></div>' +
+        '<div class="roster-summary__item"><span class="roster-summary__label">Avg XP</span><span class="roster-summary__value">' + avgXp + '%</span></div>' +
+        '</div>';
+};
+
+/**
+ * Bind click and keyboard handlers for expanding roster rows.
+ * Uses event delegation on the container.
+ */
+ArenaClient.prototype._bindRowExpand = function () {
     var container = document.getElementById('party-stats');
-    if (!container) return;
+    if (!container || this._rowExpandBound) return;
+    this._rowExpandBound = true;
 
     container.addEventListener('click', function (e) {
-        var card = e.target.closest('.confidant-card');
-        if (!card || card.classList.contains('confidant-card--active')) return;
-        card.classList.toggle('confidant-card--flipped');
+        var row = e.target.closest('.roster-row');
+        if (!row) return;
+        if (e.target.closest('.roster-tier-header')) return;
+        var isExpanded = row.classList.toggle('roster-row--expanded');
+        row.setAttribute('aria-expanded', isExpanded);
     });
 
     container.addEventListener('keydown', function (e) {
+        var row = e.target.closest('.roster-row');
+        if (!row) return;
         if (e.key === 'Enter' || e.key === ' ') {
-            var card = e.target.closest('.confidant-card');
-            if (!card || card.classList.contains('confidant-card--active')) return;
             e.preventDefault();
-            card.classList.toggle('confidant-card--flipped');
-        }
-        if (e.key === 'Escape') {
-            var card = e.target.closest('.confidant-card');
-            if (card) card.classList.remove('confidant-card--flipped');
+            var isExpanded = row.classList.toggle('roster-row--expanded');
+            row.setAttribute('aria-expanded', isExpanded);
+        } else if (e.key === 'Escape') {
+            row.classList.remove('roster-row--expanded');
+            row.setAttribute('aria-expanded', 'false');
         }
     });
 };
 
 /**
- * Update active state on a confidant card without full re-render.
+ * Bind click and keyboard handlers for collapsing tier groups.
+ */
+ArenaClient.prototype._bindTierCollapse = function () {
+    var container = document.getElementById('party-stats');
+    if (!container) return;
+    container.querySelectorAll('.roster-tier-header').forEach(function (header) {
+        header.addEventListener('click', function () {
+            var group = header.closest('.roster-tier-group');
+            if (!group) return;
+            var isCollapsed = group.classList.toggle('roster-tier-group--collapsed');
+            header.setAttribute('aria-expanded', !isCollapsed);
+        });
+        header.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                header.click();
+            }
+        });
+    });
+};
+
+/**
+ * Update active state on a roster row without full re-render.
  * @param {string} name - agent key
  * @param {boolean} isActive
  */
-ArenaClient.prototype._updateCardActiveState = function (name, isActive) {
-    var card = document.querySelector('.confidant-card[data-agent="' + name + '"]');
-    if (!card) return;
+ArenaClient.prototype._updateRowActiveState = function (name, isActive) {
+    var row = document.querySelector('.roster-row[data-agent="' + name + '"]');
+    if (!row) return;
     if (isActive) {
-        card.classList.add('confidant-card--active');
+        row.classList.add('roster-row--active');
+        var dot = row.querySelector('.roster-row__status');
+        if (dot) { dot.className = 'roster-row__status roster-row__status--active'; }
     } else {
-        card.classList.remove('confidant-card--active');
+        row.classList.remove('roster-row--active');
+        var dot = row.querySelector('.roster-row__status');
+        if (dot) { dot.className = 'roster-row__status roster-row__status--idle'; }
     }
 };
 

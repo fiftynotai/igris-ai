@@ -825,10 +825,8 @@ body {
 /* Party stats container */
 .party-stats {
   display: flex;
-  justify-content: center;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  gap: var(--space-md);
+  flex-direction: column;
+  gap: 0;
   max-height: 0;
   overflow: hidden;
   transition: max-height 0.4s ease, padding-top 0.3s ease;
@@ -836,370 +834,220 @@ body {
 }
 
 .party-stats--open {
-  max-height: 1000px;
+  max-height: 2000px;
   padding-top: var(--space-md);
 }
 
-/* --------------------------------------------------------------------------
-   CONFIDANT CARDS (Persona 5-inspired RPG Party Stats)
-   -------------------------------------------------------------------------- */
+/* ── PARTY ROSTER (FR-020) ── */
 
-/* Card perspective wrapper */
-.confidant-card {
-  perspective: 1000px;
-  cursor: pointer;
-  outline: none;
-  width: 140px;
-  height: 220px;
-  position: relative;
-  transition: transform 0.3s ease;
+/* Tier Group */
+.roster-tier-group { margin-bottom: 0; }
+.roster-tier-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 12px; cursor: pointer; user-select: none;
+  font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--text-muted); font-family: var(--font-mono);
+  border-bottom: 1px dashed var(--divider); background: var(--surface-1);
 }
-.confidant-card--compact {
-  width: 100px;
-  height: 150px;
-}
-.confidant-card:focus-visible {
-  outline: 2px solid var(--tech-crimson);
-  outline-offset: 4px;
-  border-radius: var(--radius-md);
-}
+.roster-tier-header:hover { color: var(--text-secondary); }
+.roster-tier-header__toggle { font-size: 8px; transition: transform 0.2s ease; }
+.roster-tier-group--collapsed .roster-tier-header__toggle { transform: rotate(-90deg); }
+.roster-tier-body { overflow: hidden; transition: max-height 0.4s ease; max-height: 1200px; }
+.roster-tier-group--collapsed .roster-tier-body { max-height: 0; }
 
-/* 3D flip container */
-.confidant-card__inner {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  transition: transform 0.6s ease;
-  transform-style: preserve-3d;
+/* Full Roster Row (Tier 1) */
+.roster-row {
+  display: grid; grid-template-columns: 72px 1fr 60px;
+  align-items: center; gap: 12px; padding: 10px 12px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-left: 3px solid transparent; border-top: none;
+  position: relative; cursor: pointer; outline: none;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
-.confidant-card--flipped .confidant-card__inner {
-  transform: rotateY(180deg);
-}
+.roster-row:first-child { border-top: 1px solid var(--border); }
+.roster-row:focus-visible { outline: 2px solid var(--tech-crimson); outline-offset: -2px; }
 
-/* Card faces (shared base) */
-.confidant-card__face {
-  position: absolute;
-  top: 0; left: 0;
+/* Hex Portrait */
+.roster-row__portrait { position: relative; width: 72px; height: 62px; flex-shrink: 0; }
+.roster-row__hex {
   width: 100%; height: 100%;
-  -webkit-backface-visibility: hidden;
-  backface-visibility: hidden;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-/* Front face */
-.confidant-card__front {
-  background: var(--surface-2);
-  z-index: 2;
-}
-
-/* Diagonal slash zone (top ~40% of card) */
-.confidant-card__slash-zone {
-  position: relative;
-  height: 40%;
-  background: repeating-linear-gradient(
-    -45deg,
-    var(--agent-color-dim, rgba(150,14,41,0.08)) 0px,
-    var(--agent-color-dim, rgba(150,14,41,0.08)) 2px,
-    transparent 2px,
-    transparent 8px
-  );
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-}
-.confidant-card--compact .confidant-card__slash-zone {
-  height: 38%;
-}
-
-/* Hex frame inside slash zone */
-.confidant-card__hex {
-  width: 48px;
-  height: 42px;
   clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
-  background: var(--surface-1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  z-index: 1;
-  border: 2px solid var(--agent-color, var(--border));
+  background: var(--surface-0); display: flex; align-items: center; justify-content: center;
+  position: relative; border: none;
 }
-.confidant-card--compact .confidant-card__hex {
-  width: 36px;
-  height: 31px;
+.roster-row__monogram {
+  font-family: var(--font-mono); font-size: 18px; font-weight: 800;
+  color: var(--agent-color); z-index: 2; position: relative;
+}
+.roster-row__crest {
+  position: absolute; font-size: 32px; opacity: 0.08; z-index: 1;
+  top: 50%; left: 50%; transform: translate(-50%, -50%);
 }
 
-/* Monogram + crest watermark */
-.confidant-card__monogram {
+/* Body (middle section) */
+.roster-row__body { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow: hidden; }
+.roster-row__header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.roster-row__name {
+  font-size: 12px; font-weight: 800; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--agent-color);
   font-family: var(--font-mono);
-  font-size: 14px;
-  font-weight: 800;
-  letter-spacing: 1px;
-  color: var(--agent-color, var(--text-muted));
-  position: relative;
-  z-index: 1;
 }
-.confidant-card--compact .confidant-card__monogram {
-  font-size: 11px;
+.roster-row__tier-badge {
+  font-size: 8px; padding: 1px 5px; border: 1px solid var(--agent-color);
+  border-radius: 3px; color: var(--agent-color); font-family: var(--font-mono);
+  line-height: 1.4;
 }
-.confidant-card__crest {
-  position: absolute;
-  font-size: 28px;
-  line-height: 1;
-  color: var(--agent-color, var(--text-muted));
-  opacity: 0.12;
-  pointer-events: none;
-  user-select: none;
+.roster-row__evolution {
+  font-size: 9px; color: var(--text-muted); font-family: var(--font-mono);
+}
+.roster-row__stars { font-size: 10px; color: var(--hp-warning); }
+
+/* XP Bar (10-segment chevron) */
+.roster-row__xp-row { display: flex; align-items: center; gap: 6px; }
+.roster-row__xp-bar { display: flex; gap: 2px; height: 6px; flex: 1; }
+.roster-row__xp-segment {
+  flex: 1; height: 100%; background: var(--surface-0);
+  clip-path: polygon(0 0, 85% 0, 100% 50%, 85% 100%, 0 100%, 15% 50%);
+}
+.roster-row__xp-segment:first-child {
+  clip-path: polygon(0 0, 85% 0, 100% 50%, 85% 100%, 0 100%);
+}
+.roster-row__xp-segment:last-child {
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%, 15% 50%);
+}
+.roster-row__xp-segment--filled { background: var(--xp-color, var(--tech-crimson)); }
+.roster-row__xp-pct {
+  font-size: 9px; font-family: var(--font-mono); color: var(--text-muted);
+  min-width: 32px; text-align: right;
 }
 
-/* Info section (bottom 60%) */
-.confidant-card__info {
-  flex: 1;
-  padding: var(--space-sm);
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+/* Inline Stat Bars */
+.roster-row__stats { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.roster-row__stat { display: flex; align-items: center; gap: 3px; }
+.roster-row__stat-label {
+  font-size: 8px; font-family: var(--font-mono); color: var(--text-muted);
+  font-weight: 700; width: 22px; text-align: right;
+}
+.roster-row__stat-track {
+  width: 56px; height: 3px; background: var(--surface-0);
+  border-radius: 2px; overflow: hidden;
+}
+.roster-row__stat-fill { height: 100%; border-radius: 2px; transition: width 0.6s ease; }
+.roster-row__stat-fill--str { background: #FF1744; }
+.roster-row__stat-fill--int { background: #5AC8FA; }
+.roster-row__stat-fill--spd { background: #FFD600; }
+.roster-row__stat-fill--vit { background: #00E676; }
+
+/* Telemetry */
+.roster-row__telemetry {
+  display: flex; gap: 12px; font-size: 9px;
+  font-family: var(--font-mono); color: var(--text-muted);
+}
+.roster-row__telemetry span::before {
+  content: ''; display: inline-block; width: 3px; height: 3px;
+  background: var(--text-muted); border-radius: 50%;
+  margin-right: 4px; vertical-align: middle; opacity: 0.5;
+}
+.roster-row__telemetry span:first-child::before { display: none; }
+
+/* Meta column (status + timer) */
+.roster-row__meta {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 4px; justify-self: center;
+}
+.roster-row__status {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.roster-row__status--idle { background: var(--text-muted); opacity: 0.3; }
+.roster-row__status--active { background: var(--agent-color); animation: status-blink 1.2s ease-in-out infinite; }
+.roster-row__status--complete { background: var(--success); }
+.roster-row__timer {
+  font-size: 10px; font-weight: 700; font-family: var(--font-mono);
+  color: var(--agent-color); min-width: 40px; text-align: center;
+  display: none;
+}
+.roster-row--active .roster-row__timer { display: block; }
+
+/* Active Row State */
+.roster-row--active {
+  border-left: 3px solid var(--agent-color);
+  box-shadow: -4px 0 16px var(--agent-color-dim), inset 0 0 30px var(--agent-color-dim);
+  animation: border-pulse 2s ease-in-out infinite;
   background: var(--surface-2);
 }
-.confidant-card--compact .confidant-card__info {
-  padding: 4px 6px;
-  gap: 2px;
+.roster-row--active::before {
+  content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg, transparent, transparent 2px,
+    rgba(255,255,255,0.015) 2px, rgba(255,255,255,0.015) 3px
+  );
 }
-
-/* Name */
-.confidant-card__name {
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-  color: var(--agent-color, var(--text-primary));
-  text-align: center;
+.roster-row--active::after {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 40px;
+  background: linear-gradient(90deg, var(--agent-color-dim), transparent);
+  pointer-events: none; z-index: 0;
 }
-.confidant-card--compact .confidant-card__name {
-  font-size: 8px;
-  letter-spacing: 1px;
-}
-
-/* Rank stars */
-.confidant-card__stars {
-  text-align: center;
-  font-size: 12px;
-  line-height: 1;
-  color: var(--hp-warning, #FFD600);
-  letter-spacing: 2px;
-}
-.confidant-card--compact .confidant-card__stars {
-  font-size: 10px;
-  letter-spacing: 1px;
-}
-
-/* Tier row */
-.confidant-card__tier-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 9px;
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-}
-.confidant-card__tier-badge {
-  font-size: 8px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  color: var(--agent-color, var(--crimson));
-  text-transform: uppercase;
-  padding: 1px 4px;
-  border: 1px solid var(--agent-color, var(--crimson));
-  border-radius: 3px;
-}
-.confidant-card__xp-pct {
-  font-size: 9px;
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-}
-.confidant-card--compact .confidant-card__tier-row { font-size: 7px; }
-.confidant-card--compact .confidant-card__tier-badge { font-size: 7px; }
-.confidant-card--compact .confidant-card__xp-pct { font-size: 7px; }
-
-/* Summary row (bottom of front) */
-.confidant-card__summary {
-  display: flex;
-  justify-content: space-between;
-  font-size: 9px;
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-  margin-top: auto;
-}
-.confidant-card--compact .confidant-card__summary {
-  font-size: 7px;
-}
-
-/* Back face */
-.confidant-card__back {
-  background: var(--surface-1);
-  transform: rotateY(180deg);
-  padding: var(--space-sm);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.confidant-card--compact .confidant-card__back {
-  padding: 6px;
-  gap: 4px;
-}
-.confidant-card__back-header {
-  text-align: center;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--border);
-}
-.confidant-card__back-name {
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 1.5px;
-  color: var(--agent-color, var(--text-primary));
-  text-transform: uppercase;
-}
-.confidant-card--compact .confidant-card__back-name {
-  font-size: 8px;
-}
-.confidant-card__back-subtitle {
-  font-size: 9px;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-}
-.confidant-card--compact .confidant-card__back-subtitle {
-  font-size: 7px;
-}
-
-/* Stat bars on back */
-.confidant-card__stat-bars {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex: 1;
-}
-.confidant-card__stat-row {
-  display: grid;
-  grid-template-columns: 28px 1fr 22px;
-  align-items: center;
-  gap: 4px;
-}
-.confidant-card--compact .confidant-card__stat-row {
-  grid-template-columns: 24px 1fr 18px;
-  gap: 2px;
-}
-.confidant-card__stat-label {
-  font-size: 8px;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-  letter-spacing: 0.5px;
-}
-.confidant-card__stat-track {
-  height: 5px;
-  background: var(--surface-0);
-  border-radius: 3px;
-  overflow: hidden;
-}
-.confidant-card__stat-fill {
-  height: 100%;
-  border-radius: 3px;
-  transition: width 0.5s ease;
-}
-.confidant-card__stat-fill--str { background: var(--hp-critical, #FF1744); }
-.confidant-card__stat-fill--int { background: var(--token-input, #5AC8FA); }
-.confidant-card__stat-fill--spd { background: var(--hp-warning, #FFD600); }
-.confidant-card__stat-fill--vit { background: var(--hp-full, #00E676); }
-.confidant-card__stat-value {
-  font-size: 8px;
-  font-weight: 600;
-  font-family: var(--font-mono);
-  color: var(--text-secondary);
-  text-align: right;
-}
-.confidant-card--compact .confidant-card__stat-label { font-size: 7px; }
-.confidant-card--compact .confidant-card__stat-value { font-size: 7px; }
-
-/* Back details */
-.confidant-card__details {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 9px;
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-  margin-top: auto;
-  padding-top: 4px;
-  border-top: 1px solid var(--border);
-}
-.confidant-card--compact .confidant-card__details {
-  font-size: 7px;
-  gap: 1px;
-}
-.confidant-card__detail-row {
-  display: flex;
-  justify-content: space-between;
-}
-.confidant-card__detail-value {
-  color: var(--text-secondary);
-  font-weight: 600;
-}
-
-/* --- Confidant Card Interactions and States --- */
 
 /* Hover */
-.confidant-card:hover {
-  transform: translateY(-4px);
+.roster-row:hover {
+  transform: translateY(-1px);
+  border-left-color: var(--agent-color-dim);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
-.confidant-card:hover .confidant-card__front {
-  border-color: var(--agent-color, var(--border));
-  box-shadow: 0 4px 16px var(--agent-color-dim, rgba(0,0,0,0.3));
+.roster-row--active:hover {
+  border-left-color: var(--agent-color);
 }
 
-/* Active agent */
-.confidant-card--active {
-  transform: translateY(-8px);
+/* Expanded Row */
+.roster-row__expanded {
+  grid-column: 1 / -1; max-height: 0; overflow: hidden;
+  transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.3s ease;
+  padding: 0 12px; opacity: 0;
+  border-top: none; background: var(--surface-1);
 }
-.confidant-card--active .confidant-card__front {
-  border-color: var(--agent-color);
-  box-shadow: 0 8px 24px var(--agent-color-dim, rgba(0,0,0,0.3));
+.roster-row--expanded .roster-row__expanded {
+  max-height: 180px; padding: 10px 12px; opacity: 1;
+  border-top: 1px dashed var(--divider);
 }
-.confidant-card--active .confidant-card__slash-zone {
-  animation: slash-scroll 2s linear infinite;
+.roster-row__detail-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px; font-size: 9px; font-family: var(--font-mono);
 }
-.confidant-card__active-badge {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  z-index: 10;
-  font-size: 7px;
-  font-weight: 800;
-  font-family: var(--font-mono);
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  color: var(--text-primary);
-  background: var(--agent-color, var(--tech-crimson));
-  padding: 2px 6px;
-  border-radius: 3px;
-  animation: badge-pulse 1.5s ease-in-out infinite;
+.roster-row__detail-item { display: flex; flex-direction: column; gap: 2px; }
+.roster-row__detail-label { color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; font-size: 8px; }
+.roster-row__detail-value { color: var(--text-secondary); font-weight: 700; font-size: 11px; }
+
+/* Compact Support Row */
+.roster-row--compact {
+  grid-template-columns: 48px 1fr 40px; padding: 6px 12px; gap: 8px;
 }
-.confidant-card__timer {
-  position: absolute;
-  bottom: 6px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
-  font-size: 11px;
-  font-weight: 700;
-  font-family: var(--font-mono);
-  color: var(--agent-color, var(--tech-crimson));
-  text-shadow: 0 0 6px var(--agent-color-dim);
+.roster-row--compact .roster-row__portrait { width: 48px; height: 42px; }
+.roster-row--compact .roster-row__monogram { font-size: 13px; }
+.roster-row--compact .roster-row__crest { font-size: 22px; }
+.roster-row--compact .roster-row__body {
+  flex-direction: row; align-items: center; gap: 10px; flex-wrap: wrap;
 }
+.roster-row--compact .roster-row__header { gap: 6px; }
+.roster-row--compact .roster-row__name { font-size: 10px; letter-spacing: 1px; }
+.roster-row--compact .roster-row__stats { display: none; }
+.roster-row--compact .roster-row__xp-row { display: none; }
+.roster-row--compact .roster-row__telemetry { font-size: 8px; gap: 8px; }
+.roster-row--compact .roster-row__xp-inline {
+  font-size: 9px; font-family: var(--font-mono); color: var(--text-muted);
+  display: inline;
+}
+
+/* Party Summary Footer */
+.roster-summary {
+  display: flex; justify-content: space-around; align-items: center;
+  padding: 10px 16px; background: var(--surface-1);
+  border: 1px solid var(--border); border-top: 1px dashed var(--divider);
+  font-size: 10px; font-family: var(--font-mono); color: var(--text-muted);
+  margin-top: 0;
+}
+.roster-summary__item { display: flex; gap: 4px; align-items: center; }
+.roster-summary__label { text-transform: uppercase; letter-spacing: 1px; font-size: 8px; }
+.roster-summary__value { color: var(--text-secondary); font-weight: 700; font-size: 12px; }
 
 /* --------------------------------------------------------------------------
    ANIMATIONS
@@ -1229,22 +1077,25 @@ body {
   to   { opacity: 1; }
 }
 
-@keyframes slash-scroll {
-  from { background-position: 0 0; }
-  to { background-position: 20px 20px; }
-}
-
-@keyframes badge-pulse {
+@keyframes status-blink {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  50% { opacity: 0.3; }
 }
 
-/* Reduced motion for confidant cards */
+@keyframes border-pulse {
+  0%, 100% { border-left-color: var(--agent-color); }
+  50% { border-left-color: var(--agent-color-dim); }
+}
+
+/* Reduced motion for roster rows */
 @media (prefers-reduced-motion: reduce) {
-  .confidant-card__inner { transition: none; }
-  .confidant-card { transition: none; }
-  .confidant-card--active .confidant-card__slash-zone { animation: none; }
-  .confidant-card__active-badge { animation: none; }
+  .roster-row,
+  .roster-row__stat-fill,
+  .roster-tier-body,
+  .roster-row__expanded { transition: none; }
+  .roster-row--active { animation: none; }
+  .roster-row__status--active { animation: none; }
+  .roster-row:hover { transform: none; }
 }
 
 /* --------------------------------------------------------------------------
@@ -1281,8 +1132,11 @@ body {
     padding: var(--space-sm) var(--space-md);
   }
 
-  .confidant-card { width: 120px; height: 190px; }
-  .confidant-card--compact { width: 85px; height: 130px; }
+  .roster-row { grid-template-columns: 56px 1fr 50px; gap: 8px; padding: 8px 10px; }
+  .roster-row__portrait { width: 56px; height: 48px; }
+  .roster-row__stat-track { width: 40px; }
+  .roster-row--compact { grid-template-columns: 40px 1fr 36px; }
+  .roster-row--compact .roster-row__portrait { width: 40px; height: 34px; }
 }
 
 @media (max-width: 900px) {
@@ -1315,9 +1169,14 @@ body {
     flex-direction: column;
   }
 
-  .confidant-card { width: 100px; height: 160px; }
-  .confidant-card--compact { width: 80px; height: 120px; }
-  .confidant-card__name { font-size: 8px; }
+  .roster-row { grid-template-columns: 48px 1fr 40px; gap: 6px; padding: 6px 8px; }
+  .roster-row__portrait { width: 48px; height: 42px; }
+  .roster-row__monogram { font-size: 14px; }
+  .roster-row__stats { display: none; }
+  .roster-row__telemetry { gap: 6px; }
+  .roster-row--compact { grid-template-columns: 36px 1fr 32px; }
+  .roster-row--compact .roster-row__portrait { width: 36px; height: 30px; }
+  .roster-row--compact .roster-row__monogram { font-size: 10px; }
 }
 
 /* ═══════════════════════════════════════════
