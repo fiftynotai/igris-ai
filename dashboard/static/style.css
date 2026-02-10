@@ -824,8 +824,10 @@ body {
 
 /* Party stats container */
 .party-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  flex-wrap: wrap;
   gap: var(--space-md);
   max-height: 0;
   overflow: hidden;
@@ -834,144 +836,369 @@ body {
 }
 
 .party-stats--open {
-  max-height: 800px;
+  max-height: 1000px;
   padding-top: var(--space-md);
 }
 
 /* --------------------------------------------------------------------------
-   CHARACTER CARD (RPG Stats)
+   CONFIDANT CARDS (Persona 5-inspired RPG Party Stats)
    -------------------------------------------------------------------------- */
-.char-card {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
+
+/* Card perspective wrapper */
+.confidant-card {
+  perspective: 1000px;
+  cursor: pointer;
+  outline: none;
+  width: 140px;
+  height: 220px;
+  position: relative;
+  transition: transform 0.3s ease;
+}
+.confidant-card--compact {
+  width: 100px;
+  height: 150px;
+}
+.confidant-card:focus-visible {
+  outline: 2px solid var(--tech-crimson);
+  outline-offset: 4px;
   border-radius: var(--radius-md);
-  padding: var(--space-md);
 }
 
-.char-card__header {
+/* 3D flip container */
+.confidant-card__inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.6s ease;
+  transform-style: preserve-3d;
+}
+.confidant-card--flipped .confidant-card__inner {
+  transform: rotateY(180deg);
+}
+
+/* Card faces (shared base) */
+.confidant-card__face {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  overflow: hidden;
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  margin-bottom: var(--space-sm);
+  flex-direction: column;
 }
 
-.char-card__name {
+/* Front face */
+.confidant-card__front {
+  background: var(--surface-2);
+  z-index: 2;
+}
+
+/* Diagonal slash zone (top ~40% of card) */
+.confidant-card__slash-zone {
+  position: relative;
+  height: 40%;
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--agent-color-dim, rgba(150,14,41,0.08)) 0px,
+    var(--agent-color-dim, rgba(150,14,41,0.08)) 2px,
+    transparent 2px,
+    transparent 8px
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.confidant-card--compact .confidant-card__slash-zone {
+  height: 38%;
+}
+
+/* Hex frame inside slash zone */
+.confidant-card__hex {
+  width: 48px;
+  height: 42px;
+  clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+  background: var(--surface-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  z-index: 1;
+  border: 2px solid var(--agent-color, var(--border));
+}
+.confidant-card--compact .confidant-card__hex {
+  width: 36px;
+  height: 31px;
+}
+
+/* Monogram + crest watermark */
+.confidant-card__monogram {
+  font-family: var(--font-mono);
   font-size: 14px;
   font-weight: 800;
-  letter-spacing: 1.5px;
-  color: var(--text-primary);
-}
-
-.char-card__tier {
-  font-size: 9px;
-  font-weight: 600;
   letter-spacing: 1px;
-  color: var(--crimson);
-  text-transform: uppercase;
-  padding: 2px 6px;
-  border: 1px solid var(--crimson);
-  border-radius: var(--radius-sm);
+  color: var(--agent-color, var(--text-muted));
+  position: relative;
+  z-index: 1;
+}
+.confidant-card--compact .confidant-card__monogram {
+  font-size: 11px;
+}
+.confidant-card__crest {
+  position: absolute;
+  font-size: 28px;
+  line-height: 1;
+  color: var(--agent-color, var(--text-muted));
+  opacity: 0.12;
+  pointer-events: none;
+  user-select: none;
 }
 
-.char-card__level-row {
+/* Info section (bottom 60%) */
+.confidant-card__info {
+  flex: 1;
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: var(--surface-2);
+}
+.confidant-card--compact .confidant-card__info {
+  padding: 4px 6px;
+  gap: 2px;
+}
+
+/* Name */
+.confidant-card__name {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--agent-color, var(--text-primary));
+  text-align: center;
+}
+.confidant-card--compact .confidant-card__name {
+  font-size: 8px;
+  letter-spacing: 1px;
+}
+
+/* Rank stars */
+.confidant-card__stars {
+  text-align: center;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--hp-warning, #FFD600);
+  letter-spacing: 2px;
+}
+.confidant-card--compact .confidant-card__stars {
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+/* Tier row */
+.confidant-card__tier-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 4px;
-}
-
-.char-card__level-name {
-  font-size: 12px;
-  color: var(--text-secondary);
-  font-weight: 600;
-}
-
-.char-card__level-progress {
-  font-size: 10px;
+  font-size: 9px;
   font-family: var(--font-mono);
   color: var(--text-muted);
 }
+.confidant-card__tier-badge {
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--agent-color, var(--crimson));
+  text-transform: uppercase;
+  padding: 1px 4px;
+  border: 1px solid var(--agent-color, var(--crimson));
+  border-radius: 3px;
+}
+.confidant-card__xp-pct {
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+.confidant-card--compact .confidant-card__tier-row { font-size: 7px; }
+.confidant-card--compact .confidant-card__tier-badge { font-size: 7px; }
+.confidant-card--compact .confidant-card__xp-pct { font-size: 7px; }
 
-.char-card .xp-bar {
-  margin-bottom: var(--space-md);
+/* Summary row (bottom of front) */
+.confidant-card__summary {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  margin-top: auto;
+}
+.confidant-card--compact .confidant-card__summary {
+  font-size: 7px;
 }
 
-/* Stats row */
-.char-card__stats {
+/* Back face */
+.confidant-card__back {
+  background: var(--surface-1);
+  transform: rotateY(180deg);
+  padding: var(--space-sm);
   display: flex;
-  justify-content: space-around;
-  gap: var(--space-sm);
-  margin-bottom: var(--space-md);
-  padding: var(--space-sm) 0;
-  border-top: 1px solid var(--border);
+  flex-direction: column;
+  gap: 6px;
+}
+.confidant-card--compact .confidant-card__back {
+  padding: 6px;
+  gap: 4px;
+}
+.confidant-card__back-header {
+  text-align: center;
+  padding-bottom: 4px;
   border-bottom: 1px solid var(--border);
 }
-
-.stat-badge {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  min-width: 48px;
+.confidant-card__back-name {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: var(--agent-color, var(--text-primary));
+  text-transform: uppercase;
 }
-
-.stat-badge__label {
+.confidant-card--compact .confidant-card__back-name {
+  font-size: 8px;
+}
+.confidant-card__back-subtitle {
   font-size: 9px;
   color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  margin-bottom: 2px;
-}
-
-.stat-badge__value {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--text-primary);
   font-family: var(--font-mono);
 }
-
-.stat-badge__bar {
-  width: 100%;
-  height: 3px;
-  background: var(--surface-0);
-  border-radius: 2px;
-  overflow: hidden;
-  margin-top: 3px;
+.confidant-card--compact .confidant-card__back-subtitle {
+  font-size: 7px;
 }
 
-.stat-badge__bar-fill {
-  height: 100%;
-  border-radius: 2px;
-  transition: width 0.5s ease;
+/* Stat bars on back */
+.confidant-card__stat-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
 }
-
-.stat-badge--str .stat-badge__bar-fill { background: var(--hp-critical); }
-.stat-badge--int .stat-badge__bar-fill { background: var(--token-input); }
-.stat-badge--spd .stat-badge__bar-fill { background: var(--hp-warning); }
-.stat-badge--vit .stat-badge__bar-fill { background: var(--hp-full); }
-
-/* Lifetime totals */
-.char-card__totals {
+.confidant-card__stat-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  gap: var(--space-xs);
+  grid-template-columns: 28px 1fr 22px;
+  align-items: center;
+  gap: 4px;
 }
-
-.char-card__total-item {
-  text-align: center;
+.confidant-card--compact .confidant-card__stat-row {
+  grid-template-columns: 24px 1fr 18px;
+  gap: 2px;
 }
-
-.char-card__total-label {
-  font-size: 9px;
+.confidant-card__stat-label {
+  font-size: 8px;
+  font-weight: 700;
+  font-family: var(--font-mono);
   color: var(--text-muted);
-  text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-
-.char-card__total-value {
-  font-size: 13px;
+.confidant-card__stat-track {
+  height: 5px;
+  background: var(--surface-0);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.confidant-card__stat-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+.confidant-card__stat-fill--str { background: var(--hp-critical, #FF1744); }
+.confidant-card__stat-fill--int { background: var(--token-input, #5AC8FA); }
+.confidant-card__stat-fill--spd { background: var(--hp-warning, #FFD600); }
+.confidant-card__stat-fill--vit { background: var(--hp-full, #00E676); }
+.confidant-card__stat-value {
+  font-size: 8px;
   font-weight: 600;
   font-family: var(--font-mono);
   color: var(--text-secondary);
+  text-align: right;
+}
+.confidant-card--compact .confidant-card__stat-label { font-size: 7px; }
+.confidant-card--compact .confidant-card__stat-value { font-size: 7px; }
+
+/* Back details */
+.confidant-card__details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  margin-top: auto;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.confidant-card--compact .confidant-card__details {
+  font-size: 7px;
+  gap: 1px;
+}
+.confidant-card__detail-row {
+  display: flex;
+  justify-content: space-between;
+}
+.confidant-card__detail-value {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+/* --- Confidant Card Interactions and States --- */
+
+/* Hover */
+.confidant-card:hover {
+  transform: translateY(-4px);
+}
+.confidant-card:hover .confidant-card__front {
+  border-color: var(--agent-color, var(--border));
+  box-shadow: 0 4px 16px var(--agent-color-dim, rgba(0,0,0,0.3));
+}
+
+/* Active agent */
+.confidant-card--active {
+  transform: translateY(-8px);
+}
+.confidant-card--active .confidant-card__front {
+  border-color: var(--agent-color);
+  box-shadow: 0 8px 24px var(--agent-color-dim, rgba(0,0,0,0.3));
+}
+.confidant-card--active .confidant-card__slash-zone {
+  animation: slash-scroll 2s linear infinite;
+}
+.confidant-card__active-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 10;
+  font-size: 7px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  background: var(--agent-color, var(--tech-crimson));
+  padding: 2px 6px;
+  border-radius: 3px;
+  animation: badge-pulse 1.5s ease-in-out infinite;
+}
+.confidant-card__timer {
+  position: absolute;
+  bottom: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--agent-color, var(--tech-crimson));
+  text-shadow: 0 0 6px var(--agent-color-dim);
 }
 
 /* --------------------------------------------------------------------------
@@ -1000,6 +1227,24 @@ body {
 @keyframes fade-in {
   from { opacity: 0; }
   to   { opacity: 1; }
+}
+
+@keyframes slash-scroll {
+  from { background-position: 0 0; }
+  to { background-position: 20px 20px; }
+}
+
+@keyframes badge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Reduced motion for confidant cards */
+@media (prefers-reduced-motion: reduce) {
+  .confidant-card__inner { transition: none; }
+  .confidant-card { transition: none; }
+  .confidant-card--active .confidant-card__slash-zone { animation: none; }
+  .confidant-card__active-badge { animation: none; }
 }
 
 /* --------------------------------------------------------------------------
@@ -1035,6 +1280,9 @@ body {
   .instrument-strip {
     padding: var(--space-sm) var(--space-md);
   }
+
+  .confidant-card { width: 120px; height: 190px; }
+  .confidant-card--compact { width: 85px; height: 130px; }
 }
 
 @media (max-width: 900px) {
@@ -1066,6 +1314,10 @@ body {
   .sidebar {
     flex-direction: column;
   }
+
+  .confidant-card { width: 100px; height: 160px; }
+  .confidant-card--compact { width: 80px; height: 120px; }
+  .confidant-card__name { font-size: 8px; }
 }
 
 /* ═══════════════════════════════════════════

@@ -48,6 +48,24 @@ var AGENT_CRESTS = {
 /** Pipeline order (for rendering). */
 var AGENT_ORDER = ['orchestrator', 'architect', 'forger', 'sentinel', 'warden', 'mender', 'seeker', 'sage'];
 
+/** Agent tier mapping for confidant card sizing. */
+var AGENT_TIERS = {
+    orchestrator: 1, architect: 1, forger: 1, sentinel: 1, warden: 1,
+    mender: 3, seeker: 4, sage: 5
+};
+
+/** Agent color schemes for confidant cards. */
+var AGENT_COLORS = {
+    orchestrator: { color: '#FF1744', dim: 'rgba(255,23,68,0.08)', mid: 'rgba(255,23,68,0.4)' },
+    architect:    { color: '#448AFF', dim: 'rgba(68,138,255,0.08)', mid: 'rgba(68,138,255,0.4)' },
+    forger:       { color: '#FF6D00', dim: 'rgba(255,109,0,0.08)', mid: 'rgba(255,109,0,0.4)' },
+    sentinel:     { color: '#00E676', dim: 'rgba(0,230,118,0.08)', mid: 'rgba(0,230,118,0.4)' },
+    warden:       { color: '#7C4DFF', dim: 'rgba(124,77,255,0.08)', mid: 'rgba(124,77,255,0.4)' },
+    mender:       { color: '#00BFA5', dim: 'rgba(0,191,165,0.08)', mid: 'rgba(0,191,165,0.4)' },
+    seeker:       { color: '#FFD600', dim: 'rgba(255,214,0,0.08)', mid: 'rgba(255,214,0,0.4)' },
+    sage:         { color: '#E040FB', dim: 'rgba(224,64,251,0.08)', mid: 'rgba(224,64,251,0.4)' }
+};
+
 /** Maximum battle log entries to keep in DOM. */
 var MAX_BATTLE_LOG = 50;
 
@@ -180,6 +198,34 @@ function formatCost(dollars) {
     if (dollars == null || dollars === 0) return '$0.00';
     if (dollars < 0.01) return '<$0.01';
     return '$' + dollars.toFixed(2);
+}
+
+/**
+ * Calculate evolution stars from agent tier.
+ * @param {number} tier
+ * @returns {number}
+ */
+function evolutionStars(tier) {
+    if (tier <= 1) return 0;
+    if (tier === 2) return 1;
+    if (tier === 3) return 2;
+    if (tier === 4) return 3;
+    return 4;
+}
+
+/**
+ * Render star characters for rank display.
+ * @param {number} count - number of filled stars (0-4)
+ * @returns {string}
+ */
+function renderStars(count) {
+    var filled = '\u2605';
+    var empty = '\u2606';
+    var result = '';
+    for (var i = 0; i < 4; i++) {
+        result += (i < count) ? filled : empty;
+    }
+    return result;
 }
 
 /* --------------------------------------------------------------------------
@@ -537,6 +583,11 @@ ArenaClient.prototype.onAgentStop = function (event) {
     var timerEl = document.getElementById('timer-' + agent);
     if (timerEl) timerEl.textContent = '';
 
+    var cardTimerEl = document.getElementById('card-timer-' + agent);
+    if (cardTimerEl) cardTimerEl.textContent = '';
+
+    this._updateCardActiveState(agent, false);
+
     var pod = document.getElementById('pod-' + agent);
     if (pod) {
         var orchClass = (agent === 'orchestrator') ? ' nexus__core--orchestrator' : '';
@@ -565,6 +616,8 @@ ArenaClient.prototype._updateActiveTimer = function (agent, startTime) {
     if (timerEl) {
         timerEl.textContent = formatDuration(elapsed);
     }
+    var cardTimerEl = document.getElementById('card-timer-' + agent);
+    if (cardTimerEl) cardTimerEl.textContent = formatDuration(elapsed);
 };
 
 /* --------------------------------------------------------------------------
@@ -1135,7 +1188,7 @@ ArenaClient.prototype.renderBattleLog = function () {
    -------------------------------------------------------------------------- */
 
 /**
- * Render character cards for all agents in the footer.
+ * Render Persona 5-inspired Confidant Cards for all agents in the footer.
  */
 ArenaClient.prototype.renderPartyStats = function () {
     var container = document.getElementById('party-stats');
@@ -1149,75 +1202,172 @@ ArenaClient.prototype.renderPartyStats = function () {
         var data = agents[name];
         if (!data) continue;
 
+        var tier = AGENT_TIERS[name] || 1;
+        var isCompact = tier >= 3;
+        var isActive = !!this.activeTimers[name];
+        var colors = AGENT_COLORS[name] || { color: '#FF1744', dim: 'rgba(255,23,68,0.08)', mid: 'rgba(255,23,68,0.4)' };
+
         var displayName = escapeHtml(AGENT_NAMES[name] || name.toUpperCase());
+        var monogram = escapeHtml(AGENT_MONOGRAMS[name] || name.substring(0, 2).toUpperCase());
+        var crest = escapeHtml(AGENT_CRESTS[name] || '\u2B21');
+
         var level = data.level || {};
         var stats = data.rpg_stats || {};
         var evolution = escapeHtml(level.evolution || 'In-Training');
-        var levelName = escapeHtml(level.name || 'Trainee');
         var progress = (level.progress || 0) * 100;
-        var nextAt = level.next_at || 0;
         var invocations = data.invocations || 0;
 
         var totalTokens = (data.total_input_tokens || 0) + (data.total_output_tokens || 0) +
                           (data.total_cache_read_tokens || 0) + (data.total_cache_create_tokens || 0);
+        var runsLabel = (name === 'orchestrator') ? 'turns' : 'runs';
 
-        var runsLabel = (name === 'orchestrator') ? 'Turns' : 'Runs';
+        var starCount = evolutionStars(tier);
+        var starsStr = renderStars(starCount);
 
-        html += '<div class="char-card">' +
-            '<div class="char-card__header">' +
-                '<span class="char-card__name">' + displayName + '</span>' +
-                '<span class="char-card__tier">' + evolution + '</span>' +
-            '</div>' +
-            '<div class="char-card__level-row">' +
-                '<span class="char-card__level-name">' + levelName + '</span>' +
-                '<span class="char-card__level-progress mono">' +
-                    escapeHtml(invocations) + ' / ' + escapeHtml(nextAt) + ' XP' +
-                '</span>' +
-            '</div>' +
-            '<div class="xp-bar"><div class="xp-fill" style="width:' + progress + '%"></div></div>' +
-            '<div class="char-card__stats">' +
-                this._renderStatBadge('STR', stats.STR || 0, 'str') +
-                this._renderStatBadge('INT', stats.INT || 0, 'int') +
-                this._renderStatBadge('SPD', stats.SPD || 0, 'spd') +
-                this._renderStatBadge('VIT', stats.VIT || 0, 'vit') +
-            '</div>' +
-            '<div class="char-card__totals">' +
-                '<div class="char-card__total-item">' +
-                    '<div class="char-card__total-label">Tokens</div>' +
-                    '<div class="char-card__total-value">' + escapeHtml(formatTokens(totalTokens)) + '</div>' +
-                '</div>' +
-                '<div class="char-card__total-item">' +
-                    '<div class="char-card__total-label">' + escapeHtml(runsLabel) + '</div>' +
-                    '<div class="char-card__total-value">' + escapeHtml(invocations) + '</div>' +
-                '</div>' +
-                '<div class="char-card__total-item">' +
-                    '<div class="char-card__total-label">Avg Time</div>' +
-                    '<div class="char-card__total-value">' +
-                        escapeHtml(formatDuration(data.avg_duration_seconds || 0)) +
+        var cardClasses = 'confidant-card';
+        if (isCompact) cardClasses += ' confidant-card--compact';
+        if (isActive) cardClasses += ' confidant-card--active';
+
+        var styleAttr = '--agent-color:' + colors.color + ';--agent-color-dim:' + colors.dim + ';--agent-color-mid:' + colors.mid;
+
+        // Active badge and timer
+        var activeBadgeHtml = '';
+        var timerHtml = '';
+        if (isActive) {
+            activeBadgeHtml = '<span class="confidant-card__active-badge">ACTIVE</span>';
+            timerHtml = '<span class="confidant-card__timer" id="card-timer-' + escapeHtml(name) + '"></span>';
+        }
+
+        // Front face
+        var frontHtml =
+            '<div class="confidant-card__face confidant-card__front">' +
+                activeBadgeHtml +
+                '<div class="confidant-card__slash-zone">' +
+                    '<span class="confidant-card__crest">' + crest + '</span>' +
+                    '<div class="confidant-card__hex">' +
+                        '<span class="confidant-card__monogram">' + monogram + '</span>' +
                     '</div>' +
                 '</div>' +
+                '<div class="confidant-card__info">' +
+                    '<div class="confidant-card__name">' + displayName + '</div>' +
+                    '<div class="confidant-card__stars">' + starsStr + '</div>' +
+                    '<div class="confidant-card__tier-row">' +
+                        '<span class="confidant-card__tier-badge">' + evolution + '</span>' +
+                        '<span class="confidant-card__xp-pct">' + escapeHtml(Math.round(progress)) + '%</span>' +
+                    '</div>' +
+                    '<div class="xp-bar"><div class="xp-fill" style="width:' + progress + '%"></div></div>' +
+                    '<div class="confidant-card__summary">' +
+                        '<span>' + escapeHtml(formatTokens(totalTokens)) + '</span>' +
+                        '<span>' + escapeHtml(invocations) + ' ' + escapeHtml(runsLabel) + '</span>' +
+                    '</div>' +
+                '</div>' +
+                timerHtml +
+            '</div>';
+
+        // Back face
+        var backHtml =
+            '<div class="confidant-card__face confidant-card__back">' +
+                '<div class="confidant-card__back-header">' +
+                    '<div class="confidant-card__back-name">' + displayName + '</div>' +
+                    '<div class="confidant-card__back-subtitle">Tier ' + escapeHtml(tier) + ' \u2022 ' + evolution + '</div>' +
+                '</div>' +
+                '<div class="confidant-card__stat-bars">' +
+                    this._renderStatBar('STR', stats.STR || 0, 'str') +
+                    this._renderStatBar('INT', stats.INT || 0, 'int') +
+                    this._renderStatBar('SPD', stats.SPD || 0, 'spd') +
+                    this._renderStatBar('VIT', stats.VIT || 0, 'vit') +
+                '</div>' +
+                '<div class="confidant-card__details">' +
+                    '<div class="confidant-card__detail-row">' +
+                        '<span>Tokens</span>' +
+                        '<span class="confidant-card__detail-value">' + escapeHtml(formatTokens(totalTokens)) + '</span>' +
+                    '</div>' +
+                    '<div class="confidant-card__detail-row">' +
+                        '<span>Avg Time</span>' +
+                        '<span class="confidant-card__detail-value">' + escapeHtml(formatDuration(data.avg_duration_seconds || 0)) + '</span>' +
+                    '</div>' +
+                    '<div class="confidant-card__detail-row">' +
+                        '<span>Last Used</span>' +
+                        '<span class="confidant-card__detail-value">' + escapeHtml(timeAgo(data.last_used)) + '</span>' +
+                    '</div>' +
+                '</div>' +
+            '</div>';
+
+        html += '<div class="' + cardClasses + '" data-agent="' + escapeHtml(name) + '" ' +
+            'style="' + styleAttr + '" ' +
+            'tabindex="0" role="button" ' +
+            'aria-label="' + displayName + ' agent card. Click to flip for details.">' +
+            '<div class="confidant-card__inner">' +
+                frontHtml +
+                backHtml +
             '</div>' +
         '</div>';
     }
 
     container.innerHTML = html;
+    this._bindCardFlip();
 };
 
 /**
- * Generate HTML for a single stat badge (STR/INT/SPD/VIT).
- * @param {string} label
+ * Generate HTML for a single stat bar on the confidant card back.
+ * @param {string} label - stat label (STR/INT/SPD/VIT)
  * @param {number} value - 0-100
  * @param {string} cssKey - str|int|spd|vit
  * @returns {string}
  */
-ArenaClient.prototype._renderStatBadge = function (label, value, cssKey) {
-    return '<div class="stat-badge stat-badge--' + escapeHtml(cssKey) + '">' +
-        '<span class="stat-badge__label">' + escapeHtml(label) + '</span>' +
-        '<span class="stat-badge__value">' + escapeHtml(value) + '</span>' +
-        '<div class="stat-badge__bar">' +
-            '<div class="stat-badge__bar-fill" style="width:' + escapeHtml(value) + '%"></div>' +
+ArenaClient.prototype._renderStatBar = function (label, value, cssKey) {
+    return '<div class="confidant-card__stat-row">' +
+        '<span class="confidant-card__stat-label">' + escapeHtml(label) + '</span>' +
+        '<div class="confidant-card__stat-track">' +
+            '<div class="confidant-card__stat-fill confidant-card__stat-fill--' + cssKey + '" style="width:' + Math.min(100, Math.max(0, value)) + '%"></div>' +
         '</div>' +
+        '<span class="confidant-card__stat-value">' + escapeHtml(value) + '</span>' +
     '</div>';
+};
+
+/**
+ * Bind click and keyboard event handlers for confidant card flip.
+ * Uses event delegation on the container. Only binds once.
+ */
+ArenaClient.prototype._bindCardFlip = function () {
+    if (this._cardFlipBound) return;
+    this._cardFlipBound = true;
+    var container = document.getElementById('party-stats');
+    if (!container) return;
+
+    container.addEventListener('click', function (e) {
+        var card = e.target.closest('.confidant-card');
+        if (!card || card.classList.contains('confidant-card--active')) return;
+        card.classList.toggle('confidant-card--flipped');
+    });
+
+    container.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            var card = e.target.closest('.confidant-card');
+            if (!card || card.classList.contains('confidant-card--active')) return;
+            e.preventDefault();
+            card.classList.toggle('confidant-card--flipped');
+        }
+        if (e.key === 'Escape') {
+            var card = e.target.closest('.confidant-card');
+            if (card) card.classList.remove('confidant-card--flipped');
+        }
+    });
+};
+
+/**
+ * Update active state on a confidant card without full re-render.
+ * @param {string} name - agent key
+ * @param {boolean} isActive
+ */
+ArenaClient.prototype._updateCardActiveState = function (name, isActive) {
+    var card = document.querySelector('.confidant-card[data-agent="' + name + '"]');
+    if (!card) return;
+    if (isActive) {
+        card.classList.add('confidant-card--active');
+    } else {
+        card.classList.remove('confidant-card--active');
+    }
 };
 
 /* --------------------------------------------------------------------------
