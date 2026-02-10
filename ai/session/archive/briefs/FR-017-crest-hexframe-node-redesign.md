@@ -5,7 +5,7 @@
 **Effort:** M-Medium (1-2d)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** In Progress
+**Status:** Done
 **Created:** 2026-02-10
 
 ---
@@ -143,15 +143,15 @@ _(none)_
 
 ## Workflow State
 
-**Phase:** COMMITTING
+**Phase:** COMPLETE
 **Active Agent:** none
 **Retry Count:** 0
 
 ### Current Work
-All phases complete. Committing.
+HUNT complete. Committed `b422851`.
 
 ### Next Steps
-Commit and mark Done.
+Archive FR-017.
 
 ### Agent Log
 | Time | Agent | Action | Result |

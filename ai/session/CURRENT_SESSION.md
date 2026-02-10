@@ -1,9 +1,9 @@
 # Current Session
 
 ## Status
-**Mode:** HUNT MODE
+**Mode:** REST
 **Updated:** 2026-02-10
-**Active Brief:** FR-018
+**Active Brief:** none
 
 ---
 
@@ -13,29 +13,26 @@
 |-------|-------|--------|
 | BR-015 | Token Breakdown Misleading Headline | Done |
 | FR-014 | Higgsfield Skill — Browser Automation Pivot | Ready |
-| FR-016 | DNA Digivolution Nexus — Agent Pods Redesign | Done |
-| FR-017 | Crest Hexframe — Agent Node Redesign | Done |
-| FR-018 | Evolution Aura — Node Visual Effects | Done |
 
-**Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015
+**Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018
 
 ---
 
 ## Resume Point
 
-**Last Active:** FR-017 (Done)
+**Last Active:** FR-018 (Done)
 **Phase:** REST
 
 **Next Steps:**
-1. Archive FR-016, FR-017
-2. HUNT FR-014 (L-effort — Rewrite `/higgsfield` skill to use browser automation)
+1. HUNT FR-014 (L-effort — Rewrite `/higgsfield` skill to use browser automation)
+2. Archive BR-015
 
 ---
 
 ## Last Session Summary (2026-02-10)
 
 **Completed:**
-- FR-018: Evolution Aura — Node Visual Effects. Full HUNT. Per-agent crest colors (8 unique), aura rings, particle orbits, scan lines, rotating gradient, evolution pillar, crest power-flash. Commit: pending.
+- FR-018: Evolution Aura — Node Visual Effects. Full HUNT. Per-agent crest colors (8 unique), aura rings, particle orbits, scan lines, rotating gradient, evolution pillar, crest power-flash. Commit: `f187e84`.
 - FR-017: Crest Hexframe — Agent Node Redesign. Full HUNT. Hexagonal tech-frames with 6 edge segments (XP via conic-gradient + --xp-deg), corner diamond vertices, crest watermarks. 3 tier sizes, 4 state expressions. Commit: `b422851`.
 - FR-016: DNA Digivolution Nexus — Agent Pods Redesign. Full HUNT. Interconnected energy web with nexus cores, connection lines, flow particles. Commit: `87d62d8`.
 - FR-015: Token Cost Estimation Dashboard. Full HUNT. Server-side LiteLLM pricing fetch with 24h cache + /api/pricing endpoint + hardcoded fallback. Frontend Cost Estimate card with itemized breakdown (count × rate = cost per token type), gold total. 4 files modified.
