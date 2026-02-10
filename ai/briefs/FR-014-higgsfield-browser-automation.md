@@ -5,7 +5,7 @@
 **Effort:** L-Large (2-3d)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** Done
+**Status:** In Progress
 **Created:** 2026-02-09
 
 ---
@@ -100,15 +100,39 @@ The `/higgsfield` skill generates images, videos, edits, and speech by automatin
 
 ## Workflow State
 
-**Phase:** COMPLETE
+**Phase:** TESTING
 **Active Agent:** none
 **Retry Count:** 0
 
 ### Current Work
-Skill rewritten and deployed to both repositories.
+Skill rewritten and deployed. Manual testing revealed blockers.
 
 ### Next Steps
-Manual testing — invoke `/higgsfield` with various prompts to verify browser automation flow.
+1. User to provide correct URL slug mapping for all models
+2. Update SKILL.md with corrected URL slugs
+3. Re-test generation flow with correct slugs
+4. Verify dropdown works properly when navigating to valid slugs
+
+### Blockers
+- **BLOCKER: Incorrect URL slugs in SKILL.md** — SEEKER research guessed model URL slugs (e.g., `gpt-1.5`, `seedream-4.5`) but the actual Higgsfield slugs use different naming (e.g., `openai_hazel` = GPT Image 1.5). When navigating to an invalid slug, the SPA loads the page shell but the model doesn't bind — the dropdown shows "Select model" instead of the model name, and clicking Generate returns **"Submit not implemented for model"** error. Valid slugs work correctly (model binds, dropdown shows model name, generation works).
+
+**Known correct slugs (confirmed):**
+| Model | Correct Slug | Source |
+|-------|-------------|--------|
+| GPT Image 1.5 | `openai_hazel` | User confirmed |
+| Nano Banana Pro | `nano_banana_2` | Extracted via dropdown click |
+| Nano Banana | `nano_banana` | Sitemap + page title |
+| Soul | `soul` | Sitemap |
+| Seedream 4.0 | `seedream` | Sitemap |
+| Wan 2.2 Image | `wan2` | Sitemap + URL observation |
+| Kontext | `kontext` | Sitemap |
+| GPT Image | `gpt` | Sitemap |
+| FLUX.2 Pro | `flux_2` | URL observation |
+| Multi Reference | `multi` | URL observation |
+
+**Still need correct slugs for:** Seedream 4.5, FLUX.2 Max, FLUX.2 Flex, Z-Image, Reve, Kling O1 Image, Kling 3.0, Kling 2.6, Sora 2, Grok Imagine, Veo 3.1, WAN 2.6, WAN 2.5, Seedance 2.0, Seedance 1.5 Pro, Minimax Hailuo 02, DoP, Mixed Media, Sora 2 Enhancer, and all video/editing/speech page paths.
+
+**Resolution:** User will provide the complete slug list. Then update SKILL.md URL routing and re-test.
 
 ### Agent Log
 | Time | Agent | Action | Result |
@@ -116,9 +140,7 @@ Manual testing — invoke `/higgsfield` with various prompts to verify browser a
 | 2026-02-10 | ARCHITECT | Planning phase | Plan complete — 7 phases, discovery-first |
 | 2026-02-10 | SEEKER | Deep research — Higgsfield models, workflows, best practices | Complete — 16+ image models, 15+ video models, full URL map, prompting guides |
 | 2026-02-10 | FORGER | Full skill rewrite — browser automation pivot | Complete — SKILL.md rewritten, copied to fifty_eco_system |
-
-### Blockers
-None
+| 2026-02-10 | SENTINEL | Manual testing — browser generation flow | BLOCKED — incorrect URL slugs, "Submit not implemented for model" error |
 
 ---
 
