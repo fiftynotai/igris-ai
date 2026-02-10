@@ -1,16 +1,16 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-02-09T22:43:52Z",
+  "last_updated": "2026-02-10T09:19:04Z",
   "agents": {
     "architect": {
-      "invocations": 9,
-      "last_used": "2026-02-09T21:56:52Z",
-      "avg_duration_seconds": 124.53,
+      "invocations": 10,
+      "last_used": "2026-02-10T08:42:39Z",
+      "avg_duration_seconds": 148.96,
       "success_rate": 1.0,
-      "total_input_tokens": 32297,
-      "total_output_tokens": 433,
-      "total_cache_read_tokens": 1964249,
-      "total_cache_create_tokens": 1508208
+      "total_input_tokens": 32337,
+      "total_output_tokens": 765,
+      "total_cache_read_tokens": 2719997,
+      "total_cache_create_tokens": 1624423
     },
     "forger": {
       "invocations": 15,
@@ -53,14 +53,14 @@
       "total_cache_create_tokens": 0
     },
     "seeker": {
-      "invocations": 7,
-      "last_used": "2026-02-09T21:05:23Z",
-      "avg_duration_seconds": 166.48,
+      "invocations": 8,
+      "last_used": "2026-02-10T09:15:20Z",
+      "avg_duration_seconds": 173.74,
       "success_rate": 1.0,
-      "total_input_tokens": 42349,
-      "total_output_tokens": 1117,
-      "total_cache_read_tokens": 5346627,
-      "total_cache_create_tokens": 1422371
+      "total_input_tokens": 48284,
+      "total_output_tokens": 1192,
+      "total_cache_read_tokens": 7631555,
+      "total_cache_create_tokens": 1717477
     },
     "ui-designer": {
       "invocations": 8,
@@ -81,14 +81,24 @@
       "total_output_tokens": 466,
       "total_cache_read_tokens": 2734410,
       "total_cache_create_tokens": 419337
+    },
+    "general-purpose": {
+      "invocations": 1,
+      "last_used": "2026-02-10T08:54:32Z",
+      "avg_duration_seconds": 463.52,
+      "success_rate": 1.0,
+      "total_input_tokens": 73,
+      "total_output_tokens": 1174,
+      "total_cache_read_tokens": 3458649,
+      "total_cache_create_tokens": 110106
     }
   },
   "totals": {
-    "total_invocations": 69,
+    "total_invocations": 72,
     "most_used_agent": "forger",
     "least_used_agent": "mender",
-    "total_input_tokens": 114307,
-    "total_output_tokens": 6584,
-    "total_cache_tokens": 64273796
+    "total_input_tokens": 120355,
+    "total_output_tokens": 8165,
+    "total_cache_tokens": 71294548
   }
 }
