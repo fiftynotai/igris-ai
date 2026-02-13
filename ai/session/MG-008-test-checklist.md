@@ -1,7 +1,7 @@
 # MG-008 Test Checklist — Agent Consolidation Validation
 
 **Created:** 2026-02-08
-**Purpose:** Validate v3.4 architecture (7 agents + 14 skills) during normal usage
+**Purpose:** Validate v3.4 architecture (7 agents + 16 skills) during normal usage
 
 ---
 
@@ -37,7 +37,7 @@
 - [ ] `/digivolve status` — displays 7-agent roster (not 18)
 - [ ] `/register` — creates brief with correct Active Agent field
 - [ ] `/hunt` — triggers workflow (covered above)
-- [ ] `/awaken` — session start works
+- [x] `/awaken` — session start works (validated 2026-02-13)
 - [ ] `/rest` — session pause works
 - [ ] `/archive` — archives completed brief
 
@@ -48,9 +48,15 @@
 - [x] No stale agent names in igris_os.md
 - [x] No stale agent names in brief templates
 - [x] persona.json has exactly 7 aliases
-- [x] manifest.yaml lists exactly 7 agents
+- [x] manifest.yaml lists exactly 7 agents (names fixed 2026-02-13)
 - [x] 7 agent .md files in .claude/agents/
-- [x] 14 skill directories in .claude/skills/
+- [x] 16 skill directories in .claude/skills/ (updated from 14: +/team +/higgsfield)
+
+## Data Integrity (added 2026-02-13)
+
+- [x] manifest.yaml uses correct Igris agent names (not subagent_type names)
+- [x] agent-metrics.json has exactly 7 agent entries (stale entries removed, sage added)
+- [x] /scan SKILL.md includes agent count in output template
 
 ---
 

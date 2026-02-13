@@ -50,11 +50,15 @@ Read `ai/session/BLOCKERS.md`:
 - Count active blockers (not in Resolved section)
 - Flag critical blockers
 
-### 4. Git Status
+### 4. Agent Count
+
+Count `.claude/agents/*.md` files to get current agent count.
+
+### 5. Git Status
 
 Run: `git status --short`
 
-### 5. Display Report
+### 6. Display Report
 
 Format as:
 
@@ -81,6 +85,9 @@ Format as:
 - P1 (High): X briefs
 - P2 (Medium): X briefs
 - P3 (Low): X briefs
+
+### Agents
+X agents registered (Y skills available)
 
 ### Blockers
 [None | X active (Y critical)]
