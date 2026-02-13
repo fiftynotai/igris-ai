@@ -50,8 +50,18 @@ Subcommands: `hunt`, `review`, `investigate`, `refactor`, `status`, `message`, `
 ## Prerequisites
 
 1. **Experimental flag required:** `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: 1` must be set in `~/.claude/settings.json`
+   - This is already configured for this project in `~/.claude/settings.json` under the `env` key:
+     ```json
+     {
+       "env": {
+         "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+       }
+     }
+     ```
+   - If the flag is missing or disabled, add the `env` block to `~/.claude/settings.json`
 2. **One team per session:** Only one active team is allowed at a time
 3. **No nested teams:** Teammates cannot spawn their own teams
+4. **Display mode (optional):** Set `"teammateMode": "tmux"` in `~/.claude/settings.json` for split-pane view (requires tmux or iTerm2). Default is `"in-process"` which works without extra dependencies.
 
 ## Pre-Flight Check
 
