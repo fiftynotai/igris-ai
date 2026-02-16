@@ -168,6 +168,7 @@ IGRIS v4.0 uses **7 native Claude Code subagents** for autonomous workflows, wit
 | "review code" | warden |
 | "list projects" | `/projects` skill |
 | "portfolio", "cross-project" | `/portfolio` skill |
+| "dashboard", "what was I working on" | `/dashboard` skill |
 
 ### Orchestrator-Only (Exceptions)
 - Brief listing/reading/status updates
@@ -304,10 +305,13 @@ IGRIS v4.0 uses a centralized brain at `~/.igris/` for persistent memory and cro
 - `igris_project_register/list/status` — Project registry
 - `igris_metrics_record/query/velocity` — Agent performance tracking
 - `igris_pattern_suggest` — Pattern recommendations
+- `igris_session_sync/recall` — Cross-project session tracking
+- `igris_brief_sync/dashboard` — Cross-project brief lifecycle management
 
 **New Skills:**
 - `/projects` — List all managed projects
 - `/portfolio` — Cross-project dashboard
+- `/dashboard` — Cross-project brief & session tracker
 
 ---
 
@@ -325,10 +329,10 @@ Execute the full autonomous workflow.
 
 ```
 STATES:
-[INIT] --> [PLANNING] --> [APPROVAL?] --> [BUILDING] --> [TESTING] --> [REVIEWING] --> [COMMITTING] --> [COMPLETE]
-              |               |               |              |              |
-              v               v               v              v              v
-          architect    (L/XL: user)       forger        sentinel       warden
+[INIT] --> [PLANNING] --> [APPROVAL?] --> [BUILDING] --> [TESTING] --> [REVIEWING] --> [DOCUMENTING?] --> [COMMITTING] --> [COMPLETE]
+              |               |               |              |              |              |
+              v               v               v              v              v              v
+          architect    (L/XL: user)       forger        sentinel       warden       documenter
 
 ERROR STATES:
 [BLOCKED] - Max retries exceeded

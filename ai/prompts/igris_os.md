@@ -378,6 +378,7 @@ Task Received
 | UI design guidelines | `/ui-design` | "design system", "accessibility review" |
 | Project listing | `/projects` | "list projects", "show all projects" |
 | Cross-project dashboard | `/portfolio` | "portfolio", "cross-project status" |
+| Cross-project brief dashboard | `/dashboard` | "dashboard", "what was I working on" |
 
 ---
 
