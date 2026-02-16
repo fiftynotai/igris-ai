@@ -18,10 +18,11 @@ import os
 import urllib.request
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
+import httpx
 import aiosqlite
 from pydantic import BaseModel, Field
 from typing import Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -77,6 +78,63 @@ FALLBACK_PRICING = {
         "cache_creation_input_token_cost": 1.25e-06,
     },
 }
+
+# ---------------------------------------------------------------------------
+# Brain Configuration
+# ---------------------------------------------------------------------------
+
+BRAIN_CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".igris", "config.json")
+
+
+def load_brain_config() -> dict:
+    """Load brain server configuration from ~/.igris/config.json or env vars."""
+    config = {"url": None, "api_key": None}
+
+    # Try config file first
+    try:
+        if os.path.exists(BRAIN_CONFIG_FILE):
+            with open(BRAIN_CONFIG_FILE) as f:
+                data = json.load(f)
+            remote = data.get("remote_brain", {})
+            config["url"] = remote.get("url")
+            config["api_key"] = remote.get("api_key")
+    except Exception:
+        pass
+
+    # Environment variable overrides
+    if not config["url"]:
+        config["url"] = os.environ.get("BRAIN_URL")
+    if not config["api_key"]:
+        config["api_key"] = os.environ.get("BRAIN_API_KEY")
+
+    return config
+
+
+async def brain_request(app, path: str, params: dict = None) -> dict | None:
+    """Make authenticated GET request to brain server. Returns None on any error."""
+    brain_config = app.state.brain_config
+    if not brain_config.get("url"):
+        return None
+
+    if not app.state.brain_client:
+        return None
+
+    try:
+        url = f"{brain_config['url'].rstrip('/')}{path}"
+        headers = {}
+        if brain_config.get("api_key"):
+            headers["Authorization"] = f"Bearer {brain_config['api_key']}"
+
+        resp = await app.state.brain_client.get(url, params=params, headers=headers)
+        if resp.status_code == 200:
+            return resp.json()
+        else:
+            logger.warning("Brain request %s returned %d", path, resp.status_code)
+            return None
+    except Exception as exc:
+        logger.warning("Brain request %s failed: %s", path, exc)
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Agent Leveling System
@@ -691,6 +749,85 @@ async def watch_events_file(app: FastAPI):
         logger.error("File watcher error: %s", exc)
 
 
+async def poll_brain(app: FastAPI):
+    """Background task that polls the brain server and broadcasts updates via WebSocket."""
+    brain_config = app.state.brain_config
+    if not brain_config.get("url"):
+        logger.info("Brain URL not configured, brain polling disabled")
+        return
+
+    # Polling intervals (seconds)
+    INSTANCE_INTERVAL = 30
+    HEALTH_INTERVAL = 60
+    PROJECTS_INTERVAL = 120
+
+    last_instances = 0.0
+    last_health = 0.0
+    last_projects = 0.0
+
+    logger.info(
+        "Brain polling started (instances: %ds, health: %ds, projects/briefs: %ds)",
+        INSTANCE_INTERVAL, HEALTH_INTERVAL, PROJECTS_INTERVAL,
+    )
+
+    while True:
+        await asyncio.sleep(5)  # Check every 5 seconds what needs refreshing
+        now = asyncio.get_event_loop().time()
+
+        try:
+            # Health check (every 60s)
+            if now - last_health >= HEALTH_INTERVAL:
+                health = await brain_request(app, "/health")
+                stats = await brain_request(app, "/api/brain-stats")
+                if health or stats:
+                    await manager.broadcast({
+                        "type": "brain_health",
+                        "data": {**(health or {}), **(stats or {})},
+                    })
+                last_health = now
+
+            # Instances (every 30s -- real-time feel)
+            if now - last_instances >= INSTANCE_INTERVAL:
+                data = await brain_request(app, "/api/instances")
+                if data:
+                    await manager.broadcast({
+                        "type": "brain_instances",
+                        "data": data,
+                    })
+                last_instances = now
+
+            # Projects + Briefs + Sessions (every 120s -- less frequent)
+            if now - last_projects >= PROJECTS_INTERVAL:
+                projects = await brain_request(app, "/api/projects")
+                briefs = await brain_request(app, "/api/briefs")
+                sessions = await brain_request(
+                    app, "/api/sessions", params={"days": "7"},
+                )
+
+                if projects:
+                    await manager.broadcast({
+                        "type": "brain_projects",
+                        "data": projects,
+                    })
+                if briefs:
+                    await manager.broadcast({
+                        "type": "brain_briefs",
+                        "data": briefs,
+                    })
+                if sessions:
+                    await manager.broadcast({
+                        "type": "brain_sessions",
+                        "data": sessions,
+                    })
+                last_projects = now
+
+        except asyncio.CancelledError:
+            logger.info("Brain polling stopped")
+            return
+        except Exception as exc:
+            logger.warning("Brain polling error: %s", exc)
+
+
 async def refresh_pricing_periodically(app: FastAPI):
     """Background task to refresh pricing cache every 24 hours."""
     while True:
@@ -1145,9 +1282,22 @@ async def lifespan(app: FastAPI):
     app.state.pricing_fetched_at = datetime.now(timezone.utc).isoformat()
     logger.info("Pricing cache loaded (%d models, source=%s)", len(app.state.pricing), app.state.pricing_source)
 
+    # Initialize brain proxy client
+    app.state.brain_config = load_brain_config()
+    app.state.brain_client = (
+        httpx.AsyncClient(timeout=10.0)
+        if app.state.brain_config.get("url")
+        else None
+    )
+    if app.state.brain_client:
+        logger.info("Brain proxy enabled: %s", app.state.brain_config["url"])
+    else:
+        logger.info("Brain proxy disabled (no URL configured)")
+
     # Start file watcher background task
     watcher_task = asyncio.create_task(watch_events_file(app))
     pricing_task = asyncio.create_task(refresh_pricing_periodically(app))
+    brain_task = asyncio.create_task(poll_brain(app))
 
     logger.info("Crimson Arena server ready")
 
@@ -1156,6 +1306,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     watcher_task.cancel()
     pricing_task.cancel()
+    brain_task.cancel()
     try:
         await watcher_task
     except asyncio.CancelledError:
@@ -1164,6 +1315,12 @@ async def lifespan(app: FastAPI):
         await pricing_task
     except asyncio.CancelledError:
         pass
+    try:
+        await brain_task
+    except asyncio.CancelledError:
+        pass
+    if app.state.brain_client:
+        await app.state.brain_client.aclose()
     await app.state.db.close()
     logger.info("Crimson Arena server stopped")
 
@@ -1273,6 +1430,68 @@ async def get_pricing():
     })
 
 
+# ---------------------------------------------------------------------------
+# Brain Proxy Endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/brain/health")
+async def brain_health(request: Request):
+    """Check brain server health and return stats."""
+    health = await brain_request(request.app, "/health")
+    stats = await brain_request(request.app, "/api/brain-stats")
+    if not health and not stats:
+        return {"status": "offline", "message": "Brain server unreachable"}
+    return {**(health or {}), **(stats or {}), "status": "ok"}
+
+
+@app.get("/api/brain/instances")
+async def brain_instances(request: Request):
+    """List active Claude Code instances from brain server."""
+    data = await brain_request(request.app, "/api/instances")
+    if data is None:
+        return {"instances": [], "count": 0, "status": "offline"}
+    return data
+
+
+@app.get("/api/brain/projects")
+async def brain_projects(request: Request):
+    """List registered projects from brain server."""
+    data = await brain_request(request.app, "/api/projects")
+    if data is None:
+        return {"projects": [], "count": 0, "status": "offline"}
+    return data
+
+
+@app.get("/api/brain/briefs")
+async def brain_briefs(
+    request: Request, status: str = None, project: str = None
+):
+    """List briefs from brain server, optionally filtered by status/project."""
+    params = {}
+    if status:
+        params["status"] = status
+    if project:
+        params["project"] = project
+    data = await brain_request(
+        request.app, "/api/briefs", params=params if params else None
+    )
+    if data is None:
+        return {"briefs": [], "summary": {}, "count": 0, "status": "offline"}
+    return data
+
+
+@app.get("/api/brain/sessions")
+async def brain_sessions(request: Request, days: int = 7):
+    """List recent sessions from brain server."""
+    data = await brain_request(
+        request.app, "/api/sessions", params={"days": str(days)}
+    )
+    if data is None:
+        return {"sessions": [], "count": 0, "status": "offline"}
+    return data
+
+
 @app.post("/api/event")
 async def post_event(event: AgentEvent):
     """Receive an event from the agent_metrics.sh hook.
@@ -1311,6 +1530,30 @@ async def websocket_endpoint(websocket: WebSocket):
         # Send full state as initial bootstrap payload
         state = await build_filtered_state(app, range_key="today")
         await websocket.send_json({"type": "state", "data": state})
+
+        # Send initial brain state if brain is configured
+        if app.state.brain_config.get("url"):
+            try:
+                health = await brain_request(app, "/health")
+                stats = await brain_request(app, "/api/brain-stats")
+                instances = await brain_request(app, "/api/instances")
+                projects = await brain_request(app, "/api/projects")
+                briefs = await brain_request(app, "/api/briefs")
+                sessions = await brain_request(
+                    app, "/api/sessions", params={"days": "7"},
+                )
+                await websocket.send_json({
+                    "type": "brain_state",
+                    "data": {
+                        "health": {**(health or {}), **(stats or {})},
+                        "instances": instances,
+                        "projects": projects,
+                        "briefs": briefs,
+                        "sessions": sessions,
+                    },
+                })
+            except Exception as exc:
+                logger.warning("Failed to send initial brain state: %s", exc)
 
         # Keep connection alive; read messages to detect disconnects
         while True:

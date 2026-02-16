@@ -25,8 +25,8 @@
 
 ## Resume Point
 
-**Last Active:** FR-027 (Crimson Arena — Unified Command Center Dashboard)
-**Phase:** INIT (brief registered, not yet hunted)
+**Last Active:** Brain MCP server fix (no brief — maintenance)
+**Phase:** N/A
 
 **Next Steps When Resuming:**
 1. HUNT FR-027 (L-effort — Crimson Arena unified dashboard: add brain proxy endpoints to server.py, new frontend panels for instances/projects/briefs/health, WebSocket real-time polling)
@@ -39,22 +39,25 @@
 
 ## Last Session Summary (2026-02-16)
 
+**Date:** 2026-02-16
+**Summary:** Fixed brain MCP server connection issues that blocked `/awaken` brain queries.
+
 **Completed (this session):**
-- FR-026: Implemented Live Instance Registry via full HUNT pipeline (architect > forger > sentinel > warden). Created `brain-mcp-server/src/tools/instances.ts` with 3 tools: `igris_instance_heartbeat`, `igris_instance_list`, `igris_instance_remove`. Schema migration v4. Commit: `3f77b30`.
-- Deployed brain server v4 to VPS: cloned repo to `/root/.igris/repo`, built, copied to `/root/.igris/mcp-server/`, restarted PM2, forced schema v4 migration.
-- Tested all 3 instance tools on VPS: 8/8 acceptance tests PASS (register, update, list, filter, stale detection, remove).
-- FR-027: Registered brief for Crimson Arena unified command center dashboard (L-effort, 3-phase plan: backend brain proxy, frontend panels, real-time WebSocket).
-- Synced 9 learnings to brain (4 global patterns, 5 local project learnings).
-- Fixed `schema_version` in `sync.ts` push payload: 3 → 4.
+- Fixed brain MCP `igris_memory_recall` and `igris_project_register` failing with "No valid session ID provided" error
+- Added `dispatchToolCall()` direct tool execution fallback in `brain-mcp-server/src/index.ts` — bypasses MCP transport when no sessions exist (after server restart)
+- Added session ID injection into `rawHeaders` for when sessions exist but client omits header
+- Fixed FTS5 syntax errors: added `sanitizeFts5Query()` to `memory.ts` and `errors.ts` — strips commas, colons, parentheses before MATCH queries
+- Deployed fix to VPS, verified all brain tools work end-to-end via Claude Code
+- Stored learnings in brain (IDs 11, 12)
+- Commit: `005b945`, pushed to origin/develop
 
 **Previous (this day — earlier sessions):**
-- Fixed brain MCP transport type: `streamable-http` → `http` in `~/.claude.json`.
-- Cleaned up `settings.local.json`: 122 → 76 clean patterns.
+- FR-026: Live Instance Registry. Commit: `3f77b30`.
+- FR-027: Registered brief for Crimson Arena dashboard.
 - FR-025: Deployed brain MCP server to VPS. Commit: `c97b602`.
 - FR-024: Created igris_vps_update.sh. Commit: `f997f72`.
 - FR-023: Bidirectional sync. Commit: `3ae2091`.
 - FR-022: HTTP transport. Commit: `020a964`.
-- MG-011, MG-010, MG-009, PI-003: Various migrations and improvements.
 
 **Previous (2026-02-13):**
 - v3.4 validation sweep — fixed 3 data integrity issues. Commit: `e8c8b25`.

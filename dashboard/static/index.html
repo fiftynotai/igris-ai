@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CRIMSON ARENA — Igris AI Agent Dashboard</title>
-  <link rel="stylesheet" href="/static/style.css?v=11">
+  <link rel="stylesheet" href="/static/style.css?v=12">
 </head>
 <body>
 
@@ -407,6 +407,104 @@
   </main>
 
   <!-- ================================================================== -->
+  <!-- BRAIN COMMAND CENTER                                                -->
+  <!-- ================================================================== -->
+  <section class="brain-section" id="brain-section">
+    <div class="brain-section__header">
+      <h2 class="section-title">
+        <span class="section-title__icon">&#x1F9E0;</span>
+        BRAIN COMMAND CENTER
+      </h2>
+      <div class="brain-health-badge" id="brain-health-badge">
+        <span class="brain-health-badge__dot"></span>
+        <span class="brain-health-badge__text">CHECKING...</span>
+      </div>
+    </div>
+
+    <div class="brain-section__grid">
+      <!-- Brain Health Card -->
+      <div class="panel brain-health-card" id="brain-health-card">
+        <h3 class="panel__title">System Health</h3>
+        <div class="brain-health-stats" id="brain-health-stats">
+          <div class="brain-stat">
+            <span class="brain-stat__label">Status</span>
+            <span class="brain-stat__value" id="brain-stat-status">--</span>
+          </div>
+          <div class="brain-stat">
+            <span class="brain-stat__label">Version</span>
+            <span class="brain-stat__value" id="brain-stat-version">--</span>
+          </div>
+          <div class="brain-stat">
+            <span class="brain-stat__label">Latency</span>
+            <span class="brain-stat__value" id="brain-stat-latency">--</span>
+          </div>
+          <div class="brain-stat">
+            <span class="brain-stat__label">DB Size</span>
+            <span class="brain-stat__value" id="brain-stat-dbsize">--</span>
+          </div>
+          <div class="brain-stat">
+            <span class="brain-stat__label">Uptime</span>
+            <span class="brain-stat__value" id="brain-stat-uptime">--</span>
+          </div>
+          <div class="brain-stat">
+            <span class="brain-stat__label">Records</span>
+            <span class="brain-stat__value" id="brain-stat-records">--</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live Instances Panel -->
+      <div class="panel brain-instances-panel" id="brain-instances-panel">
+        <h3 class="panel__title">
+          <span class="panel__title-icon">&#x1F4E1;</span>
+          Live Instances
+          <span class="panel__count" id="brain-instances-count">0</span>
+        </h3>
+        <div class="brain-table-wrap" id="brain-instances-table">
+          <div class="brain-panel__empty">Waiting for brain connection...</div>
+        </div>
+      </div>
+
+      <!-- Projects Panel -->
+      <div class="panel brain-projects-panel" id="brain-projects-panel">
+        <h3 class="panel__title">
+          <span class="panel__title-icon">&#x1F4C2;</span>
+          Projects
+          <span class="panel__count" id="brain-projects-count">0</span>
+        </h3>
+        <div id="brain-projects-grid">
+          <div class="brain-panel__empty">Waiting for brain connection...</div>
+        </div>
+      </div>
+
+      <!-- Briefs Panel -->
+      <div class="panel brain-briefs-panel" id="brain-briefs-panel">
+        <h3 class="panel__title">
+          <span class="panel__title-icon">&#x1F4CB;</span>
+          Brief Status
+          <span class="panel__count" id="brain-briefs-count">0</span>
+        </h3>
+        <div class="brain-briefs-summary" id="brain-briefs-summary"></div>
+        <div class="brain-table-wrap" id="brain-briefs-table">
+          <div class="brain-panel__empty">Waiting for brain connection...</div>
+        </div>
+      </div>
+
+      <!-- Sessions Timeline -->
+      <div class="panel brain-sessions-panel" id="brain-sessions-panel">
+        <h3 class="panel__title">
+          <span class="panel__title-icon">&#x1F550;</span>
+          Recent Sessions
+          <span class="panel__count" id="brain-sessions-count">0</span>
+        </h3>
+        <div id="brain-sessions-list">
+          <div class="brain-panel__empty">Waiting for brain connection...</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================== -->
   <!-- FOOTER: RPG Party Stats                                             -->
   <!-- ================================================================== -->
   <footer class="footer">
@@ -421,6 +519,6 @@
     </div>
   </footer>
 
-  <script src="/static/app.js?v=11"></script>
+  <script src="/static/app.js?v=12"></script>
 </body>
 </html>

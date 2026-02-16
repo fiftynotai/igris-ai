@@ -251,6 +251,8 @@ function ArenaClient() {
     this._digiviceInitialized = false;
     this._hpInitialized = false;
     this.pricing = null;
+    this.brainState = null;
+    this.brainAvailable = false;
 }
 
 /**
@@ -269,6 +271,8 @@ ArenaClient.prototype.init = async function () {
     var self = this;
     window.addEventListener('resize', function () { self._initNexusLines(); });
     this.connectWebSocket();
+    this.fetchBrainData();
+    setInterval(function () { self.fetchBrainData(); }, 60000);
 };
 
 /* --------------------------------------------------------------------------
@@ -430,6 +434,31 @@ ArenaClient.prototype.connectWebSocket = function () {
             } else if (msg.type === 'event') {
                 var event = msg.data || msg;
                 self.handleEvent(event);
+            } else if (msg.type === 'brain_state') {
+                self.brainState = msg.data || {};
+                self.brainAvailable = true;
+                self.renderBrainSection();
+            } else if (msg.type === 'brain_health') {
+                if (!self.brainState) self.brainState = {};
+                self.brainState.health = msg.data;
+                self.brainAvailable = true;
+                self.renderBrainSection();
+            } else if (msg.type === 'brain_instances') {
+                if (!self.brainState) self.brainState = {};
+                self.brainState.instances = msg.data;
+                self.renderBrainSection();
+            } else if (msg.type === 'brain_projects') {
+                if (!self.brainState) self.brainState = {};
+                self.brainState.projects = msg.data;
+                self.renderBrainSection();
+            } else if (msg.type === 'brain_briefs') {
+                if (!self.brainState) self.brainState = {};
+                self.brainState.briefs = msg.data;
+                self.renderBrainSection();
+            } else if (msg.type === 'brain_sessions') {
+                if (!self.brainState) self.brainState = {};
+                self.brainState.sessions = msg.data;
+                self.renderBrainSection();
             }
         } catch (e) {
             console.error('Failed to parse WebSocket message:', e);
@@ -1837,6 +1866,477 @@ ArenaClient.prototype._eventMatchesFilter = function (event) {
     }
 
     return true;
+};
+
+/* --------------------------------------------------------------------------
+   Brain Command Center: Helper Utilities
+   -------------------------------------------------------------------------- */
+
+/**
+ * Format bytes to human-readable string (KB, MB, GB).
+ * @param {number} bytes
+ * @returns {string}
+ */
+function formatBytes(bytes) {
+    if (bytes == null || bytes === 0) return '0 B';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
+    return (bytes / 1073741824).toFixed(1) + ' GB';
+}
+
+/**
+ * Format seconds to human-readable uptime string.
+ * @param {number} seconds
+ * @returns {string}
+ */
+function formatUptime(seconds) {
+    if (seconds == null || seconds === 0) return '0s';
+    var d = Math.floor(seconds / 86400);
+    var h = Math.floor((seconds % 86400) / 3600);
+    var m = Math.floor((seconds % 3600) / 60);
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + m + 'm';
+    return m + 'm';
+}
+
+/**
+ * Format ISO timestamp to relative time string.
+ * @param {string} isoString
+ * @returns {string}
+ */
+function formatRelativeTime(isoString) {
+    if (!isoString) return '--';
+    var diff = Date.now() - new Date(isoString).getTime();
+    if (diff < 0) return 'just now';
+    var seconds = Math.floor(diff / 1000);
+    if (seconds < 60) return seconds + 's ago';
+    var minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return minutes + 'm ago';
+    var hours = Math.floor(minutes / 60);
+    if (hours < 24) return hours + 'h ago';
+    var days = Math.floor(hours / 24);
+    if (days < 7) return days + 'd ago';
+    return Math.floor(days / 7) + 'w ago';
+}
+
+/**
+ * Get a date group label for session grouping.
+ * @param {string} isoString
+ * @returns {string}
+ */
+function getDateGroup(isoString) {
+    if (!isoString) return 'Unknown';
+    var date = new Date(isoString);
+    var today = new Date();
+    var yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+
+    var dateStr = date.toISOString().substring(0, 10);
+    var todayStr = today.toISOString().substring(0, 10);
+    var yesterdayStr = yesterday.toISOString().substring(0, 10);
+
+    if (dateStr === todayStr) return 'Today';
+    if (dateStr === yesterdayStr) return 'Yesterday';
+    return 'Earlier';
+}
+
+/* --------------------------------------------------------------------------
+   Brain Command Center: Data Fetching
+   -------------------------------------------------------------------------- */
+
+/**
+ * Fetch all brain data endpoints in parallel.
+ */
+ArenaClient.prototype.fetchBrainData = async function () {
+    var self = this;
+    var startTime = Date.now();
+
+    var endpoints = [
+        { key: 'health', url: '/api/brain/health' },
+        { key: 'instances', url: '/api/brain/instances' },
+        { key: 'projects', url: '/api/brain/projects' },
+        { key: 'briefs', url: '/api/brain/briefs' },
+        { key: 'sessions', url: '/api/brain/sessions' }
+    ];
+
+    var promises = endpoints.map(function (ep) {
+        return fetch(ep.url).then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        });
+    });
+
+    var results = await Promise.allSettled(promises);
+    var latencyMs = Date.now() - startTime;
+
+    var state = {};
+    var anySuccess = false;
+    for (var i = 0; i < results.length; i++) {
+        if (results[i].status === 'fulfilled') {
+            state[endpoints[i].key] = results[i].value;
+            anySuccess = true;
+        } else {
+            state[endpoints[i].key] = null;
+        }
+    }
+    state._latencyMs = latencyMs;
+
+    self.brainState = state;
+    self.brainAvailable = anySuccess;
+    self.renderBrainSection();
+};
+
+/* --------------------------------------------------------------------------
+   Brain Command Center: Rendering
+   -------------------------------------------------------------------------- */
+
+/**
+ * Master render for the brain section. Calls sub-renders or shows offline state.
+ */
+ArenaClient.prototype.renderBrainSection = function () {
+    var section = document.getElementById('brain-section');
+    if (!section) return;
+
+    if (!this.brainAvailable) {
+        section.classList.add('brain-section--offline');
+        var badge = document.getElementById('brain-health-badge');
+        if (badge) {
+            badge.querySelector('.brain-health-badge__dot').className = 'brain-health-badge__dot brain-health-badge__dot--offline';
+            badge.querySelector('.brain-health-badge__text').textContent = 'OFFLINE';
+        }
+        return;
+    }
+
+    section.classList.remove('brain-section--offline');
+
+    var bs = this.brainState || {};
+    this.renderBrainHealth(bs.health);
+    this.renderBrainInstances(bs.instances);
+    this.renderBrainProjects(bs.projects);
+    this.renderBrainBriefs(bs.briefs);
+    this.renderBrainSessions(bs.sessions);
+};
+
+/**
+ * Render the brain health card.
+ * @param {object|null} data
+ */
+ArenaClient.prototype.renderBrainHealth = function (data) {
+    var badge = document.getElementById('brain-health-badge');
+
+    if (!data) {
+        if (badge) {
+            badge.querySelector('.brain-health-badge__dot').className = 'brain-health-badge__dot brain-health-badge__dot--offline';
+            badge.querySelector('.brain-health-badge__text').textContent = 'OFFLINE';
+        }
+        return;
+    }
+
+    // Badge
+    if (badge) {
+        badge.querySelector('.brain-health-badge__dot').className = 'brain-health-badge__dot brain-health-badge__dot--online';
+        badge.querySelector('.brain-health-badge__text').textContent = 'ONLINE';
+    }
+
+    // Status
+    var statusEl = document.getElementById('brain-stat-status');
+    if (statusEl) {
+        statusEl.textContent = 'ONLINE';
+        statusEl.className = 'brain-stat__value brain-stat__value--online';
+    }
+
+    // Version
+    var versionEl = document.getElementById('brain-stat-version');
+    if (versionEl) versionEl.textContent = data.version || data.brain_version || '--';
+
+    // Latency
+    var latencyEl = document.getElementById('brain-stat-latency');
+    if (latencyEl) {
+        var lat = (this.brainState && this.brainState._latencyMs) ? this.brainState._latencyMs : null;
+        latencyEl.textContent = lat != null ? lat + 'ms' : 'N/A';
+    }
+
+    // DB Size
+    var dbsizeEl = document.getElementById('brain-stat-dbsize');
+    if (dbsizeEl) dbsizeEl.textContent = data.db_size_bytes ? formatBytes(data.db_size_bytes) : (data.db_size || '--');
+
+    // Uptime
+    var uptimeEl = document.getElementById('brain-stat-uptime');
+    if (uptimeEl) uptimeEl.textContent = data.uptime_seconds ? formatUptime(data.uptime_seconds) : (data.uptime || '--');
+
+    // Records
+    var recordsEl = document.getElementById('brain-stat-records');
+    if (recordsEl) {
+        var totalRecords = 0;
+        if (data.counts) {
+            var countKeys = Object.keys(data.counts);
+            for (var i = 0; i < countKeys.length; i++) {
+                totalRecords += data.counts[countKeys[i]] || 0;
+            }
+        } else if (data.total_records != null) {
+            totalRecords = data.total_records;
+        }
+        recordsEl.textContent = formatNumber(totalRecords);
+    }
+};
+
+/**
+ * Render the live instances table.
+ * @param {object|null} data
+ */
+ArenaClient.prototype.renderBrainInstances = function (data) {
+    var container = document.getElementById('brain-instances-table');
+    var countEl = document.getElementById('brain-instances-count');
+    if (!container) return;
+
+    var instances = [];
+    if (data && Array.isArray(data)) {
+        instances = data;
+    } else if (data && data.instances && Array.isArray(data.instances)) {
+        instances = data.instances;
+    }
+
+    if (countEl) countEl.textContent = instances.length;
+
+    if (instances.length === 0) {
+        container.innerHTML = '<div class="brain-panel__empty">No active instances</div>';
+        return;
+    }
+
+    var html = '<table class="brain-table">';
+    html += '<thead><tr>';
+    html += '<th>Machine</th><th>OS</th><th>Project</th><th>Brief</th><th>Phase</th><th>Status</th><th>Heartbeat</th>';
+    html += '</tr></thead><tbody>';
+
+    var now = Date.now();
+    for (var i = 0; i < instances.length; i++) {
+        var inst = instances[i];
+        var heartbeat = inst.last_heartbeat_at || inst.last_heartbeat || inst.updated_at || '';
+        var staleMs = heartbeat ? (now - new Date(heartbeat).getTime()) : Infinity;
+        var isStale = staleMs > 300000; // 5 minutes
+        var isActive = inst.status === 'active' || (!inst.status && staleMs < 60000);
+        var statusClass = isStale ? 'stale' : (isActive ? 'active' : 'idle');
+        var rowClass = isStale ? ' brain-table__row--stale' : '';
+
+        html += '<tr class="brain-table__row' + rowClass + '">';
+        html += '<td class="brain-table__cell">' + escapeHtml(inst.machine_hostname || inst.machine_name || '--') + '</td>';
+        html += '<td class="brain-table__cell">' + escapeHtml(inst.machine_os || inst.os || '--') + '</td>';
+        html += '<td class="brain-table__cell brain-table__cell--project">' + escapeHtml(inst.project || inst.project_slug || '--') + '</td>';
+        html += '<td class="brain-table__cell">' + escapeHtml(inst.brief || inst.current_brief || '--') + '</td>';
+        html += '<td class="brain-table__cell">' + escapeHtml(inst.phase || inst.current_phase || '--') + '</td>';
+        html += '<td class="brain-table__cell"><span class="brain-status brain-status--' + statusClass + '"><span class="brain-status__dot"></span>' + escapeHtml(statusClass.toUpperCase()) + '</span></td>';
+        html += '<td class="brain-table__cell brain-table__cell--time">' + escapeHtml(formatRelativeTime(heartbeat)) + '</td>';
+        html += '</tr>';
+    }
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+};
+
+/**
+ * Render the projects card grid.
+ * @param {object|null} data
+ */
+ArenaClient.prototype.renderBrainProjects = function (data) {
+    var container = document.getElementById('brain-projects-grid');
+    var countEl = document.getElementById('brain-projects-count');
+    if (!container) return;
+
+    var projects = [];
+    if (data && Array.isArray(data)) {
+        projects = data;
+    } else if (data && data.projects && Array.isArray(data.projects)) {
+        projects = data.projects;
+    }
+
+    if (countEl) countEl.textContent = projects.length;
+
+    if (projects.length === 0) {
+        container.innerHTML = '<div class="brain-panel__empty">No projects registered</div>';
+        return;
+    }
+
+    var html = '<div class="brain-projects__cards">';
+    for (var i = 0; i < projects.length; i++) {
+        var proj = projects[i];
+        var isActive = proj.status === 'active';
+        var cardClass = isActive ? '' : ' brain-project-card--inactive';
+
+        html += '<div class="brain-project-card' + cardClass + '">';
+        html += '<div class="brain-project-card__header">';
+        html += '<span class="brain-project-card__name">' + escapeHtml(proj.name || proj.slug || '--') + '</span>';
+        html += '<span class="brain-project-card__status brain-project-card__status--' + (isActive ? 'active' : 'inactive') + '">' + escapeHtml(isActive ? 'ACTIVE' : 'INACTIVE') + '</span>';
+        html += '</div>';
+        if (proj.slug && proj.slug !== proj.name) {
+            html += '<div class="brain-project-card__slug">' + escapeHtml(proj.slug) + '</div>';
+        }
+        if (proj.tech_stack || proj.technologies) {
+            var techs = proj.tech_stack || proj.technologies || [];
+            if (typeof techs === 'string') techs = techs.split(',');
+            if (techs.length > 0) {
+                html += '<div class="brain-project-card__tags">';
+                for (var t = 0; t < techs.length && t < 5; t++) {
+                    html += '<span class="brain-tag">' + escapeHtml(techs[t].trim()) + '</span>';
+                }
+                html += '</div>';
+            }
+        }
+        if (proj.last_session || proj.updated_at) {
+            html += '<div class="brain-project-card__time">' + escapeHtml(formatRelativeTime(proj.last_session || proj.updated_at)) + '</div>';
+        }
+        html += '</div>';
+    }
+    html += '</div>';
+    container.innerHTML = html;
+};
+
+/**
+ * Render the briefs panel with summary pills and table.
+ * @param {object|null} data
+ */
+ArenaClient.prototype.renderBrainBriefs = function (data) {
+    var summaryEl = document.getElementById('brain-briefs-summary');
+    var tableEl = document.getElementById('brain-briefs-table');
+    var countEl = document.getElementById('brain-briefs-count');
+    if (!tableEl) return;
+
+    var briefs = [];
+    if (data && Array.isArray(data)) {
+        briefs = data;
+    } else if (data && data.briefs && Array.isArray(data.briefs)) {
+        briefs = data.briefs;
+    }
+
+    if (countEl) countEl.textContent = briefs.length;
+
+    // Summary pills
+    if (summaryEl) {
+        var statusCounts = {};
+        for (var s = 0; s < briefs.length; s++) {
+            var st = briefs[s].status || 'Unknown';
+            statusCounts[st] = (statusCounts[st] || 0) + 1;
+        }
+        var pillOrder = ['Ready', 'In Progress', 'Done', 'Draft', 'Blocked'];
+        var pillHtml = '';
+        for (var p = 0; p < pillOrder.length; p++) {
+            var pName = pillOrder[p];
+            if (statusCounts[pName]) {
+                var pillClass = pName.toLowerCase().replace(/\s+/g, '-');
+                pillHtml += '<span class="brain-brief-pill brain-brief-pill--' + pillClass + '">' +
+                    escapeHtml(pName) + ': ' + statusCounts[pName] + '</span>';
+            }
+        }
+        // Any remaining statuses
+        var pillKeys = Object.keys(statusCounts);
+        for (var pk = 0; pk < pillKeys.length; pk++) {
+            if (pillOrder.indexOf(pillKeys[pk]) === -1) {
+                pillHtml += '<span class="brain-brief-pill">' + escapeHtml(pillKeys[pk]) + ': ' + statusCounts[pillKeys[pk]] + '</span>';
+            }
+        }
+        summaryEl.innerHTML = pillHtml;
+    }
+
+    // Table
+    if (briefs.length === 0) {
+        tableEl.innerHTML = '<div class="brain-panel__empty">No briefs found</div>';
+        return;
+    }
+
+    var html = '<table class="brain-table">';
+    html += '<thead><tr>';
+    html += '<th>Project</th><th>Brief</th><th>Type</th><th>Title</th><th>Status</th><th>Priority</th>';
+    html += '</tr></thead><tbody>';
+
+    for (var b = 0; b < briefs.length; b++) {
+        var brief = briefs[b];
+        var bStatus = brief.status || '--';
+        var bStatusClass = bStatus.toLowerCase().replace(/\s+/g, '-');
+
+        html += '<tr class="brain-table__row">';
+        html += '<td class="brain-table__cell brain-table__cell--project">' + escapeHtml(brief.project || brief.project_slug || '--') + '</td>';
+        html += '<td class="brain-table__cell brain-table__cell--id">' + escapeHtml(brief.brief_id || brief.id || '--') + '</td>';
+        html += '<td class="brain-table__cell">' + escapeHtml(brief.type || '--') + '</td>';
+        html += '<td class="brain-table__cell brain-table__cell--title">' + escapeHtml(brief.title || '--') + '</td>';
+        html += '<td class="brain-table__cell"><span class="brain-brief-status brain-brief-status--' + escapeHtml(bStatusClass) + '">' + escapeHtml(bStatus) + '</span></td>';
+        html += '<td class="brain-table__cell brain-table__cell--priority">' + escapeHtml(brief.priority || '--') + '</td>';
+        html += '</tr>';
+    }
+
+    html += '</tbody></table>';
+    tableEl.innerHTML = html;
+};
+
+/**
+ * Render the sessions timeline, grouped by date.
+ * @param {object|null} data
+ */
+ArenaClient.prototype.renderBrainSessions = function (data) {
+    var container = document.getElementById('brain-sessions-list');
+    var countEl = document.getElementById('brain-sessions-count');
+    if (!container) return;
+
+    var sessions = [];
+    if (data && Array.isArray(data)) {
+        sessions = data;
+    } else if (data && data.sessions && Array.isArray(data.sessions)) {
+        sessions = data.sessions;
+    }
+
+    if (countEl) countEl.textContent = sessions.length;
+
+    if (sessions.length === 0) {
+        container.innerHTML = '<div class="brain-panel__empty">No recent sessions</div>';
+        return;
+    }
+
+    // Sort newest first
+    sessions.sort(function (a, b) {
+        var ta = a.started_at || a.created_at || a.timestamp || '';
+        var tb = b.started_at || b.created_at || b.timestamp || '';
+        return tb.localeCompare(ta);
+    });
+
+    // Group by date
+    var groups = {};
+    var groupOrder = [];
+    for (var i = 0; i < sessions.length; i++) {
+        var sess = sessions[i];
+        var ts = sess.started_at || sess.created_at || sess.timestamp || '';
+        var group = getDateGroup(ts);
+        if (!groups[group]) {
+            groups[group] = [];
+            groupOrder.push(group);
+        }
+        groups[group].push(sess);
+    }
+
+    var html = '';
+    for (var g = 0; g < groupOrder.length; g++) {
+        var gName = groupOrder[g];
+        html += '<div class="brain-session-group">';
+        html += '<div class="brain-session-group__header">' + escapeHtml(gName) + '</div>';
+        var gSessions = groups[gName];
+        for (var j = 0; j < gSessions.length; j++) {
+            var s = gSessions[j];
+            var sTs = s.started_at || s.created_at || s.timestamp || '';
+            html += '<div class="brain-session-entry">';
+            html += '<span class="brain-session-entry__time">' + escapeHtml(formatRelativeTime(sTs)) + '</span>';
+            html += '<span class="brain-session-entry__project">' + escapeHtml(s.project || s.project_slug || '--') + '</span>';
+            if (s.brief || s.brief_id) {
+                html += '<span class="brain-session-entry__brief">' + escapeHtml(s.brief || s.brief_id) + '</span>';
+            }
+            if (s.mode) {
+                html += '<span class="brain-session-entry__mode">' + escapeHtml(s.mode) + '</span>';
+            }
+            if (s.summary || s.goal) {
+                html += '<span class="brain-session-entry__summary">' + escapeHtml(s.summary || s.goal) + '</span>';
+            }
+            html += '</div>';
+        }
+        html += '</div>';
+    }
+    container.innerHTML = html;
 };
 
 /* --------------------------------------------------------------------------

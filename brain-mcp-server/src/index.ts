@@ -32,6 +32,7 @@ import {
   isInitializeRequest,
 } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { statSync } from 'node:fs';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
 import express from 'express';
@@ -59,7 +60,10 @@ import type { BrainPushInput, BrainPullInput } from './tools/sync.js';
 import { processStagingFiles } from './staging.js';
 
 // Database lifecycle
-import { getDb, closeDb } from './db.js';
+import { getDb, closeDb, DB_PATH } from './db.js';
+
+/** Timestamp when this server process started, used for uptime calculation. */
+const SERVER_START_TIME = Date.now();
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -915,6 +919,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
     app.use('/mcp', authMiddleware);
     app.use('/sync', authMiddleware);
+    app.use('/api', authMiddleware);
   } else {
     console.error('[brain] WARNING: No BRAIN_API_KEY set. Server is running without authentication.');
   }
@@ -952,6 +957,139 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // Health endpoint (no auth required, minimal info)
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok', version: '4.0.0' });
+  });
+
+  // -----------------------------------------------------------------------
+  // REST API endpoints — lightweight JSON views into the brain database.
+  // Protected by authMiddleware via app.use('/api', ...) above.
+  // -----------------------------------------------------------------------
+
+  // GET /api/instances — list all live instances with stale-marking
+  app.get('/api/instances', (_req: Request, res: Response) => {
+    try {
+      const db = getDb();
+      db.prepare(
+        `UPDATE instances SET status = 'stale' WHERE last_heartbeat_at < datetime('now', '-30 minutes') AND status != 'stale'`
+      ).run();
+      const rows = db.prepare(
+        `SELECT id, machine_hostname, machine_os, project_slug, project_path, current_brief, current_phase, current_task, status, last_heartbeat_at, started_at FROM instances ORDER BY last_heartbeat_at DESC`
+      ).all();
+      res.json({ instances: rows, count: rows.length });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] GET /api/instances error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/projects — list all registered projects
+  app.get('/api/projects', (_req: Request, res: Response) => {
+    try {
+      const db = getDb();
+      const rows = db.prepare(
+        `SELECT slug, name, path, tech_stack, status, registered_at, last_session_at FROM projects ORDER BY last_session_at DESC`
+      ).all();
+      res.json({ projects: rows, count: rows.length });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] GET /api/projects error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/briefs — list briefs with optional status/project filters
+  app.get('/api/briefs', (req: Request, res: Response) => {
+    try {
+      const db = getDb();
+      const conditions: string[] = [];
+      const params: string[] = [];
+
+      const statusFilter = req.query.status as string | undefined;
+      if (statusFilter) {
+        conditions.push('status = ?');
+        params.push(statusFilter);
+      }
+
+      const projectFilter = req.query.project as string | undefined;
+      if (projectFilter) {
+        conditions.push('project = ?');
+        params.push(projectFilter);
+      }
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+      const rows = db.prepare(
+        `SELECT project, brief_id, brief_type, title, status, priority, effort, phase, updated_at FROM brief_status ${whereClause} ORDER BY updated_at DESC`
+      ).all(...params);
+
+      const summaryRows = db.prepare(
+        `SELECT status, COUNT(*) as count FROM brief_status GROUP BY status`
+      ).all() as { status: string; count: number }[];
+
+      const summary: Record<string, number> = {};
+      for (const row of summaryRows) {
+        summary[row.status] = row.count;
+      }
+
+      res.json({ briefs: rows, summary, count: rows.length });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] GET /api/briefs error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/sessions — list recent sessions with configurable time window
+  app.get('/api/sessions', (req: Request, res: Response) => {
+    try {
+      const db = getDb();
+      const days = parseInt(req.query.days as string, 10) || 7;
+      const rows = db.prepare(
+        `SELECT id, project, brief_id, phase, mode, summary, started_at, ended_at FROM sessions WHERE started_at >= datetime('now', '-' || ? || ' days') ORDER BY started_at DESC`
+      ).all(days);
+      res.json({ sessions: rows, count: rows.length });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] GET /api/sessions error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/brain-stats — aggregate counts, DB size, and uptime
+  app.get('/api/brain-stats', (_req: Request, res: Response) => {
+    try {
+      const db = getDb();
+
+      const countTable = (table: string): number => {
+        const row = db.prepare(`SELECT COUNT(*) as c FROM ${table}`).get() as { c: number };
+        return row.c;
+      };
+
+      let dbSizeBytes = 0;
+      try {
+        dbSizeBytes = statSync(DB_PATH).size;
+      } catch {
+        // DB file may not be accessible; default to 0
+      }
+
+      res.json({
+        version: '4.0.0',
+        db_size_bytes: dbSizeBytes,
+        counts: {
+          projects: countTable('projects'),
+          learnings: countTable('learnings'),
+          errors: countTable('errors'),
+          sessions: countTable('sessions'),
+          instances: countTable('instances'),
+          briefs: countTable('brief_status'),
+        },
+        uptime_seconds: Math.floor((Date.now() - SERVER_START_TIME) / 1000),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] GET /api/brain-stats error:', message);
+      res.status(500).json({ error: message });
+    }
   });
 
   // POST /mcp — main MCP request handler
