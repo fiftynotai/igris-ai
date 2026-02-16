@@ -78,7 +78,8 @@ AI made coding faster — but not better. Speed without structure created:
 
 **2. Autonomous Workflows**
 - `HUNT {brief_id}` triggers full autonomous implementation
-- Workflow: PLANNING → BUILDING → TESTING → REVIEWING → COMMITTING
+- Workflow: PLANNING → BUILDING → TESTING → REVIEWING → DOCUMENTING? → COMMITTING
+- The DOCUMENTING phase is conditional -- invoked for API changes, new features, component library changes; skipped for internal refactors, bug fixes, and test-only changes
 - Self-healing: Test failures loop back to forger (max 3 retries)
 - Auto-approval for S/M tasks, user approval for L/XL
 
@@ -156,6 +157,7 @@ claude
 - Writes code following architecture (forger agent)
 - Generates and runs tests (sentinel agent)
 - Reviews quality and security (warden agent)
+- Updates documentation if needed (documenter via Task tool)
 - Commits with conventional format (main agent)
 
 ### Commands Reference
@@ -287,6 +289,19 @@ When you invoke `HUNT BR-005`:
                  │ approve
                  ▼
 ┌──────────────────────────────────────────────────────────────┐
+│ DOCUMENTING (documenter via Task tool) - Conditional          │
+│ ├─ Evaluate: Does this change need documentation updates?     │
+│ │   ├─ New public APIs added?                                 │
+│ │   ├─ Component library changes?                             │
+│ │   ├─ README-worthy features?                                │
+│ │   └─ API signature changes?                                 │
+│ ├─ If YES → Update relevant docs (README, API docs, catalog) │
+│ ├─ If NO  → Skip (internal refactors, bug fixes, tests)      │
+│ └─ Documentation only, no source code modifications           │
+└────────────────┬─────────────────────────────────────────────┘
+                 │
+                 ▼
+┌──────────────────────────────────────────────────────────────┐
 │ COMMITTING (Main Agent)                                      │
 │ ├─ git add -A                                                │
 │ ├─ git commit -m "feat(BR-005): {title}"                     │
@@ -302,6 +317,12 @@ When you invoke `HUNT BR-005`:
 - Test failures automatically loop back to forger (max 3 attempts)
 - Code review rejections trigger fixes (max 2 rejects)
 - If max retries exceeded → BLOCKED state → human intervention
+
+**Conditional Documentation (PI-003):**
+- The DOCUMENTING phase runs between REVIEWING and COMMITTING
+- Invoked when changes affect public APIs, component libraries, or introduce README-worthy features
+- Skipped for internal refactoring, bug fixes with no API changes, test-only changes, or session/config changes
+- The documenter updates documentation files only -- it never modifies source code
 
 ---
 
@@ -531,8 +552,8 @@ PROJECT LEVEL (CURRENT_SESSION.md)
 BRIEF LEVEL (Brief Files)
 ├─ Tasks (Pending/In Progress/Completed)
 ├─ Workflow State
-│   ├─ Phase: PLANNING → BUILDING → TESTING → REVIEWING → COMPLETE
-│   ├─ Active Agent: architect | forger | sentinel | warden | none
+│   ├─ Phase: PLANNING → BUILDING → TESTING → REVIEWING → DOCUMENTING? → COMMITTING → COMPLETE
+│   ├─ Active Agent: architect | forger | sentinel | warden | documenter | none
 │   ├─ Retry Count
 │   └─ Agent Log (timestamped history)
 ├─ Current work description
@@ -1034,6 +1055,9 @@ A: Tool restrictions enforce the separation of concerns. For example, the archit
 
 **Q: Why does the seeker agent use a different model?**
 A: The seeker agent uses `model: haiku` for fast, low-cost codebase exploration. Since its role is research and investigation (not code generation), a lighter model provides faster responses without sacrificing quality.
+
+**Q: What is the DOCUMENTING phase in HUNT?**
+A: The DOCUMENTING phase is a conditional step that runs between REVIEWING and COMMITTING (added via PI-003). After the warden approves code, the orchestrator evaluates whether documentation needs updating. If the changes introduce new public APIs, modify API signatures, change component libraries, or add README-worthy features, a documenter is invoked via Task tool to update the relevant docs. For internal refactoring, bug fixes with no API changes, test-only changes, or session/config changes, the phase is skipped entirely.
 
 **Q: Do I need Node.js?**
 A: No. Node.js 20+ enables the optional MCP server for convenience tools. Core IGRIS works via CLAUDE.md + file operations.
