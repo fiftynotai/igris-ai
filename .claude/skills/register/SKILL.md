@@ -97,7 +97,21 @@ Create `ai/briefs/{PREFIX}-{XXX}-{slug}.md`:
 
 If user specifies P0 or P1 priority, also add entry to `ai/session/BLOCKERS.md`.
 
-### 7. Confirm Registration
+### 7. Sync Brief to Brain
+
+If the `igris-brain` MCP server is available, call `igris_brief_sync` with:
+- **project:** current project slug (derive from directory name or brain registry)
+- **brief_id:** the new brief ID (e.g., "FR-031")
+- **brief_type:** type from the brief (feature, bug, tech_debt, migration, testing, process, dependency, performance, architecture)
+- **title:** the brief title
+- **status:** "Ready" (or "Draft" if incomplete)
+- **priority:** the assigned priority (e.g., "P2")
+- **effort:** the assigned effort (e.g., "S", "M", "L", "XL") if known
+- **phase:** "INIT"
+
+If brain MCP is not available, skip silently. No errors.
+
+### 8. Confirm Registration
 
 Display:
 ```
@@ -117,4 +131,4 @@ To change priority: "change {PREFIX}-{XXX} priority to P0"
 - DO NOT load context files
 - DO NOT start implementation
 - DO NOT create tasks
-- ONLY create the brief file
+- ONLY create the brief file and sync to brain

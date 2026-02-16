@@ -69,7 +69,21 @@ Move from `ai/briefs/{BRIEF_ID}-*.md` to `ai/session/archive/briefs/`.
 
 Edit `ai/session/CURRENT_SESSION.md` to add to completed briefs list (if applicable).
 
-### 6. Confirm Archive
+### 6. Sync Status to Brain
+
+If the `igris-brain` MCP server is available, call `igris_brief_sync` with:
+- **project:** current project slug (derive from directory name or brain registry)
+- **brief_id:** the archived brief ID (e.g., "BR-008")
+- **brief_type:** type from the brief (feature, bug, tech_debt, etc.)
+- **title:** the brief title
+- **status:** "Archived"
+- **priority:** the brief's priority
+- **effort:** the brief's effort
+- **phase:** "COMPLETE"
+
+If brain MCP is not available, skip silently. No errors.
+
+### 7. Confirm Archive
 
 Display:
 ```

@@ -77,6 +77,18 @@ Execute the complete implementation workflow for a brief, from planning through 
    - Set Active Brief
    - Set Mode: HUNT MODE
 
+7. If brain MCP available, call `igris_brief_sync` with:
+   - project: current project slug
+   - brief_id: the brief ID
+   - brief_type: type from the brief
+   - title: the brief title
+   - status: "In Progress"
+   - priority: the brief's priority
+   - effort: the brief's effort
+   - phase: "INIT"
+
+   If brain MCP is not available, skip silently. No errors.
+
 **Update brief Workflow State:**
 ```markdown
 ## Workflow State
@@ -294,7 +306,8 @@ EOF
 
 3. Verify commit succeeded
 4. Update brief: Status = "Done", Completed = today
-5. Proceed to COMPLETE
+5. If brain MCP available, call `igris_brief_sync` with status="Done", phase="COMMITTING". Skip silently if unavailable.
+6. Proceed to COMPLETE
 
 ### Phase 8: COMPLETE
 

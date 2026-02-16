@@ -751,9 +751,10 @@ Use the trigger phrases below or commands like REGISTER, HUNT, ARCHIVE.
 4. ✅ Set Status: "Ready" (or "Draft" if incomplete info)
 5. ✅ Set Priority, Effort, Type (Bug Fix/Feature)
 6. ✅ If P0/P1 bug, add entry to `ai/session/BLOCKERS.md`
-7. ❌ **DO NOT** load context files
-8. ❌ **DO NOT** start implementation
-9. ❌ **DO NOT** create TodoWrite tasks
+7. ✅ If brain MCP available, call `igris_brief_sync` with brief metadata (project, brief_id, brief_type, title, status, priority, effort, phase="INIT"). Skip silently if unavailable.
+8. ❌ **DO NOT** load context files
+9. ❌ **DO NOT** start implementation
+10. ❌ **DO NOT** create TodoWrite tasks
 
 **Response format:**
 ```
@@ -881,6 +882,7 @@ Removed from BLOCKERS.md
 3. ✅ Save file(s)
 4. ✅ If changed TO P0/P1, add to `BLOCKERS.md`
 5. ✅ If changed FROM P0/P1 to P2/P3, remove from `BLOCKERS.md`
+6. ✅ If brain MCP available, call `igris_brief_sync` with updated priority. Skip silently if unavailable.
 
 **Response format:**
 ```
@@ -910,7 +912,8 @@ Removed from BLOCKERS.md
 1. ✅ Read brief file
 2. ✅ Update Status field
 3. ✅ Save file
-4. ✅ If status = "Done", suggest archiving
+4. ✅ If brain MCP available, call `igris_brief_sync` with updated status. Skip silently if unavailable.
+5. ✅ If status = "Done", suggest archiving
 
 **Response format:**
 ```
@@ -1012,7 +1015,8 @@ To implement: "Implement BR-XXX"
 2. ✅ Create `ai/session/archive/briefs/` folder if not exists
 3. ✅ Move file from `ai/briefs/BR-XXX-*.md` to `ai/session/archive/briefs/`
 4. ✅ Update `CURRENT_SESSION.md` history (add to completed list)
-5. ❌ **DO NOT** archive if Status ≠ "Done"
+5. ✅ If brain MCP available, call `igris_brief_sync` with status="Archived", phase="COMPLETE". Skip silently if unavailable.
+6. ❌ **DO NOT** archive if Status ≠ "Done"
 
 **Response format:**
 ```
