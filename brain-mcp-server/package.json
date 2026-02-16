@@ -1,0 +1,30 @@
+{
+  "name": "igris-brain-mcp-server",
+  "version": "4.0.0",
+  "description": "Igris AI Centralized Brain MCP Server — persistent memory, project management, cross-project intelligence",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "igris-brain-mcp-server": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "inspect": "npx @modelcontextprotocol/inspector node dist/index.js"
+  },
+  "author": "Fifty.ai",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.22.0",
+    "better-sqlite3": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

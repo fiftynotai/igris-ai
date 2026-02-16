@@ -164,6 +164,36 @@ else
 fi
 
 # ============================================================
+# Copy and build Brain MCP server
+# ============================================================
+echo ""
+echo "🔌 Setting up Brain MCP server..."
+
+if [ -d "$IGRIS_DIR/brain-mcp-server" ]; then
+  cp -r "$IGRIS_DIR/brain-mcp-server/"* "$BRAIN_DIR/mcp-server/"
+
+  if command -v node &> /dev/null; then
+    NODE_MAJOR=$(node --version | sed 's/v//' | cut -d. -f1)
+    if [ "$NODE_MAJOR" -ge 20 ]; then
+      echo "   📦 Installing dependencies..."
+      cd "$BRAIN_DIR/mcp-server"
+      npm install --silent 2>/dev/null
+      echo "   📦 Building MCP server..."
+      npm run build --silent 2>/dev/null
+      cd "$IGRIS_DIR"
+      echo "   ✅ Brain MCP server built"
+    else
+      echo "   ⚠️  Node.js $NODE_MAJOR detected (requires 20+). MCP server not built."
+    fi
+  else
+    echo "   ⚠️  Node.js not found. MCP server not built."
+    echo "   Install Node.js 20+ and run: cd ~/.igris/mcp-server && npm install && npm run build"
+  fi
+else
+  echo "   ⚠️  brain-mcp-server/ not found in repo"
+fi
+
+# ============================================================
 # Initialize knowledge.db
 # ============================================================
 echo ""
@@ -208,8 +238,8 @@ config = {
         'memory': True,
         'project_registry': True,
         'symlinks': True,
-        'mcp_server': False,
-        'staging_pipeline': False,
+        'mcp_server': True,
+        'staging_pipeline': True,
         'analytics': False
     },
     'paths': {
@@ -333,6 +363,46 @@ Projects with their own CLAUDE.md will use that instead of this global one.
 CLAUDEEOF
   fi
   echo "   ✅ Global CLAUDE.md created at $CLAUDE_MD"
+fi
+
+# ============================================================
+# Register Brain MCP in ~/.claude.json
+# ============================================================
+echo ""
+echo "🔌 Registering Brain MCP server in Claude Code..."
+
+CLAUDE_CONFIG="$HOME/.claude.json"
+MCP_SERVER_PATH="$BRAIN_DIR/mcp-server/dist/index.js"
+
+if [ -f "$MCP_SERVER_PATH" ]; then
+  python3 -c "
+import json, sys, os
+
+config_file = sys.argv[1]
+mcp_path = sys.argv[2]
+
+try:
+    with open(config_file, 'r') as f:
+        config = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    config = {}
+
+if 'mcpServers' not in config:
+    config['mcpServers'] = {}
+
+config['mcpServers']['igris-brain'] = {
+    'command': 'node',
+    'args': [mcp_path]
+}
+
+with open(config_file, 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\n')
+" "$CLAUDE_CONFIG" "$MCP_SERVER_PATH"
+  echo "   ✅ Brain MCP server registered in $CLAUDE_CONFIG"
+else
+  echo "   ⚠️  MCP server not built yet — skipping registration"
+  echo "   Build manually: cd ~/.igris/mcp-server && npm install && npm run build"
 fi
 
 # ============================================================
