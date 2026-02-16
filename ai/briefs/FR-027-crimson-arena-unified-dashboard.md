@@ -79,7 +79,7 @@ The brain MCP server (FR-025) and live instance registry (FR-026) created a cent
 
 ### High-Level Design
 
-1. **Backend (server.py):** Add brain API proxy endpoints that query the VPS brain at `http://76.13.180.77:3001`. These endpoints fetch instances, projects, briefs, sessions, and health from the brain's REST API and return them to the frontend.
+1. **Backend (server.py):** Add brain API proxy endpoints that query the VPS brain at `http://<YOUR_VPS_IP>:3001`. These endpoints fetch instances, projects, briefs, sessions, and health from the brain's REST API and return them to the frontend.
 
 2. **Frontend (index.html + app.js):** Add new panels/sections to the existing Crimson Arena layout. Instances panel (live grid), Projects panel (cards/table), Briefs panel (kanban or table), Brain Health card (status badge), Sessions timeline.
 
@@ -316,7 +316,7 @@ None
 - Agent leveling: Trainee > Novice > Adept > Expert > Master > Legend > Mythic
 - Claude Code hooks integration (events.jsonl)
 
-**Brain VPS:** `http://76.13.180.77:3001`
+**Brain VPS:** `http://<YOUR_VPS_IP>:3001`
 **Brain API:** `/health`, `/sync/push`, `/sync/pull` (existing); tool calls via MCP
 
 **Architecture Note:** The brain MCP server's tool handlers return data but aren't REST endpoints themselves. For dashboard proxy, we'll need to either:

@@ -183,6 +183,242 @@ Multiple Claude sessions safely share the brain:
 - **busy_timeout=5000ms** — automatic retry on contention
 - **Staging pattern** — hooks write unique files, processed on next startup
 
+### VPS Deployment (Remote Brain + Dashboard)
+
+Deploy the Brain MCP server and Crimson Arena dashboard to a VPS for centralized, always-on access from any machine.
+
+#### Prerequisites
+
+- VPS with Ubuntu/Debian (1GB+ RAM)
+- SSH access (`root@<YOUR_VPS_IP>`)
+- Node.js 20+, npm, PM2, Python 3, pip3
+
+#### 1. Clone the repo on the VPS
+
+```bash
+ssh root@<YOUR_VPS_IP>
+git clone https://github.com/fiftynotai/igris-ai ~/igris-ai
+```
+
+#### 2. Install system dependencies
+
+```bash
+# Node.js 20+ (if not installed)
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs
+
+# PM2 (process manager)
+npm install -g pm2
+
+# Python dependencies (for dashboard)
+apt-get install -y python3-pip
+pip3 install --break-system-packages fastapi 'uvicorn[standard]' httpx aiosqlite watchfiles
+```
+
+#### 3. Bootstrap the brain
+
+```bash
+# Create brain directory structure
+mkdir -p ~/.igris/{mcp-server,dashboard/static,memory,logs,staging}
+
+# Copy brain server source and build
+cp -r ~/igris-ai/brain-mcp-server/* ~/.igris/mcp-server/
+cd ~/.igris/mcp-server && npm ci && npm run build
+
+# Copy dashboard files
+cp ~/igris-ai/dashboard/server.py ~/.igris/dashboard/
+cp -r ~/igris-ai/dashboard/static/* ~/.igris/dashboard/static/
+```
+
+#### 4. Generate an API key and create brain.env
+
+```bash
+# Generate a secure API key
+API_KEY=$(openssl rand -base64 32)
+
+cat > ~/.igris/brain.env << EOF
+# Igris Brain HTTP Server Environment
+BRAIN_API_KEY=$API_KEY
+BRAIN_PORT=3001
+BRAIN_HTTP=1
+EOF
+
+echo "Your brain API key: $API_KEY"
+echo "Save this key — you'll need it for local config and dashboard."
+```
+
+#### 5. Create the VPS config
+
+```bash
+cat > ~/.igris/config.json << EOF
+{
+  "version": "4.0.0",
+  "installed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "source_repo": "$HOME/igris-ai",
+  "remote_brain": {
+    "url": "http://127.0.0.1:3001",
+    "api_key": "$API_KEY"
+  }
+}
+EOF
+```
+
+#### 6. Create the PM2 ecosystem config
+
+```bash
+cat > ~/.igris/ecosystem.config.cjs << 'PMEOF'
+const fs = require("fs");
+const envFile = "/root/.igris/brain.env";
+const env = {};
+if (fs.existsSync(envFile)) {
+  fs.readFileSync(envFile, "utf-8").split("\n").forEach(line => {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith("#")) {
+      const [key, ...rest] = trimmed.split("=");
+      if (key) env[key.trim()] = rest.join("=").trim();
+    }
+  });
+}
+
+module.exports = {
+  apps: [
+    {
+      name: "igris-brain",
+      script: "/root/.igris/mcp-server/dist/index.js",
+      args: "--http --port 3001",
+      cwd: "/root/.igris/mcp-server",
+      interpreter: "node",
+      env: env,
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      max_memory_restart: "256M",
+      error_file: "/root/.igris/logs/brain-error.log",
+      out_file: "/root/.igris/logs/brain-out.log",
+      merge_logs: true,
+      log_date_format: "YYYY-MM-DD HH:mm:ss Z",
+    },
+    {
+      name: "crimson-arena",
+      script: "/usr/bin/python3",
+      args: "-m uvicorn server:app --host 0.0.0.0 --port 8001",
+      cwd: "/root/.igris/dashboard",
+      interpreter: "none",
+      env: {
+        BRAIN_URL: "http://127.0.0.1:3001",
+        BRAIN_API_KEY: env.BRAIN_API_KEY || "",
+      },
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      max_memory_restart: "256M",
+      error_file: "/root/.igris/logs/arena-error.log",
+      out_file: "/root/.igris/logs/arena-out.log",
+      merge_logs: true,
+      log_date_format: "YYYY-MM-DD HH:mm:ss Z",
+    },
+  ],
+};
+PMEOF
+```
+
+#### 7. Start both services
+
+```bash
+cd ~/.igris
+pm2 start ecosystem.config.cjs
+pm2 save        # persist across reboots
+pm2 startup     # auto-start on boot
+```
+
+#### 8. Verify
+
+```bash
+# Brain health
+curl http://127.0.0.1:3001/health
+# Expected: {"status":"ok","version":"4.0.0"}
+
+# Dashboard
+curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8001/
+# Expected: 200
+```
+
+#### 9. Configure your local machine
+
+On your **local development machine**, add the brain MCP server to `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "igris-brain": {
+      "type": "http",
+      "url": "http://<YOUR_VPS_IP>:3001/mcp",
+      "headers": {
+        "Authorization": "Bearer <YOUR_API_KEY>"
+      }
+    }
+  }
+}
+```
+
+And add the remote brain config to `~/.igris/config.json`:
+
+```json
+{
+  "remote_brain": {
+    "url": "http://<YOUR_VPS_IP>:3001",
+    "api_key": "<YOUR_API_KEY>"
+  }
+}
+```
+
+#### Access
+
+| Service | URL | Purpose |
+|---------|-----|---------|
+| Brain MCP | `http://<YOUR_VPS_IP>:3001` | Brain API + MCP transport |
+| Crimson Arena | `http://<YOUR_VPS_IP>:8001` | Dashboard UI |
+| Health Check | `http://<YOUR_VPS_IP>:3001/health` | Liveness probe |
+
+#### Updating
+
+Use the built-in VPS update script to pull latest changes, rebuild, and restart:
+
+```bash
+# On VPS — manual update
+cd ~/igris-ai
+bash scripts/igris_vps_update.sh --branch develop
+
+# Or set up auto-update via cron (every 5 minutes)
+crontab -e
+*/5 * * * * /root/igris-ai/scripts/igris_vps_update.sh --if-changed >> /root/.igris/logs/update.log 2>&1
+```
+
+The update script handles: git pull, npm build, dist backup/rollback on failure, PM2 restart, and health check verification.
+
+#### VPS File Layout
+
+```
+~/.igris/
+├── config.json              # Brain + dashboard config
+├── brain.env                # API key + port (not committed)
+├── ecosystem.config.cjs     # PM2 process definitions
+├── mcp-server/              # Brain MCP server (Node.js)
+│   ├── dist/                # Compiled JS
+│   └── src/                 # TypeScript source
+├── dashboard/               # Crimson Arena (Python/FastAPI)
+│   ├── server.py            # FastAPI backend
+│   └── static/              # HTML/JS/CSS frontend
+├── memory/
+│   └── knowledge.db         # SQLite WAL + FTS5
+├── logs/                    # PM2 log files
+│   ├── brain-out.log
+│   ├── brain-error.log
+│   ├── arena-out.log
+│   └── arena-error.log
+└── staging/                 # Hook pipeline
+```
+
 ---
 
 ## ✦ Quick Start

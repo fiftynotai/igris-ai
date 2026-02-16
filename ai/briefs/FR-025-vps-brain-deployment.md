@@ -14,7 +14,7 @@
 
 **What is the proposed feature?**
 
-Deploy the Igris Brain MCP Server (with HTTP transport from FR-022) to the VPS at `root@76.13.180.77`. Set up Node.js, PM2, the brain database, and configure the server to run persistently. Generate an API key and configure the local machine to connect remotely.
+Deploy the Igris Brain MCP Server (with HTTP transport from FR-022) to the VPS at `root@<YOUR_VPS_IP>`. Set up Node.js, PM2, the brain database, and configure the server to run persistently. Generate an API key and configure the local machine to connect remotely.
 
 **Why is this valuable?**
 
@@ -39,7 +39,7 @@ Makes the Igris brain accessible from any machine. Single source of truth for le
 
 ### High-Level Design
 
-SSH into `root@76.13.180.77`, install prerequisites (Node.js 20+, PM2), copy the brain-mcp-server code, build it, generate an API key, start with PM2, and configure the local `~/.claude.json` to connect.
+SSH into `root@<YOUR_VPS_IP>`, install prerequisites (Node.js 20+, PM2), copy the brain-mcp-server code, build it, generate an API key, start with PM2, and configure the local `~/.claude.json` to connect.
 
 ### Steps
 
@@ -49,12 +49,12 @@ SSH into `root@76.13.180.77`, install prerequisites (Node.js 20+, PM2), copy the
 4. Run `npm ci && npm run build` on VPS
 5. Generate API key, create `~/.igris/brain.env`
 6. Start server with PM2: `--http --port 3001`
-7. Verify health endpoint: `curl http://76.13.180.77:3001/health`
+7. Verify health endpoint: `curl http://<YOUR_VPS_IP>:3001/health`
 8. Update local `~/.claude.json` with remote brain config
 9. Test a brain tool call from local machine
 
 ### Components Affected
-- VPS: `root@76.13.180.77` — new service installed
+- VPS: `root@<YOUR_VPS_IP>` — new service installed
 - Local: `~/.claude.json` — add remote `igris-brain` MCP server config
 
 ---
@@ -65,7 +65,7 @@ SSH into `root@76.13.180.77`, install prerequisites (Node.js 20+, PM2), copy the
 - [x] FR-022: VPS Remote Brain HTTP Transport (DONE)
 
 ### VPS Details
-- **IP:** 76.13.180.77
+- **IP:** <YOUR_VPS_IP>
 - **User:** root
 - **Target port:** 3001
 
@@ -130,7 +130,7 @@ None
 ## Acceptance Criteria
 
 1. [x] Brain MCP server running on VPS via PM2
-2. [x] Health endpoint accessible: `curl http://76.13.180.77:3001/health`
+2. [x] Health endpoint accessible: `curl http://<YOUR_VPS_IP>:3001/health`
 3. [x] API key auth working (401 without key, 200 with key)
 4. [x] Local `~/.claude.json` configured with remote brain
 5. [x] At least one brain tool works remotely (e.g., `igris_project_list`)
@@ -141,11 +141,11 @@ None
 
 ### Functional Tests
 **Test Case 1: Health Check**
-1. `curl http://76.13.180.77:3001/health`
+1. `curl http://<YOUR_VPS_IP>:3001/health`
 **Expected Result:** `{"status":"ok","version":"4.0.0"}`
 
 **Test Case 2: Auth Rejection**
-1. `curl -X POST http://76.13.180.77:3001/mcp` (no auth header)
+1. `curl -X POST http://<YOUR_VPS_IP>:3001/mcp` (no auth header)
 **Expected Result:** 401 Unauthorized
 
 **Test Case 3: Remote Tool Call**
