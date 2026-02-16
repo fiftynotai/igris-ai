@@ -86,6 +86,7 @@ from datetime import datetime, timezone
 # Actually, we use the simpler approach: write args to a temp file or use env vars.
 # Simplest: just re-parse from the variables we know.
 import sys
+import urllib.request
 
 # Arguments passed via the heredoc boundary trick: we write them to env before calling python
 hook_event = os.environ.get("_IGRIS_HOOK_EVENT", "")
@@ -94,6 +95,22 @@ agent_id = os.environ.get("_IGRIS_AGENT_ID", "")
 transcript_path = os.environ.get("_IGRIS_TRANSCRIPT_PATH", "")
 metrics_file = os.environ.get("_IGRIS_METRICS_FILE", "")
 timestamp_file = os.environ.get("_IGRIS_TIMESTAMP_FILE", "")
+
+# Read VPS dashboard URL from config
+vps_dashboard_url = None
+try:
+    config_path = os.path.expanduser("~/.igris/config.json")
+    if os.path.exists(config_path):
+        with open(config_path) as f:
+            config = json.load(f)
+        vps_dashboard_url = config.get("remote_dashboard", {}).get("url")
+        if not vps_dashboard_url:
+            # Derive from remote_brain.url (swap port 3001 -> 8001)
+            brain_url = config.get("remote_brain", {}).get("url", "")
+            if brain_url:
+                vps_dashboard_url = brain_url.replace(":3001", ":8001")
+except Exception:
+    pass
 
 # Agent name normalization map: old/built-in names -> v3.4 canonical names
 AGENT_NAME_MAP = {
@@ -348,10 +365,8 @@ if event_data:
     except Exception:
         pass
 
-    # Non-blocking POST to dashboard (fail-silent)
+    # Non-blocking POST to local dashboard (fail-silent)
     try:
-        import urllib.request
-
         req = urllib.request.Request(
             "http://localhost:8001/api/event",
             data=json.dumps(event_data).encode("utf-8"),
@@ -360,7 +375,21 @@ if event_data:
         )
         urllib.request.urlopen(req, timeout=1)
     except Exception:
-        pass  # Dashboard not running, that's fine
+        pass  # Local dashboard not running, that's fine
+
+    # Non-blocking POST to VPS dashboard (fail-silent, independent)
+    if vps_dashboard_url:
+        try:
+            vps_url = vps_dashboard_url.rstrip("/") + "/api/event"
+            req = urllib.request.Request(
+                vps_url,
+                data=json.dumps(event_data).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=2)
+        except Exception:
+            pass  # VPS dashboard unreachable, that's fine
 PYEOF
 }
 
