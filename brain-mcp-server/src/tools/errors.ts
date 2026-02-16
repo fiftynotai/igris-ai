@@ -14,6 +14,14 @@
 
 import { getDb } from '../db.js';
 
+/**
+ * Sanitize a string for use in FTS5 MATCH queries.
+ */
+function sanitizeFts5Query(input: string): string {
+  const cleaned = input.replace(/[",():*+\-^]/g, ' ');
+  return cleaned.replace(/\s+/g, ' ').trim();
+}
+
 /** Input shape for igris_error_lookup */
 interface ErrorLookupInput {
   message: string;
@@ -163,7 +171,7 @@ function handleErrorLookup(args: ErrorLookupInput): { content: { type: string; t
     WHERE errors_fts MATCH ?
     ORDER BY rank
     LIMIT 5
-  `).all(args.message) as Record<string, unknown>[];
+  `).all(sanitizeFts5Query(args.message)) as Record<string, unknown>[];
 
   if (ftsResults.length > 0) {
     const results = ftsResults.map((row, i) => {

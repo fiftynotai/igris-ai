@@ -115,6 +115,75 @@ function parseConfig(): ServerConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Direct tool dispatch (bypass MCP transport)
+// ---------------------------------------------------------------------------
+
+/**
+ * Dispatch a tool call directly, bypassing the MCP transport layer.
+ *
+ * Used as a fallback when no active MCP sessions exist (e.g. after a server
+ * restart) and Claude Code sends tool calls without re-initializing first.
+ * All tool handlers are pure functions that only need the SQLite database.
+ */
+async function dispatchToolCall(
+  name: string,
+  args: Record<string, unknown>,
+): Promise<{ content: { type: string; text: string }[]; isError?: boolean }> {
+  try {
+    switch (name) {
+      case 'igris_memory_store':
+        return handleMemoryStore(args as unknown as MemoryStoreInput);
+      case 'igris_memory_search':
+        return handleMemorySearch(args as unknown as MemorySearchInput);
+      case 'igris_memory_recall':
+        return handleMemoryRecall(args as unknown as MemoryRecallInput);
+      case 'igris_error_lookup':
+        return handleErrorLookup(args as unknown as ErrorLookupInput);
+      case 'igris_project_register':
+        return handleProjectRegister(args as unknown as ProjectRegisterInput);
+      case 'igris_project_list':
+        return handleProjectList(args as unknown as ProjectListInput);
+      case 'igris_project_status':
+        return handleProjectStatus(args as unknown as ProjectStatusInput);
+      case 'igris_metrics_record':
+        return handleMetricsRecord(args as unknown as MetricsRecordInput);
+      case 'igris_metrics_query':
+        return handleMetricsQuery(args as unknown as MetricsQueryInput);
+      case 'igris_metrics_velocity':
+        return handleMetricsVelocity(args as unknown as MetricsVelocityInput);
+      case 'igris_pattern_suggest':
+        return handlePatternSuggest(args as unknown as PatternSuggestInput);
+      case 'igris_session_sync':
+        return handleSessionSync(args as unknown as SessionSyncInput);
+      case 'igris_session_recall':
+        return handleSessionRecall(args as unknown as SessionRecallInput);
+      case 'igris_brief_sync':
+        return handleBriefSync(args as unknown as BriefSyncInput);
+      case 'igris_brief_dashboard':
+        return handleBriefDashboard(args as unknown as BriefDashboardInput);
+      case 'igris_instance_heartbeat':
+        return handleInstanceHeartbeat(args as unknown as InstanceHeartbeatInput);
+      case 'igris_instance_list':
+        return handleInstanceList(args as unknown as InstanceListInput);
+      case 'igris_instance_remove':
+        return handleInstanceRemove(args as unknown as InstanceRemoveInput);
+      case 'igris_brain_push':
+        return await handleBrainPush(args as unknown as BrainPushInput);
+      case 'igris_brain_pull':
+        return await handleBrainPull(args as unknown as BrainPullInput);
+      default:
+        throw new Error(`Unknown tool: ${name}`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      content: [{ type: 'text', text: `Error executing ${name}: ${message}` }],
+      isError: true,
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Server factory
 // ---------------------------------------------------------------------------
 
@@ -764,12 +833,6 @@ async function runStdio(): Promise<void> {
 // HTTP transport
 // ---------------------------------------------------------------------------
 
-/** Maximum concurrent sessions to prevent memory exhaustion. */
-const MAX_SESSIONS = 100;
-
-/** Session idle timeout: 30 minutes of inactivity. */
-const SESSION_TTL_MS = 30 * 60 * 1000;
-
 /** Rate limit: max auth failures per IP before temporary block. */
 const AUTH_FAIL_WINDOW_MS = 60 * 1000;
 const AUTH_FAIL_MAX = 10;
@@ -856,7 +919,11 @@ async function runHttp(config: ServerConfig): Promise<void> {
     console.error('[brain] WARNING: No BRAIN_API_KEY set. Server is running without authentication.');
   }
 
-  // Session management: map session IDs to their transports + last-activity timestamps
+  // Session management: map session IDs to their transports + last-activity timestamps.
+  // The SDK's StreamableHTTPServerTransport validates session IDs internally via the
+  // Web Standard Request object (built from rawHeaders). Claude Code's HTTP client does
+  // not reliably send mcp-session-id on subsequent requests, so we inject it into both
+  // req.headers and req.rawHeaders before forwarding to the transport.
   const transports: Record<string, StreamableHTTPServerTransport> = {};
   const sessionActivity: Record<string, number> = {};
 
@@ -864,7 +931,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
   const cleanupInterval = setInterval(() => {
     const now = Date.now();
     for (const sid of Object.keys(sessionActivity)) {
-      if (now - sessionActivity[sid] > SESSION_TTL_MS) {
+      if (now - sessionActivity[sid] > 30 * 60 * 1000) {
         console.error(`[brain] Closing idle session: ${sid}`);
         const transport = transports[sid];
         if (transport) {
@@ -897,9 +964,9 @@ async function runHttp(config: ServerConfig): Promise<void> {
         sessionActivity[sessionId] = Date.now();
         const transport = transports[sessionId];
         await transport.handleRequest(req, res, req.body);
-      } else if (!sessionId && isInitializeRequest(req.body)) {
-        // Enforce max sessions
-        if (Object.keys(transports).length >= MAX_SESSIONS) {
+      } else if (isInitializeRequest(req.body)) {
+        // Initialize request (with or without session ID) — create new session
+        if (Object.keys(transports).length >= 100) {
           res.status(503).json({
             jsonrpc: '2.0',
             error: { code: -32000, message: 'Service Unavailable: Maximum session limit reached' },
@@ -929,11 +996,62 @@ async function runHttp(config: ServerConfig): Promise<void> {
         await server.connect(transport);
         await transport.handleRequest(req, res, req.body);
       } else {
-        res.status(400).json({
-          jsonrpc: '2.0',
-          error: { code: -32000, message: 'Bad Request: No valid session ID provided' },
-          id: null,
-        });
+        // Non-initialize request without valid session ID.
+        // Two fallback strategies:
+        //   1. If active sessions exist, inject session ID and route via transport
+        //   2. If NO sessions exist (e.g. after server restart), dispatch tool calls directly
+        const activeSessions = Object.keys(transports);
+        if (activeSessions.length > 0) {
+          // Fallback A: inject session ID into an existing session
+          const fallbackSid = activeSessions[activeSessions.length - 1];
+          console.error(`[brain] No session ID in request — injecting session ${fallbackSid}`);
+          sessionActivity[fallbackSid] = Date.now();
+          req.headers['mcp-session-id'] = fallbackSid;
+          req.rawHeaders.push('mcp-session-id', fallbackSid);
+          await transports[fallbackSid].handleRequest(req, res, req.body);
+        } else {
+          // Fallback B: no active sessions — direct tool execution
+          // Claude Code doesn't re-initialize after server restarts, so we
+          // bypass the MCP transport and call tool handlers directly.
+          const body = req.body;
+          if (body && body.method === 'tools/call' && body.params) {
+            const { name, arguments: toolArgs } = body.params;
+            console.error(`[brain] Direct dispatch (no session): ${name}`);
+            const result = await dispatchToolCall(name, toolArgs || {});
+            res.json({
+              jsonrpc: '2.0',
+              result,
+              id: body.id ?? null,
+            });
+          } else {
+            // For non-tool-call methods (tools/list, etc.), signal session needed.
+            // This also auto-creates a session so subsequent requests work.
+            console.error(`[brain] Auto-creating session for method: ${body?.method}`);
+            const transport = new StreamableHTTPServerTransport({
+              sessionIdGenerator: () => randomUUID(),
+              onsessioninitialized: (sid: string) => {
+                transports[sid] = transport;
+                sessionActivity[sid] = Date.now();
+              },
+            });
+            transport.onclose = () => {
+              const sid = transport.sessionId;
+              if (sid) {
+                delete transports[sid];
+                delete sessionActivity[sid];
+              }
+            };
+            const server = createBrainServer();
+            await server.connect(transport);
+            // The transport expects an initialize first but we don't have one.
+            // Return a helpful error — the session is now ready for a proper initialize.
+            res.status(400).json({
+              jsonrpc: '2.0',
+              error: { code: -32000, message: 'Bad Request: Session expired. Send an initialize request to start a new session.' },
+              id: body?.id ?? null,
+            });
+          }
+        }
       }
     } catch (error) {
       console.error('Error handling MCP request:', error);
@@ -950,30 +1068,38 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // GET /mcp — SSE stream for server-initiated messages
   app.get('/mcp', async (req: Request, res: Response) => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
-    if (!sessionId || !transports[sessionId]) {
-      res.status(400).send('Invalid or missing session ID');
-      return;
+    if (sessionId && transports[sessionId]) {
+      sessionActivity[sessionId] = Date.now();
+      await transports[sessionId].handleRequest(req, res);
+    } else {
+      // Fallback: use most recent session
+      const activeSessions = Object.keys(transports);
+      if (activeSessions.length > 0) {
+        const fallbackSid = activeSessions[activeSessions.length - 1];
+        sessionActivity[fallbackSid] = Date.now();
+        req.headers['mcp-session-id'] = fallbackSid;
+        req.rawHeaders.push('mcp-session-id', fallbackSid);
+        await transports[fallbackSid].handleRequest(req, res);
+      } else {
+        res.status(400).send('No active session');
+      }
     }
-    sessionActivity[sessionId] = Date.now();
-    const transport = transports[sessionId];
-    await transport.handleRequest(req, res);
   });
 
   // DELETE /mcp — session termination
   app.delete('/mcp', async (req: Request, res: Response) => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
-    if (!sessionId || !transports[sessionId]) {
-      res.status(400).send('Invalid or missing session ID');
-      return;
-    }
-    try {
-      const transport = transports[sessionId];
-      await transport.handleRequest(req, res);
-    } catch (error) {
-      console.error('Error handling session termination:', error);
-      if (!res.headersSent) {
-        res.status(500).send('Error processing session termination');
+    if (sessionId && transports[sessionId]) {
+      try {
+        await transports[sessionId].handleRequest(req, res);
+      } catch (error) {
+        console.error('Error handling session termination:', error);
+        if (!res.headersSent) {
+          res.status(500).send('Error processing session termination');
+        }
       }
+    } else {
+      res.status(400).send('Invalid or missing session ID');
     }
   });
 

@@ -5,7 +5,7 @@
 **Effort:** M-Medium (2-4h)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** In Progress
+**Status:** Done
 **Created:** 2026-02-16
 
 ---
@@ -168,15 +168,15 @@ CREATE INDEX IF NOT EXISTS idx_instances_project ON instances(project_slug);
 
 ## Workflow State
 
-**Phase:** COMMITTING
+**Phase:** COMPLETE
 **Active Agent:** none
 **Retry Count:** 0
 
 ### Current Work
-Brief registered. Ready for HUNT.
+Done. Committed as `3f77b30`.
 
 ### Next Steps
-Proceed to PLANNING phase.
+None — brief complete.
 
 ### Agent Log
 | Time | Agent | Action | Result |

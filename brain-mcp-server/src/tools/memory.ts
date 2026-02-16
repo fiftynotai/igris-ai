@@ -21,6 +21,19 @@ import { getDb, BRAIN_DIR } from '../db.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
+/**
+ * Sanitize a string for use in FTS5 MATCH queries.
+ * FTS5 treats characters like commas, colons, parentheses, and quotes as
+ * operators. This function strips them and joins words with spaces so FTS5
+ * treats the input as a simple OR query of individual tokens.
+ */
+function sanitizeFts5Query(input: string): string {
+  // Remove FTS5 special characters: " ( ) * : , + - ^
+  const cleaned = input.replace(/[",():*+\-^]/g, ' ');
+  // Collapse whitespace and trim
+  return cleaned.replace(/\s+/g, ' ').trim();
+}
+
 /** Input shape for igris_memory_store */
 interface MemoryStoreInput {
   project: string;
@@ -108,7 +121,7 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
     WHERE learnings_fts MATCH ?
   `;
 
-  const params: (string | number)[] = [args.query];
+  const params: (string | number)[] = [sanitizeFts5Query(args.query)];
 
   if (args.project) {
     sql += ' AND l.project = ?';
@@ -188,7 +201,7 @@ function handleMemoryRecall(args: MemoryRecallInput): { content: { type: string;
     LIMIT ?
   `;
 
-  const rows = db.prepare(sql).all(args.context, args.project, limit) as Record<string, unknown>[];
+  const rows = db.prepare(sql).all(sanitizeFts5Query(args.context), args.project, limit) as Record<string, unknown>[];
 
   if (rows.length === 0) {
     return {
@@ -279,7 +292,7 @@ function handlePatternSuggest(args: PatternSuggestInput): { content: { type: str
     WHERE learnings_fts MATCH ?
       AND (l.project = ? OR l.scope = 'global')
   `;
-  const learningParams: (string | number)[] = [args.context, args.project];
+  const learningParams: (string | number)[] = [sanitizeFts5Query(args.context), args.project];
 
   if (args.tech_stack) {
     learningSql += ' AND l.tech_stack LIKE ?';
