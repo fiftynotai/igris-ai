@@ -403,6 +403,90 @@ with open('.igris_version', 'w') as f:
 echo "   ✅ .igris_version created"
 
 # ============================================================
+# Optional dashboard setup
+# ============================================================
+echo ""
+echo "🖥️  Dashboard Setup (Optional)"
+echo "--------------------------------"
+
+DASHBOARD_DIR="$IGRIS_DIR/dashboard"
+
+if [ -d "$DASHBOARD_DIR" ] && [ -f "$DASHBOARD_DIR/server.py" ]; then
+  if [ -t 0 ]; then
+    echo "   Crimson Arena dashboard is available for local development."
+    echo ""
+    read -rp "   Set up dashboard for local use? [y/N]: " SETUP_DASHBOARD
+    SETUP_DASHBOARD=${SETUP_DASHBOARD:-N}
+
+    if [[ "$SETUP_DASHBOARD" =~ ^[Yy]$ ]]; then
+      DASH_TARGET="$BRAIN_DIR/dashboard"
+      mkdir -p "$DASH_TARGET/static"
+
+      cp "$DASHBOARD_DIR/server.py" "$DASH_TARGET/"
+      if [ -d "$DASHBOARD_DIR/static" ]; then
+        cp -r "$DASHBOARD_DIR/static/"* "$DASH_TARGET/static/" 2>/dev/null || true
+      fi
+
+      echo "   ✅ Dashboard files copied to $DASH_TARGET"
+      echo ""
+      echo "   To run locally:"
+      echo "   cd $DASH_TARGET && python3 -m uvicorn server:app --port 8001"
+      echo ""
+      echo "   Required Python packages:"
+      echo "   pip3 install fastapi 'uvicorn[standard]' httpx aiosqlite"
+    else
+      echo "   Skipping dashboard setup."
+    fi
+  else
+    echo "   (Non-interactive mode: skipping dashboard setup)"
+  fi
+else
+  echo "   Dashboard not found in source repo (skipping)."
+fi
+
+# ============================================================
+# Brain health check
+# ============================================================
+echo ""
+echo "🩺 Brain health check..."
+
+if [ -f "$BRAIN_DIR/memory/knowledge.db" ]; then
+  INTEGRITY=$(sqlite3 "$BRAIN_DIR/memory/knowledge.db" "PRAGMA integrity_check;" 2>/dev/null || echo "failed")
+  if [ "$INTEGRITY" = "ok" ]; then
+    echo "   ✅ Local brain: knowledge.db OK"
+  else
+    echo "   ⚠️  Local brain: knowledge.db integrity issue detected"
+  fi
+else
+  echo "   ⚠️  Local brain: knowledge.db not found (may be remote-only mode)"
+fi
+
+# Check if remote brain is configured
+if [ -f "$BRAIN_DIR/config.json" ]; then
+  REMOTE_URL=$(python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1], 'r') as f:
+        config = json.load(f)
+    print(config.get('remote_brain', {}).get('url', ''))
+except:
+    print('')
+" "$BRAIN_DIR/config.json" 2>/dev/null || echo "")
+
+  if [ -n "$REMOTE_URL" ]; then
+    HEALTH_URL="${REMOTE_URL%/}/health"
+    if command -v curl &> /dev/null; then
+      HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 "$HEALTH_URL" 2>/dev/null || echo "000")
+      if [ "$HTTP_CODE" = "200" ]; then
+        echo "   ✅ Remote brain: healthy (HTTP $HTTP_CODE)"
+      else
+        echo "   ⚠️  Remote brain: HTTP $HTTP_CODE (may not be running)"
+      fi
+    fi
+  fi
+fi
+
+# ============================================================
 # Done
 # ============================================================
 echo ""

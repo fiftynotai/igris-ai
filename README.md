@@ -143,7 +143,11 @@ IGRIS v4.0 introduces a **centralized brain** at `~/.igris/` — persistent memo
 
 ```bash
 # 1. Bootstrap the brain (one-time)
-./scripts/igris_brain_init.sh
+./scripts/igris_brain_init.sh                          # Interactive (prompts for mode)
+./scripts/igris_brain_init.sh --local                  # Local stdio only (default)
+./scripts/igris_brain_init.sh --remote URL API_KEY     # Remote HTTP only
+./scripts/igris_brain_init.sh --dual URL API_KEY       # Both local + remote
+./scripts/igris_brain_init.sh --add-remote URL API_KEY # Add remote to existing local
 
 # 2. Install in any project (symlink mode)
 cd your-project
@@ -152,7 +156,21 @@ path/to/igris-ai/scripts/igris_install.sh
 # 3. Migrate existing v3.4 projects
 cd existing-project
 path/to/igris-ai/scripts/igris_migrate_to_v4.sh
+
+# 4. Switch brain modes (after dual setup)
+./scripts/igris_brain_switch.sh status   # Show current mode
+./scripts/igris_brain_switch.sh local    # Local only
+./scripts/igris_brain_switch.sh remote   # Remote only
+./scripts/igris_brain_switch.sh dual     # Both active
 ```
+
+**Brain Modes:**
+
+| Mode | MCP Entry | Use Case |
+|------|-----------|----------|
+| `local` | `igris-brain` (stdio) | Single machine, default |
+| `remote` | `igris-brain` (HTTP) | VPS brain, no local DB |
+| `dual` | `igris-brain` (stdio) + `igris-brain-remote` (HTTP) | Full redundancy |
 
 ### Brain MCP Tools
 

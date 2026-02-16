@@ -533,6 +533,48 @@ MCPEOF
   fi
 fi
 
+# ============================================================
+# Brain health check (if brain exists)
+# ============================================================
+if [ -d "$HOME/.igris" ]; then
+  echo ""
+  echo "🩺 Brain health check..."
+
+  if [ -f "$HOME/.igris/memory/knowledge.db" ]; then
+    INTEGRITY=$(sqlite3 "$HOME/.igris/memory/knowledge.db" "PRAGMA integrity_check;" 2>/dev/null || echo "failed")
+    if [ "$INTEGRITY" = "ok" ]; then
+      echo "   ✅ Local brain: knowledge.db OK"
+    else
+      echo "   ⚠️  Local brain: knowledge.db integrity issue detected"
+    fi
+  fi
+
+  # Check remote brain if configured
+  if [ -f "$HOME/.igris/config.json" ]; then
+    BRAIN_REMOTE_URL=$(python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1], 'r') as f:
+        config = json.load(f)
+    print(config.get('remote_brain', {}).get('url', ''))
+except:
+    print('')
+" "$HOME/.igris/config.json" 2>/dev/null || echo "")
+
+    if [ -n "$BRAIN_REMOTE_URL" ]; then
+      HEALTH_URL="${BRAIN_REMOTE_URL%/}/health"
+      if command -v curl &> /dev/null; then
+        HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 "$HEALTH_URL" 2>/dev/null || echo "000")
+        if [ "$HTTP_CODE" = "200" ]; then
+          echo "   ✅ Remote brain: healthy (HTTP $HTTP_CODE)"
+        else
+          echo "   ⚠️  Remote brain: HTTP $HTTP_CODE (may not be running)"
+        fi
+      fi
+    fi
+  fi
+fi
+
 echo ""
 echo "✅ Igris AI v3.3 initialized successfully!"
 echo ""

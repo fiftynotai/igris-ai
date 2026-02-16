@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Description: One-time initialization of the centralized ~/.igris/ brain
-# Usage: igris_brain_init.sh [--force]
+# Usage: igris_brain_init.sh [--force] [--local] [--remote URL KEY] [--dual URL KEY] [--add-remote URL KEY]
 # Dependencies: sqlite3 (with FTS5 support), python3
 # Exit codes:
 #   0 - Success (brain created or already exists)
@@ -17,14 +17,216 @@ echo ""
 # Parse flags
 # ============================================================
 FORCE=false
-for arg in "$@"; do
-  case "$arg" in
-    --force) FORCE=true ;;
-    *) echo "Unknown argument: $arg"; exit 1 ;;
+BRAIN_MODE=""
+REMOTE_URL=""
+REMOTE_KEY=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --force)
+      FORCE=true
+      shift
+      ;;
+    --local)
+      BRAIN_MODE="local"
+      shift
+      ;;
+    --remote)
+      BRAIN_MODE="remote"
+      if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then
+        echo "❌ Error: --remote requires URL and API_KEY arguments"
+        echo "   Usage: $0 --remote <URL> <API_KEY>"
+        exit 1
+      fi
+      REMOTE_URL="$2"
+      REMOTE_KEY="$3"
+      shift 3
+      ;;
+    --dual)
+      BRAIN_MODE="dual"
+      if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then
+        echo "❌ Error: --dual requires URL and API_KEY arguments"
+        echo "   Usage: $0 --dual <URL> <API_KEY>"
+        exit 1
+      fi
+      REMOTE_URL="$2"
+      REMOTE_KEY="$3"
+      shift 3
+      ;;
+    --add-remote)
+      BRAIN_MODE="add-remote"
+      if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then
+        echo "❌ Error: --add-remote requires URL and API_KEY arguments"
+        echo "   Usage: $0 --add-remote <URL> <API_KEY>"
+        exit 1
+      fi
+      REMOTE_URL="$2"
+      REMOTE_KEY="$3"
+      shift 3
+      ;;
+    *)
+      echo "❌ Unknown argument: $1"
+      echo ""
+      echo "Usage: $0 [--force] [--local] [--remote URL KEY] [--dual URL KEY] [--add-remote URL KEY]"
+      echo ""
+      echo "Brain modes:"
+      echo "  --local                Local stdio only (default, current behavior)"
+      echo "  --remote URL KEY       Remote HTTP only"
+      echo "  --dual URL KEY         Both local and remote"
+      echo "  --add-remote URL KEY   Add remote to existing local brain"
+      echo ""
+      echo "Options:"
+      echo "  --force                Reinitialize even if brain exists"
+      exit 1
+      ;;
   esac
 done
 
 BRAIN_DIR="$HOME/.igris"
+
+# ============================================================
+# Handle --add-remote (operates on existing brain, skips init)
+# ============================================================
+if [ "$BRAIN_MODE" = "add-remote" ]; then
+  if [ ! -d "$BRAIN_DIR" ]; then
+    echo "❌ Error: No brain found at $BRAIN_DIR"
+    echo "   Run $0 first to create the brain, then use --add-remote."
+    exit 1
+  fi
+
+  echo "🔌 Adding remote brain to existing local configuration..."
+  echo ""
+
+  # Update config.json with remote_brain block
+  python3 -c "
+import json, sys
+
+config_file = sys.argv[1]
+remote_url = sys.argv[2]
+remote_key = sys.argv[3]
+
+with open(config_file, 'r') as f:
+    config = json.load(f)
+
+config['remote_brain'] = {
+    'url': remote_url,
+    'api_key': remote_key
+}
+
+with open(config_file, 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\n')
+" "$BRAIN_DIR/config.json" "$REMOTE_URL" "$REMOTE_KEY"
+  echo "   ✅ remote_brain added to config.json"
+
+  # Register remote MCP in ~/.claude.json
+  CLAUDE_CONFIG="$HOME/.claude.json"
+  python3 -c "
+import json, sys
+
+config_file = sys.argv[1]
+remote_url = sys.argv[2]
+remote_key = sys.argv[3]
+
+try:
+    with open(config_file, 'r') as f:
+        config = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    config = {}
+
+if 'mcpServers' not in config:
+    config['mcpServers'] = {}
+
+config['mcpServers']['igris-brain-remote'] = {
+    'type': 'http',
+    'url': remote_url.rstrip('/') + '/mcp',
+    'headers': {
+        'Authorization': 'Bearer ' + remote_key
+    }
+}
+
+with open(config_file, 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\n')
+" "$CLAUDE_CONFIG" "$REMOTE_URL" "$REMOTE_KEY"
+  echo "   ✅ igris-brain-remote registered in $CLAUDE_CONFIG"
+
+  # Health check remote
+  echo ""
+  echo "🩺 Verifying remote brain connectivity..."
+  HEALTH_URL="${REMOTE_URL%/}/health"
+  if command -v curl &> /dev/null; then
+    HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 "$HEALTH_URL" 2>/dev/null || echo "000")
+    if [ "$HTTP_CODE" = "200" ]; then
+      echo "   ✅ Remote brain is healthy (HTTP $HTTP_CODE)"
+    else
+      echo "   ⚠️  Remote brain health check returned HTTP $HTTP_CODE"
+      echo "   URL: $HEALTH_URL"
+      echo "   The remote MCP entry has been registered but the server may not be running."
+    fi
+  else
+    echo "   ⚠️  curl not found — skipping remote health check"
+  fi
+
+  echo ""
+  echo "✅ Remote brain added successfully!"
+  echo "   Mode: dual (local + remote)"
+  echo "   Both igris-brain (local) and igris-brain-remote (HTTP) are now registered."
+  exit 0
+fi
+
+# ============================================================
+# Interactive mode prompt (when no brain mode flag specified)
+# ============================================================
+if [ -z "$BRAIN_MODE" ]; then
+  if [ -t 0 ]; then
+    echo "🧠 Brain Mode Selection"
+    echo ""
+    echo "  1) local   — Local stdio only (default, recommended for single machine)"
+    echo "  2) remote  — Remote HTTP only (VPS brain, no local DB)"
+    echo "  3) dual    — Both local and remote (full redundancy)"
+    echo ""
+    read -rp "Select brain mode [1/2/3] (default: 1): " MODE_CHOICE
+    MODE_CHOICE=${MODE_CHOICE:-1}
+
+    case "$MODE_CHOICE" in
+      1|local)
+        BRAIN_MODE="local"
+        ;;
+      2|remote)
+        BRAIN_MODE="remote"
+        read -rp "Remote brain URL (e.g., http://your-vps:3001): " REMOTE_URL
+        read -rsp "API key: " REMOTE_KEY
+        echo ""
+        if [ -z "$REMOTE_URL" ] || [ -z "$REMOTE_KEY" ]; then
+          echo "❌ Error: URL and API key are required for remote mode"
+          exit 1
+        fi
+        ;;
+      3|dual)
+        BRAIN_MODE="dual"
+        read -rp "Remote brain URL (e.g., http://your-vps:3001): " REMOTE_URL
+        read -rsp "API key: " REMOTE_KEY
+        echo ""
+        if [ -z "$REMOTE_URL" ] || [ -z "$REMOTE_KEY" ]; then
+          echo "❌ Error: URL and API key are required for dual mode"
+          exit 1
+        fi
+        ;;
+      *)
+        echo "❌ Invalid selection. Using default: local"
+        BRAIN_MODE="local"
+        ;;
+    esac
+    echo ""
+  else
+    # Non-interactive: default to local
+    BRAIN_MODE="local"
+  fi
+fi
+
+echo "📡 Brain mode: $BRAIN_MODE"
+echo ""
 
 # ============================================================
 # Check if brain already exists
@@ -172,61 +374,65 @@ if [ -d "$IGRIS_DIR/brain-mcp-server/patterns" ]; then
 fi
 
 # ============================================================
-# Copy and build Brain MCP server
+# Copy and build Brain MCP server (only for local/dual modes)
 # ============================================================
-echo ""
-echo "🔌 Setting up Brain MCP server..."
+if [ "$BRAIN_MODE" = "local" ] || [ "$BRAIN_MODE" = "dual" ]; then
+  echo ""
+  echo "🔌 Setting up Brain MCP server..."
 
-if [ -d "$IGRIS_DIR/brain-mcp-server" ]; then
-  cp -r "$IGRIS_DIR/brain-mcp-server/"* "$BRAIN_DIR/mcp-server/"
+  if [ -d "$IGRIS_DIR/brain-mcp-server" ]; then
+    cp -r "$IGRIS_DIR/brain-mcp-server/"* "$BRAIN_DIR/mcp-server/"
 
-  if command -v node &> /dev/null; then
-    NODE_MAJOR=$(node --version | sed 's/v//' | cut -d. -f1)
-    if [ "$NODE_MAJOR" -ge 20 ]; then
-      echo "   📦 Installing dependencies..."
-      cd "$BRAIN_DIR/mcp-server"
-      npm install --silent 2>/dev/null
-      echo "   📦 Building MCP server..."
-      npm run build --silent 2>/dev/null
-      cd "$IGRIS_DIR"
-      echo "   ✅ Brain MCP server built"
+    if command -v node &> /dev/null; then
+      NODE_MAJOR=$(node --version | sed 's/v//' | cut -d. -f1)
+      if [ "$NODE_MAJOR" -ge 20 ]; then
+        echo "   📦 Installing dependencies..."
+        cd "$BRAIN_DIR/mcp-server"
+        npm install --silent 2>/dev/null
+        echo "   📦 Building MCP server..."
+        npm run build --silent 2>/dev/null
+        cd "$IGRIS_DIR"
+        echo "   ✅ Brain MCP server built"
+      else
+        echo "   ⚠️  Node.js $NODE_MAJOR detected (requires 20+). MCP server not built."
+      fi
     else
-      echo "   ⚠️  Node.js $NODE_MAJOR detected (requires 20+). MCP server not built."
+      echo "   ⚠️  Node.js not found. MCP server not built."
+      echo "   Install Node.js 20+ and run: cd ~/.igris/mcp-server && npm install && npm run build"
     fi
   else
-    echo "   ⚠️  Node.js not found. MCP server not built."
-    echo "   Install Node.js 20+ and run: cd ~/.igris/mcp-server && npm install && npm run build"
+    echo "   ⚠️  brain-mcp-server/ not found in repo"
   fi
-else
-  echo "   ⚠️  brain-mcp-server/ not found in repo"
 fi
 
 # ============================================================
-# Initialize knowledge.db
+# Initialize knowledge.db (only for local/dual modes)
 # ============================================================
-echo ""
-echo "🗄️  Initializing knowledge database..."
+if [ "$BRAIN_MODE" = "local" ] || [ "$BRAIN_MODE" = "dual" ]; then
+  echo ""
+  echo "🗄️  Initializing knowledge database..."
 
-if [ -f "$BRAIN_DIR/memory/knowledge.db" ] && [ "$FORCE" = false ]; then
-  echo "   ✅ knowledge.db already exists (skipping)"
-else
-  if [ -f "$BRAIN_DIR/memory/knowledge.db" ] && [ "$FORCE" = true ]; then
-    echo "   ⚠️  Backing up existing knowledge.db..."
-    cp "$BRAIN_DIR/memory/knowledge.db" "$BRAIN_DIR/memory/knowledge.db.backup.$(date -u +"%Y%m%dT%H%M%SZ")"
+  if [ -f "$BRAIN_DIR/memory/knowledge.db" ] && [ "$FORCE" = false ]; then
+    echo "   ✅ knowledge.db already exists (skipping)"
+  else
+    if [ -f "$BRAIN_DIR/memory/knowledge.db" ] && [ "$FORCE" = true ]; then
+      echo "   ⚠️  Backing up existing knowledge.db..."
+      cp "$BRAIN_DIR/memory/knowledge.db" "$BRAIN_DIR/memory/knowledge.db.backup.$(date -u +"%Y%m%dT%H%M%SZ")"
+    fi
+
+    sqlite3 "$BRAIN_DIR/memory/knowledge.db" < "$IGRIS_DIR/scripts/igris_brain_schema.sql"
+    echo "   ✅ Schema applied"
   fi
 
-  sqlite3 "$BRAIN_DIR/memory/knowledge.db" < "$IGRIS_DIR/scripts/igris_brain_schema.sql"
-  echo "   ✅ Schema applied"
+  # Apply connection-time PRAGMAs (idempotent)
+  sqlite3 "$BRAIN_DIR/memory/knowledge.db" "PRAGMA journal_mode=WAL;"
+  sqlite3 "$BRAIN_DIR/memory/knowledge.db" "PRAGMA trusted_schema=ON;"
+  echo "   ✅ WAL mode enabled (persistent). trusted_schema set (per-connection, must be set on each open)"
+
+  # Verify tables
+  TABLE_COUNT=$(sqlite3 "$BRAIN_DIR/memory/knowledge.db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
+  echo "   ✅ Database ready ($TABLE_COUNT tables)"
 fi
-
-# Apply connection-time PRAGMAs (idempotent)
-sqlite3 "$BRAIN_DIR/memory/knowledge.db" "PRAGMA journal_mode=WAL;"
-sqlite3 "$BRAIN_DIR/memory/knowledge.db" "PRAGMA trusted_schema=ON;"
-echo "   ✅ WAL mode enabled (persistent). trusted_schema set (per-connection, must be set on each open)"
-
-# Verify tables
-TABLE_COUNT=$(sqlite3 "$BRAIN_DIR/memory/knowledge.db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
-echo "   ✅ Database ready ($TABLE_COUNT tables)"
 
 # ============================================================
 # Generate config.json
@@ -238,16 +444,21 @@ INSTALL_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 python3 -c "
 import json, sys
+
+brain_mode = sys.argv[4]
+remote_url = sys.argv[5] if len(sys.argv) > 5 else ''
+remote_key = sys.argv[6] if len(sys.argv) > 6 else ''
+
 config = {
     'version': '4.0.0',
     'installed_at': sys.argv[1],
     'source_repo': sys.argv[2],
     'features': {
-        'memory': True,
+        'memory': brain_mode in ('local', 'dual'),
         'project_registry': True,
         'symlinks': True,
         'mcp_server': True,
-        'staging_pipeline': True,
+        'staging_pipeline': brain_mode in ('local', 'dual'),
         'analytics': True
     },
     'paths': {
@@ -262,10 +473,17 @@ config = {
         'busy_timeout_ms': 5000
     }
 }
+
+if brain_mode in ('remote', 'dual') and remote_url and remote_key:
+    config['remote_brain'] = {
+        'url': remote_url,
+        'api_key': remote_key
+    }
+
 with open(sys.argv[3], 'w') as f:
     json.dump(config, f, indent=2)
     f.write('\n')
-" "$INSTALL_DATE" "$IGRIS_DIR" "$BRAIN_DIR/config.json"
+" "$INSTALL_DATE" "$IGRIS_DIR" "$BRAIN_DIR/config.json" "$BRAIN_MODE" "$REMOTE_URL" "$REMOTE_KEY"
 
 echo "   ✅ config.json created"
 
@@ -382,12 +600,14 @@ echo "🔌 Registering Brain MCP server in Claude Code..."
 CLAUDE_CONFIG="$HOME/.claude.json"
 MCP_SERVER_PATH="$BRAIN_DIR/mcp-server/dist/index.js"
 
-if [ -f "$MCP_SERVER_PATH" ]; then
-  python3 -c "
-import json, sys, os
+python3 -c "
+import json, sys
 
 config_file = sys.argv[1]
 mcp_path = sys.argv[2]
+brain_mode = sys.argv[3]
+remote_url = sys.argv[4] if len(sys.argv) > 4 else ''
+remote_key = sys.argv[5] if len(sys.argv) > 5 else ''
 
 try:
     with open(config_file, 'r') as f:
@@ -398,19 +618,96 @@ except (FileNotFoundError, json.JSONDecodeError):
 if 'mcpServers' not in config:
     config['mcpServers'] = {}
 
-config['mcpServers']['igris-brain'] = {
-    'command': 'node',
-    'args': [mcp_path]
-}
+import os
+
+# Register local MCP (stdio) for local and dual modes
+if brain_mode in ('local', 'dual') and os.path.exists(mcp_path):
+    config['mcpServers']['igris-brain'] = {
+        'command': 'node',
+        'args': [mcp_path]
+    }
+
+# Register remote MCP (HTTP) for remote and dual modes
+if brain_mode in ('remote', 'dual') and remote_url and remote_key:
+    mcp_url = remote_url.rstrip('/') + '/mcp'
+    if brain_mode == 'remote':
+        # Remote-only: use the primary igris-brain name
+        config['mcpServers']['igris-brain'] = {
+            'type': 'http',
+            'url': mcp_url,
+            'headers': {
+                'Authorization': 'Bearer ' + remote_key
+            }
+        }
+    else:
+        # Dual mode: use separate name for remote
+        config['mcpServers']['igris-brain-remote'] = {
+            'type': 'http',
+            'url': mcp_url,
+            'headers': {
+                'Authorization': 'Bearer ' + remote_key
+            }
+        }
 
 with open(config_file, 'w') as f:
     json.dump(config, f, indent=2)
     f.write('\n')
-" "$CLAUDE_CONFIG" "$MCP_SERVER_PATH"
-  echo "   ✅ Brain MCP server registered in $CLAUDE_CONFIG"
-else
-  echo "   ⚠️  MCP server not built yet — skipping registration"
-  echo "   Build manually: cd ~/.igris/mcp-server && npm install && npm run build"
+" "$CLAUDE_CONFIG" "$MCP_SERVER_PATH" "$BRAIN_MODE" "$REMOTE_URL" "$REMOTE_KEY"
+
+if [ "$BRAIN_MODE" = "local" ]; then
+  if [ -f "$MCP_SERVER_PATH" ]; then
+    echo "   ✅ igris-brain (local stdio) registered in $CLAUDE_CONFIG"
+  else
+    echo "   ⚠️  MCP server not built yet — skipping local registration"
+    echo "   Build manually: cd ~/.igris/mcp-server && npm install && npm run build"
+  fi
+elif [ "$BRAIN_MODE" = "remote" ]; then
+  echo "   ✅ igris-brain (remote HTTP) registered in $CLAUDE_CONFIG"
+elif [ "$BRAIN_MODE" = "dual" ]; then
+  if [ -f "$MCP_SERVER_PATH" ]; then
+    echo "   ✅ igris-brain (local stdio) registered in $CLAUDE_CONFIG"
+  else
+    echo "   ⚠️  MCP server not built — local registration skipped"
+  fi
+  echo "   ✅ igris-brain-remote (remote HTTP) registered in $CLAUDE_CONFIG"
+fi
+
+# ============================================================
+# Health checks
+# ============================================================
+echo ""
+echo "🩺 Running health checks..."
+
+# Local health check
+if [ "$BRAIN_MODE" = "local" ] || [ "$BRAIN_MODE" = "dual" ]; then
+  if [ -f "$BRAIN_DIR/memory/knowledge.db" ]; then
+    INTEGRITY=$(sqlite3 "$BRAIN_DIR/memory/knowledge.db" "PRAGMA integrity_check;" 2>/dev/null || echo "failed")
+    if [ "$INTEGRITY" = "ok" ]; then
+      echo "   ✅ Local brain: knowledge.db integrity check passed"
+    else
+      echo "   ❌ Local brain: knowledge.db integrity check FAILED"
+      : # health check failed
+    fi
+  else
+    echo "   ❌ Local brain: knowledge.db not found"
+  fi
+fi
+
+# Remote health check
+if [ "$BRAIN_MODE" = "remote" ] || [ "$BRAIN_MODE" = "dual" ]; then
+  HEALTH_URL="${REMOTE_URL%/}/health"
+  if command -v curl &> /dev/null; then
+    HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 "$HEALTH_URL" 2>/dev/null || echo "000")
+    if [ "$HTTP_CODE" = "200" ]; then
+      echo "   ✅ Remote brain: healthy (HTTP $HTTP_CODE)"
+    else
+      echo "   ⚠️  Remote brain: health check returned HTTP $HTTP_CODE"
+      echo "      URL: $HEALTH_URL"
+      echo "      The remote MCP entry has been registered but the server may not be running."
+    fi
+  else
+    echo "   ⚠️  curl not found — skipping remote health check"
+  fi
 fi
 
 # ============================================================
@@ -422,10 +719,23 @@ echo "✅ Igris AI Brain initialized successfully!"
 echo "========================================"
 echo ""
 echo "🧠 Brain location: $BRAIN_DIR"
-echo "🗄️  Database: $BRAIN_DIR/memory/knowledge.db"
+echo "📡 Brain mode: $BRAIN_MODE"
+
+if [ "$BRAIN_MODE" = "local" ] || [ "$BRAIN_MODE" = "dual" ]; then
+  echo "🗄️  Database: $BRAIN_DIR/memory/knowledge.db"
+fi
+
 echo "⚙️  Config: $BRAIN_DIR/config.json"
 echo "👤 Profile: $BRAIN_DIR/user_profile.json"
 echo "🌐 Global CLAUDE.md: $HOME/.claude/CLAUDE.md"
+
+if [ "$BRAIN_MODE" = "dual" ]; then
+  echo ""
+  echo "🔗 MCP Servers registered:"
+  echo "   igris-brain         → local stdio ($MCP_SERVER_PATH)"
+  echo "   igris-brain-remote  → remote HTTP ($REMOTE_URL)"
+fi
+
 echo ""
 echo "📚 Next Steps:"
 echo ""
@@ -435,8 +745,21 @@ echo ""
 echo "2. Or install in the current directory:"
 echo "   ./scripts/igris_install.sh ."
 echo ""
-echo "3. Verify brain health:"
-echo "   sqlite3 ~/.igris/memory/knowledge.db \"PRAGMA integrity_check;\""
-echo ""
+
+if [ "$BRAIN_MODE" = "local" ] || [ "$BRAIN_MODE" = "dual" ]; then
+  echo "3. Verify brain health:"
+  echo "   sqlite3 ~/.igris/memory/knowledge.db \"PRAGMA integrity_check;\""
+  echo ""
+fi
+
+if [ "$BRAIN_MODE" = "dual" ]; then
+  echo "4. Switch brain modes:"
+  echo "   ./scripts/igris_brain_switch.sh status  — Show current mode"
+  echo "   ./scripts/igris_brain_switch.sh local   — Local only"
+  echo "   ./scripts/igris_brain_switch.sh remote  — Remote only"
+  echo "   ./scripts/igris_brain_switch.sh dual    — Both active"
+  echo ""
+fi
+
 echo "🔗 Docs: https://github.com/fiftynotai/igris-ai"
 echo ""

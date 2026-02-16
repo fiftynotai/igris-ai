@@ -1,6 +1,6 @@
 #!/bin/bash
 # Description: Migrate a v3.4 Igris AI project to v4.0 (centralized brain)
-# Usage: igris_migrate_to_v4.sh [target-directory]
+# Usage: igris_migrate_to_v4.sh [target-directory] [--add-remote URL KEY]
 # Dependencies: sqlite3, python3
 # Exit codes:
 #   0 - Success
@@ -10,6 +10,35 @@ set -e
 
 # Check dependencies
 command -v python3 >/dev/null 2>&1 || { echo "Error: python3 is required but not installed."; exit 1; }
+
+# ============================================================
+# Check for --add-remote flag (separate migration path)
+# ============================================================
+if [ "${1:-}" = "--add-remote" ]; then
+  if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then
+    echo "Error: --add-remote requires URL and API_KEY arguments"
+    echo "Usage: $0 --add-remote <URL> <API_KEY>"
+    exit 1
+  fi
+
+  REMOTE_URL="$2"
+  REMOTE_KEY="$3"
+  BRAIN_DIR="$HOME/.igris"
+
+  if [ ! -d "$BRAIN_DIR" ]; then
+    echo "Error: Brain not found at $BRAIN_DIR"
+    echo "Run igris_brain_init.sh first."
+    exit 1
+  fi
+
+  echo "Igris AI - Add Remote Brain (Migration Path)"
+  echo "=============================================="
+  echo ""
+
+  # Delegate to igris_brain_init.sh --add-remote
+  SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+  exec "$SCRIPT_DIR/igris_brain_init.sh" --add-remote "$REMOTE_URL" "$REMOTE_KEY"
+fi
 
 echo "Igris AI - Migration to v4.0 (Centralized Brain)"
 echo "=================================================="
