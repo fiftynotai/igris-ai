@@ -13,7 +13,7 @@
 |-------|-------|--------|
 | FR-014 | Higgsfield Skill — Browser Automation Pivot | In Progress (blocked — URL slugs needed) |
 
-**Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018, BR-015, FR-019, FR-020, FR-021
+**Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018, BR-015, FR-019, FR-020, FR-021, PI-003
 
 ---
 
