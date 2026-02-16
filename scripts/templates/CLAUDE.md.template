@@ -120,9 +120,9 @@ This project uses [Igris AI](https://github.com/fiftynotai/igris-ai) for code qu
 
 ---
 
-## Multi-Agent Ecosystem (v3.4)
+## Multi-Agent Ecosystem (v4.0)
 
-IGRIS v3.4 uses **7 native Claude Code subagents** for autonomous workflows.
+IGRIS v4.0 uses **7 native Claude Code subagents** for autonomous workflows, with a centralized brain for persistent memory.
 
 **Agent Tiers:**
 
@@ -166,6 +166,8 @@ IGRIS v3.4 uses **7 native Claude Code subagents** for autonomous workflows.
 | "MIGRATE analyze" | `/migrate-analyze` skill |
 | "test", "run tests" | sentinel |
 | "review code" | warden |
+| "list projects" | `/projects` skill |
+| "portfolio", "cross-project" | `/portfolio` skill |
 
 ### Orchestrator-Only (Exceptions)
 - Brief listing/reading/status updates
@@ -289,6 +291,23 @@ def get_agent_display_name(static_name: str) -> str:
     # Fallback: capitalize static name
     return static_name.upper()
 ```
+
+---
+
+## Brain Integration
+
+IGRIS v4.0 uses a centralized brain at `~/.igris/` for persistent memory and cross-project intelligence.
+
+**Brain MCP tools are available globally** (registered in `~/.claude.json`):
+- `igris_memory_store/search/recall` — Knowledge base
+- `igris_error_lookup` — Error solution catalog
+- `igris_project_register/list/status` — Project registry
+- `igris_metrics_record/query/velocity` — Agent performance tracking
+- `igris_pattern_suggest` — Pattern recommendations
+
+**New Skills:**
+- `/projects` — List all managed projects
+- `/portfolio` — Cross-project dashboard
 
 ---
 

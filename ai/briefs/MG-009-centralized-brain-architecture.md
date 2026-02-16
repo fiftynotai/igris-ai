@@ -167,16 +167,17 @@ _(Tasks currently being worked on)_
 
 ## Workflow State
 
-**Phase:** COMMITTING (Phase 3)
+**Phase:** COMMITTING (Phase 4)
 **Active Agent:** none
 **Retry Count:** 0
 
 ### Current Work
-Phase 3 WARDEN rejected (1 bug: extra param in pattern suggest), fixed. Committing.
+Phase 4 WARDEN rejected (stale version + missing skill), fixed. Committing.
 
 ### Next Steps
 1. Phase 4: Update /awaken, /rest, /scan for brain integration
-2. Migrate existing LEARNINGS.md/DECISIONS.md to knowledge.db
+2. Create migrate-to-v4 script
+3. Update igris_os.md, rules, README
 
 ### Agent Log
 | Time | Agent | Action | Result |
@@ -194,6 +195,9 @@ Phase 3 WARDEN rejected (1 bug: extra param in pattern suggest), fixed. Committi
 | 2026-02-16 | forger | Implement Phase 3 (7 deliverables) | Complete — velocity, patterns, skills, auto-promotion, starter patterns |
 | 2026-02-16 | sentinel | Test Phase 3 implementation | PASS 8/8 — build, MCP, velocity, patterns, promotion, skills, JSON, bash |
 | 2026-02-16 | warden | Code review Phase 3 | REJECT — 1 bug: extra param in handlePatternSuggest, fixed |
+| 2026-02-16 | forger | Implement Phase 4 (10 deliverables) | Complete — skills, rules, igris_os.md, README, CLAUDE.md, migration script |
+| 2026-02-16 | sentinel | Test Phase 4 implementation | PASS 15/15 — syntax, frontmatter, brain integration, versions, graceful degradation |
+| 2026-02-16 | warden | Code review Phase 4 | REJECT — stale v3.4 in rules, missing /higgsfield in CLAUDE.md, fixed |
 
 ### Blockers
 None

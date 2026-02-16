@@ -24,6 +24,7 @@ This applies to:
 4. **Display:** Persona greeting WITH capabilities (see greeting format below)
 5. **Load:** `ai/session/CURRENT_SESSION.md` (silently)
 6. **Load:** `ai/context/coding_guidelines.md` if exists (silently)
+6.5. **Check Brain:** If `~/.igris/` exists, note brain is available. Query `igris_project_status` for current project context.
 7. **Analyze:** Execute Post-Initialization Analysis Protocol from igris_os.md
 8. **Display:** Session status + System Assessment + Recommendations
 9. **Display:** "Igris AI initialized. System ready."
@@ -145,6 +146,7 @@ System Assessment:
 - Briefs: X completed, Y ready (Z P0/P1)
 - Blockers: [None | X active (Y critical)]
 - Architecture: [coding_guidelines.md loaded | coding_guidelines.md not found]
+- Brain: [Connected (X learnings) | Not available]
 - Git: [Clean | X uncommitted files]
 
 Recommended Actions:

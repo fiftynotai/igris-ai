@@ -2,13 +2,13 @@
 
 > *From Vibe Coding → Vibe Engineering*
 
-**Version 3.4.0** | Production Ready
+**Version 4.0.0** | Production Ready
 
 ---
 
 > *"AI made coding faster — but not better. IGRIS brings the discipline."*
 
-**IGRIS** is a multi-agent AI engineering system that orchestrates Claude Code through 7 specialized subagents and 16 skills to build high-quality software with structure, testing, and documentation.
+**IGRIS** is a multi-agent AI engineering system that orchestrates Claude Code through 7 specialized subagents and 18 skills to build high-quality software with structure, testing, and documentation.
 
 Not just code generation. **Autonomous engineering execution.**
 
@@ -30,16 +30,16 @@ AI made coding faster — but not better. Speed without structure created:
 
 ---
 
-## ✦ What is IGRIS v3.4?
+## ✦ What is IGRIS v4.0?
 
 **IGRIS** is a multi-agent AI engineering system powered by Claude Code that transforms how you build software through autonomous workflows.
 
 **Category:** Multi-Agent AI Engineering Platform
 **Core Promise:** Autonomous Quality Execution
 
-### The v3.4 Architecture
+### The v4.0 Architecture
 
-**7 Specialized Subagents Across 4 Tiers + 16 Skills:**
+**7 Specialized Subagents Across 4 Tiers + 18 Skills + Centralized Brain:**
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -63,10 +63,10 @@ AI made coding faster — but not better. Speed without structure created:
                    ├─► TIER 5 (Custom): sage (user-defined domain experts)
                    │                     Specialized Knowledge
                    │
-                   └─► 16 SKILLS: scan, rest, awaken, register, archive, hunt,
+                   └─► 18 SKILLS: scan, rest, awaken, register, archive, hunt,
                                   digivolve, ui-design, document, release,
                                   standardize, ideate, migrate-analyze, audit,
-                                  higgsfield, team
+                                  higgsfield, team, projects, portfolio
 ```
 
 ### How It Works
@@ -102,25 +102,120 @@ AI made coding faster — but not better. Speed without structure created:
 
 ---
 
+## ✦ The v4.0 Brain Architecture
+
+IGRIS v4.0 introduces a **centralized brain** at `~/.igris/` — persistent memory, cross-project intelligence, and zero-drift core files.
+
+### Architecture
+
+```
+┌──────────┐  ┌──────────┐  ┌──────────┐
+│Project A  │  │Project B  │  │Project C  │
+│ (Claude)  │  │ (Claude)  │  │ (Claude)  │
+└─────┬─────┘  └─────┬─────┘  └─────┬─────┘
+      │               │               │
+      │  symlinks +   │  symlinks +   │  symlinks +
+      │  MCP calls    │  MCP calls    │  MCP calls
+      └───────────────┼───────────────┘
+                      │
+           ┌──────────▼──────────┐
+           │  ~/.igris/ (BRAIN)  │
+           │                     │
+           │  core/ (symlinked)  │
+           │  knowledge.db (WAL) │
+           │  staging/ (hooks)   │
+           │  mcp-server/        │
+           └─────────────────────┘
+```
+
+### What the Brain Provides
+
+| Feature | Before (v3.4) | After (v4.0) |
+|---------|--------------|-------------|
+| Core files | Copied per project (drift) | Symlinked from brain (instant updates) |
+| Learnings | Lost between projects | Persistent in knowledge.db |
+| Error solutions | Solved once, forgotten | Cataloged and searchable |
+| Project overview | None | `/projects` and `/portfolio` commands |
+| Agent metrics | Per-project JSON | Cross-project SQLite analytics |
+| Updates | Run per-project update | Update brain once, all projects updated |
+
+### Installation (v4.0)
+
+```bash
+# 1. Bootstrap the brain (one-time)
+./scripts/igris_brain_init.sh
+
+# 2. Install in any project (symlink mode)
+cd your-project
+path/to/igris-ai/scripts/igris_install.sh
+
+# 3. Migrate existing v3.4 projects
+cd existing-project
+path/to/igris-ai/scripts/igris_migrate_to_v4.sh
+```
+
+### Brain MCP Tools
+
+11 tools available globally via `igris-brain` MCP server:
+
+| Tool | Purpose |
+|------|---------|
+| `igris_memory_store` | Store a learning |
+| `igris_memory_search` | Full-text search learnings |
+| `igris_memory_recall` | Contextual retrieval |
+| `igris_error_lookup` | Error solution catalog |
+| `igris_project_register` | Register project |
+| `igris_project_list` | List all projects |
+| `igris_project_status` | Project dashboard |
+| `igris_metrics_record` | Record agent metric |
+| `igris_metrics_query` | Query metrics |
+| `igris_metrics_velocity` | Velocity dashboard |
+| `igris_pattern_suggest` | Pattern recommendations |
+
+### Concurrency
+
+Multiple Claude sessions safely share the brain:
+- **SQLite WAL mode** — concurrent reads, serialized writes (~3ms each)
+- **busy_timeout=5000ms** — automatic retry on contention
+- **Staging pattern** — hooks write unique files, processed on next startup
+
+---
+
 ## ✦ Quick Start
 
-### Installation
+### Installation (v4.0 — Recommended)
+
+```bash
+# Clone IGRIS
+git clone https://github.com/fiftynotai/igris-ai
+
+# 1. Bootstrap the centralized brain (one-time)
+./igris-ai/scripts/igris_brain_init.sh
+
+# 2. Install in your project (symlink mode)
+cd your-project
+path/to/igris-ai/scripts/igris_install.sh
+```
+
+This creates:
+- `ai/` - IGRIS directory with templates and prompts (symlinked from brain)
+- `.claude/agents/` - 7 native subagents (symlinked from brain)
+- `.claude/hooks/` - Startup hook for auto-initialization
+- `CLAUDE.md` - Context for Claude Code CLI
+- Brain MCP server registered globally in `~/.claude.json`
+
+### Installation (v3.4 — Legacy, No Brain)
 
 ```bash
 # Clone IGRIS
 git clone https://github.com/fiftynotai/igris-ai
 cd your-project
 
-# Initialize IGRIS in your project
+# Initialize IGRIS in your project (copies files)
 ../igris-ai/scripts/igris_init.sh
 ```
 
-This creates:
-- `ai/` - IGRIS directory with templates and prompts
-- `.claude/agents/` - 7 native subagents
-- `.claude/hooks/` - Startup hook for auto-initialization
-- `CLAUDE.md` - Context for Claude Code CLI
-- `scripts/` - Core IGRIS scripts
+This creates the same structure but copies files instead of symlinking. Works fully without brain.
 
 **MCP Server Setup (Optional):**
 
@@ -170,6 +265,8 @@ claude
 | `/audit {type}` | Code quality analysis | /audit skill |
 | `/document` | Generate documentation | /document skill |
 | `/team hunt <brief-ids>` | Parallel implementation | /team skill (Agent Teams) |
+| `/projects` | List all managed projects | /projects skill |
+| `/portfolio` | Cross-project dashboard | /portfolio skill |
 | `DIGIVOLVE status` | List all agents | - |
 
 **Modes for /standardize:**
@@ -192,7 +289,7 @@ claude
 ```
 ┌─────────────────────────────────────┐
 │   IGRIS (Multi-Agent System)        │
-│   - 7 Specialized Subagents + 16 Skills│
+│   - 7 Specialized Subagents + 18 Skills│
 │   - Workflow Orchestration           │
 │   - Architecture Enforcement         │
 │   - Session Management               │
@@ -223,7 +320,7 @@ claude
 - **You** = The architect (strategic decisions, priorities)
 
 **Without IGRIS:** Claude generates code based on prompts → random outputs
-**With IGRIS:** 7 specialized agents + 16 skills engineer outcomes autonomously → disciplined execution
+**With IGRIS:** 7 specialized agents + 18 skills engineer outcomes autonomously → disciplined execution
 
 ---
 
@@ -328,7 +425,7 @@ When you invoke `HUNT BR-005`:
 
 ## ✦ The 7 Agents
 
-As of v3.4, IGRIS uses **7 focused subagents** defined as native Claude Code agent files in `.claude/agents/`. Procedural workflows previously handled by 11 retired agents have been consolidated into **16 skills** (slash commands), reducing complexity while maintaining full capability.
+As of v4.0, IGRIS uses **7 focused subagents** defined as native Claude Code agent files in `.claude/agents/`. Procedural workflows previously handled by 11 retired agents have been consolidated into **18 skills** (slash commands), reducing complexity while maintaining full capability.
 
 ### Agent Definition Format
 
@@ -393,9 +490,9 @@ Agents were renamed from generic identifiers to persona-themed names in MG-007. 
 |-------|------|------------------|-------|-------|
 | **sage** | Flutter architecture | Kalvad MVVM + Actions Layer patterns, GetX | Read, Write, Edit, Bash, Glob, Grep | inherit |
 
-### 16 Skills (Slash Commands)
+### 18 Skills (Slash Commands)
 
-In v3.4, procedural workflows moved from dedicated agents to skills. Skills are defined in `.claude/skills/*/SKILL.md`.
+In v4.0, procedural workflows moved from dedicated agents to skills. Skills are defined in `.claude/skills/*/SKILL.md`.
 
 | Skill | Replaces | Purpose |
 |-------|----------|---------|
@@ -415,8 +512,10 @@ In v3.4, procedural workflows moved from dedicated agents to skills. Skills are 
 | `/audit` | inquisitor agent | 7 audit operations, creates briefs |
 | `/higgsfield` | - | Higgsfield media generation (browser automation) |
 | `/team` | - | Parallel execution with Agent Teams |
+| `/projects` | - | List all brain-registered projects |
+| `/portfolio` | - | Cross-project dashboard and insights |
 
-### Key Features (v3.4)
+### Key Features (v4.0)
 
 - **Persistent Memory:** All agents have `memory: project`, storing learned context in `.claude/agent-memory/<name>/` across sessions.
 - **Tool Restrictions:** Read-only agents (architect, warden) cannot write files. Implementation agents (forger, sage) have full Read/Write/Edit/Bash access.
@@ -609,7 +708,7 @@ Agent Teams spawns multiple independent Claude Code instances (teammates) that w
 |---------|-----------|-------|
 | **Approach** | Editor-integrated AI | Multi-agent engineering system |
 | **Focus** | Fast code completion | Autonomous end-to-end workflows |
-| **Quality Control** | Manual | Automated (7 agents + 16 skills, quality gates) |
+| **Quality Control** | Manual | Automated (7 agents + 18 skills, quality gates) |
 | **Session Recovery** | None | Automatic (multi-level tracking) |
 | **Architecture Enforcement** | No | Yes (coding_guidelines.md) |
 | **Brief Management** | No | Yes (9 brief types, priorities) |
@@ -622,7 +721,7 @@ Agent Teams spawns multiple independent Claude Code instances (teammates) that w
 |---------|-------|-------|
 | **Approach** | CLI chat for code edits | Multi-agent autonomous system |
 | **Focus** | File editing, git integration | End-to-end engineering (plan → test → commit) |
-| **Agents** | Single agent | 7 agents + 16 skills |
+| **Agents** | Single agent | 7 agents + 18 skills |
 | **Quality Control** | Commit messages | Briefs, tests, architecture, warden agent |
 | **Session Tracking** | Git commits only | Multi-level (session, briefs, workflow, agents) |
 | **Self-Healing** | No | Yes (test failures loop to forger) |
@@ -647,7 +746,7 @@ Agent Teams spawns multiple independent Claude Code instances (teammates) that w
 |---------|--------------|----------------|
 | **Context** | Manual prompt loading | Automatic (CLAUDE.md + hooks) |
 | **Workflow** | Ad-hoc | Autonomous (HUNT command) |
-| **Agents** | Single Claude | 7 agents + 16 skills |
+| **Agents** | Single Claude | 7 agents + 18 skills |
 | **Quality** | Varies by prompt | Enforced (guidelines, tests, review) |
 | **Recovery** | Lose context on reset | Automatic (session tracking) |
 | **Accountability** | None | Full audit trail (briefs, decisions) |
@@ -799,10 +898,10 @@ Tier 4: Research
 Tier 5: Custom
 ✅ sage         | Flutter MVVM + Actions   | 6 runs
 
-SKILLS (16 total)
+SKILLS (18 total)
   scan, rest, awaken, register, archive, hunt, digivolve,
   ui-design, document, release, standardize, ideate, migrate-analyze, audit,
-  higgsfield, team
+  higgsfield, team, projects, portfolio
 ```
 
 **Agent metrics tracked in:** `ai/session/metrics/agent-metrics.json`
@@ -917,7 +1016,7 @@ your-project/
 │   │   ├── mender.md            # Tier 3: Error recovery
 │   │   ├── seeker.md            # Tier 4: Codebase research
 │   │   └── sage.md              # Tier 5: Flutter MVVM + Actions
-│   ├── skills/                  # 16 native skills (slash commands)
+│   ├── skills/                  # 18 native skills (slash commands)
 │   │   ├── scan/SKILL.md
 │   │   ├── rest/SKILL.md
 │   │   ├── awaken/SKILL.md
@@ -933,7 +1032,9 @@ your-project/
 │   │   ├── migrate-analyze/SKILL.md
 │   │   ├── audit/SKILL.md
 │   │   ├── higgsfield/SKILL.md
-│   │   └── team/SKILL.md
+│   │   ├── team/SKILL.md
+│   │   ├── projects/SKILL.md
+│   │   └── portfolio/SKILL.md
 │   ├── agent-memory/            # Persistent per-agent memory
 │   │   ├── architect/
 │   │   ├── forger/
@@ -961,14 +1062,61 @@ your-project/
 │   └── plugins/                 # Plugin registry
 └── scripts/                     # IGRIS scripts
     ├── igris_init.sh
+    ├── igris_install.sh
+    ├── igris_brain_init.sh
+    ├── igris_migrate_to_v4.sh
     ├── igris_update.sh
     ├── plugin_install.sh
     └── ...
 ```
 
+**Centralized Brain (v4.0):**
+```
+~/.igris/
+├── config.json              # Brain configuration
+├── user_profile.json        # Developer identity
+├── core/                    # Symlink source
+│   ├── agents/              # Agent definitions
+│   ├── skills/              # Skill definitions
+│   ├── rules/               # Rule definitions
+│   ├── prompts/             # System prompts
+│   └── templates/           # Brief templates
+├── memory/
+│   ├── knowledge.db         # SQLite WAL + FTS5
+│   └── patterns/            # Pattern library
+├── staging/                 # Hook pipeline
+│   └── {project-slug}/      # Per-project staging
+└── mcp-server/              # Brain MCP server
+    ├── dist/                # Compiled JS
+    └── src/                 # TypeScript source
+```
+
 ---
 
 ## ✦ Migration Guide
+
+### v3.4 → v4.0: Centralized Brain (MG-009)
+
+v4.0 introduces the centralized brain at `~/.igris/`. Existing projects continue working in local mode. Migration is optional.
+
+**To migrate:**
+```bash
+# 1. Bootstrap the brain
+./scripts/igris_brain_init.sh
+
+# 2. Migrate each project
+cd your-project
+path/to/igris-ai/scripts/igris_migrate_to_v4.sh
+```
+
+**What changes:**
+- Copied agents/rules/prompts/templates → symlinks to `~/.igris/core/`
+- LEARNINGS.md and DECISIONS.md → migrated to knowledge.db
+- Project registered in brain for cross-project management
+- Brain MCP tools available globally
+- 2 new skills: `/projects`, `/portfolio`
+
+**Backward compatible:** v3.4 projects continue working without brain.
 
 ### v3.3 → v3.4: Agent Consolidation (MG-008)
 
@@ -1033,7 +1181,7 @@ In v3.3, all agents were migrated from generic identifiers to persona-themed nam
 ## ✦ FAQ
 
 **Q: What's the difference between IGRIS and Claude?**
-A: IGRIS is a multi-agent engineering system that orchestrates Claude Code through 7 specialized subagents and 16 skills. Claude provides intelligence; IGRIS provides process, agents, and discipline.
+A: IGRIS is a multi-agent engineering system that orchestrates Claude Code through 7 specialized subagents and 18 skills. Claude provides intelligence; IGRIS provides process, agents, and discipline.
 
 **Q: Does IGRIS work with Claude.ai (web interface)?**
 A: Yes, but with limitations. Startup hooks won't auto-run, and Task tool (subagents) may not be available. Claude Code CLI is recommended.
@@ -1108,7 +1256,7 @@ IGRIS exists to merge imagination with structure — the spark *and* the system 
 Open source is humanity's greatest multiplier. IGRIS empowers:
 - **Abundance** — More creators, more releases, more shared knowledge
 - **Quality** — Tests, docs, clarity, maintainability
-- **Autonomy** — 7 agents + 16 skills working together to ship quality software
+- **Autonomy** — 7 agents + 18 skills working together to ship quality software
 
 **The Open Source Call:**
 > *Create boldly. Release openly. Engineer with discipline.*
@@ -1127,19 +1275,21 @@ Built for developers and teams using Claude AI to engineer high-quality software
 
 ---
 
-> **IGRIS — Where Creativity Meets Discipline, Powered by 7 Agents + 16 Skills.**
+> **IGRIS — Where Creativity Meets Discipline, Powered by 7 Agents + 18 Skills.**
 
 ```bash
 # Ready to engineer?
 ./scripts/igris_init.sh
 
-# v3.4 Commands:
+# v4.0 Commands:
 # HUNT BR-001           - Autonomous implementation
 # /standardize analyze  - Generate coding guidelines
 # /document             - Generate documentation
 # /migrate-analyze      - Analyze codebase for migrations
 # /audit {type}         - Code quality analysis
 # /team hunt FR-001 FR-002 - Parallel implementation (Agent Teams)
+# /projects             - List all brain-registered projects
+# /portfolio            - Cross-project dashboard
 # DIGIVOLVE status      - List all agents
 ```
 

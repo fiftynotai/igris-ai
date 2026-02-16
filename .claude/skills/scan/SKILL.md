@@ -58,6 +58,14 @@ Count `.claude/agents/*.md` files to get current agent count.
 
 Run: `git status --short`
 
+### 5.5. Query Brain Stats (Optional)
+
+If the `igris-brain` MCP server is available:
+- Call `igris_project_status` for the current project slug
+- Get learning count, error count, recent metrics
+
+If brain MCP is not available, skip this step silently. No errors, no warnings.
+
 ### 6. Display Report
 
 Format as:
@@ -94,6 +102,12 @@ X agents registered (Y skills available)
 
 ### Git Status
 [Clean | X uncommitted files]
+
+### Brain (if connected)
+- Learnings: X (Y global)
+- Errors cataloged: Z
+- Cross-project patterns: N available
+- Last brain sync: [timestamp]
 
 ### Recommendations
 1. [Primary recommendation]

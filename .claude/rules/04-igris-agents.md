@@ -14,7 +14,7 @@ The main agent (orchestrator) is NOT a do-everything agent. It is a workflow coo
 
 ---
 
-## Agent Registry (v3.4 - 7 Agents)
+## Agent Registry (v4.0 - 7 Agents)
 
 ### Tier 1: Core Workflow
 
@@ -72,6 +72,8 @@ These tasks are handled by skills instead of subagents. The orchestrator invokes
 | Feature brainstorming | `/ideate` | "suggest features", "what could we add" |
 | Release preparation | `/release` | "prepare release", "generate changelog" |
 | UI design guidelines | `/ui-design` | "design system", "accessibility review" |
+| Project listing | `/projects` | "list projects", "show all projects" |
+| Cross-project dashboard | `/portfolio` | "portfolio", "cross-project status" |
 
 **Note:** The `/ui-design` skill can be preloaded by the forger agent when implementing UI-related code.
 
@@ -236,4 +238,4 @@ When implementing a brief:
 
 ---
 
-**Rule Purpose:** Ensure proper delegation to 7 specialized agents and 16 skills for consistent, high-quality work.
+**Rule Purpose:** Ensure proper delegation to 7 specialized agents and 18 skills for consistent, high-quality work.

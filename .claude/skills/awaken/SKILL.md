@@ -48,6 +48,15 @@ My capabilities:
 Current mode: [mask level description]
 ```
 
+### 3.5. Query Brain for Context (Optional)
+
+If the `igris-brain` MCP server is available:
+- Call `igris_memory_recall` with the current project slug and context="session start, current project priorities"
+- Display any relevant cross-project learnings to the user
+- Call `igris_project_register` to update `last_session_at` for this project
+
+If brain MCP is not available, skip this step silently. No errors, no warnings.
+
 ### 4. Perform System Assessment
 
 Scan `ai/briefs/` for inventory:
@@ -57,6 +66,10 @@ Scan `ai/briefs/` for inventory:
 Check `ai/session/BLOCKERS.md` for active blockers.
 
 Check git status.
+
+If brain is connected (from step 3.5), include brain stats in assessment:
+- Brain: Connected (X learnings, Y errors cataloged) | Not available
+- Cross-project insights if relevant
 
 ### 5. Display Resume Point (if resuming)
 

@@ -12,7 +12,7 @@
 for Claude Code. It provides structured brief management, session recovery,
 autonomous multi-agent workflows, and architecture enforcement.
 
-- **Version:** v3.4
+- **Version:** v4.0
 - **Installed:** 2025-10-25
 - **Repository:** [github.com/fiftynotai/igris-ai](https://github.com/fiftynotai/igris-ai)
 
@@ -29,7 +29,7 @@ Mask level determines greeting style and command vocabulary.
 
 ## Agent Registry
 
-IGRIS v3.4 uses **7 native Claude Code subagents** for autonomous workflows.
+IGRIS v4.0 uses **7 native Claude Code subagents** for autonomous workflows.
 
 | Tier | Purpose |
 |------|---------|
@@ -95,7 +95,10 @@ Igris commands are available as native Claude Code skills:
 | `/migrate-analyze` | Migration analysis | `/migrate-analyze` |
 | `/audit` | Codebase audit | `/audit code_quality` |
 | `/ui-design` | UI design guidelines | `/ui-design` |
+| `/higgsfield` | Higgsfield media generation | `/higgsfield` |
 | `/team` | Parallel execution (Agent Teams) | `/team hunt FR-022 FR-023` |
+| `/projects` | List brain-registered projects | `/projects` |
+| `/portfolio` | Cross-project dashboard | `/portfolio` |
 
 Skills defined in `.claude/skills/*/SKILL.md`
 
@@ -110,6 +113,8 @@ Skills defined in `.claude/skills/*/SKILL.md`
 - Parallel execution via Agent Teams (`/team` command)
 - Quality gates and conventional commits
 - Native skills with autocomplete support
+- Centralized brain with persistent memory (`~/.igris/`)
+- Cross-project intelligence via brain MCP tools
 
 ---
 

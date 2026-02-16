@@ -63,9 +63,9 @@ When operating:
 
 ---
 
-## Multi-Agent Architecture (v3.4)
+## Multi-Agent Architecture (v4.0)
 
-IGRIS v3.4 uses native Claude Code subagents for autonomous workflows, with an optional Agent Teams parallel execution layer. The main agent (you) is the orchestrator that delegates work to 7 specialized subagents, and can spawn independent teammate sessions for parallel workloads via `/team`.
+IGRIS v4.0 uses native Claude Code subagents for autonomous workflows, with an optional Agent Teams parallel execution layer and a centralized brain for persistent memory. The main agent (you) is the orchestrator that delegates work to 7 specialized subagents, and can spawn independent teammate sessions for parallel workloads via `/team`.
 
 ### Core Principle: Separation of Concerns
 
@@ -176,7 +176,7 @@ If context resets mid-workflow:
 3. Update Phase based on result (advance or retry)
 4. Update Next Steps
 
-### Agent Registry (v3.4 - 7 Agents)
+### Agent Registry (v4.0 - 7 Agents)
 
 Agents are defined in `.claude/agents/`:
 
@@ -266,6 +266,42 @@ Team state is ephemeral -- not recoverable after context reset. Each teammate's 
 
 ---
 
+## Centralized Brain (`~/.igris/`)
+
+IGRIS v4.0 introduces a centralized brain at `~/.igris/` that provides persistent memory and cross-project intelligence.
+
+### Brain Components
+- **knowledge.db** — SQLite database with WAL mode (concurrent reads, serialized writes)
+- **MCP Server** — `igris-brain` registered globally in `~/.claude.json`
+- **Staging Pipeline** — Hooks write to `~/.igris/staging/`, processed on server startup
+- **Core Files** — Agents, skills, rules, prompts symlinked from `~/.igris/core/`
+
+### Brain MCP Tools
+| Tool | Purpose |
+|------|---------|
+| `igris_memory_store` | Store a learning in knowledge DB |
+| `igris_memory_search` | Full-text search across learnings |
+| `igris_memory_recall` | Contextual retrieval for current project |
+| `igris_error_lookup` | Look up or store error solutions |
+| `igris_project_register` | Register a project in the brain |
+| `igris_project_list` | List all registered projects |
+| `igris_project_status` | Get detailed project status |
+| `igris_metrics_record` | Record an agent metric |
+| `igris_metrics_query` | Query agent performance metrics |
+| `igris_metrics_velocity` | Velocity dashboard |
+| `igris_pattern_suggest` | Suggest relevant patterns |
+
+### Brain Integration Points
+- **Session Start (/awaken):** Recall relevant learnings, register session
+- **Session End (/rest):** Sync learnings and decisions to brain
+- **Status (/scan):** Show brain stats and cross-project insights
+- **Implementation (/hunt):** Record agent metrics, store error solutions
+
+### Graceful Degradation
+Brain integration is optional. If `~/.igris/` does not exist or MCP server is not registered, all features work in local-only mode (v3.4 behavior). No errors, no warnings — just local operation.
+
+---
+
 ## Subagent Delegation Protocol (MANDATORY)
 
 ### Core Principle: Orchestrator Delegates, Subagents Execute
@@ -335,6 +371,8 @@ Task Received
 | Feature brainstorming | `/ideate` | "suggest features", "what could we add" |
 | Release preparation | `/release` | "prepare release", "generate changelog" |
 | UI design guidelines | `/ui-design` | "design system", "accessibility review" |
+| Project listing | `/projects` | "list projects", "show all projects" |
+| Cross-project dashboard | `/portfolio` | "portfolio", "cross-project status" |
 
 ---
 
@@ -428,7 +466,7 @@ Orchestrator:
 - ❌ No quality gates
 - ❌ Monolithic complexity
 
-**We built 7 specialized agents + 16 skills. USE THEM.**
+**We built 7 specialized agents + 18 skills. USE THEM.**
 
 ---
 
@@ -1124,7 +1162,7 @@ Igris AI uses modular rules in `.claude/rules/` for protocol enforcement. These 
 
 Igris AI can perform 10 maintenance operations on ANY project (not just Igris AI itself). These operations analyze code, identify issues, and create appropriate briefs for tracking improvements.
 
-**In v3.4, these operations are distributed across agents and skills:**
+**In v4.0, these operations are distributed across agents and skills:**
 - **warden** (audit mode) or `/audit` skill - CODE_QUALITY_AUDIT, BUG_HUNT, STANDARDS_COMPLIANCE_CHECK, PROCESS_AUDIT, DEPENDENCY_AUDIT
 - **sentinel** - TEST_COVERAGE_ANALYSIS
 - `/ideate` skill - FEATURE_IDEATION
@@ -1208,8 +1246,8 @@ Each type has independent numbering (PI-001, FR-001, etc.)
 
 ---
 
-**Last Updated:** 2025-12-24
-**Igris AI Version:** 3.4.0
+**Last Updated:** 2026-02-16
+**Igris AI Version:** 4.0.0
 **Documentation:** https://github.com/fiftynotai/igris-ai
 
 **Tip:** Customize this prompt for your project by adding project-specific patterns to the "Project-Specific Notes" section.
