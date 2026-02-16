@@ -229,12 +229,74 @@ db.close()
 
 echo "  Registered: $SLUG"
 
+# Sync existing briefs to brain
+echo ""
+echo "Syncing briefs to brain..."
+
+python3 -c "
+import sqlite3, sys, os, re, glob
+
+db_path = os.path.expanduser('~/.igris/memory/knowledge.db')
+project = sys.argv[1]
+briefs_dir = sys.argv[2]
+
+db = sqlite3.connect(db_path)
+db.execute('PRAGMA busy_timeout = 5000')
+
+count = 0
+patterns = [
+    os.path.join(briefs_dir, '*.md'),
+    os.path.join(briefs_dir, '..', 'session', 'archive', 'briefs', '*.md'),
+]
+
+for pattern in patterns:
+    for filepath in glob.glob(pattern):
+        filename = os.path.basename(filepath)
+        if 'TEMPLATE' in filename:
+            continue
+
+        with open(filepath, 'r') as f:
+            content = f.read()
+
+        # Parse brief ID from filename (XX-NNN pattern)
+        id_match = re.match(r'^([A-Z]{2}-\d{3})', filename)
+        if not id_match:
+            continue
+        brief_id = id_match.group(1)
+
+        # Parse title from first heading
+        title_match = re.search(r'^#\s+.*?:\s*(.+)$', content, re.MULTILINE)
+        title = title_match.group(1).strip() if title_match else filename
+
+        # Parse frontmatter fields
+        def parse_field(name):
+            m = re.search(r'\*\*' + name + r':\*\*\s*(.+)', content)
+            return m.group(1).strip() if m else None
+
+        status = parse_field('Status') or 'Unknown'
+        priority = parse_field('Priority')
+        effort = parse_field('Effort')
+        brief_type = parse_field('Type')
+
+        db.execute('''
+            INSERT OR REPLACE INTO brief_status
+            (project, brief_id, brief_type, title, status, priority, effort, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ''', (project, brief_id, brief_type, title, status, priority, effort))
+        count += 1
+
+db.commit()
+db.close()
+print(f'  Synced {count} briefs to brain')
+" "$SLUG" "$TARGET_DIR/ai/briefs"
+
 # Update .igris_version
 echo ""
 echo "Updating version tracking..."
 
 python3 -c "
 import json, sys, os
+from datetime import datetime, timezone
 
 version_file = '.igris_version'
 now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
