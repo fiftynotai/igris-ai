@@ -103,6 +103,33 @@ function migrateSchema(db: Database.Database): void {
     })();
     console.error('[brain] Schema migrated to version 3 (sync_state)');
   }
+
+  if (currentVersion < 4) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS instances (
+            id TEXT PRIMARY KEY,
+            machine_hostname TEXT NOT NULL,
+            machine_os TEXT,
+            project_slug TEXT,
+            project_path TEXT,
+            current_brief TEXT,
+            current_phase TEXT,
+            current_task TEXT,
+            status TEXT DEFAULT 'active' CHECK (status IN ('active', 'idle', 'stale')),
+            started_at TEXT NOT NULL DEFAULT (datetime('now')),
+            last_heartbeat_at TEXT NOT NULL DEFAULT (datetime('now')),
+            metadata TEXT DEFAULT '{}'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_instances_status ON instances(status);
+        CREATE INDEX IF NOT EXISTS idx_instances_project ON instances(project_slug);
+
+        INSERT OR IGNORE INTO schema_version (version) VALUES (4);
+      `);
+    })();
+    console.error('[brain] Schema migrated to version 4 (instances)');
+  }
 }
 
 /**

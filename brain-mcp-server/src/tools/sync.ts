@@ -107,6 +107,17 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     ],
   },
   {
+    table: 'instances',
+    syncKey: ['id'],
+    timestampCol: 'last_heartbeat_at',
+    strategy: 'lww',
+    columns: [
+      'id', 'machine_hostname', 'machine_os', 'project_slug', 'project_path',
+      'current_brief', 'current_phase', 'current_task', 'status',
+      'started_at', 'last_heartbeat_at', 'metadata',
+    ],
+  },
+  {
     table: 'agent_metrics',
     syncKey: ['project', 'agent', 'action', 'recorded_at'],
     timestampCol: 'recorded_at',
@@ -329,7 +340,7 @@ async function handleBrainPush(
   const payload = {
     tables,
     pushed_at: pushedAt,
-    schema_version: 3,
+    schema_version: 4,
   };
 
   try {

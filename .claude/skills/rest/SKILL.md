@@ -28,7 +28,15 @@ Read `ai/session/CURRENT_SESSION.md` to understand current state.
 
 Ask: "Save session and enter REST MODE? Any unsaved work will be noted for resumption."
 
-### 2.5. Sync to Brain (Optional)
+### 2.5. Deregister Instance (Optional)
+
+If the `igris-brain` MCP server is available and an instance ID exists in CURRENT_SESSION.md:
+- Call `igris_instance_remove` with the instance_id from session
+- This deregisters the instance from the live registry
+
+If brain MCP is not available or no instance ID is stored, skip silently.
+
+### 2.6. Sync to Brain (Optional)
 
 If the `igris-brain` MCP server is available:
 - Read `ai/session/LEARNINGS.md` — if it has new content since last sync, store each learning via `igris_memory_store` with the current project slug
@@ -45,7 +53,7 @@ If the `igris-brain` MCP server is available:
 
 If brain MCP is not available, skip this step silently. No errors, no warnings.
 
-### 2.6. Push to Remote Brain (Optional)
+### 2.7. Push to Remote Brain (Optional)
 
 If the `igris-brain` MCP server is available AND a remote brain URL is configured:
 - Read `~/.igris/config.json` to check for `remote_brain.url` and `remote_brain.api_key`

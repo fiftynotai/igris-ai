@@ -318,6 +318,20 @@ Next actions:
 3. View status: /scan
 ```
 
+## Instance Heartbeat
+
+On each phase transition (PLANNING, BUILDING, TESTING, REVIEWING, DOCUMENTING, COMMITTING, COMPLETE), if the `igris-brain` MCP server is available and an instance ID exists in CURRENT_SESSION.md:
+- Call `igris_instance_heartbeat` with:
+  - instance_id = the instance ID from CURRENT_SESSION.md
+  - machine_hostname = system hostname
+  - machine_os = platform (e.g., "darwin", "linux")
+  - project_slug = current project slug
+  - project_path = absolute path to project directory
+  - current_brief = the brief ID being implemented
+  - current_phase = the new phase name
+
+If brain MCP is not available or no instance ID is stored, skip silently.
+
 ## Error Handling
 
 - If brief not found: Display error with available briefs

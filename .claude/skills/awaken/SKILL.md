@@ -76,6 +76,19 @@ If the `igris-brain` MCP server is available AND a remote brain URL is configure
 
 If remote brain is not configured or pull fails, skip silently. Do NOT block session start.
 
+### 3.7. Register Instance (Optional)
+
+If the `igris-brain` MCP server is available:
+- Call `igris_instance_heartbeat` with:
+  - machine_hostname = system hostname
+  - machine_os = platform (e.g., "darwin", "linux")
+  - project_slug = current project slug
+  - project_path = absolute path to project directory
+- Store the returned `instance_id` — add it to CURRENT_SESSION.md as `**Instance ID:** {uuid}`
+- This ID will be used for subsequent heartbeats and deregistration on /rest
+
+If brain MCP is not available, skip silently.
+
 ### 4. Perform System Assessment
 
 Scan `ai/briefs/` for inventory:
@@ -88,6 +101,7 @@ Check git status.
 
 If brain is connected (from step 3.5), include brain stats in assessment:
 - Brain: Connected (X learnings, Y errors cataloged) | Not available
+- Active Instances: X (from `igris_instance_list` with status="active")
 - Cross-project insights if relevant
 
 ### 5. Display Resume Point (if resuming)

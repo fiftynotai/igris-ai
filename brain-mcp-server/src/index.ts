@@ -18,6 +18,7 @@
  * - igris_metrics_record, igris_metrics_query, igris_metrics_velocity
  * - igris_session_sync, igris_session_recall
  * - igris_brief_sync, igris_brief_dashboard
+ * - igris_instance_heartbeat, igris_instance_list, igris_instance_remove
  *
  * @version 4.0.0
  * @author Fifty.ai
@@ -49,6 +50,8 @@ import { handleSessionSync, handleSessionRecall } from './tools/sessions.js';
 import type { SessionSyncInput, SessionRecallInput } from './tools/sessions.js';
 import { handleBriefSync, handleBriefDashboard } from './tools/briefs.js';
 import type { BriefSyncInput, BriefDashboardInput } from './tools/briefs.js';
+import { handleInstanceHeartbeat, handleInstanceList, handleInstanceRemove } from './tools/instances.js';
+import type { InstanceHeartbeatInput, InstanceListInput, InstanceRemoveInput } from './tools/instances.js';
 import { handleBrainPush, handleBrainPull, SYNC_TABLES, mergeRows } from './tools/sync.js';
 import type { BrainPushInput, BrainPullInput } from './tools/sync.js';
 
@@ -521,6 +524,82 @@ function createBrainServer(): Server {
           },
         },
 
+        // === Instance Tools ===
+        {
+          name: 'igris_instance_heartbeat',
+          description: 'Register or update a live Igris instance in the brain. Called on /awaken to register, and during /hunt to update current brief/phase. Returns the instance ID for subsequent heartbeats.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              machine_hostname: {
+                type: 'string',
+                description: 'Hostname of the machine running this instance',
+              },
+              machine_os: {
+                type: 'string',
+                description: 'Operating system (e.g., "darwin", "linux")',
+              },
+              project_slug: {
+                type: 'string',
+                description: 'Project slug (e.g., "igris-ai")',
+              },
+              project_path: {
+                type: 'string',
+                description: 'Absolute path to the project directory',
+              },
+              current_brief: {
+                type: 'string',
+                description: 'Currently active brief ID (e.g., "FR-026")',
+              },
+              current_phase: {
+                type: 'string',
+                description: 'Current workflow phase (e.g., "BUILDING")',
+              },
+              current_task: {
+                type: 'string',
+                description: 'Description of current task',
+              },
+              instance_id: {
+                type: 'string',
+                description: 'Existing instance ID for heartbeat updates (omit for new registration)',
+              },
+            },
+            required: ['machine_hostname'],
+          },
+        },
+        {
+          name: 'igris_instance_list',
+          description: 'List all active Igris instances across machines. Auto-marks instances with no heartbeat for 30+ minutes as stale.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              status: {
+                type: 'string',
+                enum: ['active', 'idle', 'stale', 'all'],
+                description: 'Filter by instance status (optional — omit or "all" to list everything)',
+              },
+              project: {
+                type: 'string',
+                description: 'Filter by project slug (optional)',
+              },
+            },
+          },
+        },
+        {
+          name: 'igris_instance_remove',
+          description: 'Remove an Igris instance from the registry. Called on /rest to deregister cleanly.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              instance_id: {
+                type: 'string',
+                description: 'The instance ID to remove',
+              },
+            },
+            required: ['instance_id'],
+          },
+        },
+
         // === Sync Tools ===
         {
           name: 'igris_brain_push',
@@ -613,6 +692,14 @@ function createBrainServer(): Server {
           return handleBriefSync(args as unknown as BriefSyncInput);
         case 'igris_brief_dashboard':
           return handleBriefDashboard(args as unknown as BriefDashboardInput);
+
+        // Instance tools
+        case 'igris_instance_heartbeat':
+          return handleInstanceHeartbeat(args as unknown as InstanceHeartbeatInput);
+        case 'igris_instance_list':
+          return handleInstanceList(args as unknown as InstanceListInput);
+        case 'igris_instance_remove':
+          return handleInstanceRemove(args as unknown as InstanceRemoveInput);
 
         // Sync tools
         case 'igris_brain_push':
