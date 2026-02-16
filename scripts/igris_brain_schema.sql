@@ -175,3 +175,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_brief_status_unique ON brief_status(projec
 
 -- Update schema version
 INSERT OR IGNORE INTO schema_version (version) VALUES (2);
+
+-- === Sync State (v3) ===
+CREATE TABLE IF NOT EXISTS sync_state (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    remote_url TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    last_push_at TEXT,
+    last_pull_at TEXT,
+    UNIQUE(remote_url, table_name)
+);
+
+INSERT OR IGNORE INTO schema_version (version) VALUES (3);

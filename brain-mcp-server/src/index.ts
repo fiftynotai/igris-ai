@@ -33,6 +33,7 @@ import {
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
+import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 
 // Tool handlers
@@ -48,12 +49,14 @@ import { handleSessionSync, handleSessionRecall } from './tools/sessions.js';
 import type { SessionSyncInput, SessionRecallInput } from './tools/sessions.js';
 import { handleBriefSync, handleBriefDashboard } from './tools/briefs.js';
 import type { BriefSyncInput, BriefDashboardInput } from './tools/briefs.js';
+import { handleBrainPush, handleBrainPull, SYNC_TABLES, mergeRows } from './tools/sync.js';
+import type { BrainPushInput, BrainPullInput } from './tools/sync.js';
 
 // Staging processor
 import { processStagingFiles } from './staging.js';
 
 // Database lifecycle
-import { closeDb } from './db.js';
+import { getDb, closeDb } from './db.js';
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -517,6 +520,44 @@ function createBrainServer(): Server {
             },
           },
         },
+
+        // === Sync Tools ===
+        {
+          name: 'igris_brain_push',
+          description: 'Push local brain changes to a remote brain server. Syncs learnings, errors, projects, sessions, brief_status, agent_metrics changed since last push. Uses last-write-wins for conflict resolution.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              remote_url: {
+                type: 'string',
+                description: 'URL of the remote brain server (e.g., "https://brain.example.com")',
+              },
+              api_key: {
+                type: 'string',
+                description: 'API key for authenticating with the remote brain server',
+              },
+            },
+            required: ['remote_url', 'api_key'],
+          },
+        },
+        {
+          name: 'igris_brain_pull',
+          description: 'Pull remote brain changes to local brain. Syncs all tables changed since last pull. Uses last-write-wins for conflict resolution.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              remote_url: {
+                type: 'string',
+                description: 'URL of the remote brain server (e.g., "https://brain.example.com")',
+              },
+              api_key: {
+                type: 'string',
+                description: 'API key for authenticating with the remote brain server',
+              },
+            },
+            required: ['remote_url', 'api_key'],
+          },
+        },
       ],
     };
   });
@@ -572,6 +613,12 @@ function createBrainServer(): Server {
           return handleBriefSync(args as unknown as BriefSyncInput);
         case 'igris_brief_dashboard':
           return handleBriefDashboard(args as unknown as BriefDashboardInput);
+
+        // Sync tools
+        case 'igris_brain_push':
+          return await handleBrainPush(args as unknown as BrainPushInput);
+        case 'igris_brain_pull':
+          return await handleBrainPull(args as unknown as BrainPullInput);
 
         default:
           throw new Error(`Unknown tool: ${name}`);
@@ -675,11 +722,11 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // Rate limiting: track auth failures per IP
   const authFailures: Record<string, { count: number; resetAt: number }> = {};
 
-  // API key middleware — applied to /mcp routes only
+  // API key middleware — reusable across /mcp and /sync routes
   if (config.apiKey) {
     const expectedToken = `Bearer ${config.apiKey}`;
 
-    app.use('/mcp', (req: Request, res: Response, next: NextFunction) => {
+    const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
       const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
 
       // Check rate limit
@@ -714,7 +761,10 @@ async function runHttp(config: ServerConfig): Promise<void> {
       // Reset failures on successful auth
       delete authFailures[ip];
       next();
-    });
+    };
+
+    app.use('/mcp', authMiddleware);
+    app.use('/sync', authMiddleware);
   } else {
     console.error('[brain] WARNING: No BRAIN_API_KEY set. Server is running without authentication.');
   }
@@ -836,6 +886,74 @@ async function runHttp(config: ServerConfig): Promise<void> {
       console.error('Error handling session termination:', error);
       if (!res.headersSent) {
         res.status(500).send('Error processing session termination');
+      }
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Sync endpoints — used by igris_brain_push / igris_brain_pull across
+  // brain instances. Protected by the same auth middleware as /mcp.
+  // -----------------------------------------------------------------------
+
+  // POST /sync/push — receive pushed data from a remote brain, merge locally
+  app.post('/sync/push', express.json({ limit: '10mb' }), (req: Request, res: Response) => {
+    try {
+      const db = getDb();
+      const { tables } = req.body as {
+        tables: Record<string, Record<string, unknown>[]>;
+      };
+
+      if (!tables || typeof tables !== 'object') {
+        res.status(400).json({ error: 'Missing or invalid "tables" field' });
+        return;
+      }
+
+      const results: Record<string, { inserted: number; updated: number; skipped: number }> = {};
+
+      db.transaction(() => {
+        for (const config of SYNC_TABLES) {
+          const rows = tables[config.table];
+          if (!rows || rows.length === 0) continue;
+          results[config.table] = mergeRows(db, config, rows);
+        }
+      })();
+
+      res.json({ ok: true, results });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] Sync push error:', message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: message });
+      }
+    }
+  });
+
+  // GET /sync/pull — serve local rows changed since per-table timestamps
+  app.get('/sync/pull', (_req: Request, res: Response) => {
+    try {
+      const db = getDb();
+      const tables: Record<string, Record<string, unknown>[]> = {};
+
+      for (const config of SYNC_TABLES) {
+        const sinceParam = _req.query[`since_${config.table}`] as string | undefined;
+        const since = sinceParam ?? '1970-01-01T00:00:00';
+
+        const cols = config.columns.join(', ');
+        const rows = db.prepare(
+          `SELECT ${cols} FROM ${config.table} WHERE ${config.timestampCol} > ?`
+        ).all(since) as Record<string, unknown>[];
+
+        if (rows.length > 0) {
+          tables[config.table] = rows;
+        }
+      }
+
+      res.json({ tables });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] Sync pull error:', message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: message });
       }
     }
   });

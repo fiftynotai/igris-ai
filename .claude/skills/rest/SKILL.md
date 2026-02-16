@@ -45,6 +45,18 @@ If the `igris-brain` MCP server is available:
 
 If brain MCP is not available, skip this step silently. No errors, no warnings.
 
+### 2.6. Push to Remote Brain (Optional)
+
+If the `igris-brain` MCP server is available AND a remote brain URL is configured:
+- Read `~/.igris/config.json` to check for `remote_brain.url` and `remote_brain.api_key`
+- If both are present, call `igris_brain_push` with:
+  - remote_url = the configured URL
+  - api_key = the configured API key
+- Display sync result summary (e.g., "Pushed 3 learnings, 1 error, 2 sessions to remote brain")
+
+If remote brain is not configured or push fails, log a one-line notice and continue.
+Do NOT block session end on sync failure.
+
 ### 3. Update Session File
 
 Edit `ai/session/CURRENT_SESSION.md`:

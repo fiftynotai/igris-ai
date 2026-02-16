@@ -65,6 +65,17 @@ If the `igris-brain` MCP server is available:
 
 If brain MCP is not available, skip this step silently. No errors, no warnings.
 
+### 3.6. Pull from Remote Brain (Optional)
+
+If the `igris-brain` MCP server is available AND a remote brain URL is configured:
+- Read `~/.igris/config.json` to check for `remote_brain.url` and `remote_brain.api_key`
+- If both are present, call `igris_brain_pull` with:
+  - remote_url = the configured URL
+  - api_key = the configured API key
+- Display sync result summary (e.g., "Pulled 5 learnings, 2 errors from remote brain")
+
+If remote brain is not configured or pull fails, skip silently. Do NOT block session start.
+
 ### 4. Perform System Assessment
 
 Scan `ai/briefs/` for inventory:

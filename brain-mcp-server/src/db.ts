@@ -85,6 +85,24 @@ function migrateSchema(db: Database.Database): void {
     })();
     console.error('[brain] Schema migrated to version 2 (sessions + brief_status)');
   }
+
+  if (currentVersion < 3) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sync_state (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            remote_url TEXT NOT NULL,
+            table_name TEXT NOT NULL,
+            last_push_at TEXT,
+            last_pull_at TEXT,
+            UNIQUE(remote_url, table_name)
+        );
+
+        INSERT OR IGNORE INTO schema_version (version) VALUES (3);
+      `);
+    })();
+    console.error('[brain] Schema migrated to version 3 (sync_state)');
+  }
 }
 
 /**
