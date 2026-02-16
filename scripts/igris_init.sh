@@ -5,6 +5,29 @@
 
 set -e
 
+# v4.0 Brain Check — suggest igris_install.sh if brain exists
+if [ -d "$HOME/.igris" ]; then
+  echo ""
+  echo "💡 Igris Brain detected at ~/.igris/"
+  echo "   Consider using the new symlink installer instead:"
+  echo "   ./scripts/igris_install.sh ${1:-.}"
+  echo ""
+  echo "   Benefits: shared core files, persistent memory, instant updates"
+  echo "   The v3.4 copy-based install will continue to work."
+  echo ""
+  # Check if running interactively
+  if [ -t 0 ]; then
+    read -p "Use new installer? [Y/n]: " USE_NEW
+    USE_NEW=${USE_NEW:-Y}
+    if [[ "$USE_NEW" =~ ^[Yy]$ ]]; then
+      SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+      exec "$SCRIPT_DIR/igris_install.sh" "${1:-.}"
+    fi
+  fi
+  echo "Continuing with v3.4 copy-based install..."
+  echo ""
+fi
+
 echo "⚔️  Igris AI - Project Initialization"
 echo "========================================"
 echo ""
