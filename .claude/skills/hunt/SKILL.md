@@ -39,10 +39,10 @@ Execute the complete implementation workflow for a brief, from planning through 
 ## Workflow State Machine
 
 ```
-[INIT] --> [PLANNING] --> [APPROVAL?] --> [BUILDING] --> [TESTING] --> [REVIEWING] --> [COMMITTING] --> [COMPLETE]
-              |               |               |              |              |
-              v               v               v              v              v
-          architect    (L/XL: user)       forger        sentinel       warden
+[INIT] --> [PLANNING] --> [APPROVAL?] --> [BUILDING] --> [TESTING] --> [REVIEWING] --> [DOCUMENTING?] --> [COMMITTING] --> [COMPLETE]
+              |               |               |              |              |              |
+              v               v               v              v              v              v
+          architect    (L/XL: user)       forger        sentinel       warden       documenter
 ```
 
 ## State Transitions
@@ -56,9 +56,12 @@ Execute the complete implementation workflow for a brief, from planning through 
 | TESTING | Tests pass | REVIEWING |
 | TESTING | Tests fail (retry < 3) | BUILDING (self-heal via mender) |
 | TESTING | Tests fail (retry >= 3) | BLOCKED |
-| REVIEWING | APPROVE | COMMITTING |
+| REVIEWING | APPROVE (docs needed) | DOCUMENTING |
+| REVIEWING | APPROVE (no docs needed) | COMMITTING |
 | REVIEWING | REJECT (retry < 2) | BUILDING (fix issues) |
 | REVIEWING | REJECT (retry >= 2) | BLOCKED |
+| DOCUMENTING | Docs updated | COMMITTING |
+| DOCUMENTING | Skipped (no docs needed) | COMMITTING |
 | COMMITTING | Commit success | COMPLETE |
 
 ## Execution
@@ -215,7 +218,9 @@ Task tool parameters:
    - Update Agent Log with result
 
 5. **If APPROVE:**
-   - Proceed to COMMITTING
+   - Evaluate if documentation updates are needed (see Phase 6 conditions)
+   - If docs needed: Proceed to DOCUMENTING
+   - If no docs needed: Proceed to COMMITTING
 
 6. **If REJECT and Retry Count < 2:**
    - Increment Retry Count
@@ -226,7 +231,50 @@ Task tool parameters:
    - Display: "Review failed after 2 attempts. Manual intervention required."
    - Stop workflow
 
-### Phase 6: COMMITTING
+### Phase 6: DOCUMENTING (Conditional)
+
+1. Update brief: Phase = DOCUMENTING, Active Agent = documenter
+2. Add Agent Log entry: "Starting documenter..."
+3. **Evaluate whether documentation updates are needed:**
+
+**Invoke documenter when:**
+- New public APIs added
+- Component library changes
+- README-worthy features implemented
+- API signatures change
+
+**Skip documenter when (proceed directly to COMMITTING):**
+- Internal refactoring only
+- Bug fixes with no API changes
+- Test-only changes
+- Session/config changes
+
+4. **If docs needed, delegate to documenter agent** using Task tool:
+
+```
+Task tool parameters:
+- subagent_type: "documenter"
+- description: "Update docs for {BRIEF_ID}"
+- prompt: "Update documentation for the changes made in brief {BRIEF_ID}.
+
+  Brief: [brief content]
+  Changes made: [summary of implementation changes]
+
+  Check and update as needed:
+  1. README.md (if user-facing features)
+  2. API documentation (if API changes)
+  3. Module catalog (if new modules)
+  4. Code comments (if public API changes)
+
+  Only update docs that are relevant to the changes made."
+```
+
+5. After documenter returns (or if skipped):
+   - Update brief: Active Agent = none
+   - Update Agent Log with result (or "Skipped - no docs needed")
+   - Proceed to COMMITTING
+
+### Phase 7: COMMITTING
 
 1. Update brief: Phase = COMMITTING, Active Agent = none
 2. Run git commands:
@@ -248,7 +296,7 @@ EOF
 4. Update brief: Status = "Done", Completed = today
 5. Proceed to COMPLETE
 
-### Phase 7: COMPLETE
+### Phase 8: COMPLETE
 
 1. Update brief: Phase = COMPLETE
 2. Update `ai/session/CURRENT_SESSION.md`:
@@ -289,4 +337,5 @@ Maintain in brief file under Workflow State:
 | 2026-02-06 10:15 | forger | Implement changes | SUCCESS |
 | 2026-02-06 10:30 | sentinel | Run test suite | PASS |
 | 2026-02-06 10:35 | warden | Code review | APPROVE |
+| 2026-02-06 10:40 | documenter | Update documentation | SUCCESS (or Skipped) |
 ```

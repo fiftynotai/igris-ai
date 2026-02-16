@@ -79,7 +79,7 @@ PROJECT LEVEL (CURRENT_SESSION.md)
 BRIEF LEVEL (Brief Files)
 ├─ Tasks (Pending/In Progress/Completed)
 ├─ Workflow State
-│   ├─ Phase: PLANNING → BUILDING → TESTING → REVIEWING → COMPLETE
+│   ├─ Phase: PLANNING → BUILDING → TESTING → REVIEWING → DOCUMENTING → COMPLETE
 │   ├─ Active Agent: architect | forger | sentinel | warden | none
 │   ├─ Retry Count
 │   └─ Agent Log (timestamped history)
@@ -113,10 +113,10 @@ SUBAGENT (Stateless)
 When implementing a brief (HUNT command):
 
 ```
-[INIT] ──► [PLANNING] ──► [APPROVAL?] ──► [BUILDING] ──► [TESTING] ──► [REVIEWING] ──► [COMMITTING] ──► [COMPLETE]
-              │               │               │              │              │
-              ▼               ▼               ▼              ▼              ▼
-          architect    (L/XL: user)       forger        sentinel       warden
+[INIT] ──► [PLANNING] ──► [APPROVAL?] ──► [BUILDING] ──► [TESTING] ──► [REVIEWING] ──► [DOCUMENTING?] ──► [COMMITTING] ──► [COMPLETE]
+              │               │               │              │              │              │
+              ▼               ▼               ▼              ▼              ▼              ▼
+          architect    (L/XL: user)       forger        sentinel       warden       documenter
 ```
 
 **State Transitions:**
@@ -130,9 +130,12 @@ When implementing a brief (HUNT command):
 | TESTING | Tests pass | REVIEWING |
 | TESTING | Tests fail (retry < 3) | BUILDING (self-heal via mender) |
 | TESTING | Tests fail (retry >= 3) | BLOCKED |
-| REVIEWING | APPROVE | COMMITTING |
+| REVIEWING | APPROVE (docs needed) | DOCUMENTING |
+| REVIEWING | APPROVE (no docs needed) | COMMITTING |
 | REVIEWING | REJECT (retry < 2) | BUILDING (fix issues) |
 | REVIEWING | REJECT (retry >= 2) | BLOCKED |
+| DOCUMENTING | Docs updated | COMMITTING |
+| DOCUMENTING | Skipped (no docs needed) | COMMITTING |
 | COMMITTING | Commit success | COMPLETE |
 
 ### Session Tracking Protocol
@@ -377,8 +380,9 @@ Orchestrator:
 3. DELEGATE to forger → Receive implementation
 4. DELEGATE to sentinel → Receive PASS/FAIL
 5. DELEGATE to warden → Receive APPROVE/REJECT
-6. Commit changes (orchestrator handles git)
-7. Update brief status to "Done"
+6. IF (docs needed): DELEGATE to documenter → Update docs
+7. Commit changes (orchestrator handles git)
+8. Update brief status to "Done"
 ```
 
 **❌ INCORRECT: Orchestrator Doing Work**

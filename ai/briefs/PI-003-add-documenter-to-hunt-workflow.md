@@ -5,9 +5,9 @@
 **Effort:** S-Small (< 4h)
 **Assignee:** Igris AI
 **Commanded By:** Monarch
-**Status:** Ready
+**Status:** Done
 **Created:** 2026-01-20
-**Completed:** _(pending)_
+**Completed:** 2026-02-16
 
 ---
 
@@ -32,10 +32,10 @@ During HUNT workflow execution, the documenter agent is not invoked after implem
 
 **How does it work now?**
 
-1. PLANNING - planner agent creates implementation plan
-2. BUILDING - coder agent implements changes
-3. TESTING - tester agent validates implementation
-4. REVIEWING - reviewer agent approves code quality
+1. PLANNING - architect agent creates implementation plan
+2. BUILDING - forger agent implements changes
+3. TESTING - sentinel agent validates implementation
+4. REVIEWING - warden agent approves code quality
 5. COMMITTING - orchestrator commits changes
 
 **Pain points:**
@@ -50,10 +50,10 @@ During HUNT workflow execution, the documenter agent is not invoked after implem
 
 **How should it work after this improvement?**
 
-1. PLANNING - planner agent creates implementation plan
-2. BUILDING - coder agent implements changes
-3. TESTING - tester agent validates implementation
-4. REVIEWING - reviewer agent approves code quality
+1. PLANNING - architect agent creates implementation plan
+2. BUILDING - forger agent implements changes
+3. TESTING - sentinel agent validates implementation
+4. REVIEWING - warden agent approves code quality
 5. **DOCUMENTING** - documenter agent updates relevant docs (NEW)
 6. COMMITTING - orchestrator commits changes
 
@@ -131,20 +131,21 @@ _(none)_
 
 ## Workflow State
 
-**Phase:** INIT
+**Phase:** COMPLETE
 **Active Agent:** none
 **Retry Count:** 0
 
 ### Current Work
-Brief registered, awaiting implementation
+All workflow definitions updated with DOCUMENTING phase.
 
 ### Next Steps
-Update igris_os.md with new workflow phase
+Archive brief.
 
 ### Agent Log
 | Time | Agent | Action | Result |
 |------|-------|--------|--------|
 | 2026-01-20 | orchestrator | Brief created | PI-003 registered |
+| 2026-02-16 | orchestrator | Implement PI-003 | Updated 4 files: hunt/SKILL.md, igris_os.md, 04-igris-agents.md, PI-003 brief |
 
 ### Blockers
 None

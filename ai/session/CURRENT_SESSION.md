@@ -1,9 +1,9 @@
 # Current Session
 
 ## Status
-**Mode:** REST MODE
-**Updated:** 2026-02-13
-**Active Brief:** None
+**Mode:** HUNT MODE
+**Updated:** 2026-02-16
+**Active Brief:** PI-003
 
 ---
 
@@ -19,37 +19,37 @@
 
 ## Resume Point
 
-**Last Active:** FR-021 (Archived)
+**Last Active:** MG-008 validation (v3.4 checklist)
 **Phase:** REST
 
 **Next Steps When Resuming:**
 1. HUNT FR-014 (L-effort — Unblock with correct URL slugs, re-test browser automation)
-2. Validate v3.4 via checklist: `ai/session/MG-008-test-checklist.md`
+2. Continue v3.4 validation — 19 items remaining on checklist: `ai/session/MG-008-test-checklist.md`
+3. Run a HUNT to validate core pipeline (architect, forger, sentinel, warden)
 
 ---
 
-## Last Session Summary (2026-02-10)
+## Last Session Summary (2026-02-13)
 
 **Completed:**
-- FR-021: Agent Teams Integration — Parallel Execution Layer. Full HUNT (ARCHITECT -> FORGER -> SENTINEL -> WARDEN). Created /team skill (696 lines), updated igris_os.md, 04-igris-agents.md, CLAUDE.md. 5 files, 1196 insertions. Commits: `8472ce0` (archive), `8a4370f` (feature).
+- v3.4 validation sweep — fixed 3 data integrity issues:
+  - manifest.yaml: Corrected stale agent names (planner/coder/tester/reviewer/debugger/explorer → architect/forger/sentinel/warden/mender/seeker/sage)
+  - agent-metrics.json: Removed stale entries (ui-designer, Plan, general-purpose), added sage
+  - /scan SKILL.md: Added agent count to output template
+- Updated MG-008 test checklist: 12/31 items validated, skill count 14 → 16
+- Commit: `e8c8b25`
+
+**Previous (2026-02-10):**
+- FR-021: Agent Teams Integration — Parallel Execution Layer. Full HUNT. Commits: `8472ce0`, `8a4370f`.
 - FR-019: Archived. Superseded by FR-020.
 - FR-020: Archived. Digimon World Party Roster. Commit: `b805248`.
-
-**Previous (2026-02-10 earlier):**
-- FR-018: Evolution Aura — Node Visual Effects. Full HUNT. Commit: `f187e84`.
-- FR-017: Crest Hexframe — Agent Node Redesign. Full HUNT. Commit: `b422851`.
-- FR-016: DNA Digivolution Nexus — Agent Pods Redesign. Full HUNT. Commit: `87d62d8`.
-- FR-015: Token Cost Estimation Dashboard. Full HUNT. 4 files modified.
-
-**Previous (2026-02-09):**
-- BR-015: Token Breakdown Misleading Headline. Full HUNT. Commit: `7644a6f`.
 
 ---
 
 ## Pending
 
 - HUNT FR-014 (Higgsfield browser automation — blocked on URL slugs)
-- Validate v3.4 via checklist: `ai/session/MG-008-test-checklist.md`
+- Continue v3.4 validation (19 remaining checklist items)
 
 ---
 
