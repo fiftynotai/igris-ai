@@ -1,46 +1,46 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-02-13T06:22:16Z",
+  "last_updated": "2026-02-16T13:41:10Z",
   "agents": {
     "architect": {
-      "invocations": 13,
-      "last_used": "2026-02-10T14:59:32Z",
-      "avg_duration_seconds": 154.91,
+      "invocations": 18,
+      "last_used": "2026-02-16T13:33:53Z",
+      "avg_duration_seconds": 161.71,
       "success_rate": 1.0,
-      "total_input_tokens": 32414,
-      "total_output_tokens": 1006,
-      "total_cache_read_tokens": 4141048,
-      "total_cache_create_tokens": 2412758
+      "total_input_tokens": 47418,
+      "total_output_tokens": 1544,
+      "total_cache_read_tokens": 9848821,
+      "total_cache_create_tokens": 3775975
     },
     "forger": {
-      "invocations": 19,
-      "last_used": "2026-02-13T06:17:51Z",
-      "avg_duration_seconds": 780.66,
+      "invocations": 30,
+      "last_used": "2026-02-16T13:36:22Z",
+      "avg_duration_seconds": 645.09,
       "success_rate": 1.0,
-      "total_input_tokens": 37555,
-      "total_output_tokens": 2474,
-      "total_cache_read_tokens": 39684595,
-      "total_cache_create_tokens": 3396657
+      "total_input_tokens": 40004,
+      "total_output_tokens": 4438,
+      "total_cache_read_tokens": 69870144,
+      "total_cache_create_tokens": 5872618
     },
     "sentinel": {
-      "invocations": 15,
-      "last_used": "2026-02-10T18:05:06Z",
-      "avg_duration_seconds": 149.31,
+      "invocations": 24,
+      "last_used": "2026-02-16T13:38:38Z",
+      "avg_duration_seconds": 219.12,
       "success_rate": 1.0,
-      "total_input_tokens": 66340,
-      "total_output_tokens": 1543,
-      "total_cache_read_tokens": 11590928,
-      "total_cache_create_tokens": 4089019
+      "total_input_tokens": 67926,
+      "total_output_tokens": 2709,
+      "total_cache_read_tokens": 17859264,
+      "total_cache_create_tokens": 5275597
     },
     "warden": {
-      "invocations": 18,
-      "last_used": "2026-02-10T18:06:52Z",
-      "avg_duration_seconds": 64.93,
+      "invocations": 28,
+      "last_used": "2026-02-16T13:40:00Z",
+      "avg_duration_seconds": 71.66,
       "success_rate": 1.0,
-      "total_input_tokens": 15505,
-      "total_output_tokens": 955,
-      "total_cache_read_tokens": 5853764,
-      "total_cache_create_tokens": 3213716
+      "total_input_tokens": 19859,
+      "total_output_tokens": 1479,
+      "total_cache_read_tokens": 10387136,
+      "total_cache_create_tokens": 5461831
     },
     "mender": {
       "invocations": 0,
@@ -53,14 +53,14 @@
       "total_cache_create_tokens": 0
     },
     "seeker": {
-      "invocations": 9,
-      "last_used": "2026-02-10T14:33:30Z",
-      "avg_duration_seconds": 228.72,
+      "invocations": 17,
+      "last_used": "2026-02-16T12:18:15Z",
+      "avg_duration_seconds": 192.23,
       "success_rate": 1.0,
-      "total_input_tokens": 52248,
-      "total_output_tokens": 1214,
-      "total_cache_read_tokens": 7836725,
-      "total_cache_create_tokens": 1874786
+      "total_input_tokens": 60376,
+      "total_output_tokens": 2927,
+      "total_cache_read_tokens": 20075474,
+      "total_cache_create_tokens": 3883149
     },
     "sage": {
       "invocations": 0,
@@ -71,14 +71,24 @@
       "total_output_tokens": 0,
       "total_cache_read_tokens": 0,
       "total_cache_create_tokens": 0
+    },
+    "Plan": {
+      "invocations": 1,
+      "last_used": "2026-02-16T13:14:00Z",
+      "avg_duration_seconds": 106.78,
+      "success_rate": 1.0,
+      "total_input_tokens": 11754,
+      "total_output_tokens": 8931,
+      "total_cache_read_tokens": 1054915,
+      "total_cache_create_tokens": 379342
     }
   },
   "totals": {
-    "total_invocations": 74,
+    "total_invocations": 118,
     "most_used_agent": "forger",
-    "least_used_agent": "mender",
-    "total_input_tokens": 204062,
-    "total_output_tokens": 7192,
-    "total_cache_tokens": 83260044
+    "least_used_agent": "sage",
+    "total_input_tokens": 247337,
+    "total_output_tokens": 22028,
+    "total_cache_tokens": 153744266
   }
 }

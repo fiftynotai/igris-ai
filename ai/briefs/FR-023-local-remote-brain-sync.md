@@ -5,7 +5,7 @@
 **Effort:** M-Medium (1-2d)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** In Progress
+**Status:** Done
 **Created:** 2026-02-16
 
 ---
@@ -161,17 +161,15 @@ GET  /sync/pull   — Return changes since timestamp
 
 ## Workflow State
 
-**Phase:** COMMITTING
+**Phase:** COMPLETE
 **Active Agent:** none
 **Retry Count:** 0
 
 ### Current Work
-Review APPROVED. Committing changes.
+Done. Committed as `3ae2091`.
 
 ### Next Steps
-1. Stage and commit all FR-023 changes
-2. Update brief status to Done
-3. Update session
+None — brief complete.
 
 ### Agent Log
 | Time | Agent | Action | Result |
