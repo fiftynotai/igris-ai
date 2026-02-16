@@ -164,6 +164,14 @@ else
 fi
 
 # ============================================================
+# Copy starter patterns
+# ============================================================
+if [ -d "$IGRIS_DIR/brain-mcp-server/patterns" ]; then
+  cp "$IGRIS_DIR/brain-mcp-server/patterns/"*.json "$BRAIN_DIR/memory/patterns/" 2>/dev/null || true
+  echo "   ✅ Starter patterns copied"
+fi
+
+# ============================================================
 # Copy and build Brain MCP server
 # ============================================================
 echo ""
@@ -240,7 +248,7 @@ config = {
         'symlinks': True,
         'mcp_server': True,
         'staging_pipeline': True,
-        'analytics': False
+        'analytics': True
     },
     'paths': {
         'brain': '~/.igris',

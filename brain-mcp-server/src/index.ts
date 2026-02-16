@@ -8,9 +8,10 @@
  *
  * Tools provided:
  * - igris_memory_store, igris_memory_search, igris_memory_recall
+ * - igris_pattern_suggest
  * - igris_error_lookup
  * - igris_project_register, igris_project_list, igris_project_status
- * - igris_metrics_record, igris_metrics_query
+ * - igris_metrics_record, igris_metrics_query, igris_metrics_velocity
  *
  * @version 4.0.0
  * @author Fifty.ai
@@ -24,14 +25,14 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 // Tool handlers
-import { handleMemoryStore, handleMemorySearch, handleMemoryRecall } from './tools/memory.js';
-import type { MemoryStoreInput, MemorySearchInput, MemoryRecallInput } from './tools/memory.js';
+import { handleMemoryStore, handleMemorySearch, handleMemoryRecall, handlePatternSuggest } from './tools/memory.js';
+import type { MemoryStoreInput, MemorySearchInput, MemoryRecallInput, PatternSuggestInput } from './tools/memory.js';
 import { handleErrorLookup } from './tools/errors.js';
 import type { ErrorLookupInput } from './tools/errors.js';
 import { handleProjectRegister, handleProjectList, handleProjectStatus } from './tools/projects.js';
 import type { ProjectRegisterInput, ProjectListInput, ProjectStatusInput } from './tools/projects.js';
-import { handleMetricsRecord, handleMetricsQuery } from './tools/metrics.js';
-import type { MetricsRecordInput, MetricsQueryInput } from './tools/metrics.js';
+import { handleMetricsRecord, handleMetricsQuery, handleMetricsVelocity } from './tools/metrics.js';
+import type { MetricsRecordInput, MetricsQueryInput, MetricsVelocityInput } from './tools/metrics.js';
 
 // Staging processor
 import { processStagingFiles } from './staging.js';
@@ -307,6 +308,45 @@ class IgrisBrainServer {
               },
             },
           },
+          {
+            name: 'igris_metrics_velocity',
+            description: 'Generate a velocity dashboard showing brief completion rates per week, average completion time, agent utilization, and week-over-week trends.',
+            inputSchema: {
+              type: 'object' as const,
+              properties: {
+                project: {
+                  type: 'string',
+                  description: 'Filter by project slug (optional — omit for all projects)',
+                },
+                days: {
+                  type: 'number',
+                  description: 'Time window in days (default: 30)',
+                },
+              },
+            },
+          },
+          {
+            name: 'igris_pattern_suggest',
+            description: 'Suggest relevant patterns for the current context. Searches learnings via FTS5, includes global-scope patterns, and loads matching patterns from the starter-patterns library. Optionally filters by tech stack.',
+            inputSchema: {
+              type: 'object' as const,
+              properties: {
+                project: {
+                  type: 'string',
+                  description: 'Project slug to search patterns for',
+                },
+                context: {
+                  type: 'string',
+                  description: 'What you are currently working on — used for pattern matching',
+                },
+                tech_stack: {
+                  type: 'string',
+                  description: 'Filter by technology (e.g., "typescript", "sqlite") — optional',
+                },
+              },
+              required: ['project', 'context'],
+            },
+          },
         ],
       };
     });
@@ -342,6 +382,12 @@ class IgrisBrainServer {
             return handleMetricsRecord(args as unknown as MetricsRecordInput);
           case 'igris_metrics_query':
             return handleMetricsQuery(args as unknown as MetricsQueryInput);
+          case 'igris_metrics_velocity':
+            return handleMetricsVelocity(args as unknown as MetricsVelocityInput);
+
+          // Pattern tools
+          case 'igris_pattern_suggest':
+            return handlePatternSuggest(args as unknown as PatternSuggestInput);
 
           default:
             throw new Error(`Unknown tool: ${name}`);

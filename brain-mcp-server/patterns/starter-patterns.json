@@ -1,0 +1,74 @@
+[
+  {
+    "id": "error-handling-try-catch",
+    "name": "Try-Catch Error Handling",
+    "category": "error-handling",
+    "tech_stack": ["typescript", "javascript", "nodejs"],
+    "description": "Wrap external calls and I/O operations in try-catch blocks. Return structured error responses instead of throwing.",
+    "when_to_use": "API calls, file operations, database queries, external service integrations",
+    "example": "try { const result = await fetch(url); } catch (error) { return { error: error.message, status: 'failed' }; }"
+  },
+  {
+    "id": "singleton-db-connection",
+    "name": "Database Singleton Pattern",
+    "category": "architecture",
+    "tech_stack": ["typescript", "javascript", "nodejs", "sqlite"],
+    "description": "Use a singleton pattern for database connections. Initialize once, reuse everywhere. Close on process exit.",
+    "when_to_use": "Any application using a database connection",
+    "example": "let _db: Database | null = null; function getDb() { if (!_db) _db = new Database(path); return _db; }"
+  },
+  {
+    "id": "parameterized-sql",
+    "name": "Parameterized SQL Queries",
+    "category": "security",
+    "tech_stack": ["sql", "sqlite", "typescript", "python"],
+    "description": "Always use parameterized queries (? placeholders) instead of string interpolation for SQL. Prevents SQL injection.",
+    "when_to_use": "Every SQL query that includes user-provided values",
+    "example": "db.prepare('SELECT * FROM users WHERE id = ?').get(userId)"
+  },
+  {
+    "id": "conventional-commits",
+    "name": "Conventional Commits",
+    "category": "workflow",
+    "tech_stack": ["git"],
+    "description": "Use conventional commit format: type(scope): description. Types: feat, fix, refactor, docs, chore, test.",
+    "when_to_use": "Every git commit",
+    "example": "feat(auth): add OAuth2 login flow"
+  },
+  {
+    "id": "stdin-piping-python",
+    "name": "Python3 Stdin Piping for JSON",
+    "category": "security",
+    "tech_stack": ["bash", "python"],
+    "description": "When parsing JSON in bash scripts, pipe file content via stdin to python3 instead of interpolating paths into python code.",
+    "when_to_use": "Any bash script that needs to parse JSON files",
+    "example": "VALUE=$(python3 -c 'import json, sys; data=json.load(sys.stdin); print(data[\"key\"])' < file.json)"
+  },
+  {
+    "id": "idempotent-scripts",
+    "name": "Idempotent Script Design",
+    "category": "workflow",
+    "tech_stack": ["bash"],
+    "description": "Scripts should be safe to run multiple times. Use mkdir -p, CREATE IF NOT EXISTS, INSERT OR IGNORE. Check state before acting.",
+    "when_to_use": "Setup scripts, migration scripts, initialization scripts",
+    "example": "mkdir -p \"$DIR\"; [ -f \"$FILE\" ] || create_file"
+  },
+  {
+    "id": "wal-mode-sqlite",
+    "name": "SQLite WAL Mode for Concurrency",
+    "category": "architecture",
+    "tech_stack": ["sqlite"],
+    "description": "Enable WAL (Write-Ahead Logging) mode for concurrent read access. Set busy_timeout for write serialization.",
+    "when_to_use": "Any SQLite database that may be accessed by multiple processes",
+    "example": "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA synchronous=NORMAL;"
+  },
+  {
+    "id": "fts5-content-sync",
+    "name": "FTS5 Content-Sync Pattern",
+    "category": "architecture",
+    "tech_stack": ["sqlite"],
+    "description": "Use FTS5 content= tables with AFTER INSERT/UPDATE/DELETE triggers to keep full-text index in sync with main table.",
+    "when_to_use": "When you need full-text search on SQLite tables",
+    "example": "CREATE VIRTUAL TABLE t_fts USING fts5(col1, col2, content=t, content_rowid=id);"
+  }
+]

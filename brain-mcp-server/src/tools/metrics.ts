@@ -7,6 +7,7 @@
  * Tools:
  * - igris_metrics_record: Record an agent metric
  * - igris_metrics_query: Query agent performance metrics
+ * - igris_metrics_velocity: Velocity dashboard with weekly completion rates
  *
  * @module tools/metrics
  * @author Fifty.ai
@@ -173,5 +174,170 @@ function handleMetricsQuery(args: MetricsQueryInput): { content: { type: string;
   };
 }
 
-export { handleMetricsRecord, handleMetricsQuery };
-export type { MetricsRecordInput, MetricsQueryInput };
+/** Input shape for igris_metrics_velocity */
+interface MetricsVelocityInput {
+  project?: string;
+  days?: number;
+}
+
+/**
+ * Generate a velocity dashboard showing brief completion rates,
+ * average completion time, agent utilization, and week-over-week trends.
+ *
+ * @param args - Optional project filter and time window (days, default 30)
+ * @returns MCP-formatted markdown velocity dashboard
+ */
+function handleMetricsVelocity(args: MetricsVelocityInput): { content: { type: string; text: string }[] } {
+  const db = getDb();
+  const days = args.days ?? 30;
+
+  // Build dynamic WHERE clause for optional project filter
+  const projectCondition = args.project ? ' AND project = ?' : '';
+  const projectParams: string[] = args.project ? [args.project] : [];
+
+  // --- Briefs completed per week ---
+  const weeklyBriefsSql = `
+    SELECT strftime('%Y-W%W', recorded_at) as week,
+           COUNT(DISTINCT brief_id) as briefs_completed
+    FROM agent_metrics
+    WHERE action = 'implement'
+      AND result = 'success'
+      AND brief_id != ''
+      AND recorded_at >= datetime('now', '-' || ? || ' days')
+      ${projectCondition}
+    GROUP BY week
+    ORDER BY week DESC
+  `;
+  const weeklyBriefsRows = db.prepare(weeklyBriefsSql).all(days, ...projectParams) as Record<string, unknown>[];
+
+  // --- Average brief completion time (proxy: first to last metric per brief_id) ---
+  const avgTimeSql = `
+    SELECT brief_id,
+           ROUND((julianday(MAX(recorded_at)) - julianday(MIN(recorded_at))) * 24 * 60, 1) as duration_minutes
+    FROM agent_metrics
+    WHERE brief_id != ''
+      AND recorded_at >= datetime('now', '-' || ? || ' days')
+      ${projectCondition}
+    GROUP BY brief_id
+    HAVING COUNT(*) >= 2
+  `;
+  const avgTimeRows = db.prepare(avgTimeSql).all(days, ...projectParams) as Record<string, unknown>[];
+
+  let avgCompletionTime = 'N/A';
+  if (avgTimeRows.length > 0) {
+    const totalMinutes = avgTimeRows.reduce((sum, row) => sum + (row.duration_minutes as number), 0);
+    const avg = totalMinutes / avgTimeRows.length;
+    if (avg >= 60) {
+      avgCompletionTime = `${(avg / 60).toFixed(1)}h`;
+    } else {
+      avgCompletionTime = `${avg.toFixed(1)}min`;
+    }
+  }
+
+  // --- Agent utilization ---
+  const agentUtilSql = `
+    SELECT agent,
+           COUNT(*) as total_actions,
+           SUM(CASE WHEN result = 'success' THEN 1 ELSE 0 END) as successes,
+           ROUND(AVG(duration_ms), 0) as avg_ms
+    FROM agent_metrics
+    WHERE recorded_at >= datetime('now', '-' || ? || ' days')
+      ${projectCondition}
+    GROUP BY agent
+    ORDER BY total_actions DESC
+  `;
+  const agentUtilRows = db.prepare(agentUtilSql).all(days, ...projectParams) as Record<string, unknown>[];
+
+  // --- Week-over-week trend ---
+  const currentWeekSql = `
+    SELECT COUNT(*) as actions,
+           COUNT(DISTINCT brief_id) as briefs
+    FROM agent_metrics
+    WHERE recorded_at >= datetime('now', '-7 days')
+      AND result = 'success'
+      ${projectCondition}
+  `;
+  const currentWeek = db.prepare(currentWeekSql).get(...projectParams) as Record<string, unknown> | undefined;
+
+  const previousWeekSql = `
+    SELECT COUNT(*) as actions,
+           COUNT(DISTINCT brief_id) as briefs
+    FROM agent_metrics
+    WHERE recorded_at >= datetime('now', '-14 days')
+      AND recorded_at < datetime('now', '-7 days')
+      AND result = 'success'
+      ${projectCondition}
+  `;
+  const previousWeek = db.prepare(previousWeekSql).get(...projectParams) as Record<string, unknown> | undefined;
+
+  // --- Format dashboard ---
+  const filterDesc = args.project ? ` (project: ${args.project})` : ' (all projects)';
+
+  // Weekly briefs section
+  let weeklySection: string;
+  if (weeklyBriefsRows.length === 0) {
+    weeklySection = '(no completed briefs in this period)';
+  } else {
+    const wHeader = '| Week | Briefs Completed |';
+    const wSep = '|------|-----------------|';
+    const wRows = weeklyBriefsRows.map(r => `| ${r.week} | ${r.briefs_completed} |`);
+    weeklySection = `${wHeader}\n${wSep}\n${wRows.join('\n')}`;
+  }
+
+  // Agent utilization section
+  let agentSection: string;
+  if (agentUtilRows.length === 0) {
+    agentSection = '(no agent activity in this period)';
+  } else {
+    const aHeader = '| Agent | Actions | Success Rate | Avg Duration |';
+    const aSep = '|-------|---------|-------------|-------------|';
+    const aRows = agentUtilRows.map(r => {
+      const total = r.total_actions as number;
+      const successes = r.successes as number;
+      const rate = total > 0 ? Math.round((successes / total) * 100) : 0;
+      const avgDur = r.avg_ms ? `${r.avg_ms}ms` : 'N/A';
+      return `| ${r.agent} | ${total} | ${rate}% | ${avgDur} |`;
+    });
+    agentSection = `${aHeader}\n${aSep}\n${aRows.join('\n')}`;
+  }
+
+  // Trend section
+  const curActions = (currentWeek?.actions as number) ?? 0;
+  const prevActions = (previousWeek?.actions as number) ?? 0;
+  const curBriefs = (currentWeek?.briefs as number) ?? 0;
+  const prevBriefs = (previousWeek?.briefs as number) ?? 0;
+
+  let trendEmoji: string;
+  if (prevActions === 0) {
+    trendEmoji = '(no previous week data for comparison)';
+  } else {
+    const changePct = Math.round(((curActions - prevActions) / prevActions) * 100);
+    const direction = changePct >= 0 ? 'up' : 'down';
+    trendEmoji = `Actions: ${curActions} vs ${prevActions} (${direction} ${Math.abs(changePct)}%) | Briefs: ${curBriefs} vs ${prevBriefs}`;
+  }
+
+  return {
+    content: [{
+      type: 'text',
+      text: [
+        `# Velocity Dashboard${filterDesc}`,
+        `Period: last ${days} days`,
+        '',
+        '## Briefs Completed Per Week',
+        weeklySection,
+        '',
+        '## Average Brief Completion Time',
+        `${avgCompletionTime} (based on ${avgTimeRows.length} briefs with 2+ metrics)`,
+        '',
+        '## Agent Utilization',
+        agentSection,
+        '',
+        '## Week-over-Week Trend (current vs previous)',
+        trendEmoji,
+      ].join('\n'),
+    }],
+  };
+}
+
+export { handleMetricsRecord, handleMetricsQuery, handleMetricsVelocity };
+export type { MetricsRecordInput, MetricsQueryInput, MetricsVelocityInput };
