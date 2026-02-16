@@ -74,6 +74,7 @@ These tasks are handled by skills instead of subagents. The orchestrator invokes
 | UI design guidelines | `/ui-design` | "design system", "accessibility review" |
 | Project listing | `/projects` | "list projects", "show all projects" |
 | Cross-project dashboard | `/portfolio` | "portfolio", "cross-project status" |
+| Cross-project brief dashboard | `/dashboard` | "dashboard", "what was I working on" |
 
 **Note:** The `/ui-design` skill can be preloaded by the forger agent when implementing UI-related code.
 
@@ -238,4 +239,4 @@ When implementing a brief:
 
 ---
 
-**Rule Purpose:** Ensure proper delegation to 7 specialized agents and 18 skills for consistent, high-quality work.
+**Rule Purpose:** Ensure proper delegation to 7 specialized agents and 19 skills for consistent, high-quality work.

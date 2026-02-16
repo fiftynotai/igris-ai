@@ -8,7 +8,7 @@
 
 > *"AI made coding faster — but not better. IGRIS brings the discipline."*
 
-**IGRIS** is a multi-agent AI engineering system that orchestrates Claude Code through 7 specialized subagents and 18 skills to build high-quality software with structure, testing, and documentation.
+**IGRIS** is a multi-agent AI engineering system that orchestrates Claude Code through 7 specialized subagents and 19 skills to build high-quality software with structure, testing, and documentation.
 
 Not just code generation. **Autonomous engineering execution.**
 
@@ -39,7 +39,7 @@ AI made coding faster — but not better. Speed without structure created:
 
 ### The v4.0 Architecture
 
-**7 Specialized Subagents Across 4 Tiers + 18 Skills + Centralized Brain:**
+**7 Specialized Subagents Across 4 Tiers + 19 Skills + Centralized Brain:**
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -63,10 +63,10 @@ AI made coding faster — but not better. Speed without structure created:
                    ├─► TIER 5 (Custom): sage (user-defined domain experts)
                    │                     Specialized Knowledge
                    │
-                   └─► 18 SKILLS: scan, rest, awaken, register, archive, hunt,
+                   └─► 19 SKILLS: scan, rest, awaken, register, archive, hunt,
                                   digivolve, ui-design, document, release,
                                   standardize, ideate, migrate-analyze, audit,
-                                  higgsfield, team, projects, portfolio
+                                  higgsfield, team, projects, portfolio, dashboard
 ```
 
 ### How It Works
@@ -156,7 +156,7 @@ path/to/igris-ai/scripts/igris_migrate_to_v4.sh
 
 ### Brain MCP Tools
 
-11 tools available globally via `igris-brain` MCP server:
+15 tools available globally via `igris-brain` MCP server:
 
 | Tool | Purpose |
 |------|---------|
@@ -171,6 +171,10 @@ path/to/igris-ai/scripts/igris_migrate_to_v4.sh
 | `igris_metrics_query` | Query metrics |
 | `igris_metrics_velocity` | Velocity dashboard |
 | `igris_pattern_suggest` | Pattern recommendations |
+| `igris_session_sync` | Sync session snapshot |
+| `igris_session_recall` | Recall recent sessions |
+| `igris_brief_sync` | Sync brief status |
+| `igris_brief_dashboard` | Cross-project brief dashboard |
 
 ### Concurrency
 
@@ -267,6 +271,7 @@ claude
 | `/team hunt <brief-ids>` | Parallel implementation | /team skill (Agent Teams) |
 | `/projects` | List all managed projects | /projects skill |
 | `/portfolio` | Cross-project dashboard | /portfolio skill |
+| `/dashboard` | Cross-project brief & session tracker | /dashboard skill |
 | `DIGIVOLVE status` | List all agents | - |
 
 **Modes for /standardize:**
@@ -289,7 +294,7 @@ claude
 ```
 ┌─────────────────────────────────────┐
 │   IGRIS (Multi-Agent System)        │
-│   - 7 Specialized Subagents + 18 Skills│
+│   - 7 Specialized Subagents + 19 Skills│
 │   - Workflow Orchestration           │
 │   - Architecture Enforcement         │
 │   - Session Management               │
@@ -320,7 +325,7 @@ claude
 - **You** = The architect (strategic decisions, priorities)
 
 **Without IGRIS:** Claude generates code based on prompts → random outputs
-**With IGRIS:** 7 specialized agents + 18 skills engineer outcomes autonomously → disciplined execution
+**With IGRIS:** 7 specialized agents + 19 skills engineer outcomes autonomously → disciplined execution
 
 ---
 
@@ -425,7 +430,7 @@ When you invoke `HUNT BR-005`:
 
 ## ✦ The 7 Agents
 
-As of v4.0, IGRIS uses **7 focused subagents** defined as native Claude Code agent files in `.claude/agents/`. Procedural workflows previously handled by 11 retired agents have been consolidated into **18 skills** (slash commands), reducing complexity while maintaining full capability.
+As of v4.0, IGRIS uses **7 focused subagents** defined as native Claude Code agent files in `.claude/agents/`. Procedural workflows previously handled by 11 retired agents have been consolidated into **19 skills** (slash commands), reducing complexity while maintaining full capability.
 
 ### Agent Definition Format
 
@@ -490,7 +495,7 @@ Agents were renamed from generic identifiers to persona-themed names in MG-007. 
 |-------|------|------------------|-------|-------|
 | **sage** | Flutter architecture | Kalvad MVVM + Actions Layer patterns, GetX | Read, Write, Edit, Bash, Glob, Grep | inherit |
 
-### 18 Skills (Slash Commands)
+### 19 Skills (Slash Commands)
 
 In v4.0, procedural workflows moved from dedicated agents to skills. Skills are defined in `.claude/skills/*/SKILL.md`.
 
@@ -514,6 +519,7 @@ In v4.0, procedural workflows moved from dedicated agents to skills. Skills are 
 | `/team` | - | Parallel execution with Agent Teams |
 | `/projects` | - | List all brain-registered projects |
 | `/portfolio` | - | Cross-project dashboard and insights |
+| `/dashboard` | - | Cross-project brief & session tracker |
 
 ### Key Features (v4.0)
 
@@ -708,7 +714,7 @@ Agent Teams spawns multiple independent Claude Code instances (teammates) that w
 |---------|-----------|-------|
 | **Approach** | Editor-integrated AI | Multi-agent engineering system |
 | **Focus** | Fast code completion | Autonomous end-to-end workflows |
-| **Quality Control** | Manual | Automated (7 agents + 18 skills, quality gates) |
+| **Quality Control** | Manual | Automated (7 agents + 19 skills, quality gates) |
 | **Session Recovery** | None | Automatic (multi-level tracking) |
 | **Architecture Enforcement** | No | Yes (coding_guidelines.md) |
 | **Brief Management** | No | Yes (9 brief types, priorities) |
@@ -721,7 +727,7 @@ Agent Teams spawns multiple independent Claude Code instances (teammates) that w
 |---------|-------|-------|
 | **Approach** | CLI chat for code edits | Multi-agent autonomous system |
 | **Focus** | File editing, git integration | End-to-end engineering (plan → test → commit) |
-| **Agents** | Single agent | 7 agents + 18 skills |
+| **Agents** | Single agent | 7 agents + 19 skills |
 | **Quality Control** | Commit messages | Briefs, tests, architecture, warden agent |
 | **Session Tracking** | Git commits only | Multi-level (session, briefs, workflow, agents) |
 | **Self-Healing** | No | Yes (test failures loop to forger) |
@@ -746,7 +752,7 @@ Agent Teams spawns multiple independent Claude Code instances (teammates) that w
 |---------|--------------|----------------|
 | **Context** | Manual prompt loading | Automatic (CLAUDE.md + hooks) |
 | **Workflow** | Ad-hoc | Autonomous (HUNT command) |
-| **Agents** | Single Claude | 7 agents + 18 skills |
+| **Agents** | Single Claude | 7 agents + 19 skills |
 | **Quality** | Varies by prompt | Enforced (guidelines, tests, review) |
 | **Recovery** | Lose context on reset | Automatic (session tracking) |
 | **Accountability** | None | Full audit trail (briefs, decisions) |
@@ -898,10 +904,10 @@ Tier 4: Research
 Tier 5: Custom
 ✅ sage         | Flutter MVVM + Actions   | 6 runs
 
-SKILLS (18 total)
+SKILLS (19 total)
   scan, rest, awaken, register, archive, hunt, digivolve,
   ui-design, document, release, standardize, ideate, migrate-analyze, audit,
-  higgsfield, team, projects, portfolio
+  higgsfield, team, projects, portfolio, dashboard
 ```
 
 **Agent metrics tracked in:** `ai/session/metrics/agent-metrics.json`
@@ -1016,7 +1022,7 @@ your-project/
 │   │   ├── mender.md            # Tier 3: Error recovery
 │   │   ├── seeker.md            # Tier 4: Codebase research
 │   │   └── sage.md              # Tier 5: Flutter MVVM + Actions
-│   ├── skills/                  # 18 native skills (slash commands)
+│   ├── skills/                  # 19 native skills (slash commands)
 │   │   ├── scan/SKILL.md
 │   │   ├── rest/SKILL.md
 │   │   ├── awaken/SKILL.md
@@ -1034,7 +1040,8 @@ your-project/
 │   │   ├── higgsfield/SKILL.md
 │   │   ├── team/SKILL.md
 │   │   ├── projects/SKILL.md
-│   │   └── portfolio/SKILL.md
+│   │   ├── portfolio/SKILL.md
+│   │   └── dashboard/SKILL.md
 │   ├── agent-memory/            # Persistent per-agent memory
 │   │   ├── architect/
 │   │   ├── forger/
@@ -1114,7 +1121,7 @@ path/to/igris-ai/scripts/igris_migrate_to_v4.sh
 - LEARNINGS.md and DECISIONS.md → migrated to knowledge.db
 - Project registered in brain for cross-project management
 - Brain MCP tools available globally
-- 2 new skills: `/projects`, `/portfolio`
+- 3 new skills: `/projects`, `/portfolio`, `/dashboard`
 
 **Backward compatible:** v3.4 projects continue working without brain.
 
@@ -1181,7 +1188,7 @@ In v3.3, all agents were migrated from generic identifiers to persona-themed nam
 ## ✦ FAQ
 
 **Q: What's the difference between IGRIS and Claude?**
-A: IGRIS is a multi-agent engineering system that orchestrates Claude Code through 7 specialized subagents and 18 skills. Claude provides intelligence; IGRIS provides process, agents, and discipline.
+A: IGRIS is a multi-agent engineering system that orchestrates Claude Code through 7 specialized subagents and 19 skills. Claude provides intelligence; IGRIS provides process, agents, and discipline.
 
 **Q: Does IGRIS work with Claude.ai (web interface)?**
 A: Yes, but with limitations. Startup hooks won't auto-run, and Task tool (subagents) may not be available. Claude Code CLI is recommended.
@@ -1256,7 +1263,7 @@ IGRIS exists to merge imagination with structure — the spark *and* the system 
 Open source is humanity's greatest multiplier. IGRIS empowers:
 - **Abundance** — More creators, more releases, more shared knowledge
 - **Quality** — Tests, docs, clarity, maintainability
-- **Autonomy** — 7 agents + 18 skills working together to ship quality software
+- **Autonomy** — 7 agents + 19 skills working together to ship quality software
 
 **The Open Source Call:**
 > *Create boldly. Release openly. Engineer with discipline.*
@@ -1275,7 +1282,7 @@ Built for developers and teams using Claude AI to engineer high-quality software
 
 ---
 
-> **IGRIS — Where Creativity Meets Discipline, Powered by 7 Agents + 18 Skills.**
+> **IGRIS — Where Creativity Meets Discipline, Powered by 7 Agents + 19 Skills.**
 
 ```bash
 # Ready to engineer?
@@ -1290,6 +1297,7 @@ Built for developers and teams using Claude AI to engineer high-quality software
 # /team hunt FR-001 FR-002 - Parallel implementation (Agent Teams)
 # /projects             - List all brain-registered projects
 # /portfolio            - Cross-project dashboard
+# /dashboard            - Cross-project brief & session tracker
 # DIGIVOLVE status      - List all agents
 ```
 

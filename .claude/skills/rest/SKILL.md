@@ -34,6 +34,14 @@ If the `igris-brain` MCP server is available:
 - Read `ai/session/LEARNINGS.md` — if it has new content since last sync, store each learning via `igris_memory_store` with the current project slug
 - Read `ai/session/DECISIONS.md` — if it has new content, store each decision via `igris_memory_store` with category="decision" and the current project slug
 - Call `igris_metrics_record` with session summary: project=current project slug, agent="session", action="rest", result="success"
+- Call `igris_session_sync` with:
+  - project = current project slug (basename of project directory)
+  - brief_id = active brief ID from CURRENT_SESSION.md (if any)
+  - phase = current workflow phase from the active brief's Workflow State (if any)
+  - mode = "REST"
+  - summary = brief description of work done this session (from Last Session Summary)
+- Call `igris_brief_sync` for each active brief that changed status during this session:
+  - project, brief_id, brief_type, title, status, priority, effort, phase from the brief file
 
 If brain MCP is not available, skip this step silently. No errors, no warnings.
 

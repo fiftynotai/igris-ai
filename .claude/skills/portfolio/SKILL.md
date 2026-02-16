@@ -9,7 +9,6 @@ allowed-tools:
   - Glob
 triggers:
   - "portfolio"
-  - "dashboard"
   - "cross-project"
   - "brain status"
 ---
@@ -89,6 +88,23 @@ sqlite3 ~/.igris/memory/knowledge.db "
 "
 ```
 
+### 3.5. Query Active Briefs
+
+If `igris-brain` MCP server is available:
+- Call `igris_brief_dashboard` with no filters
+- Include the active brief summary in the dashboard output
+
+If MCP is not available, use sqlite3 fallback:
+```bash
+sqlite3 ~/.igris/memory/knowledge.db "
+  PRAGMA trusted_schema=ON;
+  SELECT project, brief_id, title, status, priority, phase, updated_at
+  FROM brief_status
+  WHERE status IN ('In Progress', 'Ready', 'Blocked')
+  ORDER BY updated_at DESC;
+"
+```
+
 ### 4. Display Dashboard
 
 Format as:
@@ -125,6 +141,12 @@ Format as:
 ### Most Accessed Learnings
 1. "SQLite WAL Mode" (igris-ai) -- accessed 8 times
 2. "Error Fingerprinting" (igris-ai) -- accessed 5 times
+
+### Active Briefs (across all projects)
+| Project | Brief | Title | Status | Priority | Phase | Updated |
+|---------|-------|-------|--------|----------|-------|---------|
+
+_Use `/dashboard` for a detailed brief-focused view._
 
 ### Recommendations
 Based on the data, suggest:

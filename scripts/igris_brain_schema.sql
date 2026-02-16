@@ -137,3 +137,41 @@ CREATE INDEX IF NOT EXISTS idx_errors_scope ON errors(scope);
 CREATE INDEX IF NOT EXISTS idx_agent_metrics_project ON agent_metrics(project);
 CREATE INDEX IF NOT EXISTS idx_agent_metrics_agent ON agent_metrics(agent);
 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+
+-- === Sessions (v2) ===
+CREATE TABLE IF NOT EXISTS sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project TEXT NOT NULL,
+    brief_id TEXT,
+    phase TEXT,
+    mode TEXT,
+    summary TEXT NOT NULL,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')),
+    ended_at TEXT,
+    FOREIGN KEY (project) REFERENCES projects(slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project);
+CREATE INDEX IF NOT EXISTS idx_sessions_ended_at ON sessions(ended_at);
+
+-- === Brief Status (v2) ===
+CREATE TABLE IF NOT EXISTS brief_status (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project TEXT NOT NULL,
+    brief_id TEXT NOT NULL,
+    brief_type TEXT,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,
+    priority TEXT,
+    effort TEXT,
+    phase TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (project) REFERENCES projects(slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_brief_status_project ON brief_status(project);
+CREATE INDEX IF NOT EXISTS idx_brief_status_brief_id ON brief_status(brief_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_brief_status_unique ON brief_status(project, brief_id);
+
+-- Update schema version
+INSERT OR IGNORE INTO schema_version (version) VALUES (2);

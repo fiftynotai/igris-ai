@@ -12,6 +12,8 @@
  * - igris_error_lookup
  * - igris_project_register, igris_project_list, igris_project_status
  * - igris_metrics_record, igris_metrics_query, igris_metrics_velocity
+ * - igris_session_sync, igris_session_recall
+ * - igris_brief_sync, igris_brief_dashboard
  *
  * @version 4.0.0
  * @author Fifty.ai
@@ -33,6 +35,10 @@ import { handleProjectRegister, handleProjectList, handleProjectStatus } from '.
 import type { ProjectRegisterInput, ProjectListInput, ProjectStatusInput } from './tools/projects.js';
 import { handleMetricsRecord, handleMetricsQuery, handleMetricsVelocity } from './tools/metrics.js';
 import type { MetricsRecordInput, MetricsQueryInput, MetricsVelocityInput } from './tools/metrics.js';
+import { handleSessionSync, handleSessionRecall } from './tools/sessions.js';
+import type { SessionSyncInput, SessionRecallInput } from './tools/sessions.js';
+import { handleBriefSync, handleBriefDashboard } from './tools/briefs.js';
+import type { BriefSyncInput, BriefDashboardInput } from './tools/briefs.js';
 
 // Staging processor
 import { processStagingFiles } from './staging.js';
@@ -347,6 +353,112 @@ class IgrisBrainServer {
               required: ['project', 'context'],
             },
           },
+
+          // === Session Tools ===
+          {
+            name: 'igris_session_sync',
+            description: 'Sync a session snapshot to the Igris brain. Called by /rest to record what you were working on. Closes any existing open session for the project before creating a new one.',
+            inputSchema: {
+              type: 'object' as const,
+              properties: {
+                project: {
+                  type: 'string',
+                  description: 'Project slug',
+                },
+                brief_id: {
+                  type: 'string',
+                  description: 'Active brief ID (optional)',
+                },
+                phase: {
+                  type: 'string',
+                  description: 'Current workflow phase (optional)',
+                },
+                mode: {
+                  type: 'string',
+                  description: 'Session mode (e.g., "HUNT", "REST")',
+                },
+                summary: {
+                  type: 'string',
+                  description: 'Brief description of work done this session',
+                },
+              },
+              required: ['project', 'summary'],
+            },
+          },
+          {
+            name: 'igris_session_recall',
+            description: 'Recall recent sessions across all projects. Called by /awaken to show cross-project context. Returns sessions grouped by day.',
+            inputSchema: {
+              type: 'object' as const,
+              properties: {
+                days: {
+                  type: 'number',
+                  description: 'Number of days to look back (default: 7)',
+                },
+              },
+            },
+          },
+
+          // === Brief Tools ===
+          {
+            name: 'igris_brief_sync',
+            description: 'Sync a brief status change to the Igris brain. Called when brief status changes during /hunt, /rest, or /archive. Uses upsert to maintain one record per project+brief_id.',
+            inputSchema: {
+              type: 'object' as const,
+              properties: {
+                project: {
+                  type: 'string',
+                  description: 'Project slug',
+                },
+                brief_id: {
+                  type: 'string',
+                  description: 'Brief ID (e.g., "BR-008", "MG-010")',
+                },
+                brief_type: {
+                  type: 'string',
+                  description: 'Brief type (e.g., "Bug", "Migration", "Feature")',
+                },
+                title: {
+                  type: 'string',
+                  description: 'Brief title',
+                },
+                status: {
+                  type: 'string',
+                  description: 'Brief status (e.g., "Ready", "In Progress", "Done")',
+                },
+                priority: {
+                  type: 'string',
+                  description: 'Priority level (e.g., "P0", "P1-High")',
+                },
+                effort: {
+                  type: 'string',
+                  description: 'Effort estimate (e.g., "S-Small", "L-Large")',
+                },
+                phase: {
+                  type: 'string',
+                  description: 'Current workflow phase (e.g., "BUILDING", "TESTING")',
+                },
+              },
+              required: ['project', 'brief_id', 'title', 'status'],
+            },
+          },
+          {
+            name: 'igris_brief_dashboard',
+            description: 'Display a cross-project brief dashboard showing all tracked briefs with status counts. Supports filtering by status and project.',
+            inputSchema: {
+              type: 'object' as const,
+              properties: {
+                status: {
+                  type: 'string',
+                  description: 'Filter by brief status (optional)',
+                },
+                project: {
+                  type: 'string',
+                  description: 'Filter by project slug (optional)',
+                },
+              },
+            },
+          },
         ],
       };
     });
@@ -388,6 +500,18 @@ class IgrisBrainServer {
           // Pattern tools
           case 'igris_pattern_suggest':
             return handlePatternSuggest(args as unknown as PatternSuggestInput);
+
+          // Session tools
+          case 'igris_session_sync':
+            return handleSessionSync(args as unknown as SessionSyncInput);
+          case 'igris_session_recall':
+            return handleSessionRecall(args as unknown as SessionRecallInput);
+
+          // Brief tools
+          case 'igris_brief_sync':
+            return handleBriefSync(args as unknown as BriefSyncInput);
+          case 'igris_brief_dashboard':
+            return handleBriefDashboard(args as unknown as BriefDashboardInput);
 
           default:
             throw new Error(`Unknown tool: ${name}`);

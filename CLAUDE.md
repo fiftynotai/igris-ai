@@ -99,6 +99,7 @@ Igris commands are available as native Claude Code skills:
 | `/team` | Parallel execution (Agent Teams) | `/team hunt FR-022 FR-023` |
 | `/projects` | List brain-registered projects | `/projects` |
 | `/portfolio` | Cross-project dashboard | `/portfolio` |
+| `/dashboard` | Cross-project brief & session tracker | `/dashboard` |
 
 Skills defined in `.claude/skills/*/SKILL.md`
 

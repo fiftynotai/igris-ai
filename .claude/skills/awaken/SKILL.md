@@ -54,6 +54,14 @@ If the `igris-brain` MCP server is available:
 - Call `igris_memory_recall` with the current project slug and context="session start, current project priorities"
 - Display any relevant cross-project learnings to the user
 - Call `igris_project_register` to update `last_session_at` for this project
+- Call `igris_session_recall` with days=2 to see recent cross-project activity
+- If sessions returned, display a "Cross-Project Context" section:
+  ```
+  ### Cross-Project Context (last 48h)
+  - project-a: Worked on BR-012 (auth fix), BUILDING phase
+  - project-b: Completed FR-005 (dark mode)
+  ```
+- This gives a "welcome back" overview across all projects
 
 If brain MCP is not available, skip this step silently. No errors, no warnings.
 

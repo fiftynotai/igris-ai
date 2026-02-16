@@ -290,12 +290,17 @@ IGRIS v4.0 introduces a centralized brain at `~/.igris/` that provides persisten
 | `igris_metrics_query` | Query agent performance metrics |
 | `igris_metrics_velocity` | Velocity dashboard |
 | `igris_pattern_suggest` | Suggest relevant patterns |
+| `igris_session_sync` | Sync session snapshot to brain |
+| `igris_session_recall` | Recall recent sessions across projects |
+| `igris_brief_sync` | Sync brief status change to brain |
+| `igris_brief_dashboard` | Cross-project brief dashboard |
 
 ### Brain Integration Points
-- **Session Start (/awaken):** Recall relevant learnings, register session
-- **Session End (/rest):** Sync learnings and decisions to brain
+- **Session Start (/awaken):** Recall relevant learnings, register session, recall cross-project session context
+- **Session End (/rest):** Sync learnings and decisions to brain, sync session snapshot and brief status
 - **Status (/scan):** Show brain stats and cross-project insights
 - **Implementation (/hunt):** Record agent metrics, store error solutions
+- **Dashboard (/dashboard):** Show active briefs and recent sessions across all projects
 
 ### Graceful Degradation
 Brain integration is optional. If `~/.igris/` does not exist or MCP server is not registered, all features work in local-only mode (v3.4 behavior). No errors, no warnings — just local operation.
@@ -466,7 +471,7 @@ Orchestrator:
 - ❌ No quality gates
 - ❌ Monolithic complexity
 
-**We built 7 specialized agents + 18 skills. USE THEM.**
+**We built 7 specialized agents + 19 skills. USE THEM.**
 
 ---
 
