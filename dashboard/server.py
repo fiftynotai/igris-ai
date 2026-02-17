@@ -388,6 +388,15 @@ CREATE TABLE IF NOT EXISTS sync_state (
     value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS skill_invocations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    skill_name TEXT NOT NULL,
+    session_date TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_skill_name ON skill_invocations(skill_name);
+CREATE INDEX IF NOT EXISTS idx_skill_session_date ON skill_invocations(session_date);
+
 CREATE TABLE IF NOT EXISTS context_window (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     context_used INTEGER DEFAULT 0,
@@ -784,6 +793,21 @@ async def poll_brain(app: FastAPI):
                         "type": "brain_health",
                         "data": {**(health or {}), **(stats or {})},
                     })
+
+                # Sync status
+                try:
+                    sync_data = await build_sync_status(app)
+                    await manager.broadcast({"type": "sync_status", "data": sync_data})
+                except Exception:
+                    pass
+
+                # Knowledge stats
+                try:
+                    knowledge_data = await build_knowledge_state()
+                    await manager.broadcast({"type": "brain_knowledge", "data": knowledge_data})
+                except Exception:
+                    pass
+
                 last_health = now
 
             # Instances (every 30s -- real-time feel)
@@ -1050,6 +1074,98 @@ async def build_context_window_state(db: aiosqlite.Connection) -> dict:
     }
 
 
+async def build_sync_status(app):
+    """Build sync pipeline status from brain server."""
+    data = await brain_request(app, "/api/sync-status")
+    if data:
+        return {**data, "status": "online"}
+    return {"status": "offline", "last_push": None, "last_pull": None, "queue_depth": 0}
+
+
+def build_team_status():
+    """Build team status from file system."""
+    team_file = os.path.join(METRICS_DIR, "team-status.json")
+    if os.path.exists(team_file):
+        try:
+            with open(team_file) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"active": False, "teammates": []}
+
+
+async def build_knowledge_state():
+    """Build knowledge base state from local brain DB."""
+    knowledge_db = os.path.join(os.path.expanduser("~"), ".igris", "memory", "knowledge.db")
+    if not os.path.exists(knowledge_db):
+        return {"status": "unavailable", "learnings_count": 0, "errors_count": 0, "patterns_count": 0, "recent": []}
+    try:
+        async with aiosqlite.connect(f"file:{knowledge_db}?mode=ro", uri=True) as db:
+            db.row_factory = aiosqlite.Row
+            # Counts
+            cur = await db.execute("SELECT COUNT(*) as c FROM learnings")
+            row = await cur.fetchone()
+            learnings_count = row[0] if row else 0
+
+            cur = await db.execute("SELECT COUNT(*) as c FROM errors")
+            row = await cur.fetchone()
+            errors_count = row[0] if row else 0
+
+            # Pattern categories
+            cur = await db.execute(
+                "SELECT DISTINCT category FROM learnings WHERE category IS NOT NULL AND category != ''"
+            )
+            rows = await cur.fetchall()
+            patterns_count = len(rows)
+
+            # Recent learnings
+            cur = await db.execute(
+                "SELECT id, project, category, title, created_at FROM learnings ORDER BY created_at DESC LIMIT 10"
+            )
+            rows = await cur.fetchall()
+            recent = [
+                {"id": r[0], "project": r[1], "category": r[2], "title": r[3], "created_at": r[4]}
+                for r in rows
+            ]
+
+            return {
+                "status": "connected",
+                "learnings_count": learnings_count,
+                "errors_count": errors_count,
+                "patterns_count": patterns_count,
+                "recent": recent,
+            }
+    except Exception:
+        return {"status": "unavailable", "learnings_count": 0, "errors_count": 0, "patterns_count": 0, "recent": []}
+
+
+async def build_skill_heatmap(db, range_key="all"):
+    """Build skill invocation heatmap."""
+    try:
+        if range_key == "today":
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            cursor = await db.execute(
+                "SELECT skill_name, COUNT(*) as cnt FROM skill_invocations WHERE session_date = ? GROUP BY skill_name ORDER BY cnt DESC",
+                (today,),
+            )
+        elif range_key == "week":
+            week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+            cursor = await db.execute(
+                "SELECT skill_name, COUNT(*) as cnt FROM skill_invocations WHERE session_date >= ? GROUP BY skill_name ORDER BY cnt DESC",
+                (week_ago,),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT skill_name, COUNT(*) as cnt FROM skill_invocations GROUP BY skill_name ORDER BY cnt DESC"
+            )
+        rows = await cursor.fetchall()
+        skills = {r[0]: r[1] for r in rows}
+        total = sum(skills.values())
+        return {"skills": skills, "total": total}
+    except Exception:
+        return {"skills": {}, "total": 0}
+
+
 async def build_filtered_totals(db: aiosqlite.Connection, range_key: str) -> dict:
     """Compute aggregate totals filtered by date range."""
     date_clause, date_params = build_date_where(range_key)
@@ -1217,6 +1333,7 @@ async def build_filtered_state(app: FastAPI, range_key: str = "today") -> dict:
 
     budget = await build_budget_state(db, budget_config)  # Always daily
     context_window = await build_context_window_state(db)
+    skill_heatmap = await build_skill_heatmap(db, range_key)
 
     return {
         "agents": agents,
@@ -1224,6 +1341,7 @@ async def build_filtered_state(app: FastAPI, range_key: str = "today") -> dict:
         "recent_events": recent_events,
         "totals": totals,
         "context_window": context_window,
+        "skill_heatmap": skill_heatmap,
         "range": range_key,
     }
 
@@ -1238,6 +1356,7 @@ async def build_full_state(app: FastAPI) -> dict:
     recent_events = await build_recent_events(db)
     totals = await build_totals(db)
     context_window = await build_context_window_state(db)
+    skill_heatmap = await build_skill_heatmap(db)
 
     return {
         "agents": agents,
@@ -1245,6 +1364,7 @@ async def build_full_state(app: FastAPI) -> dict:
         "recent_events": recent_events,
         "totals": totals,
         "context_window": context_window,
+        "skill_heatmap": skill_heatmap,
     }
 
 
@@ -1347,7 +1467,8 @@ class AgentEvent(BaseModel):
     """Validated event payload from agent_metrics.sh hook."""
 
     ts: str
-    event: str = Field(..., pattern="^(start|stop)$")
+    event: str = Field(..., pattern="^(start|stop|skill_invoke)$")
+    skill_name: str = ""
     agent: str
     agent_id: str = ""
     raw_type: str = ""
@@ -1496,6 +1617,31 @@ async def brain_sessions(request: Request, days: int = 7):
     return data
 
 
+@app.get("/api/sync-status")
+async def get_sync_status(request: Request):
+    """Sync pipeline status from brain server."""
+    return JSONResponse(await build_sync_status(request.app))
+
+
+@app.get("/api/team-status")
+async def get_team_status():
+    """Team mode status from file system."""
+    return JSONResponse(build_team_status())
+
+
+@app.get("/api/brain/knowledge")
+async def get_brain_knowledge():
+    """Knowledge base state from local brain DB."""
+    return JSONResponse(await build_knowledge_state())
+
+
+@app.get("/api/skills")
+async def get_skills(range: str = "all"):
+    """Skill invocation heatmap data."""
+    db = app.state.db
+    return JSONResponse(await build_skill_heatmap(db, range))
+
+
 @app.post("/api/event")
 async def post_event(event: AgentEvent):
     """Receive an event from the agent_metrics.sh hook.
@@ -1514,6 +1660,27 @@ async def post_event(event: AgentEvent):
             {"status": "error", "message": "Failed to process event"},
             status_code=500,
         )
+
+    # Handle skill_invoke: insert into skill_invocations table
+    if event.event == "skill_invoke" and event.skill_name:
+        try:
+            session_date = datetime.now().strftime("%Y-%m-%d")
+            await db.execute(
+                "INSERT INTO skill_invocations (ts, skill_name, session_date) VALUES (?, ?, ?)",
+                (event.ts or datetime.now().isoformat(), event.skill_name, session_date),
+            )
+            await db.commit()
+        except Exception as exc:
+            logger.warning("Failed to insert skill invocation: %s", exc)
+
+        # Broadcast skill event
+        try:
+            await manager.broadcast({
+                "type": "skill_event",
+                "data": {"skill_name": event.skill_name, "ts": event.ts or datetime.now().isoformat()},
+            })
+        except Exception:
+            pass
 
     # Broadcast to WebSocket clients
     await manager.broadcast({"type": "event", "data": event_dict})
@@ -1560,6 +1727,25 @@ async def websocket_endpoint(websocket: WebSocket):
                 })
             except Exception as exc:
                 logger.warning("Failed to send initial brain state: %s", exc)
+
+        # Send initial new section data
+        try:
+            sync_data = await build_sync_status(app)
+            await websocket.send_json({"type": "sync_status", "data": sync_data})
+        except Exception:
+            pass
+
+        try:
+            team_data = build_team_status()
+            await websocket.send_json({"type": "team_status", "data": team_data})
+        except Exception:
+            pass
+
+        try:
+            knowledge_data = await build_knowledge_state()
+            await websocket.send_json({"type": "brain_knowledge", "data": knowledge_data})
+        except Exception:
+            pass
 
         # Keep connection alive; read messages to detect disconnects
         while True:

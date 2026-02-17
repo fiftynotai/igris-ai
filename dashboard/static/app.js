@@ -253,6 +253,10 @@ function ArenaClient() {
     this.pricing = null;
     this.brainState = null;
     this.brainAvailable = false;
+    this.syncStatus = null;
+    this.teamStatus = null;
+    this.knowledgeState = null;
+    this.skillData = null;
 }
 
 /**
@@ -273,6 +277,11 @@ ArenaClient.prototype.init = async function () {
     this.connectWebSocket();
     this.fetchBrainData();
     setInterval(function () { self.fetchBrainData(); }, 60000);
+
+    // Fetch new section data
+    fetch('/api/sync-status').then(function (r) { return r.json(); }).then(function (d) { self.syncStatus = d; self.renderSyncPanel(); }).catch(function () {});
+    fetch('/api/team-status').then(function (r) { return r.json(); }).then(function (d) { self.teamStatus = d; self.renderTeamMode(); }).catch(function () {});
+    fetch('/api/brain/knowledge').then(function (r) { return r.json(); }).then(function (d) { self.knowledgeState = d; self.renderKnowledgePanel(); }).catch(function () {});
 };
 
 /* --------------------------------------------------------------------------
@@ -459,6 +468,17 @@ ArenaClient.prototype.connectWebSocket = function () {
                 if (!self.brainState) self.brainState = {};
                 self.brainState.sessions = msg.data;
                 self.renderBrainSection();
+            } else if (msg.type === 'sync_status') {
+                self.syncStatus = msg.data;
+                self.renderSyncPanel();
+            } else if (msg.type === 'team_status') {
+                self.teamStatus = msg.data;
+                self.renderTeamMode();
+            } else if (msg.type === 'skill_event') {
+                self.handleSkillEvent(msg.data);
+            } else if (msg.type === 'brain_knowledge') {
+                self.knowledgeState = msg.data;
+                self.renderKnowledgePanel();
             }
         } catch (e) {
             console.error('Failed to parse WebSocket message:', e);
@@ -688,6 +708,11 @@ ArenaClient.prototype.addBattleLogEntry = function (event) {
             '<span class="entry-tokens">' + escapeHtml(formatNumber(directTokens)) + ' tokens</span>' +
             cacheStr + ' ' +
             '(<span class="entry-duration">' + dur + '</span>)';
+    } else if (event.event === 'skill_invoke') {
+        entry.className = 'battle-log__entry battle-log__entry--skill';
+        entry.innerHTML =
+            '<span class="entry-time">[' + time + ']</span> ' +
+            '<span class="entry-skill">/' + escapeHtml(event.skill_name || 'unknown') + '</span> invoked';
     } else {
         entry.className = 'battle-log__entry';
         entry.innerHTML =
@@ -724,6 +749,11 @@ ArenaClient.prototype.render = function () {
     this.renderCostCard();
     this.renderBattleLog();
     this.renderPartyStats();
+    this.renderSyncPanel();
+    this.renderTeamMode();
+    this.renderBriefPipeline();
+    this.renderSkillHeatmap();
+    this.renderKnowledgePanel();
 };
 
 /* --------------------------------------------------------------------------
@@ -1192,6 +1222,11 @@ ArenaClient.prototype.renderBattleLog = function () {
                 '<span class="entry-tokens">' + escapeHtml(formatNumber(directTokens)) + ' tokens</span>' +
                 cacheStr + ' ' +
                 '(<span class="entry-duration">' + dur + '</span>)';
+        } else if (event.event === 'skill_invoke') {
+            entry.className = 'battle-log__entry battle-log__entry--skill';
+            entry.innerHTML =
+                '<span class="entry-time">[' + time + ']</span> ' +
+                '<span class="entry-skill">/' + escapeHtml(event.skill_name || 'unknown') + '</span> invoked';
         } else {
             entry.className = 'battle-log__entry';
             entry.innerHTML =
@@ -2362,6 +2397,284 @@ ArenaClient.prototype.renderBrainSessions = function (data) {
         html += '</div>';
     }
     container.innerHTML = html;
+};
+
+/* --------------------------------------------------------------------------
+   Rendering: Sync Pipeline Panel
+   -------------------------------------------------------------------------- */
+
+/**
+ * Update the Sync Pipeline panel in the instrument strip.
+ */
+ArenaClient.prototype.renderSyncPanel = function () {
+    var data = this.syncStatus;
+    if (!data) return;
+
+    var statusEl = document.getElementById('sync-status-text');
+    if (statusEl) {
+        var status = data.status || 'offline';
+        statusEl.textContent = status.toUpperCase();
+        if (status === 'online') {
+            statusEl.style.color = 'var(--success)';
+        } else {
+            statusEl.style.color = 'var(--text-muted)';
+        }
+    }
+
+    var pushEl = document.getElementById('sync-last-push');
+    if (pushEl) pushEl.textContent = data.last_push ? timeAgo(data.last_push) : '--';
+
+    var pullEl = document.getElementById('sync-last-pull');
+    if (pullEl) pullEl.textContent = data.last_pull ? timeAgo(data.last_pull) : '--';
+
+    var queueEl = document.getElementById('sync-queue-depth');
+    if (queueEl) {
+        var depth = data.queue_depth || 0;
+        queueEl.textContent = depth;
+        if (depth === 0) {
+            queueEl.style.color = 'var(--success)';
+        } else if (depth > 10) {
+            queueEl.style.color = 'var(--hp-critical)';
+        } else {
+            queueEl.style.color = 'var(--hp-warning)';
+        }
+    }
+};
+
+/* --------------------------------------------------------------------------
+   Rendering: Team Mode
+   -------------------------------------------------------------------------- */
+
+/**
+ * Render the Team Mode section. Show/hide based on active status.
+ */
+ArenaClient.prototype.renderTeamMode = function () {
+    var section = document.getElementById('team-mode-section');
+    if (!section) return;
+
+    if (!this.teamStatus || !this.teamStatus.active) {
+        section.style.display = 'none';
+        return;
+    }
+
+    section.style.display = '';
+    var grid = document.getElementById('team-mode-grid');
+    if (!grid) return;
+
+    var teammates = this.teamStatus.teammates || [];
+    if (teammates.length === 0) {
+        grid.innerHTML = '<div class="brain-panel__empty">No teammates active</div>';
+        return;
+    }
+
+    var html = '';
+    for (var i = 0; i < teammates.length; i++) {
+        var tm = teammates[i];
+        var progress = tm.progress || 0;
+        var phase = tm.phase || '--';
+        var brief = tm.brief || '--';
+        var name = tm.name || ('Teammate ' + (i + 1));
+
+        html += '<div class="team-card">';
+        html += '<div class="team-card__header">';
+        html += '<span class="team-card__name">' + escapeHtml(name) + '</span>';
+        html += '<span class="team-card__phase">' + escapeHtml(phase) + '</span>';
+        html += '</div>';
+        html += '<div class="team-card__brief mono">' + escapeHtml(brief) + '</div>';
+        html += '<div class="team-card__progress">';
+        html += '<div class="team-card__progress-fill" style="width:' + Math.min(100, progress) + '%"></div>';
+        html += '</div>';
+        html += '</div>';
+    }
+    grid.innerHTML = html;
+};
+
+/* --------------------------------------------------------------------------
+   Rendering: Brief Pipeline
+   -------------------------------------------------------------------------- */
+
+/**
+ * Render the Brief Pipeline strip showing current workflow phase.
+ */
+ArenaClient.prototype.renderBriefPipeline = function () {
+    var pipeline = document.getElementById('brief-pipeline');
+    if (!pipeline) return;
+
+    var phaseOrder = ['plan', 'build', 'test', 'review', 'done'];
+    var phaseMap = {
+        'PLANNING': 'plan', 'PLAN': 'plan',
+        'BUILDING': 'build', 'BUILD': 'build', 'IMPLEMENTING': 'build',
+        'TESTING': 'test', 'TEST': 'test',
+        'REVIEWING': 'review', 'REVIEW': 'review',
+        'COMMITTING': 'done', 'COMPLETE': 'done', 'DONE': 'done'
+    };
+
+    // Find active brief from brain state
+    var activeBrief = null;
+    var activePhase = null;
+    var activeAgent = '--';
+
+    if (this.brainState && this.brainState.briefs) {
+        var briefs = this.brainState.briefs;
+        var briefList = Array.isArray(briefs) ? briefs : (briefs.briefs || []);
+        for (var i = 0; i < briefList.length; i++) {
+            if (briefList[i].status === 'In Progress') {
+                activeBrief = briefList[i];
+                break;
+            }
+        }
+    }
+
+    if (activeBrief) {
+        pipeline.classList.remove('brief-pipeline--idle');
+        var rawPhase = (activeBrief.phase || activeBrief.current_phase || '').toUpperCase();
+        activePhase = phaseMap[rawPhase] || null;
+        activeAgent = activeBrief.active_agent || activeBrief.brief_id || '--';
+    } else {
+        pipeline.classList.add('brief-pipeline--idle');
+    }
+
+    var agentEl = document.getElementById('pipeline-active-agent');
+    if (agentEl) agentEl.textContent = activeAgent;
+
+    // Update phase classes
+    var currentIdx = activePhase ? phaseOrder.indexOf(activePhase) : -1;
+
+    for (var j = 0; j < phaseOrder.length; j++) {
+        var phaseEl = document.getElementById('pipeline-phase-' + phaseOrder[j]);
+        if (!phaseEl) continue;
+
+        phaseEl.classList.remove('pipeline-phase--done', 'pipeline-phase--active');
+        if (currentIdx >= 0) {
+            if (j < currentIdx) {
+                phaseEl.classList.add('pipeline-phase--done');
+            } else if (j === currentIdx) {
+                phaseEl.classList.add('pipeline-phase--active');
+            }
+        }
+    }
+};
+
+/* --------------------------------------------------------------------------
+   Rendering: Knowledge Panel
+   -------------------------------------------------------------------------- */
+
+/**
+ * Render the Knowledge Base panel in the brain grid.
+ */
+ArenaClient.prototype.renderKnowledgePanel = function () {
+    var data = this.knowledgeState;
+    if (!data) return;
+
+    var learningsEl = document.getElementById('knowledge-learnings-count');
+    if (learningsEl) learningsEl.textContent = formatNumber(data.learnings_count || 0);
+
+    var errorsEl = document.getElementById('knowledge-errors-count');
+    if (errorsEl) errorsEl.textContent = formatNumber(data.errors_count || 0);
+
+    var patternsEl = document.getElementById('knowledge-patterns-count');
+    if (patternsEl) patternsEl.textContent = formatNumber(data.patterns_count || 0);
+
+    var recentEl = document.getElementById('brain-knowledge-recent');
+    if (!recentEl) return;
+
+    var recent = data.recent || [];
+    if (recent.length === 0) {
+        recentEl.innerHTML = '<div class="brain-panel__empty">No learnings recorded</div>';
+        return;
+    }
+
+    var html = '';
+    for (var i = 0; i < recent.length; i++) {
+        var item = recent[i];
+        var category = item.category || 'general';
+        var catClass = category.toLowerCase().replace(/[^a-z0-9]/g, '-');
+
+        html += '<div class="brain-knowledge-entry">';
+        html += '<span class="brain-knowledge-entry__title">' + escapeHtml(item.title || '--') + '</span>';
+        html += '<span class="brain-knowledge-entry__badge brain-knowledge-badge--' + escapeHtml(catClass) + '">' + escapeHtml(category) + '</span>';
+        html += '<span class="brain-knowledge-entry__time">' + escapeHtml(timeAgo(item.created_at)) + '</span>';
+        html += '</div>';
+    }
+    recentEl.innerHTML = html;
+};
+
+/* --------------------------------------------------------------------------
+   Rendering: Skill Heatmap
+   -------------------------------------------------------------------------- */
+
+/**
+ * Render the Skill Heatmap section with horizontal bars.
+ */
+ArenaClient.prototype.renderSkillHeatmap = function () {
+    var container = document.getElementById('skill-heatmap-bars');
+    var totalEl = document.getElementById('skill-heatmap-total');
+    if (!container) return;
+
+    // Get skill data from state (included in full state response)
+    var heatmap = this.skillData || get(this.state, ['skill_heatmap'], null);
+    if (!heatmap || !heatmap.skills || Object.keys(heatmap.skills).length === 0) {
+        container.innerHTML = '<div class="brain-panel__empty">No skill data yet</div>';
+        if (totalEl) totalEl.textContent = '0 total';
+        return;
+    }
+
+    var skills = heatmap.skills;
+    var total = heatmap.total || 0;
+    if (totalEl) totalEl.textContent = formatNumber(total) + ' total';
+
+    // Sort by count descending
+    var skillNames = Object.keys(skills);
+    skillNames.sort(function (a, b) { return skills[b] - skills[a]; });
+
+    var maxCount = skills[skillNames[0]] || 1;
+
+    var html = '';
+    for (var i = 0; i < skillNames.length; i++) {
+        var name = skillNames[i];
+        var count = skills[name];
+        var widthPct = Math.max(2, Math.round((count / maxCount) * 100));
+
+        html += '<div class="skill-bar">';
+        html += '<span class="skill-bar__label mono">/' + escapeHtml(name) + '</span>';
+        html += '<div class="skill-bar__track"><div class="skill-bar__fill" style="width:' + widthPct + '%"></div></div>';
+        html += '<span class="skill-bar__count mono">' + count + '</span>';
+        html += '</div>';
+    }
+    container.innerHTML = html;
+};
+
+/* --------------------------------------------------------------------------
+   Skill Event Handler
+   -------------------------------------------------------------------------- */
+
+/**
+ * Handle an incoming skill_event from WebSocket.
+ * Increment local skill count, add battle log entry, re-render heatmap.
+ * @param {object} data - { skill_name, ts }
+ */
+ArenaClient.prototype.handleSkillEvent = function (data) {
+    if (!data || !data.skill_name) return;
+
+    // Update local skill data
+    if (!this.state) return;
+    if (!this.state.skill_heatmap) {
+        this.state.skill_heatmap = { skills: {}, total: 0 };
+    }
+    var hm = this.state.skill_heatmap;
+    hm.skills[data.skill_name] = (hm.skills[data.skill_name] || 0) + 1;
+    hm.total = (hm.total || 0) + 1;
+
+    // Add battle log entry
+    this.addBattleLogEntry({
+        event: 'skill_invoke',
+        skill_name: data.skill_name,
+        ts: data.ts || new Date().toISOString(),
+        agent: 'skill'
+    });
+
+    // Re-render heatmap
+    this.renderSkillHeatmap();
 };
 
 /* --------------------------------------------------------------------------

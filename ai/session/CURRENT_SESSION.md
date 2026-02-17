@@ -1,10 +1,10 @@
 # Current Session
 
 ## Status
-**Mode:** Active
+**Mode:** HUNT MODE
 **Updated:** 2026-02-17
-**Active Brief:** FR-043
-**Instance ID:** 03a41425-16bd-401b-930f-b91d86e5001a
+**Active Brief:** FR-044 (Crimson Arena v2 — Architecture-Aligned Dashboard)
+**Instance ID:** ca617dc5-0af9-434a-ad62-0161b727cee0
 
 ---
 
@@ -34,7 +34,7 @@
 | FR-040 | /sync Predefined Skill | Done (commit `5991700`) |
 | FR-041 | Fix Brain MCP Tool Discovery | Done (commit `7ccf4e5`) |
 | FR-042 | Sync Local Metrics & Brain Data to VPS | Done (commit `92871ec`, `3f35848`) |
-| FR-043 | Fix Live Instances — Stale Cleanup & Live Feel | Ready |
+| FR-043 | Fix Live Instances — Stale Cleanup & Live Feel | Done (commit `cb087a2`) |
 
 **Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, MG-009, MG-010, MG-011, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018, BR-015, FR-019, FR-020, FR-021, PI-003
 
@@ -42,37 +42,33 @@
 
 ## Resume Point
 
-**Last Active:** FR-042 (completed), FR-043 (registered)
-**Phase:** COMPLETE / READY
+**Last Active:** FR-043 (completed)
+**Phase:** COMPLETE
 
 ---
 
 ## Next Session Instructions
 
-1. **HUNT FR-043** (M-effort) — Fix Live Instances: stale cleanup, API filtering, pulsing dot, live heartbeat timer
-2. **HUNT FR-014** (L-effort) — Unblock Higgsfield browser automation with correct URL slugs
-3. Continue v3.4 validation — 19 items remaining: `ai/session/MG-008-test-checklist.md`
+1. **HUNT FR-014** (L-effort) — Unblock Higgsfield browser automation with correct URL slugs
+2. Continue v3.4 validation — 19 items remaining: `ai/session/MG-008-test-checklist.md`
+3. Consider archiving completed briefs (FR-022 through FR-043)
 
-**Key context for FR-043:** VPS brain DB has 3 instances (2 orphans + 1 stale current). Brain server needs TTL auto-purge (>2h), API needs `?include_stale` param, dashboard needs active-only view with pulsing green dot and live heartbeat timer. Files: `brain-mcp-server/src/tools/instances.ts`, `brain-mcp-server/src/index.ts`, `dashboard/server.py`, `dashboard/static/app.js`, `dashboard/static/style.css`.
-
-**Key context for FR-042 completion:** /sync data now uploads 3 files (agent-metrics.json, events.jsonl, budget.json) via SCP + merges 5 brain DB tables via SSH sqlite3. Dashboard cost comes from events.jsonl not agent-metrics.json. VPS Crimson Arena now shows ~$750 all-time matching local.
+**Key context for FR-043 completion:** TTL auto-purge (>2h stale) added to brain MCP server + API. Dashboard redesigned from table to card layout with pulsing green dots and live heartbeat timers (10s setInterval). Deployed to VPS via /sync code + /sync data. All 3 stale instances will auto-purge on next API call.
 
 ---
 
 ## Last Session Summary (2026-02-17)
 
 **Date:** 2026-02-17
-**Summary:** Completed FR-042 (sync local metrics & brain data to VPS). Discovered that Crimson Arena cost tracking reads from events.jsonl, not agent-metrics.json — added events.jsonl and budget.json to /sync data skill. Ran full data sync: 630 events, 77 DB rows, 16 agents synced to VPS. VPS dashboard now shows complete $750 all-time cost matching local. Audited all data sources for completeness. Registered FR-043 for live instances fix (stale cleanup, filtering, live feel).
+**Summary:** Completed FR-043 (fix live instances dashboard). Added TTL auto-purge (>2h stale) to brain MCP server, include_stale API filtering (default: exclude), redesigned Crimson Arena Live Instances from table to card layout with pulsing green dot indicators and live heartbeat timers. Full agent pipeline: ARCHITECT (plan) -> FORGER (5 files) -> SENTINEL (PASS) -> WARDEN (APPROVE). Deployed to VPS via /sync code + /sync data. Commit: cb087a2.
 
 **Completed (this session):**
-- FR-042: Enhanced /sync data with metrics upload + local DB merge. Commits: `92871ec`, `3f35848`
-- Full data sync executed: events.jsonl (630 events), agent-metrics.json (16 agents), budget.json, brain DB (77 rows across 5 tables)
-- Discovered events.jsonl is the cost data source, not agent-metrics.json
-- Data source audit: all dashboard inputs now covered by /sync data
-- FR-043: Registered brief for live instances fix (stale cleanup, API filtering, pulsing UI)
-- Investigated live instances showing 3 when only 1 active (2 orphans + stale heartbeat)
+- FR-043: Fix Live Instances — TTL purge, API filtering, pulsing UI cards. Commit: `cb087a2`
+- /sync code: Pushed 5 commits to VPS, brain server rebuilt and restarted
+- /sync data: 648 events, 16 agents, 77 DB rows synced to VPS
 
 **Previous (earlier sessions):**
+- FR-042: Enhanced /sync data with metrics upload + local DB merge. Commits: `92871ec`, `3f35848`
 - FR-041: Brain MCP tool discovery verified. Commit: `7ccf4e5`
 - FR-040: /sync predefined skill created. Commit: `5991700`
 - FR-033 through FR-039: Complete brain sync pipeline. Commit: `f24d25c`
@@ -84,9 +80,9 @@
 
 ## Pending
 
-- HUNT FR-043 (Live instances fix — M-effort, ready)
 - HUNT FR-014 (Higgsfield browser automation — blocked on URL slugs)
 - Continue v3.4 validation (19 remaining checklist items)
+- Archive completed briefs (FR-022 through FR-043)
 
 ---
 

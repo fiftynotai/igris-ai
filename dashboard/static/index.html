@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CRIMSON ARENA — Igris AI Agent Dashboard</title>
-  <link rel="stylesheet" href="/static/style.css?v=12">
+  <link rel="stylesheet" href="/static/style.css?v=13">
 </head>
 <body>
 
@@ -59,6 +59,34 @@
             <span class="digi-panel__tag">[cache:0]</span>
             <span class="digi-panel__tag">[in:0]</span>
             <span class="digi-panel__tag">[out:0]</span>
+          </div>
+        </div>
+      </div>
+      <div class="digi-panel__bezel">
+        <span class="digi-panel__ridge"></span>
+        <span class="digi-panel__ridge"></span>
+        <span class="digi-panel__ridge"></span>
+      </div>
+    </div>
+    <div class="instrument-strip__divider"></div>
+    <div class="instrument-strip__sync" id="sync-panel">
+      <div class="digi-panel__screen">
+        <div class="digi-panel__scanlines"></div>
+        <div class="digi-panel__readout">
+          <div class="digi-panel__label">&gt; <span id="sync-label-text">SYNC PIPELINE</span> <span class="digi-panel__dots">............</span> <span class="digi-panel__pct" id="sync-status-text">OFFLINE</span></div>
+          <div class="sync-stats">
+            <div class="sync-stat">
+              <span class="sync-stat__label">Last Push</span>
+              <span class="sync-stat__value mono" id="sync-last-push">--</span>
+            </div>
+            <div class="sync-stat">
+              <span class="sync-stat__label">Last Pull</span>
+              <span class="sync-stat__value mono" id="sync-last-pull">--</span>
+            </div>
+            <div class="sync-stat">
+              <span class="sync-stat__label">Queue</span>
+              <span class="sync-stat__value mono" id="sync-queue-depth">0</span>
+            </div>
           </div>
         </div>
       </div>
@@ -344,6 +372,16 @@
       </section>
 
     <!-- ---------------------------------------------------------------- -->
+    <!-- TEAM MODE (conditional)                                           -->
+    <!-- ---------------------------------------------------------------- -->
+    <section class="team-mode" id="team-mode-section" style="display:none" aria-label="Team Mode">
+      <h2 class="section-title">Agent Team Mode</h2>
+      <div class="team-mode__grid" id="team-mode-grid">
+        <!-- Teammate cards rendered by app.js -->
+      </div>
+    </section>
+
+    <!-- ---------------------------------------------------------------- -->
     <!-- SIDEBAR (right)                                                   -->
     <!-- ---------------------------------------------------------------- -->
     <aside class="sidebar">
@@ -405,6 +443,37 @@
 
     </aside>
   </main>
+
+  <!-- ================================================================== -->
+  <!-- BRIEF PIPELINE                                                      -->
+  <!-- ================================================================== -->
+  <div class="brief-pipeline" id="brief-pipeline">
+    <div class="brief-pipeline__header">
+      <span class="brief-pipeline__title">BRIEF PIPELINE</span>
+      <span class="brief-pipeline__agent mono" id="pipeline-active-agent">--</span>
+    </div>
+    <div class="brief-pipeline__phases">
+      <div class="pipeline-phase" id="pipeline-phase-plan" data-phase="plan">
+        <span class="pipeline-phase__label">PLAN</span>
+      </div>
+      <span class="pipeline-phase__arrow">&rarr;</span>
+      <div class="pipeline-phase" id="pipeline-phase-build" data-phase="build">
+        <span class="pipeline-phase__label">BUILD</span>
+      </div>
+      <span class="pipeline-phase__arrow">&rarr;</span>
+      <div class="pipeline-phase" id="pipeline-phase-test" data-phase="test">
+        <span class="pipeline-phase__label">TEST</span>
+      </div>
+      <span class="pipeline-phase__arrow">&rarr;</span>
+      <div class="pipeline-phase" id="pipeline-phase-review" data-phase="review">
+        <span class="pipeline-phase__label">REVIEW</span>
+      </div>
+      <span class="pipeline-phase__arrow">&rarr;</span>
+      <div class="pipeline-phase" id="pipeline-phase-done" data-phase="done">
+        <span class="pipeline-phase__label">DONE</span>
+      </div>
+    </div>
+  </div>
 
   <!-- ================================================================== -->
   <!-- BRAIN COMMAND CENTER                                                -->
@@ -501,6 +570,44 @@
           <div class="brain-panel__empty">Waiting for brain connection...</div>
         </div>
       </div>
+
+      <!-- Knowledge Base Panel -->
+      <div class="panel brain-knowledge-panel" id="brain-knowledge-panel">
+        <h3 class="panel__title">
+          <span class="panel__title-icon">&#x1F4DA;</span>
+          Knowledge Base
+        </h3>
+        <div class="brain-knowledge-stats">
+          <div class="brain-stat">
+            <span class="brain-stat__label">Learnings</span>
+            <span class="brain-stat__value mono" id="knowledge-learnings-count">0</span>
+          </div>
+          <div class="brain-stat">
+            <span class="brain-stat__label">Errors</span>
+            <span class="brain-stat__value mono" id="knowledge-errors-count">0</span>
+          </div>
+          <div class="brain-stat">
+            <span class="brain-stat__label">Patterns</span>
+            <span class="brain-stat__value mono" id="knowledge-patterns-count">0</span>
+          </div>
+        </div>
+        <div class="brain-knowledge-recent" id="brain-knowledge-recent">
+          <div class="brain-panel__empty">Waiting for knowledge data...</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================== -->
+  <!-- SKILL HEATMAP                                                       -->
+  <!-- ================================================================== -->
+  <section class="skill-heatmap-section" id="skill-heatmap-section" aria-label="Skill Heatmap">
+    <div class="skill-heatmap__header">
+      <h2 class="section-title">Skill Invocation Heatmap</h2>
+      <span class="skill-heatmap__total mono" id="skill-heatmap-total">0 total</span>
+    </div>
+    <div class="skill-heatmap__bars" id="skill-heatmap-bars">
+      <div class="brain-panel__empty">No skill data yet</div>
     </div>
   </section>
 
@@ -519,6 +626,6 @@
     </div>
   </footer>
 
-  <script src="/static/app.js?v=12"></script>
+  <script src="/static/app.js?v=13"></script>
 </body>
 </html>

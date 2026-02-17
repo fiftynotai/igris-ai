@@ -2599,6 +2599,406 @@ body {
 .nexus__orbit-bar-fill--spd { background: var(--hp-warning); }
 .nexus__orbit-bar-fill--vit { background: var(--hp-full); }
 
+/* ═══════════════════════════════════════════
+   SYNC PIPELINE (Instrument Strip)
+   ═══════════════════════════════════════════ */
+
+.instrument-strip__sync {
+  --digi-accent: #AF52DE;
+  --digi-accent-dim: rgba(175, 82, 222, 0.015);
+  --digi-flash-rgb: 175, 82, 222;
+  flex: 0.6;
+  min-width: 0;
+}
+
+.sync-stats {
+  display: flex;
+  justify-content: space-around;
+  gap: var(--space-sm);
+  margin-top: 4px;
+}
+
+.sync-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+
+.sync-stat__label {
+  font-family: var(--font-mono);
+  font-size: 7px;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.sync-stat__value {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+/* ═══════════════════════════════════════════
+   TEAM MODE
+   ═══════════════════════════════════════════ */
+
+.team-mode {
+  grid-column: 1 / -1;
+  padding: var(--space-md) 0;
+}
+
+.team-mode__grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.team-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--tech-crimson);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+}
+
+.team-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.team-card__name {
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.team-card__phase {
+  font-size: 9px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--hp-warning);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border: 1px solid var(--hp-warning);
+  border-radius: 3px;
+}
+
+.team-card__brief {
+  font-size: 10px;
+  color: var(--token-input);
+  margin-bottom: 6px;
+}
+
+.team-card__progress {
+  height: 4px;
+  background: var(--surface-0);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.team-card__progress-fill {
+  height: 100%;
+  background: var(--tech-crimson);
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+
+/* ═══════════════════════════════════════════
+   BRIEF PIPELINE
+   ═══════════════════════════════════════════ */
+
+.brief-pipeline {
+  padding: var(--space-sm) var(--space-xl);
+  background: var(--surface-1);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.brief-pipeline__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-sm);
+}
+
+.brief-pipeline__title {
+  font-size: 9px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.brief-pipeline__agent {
+  font-size: 10px;
+  color: var(--token-input);
+  font-weight: 600;
+}
+
+.brief-pipeline__phases {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  justify-content: center;
+}
+
+.pipeline-phase {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  transition: all 0.3s ease;
+}
+
+.pipeline-phase__label {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.pipeline-phase__arrow {
+  font-size: 12px;
+  color: var(--border);
+}
+
+.pipeline-phase--done {
+  border-color: var(--success);
+  background: rgba(0, 186, 51, 0.08);
+}
+
+.pipeline-phase--done .pipeline-phase__label {
+  color: var(--success);
+}
+
+.pipeline-phase--active {
+  border-color: var(--tech-crimson);
+  background: rgba(179, 19, 55, 0.12);
+  animation: pipeline-pulse 2s ease-in-out infinite;
+}
+
+.pipeline-phase--active .pipeline-phase__label {
+  color: var(--tech-crimson);
+}
+
+@keyframes pipeline-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(179, 19, 55, 0.3); }
+  50%      { box-shadow: 0 0 12px 2px rgba(179, 19, 55, 0.4); }
+}
+
+.brief-pipeline--idle .pipeline-phase {
+  opacity: 0.4;
+}
+
+.brief-pipeline--idle .pipeline-phase__arrow {
+  opacity: 0.3;
+}
+
+/* ═══════════════════════════════════════════
+   KNOWLEDGE BASE PANEL
+   ═══════════════════════════════════════════ */
+
+.brain-knowledge-panel {
+  grid-column: 1 / -1;
+}
+
+.brain-knowledge-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-lg);
+  margin-bottom: var(--space-md);
+  padding-bottom: var(--space-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.brain-knowledge-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.brain-knowledge-recent::-webkit-scrollbar {
+  width: 6px;
+}
+
+.brain-knowledge-recent::-webkit-scrollbar-track {
+  background: var(--surface-0);
+  border-radius: 3px;
+}
+
+.brain-knowledge-recent::-webkit-scrollbar-thumb {
+  background: var(--divider);
+  border-radius: 3px;
+}
+
+.brain-knowledge-entry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--surface-3);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.brain-knowledge-entry__title {
+  color: var(--text-secondary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brain-knowledge-entry__badge {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(175, 82, 222, 0.15);
+  color: var(--token-output);
+  border: 1px solid rgba(175, 82, 222, 0.3);
+  flex-shrink: 0;
+}
+
+.brain-knowledge-entry__time {
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  min-width: 48px;
+  text-align: right;
+}
+
+/* ═══════════════════════════════════════════
+   SKILL HEATMAP
+   ═══════════════════════════════════════════ */
+
+.skill-heatmap-section {
+  padding: var(--space-lg) var(--space-xl);
+  border-top: 1px solid var(--border);
+  background: var(--surface-0);
+}
+
+.skill-heatmap__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-md);
+}
+
+.skill-heatmap__header .section-title {
+  margin-bottom: 0;
+}
+
+.skill-heatmap__total {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.skill-heatmap__bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.skill-bar {
+  display: grid;
+  grid-template-columns: 120px 1fr 50px;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.skill-bar__label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-bar__track {
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.skill-bar__fill {
+  height: 100%;
+  background: var(--tech-crimson);
+  border-radius: 4px;
+  transition: width 0.5s ease;
+}
+
+.skill-bar__count {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+  text-align: right;
+}
+
+/* ═══════════════════════════════════════════
+   BATTLE LOG: Skill Entries
+   ═══════════════════════════════════════════ */
+
+.battle-log__entry--skill {
+  color: var(--token-output);
+}
+
+.battle-log__entry .entry-skill {
+  font-weight: 700;
+  color: var(--token-output);
+}
+
+/* ═══════════════════════════════════════════
+   RESPONSIVE: New sections
+   ═══════════════════════════════════════════ */
+
+@media (max-width: 900px) {
+  .instrument-strip__sync {
+    flex: 1;
+  }
+
+  .brief-pipeline {
+    padding: var(--space-sm) var(--space-md);
+  }
+
+  .brief-pipeline__phases {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .pipeline-phase {
+    padding: 4px 10px;
+  }
+
+  .skill-bar {
+    grid-template-columns: 80px 1fr 40px;
+  }
+
+  .skill-heatmap-section {
+    padding: var(--space-md) var(--space-md);
+  }
+}
+
 @media (max-width: 1200px) {
   .nexus__grid {
     height: 440px;
