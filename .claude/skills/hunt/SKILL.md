@@ -104,6 +104,8 @@ Loading brief and preparing for implementation.
 Proceed to PLANNING phase.
 ```
 
+**Heartbeat:** If Instance ID exists in CURRENT_SESSION.md, call `igris_instance_heartbeat` with current_brief and current_phase="INIT". See "Instance Heartbeat" section below.
+
 ### Phase 2: PLANNING
 
 1. Update brief: Phase = PLANNING, Active Agent = architect
@@ -331,19 +333,23 @@ Next actions:
 3. View status: /scan
 ```
 
-## Instance Heartbeat
+## Instance Heartbeat (Mandatory When Available)
 
-On each phase transition (PLANNING, BUILDING, TESTING, REVIEWING, DOCUMENTING, COMMITTING, COMPLETE), if the `igris-brain` MCP server is available and an instance ID exists in CURRENT_SESSION.md:
-- Call `igris_instance_heartbeat` with:
-  - instance_id = the instance ID from CURRENT_SESSION.md
-  - machine_hostname = system hostname
-  - machine_os = platform (e.g., "darwin", "linux")
-  - project_slug = current project slug
-  - project_path = absolute path to project directory
-  - current_brief = the brief ID being implemented
-  - current_phase = the new phase name
+On each phase transition (PLANNING, BUILDING, TESTING, REVIEWING, DOCUMENTING, COMMITTING, COMPLETE), you MUST refresh the instance heartbeat if an instance ID exists in CURRENT_SESSION.md.
 
-If brain MCP is not available or no instance ID is stored, skip silently.
+If the `igris-brain` MCP server is available AND an instance ID is stored:
+1. Read the Instance ID from CURRENT_SESSION.md
+2. Call `igris_instance_heartbeat` with:
+   - instance_id = the instance ID from CURRENT_SESSION.md
+   - machine_hostname = system hostname
+   - machine_os = platform (e.g., "darwin", "linux")
+   - project_slug = current project slug
+   - project_path = absolute path to project directory
+   - current_brief = the brief ID being implemented
+   - current_phase = the new phase name
+3. This keeps the instance "active" on the dashboard and shows real-time workflow progress
+
+If brain MCP is not available or no instance ID is stored, skip silently. Do NOT block workflow execution.
 
 ## Error Handling
 

@@ -28,13 +28,17 @@ Read `ai/session/CURRENT_SESSION.md` to understand current state.
 
 Ask: "Save session and enter REST MODE? Any unsaved work will be noted for resumption."
 
-### 2.5. Deregister Instance (Optional)
+### 2.5. Deregister Instance (Mandatory)
 
-If the `igris-brain` MCP server is available and an instance ID exists in CURRENT_SESSION.md:
-- Call `igris_instance_remove` with the instance_id from session
-- This deregisters the instance from the live registry
+You MUST deregister the instance when ending a session. This removes the instance from the VPS dashboard.
 
-If brain MCP is not available or no instance ID is stored, skip silently.
+If the `igris-brain` MCP server is available:
+1. Read the Instance ID from CURRENT_SESSION.md (look for `**Instance ID:**` field)
+2. If Instance ID exists, call `igris_instance_remove` with the instance_id
+3. Display: "Instance deregistered: {instance_id}"
+4. Remove the `**Instance ID:**` line from CURRENT_SESSION.md (clean up for next session)
+
+If brain MCP is NOT available or no Instance ID is stored, skip gracefully. Do NOT block session end.
 
 ### 2.6. Sync to Brain (Optional)
 

@@ -1,9 +1,9 @@
 # Current Session
 
 ## Status
-**Mode:** REST MODE
-**Updated:** 2026-02-16
-**Active Brief:** None
+**Mode:** HUNT MODE
+**Updated:** 2026-02-17
+**Active Brief:** FR-032
 
 ---
 
@@ -17,7 +17,12 @@
 | FR-024 | GitHub-Based VPS Code Updates | Done (commit `f997f72`) |
 | FR-025 | Deploy Brain MCP Server to VPS | Done (commit `c97b602`) |
 | FR-026 | Live Instance Registry | Done (commit `3f77b30`) |
-| FR-027 | Crimson Arena — Unified Command Center Dashboard | Ready |
+| FR-027 | Crimson Arena — Unified Command Center Dashboard | Done (commit `b06c1ec`) |
+| FR-028 | Install Scripts — Remote Brain & Dual-Mode Support | Done (commit `6a96d12`) |
+| FR-029 | Dual-POST Agent Events to VPS Dashboard | Done (commit `c8c1c39`) |
+| FR-030 | Brain Sync Activation & End-to-End Validation | Done (commit `ede7957`) |
+| FR-031 | Sync Briefs to Brain on Registration | Done (commit `b680fae`) |
+| FR-032 | Fix Live Instance Registration & Heartbeat | Done |
 
 **Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, MG-009, MG-010, MG-011, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018, BR-015, FR-019, FR-020, FR-021, PI-003
 
@@ -25,51 +30,56 @@
 
 ## Resume Point
 
-**Last Active:** Brain MCP server fix (no brief — maintenance)
+**Last Active:** FR-032 registration
 **Phase:** N/A
-
-**Next Steps When Resuming:**
-1. HUNT FR-027 (L-effort — Crimson Arena unified dashboard: add brain proxy endpoints to server.py, new frontend panels for instances/projects/briefs/health, WebSocket real-time polling)
-2. **Architecture note for FR-027:** Brain MCP server needs lightweight REST query endpoints added (GET routes returning JSON from SQLite) so the dashboard can proxy without MCP protocol complexity. This should be a sub-task during the PLANNING phase.
-3. HUNT FR-014 (L-effort — Unblock with correct URL slugs, re-test browser automation)
-4. Continue v3.4 validation — 19 items remaining on checklist: `ai/session/MG-008-test-checklist.md`
-5. **Add `remote_brain` config** to `~/.igris/config.json` — currently missing `remote_brain.url` and `remote_brain.api_key` fields, which blocks `/awaken` brain pull and `/rest` brain push.
 
 ---
 
-## Last Session Summary (2026-02-16)
+## Next Session Instructions
 
-**Date:** 2026-02-16
-**Summary:** Fixed brain MCP server connection issues that blocked `/awaken` brain queries.
+1. **HUNT FR-032** (S-effort) — Fix live instance registration. Change /awaken step 3.7 from "Optional" to mandatory, add periodic heartbeat in /hunt, verify /rest deregistration. Root cause: orchestrator skips "Optional" steps.
+2. **HUNT FR-014** (L-effort) — Unblock Higgsfield browser automation with correct URL slugs.
+3. Continue v3.4 validation — 19 items remaining: `ai/session/MG-008-test-checklist.md`
+4. Manual test: VPS unreachable graceful failure for brain sync (FR-030 remaining test)
+5. Verify VPS dashboard shows synced briefs after FR-031 changes take effect
+
+**Key context for FR-032:** The /awaken skill step 3.7 uses the word "Optional" — orchestrator interprets this as "skip." Fix: change to "MUST call (skip silently if brain unavailable)." Also add heartbeat refresh between /hunt phases to prevent 30-min stale timeout. The instances table IS in sync config (sync.ts lines 110-119) but never gets data because local table is always empty.
+
+---
+
+## Last Session Summary (2026-02-17)
+
+**Date:** 2026-02-17
+**Summary:** Implemented 4 briefs via parallel Agent Teams (FR-029, FR-028, FR-030, FR-031). Investigated VPS dashboard gaps (missing briefs, missing live instances) via SEEKER and registered FR-032. All code pushed to develop.
 
 **Completed (this session):**
-- Fixed brain MCP `igris_memory_recall` and `igris_project_register` failing with "No valid session ID provided" error
-- Added `dispatchToolCall()` direct tool execution fallback in `brain-mcp-server/src/index.ts` — bypasses MCP transport when no sessions exist (after server restart)
-- Added session ID injection into `rawHeaders` for when sessions exist but client omits header
-- Fixed FTS5 syntax errors: added `sanitizeFts5Query()` to `memory.ts` and `errors.ts` — strips commas, colons, parentheses before MATCH queries
-- Deployed fix to VPS, verified all brain tools work end-to-end via Claude Code
-- Stored learnings in brain (IDs 11, 12)
-- Commit: `005b945`, pushed to origin/develop
+- FR-029: Dual-POST agent events to local + VPS dashboard. Commit: `c8c1c39`
+- FR-028: Install scripts with --local/--remote/--dual brain modes + igris_brain_switch.sh. Commit: `6a96d12`
+- FR-030: Brain sync activation — schema v2→v4, push/pull tested end-to-end (54 rows pushed, 22 pulled). Commit: `ede7957`
+- FR-031: Brief sync on registration — /register, /archive, /hunt skills + igris_os.md updated. Commit: `b680fae`
+- Investigated brain DB sync gap via SEEKER → registered FR-030
+- Investigated VPS dashboard missing briefs via SEEKER → registered FR-031
+- Investigated VPS dashboard zero live instances via SEEKER → registered FR-032
+- All 4 commits pushed to develop
 
-**Previous (this day — earlier sessions):**
-- FR-026: Live Instance Registry. Commit: `3f77b30`.
-- FR-027: Registered brief for Crimson Arena dashboard.
-- FR-025: Deployed brain MCP server to VPS. Commit: `c97b602`.
-- FR-024: Created igris_vps_update.sh. Commit: `f997f72`.
-- FR-023: Bidirectional sync. Commit: `3ae2091`.
-- FR-022: HTTP transport. Commit: `020a964`.
-
-**Previous (2026-02-13):**
-- v3.4 validation sweep — fixed 3 data integrity issues. Commit: `e8c8b25`.
+**Previous (earlier sessions):**
+- FR-027: Crimson Arena dashboard. Commit: `b06c1ec`
+- VPS deployment docs. Commit: `59d4750`
+- FR-026: Live Instance Registry. Commit: `3f77b30`
+- FR-025: VPS brain deployment. Commit: `c97b602`
+- FR-024: GitHub VPS code updates. Commit: `f997f72`
+- FR-023: Bidirectional sync. Commit: `3ae2091`
+- FR-022: HTTP transport. Commit: `020a964`
+- Brain MCP server fix. Commit: `005b945`
 
 ---
 
 ## Pending
 
-- HUNT FR-027 (Crimson Arena — Unified Command Center Dashboard — L-effort, ready)
+- HUNT FR-032 (Fix live instance registration & heartbeat — S-effort, ready)
 - HUNT FR-014 (Higgsfield browser automation — blocked on URL slugs)
 - Continue v3.4 validation (19 remaining checklist items)
-- Add `remote_brain` config to `~/.igris/config.json`
+- Manual VPS failure testing for brain sync
 
 ---
 

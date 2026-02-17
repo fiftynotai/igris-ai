@@ -76,18 +76,21 @@ If the `igris-brain` MCP server is available AND a remote brain URL is configure
 
 If remote brain is not configured or pull fails, skip silently. Do NOT block session start.
 
-### 3.7. Register Instance (Optional)
+### 3.7. Register Instance (Mandatory)
+
+You MUST call `igris_instance_heartbeat` to register this session as a live instance. This is NOT optional — the VPS dashboard depends on it.
 
 If the `igris-brain` MCP server is available:
-- Call `igris_instance_heartbeat` with:
-  - machine_hostname = system hostname
-  - machine_os = platform (e.g., "darwin", "linux")
-  - project_slug = current project slug
-  - project_path = absolute path to project directory
-- Store the returned `instance_id` — add it to CURRENT_SESSION.md as `**Instance ID:** {uuid}`
-- This ID will be used for subsequent heartbeats and deregistration on /rest
+1. Call `igris_instance_heartbeat` with:
+   - machine_hostname = system hostname
+   - machine_os = platform (e.g., "darwin", "linux")
+   - project_slug = current project slug
+   - project_path = absolute path to project directory
+2. Store the returned `instance_id` in CURRENT_SESSION.md by adding a line: `**Instance ID:** {uuid}` in the Status section
+3. Display: "Instance registered: {instance_id}"
+4. This ID will be used for subsequent heartbeats and deregistration on /rest
 
-If brain MCP is not available, skip silently.
+If brain MCP is NOT available (tool call fails or MCP server not registered), skip gracefully with a one-line notice: "Instance registration skipped (brain MCP unavailable)." Do NOT block session start.
 
 ### 4. Perform System Assessment
 

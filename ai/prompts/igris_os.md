@@ -296,10 +296,10 @@ IGRIS v4.0 introduces a centralized brain at `~/.igris/` that provides persisten
 | `igris_brief_dashboard` | Cross-project brief dashboard |
 
 ### Brain Integration Points
-- **Session Start (/awaken):** Recall relevant learnings, register session, recall cross-project session context
-- **Session End (/rest):** Sync learnings and decisions to brain, sync session snapshot and brief status
+- **Session Start (/awaken):** Recall relevant learnings, register session, recall cross-project session context, **register instance via heartbeat (mandatory)**
+- **Session End (/rest):** Sync learnings and decisions to brain, sync session snapshot and brief status, **deregister instance (mandatory)**
 - **Status (/scan):** Show brain stats and cross-project insights
-- **Implementation (/hunt):** Record agent metrics, store error solutions
+- **Implementation (/hunt):** Record agent metrics, store error solutions, **refresh instance heartbeat on each phase transition**
 - **Dashboard (/dashboard):** Show active briefs and recent sessions across all projects
 
 ### Graceful Degradation
@@ -514,6 +514,12 @@ After loading system context, perform intelligent assessment and recommendations
    - File exists but only whitespace/newlines → treat as missing
    - File has actual content (> 100 chars meaningful text) → treat as loaded
 
+6. **Check Instance Registration:**
+   - Check if CURRENT_SESSION.md contains an `**Instance ID:**` field
+   - If Instance ID present: Instance is registered and active
+   - If Instance ID missing: Instance was not registered during /awaken
+   - If brain MCP is available but no Instance ID: Flag for recommendation (registration should have happened)
+
 ### Recommendation Priority Logic
 
 **Generate recommendations based on this priority:**
@@ -556,6 +562,7 @@ After loading system context, perform intelligent assessment and recommendations
 ├─ Briefs: X completed, Y ready (Z P0/P1)
 ├─ Blockers: [None | X active (Y critical)]
 ├─ Architecture: [✅ coding_guidelines.md loaded | ⚠️  coding_guidelines.md not found]
+├─ Instance: [✅ Registered (ID: {short_id}) | ⚠️ Not registered | N/A (no brain)]
 └─ Git: [Clean | X uncommitted files]
 
 💡 Recommended Actions:
@@ -573,6 +580,7 @@ After loading system context, perform intelligent assessment and recommendations
 ├─ Briefs: 4 completed, 0 ready
 ├─ Blockers: None
 ├─ Architecture: ✅ coding_guidelines.md loaded
+├─ Instance: ✅ Registered (ID: a1b2c3d4)
 └─ Git: Clean
 
 💡 Recommended Actions:
@@ -587,6 +595,7 @@ After loading system context, perform intelligent assessment and recommendations
 ├─ Briefs: 0 completed, 0 ready
 ├─ Blockers: None
 ├─ Architecture: ⚠️  coding_guidelines.md not found (or empty)
+├─ Instance: N/A (no brain)
 └─ Git: Clean
 
 💡 Recommended Actions:
