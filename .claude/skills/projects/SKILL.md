@@ -32,6 +32,12 @@ Display all projects registered in the Igris AI centralized brain.
 
 ## Execution
 
+### 0. Track Invocation
+Silently emit a skill invocation event (never blocks execution):
+```bash
+bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "projects" 2>/dev/null || true
+```
+
 ### 1. Check Brain Exists
 
 Check if `~/.igris/memory/knowledge.db` exists. If not, display:

@@ -38,6 +38,12 @@ Deploy code and/or data to the VPS brain server.
 
 ## Execution
 
+### 0. Track Invocation
+Silently emit a skill invocation event (never blocks execution):
+```bash
+bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "sync" 2>/dev/null || true
+```
+
 ### Step 1: Load Configuration
 
 Read `~/.igris/config.json` and extract:

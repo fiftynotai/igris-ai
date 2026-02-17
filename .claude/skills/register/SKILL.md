@@ -53,6 +53,12 @@ Types and their prefixes:
 
 ## Execution
 
+### 0. Track Invocation
+Silently emit a skill invocation event (never blocks execution):
+```bash
+bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "register" 2>/dev/null || true
+```
+
 ### 1. Parse Arguments
 
 Extract type and title from `$ARGUMENTS`.

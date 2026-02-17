@@ -397,7 +397,8 @@ CREATE TABLE IF NOT EXISTS skill_invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
     skill_name TEXT NOT NULL,
-    session_date TEXT NOT NULL
+    session_date TEXT NOT NULL,
+    UNIQUE(skill_name, ts)
 );
 CREATE INDEX IF NOT EXISTS idx_skill_name ON skill_invocations(skill_name);
 CREATE INDEX IF NOT EXISTS idx_skill_session_date ON skill_invocations(session_date);
@@ -582,6 +583,15 @@ async def insert_event(db: aiosqlite.Connection, event: dict):
                        VALUES (1, ?, ?, ?, ?, ?)""",
                     (ctx_used, ctx_max, ctx_remaining, model_id, now),
                 )
+
+    # Handle skill_invoke: insert into skill_invocations table
+    if event_type == "skill_invoke":
+        skill_name = event.get("skill_name", "")
+        if skill_name:
+            await db.execute(
+                "INSERT OR IGNORE INTO skill_invocations (ts, skill_name, session_date) VALUES (?, ?, ?)",
+                (ts, skill_name, session_date),
+            )
 
     await db.commit()
     return True
@@ -1167,7 +1177,8 @@ async def build_skill_heatmap(db, range_key="all"):
         skills = {r[0]: r[1] for r in rows}
         total = sum(skills.values())
         return {"skills": skills, "total": total}
-    except Exception:
+    except Exception as exc:
+        logger.warning("build_skill_heatmap failed: %s", exc)
         return {"skills": {}, "total": 0}
 
 
@@ -1385,6 +1396,16 @@ async def lifespan(app: FastAPI):
     logger.info("Connecting to database: %s", DB_PATH)
     app.state.db = await aiosqlite.connect(DB_PATH)
     await init_db(app.state.db)
+
+    # Verify skill_invocations table exists
+    async with app.state.db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='skill_invocations'"
+    ) as cursor:
+        row = await cursor.fetchone()
+    if row:
+        logger.info("skill_invocations table verified")
+    else:
+        logger.warning("skill_invocations table NOT found after init_db")
 
     # Load budget config
     app.state.budget_config = load_budget_config()
@@ -1676,23 +1697,12 @@ async def post_event(event: AgentEvent):
             status_code=500,
         )
 
-    # Handle skill_invoke: insert into skill_invocations table
+    # Broadcast skill event to WebSocket clients
     if event.event == "skill_invoke" and event.skill_name:
-        try:
-            session_date = datetime.now().strftime("%Y-%m-%d")
-            await db.execute(
-                "INSERT INTO skill_invocations (ts, skill_name, session_date) VALUES (?, ?, ?)",
-                (event.ts or datetime.now().isoformat(), event.skill_name, session_date),
-            )
-            await db.commit()
-        except Exception as exc:
-            logger.warning("Failed to insert skill invocation: %s", exc)
-
-        # Broadcast skill event
         try:
             await manager.broadcast({
                 "type": "skill_event",
-                "data": {"skill_name": event.skill_name, "ts": event.ts or datetime.now().isoformat()},
+                "data": {"skill_name": event.skill_name, "ts": event.ts or datetime.now(timezone.utc).isoformat()},
             })
         except Exception:
             pass

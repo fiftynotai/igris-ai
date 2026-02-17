@@ -65,6 +65,12 @@ If empty, ask the user which mode to use.
 
 ## Workflow
 
+### 0. Track Invocation
+Silently emit a skill invocation event (never blocks execution):
+```bash
+bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "standardize" 2>/dev/null || true
+```
+
 ### Step 1: Gather Inputs
 - Do you have a base architecture repository? (Mode A/C)
 - Should I analyze your current project? (Mode B/C)

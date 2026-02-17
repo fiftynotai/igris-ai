@@ -169,6 +169,12 @@ Per-model prompting tips for best results:
 
 ## Execution Flow
 
+### 0. Track Invocation
+Silently emit a skill invocation event (never blocks execution):
+```bash
+bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "higgsfield" 2>/dev/null || true
+```
+
 ### Step 1: Parse the Request
 
 From `$ARGUMENTS`, determine:

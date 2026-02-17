@@ -32,6 +32,12 @@ Move a completed brief to the archive directory.
 
 ## Execution
 
+### 0. Track Invocation
+Silently emit a skill invocation event (never blocks execution):
+```bash
+bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "archive" 2>/dev/null || true
+```
+
 ### 1. Find Brief File
 
 Search `ai/briefs/` for file matching `$ARGUMENTS`:

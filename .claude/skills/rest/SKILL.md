@@ -20,6 +20,12 @@ Safely pause or end the current session, saving state for later resumption.
 
 ## Execution
 
+### 0. Track Invocation
+Silently emit a skill invocation event (never blocks execution):
+```bash
+bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "rest" 2>/dev/null || true
+```
+
 ### 1. Read Current Session
 
 Read `ai/session/CURRENT_SESSION.md` to understand current state.

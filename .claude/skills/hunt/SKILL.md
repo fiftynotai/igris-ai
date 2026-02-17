@@ -66,6 +66,12 @@ Execute the complete implementation workflow for a brief, from planning through 
 
 ## Execution
 
+### 0. Track Invocation
+Silently emit a skill invocation event (never blocks execution):
+```bash
+bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "hunt" 2>/dev/null || true
+```
+
 ### Phase 1: INIT
 
 1. Find brief file in `ai/briefs/` matching `$ARGUMENTS`

@@ -49,6 +49,12 @@ Low Val  | IF TIME    | SKIP       | SKIP
 
 ## Workflow
 
+### 0. Track Invocation
+Silently emit a skill invocation event (never blocks execution):
+```bash
+bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "ideate" 2>/dev/null || true
+```
+
 ### Step 1: Understand Context
 - Read project structure and purpose
 - Understand existing features
