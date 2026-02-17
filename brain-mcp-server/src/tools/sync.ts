@@ -13,6 +13,8 @@
  * Tools:
  * - igris_brain_push: Push local changes to remote brain
  * - igris_brain_pull: Pull remote changes to local brain
+ * - igris_file_push: Push a flat file to the remote brain server
+ * - igris_file_pull: Pull a flat file from the remote brain server
  *
  * @module tools/sync
  * @author Fifty.ai
@@ -35,6 +37,24 @@ export interface BrainPushInput {
 
 /** Input shape for igris_brain_pull */
 export interface BrainPullInput {
+  remote_url: string;
+  api_key: string;
+}
+
+/** Valid file types for flat file sync */
+export type SyncFileType = 'events' | 'agent_metrics' | 'budget';
+
+/** Input shape for igris_file_push */
+export interface FilePushInput {
+  file_type: SyncFileType;
+  content: string;
+  remote_url: string;
+  api_key: string;
+}
+
+/** Input shape for igris_file_pull */
+export interface FilePullInput {
+  file_type: SyncFileType;
   remote_url: string;
   api_key: string;
 }
@@ -1088,6 +1108,121 @@ function handleDefinitionPull(
   };
 }
 
+// ---------------------------------------------------------------------------
+// File Sync — BR-023
+// ---------------------------------------------------------------------------
+
+/**
+ * Push a flat file (events.jsonl, agent-metrics.json, budget.json) to the
+ * remote brain server via HTTP. Updates local sync_state for dashboard tracking.
+ *
+ * @param args - File type, content, remote URL, and API key
+ * @returns MCP-formatted response with push summary
+ */
+async function handleFilePush(
+  args: FilePushInput
+): Promise<{ content: { type: string; text: string }[] }> {
+  const db = getDb();
+  const remoteUrl = args.remote_url.replace(/\/+$/, '');
+  const pushedAt = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const byteSize = Buffer.byteLength(args.content, 'utf8');
+
+  try {
+    await fetchWithRetry(`${remoteUrl}/sync/file-push`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${args.api_key}`,
+      },
+      body: JSON.stringify({
+        file_type: args.file_type,
+        content: args.content,
+      }),
+    });
+
+    // Update local sync_state
+    db.prepare(`
+      INSERT INTO sync_state (remote_url, table_name, last_push_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(remote_url, table_name)
+      DO UPDATE SET last_push_at = excluded.last_push_at
+    `).run(remoteUrl, `file:${args.file_type}`, pushedAt);
+
+    return {
+      content: [{
+        type: 'text',
+        text: [
+          'File push completed successfully.',
+          '',
+          `Remote: ${remoteUrl}`,
+          `File type: ${args.file_type}`,
+          `Bytes pushed: ${byteSize}`,
+          `Pushed at: ${pushedAt}`,
+        ].join('\n'),
+      }],
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      content: [{
+        type: 'text',
+        text: `File push failed: ${message}\n\nRemote: ${remoteUrl}\nFile type: ${args.file_type}`,
+      }],
+      isError: true,
+    } as { content: { type: string; text: string }[]; isError: boolean };
+  }
+}
+
+/**
+ * Pull a flat file from the remote brain server.
+ *
+ * @param args - File type, remote URL, and API key
+ * @returns MCP-formatted response with file content
+ */
+async function handleFilePull(
+  args: FilePullInput
+): Promise<{ content: { type: string; text: string }[] }> {
+  const remoteUrl = args.remote_url.replace(/\/+$/, '');
+
+  try {
+    const response = await fetchWithRetry(
+      `${remoteUrl}/sync/file-pull/${args.file_type}`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${args.api_key}`,
+        },
+      },
+    );
+
+    const data = await response.json() as {
+      file_type: string;
+      content: string;
+      size: number;
+    };
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          file_type: data.file_type,
+          content: data.content,
+          size: data.size,
+        }, null, 2),
+      }],
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      content: [{
+        type: 'text',
+        text: `File pull failed: ${message}\n\nRemote: ${remoteUrl}\nFile type: ${args.file_type}`,
+      }],
+      isError: true,
+    } as { content: { type: string; text: string }[]; isError: boolean };
+  }
+}
+
 export {
   handleBrainPush,
   handleBrainPull,
@@ -1098,5 +1233,7 @@ export {
   handleSessionFilePull,
   handleDefinitionSync,
   handleDefinitionPull,
+  handleFilePush,
+  handleFilePull,
 };
 export type { SyncTableConfig };

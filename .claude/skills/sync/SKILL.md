@@ -139,96 +139,71 @@ Execute these steps sequentially, displaying progress:
 
 Skip this step if mode is `code` or `status`.
 
-**MCP-dependent steps ([1/4] and [2/4]):**
+All data sync operations use MCP tools. The `igris-brain` MCP server must be available.
 
-If the `igris-brain` MCP server is available:
+If the `igris-brain` MCP server is NOT available:
+- Display error and abort:
+  ```
+  ERROR: Brain MCP server is not available.
 
-**[1/4] Draining sync queue...**
+  The igris-brain MCP server must be registered and running to sync brain data.
+  Check ~/.claude.json for MCP server registration.
+  ```
+
+**[1/5] Draining sync queue...**
 - Call `igris_sync_queue_drain` with:
   - remote_url = value from `remote_brain.url`
   - api_key = value from `remote_brain.api_key`
 - Display count of drained operations.
 
-**[2/4] Pushing brain data...**
+**[2/5] Pushing brain data...**
 - Call `igris_brain_push` with:
   - remote_url = value from `remote_brain.url`
   - api_key = value from `remote_brain.api_key`
 - Display sync summary (rows pushed, errors synced, etc.)
 
-If the `igris-brain` MCP server is NOT available:
-- Skip steps [1/4] and [2/4].
-- Display warning:
-  ```
-  WARNING: Brain MCP server not available. Steps [1/4] and [2/4] skipped.
-  ```
-- If mode is `data` and SSH-based steps also fail: hard failure with clear error:
-  ```
-  ERROR: Brain MCP server is not available and SSH sync also failed.
+**[3/5] Pushing events log...**
+- Check if `ai/session/metrics/events.jsonl` exists in the project directory.
+- If it exists:
+  - Read the file content.
+  - Call `igris_file_push` with:
+    - file_type = `events`
+    - content = file contents
+    - remote_url = value from `remote_brain.url`
+    - api_key = value from `remote_brain.api_key`
+  - On success: display "Events log pushed (X bytes)"
+  - On failure: display WARNING but do NOT abort.
+  - **Note:** The Crimson Arena dashboard watches this file and auto-imports new events into arena.db.
+- If it does not exist:
+  - Display: "No events.jsonl found. Skipping."
 
-  The igris-brain MCP server must be registered and running to sync brain data via MCP.
-  Check ~/.claude.json for MCP server registration.
-  Alternatively, ensure SSH connectivity is working for direct DB sync.
-  ```
-- If mode is `all`: warn but continue with SSH-based steps [3/4] and [4/4]:
-  ```
-  WARNING: Brain MCP server not available. MCP data sync skipped.
-  Continuing with SSH-based sync steps...
-  ```
+**[4/5] Pushing agent metrics...**
+- Check if `ai/session/metrics/agent-metrics.json` exists in the project directory.
+- If it exists:
+  - Read the file content.
+  - Call `igris_file_push` with:
+    - file_type = `agent_metrics`
+    - content = file contents
+    - remote_url = value from `remote_brain.url`
+    - api_key = value from `remote_brain.api_key`
+  - On success: display "Agent metrics pushed (X bytes)"
+  - On failure: display WARNING but do NOT abort.
+- If it does not exist:
+  - Display: "No agent-metrics.json found. Skipping."
 
-**SSH-based steps ([3/4] and [4/4]) -- always run regardless of MCP availability:**
-
-**[3/4] Uploading agent metrics and events...**
-- Read `vps.user`, `vps.host`, `vps.brain_path` from config.
-- Create remote directories: `ssh -o ConnectTimeout=10 {vps.user}@{vps.host} "mkdir -p {vps.brain_path}/metrics && mkdir -p {vps.brain_path}/ai/session/metrics"`
-
-- **agent-metrics.json:**
-  - Check if `ai/session/metrics/agent-metrics.json` exists in the project directory.
-  - If it exists:
-    - Upload file: `scp -o ConnectTimeout=10 ai/session/metrics/agent-metrics.json {vps.user}@{vps.host}:{vps.brain_path}/metrics/agent-metrics.json`
-    - On success: display "Agent metrics uploaded (X agents, Y total invocations)"
-      - Parse the JSON to get totals.total_invocations and count of agents for the display message.
-    - On failure: display WARNING but do NOT abort.
-  - If it does not exist:
-    - Display: "No agent-metrics.json found. Skipping."
-
-- **events.jsonl** (required for Crimson Arena cost tracking):
-  - Check if `ai/session/metrics/events.jsonl` exists in the project directory.
-  - If it exists:
-    - Upload file: `scp -o ConnectTimeout=10 ai/session/metrics/events.jsonl {vps.user}@{vps.host}:{vps.brain_path}/ai/session/metrics/events.jsonl`
-    - On success: display "Events log uploaded (X events)"
-      - Count lines in the file for the display message.
-    - On failure: display WARNING but do NOT abort.
-    - **Note:** The Crimson Arena dashboard watches this file and auto-imports new events into arena.db. If the dashboard is running, events will appear within seconds. If not, they will be imported on next dashboard restart.
-  - If it does not exist:
-    - Display: "No events.jsonl found. Skipping."
-
-- **budget.json** (daily budget thresholds for Crimson Arena):
-  - Check if `ai/session/metrics/budget.json` exists in the project directory.
-  - If it exists:
-    - Upload file: `scp -o ConnectTimeout=10 ai/session/metrics/budget.json {vps.user}@{vps.host}:{vps.brain_path}/ai/session/metrics/budget.json`
-    - On success: display "Budget config uploaded"
-    - On failure: display WARNING but do NOT abort.
-  - If it does not exist:
-    - Display: "No budget.json found. Skipping."
-
-**[4/4] Merging local brain data...**
-- This step syncs the local machine's brain database to the VPS brain database.
-- Read `vps.user`, `vps.host`, `vps.brain_path` from config.
-- For each table (learnings, projects, sessions, brief_status, agent_metrics):
-  1. Dump local data: Run `sqlite3 ~/.igris/memory/knowledge.db` with a query to export rows as INSERT OR IGNORE SQL statements (excluding the id column to avoid PK conflicts).
-     - For `brief_status` (has UNIQUE on project+brief_id):
-       `sqlite3 ~/.igris/memory/knowledge.db "SELECT 'INSERT OR IGNORE INTO brief_status (project, brief_id, brief_type, title, status, priority, effort, phase, updated_at) VALUES (' || quote(project) || ',' || quote(brief_id) || ',' || quote(brief_type) || ',' || quote(title) || ',' || quote(status) || ',' || quote(priority) || ',' || quote(effort) || ',' || quote(phase) || ',' || quote(updated_at) || ');' FROM brief_status;"`
-     - For `projects` (has UNIQUE on slug):
-       `sqlite3 ~/.igris/memory/knowledge.db "SELECT 'INSERT OR IGNORE INTO projects (slug, name, path, tech_stack, igris_version, status, registered_at, last_session_at) VALUES (' || quote(slug) || ',' || quote(name) || ',' || quote(path) || ',' || quote(tech_stack) || ',' || quote(igris_version) || ',' || quote(status) || ',' || quote(registered_at) || ',' || quote(last_session_at) || ');' FROM projects;"`
-     - For `learnings` (no UNIQUE beyond PK -- use title+project dedup):
-       `sqlite3 ~/.igris/memory/knowledge.db "SELECT 'INSERT INTO learnings (project, category, title, content, tags, tech_stack, scope, source_brief, confidence, created_at, updated_at, access_count, last_accessed_at) SELECT ' || quote(project) || ',' || quote(category) || ',' || quote(title) || ',' || quote(content) || ',' || quote(tags) || ',' || quote(tech_stack) || ',' || quote(scope) || ',' || quote(source_brief) || ',' || quote(confidence) || ',' || quote(created_at) || ',' || quote(updated_at) || ',' || quote(access_count) || ',' || quote(last_accessed_at) || ' WHERE NOT EXISTS (SELECT 1 FROM learnings WHERE project = ' || quote(project) || ' AND title = ' || quote(title) || ');' FROM learnings;"`
-     - For `sessions` and `agent_metrics`: Use similar WHERE NOT EXISTS dedup on key columns.
-  2. Write all INSERT statements to a temp file: `/tmp/igris_local_merge.sql`
-  3. Upload: `scp -o ConnectTimeout=10 /tmp/igris_local_merge.sql {vps.user}@{vps.host}:/tmp/igris_local_merge.sql`
-  4. Execute on VPS: `ssh -o ConnectTimeout=10 {vps.user}@{vps.host} "sqlite3 {vps.brain_path}/memory/knowledge.db < /tmp/igris_local_merge.sql"`
-  5. Clean up: Remove `/tmp/igris_local_merge.sql` locally and on VPS.
-  6. On success: display row counts merged per table.
-  7. On failure: display WARNING with error details. Do NOT abort.
+**[5/5] Pushing budget config...**
+- Check if `ai/session/metrics/budget.json` exists in the project directory.
+- If it exists:
+  - Read the file content.
+  - Call `igris_file_push` with:
+    - file_type = `budget`
+    - content = file contents
+    - remote_url = value from `remote_brain.url`
+    - api_key = value from `remote_brain.api_key`
+  - On success: display "Budget config pushed (X bytes)"
+  - On failure: display WARNING but do NOT abort.
+- If it does not exist:
+  - Display: "No budget.json found. Skipping."
 
 ### Step 5: Status Mode (status mode only)
 
@@ -296,11 +271,11 @@ After code and/or data sync completes, display a summary table:
 | Git push | OK (X commits) / SKIPPED / FAILED: {reason} |
 | VPS deploy | OK ({old_hash} -> {new_hash}) / SKIPPED / FAILED: {reason} |
 | Health check | PASSED (v{version}) / WARNING: {reason} / FAILED |
-| Brain data (MCP) | OK (X rows synced) / SKIPPED / FAILED: {reason} |
-| Agent metrics | OK (uploaded) / SKIPPED (no file) / FAILED: {reason} |
-| Events log | OK (X events uploaded) / SKIPPED (no file) / FAILED: {reason} |
-| Budget config | OK (uploaded) / SKIPPED (no file) / FAILED: {reason} |
-| Local DB merge | OK (X rows merged) / SKIPPED / FAILED: {reason} |
+| Sync queue drain | OK (X items drained) / SKIPPED / FAILED: {reason} |
+| Brain data push | OK (X rows synced) / SKIPPED / FAILED: {reason} |
+| Events log | OK (X bytes pushed) / SKIPPED (no file) / FAILED: {reason} |
+| Agent metrics | OK (X bytes pushed) / SKIPPED (no file) / FAILED: {reason} |
+| Budget config | OK (X bytes pushed) / SKIPPED (no file) / FAILED: {reason} |
 ```
 
 If any step failed, include troubleshooting tips:
@@ -311,8 +286,7 @@ If any step failed, include troubleshooting tips:
 - **SSH failed:** Verify SSH key is configured for {vps.user}@{vps.host}. Test with: ssh {vps.user}@{vps.host} "echo ok"
 - **Health check failed:** Service may be restarting. Check PM2: ssh {vps.user}@{vps.host} "pm2 status igris-brain"
 - **Brain data failed:** Ensure igris-brain MCP server is registered in ~/.claude.json
-- **Metrics/events upload failed:** Check SSH/SCP connectivity and that {vps.brain_path}/metrics/ and {vps.brain_path}/ai/session/metrics/ are writable.
-- **Local DB merge failed:** Check that local ~/.igris/memory/knowledge.db exists and VPS brain DB is accessible.
+- **File push failed:** Ensure remote brain server is reachable at the configured URL and API key is correct.
 ```
 
 Only show troubleshooting tips relevant to the actual failures encountered.

@@ -32,7 +32,8 @@ import {
   isInitializeRequest,
 } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
-import { statSync } from 'node:fs';
+import { statSync, mkdirSync, writeFileSync, readFileSync, renameSync, existsSync } from 'node:fs';
+import * as path from 'node:path';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
@@ -58,19 +59,21 @@ import {
   handleBriefFileSync,
   handleSessionFileSync, handleSessionFilePull,
   handleDefinitionSync, handleDefinitionPull,
+  handleFilePush, handleFilePull,
 } from './tools/sync.js';
 import type {
   BrainPushInput, BrainPullInput, SyncQueueDrainInput,
   BriefFileSyncInput,
   SessionFileSyncInput, SessionFilePullInput,
   DefinitionSyncInput, DefinitionPullInput,
+  FilePushInput, FilePullInput,
 } from './tools/sync.js';
 
 // Staging processor
 import { processStagingFiles } from './staging.js';
 
 // Database lifecycle
-import { getDb, closeDb, DB_PATH } from './db.js';
+import { getDb, closeDb, DB_PATH, BRAIN_DIR } from './db.js';
 
 /** Timestamp when this server process started, used for uptime calculation. */
 const SERVER_START_TIME = Date.now();
@@ -199,6 +202,10 @@ async function dispatchToolCall(
         return handleDefinitionSync(args as unknown as DefinitionSyncInput);
       case 'igris_definition_pull':
         return handleDefinitionPull(args as unknown as DefinitionPullInput);
+      case 'igris_file_push':
+        return await handleFilePush(args as unknown as FilePushInput);
+      case 'igris_file_pull':
+        return await handleFilePull(args as unknown as FilePullInput);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -878,6 +885,58 @@ function createBrainServer(): Server {
             },
           },
         },
+
+        // === File Sync Tools (BR-023) ===
+        {
+          name: 'igris_file_push',
+          description: 'Push a flat file (events.jsonl, agent-metrics.json, budget.json) to the remote brain server via HTTP. Updates sync_state for dashboard tracking.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              file_type: {
+                type: 'string',
+                enum: ['events', 'agent_metrics', 'budget'],
+                description: 'File type: "events" for events.jsonl (cost tracking), "agent_metrics" for agent-metrics.json (agent stats), "budget" for budget.json (daily budget thresholds)',
+              },
+              content: {
+                type: 'string',
+                description: 'Full file content to push',
+              },
+              remote_url: {
+                type: 'string',
+                description: 'URL of the remote brain server (e.g., "https://brain.example.com")',
+              },
+              api_key: {
+                type: 'string',
+                description: 'API key for authenticating with the remote brain server',
+              },
+            },
+            required: ['file_type', 'content', 'remote_url', 'api_key'],
+          },
+        },
+        {
+          name: 'igris_file_pull',
+          description: 'Pull a flat file from the remote brain server.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              file_type: {
+                type: 'string',
+                enum: ['events', 'agent_metrics', 'budget'],
+                description: 'File type: "events" for events.jsonl, "agent_metrics" for agent-metrics.json, "budget" for budget.json',
+              },
+              remote_url: {
+                type: 'string',
+                description: 'URL of the remote brain server',
+              },
+              api_key: {
+                type: 'string',
+                description: 'API key for authenticating with the remote brain server',
+              },
+            },
+            required: ['file_type', 'remote_url', 'api_key'],
+          },
+        },
       ],
     };
   });
@@ -969,6 +1028,12 @@ function createBrainServer(): Server {
           return handleDefinitionSync(args as unknown as DefinitionSyncInput);
         case 'igris_definition_pull':
           return handleDefinitionPull(args as unknown as DefinitionPullInput);
+
+        // File sync (BR-023)
+        case 'igris_file_push':
+          return await handleFilePush(args as unknown as FilePushInput);
+        case 'igris_file_pull':
+          return await handleFilePull(args as unknown as FilePullInput);
 
         default:
           throw new Error(`Unknown tool: ${name}`);
@@ -1603,6 +1668,98 @@ async function runHttp(config: ServerConfig): Promise<void> {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[brain] Sync pull error:', message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: message });
+      }
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // File sync endpoints (BR-023)
+  // Push/pull flat files (events.jsonl, agent-metrics.json, budget.json)
+  // -----------------------------------------------------------------------
+
+  /** Map file_type to relative path under BRAIN_DIR */
+  const FILE_TYPE_PATHS: Record<string, string> = {
+    events: 'ai/session/metrics/events.jsonl',
+    agent_metrics: 'ai/session/metrics/agent-metrics.json',
+    budget: 'ai/session/metrics/budget.json',
+  };
+
+  // POST /sync/file-push — receive file content and write to VPS path
+  app.post('/sync/file-push', express.json({ limit: '50mb' }), (req: Request, res: Response) => {
+    try {
+      const { file_type, content } = req.body as { file_type: string; content: string };
+
+      if (!file_type || typeof content !== 'string') {
+        res.status(400).json({ error: 'Missing or invalid "file_type" or "content" field' });
+        return;
+      }
+
+      const relativePath = FILE_TYPE_PATHS[file_type];
+      if (!relativePath) {
+        res.status(400).json({ error: `Unknown file_type: ${file_type}. Valid types: events, agent_metrics, budget` });
+        return;
+      }
+
+      const filePath = path.join(BRAIN_DIR, relativePath);
+      const dirPath = path.dirname(filePath);
+      const tmpPath = filePath + '.tmp';
+
+      // Create directories if needed
+      mkdirSync(dirPath, { recursive: true });
+
+      // Write atomically: write to .tmp, then rename
+      writeFileSync(tmpPath, content, 'utf8');
+      renameSync(tmpPath, filePath);
+
+      const bytesWritten = Buffer.byteLength(content, 'utf8');
+
+      // Update sync_state on VPS side
+      const db = getDb();
+      const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+      db.prepare(`
+        INSERT INTO sync_state (remote_url, table_name, last_push_at)
+        VALUES ('local', ?, ?)
+        ON CONFLICT(remote_url, table_name)
+        DO UPDATE SET last_push_at = excluded.last_push_at
+      `).run(`file:${file_type}`, now);
+
+      res.json({ ok: true, file_type, bytes_written: bytesWritten });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] POST /sync/file-push error:', message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: message });
+      }
+    }
+  });
+
+  // GET /sync/file-pull/:type — return file content
+  app.get('/sync/file-pull/:type', (req: Request, res: Response) => {
+    try {
+      const fileType = req.params.type as string;
+      const relativePath = FILE_TYPE_PATHS[fileType];
+
+      if (!relativePath) {
+        res.status(400).json({ error: `Unknown file type: ${fileType}. Valid types: events, agent_metrics, budget` });
+        return;
+      }
+
+      const filePath = path.join(BRAIN_DIR, relativePath);
+
+      if (!existsSync(filePath)) {
+        res.status(404).json({ error: `File not found: ${fileType}` });
+        return;
+      }
+
+      const content = readFileSync(filePath, 'utf8');
+      const size = Buffer.byteLength(content, 'utf8');
+
+      res.json({ file_type: fileType, content, size });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[brain] GET /sync/file-pull/${req.params.type} error:`, message);
       if (!res.headersSent) {
         res.status(500).json({ error: message });
       }
