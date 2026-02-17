@@ -1,10 +1,10 @@
 # Current Session
 
 ## Status
-**Mode:** HUNT MODE
+**Mode:** Active
 **Updated:** 2026-02-17
-**Active Brief:** FR-042
-**Instance ID:** 77318e66-86c5-4d96-ab2e-da5a965ec4a1
+**Active Brief:** FR-043
+**Instance ID:** 03a41425-16bd-401b-930f-b91d86e5001a
 
 ---
 
@@ -33,6 +33,8 @@
 | FR-039 | Sync Agent/Skill/Rule Definitions to VPS | Done (commit `f24d25c`) |
 | FR-040 | /sync Predefined Skill | Done (commit `5991700`) |
 | FR-041 | Fix Brain MCP Tool Discovery | Done (commit `7ccf4e5`) |
+| FR-042 | Sync Local Metrics & Brain Data to VPS | Done (commit `92871ec`, `3f35848`) |
+| FR-043 | Fix Live Instances — Stale Cleanup & Live Feel | Ready |
 
 **Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, MG-009, MG-010, MG-011, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018, BR-015, FR-019, FR-020, FR-021, PI-003
 
@@ -40,48 +42,49 @@
 
 ## Resume Point
 
-**Last Active:** FR-041 (verified and closed)
-**Phase:** COMPLETE
+**Last Active:** FR-042 (completed), FR-043 (registered)
+**Phase:** COMPLETE / READY
 
 ---
 
 ## Next Session Instructions
 
-1. **HUNT FR-040** (M-effort) — Create `/sync` predefined skill for VPS brain deployment automation
+1. **HUNT FR-043** (M-effort) — Fix Live Instances: stale cleanup, API filtering, pulsing dot, live heartbeat timer
 2. **HUNT FR-014** (L-effort) — Unblock Higgsfield browser automation with correct URL slugs
 3. Continue v3.4 validation — 19 items remaining: `ai/session/MG-008-test-checklist.md`
 
-**Key context for FR-040:** User wants the manual VPS sync workflow (git push + SSH deploy + health check + brain data push) packaged as a `/sync` Claude Code skill. Brief already registered with full spec: 3 modes (code/data/all), reads config from `~/.igris/config.json`, graceful failure handling.
+**Key context for FR-043:** VPS brain DB has 3 instances (2 orphans + 1 stale current). Brain server needs TTL auto-purge (>2h), API needs `?include_stale` param, dashboard needs active-only view with pulsing green dot and live heartbeat timer. Files: `brain-mcp-server/src/tools/instances.ts`, `brain-mcp-server/src/index.ts`, `dashboard/server.py`, `dashboard/static/app.js`, `dashboard/static/style.css`.
 
-**Key context for FR-033 verification:** SSE keepalive (25s interval), auto-session-create for tools/list, 2h session TTL — all deployed to VPS and **confirmed working** this session. All 27 brain MCP tools discoverable and callable. Instance registration, brain pull/push, sync queue drain all functional.
+**Key context for FR-042 completion:** /sync data now uploads 3 files (agent-metrics.json, events.jsonl, budget.json) via SCP + merges 5 brain DB tables via SSH sqlite3. Dashboard cost comes from events.jsonl not agent-metrics.json. VPS Crimson Arena now shows ~$750 all-time matching local.
 
 ---
 
 ## Last Session Summary (2026-02-17)
 
 **Date:** 2026-02-17
-**Summary:** Investigated and closed FR-041 (P0 brain MCP tool discovery). Found issue already resolved — MCP config correctly points to VPS brain server, FR-033 SSE keepalive keeps connections alive. All 27 brain tools confirmed discoverable and callable during /awaken (13+ successful calls). Scrubbed VPS IP from FR-033 and FR-041 brief files. First session with fully working brain sync pipeline end-to-end.
+**Summary:** Completed FR-042 (sync local metrics & brain data to VPS). Discovered that Crimson Arena cost tracking reads from events.jsonl, not agent-metrics.json — added events.jsonl and budget.json to /sync data skill. Ran full data sync: 630 events, 77 DB rows, 16 agents synced to VPS. VPS dashboard now shows complete $750 all-time cost matching local. Audited all data sources for completeness. Registered FR-043 for live instances fix (stale cleanup, filtering, live feel).
 
 **Completed (this session):**
-- FR-041: Brain MCP tool discovery verified working. Root cause: config was already updated to VPS. No code changes needed. Commit: `7ccf4e5`
-- Scrubbed VPS IP from FR-033 and FR-041 briefs (security)
-- Stored learning in brain (ID: 13): Brain MCP tools work via VPS, no local server needed
-- Full brain sync verified: pull, push, instance registration/deregistration, queue drain all working
+- FR-042: Enhanced /sync data with metrics upload + local DB merge. Commits: `92871ec`, `3f35848`
+- Full data sync executed: events.jsonl (630 events), agent-metrics.json (16 agents), budget.json, brain DB (77 rows across 5 tables)
+- Discovered events.jsonl is the cost data source, not agent-metrics.json
+- Data source audit: all dashboard inputs now covered by /sync data
+- FR-043: Registered brief for live instances fix (stale cleanup, API filtering, pulsing UI)
+- Investigated live instances showing 3 when only 1 active (2 orphans + stale heartbeat)
 
 **Previous (earlier sessions):**
-- FR-033 through FR-039: Complete brain sync pipeline (team hunt, 4 workers). Commit: `f24d25c`
+- FR-041: Brain MCP tool discovery verified. Commit: `7ccf4e5`
+- FR-040: /sync predefined skill created. Commit: `5991700`
+- FR-033 through FR-039: Complete brain sync pipeline. Commit: `f24d25c`
 - FR-032: Fix live instance registration. Commit: `3f66c4f`
 - FR-031: Brief sync on registration. Commit: `b680fae`
 - FR-030: Brain sync activation — schema v2->v4. Commit: `ede7957`
-- FR-029: Dual-POST agent events. Commit: `c8c1c39`
-- FR-028: Install scripts with brain modes. Commit: `6a96d12`
-- FR-027: Crimson Arena dashboard. Commit: `b06c1ec`
 
 ---
 
 ## Pending
 
-- HUNT FR-040 (/sync predefined skill — M-effort, ready)
+- HUNT FR-043 (Live instances fix — M-effort, ready)
 - HUNT FR-014 (Higgsfield browser automation — blocked on URL slugs)
 - Continue v3.4 validation (19 remaining checklist items)
 

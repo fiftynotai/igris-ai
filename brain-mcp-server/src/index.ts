@@ -667,7 +667,7 @@ function createBrainServer(): Server {
         },
         {
           name: 'igris_instance_list',
-          description: 'List all active Igris instances across machines. Auto-marks instances with no heartbeat for 30+ minutes as stale.',
+          description: 'List all active Igris instances across machines. Auto-marks instances with no heartbeat for 30+ minutes as stale. Purges instances stale for >2 hours.',
           inputSchema: {
             type: 'object' as const,
             properties: {
@@ -679,6 +679,10 @@ function createBrainServer(): Server {
               project: {
                 type: 'string',
                 description: 'Filter by project slug (optional)',
+              },
+              include_stale: {
+                type: 'boolean',
+                description: 'Include stale instances in results (default: false)',
               },
             },
           },
@@ -1156,14 +1160,23 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // -----------------------------------------------------------------------
 
   // GET /api/instances — list all live instances with stale-marking
-  app.get('/api/instances', (_req: Request, res: Response) => {
+  app.get('/api/instances', (req: Request, res: Response) => {
     try {
       const db = getDb();
+      const includeStale = req.query.include_stale === 'true';
+
+      // Purge instances stale for >2 hours
+      db.prepare(
+        "DELETE FROM instances WHERE last_heartbeat_at < datetime('now', '-120 minutes')"
+      ).run();
+
       db.prepare(
         `UPDATE instances SET status = 'stale' WHERE last_heartbeat_at < datetime('now', '-30 minutes') AND status != 'stale'`
       ).run();
+
+      const whereClause = includeStale ? '' : "WHERE status != 'stale'";
       const rows = db.prepare(
-        `SELECT id, machine_hostname, machine_os, project_slug, project_path, current_brief, current_phase, current_task, status, last_heartbeat_at, started_at FROM instances ORDER BY last_heartbeat_at DESC`
+        `SELECT id, machine_hostname, machine_os, project_slug, project_path, current_brief, current_phase, current_task, status, last_heartbeat_at, started_at FROM instances ${whereClause} ORDER BY last_heartbeat_at DESC`
       ).all();
       res.json({ instances: rows, count: rows.length });
     } catch (err) {

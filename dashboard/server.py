@@ -788,7 +788,9 @@ async def poll_brain(app: FastAPI):
 
             # Instances (every 30s -- real-time feel)
             if now - last_instances >= INSTANCE_INTERVAL:
-                data = await brain_request(app, "/api/instances")
+                data = await brain_request(
+                    app, "/api/instances", params={"include_stale": "false"}
+                )
                 if data:
                     await manager.broadcast({
                         "type": "brain_instances",
@@ -1448,7 +1450,9 @@ async def brain_health(request: Request):
 @app.get("/api/brain/instances")
 async def brain_instances(request: Request):
     """List active Claude Code instances from brain server."""
-    data = await brain_request(request.app, "/api/instances")
+    data = await brain_request(
+        request.app, "/api/instances", params={"include_stale": "false"}
+    )
     if data is None:
         return {"instances": [], "count": 0, "status": "offline"}
     return data
@@ -1536,7 +1540,9 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 health = await brain_request(app, "/health")
                 stats = await brain_request(app, "/api/brain-stats")
-                instances = await brain_request(app, "/api/instances")
+                instances = await brain_request(
+                    app, "/api/instances", params={"include_stale": "false"}
+                )
                 projects = await brain_request(app, "/api/projects")
                 briefs = await brain_request(app, "/api/briefs")
                 sessions = await brain_request(

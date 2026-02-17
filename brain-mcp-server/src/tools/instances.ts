@@ -18,6 +18,9 @@
 import { getDb } from '../db.js';
 import { randomUUID } from 'node:crypto';
 
+/** Instances with no heartbeat for longer than this are permanently purged. */
+const STALE_PURGE_HOURS = 2;
+
 /** Input shape for igris_instance_heartbeat */
 interface InstanceHeartbeatInput {
   instance_id?: string;
@@ -34,6 +37,7 @@ interface InstanceHeartbeatInput {
 interface InstanceListInput {
   status?: string;
   project?: string;
+  include_stale?: boolean;
 }
 
 /** Input shape for igris_instance_remove */
@@ -126,6 +130,11 @@ function handleInstanceHeartbeat(args: InstanceHeartbeatInput): { content: { typ
 function handleInstanceList(args: InstanceListInput): { content: { type: string; text: string }[] } {
   const db = getDb();
 
+  // Purge instances stale for longer than STALE_PURGE_HOURS (2h = 120 minutes)
+  db.prepare(
+    `DELETE FROM instances WHERE last_heartbeat_at < datetime('now', '-${STALE_PURGE_HOURS * 60} minutes')`
+  ).run();
+
   // Auto-mark stale instances
   db.prepare(
     "UPDATE instances SET status = 'stale' WHERE last_heartbeat_at < datetime('now', '-30 minutes') AND status != 'stale'"
@@ -134,6 +143,11 @@ function handleInstanceList(args: InstanceListInput): { content: { type: string;
   // Build dynamic WHERE clause
   const conditions: string[] = [];
   const params: string[] = [];
+
+  // By default, exclude stale instances unless explicitly requested
+  if (!args.include_stale) {
+    conditions.push("status != 'stale'");
+  }
 
   if (args.status && args.status !== 'all') {
     conditions.push('status = ?');

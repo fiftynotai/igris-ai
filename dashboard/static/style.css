@@ -1091,6 +1091,64 @@ body {
   grid-column: 1 / -1;
 }
 
+/* Instance Cards (FR-043) */
+.brain-instance-cards { display: flex; flex-direction: column; gap: 8px; }
+
+.brain-instance-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+}
+
+.brain-instance-card__header {
+  display: flex; align-items: center; gap: 8px;
+}
+
+.brain-instance-card__hostname {
+  font-weight: 700; font-family: var(--font-mono); font-size: 12px;
+  color: var(--text-primary);
+}
+
+.brain-instance-card__status {
+  margin-left: auto;
+  font-size: 9px; font-weight: 700; letter-spacing: 1px;
+  text-transform: uppercase; font-family: var(--font-mono);
+}
+
+.brain-instance-card--active .brain-instance-card__status { color: var(--success); }
+.brain-instance-card--idle .brain-instance-card__status { color: var(--text-muted); }
+
+.brain-instance-card__details {
+  font-size: 11px; color: var(--text-secondary);
+  font-family: var(--font-mono); margin-top: 4px;
+}
+
+.brain-instance-card__heartbeat {
+  font-size: 10px; color: var(--text-muted);
+  font-family: var(--font-mono); margin-top: 6px;
+}
+
+/* Instance Pulsing Dot */
+.brain-instance-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+
+.brain-instance-dot--active {
+  background: var(--success);
+  animation: brain-instance-pulse 2s ease-in-out infinite;
+}
+
+.brain-instance-dot--idle {
+  background: var(--text-muted);
+  opacity: 0.5;
+}
+
+@keyframes brain-instance-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(0, 186, 51, 0.5); }
+  50%      { opacity: 0.7; box-shadow: 0 0 8px 3px rgba(0, 186, 51, 0.3); }
+}
+
 .brain-sessions-panel {
   grid-column: 1 / -1;
 }

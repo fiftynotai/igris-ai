@@ -2082,13 +2082,19 @@ ArenaClient.prototype.renderBrainHealth = function (data) {
 };
 
 /**
- * Render the live instances table.
+ * Render the live instances as cards with pulsing status dots.
  * @param {object|null} data
  */
 ArenaClient.prototype.renderBrainInstances = function (data) {
     var container = document.getElementById('brain-instances-table');
     var countEl = document.getElementById('brain-instances-count');
     if (!container) return;
+
+    // Clear previous heartbeat ticker
+    if (this._heartbeatTimerId) {
+        clearInterval(this._heartbeatTimerId);
+        this._heartbeatTimerId = null;
+    }
 
     var instances = [];
     if (data && Array.isArray(data)) {
@@ -2097,41 +2103,60 @@ ArenaClient.prototype.renderBrainInstances = function (data) {
         instances = data.instances;
     }
 
-    if (countEl) countEl.textContent = instances.length;
+    // Count badge: only active/idle instances
+    var liveCount = 0;
+    for (var c = 0; c < instances.length; c++) {
+        var st = instances[c].status || '';
+        if (st === 'active' || st === 'idle') liveCount++;
+    }
+    if (countEl) countEl.textContent = liveCount;
 
     if (instances.length === 0) {
         container.innerHTML = '<div class="brain-panel__empty">No active instances</div>';
         return;
     }
 
-    var html = '<table class="brain-table">';
-    html += '<thead><tr>';
-    html += '<th>Machine</th><th>OS</th><th>Project</th><th>Brief</th><th>Phase</th><th>Status</th><th>Heartbeat</th>';
-    html += '</tr></thead><tbody>';
+    var html = '<div class="brain-instance-cards">';
 
-    var now = Date.now();
     for (var i = 0; i < instances.length; i++) {
         var inst = instances[i];
         var heartbeat = inst.last_heartbeat_at || inst.last_heartbeat || inst.updated_at || '';
+        var now = Date.now();
         var staleMs = heartbeat ? (now - new Date(heartbeat).getTime()) : Infinity;
-        var isStale = staleMs > 300000; // 5 minutes
         var isActive = inst.status === 'active' || (!inst.status && staleMs < 60000);
-        var statusClass = isStale ? 'stale' : (isActive ? 'active' : 'idle');
-        var rowClass = isStale ? ' brain-table__row--stale' : '';
+        var statusKey = isActive ? 'active' : 'idle';
+        var hostname = inst.machine_hostname || inst.machine_name || '--';
+        var project = inst.project || inst.project_slug || '--';
+        var brief = inst.brief || inst.current_brief || '--';
+        var phase = inst.phase || inst.current_phase || '--';
 
-        html += '<tr class="brain-table__row' + rowClass + '">';
-        html += '<td class="brain-table__cell">' + escapeHtml(inst.machine_hostname || inst.machine_name || '--') + '</td>';
-        html += '<td class="brain-table__cell">' + escapeHtml(inst.machine_os || inst.os || '--') + '</td>';
-        html += '<td class="brain-table__cell brain-table__cell--project">' + escapeHtml(inst.project || inst.project_slug || '--') + '</td>';
-        html += '<td class="brain-table__cell">' + escapeHtml(inst.brief || inst.current_brief || '--') + '</td>';
-        html += '<td class="brain-table__cell">' + escapeHtml(inst.phase || inst.current_phase || '--') + '</td>';
-        html += '<td class="brain-table__cell"><span class="brain-status brain-status--' + statusClass + '"><span class="brain-status__dot"></span>' + escapeHtml(statusClass.toUpperCase()) + '</span></td>';
-        html += '<td class="brain-table__cell brain-table__cell--time">' + escapeHtml(formatRelativeTime(heartbeat)) + '</td>';
-        html += '</tr>';
+        html += '<div class="brain-instance-card brain-instance-card--' + escapeHtml(statusKey) + '">';
+        html += '<div class="brain-instance-card__header">';
+        html += '<span class="brain-instance-dot brain-instance-dot--' + escapeHtml(statusKey) + '"></span>';
+        html += '<span class="brain-instance-card__hostname">' + escapeHtml(hostname) + '</span>';
+        html += '<span class="brain-instance-card__status">' + escapeHtml(statusKey.toUpperCase()) + '</span>';
+        html += '</div>';
+        html += '<div class="brain-instance-card__details">';
+        html += '<span>' + escapeHtml(project) + '</span> / <span>' + escapeHtml(brief) + '</span> / <span>' + escapeHtml(phase) + '</span>';
+        html += '</div>';
+        html += '<div class="brain-instance-card__heartbeat" data-heartbeat-ts="' + escapeHtml(heartbeat) + '">';
+        html += 'Last heartbeat: ' + escapeHtml(formatRelativeTime(heartbeat));
+        html += '</div>';
+        html += '</div>';
     }
 
-    html += '</tbody></table>';
+    html += '</div>';
     container.innerHTML = html;
+
+    // Update heartbeat timestamps every 10 seconds
+    var self = this;
+    this._heartbeatTimerId = setInterval(function () {
+        var els = container.querySelectorAll('[data-heartbeat-ts]');
+        for (var j = 0; j < els.length; j++) {
+            var ts = els[j].getAttribute('data-heartbeat-ts');
+            els[j].textContent = 'Last heartbeat: ' + formatRelativeTime(ts);
+        }
+    }, 10000);
 };
 
 /**
