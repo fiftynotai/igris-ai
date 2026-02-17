@@ -1310,6 +1310,42 @@ async function runHttp(config: ServerConfig): Promise<void> {
     }
   });
 
+  // GET /api/sync-status — sync pipeline status for dashboard
+  app.get('/api/sync-status', (_req: Request, res: Response) => {
+    try {
+      const db = getDb();
+
+      // Get counts by status from sync_queue
+      const statusCounts = db.prepare(
+        `SELECT status, COUNT(*) as count FROM sync_queue GROUP BY status`
+      ).all() as { status: string; count: number }[];
+
+      const pending = statusCounts.find(r => r.status === 'pending')?.count ?? 0;
+      const retrying = statusCounts.find(r => r.status === 'retrying')?.count ?? 0;
+      const sent = statusCounts.find(r => r.status === 'sent')?.count ?? 0;
+      const failed = statusCounts.find(r => r.status === 'failed')?.count ?? 0;
+
+      // Get last push/pull timestamps from sync_state
+      const syncTimes = db.prepare(
+        `SELECT MAX(last_push_at) as last_push, MAX(last_pull_at) as last_pull FROM sync_state`
+      ).get() as { last_push: string | null; last_pull: string | null };
+
+      res.json({
+        last_push: syncTimes.last_push ?? null,
+        last_pull: syncTimes.last_pull ?? null,
+        queue_depth: pending + retrying,
+        pending,
+        retrying,
+        sent,
+        failed,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] GET /api/sync-status error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
   // POST /mcp — main MCP request handler
   // Route-specific JSON parsing (not global) to avoid consuming body for other routes
   app.post('/mcp', express.json(), async (req: Request, res: Response) => {
