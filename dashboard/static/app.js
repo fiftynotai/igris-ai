@@ -117,7 +117,8 @@ function formatTokens(n) {
  */
 function timeAgo(isoString) {
     if (!isoString) return '--';
-    var diff = Date.now() - new Date(isoString).getTime();
+    var s = isoString.endsWith('Z') ? isoString : isoString.replace(' ', 'T') + 'Z';
+    var diff = Date.now() - new Date(s).getTime();
     if (diff < 0) return 'just now';
     var seconds = Math.floor(diff / 1000);
     if (seconds < 60) return seconds + 's ago';
@@ -1942,7 +1943,8 @@ function formatUptime(seconds) {
  */
 function formatRelativeTime(isoString) {
     if (!isoString) return '--';
-    var diff = Date.now() - new Date(isoString).getTime();
+    var s = isoString.endsWith('Z') ? isoString : isoString.replace(' ', 'T') + 'Z';
+    var diff = Date.now() - new Date(s).getTime();
     if (diff < 0) return 'just now';
     var seconds = Math.floor(diff / 1000);
     if (seconds < 60) return seconds + 's ago';
