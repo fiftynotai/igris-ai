@@ -1,46 +1,46 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-02-17T10:32:29Z",
+  "last_updated": "2026-02-17T15:00:22Z",
   "agents": {
     "architect": {
-      "invocations": 24,
-      "last_used": "2026-02-17T09:53:58Z",
-      "avg_duration_seconds": 159.0,
+      "invocations": 26,
+      "last_used": "2026-02-17T14:53:35Z",
+      "avg_duration_seconds": 157.96,
       "success_rate": 1.0,
-      "total_input_tokens": 76449,
-      "total_output_tokens": 2171,
-      "total_cache_read_tokens": 17198545,
-      "total_cache_create_tokens": 5882050
+      "total_input_tokens": 76520,
+      "total_output_tokens": 2316,
+      "total_cache_read_tokens": 19254272,
+      "total_cache_create_tokens": 6472523
     },
     "forger": {
-      "invocations": 40,
-      "last_used": "2026-02-17T10:01:12Z",
-      "avg_duration_seconds": 540.94,
+      "invocations": 42,
+      "last_used": "2026-02-17T14:55:39Z",
+      "avg_duration_seconds": 525.51,
       "success_rate": 1.0,
-      "total_input_tokens": 40455,
-      "total_output_tokens": 5658,
-      "total_cache_read_tokens": 94316048,
-      "total_cache_create_tokens": 8169202
+      "total_input_tokens": 49709,
+      "total_output_tokens": 5923,
+      "total_cache_read_tokens": 98030968,
+      "total_cache_create_tokens": 8656642
     },
     "sentinel": {
-      "invocations": 32,
-      "last_used": "2026-02-17T10:30:37Z",
-      "avg_duration_seconds": 184.55,
+      "invocations": 34,
+      "last_used": "2026-02-17T14:57:35Z",
+      "avg_duration_seconds": 178.14,
       "success_rate": 1.0,
-      "total_input_tokens": 68183,
-      "total_output_tokens": 3043,
-      "total_cache_read_tokens": 23502656,
-      "total_cache_create_tokens": 7383857
+      "total_input_tokens": 89199,
+      "total_output_tokens": 3150,
+      "total_cache_read_tokens": 24864328,
+      "total_cache_create_tokens": 8175695
     },
     "warden": {
-      "invocations": 36,
-      "last_used": "2026-02-17T10:31:31Z",
-      "avg_duration_seconds": 74.99,
+      "invocations": 43,
+      "last_used": "2026-02-17T14:59:07Z",
+      "avg_duration_seconds": 76.85,
       "success_rate": 1.0,
-      "total_input_tokens": 21555,
-      "total_output_tokens": 2264,
-      "total_cache_read_tokens": 15171342,
-      "total_cache_create_tokens": 7573593
+      "total_input_tokens": 21866,
+      "total_output_tokens": 3120,
+      "total_cache_read_tokens": 24161722,
+      "total_cache_create_tokens": 11032695
     },
     "mender": {
       "invocations": 0,
@@ -53,14 +53,14 @@
       "total_cache_create_tokens": 0
     },
     "seeker": {
-      "invocations": 30,
-      "last_used": "2026-02-17T09:45:26Z",
-      "avg_duration_seconds": 1353.0,
+      "invocations": 38,
+      "last_used": "2026-02-17T13:50:50Z",
+      "avg_duration_seconds": 1217.92,
       "success_rate": 1.0,
-      "total_input_tokens": 101089,
-      "total_output_tokens": 3977,
-      "total_cache_read_tokens": 41541196,
-      "total_cache_create_tokens": 6491211
+      "total_input_tokens": 187069,
+      "total_output_tokens": 4495,
+      "total_cache_read_tokens": 51563747,
+      "total_cache_create_tokens": 9015628
     },
     "sage": {
       "invocations": 0,
@@ -161,14 +161,64 @@
       "total_output_tokens": 227,
       "total_cache_read_tokens": 4028280,
       "total_cache_create_tokens": 170881
+    },
+    "teammate-fr-046": {
+      "invocations": 2,
+      "last_used": "2026-02-17T11:00:25Z",
+      "avg_duration_seconds": 137.25,
+      "success_rate": 1.0,
+      "total_input_tokens": 56,
+      "total_output_tokens": 539,
+      "total_cache_read_tokens": 3763327,
+      "total_cache_create_tokens": 194253
+    },
+    "teammate-fr-047": {
+      "invocations": 2,
+      "last_used": "2026-02-17T10:59:20Z",
+      "avg_duration_seconds": 94.76,
+      "success_rate": 1.0,
+      "total_input_tokens": 51,
+      "total_output_tokens": 257,
+      "total_cache_read_tokens": 2363098,
+      "total_cache_create_tokens": 94043
+    },
+    "teammate-fr-048": {
+      "invocations": 2,
+      "last_used": "2026-02-17T11:08:48Z",
+      "avg_duration_seconds": 369.49,
+      "success_rate": 1.0,
+      "total_input_tokens": 105,
+      "total_output_tokens": 423,
+      "total_cache_read_tokens": 8528356,
+      "total_cache_create_tokens": 1470208
+    },
+    "teammate-fr-049": {
+      "invocations": 2,
+      "last_used": "2026-02-17T11:00:47Z",
+      "avg_duration_seconds": 116.84,
+      "success_rate": 1.0,
+      "total_input_tokens": 46,
+      "total_output_tokens": 371,
+      "total_cache_read_tokens": 1832639,
+      "total_cache_create_tokens": 112040
+    },
+    "general-purpose": {
+      "invocations": 5,
+      "last_used": "2026-02-17T13:24:42Z",
+      "avg_duration_seconds": 172.6,
+      "success_rate": 1.0,
+      "total_input_tokens": 55103,
+      "total_output_tokens": 2264,
+      "total_cache_read_tokens": 4105743,
+      "total_cache_create_tokens": 573779
     }
   },
   "totals": {
-    "total_invocations": 185,
-    "most_used_agent": "forger",
+    "total_invocations": 219,
+    "most_used_agent": "warden",
     "least_used_agent": "sage",
-    "total_input_tokens": 331219,
-    "total_output_tokens": 28249,
-    "total_cache_tokens": 257685253
+    "total_input_tokens": 503212,
+    "total_output_tokens": 33994,
+    "total_cache_tokens": 314721259
   }
 }

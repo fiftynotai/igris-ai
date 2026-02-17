@@ -1264,7 +1264,21 @@ async function runHttp(config: ServerConfig): Promise<void> {
     try {
       const db = getDb();
 
+      const ALLOWED_COUNT_TABLES = new Set([
+        'projects',
+        'learnings',
+        'errors',
+        'sessions',
+        'instances',
+        'brief_status',
+        'agent_metrics',
+        'sync_queue',
+      ]);
+
       const countTable = (table: string): number => {
+        if (!ALLOWED_COUNT_TABLES.has(table)) {
+          throw new Error(`countTable: invalid table name "${table}"`);
+        }
         const row = db.prepare(`SELECT COUNT(*) as c FROM ${table}`).get() as { c: number };
         return row.c;
       };

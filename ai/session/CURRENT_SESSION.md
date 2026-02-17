@@ -3,7 +3,8 @@
 ## Status
 **Mode:** HUNT MODE
 **Updated:** 2026-02-17
-**Active Brief:** FR-050 (Full README Rewrite — v4.0 Identity Refresh)
+**Active Brief:** BR-017 (v4.0 Critical Security Hardening)
+**Instance ID:** f2a2184d-4809-4a31-86e2-733ed11d7860
 
 ---
 
@@ -11,60 +12,73 @@
 
 | Brief | Title | Status |
 |-------|-------|--------|
+| FR-051 | Brain v5.0 — Modular Architecture + Task Mgmt + Scheduling | Ready (XL, 5 phases) |
 | FR-014 | Higgsfield Skill — Browser Automation Pivot | Blocked (URL slugs needed) |
+| FR-013 | Context Breakdown Dashboard | Ready |
+| PI-001 | Multi-Instance Concurrent Brief Workflow | Ready |
+| TD-008 | Usage Metrics and Error Tracking | Deferred |
 
-**Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, MG-009, MG-010, MG-011, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018, BR-015, FR-019, FR-020, FR-021, PI-003, FR-022, FR-023, FR-024, FR-025, FR-026, FR-027, FR-028, FR-029, FR-030, FR-031, FR-032, FR-033, FR-034, FR-035, FR-036, FR-037, FR-038, FR-039, FR-040, FR-041, FR-042, FR-043, FR-044, FR-045, FR-046, FR-047, FR-048, FR-049
+**Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, MG-009, MG-010, MG-011, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018, BR-015, FR-019, FR-020, FR-021, PI-003, FR-022, FR-023, FR-024, FR-025, FR-026, FR-027, FR-028, FR-029, FR-030, FR-031, FR-032, FR-033, FR-034, FR-035, FR-036, FR-037, FR-038, FR-039, FR-040, FR-041, FR-042, FR-043, FR-044, FR-045, FR-046, FR-047, FR-048, FR-049, FR-050, BR-004, BR-005, BR-006, BR-007, BR-008, BR-009, BR-010, BR-011, BR-012, BR-013, FR-003, FR-004, FR-005, FR-006, FR-009, FR-011, FR-012, MG-001, MG-002, MG-003, PI-002, TD-001, TD-002, TD-003, TD-004, TD-006, TD-007, TD-009, TD-010, TD-011, TD-012, TD-013, TD-014, TD-015, TD-016
 
 ---
 
 ## Resume Point
 
-**Last Active:** FR-049 (completed)
-**Phase:** COMPLETE
+**Last Active:** v4.0 readiness report + archive cleanup
+**Phase:** Active
 
 ---
 
 ## Next Session Instructions
 
-1. **HUNT FR-014** (L-effort) — Unblock Higgsfield browser automation with correct URL slugs
-2. Continue v3.4 validation — 19 items remaining: `ai/session/MG-008-test-checklist.md`
-3. Consider v4.0 release preparation — all pre-release hardening briefs (FR-046 through FR-049) are complete
+1. **Register phase briefs FR-052 through FR-056** from FR-051 master brief
+2. **HUNT FR-052 (Engine Foundation)** — Phase 1 of Brain v5.0, critical path for all other phases
 
-**Key context:** All pre-release hardening is done. 75 audit issues identified, 4 briefs created and completed via parallel team hunt. Brain MCP server hardened (schema migration, upsert, input validation). Dashboard secured (CORS, path validation, log redaction). All 17 scripts hardened with `set -euo pipefail`. 24 briefs archived. Hunt skill DOCUMENTING phase fixed.
+**Key context for FR-051 (Brain v5.0):**
+- Extensive research completed: OpenClaw (lane queue, heartbeat, cron), CrewAI (hierarchical manager), LangGraph (state machine), AutoGen (actor model), Claude Code Agent SDK (programmatic invocation), hooks (14 events), headless mode
+- Architecture designed: 5-layer modular brain, 7 domain components (memory, projects, briefs, tasks, scheduler, sessions, sync), event bus, pluggable storage adapters, config-driven component loading
+- Option C chosen: Hybrid DB + Cache — DB is source of truth, markdown generated on demand for agents
+- Key decisions captured in FR-051 brief:
+  - Sessions = one Claude Code conversation (/awaken to /clear)
+  - Sessions are short-lived, tasks are long-lived (span multiple sessions)
+  - Session ↔ Task is many-to-many (session_tasks junction table)
+  - CURRENT_SESSION.md becomes a generated cache file from DB
+  - BLOCKERS.md → DB, DECISIONS.md → memory component, LEARNINGS.md → memory component
+- All research data in FR-051 brief at `ai/briefs/FR-051-brain-v5-modular-architecture.md`
 
 ---
 
 ## Last Session Summary (2026-02-17)
 
 **Date:** 2026-02-17
-**Summary:** Completed 5 briefs in one session. FR-045 (sync code dashboard deploy) via standard HUNT pipeline. Full pre-release system audit (75 issues across 5 components). Registered FR-046 through FR-049. Parallel team hunt with 4 teammates implementing all 4 briefs simultaneously. 4 separate commits, all deployed to VPS via /sync code + /sync data. Total: 60 files changed, +1239/-151 lines.
+**Summary:** Full README rewrite (FR-050) via HUNT pipeline — 1557→685 lines, 16 sections, all facts verified. Then deep architectural research for Brain v5.0: autonomous agent orchestration, task management systems, scheduling patterns, and Claude Code latest capabilities. Designed modular brain architecture with 7 domain components. Registered FR-051 (XL, 5 phases). Multiple design decisions captured.
 
 **Completed (this session):**
-- FR-045: Sync code dashboard deploy fix. Commit: `cb016c8`
-- FR-046: Brain MCP server hardening — 8 fixes, 5 files. Commit: `c65f8df`
-- FR-047: Dashboard security — CORS, path validation, log redaction. Commit: `5d31cde`
-- FR-048: Script hardening — set -euo pipefail on 17 scripts, 2 new backup/restore scripts. Commit: `e7ef45e`
-- FR-049: Workflow cleanup — 24 briefs archived, hunt skill fixed, BLOCKERS.md updated. Commit: `f456527`
-- Full system audit: 75 issues cataloged (13 CRITICAL, 23 HIGH, 24 MEDIUM, 15 LOW)
-- Parallel team hunt: 4 teammates, all completed successfully
-- /sync code: 4 commits deployed to VPS (cb016c8 -> f456527)
-- /sync data: 713 events, 20 agents, 77 DB rows merged to VPS
+- v4.0 Readiness Report: 5 parallel WARDEN audits — overall 7.4/10 (YELLOW)
+  - Brain MCP Server: 7.0/10 (2 critical: trusted_schema, SQL interpolation)
+  - Scripts & Deployment: 7.5/10 (1 critical: eval injection)
+  - Skills, Agents & Rules: 8.0/10 (ghost documenter refs, tier label mismatch)
+  - Crimson Arena Dashboard: 7.5/10 (no tests, transaction safety)
+  - Briefs & Session State: 7.0/10 (archive debt, stale statuses)
+- Archive cleanup: FR-050 + 38 Done briefs archived, FR-006 duplicate removed
+- FR-048, FR-049 status fixed (In Progress/Ready → Done) and archived
 
 **Previous (earlier sessions):**
-- FR-044: Crimson Arena v2 — 6 new panels, 4 files, 1073 insertions. Commit: `90d0595`
-- FR-043: Fix Live Instances — TTL purge, API filtering, pulsing UI cards. Commit: `cb087a2`
-- FR-042: Enhanced /sync data with metrics upload + local DB merge. Commits: `92871ec`, `3f35848`
-- FR-041: Brain MCP tool discovery verified. Commit: `7ccf4e5`
-- FR-040: /sync predefined skill created. Commit: `5991700`
-- FR-033 through FR-039: Complete brain sync pipeline. Commit: `f24d25c`
+- FR-050: Full README v4.0 identity rewrite. Commit: `6aa9d62`
+- FR-051 registered: Brain v5.0 Modular Architecture (XL, 5 phases)
+- FR-045 through FR-049: Pre-release hardening (5 briefs, parallel team hunt)
+- FR-044: Crimson Arena v2. Commit: `90d0595`
+- FR-043: Fix Live Instances. Commit: `cb087a2`
+- FR-042: Enhanced /sync data. Commits: `92871ec`, `3f35848`
 
 ---
 
 ## Pending
 
-- HUNT FR-014 (Higgsfield browser automation — blocked on URL slugs)
-- Continue v3.4 validation (19 remaining checklist items)
-- v4.0 release preparation
+- **Register phase briefs FR-052 through FR-056** from FR-051 master brief
+- **HUNT FR-052 (Engine Foundation)** — Phase 1 of Brain v5.0, critical path
+- FR-014: Higgsfield browser automation — blocked on URL slugs
+- 4 critical findings from readiness report to address (can fold into v5.0 work)
 
 ---
 

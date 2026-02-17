@@ -369,7 +369,7 @@ function getDb(): Database.Database {
     _db.pragma('busy_timeout = 5000');
     _db.pragma('synchronous = NORMAL');
     _db.pragma('foreign_keys = ON');
-    _db.pragma('trusted_schema = ON');
+    _db.pragma('trusted_schema = OFF');
     migrateSchema(_db);
   }
   return _db;

@@ -119,7 +119,17 @@ if has_remote_config:
 }
 
 # Read current state into variables
-eval "$(detect_current_mode)"
+_detect_output="$(detect_current_mode)"
+while IFS='=' read -r key value; do
+  case "$key" in
+    MODE) MODE="$value" ;;
+    HAS_LOCAL) HAS_LOCAL="$value" ;;
+    HAS_REMOTE) HAS_REMOTE="$value" ;;
+    HAS_REMOTE_CONFIG) HAS_REMOTE_CONFIG="$value" ;;
+    REMOTE_URL) REMOTE_URL="$value" ;;
+    REMOTE_KEY_MASKED) REMOTE_KEY_MASKED="$value" ;;
+  esac
+done <<< "$_detect_output"
 
 # ============================================================
 # Status command
@@ -275,7 +285,17 @@ with open(claude_file, 'w') as f:
 " "$CLAUDE_CONFIG" "$CONFIG_FILE" "$COMMAND" "$MCP_SERVER_PATH"
 
 # Verify the switch
-eval "$(detect_current_mode)"
+_detect_output="$(detect_current_mode)"
+while IFS='=' read -r key value; do
+  case "$key" in
+    MODE) MODE="$value" ;;
+    HAS_LOCAL) HAS_LOCAL="$value" ;;
+    HAS_REMOTE) HAS_REMOTE="$value" ;;
+    HAS_REMOTE_CONFIG) HAS_REMOTE_CONFIG="$value" ;;
+    REMOTE_URL) REMOTE_URL="$value" ;;
+    REMOTE_KEY_MASKED) REMOTE_KEY_MASKED="$value" ;;
+  esac
+done <<< "$_detect_output"
 
 echo "✅ Brain mode switched to: $MODE"
 echo ""
