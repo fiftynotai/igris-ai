@@ -576,19 +576,12 @@ async def insert_event(db: aiosqlite.Connection, event: dict):
                 ctx_used = int(event.get("context_used", 0))
                 ctx_remaining = int(event.get("context_remaining", 0))
                 model_id = event.get("model_id", "")
-                # Use BEGIN IMMEDIATE for atomic read-then-write under concurrency
-                await db.execute("BEGIN IMMEDIATE")
-                try:
-                    await db.execute(
-                        """INSERT OR REPLACE INTO context_window
-                           (id, context_used, context_max, context_remaining, model_id, updated_at)
-                           VALUES (1, ?, ?, ?, ?, ?)""",
-                        (ctx_used, ctx_max, ctx_remaining, model_id, now),
-                    )
-                    await db.commit()
-                except Exception:
-                    await db.rollback()
-                    raise
+                await db.execute(
+                    """INSERT OR REPLACE INTO context_window
+                       (id, context_used, context_max, context_remaining, model_id, updated_at)
+                       VALUES (1, ?, ?, ?, ?, ?)""",
+                    (ctx_used, ctx_max, ctx_remaining, model_id, now),
+                )
 
     await db.commit()
     return True
