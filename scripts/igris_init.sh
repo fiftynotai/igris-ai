@@ -3,7 +3,7 @@
 # Igris AI Initialization Script
 # Initializes Igris AI in a target project
 
-set -e
+set -euo pipefail
 
 # v4.0 Brain Check — suggest igris_install.sh if brain exists
 if [ -d "$HOME/.igris" ]; then
@@ -404,6 +404,7 @@ echo "--------------------------------"
 
 MCP_AVAILABLE=false
 MCP_CONFIGURED=false
+PERSONA_NAME="${PERSONA_NAME:-none}"
 
 # Check for Node.js
 if command -v node &> /dev/null; then

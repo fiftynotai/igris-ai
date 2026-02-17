@@ -7,7 +7,7 @@
 #   0 - Success (brain created or already exists)
 #   1 - Error (missing dependency, invalid state)
 
-set -e
+set -euo pipefail
 
 echo "🧠 Igris AI - Brain Bootstrap"
 echo "========================================"
@@ -83,6 +83,63 @@ while [ $# -gt 0 ]; do
 done
 
 BRAIN_DIR="$HOME/.igris"
+
+# ============================================================
+# Input validation helpers
+# ============================================================
+validate_url() {
+  local url="$1"
+  local label="${2:-URL}"
+
+  # Must start with http:// or https://
+  if [[ ! "$url" =~ ^https?:// ]]; then
+    echo "❌ Error: $label must start with http:// or https://"
+    echo "   Got: $url"
+    exit 1
+  fi
+
+  # No spaces allowed
+  if [[ "$url" =~ [[:space:]] ]]; then
+    echo "❌ Error: $label must not contain spaces"
+    echo "   Got: $url"
+    exit 1
+  fi
+
+  # Extract port if present and validate range
+  local port_match
+  port_match=$(echo "$url" | sed -n 's|.*://[^:/]*:\([0-9]*\).*|\1|p')
+  if [ -n "$port_match" ]; then
+    if [ "$port_match" -lt 1 ] || [ "$port_match" -gt 65535 ] 2>/dev/null; then
+      echo "❌ Error: $label port must be between 1 and 65535"
+      echo "   Got port: $port_match"
+      exit 1
+    fi
+  fi
+}
+
+validate_ssh_host() {
+  local host="$1"
+
+  # No spaces allowed
+  if [[ "$host" =~ [[:space:]] ]]; then
+    echo "❌ Error: SSH host must not contain spaces"
+    echo "   Got: $host"
+    exit 1
+  fi
+
+  # Only allow valid hostname characters (letters, digits, dots, hyphens, colons for IPv6)
+  if [[ ! "$host" =~ ^[a-zA-Z0-9._:-]+$ ]]; then
+    echo "❌ Error: SSH host contains invalid characters"
+    echo "   Got: $host"
+    echo "   Allowed: letters, digits, dots, hyphens, colons, underscores"
+    exit 1
+  fi
+}
+
+# Validate remote URL if provided
+if [ -n "${REMOTE_URL:-}" ]; then
+  validate_url "$REMOTE_URL" "Remote brain URL"
+fi
 
 # ============================================================
 # Handle --add-remote (operates on existing brain, skips init)
@@ -202,6 +259,7 @@ if [ -z "$BRAIN_MODE" ]; then
           echo "❌ Error: URL and API key are required for remote mode"
           exit 1
         fi
+        validate_url "$REMOTE_URL" "Remote brain URL"
         ;;
       3|dual)
         BRAIN_MODE="dual"
@@ -212,6 +270,7 @@ if [ -z "$BRAIN_MODE" ]; then
           echo "❌ Error: URL and API key are required for dual mode"
           exit 1
         fi
+        validate_url "$REMOTE_URL" "Remote brain URL"
         ;;
       *)
         echo "❌ Invalid selection. Using default: local"

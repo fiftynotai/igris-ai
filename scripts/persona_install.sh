@@ -1,7 +1,7 @@
 #!/bin/bash
 # Igris AI Persona Packs - Interactive Installer
 
-set -e
+set -euo pipefail
 
 echo "🎭 Igris AI Persona Installer"
 echo ""
@@ -51,12 +51,16 @@ case $MASK_CHOICE in
   *) echo "Invalid choice"; exit 1 ;;
 esac
 
+COMPANY=""
+TONE="C2"
+ADDRESSING="T3"
+
 echo ""
-read -p "Title (how Igris addresses you) [Monarch]: " TITLE
+read -rp "Title (how Igris addresses you) [Monarch]: " TITLE
 TITLE=${TITLE:-Monarch}
 
 if [ "$MASK" != "none" ]; then
-  read -p "Company name (optional, press Enter to skip): " COMPANY
+  read -rp "Company name (optional, press Enter to skip): " COMPANY
   COMPANY=${COMPANY:-Shadow Industries}
 fi
 

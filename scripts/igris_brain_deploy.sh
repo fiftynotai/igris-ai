@@ -7,17 +7,17 @@
 #   0 - Success
 #   1 - Error (missing dependency, build failure)
 
-set -e
+set -euo pipefail
 
 # ============================================================
 # Constants
 # ============================================================
-BRAIN_DIR="$HOME/.igris"
+BRAIN_DIR="${IGRIS_BRAIN_DIR:-$HOME/.igris}"
 BRAIN_ENV="$BRAIN_DIR/brain.env"
 MCP_SERVER_DIR="$BRAIN_DIR/mcp-server"
 IGRIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-PM2_APP_NAME="igris-brain"
-DEFAULT_PORT=3001
+PM2_APP_NAME="${IGRIS_PM2_APP_NAME:-igris-brain}"
+DEFAULT_PORT="${IGRIS_BRAIN_PORT:-3001}"
 
 # ============================================================
 # Functions
@@ -86,11 +86,11 @@ parse_arguments() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --domain)
-        DOMAIN="$2"
+        DOMAIN="${2:-}"
         shift 2
         ;;
       --port)
-        PORT="$2"
+        PORT="${2:-}"
         shift 2
         ;;
       *)
@@ -163,7 +163,7 @@ setup_authentication() {
   if [ -f "$BRAIN_ENV" ]; then
     # shellcheck source=/dev/null
     source "$BRAIN_ENV"
-    if [ -n "$BRAIN_API_KEY" ]; then
+    if [ -n "${BRAIN_API_KEY:-}" ]; then
       echo "  [ok] Existing API key found in $BRAIN_ENV"
     else
       BRAIN_API_KEY=$(generate_api_key)

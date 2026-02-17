@@ -3,7 +3,7 @@
 # Igris AI Update Script
 # Updates Igris AI core to the latest version
 
-set -e
+set -euo pipefail
 
 # Check Python3 dependency
 check_python3() {

@@ -3,7 +3,7 @@
 # Igris AI Plugin Installer
 # Installs a Igris AI plugin from a git repository
 
-set -e
+set -euo pipefail
 
 # Check Python3 dependency
 check_python3() {
@@ -42,7 +42,7 @@ validate_json() {
   return 0
 }
 
-PLUGIN_REPO=$1
+PLUGIN_REPO="${1:-}"
 
 if [ -z "$PLUGIN_REPO" ]; then
   echo "❌ Error: Plugin repository URL not provided"
@@ -78,7 +78,7 @@ fi
 TEMP_DIR=$(mktemp -d)
 
 # Test mode: allow local directories (for bats testing)
-if [ "$IGRIS_TEST_MODE" = "1" ] && [ -d "$PLUGIN_REPO" ]; then
+if [ "${IGRIS_TEST_MODE:-}" = "1" ] && [ -d "$PLUGIN_REPO" ]; then
   echo "📦 Copying plugin from local directory (test mode)..."
   cp -r "$PLUGIN_REPO"/* "$TEMP_DIR/"
 else

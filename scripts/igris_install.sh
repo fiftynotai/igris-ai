@@ -7,7 +7,7 @@
 #   0 - Success (project installed and registered)
 #   1 - Error (brain not found, invalid directory)
 
-set -e
+set -euo pipefail
 
 echo "🔗 Igris AI - Project Installer (Symlink Mode)"
 echo "========================================"

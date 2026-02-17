@@ -3,7 +3,7 @@
 # Igris AI Plugin Uninstaller
 # Removes an installed Igris AI plugin
 
-set -e
+set -euo pipefail
 
 # Check Python3 dependency
 check_python3() {
@@ -47,7 +47,7 @@ PLUGIN_NAME=""
 AUTO_CONFIRM=false
 
 while [[ $# -gt 0 ]]; do
-  case $1 in
+  case "$1" in
     -y|--yes)
       AUTO_CONFIRM=true
       shift

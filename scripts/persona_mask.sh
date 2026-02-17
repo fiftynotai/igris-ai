@@ -2,11 +2,11 @@
 # Igris AI Persona Packs - Mask Control
 # Commands: wear, adjust, remove, status
 
-set -e
+set -euo pipefail
 
-COMMAND=$1
-PERSONA=$2
-MASK_LEVEL=$3
+COMMAND="${1:-}"
+PERSONA="${2:-}"
+MASK_LEVEL="${3:-}"
 
 PERSONA_CONFIG="ai/persona.json"
 HOOK_FILE="ai/prompts/persona_loader.md"

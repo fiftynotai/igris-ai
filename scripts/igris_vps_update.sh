@@ -8,17 +8,17 @@
 #   1 - Error (missing dependency, build failure, pull failure)
 #   2 - Invalid arguments
 
-set -e
+set -euo pipefail
 
 # ============================================================
 # Constants
 # ============================================================
-BRAIN_DIR="$HOME/.igris"
+BRAIN_DIR="${IGRIS_BRAIN_DIR:-$HOME/.igris}"
 BRAIN_ENV="$BRAIN_DIR/brain.env"
 MCP_SERVER_DIR="$BRAIN_DIR/mcp-server"
 REPO_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-PM2_APP_NAME="igris-brain"
-DEFAULT_PORT=3001
+PM2_APP_NAME="${IGRIS_PM2_APP_NAME:-igris-brain}"
+DEFAULT_PORT="${IGRIS_BRAIN_PORT:-3001}"
 
 # ============================================================
 # Defaults
@@ -195,6 +195,31 @@ pull_latest() {
   echo ""
 }
 
+check_disk_space() {
+  local target_dir="$1"
+  local min_mb="${2:-100}"
+
+  # Get available space in MB
+  local available_mb
+  available_mb=$(df -m "$target_dir" 2>/dev/null | awk 'NR==2 {print $4}')
+
+  if [ -n "$available_mb" ] && [ "$available_mb" -lt "$min_mb" ] 2>/dev/null; then
+    echo "ERROR: Insufficient disk space on $(df "$target_dir" | awk 'NR==2 {print $6}')"
+    echo "       Available: ${available_mb}MB, Required: ${min_mb}MB minimum"
+    exit 1
+  fi
+}
+
+check_write_permissions() {
+  local target_dir="$1"
+
+  if [ ! -w "$target_dir" ]; then
+    echo "ERROR: No write permission on $target_dir"
+    echo "       Check file permissions: ls -la $target_dir"
+    exit 1
+  fi
+}
+
 build_server() {
   echo "Building brain-mcp-server..."
 
@@ -203,6 +228,10 @@ build_server() {
     echo "       Make sure the repository contains the brain-mcp-server directory."
     exit 1
   fi
+
+  # Pre-flight checks: permissions and disk space
+  check_write_permissions "$MCP_SERVER_DIR"
+  check_disk_space "$MCP_SERVER_DIR" 100
 
   # Back up existing dist directory for rollback on failure
   local has_backup=false
@@ -227,7 +256,10 @@ build_server() {
       echo "  Restoring previous build from backup..."
       rm -rf "$MCP_SERVER_DIR/dist"
       mv "$MCP_SERVER_DIR/dist.backup" "$MCP_SERVER_DIR/dist"
-      echo "  [ok] Previous build restored. Server should still be functional."
+      echo "  [ok] Previous build restored."
+      echo "  Restarting PM2 with previous build..."
+      pm2 restart "$PM2_APP_NAME" 2>&1 | tail -2 || true
+      echo "  [ok] PM2 restarted with old code."
     fi
     exit 1
   fi
@@ -241,7 +273,10 @@ build_server() {
       echo "  Restoring previous build from backup..."
       rm -rf "$MCP_SERVER_DIR/dist"
       mv "$MCP_SERVER_DIR/dist.backup" "$MCP_SERVER_DIR/dist"
-      echo "  [ok] Previous build restored. Server should still be functional."
+      echo "  [ok] Previous build restored."
+      echo "  Restarting PM2 with previous build..."
+      pm2 restart "$PM2_APP_NAME" 2>&1 | tail -2 || true
+      echo "  [ok] PM2 restarted with old code."
     fi
     exit 1
   fi
@@ -271,6 +306,10 @@ deploy_dashboard() {
 
   # Ensure destination directories exist
   mkdir -p "$dashboard_dst/static"
+
+  # Pre-flight checks: permissions and disk space
+  check_write_permissions "$dashboard_dst"
+  check_disk_space "$dashboard_dst" 50
 
   # Copy dashboard server
   if [ ! -f "$dashboard_src/server.py" ]; then

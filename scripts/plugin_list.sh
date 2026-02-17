@@ -3,7 +3,7 @@
 # Igris AI Plugin Lister
 # Lists all installed Igris AI plugins
 
-set -e
+set -euo pipefail
 
 # Check Python3 dependency
 check_python3() {

@@ -7,7 +7,7 @@
 #   0 - Success
 #   1 - Error (missing config, invalid mode)
 
-set -e
+set -euo pipefail
 
 BRAIN_DIR="$HOME/.igris"
 CLAUDE_CONFIG="$HOME/.claude.json"

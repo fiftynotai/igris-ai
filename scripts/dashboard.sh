@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # Description: Launch the Igris AI Agent Token Dashboard (Crimson Arena)
 # Usage: scripts/dashboard.sh [--port PORT] [--host HOST] [--open] [--reset-db]
@@ -144,6 +144,29 @@ with open(sys.argv[1], 'rb') as f:
     echo "  Dependencies installed"
   else
     echo "  Dependencies up to date"
+  fi
+
+  # Verify critical imports actually work (catches deleted/corrupted packages)
+  check_venv_health
+}
+
+check_venv_health() {
+  echo "  Verifying package health..."
+  if ! "${VENV_DIR}/bin/python" -c "import fastapi; import uvicorn" 2>/dev/null; then
+    echo "  WARNING: Critical imports failed. Force-reinstalling dependencies..."
+    "${VENV_DIR}/bin/pip" install --quiet --upgrade pip > /dev/null 2>&1
+    "${VENV_DIR}/bin/pip" install --quiet --force-reinstall -r "${REQUIREMENTS_FILE}"
+    local marker_file="${VENV_DIR}/.requirements_hash"
+    local current_hash
+    current_hash=$(python3 -c "
+import hashlib, sys
+with open(sys.argv[1], 'rb') as f:
+    print(hashlib.md5(f.read()).hexdigest())
+" "${REQUIREMENTS_FILE}")
+    echo "${current_hash}" > "${marker_file}"
+    echo "  Dependencies reinstalled"
+  else
+    echo "  Package health OK"
   fi
 }
 

@@ -6,7 +6,7 @@
 #   0 - Success
 #   1 - Error (brain not found, not a v3.4 project)
 
-set -e
+set -euo pipefail
 
 # Check dependencies
 command -v python3 >/dev/null 2>&1 || { echo "Error: python3 is required but not installed."; exit 1; }

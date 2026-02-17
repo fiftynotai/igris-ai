@@ -1,8 +1,13 @@
 #!/bin/bash
+set -euo pipefail
+
 # Description: SessionEnd hook — captures session learnings to brain staging
 # Usage: Called automatically by Claude Code SessionEnd hook
 # Dependencies: python3
 # Exit codes: 0 always (hooks should never fail the session)
+
+# Hooks must never fail the session — trap all errors and exit 0
+trap 'exit 0' ERR
 
 BRAIN_DIR="$HOME/.igris"
 

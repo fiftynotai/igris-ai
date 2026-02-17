@@ -4,7 +4,7 @@
 # Adds terminal notifications when entering Igris AI projects
 # This script ONLY adds code to your shell config - you maintain full control
 
-set -e
+set -euo pipefail
 
 # Check Python3 dependency
 check_python3() {

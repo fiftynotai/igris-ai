@@ -3,7 +3,7 @@
 # Igris AI Plugin Update Script
 # Updates an installed plugin to the latest version
 
-set -e
+set -euo pipefail
 
 # Check Python3 dependency
 check_python3() {
@@ -42,7 +42,7 @@ validate_json() {
   return 0
 }
 
-PLUGIN_NAME=$1
+PLUGIN_NAME="${1:-}"
 DRY_RUN=false
 FORCE=false
 AUTO_YES=false
@@ -137,7 +137,7 @@ TEMP_DIR=$(mktemp -d)
 echo "🌐 Checking for updates..."
 
 # Test mode: allow local directories (for bats testing)
-if [ "$IGRIS_TEST_MODE" = "1" ] && [ -d "$PLUGIN_REPO" ]; then
+if [ "${IGRIS_TEST_MODE:-}" = "1" ] && [ -d "$PLUGIN_REPO" ]; then
   echo "📦 Copying plugin from local directory (test mode)..."
   cp -r "$PLUGIN_REPO"/* "$TEMP_DIR/"
 else
