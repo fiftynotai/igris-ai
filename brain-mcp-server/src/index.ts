@@ -34,7 +34,6 @@ import {
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 
@@ -1058,11 +1057,12 @@ async function runHttp(config: ServerConfig): Promise<void> {
     console.error(`[brain] Staging processing error: ${message}`);
   }
 
-  // Parse allowed hosts from env, default to localhost variants
-  const allowedHosts = process.env.BRAIN_ALLOWED_HOSTS
-    ? process.env.BRAIN_ALLOWED_HOSTS.split(',').map(h => h.trim())
-    : undefined;
-  const app = createMcpExpressApp({ host: '0.0.0.0', allowedHosts });
+  // Create Express app WITHOUT global express.json() middleware.
+  // createMcpExpressApp adds app.use(express.json()) which consumes the
+  // request body for ALL routes, breaking route-specific parsers like
+  // /sync/push's express.json({ limit: '50mb' }). Instead, we add
+  // express.json() only to routes that need it (POST /mcp, POST /sync/push).
+  const app = express();
 
   // Rate limiting: track auth failures per IP
   const authFailures: Record<string, { count: number; resetAt: number }> = {};
@@ -1311,7 +1311,8 @@ async function runHttp(config: ServerConfig): Promise<void> {
   });
 
   // POST /mcp — main MCP request handler
-  app.post('/mcp', async (req: Request, res: Response) => {
+  // Route-specific JSON parsing (not global) to avoid consuming body for other routes
+  app.post('/mcp', express.json(), async (req: Request, res: Response) => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
     try {
