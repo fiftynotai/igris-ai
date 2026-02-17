@@ -1510,7 +1510,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // -----------------------------------------------------------------------
 
   // POST /sync/push — receive pushed data from a remote brain, merge locally
-  app.post('/sync/push', express.json({ limit: '10mb' }), (req: Request, res: Response) => {
+  app.post('/sync/push', express.json({ limit: '50mb' }), (req: Request, res: Response) => {
     try {
       const db = getDb();
       const { tables } = req.body as {

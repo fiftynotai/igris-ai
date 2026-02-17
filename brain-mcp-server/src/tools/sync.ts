@@ -213,6 +213,46 @@ async function fetchWithRetry(
   throw lastError ?? new Error('Fetch failed');
 }
 
+/** Maximum approximate payload size per chunk in bytes (5 MB). */
+const CHUNK_SIZE_LIMIT = 5 * 1024 * 1024;
+
+/**
+ * Split a tables payload into multiple chunks, each under CHUNK_SIZE_LIMIT.
+ * Iterates rows across tables, accumulating into chunks. A single oversized
+ * row is allowed in its own chunk (never split a row).
+ */
+function chunkTablesForPush(
+  tables: Record<string, Record<string, unknown>[]>
+): Record<string, Record<string, unknown>[]>[] {
+  const chunks: Record<string, Record<string, unknown>[]>[] = [];
+  let currentChunk: Record<string, Record<string, unknown>[]> = {};
+  let currentSize = 0;
+
+  for (const [tableName, rows] of Object.entries(tables)) {
+    for (const row of rows) {
+      const rowSize = Buffer.byteLength(JSON.stringify(row), 'utf8');
+
+      if (currentSize + rowSize > CHUNK_SIZE_LIMIT && currentSize > 0) {
+        chunks.push(currentChunk);
+        currentChunk = {};
+        currentSize = 0;
+      }
+
+      if (!currentChunk[tableName]) {
+        currentChunk[tableName] = [];
+      }
+      currentChunk[tableName].push(row);
+      currentSize += rowSize;
+    }
+  }
+
+  if (currentSize > 0) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
+}
+
 // ---------------------------------------------------------------------------
 // mergeRows — core merge logic (used by both pull handler and push endpoint)
 // ---------------------------------------------------------------------------
@@ -359,31 +399,35 @@ async function handleBrainPush(
     };
   }
 
-  // POST to remote
-  const payload = {
-    tables,
-    pushed_at: pushedAt,
-    schema_version: 8,
-  };
+  // Chunk and POST to remote
+  const chunks = chunkTablesForPush(tables);
 
   try {
-    const response = await fetchWithRetry(`${remoteUrl}/sync/push`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${args.api_key}`,
-      },
-      body: JSON.stringify(payload),
-    });
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkPayload = {
+        tables: chunks[i],
+        pushed_at: pushedAt,
+        schema_version: 8,
+      };
 
-    const result = await response.json() as Record<string, unknown>;
+      const response = await fetchWithRetry(`${remoteUrl}/sync/push`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${args.api_key}`,
+        },
+        body: JSON.stringify(chunkPayload),
+      });
 
-    // Validate remote response before updating sync_state
-    if (!result.ok || !result.results) {
-      throw new Error(`Remote returned invalid response: missing 'ok' or 'results' field. Response: ${JSON.stringify(result)}`);
+      const result = await response.json() as Record<string, unknown>;
+
+      // Validate remote response before continuing
+      if (!result.ok || !result.results) {
+        throw new Error(`Remote returned invalid response for chunk ${i + 1}/${chunks.length}: missing 'ok' or 'results' field. Response: ${JSON.stringify(result)}`);
+      }
     }
 
-    // Update sync_state for each pushed table
+    // Update sync_state for each pushed table only after ALL chunks succeed
     const upsertState = db.prepare(`
       INSERT INTO sync_state (remote_url, table_name, last_push_at)
       VALUES (?, ?, ?)
@@ -410,10 +454,9 @@ async function handleBrainPush(
           '',
           `Remote: ${remoteUrl}`,
           `Total rows pushed: ${totalRows}`,
+          `Chunks sent: ${chunks.length}`,
           `Tables:`,
           tablesSummary,
-          '',
-          `Remote response: ${JSON.stringify(result)}`,
         ].join('\n'),
       }],
     };
@@ -674,81 +717,119 @@ async function handleSyncQueueDrain(
     grouped[item.table_name].rows.push(JSON.parse(item.row_data));
   }
 
-  // Attempt push
+  // Build tables map for chunking
   const tables: Record<string, Record<string, unknown>[]> = {};
   for (const [tableName, group] of Object.entries(grouped)) {
     tables[tableName] = group.rows;
   }
 
-  const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const chunks = chunkTablesForPush(tables);
 
-  try {
-    await fetchWithRetry(`${remoteUrl}/sync/push`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${args.api_key}`,
-      },
-      body: JSON.stringify({ tables, pushed_at: now, schema_version: 8 }),
-    });
-
-    // Mark all as sent
-    const markSent = db.prepare(`
-      UPDATE sync_queue SET status = 'sent', sent_at = ? WHERE id = ?
-    `);
-    db.transaction(() => {
-      for (const group of Object.values(grouped)) {
-        for (const id of group.ids) {
-          markSent.run(now, id);
+  // Build a mapping from each chunk index to the queue item IDs it contains.
+  // We use object reference identity (indexOf) to match rows back to their IDs.
+  const chunkItemIds: number[][] = [];
+  for (const chunk of chunks) {
+    const ids: number[] = [];
+    for (const [tableName, chunkRows] of Object.entries(chunk)) {
+      const group = grouped[tableName];
+      for (const row of chunkRows) {
+        const rowIndex = group.rows.indexOf(row);
+        if (rowIndex !== -1) {
+          ids.push(group.ids[rowIndex]);
         }
       }
-    })();
+    }
+    chunkItemIds.push(ids);
+  }
 
-    const tablesSummary = Object.entries(tables)
-      .map(([name, rows]) => `  - ${name}: ${rows.length} row(s)`)
-      .join('\n');
+  const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
 
+  const markSent = db.prepare(`
+    UPDATE sync_queue SET status = 'sent', sent_at = ? WHERE id = ?
+  `);
+  const updateRetry = db.prepare(`
+    UPDATE sync_queue
+    SET retry_count = retry_count + 1,
+        last_retry_at = ?,
+        status = CASE WHEN retry_count + 1 >= max_retries THEN 'failed' ELSE 'retrying' END,
+        error_message = ?
+    WHERE id = ?
+  `);
+
+  let totalSent = 0;
+  let totalFailed = 0;
+
+  for (let i = 0; i < chunks.length; i++) {
+    try {
+      await fetchWithRetry(`${remoteUrl}/sync/push`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${args.api_key}`,
+        },
+        body: JSON.stringify({ tables: chunks[i], pushed_at: now, schema_version: 8 }),
+      });
+
+      // Per-chunk success: mark items as sent
+      db.transaction(() => {
+        for (const id of chunkItemIds[i]) {
+          markSent.run(now, id);
+        }
+      })();
+      totalSent += chunkItemIds[i].length;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+
+      // Per-chunk failure: mark items as retrying/failed
+      db.transaction(() => {
+        for (const id of chunkItemIds[i]) {
+          updateRetry.run(now, message, id);
+        }
+      })();
+      totalFailed += chunkItemIds[i].length;
+    }
+  }
+
+  const tablesSummary = Object.entries(tables)
+    .map(([name, rows]) => `  - ${name}: ${rows.length} row(s)`)
+    .join('\n');
+
+  if (totalSent === 0) {
     return {
       content: [{
         type: 'text',
         text: [
-          'Sync queue drain completed successfully.',
+          'Sync queue drain failed: all chunks failed.',
           '',
           `Remote: ${remoteUrl}`,
-          `Items processed: ${items.length}`,
+          `Chunks attempted: ${chunks.length}`,
+          `Items sent: ${totalSent}`,
+          `Items failed: ${totalFailed}`,
           `Tables:`,
           tablesSummary,
         ].join('\n'),
       }],
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-
-    // Mark items as retrying or failed
-    const updateRetry = db.prepare(`
-      UPDATE sync_queue
-      SET retry_count = retry_count + 1,
-          last_retry_at = ?,
-          status = CASE WHEN retry_count + 1 >= max_retries THEN 'failed' ELSE 'retrying' END,
-          error_message = ?
-      WHERE id = ?
-    `);
-    db.transaction(() => {
-      for (const group of Object.values(grouped)) {
-        for (const id of group.ids) {
-          updateRetry.run(now, message, id);
-        }
-      }
-    })();
-
-    return {
-      content: [{
-        type: 'text',
-        text: `Sync queue drain failed: ${message}\n\nItems updated with retry status. ${items.length} item(s) affected.`,
-      }],
       isError: true,
     } as { content: { type: string; text: string }[]; isError: boolean };
   }
+
+  return {
+    content: [{
+      type: 'text',
+      text: [
+        totalFailed === 0
+          ? 'Sync queue drain completed successfully.'
+          : 'Sync queue drain completed with partial success.',
+        '',
+        `Remote: ${remoteUrl}`,
+        `Chunks sent: ${chunks.length}`,
+        `Items sent: ${totalSent}`,
+        ...(totalFailed > 0 ? [`Items failed: ${totalFailed}`] : []),
+        `Tables:`,
+        tablesSummary,
+      ].join('\n'),
+    }],
+  };
 }
 
 // ---------------------------------------------------------------------------

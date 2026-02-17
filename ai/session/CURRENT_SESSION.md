@@ -3,8 +3,8 @@
 ## Status
 **Mode:** Active
 **Updated:** 2026-02-17
-**Active Brief:** None
-**Instance ID:** f2a2184d-4809-4a31-86e2-733ed11d7860
+**Active Brief:** BR-019 (Fix VPS Brain Push HTTP 500)
+**Instance ID:** 384f9043-496a-49c7-93b7-4e74dbd68b79
 
 ---
 
@@ -29,26 +29,21 @@
 
 ## Resume Point
 
-**Last Active:** BR-017 (v4.0 Critical Security Hardening) — COMPLETE
-**Phase:** Active
+**Last Active:** BR-018 (v4.0 Publish Hardening) — COMPLETE
+**Phase:** REST
 
 ---
 
 ## Next Session Instructions
 
-1. **Register phase briefs FR-052 through FR-056** from FR-051 master brief
-2. **HUNT FR-052 (Engine Foundation)** — Phase 1 of Brain v5.0, critical path for all other phases
+1. **Publish v4.0** — All audit findings resolved, code synced to VPS. Ready for public release.
+2. **HUNT FR-052 (Engine Foundation)** — Phase 1 of Brain v5.0, critical path. Plan already complete at `ai/plans/FR-052-plan.md` (11 phases, 17 files). Needs user approval then BUILDING.
+3. **Fix brain push HTTP 500** — The VPS brain server's body-parser rejects large push payloads. 28 sync queue items pending. Likely needs payload size limit increase on VPS express config.
 
-**Key context for FR-051 (Brain v5.0):**
-- Extensive research completed: OpenClaw (lane queue, heartbeat, cron), CrewAI (hierarchical manager), LangGraph (state machine), AutoGen (actor model), Claude Code Agent SDK (programmatic invocation), hooks (14 events), headless mode
-- Architecture designed: 5-layer modular brain, 7 domain components (memory, projects, briefs, tasks, scheduler, sessions, sync), event bus, pluggable storage adapters, config-driven component loading
-- Option C chosen: Hybrid DB + Cache — DB is source of truth, markdown generated on demand for agents
-- Key decisions captured in FR-051 brief:
-  - Sessions = one Claude Code conversation (/awaken to /clear)
-  - Sessions are short-lived, tasks are long-lived (span multiple sessions)
-  - Session ↔ Task is many-to-many (session_tasks junction table)
-  - CURRENT_SESSION.md becomes a generated cache file from DB
-  - BLOCKERS.md → DB, DECISIONS.md → memory component, LEARNINGS.md → memory component
+**Key context for FR-052:**
+- Phase briefs FR-052 through FR-056 already registered
+- FR-052 plan complete: 27 MCP tools (not 40), 8 components (not 7), setAdapter() bridge pattern
+- FR-052 was PAUSED at APPROVAL phase — resume with user plan approval
 - All research data in FR-051 brief at `ai/briefs/FR-051-brain-v5-modular-architecture.md`
 
 ---
@@ -57,6 +52,12 @@
 
 **Date:** 2026-02-17
 **Summary:** Full README rewrite (FR-050) via HUNT pipeline — 1557→685 lines, 16 sections, all facts verified. Then deep architectural research for Brain v5.0: autonomous agent orchestration, task management systems, scheduling patterns, and Claude Code latest capabilities. Designed modular brain architecture with 7 domain components. Registered FR-051 (XL, 5 phases). Multiple design decisions captured.
+
+**Completed (this session — continued):**
+- README: Added Crimson Arena Dashboard section. Commit: `eff85c5`
+- `/sync code` x2 — VPS deployed (`ffa0362` → `eff85c5`)
+- `/sync data` — metrics + events uploaded, local DB merged. MCP push failed (HTTP 500)
+- `/archive BR-018`
 
 **Completed (this session):**
 - **BR-018: v4.0 Publish Hardening — COMPLETE.** Commit: `87213f8`
@@ -93,10 +94,10 @@
 
 ## Pending
 
-- ~~Register phase briefs FR-052 through FR-056~~ — DONE
-- **HUNT FR-052 (Engine Foundation)** — Phase 1 of Brain v5.0, critical path
+- **Publish v4.0** — all blockers resolved, VPS synced
+- **HUNT FR-052 (Engine Foundation)** — Phase 1 of Brain v5.0, plan complete, awaiting approval
+- Fix brain push HTTP 500 (28 sync queue items pending)
 - FR-014: Higgsfield browser automation — blocked on URL slugs
-- 3 critical findings from readiness report RESOLVED (BR-017, commit `ffa0362`)
 
 ---
 
