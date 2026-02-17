@@ -3,7 +3,7 @@
 ## Status
 **Mode:** HUNT MODE
 **Updated:** 2026-02-17
-**Active Brief:** FR-040
+**Active Brief:** FR-042
 **Instance ID:** 77318e66-86c5-4d96-ab2e-da5a965ec4a1
 
 ---
@@ -31,7 +31,7 @@
 | FR-037 | Sync Brief File Content to VPS Brain | Done (commit `f24d25c`) |
 | FR-038 | Sync Session File Content to VPS Brain | Done (commit `f24d25c`) |
 | FR-039 | Sync Agent/Skill/Rule Definitions to VPS | Done (commit `f24d25c`) |
-| FR-040 | /sync Predefined Skill | Ready |
+| FR-040 | /sync Predefined Skill | Done (commit `5991700`) |
 | FR-041 | Fix Brain MCP Tool Discovery | Done (commit `7ccf4e5`) |
 
 **Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, MG-009, MG-010, MG-011, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018, BR-015, FR-019, FR-020, FR-021, PI-003

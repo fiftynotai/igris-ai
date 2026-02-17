@@ -133,33 +133,74 @@ Execute these steps sequentially, displaying progress:
 
 Skip this step if mode is `code` or `status`.
 
+**MCP-dependent steps ([1/4] and [2/4]):**
+
 If the `igris-brain` MCP server is available:
 
-**[1/2] Draining sync queue...**
+**[1/4] Draining sync queue...**
 - Call `igris_sync_queue_drain` with:
   - remote_url = value from `remote_brain.url`
   - api_key = value from `remote_brain.api_key`
 - Display count of drained operations.
 
-**[2/2] Pushing brain data...**
+**[2/4] Pushing brain data...**
 - Call `igris_brain_push` with:
   - remote_url = value from `remote_brain.url`
   - api_key = value from `remote_brain.api_key`
 - Display sync summary (rows pushed, errors synced, etc.)
 
 If the `igris-brain` MCP server is NOT available:
-- If mode is `data`: hard failure with clear error:
+- Skip steps [1/4] and [2/4].
+- Display warning:
   ```
-  ERROR: Brain MCP server is not available.
+  WARNING: Brain MCP server not available. Steps [1/4] and [2/4] skipped.
+  ```
+- If mode is `data` and SSH-based steps also fail: hard failure with clear error:
+  ```
+  ERROR: Brain MCP server is not available and SSH sync also failed.
 
-  The igris-brain MCP server must be registered and running to sync brain data.
+  The igris-brain MCP server must be registered and running to sync brain data via MCP.
   Check ~/.claude.json for MCP server registration.
+  Alternatively, ensure SSH connectivity is working for direct DB sync.
   ```
-- If mode is `all`: warn but report code sync success:
+- If mode is `all`: warn but continue with SSH-based steps [3/4] and [4/4]:
   ```
-  WARNING: Brain MCP server not available. Data sync skipped.
-  Code deployment completed successfully.
+  WARNING: Brain MCP server not available. MCP data sync skipped.
+  Continuing with SSH-based sync steps...
   ```
+
+**SSH-based steps ([3/4] and [4/4]) -- always run regardless of MCP availability:**
+
+**[3/4] Uploading agent metrics...**
+- Check if `ai/session/metrics/agent-metrics.json` exists in the project directory.
+- If it exists:
+  - Read `vps.user`, `vps.host`, `vps.brain_path` from config.
+  - Create remote directory: `ssh -o ConnectTimeout=10 {vps.user}@{vps.host} "mkdir -p {vps.brain_path}/metrics"`
+  - Upload file: `scp -o ConnectTimeout=10 ai/session/metrics/agent-metrics.json {vps.user}@{vps.host}:{vps.brain_path}/metrics/agent-metrics.json`
+  - On success: display "Agent metrics uploaded (X agents, Y total invocations)"
+    - Parse the JSON to get totals.total_invocations and count of agents for the display message.
+  - On failure: display WARNING but do NOT abort. Continue with next step.
+- If it does not exist:
+  - Display: "No agent-metrics.json found. Skipping metrics upload."
+
+**[4/4] Merging local brain data...**
+- This step syncs the local machine's brain database to the VPS brain database.
+- Read `vps.user`, `vps.host`, `vps.brain_path` from config.
+- For each table (learnings, projects, sessions, brief_status, agent_metrics):
+  1. Dump local data: Run `sqlite3 ~/.igris/memory/knowledge.db` with a query to export rows as INSERT OR IGNORE SQL statements (excluding the id column to avoid PK conflicts).
+     - For `brief_status` (has UNIQUE on project+brief_id):
+       `sqlite3 ~/.igris/memory/knowledge.db "SELECT 'INSERT OR IGNORE INTO brief_status (project, brief_id, brief_type, title, status, priority, effort, phase, updated_at) VALUES (' || quote(project) || ',' || quote(brief_id) || ',' || quote(brief_type) || ',' || quote(title) || ',' || quote(status) || ',' || quote(priority) || ',' || quote(effort) || ',' || quote(phase) || ',' || quote(updated_at) || ');' FROM brief_status;"`
+     - For `projects` (has UNIQUE on slug):
+       `sqlite3 ~/.igris/memory/knowledge.db "SELECT 'INSERT OR IGNORE INTO projects (slug, name, path, tech_stack, igris_version, status, registered_at, last_session_at) VALUES (' || quote(slug) || ',' || quote(name) || ',' || quote(path) || ',' || quote(tech_stack) || ',' || quote(igris_version) || ',' || quote(status) || ',' || quote(registered_at) || ',' || quote(last_session_at) || ');' FROM projects;"`
+     - For `learnings` (no UNIQUE beyond PK -- use title+project dedup):
+       `sqlite3 ~/.igris/memory/knowledge.db "SELECT 'INSERT INTO learnings (project, category, title, content, tags, tech_stack, scope, source_brief, confidence, created_at, updated_at, access_count, last_accessed_at) SELECT ' || quote(project) || ',' || quote(category) || ',' || quote(title) || ',' || quote(content) || ',' || quote(tags) || ',' || quote(tech_stack) || ',' || quote(scope) || ',' || quote(source_brief) || ',' || quote(confidence) || ',' || quote(created_at) || ',' || quote(updated_at) || ',' || quote(access_count) || ',' || quote(last_accessed_at) || ' WHERE NOT EXISTS (SELECT 1 FROM learnings WHERE project = ' || quote(project) || ' AND title = ' || quote(title) || ');' FROM learnings;"`
+     - For `sessions` and `agent_metrics`: Use similar WHERE NOT EXISTS dedup on key columns.
+  2. Write all INSERT statements to a temp file: `/tmp/igris_local_merge.sql`
+  3. Upload: `scp -o ConnectTimeout=10 /tmp/igris_local_merge.sql {vps.user}@{vps.host}:/tmp/igris_local_merge.sql`
+  4. Execute on VPS: `ssh -o ConnectTimeout=10 {vps.user}@{vps.host} "sqlite3 {vps.brain_path}/memory/knowledge.db < /tmp/igris_local_merge.sql"`
+  5. Clean up: Remove `/tmp/igris_local_merge.sql` locally and on VPS.
+  6. On success: display row counts merged per table.
+  7. On failure: display WARNING with error details. Do NOT abort.
 
 ### Step 5: Status Mode (status mode only)
 
@@ -227,7 +268,9 @@ After code and/or data sync completes, display a summary table:
 | Git push | OK (X commits) / SKIPPED / FAILED: {reason} |
 | VPS deploy | OK ({old_hash} -> {new_hash}) / SKIPPED / FAILED: {reason} |
 | Health check | PASSED (v{version}) / WARNING: {reason} / FAILED |
-| Brain data | OK (X rows synced) / SKIPPED / FAILED: {reason} |
+| Brain data (MCP) | OK (X rows synced) / SKIPPED / FAILED: {reason} |
+| Agent metrics | OK (uploaded) / SKIPPED (no file) / FAILED: {reason} |
+| Local DB merge | OK (X rows merged) / SKIPPED / FAILED: {reason} |
 ```
 
 If any step failed, include troubleshooting tips:
@@ -238,6 +281,8 @@ If any step failed, include troubleshooting tips:
 - **SSH failed:** Verify SSH key is configured for {vps.user}@{vps.host}. Test with: ssh {vps.user}@{vps.host} "echo ok"
 - **Health check failed:** Service may be restarting. Check PM2: ssh {vps.user}@{vps.host} "pm2 status igris-brain"
 - **Brain data failed:** Ensure igris-brain MCP server is registered in ~/.claude.json
+- **Metrics upload failed:** Check SSH/SCP connectivity and that {vps.brain_path}/metrics/ is writable.
+- **Local DB merge failed:** Check that local ~/.igris/memory/knowledge.db exists and VPS brain DB is accessible.
 ```
 
 Only show troubleshooting tips relevant to the actual failures encountered.
