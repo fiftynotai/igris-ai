@@ -18,9 +18,6 @@
 import { getDb } from '../db.js';
 import { randomUUID } from 'node:crypto';
 
-/** Instances with no heartbeat for longer than this are permanently purged. */
-const STALE_PURGE_HOURS = 2;
-
 /** Input shape for igris_instance_heartbeat */
 interface InstanceHeartbeatInput {
   instance_id?: string;
@@ -57,48 +54,21 @@ interface InstanceRemoveInput {
  */
 function handleInstanceHeartbeat(args: InstanceHeartbeatInput): { content: { type: string; text: string }[] } {
   const db = getDb();
-
-  // Try to update existing instance if instance_id provided
-  if (args.instance_id) {
-    const result = db.prepare(`
-      UPDATE instances
-      SET machine_hostname = ?,
-          machine_os = ?,
-          project_slug = ?,
-          project_path = ?,
-          current_brief = ?,
-          current_phase = ?,
-          current_task = ?,
-          status = 'active',
-          last_heartbeat_at = datetime('now')
-      WHERE id = ?
-    `).run(
-      args.machine_hostname,
-      args.machine_os ?? null,
-      args.project_slug ?? null,
-      args.project_path ?? null,
-      args.current_brief ?? null,
-      args.current_phase ?? null,
-      args.current_task ?? null,
-      args.instance_id
-    );
-
-    if (result.changes > 0) {
-      return {
-        content: [{
-          type: 'text',
-          text: `Instance heartbeat updated: ${args.instance_id}`,
-        }],
-      };
-    }
-  }
-
-  // Insert new instance
   const instanceId = args.instance_id ?? randomUUID();
 
-  db.prepare(`
-    INSERT INTO instances (id, machine_hostname, machine_os, project_slug, project_path, current_brief, current_phase, current_task)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  const result = db.prepare(`
+    INSERT INTO instances (id, machine_hostname, machine_os, project_slug, project_path, current_brief, current_phase, current_task, status, last_heartbeat_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', datetime('now'))
+    ON CONFLICT(id) DO UPDATE SET
+      machine_hostname = excluded.machine_hostname,
+      machine_os = excluded.machine_os,
+      project_slug = excluded.project_slug,
+      project_path = excluded.project_path,
+      current_brief = excluded.current_brief,
+      current_phase = excluded.current_phase,
+      current_task = excluded.current_task,
+      status = 'active',
+      last_heartbeat_at = datetime('now')
   `).run(
     instanceId,
     args.machine_hostname,
@@ -110,10 +80,12 @@ function handleInstanceHeartbeat(args: InstanceHeartbeatInput): { content: { typ
     args.current_task ?? null
   );
 
+  const action = result.changes > 0 && args.instance_id ? 'heartbeat updated' : 'registered';
+
   return {
     content: [{
       type: 'text',
-      text: `Instance registered: ${instanceId}`,
+      text: `Instance ${action}: ${instanceId}`,
     }],
   };
 }
@@ -130,9 +102,9 @@ function handleInstanceHeartbeat(args: InstanceHeartbeatInput): { content: { typ
 function handleInstanceList(args: InstanceListInput): { content: { type: string; text: string }[] } {
   const db = getDb();
 
-  // Purge instances stale for longer than STALE_PURGE_HOURS (2h = 120 minutes)
+  // Purge instances stale for longer than 2 hours (120 minutes)
   db.prepare(
-    `DELETE FROM instances WHERE last_heartbeat_at < datetime('now', '-${STALE_PURGE_HOURS * 60} minutes')`
+    "DELETE FROM instances WHERE last_heartbeat_at < datetime('now', '-120 minutes')"
   ).run();
 
   // Auto-mark stale instances

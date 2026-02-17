@@ -62,7 +62,13 @@ function processStagingFiles(): void {
         const staging = JSON.parse(raw) as StagingFile;
 
         processStagingEntry(staging, projectDir.name);
-        fs.unlinkSync(filePath);
+        // Only delete after successful DB insert
+        try {
+          fs.unlinkSync(filePath);
+        } catch (unlinkErr) {
+          const unlinkMsg = unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr);
+          console.error(`[staging] Failed to delete ${filePath}: ${unlinkMsg}`);
+        }
         totalProcessed++;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

@@ -378,6 +378,11 @@ async function handleBrainPush(
 
     const result = await response.json() as Record<string, unknown>;
 
+    // Validate remote response before updating sync_state
+    if (!result.ok || !result.results) {
+      throw new Error(`Remote returned invalid response: missing 'ok' or 'results' field. Response: ${JSON.stringify(result)}`);
+    }
+
     // Update sync_state for each pushed table
     const upsertState = db.prepare(`
       INSERT INTO sync_state (remote_url, table_name, last_push_at)
@@ -473,17 +478,19 @@ async function handleBrainPull(
     });
 
     const data = await response.json() as {
-      tables: Record<string, Record<string, unknown>[]>;
+      tables?: Record<string, Record<string, unknown>[]>;
     };
 
-    if (!data.tables) {
+    if (!data || typeof data !== 'object' || !data.tables || typeof data.tables !== 'object') {
       return {
         content: [{
           type: 'text',
-          text: 'Pull response contained no tables. Nothing to merge.',
+          text: `Pull response invalid or contained no tables. Nothing to merge. Sync state was NOT updated.`,
         }],
       };
     }
+
+    const validatedTables = data.tables;
 
     // Merge rows within a transaction for performance
     const summary: string[] = [];
@@ -498,7 +505,7 @@ async function handleBrainPull(
 
     db.transaction(() => {
       for (const config of SYNC_TABLES) {
-        const rows = data.tables[config.table];
+        const rows = validatedTables[config.table];
         if (!rows || rows.length === 0) continue;
 
         const result = mergeRows(db, config, rows);

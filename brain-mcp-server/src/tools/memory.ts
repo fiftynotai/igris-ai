@@ -67,7 +67,34 @@ interface MemoryRecallInput {
  * @param args - The learning data to store
  * @returns MCP-formatted response with the inserted learning ID
  */
+/** Max content size: 1 MB */
+const MAX_CONTENT_LENGTH = 1_048_576;
+const MAX_PROJECT_LENGTH = 255;
+const MAX_TITLE_LENGTH = 500;
+const VALID_CATEGORIES = ['pattern', 'decision', 'discovery', 'mistake', 'optimization'];
+
+function validateMemoryInput(args: MemoryStoreInput): string | null {
+  if (!args.project || args.project.length > MAX_PROJECT_LENGTH) {
+    return `Invalid project: must be 1-${MAX_PROJECT_LENGTH} characters.`;
+  }
+  if (!args.title || args.title.length > MAX_TITLE_LENGTH) {
+    return `Invalid title: must be 1-${MAX_TITLE_LENGTH} characters.`;
+  }
+  if (!args.content || args.content.length > MAX_CONTENT_LENGTH) {
+    return `Invalid content: must be 1-${MAX_CONTENT_LENGTH} characters (1 MB max).`;
+  }
+  if (!VALID_CATEGORIES.includes(args.category)) {
+    return `Invalid category: must be one of ${VALID_CATEGORIES.join(', ')}.`;
+  }
+  return null;
+}
+
 function handleMemoryStore(args: MemoryStoreInput): { content: { type: string; text: string }[] } {
+  const validationError = validateMemoryInput(args);
+  if (validationError) {
+    return { content: [{ type: 'text', text: `Validation error: ${validationError}` }] };
+  }
+
   const db = getDb();
 
   const stmt = db.prepare(`

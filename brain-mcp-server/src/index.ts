@@ -1335,8 +1335,18 @@ async function runHttp(config: ServerConfig): Promise<void> {
         };
 
         const server = createBrainServer();
-        await server.connect(transport);
-        await transport.handleRequest(req, res, req.body);
+        try {
+          await server.connect(transport);
+          await transport.handleRequest(req, res, req.body);
+        } catch (connectErr) {
+          // Clean up orphan session on failure
+          const sid = transport.sessionId;
+          if (sid) {
+            delete transports[sid];
+            delete sessionActivity[sid];
+          }
+          throw connectErr;
+        }
       } else {
         // Non-initialize request without valid session ID.
         // Two fallback strategies:
@@ -1386,8 +1396,18 @@ async function runHttp(config: ServerConfig): Promise<void> {
               }
             };
             const server = createBrainServer();
-            await server.connect(transport);
-            await transport.handleRequest(req, res, req.body);
+            try {
+              await server.connect(transport);
+              await transport.handleRequest(req, res, req.body);
+            } catch (connectErr) {
+              // Clean up orphan session on failure
+              const sid = transport.sessionId;
+              if (sid) {
+                delete transports[sid];
+                delete sessionActivity[sid];
+              }
+              throw connectErr;
+            }
           }
         }
       }

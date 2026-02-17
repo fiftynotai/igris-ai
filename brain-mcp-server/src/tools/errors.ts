@@ -86,7 +86,21 @@ function createFingerprint(message: string): string {
  * @param args - Error lookup parameters
  * @returns MCP-formatted response with results
  */
+/** Max content size: 1 MB */
+const MAX_CONTENT_LENGTH = 1_048_576;
+const MAX_PROJECT_LENGTH = 255;
+
 function handleErrorLookup(args: ErrorLookupInput): { content: { type: string; text: string }[] } {
+  if (!args.project || args.project.length > MAX_PROJECT_LENGTH) {
+    return { content: [{ type: 'text', text: `Validation error: project must be 1-${MAX_PROJECT_LENGTH} characters.` }] };
+  }
+  if (!args.message || args.message.length > MAX_CONTENT_LENGTH) {
+    return { content: [{ type: 'text', text: `Validation error: message must be 1-${MAX_CONTENT_LENGTH} characters (1 MB max).` }] };
+  }
+  if (args.solution && args.solution.length > MAX_CONTENT_LENGTH) {
+    return { content: [{ type: 'text', text: `Validation error: solution must be at most ${MAX_CONTENT_LENGTH} characters (1 MB max).` }] };
+  }
+
   const db = getDb();
   const fingerprint = createFingerprint(args.message);
 
