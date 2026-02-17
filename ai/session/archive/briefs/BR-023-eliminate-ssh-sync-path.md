@@ -5,7 +5,7 @@
 **Effort:** M-Medium (4-8h)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** In Progress
+**Status:** Done
 **Created:** 2026-02-18
 
 ---
@@ -123,7 +123,7 @@ The local `sync_state` table has `last_push_at = 1970-01-01` for all rows. Fix t
 
 ## Workflow State
 
-**Phase:** COMMITTING
+**Phase:** COMPLETE
 **Active Agent:** none
 **Retry Count:** 0
 
@@ -132,6 +132,7 @@ The local `sync_state` table has `last_push_at = 1970-01-01` for all rows. Fix t
 - [2026-02-18] FORGER: Implementation complete — 3 files modified. Added handleFilePush/handleFilePull to sync.ts, MCP tool defs + HTTP endpoints + dispatch in index.ts, rewrote SKILL.md data sync to 5-step MCP-only.
 - [2026-02-18] SENTINEL: PASS — Build clean (tsc zero errors), 7/7 acceptance criteria met, zero issues.
 - [2026-02-18] WARDEN: APPROVE — Security solid, patterns consistent, zero critical/major issues. 4 minor suggestions (non-blocking).
+- [2026-02-18] COMMIT: b43b0f6 — fix(sync): eliminate SSH data sync path, move all to MCP tools
 
 ---
 

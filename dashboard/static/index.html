@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CRIMSON ARENA — Igris AI Agent Dashboard</title>
-  <link rel="stylesheet" href="/static/style.css?v=13">
+  <link rel="stylesheet" href="/static/style.css?v=15">
 </head>
 <body>
 
@@ -16,616 +16,367 @@
       <h1 class="header__title">CRIMSON ARENA</h1>
       <span class="header__subtitle">Igris AI Agent Dashboard</span>
     </div>
-    <div class="header__filter">
-      <div class="filter-toggle" id="filter-toggle">
-        <button class="filter-btn filter-btn--active" data-range="today">Today</button>
-        <button class="filter-btn" data-range="week">This Week</button>
-        <button class="filter-btn" data-range="all">All Time</button>
+    <nav class="header__nav" id="nav-tabs">
+      <button class="nav-tab nav-tab--active" data-page="home">HOME</button>
+      <button class="nav-tab" data-page="instances">
+        INSTANCES
+        <span class="nav-tab__badge" id="instances-badge">0</span>
+      </button>
+    </nav>
+    <div class="header__controls">
+      <div class="header__filter">
+        <div class="filter-toggle" id="filter-toggle">
+          <button class="filter-btn filter-btn--active" data-range="today">Today</button>
+          <button class="filter-btn" data-range="week">This Week</button>
+          <button class="filter-btn" data-range="all">All Time</button>
+        </div>
       </div>
-    </div>
-    <div class="header__meta">
-      <span class="connection-status" id="connection-status" title="WebSocket status">OFFLINE</span>
+      <div class="header__meta">
+        <span class="connection-status" id="connection-status" title="WebSocket status">OFFLINE</span>
+      </div>
     </div>
   </header>
 
   <!-- ================================================================== -->
-  <!-- INSTRUMENT STRIP: War Room readout bar                              -->
+  <!-- PAGE: HOME                                                          -->
   <!-- ================================================================== -->
-  <div class="instrument-strip">
-    <div class="instrument-strip__hp" id="hp-panel">
-      <div class="digi-panel__screen">
-        <div class="digi-panel__scanlines"></div>
-        <div class="digi-panel__readout">
-          <div class="digi-panel__label">&gt; <span id="hp-label-text">SESSION HP</span> <span class="digi-panel__dots">............</span> <span class="digi-panel__pct" id="hp-pct">0.0%</span></div>
-          <div class="digi-panel__bar" id="hp-bar"></div>
-          <div class="digi-panel__count mono" id="hp-count">0 / 0 tokens</div>
-        </div>
-      </div>
-      <div class="digi-panel__bezel">
-        <span class="digi-panel__ridge"></span>
-        <span class="digi-panel__ridge"></span>
-        <span class="digi-panel__ridge"></span>
-      </div>
-    </div>
-    <div class="instrument-strip__divider"></div>
-    <div class="instrument-strip__ctx" id="digivice">
-      <div class="digi-panel__screen">
-        <div class="digi-panel__scanlines"></div>
-        <div class="digi-panel__readout">
-          <div class="digi-panel__label">&gt; <span id="digivice-label-text">DATA LOAD</span> <span class="digi-panel__dots">............</span> <span class="digi-panel__pct" id="digivice-pct">0.0%</span></div>
-          <div class="digi-panel__bar" id="digivice-bar"></div>
-          <div class="digi-panel__count mono" id="digivice-count">0 / 200,000 ctx</div>
-          <div class="digi-panel__tags" id="digivice-tags">
-            <span class="digi-panel__tag">[cache:0]</span>
-            <span class="digi-panel__tag">[in:0]</span>
-            <span class="digi-panel__tag">[out:0]</span>
+  <div class="page page--home" id="page-home">
+
+    <!-- ================================================================ -->
+    <!-- INSTRUMENT STRIP: War Room readout bar (expanded on HOME)         -->
+    <!-- ================================================================ -->
+    <div class="instrument-strip">
+      <div class="instrument-strip__hp" id="hp-panel">
+        <div class="digi-panel__screen">
+          <div class="digi-panel__scanlines"></div>
+          <div class="digi-panel__readout">
+            <div class="digi-panel__label">&gt; <span id="hp-label-text">SESSION HP</span> <span class="digi-panel__dots">............</span> <span class="digi-panel__pct" id="hp-pct">0.0%</span></div>
+            <div class="digi-panel__bar" id="hp-bar"></div>
+            <div class="digi-panel__count mono" id="hp-count">0 / 0 tokens</div>
           </div>
         </div>
+        <div class="digi-panel__bezel">
+          <span class="digi-panel__ridge"></span>
+          <span class="digi-panel__ridge"></span>
+          <span class="digi-panel__ridge"></span>
+        </div>
       </div>
-      <div class="digi-panel__bezel">
-        <span class="digi-panel__ridge"></span>
-        <span class="digi-panel__ridge"></span>
-        <span class="digi-panel__ridge"></span>
-      </div>
-    </div>
-    <div class="instrument-strip__divider"></div>
-    <div class="instrument-strip__sync" id="sync-panel">
-      <div class="digi-panel__screen">
-        <div class="digi-panel__scanlines"></div>
-        <div class="digi-panel__readout">
-          <div class="digi-panel__label">&gt; <span id="sync-label-text">SYNC PIPELINE</span> <span class="digi-panel__dots">............</span> <span class="digi-panel__pct" id="sync-status-text">OFFLINE</span></div>
-          <div class="sync-stats">
-            <div class="sync-stat">
-              <span class="sync-stat__label">Last Push</span>
-              <span class="sync-stat__value mono" id="sync-last-push">--</span>
-            </div>
-            <div class="sync-stat">
-              <span class="sync-stat__label">Last Pull</span>
-              <span class="sync-stat__value mono" id="sync-last-pull">--</span>
-            </div>
-            <div class="sync-stat">
-              <span class="sync-stat__label">Queue</span>
-              <span class="sync-stat__value mono" id="sync-queue-depth">0</span>
+      <div class="instrument-strip__divider"></div>
+      <div class="instrument-strip__ctx" id="digivice">
+        <div class="digi-panel__screen">
+          <div class="digi-panel__scanlines"></div>
+          <div class="digi-panel__readout">
+            <div class="digi-panel__label">&gt; <span id="digivice-label-text">DATA LOAD</span> <span class="digi-panel__dots">............</span> <span class="digi-panel__pct" id="digivice-pct">0.0%</span></div>
+            <div class="digi-panel__bar" id="digivice-bar"></div>
+            <div class="digi-panel__count mono" id="digivice-count">0 / 200,000 ctx</div>
+            <div class="digi-panel__tags" id="digivice-tags">
+              <span class="digi-panel__tag">[cache:0]</span>
+              <span class="digi-panel__tag">[in:0]</span>
+              <span class="digi-panel__tag">[out:0]</span>
             </div>
           </div>
         </div>
+        <div class="digi-panel__bezel">
+          <span class="digi-panel__ridge"></span>
+          <span class="digi-panel__ridge"></span>
+          <span class="digi-panel__ridge"></span>
+        </div>
       </div>
-      <div class="digi-panel__bezel">
-        <span class="digi-panel__ridge"></span>
-        <span class="digi-panel__ridge"></span>
-        <span class="digi-panel__ridge"></span>
+      <div class="instrument-strip__divider"></div>
+      <div class="instrument-strip__sync" id="sync-panel">
+        <div class="digi-panel__screen">
+          <div class="digi-panel__scanlines"></div>
+          <div class="digi-panel__readout">
+            <div class="digi-panel__label">&gt; <span id="sync-label-text">SYNC PIPELINE</span> <span class="digi-panel__dots">............</span> <span class="digi-panel__pct" id="sync-status-text">OFFLINE</span></div>
+            <div class="sync-stats">
+              <div class="sync-stat">
+                <span class="sync-stat__label">Last Push</span>
+                <span class="sync-stat__value mono" id="sync-last-push">--</span>
+              </div>
+              <div class="sync-stat">
+                <span class="sync-stat__label">Last Pull</span>
+                <span class="sync-stat__value mono" id="sync-last-pull">--</span>
+              </div>
+              <div class="sync-stat">
+                <span class="sync-stat__label">Queue</span>
+                <span class="sync-stat__value mono" id="sync-queue-depth">0</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="digi-panel__bezel">
+          <span class="digi-panel__ridge"></span>
+          <span class="digi-panel__ridge"></span>
+          <span class="digi-panel__ridge"></span>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- ================================================================== -->
-  <!-- MAIN CONTENT                                                        -->
-  <!-- ================================================================== -->
-  <main class="main">
+    <!-- ================================================================ -->
+    <!-- HOME MAIN CONTENT                                                 -->
+    <!-- ================================================================ -->
+    <div class="home-content">
 
-    <!-- ---------------------------------------------------------------- -->
-    <!-- AGENT PIPELINE (left)                                             -->
-    <!-- ---------------------------------------------------------------- -->
-      <section class="nexus" aria-label="Agent Nexus">
-        <h2 class="section-title">DNA Digivolution Nexus</h2>
+      <!-- ---- TOP ROW: Token Breakdown + Cost Estimate side by side ---- -->
+      <div class="home-top-row">
+        <!-- Token Breakdown -->
+        <div class="panel token-breakdown">
+          <h2 class="section-title">Token Breakdown <span class="range-label" id="range-label">— Today</span></h2>
+          <div class="token-total">
+            <span class="token-total__label">Direct Tokens</span>
+            <span class="token-total__value mono" id="total-tokens">0</span>
+          </div>
+          <div class="token-total__cached mono" id="total-cached"></div>
+          <div class="token-bars" id="token-bars">
+            <div class="token-bar-row">
+              <span class="token-bar-row__label">Input</span>
+              <div class="token-bar-row__track"><div class="token-bar-row__fill token-bar-row__fill--input" id="bar-input" style="width:0%"></div></div>
+              <span class="token-bar-row__count mono" id="count-input">0</span>
+              <span class="token-bar-row__pct mono" id="pct-input">0%</span>
+            </div>
+            <div class="token-bar-row">
+              <span class="token-bar-row__label">Output</span>
+              <div class="token-bar-row__track"><div class="token-bar-row__fill token-bar-row__fill--output" id="bar-output" style="width:0%"></div></div>
+              <span class="token-bar-row__count mono" id="count-output">0</span>
+              <span class="token-bar-row__pct mono" id="pct-output">0%</span>
+            </div>
+            <div class="token-bars__separator"></div>
+            <div class="token-bar-row">
+              <span class="token-bar-row__label">Cache Read</span>
+              <div class="token-bar-row__track"><div class="token-bar-row__fill token-bar-row__fill--cache-read" id="bar-cache-read" style="width:0%"></div></div>
+              <span class="token-bar-row__count mono" id="count-cache-read">0</span>
+              <span class="token-bar-row__pct mono" id="pct-cache-read">0%</span>
+            </div>
+            <div class="token-bar-row">
+              <span class="token-bar-row__label">Cache Create</span>
+              <div class="token-bar-row__track"><div class="token-bar-row__fill token-bar-row__fill--cache-create" id="bar-cache-create" style="width:0%"></div></div>
+              <span class="token-bar-row__count mono" id="count-cache-create">0</span>
+              <span class="token-bar-row__pct mono" id="pct-cache-create">0%</span>
+            </div>
+          </div>
+          <div class="token-invocations">
+            <span class="token-invocations__label">Total Invocations</span>
+            <span class="token-invocations__value mono" id="total-invocations">0</span>
+          </div>
+        </div>
 
-        <div class="nexus__grid">
+        <!-- Cost Estimate -->
+        <div class="panel cost-card cost-card--no-pricing" id="cost-card">
+          <h2 class="section-title">Cost Estimate</h2>
+          <div class="cost-card__empty">Loading pricing data...</div>
+        </div>
+      </div>
 
-          <!-- Connection lines (behind cores) -->
-          <div class="nexus__line" id="line-architect"></div>
-          <div class="nexus__line" id="line-forger"></div>
-          <div class="nexus__line" id="line-sentinel"></div>
-          <div class="nexus__line" id="line-warden"></div>
-          <div class="nexus__line" id="line-mender"></div>
-          <div class="nexus__line" id="line-seeker"></div>
-          <div class="nexus__line" id="line-sage"></div>
+      <!-- ---- BRAIN COMMAND CENTER ---- -->
+      <section class="brain-section" id="brain-section">
+        <div class="brain-section__header">
+          <h2 class="section-title">
+            <span class="section-title__icon">&#x1F9E0;</span>
+            BRAIN COMMAND CENTER
+          </h2>
+          <div class="brain-health-badge" id="brain-health-badge">
+            <span class="brain-health-badge__dot"></span>
+            <span class="brain-health-badge__text">CHECKING...</span>
+          </div>
+        </div>
 
-          <!-- Orchestrator (center) -->
-          <div class="nexus__core nexus__core--orchestrator nexus__core--idle"
-               id="pod-orchestrator" data-agent="orchestrator">
-            <div class="nexus__hex-frame">
-              <div class="nexus__hex-outer" style="--xp-deg: 0deg;">
-                <div class="nexus__hex-inner">
-                  <span class="nexus__crest">&#x2B21;</span>
-                  <span class="nexus__monogram">IG</span>
-                </div>
+        <div class="brain-section__grid">
+          <!-- Brain Health Card -->
+          <div class="panel brain-health-card" id="brain-health-card">
+            <h3 class="panel__title">System Health</h3>
+            <div class="brain-health-stats" id="brain-health-stats">
+              <div class="brain-stat">
+                <span class="brain-stat__label">Status</span>
+                <span class="brain-stat__value" id="brain-stat-status">--</span>
               </div>
-              <span class="nexus__vertex" style="--v: 0;"></span>
-              <span class="nexus__vertex" style="--v: 1;"></span>
-              <span class="nexus__vertex" style="--v: 2;"></span>
-              <span class="nexus__vertex" style="--v: 3;"></span>
-              <span class="nexus__vertex" style="--v: 4;"></span>
-              <span class="nexus__vertex" style="--v: 5;"></span>
-              <span class="nexus__aura nexus__aura--1"></span>
-              <span class="nexus__aura nexus__aura--2"></span>
-              <span class="nexus__particles"></span>
+              <div class="brain-stat">
+                <span class="brain-stat__label">Version</span>
+                <span class="brain-stat__value" id="brain-stat-version">--</span>
+              </div>
+              <div class="brain-stat">
+                <span class="brain-stat__label">Latency</span>
+                <span class="brain-stat__value" id="brain-stat-latency">--</span>
+              </div>
+              <div class="brain-stat">
+                <span class="brain-stat__label">DB Size</span>
+                <span class="brain-stat__value" id="brain-stat-dbsize">--</span>
+              </div>
+              <div class="brain-stat">
+                <span class="brain-stat__label">Uptime</span>
+                <span class="brain-stat__value" id="brain-stat-uptime">--</span>
+              </div>
+              <div class="brain-stat">
+                <span class="brain-stat__label">Records</span>
+                <span class="brain-stat__value" id="brain-stat-records">--</span>
+              </div>
             </div>
-            <div class="nexus__label">
-              <span class="nexus__name">IGRIS</span>
-              <span class="nexus__evo" id="evo-orchestrator">In-Training</span>
-              <span class="nexus__stats mono" id="inv-orchestrator">0 turns</span>
-            </div>
-            <div class="nexus__timer mono" id="timer-orchestrator"></div>
-            <span class="nexus__hidden" id="level-orchestrator"></span>
-            <span class="nexus__hidden" id="xp-orchestrator"></span>
-            <span class="nexus__hidden" id="last-orchestrator"></span>
           </div>
 
-          <!-- ARCHITECT (top) -->
-          <div class="nexus__core nexus__core--idle"
-               id="pod-architect" data-agent="architect">
-            <div class="nexus__hex-frame">
-              <div class="nexus__hex-outer" style="--xp-deg: 0deg;">
-                <div class="nexus__hex-inner">
-                  <span class="nexus__crest">&#x2316;</span>
-                  <span class="nexus__monogram">AR</span>
-                </div>
-              </div>
-              <span class="nexus__vertex" style="--v: 0;"></span>
-              <span class="nexus__vertex" style="--v: 1;"></span>
-              <span class="nexus__vertex" style="--v: 2;"></span>
-              <span class="nexus__vertex" style="--v: 3;"></span>
-              <span class="nexus__vertex" style="--v: 4;"></span>
-              <span class="nexus__vertex" style="--v: 5;"></span>
-              <span class="nexus__aura nexus__aura--1"></span>
-              <span class="nexus__aura nexus__aura--2"></span>
-              <span class="nexus__particles"></span>
+          <!-- Projects Panel -->
+          <div class="panel brain-projects-panel" id="brain-projects-panel">
+            <h3 class="panel__title">
+              <span class="panel__title-icon">&#x1F4C2;</span>
+              Projects
+              <span class="panel__count" id="brain-projects-count">0</span>
+            </h3>
+            <div id="brain-projects-grid">
+              <div class="brain-panel__empty">Waiting for brain connection...</div>
             </div>
-            <div class="nexus__label">
-              <span class="nexus__name">ARCHITECT</span>
-              <span class="nexus__evo" id="evo-architect">In-Training</span>
-              <span class="nexus__stats mono" id="inv-architect">0 runs</span>
-            </div>
-            <div class="nexus__timer mono" id="timer-architect"></div>
-            <span class="nexus__hidden" id="level-architect"></span>
-            <span class="nexus__hidden" id="xp-architect"></span>
-            <span class="nexus__hidden" id="last-architect"></span>
           </div>
 
-          <!-- FORGER (right) -->
-          <div class="nexus__core nexus__core--idle"
-               id="pod-forger" data-agent="forger">
-            <div class="nexus__hex-frame">
-              <div class="nexus__hex-outer" style="--xp-deg: 0deg;">
-                <div class="nexus__hex-inner">
-                  <span class="nexus__crest">&#x2699;</span>
-                  <span class="nexus__monogram">FO</span>
-                </div>
-              </div>
-              <span class="nexus__vertex" style="--v: 0;"></span>
-              <span class="nexus__vertex" style="--v: 1;"></span>
-              <span class="nexus__vertex" style="--v: 2;"></span>
-              <span class="nexus__vertex" style="--v: 3;"></span>
-              <span class="nexus__vertex" style="--v: 4;"></span>
-              <span class="nexus__vertex" style="--v: 5;"></span>
-              <span class="nexus__aura nexus__aura--1"></span>
-              <span class="nexus__aura nexus__aura--2"></span>
-              <span class="nexus__particles"></span>
+          <!-- Briefs Panel -->
+          <div class="panel brain-briefs-panel" id="brain-briefs-panel">
+            <h3 class="panel__title">
+              <span class="panel__title-icon">&#x1F4CB;</span>
+              Brief Status
+              <span class="panel__count" id="brain-briefs-count">0</span>
+            </h3>
+            <div class="brain-briefs-summary" id="brain-briefs-summary"></div>
+            <div class="brain-table-wrap" id="brain-briefs-table">
+              <div class="brain-panel__empty">Waiting for brain connection...</div>
             </div>
-            <div class="nexus__label">
-              <span class="nexus__name">FORGER</span>
-              <span class="nexus__evo" id="evo-forger">In-Training</span>
-              <span class="nexus__stats mono" id="inv-forger">0 runs</span>
-            </div>
-            <div class="nexus__timer mono" id="timer-forger"></div>
-            <span class="nexus__hidden" id="level-forger"></span>
-            <span class="nexus__hidden" id="xp-forger"></span>
-            <span class="nexus__hidden" id="last-forger"></span>
           </div>
 
-          <!-- SENTINEL (bottom) -->
-          <div class="nexus__core nexus__core--idle"
-               id="pod-sentinel" data-agent="sentinel">
-            <div class="nexus__hex-frame">
-              <div class="nexus__hex-outer" style="--xp-deg: 0deg;">
-                <div class="nexus__hex-inner">
-                  <span class="nexus__crest">&#x25C8;</span>
-                  <span class="nexus__monogram">SE</span>
-                </div>
-              </div>
-              <span class="nexus__vertex" style="--v: 0;"></span>
-              <span class="nexus__vertex" style="--v: 1;"></span>
-              <span class="nexus__vertex" style="--v: 2;"></span>
-              <span class="nexus__vertex" style="--v: 3;"></span>
-              <span class="nexus__vertex" style="--v: 4;"></span>
-              <span class="nexus__vertex" style="--v: 5;"></span>
-              <span class="nexus__aura nexus__aura--1"></span>
-              <span class="nexus__aura nexus__aura--2"></span>
-              <span class="nexus__particles"></span>
+          <!-- Sessions Timeline -->
+          <div class="panel brain-sessions-panel" id="brain-sessions-panel">
+            <h3 class="panel__title">
+              <span class="panel__title-icon">&#x1F550;</span>
+              Recent Sessions
+              <span class="panel__count" id="brain-sessions-count">0</span>
+            </h3>
+            <div id="brain-sessions-list">
+              <div class="brain-panel__empty">Waiting for brain connection...</div>
             </div>
-            <div class="nexus__label">
-              <span class="nexus__name">SENTINEL</span>
-              <span class="nexus__evo" id="evo-sentinel">In-Training</span>
-              <span class="nexus__stats mono" id="inv-sentinel">0 runs</span>
-            </div>
-            <div class="nexus__timer mono" id="timer-sentinel"></div>
-            <span class="nexus__hidden" id="level-sentinel"></span>
-            <span class="nexus__hidden" id="xp-sentinel"></span>
-            <span class="nexus__hidden" id="last-sentinel"></span>
           </div>
-
-          <!-- WARDEN (left) -->
-          <div class="nexus__core nexus__core--idle"
-               id="pod-warden" data-agent="warden">
-            <div class="nexus__hex-frame">
-              <div class="nexus__hex-outer" style="--xp-deg: 0deg;">
-                <div class="nexus__hex-inner">
-                  <span class="nexus__crest">&#x25C9;</span>
-                  <span class="nexus__monogram">WA</span>
-                </div>
-              </div>
-              <span class="nexus__vertex" style="--v: 0;"></span>
-              <span class="nexus__vertex" style="--v: 1;"></span>
-              <span class="nexus__vertex" style="--v: 2;"></span>
-              <span class="nexus__vertex" style="--v: 3;"></span>
-              <span class="nexus__vertex" style="--v: 4;"></span>
-              <span class="nexus__vertex" style="--v: 5;"></span>
-              <span class="nexus__aura nexus__aura--1"></span>
-              <span class="nexus__aura nexus__aura--2"></span>
-              <span class="nexus__particles"></span>
-            </div>
-            <div class="nexus__label">
-              <span class="nexus__name">WARDEN</span>
-              <span class="nexus__evo" id="evo-warden">In-Training</span>
-              <span class="nexus__stats mono" id="inv-warden">0 runs</span>
-            </div>
-            <div class="nexus__timer mono" id="timer-warden"></div>
-            <span class="nexus__hidden" id="level-warden"></span>
-            <span class="nexus__hidden" id="xp-warden"></span>
-            <span class="nexus__hidden" id="last-warden"></span>
-          </div>
-
-          <!-- MENDER (lower-left) -->
-          <div class="nexus__core nexus__core--support nexus__core--idle"
-               id="pod-mender" data-agent="mender">
-            <div class="nexus__hex-frame">
-              <div class="nexus__hex-outer" style="--xp-deg: 0deg;">
-                <div class="nexus__hex-inner">
-                  <span class="nexus__crest">&#x2726;</span>
-                  <span class="nexus__monogram">ME</span>
-                </div>
-              </div>
-              <span class="nexus__vertex" style="--v: 0;"></span>
-              <span class="nexus__vertex" style="--v: 1;"></span>
-              <span class="nexus__vertex" style="--v: 2;"></span>
-              <span class="nexus__vertex" style="--v: 3;"></span>
-              <span class="nexus__vertex" style="--v: 4;"></span>
-              <span class="nexus__vertex" style="--v: 5;"></span>
-              <span class="nexus__aura nexus__aura--1"></span>
-              <span class="nexus__aura nexus__aura--2"></span>
-              <span class="nexus__particles"></span>
-            </div>
-            <div class="nexus__label">
-              <span class="nexus__name">MENDER</span>
-              <span class="nexus__evo" id="evo-mender">In-Training</span>
-              <span class="nexus__stats mono" id="inv-mender">0 runs</span>
-            </div>
-            <div class="nexus__timer mono" id="timer-mender"></div>
-            <span class="nexus__hidden" id="level-mender"></span>
-            <span class="nexus__hidden" id="xp-mender"></span>
-            <span class="nexus__hidden" id="last-mender"></span>
-          </div>
-
-          <!-- SEEKER (lower-center) -->
-          <div class="nexus__core nexus__core--support nexus__core--idle"
-               id="pod-seeker" data-agent="seeker">
-            <div class="nexus__hex-frame">
-              <div class="nexus__hex-outer" style="--xp-deg: 0deg;">
-                <div class="nexus__hex-inner">
-                  <span class="nexus__crest">&#x2295;</span>
-                  <span class="nexus__monogram">SK</span>
-                </div>
-              </div>
-              <span class="nexus__vertex" style="--v: 0;"></span>
-              <span class="nexus__vertex" style="--v: 1;"></span>
-              <span class="nexus__vertex" style="--v: 2;"></span>
-              <span class="nexus__vertex" style="--v: 3;"></span>
-              <span class="nexus__vertex" style="--v: 4;"></span>
-              <span class="nexus__vertex" style="--v: 5;"></span>
-              <span class="nexus__aura nexus__aura--1"></span>
-              <span class="nexus__aura nexus__aura--2"></span>
-              <span class="nexus__particles"></span>
-            </div>
-            <div class="nexus__label">
-              <span class="nexus__name">SEEKER</span>
-              <span class="nexus__evo" id="evo-seeker">In-Training</span>
-              <span class="nexus__stats mono" id="inv-seeker">0 runs</span>
-            </div>
-            <div class="nexus__timer mono" id="timer-seeker"></div>
-            <span class="nexus__hidden" id="level-seeker"></span>
-            <span class="nexus__hidden" id="xp-seeker"></span>
-            <span class="nexus__hidden" id="last-seeker"></span>
-          </div>
-
-          <!-- SAGE (lower-right) -->
-          <div class="nexus__core nexus__core--support nexus__core--idle"
-               id="pod-sage" data-agent="sage">
-            <div class="nexus__hex-frame">
-              <div class="nexus__hex-outer" style="--xp-deg: 0deg;">
-                <div class="nexus__hex-inner">
-                  <span class="nexus__crest">&#x262F;</span>
-                  <span class="nexus__monogram">SA</span>
-                </div>
-              </div>
-              <span class="nexus__vertex" style="--v: 0;"></span>
-              <span class="nexus__vertex" style="--v: 1;"></span>
-              <span class="nexus__vertex" style="--v: 2;"></span>
-              <span class="nexus__vertex" style="--v: 3;"></span>
-              <span class="nexus__vertex" style="--v: 4;"></span>
-              <span class="nexus__vertex" style="--v: 5;"></span>
-              <span class="nexus__aura nexus__aura--1"></span>
-              <span class="nexus__aura nexus__aura--2"></span>
-              <span class="nexus__particles"></span>
-            </div>
-            <div class="nexus__label">
-              <span class="nexus__name">SAGE</span>
-              <span class="nexus__evo" id="evo-sage">In-Training</span>
-              <span class="nexus__stats mono" id="inv-sage">0 runs</span>
-            </div>
-            <div class="nexus__timer mono" id="timer-sage"></div>
-            <span class="nexus__hidden" id="level-sage"></span>
-            <span class="nexus__hidden" id="xp-sage"></span>
-            <span class="nexus__hidden" id="last-sage"></span>
-          </div>
-
         </div>
       </section>
 
-    <!-- ---------------------------------------------------------------- -->
-    <!-- TEAM MODE (conditional)                                           -->
-    <!-- ---------------------------------------------------------------- -->
-    <section class="team-mode" id="team-mode-section" style="display:none" aria-label="Team Mode">
-      <h2 class="section-title">Agent Team Mode</h2>
-      <div class="team-mode__grid" id="team-mode-grid">
-        <!-- Teammate cards rendered by app.js -->
-      </div>
-    </section>
-
-    <!-- ---------------------------------------------------------------- -->
-    <!-- SIDEBAR (right)                                                   -->
-    <!-- ---------------------------------------------------------------- -->
-    <aside class="sidebar">
-
-      <!-- Token Breakdown -->
-      <div class="panel token-breakdown">
-        <h2 class="section-title">Token Breakdown <span class="range-label" id="range-label">— Today</span></h2>
-        <div class="token-total">
-          <span class="token-total__label">Direct Tokens</span>
-          <span class="token-total__value mono" id="total-tokens">0</span>
-        </div>
-        <div class="token-total__cached mono" id="total-cached"></div>
-        <div class="token-bars" id="token-bars">
-          <div class="token-bar-row">
-            <span class="token-bar-row__label">Input</span>
-            <div class="token-bar-row__track"><div class="token-bar-row__fill token-bar-row__fill--input" id="bar-input" style="width:0%"></div></div>
-            <span class="token-bar-row__count mono" id="count-input">0</span>
-            <span class="token-bar-row__pct mono" id="pct-input">0%</span>
+      <!-- ---- KNOWLEDGE + SKILL HEATMAP ROW ---- -->
+      <div class="home-knowledge-row">
+        <!-- Knowledge Base Panel -->
+        <div class="panel brain-knowledge-panel" id="brain-knowledge-panel">
+          <h3 class="panel__title">
+            <span class="panel__title-icon">&#x1F4DA;</span>
+            Knowledge Base
+          </h3>
+          <div class="brain-knowledge-stats">
+            <div class="brain-stat">
+              <span class="brain-stat__label">Learnings</span>
+              <span class="brain-stat__value mono" id="knowledge-learnings-count">0</span>
+            </div>
+            <div class="brain-stat">
+              <span class="brain-stat__label">Errors</span>
+              <span class="brain-stat__value mono" id="knowledge-errors-count">0</span>
+            </div>
+            <div class="brain-stat">
+              <span class="brain-stat__label">Patterns</span>
+              <span class="brain-stat__value mono" id="knowledge-patterns-count">0</span>
+            </div>
           </div>
-          <div class="token-bar-row">
-            <span class="token-bar-row__label">Output</span>
-            <div class="token-bar-row__track"><div class="token-bar-row__fill token-bar-row__fill--output" id="bar-output" style="width:0%"></div></div>
-            <span class="token-bar-row__count mono" id="count-output">0</span>
-            <span class="token-bar-row__pct mono" id="pct-output">0%</span>
-          </div>
-          <div class="token-bars__separator"></div>
-          <div class="token-bar-row">
-            <span class="token-bar-row__label">Cache Read</span>
-            <div class="token-bar-row__track"><div class="token-bar-row__fill token-bar-row__fill--cache-read" id="bar-cache-read" style="width:0%"></div></div>
-            <span class="token-bar-row__count mono" id="count-cache-read">0</span>
-            <span class="token-bar-row__pct mono" id="pct-cache-read">0%</span>
-          </div>
-          <div class="token-bar-row">
-            <span class="token-bar-row__label">Cache Create</span>
-            <div class="token-bar-row__track"><div class="token-bar-row__fill token-bar-row__fill--cache-create" id="bar-cache-create" style="width:0%"></div></div>
-            <span class="token-bar-row__count mono" id="count-cache-create">0</span>
-            <span class="token-bar-row__pct mono" id="pct-cache-create">0%</span>
+          <div class="brain-knowledge-recent" id="brain-knowledge-recent">
+            <div class="brain-panel__empty">Waiting for knowledge data...</div>
           </div>
         </div>
-        <div class="token-invocations">
-          <span class="token-invocations__label">Total Invocations</span>
-          <span class="token-invocations__value mono" id="total-invocations">0</span>
+
+        <!-- Skill Heatmap -->
+        <section class="panel skill-heatmap-panel" id="skill-heatmap-section" aria-label="Skill Heatmap">
+          <div class="skill-heatmap__header">
+            <h2 class="section-title">Skill Invocation Heatmap</h2>
+            <span class="skill-heatmap__total mono" id="skill-heatmap-total">0 total</span>
+          </div>
+          <div class="skill-heatmap__bars" id="skill-heatmap-bars">
+            <div class="brain-panel__empty">No skill data yet</div>
+          </div>
+        </section>
+      </div>
+
+      <!-- ---- AGENT ROSTER (horizontal compact strip) ---- -->
+      <section class="agent-roster-section" id="agent-roster-section" aria-label="Agent Roster">
+        <h2 class="section-title">Agent Roster</h2>
+        <div class="agent-roster" id="agent-roster">
+          <!-- Agent roster cards rendered by app.js -->
         </div>
-      </div>
+      </section>
 
-      <!-- Cost Estimate -->
-      <div class="panel cost-card cost-card--no-pricing" id="cost-card">
-        <h2 class="section-title">Cost Estimate</h2>
-        <div class="cost-card__empty">Loading pricing data...</div>
-      </div>
-
-      <!-- Battle Log -->
-      <div class="panel battle-log-panel">
+      <!-- ---- BATTLE LOG ---- -->
+      <section class="panel battle-log-panel" id="battle-log-panel">
         <h2 class="section-title">Battle Log</h2>
         <div class="battle-log" id="battle-log">
           <div class="battle-log__empty">Awaiting agent activity...</div>
         </div>
-      </div>
+      </section>
 
-    </aside>
-  </main>
+      <!-- ---- OVERALL STATS BAR (replaces RPG Party Stats footer) ---- -->
+      <footer class="overall-stats" id="overall-stats">
+        <div class="overall-stats__item">
+          <span class="overall-stats__label">Total Invocations</span>
+          <span class="overall-stats__value mono" id="overall-invocations">0</span>
+        </div>
+        <div class="overall-stats__divider"></div>
+        <div class="overall-stats__item">
+          <span class="overall-stats__label">Total Tokens</span>
+          <span class="overall-stats__value mono" id="overall-tokens">0</span>
+        </div>
+        <div class="overall-stats__divider"></div>
+        <div class="overall-stats__item">
+          <span class="overall-stats__label">Total Cost</span>
+          <span class="overall-stats__value mono" id="overall-cost">$0.00</span>
+        </div>
+        <div class="overall-stats__divider"></div>
+        <div class="overall-stats__item">
+          <span class="overall-stats__label">Uptime</span>
+          <span class="overall-stats__value mono" id="overall-uptime">--</span>
+        </div>
+      </footer>
+
+    </div><!-- .home-content -->
+  </div><!-- #page-home -->
 
   <!-- ================================================================== -->
-  <!-- BRIEF PIPELINE                                                      -->
+  <!-- PAGE: INSTANCES                                                     -->
   <!-- ================================================================== -->
-  <div class="brief-pipeline" id="brief-pipeline">
-    <div class="brief-pipeline__header">
-      <span class="brief-pipeline__title">BRIEF PIPELINE</span>
-      <span class="brief-pipeline__agent mono" id="pipeline-active-agent">--</span>
+  <div class="page page--instances" id="page-instances" style="display:none">
+
+    <!-- Compact Vital Signs Strip -->
+    <div class="compact-vitals" id="compact-vitals">
+      <span class="compact-vitals__item">
+        <span class="compact-vitals__label">HP:</span>
+        <span class="compact-vitals__value" id="compact-hp">--</span>
+      </span>
+      <span class="compact-vitals__sep">|</span>
+      <span class="compact-vitals__item">
+        <span class="compact-vitals__label">CTX:</span>
+        <span class="compact-vitals__value" id="compact-ctx">--</span>
+      </span>
+      <span class="compact-vitals__sep">|</span>
+      <span class="compact-vitals__item">
+        <span class="compact-vitals__label">SYNC:</span>
+        <span class="compact-vitals__value" id="compact-sync">--</span>
+      </span>
     </div>
-    <div class="brief-pipeline__phases">
-      <div class="pipeline-phase" id="pipeline-phase-plan" data-phase="plan">
-        <span class="pipeline-phase__label">PLAN</span>
-      </div>
-      <span class="pipeline-phase__arrow">&rarr;</span>
-      <div class="pipeline-phase" id="pipeline-phase-build" data-phase="build">
-        <span class="pipeline-phase__label">BUILD</span>
-      </div>
-      <span class="pipeline-phase__arrow">&rarr;</span>
-      <div class="pipeline-phase" id="pipeline-phase-test" data-phase="test">
-        <span class="pipeline-phase__label">TEST</span>
-      </div>
-      <span class="pipeline-phase__arrow">&rarr;</span>
-      <div class="pipeline-phase" id="pipeline-phase-review" data-phase="review">
-        <span class="pipeline-phase__label">REVIEW</span>
-      </div>
-      <span class="pipeline-phase__arrow">&rarr;</span>
-      <div class="pipeline-phase" id="pipeline-phase-done" data-phase="done">
-        <span class="pipeline-phase__label">DONE</span>
-      </div>
-    </div>
-  </div>
 
-  <!-- ================================================================== -->
-  <!-- BRAIN COMMAND CENTER                                                -->
-  <!-- ================================================================== -->
-  <section class="brain-section" id="brain-section">
-    <div class="brain-section__header">
-      <h2 class="section-title">
-        <span class="section-title__icon">&#x1F9E0;</span>
-        BRAIN COMMAND CENTER
-      </h2>
-      <div class="brain-health-badge" id="brain-health-badge">
-        <span class="brain-health-badge__dot"></span>
-        <span class="brain-health-badge__text">CHECKING...</span>
+    <!-- Instance List -->
+    <div class="instances-content">
+      <div class="instances-header">
+        <h2 class="section-title">Running Instances</h2>
+        <span class="instances-header__count mono" id="instances-count-summary">0 active / 0 idle</span>
       </div>
-    </div>
-
-    <div class="brain-section__grid">
-      <!-- Brain Health Card -->
-      <div class="panel brain-health-card" id="brain-health-card">
-        <h3 class="panel__title">System Health</h3>
-        <div class="brain-health-stats" id="brain-health-stats">
-          <div class="brain-stat">
-            <span class="brain-stat__label">Status</span>
-            <span class="brain-stat__value" id="brain-stat-status">--</span>
-          </div>
-          <div class="brain-stat">
-            <span class="brain-stat__label">Version</span>
-            <span class="brain-stat__value" id="brain-stat-version">--</span>
-          </div>
-          <div class="brain-stat">
-            <span class="brain-stat__label">Latency</span>
-            <span class="brain-stat__value" id="brain-stat-latency">--</span>
-          </div>
-          <div class="brain-stat">
-            <span class="brain-stat__label">DB Size</span>
-            <span class="brain-stat__value" id="brain-stat-dbsize">--</span>
-          </div>
-          <div class="brain-stat">
-            <span class="brain-stat__label">Uptime</span>
-            <span class="brain-stat__value" id="brain-stat-uptime">--</span>
-          </div>
-          <div class="brain-stat">
-            <span class="brain-stat__label">Records</span>
-            <span class="brain-stat__value" id="brain-stat-records">--</span>
+      <div class="instances-list" id="instances-list">
+        <!-- Instance cards rendered by app.js; empty state by default -->
+        <div class="instances-empty" id="instances-empty">
+          <div class="instances-empty__icon">. . . . . . . .</div>
+          <div class="instances-empty__title">NO ACTIVE INSTANCES</div>
+          <div class="instances-empty__commands">
+            <div class="instances-empty__cmd"><span class="instances-empty__cmd-label">Start a session:</span> <span class="mono">/awaken</span></div>
+            <div class="instances-empty__cmd"><span class="instances-empty__cmd-label">Begin a hunt:</span> <span class="mono">/hunt BR-008</span></div>
+            <div class="instances-empty__cmd"><span class="instances-empty__cmd-label">Deploy a team:</span> <span class="mono">/team hunt BR-008 BR-009</span></div>
           </div>
         </div>
       </div>
-
-      <!-- Live Instances Panel -->
-      <div class="panel brain-instances-panel" id="brain-instances-panel">
-        <h3 class="panel__title">
-          <span class="panel__title-icon">&#x1F4E1;</span>
-          Live Instances
-          <span class="panel__count" id="brain-instances-count">0</span>
-        </h3>
-        <div class="brain-table-wrap" id="brain-instances-table">
-          <div class="brain-panel__empty">Waiting for brain connection...</div>
-        </div>
-      </div>
-
-      <!-- Projects Panel -->
-      <div class="panel brain-projects-panel" id="brain-projects-panel">
-        <h3 class="panel__title">
-          <span class="panel__title-icon">&#x1F4C2;</span>
-          Projects
-          <span class="panel__count" id="brain-projects-count">0</span>
-        </h3>
-        <div id="brain-projects-grid">
-          <div class="brain-panel__empty">Waiting for brain connection...</div>
-        </div>
-      </div>
-
-      <!-- Briefs Panel -->
-      <div class="panel brain-briefs-panel" id="brain-briefs-panel">
-        <h3 class="panel__title">
-          <span class="panel__title-icon">&#x1F4CB;</span>
-          Brief Status
-          <span class="panel__count" id="brain-briefs-count">0</span>
-        </h3>
-        <div class="brain-briefs-summary" id="brain-briefs-summary"></div>
-        <div class="brain-table-wrap" id="brain-briefs-table">
-          <div class="brain-panel__empty">Waiting for brain connection...</div>
-        </div>
-      </div>
-
-      <!-- Sessions Timeline -->
-      <div class="panel brain-sessions-panel" id="brain-sessions-panel">
-        <h3 class="panel__title">
-          <span class="panel__title-icon">&#x1F550;</span>
-          Recent Sessions
-          <span class="panel__count" id="brain-sessions-count">0</span>
-        </h3>
-        <div id="brain-sessions-list">
-          <div class="brain-panel__empty">Waiting for brain connection...</div>
-        </div>
-      </div>
-
-      <!-- Knowledge Base Panel -->
-      <div class="panel brain-knowledge-panel" id="brain-knowledge-panel">
-        <h3 class="panel__title">
-          <span class="panel__title-icon">&#x1F4DA;</span>
-          Knowledge Base
-        </h3>
-        <div class="brain-knowledge-stats">
-          <div class="brain-stat">
-            <span class="brain-stat__label">Learnings</span>
-            <span class="brain-stat__value mono" id="knowledge-learnings-count">0</span>
-          </div>
-          <div class="brain-stat">
-            <span class="brain-stat__label">Errors</span>
-            <span class="brain-stat__value mono" id="knowledge-errors-count">0</span>
-          </div>
-          <div class="brain-stat">
-            <span class="brain-stat__label">Patterns</span>
-            <span class="brain-stat__value mono" id="knowledge-patterns-count">0</span>
-          </div>
-        </div>
-        <div class="brain-knowledge-recent" id="brain-knowledge-recent">
-          <div class="brain-panel__empty">Waiting for knowledge data...</div>
-        </div>
-      </div>
     </div>
-  </section>
 
-  <!-- ================================================================== -->
-  <!-- SKILL HEATMAP                                                       -->
-  <!-- ================================================================== -->
-  <section class="skill-heatmap-section" id="skill-heatmap-section" aria-label="Skill Heatmap">
-    <div class="skill-heatmap__header">
-      <h2 class="section-title">Skill Invocation Heatmap</h2>
-      <span class="skill-heatmap__total mono" id="skill-heatmap-total">0 total</span>
-    </div>
-    <div class="skill-heatmap__bars" id="skill-heatmap-bars">
-      <div class="brain-panel__empty">No skill data yet</div>
-    </div>
-  </section>
+  </div><!-- #page-instances -->
 
-  <!-- ================================================================== -->
-  <!-- FOOTER: RPG Party Stats                                             -->
-  <!-- ================================================================== -->
-  <footer class="footer">
-    <div class="footer__header" id="party-toggle">
-      <h2 class="section-title">RPG Party Stats</h2>
-      <button class="footer__expand-btn" id="party-expand-btn" aria-label="Toggle party stats">
-        <span class="footer__expand-icon" id="party-expand-icon">&#9660;</span>
-      </button>
-    </div>
-    <div class="party-stats" id="party-stats">
-      <!-- Roster rows are rendered by app.js -->
-    </div>
-  </footer>
-
-  <script src="/static/app.js?v=13"></script>
+  <script src="/static/app.js?v=15"></script>
 </body>
 </html>

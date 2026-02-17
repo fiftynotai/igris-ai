@@ -1098,15 +1098,57 @@ async def build_sync_status(app):
 
 
 def build_team_status():
-    """Build team status from file system."""
+    """Build team status from file system.
+
+    Expected shape of team-status.json:
+    {
+        "active": true,
+        "team_name": "parallel-hunt",
+        "is_team_lead": true,
+        "teammates": [
+            {
+                "name": "teammate-alpha",
+                "brief": "BR-015",
+                "phase": "TESTING",
+                "elapsed": "18m22s",
+                "tokens": 62000,
+                "retries": 0,
+                "file_ownership": {"sync/retry.dart": "teammate-alpha"}
+            }
+        ],
+        "coordination_log": [
+            {"ts": "2026-02-18T14:52:00Z", "message": "charlie -> REVIEWING"}
+        ],
+        "file_ownership": {
+            "sync/retry.dart": "alpha",
+            "dashboard/": "bravo"
+        }
+    }
+    """
     team_file = os.path.join(METRICS_DIR, "team-status.json")
     if os.path.exists(team_file):
         try:
             with open(team_file) as f:
-                return json.load(f)
+                data = json.load(f)
+            # Ensure required fields exist for the frontend
+            data.setdefault("active", False)
+            data.setdefault("teammates", [])
+            data.setdefault("team_name", "")
+            data.setdefault("coordination_log", [])
+            data.setdefault("file_ownership", {})
+            # Ensure each teammate has expected fields
+            for tm in data.get("teammates", []):
+                tm.setdefault("name", "unknown")
+                tm.setdefault("brief", "--")
+                tm.setdefault("phase", "--")
+                tm.setdefault("elapsed", "--")
+                tm.setdefault("tokens", 0)
+                tm.setdefault("retries", 0)
+                tm.setdefault("file_ownership", {})
+            return data
         except Exception:
             pass
-    return {"active": False, "teammates": []}
+    return {"active": False, "teammates": [], "team_name": "", "coordination_log": [], "file_ownership": {}}
 
 
 async def build_knowledge_state():
@@ -1610,6 +1652,21 @@ async def brain_instances(request: Request):
     )
     if data is None:
         return {"instances": [], "count": 0, "status": "offline"}
+    return data
+
+
+@app.get("/api/brain/instances/{instance_id}")
+async def brain_instance_detail(instance_id: str, request: Request):
+    """Get detail for a specific instance from brain server.
+
+    Proxies to the brain server's instance endpoint. Returns 404 if
+    the brain server is unreachable or the instance is not found.
+    """
+    data = await brain_request(
+        request.app, f"/api/instances/{instance_id}"
+    )
+    if data is None:
+        raise HTTPException(status_code=404, detail="Instance not found or brain offline")
     return data
 
 
