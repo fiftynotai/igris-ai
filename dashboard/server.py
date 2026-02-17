@@ -21,8 +21,9 @@ from datetime import datetime, timezone, timedelta
 import httpx
 import aiosqlite
 from pydantic import BaseModel, Field
-from typing import Optional
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Query
+from typing import Literal, Optional
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -112,6 +113,10 @@ def load_brain_config() -> dict:
 
 async def brain_request(app, path: str, params: dict = None) -> dict | None:
     """Make authenticated GET request to brain server. Returns None on any error."""
+    # Validate path to prevent traversal attacks
+    if not path.startswith("/") or ".." in path:
+        raise HTTPException(status_code=400, detail="Invalid brain request path")
+
     brain_config = app.state.brain_config
     if not brain_config.get("url"):
         return None
@@ -571,12 +576,19 @@ async def insert_event(db: aiosqlite.Connection, event: dict):
                 ctx_used = int(event.get("context_used", 0))
                 ctx_remaining = int(event.get("context_remaining", 0))
                 model_id = event.get("model_id", "")
-                await db.execute(
-                    """INSERT OR REPLACE INTO context_window
-                       (id, context_used, context_max, context_remaining, model_id, updated_at)
-                       VALUES (1, ?, ?, ?, ?, ?)""",
-                    (ctx_used, ctx_max, ctx_remaining, model_id, now),
-                )
+                # Use BEGIN IMMEDIATE for atomic read-then-write under concurrency
+                await db.execute("BEGIN IMMEDIATE")
+                try:
+                    await db.execute(
+                        """INSERT OR REPLACE INTO context_window
+                           (id, context_used, context_max, context_remaining, model_id, updated_at)
+                           VALUES (1, ?, ?, ?, ?, ?)""",
+                        (ctx_used, ctx_max, ctx_remaining, model_id, now),
+                    )
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
+                    raise
 
     await db.commit()
     return True
@@ -1412,7 +1424,7 @@ async def lifespan(app: FastAPI):
         else None
     )
     if app.state.brain_client:
-        logger.info("Brain proxy enabled: %s", app.state.brain_config["url"])
+        logger.info("Brain proxy enabled: [configured]")
     else:
         logger.info("Brain proxy disabled (no URL configured)")
 
@@ -1455,6 +1467,14 @@ app = FastAPI(
     title="Crimson Arena - Igris AI Agent Dashboard",
     version="1.0.0",
     lifespan=lifespan,
+)
+
+# CORS — restrict to dashboard origin only
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://127.0.0.1:8001", "http://localhost:8001"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
 )
 
 
@@ -1590,7 +1610,9 @@ async def brain_projects(request: Request):
 
 @app.get("/api/brain/briefs")
 async def brain_briefs(
-    request: Request, status: str = None, project: str = None
+    request: Request,
+    status: Optional[Literal["Ready", "In Progress", "Done", "Blocked", "Draft"]] = None,
+    project: Optional[str] = Query(default=None, min_length=1, max_length=100),
 ):
     """List briefs from brain server, optionally filtered by status/project."""
     params = {}
@@ -1607,7 +1629,7 @@ async def brain_briefs(
 
 
 @app.get("/api/brain/sessions")
-async def brain_sessions(request: Request, days: int = 7):
+async def brain_sessions(request: Request, days: int = Query(default=7, ge=1, le=365)):
     """List recent sessions from brain server."""
     data = await brain_request(
         request.app, "/api/sessions", params={"days": str(days)}
@@ -1758,6 +1780,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception:
+        logger.error("WebSocket error during connection", exc_info=True)
         manager.disconnect(websocket)
 
 
