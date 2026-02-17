@@ -171,17 +171,39 @@ If the `igris-brain` MCP server is NOT available:
 
 **SSH-based steps ([3/4] and [4/4]) -- always run regardless of MCP availability:**
 
-**[3/4] Uploading agent metrics...**
-- Check if `ai/session/metrics/agent-metrics.json` exists in the project directory.
-- If it exists:
-  - Read `vps.user`, `vps.host`, `vps.brain_path` from config.
-  - Create remote directory: `ssh -o ConnectTimeout=10 {vps.user}@{vps.host} "mkdir -p {vps.brain_path}/metrics"`
-  - Upload file: `scp -o ConnectTimeout=10 ai/session/metrics/agent-metrics.json {vps.user}@{vps.host}:{vps.brain_path}/metrics/agent-metrics.json`
-  - On success: display "Agent metrics uploaded (X agents, Y total invocations)"
-    - Parse the JSON to get totals.total_invocations and count of agents for the display message.
-  - On failure: display WARNING but do NOT abort. Continue with next step.
-- If it does not exist:
-  - Display: "No agent-metrics.json found. Skipping metrics upload."
+**[3/4] Uploading agent metrics and events...**
+- Read `vps.user`, `vps.host`, `vps.brain_path` from config.
+- Create remote directories: `ssh -o ConnectTimeout=10 {vps.user}@{vps.host} "mkdir -p {vps.brain_path}/metrics && mkdir -p {vps.brain_path}/ai/session/metrics"`
+
+- **agent-metrics.json:**
+  - Check if `ai/session/metrics/agent-metrics.json` exists in the project directory.
+  - If it exists:
+    - Upload file: `scp -o ConnectTimeout=10 ai/session/metrics/agent-metrics.json {vps.user}@{vps.host}:{vps.brain_path}/metrics/agent-metrics.json`
+    - On success: display "Agent metrics uploaded (X agents, Y total invocations)"
+      - Parse the JSON to get totals.total_invocations and count of agents for the display message.
+    - On failure: display WARNING but do NOT abort.
+  - If it does not exist:
+    - Display: "No agent-metrics.json found. Skipping."
+
+- **events.jsonl** (required for Crimson Arena cost tracking):
+  - Check if `ai/session/metrics/events.jsonl` exists in the project directory.
+  - If it exists:
+    - Upload file: `scp -o ConnectTimeout=10 ai/session/metrics/events.jsonl {vps.user}@{vps.host}:{vps.brain_path}/ai/session/metrics/events.jsonl`
+    - On success: display "Events log uploaded (X events)"
+      - Count lines in the file for the display message.
+    - On failure: display WARNING but do NOT abort.
+    - **Note:** The Crimson Arena dashboard watches this file and auto-imports new events into arena.db. If the dashboard is running, events will appear within seconds. If not, they will be imported on next dashboard restart.
+  - If it does not exist:
+    - Display: "No events.jsonl found. Skipping."
+
+- **budget.json** (daily budget thresholds for Crimson Arena):
+  - Check if `ai/session/metrics/budget.json` exists in the project directory.
+  - If it exists:
+    - Upload file: `scp -o ConnectTimeout=10 ai/session/metrics/budget.json {vps.user}@{vps.host}:{vps.brain_path}/ai/session/metrics/budget.json`
+    - On success: display "Budget config uploaded"
+    - On failure: display WARNING but do NOT abort.
+  - If it does not exist:
+    - Display: "No budget.json found. Skipping."
 
 **[4/4] Merging local brain data...**
 - This step syncs the local machine's brain database to the VPS brain database.
@@ -270,6 +292,8 @@ After code and/or data sync completes, display a summary table:
 | Health check | PASSED (v{version}) / WARNING: {reason} / FAILED |
 | Brain data (MCP) | OK (X rows synced) / SKIPPED / FAILED: {reason} |
 | Agent metrics | OK (uploaded) / SKIPPED (no file) / FAILED: {reason} |
+| Events log | OK (X events uploaded) / SKIPPED (no file) / FAILED: {reason} |
+| Budget config | OK (uploaded) / SKIPPED (no file) / FAILED: {reason} |
 | Local DB merge | OK (X rows merged) / SKIPPED / FAILED: {reason} |
 ```
 
@@ -281,7 +305,7 @@ If any step failed, include troubleshooting tips:
 - **SSH failed:** Verify SSH key is configured for {vps.user}@{vps.host}. Test with: ssh {vps.user}@{vps.host} "echo ok"
 - **Health check failed:** Service may be restarting. Check PM2: ssh {vps.user}@{vps.host} "pm2 status igris-brain"
 - **Brain data failed:** Ensure igris-brain MCP server is registered in ~/.claude.json
-- **Metrics upload failed:** Check SSH/SCP connectivity and that {vps.brain_path}/metrics/ is writable.
+- **Metrics/events upload failed:** Check SSH/SCP connectivity and that {vps.brain_path}/metrics/ and {vps.brain_path}/ai/session/metrics/ are writable.
 - **Local DB merge failed:** Check that local ~/.igris/memory/knowledge.db exists and VPS brain DB is accessible.
 ```
 
