@@ -540,15 +540,15 @@ This is an XL effort decomposed into 5 phases. Each phase is a separate brief wi
 ## Tasks
 
 ### Pending
-- [ ] Task 1: Register Phase 1 brief (FR-052) — Engine Foundation
-- [ ] Task 2: Register Phase 2 brief (FR-053) — Task Management System
-- [ ] Task 3: Register Phase 3 brief (FR-054) — Brief Migration & Cache Layer
-- [ ] Task 4: Register Phase 4 brief (FR-055) — Scheduling System
-- [ ] Task 5: Register Phase 5 brief (FR-056) — Autonomous Coordination
 
 ### In Progress
 
 ### Completed
+- [x] Task 1: Register Phase 1 brief (FR-052) — Engine Foundation
+- [x] Task 2: Register Phase 2 brief (FR-053) — Task Management System
+- [x] Task 3: Register Phase 3 brief (FR-054) — Brief Migration & Cache Layer
+- [x] Task 4: Register Phase 4 brief (FR-055) — Scheduling System
+- [x] Task 5: Register Phase 5 brief (FR-056) — Autonomous Coordination
 
 ---
 
@@ -559,12 +559,14 @@ This is an XL effort decomposed into 5 phases. Each phase is a separate brief wi
 **Retry Count:** 0
 
 ### Current Work
-Master brief registered. Sub-briefs to be created per phase.
+All 5 phase briefs registered (FR-052 through FR-056). Ready to begin Phase 1.
 
 ### Next Steps
-1. Create FR-052 through FR-056 as separate implementation briefs
-2. Begin with FR-052 (Engine Foundation) — this must complete before all other phases
-3. Each phase can be hunted independently in sequence
+1. HUNT FR-052 (Engine Foundation) — critical path for all other phases
+2. Then FR-053 (Task Management) — depends on FR-052
+3. Then FR-054 (Brief Migration) — depends on FR-053
+4. FR-055 (Scheduling) — depends on FR-053
+5. FR-056 (Autonomous Coordination) — depends on FR-055
 
 ### Agent Log
 | Time | Agent | Action | Result |

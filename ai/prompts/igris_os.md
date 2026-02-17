@@ -116,7 +116,7 @@ When implementing a brief (HUNT command):
 [INIT] ──► [PLANNING] ──► [APPROVAL?] ──► [BUILDING] ──► [TESTING] ──► [REVIEWING] ──► [DOCUMENTING?] ──► [COMMITTING] ──► [COMPLETE]
               │               │               │              │              │              │
               ▼               ▼               ▼              ▼              ▼              ▼
-          architect    (L/XL: user)       forger        sentinel       warden       documenter
+          architect    (L/XL: user)       forger        sentinel       warden     /document skill
 ```
 
 **State Transitions:**
@@ -276,24 +276,66 @@ IGRIS v4.0 introduces a centralized brain at `~/.igris/` that provides persisten
 - **Staging Pipeline** — Hooks write to `~/.igris/staging/`, processed on server startup
 - **Core Files** — Agents, skills, rules, prompts symlinked from `~/.igris/core/`
 
-### Brain MCP Tools
+### Brain MCP Tools (27 tools)
+
+**Memory domain:**
 | Tool | Purpose |
 |------|---------|
 | `igris_memory_store` | Store a learning in knowledge DB |
 | `igris_memory_search` | Full-text search across learnings |
 | `igris_memory_recall` | Contextual retrieval for current project |
+| `igris_pattern_suggest` | Suggest relevant patterns |
+
+**Errors domain:**
+| Tool | Purpose |
+|------|---------|
 | `igris_error_lookup` | Look up or store error solutions |
+
+**Projects domain:**
+| Tool | Purpose |
+|------|---------|
 | `igris_project_register` | Register a project in the brain |
 | `igris_project_list` | List all registered projects |
 | `igris_project_status` | Get detailed project status |
+
+**Metrics domain:**
+| Tool | Purpose |
+|------|---------|
 | `igris_metrics_record` | Record an agent metric |
 | `igris_metrics_query` | Query agent performance metrics |
 | `igris_metrics_velocity` | Velocity dashboard |
-| `igris_pattern_suggest` | Suggest relevant patterns |
+
+**Sessions domain:**
+| Tool | Purpose |
+|------|---------|
 | `igris_session_sync` | Sync session snapshot to brain |
 | `igris_session_recall` | Recall recent sessions across projects |
+
+**Briefs domain:**
+| Tool | Purpose |
+|------|---------|
 | `igris_brief_sync` | Sync brief status change to brain |
 | `igris_brief_dashboard` | Cross-project brief dashboard |
+
+**Instances domain:**
+| Tool | Purpose |
+|------|---------|
+| `igris_instance_heartbeat` | Register or refresh instance heartbeat |
+| `igris_instance_list` | List active instances across machines |
+| `igris_instance_remove` | Deregister an instance |
+
+**Sync domain:**
+| Tool | Purpose |
+|------|---------|
+| `igris_brain_push` | Push local changes to remote brain |
+| `igris_brain_pull` | Pull remote changes to local brain |
+| `igris_sync_queue_status` | Show sync queue depth and status |
+| `igris_sync_queue_drain` | Retry failed sync queue items |
+| `igris_brief_file_sync` | Sync brief file content to brain |
+| `igris_session_file_sync` | Sync session file content to brain |
+| `igris_session_file_pull` | Pull session files from brain |
+| `igris_definition_sync` | Sync definition file (agent/skill/rule/prompt) to brain |
+| `igris_definition_pull` | Pull latest definitions from brain |
 
 ### Brain Integration Points
 - **Session Start (/awaken):** Recall relevant learnings, register session, recall cross-project session context, **register instance via heartbeat (mandatory)**, **pull from remote brain (mandatory)**, **drain sync queue (mandatory)**, **pull session files (mandatory)**, **pull latest definitions (mandatory)**
@@ -426,7 +468,7 @@ Orchestrator:
 3. DELEGATE to forger → Receive implementation
 4. DELEGATE to sentinel → Receive PASS/FAIL
 5. DELEGATE to warden → Receive APPROVE/REJECT
-6. IF (docs needed): DELEGATE to documenter → Update docs
+6. IF (docs needed): Invoke /document skill → Update docs
 7. Commit changes (orchestrator handles git)
 8. Update brief status to "Done"
 ```

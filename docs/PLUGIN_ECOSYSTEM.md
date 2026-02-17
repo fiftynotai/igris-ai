@@ -37,12 +37,10 @@ IGRIS now uses **native Claude Code subagents** instead of external LangChain/La
 
 | Tier | Agents | Purpose |
 |------|--------|---------|
-| 1 - Core | planner, coder, tester, reviewer, ui-designer | Development workflow |
-| 2 - Docs | documenter, releaser, standardizer | Documentation & releases |
-| 3 - Maintenance | auditor, debugger, migrator | Quality & migration |
-| 4 - Innovation | ideator, explorer | Research & ideas |
-| 5 - Custom | flutter-mvvm-actions-expert (SAGE) | Domain expertise |
-| 6 - Meta | coordinator, organizer, context-manager, task-distributor | Orchestration |
+| 1 - Core | architect, forger, sentinel, warden | Development workflow |
+| 3 - Maintenance | mender | Quality & maintenance |
+| 4 - Research | seeker | Codebase research |
+| 5 - Custom | sage (Flutter MVVM + Actions) | Domain expertise |
 
 **Total: 18 agents** defined in `.claude/agents/manifest.yaml`
 

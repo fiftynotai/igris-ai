@@ -604,25 +604,6 @@ your-project/
 
 ---
 
-## Comparisons
-
-| Capability | Claude Code (solo) | Cursor AI | Aider | Igris AI |
-|------------|-------------|-----------|-------|----------|
-| Architecture | Ad-hoc | Editor-integrated | CLI chat | Multi-agent OS |
-| Agents | 1 | 1 | 1 | 7 specialized + 20 skills |
-| Workflow | Manual prompts | Autocomplete-driven | File editing | Autonomous (HUNT) |
-| Quality gates | None | Manual | Commit messages | Automated (test + review + audit) |
-| Session recovery | None | None | Git commits | Multi-level tracking |
-| Architecture enforcement | None | None | None | coding_guidelines.md + warden |
-| Persistent memory | None | None | None | Brain (SQLite, cross-project) |
-| Brief management | None | None | None | 9 types, priorities, lifecycle |
-| Parallel execution | None | None | None | Agent Teams |
-| Best for | Quick questions | Fast edits | Pair programming | Production engineering |
-
-Igris is not a replacement for these tools -- it operates at a different level. Cursor and Copilot accelerate individual edits. Aider streamlines file changes. Igris orchestrates the full engineering workflow from planning through deployment, with agents, memory, and quality enforcement built in.
-
----
-
 ## FAQ
 
 **Q: What is the relationship between Igris and Claude?**
@@ -656,7 +637,7 @@ Igris automatically resumes from where you left off. Session state is saved in `
 Currently optimized for Claude Code CLI. The system is model-agnostic in theory, but workflows assume the Task tool for subagent delegation.
 
 **Q: What is the DOCUMENTING phase in HUNT?**
-A conditional step between REVIEWING and COMMITTING. After the warden approves code, the orchestrator evaluates whether documentation needs updating. If changes introduce new public APIs, modify component libraries, or add README-worthy features, a documenter is invoked. For internal refactors, bug fixes, or test-only changes, the phase is skipped entirely.
+A conditional step between REVIEWING and COMMITTING. After the warden approves code, the orchestrator evaluates whether documentation needs updating. If changes introduce new public APIs, modify component libraries, or add README-worthy features, the `/document` skill is invoked. For internal refactors, bug fixes, or test-only changes, the phase is skipped entirely.
 
 **Q: What is agent memory?**
 All 7 agents have `memory: project` enabled, which stores persistent knowledge in `.claude/agent-memory/<name>/`. This allows agents to remember project-specific context across sessions -- the architect remembers past plans, the warden remembers past review patterns, and so on.

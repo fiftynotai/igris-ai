@@ -264,7 +264,7 @@ Use the DOCUMENT command to have IGRIS analyze your project and create these fil
 DOCUMENT architecture
 ```
 
-The documenter agent will ask questions about your architecture and generate comprehensive documentation.
+The /document skill will ask questions about your architecture and generate comprehensive documentation.
 EOF
   echo "   ✅ context/README.md created"
 else

@@ -74,8 +74,8 @@ igris-ai-distribution-flutter/
   "version": "1.0.0",
   "description": "Smart release automation for Flutter projects",
   "author": "Your Name",
-  "repository": "https://github.com/yourorg/igris-ai-distribution-flutter",
-  "homepage": "https://docs.yourorg.com/plugins/distribution-flutter",
+  "repository": "https://github.com/fiftynotai/igris-ai-distribution-flutter",
+  "homepage": "https://docs.fiftynotai.com/plugins/distribution-flutter",
   "license": "MIT",
   "igris_ai_version": ">=1.0.0",
   "capabilities": [
@@ -498,7 +498,7 @@ git add .
 git commit -m "Initial release: v1.0.0"
 
 # Create repo on GitHub, then:
-git remote add origin https://github.com/yourorg/your-plugin
+git remote add origin https://github.com/fiftynotai/your-plugin
 git push -u origin main
 ```
 
@@ -525,7 +525,7 @@ Include in README.md:
 
 ```bash
 # Submit to Igris AI plugin registry
-igris-ai plugin submit https://github.com/yourorg/your-plugin
+igris-ai plugin submit https://github.com/fiftynotai/your-plugin
 ```
 
 ---
@@ -570,7 +570,7 @@ Simple example plugin.
 
 ## Installation
 
-./scripts/plugin_install.sh https://github.com/yourorg/igris-ai-hello
+./scripts/plugin_install.sh https://github.com/fiftynotai/igris-ai-hello
 
 ## Usage
 
@@ -639,9 +639,9 @@ Simple example plugin.
 
 ## Getting Help
 
-- **Examples:** See [igris-ai-distribution-flutter](https://github.com/yourorg/igris-ai-distribution-flutter)
-- **Issues:** https://github.com/yourorg/igris-ai/issues
-- **Discussions:** https://github.com/yourorg/igris-ai/discussions
+- **Examples:** See [igris-ai-distribution-flutter](https://github.com/fiftynotai/igris-ai-distribution-flutter)
+- **Issues:** https://github.com/fiftynotai/igris-ai/issues
+- **Discussions:** https://github.com/fiftynotai/igris-ai/discussions
 
 ---
 

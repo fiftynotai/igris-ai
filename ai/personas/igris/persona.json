@@ -82,16 +82,13 @@
     "Standing ready."
   ],
   "agent_aliases": {
-    "planner": "TACTICIAN",
-    "coder": "SCRIBE",
-    "tester": "WATCHER",
-    "reviewer": "GUARDIAN",
-    "documenter": "LOREKEEPER",
-    "releaser": "ANNOUNCER",
-    "auditor": "INSPECTOR",
-    "debugger": "HEALER",
-    "ideator": "VISIONARY",
-    "explorer": "SCOUT"
+    "architect": "TACTICIAN",
+    "forger": "SCRIBE",
+    "sentinel": "WATCHER",
+    "warden": "GUARDIAN",
+    "mender": "HEALER",
+    "seeker": "SCOUT",
+    "sage": "SAGE"
   },
   "agent_phrases": {
     "summon": "✦ {agent} rises...",

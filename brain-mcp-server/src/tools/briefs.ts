@@ -36,7 +36,8 @@ interface BriefDashboardInput {
 /**
  * Sync a brief status change to the brain.
  *
- * Uses INSERT OR REPLACE to maintain one record per project+brief_id.
+ * Uses INSERT ... ON CONFLICT DO UPDATE to maintain one record per
+ * project+brief_id without destroying columns not in the INSERT.
  * Called when brief status changes during /hunt, /rest, or /archive.
  *
  * @param args - Brief status data to sync
@@ -46,9 +47,17 @@ function handleBriefSync(args: BriefSyncInput): { content: { type: string; text:
   const db = getDb();
 
   db.prepare(`
-    INSERT OR REPLACE INTO brief_status
+    INSERT INTO brief_status
       (project, brief_id, brief_type, title, status, priority, effort, phase, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(project, brief_id) DO UPDATE SET
+      brief_type = excluded.brief_type,
+      title = excluded.title,
+      status = excluded.status,
+      priority = excluded.priority,
+      effort = excluded.effort,
+      phase = excluded.phase,
+      updated_at = excluded.updated_at
   `).run(
     args.project,
     args.brief_id,

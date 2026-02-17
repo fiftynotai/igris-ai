@@ -24,7 +24,7 @@ Before you begin, ensure you have:
 cd /path/to/projects/
 
 # Clone Igris AI
-git clone https://github.com/yourorg/igris-ai
+git clone https://github.com/fiftynotai/igris-ai
 ```
 
 This creates a `igris-ai` directory you'll reference for all projects.
@@ -89,7 +89,7 @@ After installation, generate project-specific documentation:
 DOCUMENT architecture
 ```
 
-**The documenter agent will:**
+**The `/document` skill will:**
 1. Scan your project structure
 2. Ask clarifying questions about your architecture
 3. Generate 4 documentation files in `ai/context/`:
@@ -247,7 +247,7 @@ REST  # or: Archive current session
 
 ```bash
 # Example: Installing Flutter distribution plugin
-./scripts/plugin_install.sh https://github.com/yourorg/igris-ai-distribution-flutter
+./scripts/plugin_install.sh https://github.com/fiftynotai/igris-ai-distribution-flutter
 ```
 
 **Plugin installer will:**
@@ -272,7 +272,7 @@ Found 1 plugin(s):
 📦 igris-ai-distribution-flutter v1.0.0
    Installed: 2025-10-13T15:30:00Z
    Capabilities: distribution, versioning, release_notes
-   Repository: https://github.com/yourorg/igris-ai-distribution-flutter
+   Repository: https://github.com/fiftynotai/igris-ai-distribution-flutter
 ```
 
 ### Uninstall a Plugin
@@ -364,7 +364,7 @@ chmod +x scripts/*.sh
 **Solution:**
 ```bash
 # Clone Igris AI first
-git clone https://github.com/yourorg/igris-ai
+git clone https://github.com/fiftynotai/igris-ai
 
 # Then reference it with correct path
 /full/path/to/igris-ai/scripts/igris_init.sh
@@ -387,8 +387,8 @@ After setup:
 ## Getting Help
 
 - **Documentation:** See `ai/CONTRIBUTING.md` for detailed usage
-- **Issues:** https://github.com/yourorg/igris-ai/issues
-- **Discussions:** https://github.com/yourorg/igris-ai/discussions
+- **Issues:** https://github.com/fiftynotai/igris-ai/issues
+- **Discussions:** https://github.com/fiftynotai/igris-ai/discussions
 
 ---
 

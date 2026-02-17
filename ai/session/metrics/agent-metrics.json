@@ -1,46 +1,46 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-02-17T15:00:22Z",
+  "last_updated": "2026-02-17T16:32:35Z",
   "agents": {
     "architect": {
-      "invocations": 26,
-      "last_used": "2026-02-17T14:53:35Z",
-      "avg_duration_seconds": 157.96,
+      "invocations": 27,
+      "last_used": "2026-02-17T15:53:25Z",
+      "avg_duration_seconds": 160.98,
       "success_rate": 1.0,
-      "total_input_tokens": 76520,
-      "total_output_tokens": 2316,
-      "total_cache_read_tokens": 19254272,
-      "total_cache_create_tokens": 6472523
+      "total_input_tokens": 77446,
+      "total_output_tokens": 2401,
+      "total_cache_read_tokens": 20155603,
+      "total_cache_create_tokens": 7002070
     },
     "forger": {
-      "invocations": 42,
-      "last_used": "2026-02-17T14:55:39Z",
-      "avg_duration_seconds": 525.51,
+      "invocations": 43,
+      "last_used": "2026-02-17T16:24:24Z",
+      "avg_duration_seconds": 519.15,
       "success_rate": 1.0,
-      "total_input_tokens": 49709,
-      "total_output_tokens": 5923,
-      "total_cache_read_tokens": 98030968,
-      "total_cache_create_tokens": 8656642
+      "total_input_tokens": 49796,
+      "total_output_tokens": 6222,
+      "total_cache_read_tokens": 101624404,
+      "total_cache_create_tokens": 9081017
     },
     "sentinel": {
-      "invocations": 34,
-      "last_used": "2026-02-17T14:57:35Z",
-      "avg_duration_seconds": 178.14,
+      "invocations": 35,
+      "last_used": "2026-02-17T16:29:03Z",
+      "avg_duration_seconds": 175.02,
       "success_rate": 1.0,
-      "total_input_tokens": 89199,
-      "total_output_tokens": 3150,
-      "total_cache_read_tokens": 24864328,
-      "total_cache_create_tokens": 8175695
+      "total_input_tokens": 89254,
+      "total_output_tokens": 3209,
+      "total_cache_read_tokens": 25328969,
+      "total_cache_create_tokens": 8520310
     },
     "warden": {
-      "invocations": 43,
-      "last_used": "2026-02-17T14:59:07Z",
-      "avg_duration_seconds": 76.85,
+      "invocations": 54,
+      "last_used": "2026-02-17T16:30:35Z",
+      "avg_duration_seconds": 79.37,
       "success_rate": 1.0,
-      "total_input_tokens": 21866,
-      "total_output_tokens": 3120,
-      "total_cache_read_tokens": 24161722,
-      "total_cache_create_tokens": 11032695
+      "total_input_tokens": 89406,
+      "total_output_tokens": 6129,
+      "total_cache_read_tokens": 52373242,
+      "total_cache_create_tokens": 16519378
     },
     "mender": {
       "invocations": 0,
@@ -53,14 +53,14 @@
       "total_cache_create_tokens": 0
     },
     "seeker": {
-      "invocations": 38,
-      "last_used": "2026-02-17T13:50:50Z",
-      "avg_duration_seconds": 1217.92,
+      "invocations": 39,
+      "last_used": "2026-02-17T16:20:27Z",
+      "avg_duration_seconds": 1188.39,
       "success_rate": 1.0,
-      "total_input_tokens": 187069,
-      "total_output_tokens": 4495,
-      "total_cache_read_tokens": 51563747,
-      "total_cache_create_tokens": 9015628
+      "total_input_tokens": 187366,
+      "total_output_tokens": 4573,
+      "total_cache_read_tokens": 52619852,
+      "total_cache_create_tokens": 9272483
     },
     "sage": {
       "invocations": 0,
@@ -214,11 +214,11 @@
     }
   },
   "totals": {
-    "total_invocations": 219,
+    "total_invocations": 234,
     "most_used_agent": "warden",
     "least_used_agent": "sage",
-    "total_input_tokens": 503212,
-    "total_output_tokens": 33994,
-    "total_cache_tokens": 314721259
+    "total_input_tokens": 572117,
+    "total_output_tokens": 37524,
+    "total_cache_tokens": 355990367
   }
 }

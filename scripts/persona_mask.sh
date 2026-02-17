@@ -12,7 +12,7 @@ PERSONA_CONFIG="ai/persona.json"
 HOOK_FILE="ai/prompts/persona_loader.md"
 
 # Color codes
-RED='\033[0:31m'
+RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
@@ -191,6 +191,16 @@ cmd_adjust() {
   fi
 
   MASK_LEVEL=$PERSONA  # Second arg is mask level for adjust
+
+  # Validate mask level
+  case "$MASK_LEVEL" in
+    none|light|half|full) ;;
+    *)
+      echo -e "${RED}Error: Invalid mask level '$MASK_LEVEL'${NC}"
+      echo "Valid masks: none, light, half, full"
+      exit 1
+      ;;
+  esac
 
   # Get current persona
   CURRENT_PERSONA=$(jq -r '.persona' "$PERSONA_CONFIG")

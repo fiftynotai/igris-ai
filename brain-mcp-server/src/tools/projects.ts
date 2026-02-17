@@ -37,7 +37,8 @@ interface ProjectStatusInput {
 /**
  * Register a project in the brain.
  *
- * Uses INSERT OR REPLACE to handle both new registrations and updates.
+ * Uses INSERT ... ON CONFLICT DO UPDATE to safely upsert without
+ * destroying columns not included in the INSERT.
  * Automatically updates last_session_at to the current timestamp.
  *
  * @param args - Project registration data
@@ -47,8 +48,13 @@ function handleProjectRegister(args: ProjectRegisterInput): { content: { type: s
   const db = getDb();
 
   db.prepare(`
-    INSERT OR REPLACE INTO projects (slug, name, path, tech_stack, last_session_at)
+    INSERT INTO projects (slug, name, path, tech_stack, last_session_at)
     VALUES (?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(slug) DO UPDATE SET
+      name = excluded.name,
+      path = excluded.path,
+      tech_stack = excluded.tech_stack,
+      last_session_at = excluded.last_session_at
   `).run(args.slug, args.name, args.path, args.tech_stack ?? '');
 
   const project = db.prepare(

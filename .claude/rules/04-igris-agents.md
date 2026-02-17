@@ -161,7 +161,7 @@ Orchestrator:
 3. DELEGATE to forger -> Receive implementation
 4. DELEGATE to sentinel -> Receive PASS/FAIL
 5. DELEGATE to warden -> Receive APPROVE/REJECT
-6. IF (docs needed): DELEGATE to documenter -> Update docs
+6. IF (docs needed): Invoke /document skill -> Update docs
 7. Commit changes (orchestrator handles git)
 8. Update brief status to "Done"
 ```
@@ -202,7 +202,7 @@ When implementing a brief:
 [INIT] --> [PLANNING] --> [APPROVAL?] --> [BUILDING] --> [TESTING] --> [REVIEWING] --> [DOCUMENTING?] --> [COMMITTING] --> [COMPLETE]
               |               |               |              |              |              |
               v               v               v              v              v              v
-          architect    (L/XL: user)       forger        sentinel       warden       documenter
+          architect    (L/XL: user)       forger        sentinel       warden     /document skill
 ```
 
 **State Transitions:**

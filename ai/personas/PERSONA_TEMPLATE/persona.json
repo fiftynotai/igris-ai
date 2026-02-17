@@ -87,16 +87,13 @@
 
   "agent_aliases": {
     "_comment": "Give each agent a themed name that fits your persona",
-    "planner": "PLANNER_ALIAS",
-    "coder": "CODER_ALIAS",
-    "tester": "TESTER_ALIAS",
-    "reviewer": "REVIEWER_ALIAS",
-    "documenter": "DOCUMENTER_ALIAS",
-    "releaser": "RELEASER_ALIAS",
-    "auditor": "AUDITOR_ALIAS",
-    "debugger": "DEBUGGER_ALIAS",
-    "ideator": "IDEATOR_ALIAS",
-    "explorer": "EXPLORER_ALIAS"
+    "architect": "ARCHITECT_ALIAS",
+    "forger": "FORGER_ALIAS",
+    "sentinel": "SENTINEL_ALIAS",
+    "warden": "WARDEN_ALIAS",
+    "mender": "MENDER_ALIAS",
+    "seeker": "SEEKER_ALIAS",
+    "sage": "SAGE_ALIAS"
   },
 
   "agent_phrases": {

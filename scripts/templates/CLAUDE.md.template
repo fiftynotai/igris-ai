@@ -332,7 +332,7 @@ STATES:
 [INIT] --> [PLANNING] --> [APPROVAL?] --> [BUILDING] --> [TESTING] --> [REVIEWING] --> [DOCUMENTING?] --> [COMMITTING] --> [COMPLETE]
               |               |               |              |              |              |
               v               v               v              v              v              v
-          architect    (L/XL: user)       forger        sentinel       warden       documenter
+          architect    (L/XL: user)       forger        sentinel       warden       /document skill
 
 ERROR STATES:
 [BLOCKED] - Max retries exceeded

@@ -363,7 +363,7 @@ async function handleBrainPush(
   const payload = {
     tables,
     pushed_at: pushedAt,
-    schema_version: 4,
+    schema_version: 8,
   };
 
   try {

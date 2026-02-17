@@ -3,7 +3,7 @@
 ## Status
 **Mode:** HUNT MODE
 **Updated:** 2026-02-17
-**Active Brief:** BR-017 (v4.0 Critical Security Hardening)
+**Active Brief:** BR-018 (v4.0 Publish Hardening — Final Audit Fixes)
 **Instance ID:** f2a2184d-4809-4a31-86e2-733ed11d7860
 
 ---
@@ -12,19 +12,24 @@
 
 | Brief | Title | Status |
 |-------|-------|--------|
-| FR-051 | Brain v5.0 — Modular Architecture + Task Mgmt + Scheduling | Ready (XL, 5 phases) |
+| FR-051 | Brain v5.0 — Modular Architecture + Task Mgmt + Scheduling | In Progress (XL, 5 phases) |
+| FR-052 | Brain v5.0 Phase 1 — Engine Foundation | Ready (L, critical path) |
+| FR-053 | Brain v5.0 Phase 2 — Task Management System | Ready (L, blocked by FR-052) |
+| FR-054 | Brain v5.0 Phase 3 — Brief Migration & Cache Layer | Ready (M, blocked by FR-053) |
+| FR-055 | Brain v5.0 Phase 4 — Scheduling System | Ready (M, blocked by FR-053) |
+| FR-056 | Brain v5.0 Phase 5 — Autonomous Coordination | Ready (M, blocked by FR-055) |
 | FR-014 | Higgsfield Skill — Browser Automation Pivot | Blocked (URL slugs needed) |
 | FR-013 | Context Breakdown Dashboard | Ready |
 | PI-001 | Multi-Instance Concurrent Brief Workflow | Ready |
 | TD-008 | Usage Metrics and Error Tracking | Deferred |
 
-**Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, MG-009, MG-010, MG-011, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018, BR-015, FR-019, FR-020, FR-021, PI-003, FR-022, FR-023, FR-024, FR-025, FR-026, FR-027, FR-028, FR-029, FR-030, FR-031, FR-032, FR-033, FR-034, FR-035, FR-036, FR-037, FR-038, FR-039, FR-040, FR-041, FR-042, FR-043, FR-044, FR-045, FR-046, FR-047, FR-048, FR-049, FR-050, BR-004, BR-005, BR-006, BR-007, BR-008, BR-009, BR-010, BR-011, BR-012, BR-013, FR-003, FR-004, FR-005, FR-006, FR-009, FR-011, FR-012, MG-001, MG-002, MG-003, PI-002, TD-001, TD-002, TD-003, TD-004, TD-006, TD-007, TD-009, TD-010, TD-011, TD-012, TD-013, TD-014, TD-015, TD-016
+**Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, MG-009, MG-010, MG-011, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018, BR-015, FR-019, FR-020, FR-021, PI-003, FR-022, FR-023, FR-024, FR-025, FR-026, FR-027, FR-028, FR-029, FR-030, FR-031, FR-032, FR-033, FR-034, FR-035, FR-036, FR-037, FR-038, FR-039, FR-040, FR-041, FR-042, FR-043, FR-044, FR-045, FR-046, FR-047, FR-048, FR-049, FR-050, BR-004, BR-005, BR-006, BR-007, BR-008, BR-009, BR-010, BR-011, BR-012, BR-013, FR-003, FR-004, FR-005, FR-006, FR-009, FR-011, FR-012, MG-001, MG-002, MG-003, PI-002, TD-001, TD-002, TD-003, TD-004, TD-006, TD-007, TD-009, TD-010, TD-011, TD-012, TD-013, TD-014, TD-015, TD-016, BR-017
 
 ---
 
 ## Resume Point
 
-**Last Active:** v4.0 readiness report + archive cleanup
+**Last Active:** BR-017 (v4.0 Critical Security Hardening) — COMPLETE
 **Phase:** Active
 
 ---
@@ -62,6 +67,11 @@
   - Briefs & Session State: 7.0/10 (archive debt, stale statuses)
 - Archive cleanup: FR-050 + 38 Done briefs archived, FR-006 duplicate removed
 - FR-048, FR-049 status fixed (In Progress/Ready → Done) and archived
+- **BR-017: v4.0 Critical Security Hardening — COMPLETE.** Commit: `ffa0362`
+  - trusted_schema = OFF in brain MCP (was ON)
+  - countTable whitelist validation added (8 tables)
+  - eval command injection eliminated from igris_brain_switch.sh
+  - Full HUNT pipeline: architect → forger → sentinel (6/6 PASS) → warden (APPROVE)
 
 **Previous (earlier sessions):**
 - FR-050: Full README v4.0 identity rewrite. Commit: `6aa9d62`
@@ -75,10 +85,10 @@
 
 ## Pending
 
-- **Register phase briefs FR-052 through FR-056** from FR-051 master brief
+- ~~Register phase briefs FR-052 through FR-056~~ — DONE
 - **HUNT FR-052 (Engine Foundation)** — Phase 1 of Brain v5.0, critical path
 - FR-014: Higgsfield browser automation — blocked on URL slugs
-- 4 critical findings from readiness report to address (can fold into v5.0 work)
+- 3 critical findings from readiness report RESOLVED (BR-017, commit `ffa0362`)
 
 ---
 
