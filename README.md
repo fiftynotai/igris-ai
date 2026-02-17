@@ -508,6 +508,96 @@ Agent Teams is an experimental parallel execution layer that spawns multiple ind
 
 ---
 
+## Crimson Arena Dashboard
+
+A real-time web dashboard for monitoring agent execution, token consumption, and system health.
+
+### Features
+
+- **Agent Monitoring** -- Track all 7 agents with RPG-style leveling (Trainee through Mythic), stats (STR, INT, SPD, VIT), and execution history
+- **Token Budget** -- Daily token consumption vs ceiling with warning (75%) and critical (90%) thresholds
+- **Live Event Stream** -- WebSocket-powered real-time updates as agents start and stop
+- **Brain Integration** -- Proxies to the brain server for instances, projects, briefs, sessions, and sync status
+- **Skill Heatmap** -- Track which skills are invoked most frequently
+- **Context Window** -- Monitor Claude's context budget consumption in real time
+
+### Quick Start (Local)
+
+```bash
+cd dashboard
+
+# Set up virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run
+uvicorn server:app --host 127.0.0.1 --port 8001
+```
+
+Dashboard available at **http://127.0.0.1:8001**
+
+### Configuration
+
+The dashboard reads configuration from `~/.igris/config.json`:
+
+```json
+{
+  "remote_brain": {
+    "url": "http://your-vps:3001",
+    "api_key": "your-api-key"
+  }
+}
+```
+
+**Budget thresholds** are configured in `ai/session/metrics/budget.json`:
+
+```json
+{
+  "daily_token_budget": 1000000,
+  "warning_threshold": 0.75,
+  "critical_threshold": 0.90
+}
+```
+
+### VPS Deployment
+
+The dashboard deploys automatically as part of `/sync code`. The VPS update script copies `server.py`, `requirements.txt`, and static assets to `~/.igris/dashboard/`, then restarts the `crimson-arena` PM2 process.
+
+```bash
+# On VPS -- manual management
+pm2 status crimson-arena
+pm2 logs crimson-arena
+pm2 restart crimson-arena
+```
+
+### Data Flow
+
+```
+Claude Code hooks → events.jsonl → Dashboard (file watcher) → arena.db → WebSocket → UI
+                                                                   ↕
+                                               Brain MCP Server (proxied API)
+```
+
+The dashboard watches `events.jsonl` for new agent events, imports them into its own SQLite database (`arena.db`), and pushes updates to connected browsers via WebSocket. Brain server data (instances, briefs, sessions) is fetched via HTTP proxy.
+
+### Key Endpoints
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/state` | Full dashboard state |
+| `GET /api/agents` | Agent summary with levels and stats |
+| `GET /api/budget` | Today's token budget |
+| `GET /api/events` | Recent agent events |
+| `GET /api/brain/health` | Brain server health (proxied) |
+| `GET /api/brain/instances` | Active Claude Code instances |
+| `GET /api/brain/briefs` | All briefs across projects |
+| `WS /ws` | Real-time event stream |
+
+---
+
 ## Persona System
 
 Igris ships with the **Crimson** persona (Cyber Monkey Guardian) for consistent AI identity across sessions.
@@ -559,6 +649,10 @@ your-project/
 │   ├── session/             # CURRENT_SESSION.md, BLOCKERS.md, metrics/
 │   ├── plans/               # Implementation plans from architect
 │   └── templates/           # Brief templates
+├── dashboard/               # Crimson Arena (FastAPI + WebSocket)
+│   ├── server.py            # Backend
+│   ├── requirements.txt     # Python dependencies
+│   └── static/              # Frontend (HTML, JS, CSS)
 └── scripts/                 # 19 utility scripts
     ├── igris_brain_init.sh
     ├── igris_install.sh

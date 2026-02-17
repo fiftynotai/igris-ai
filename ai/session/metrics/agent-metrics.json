@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-02-17T16:32:35Z",
+  "last_updated": "2026-02-17T16:50:35Z",
   "agents": {
     "architect": {
       "invocations": 27,
@@ -53,14 +53,14 @@
       "total_cache_create_tokens": 0
     },
     "seeker": {
-      "invocations": 39,
-      "last_used": "2026-02-17T16:20:27Z",
-      "avg_duration_seconds": 1188.39,
+      "invocations": 40,
+      "last_used": "2026-02-17T16:49:55Z",
+      "avg_duration_seconds": 1159.69,
       "success_rate": 1.0,
-      "total_input_tokens": 187366,
-      "total_output_tokens": 4573,
-      "total_cache_read_tokens": 52619852,
-      "total_cache_create_tokens": 9272483
+      "total_input_tokens": 205317,
+      "total_output_tokens": 4611,
+      "total_cache_read_tokens": 52845956,
+      "total_cache_create_tokens": 9447512
     },
     "sage": {
       "invocations": 0,
@@ -214,11 +214,11 @@
     }
   },
   "totals": {
-    "total_invocations": 234,
+    "total_invocations": 235,
     "most_used_agent": "warden",
     "least_used_agent": "sage",
-    "total_input_tokens": 572117,
-    "total_output_tokens": 37524,
-    "total_cache_tokens": 355990367
+    "total_input_tokens": 590068,
+    "total_output_tokens": 37562,
+    "total_cache_tokens": 356391500
   }
 }
