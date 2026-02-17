@@ -296,8 +296,8 @@ IGRIS v4.0 introduces a centralized brain at `~/.igris/` that provides persisten
 | `igris_brief_dashboard` | Cross-project brief dashboard |
 
 ### Brain Integration Points
-- **Session Start (/awaken):** Recall relevant learnings, register session, recall cross-project session context, **register instance via heartbeat (mandatory)**
-- **Session End (/rest):** Sync learnings and decisions to brain, sync session snapshot and brief status, **deregister instance (mandatory)**
+- **Session Start (/awaken):** Recall relevant learnings, register session, recall cross-project session context, **register instance via heartbeat (mandatory)**, **pull from remote brain (mandatory)**, **drain sync queue (mandatory)**, **pull session files (mandatory)**, **pull latest definitions (mandatory)**
+- **Session End (/rest):** Sync learnings and decisions to brain, sync session snapshot and brief status, **deregister instance (mandatory)**, **drain sync queue (mandatory)**, **push to remote brain (mandatory)**
 - **Status (/scan):** Show brain stats and cross-project insights
 - **Implementation (/hunt):** Record agent metrics, store error solutions, **refresh instance heartbeat on each phase transition**
 - **Dashboard (/dashboard):** Show active briefs and recent sessions across all projects

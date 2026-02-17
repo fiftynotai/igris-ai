@@ -53,8 +53,19 @@ import { handleBriefSync, handleBriefDashboard } from './tools/briefs.js';
 import type { BriefSyncInput, BriefDashboardInput } from './tools/briefs.js';
 import { handleInstanceHeartbeat, handleInstanceList, handleInstanceRemove } from './tools/instances.js';
 import type { InstanceHeartbeatInput, InstanceListInput, InstanceRemoveInput } from './tools/instances.js';
-import { handleBrainPush, handleBrainPull, SYNC_TABLES, mergeRows } from './tools/sync.js';
-import type { BrainPushInput, BrainPullInput } from './tools/sync.js';
+import {
+  handleBrainPush, handleBrainPull, SYNC_TABLES, mergeRows,
+  handleSyncQueueStatus, handleSyncQueueDrain,
+  handleBriefFileSync,
+  handleSessionFileSync, handleSessionFilePull,
+  handleDefinitionSync, handleDefinitionPull,
+} from './tools/sync.js';
+import type {
+  BrainPushInput, BrainPullInput, SyncQueueDrainInput,
+  BriefFileSyncInput,
+  SessionFileSyncInput, SessionFilePullInput,
+  DefinitionSyncInput, DefinitionPullInput,
+} from './tools/sync.js';
 
 // Staging processor
 import { processStagingFiles } from './staging.js';
@@ -175,6 +186,20 @@ async function dispatchToolCall(
         return await handleBrainPush(args as unknown as BrainPushInput);
       case 'igris_brain_pull':
         return await handleBrainPull(args as unknown as BrainPullInput);
+      case 'igris_sync_queue_status':
+        return handleSyncQueueStatus();
+      case 'igris_sync_queue_drain':
+        return await handleSyncQueueDrain(args as unknown as SyncQueueDrainInput);
+      case 'igris_brief_file_sync':
+        return handleBriefFileSync(args as unknown as BriefFileSyncInput);
+      case 'igris_session_file_sync':
+        return handleSessionFileSync(args as unknown as SessionFileSyncInput);
+      case 'igris_session_file_pull':
+        return handleSessionFilePull(args as unknown as SessionFilePullInput);
+      case 'igris_definition_sync':
+        return handleDefinitionSync(args as unknown as DefinitionSyncInput);
+      case 'igris_definition_pull':
+        return handleDefinitionPull(args as unknown as DefinitionPullInput);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -710,6 +735,146 @@ function createBrainServer(): Server {
             required: ['remote_url', 'api_key'],
           },
         },
+
+        // === Sync Queue Tools (FR-036) ===
+        {
+          name: 'igris_sync_queue_status',
+          description: 'Show the current sync queue status. Displays pending, retrying, sent, and failed counts plus per-table breakdown of actionable items.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {},
+          },
+        },
+        {
+          name: 'igris_sync_queue_drain',
+          description: 'Process pending sync queue items by pushing them to the remote brain. Retries failed push operations with exponential backoff tracking.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              remote_url: {
+                type: 'string',
+                description: 'URL of the remote brain server',
+              },
+              api_key: {
+                type: 'string',
+                description: 'API key for authenticating with the remote brain server',
+              },
+            },
+            required: ['remote_url', 'api_key'],
+          },
+        },
+
+        // === Brief File Sync (FR-037) ===
+        {
+          name: 'igris_brief_file_sync',
+          description: 'Sync a brief file content to the brain. Computes content hash and upserts into brief_files table. Use this to store the full markdown content of brief files for cross-device access.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project slug',
+              },
+              brief_id: {
+                type: 'string',
+                description: 'Brief ID (e.g., "BR-008", "FR-026")',
+              },
+              filename: {
+                type: 'string',
+                description: 'Brief filename (e.g., "FR-026-feature-name.md")',
+              },
+              content: {
+                type: 'string',
+                description: 'Full markdown content of the brief file',
+              },
+            },
+            required: ['project', 'brief_id', 'filename', 'content'],
+          },
+        },
+
+        // === Session File Sync (FR-038) ===
+        {
+          name: 'igris_session_file_sync',
+          description: 'Sync a session file content to the brain. Stores session files (CURRENT_SESSION.md, BLOCKERS.md, etc.) for cross-device access.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project slug',
+              },
+              filename: {
+                type: 'string',
+                description: 'Session filename (e.g., "CURRENT_SESSION.md")',
+              },
+              content: {
+                type: 'string',
+                description: 'Full content of the session file',
+              },
+            },
+            required: ['project', 'filename', 'content'],
+          },
+        },
+        {
+          name: 'igris_session_file_pull',
+          description: 'Pull all session files for a project from the brain. Returns all stored session files with their content.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project slug to pull session files for',
+              },
+            },
+            required: ['project'],
+          },
+        },
+
+        // === Definition File Sync (FR-039) ===
+        {
+          name: 'igris_definition_sync',
+          description: 'Sync a definition file (agent, skill, rule, or prompt) to the brain. Stores the full content for cross-device and cross-project sharing.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              type: {
+                type: 'string',
+                enum: ['agent', 'skill', 'rule', 'prompt'],
+                description: 'Definition type',
+              },
+              name: {
+                type: 'string',
+                description: 'Definition name (e.g., "forger", "hunt", "01-igris-init")',
+              },
+              filename: {
+                type: 'string',
+                description: 'Filename (e.g., "forger.md", "SKILL.md")',
+              },
+              content: {
+                type: 'string',
+                description: 'Full content of the definition file',
+              },
+              version: {
+                type: 'string',
+                description: 'Version string (optional)',
+              },
+            },
+            required: ['type', 'name', 'filename', 'content'],
+          },
+        },
+        {
+          name: 'igris_definition_pull',
+          description: 'Pull definitions from the brain. Optionally filter by timestamp to get only recently updated definitions.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              since: {
+                type: 'string',
+                description: 'ISO timestamp — only return definitions updated after this time (optional)',
+              },
+            },
+          },
+        },
       ],
     };
   });
@@ -779,6 +944,28 @@ function createBrainServer(): Server {
           return await handleBrainPush(args as unknown as BrainPushInput);
         case 'igris_brain_pull':
           return await handleBrainPull(args as unknown as BrainPullInput);
+
+        // Sync queue tools (FR-036)
+        case 'igris_sync_queue_status':
+          return handleSyncQueueStatus();
+        case 'igris_sync_queue_drain':
+          return await handleSyncQueueDrain(args as unknown as SyncQueueDrainInput);
+
+        // Brief file sync (FR-037)
+        case 'igris_brief_file_sync':
+          return handleBriefFileSync(args as unknown as BriefFileSyncInput);
+
+        // Session file sync (FR-038)
+        case 'igris_session_file_sync':
+          return handleSessionFileSync(args as unknown as SessionFileSyncInput);
+        case 'igris_session_file_pull':
+          return handleSessionFilePull(args as unknown as SessionFilePullInput);
+
+        // Definition file sync (FR-039)
+        case 'igris_definition_sync':
+          return handleDefinitionSync(args as unknown as DefinitionSyncInput);
+        case 'igris_definition_pull':
+          return handleDefinitionPull(args as unknown as DefinitionPullInput);
 
         default:
           throw new Error(`Unknown tool: ${name}`);
@@ -932,11 +1119,15 @@ async function runHttp(config: ServerConfig): Promise<void> {
   const transports: Record<string, StreamableHTTPServerTransport> = {};
   const sessionActivity: Record<string, number> = {};
 
-  // Periodic session cleanup (every 5 minutes)
+  // Periodic session cleanup (every 5 minutes).
+  // Sessions idle for 2+ hours are cleaned up. The extended TTL (from 30min
+  // to 2h) prevents premature session loss during long Claude Code sessions
+  // where gaps between MCP calls can exceed 30 minutes.
+  const SESSION_IDLE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
   const cleanupInterval = setInterval(() => {
     const now = Date.now();
     for (const sid of Object.keys(sessionActivity)) {
-      if (now - sessionActivity[sid] > 30 * 60 * 1000) {
+      if (now - sessionActivity[sid] > SESSION_IDLE_TTL_MS) {
         console.error(`[brain] Closing idle session: ${sid}`);
         const transport = transports[sid];
         if (transport) {
@@ -1162,8 +1353,10 @@ async function runHttp(config: ServerConfig): Promise<void> {
               id: body.id ?? null,
             });
           } else {
-            // For non-tool-call methods (tools/list, etc.), signal session needed.
-            // This also auto-creates a session so subsequent requests work.
+            // For non-tool-call methods (tools/list, etc.), auto-create a
+            // session transparently and route the request through it. This
+            // prevents Claude Code from losing MCP connectivity after a
+            // server restart when it sends tools/list without re-initializing.
             console.error(`[brain] Auto-creating session for method: ${body?.method}`);
             const transport = new StreamableHTTPServerTransport({
               sessionIdGenerator: () => randomUUID(),
@@ -1181,13 +1374,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
             };
             const server = createBrainServer();
             await server.connect(transport);
-            // The transport expects an initialize first but we don't have one.
-            // Return a helpful error — the session is now ready for a proper initialize.
-            res.status(400).json({
-              jsonrpc: '2.0',
-              error: { code: -32000, message: 'Bad Request: Session expired. Send an initialize request to start a new session.' },
-              id: body?.id ?? null,
-            });
+            await transport.handleRequest(req, res, req.body);
           }
         }
       }
@@ -1204,24 +1391,53 @@ async function runHttp(config: ServerConfig): Promise<void> {
   });
 
   // GET /mcp — SSE stream for server-initiated messages
+  // Sends periodic keepalive comments to prevent TCP idle timeouts.
   app.get('/mcp', async (req: Request, res: Response) => {
     const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+    // Resolve the target session ID — explicit or fallback to most recent
+    let targetSid: string | undefined = undefined;
     if (sessionId && transports[sessionId]) {
-      sessionActivity[sessionId] = Date.now();
-      await transports[sessionId].handleRequest(req, res);
+      targetSid = sessionId;
     } else {
-      // Fallback: use most recent session
       const activeSessions = Object.keys(transports);
       if (activeSessions.length > 0) {
-        const fallbackSid = activeSessions[activeSessions.length - 1];
-        sessionActivity[fallbackSid] = Date.now();
-        req.headers['mcp-session-id'] = fallbackSid;
-        req.rawHeaders.push('mcp-session-id', fallbackSid);
-        await transports[fallbackSid].handleRequest(req, res);
-      } else {
-        res.status(400).send('No active session');
+        targetSid = activeSessions[activeSessions.length - 1];
+        req.headers['mcp-session-id'] = targetSid;
+        req.rawHeaders.push('mcp-session-id', targetSid);
       }
     }
+
+    if (!targetSid) {
+      res.status(400).send('No active session');
+      return;
+    }
+
+    sessionActivity[targetSid] = Date.now();
+
+    // Start SSE keepalive interval — send a comment every 25s to prevent
+    // TCP idle timeout (typically 60-300s depending on network/proxy).
+    const keepaliveTimer = setInterval(() => {
+      try {
+        if (!res.writableEnded) {
+          res.write(':keepalive\n\n');
+          if (targetSid) {
+            sessionActivity[targetSid] = Date.now();
+          }
+        } else {
+          clearInterval(keepaliveTimer);
+        }
+      } catch {
+        clearInterval(keepaliveTimer);
+      }
+    }, 25_000);
+
+    // Clear keepalive on connection close
+    res.on('close', () => {
+      clearInterval(keepaliveTimer);
+    });
+
+    await transports[targetSid].handleRequest(req, res);
   });
 
   // DELETE /mcp — session termination
@@ -1306,6 +1522,72 @@ async function runHttp(config: ServerConfig): Promise<void> {
       if (!res.headersSent) {
         res.status(500).json({ error: message });
       }
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Content sync API endpoints (FR-037, FR-038, FR-039)
+  // -----------------------------------------------------------------------
+
+  // GET /api/briefs/:project/:briefId/content — retrieve brief file content
+  app.get('/api/briefs/:project/:briefId/content', (req: Request, res: Response) => {
+    try {
+      const db = getDb();
+      const row = db.prepare(
+        `SELECT brief_id, filename, content, content_hash, updated_at FROM brief_files WHERE project = ? AND brief_id = ?`
+      ).get(req.params.project, req.params.briefId) as Record<string, unknown> | undefined;
+
+      if (!row) {
+        res.status(404).json({ error: 'Brief file not found' });
+        return;
+      }
+
+      res.json(row);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] GET /api/briefs/:project/:briefId/content error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/sessions/:project/files — retrieve all session files for a project
+  app.get('/api/sessions/:project/files', (req: Request, res: Response) => {
+    try {
+      const db = getDb();
+      const rows = db.prepare(
+        `SELECT filename, content, content_hash, updated_at FROM session_files WHERE project = ? ORDER BY updated_at DESC`
+      ).all(req.params.project) as Record<string, unknown>[];
+
+      res.json({ files: rows, count: rows.length });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] GET /api/sessions/:project/files error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/definitions — retrieve definition files with optional type filter
+  app.get('/api/definitions', (req: Request, res: Response) => {
+    try {
+      const db = getDb();
+      const typeFilter = req.query.type as string | undefined;
+
+      let rows: Record<string, unknown>[];
+      if (typeFilter) {
+        rows = db.prepare(
+          `SELECT type, name, filename, content, content_hash, version, updated_at FROM definition_files WHERE type = ? ORDER BY type, name`
+        ).all(typeFilter) as Record<string, unknown>[];
+      } else {
+        rows = db.prepare(
+          `SELECT type, name, filename, content, content_hash, version, updated_at FROM definition_files ORDER BY type, name`
+        ).all() as Record<string, unknown>[];
+      }
+
+      res.json({ definitions: rows, count: rows.length });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] GET /api/definitions error:', message);
+      res.status(500).json({ error: message });
     }
   });
 

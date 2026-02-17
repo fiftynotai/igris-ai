@@ -1,9 +1,11 @@
 # Current Session
 
 ## Status
-**Mode:** HUNT MODE
+**Mode:** TEAM HUNT
 **Updated:** 2026-02-17
-**Active Brief:** FR-032
+**Active Briefs:** FR-033, FR-034, FR-035, FR-036, FR-037, FR-038, FR-039
+**Team:** sync-pipeline (4 workers)
+**Team Started:** 2026-02-17
 
 ---
 
@@ -22,7 +24,14 @@
 | FR-029 | Dual-POST Agent Events to VPS Dashboard | Done (commit `c8c1c39`) |
 | FR-030 | Brain Sync Activation & End-to-End Validation | Done (commit `ede7957`) |
 | FR-031 | Sync Briefs to Brain on Registration | Done (commit `b680fae`) |
-| FR-032 | Fix Live Instance Registration & Heartbeat | Done |
+| FR-032 | Fix Live Instance Registration & Heartbeat | Done (commit `3f66c4f`) |
+| FR-033 | Fix igris-brain HTTP MCP Transport | Ready |
+| FR-034 | Activate Brain Sync in /awaken and /rest | Ready (blocked by FR-033) |
+| FR-035 | Auto-Sync Hooks for Brief/Session Changes | Ready (blocked by FR-033, FR-034) |
+| FR-036 | Offline Sync Queue & Retry Mechanism | Ready (blocked by FR-033) |
+| FR-037 | Sync Brief File Content to VPS Brain | Ready (blocked by FR-033, FR-034) |
+| FR-038 | Sync Session File Content to VPS Brain | Ready (blocked by FR-033, FR-034) |
+| FR-039 | Sync Agent/Skill/Rule Definitions to VPS | Ready (blocked by FR-033, FR-034) |
 
 **Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, MG-009, MG-010, MG-011, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018, BR-015, FR-019, FR-020, FR-021, PI-003
 

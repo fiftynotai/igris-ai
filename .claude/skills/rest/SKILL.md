@@ -57,7 +57,19 @@ If the `igris-brain` MCP server is available:
 
 If brain MCP is not available, skip this step silently. No errors, no warnings.
 
-### 2.7. Push to Remote Brain (Optional)
+### 2.6.5. Drain Sync Queue (Mandatory)
+
+You MUST drain the sync queue before the final push. This is NOT optional.
+
+If the `igris-brain` MCP server is available:
+1. Call `igris_sync_queue_drain` to process any queued sync operations from previous failed pushes
+2. Display count of drained operations if any were processed
+
+If brain MCP is NOT available or drain fails, skip silently. Do NOT block session end.
+
+### 2.7. Push to Remote Brain (Mandatory)
+
+You MUST call `igris_brain_push` when remote brain is configured. This is NOT optional — the VPS brain depends on receiving data.
 
 If the `igris-brain` MCP server is available AND a remote brain URL is configured:
 - Read `~/.igris/config.json` to check for `remote_brain.url` and `remote_brain.api_key`
@@ -66,8 +78,7 @@ If the `igris-brain` MCP server is available AND a remote brain URL is configure
   - api_key = the configured API key
 - Display sync result summary (e.g., "Pushed 3 learnings, 1 error, 2 sessions to remote brain")
 
-If remote brain is not configured or push fails, log a one-line notice and continue.
-Do NOT block session end on sync failure.
+If remote brain is not configured or push fails, skip with one-line notice: "Brain push skipped ([reason])." Do NOT block session end.
 
 ### 3. Update Session File
 

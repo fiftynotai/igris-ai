@@ -130,6 +130,97 @@ function migrateSchema(db: Database.Database): void {
     })();
     console.error('[brain] Schema migrated to version 4 (instances)');
   }
+
+  if (currentVersion < 5) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS sync_queue (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          table_name TEXT NOT NULL,
+          row_data TEXT NOT NULL,
+          operation TEXT DEFAULT 'push' CHECK (operation IN ('push', 'pull')),
+          status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'retrying', 'sent', 'failed')),
+          retry_count INTEGER DEFAULT 0,
+          max_retries INTEGER DEFAULT 5,
+          error_message TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_retry_at TEXT,
+          sent_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status);
+
+        INSERT OR IGNORE INTO schema_version (version) VALUES (5);
+      `);
+    })();
+    console.error('[brain] Schema migrated to version 5 (sync_queue)');
+  }
+
+  if (currentVersion < 6) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS brief_files (
+          id TEXT PRIMARY KEY,
+          project TEXT NOT NULL,
+          brief_id TEXT NOT NULL,
+          filename TEXT NOT NULL,
+          content TEXT NOT NULL,
+          content_hash TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(project, brief_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_brief_files_project ON brief_files(project);
+
+        INSERT OR IGNORE INTO schema_version (version) VALUES (6);
+      `);
+    })();
+    console.error('[brain] Schema migrated to version 6 (brief_files)');
+  }
+
+  if (currentVersion < 7) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS session_files (
+          id TEXT PRIMARY KEY,
+          project TEXT NOT NULL,
+          filename TEXT NOT NULL,
+          content TEXT NOT NULL,
+          content_hash TEXT NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(project, filename)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_session_files_project ON session_files(project);
+
+        INSERT OR IGNORE INTO schema_version (version) VALUES (7);
+      `);
+    })();
+    console.error('[brain] Schema migrated to version 7 (session_files)');
+  }
+
+  if (currentVersion < 8) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS definition_files (
+          id TEXT PRIMARY KEY,
+          type TEXT NOT NULL CHECK (type IN ('agent', 'skill', 'rule', 'prompt')),
+          name TEXT NOT NULL,
+          filename TEXT NOT NULL,
+          content TEXT NOT NULL,
+          content_hash TEXT NOT NULL,
+          version TEXT,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(type, name)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_definition_files_type ON definition_files(type);
+
+        INSERT OR IGNORE INTO schema_version (version) VALUES (8);
+      `);
+    })();
+    console.error('[brain] Schema migrated to version 8 (definition_files)');
+  }
 }
 
 /**
