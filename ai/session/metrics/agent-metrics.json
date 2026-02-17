@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-02-17T10:13:35Z",
+  "last_updated": "2026-02-17T10:32:29Z",
   "agents": {
     "architect": {
       "invocations": 24,
@@ -23,24 +23,24 @@
       "total_cache_create_tokens": 8169202
     },
     "sentinel": {
-      "invocations": 31,
-      "last_used": "2026-02-17T10:09:54Z",
-      "avg_duration_seconds": 189.39,
+      "invocations": 32,
+      "last_used": "2026-02-17T10:30:37Z",
+      "avg_duration_seconds": 184.55,
       "success_rate": 1.0,
-      "total_input_tokens": 68164,
-      "total_output_tokens": 3019,
-      "total_cache_read_tokens": 23358909,
-      "total_cache_create_tokens": 7309583
+      "total_input_tokens": 68183,
+      "total_output_tokens": 3043,
+      "total_cache_read_tokens": 23502656,
+      "total_cache_create_tokens": 7383857
     },
     "warden": {
-      "invocations": 35,
-      "last_used": "2026-02-17T10:11:58Z",
-      "avg_duration_seconds": 75.47,
+      "invocations": 36,
+      "last_used": "2026-02-17T10:31:31Z",
+      "avg_duration_seconds": 74.99,
       "success_rate": 1.0,
-      "total_input_tokens": 20052,
-      "total_output_tokens": 2224,
-      "total_cache_read_tokens": 15002379,
-      "total_cache_create_tokens": 7501001
+      "total_input_tokens": 21555,
+      "total_output_tokens": 2264,
+      "total_cache_read_tokens": 15171342,
+      "total_cache_create_tokens": 7573593
     },
     "mender": {
       "invocations": 0,
@@ -164,11 +164,11 @@
     }
   },
   "totals": {
-    "total_invocations": 183,
+    "total_invocations": 185,
     "most_used_agent": "forger",
     "least_used_agent": "sage",
-    "total_input_tokens": 329697,
-    "total_output_tokens": 28185,
-    "total_cache_tokens": 257225677
+    "total_input_tokens": 331219,
+    "total_output_tokens": 28249,
+    "total_cache_tokens": 257685253
   }
 }
