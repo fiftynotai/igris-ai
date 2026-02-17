@@ -5,7 +5,7 @@
 **Effort:** L-Large (2-3d)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** In Progress
+**Status:** Blocked
 **Created:** 2026-02-09
 
 ---
@@ -100,12 +100,12 @@ The `/higgsfield` skill generates images, videos, edits, and speech by automatin
 
 ## Workflow State
 
-**Phase:** TESTING
+**Phase:** BLOCKED
 **Active Agent:** none
 **Retry Count:** 0
 
 ### Current Work
-Skill rewritten and deployed. Manual testing revealed blockers.
+Skill rewritten and deployed. Manual testing revealed blockers. Blocked on external input -- need correct Higgsfield URL slugs for browser automation.
 
 ### Next Steps
 1. User to provide correct URL slug mapping for all models

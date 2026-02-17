@@ -6,7 +6,12 @@ Tracks unresolved issues, questions, and blockers encountered during implementat
 
 ## Active Blockers
 
-_No active blockers - all bugs resolved!_ 🎉
+### FR-014: Higgsfield Skill — Browser Automation Pivot
+- **Status:** Blocked
+- **Blocker:** Need correct Higgsfield URL slugs for browser automation. SEEKER research guessed model URL slugs but the actual Higgsfield slugs use different naming. Invalid slugs cause "Submit not implemented for model" error.
+- **Since:** 2025-10 (ongoing)
+- **Impact:** Cannot implement Higgsfield media generation via browser. Skill rewritten and deployed but generation fails with incorrect URL routing.
+- **Resolution:** User to provide complete URL slug mapping for all Higgsfield models.
 
 ---
 

@@ -12,33 +12,13 @@
 
 | Brief | Title | Status |
 |-------|-------|--------|
-| FR-014 | Higgsfield Skill — Browser Automation Pivot | In Progress (blocked — URL slugs needed) |
-| FR-022 | VPS Remote Brain — HTTP Transport + API Key Auth | Done |
-| FR-023 | Local + Remote Brain Sync | Done (commit `3ae2091`) |
-| FR-024 | GitHub-Based VPS Code Updates | Done (commit `f997f72`) |
-| FR-025 | Deploy Brain MCP Server to VPS | Done (commit `c97b602`) |
-| FR-026 | Live Instance Registry | Done (commit `3f77b30`) |
-| FR-027 | Crimson Arena — Unified Command Center Dashboard | Done (commit `b06c1ec`) |
-| FR-028 | Install Scripts — Remote Brain & Dual-Mode Support | Done (commit `6a96d12`) |
-| FR-029 | Dual-POST Agent Events to VPS Dashboard | Done (commit `c8c1c39`) |
-| FR-030 | Brain Sync Activation & End-to-End Validation | Done (commit `ede7957`) |
-| FR-031 | Sync Briefs to Brain on Registration | Done (commit `b680fae`) |
-| FR-032 | Fix Live Instance Registration & Heartbeat | Done (commit `3f66c4f`) |
-| FR-033 | Fix igris-brain HTTP MCP Transport | Done (commit `f24d25c`) |
-| FR-034 | Activate Brain Sync in /awaken and /rest | Done (commit `f24d25c`) |
-| FR-035 | Auto-Sync Hooks for Brief/Session Changes | Done (commit `f24d25c`) |
-| FR-036 | Offline Sync Queue & Retry Mechanism | Done (commit `f24d25c`) |
-| FR-037 | Sync Brief File Content to VPS Brain | Done (commit `f24d25c`) |
-| FR-038 | Sync Session File Content to VPS Brain | Done (commit `f24d25c`) |
-| FR-039 | Sync Agent/Skill/Rule Definitions to VPS | Done (commit `f24d25c`) |
-| FR-040 | /sync Predefined Skill | Done (commit `5991700`) |
-| FR-041 | Fix Brain MCP Tool Discovery | Done (commit `7ccf4e5`) |
-| FR-042 | Sync Local Metrics & Brain Data to VPS | Done (commit `92871ec`, `3f35848`) |
-| FR-043 | Fix Live Instances — Stale Cleanup & Live Feel | Done (commit `cb087a2`) |
-| FR-044 | Crimson Arena v2 — Architecture-Aligned Dashboard | Done (commit `90d0595`) |
-| FR-045 | /sync code — Include Dashboard Files in VPS Deploy | Done |
+| FR-014 | Higgsfield Skill — Browser Automation Pivot | Blocked (URL slugs needed) |
+| FR-046 | Brain MCP Server Hardening — Pre-Release Fixes | Ready |
+| FR-047 | Dashboard Security & Reliability — Pre-Release Fixes | Ready |
+| FR-048 | Script Hardening & DB Backup — Pre-Release Fixes | Ready |
+| FR-049 | Workflow & Brief Cleanup — Pre-Release Fixes | In Progress |
 
-**Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, MG-009, MG-010, MG-011, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018, BR-015, FR-019, FR-020, FR-021, PI-003
+**Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, MG-009, MG-010, MG-011, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018, BR-015, FR-019, FR-020, FR-021, PI-003, FR-022, FR-023, FR-024, FR-025, FR-026, FR-027, FR-028, FR-029, FR-030, FR-031, FR-032, FR-033, FR-034, FR-035, FR-036, FR-037, FR-038, FR-039, FR-040, FR-041, FR-042, FR-043, FR-044, FR-045
 
 ---
 
@@ -82,9 +62,7 @@
 
 ## Pending
 
-- HUNT FR-045 (/sync code dashboard deploy fix — P1, S-effort)
 - HUNT FR-014 (Higgsfield browser automation — blocked on URL slugs)
-- Archive completed briefs (FR-022 through FR-044)
 - Continue v3.4 validation (19 remaining checklist items)
 
 ---

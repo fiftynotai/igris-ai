@@ -42,7 +42,7 @@ Execute the complete implementation workflow for a brief, from planning through 
 [INIT] --> [PLANNING] --> [APPROVAL?] --> [BUILDING] --> [TESTING] --> [REVIEWING] --> [DOCUMENTING?] --> [COMMITTING] --> [COMPLETE]
               |               |               |              |              |              |
               v               v               v              v              v              v
-          architect    (L/XL: user)       forger        sentinel       warden       documenter
+          architect    (L/XL: user)       forger        sentinel       warden       /document skill
 ```
 
 ## State Transitions
@@ -247,43 +247,41 @@ Task tool parameters:
 
 ### Phase 6: DOCUMENTING (Conditional)
 
-1. Update brief: Phase = DOCUMENTING, Active Agent = documenter
-2. Add Agent Log entry: "Starting documenter..."
+1. Update brief: Phase = DOCUMENTING, Active Agent = document skill
+2. Add Agent Log entry: "Starting /document skill..."
 3. **Evaluate whether documentation updates are needed:**
 
-**Invoke documenter when:**
+**Invoke /document skill when:**
 - New public APIs added
 - Component library changes
 - README-worthy features implemented
 - API signatures change
 
-**Skip documenter when (proceed directly to COMMITTING):**
+**Skip /document skill when (proceed directly to COMMITTING):**
 - Internal refactoring only
 - Bug fixes with no API changes
 - Test-only changes
 - Session/config changes
 
-4. **If docs needed, delegate to documenter agent** using Task tool:
+4. **If docs needed, invoke /document skill directly** (orchestrator-level operation):
+
+The orchestrator invokes the `/document` skill using the Skill tool. This is NOT a subagent delegation — it is an orchestrator-level skill invocation, matching the pattern defined in `rules/04-igris-agents.md`.
 
 ```
-Task tool parameters:
-- subagent_type: "documenter"
-- description: "Update docs for {BRIEF_ID}"
-- prompt: "Update documentation for the changes made in brief {BRIEF_ID}.
-
+Skill tool parameters:
+- skill: "document"
+- arguments: "{BRIEF_ID} - Update documentation for changes made.
   Brief: [brief content]
   Changes made: [summary of implementation changes]
-
   Check and update as needed:
   1. README.md (if user-facing features)
   2. API documentation (if API changes)
   3. Module catalog (if new modules)
   4. Code comments (if public API changes)
-
   Only update docs that are relevant to the changes made."
 ```
 
-5. After documenter returns (or if skipped):
+5. After /document skill completes (or if skipped):
    - Update brief: Active Agent = none
    - Update Agent Log with result (or "Skipped - no docs needed")
    - Proceed to COMMITTING
@@ -370,5 +368,5 @@ Maintain in brief file under Workflow State:
 | 2026-02-06 10:15 | forger | Implement changes | SUCCESS |
 | 2026-02-06 10:30 | sentinel | Run test suite | PASS |
 | 2026-02-06 10:35 | warden | Code review | APPROVE |
-| 2026-02-06 10:40 | documenter | Update documentation | SUCCESS (or Skipped) |
+| 2026-02-06 10:40 | /document skill | Update documentation | SUCCESS (or Skipped) |
 ```
