@@ -1,11 +1,10 @@
 # Current Session
 
 ## Status
-**Mode:** TEAM HUNT
+**Mode:** HUNT MODE
 **Updated:** 2026-02-17
-**Active Briefs:** FR-033, FR-034, FR-035, FR-036, FR-037, FR-038, FR-039
-**Team:** sync-pipeline (4 workers)
-**Team Started:** 2026-02-17
+**Active Brief:** None
+**Instance ID:** 25629fa2-e565-4116-a95c-dc2912c40e89
 
 ---
 
@@ -25,13 +24,15 @@
 | FR-030 | Brain Sync Activation & End-to-End Validation | Done (commit `ede7957`) |
 | FR-031 | Sync Briefs to Brain on Registration | Done (commit `b680fae`) |
 | FR-032 | Fix Live Instance Registration & Heartbeat | Done (commit `3f66c4f`) |
-| FR-033 | Fix igris-brain HTTP MCP Transport | Ready |
-| FR-034 | Activate Brain Sync in /awaken and /rest | Ready (blocked by FR-033) |
-| FR-035 | Auto-Sync Hooks for Brief/Session Changes | Ready (blocked by FR-033, FR-034) |
-| FR-036 | Offline Sync Queue & Retry Mechanism | Ready (blocked by FR-033) |
-| FR-037 | Sync Brief File Content to VPS Brain | Ready (blocked by FR-033, FR-034) |
-| FR-038 | Sync Session File Content to VPS Brain | Ready (blocked by FR-033, FR-034) |
-| FR-039 | Sync Agent/Skill/Rule Definitions to VPS | Ready (blocked by FR-033, FR-034) |
+| FR-033 | Fix igris-brain HTTP MCP Transport | Done (commit `f24d25c`) |
+| FR-034 | Activate Brain Sync in /awaken and /rest | Done (commit `f24d25c`) |
+| FR-035 | Auto-Sync Hooks for Brief/Session Changes | Done (commit `f24d25c`) |
+| FR-036 | Offline Sync Queue & Retry Mechanism | Done (commit `f24d25c`) |
+| FR-037 | Sync Brief File Content to VPS Brain | Done (commit `f24d25c`) |
+| FR-038 | Sync Session File Content to VPS Brain | Done (commit `f24d25c`) |
+| FR-039 | Sync Agent/Skill/Rule Definitions to VPS | Done (commit `f24d25c`) |
+| FR-040 | /sync Predefined Skill | Ready |
+| FR-041 | Fix Brain MCP Tool Discovery | Done (verified — tools working via VPS) |
 
 **Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, MG-009, MG-010, MG-011, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018, BR-015, FR-019, FR-020, FR-021, PI-003
 
@@ -39,56 +40,57 @@
 
 ## Resume Point
 
-**Last Active:** FR-032 registration
-**Phase:** N/A
+**Last Active:** FR-033 through FR-039 (team hunt complete)
+**Phase:** COMPLETE
 
 ---
 
 ## Next Session Instructions
 
-1. **HUNT FR-032** (S-effort) — Fix live instance registration. Change /awaken step 3.7 from "Optional" to mandatory, add periodic heartbeat in /hunt, verify /rest deregistration. Root cause: orchestrator skips "Optional" steps.
-2. **HUNT FR-014** (L-effort) — Unblock Higgsfield browser automation with correct URL slugs.
-3. Continue v3.4 validation — 19 items remaining: `ai/session/MG-008-test-checklist.md`
-4. Manual test: VPS unreachable graceful failure for brain sync (FR-030 remaining test)
-5. Verify VPS dashboard shows synced briefs after FR-031 changes take effect
+1. **HUNT FR-041** (P0, M-effort) — Fix brain MCP tool discovery. All brain sync tools are invisible to Claude Code, causing /awaken and /rest to silently skip every sync step. Top suspect: brain server not running locally.
+2. **HUNT FR-040** (M-effort) — Create `/sync` predefined skill for VPS brain deployment automation
+3. **HUNT FR-014** (L-effort) — Unblock Higgsfield browser automation with correct URL slugs
+4. Continue v3.4 validation — 19 items remaining: `ai/session/MG-008-test-checklist.md`
 
-**Key context for FR-032:** The /awaken skill step 3.7 uses the word "Optional" — orchestrator interprets this as "skip." Fix: change to "MUST call (skip silently if brain unavailable)." Also add heartbeat refresh between /hunt phases to prevent 30-min stale timeout. The instances table IS in sync config (sync.ts lines 110-119) but never gets data because local table is always empty.
+**Key context for FR-040:** User wants the manual VPS sync workflow (git push + SSH deploy + health check + brain data push) packaged as a `/sync` Claude Code skill. Brief already registered with full spec: 3 modes (code/data/all), reads config from `~/.igris/config.json`, graceful failure handling.
+
+**Key context for FR-033 verification:** SSE keepalive (25s interval), auto-session-create for tools/list, 2h session TTL — all deployed to VPS. Needs real-world testing to confirm connections survive beyond the previous 300s timeout.
 
 ---
 
 ## Last Session Summary (2026-02-17)
 
 **Date:** 2026-02-17
-**Summary:** Implemented 4 briefs via parallel Agent Teams (FR-029, FR-028, FR-030, FR-031). Investigated VPS dashboard gaps (missing briefs, missing live instances) via SEEKER and registered FR-032. All code pushed to develop.
+**Summary:** Implemented 7 briefs (FR-033 through FR-039) via parallel Agent Teams (4 workers). Built the complete brain sync pipeline: SSE keepalive fix, mandatory sync in /awaken+/rest, auto-sync hooks, offline sync queue, brief/session/definition file content sync. Deployed to VPS. Registered FR-040 for /sync skill.
 
 **Completed (this session):**
-- FR-029: Dual-POST agent events to local + VPS dashboard. Commit: `c8c1c39`
-- FR-028: Install scripts with --local/--remote/--dual brain modes + igris_brain_switch.sh. Commit: `6a96d12`
-- FR-030: Brain sync activation — schema v2→v4, push/pull tested end-to-end (54 rows pushed, 22 pulled). Commit: `ede7957`
-- FR-031: Brief sync on registration — /register, /archive, /hunt skills + igris_os.md updated. Commit: `b680fae`
-- Investigated brain DB sync gap via SEEKER → registered FR-030
-- Investigated VPS dashboard missing briefs via SEEKER → registered FR-031
-- Investigated VPS dashboard zero live instances via SEEKER → registered FR-032
-- All 4 commits pushed to develop
+- FR-033: SSE keepalive (25s), auto-session-create, 2h TTL. Commit: `f24d25c`
+- FR-034: Mandatory brain pull/push in /awaken and /rest skills + igris_os.md. Commit: `f24d25c`
+- FR-035: Auto-sync hooks — post_brief_sync.sh and post_session_sync.sh + settings.json. Commit: `f24d25c`
+- FR-036: Offline sync queue — sync_queue table (v5), queue-on-failure in push, drain tool. Commit: `f24d25c`
+- FR-037: Brief file content sync — brief_files table (v6), igris_brief_file_sync tool. Commit: `f24d25c`
+- FR-038: Session file content sync — session_files table (v7), igris_session_file_sync/pull tools. Commit: `f24d25c`
+- FR-039: Agent/skill/rule definition sync — definition_files table (v8), igris_definition_sync/pull tools. Commit: `f24d25c`
+- VPS deployment: 7 commits pulled, build OK, PM2 restarted, health check passed
+- FR-040 registered: /sync predefined skill brief
+- FR-041 registered: Fix brain MCP tool discovery (P0 — all sync steps silently skip)
 
 **Previous (earlier sessions):**
+- FR-032: Fix live instance registration. Commit: `3f66c4f`
+- FR-031: Brief sync on registration. Commit: `b680fae`
+- FR-030: Brain sync activation — schema v2->v4. Commit: `ede7957`
+- FR-029: Dual-POST agent events. Commit: `c8c1c39`
+- FR-028: Install scripts with brain modes. Commit: `6a96d12`
 - FR-027: Crimson Arena dashboard. Commit: `b06c1ec`
-- VPS deployment docs. Commit: `59d4750`
-- FR-026: Live Instance Registry. Commit: `3f77b30`
-- FR-025: VPS brain deployment. Commit: `c97b602`
-- FR-024: GitHub VPS code updates. Commit: `f997f72`
-- FR-023: Bidirectional sync. Commit: `3ae2091`
-- FR-022: HTTP transport. Commit: `020a964`
-- Brain MCP server fix. Commit: `005b945`
 
 ---
 
 ## Pending
 
-- HUNT FR-032 (Fix live instance registration & heartbeat — S-effort, ready)
+- HUNT FR-041 (Fix brain MCP tool discovery — P0, M-effort, ready — blocks all brain sync)
+- HUNT FR-040 (/sync predefined skill — M-effort, ready)
 - HUNT FR-014 (Higgsfield browser automation — blocked on URL slugs)
 - Continue v3.4 validation (19 remaining checklist items)
-- Manual VPS failure testing for brain sync
 
 ---
 

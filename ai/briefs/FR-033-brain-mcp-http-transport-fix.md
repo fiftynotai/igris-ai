@@ -14,7 +14,7 @@
 
 **What is the proposed feature?**
 
-Diagnose and fix why the `igris-brain` HTTP MCP server's tools don't load in Claude Code despite the server being reachable and correctly configured. The VPS brain server at `http://76.13.180.77:3001/mcp` responds to initialization handshakes (SSE) and all REST API endpoints work, but Claude Code never surfaces its MCP tools (`igris_instance_heartbeat`, `igris_brain_push`, `igris_memory_store`, etc.) in ToolSearch.
+Diagnose and fix why the `igris-brain` HTTP MCP server's tools don't load in Claude Code despite the server being reachable and correctly configured. The VPS brain server at `http://<VPS_IP>:3001/mcp` responds to initialization handshakes (SSE) and all REST API endpoints work, but Claude Code never surfaces its MCP tools (`igris_instance_heartbeat`, `igris_brain_push`, `igris_memory_store`, etc.) in ToolSearch.
 
 **Why is this valuable?**
 
@@ -93,7 +93,7 @@ Without MCP tools loading, the entire brain integration pipeline is broken at th
   {
     "igris-brain": {
       "type": "http",
-      "url": "http://76.13.180.77:3001/mcp",
+      "url": "http://<VPS_IP>:3001/mcp",
       "headers": {
         "Authorization": "Bearer <api_key>"
       }
