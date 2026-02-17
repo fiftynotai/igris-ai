@@ -5,7 +5,7 @@
 **Effort:** M-Medium (1-2d)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** Ready
+**Status:** In Progress
 **Created:** 2026-02-17
 **Completed:**
 
@@ -210,22 +210,25 @@ Igris: Syncing code and data to VPS...
 
 ## Workflow State
 
-**Phase:** INIT
+**Phase:** COMMITTING
 **Active Agent:** none
 **Retry Count:** 0
 
 ### Current Work
-Brief registered, awaiting implementation.
+Building the /sync skill definition and updating documentation.
 
 ### Next Steps
-1. Plan skill definition structure
-2. Implement SKILL.md
-3. Update documentation references
-4. Test all sync modes
+1. Create `.claude/skills/sync/SKILL.md`
+2. Update `~/.igris/config.json` with VPS section
+3. Update CLAUDE.md, rules, igris_os.md with /sync references
 
 ### Agent Log
 | Time | Agent | Action | Result |
 |------|-------|--------|--------|
+| 2026-02-17 07:22 | architect | Create implementation plan | SUCCESS |
+| 2026-02-17 07:25 | forger | Implement /sync skill + docs | SUCCESS |
+| 2026-02-17 07:29 | sentinel | Validate implementation | PASS (17/17 checks) |
+| 2026-02-17 07:32 | warden | Code review | APPROVE |
 
 ### Blockers
 None

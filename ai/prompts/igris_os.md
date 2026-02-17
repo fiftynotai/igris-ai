@@ -300,6 +300,7 @@ IGRIS v4.0 introduces a centralized brain at `~/.igris/` that provides persisten
 - **Session End (/rest):** Sync learnings and decisions to brain, sync session snapshot and brief status, **deregister instance (mandatory)**, **drain sync queue (mandatory)**, **push to remote brain (mandatory)**
 - **Status (/scan):** Show brain stats and cross-project insights
 - **Implementation (/hunt):** Record agent metrics, store error solutions, **refresh instance heartbeat on each phase transition**
+- **Deployment (/sync):** Push code to VPS, sync brain data, verify health
 - **Dashboard (/dashboard):** Show active briefs and recent sessions across all projects
 
 ### Graceful Degradation
@@ -379,6 +380,7 @@ Task Received
 | Project listing | `/projects` | "list projects", "show all projects" |
 | Cross-project dashboard | `/portfolio` | "portfolio", "cross-project status" |
 | Cross-project brief dashboard | `/dashboard` | "dashboard", "what was I working on" |
+| VPS deployment | `/sync` | "sync", "deploy to VPS", "push to VPS" |
 
 ---
 
@@ -472,7 +474,7 @@ Orchestrator:
 - ❌ No quality gates
 - ❌ Monolithic complexity
 
-**We built 7 specialized agents + 19 skills. USE THEM.**
+**We built 7 specialized agents + 20 skills. USE THEM.**
 
 ---
 

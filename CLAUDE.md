@@ -100,6 +100,7 @@ Igris commands are available as native Claude Code skills:
 | `/projects` | List brain-registered projects | `/projects` |
 | `/portfolio` | Cross-project dashboard | `/portfolio` |
 | `/dashboard` | Cross-project brief & session tracker | `/dashboard` |
+| `/sync` | VPS brain deployment | `/sync code` or `/sync data` or `/sync status` |
 
 Skills defined in `.claude/skills/*/SKILL.md`
 
