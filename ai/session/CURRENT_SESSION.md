@@ -3,7 +3,7 @@
 ## Status
 **Mode:** HUNT MODE
 **Updated:** 2026-02-18
-**Active Brief:** FR-058 (Crimson Arena Flutter Web Rewrite)
+**Active Brief:** None (FR-058 complete)
 
 ---
 
@@ -29,7 +29,7 @@
 ## Resume Point
 
 **Last Active:** FR-058 (Crimson Arena Flutter Web Rewrite)
-**Phase:** PLANNING
+**Phase:** COMPLETE
 
 ---
 
@@ -46,21 +46,22 @@
 ## Last Session Summary (2026-02-18)
 
 **Date:** 2026-02-18
-**Summary:** HUNT FR-052 (Crimson Arena Dashboard Redesign) — full agent pipeline (ARCHITECT → FORGER → SENTINEL → WARDEN). Complete two-page SPA redesign: HOME (war room) + INSTANCES (operations floor) with hash routing, instance cards, hunt pipeline visualization, nested team views. 8 files changed (+2,746/-3,737). Commit: 85173ca. Archived BR-023 and FR-052. Deployed code + data to VPS.
+**Summary:** HUNT FR-058 (Crimson Arena Flutter Web Rewrite) — full agent pipeline (ARCHITECT → FORGER/SAGE × 8 phases → SENTINEL → WARDEN). Complete Flutter Web rewrite of Crimson Arena dashboard with 4 pages (HOME, INSTANCES, AGENTS, ACHIEVEMENTS), agent event pipeline, gaming systems (skill trees, achievements), FDL v2 design system. 98 files changed (+16,418/-74). Commit: e1d9fae. FR-057 superseded.
 
 **Completed:**
-- **FR-052: Crimson Arena Dashboard Redesign — COMPLETE.**
-  - Two-page architecture: HOME (tokens, costs, brain, agents, skills, battle log) + INSTANCES (expandable instance cards)
-  - Hash router with `/#home`, `/#instances`, deep links, keyboard shortcuts (Ctrl+1/2)
-  - Solo instance expanded view: hunt pipeline + agent table + execution log
-  - Team lead expanded view: nested teammate pipelines + coordination log + file ownership
-  - Agent roster horizontal strip replaces Nexus grid
-  - Compact vital signs on INSTANCES, expanded on HOME
-  - 8 files changed (+2,746/-3,737). Commit: `85173ca`
-- **BR-023: Archived** (moved to `ai/session/archive/briefs/`)
-- **FR-052: Archived** (moved to `ai/session/archive/briefs/`)
-- `/sync code` — Deployed commit 85173ca to VPS
-- `/sync data` — Pushed brain data + events (210KB) + metrics (6.7KB) + budget (159B)
+- **FR-058: Crimson Arena Flutter Web Rewrite — COMPLETE.**
+  - Phase 1: Backend agent event pipeline (agent_events table, MCP tool, REST endpoints, WebSocket broadcasting)
+  - Phase 2: Flutter app scaffold (MVVM+GetX, 4 services, 12 models, routing)
+  - Phase 3: ViewModels (home, instances, agents, achievements) + WebSocket/REST wiring
+  - Phase 4: HOME page — 14 widgets (budget, brain health, agent roster, heatmap, battle log, velocity, performance)
+  - Phase 5: INSTANCES page — 6 widgets (instance cards, hunt pipeline, agent nexus, execution log, team mode)
+  - Phase 6: AGENTS page — skill trees (fifty_skill_tree), metrics (fl_chart), comparison view
+  - Phase 7: ACHIEVEMENTS page — 28 achievements, unlock popups, category filtering, progress persistence
+  - Phase 8: Polish (slide transitions, keyboard shortcuts, halftone overlay, glitch effects, responsive layout)
+  - WARDEN review: 3 bugs fixed (WebSocket ping protocol, skill heatmap URL, instance model field name)
+  - 98 files changed (+16,418/-74). Commit: `e1d9fae`
+- **FR-057: Superseded** by FR-058 (all requirements absorbed)
+- **BR-024, FR-052: Archived** (moved to `ai/session/archive/briefs/`)
 
 **Previous sessions:**
 - BR-023: Eliminate SSH Sync Path. Commits: `b43b0f6`, `fdfba96`

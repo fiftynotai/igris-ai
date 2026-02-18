@@ -112,20 +112,28 @@ class BrainWebSocketService extends GetxService {
       );
 
       _channel = WebSocketChannel.connect(wsUrl);
-      isConnected.value = true;
 
-      _subscription = _channel!.stream.listen(
-        _onMessage,
-        onDone: _onDisconnect,
-        onError: (_) => _onDisconnect(),
-      );
+      // Wait for the connection handshake before marking as connected.
+      // On failure the .ready future throws — catch it to avoid grey screen.
+      _channel!.ready.then((_) {
+        isConnected.value = true;
 
-      // Keepalive ping every 30s.
-      _pingTimer?.cancel();
-      _pingTimer = Timer.periodic(
-        const Duration(milliseconds: ApiConstants.wsPingInterval),
-        (_) => _sendPing(),
-      );
+        _subscription = _channel!.stream.listen(
+          _onMessage,
+          onDone: _onDisconnect,
+          onError: (_) => _onDisconnect(),
+        );
+
+        // Keepalive ping every 30s.
+        _pingTimer?.cancel();
+        _pingTimer = Timer.periodic(
+          const Duration(milliseconds: ApiConstants.wsPingInterval),
+          (_) => _sendPing(),
+        );
+      }).catchError((_) {
+        // Connection handshake failed — schedule reconnect silently.
+        _scheduleReconnect();
+      });
     } catch (_) {
       _scheduleReconnect();
     }

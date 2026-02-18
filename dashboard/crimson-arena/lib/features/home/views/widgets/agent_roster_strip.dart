@@ -20,6 +20,8 @@ class AgentRosterStrip extends StatelessWidget {
     final vm = Get.find<HomeViewModel>();
 
     return Obx(() {
+      // Access .length to register the RxMap subscription with GetX.
+      final _ = vm.agents.length;
       final agentsMap = vm.agents;
 
       return SizedBox(
