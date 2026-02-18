@@ -1,4 +1,3 @@
-import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:fifty_ui/fifty_ui.dart';
 import 'package:flutter/material.dart';
@@ -8,7 +7,6 @@ import 'package:get/get.dart';
 import '../../core/constants/arena_breakpoints.dart';
 import '../../core/routing/app_routes.dart';
 import '../../services/brain_websocket_service.dart';
-import 'status_badge.dart';
 
 /// Shared scaffold for all Crimson Arena pages.
 ///
@@ -203,18 +201,16 @@ class ArenaScaffold extends StatelessWidget {
   }
 
   Widget _buildConnectionBadge(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final ext = theme.extension<FiftyThemeExtension>()!;
     final wsService = Get.find<BrainWebSocketService>();
 
     return Obx(() {
       final connected = wsService.isConnected.value;
-      final statusColor = connected ? ext.success : colorScheme.primary;
-      final badge = StatusBadge(
+      final badge = FiftyBadge(
         label: connected ? 'LIVE' : 'OFFLINE',
-        color: statusColor,
-        showDot: true,
+        variant: connected
+            ? FiftyBadgeVariant.success
+            : FiftyBadgeVariant.error,
+        showGlow: connected,
       );
 
       // Apply glitch effect when disconnected.

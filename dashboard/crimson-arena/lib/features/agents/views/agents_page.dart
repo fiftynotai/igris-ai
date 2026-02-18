@@ -61,6 +61,11 @@ class AgentsPage extends StatelessWidget {
                     const SizedBox(height: FiftySpacing.md),
 
                     // Agent grid (always visible)
+                    const FiftySectionHeader(
+                      title: 'Agent Registry',
+                      size: FiftySectionHeaderSize.small,
+                      showDivider: false,
+                    ),
                     const AgentGrid(),
                     const SizedBox(height: FiftySpacing.md),
 

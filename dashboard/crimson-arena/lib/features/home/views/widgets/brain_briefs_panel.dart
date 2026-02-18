@@ -2,9 +2,10 @@ import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 
+import 'package:fifty_ui/fifty_ui.dart';
+
 import '../../../../data/models/brief_model.dart';
 import '../../../../shared/widgets/arena_card.dart';
-import '../../../../shared/widgets/status_badge.dart';
 
 /// Briefs panel for the Brain Command Center.
 ///
@@ -48,15 +49,14 @@ class BrainBriefsPanel extends StatelessWidget {
               spacing: FiftySpacing.xs,
               runSpacing: FiftySpacing.xs,
               children: statusCounts.entries.map((entry) {
-                return StatusBadge(
-                  label: entry.key,
-                  count: entry.value,
-                  color: _statusColor(
+                return FiftyBadge(
+                  label: '${entry.key}: ${entry.value}',
+                  customColor: _statusColor(
                     entry.key,
                     colorScheme,
                     theme.extension<FiftyThemeExtension>()!,
                   ),
-                  showBorder: true,
+                  showGlow: false,
                 );
               }).toList(),
             ),

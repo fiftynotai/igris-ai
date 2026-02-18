@@ -80,6 +80,11 @@ class HomePage extends StatelessWidget {
                     const SizedBox(height: FiftySpacing.sm),
 
                     // Instrument strip
+                    const FiftySectionHeader(
+                      title: 'Vitals',
+                      size: FiftySectionHeaderSize.small,
+                      showDivider: false,
+                    ),
                     const InstrumentStrip(),
                     const SizedBox(height: FiftySpacing.md),
 
@@ -96,6 +101,11 @@ class HomePage extends StatelessWidget {
                     const SizedBox(height: FiftySpacing.md),
 
                     // Brain health status
+                    const FiftySectionHeader(
+                      title: 'Brain',
+                      size: FiftySectionHeaderSize.small,
+                      showDivider: false,
+                    ),
                     const BrainHealthCard(),
                     const SizedBox(height: FiftySpacing.md),
 
@@ -104,6 +114,11 @@ class HomePage extends StatelessWidget {
                     const SizedBox(height: FiftySpacing.md),
 
                     // Bottom row: Knowledge + Sync
+                    const FiftySectionHeader(
+                      title: 'Intelligence',
+                      size: FiftySectionHeaderSize.small,
+                      showDivider: false,
+                    ),
                     if (isWide)
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,

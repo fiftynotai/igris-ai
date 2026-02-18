@@ -1,11 +1,9 @@
-import 'package:fifty_theme/fifty_theme.dart';
-import 'package:fifty_tokens/fifty_tokens.dart';
+import 'package:fifty_ui/fifty_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../../../../shared/utils/format_utils.dart';
 import '../../../../shared/widgets/arena_card.dart';
-import '../../../../shared/widgets/status_badge.dart';
 import '../../controllers/home_view_model.dart';
 
 /// Brain Health card.
@@ -26,15 +24,14 @@ class BrainHealthCard extends StatelessWidget {
       final health = vm.brainHealth.value;
       final available = vm.brainAvailable.value;
 
-      final ext = theme.extension<FiftyThemeExtension>()!;
-      final statusColor = available ? ext.success : colorScheme.primary;
-
       return ArenaCard(
         title: 'BRAIN STATUS',
-        trailing: StatusBadge(
+        trailing: FiftyBadge(
           label: available ? 'ONLINE' : 'OFFLINE',
-          color: statusColor,
-          showDot: true,
+          variant: available
+              ? FiftyBadgeVariant.success
+              : FiftyBadgeVariant.error,
+          showGlow: available,
         ),
         child: available && health != null
             ? _BrainStats(health: health)
@@ -80,54 +77,15 @@ class _BrainStats extends StatelessWidget {
       totalRecords = health['total_records'] as int? ?? 0;
     }
 
-    return Wrap(
-      spacing: FiftySpacing.lg,
-      runSpacing: FiftySpacing.sm,
-      children: [
-        _StatItem(label: 'VERSION', value: version),
-        _StatItem(label: 'DB SIZE', value: dbSize),
-        _StatItem(label: 'UPTIME', value: uptime),
-        _StatItem(
-          label: 'RECORDS',
-          value: FormatUtils.formatNumber(totalRecords),
-        ),
-      ],
-    );
-  }
-}
-
-/// A single stat item with label and value.
-class _StatItem extends StatelessWidget {
-  final String label;
-  final String value;
-
-  const _StatItem({required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final textTheme = theme.textTheme;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          label,
-          style: textTheme.labelSmall!.copyWith(
-            color: colorScheme.onSurfaceVariant,
-            letterSpacing: FiftyTypography.letterSpacingLabelMedium,
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          value,
-          style: textTheme.labelLarge!.copyWith(
-            color: colorScheme.onSurface,
-          ),
-        ),
-      ],
+    return FiftyDataSlate(
+      data: {
+        'Version': version,
+        'DB Size': dbSize,
+        'Uptime': uptime,
+        'Records': FormatUtils.formatNumber(totalRecords),
+      },
+      showBorder: false,
+      showGlow: false,
     );
   }
 }

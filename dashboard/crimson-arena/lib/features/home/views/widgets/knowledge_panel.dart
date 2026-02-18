@@ -1,5 +1,6 @@
 import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
+import 'package:fifty_ui/fifty_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -160,24 +161,10 @@ class _KnowledgeEntry extends StatelessWidget {
           const SizedBox(width: FiftySpacing.sm),
 
           // Category badge
-          Container(
-            padding: const EdgeInsets.symmetric(
-              horizontal: FiftySpacing.xs,
-              vertical: 1,
-            ),
-            decoration: BoxDecoration(
-              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.15),
-              borderRadius: FiftyRadii.smRadius,
-            ),
-            child: Text(
-              category,
-              style: textTheme.labelSmall!.copyWith(
-                fontSize: 11,
-                color: colorScheme.onSurfaceVariant,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
+          FiftyBadge(
+            label: category,
+            variant: FiftyBadgeVariant.neutral,
+            showGlow: false,
           ),
           const SizedBox(width: FiftySpacing.sm),
 

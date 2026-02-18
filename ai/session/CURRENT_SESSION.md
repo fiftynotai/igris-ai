@@ -11,7 +11,7 @@
 
 | Brief | Title | Status |
 |-------|-------|--------|
-| FR-059 | Crimson Arena — Theme-Aware UI/UX Polish | **In Progress** (L, 6 phases, 46 tasks) |
+| FR-059 | Crimson Arena — Theme-Aware UI/UX Polish | **Done** (commit: e08641a) |
 | FR-051 | Brain v5.0 — Modular Architecture + Task Mgmt + Scheduling | In Progress (XL, 5 phases) |
 | FR-052-engine | Brain v5.0 Phase 1 — Engine Foundation | Ready (L, critical path) |
 | FR-053 | Brain v5.0 Phase 2 — Task Management System | Ready (L, blocked by FR-052) |

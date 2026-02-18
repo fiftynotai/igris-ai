@@ -67,6 +67,16 @@ class _InstancesPageState extends State<InstancesPage> {
               const CompactVitalsStrip(),
 
               // Instances header
+              Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: hPad,
+                ).copyWith(top: FiftySpacing.sm),
+                child: const FiftySectionHeader(
+                  title: 'Active Instances',
+                  size: FiftySectionHeaderSize.small,
+                  showDivider: false,
+                ),
+              ),
               _buildInstancesHeader(context, vm, horizontalPad: hPad),
 
               // Instance list

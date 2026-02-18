@@ -98,6 +98,16 @@ class _AchievementsPageState extends State<AchievementsPage> {
 
             const SizedBox(height: FiftySpacing.md),
 
+            // Achievements section header
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: FiftySpacing.md),
+              child: FiftySectionHeader(
+                title: 'Achievements',
+                size: FiftySectionHeaderSize.small,
+                showDivider: false,
+              ),
+            ),
+
             // Category filter chips
             const CategoryFilterChips(),
 
