@@ -1,7 +1,7 @@
 ---
 name: scan
 description: Show system status report - briefs, session, blockers, git status
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools:
   - Read
   - Grep

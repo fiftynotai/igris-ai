@@ -1,7 +1,7 @@
 ---
 name: portfolio
 description: Cross-project dashboard with analytics and brain health
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools:
   - Bash
   - Read

@@ -1,7 +1,7 @@
 ---
 name: ui-design
 description: UI design guidelines and workflow - accessibility, component states, responsive design, dark mode
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools:
   - Read
   - Write

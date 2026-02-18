@@ -1,7 +1,7 @@
 ---
 name: document
 description: Documentation workflow - README updates, API docs, architecture docs, code comments
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools:
   - Read
   - Write

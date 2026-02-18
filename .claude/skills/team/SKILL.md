@@ -1,7 +1,7 @@
 ---
 name: team
 description: Parallel execution with Agent Teams - spawn teammates for parallel briefs, reviews, investigations
-disable-model-invocation: true
+disable-model-invocation: false
 context: fork
 allowed-tools:
   - Read

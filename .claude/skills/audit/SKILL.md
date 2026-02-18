@@ -1,7 +1,7 @@
 ---
 name: audit
 description: Codebase audit - 7 audit types for quality, security, architecture, and process analysis
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools:
   - Read
   - Grep

@@ -1,7 +1,7 @@
 ---
 name: register
 description: Create a new brief - usage: /register bug|feature|migration|debt "title"
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools:
   - Read
   - Write

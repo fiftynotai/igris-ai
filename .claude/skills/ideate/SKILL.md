@@ -1,7 +1,7 @@
 ---
 name: ideate
 description: Feature brainstorming and ideation - value/effort matrix, feature briefs
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools:
   - Read
   - Grep

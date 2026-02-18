@@ -1,7 +1,7 @@
 ---
 name: awaken
 description: Start or resume session - loads state and continues work
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools:
   - Read
   - Write

@@ -1,7 +1,7 @@
 ---
 name: higgsfield
 description: Generate images, videos, edits, or speech using Higgsfield AI via browser automation
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools:
   - mcp__claude-in-chrome__navigate
   - mcp__claude-in-chrome__computer

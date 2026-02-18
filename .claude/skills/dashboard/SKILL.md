@@ -1,7 +1,7 @@
 ---
 name: dashboard
 description: Cross-project brief and session tracker using brain MCP tools
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools:
   - Bash
   - Read

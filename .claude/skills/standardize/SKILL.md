@@ -1,7 +1,7 @@
 ---
 name: standardize
 description: Generate coding_guidelines.md from codebase analysis or base architecture repo (4 modes)
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools:
   - Read
   - Write

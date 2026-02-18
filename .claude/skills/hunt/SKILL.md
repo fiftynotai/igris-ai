@@ -1,7 +1,7 @@
 ---
 name: hunt
 description: Implement a brief with full workflow - usage: /hunt BR-008
-disable-model-invocation: true
+disable-model-invocation: false
 context: fork
 allowed-tools:
   - Read

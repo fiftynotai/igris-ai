@@ -1,7 +1,7 @@
 ---
 name: digivolve
 description: Agent management - status, add, upgrade, disable, enable, remove, reset
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools:
   - Read
   - Write

@@ -1,7 +1,7 @@
 ---
 name: migrate-analyze
 description: Migration analysis - gap analysis, migration roadmaps, MG-XXX brief generation
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools:
   - Read
   - Grep

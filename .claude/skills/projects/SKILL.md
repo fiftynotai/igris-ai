@@ -1,7 +1,7 @@
 ---
 name: projects
 description: List all Igris-managed projects registered in the brain
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools:
   - Bash
   - Read

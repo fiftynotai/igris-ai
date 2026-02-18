@@ -1,7 +1,7 @@
 ---
 name: release
 description: Release preparation - changelog generation, version bumps, release notes
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools:
   - Read
   - Write

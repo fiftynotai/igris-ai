@@ -1,7 +1,7 @@
 ---
 name: rest
 description: Pause or end current session - saves state for later resumption
-disable-model-invocation: true
+disable-model-invocation: false
 allowed-tools:
   - Read
   - Write
