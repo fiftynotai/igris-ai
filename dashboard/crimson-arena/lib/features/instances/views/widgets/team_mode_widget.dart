@@ -1,6 +1,7 @@
+import 'package:crimson_arena/core/theme/arena_text_styles.dart';
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/agent_constants.dart';
 import '../../../../data/models/team_status_model.dart';
@@ -22,13 +23,16 @@ class TeamModeWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
     return Container(
       padding: const EdgeInsets.all(FiftySpacing.md),
       decoration: BoxDecoration(
-        color: FiftyColors.darkBurgundy.withValues(alpha: 0.5),
+        color: colorScheme.surface.withValues(alpha: 0.5),
         borderRadius: FiftyRadii.smRadius,
         border: Border.all(
-          color: FiftyColors.slateGrey.withValues(alpha: 0.3),
+          color: colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
           width: 1,
         ),
       ),
@@ -36,29 +40,34 @@ class TeamModeWidget extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Team header
-          _buildTeamHeader(),
+          _buildTeamHeader(context),
           const SizedBox(height: FiftySpacing.md),
 
           // Teammate cards
           if (teamStatus.teammates.isNotEmpty) ...[
-            _buildTeammateGrid(),
+            _buildTeammateGrid(context),
             const SizedBox(height: FiftySpacing.md),
           ],
 
           // Coordination log
-          _buildCoordinationLog(),
+          _buildCoordinationLog(context),
 
           // File ownership
           if (teamStatus.fileOwnership.isNotEmpty) ...[
             const SizedBox(height: FiftySpacing.md),
-            _buildFileOwnership(),
+            _buildFileOwnership(context),
           ],
         ],
       ),
     );
   }
 
-  Widget _buildTeamHeader() {
+  Widget _buildTeamHeader(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
+
     return Row(
       children: [
         // Team icon
@@ -68,18 +77,16 @@ class TeamModeWidget extends StatelessWidget {
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: teamStatus.active
-                ? FiftyColors.hunterGreen
-                : FiftyColors.slateGrey,
+                ? ext.success
+                : colorScheme.onSurfaceVariant,
           ),
         ),
         const SizedBox(width: FiftySpacing.sm),
 
         Text(
           'TEAM: "${teamStatus.teamName}"',
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelMedium,
-            fontWeight: FiftyTypography.bold,
-            color: FiftyColors.slateGrey,
+          style: textTheme.labelMedium!.copyWith(
+            color: colorScheme.onSurfaceVariant,
             letterSpacing: FiftyTypography.letterSpacingLabelMedium,
           ),
         ),
@@ -87,10 +94,9 @@ class TeamModeWidget extends StatelessWidget {
 
         Text(
           '${teamStatus.teammates.length} briefs',
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
+          style: textTheme.labelSmall!.copyWith(
             fontWeight: FiftyTypography.medium,
-            color: FiftyColors.cream.withValues(alpha: 0.6),
+            color: colorScheme.onSurface.withValues(alpha: 0.6),
           ),
         ),
 
@@ -104,24 +110,23 @@ class TeamModeWidget extends StatelessWidget {
           ),
           decoration: BoxDecoration(
             color: teamStatus.active
-                ? FiftyColors.hunterGreen.withValues(alpha: 0.15)
-                : FiftyColors.slateGrey.withValues(alpha: 0.15),
+                ? ext.success.withValues(alpha: 0.15)
+                : colorScheme.onSurfaceVariant.withValues(alpha: 0.15),
             borderRadius: FiftyRadii.smRadius,
             border: Border.all(
               color: teamStatus.active
-                  ? FiftyColors.hunterGreen.withValues(alpha: 0.3)
-                  : FiftyColors.slateGrey.withValues(alpha: 0.3),
+                  ? ext.success.withValues(alpha: 0.3)
+                  : colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
               width: 1,
             ),
           ),
           child: Text(
             teamStatus.active ? 'ACTIVE' : 'IDLE',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelSmall,
+            style: textTheme.labelSmall!.copyWith(
               fontWeight: FiftyTypography.bold,
               color: teamStatus.active
-                  ? FiftyColors.hunterGreen
-                  : FiftyColors.slateGrey,
+                  ? ext.success
+                  : colorScheme.onSurfaceVariant,
               letterSpacing: FiftyTypography.letterSpacingLabelMedium,
             ),
           ),
@@ -130,15 +135,20 @@ class TeamModeWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildTeammateGrid() {
+  Widget _buildTeammateGrid(BuildContext context) {
     return Wrap(
       spacing: FiftySpacing.sm,
       runSpacing: FiftySpacing.sm,
-      children: teamStatus.teammates.map(_buildTeammateCard).toList(),
+      children:
+          teamStatus.teammates.map((t) => _buildTeammateCard(context, t)).toList(),
     );
   }
 
-  Widget _buildTeammateCard(TeammateModel teammate) {
+  Widget _buildTeammateCard(BuildContext context, TeammateModel teammate) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
     final rawPhase = teammate.phase.toUpperCase();
     final phaseKey = AgentConstants.phaseMap[rawPhase];
     final currentIndex = phaseKey != null
@@ -149,10 +159,10 @@ class TeamModeWidget extends StatelessWidget {
       width: 280,
       padding: const EdgeInsets.all(FiftySpacing.sm),
       decoration: BoxDecoration(
-        color: FiftyColors.surfaceDark,
+        color: colorScheme.surfaceContainerHighest,
         borderRadius: FiftyRadii.smRadius,
         border: Border.all(
-          color: FiftyColors.borderDark,
+          color: colorScheme.outline,
           width: 1,
         ),
       ),
@@ -164,23 +174,27 @@ class TeamModeWidget extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Text(
-                  teammate.name,
-                  style: GoogleFonts.manrope(
-                    fontSize: FiftyTypography.bodySmall,
-                    fontWeight: FiftyTypography.bold,
-                    color: FiftyColors.cream,
+                child: Tooltip(
+                  message: teammate.name,
+                  child: Text(
+                    teammate.name,
+                    style: textTheme.bodySmall!.copyWith(
+                      fontWeight: FiftyTypography.bold,
+                      color: colorScheme.onSurface,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               Text(
                 teammate.brief,
-                style: GoogleFonts.manrope(
-                  fontSize: FiftyTypography.bodySmall,
+                style: textTheme.bodySmall!.copyWith(
                   fontWeight: FiftyTypography.medium,
-                  color: FiftyColors.powderBlush,
+                  color: ext.accent,
                 ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ],
           ),
@@ -191,20 +205,20 @@ class TeamModeWidget extends StatelessWidget {
             children: [
               Text(
                 teammate.phase.toUpperCase(),
-                style: GoogleFonts.manrope(
-                  fontSize: FiftyTypography.labelSmall,
+                style: textTheme.labelSmall!.copyWith(
                   fontWeight: FiftyTypography.bold,
-                  color: FiftyColors.burgundy,
+                  color: colorScheme.primary,
                   letterSpacing: FiftyTypography.letterSpacingLabelMedium,
                 ),
               ),
               const Spacer(),
               Text(
                 teammate.elapsed,
-                style: GoogleFonts.sourceCodePro(
+                style: ArenaTextStyles.mono(
+                  context,
                   fontSize: FiftyTypography.labelSmall,
                   fontWeight: FiftyTypography.medium,
-                  color: FiftyColors.slateGrey,
+                  color: colorScheme.onSurfaceVariant,
                 ),
               ),
             ],
@@ -212,7 +226,7 @@ class TeamModeWidget extends StatelessWidget {
           const SizedBox(height: FiftySpacing.xs),
 
           // Mini pipeline
-          _buildMiniPipeline(currentIndex),
+          _buildMiniPipeline(context, currentIndex),
 
           const SizedBox(height: FiftySpacing.xs),
 
@@ -221,20 +235,22 @@ class TeamModeWidget extends StatelessWidget {
             children: [
               Text(
                 'Tokens: ${_formatTokens(teammate.tokens)}',
-                style: GoogleFonts.sourceCodePro(
+                style: ArenaTextStyles.mono(
+                  context,
                   fontSize: FiftyTypography.labelSmall,
                   fontWeight: FiftyTypography.medium,
-                  color: FiftyColors.slateGrey,
+                  color: colorScheme.onSurfaceVariant,
                 ),
               ),
               if (teammate.retries > 0) ...[
                 const Spacer(),
                 Text(
                   'Retries: ${teammate.retries}',
-                  style: GoogleFonts.sourceCodePro(
+                  style: ArenaTextStyles.mono(
+                    context,
                     fontSize: FiftyTypography.labelSmall,
                     fontWeight: FiftyTypography.medium,
-                    color: FiftyColors.warning,
+                    color: ext.warning,
                   ),
                 ),
               ],
@@ -245,7 +261,11 @@ class TeamModeWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildMiniPipeline(int currentIndex) {
+  Widget _buildMiniPipeline(BuildContext context, int currentIndex) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+
     return Row(
       children: [
         for (int i = 0; i < AgentConstants.huntPhases.length; i++) ...[
@@ -254,66 +274,74 @@ class TeamModeWidget extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 2),
               child: Text(
                 '\u2192',
-                style: GoogleFonts.sourceCodePro(
-                  fontSize: 8,
+                style: ArenaTextStyles.mono(
+                  context,
+                  fontSize: 11,
                   color: currentIndex >= 0 && i <= currentIndex
-                      ? FiftyColors.hunterGreen.withValues(alpha: 0.6)
-                      : FiftyColors.borderDark,
+                      ? ext.success.withValues(alpha: 0.6)
+                      : colorScheme.outline,
                 ),
               ),
             ),
-          _buildMiniPhaseNode(i, currentIndex),
+          _buildMiniPhaseNode(context, i, currentIndex),
         ],
       ],
     );
   }
 
-  Widget _buildMiniPhaseNode(int index, int currentIndex) {
+  Widget _buildMiniPhaseNode(
+      BuildContext context, int index, int currentIndex) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
     final phase = AgentConstants.huntPhases[index];
     final isDone = currentIndex >= 0 && index < currentIndex;
     final isCurrent = index == currentIndex;
 
     Color color;
     if (isDone) {
-      color = FiftyColors.hunterGreen;
+      color = ext.success;
     } else if (isCurrent) {
-      color = FiftyColors.burgundy;
+      color = colorScheme.primary;
     } else {
-      color = FiftyColors.slateGrey.withValues(alpha: 0.3);
+      color = colorScheme.onSurfaceVariant.withValues(alpha: 0.3);
     }
 
     return Text(
       phase.toUpperCase().substring(0, 1),
-      style: GoogleFonts.sourceCodePro(
-        fontSize: 8,
+      style: ArenaTextStyles.mono(
+        context,
+        fontSize: 11,
         fontWeight: isCurrent ? FiftyTypography.bold : FiftyTypography.medium,
         color: color,
       ),
     );
   }
 
-  Widget _buildCoordinationLog() {
+  Widget _buildCoordinationLog(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           'COORDINATION LOG',
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelMedium,
-            fontWeight: FiftyTypography.bold,
-            color: FiftyColors.slateGrey,
+          style: textTheme.labelMedium!.copyWith(
+            color: colorScheme.onSurfaceVariant,
             letterSpacing: FiftyTypography.letterSpacingLabelMedium,
           ),
         ),
         const SizedBox(height: FiftySpacing.xs),
 
         if (teamStatus.coordinationLog.isEmpty)
-          Text(
-            'No coordination data available',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.bodySmall,
-              fontWeight: FiftyTypography.medium,
-              color: FiftyColors.slateGrey.withValues(alpha: 0.5),
+          Center(
+            child: Text(
+              'No coordination data available',
+              style: textTheme.bodySmall!.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
             ),
           )
         else
@@ -321,6 +349,7 @@ class TeamModeWidget extends StatelessWidget {
             constraints: const BoxConstraints(maxHeight: 120),
             child: ListView.builder(
               shrinkWrap: true,
+              physics: const ClampingScrollPhysics(),
               itemCount: teamStatus.coordinationLog.length,
               itemBuilder: (context, index) {
                 final entry = teamStatus.coordinationLog[index];
@@ -331,20 +360,22 @@ class TeamModeWidget extends StatelessWidget {
                     children: [
                       Text(
                         '[${entry.timestamp}]',
-                        style: GoogleFonts.sourceCodePro(
+                        style: ArenaTextStyles.mono(
+                          context,
                           fontSize: FiftyTypography.labelSmall,
                           fontWeight: FiftyTypography.medium,
-                          color: FiftyColors.slateGrey,
+                          color: colorScheme.onSurfaceVariant,
                         ),
                       ),
                       const SizedBox(width: FiftySpacing.xs),
                       Expanded(
                         child: Text(
                           entry.message,
-                          style: GoogleFonts.sourceCodePro(
+                          style: ArenaTextStyles.mono(
+                            context,
                             fontSize: FiftyTypography.labelSmall,
                             fontWeight: FiftyTypography.medium,
-                            color: FiftyColors.cream.withValues(alpha: 0.7),
+                            color: colorScheme.onSurface.withValues(alpha: 0.7),
                           ),
                         ),
                       ),
@@ -358,16 +389,19 @@ class TeamModeWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildFileOwnership() {
+  Widget _buildFileOwnership(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           'FILE OWNERSHIP',
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelMedium,
-            fontWeight: FiftyTypography.bold,
-            color: FiftyColors.slateGrey,
+          style: textTheme.labelMedium!.copyWith(
+            color: colorScheme.onSurfaceVariant,
             letterSpacing: FiftyTypography.letterSpacingLabelMedium,
           ),
         ),
@@ -379,23 +413,29 @@ class TeamModeWidget extends StatelessWidget {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(
-                    entry.key,
-                    style: GoogleFonts.sourceCodePro(
-                      fontSize: FiftyTypography.labelSmall,
-                      fontWeight: FiftyTypography.medium,
-                      color: FiftyColors.cream.withValues(alpha: 0.6),
+                  child: Tooltip(
+                    message: entry.key,
+                    child: Text(
+                      entry.key,
+                      style: ArenaTextStyles.mono(
+                        context,
+                        fontSize: FiftyTypography.labelSmall,
+                        fontWeight: FiftyTypography.medium,
+                        color: colorScheme.onSurface.withValues(alpha: 0.6),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 const SizedBox(width: FiftySpacing.sm),
                 Text(
                   entry.value,
-                  style: GoogleFonts.sourceCodePro(
+                  style: ArenaTextStyles.mono(
+                    context,
                     fontSize: FiftyTypography.labelSmall,
                     fontWeight: FiftyTypography.bold,
-                    color: FiftyColors.powderBlush,
+                    color: ext.accent,
                   ),
                 ),
               ],

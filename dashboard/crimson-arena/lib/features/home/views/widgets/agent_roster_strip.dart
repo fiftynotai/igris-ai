@@ -1,7 +1,7 @@
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/agent_constants.dart';
 import '../../../../data/models/agent_model.dart';
@@ -28,6 +28,7 @@ class AgentRosterStrip extends StatelessWidget {
         height: 148,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
+          physics: const ClampingScrollPhysics(),
           padding: const EdgeInsets.symmetric(horizontal: FiftySpacing.xs),
           itemCount: AgentConstants.agentOrder.length,
           separatorBuilder: (_, __) =>
@@ -55,6 +56,11 @@ class _AgentCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
+    // Agent-specific color -- game identity, not migrated.
     final color = Color(
       AgentConstants.agentColors[agentName] ?? 0xFF888888,
     );
@@ -71,12 +77,12 @@ class _AgentCard extends StatelessWidget {
       width: 120,
       padding: const EdgeInsets.all(FiftySpacing.sm),
       decoration: BoxDecoration(
-        color: FiftyColors.surfaceDark,
+        color: colorScheme.surfaceContainerHighest,
         borderRadius: FiftyRadii.lgRadius,
         border: Border.all(
           color: isActive
               ? color.withValues(alpha: 0.6)
-              : FiftyColors.borderDark,
+              : colorScheme.outline,
           width: isActive ? 1.5 : 1,
         ),
         boxShadow: isActive
@@ -111,25 +117,29 @@ class _AgentCard extends StatelessWidget {
                 child: Center(
                   child: Text(
                     monogram,
-                    style: GoogleFonts.manrope(
-                      fontSize: FiftyTypography.labelMedium,
+                    style: textTheme.labelMedium!.copyWith(
                       fontWeight: FiftyTypography.extraBold,
                       color: color,
                     ),
                   ),
                 ),
               ),
-              // Status dot
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: isActive
-                      ? FiftyColors.hunterGreen
-                      : (invocations > 0
-                          ? FiftyColors.slateGrey
-                          : FiftyColors.cream.withValues(alpha: 0.2)),
+              // Status dot with tooltip for accessibility
+              Tooltip(
+                message: isActive
+                    ? 'Active'
+                    : (invocations > 0 ? 'Ready' : 'Unused'),
+                child: Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: isActive
+                        ? ext.success
+                        : (invocations > 0
+                            ? colorScheme.onSurfaceVariant
+                            : colorScheme.onSurface.withValues(alpha: 0.2)),
+                  ),
                 ),
               ),
             ],
@@ -137,25 +147,26 @@ class _AgentCard extends StatelessWidget {
           const SizedBox(height: FiftySpacing.xs),
 
           // Agent name
-          Text(
-            displayName,
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelSmall,
-              fontWeight: FiftyTypography.bold,
-              color: FiftyColors.cream,
-              letterSpacing: FiftyTypography.letterSpacingLabel,
+          Tooltip(
+            message: displayName,
+            child: Text(
+              displayName,
+              style: textTheme.labelSmall!.copyWith(
+                fontWeight: FiftyTypography.bold,
+                color: colorScheme.onSurface,
+                letterSpacing: FiftyTypography.letterSpacingLabel,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
           ),
 
           // Level
           Text(
             'Lv.$levelTier',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelSmall,
+            style: textTheme.labelSmall!.copyWith(
               fontWeight: FiftyTypography.medium,
-              color: FiftyColors.cream.withValues(alpha: 0.5),
+              color: colorScheme.onSurface.withValues(alpha: 0.5),
             ),
           ),
           const SizedBox(height: FiftySpacing.xs),
@@ -167,7 +178,7 @@ class _AgentCard extends StatelessWidget {
               borderRadius: FiftyRadii.smRadius,
               child: LinearProgressIndicator(
                 value: progress.clamp(0, 1).toDouble(),
-                backgroundColor: FiftyColors.cream.withValues(alpha: 0.05),
+                backgroundColor: colorScheme.onSurface.withValues(alpha: 0.05),
                 valueColor: AlwaysStoppedAnimation<Color>(color),
               ),
             ),
@@ -180,10 +191,9 @@ class _AgentCard extends StatelessWidget {
           // Invocations
           Text(
             '$invocations ${agentName == "orchestrator" ? "turns" : "runs"}',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelSmall,
+            style: textTheme.labelSmall!.copyWith(
               fontWeight: FiftyTypography.medium,
-              color: FiftyColors.cream.withValues(alpha: 0.4),
+              color: colorScheme.onSurface.withValues(alpha: 0.4),
             ),
           ),
         ],

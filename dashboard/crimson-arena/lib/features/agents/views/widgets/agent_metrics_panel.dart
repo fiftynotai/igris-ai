@@ -1,8 +1,8 @@
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/agent_constants.dart';
 import '../../../../data/models/agent_model.dart';
@@ -24,6 +24,10 @@ class AgentMetricsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final vm = Get.find<AgentsViewModel>();
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
 
     return Obx(() {
       final agentName = vm.selectedAgent.value;
@@ -34,13 +38,14 @@ class AgentMetricsPanel extends StatelessWidget {
         return _EmptyState(agentName: agentName);
       }
 
+      // Agent-specific color -- game identity, not migrated.
       final color = Color(
         AgentConstants.agentColors[agentName] ?? 0xFF888888,
       );
 
       return Container(
         decoration: BoxDecoration(
-          color: FiftyColors.surfaceDark,
+          color: colorScheme.surfaceContainerHighest,
           borderRadius: FiftyRadii.lgRadius,
           border: Border.all(
             color: color.withValues(alpha: 0.2),
@@ -55,10 +60,8 @@ class AgentMetricsPanel extends StatelessWidget {
               // Section header
               Text(
                 'METRICS',
-                style: GoogleFonts.manrope(
-                  fontSize: FiftyTypography.labelMedium,
-                  fontWeight: FiftyTypography.bold,
-                  color: FiftyColors.slateGrey,
+                style: textTheme.labelMedium!.copyWith(
+                  color: colorScheme.onSurfaceVariant,
                   letterSpacing: FiftyTypography.letterSpacingLabelMedium,
                 ),
               ),
@@ -73,7 +76,7 @@ class AgentMetricsPanel extends StatelessWidget {
                 label: 'SUCCESS RATE',
                 value:
                     '${(agent.successRate * 100).clamp(0, 100).toStringAsFixed(1)}%',
-                color: _successColor(agent.successRate * 100),
+                color: _successColor(agent.successRate * 100, colorScheme, ext),
                 progress: agent.successRate.clamp(0, 1).toDouble(),
               ),
               const SizedBox(height: FiftySpacing.md),
@@ -85,14 +88,14 @@ class AgentMetricsPanel extends StatelessWidget {
                         agent.totalTokens ~/ agent.invocations,
                       )
                     : '--',
-                color: FiftyColors.cream.withValues(alpha: 0.7),
+                color: colorScheme.onSurface.withValues(alpha: 0.7),
               ),
               const SizedBox(height: FiftySpacing.md),
 
               _MetricTile(
                 label: 'AVG DURATION',
                 value: FormatUtils.formatDuration(agent.avgDurationSeconds),
-                color: FiftyColors.cream.withValues(alpha: 0.7),
+                color: colorScheme.onSurface.withValues(alpha: 0.7),
               ),
               const SizedBox(height: FiftySpacing.lg),
 
@@ -100,7 +103,7 @@ class AgentMetricsPanel extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(FiftySpacing.sm),
                 decoration: BoxDecoration(
-                  color: FiftyColors.darkBurgundy,
+                  color: colorScheme.surface,
                   borderRadius: FiftyRadii.mdRadius,
                 ),
                 child: Column(
@@ -145,10 +148,8 @@ class AgentMetricsPanel extends StatelessWidget {
               // Token distribution sparkline
               Text(
                 'TOKEN DISTRIBUTION',
-                style: GoogleFonts.manrope(
-                  fontSize: FiftyTypography.labelSmall,
-                  fontWeight: FiftyTypography.semiBold,
-                  color: FiftyColors.cream.withValues(alpha: 0.3),
+                style: textTheme.labelSmall!.copyWith(
+                  color: colorScheme.onSurface.withValues(alpha: 0.3),
                   letterSpacing: FiftyTypography.letterSpacingLabelMedium,
                 ),
               ),
@@ -164,20 +165,17 @@ class AgentMetricsPanel extends StatelessWidget {
               if (agent.lastUsed != null) ...[
                 Text(
                   'LAST USED',
-                  style: GoogleFonts.manrope(
-                    fontSize: FiftyTypography.labelSmall,
-                    fontWeight: FiftyTypography.semiBold,
-                    color: FiftyColors.cream.withValues(alpha: 0.3),
+                  style: textTheme.labelSmall!.copyWith(
+                    color: colorScheme.onSurface.withValues(alpha: 0.3),
                     letterSpacing: FiftyTypography.letterSpacingLabelMedium,
                   ),
                 ),
                 const SizedBox(height: FiftySpacing.xs),
                 Text(
                   FormatUtils.timeAgo(agent.lastUsed),
-                  style: GoogleFonts.manrope(
-                    fontSize: FiftyTypography.bodySmall,
+                  style: textTheme.bodySmall!.copyWith(
                     fontWeight: FiftyTypography.medium,
-                    color: FiftyColors.cream.withValues(alpha: 0.6),
+                    color: colorScheme.onSurface.withValues(alpha: 0.6),
                   ),
                 ),
               ],
@@ -192,10 +190,10 @@ class AgentMetricsPanel extends StatelessWidget {
     });
   }
 
-  static Color _successColor(double pct) {
-    if (pct > 90) return FiftyColors.hunterGreen;
-    if (pct > 70) return FiftyColors.warning;
-    return FiftyColors.burgundy;
+  static Color _successColor(double pct, ColorScheme colorScheme, FiftyThemeExtension ext) {
+    if (pct > 90) return ext.success;
+    if (pct > 70) return ext.warning;
+    return colorScheme.primary;
   }
 }
 
@@ -207,19 +205,22 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Container(
       decoration: BoxDecoration(
-        color: FiftyColors.surfaceDark,
+        color: colorScheme.surfaceContainerHighest,
         borderRadius: FiftyRadii.lgRadius,
-        border: Border.all(color: FiftyColors.borderDark, width: 1),
+        border: Border.all(color: colorScheme.outline, width: 1),
       ),
       padding: const EdgeInsets.all(FiftySpacing.lg),
       child: Center(
         child: Text(
-          '> No metrics for ${agentName.toUpperCase()}',
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.bodySmall,
-            color: FiftyColors.slateGrey,
+          'No metrics available for ${agentName.toUpperCase()}',
+          style: textTheme.bodySmall!.copyWith(
+            color: colorScheme.onSurfaceVariant,
           ),
         ),
       ),
@@ -236,12 +237,16 @@ class _GradeBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
     final successPct = (agent.successRate * 100).clamp(0.0, 100.0);
     final avgTokens = agent.invocations > 0
         ? agent.totalTokens ~/ agent.invocations
         : 0;
     final grade = _computeGrade(successPct, avgTokens);
-    final gradeColor = _gradeColor(grade);
+    final gradeColor = _gradeColor(grade, colorScheme, ext);
 
     return Center(
       child: Container(
@@ -265,9 +270,7 @@ class _GradeBadge extends StatelessWidget {
         child: Center(
           child: Text(
             grade,
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.displayMedium,
-              fontWeight: FiftyTypography.extraBold,
+            style: textTheme.displayMedium!.copyWith(
               color: gradeColor,
             ),
           ),
@@ -286,20 +289,20 @@ class _GradeBadge extends StatelessWidget {
     return 'F';
   }
 
-  Color _gradeColor(String grade) {
+  Color _gradeColor(String grade, ColorScheme colorScheme, FiftyThemeExtension ext) {
     switch (grade) {
       case 'S':
         return const Color(0xFFFFD700); // Gold
       case 'A':
-        return FiftyColors.hunterGreen;
+        return ext.success;
       case 'B':
-        return FiftyColors.slateGrey;
+        return colorScheme.onSurfaceVariant;
       case 'C':
-        return FiftyColors.warning;
+        return ext.warning;
       case 'F':
-        return FiftyColors.burgundy;
+        return colorScheme.primary;
       default:
-        return FiftyColors.slateGrey;
+        return colorScheme.onSurfaceVariant;
     }
   }
 }
@@ -320,23 +323,24 @@ class _MetricTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           label,
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
-            fontWeight: FiftyTypography.semiBold,
-            color: FiftyColors.cream.withValues(alpha: 0.3),
+          style: textTheme.labelSmall!.copyWith(
+            color: colorScheme.onSurface.withValues(alpha: 0.3),
             letterSpacing: FiftyTypography.letterSpacingLabelMedium,
           ),
         ),
         const SizedBox(height: FiftySpacing.xs),
         Text(
           value,
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.titleLarge,
+          style: textTheme.titleLarge!.copyWith(
             fontWeight: FiftyTypography.extraBold,
             color: color,
           ),
@@ -349,7 +353,7 @@ class _MetricTile extends StatelessWidget {
               borderRadius: FiftyRadii.smRadius,
               child: LinearProgressIndicator(
                 value: progress!.clamp(0, 1),
-                backgroundColor: FiftyColors.cream.withValues(alpha: 0.05),
+                backgroundColor: colorScheme.onSurface.withValues(alpha: 0.05),
                 valueColor: AlwaysStoppedAnimation<Color>(color),
               ),
             ),
@@ -369,23 +373,25 @@ class _CompactRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(
           label,
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
+          style: textTheme.labelSmall!.copyWith(
             fontWeight: FiftyTypography.medium,
-            color: FiftyColors.cream.withValues(alpha: 0.4),
+            color: colorScheme.onSurface.withValues(alpha: 0.4),
           ),
         ),
         Text(
           value,
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
+          style: textTheme.labelSmall!.copyWith(
             fontWeight: FiftyTypography.bold,
-            color: FiftyColors.cream.withValues(alpha: 0.7),
+            color: colorScheme.onSurface.withValues(alpha: 0.7),
           ),
         ),
       ],
@@ -405,14 +411,16 @@ class _TokenDistributionChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final total = agent.totalTokens;
     if (total == 0) {
       return Center(
         child: Text(
-          '> No token data',
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
-            color: FiftyColors.slateGrey,
+          'No token data available',
+          style: textTheme.labelSmall!.copyWith(
+            color: colorScheme.onSurfaceVariant,
           ),
         ),
       );
@@ -481,6 +489,9 @@ class _CompareButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final vm = Get.find<AgentsViewModel>();
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
 
     return SizedBox(
       width: double.infinity,
@@ -501,19 +512,17 @@ class _CompareButton extends StatelessWidget {
               border: Border.all(
                 color: isComparing
                     ? color.withValues(alpha: 0.4)
-                    : FiftyColors.borderDark,
+                    : colorScheme.outline,
                 width: 1,
               ),
             ),
             child: Center(
               child: Text(
                 isComparing ? 'EXIT COMPARE' : 'COMPARE',
-                style: GoogleFonts.manrope(
-                  fontSize: FiftyTypography.labelMedium,
-                  fontWeight: FiftyTypography.bold,
+                style: textTheme.labelMedium!.copyWith(
                   color: isComparing
                       ? color
-                      : FiftyColors.cream.withValues(alpha: 0.5),
+                      : colorScheme.onSurface.withValues(alpha: 0.5),
                   letterSpacing: FiftyTypography.letterSpacingLabelMedium,
                 ),
               ),

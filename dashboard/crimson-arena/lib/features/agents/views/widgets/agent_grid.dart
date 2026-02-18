@@ -1,9 +1,9 @@
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/agent_constants.dart';
+import '../../../../core/constants/arena_breakpoints.dart';
 import '../../../../data/models/agent_model.dart';
 import '../../../../shared/utils/format_utils.dart';
 import '../../controllers/agents_view_model.dart';
@@ -63,10 +63,7 @@ class AgentGrid extends StatelessWidget {
   }
 
   int _columnCount(double width) {
-    if (width > 1200) return 4;
-    if (width > 800) return 3;
-    if (width > 500) return 2;
-    return 1;
+    return ArenaBreakpoints.gridColumns(width);
   }
 }
 
@@ -93,6 +90,10 @@ class _AgentGridCardState extends State<_AgentGridCard> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+    // Agent-specific color -- game identity, not migrated.
     final color = Color(
       AgentConstants.agentColors[widget.agentName] ?? 0xFF888888,
     );
@@ -118,21 +119,21 @@ class _AgentGridCardState extends State<_AgentGridCard> {
           padding: const EdgeInsets.all(FiftySpacing.md),
           decoration: BoxDecoration(
             color: widget.isSelected
-                ? FiftyColors.burgundy.withValues(alpha: 0.08)
-                : FiftyColors.surfaceDark,
+                ? colorScheme.primary.withValues(alpha: 0.08)
+                : colorScheme.surfaceContainerHighest,
             borderRadius: FiftyRadii.lgRadius,
             border: Border.all(
               color: widget.isSelected
-                  ? FiftyColors.burgundy.withValues(alpha: 0.6)
+                  ? colorScheme.primary.withValues(alpha: 0.6)
                   : _hovered
                       ? color.withValues(alpha: 0.3)
-                      : FiftyColors.borderDark,
+                      : colorScheme.outline,
               width: widget.isSelected ? 1.5 : 1,
             ),
             boxShadow: widget.isSelected
                 ? [
                     BoxShadow(
-                      color: FiftyColors.burgundy.withValues(alpha: 0.15),
+                      color: colorScheme.primary.withValues(alpha: 0.15),
                       blurRadius: 12,
                       spreadRadius: 2,
                     ),
@@ -161,8 +162,7 @@ class _AgentGridCardState extends State<_AgentGridCard> {
                     child: Center(
                       child: Text(
                         monogram,
-                        style: GoogleFonts.manrope(
-                          fontSize: FiftyTypography.bodyMedium,
+                        style: textTheme.bodyMedium!.copyWith(
                           fontWeight: FiftyTypography.extraBold,
                           color: color,
                         ),
@@ -174,24 +174,29 @@ class _AgentGridCardState extends State<_AgentGridCard> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          displayName,
-                          style: GoogleFonts.manrope(
-                            fontSize: FiftyTypography.labelLarge,
-                            fontWeight: FiftyTypography.extraBold,
-                            color: FiftyColors.cream,
-                            letterSpacing:
-                                FiftyTypography.letterSpacingLabelMedium,
+                        Tooltip(
+                          message: displayName,
+                          child: Text(
+                            displayName,
+                            style: textTheme.labelLarge!.copyWith(
+                              fontWeight: FiftyTypography.extraBold,
+                              color: colorScheme.onSurface,
+                              letterSpacing:
+                                  FiftyTypography.letterSpacingLabelMedium,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         Text(
                           '$levelName  T$tier',
-                          style: GoogleFonts.manrope(
-                            fontSize: FiftyTypography.labelSmall,
+                          style: textTheme.labelSmall!.copyWith(
                             fontWeight: FiftyTypography.medium,
                             color: color.withValues(alpha: 0.7),
                             letterSpacing: FiftyTypography.letterSpacingLabel,
                           ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
@@ -212,8 +217,7 @@ class _AgentGridCardState extends State<_AgentGridCard> {
                     ),
                     child: Text(
                       'Lv.$levelTier',
-                      style: GoogleFonts.manrope(
-                        fontSize: FiftyTypography.labelSmall,
+                      style: textTheme.labelSmall!.copyWith(
                         fontWeight: FiftyTypography.bold,
                         color: color,
                       ),
@@ -232,18 +236,15 @@ class _AgentGridCardState extends State<_AgentGridCard> {
                     children: [
                       Text(
                         'PROGRESS',
-                        style: GoogleFonts.manrope(
-                          fontSize: FiftyTypography.labelSmall,
-                          fontWeight: FiftyTypography.semiBold,
-                          color: FiftyColors.cream.withValues(alpha: 0.3),
+                        style: textTheme.labelSmall!.copyWith(
+                          color: colorScheme.onSurface.withValues(alpha: 0.3),
                           letterSpacing:
                               FiftyTypography.letterSpacingLabelMedium,
                         ),
                       ),
                       Text(
                         '${(progress * 100).toStringAsFixed(0)}%',
-                        style: GoogleFonts.manrope(
-                          fontSize: FiftyTypography.labelSmall,
+                        style: textTheme.labelSmall!.copyWith(
                           fontWeight: FiftyTypography.bold,
                           color: color.withValues(alpha: 0.7),
                         ),
@@ -258,7 +259,7 @@ class _AgentGridCardState extends State<_AgentGridCard> {
                       child: LinearProgressIndicator(
                         value: progress.clamp(0, 1).toDouble(),
                         backgroundColor:
-                            FiftyColors.cream.withValues(alpha: 0.05),
+                            colorScheme.onSurface.withValues(alpha: 0.05),
                         valueColor: AlwaysStoppedAnimation<Color>(color),
                       ),
                     ),
@@ -279,19 +280,17 @@ class _AgentGridCardState extends State<_AgentGridCard> {
                 children: [
                   Text(
                     'INVOCATIONS',
-                    style: GoogleFonts.manrope(
-                      fontSize: FiftyTypography.labelSmall,
+                    style: textTheme.labelSmall!.copyWith(
                       fontWeight: FiftyTypography.medium,
-                      color: FiftyColors.cream.withValues(alpha: 0.3),
+                      color: colorScheme.onSurface.withValues(alpha: 0.3),
                       letterSpacing: FiftyTypography.letterSpacingLabelMedium,
                     ),
                   ),
                   Text(
                     FormatUtils.formatNumber(invocations),
-                    style: GoogleFonts.manrope(
-                      fontSize: FiftyTypography.bodyMedium,
+                    style: textTheme.bodyMedium!.copyWith(
                       fontWeight: FiftyTypography.bold,
-                      color: FiftyColors.cream.withValues(alpha: 0.8),
+                      color: colorScheme.onSurface.withValues(alpha: 0.8),
                     ),
                   ),
                 ],
@@ -341,16 +340,18 @@ class _StatBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Row(
       children: [
         SizedBox(
           width: 28,
           child: Text(
             label,
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelSmall,
-              fontWeight: FiftyTypography.semiBold,
-              color: FiftyColors.cream.withValues(alpha: 0.3),
+            style: textTheme.labelSmall!.copyWith(
+              color: colorScheme.onSurface.withValues(alpha: 0.3),
             ),
           ),
         ),
@@ -361,7 +362,7 @@ class _StatBar extends StatelessWidget {
               borderRadius: FiftyRadii.smRadius,
               child: LinearProgressIndicator(
                 value: (value / 100).clamp(0, 1).toDouble(),
-                backgroundColor: FiftyColors.cream.withValues(alpha: 0.05),
+                backgroundColor: colorScheme.onSurface.withValues(alpha: 0.05),
                 valueColor:
                     AlwaysStoppedAnimation<Color>(color.withValues(alpha: 0.6)),
               ),
@@ -374,10 +375,9 @@ class _StatBar extends StatelessWidget {
           child: Text(
             '$value',
             textAlign: TextAlign.right,
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelSmall,
+            style: textTheme.labelSmall!.copyWith(
               fontWeight: FiftyTypography.bold,
-              color: FiftyColors.cream.withValues(alpha: 0.5),
+              color: colorScheme.onSurface.withValues(alpha: 0.5),
             ),
           ),
         ),

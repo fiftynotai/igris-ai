@@ -1,7 +1,6 @@
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/agent_constants.dart';
 import '../../../../data/models/agent_model.dart';
@@ -21,6 +20,9 @@ class AgentComparisonView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final vm = Get.find<AgentsViewModel>();
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
 
     return Obx(() {
       final primaryName = vm.selectedAgent.value;
@@ -32,9 +34,9 @@ class AgentComparisonView extends StatelessWidget {
 
       return Container(
         decoration: BoxDecoration(
-          color: FiftyColors.surfaceDark,
+          color: colorScheme.surfaceContainerHighest,
           borderRadius: FiftyRadii.lgRadius,
-          border: Border.all(color: FiftyColors.borderDark, width: 1),
+          border: Border.all(color: colorScheme.outline, width: 1),
         ),
         padding: const EdgeInsets.all(FiftySpacing.md),
         child: Column(
@@ -46,19 +48,20 @@ class AgentComparisonView extends StatelessWidget {
               children: [
                 Text(
                   'AGENT COMPARISON',
-                  style: GoogleFonts.manrope(
-                    fontSize: FiftyTypography.labelMedium,
-                    fontWeight: FiftyTypography.bold,
-                    color: FiftyColors.slateGrey,
+                  style: textTheme.labelMedium!.copyWith(
+                    color: colorScheme.onSurfaceVariant,
                     letterSpacing: FiftyTypography.letterSpacingLabelMedium,
                   ),
                 ),
                 const Spacer(),
-                InkWell(
+                MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: InkWell(
                   onTap: () {
                     vm.clearCompare();
                     vm.toggleComparisonMode();
                   },
+                  borderRadius: FiftyRadii.smRadius,
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: FiftySpacing.sm,
@@ -67,20 +70,20 @@ class AgentComparisonView extends StatelessWidget {
                     decoration: BoxDecoration(
                       borderRadius: FiftyRadii.smRadius,
                       border: Border.all(
-                        color: FiftyColors.borderDark,
+                        color: colorScheme.outline,
                         width: 1,
                       ),
                     ),
                     child: Text(
                       'CLOSE',
-                      style: GoogleFonts.manrope(
-                        fontSize: FiftyTypography.labelSmall,
+                      style: textTheme.labelSmall!.copyWith(
                         fontWeight: FiftyTypography.bold,
-                        color: FiftyColors.cream.withValues(alpha: 0.5),
+                        color: colorScheme.onSurface.withValues(alpha: 0.5),
                         letterSpacing: FiftyTypography.letterSpacingLabel,
                       ),
                     ),
                   ),
+                ),
                 ),
               ],
             ),
@@ -102,14 +105,23 @@ class AgentComparisonView extends StatelessWidget {
               ),
               const SizedBox(height: FiftySpacing.sm),
               Center(
-                child: InkWell(
-                  onTap: () => vm.clearCompare(),
-                  child: Text(
-                    'Change comparison agent',
-                    style: GoogleFonts.manrope(
-                      fontSize: FiftyTypography.labelSmall,
-                      fontWeight: FiftyTypography.medium,
-                      color: FiftyColors.slateGrey,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: InkWell(
+                    onTap: () => vm.clearCompare(),
+                    borderRadius: FiftyRadii.smRadius,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: FiftySpacing.sm,
+                        vertical: FiftySpacing.xs,
+                      ),
+                      child: Text(
+                        'Change comparison agent',
+                        style: textTheme.labelSmall!.copyWith(
+                          fontWeight: FiftyTypography.medium,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -134,6 +146,9 @@ class _AgentSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final agents = AgentConstants.agentOrder
         .where((name) => name != 'orchestrator' && name != excludeAgent)
         .toList();
@@ -143,9 +158,8 @@ class _AgentSelector extends StatelessWidget {
       children: [
         Text(
           'Select an agent to compare:',
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.bodySmall,
-            color: FiftyColors.cream.withValues(alpha: 0.5),
+          style: textTheme.bodySmall!.copyWith(
+            color: colorScheme.onSurface.withValues(alpha: 0.5),
           ),
         ),
         const SizedBox(height: FiftySpacing.sm),
@@ -153,6 +167,7 @@ class _AgentSelector extends StatelessWidget {
           spacing: FiftySpacing.sm,
           runSpacing: FiftySpacing.sm,
           children: agents.map((name) {
+            // Agent-specific color -- game identity, not migrated.
             final color =
                 Color(AgentConstants.agentColors[name] ?? 0xFF888888);
             final displayName =
@@ -176,8 +191,7 @@ class _AgentSelector extends StatelessWidget {
                 ),
                 child: Text(
                   displayName,
-                  style: GoogleFonts.manrope(
-                    fontSize: FiftyTypography.labelSmall,
+                  style: textTheme.labelSmall!.copyWith(
                     fontWeight: FiftyTypography.bold,
                     color: color,
                     letterSpacing: FiftyTypography.letterSpacingLabel,
@@ -208,6 +222,10 @@ class _ComparisonContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+    // Agent-specific colors -- game identity, not migrated.
     final colorA =
         Color(AgentConstants.agentColors[primaryName] ?? 0xFF888888);
     final colorB =
@@ -243,10 +261,9 @@ class _ComparisonContent extends StatelessWidget {
             const SizedBox(width: FiftySpacing.md),
             Text(
               'VS',
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelMedium,
+              style: textTheme.labelMedium!.copyWith(
                 fontWeight: FiftyTypography.extraBold,
-                color: FiftyColors.cream.withValues(alpha: 0.3),
+                color: colorScheme.onSurface.withValues(alpha: 0.3),
                 letterSpacing: FiftyTypography.letterSpacingLabelMedium,
               ),
             ),
@@ -343,6 +360,8 @@ class _AgentHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -360,8 +379,7 @@ class _AgentHeader extends StatelessWidget {
           child: Center(
             child: Text(
               grade,
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelMedium,
+              style: textTheme.labelMedium!.copyWith(
                 fontWeight: FiftyTypography.extraBold,
                 color: color,
               ),
@@ -372,14 +390,10 @@ class _AgentHeader extends StatelessWidget {
         Flexible(
           child: Text(
             name,
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelLarge,
-              fontWeight: FiftyTypography.bold,
+            style: textTheme.labelLarge!.copyWith(
               color: color,
               letterSpacing: FiftyTypography.letterSpacingLabel,
             ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
           ),
         ),
       ],
@@ -413,6 +427,9 @@ class _ComparisonBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final max = maxValue ?? [valueA, valueB, 1.0].reduce((a, b) => a > b ? a : b);
     final normalA = max > 0 ? (valueA / max).clamp(0, 1).toDouble() : 0.0;
     final normalB = max > 0 ? (valueB / max).clamp(0, 1).toDouble() : 0.0;
@@ -431,10 +448,8 @@ class _ComparisonBar extends StatelessWidget {
         // Label
         Text(
           label.toUpperCase(),
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
-            fontWeight: FiftyTypography.semiBold,
-            color: FiftyColors.cream.withValues(alpha: 0.3),
+          style: textTheme.labelSmall!.copyWith(
+            color: colorScheme.onSurface.withValues(alpha: 0.3),
             letterSpacing: FiftyTypography.letterSpacingLabelMedium,
           ),
         ),
@@ -448,8 +463,7 @@ class _ComparisonBar extends StatelessWidget {
               child: Text(
                 displayA,
                 textAlign: TextAlign.right,
-                style: GoogleFonts.manrope(
-                  fontSize: FiftyTypography.labelSmall,
+                style: textTheme.labelSmall!.copyWith(
                   fontWeight: FiftyTypography.bold,
                   color: aWins
                       ? colorA
@@ -468,7 +482,7 @@ class _ComparisonBar extends StatelessWidget {
                     children: [
                       // Background
                       Container(
-                        color: FiftyColors.cream.withValues(alpha: 0.03),
+                        color: colorScheme.onSurface.withValues(alpha: 0.03),
                       ),
                       // Bar A from right
                       Align(
@@ -494,7 +508,7 @@ class _ComparisonBar extends StatelessWidget {
             Container(
               width: 2,
               height: 12,
-              color: FiftyColors.cream.withValues(alpha: 0.1),
+              color: colorScheme.onSurface.withValues(alpha: 0.1),
             ),
             // Bar B (left-aligned, growing right)
             Expanded(
@@ -505,7 +519,7 @@ class _ComparisonBar extends StatelessWidget {
                   child: Stack(
                     children: [
                       Container(
-                        color: FiftyColors.cream.withValues(alpha: 0.03),
+                        color: colorScheme.onSurface.withValues(alpha: 0.03),
                       ),
                       Align(
                         alignment: Alignment.centerLeft,
@@ -532,8 +546,7 @@ class _ComparisonBar extends StatelessWidget {
               width: 48,
               child: Text(
                 displayB,
-                style: GoogleFonts.manrope(
-                  fontSize: FiftyTypography.labelSmall,
+                style: textTheme.labelSmall!.copyWith(
                   fontWeight: FiftyTypography.bold,
                   color: !aWins
                       ? colorB

@@ -2,7 +2,6 @@ import 'package:fifty_achievement_engine/fifty_achievement_engine.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../shared/utils/format_utils.dart';
 import '../../../../shared/widgets/arena_card.dart';
@@ -84,25 +83,28 @@ class _PointsBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: FiftySpacing.sm,
         vertical: FiftySpacing.xs,
       ),
       decoration: BoxDecoration(
-        color: FiftyColors.burgundy.withValues(alpha: 0.15),
+        color: colorScheme.primary.withValues(alpha: 0.15),
         borderRadius: FiftyRadii.smRadius,
         border: Border.all(
-          color: FiftyColors.burgundy.withValues(alpha: 0.3),
+          color: colorScheme.primary.withValues(alpha: 0.3),
           width: 1,
         ),
       ),
       child: Text(
         '${FormatUtils.formatNumber(earned)} / ${FormatUtils.formatNumber(max)} PTS',
-        style: GoogleFonts.manrope(
-          fontSize: FiftyTypography.labelSmall,
+        style: textTheme.labelSmall!.copyWith(
           fontWeight: FiftyTypography.bold,
-          color: FiftyColors.burgundy,
+          color: colorScheme.primary,
           letterSpacing: FiftyTypography.letterSpacingLabel,
         ),
       ),
@@ -119,26 +121,27 @@ class _StatBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           label,
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
-            fontWeight: FiftyTypography.semiBold,
-            color: FiftyColors.slateGrey,
+          style: textTheme.labelSmall!.copyWith(
+            color: colorScheme.onSurfaceVariant,
             letterSpacing: FiftyTypography.letterSpacingLabelMedium,
           ),
         ),
         const SizedBox(height: 2),
         Text(
           value,
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.titleMedium,
+          style: textTheme.titleMedium!.copyWith(
             fontWeight: FiftyTypography.extraBold,
-            color: FiftyColors.cream,
+            color: colorScheme.onSurface,
           ),
         ),
       ],
@@ -155,6 +158,7 @@ class _RarityCountBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
     final theme = RarityTheme.of(rarity);
 
     return Container(
@@ -184,8 +188,8 @@ class _RarityCountBadge extends StatelessWidget {
           const SizedBox(width: FiftySpacing.xs),
           Text(
             '${rarity.displayName.toUpperCase()}: $count',
-            style: GoogleFonts.manrope(
-              fontSize: 9,
+            style: textTheme.labelSmall!.copyWith(
+              fontSize: 11,
               fontWeight: FiftyTypography.bold,
               color: theme.labelColor,
               letterSpacing: FiftyTypography.letterSpacingLabel,

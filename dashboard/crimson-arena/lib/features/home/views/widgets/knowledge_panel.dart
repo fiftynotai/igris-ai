@@ -1,7 +1,7 @@
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../shared/utils/format_utils.dart';
 import '../../../../shared/widgets/arena_card.dart';
@@ -16,6 +16,10 @@ class KnowledgePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
     final vm = Get.find<HomeViewModel>();
 
     return Obx(() {
@@ -35,26 +39,26 @@ class KnowledgePanel extends StatelessWidget {
                 _KnowledgeStat(
                   label: 'LEARNINGS',
                   count: learnings,
-                  color: FiftyColors.hunterGreen,
+                  color: ext.success,
                 ),
                 const SizedBox(width: FiftySpacing.lg),
                 _KnowledgeStat(
                   label: 'ERRORS',
                   count: errors,
-                  color: FiftyColors.burgundy,
+                  color: colorScheme.primary,
                 ),
                 const SizedBox(width: FiftySpacing.lg),
                 _KnowledgeStat(
                   label: 'PATTERNS',
                   count: patterns,
-                  color: FiftyColors.slateGrey,
+                  color: colorScheme.onSurfaceVariant,
                 ),
               ],
             ),
 
             if (recent.isNotEmpty) ...[
               const SizedBox(height: FiftySpacing.sm),
-              Divider(height: 1, color: FiftyColors.borderDark),
+              Divider(height: 1, color: colorScheme.outline),
               const SizedBox(height: FiftySpacing.sm),
 
               // Recent entries
@@ -65,10 +69,9 @@ class KnowledgePanel extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(top: FiftySpacing.sm),
                 child: Text(
-                  '> No learnings recorded',
-                  style: GoogleFonts.manrope(
-                    fontSize: FiftyTypography.bodySmall,
-                    color: FiftyColors.slateGrey,
+                  'No learnings recorded',
+                  style: textTheme.bodySmall!.copyWith(
+                    color: colorScheme.onSurfaceVariant,
                   ),
                 ),
               ),
@@ -93,23 +96,24 @@ class _KnowledgeStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           label,
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
-            fontWeight: FiftyTypography.semiBold,
-            color: FiftyColors.slateGrey,
+          style: textTheme.labelSmall!.copyWith(
+            color: colorScheme.onSurfaceVariant,
             letterSpacing: FiftyTypography.letterSpacingLabelMedium,
           ),
         ),
         Text(
           FormatUtils.formatNumber(count),
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.titleSmall,
+          style: textTheme.titleSmall!.copyWith(
             fontWeight: FiftyTypography.extraBold,
             color: color,
           ),
@@ -127,6 +131,9 @@ class _KnowledgeEntry extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final title = data['title'] as String? ?? '--';
     final category = data['category'] as String? ?? 'general';
     final createdAt = data['created_at'] as String?;
@@ -137,15 +144,17 @@ class _KnowledgeEntry extends StatelessWidget {
         children: [
           // Title
           Expanded(
-            child: Text(
-              title,
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelSmall,
-                fontWeight: FiftyTypography.medium,
-                color: FiftyColors.cream.withValues(alpha: 0.7),
+            child: Tooltip(
+              message: title,
+              child: Text(
+                title,
+                style: textTheme.labelSmall!.copyWith(
+                  fontWeight: FiftyTypography.medium,
+                  color: colorScheme.onSurface.withValues(alpha: 0.7),
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
             ),
           ),
           const SizedBox(width: FiftySpacing.sm),
@@ -157,16 +166,17 @@ class _KnowledgeEntry extends StatelessWidget {
               vertical: 1,
             ),
             decoration: BoxDecoration(
-              color: FiftyColors.slateGrey.withValues(alpha: 0.15),
+              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.15),
               borderRadius: FiftyRadii.smRadius,
             ),
             child: Text(
               category,
-              style: GoogleFonts.manrope(
-                fontSize: 8,
-                fontWeight: FiftyTypography.semiBold,
-                color: FiftyColors.slateGrey,
+              style: textTheme.labelSmall!.copyWith(
+                fontSize: 11,
+                color: colorScheme.onSurfaceVariant,
               ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
           const SizedBox(width: FiftySpacing.sm),
@@ -174,10 +184,9 @@ class _KnowledgeEntry extends StatelessWidget {
           // Time
           Text(
             FormatUtils.timeAgo(createdAt),
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelSmall,
+            style: textTheme.labelSmall!.copyWith(
               fontWeight: FiftyTypography.medium,
-              color: FiftyColors.cream.withValues(alpha: 0.3),
+              color: colorScheme.onSurface.withValues(alpha: 0.3),
             ),
           ),
         ],

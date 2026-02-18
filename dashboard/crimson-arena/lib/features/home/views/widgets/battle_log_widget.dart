@@ -1,7 +1,7 @@
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/agent_constants.dart';
 import '../../../../data/models/battle_log_entry.dart';
@@ -19,6 +19,9 @@ class BattleLogWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final vm = Get.find<HomeViewModel>();
 
     return Obx(() {
@@ -28,10 +31,9 @@ class BattleLogWidget extends StatelessWidget {
         title: 'BATTLE LOG',
         trailing: Text(
           '${entries.length} events',
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
+          style: textTheme.labelSmall!.copyWith(
             fontWeight: FiftyTypography.medium,
-            color: FiftyColors.slateGrey,
+            color: colorScheme.onSurfaceVariant,
           ),
         ),
         padding: const EdgeInsets.fromLTRB(
@@ -44,16 +46,16 @@ class BattleLogWidget extends StatelessWidget {
             ? Padding(
                 padding: const EdgeInsets.only(bottom: FiftySpacing.sm),
                 child: Text(
-                  '> Awaiting agent activity...',
-                  style: GoogleFonts.manrope(
-                    fontSize: FiftyTypography.bodySmall,
-                    color: FiftyColors.slateGrey,
+                  'No agent activity recorded',
+                  style: textTheme.bodySmall!.copyWith(
+                    color: colorScheme.onSurfaceVariant,
                   ),
                 ),
               )
             : SizedBox(
                 height: 280,
                 child: ListView.builder(
+                  physics: const ClampingScrollPhysics(),
                   itemCount: entries.length,
                   itemBuilder: (_, index) => _BattleLogRow(
                     entry: entries[index],
@@ -73,9 +75,14 @@ class _BattleLogRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
     final time = FormatUtils.formatTime(entry.timestamp);
     final agentName = AgentConstants.agentNames[entry.agent] ??
         entry.agent.toUpperCase();
+    // Agent-specific color -- game identity, not migrated.
     final agentColor = Color(
       AgentConstants.agentColors[entry.agent] ?? 0xFF888888,
     );
@@ -91,10 +98,9 @@ class _BattleLogRow extends StatelessWidget {
           // Timestamp
           Text(
             '[$time]',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelSmall,
+            style: textTheme.labelSmall!.copyWith(
               fontWeight: FiftyTypography.medium,
-              color: FiftyColors.cream.withValues(alpha: 0.3),
+              color: colorScheme.onSurface.withValues(alpha: 0.3),
             ),
           ),
           const SizedBox(width: FiftySpacing.sm),
@@ -111,8 +117,7 @@ class _BattleLogRow extends StatelessWidget {
             ),
             child: Text(
               isSkill ? 'SKILL' : agentName,
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelSmall,
+              style: textTheme.labelSmall!.copyWith(
                 fontWeight: FiftyTypography.bold,
                 color: agentColor,
               ),
@@ -122,34 +127,44 @@ class _BattleLogRow extends StatelessWidget {
 
           // Event description
           Expanded(
-            child: _buildDescription(isStart, isSkill),
+            child: _buildDescription(context, isStart, isSkill, colorScheme, ext),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildDescription(bool isStart, bool isSkill) {
+  Widget _buildDescription(
+    BuildContext context,
+    bool isStart,
+    bool isSkill,
+    ColorScheme colorScheme,
+    FiftyThemeExtension ext,
+  ) {
+    final textTheme = Theme.of(context).textTheme;
+
     if (isSkill) {
       final skillName = entry.rawType ?? 'unknown';
       return Text(
         '/$skillName invoked',
-        style: GoogleFonts.manrope(
-          fontSize: FiftyTypography.labelSmall,
+        style: textTheme.labelSmall!.copyWith(
           fontWeight: FiftyTypography.medium,
-          color: FiftyColors.powderBlush,
+          color: ext.accent,
         ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       );
     }
 
     if (isStart) {
       return Text(
         'deployed to battle',
-        style: GoogleFonts.manrope(
-          fontSize: FiftyTypography.labelSmall,
+        style: textTheme.labelSmall!.copyWith(
           fontWeight: FiftyTypography.medium,
-          color: FiftyColors.cream.withValues(alpha: 0.5),
+          color: colorScheme.onSurface.withValues(alpha: 0.5),
         ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       );
     }
 
@@ -162,21 +177,20 @@ class _BattleLogRow extends StatelessWidget {
 
     return Text.rich(
       TextSpan(
-        style: GoogleFonts.manrope(
-          fontSize: FiftyTypography.labelSmall,
+        style: textTheme.labelSmall!.copyWith(
           fontWeight: FiftyTypography.medium,
-          color: FiftyColors.cream.withValues(alpha: 0.5),
+          color: colorScheme.onSurface.withValues(alpha: 0.5),
         ),
         children: [
           const TextSpan(text: 'completed \u2014 '),
           TextSpan(
             text: '${FormatUtils.formatNumber(directTokens)} tokens',
-            style: const TextStyle(color: FiftyColors.cream),
+            style: TextStyle(color: colorScheme.onSurface),
           ),
           if (cachedTokens > 0)
             TextSpan(
               text: ' (+ ${FormatUtils.formatTokens(cachedTokens)} cached)',
-              style: const TextStyle(color: FiftyColors.hunterGreen),
+              style: TextStyle(color: ext.success),
             ),
           TextSpan(text: ' ($dur)'),
         ],

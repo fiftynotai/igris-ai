@@ -1,8 +1,8 @@
+import 'package:crimson_arena/core/constants/arena_breakpoints.dart';
 import 'package:fifty_achievement_engine/fifty_achievement_engine.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../controllers/achievements_view_model.dart';
 import 'rarity_theme.dart';
@@ -18,6 +18,9 @@ class AchievementGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final vm = Get.find<AchievementsViewModel>();
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
 
     return Obx(() {
       final achievements = vm.filteredAchievements;
@@ -25,12 +28,9 @@ class AchievementGrid extends StatelessWidget {
       if (achievements.isEmpty) {
         return Center(
           child: Text(
-            '> NO ACHIEVEMENTS IN THIS CATEGORY',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.bodyMedium,
-              fontWeight: FiftyTypography.medium,
-              color: FiftyColors.slateGrey,
-              letterSpacing: FiftyTypography.letterSpacingLabel,
+            'No achievements in this category',
+            style: textTheme.bodySmall!.copyWith(
+              color: colorScheme.onSurfaceVariant,
             ),
           ),
         );
@@ -40,13 +40,7 @@ class AchievementGrid extends StatelessWidget {
         builder: (context, constraints) {
           // Responsive column count.
           final width = constraints.maxWidth;
-          final crossAxisCount = width > 1200
-              ? 4
-              : width > 800
-                  ? 3
-                  : width > 500
-                      ? 2
-                      : 1;
+          final crossAxisCount = ArenaBreakpoints.gridColumns(width);
 
           return GridView.builder(
             padding: const EdgeInsets.all(FiftySpacing.md),
@@ -77,28 +71,31 @@ class _AchievementCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final vm = Get.find<AchievementsViewModel>();
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
 
     return Obx(() {
       final unlocked = vm.isUnlocked(achievement.id);
       final progress = vm.getProgress(achievement.id);
       final details = vm.getProgressDetails(achievement.id);
-      final theme = RarityTheme.of(achievement.rarity);
+      final rarityTheme = RarityTheme.of(achievement.rarity);
 
       return AnimatedContainer(
         duration: const Duration(milliseconds: 300),
         decoration: BoxDecoration(
-          color: FiftyColors.surfaceDark,
+          color: colorScheme.surfaceContainerHighest,
           borderRadius: FiftyRadii.lgRadius,
           border: Border.all(
             color: unlocked
-                ? theme.glowColor.withValues(alpha: 0.5)
-                : FiftyColors.borderDark,
+                ? rarityTheme.glowColor.withValues(alpha: 0.5)
+                : colorScheme.outline,
             width: unlocked ? 1.5 : 1,
           ),
           boxShadow: unlocked
               ? [
                   BoxShadow(
-                    color: theme.glowColor.withValues(alpha: 0.15),
+                    color: rarityTheme.glowColor.withValues(alpha: 0.15),
                     blurRadius: 12,
                     spreadRadius: 1,
                   ),
@@ -106,7 +103,7 @@ class _AchievementCard extends StatelessWidget {
               : null,
         ),
         child: Opacity(
-          opacity: unlocked ? 1.0 : 0.55,
+          opacity: unlocked ? 1.0 : 0.70,
           child: Padding(
             padding: const EdgeInsets.all(FiftySpacing.md),
             child: Column(
@@ -122,16 +119,16 @@ class _AchievementCard extends StatelessWidget {
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: unlocked
-                            ? theme.glowColor.withValues(alpha: 0.15)
-                            : FiftyColors.borderDark,
+                            ? rarityTheme.glowColor.withValues(alpha: 0.15)
+                            : colorScheme.outline,
                       ),
                       child: Icon(
                         unlocked
                             ? (achievement.icon ?? Icons.emoji_events)
                             : Icons.lock_outline,
                         color: unlocked
-                            ? theme.glowColor
-                            : FiftyColors.slateGrey.withValues(alpha: 0.5),
+                            ? rarityTheme.glowColor
+                            : colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                         size: 18,
                       ),
                     ),
@@ -144,14 +141,16 @@ class _AchievementCard extends StatelessWidget {
                 const SizedBox(height: FiftySpacing.sm),
 
                 // Achievement name
-                Text(
-                  achievement.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.manrope(
-                    fontSize: FiftyTypography.bodyMedium,
-                    fontWeight: FiftyTypography.bold,
-                    color: unlocked ? FiftyColors.cream : FiftyColors.slateGrey,
+                Tooltip(
+                  message: achievement.name,
+                  child: Text(
+                    achievement.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.bodyMedium!.copyWith(
+                      fontWeight: FiftyTypography.bold,
+                      color: unlocked ? colorScheme.onSurface : colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
 
@@ -163,10 +162,9 @@ class _AchievementCard extends StatelessWidget {
                     achievement.description ?? '',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.manrope(
-                      fontSize: FiftyTypography.labelSmall,
+                    style: textTheme.labelSmall!.copyWith(
                       fontWeight: FiftyTypography.regular,
-                      color: FiftyColors.slateGrey.withValues(alpha: 0.8),
+                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
                       height: 1.3,
                     ),
                   ),
@@ -179,7 +177,7 @@ class _AchievementCard extends StatelessWidget {
                     progress: progress,
                     current: details.current,
                     target: details.target,
-                    color: theme.glowColor,
+                    color: rarityTheme.glowColor,
                   ),
                 ],
 
@@ -189,12 +187,11 @@ class _AchievementCard extends StatelessWidget {
                   children: [
                     Text(
                       '${achievement.points} PTS',
-                      style: GoogleFonts.manrope(
-                        fontSize: FiftyTypography.labelSmall,
+                      style: textTheme.labelSmall!.copyWith(
                         fontWeight: FiftyTypography.bold,
                         color: unlocked
-                            ? theme.glowColor
-                            : FiftyColors.slateGrey.withValues(alpha: 0.5),
+                            ? rarityTheme.glowColor
+                            : colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                         letterSpacing: FiftyTypography.letterSpacingLabel,
                       ),
                     ),
@@ -202,13 +199,13 @@ class _AchievementCard extends StatelessWidget {
                     if (unlocked)
                       Icon(
                         Icons.check_circle,
-                        color: theme.glowColor,
+                        color: rarityTheme.glowColor,
                         size: 16,
                       )
                     else
                       Icon(
                         Icons.lock_outline,
-                        color: FiftyColors.slateGrey.withValues(alpha: 0.4),
+                        color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
                         size: 14,
                       ),
                   ],
@@ -230,6 +227,7 @@ class _RarityBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
     final theme = RarityTheme.of(rarity);
 
     return Container(
@@ -247,8 +245,8 @@ class _RarityBadge extends StatelessWidget {
       ),
       child: Text(
         rarity.displayName.toUpperCase(),
-        style: GoogleFonts.manrope(
-          fontSize: 9,
+        style: textTheme.labelSmall!.copyWith(
+          fontSize: 11,
           fontWeight: FiftyTypography.bold,
           color: theme.labelColor,
           letterSpacing: FiftyTypography.letterSpacingLabel,
@@ -274,6 +272,10 @@ class _ProgressIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -284,7 +286,7 @@ class _ProgressIndicator extends StatelessWidget {
             height: 4,
             child: LinearProgressIndicator(
               value: progress,
-              backgroundColor: FiftyColors.borderDark,
+              backgroundColor: colorScheme.outline,
               color: color.withValues(alpha: 0.7),
             ),
           ),
@@ -293,10 +295,10 @@ class _ProgressIndicator extends StatelessWidget {
         // Counter label
         Text(
           '$current / $target',
-          style: GoogleFonts.manrope(
-            fontSize: 9,
+          style: textTheme.labelSmall!.copyWith(
+            fontSize: 11,
             fontWeight: FiftyTypography.medium,
-            color: FiftyColors.slateGrey.withValues(alpha: 0.6),
+            color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
           ),
         ),
       ],

@@ -3,7 +3,7 @@
 ## Status
 **Mode:** HUNT MODE
 **Updated:** 2026-02-18
-**Active Brief:** None (FR-058 complete)
+**Active Brief:** FR-059 (Ready)
 
 ---
 
@@ -11,6 +11,7 @@
 
 | Brief | Title | Status |
 |-------|-------|--------|
+| FR-059 | Crimson Arena — Theme-Aware UI/UX Polish | **In Progress** (L, 6 phases, 46 tasks) |
 | FR-051 | Brain v5.0 — Modular Architecture + Task Mgmt + Scheduling | In Progress (XL, 5 phases) |
 | FR-052-engine | Brain v5.0 Phase 1 — Engine Foundation | Ready (L, critical path) |
 | FR-053 | Brain v5.0 Phase 2 — Task Management System | Ready (L, blocked by FR-052) |
@@ -22,48 +23,44 @@
 | PI-001 | Multi-Instance Concurrent Brief Workflow | Ready |
 | TD-008 | Usage Metrics and Error Tracking | Deferred |
 
-**Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, MG-009, MG-010, MG-011, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018, BR-015, FR-019, FR-020, FR-021, PI-003, FR-022, FR-023, FR-024, FR-025, FR-026, FR-027, FR-028, FR-029, FR-030, FR-031, FR-032, FR-033, FR-034, FR-035, FR-036, FR-037, FR-038, FR-039, FR-040, FR-041, FR-042, FR-043, FR-044, FR-045, FR-046, FR-047, FR-048, FR-049, FR-050, BR-004, BR-005, BR-006, BR-007, BR-008, BR-009, BR-010, BR-011, BR-012, BR-013, FR-003, FR-004, FR-005, FR-006, FR-009, FR-011, FR-012, MG-001, MG-002, MG-003, PI-002, TD-001, TD-002, TD-003, TD-004, TD-006, TD-007, TD-009, TD-010, TD-011, TD-012, TD-013, TD-014, TD-015, TD-016, BR-017, BR-018, BR-019, BR-020, BR-021, BR-022, BR-023, FR-052, BR-024
+**Archived:** MG-004, MG-005, MG-006, MG-007, MG-008, MG-009, MG-010, MG-011, FR-007, FR-008, FR-010, BR-014, BR-016, FR-015, FR-016, FR-017, FR-018, BR-015, FR-019, FR-020, FR-021, PI-003, FR-022, FR-023, FR-024, FR-025, FR-026, FR-027, FR-028, FR-029, FR-030, FR-031, FR-032, FR-033, FR-034, FR-035, FR-036, FR-037, FR-038, FR-039, FR-040, FR-041, FR-042, FR-043, FR-044, FR-045, FR-046, FR-047, FR-048, FR-049, FR-050, BR-004, BR-005, BR-006, BR-007, BR-008, BR-009, BR-010, BR-011, BR-012, BR-013, FR-003, FR-004, FR-005, FR-006, FR-009, FR-011, FR-012, MG-001, MG-002, MG-003, PI-002, TD-001, TD-002, TD-003, TD-004, TD-006, TD-007, TD-009, TD-010, TD-011, TD-012, TD-013, TD-014, TD-015, TD-016, BR-017, BR-018, BR-019, BR-020, BR-021, BR-022, BR-023, FR-052, BR-024, FR-058
 
 ---
 
 ## Resume Point
 
-**Last Active:** FR-058 (Crimson Arena Flutter Web Rewrite)
-**Phase:** COMPLETE
+**Last Active:** FR-059 (Crimson Arena Theme-Aware UI/UX Polish)
+**Phase:** INIT (registered, not started)
 
 ---
 
 ## Next Session Instructions
 
-1. **Publish v4.0** — All blockers resolved, VPS synced, all bugs fixed. Crimson Arena redesigned and deployed.
-2. **Brain v5.0** — FR-052-engine plan complete, awaiting user approval. Start with HUNT FR-052-engine (Engine Foundation).
-3. **FR-013** — Context Breakdown Dashboard (Ready).
+1. **FR-059: Crimson Arena Theme-Aware UI/UX Polish** — Ready to HUNT. 6 phases: Foundation (constants + shared widgets) → Theme-Aware Text → Theme-Aware Colors → fifty_ui Component Adoption → Visual Fixes + Accessibility → Architecture Cleanup. Core principle: all widgets use Theme.of(context) instead of direct FiftyColors/GoogleFonts.
+2. **Publish v4.0** — All blockers resolved, VPS synced, Crimson Arena deployed with grey screen fix.
+3. **Brain v5.0** — FR-052-engine plan complete, awaiting user approval.
 
 **Note on VPS deploy:** The `igris_vps_update.sh` build step may cache stale TypeScript output. During BR-023 deploy, `dist/index.js` didn't contain new code despite `tsc` running. Manual `npx tsc` + PM2 restart fixed it. Investigate build cache issue.
+
+**Note on Flutter deploy:** VPS has no Flutter SDK. Build locally with `flutter build web --release`, then SCP `build/web/` to VPS. Symlink exists: `/root/.igris/dashboard/crimson-arena/build/web` → `/root/igris-ai/dashboard/crimson-arena/build/web`.
 
 ---
 
 ## Last Session Summary (2026-02-18)
 
 **Date:** 2026-02-18
-**Summary:** HUNT FR-058 (Crimson Arena Flutter Web Rewrite) — full agent pipeline (ARCHITECT → FORGER/SAGE × 8 phases → SENTINEL → WARDEN). Complete Flutter Web rewrite of Crimson Arena dashboard with 4 pages (HOME, INSTANCES, AGENTS, ACHIEVEMENTS), agent event pipeline, gaming systems (skill trees, achievements), FDL v2 design system. 98 files changed (+16,418/-74). Commit: e1d9fae. FR-057 superseded.
+**Summary:** Fixed grey screen crash in Crimson Arena (WebSocket .ready handshake + GetX Obx subscription fix). Deployed fix to VPS. Ran comprehensive UI/UX audit with 3 parallel SEEKER agents analyzing all 33 widget files. Registered FR-059: Crimson Arena Theme-Aware UI/UX Polish (6 phases, 46 tasks). Commit: `00bf662`.
 
 **Completed:**
-- **FR-058: Crimson Arena Flutter Web Rewrite — COMPLETE.**
-  - Phase 1: Backend agent event pipeline (agent_events table, MCP tool, REST endpoints, WebSocket broadcasting)
-  - Phase 2: Flutter app scaffold (MVVM+GetX, 4 services, 12 models, routing)
-  - Phase 3: ViewModels (home, instances, agents, achievements) + WebSocket/REST wiring
-  - Phase 4: HOME page — 14 widgets (budget, brain health, agent roster, heatmap, battle log, velocity, performance)
-  - Phase 5: INSTANCES page — 6 widgets (instance cards, hunt pipeline, agent nexus, execution log, team mode)
-  - Phase 6: AGENTS page — skill trees (fifty_skill_tree), metrics (fl_chart), comparison view
-  - Phase 7: ACHIEVEMENTS page — 28 achievements, unlock popups, category filtering, progress persistence
-  - Phase 8: Polish (slide transitions, keyboard shortcuts, halftone overlay, glitch effects, responsive layout)
-  - WARDEN review: 3 bugs fixed (WebSocket ping protocol, skill heatmap URL, instance model field name)
-  - 98 files changed (+16,418/-74). Commit: `e1d9fae`
-- **FR-057: Superseded** by FR-058 (all requirements absorbed)
-- **BR-024, FR-052: Archived** (moved to `ai/session/archive/briefs/`)
+- **Grey screen fix** — WebSocket `connect()` used `.ready.then()` for async handshake (brain_websocket_service.dart). Added `.length` access to force Obx subscription in agent_roster_strip.dart.
+- **VPS deployment** — Code pushed, Flutter build SCP'd, dashboard restarted and serving Flutter app.
+- **UI/UX audit** — 3 parallel SEEKER agents: FDL token usage (94% compliance), visual/layout (20 issues), component architecture (5 anti-patterns). Key findings: 201 direct GoogleFonts calls, 89.5% of fifty_ui unused, 109 hardcoded SizedBox heights.
+- **FR-059 registered** — Theme-Aware UI/UX Polish brief with 6 phases, 46 tasks. Core principle: widgets use Theme.of(context) not direct tokens.
+- **FR-058 archived** — Added to archived list.
+- Commit: `00bf662` — `fix(dashboard): handle WebSocket connection failure gracefully`
 
 **Previous sessions:**
+- FR-058: Crimson Arena Flutter Web Rewrite. 98 files (+16,418/-74). Commit: `e1d9fae`
 - BR-023: Eliminate SSH Sync Path. Commits: `b43b0f6`, `fdfba96`
 - BR-021: Fix Skill Heatmap. Commit: `87bab6b`
 - BR-022: Fix Sync Pipeline Cards. Commit: `9d9492f`
@@ -74,6 +71,7 @@
 
 ## Pending
 
+- **FR-059** — Theme-Aware UI/UX Polish (Ready, P1)
 - **Publish v4.0** — All blockers resolved
 - **Brain v5.0** — FR-052-engine awaiting approval
 - FR-013: Context Breakdown Dashboard

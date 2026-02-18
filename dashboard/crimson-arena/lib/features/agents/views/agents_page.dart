@@ -2,8 +2,8 @@ import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:fifty_ui/fifty_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
+import '../../../core/constants/arena_breakpoints.dart';
 import '../../../shared/widgets/arena_scaffold.dart';
 import '../controllers/agents_view_model.dart';
 import 'widgets/agent_comparison_view.dart';
@@ -46,8 +46,8 @@ class AgentsPage extends StatelessWidget {
 
           return LayoutBuilder(
             builder: (context, constraints) {
-              final isWide = constraints.maxWidth > 900;
-              final isNarrow = constraints.maxWidth < 600;
+              final isWide = constraints.maxWidth > ArenaBreakpoints.wide;
+              final isNarrow = constraints.maxWidth < ArenaBreakpoints.narrow;
               final pagePad =
                   isNarrow ? FiftySpacing.sm : FiftySpacing.md;
 
@@ -157,15 +157,18 @@ class _HeaderStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: FiftySpacing.md,
         vertical: FiftySpacing.sm,
       ),
       decoration: BoxDecoration(
-        color: FiftyColors.surfaceDark,
+        color: colorScheme.surfaceContainerHighest,
         borderRadius: FiftyRadii.lgRadius,
-        border: Border.all(color: FiftyColors.borderDark, width: 1),
+        border: Border.all(color: colorScheme.outline, width: 1),
       ),
       child: Obx(() {
         final agentCount = controller.agents.length;
@@ -219,24 +222,26 @@ class _StatChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           '$label: ',
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
+          style: textTheme.labelSmall!.copyWith(
             fontWeight: FiftyTypography.medium,
-            color: FiftyColors.cream.withValues(alpha: 0.4),
+            color: colorScheme.onSurface.withValues(alpha: 0.4),
             letterSpacing: FiftyTypography.letterSpacingLabelMedium,
           ),
         ),
         Text(
           value,
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
+          style: textTheme.labelSmall!.copyWith(
             fontWeight: FiftyTypography.bold,
-            color: FiftyColors.cream.withValues(alpha: 0.8),
+            color: colorScheme.onSurface.withValues(alpha: 0.8),
           ),
         ),
       ],

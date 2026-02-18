@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:fifty_achievement_engine/fifty_achievement_engine.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import 'rarity_theme.dart';
 
@@ -78,7 +77,10 @@ class _AchievementUnlockPopupState extends State<AchievementUnlockPopup>
 
   @override
   Widget build(BuildContext context) {
-    final theme = RarityTheme.of(widget.achievement.rarity);
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+    final rarityTheme = RarityTheme.of(widget.achievement.rarity);
 
     return GestureDetector(
       onTap: _dismiss,
@@ -92,15 +94,15 @@ class _AchievementUnlockPopupState extends State<AchievementUnlockPopup>
               width: 380,
               padding: const EdgeInsets.all(FiftySpacing.lg),
               decoration: BoxDecoration(
-                color: FiftyColors.surfaceDark,
+                color: colorScheme.surfaceContainerHighest,
                 borderRadius: FiftyRadii.lgRadius,
                 border: Border.all(
-                  color: theme.glowColor,
+                  color: rarityTheme.glowColor,
                   width: 2,
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: theme.glowColor.withValues(alpha: 0.4),
+                    color: rarityTheme.glowColor.withValues(alpha: 0.4),
                     blurRadius: 24,
                     spreadRadius: 4,
                   ),
@@ -116,19 +118,18 @@ class _AchievementUnlockPopupState extends State<AchievementUnlockPopup>
                       vertical: FiftySpacing.xs,
                     ),
                     decoration: BoxDecoration(
-                      color: theme.glowColor.withValues(alpha: 0.15),
+                      color: rarityTheme.glowColor.withValues(alpha: 0.15),
                       borderRadius: FiftyRadii.smRadius,
                       border: Border.all(
-                        color: theme.glowColor.withValues(alpha: 0.3),
+                        color: rarityTheme.glowColor.withValues(alpha: 0.3),
                         width: 1,
                       ),
                     ),
                     child: Text(
                       widget.achievement.rarity.displayName.toUpperCase(),
-                      style: GoogleFonts.manrope(
-                        fontSize: FiftyTypography.labelSmall,
+                      style: textTheme.labelSmall!.copyWith(
                         fontWeight: FiftyTypography.bold,
-                        color: theme.glowColor,
+                        color: rarityTheme.glowColor,
                         letterSpacing: FiftyTypography.letterSpacingLabelMedium,
                       ),
                     ),
@@ -142,15 +143,15 @@ class _AchievementUnlockPopupState extends State<AchievementUnlockPopup>
                     height: 64,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: theme.glowColor.withValues(alpha: 0.15),
+                      color: rarityTheme.glowColor.withValues(alpha: 0.15),
                       border: Border.all(
-                        color: theme.glowColor.withValues(alpha: 0.5),
+                        color: rarityTheme.glowColor.withValues(alpha: 0.5),
                         width: 2,
                       ),
                     ),
                     child: Icon(
                       widget.achievement.icon ?? Icons.emoji_events,
-                      color: theme.glowColor,
+                      color: rarityTheme.glowColor,
                       size: 32,
                     ),
                   ),
@@ -160,10 +161,8 @@ class _AchievementUnlockPopupState extends State<AchievementUnlockPopup>
                   // ACHIEVEMENT UNLOCKED header
                   Text(
                     'ACHIEVEMENT UNLOCKED',
-                    style: GoogleFonts.manrope(
-                      fontSize: FiftyTypography.labelMedium,
-                      fontWeight: FiftyTypography.bold,
-                      color: theme.glowColor,
+                    style: textTheme.labelMedium!.copyWith(
+                      color: rarityTheme.glowColor,
                       letterSpacing: FiftyTypography.letterSpacingLabelMedium,
                     ),
                   ),
@@ -174,10 +173,9 @@ class _AchievementUnlockPopupState extends State<AchievementUnlockPopup>
                   Text(
                     widget.achievement.name,
                     textAlign: TextAlign.center,
-                    style: GoogleFonts.manrope(
-                      fontSize: FiftyTypography.titleLarge,
+                    style: textTheme.titleLarge!.copyWith(
                       fontWeight: FiftyTypography.extraBold,
-                      color: FiftyColors.cream,
+                      color: colorScheme.onSurface,
                       letterSpacing: FiftyTypography.letterSpacingDisplay,
                     ),
                   ),
@@ -188,10 +186,9 @@ class _AchievementUnlockPopupState extends State<AchievementUnlockPopup>
                   Text(
                     widget.achievement.description ?? '',
                     textAlign: TextAlign.center,
-                    style: GoogleFonts.manrope(
-                      fontSize: FiftyTypography.bodyMedium,
+                    style: textTheme.bodyMedium!.copyWith(
                       fontWeight: FiftyTypography.medium,
-                      color: FiftyColors.slateGrey,
+                      color: colorScheme.onSurfaceVariant,
                     ),
                   ),
 
@@ -204,15 +201,14 @@ class _AchievementUnlockPopupState extends State<AchievementUnlockPopup>
                       vertical: FiftySpacing.sm,
                     ),
                     decoration: BoxDecoration(
-                      color: FiftyColors.darkBurgundy,
+                      color: colorScheme.surface,
                       borderRadius: FiftyRadii.smRadius,
                     ),
                     child: Text(
                       '+${widget.achievement.points} PTS',
-                      style: GoogleFonts.manrope(
-                        fontSize: FiftyTypography.titleSmall,
+                      style: textTheme.titleSmall!.copyWith(
                         fontWeight: FiftyTypography.extraBold,
-                        color: FiftyColors.cream,
+                        color: colorScheme.onSurface,
                         letterSpacing: FiftyTypography.letterSpacingLabel,
                       ),
                     ),
@@ -223,10 +219,9 @@ class _AchievementUnlockPopupState extends State<AchievementUnlockPopup>
                   // Dismiss hint
                   Text(
                     'TAP TO DISMISS',
-                    style: GoogleFonts.manrope(
-                      fontSize: FiftyTypography.labelSmall,
+                    style: textTheme.labelSmall!.copyWith(
                       fontWeight: FiftyTypography.medium,
-                      color: FiftyColors.slateGrey.withValues(alpha: 0.6),
+                      color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
                       letterSpacing: FiftyTypography.letterSpacingLabel,
                     ),
                   ),

@@ -1,6 +1,7 @@
+import 'package:crimson_arena/core/theme/arena_text_styles.dart';
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../data/models/instance_model.dart';
 
@@ -8,9 +9,9 @@ import '../../../../data/models/instance_model.dart';
 /// expanded content (pipeline, agent nexus, log, team mode).
 ///
 /// Status is indicated by a colored dot:
-/// - Green (hunterGreen): active
-/// - Gray (slateGrey): idle
-/// - Red (burgundy): stale (no heartbeat > 2 minutes)
+/// - Green (success): active
+/// - Gray (onSurfaceVariant): idle
+/// - Red (primary): stale (no heartbeat > 2 minutes)
 class InstanceCard extends StatelessWidget {
   final InstanceModel instance;
   final bool isExpanded;
@@ -27,7 +28,10 @@ class InstanceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final statusColor = _statusColor;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final statusColor = _resolveStatusColor(colorScheme, ext);
     final isActive = instance.isActive;
 
     return Padding(
@@ -38,18 +42,18 @@ class InstanceCard extends StatelessWidget {
         alignment: Alignment.topCenter,
         child: Container(
           decoration: BoxDecoration(
-            color: FiftyColors.surfaceDark,
+            color: colorScheme.surfaceContainerHighest,
             borderRadius: FiftyRadii.mdRadius,
             border: Border.all(
               color: isActive && isExpanded
-                  ? FiftyColors.burgundy.withValues(alpha: 0.4)
-                  : FiftyColors.borderDark,
+                  ? colorScheme.primary.withValues(alpha: 0.4)
+                  : colorScheme.outline,
               width: isActive && isExpanded ? 1.5 : 1,
             ),
             boxShadow: isActive
                 ? [
                     BoxShadow(
-                      color: FiftyColors.burgundy.withValues(alpha: 0.08),
+                      color: colorScheme.primary.withValues(alpha: 0.08),
                       blurRadius: 12,
                       spreadRadius: 0,
                     ),
@@ -61,7 +65,7 @@ class InstanceCard extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               // Collapsed header (always visible)
-              _buildHeader(statusColor),
+              _buildHeader(context, statusColor),
 
               // Expanded content
               if (isExpanded && expandedContent != null)
@@ -81,7 +85,12 @@ class InstanceCard extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader(Color statusColor) {
+  Widget _buildHeader(BuildContext context, Color statusColor) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
+
     return InkWell(
       onTap: onTap,
       borderRadius: FiftyRadii.mdRadius,
@@ -92,7 +101,7 @@ class InstanceCard extends StatelessWidget {
         ),
         child: Row(
           children: [
-            // Status dot
+            // Status dot + label
             Container(
               width: 8,
               height: 8,
@@ -110,57 +119,88 @@ class InstanceCard extends StatelessWidget {
                     : null,
               ),
             ),
+            const SizedBox(width: FiftySpacing.xs),
+            Text(
+              _statusLabel,
+              style: textTheme.labelSmall!.copyWith(
+                fontWeight: FiftyTypography.bold,
+                color: statusColor,
+                letterSpacing: FiftyTypography.letterSpacingLabel,
+              ),
+            ),
             const SizedBox(width: FiftySpacing.sm),
 
             // Hostname
-            Text(
-              instance.machineHostname.isNotEmpty
-                  ? instance.machineHostname
-                  : '--',
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.bodySmall,
-                fontWeight: FiftyTypography.semiBold,
-                color: FiftyColors.cream,
+            Flexible(
+              child: Tooltip(
+                message: instance.machineHostname.isNotEmpty
+                    ? instance.machineHostname
+                    : '--',
+                child: Text(
+                  instance.machineHostname.isNotEmpty
+                      ? instance.machineHostname
+                      : '--',
+                  style: textTheme.bodySmall!.copyWith(
+                    fontWeight: FiftyTypography.semiBold,
+                    color: colorScheme.onSurface,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ),
 
-            _separator(),
+            _separator(context),
 
             // Project slug
-            Text(
-              instance.projectSlug.isNotEmpty
-                  ? instance.projectSlug.toUpperCase()
-                  : '--',
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.bodySmall,
-                fontWeight: FiftyTypography.bold,
-                color: FiftyColors.burgundy,
+            Flexible(
+              child: Tooltip(
+                message: instance.projectSlug.isNotEmpty
+                    ? instance.projectSlug.toUpperCase()
+                    : '--',
+                child: Text(
+                  instance.projectSlug.isNotEmpty
+                      ? instance.projectSlug.toUpperCase()
+                      : '--',
+                  style: textTheme.bodySmall!.copyWith(
+                    fontWeight: FiftyTypography.bold,
+                    color: colorScheme.primary,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ),
 
-            _separator(),
+            _separator(context),
 
             // Brief
-            Text(
-              instance.currentBrief ?? '--',
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.bodySmall,
-                fontWeight: FiftyTypography.medium,
-                color: FiftyColors.cream.withValues(alpha: 0.8),
+            Flexible(
+              child: Tooltip(
+                message: instance.currentBrief ?? '--',
+                child: Text(
+                  instance.currentBrief ?? '--',
+                  style: textTheme.bodySmall!.copyWith(
+                    fontWeight: FiftyTypography.medium,
+                    color: colorScheme.onSurface.withValues(alpha: 0.8),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ),
 
-            _separator(),
+            _separator(context),
 
             // Phase
             Text(
               (instance.currentPhase ?? '--').toUpperCase(),
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.bodySmall,
+              style: textTheme.bodySmall!.copyWith(
                 fontWeight: FiftyTypography.bold,
-                color: FiftyColors.powderBlush,
+                color: ext.accent,
                 letterSpacing: FiftyTypography.letterSpacingLabelMedium,
               ),
+              maxLines: 1,
             ),
 
             // Team badge
@@ -172,19 +212,18 @@ class InstanceCard extends StatelessWidget {
                   vertical: 2,
                 ),
                 decoration: BoxDecoration(
-                  color: FiftyColors.slateGrey.withValues(alpha: 0.2),
+                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.2),
                   borderRadius: FiftyRadii.smRadius,
                   border: Border.all(
-                    color: FiftyColors.slateGrey.withValues(alpha: 0.3),
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
                     width: 1,
                   ),
                 ),
                 child: Text(
                   'TEAM LEAD',
-                  style: GoogleFonts.manrope(
-                    fontSize: FiftyTypography.labelSmall,
+                  style: textTheme.labelSmall!.copyWith(
                     fontWeight: FiftyTypography.bold,
-                    color: FiftyColors.slateGrey,
+                    color: colorScheme.onSurfaceVariant,
                     letterSpacing: FiftyTypography.letterSpacingLabelMedium,
                   ),
                 ),
@@ -196,10 +235,11 @@ class InstanceCard extends StatelessWidget {
             // Elapsed time
             Text(
               _relativeTime,
-              style: GoogleFonts.sourceCodePro(
+              style: ArenaTextStyles.mono(
+                context,
                 fontSize: FiftyTypography.bodySmall,
                 fontWeight: FiftyTypography.medium,
-                color: FiftyColors.slateGrey,
+                color: colorScheme.onSurfaceVariant,
               ),
             ),
             const SizedBox(width: FiftySpacing.sm),
@@ -207,10 +247,11 @@ class InstanceCard extends StatelessWidget {
             // Expand/collapse indicator
             Text(
               isExpanded ? '[-]' : '[+]',
-              style: GoogleFonts.sourceCodePro(
+              style: ArenaTextStyles.mono(
+                context,
                 fontSize: FiftyTypography.bodySmall,
                 fontWeight: FiftyTypography.bold,
-                color: FiftyColors.slateGrey,
+                color: colorScheme.onSurfaceVariant,
               ),
             ),
           ],
@@ -219,33 +260,48 @@ class InstanceCard extends StatelessWidget {
     );
   }
 
-  Widget _separator() {
+  Widget _separator(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: FiftySpacing.xs),
       child: Text(
         '/',
-        style: GoogleFonts.manrope(
-          fontSize: FiftyTypography.bodySmall,
+        style: textTheme.bodySmall!.copyWith(
           fontWeight: FiftyTypography.medium,
-          color: FiftyColors.slateGrey.withValues(alpha: 0.5),
+          color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
         ),
       ),
     );
   }
 
-  Color get _statusColor {
-    if (instance.status == 'active') return FiftyColors.hunterGreen;
+  Color _resolveStatusColor(ColorScheme colorScheme, FiftyThemeExtension ext) {
+    if (instance.status == 'active') return ext.success;
 
     // Check for stale based on heartbeat
     if (instance.lastHeartbeat != null) {
       final heartbeat = DateTime.tryParse(instance.lastHeartbeat!);
       if (heartbeat != null) {
         final staleDuration = DateTime.now().toUtc().difference(heartbeat);
-        if (staleDuration.inMinutes > 2) return FiftyColors.burgundy;
+        if (staleDuration.inMinutes > 2) return colorScheme.primary;
       }
     }
 
-    return FiftyColors.slateGrey;
+    return colorScheme.onSurfaceVariant;
+  }
+
+  String get _statusLabel {
+    if (instance.status == 'active') return 'ACTIVE';
+    if (instance.lastHeartbeat != null) {
+      final heartbeat = DateTime.tryParse(instance.lastHeartbeat!);
+      if (heartbeat != null) {
+        final staleDuration = DateTime.now().toUtc().difference(heartbeat);
+        if (staleDuration.inMinutes > 2) return 'STALE';
+      }
+    }
+    return 'IDLE';
   }
 
   bool get _isTeamLead {

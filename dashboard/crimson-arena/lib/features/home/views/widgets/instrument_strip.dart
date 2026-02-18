@@ -1,7 +1,7 @@
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../data/models/budget_model.dart';
 import '../../../../data/models/context_window_model.dart';
@@ -22,6 +22,8 @@ class InstrumentStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     final vm = Get.find<HomeViewModel>();
 
     return Container(
@@ -30,10 +32,10 @@ class InstrumentStrip extends StatelessWidget {
         vertical: FiftySpacing.sm,
       ),
       decoration: BoxDecoration(
-        color: FiftyColors.surfaceDark,
+        color: colorScheme.surfaceContainerHighest,
         borderRadius: FiftyRadii.lgRadius,
         border: Border.all(
-          color: FiftyColors.borderDark,
+          color: colorScheme.outline,
           width: 1,
         ),
       ),
@@ -42,19 +44,19 @@ class InstrumentStrip extends StatelessWidget {
           children: [
             // HP gauge
             Expanded(
-              child: _buildBudgetGauge(vm),
+              child: _buildBudgetGauge(context, vm),
             ),
-            _divider(),
+            _divider(context),
             // CTX gauge
             Expanded(
-              child: _buildContextGauge(vm),
+              child: _buildContextGauge(context, vm),
             ),
-            _divider(),
+            _divider(context),
             // SYNC gauge
             Expanded(
-              child: _buildSyncGauge(vm),
+              child: _buildSyncGauge(context, vm),
             ),
-            _divider(),
+            _divider(context),
             // Overall stats
             Expanded(
               child: _buildOverallStats(vm),
@@ -65,22 +67,25 @@ class InstrumentStrip extends StatelessWidget {
     );
   }
 
-  Widget _divider() {
+  Widget _divider(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Container(
       width: 1,
       height: 32,
       margin: const EdgeInsets.symmetric(horizontal: FiftySpacing.sm),
-      color: FiftyColors.borderDark,
+      color: colorScheme.outline,
     );
   }
 
-  Widget _buildBudgetGauge(HomeViewModel vm) {
+  Widget _buildBudgetGauge(BuildContext context, HomeViewModel vm) {
+    final colorScheme = Theme.of(context).colorScheme;
     final budget = vm.budget.value;
     if (budget == null) {
-      return _Gauge(label: 'HP', value: '--', color: FiftyColors.slateGrey);
+      return _Gauge(label: 'HP', value: '--', color: colorScheme.onSurfaceVariant);
     }
     final pct = budget.percentage;
-    final color = _hpColor(budget.ratio);
+    final color = _hpColor(context, budget.ratio);
     return _Gauge(
       label: 'HP',
       value: '${pct.toStringAsFixed(0)}%',
@@ -89,13 +94,14 @@ class InstrumentStrip extends StatelessWidget {
     );
   }
 
-  Widget _buildContextGauge(HomeViewModel vm) {
+  Widget _buildContextGauge(BuildContext context, HomeViewModel vm) {
+    final colorScheme = Theme.of(context).colorScheme;
     final ctx = vm.contextWindow.value;
     if (ctx == null) {
-      return _Gauge(label: 'CTX', value: '--', color: FiftyColors.slateGrey);
+      return _Gauge(label: 'CTX', value: '--', color: colorScheme.onSurfaceVariant);
     }
     final pct = ctx.usagePercent;
-    final color = _ctxColor(ctx.usageRatio);
+    final color = _ctxColor(context, ctx.usageRatio);
     return _Gauge(
       label: 'CTX',
       value: '${pct.toStringAsFixed(0)}%',
@@ -104,16 +110,19 @@ class InstrumentStrip extends StatelessWidget {
     );
   }
 
-  Widget _buildSyncGauge(HomeViewModel vm) {
+  Widget _buildSyncGauge(BuildContext context, HomeViewModel vm) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
     final sync = vm.syncStatus.value;
     if (sync == null) {
-      return _Gauge(label: 'SYNC', value: '--', color: FiftyColors.slateGrey);
+      return _Gauge(label: 'SYNC', value: '--', color: colorScheme.onSurfaceVariant);
     }
     final isOnline = sync.isOnline;
     return _Gauge(
       label: 'SYNC',
       value: isOnline ? 'ONLINE' : 'OFFLINE',
-      color: isOnline ? FiftyColors.hunterGreen : FiftyColors.burgundy,
+      color: isOnline ? ext.success : colorScheme.primary,
     );
   }
 
@@ -135,16 +144,22 @@ class InstrumentStrip extends StatelessWidget {
     );
   }
 
-  Color _hpColor(double ratio) {
-    if (ratio >= 0.90) return FiftyColors.burgundy;
-    if (ratio >= 0.75) return FiftyColors.warning;
-    return FiftyColors.hunterGreen;
+  Color _hpColor(BuildContext context, double ratio) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    if (ratio >= 0.90) return colorScheme.primary;
+    if (ratio >= 0.75) return ext.warning;
+    return ext.success;
   }
 
-  Color _ctxColor(double ratio) {
-    if (ratio >= 0.90) return FiftyColors.burgundy;
-    if (ratio >= 0.80) return FiftyColors.warning;
-    return FiftyColors.slateGrey;
+  Color _ctxColor(BuildContext context, double ratio) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    if (ratio >= 0.90) return colorScheme.primary;
+    if (ratio >= 0.80) return ext.warning;
+    return colorScheme.onSurfaceVariant;
   }
 }
 
@@ -164,6 +179,10 @@ class _Gauge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -173,19 +192,15 @@ class _Gauge extends StatelessWidget {
           children: [
             Text(
               label,
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelSmall,
-                fontWeight: FiftyTypography.semiBold,
-                color: FiftyColors.slateGrey,
+              style: textTheme.labelSmall!.copyWith(
+                color: colorScheme.onSurfaceVariant,
                 letterSpacing: FiftyTypography.letterSpacingLabelMedium,
               ),
             ),
             const SizedBox(width: FiftySpacing.sm),
             Text(
               value,
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelMedium,
-                fontWeight: FiftyTypography.bold,
+              style: textTheme.labelMedium!.copyWith(
                 color: color,
               ),
             ),
@@ -200,7 +215,7 @@ class _Gauge extends StatelessWidget {
               borderRadius: FiftyRadii.smRadius,
               child: LinearProgressIndicator(
                 value: progress!.clamp(0, 1),
-                backgroundColor: FiftyColors.cream.withValues(alpha: 0.05),
+                backgroundColor: colorScheme.onSurface.withValues(alpha: 0.05),
                 valueColor: AlwaysStoppedAnimation<Color>(color),
               ),
             ),
@@ -220,24 +235,24 @@ class _MiniStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           label,
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
-            fontWeight: FiftyTypography.semiBold,
-            color: FiftyColors.slateGrey,
+          style: textTheme.labelSmall!.copyWith(
+            color: colorScheme.onSurfaceVariant,
             letterSpacing: FiftyTypography.letterSpacingLabelMedium,
           ),
         ),
         Text(
           value,
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelMedium,
-            fontWeight: FiftyTypography.bold,
-            color: FiftyColors.cream,
+          style: textTheme.labelMedium!.copyWith(
+            color: colorScheme.onSurface,
           ),
         ),
       ],

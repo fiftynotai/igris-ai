@@ -3,6 +3,7 @@ import 'package:fifty_ui/fifty_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
+import '../../../core/constants/arena_breakpoints.dart';
 import '../../../shared/widgets/arena_scaffold.dart';
 import '../controllers/home_view_model.dart';
 import 'widgets/agent_performance_summary.dart';
@@ -59,8 +60,8 @@ class HomePage extends StatelessWidget {
 
           return LayoutBuilder(
             builder: (context, constraints) {
-              final isWide = constraints.maxWidth > 900;
-              final isNarrow = constraints.maxWidth < 600;
+              final isWide = constraints.maxWidth > ArenaBreakpoints.wide;
+              final isNarrow = constraints.maxWidth < ArenaBreakpoints.narrow;
               final pagePad =
                   isNarrow ? FiftySpacing.sm : FiftySpacing.md;
 

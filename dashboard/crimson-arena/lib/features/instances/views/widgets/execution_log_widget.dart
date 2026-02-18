@@ -1,6 +1,7 @@
+import 'package:crimson_arena/core/theme/arena_text_styles.dart';
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/agent_constants.dart';
 import '../../../../data/models/execution_log_entry.dart';
@@ -28,13 +29,18 @@ class ExecutionLogWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
+
     return Container(
       padding: const EdgeInsets.all(FiftySpacing.md),
       decoration: BoxDecoration(
-        color: FiftyColors.darkBurgundy.withValues(alpha: 0.5),
+        color: colorScheme.surface.withValues(alpha: 0.5),
         borderRadius: FiftyRadii.smRadius,
         border: Border.all(
-          color: FiftyColors.borderDark,
+          color: colorScheme.outline,
           width: 1,
         ),
       ),
@@ -46,22 +52,21 @@ class ExecutionLogWidget extends StatelessWidget {
             children: [
               Text(
                 'EXECUTION LOG',
-                style: GoogleFonts.manrope(
-                  fontSize: FiftyTypography.labelMedium,
-                  fontWeight: FiftyTypography.bold,
-                  color: FiftyColors.slateGrey,
+                style: textTheme.labelMedium!.copyWith(
+                  color: colorScheme.onSurfaceVariant,
                   letterSpacing: FiftyTypography.letterSpacingLabelMedium,
                 ),
               ),
               const Spacer(),
               Text(
                 'Retries: $retryCount/3',
-                style: GoogleFonts.sourceCodePro(
+                style: ArenaTextStyles.mono(
+                  context,
                   fontSize: FiftyTypography.labelSmall,
                   fontWeight: FiftyTypography.medium,
                   color: retryCount > 0
-                      ? FiftyColors.warning
-                      : FiftyColors.slateGrey,
+                      ? ext.warning
+                      : colorScheme.onSurfaceVariant,
                 ),
               ),
             ],
@@ -72,12 +77,12 @@ class ExecutionLogWidget extends StatelessWidget {
           if (entries.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: FiftySpacing.md),
-              child: Text(
-                'No execution data available',
-                style: GoogleFonts.manrope(
-                  fontSize: FiftyTypography.bodySmall,
-                  fontWeight: FiftyTypography.medium,
-                  color: FiftyColors.slateGrey.withValues(alpha: 0.5),
+              child: Center(
+                child: Text(
+                  'No execution data available',
+                  style: textTheme.bodySmall!.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ),
             )
@@ -86,6 +91,7 @@ class ExecutionLogWidget extends StatelessWidget {
               constraints: const BoxConstraints(maxHeight: 200),
               child: ListView.builder(
                 shrinkWrap: true,
+                physics: const ClampingScrollPhysics(),
                 itemCount: entries.length,
                 itemBuilder: (context, index) {
                   return _ExecutionLogLine(
@@ -145,7 +151,11 @@ class _ExecutionLogLineState extends State<_ExecutionLogLine>
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
     final entry = widget.entry;
+    // Agent-specific color -- game identity, not migrated.
     final agentColor = Color(
       AgentConstants.agentColors[entry.agent] ?? 0xFF888888,
     );
@@ -162,10 +172,11 @@ class _ExecutionLogLineState extends State<_ExecutionLogLine>
             // Timestamp
             Text(
               '[$timestamp]',
-              style: GoogleFonts.sourceCodePro(
+              style: ArenaTextStyles.mono(
+                context,
                 fontSize: FiftyTypography.labelSmall,
                 fontWeight: FiftyTypography.medium,
-                color: FiftyColors.slateGrey,
+                color: colorScheme.onSurfaceVariant,
               ),
             ),
             const SizedBox(width: FiftySpacing.xs),
@@ -173,7 +184,8 @@ class _ExecutionLogLineState extends State<_ExecutionLogLine>
             // Agent name
             Text(
               entry.agent.toUpperCase(),
-              style: GoogleFonts.sourceCodePro(
+              style: ArenaTextStyles.mono(
+                context,
                 fontSize: FiftyTypography.labelSmall,
                 fontWeight: FiftyTypography.bold,
                 color: agentColor,
@@ -183,14 +195,19 @@ class _ExecutionLogLineState extends State<_ExecutionLogLine>
 
             // Event message
             Expanded(
-              child: Text(
-                message,
-                style: GoogleFonts.sourceCodePro(
-                  fontSize: FiftyTypography.labelSmall,
-                  fontWeight: FiftyTypography.medium,
-                  color: _eventColor(entry.eventType),
+              child: Tooltip(
+                message: message,
+                child: Text(
+                  message,
+                  style: ArenaTextStyles.mono(
+                    context,
+                    fontSize: FiftyTypography.labelSmall,
+                    fontWeight: FiftyTypography.medium,
+                    color: _eventColor(entry.eventType, colorScheme, ext),
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
@@ -233,18 +250,18 @@ class _ExecutionLogLineState extends State<_ExecutionLogLine>
     }
   }
 
-  Color _eventColor(String eventType) {
+  Color _eventColor(String eventType, ColorScheme colorScheme, FiftyThemeExtension ext) {
     switch (eventType) {
       case 'start':
-        return FiftyColors.cream.withValues(alpha: 0.7);
+        return colorScheme.onSurface.withValues(alpha: 0.7);
       case 'stop':
-        return FiftyColors.hunterGreen;
+        return ext.success;
       case 'error':
-        return FiftyColors.burgundy;
+        return colorScheme.primary;
       case 'retry':
-        return FiftyColors.warning;
+        return ext.warning;
       default:
-        return FiftyColors.slateGrey;
+        return colorScheme.onSurfaceVariant;
     }
   }
 

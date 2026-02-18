@@ -1,7 +1,7 @@
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/agent_constants.dart';
 import '../../../../data/models/agent_model.dart';
@@ -19,6 +19,9 @@ class AgentPerformanceSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final vm = Get.find<HomeViewModel>();
 
     return Obx(() {
@@ -33,10 +36,9 @@ class AgentPerformanceSummary extends StatelessWidget {
         return ArenaCard(
           title: 'AGENT PERFORMANCE',
           child: Text(
-            '> No agent data available',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.bodySmall,
-              color: FiftyColors.slateGrey,
+            'No agent data available',
+            style: textTheme.bodySmall!.copyWith(
+              color: colorScheme.onSurfaceVariant,
             ),
           ),
         );
@@ -46,10 +48,9 @@ class AgentPerformanceSummary extends StatelessWidget {
         title: 'AGENT PERFORMANCE',
         trailing: Text(
           '${agentList.length} active',
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
+          style: textTheme.labelSmall!.copyWith(
             fontWeight: FiftyTypography.medium,
-            color: FiftyColors.slateGrey,
+            color: colorScheme.onSurfaceVariant,
           ),
         ),
         child: Wrap(
@@ -72,6 +73,11 @@ class _AgentPerfCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
+    // Agent-specific color -- game identity, not migrated.
     final color = Color(
       AgentConstants.agentColors[agent.name] ?? 0xFF888888,
     );
@@ -79,7 +85,7 @@ class _AgentPerfCard extends StatelessWidget {
         agent.name.toUpperCase();
     final successPct = (agent.successRate * 100).clamp(0.0, 100.0);
     final grade = _efficiencyGrade(successPct);
-    final gradeColor = _gradeColor(grade);
+    final gradeColor = _gradeColor(grade, colorScheme, ext);
     final avgTokens = agent.invocations > 0
         ? agent.totalTokens ~/ agent.invocations
         : 0;
@@ -88,7 +94,7 @@ class _AgentPerfCard extends StatelessWidget {
       width: 160,
       padding: const EdgeInsets.all(FiftySpacing.sm),
       decoration: BoxDecoration(
-        color: FiftyColors.darkBurgundy,
+        color: colorScheme.surface,
         borderRadius: FiftyRadii.mdRadius,
         border: Border.all(
           color: color.withValues(alpha: 0.2),
@@ -104,16 +110,18 @@ class _AgentPerfCard extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Expanded(
-                child: Text(
-                  displayName,
-                  style: GoogleFonts.manrope(
-                    fontSize: FiftyTypography.labelSmall,
-                    fontWeight: FiftyTypography.bold,
-                    color: color,
-                    letterSpacing: FiftyTypography.letterSpacingLabel,
+                child: Tooltip(
+                  message: displayName,
+                  child: Text(
+                    displayName,
+                    style: textTheme.labelSmall!.copyWith(
+                      fontWeight: FiftyTypography.bold,
+                      color: color,
+                      letterSpacing: FiftyTypography.letterSpacingLabel,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               Container(
@@ -130,8 +138,7 @@ class _AgentPerfCard extends StatelessWidget {
                 child: Center(
                   child: Text(
                     grade,
-                    style: GoogleFonts.manrope(
-                      fontSize: FiftyTypography.labelMedium,
+                    style: textTheme.labelMedium!.copyWith(
                       fontWeight: FiftyTypography.extraBold,
                       color: gradeColor,
                     ),
@@ -147,7 +154,7 @@ class _AgentPerfCard extends StatelessWidget {
             label: 'Success',
             value: '${successPct.toStringAsFixed(0)}%',
             progress: successPct / 100,
-            color: _successColor(successPct),
+            color: _successColor(successPct, colorScheme, ext),
           ),
           const SizedBox(height: FiftySpacing.xs),
 
@@ -183,27 +190,27 @@ class _AgentPerfCard extends StatelessWidget {
     return 'F';
   }
 
-  Color _gradeColor(String grade) {
+  Color _gradeColor(String grade, ColorScheme colorScheme, FiftyThemeExtension ext) {
     switch (grade) {
       case 'S':
-        return FiftyColors.hunterGreen;
+        return ext.success;
       case 'A':
-        return FiftyColors.hunterGreen;
+        return ext.success;
       case 'B':
-        return FiftyColors.slateGrey;
+        return colorScheme.onSurfaceVariant;
       case 'C':
-        return FiftyColors.warning;
+        return ext.warning;
       case 'F':
-        return FiftyColors.burgundy;
+        return colorScheme.primary;
       default:
-        return FiftyColors.slateGrey;
+        return colorScheme.onSurfaceVariant;
     }
   }
 
-  Color _successColor(double pct) {
-    if (pct > 90) return FiftyColors.hunterGreen;
-    if (pct > 70) return FiftyColors.warning;
-    return FiftyColors.burgundy;
+  Color _successColor(double pct, ColorScheme colorScheme, FiftyThemeExtension ext) {
+    if (pct > 90) return ext.success;
+    if (pct > 70) return ext.warning;
+    return colorScheme.primary;
   }
 }
 
@@ -223,6 +230,10 @@ class _MetricRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -231,18 +242,16 @@ class _MetricRow extends StatelessWidget {
           children: [
             Text(
               label,
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelSmall,
+              style: textTheme.labelSmall!.copyWith(
                 fontWeight: FiftyTypography.medium,
-                color: FiftyColors.cream.withValues(alpha: 0.4),
+                color: colorScheme.onSurface.withValues(alpha: 0.4),
               ),
             ),
             Text(
               value,
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelSmall,
+              style: textTheme.labelSmall!.copyWith(
                 fontWeight: FiftyTypography.bold,
-                color: color ?? FiftyColors.cream.withValues(alpha: 0.7),
+                color: color ?? colorScheme.onSurface.withValues(alpha: 0.7),
               ),
             ),
           ],
@@ -255,9 +264,9 @@ class _MetricRow extends StatelessWidget {
               borderRadius: FiftyRadii.smRadius,
               child: LinearProgressIndicator(
                 value: progress!.clamp(0, 1),
-                backgroundColor: FiftyColors.cream.withValues(alpha: 0.05),
+                backgroundColor: colorScheme.onSurface.withValues(alpha: 0.05),
                 valueColor: AlwaysStoppedAnimation<Color>(
-                  color ?? FiftyColors.cream,
+                  color ?? colorScheme.onSurface,
                 ),
               ),
             ),

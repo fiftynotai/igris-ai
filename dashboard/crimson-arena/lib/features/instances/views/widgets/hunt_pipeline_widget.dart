@@ -1,6 +1,6 @@
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/agent_constants.dart';
 import '../../../../data/models/instance_model.dart';
@@ -19,6 +19,9 @@ class HuntPipelineWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final rawPhase = (instance.currentPhase ?? '').toUpperCase();
     final phaseKey = AgentConstants.phaseMap[rawPhase];
     final currentIndex = phaseKey != null
@@ -28,10 +31,10 @@ class HuntPipelineWidget extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(FiftySpacing.md),
       decoration: BoxDecoration(
-        color: FiftyColors.darkBurgundy.withValues(alpha: 0.5),
+        color: colorScheme.surface.withValues(alpha: 0.5),
         borderRadius: FiftyRadii.smRadius,
         border: Border.all(
-          color: FiftyColors.borderDark,
+          color: colorScheme.outline,
           width: 1,
         ),
       ),
@@ -43,10 +46,8 @@ class HuntPipelineWidget extends StatelessWidget {
             children: [
               Text(
                 'HUNT PIPELINE',
-                style: GoogleFonts.manrope(
-                  fontSize: FiftyTypography.labelMedium,
-                  fontWeight: FiftyTypography.bold,
-                  color: FiftyColors.slateGrey,
+                style: textTheme.labelMedium!.copyWith(
+                  color: colorScheme.onSurfaceVariant,
                   letterSpacing: FiftyTypography.letterSpacingLabelMedium,
                 ),
               ),
@@ -54,10 +55,9 @@ class HuntPipelineWidget extends StatelessWidget {
                 const SizedBox(width: FiftySpacing.sm),
                 Text(
                   instance.currentBrief!,
-                  style: GoogleFonts.manrope(
-                    fontSize: FiftyTypography.labelMedium,
+                  style: textTheme.labelMedium!.copyWith(
                     fontWeight: FiftyTypography.semiBold,
-                    color: FiftyColors.cream.withValues(alpha: 0.7),
+                    color: colorScheme.onSurface.withValues(alpha: 0.7),
                   ),
                 ),
               ],
@@ -69,8 +69,8 @@ class HuntPipelineWidget extends StatelessWidget {
           Row(
             children: [
               for (int i = 0; i < AgentConstants.huntPhases.length; i++) ...[
-                if (i > 0) _buildConnector(i, currentIndex),
-                Expanded(child: _buildPhaseNode(i, currentIndex)),
+                if (i > 0) _buildConnector(context, i, currentIndex),
+                Expanded(child: _buildPhaseNode(context, i, currentIndex)),
               ],
             ],
           ),
@@ -79,7 +79,11 @@ class HuntPipelineWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildPhaseNode(int index, int currentIndex) {
+  Widget _buildPhaseNode(BuildContext context, int index, int currentIndex) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
     final phase = AgentConstants.huntPhases[index];
     final isDone = currentIndex >= 0 && index < currentIndex;
     final isCurrent = index == currentIndex;
@@ -89,17 +93,17 @@ class HuntPipelineWidget extends StatelessWidget {
     Color borderColor;
 
     if (isDone) {
-      nodeColor = FiftyColors.hunterGreen.withValues(alpha: 0.2);
-      textColor = FiftyColors.hunterGreen;
-      borderColor = FiftyColors.hunterGreen.withValues(alpha: 0.5);
+      nodeColor = ext.success.withValues(alpha: 0.2);
+      textColor = ext.success;
+      borderColor = ext.success.withValues(alpha: 0.5);
     } else if (isCurrent) {
-      nodeColor = FiftyColors.burgundy.withValues(alpha: 0.2);
-      textColor = FiftyColors.cream;
-      borderColor = FiftyColors.burgundy;
+      nodeColor = colorScheme.primary.withValues(alpha: 0.2);
+      textColor = colorScheme.onSurface;
+      borderColor = colorScheme.primary;
     } else {
       nodeColor = Colors.transparent;
-      textColor = FiftyColors.slateGrey.withValues(alpha: 0.5);
-      borderColor = FiftyColors.borderDark;
+      textColor = colorScheme.onSurfaceVariant.withValues(alpha: 0.5);
+      borderColor = colorScheme.outline;
     }
 
     return Column(
@@ -116,7 +120,7 @@ class HuntPipelineWidget extends StatelessWidget {
             boxShadow: isCurrent
                 ? [
                     BoxShadow(
-                      color: FiftyColors.burgundy.withValues(alpha: 0.3),
+                      color: colorScheme.primary.withValues(alpha: 0.3),
                       blurRadius: 8,
                       spreadRadius: 1,
                     ),
@@ -127,7 +131,7 @@ class HuntPipelineWidget extends StatelessWidget {
             child: isDone
                 ? Icon(Icons.check, size: 16, color: textColor)
                 : isCurrent
-                    ? _buildPulsingDot()
+                    ? _buildPulsingDot(context)
                     : Container(
                         width: 6,
                         height: 6,
@@ -143,8 +147,7 @@ class HuntPipelineWidget extends StatelessWidget {
         // Phase label
         Text(
           phase.toUpperCase(),
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
+          style: textTheme.labelSmall!.copyWith(
             fontWeight:
                 isCurrent ? FiftyTypography.bold : FiftyTypography.medium,
             color: textColor,
@@ -155,7 +158,10 @@ class HuntPipelineWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildConnector(int index, int currentIndex) {
+  Widget _buildConnector(BuildContext context, int index, int currentIndex) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
     final isDone = currentIndex >= 0 && index <= currentIndex;
 
     return SizedBox(
@@ -165,15 +171,16 @@ class HuntPipelineWidget extends StatelessWidget {
         child: Container(
           height: 2,
           color: isDone
-              ? FiftyColors.hunterGreen.withValues(alpha: 0.5)
-              : FiftyColors.borderDark,
+              ? ext.success.withValues(alpha: 0.5)
+              : colorScheme.outline,
         ),
       ),
     );
   }
 
-  Widget _buildPulsingDot() {
-    return _PulsingDot(color: FiftyColors.burgundy);
+  Widget _buildPulsingDot(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return _PulsingDot(color: colorScheme.primary);
   }
 }
 

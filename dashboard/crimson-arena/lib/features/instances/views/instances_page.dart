@@ -1,8 +1,9 @@
+import 'package:crimson_arena/core/constants/arena_breakpoints.dart';
+import 'package:crimson_arena/core/theme/arena_text_styles.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:fifty_ui/fifty_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../shared/widgets/arena_scaffold.dart';
 import '../controllers/instances_view_model.dart';
@@ -48,6 +49,8 @@ class _InstancesPageState extends State<InstancesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     final vm = Get.find<InstancesViewModel>();
 
     return ArenaScaffold(
@@ -55,7 +58,7 @@ class _InstancesPageState extends State<InstancesPage> {
       activeTabIndex: 1,
       body: LayoutBuilder(
         builder: (context, constraints) {
-          final isNarrow = constraints.maxWidth < 600;
+          final isNarrow = constraints.maxWidth < ArenaBreakpoints.narrow;
           final hPad = isNarrow ? FiftySpacing.sm : FiftySpacing.lg;
 
           return Column(
@@ -64,7 +67,7 @@ class _InstancesPageState extends State<InstancesPage> {
               const CompactVitalsStrip(),
 
               // Instances header
-              _buildInstancesHeader(vm, horizontalPad: hPad),
+              _buildInstancesHeader(context, vm, horizontalPad: hPad),
 
               // Instance list
               Expanded(
@@ -87,14 +90,15 @@ class _InstancesPageState extends State<InstancesPage> {
                   final instances = vm.instances;
 
                   if (instances.isEmpty) {
-                    return _buildEmptyState();
+                    return _buildEmptyState(context);
                   }
 
                   return RefreshIndicator(
                     onRefresh: vm.refreshData,
-                    color: FiftyColors.burgundy,
-                    backgroundColor: FiftyColors.surfaceDark,
+                    color: colorScheme.primary,
+                    backgroundColor: colorScheme.surfaceContainerHighest,
                     child: ListView.builder(
+                      physics: const ClampingScrollPhysics(),
                       padding: EdgeInsets.symmetric(
                         horizontal: hPad,
                         vertical: FiftySpacing.sm,
@@ -126,9 +130,14 @@ class _InstancesPageState extends State<InstancesPage> {
   }
 
   Widget _buildInstancesHeader(
+    BuildContext context,
     InstancesViewModel vm, {
     double horizontalPad = FiftySpacing.lg,
   }) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Container(
       padding: EdgeInsets.symmetric(
         horizontal: horizontalPad,
@@ -142,10 +151,9 @@ class _InstancesPageState extends State<InstancesPage> {
           children: [
             Text(
               'INSTANCES',
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.titleSmall,
+              style: textTheme.titleSmall!.copyWith(
                 fontWeight: FiftyTypography.extraBold,
-                color: FiftyColors.cream,
+                color: colorScheme.onSurface,
                 letterSpacing: FiftyTypography.letterSpacingLabelMedium,
               ),
             ),
@@ -158,19 +166,20 @@ class _InstancesPageState extends State<InstancesPage> {
                 vertical: FiftySpacing.xs,
               ),
               decoration: BoxDecoration(
-                color: FiftyColors.burgundy.withValues(alpha: 0.15),
+                color: colorScheme.primary.withValues(alpha: 0.15),
                 borderRadius: FiftyRadii.smRadius,
                 border: Border.all(
-                  color: FiftyColors.burgundy.withValues(alpha: 0.3),
+                  color: colorScheme.primary.withValues(alpha: 0.3),
                   width: 1,
                 ),
               ),
               child: Text(
                 '$active active, $idle idle',
-                style: GoogleFonts.sourceCodePro(
+                style: ArenaTextStyles.mono(
+                  context,
                   fontSize: FiftyTypography.labelSmall,
                   fontWeight: FiftyTypography.semiBold,
-                  color: FiftyColors.cream.withValues(alpha: 0.8),
+                  color: colorScheme.onSurface.withValues(alpha: 0.8),
                 ),
               ),
             ),
@@ -178,22 +187,14 @@ class _InstancesPageState extends State<InstancesPage> {
             const Spacer(),
 
             // Refresh button
-            InkWell(
+            _HoverButton(
               onTap: vm.refreshData,
-              borderRadius: FiftyRadii.smRadius,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: FiftySpacing.sm,
-                  vertical: FiftySpacing.xs,
-                ),
-                child: Text(
-                  'REFRESH',
-                  style: GoogleFonts.manrope(
-                    fontSize: FiftyTypography.labelSmall,
-                    fontWeight: FiftyTypography.bold,
-                    color: FiftyColors.slateGrey,
-                    letterSpacing: FiftyTypography.letterSpacingLabelMedium,
-                  ),
+              child: Text(
+                'REFRESH',
+                style: textTheme.labelSmall!.copyWith(
+                  fontWeight: FiftyTypography.bold,
+                  color: colorScheme.onSurfaceVariant,
+                  letterSpacing: FiftyTypography.letterSpacingLabelMedium,
                 ),
               ),
             ),
@@ -245,30 +246,81 @@ class _InstancesPageState extends State<InstancesPage> {
     });
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(
             'NO ACTIVE INSTANCES',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.titleLarge,
+            style: textTheme.titleLarge!.copyWith(
               fontWeight: FiftyTypography.extraBold,
-              color: FiftyColors.slateGrey.withValues(alpha: 0.5),
+              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
               letterSpacing: FiftyTypography.letterSpacingLabelMedium,
             ),
           ),
           const SizedBox(height: FiftySpacing.sm),
           Text(
             '> Brain instances will appear here when Claude Code sessions are active.',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.bodyMedium,
+            style: textTheme.bodyMedium!.copyWith(
               fontWeight: FiftyTypography.medium,
-              color: FiftyColors.slateGrey.withValues(alpha: 0.4),
+              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A button with hover feedback: background tint appears on mouse hover.
+class _HoverButton extends StatefulWidget {
+  final VoidCallback? onTap;
+  final Widget child;
+
+  const _HoverButton({this.onTap, required this.child});
+
+  @override
+  State<_HoverButton> createState() => _HoverButtonState();
+}
+
+class _HoverButtonState extends State<_HoverButton> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(
+            horizontal: FiftySpacing.sm,
+            vertical: FiftySpacing.xs,
+          ),
+          decoration: BoxDecoration(
+            color: _hovered
+                ? colorScheme.onSurface.withValues(alpha: 0.08)
+                : Colors.transparent,
+            borderRadius: FiftyRadii.smRadius,
+            border: Border.all(
+              color: _hovered
+                  ? colorScheme.outline
+                  : Colors.transparent,
+              width: 1,
+            ),
+          ),
+          child: widget.child,
+        ),
       ),
     );
   }

@@ -1,11 +1,12 @@
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../data/models/budget_model.dart';
 import '../../../../shared/utils/format_utils.dart';
 import '../../../../shared/widgets/arena_card.dart';
+import '../../../../shared/widgets/segmented_bar.dart';
 import '../../controllers/home_view_model.dart';
 
 /// Token Budget HP card.
@@ -18,6 +19,9 @@ class TokenBudgetCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final vm = Get.find<HomeViewModel>();
 
     return Obx(() {
@@ -26,10 +30,9 @@ class TokenBudgetCard extends StatelessWidget {
         return ArenaCard(
           title: 'SESSION HP',
           child: Text(
-            '> AWAITING BUDGET DATA...',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.bodySmall,
-              color: FiftyColors.slateGrey,
+            'No budget data available',
+            style: textTheme.bodySmall!.copyWith(
+              color: colorScheme.onSurfaceVariant,
             ),
           ),
         );
@@ -37,14 +40,13 @@ class TokenBudgetCard extends StatelessWidget {
 
       final ratio = budget.ratio;
       final percentage = budget.percentage;
-      final barColor = _barColor(ratio);
+      final barColor = _barColor(context, ratio);
 
       return ArenaCard(
         title: ratio >= budget.criticalThreshold ? 'HP CRITICAL' : 'SESSION HP',
         trailing: Text(
           '${percentage.toStringAsFixed(1)}%',
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.titleSmall,
+          style: textTheme.titleSmall!.copyWith(
             fontWeight: FiftyTypography.extraBold,
             color: barColor,
           ),
@@ -53,7 +55,7 @@ class TokenBudgetCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Segmented HP bar
-            _SegmentedBar(
+            SegmentedBar(
               percentage: percentage,
               color: barColor,
             ),
@@ -63,10 +65,9 @@ class TokenBudgetCard extends StatelessWidget {
             Text(
               '${FormatUtils.formatNumber(budget.consumed)} / '
               '${FormatUtils.formatNumber(budget.ceiling)} tokens',
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.bodySmall,
+              style: textTheme.bodySmall!.copyWith(
                 fontWeight: FiftyTypography.medium,
-                color: FiftyColors.cream.withValues(alpha: 0.7),
+                color: colorScheme.onSurface.withValues(alpha: 0.7),
               ),
             ),
             const SizedBox(height: FiftySpacing.md),
@@ -79,47 +80,13 @@ class TokenBudgetCard extends StatelessWidget {
     });
   }
 
-  Color _barColor(double ratio) {
-    if (ratio >= 0.95) return FiftyColors.burgundy;
-    if (ratio >= 0.80) return FiftyColors.warning;
-    return FiftyColors.hunterGreen;
-  }
-}
-
-/// A segmented progress bar (20 segments) mimicking the vanilla JS HP bar.
-class _SegmentedBar extends StatelessWidget {
-  final double percentage;
-  final Color color;
-
-  const _SegmentedBar({
-    required this.percentage,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    const segmentCount = 20;
-    final filledCount = (percentage / 100 * segmentCount).round();
-
-    return Row(
-      children: List.generate(segmentCount, (i) {
-        final filled = i < filledCount;
-        return Expanded(
-          child: Container(
-            height: 8,
-            margin: EdgeInsets.only(
-              right: i < segmentCount - 1 ? 2 : 0,
-            ),
-            decoration: BoxDecoration(
-              color: filled
-                  ? color
-                  : FiftyColors.cream.withValues(alpha: 0.05),
-              borderRadius: FiftyRadii.smRadius,
-            ),
-          ),
-        );
-      }),
-    );
+  Color _barColor(BuildContext context, double ratio) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    if (ratio >= 0.95) return colorScheme.primary;
+    if (ratio >= 0.80) return ext.warning;
+    return ext.success;
   }
 }
 
@@ -131,6 +98,10 @@ class _TokenBreakdownBars extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
     final input = vm.totalInputTokens.value;
     final output = vm.totalOutputTokens.value;
     final cacheRead = vm.totalCacheReadTokens.value;
@@ -148,19 +119,16 @@ class _TokenBreakdownBars extends StatelessWidget {
           children: [
             Text(
               'DIRECT TOKENS',
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelSmall,
-                fontWeight: FiftyTypography.semiBold,
-                color: FiftyColors.slateGrey,
+              style: textTheme.labelSmall!.copyWith(
+                color: colorScheme.onSurfaceVariant,
                 letterSpacing: FiftyTypography.letterSpacingLabelMedium,
               ),
             ),
             Text(
               FormatUtils.formatTokens(directTotal),
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelSmall,
+              style: textTheme.labelSmall!.copyWith(
                 fontWeight: FiftyTypography.bold,
-                color: FiftyColors.cream.withValues(alpha: 0.7),
+                color: colorScheme.onSurface.withValues(alpha: 0.7),
               ),
             ),
           ],
@@ -170,14 +138,14 @@ class _TokenBreakdownBars extends StatelessWidget {
           label: 'Input',
           count: input,
           total: directTotal,
-          color: FiftyColors.powderBlush,
+          color: ext.accent,
         ),
         const SizedBox(height: FiftySpacing.xs),
         _TokenBar(
           label: 'Output',
           count: output,
           total: directTotal,
-          color: FiftyColors.burgundy,
+          color: colorScheme.primary,
         ),
         const SizedBox(height: FiftySpacing.sm),
 
@@ -188,19 +156,16 @@ class _TokenBreakdownBars extends StatelessWidget {
             children: [
               Text(
                 'CACHED TOKENS',
-                style: GoogleFonts.manrope(
-                  fontSize: FiftyTypography.labelSmall,
-                  fontWeight: FiftyTypography.semiBold,
-                  color: FiftyColors.slateGrey,
+                style: textTheme.labelSmall!.copyWith(
+                  color: colorScheme.onSurfaceVariant,
                   letterSpacing: FiftyTypography.letterSpacingLabelMedium,
                 ),
               ),
               Text(
                 FormatUtils.formatTokens(cacheTotal),
-                style: GoogleFonts.manrope(
-                  fontSize: FiftyTypography.labelSmall,
+                style: textTheme.labelSmall!.copyWith(
                   fontWeight: FiftyTypography.bold,
-                  color: FiftyColors.cream.withValues(alpha: 0.7),
+                  color: colorScheme.onSurface.withValues(alpha: 0.7),
                 ),
               ),
             ],
@@ -210,14 +175,14 @@ class _TokenBreakdownBars extends StatelessWidget {
             label: 'Cache Rd',
             count: cacheRead,
             total: cacheTotal,
-            color: FiftyColors.hunterGreen,
+            color: ext.success,
           ),
           const SizedBox(height: FiftySpacing.xs),
           _TokenBar(
             label: 'Cache Wr',
             count: cacheCreate,
             total: cacheTotal,
-            color: FiftyColors.slateGrey,
+            color: colorScheme.onSurfaceVariant,
           ),
         ],
       ],
@@ -241,6 +206,9 @@ class _TokenBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final pct = FormatUtils.percentage(count, total);
 
     return Row(
@@ -249,10 +217,9 @@ class _TokenBar extends StatelessWidget {
           width: 64,
           child: Text(
             label,
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelSmall,
+            style: textTheme.labelSmall!.copyWith(
               fontWeight: FiftyTypography.medium,
-              color: FiftyColors.cream.withValues(alpha: 0.5),
+              color: colorScheme.onSurface.withValues(alpha: 0.5),
             ),
           ),
         ),
@@ -260,7 +227,7 @@ class _TokenBar extends StatelessWidget {
           child: Container(
             height: 6,
             decoration: BoxDecoration(
-              color: FiftyColors.cream.withValues(alpha: 0.05),
+              color: colorScheme.onSurface.withValues(alpha: 0.05),
               borderRadius: FiftyRadii.smRadius,
             ),
             child: FractionallySizedBox(
@@ -281,10 +248,9 @@ class _TokenBar extends StatelessWidget {
           child: Text(
             FormatUtils.formatTokens(count),
             textAlign: TextAlign.right,
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelSmall,
+            style: textTheme.labelSmall!.copyWith(
               fontWeight: FiftyTypography.medium,
-              color: FiftyColors.cream.withValues(alpha: 0.5),
+              color: colorScheme.onSurface.withValues(alpha: 0.5),
             ),
           ),
         ),
@@ -293,10 +259,9 @@ class _TokenBar extends StatelessWidget {
           child: Text(
             '${pct.round()}%',
             textAlign: TextAlign.right,
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelSmall,
+            style: textTheme.labelSmall!.copyWith(
               fontWeight: FiftyTypography.medium,
-              color: FiftyColors.cream.withValues(alpha: 0.3),
+              color: colorScheme.onSurface.withValues(alpha: 0.3),
             ),
           ),
         ),

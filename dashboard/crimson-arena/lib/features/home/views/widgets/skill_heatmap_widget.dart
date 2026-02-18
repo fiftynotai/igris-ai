@@ -1,7 +1,6 @@
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../shared/utils/format_utils.dart';
 import '../../../../shared/widgets/arena_card.dart';
@@ -20,6 +19,9 @@ class SkillHeatmapWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final vm = Get.find<HomeViewModel>();
 
     return Obx(() {
@@ -31,17 +33,15 @@ class SkillHeatmapWidget extends StatelessWidget {
           title: 'SKILL HEATMAP',
           trailing: Text(
             '0 total',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelSmall,
+            style: textTheme.labelSmall!.copyWith(
               fontWeight: FiftyTypography.medium,
-              color: FiftyColors.slateGrey,
+              color: colorScheme.onSurfaceVariant,
             ),
           ),
           child: Text(
-            '> No skill data yet',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.bodySmall,
-              color: FiftyColors.slateGrey,
+            'No skill data available',
+            style: textTheme.bodySmall!.copyWith(
+              color: colorScheme.onSurfaceVariant,
             ),
           ),
         );
@@ -57,10 +57,9 @@ class SkillHeatmapWidget extends StatelessWidget {
         title: 'SKILL HEATMAP',
         trailing: Text(
           '${FormatUtils.formatNumber(total)} total',
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
+          style: textTheme.labelSmall!.copyWith(
             fontWeight: FiftyTypography.medium,
-            color: FiftyColors.slateGrey,
+            color: colorScheme.onSurfaceVariant,
           ),
         ),
         child: Column(
@@ -92,6 +91,9 @@ class _SkillBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final widthFraction = maxCount > 0
         ? (count / maxCount).clamp(0.02, 1.0)
         : 0.0;
@@ -103,15 +105,17 @@ class _SkillBar extends StatelessWidget {
           // Skill name
           SizedBox(
             width: 100,
-            child: Text(
-              '/$name',
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelSmall,
-                fontWeight: FiftyTypography.medium,
-                color: FiftyColors.cream.withValues(alpha: 0.6),
+            child: Tooltip(
+              message: '/$name',
+              child: Text(
+                '/$name',
+                style: textTheme.labelSmall!.copyWith(
+                  fontWeight: FiftyTypography.medium,
+                  color: colorScheme.onSurface.withValues(alpha: 0.6),
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
             ),
           ),
           const SizedBox(width: FiftySpacing.sm),
@@ -121,7 +125,7 @@ class _SkillBar extends StatelessWidget {
             child: Container(
               height: 10,
               decoration: BoxDecoration(
-                color: FiftyColors.cream.withValues(alpha: 0.05),
+                color: colorScheme.onSurface.withValues(alpha: 0.05),
                 borderRadius: FiftyRadii.smRadius,
               ),
               child: FractionallySizedBox(
@@ -129,7 +133,7 @@ class _SkillBar extends StatelessWidget {
                 widthFactor: widthFraction.toDouble(),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: FiftyColors.burgundy,
+                    color: colorScheme.primary,
                     borderRadius: FiftyRadii.smRadius,
                   ),
                 ),
@@ -144,10 +148,9 @@ class _SkillBar extends StatelessWidget {
             child: Text(
               count.toString(),
               textAlign: TextAlign.right,
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelSmall,
+              style: textTheme.labelSmall!.copyWith(
                 fontWeight: FiftyTypography.bold,
-                color: FiftyColors.cream.withValues(alpha: 0.7),
+                color: colorScheme.onSurface.withValues(alpha: 0.7),
               ),
             ),
           ),

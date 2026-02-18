@@ -2,7 +2,6 @@ import 'package:fifty_skill_tree/fifty_skill_tree.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/agent_constants.dart';
 import '../../../../core/constants/agent_skill_trees.dart';
@@ -24,12 +23,16 @@ class AgentDetailPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final vm = Get.find<AgentsViewModel>();
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
 
     return Obx(() {
       final agentName = vm.selectedAgent.value;
       if (agentName == null) return const SizedBox.shrink();
 
       final agent = vm.agents[agentName];
+      // Agent-specific color -- game identity, not migrated.
       final color = Color(
         AgentConstants.agentColors[agentName] ?? 0xFF888888,
       );
@@ -41,7 +44,7 @@ class AgentDetailPanel extends StatelessWidget {
 
       return Container(
         decoration: BoxDecoration(
-          color: FiftyColors.surfaceDark,
+          color: colorScheme.surfaceContainerHighest,
           borderRadius: FiftyRadii.lgRadius,
           border: Border.all(
             color: color.withValues(alpha: 0.2),
@@ -70,8 +73,7 @@ class AgentDetailPanel extends StatelessWidget {
                     child: Center(
                       child: Text(
                         AgentConstants.agentMonograms[agentName] ?? 'AG',
-                        style: GoogleFonts.manrope(
-                          fontSize: FiftyTypography.labelMedium,
+                        style: textTheme.labelMedium!.copyWith(
                           fontWeight: FiftyTypography.extraBold,
                           color: color,
                         ),
@@ -85,20 +87,17 @@ class AgentDetailPanel extends StatelessWidget {
                       children: [
                         Text(
                           '$displayName SKILL TREE',
-                          style: GoogleFonts.manrope(
-                            fontSize: FiftyTypography.labelMedium,
-                            fontWeight: FiftyTypography.bold,
-                            color: FiftyColors.cream,
+                          style: textTheme.labelMedium!.copyWith(
+                            color: colorScheme.onSurface,
                             letterSpacing:
                                 FiftyTypography.letterSpacingLabelMedium,
                           ),
                         ),
                         Text(
                           'Tier $maxTier unlocked  |  $invocations invocations',
-                          style: GoogleFonts.manrope(
-                            fontSize: FiftyTypography.labelSmall,
+                          style: textTheme.labelSmall!.copyWith(
                             fontWeight: FiftyTypography.medium,
-                            color: FiftyColors.slateGrey,
+                            color: colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ],
@@ -117,7 +116,7 @@ class AgentDetailPanel extends StatelessWidget {
             // Divider
             Container(
               height: 1,
-              color: FiftyColors.borderDark,
+              color: colorScheme.outline,
             ),
 
             // Skill tree
@@ -151,6 +150,9 @@ class _NextTierBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final nextTier = currentTier + 1;
     final nextThreshold = AgentSkillTrees.tierThresholds[nextTier] ?? 999;
     final currentThreshold =
@@ -176,9 +178,7 @@ class _NextTierBadge extends StatelessWidget {
         children: [
           Text(
             'NEXT T$nextTier',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelSmall,
-              fontWeight: FiftyTypography.semiBold,
+            style: textTheme.labelSmall!.copyWith(
               color: color.withValues(alpha: 0.6),
               letterSpacing: FiftyTypography.letterSpacingLabel,
             ),
@@ -191,7 +191,7 @@ class _NextTierBadge extends StatelessWidget {
               borderRadius: FiftyRadii.smRadius,
               child: LinearProgressIndicator(
                 value: progress.clamp(0, 1).toDouble(),
-                backgroundColor: FiftyColors.cream.withValues(alpha: 0.05),
+                backgroundColor: colorScheme.onSurface.withValues(alpha: 0.05),
                 valueColor: AlwaysStoppedAnimation<Color>(color),
               ),
             ),
@@ -199,10 +199,10 @@ class _NextTierBadge extends StatelessWidget {
           const SizedBox(height: 2),
           Text(
             '$invocations/$nextThreshold',
-            style: GoogleFonts.manrope(
-              fontSize: 8,
+            style: textTheme.labelSmall!.copyWith(
+              fontSize: 11,
               fontWeight: FiftyTypography.medium,
-              color: FiftyColors.cream.withValues(alpha: 0.4),
+              color: colorScheme.onSurface.withValues(alpha: 0.4),
             ),
           ),
         ],
@@ -250,6 +250,9 @@ class _SkillTreeContentState extends State<_SkillTreeContent> {
   }
 
   void _buildTree() {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final tree = SkillTree<void>(
       id: widget.agentName,
       name: '${widget.agentName} Skills',
@@ -283,7 +286,7 @@ class _SkillTreeContentState extends State<_SkillTreeContent> {
     // Give enough points to unlock available nodes
     tree.setPoints(100);
 
-    final theme = SkillTreeTheme.dark().copyWith(
+    final skillTheme = SkillTreeTheme.dark().copyWith(
       lockedNodeColor: const Color(0xFF1A1015),
       lockedNodeBorderColor: const Color(0xFF3A2A30),
       availableNodeColor: widget.agentColor.withValues(alpha: 0.15),
@@ -298,32 +301,29 @@ class _SkillTreeContentState extends State<_SkillTreeContent> {
       nodeRadius: 24.0,
       nodeBorderWidth: 2.0,
       connectionWidth: 1.5,
-      nodeNameStyle: GoogleFonts.manrope(
-        fontSize: 9,
+      nodeNameStyle: textTheme.labelSmall!.copyWith(
+        fontSize: 11,
         fontWeight: FiftyTypography.bold,
-        color: FiftyColors.cream,
+        color: colorScheme.onSurface,
       ),
-      nodeLevelStyle: GoogleFonts.manrope(
-        fontSize: 8,
-        fontWeight: FiftyTypography.semiBold,
-        color: FiftyColors.cream.withValues(alpha: 0.6),
+      nodeLevelStyle: textTheme.labelSmall!.copyWith(
+        fontSize: 11,
+        color: colorScheme.onSurface.withValues(alpha: 0.6),
       ),
-      tooltipTitleStyle: GoogleFonts.manrope(
-        fontSize: FiftyTypography.bodyMedium,
+      tooltipTitleStyle: textTheme.bodyMedium!.copyWith(
         fontWeight: FiftyTypography.bold,
-        color: FiftyColors.cream,
+        color: colorScheme.onSurface,
       ),
-      tooltipDescriptionStyle: GoogleFonts.manrope(
-        fontSize: FiftyTypography.bodySmall,
-        color: FiftyColors.slateGrey,
+      tooltipDescriptionStyle: textTheme.bodySmall!.copyWith(
+        color: colorScheme.onSurfaceVariant,
       ),
-      tooltipBackground: FiftyColors.surfaceDark,
-      tooltipBorder: FiftyColors.borderDark,
+      tooltipBackground: colorScheme.surfaceContainerHighest,
+      tooltipBorder: colorScheme.outline,
     );
 
     _controller = SkillTreeController<void>(
       tree: tree,
-      theme: theme,
+      theme: skillTheme,
     );
   }
 
@@ -392,10 +392,15 @@ class _TierLegend extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return SizedBox(
       height: 20,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
+        physics: const ClampingScrollPhysics(),
         itemCount: _tierNames.length,
         separatorBuilder: (_, __) => const SizedBox(width: FiftySpacing.xs),
         itemBuilder: (_, index) {
@@ -414,19 +419,19 @@ class _TierLegend extends StatelessWidget {
               border: Border.all(
                 color: isUnlocked
                     ? color.withValues(alpha: 0.3)
-                    : FiftyColors.borderDark,
+                    : colorScheme.outline,
                 width: 1,
               ),
             ),
             child: Text(
               'T$index ${_tierNames[index]} ${threshold > 0 ? "($threshold)" : ""}',
-              style: GoogleFonts.manrope(
-                fontSize: 8,
+              style: textTheme.labelSmall!.copyWith(
+                fontSize: 11,
                 fontWeight:
                     isUnlocked ? FiftyTypography.bold : FiftyTypography.medium,
                 color: isUnlocked
                     ? color
-                    : FiftyColors.cream.withValues(alpha: 0.3),
+                    : colorScheme.onSurface.withValues(alpha: 0.3),
               ),
             ),
           );

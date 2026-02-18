@@ -1,7 +1,8 @@
+import 'package:crimson_arena/core/theme/arena_text_styles.dart';
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:fifty_ui/fifty_ui.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/agent_constants.dart';
 import '../../../../data/models/agent_nexus_entry.dart';
@@ -36,13 +37,17 @@ class AgentNexusTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Container(
       padding: const EdgeInsets.all(FiftySpacing.md),
       decoration: BoxDecoration(
-        color: FiftyColors.darkBurgundy.withValues(alpha: 0.5),
+        color: colorScheme.surface.withValues(alpha: 0.5),
         borderRadius: FiftyRadii.smRadius,
         border: Border.all(
-          color: FiftyColors.borderDark,
+          color: colorScheme.outline,
           width: 1,
         ),
       ),
@@ -52,33 +57,33 @@ class AgentNexusTable extends StatelessWidget {
           // Section title
           Text(
             'AGENT NEXUS',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelMedium,
-              fontWeight: FiftyTypography.bold,
-              color: FiftyColors.slateGrey,
+            style: textTheme.labelMedium!.copyWith(
+              color: colorScheme.onSurfaceVariant,
               letterSpacing: FiftyTypography.letterSpacingLabelMedium,
             ),
           ),
           const SizedBox(height: FiftySpacing.sm),
 
           // Agent header row (monograms)
-          _buildHeaderRow(),
+          _buildHeaderRow(context),
           const SizedBox(height: FiftySpacing.xs),
 
           // Status row
-          _buildDataRow('STATUS', _getStatusValues()),
+          _buildDataRow(context, 'STATUS', _getStatusValues(context)),
 
           // Time row
-          _buildDataRow('TIME', _getTimeValues()),
+          _buildDataRow(context, 'TIME', _getTimeValues(context)),
 
           // Tokens row
-          _buildDataRow('TOKENS', _getTokenValues()),
+          _buildDataRow(context, 'TOKENS', _getTokenValues(context)),
         ],
       ),
     );
   }
 
-  Widget _buildHeaderRow() {
+  Widget _buildHeaderRow(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+
     return Row(
       children: [
         // Row label spacer
@@ -86,9 +91,7 @@ class AgentNexusTable extends StatelessWidget {
           width: 56,
           child: Text(
             '',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelSmall,
-            ),
+            style: textTheme.labelSmall,
           ),
         ),
         // Agent monogram headers
@@ -105,7 +108,12 @@ class AgentNexusTable extends StatelessWidget {
     );
   }
 
-  Widget _buildDataRow(String label, List<_CellData> values) {
+  Widget _buildDataRow(
+      BuildContext context, String label, List<_CellData> values) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -115,10 +123,8 @@ class AgentNexusTable extends StatelessWidget {
             width: 56,
             child: Text(
               label,
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelSmall,
-                fontWeight: FiftyTypography.semiBold,
-                color: FiftyColors.slateGrey,
+              style: textTheme.labelSmall!.copyWith(
+                color: colorScheme.onSurfaceVariant,
                 letterSpacing: FiftyTypography.letterSpacingLabel,
               ),
             ),
@@ -135,7 +141,8 @@ class AgentNexusTable extends StatelessWidget {
                         duration: const Duration(milliseconds: 500),
                         child: Text(
                           cell.text,
-                          style: GoogleFonts.sourceCodePro(
+                          style: ArenaTextStyles.mono(
+                            context,
                             fontSize: FiftyTypography.labelSmall,
                             fontWeight: FiftyTypography.medium,
                             color: cell.color,
@@ -144,7 +151,8 @@ class AgentNexusTable extends StatelessWidget {
                       )
                     : Text(
                         cell.text,
-                        style: GoogleFonts.sourceCodePro(
+                        style: ArenaTextStyles.mono(
+                          context,
                           fontSize: FiftyTypography.labelSmall,
                           fontWeight: FiftyTypography.medium,
                           color: cell.color,
@@ -164,50 +172,58 @@ class AgentNexusTable extends StatelessWidget {
     return null;
   }
 
-  List<_CellData> _getStatusValues() {
+  List<_CellData> _getStatusValues(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+
     return _agents.map((agent) {
       final entry = _entryFor(agent);
       final status = entry?.status ?? 'IDLE';
       return _CellData(
         text: status,
-        color: _statusColor(status),
+        color: _statusColor(status, colorScheme, ext),
         isFail: status.toUpperCase() == 'FAIL',
       );
     }).toList();
   }
 
-  List<_CellData> _getTimeValues() {
+  List<_CellData> _getTimeValues(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return _agents.map((agent) {
       final entry = _entryFor(agent);
-      if (entry == null) return _CellData(text: '--', color: FiftyColors.slateGrey);
+      if (entry == null) return _CellData(text: '--', color: colorScheme.onSurfaceVariant);
       return _CellData(
         text: entry.formattedDuration,
-        color: FiftyColors.cream.withValues(alpha: 0.7),
+        color: colorScheme.onSurface.withValues(alpha: 0.7),
       );
     }).toList();
   }
 
-  List<_CellData> _getTokenValues() {
+  List<_CellData> _getTokenValues(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return _agents.map((agent) {
       final entry = _entryFor(agent);
-      if (entry == null) return _CellData(text: '0', color: FiftyColors.slateGrey);
+      if (entry == null) return _CellData(text: '0', color: colorScheme.onSurfaceVariant);
       return _CellData(
         text: _formatTokens(entry.totalTokens),
-        color: FiftyColors.cream.withValues(alpha: 0.7),
+        color: colorScheme.onSurface.withValues(alpha: 0.7),
       );
     }).toList();
   }
 
-  Color _statusColor(String status) {
+  Color _statusColor(String status, ColorScheme colorScheme, FiftyThemeExtension ext) {
     switch (status.toUpperCase()) {
       case 'WORKING':
-        return FiftyColors.warning;
+        return ext.warning;
       case 'DONE':
-        return FiftyColors.hunterGreen;
+        return ext.success;
       case 'FAIL':
-        return FiftyColors.burgundy;
+        return colorScheme.primary;
       default:
-        return FiftyColors.slateGrey;
+        return colorScheme.onSurfaceVariant;
     }
   }
 
@@ -289,6 +305,7 @@ class _AgentMonogramCellState extends State<_AgentMonogramCell>
   Widget build(BuildContext context) {
     final monogram =
         AgentConstants.agentMonograms[widget.agent] ?? '--';
+    // Agent-specific color -- game identity, not migrated.
     final agentColor =
         Color(AgentConstants.agentColors[widget.agent] ?? 0xFF888888);
 
@@ -298,7 +315,8 @@ class _AgentMonogramCellState extends State<_AgentMonogramCell>
         builder: (context, child) {
           return Text(
             monogram,
-            style: GoogleFonts.sourceCodePro(
+            style: ArenaTextStyles.mono(
+              context,
               fontSize: FiftyTypography.labelMedium,
               fontWeight: FiftyTypography.bold,
               color: agentColor.withValues(alpha: _animation.value),
@@ -310,7 +328,8 @@ class _AgentMonogramCellState extends State<_AgentMonogramCell>
 
     return Text(
       monogram,
-      style: GoogleFonts.sourceCodePro(
+      style: ArenaTextStyles.mono(
+        context,
         fontSize: FiftyTypography.labelMedium,
         fontWeight: FiftyTypography.bold,
         color: agentColor.withValues(alpha: 0.7),

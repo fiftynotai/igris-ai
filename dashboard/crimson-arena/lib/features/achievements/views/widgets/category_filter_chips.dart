@@ -1,7 +1,6 @@
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../core/constants/achievement_catalog.dart';
 import '../../controllers/achievements_view_model.dart';
@@ -64,6 +63,10 @@ class _FilterChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return InkWell(
       onTap: onTap,
       borderRadius: FiftyRadii.smRadius,
@@ -75,13 +78,13 @@ class _FilterChip extends StatelessWidget {
         ),
         decoration: BoxDecoration(
           color: isActive
-              ? FiftyColors.burgundy.withValues(alpha: 0.15)
+              ? colorScheme.primary.withValues(alpha: 0.15)
               : Colors.transparent,
           borderRadius: FiftyRadii.smRadius,
           border: Border.all(
             color: isActive
-                ? FiftyColors.burgundy.withValues(alpha: 0.4)
-                : FiftyColors.borderDark,
+                ? colorScheme.primary.withValues(alpha: 0.4)
+                : colorScheme.outline,
             width: 1,
           ),
         ),
@@ -92,17 +95,16 @@ class _FilterChip extends StatelessWidget {
               Icon(
                 icon,
                 size: 14,
-                color: isActive ? FiftyColors.cream : FiftyColors.slateGrey,
+                color: isActive ? colorScheme.onSurface : colorScheme.onSurfaceVariant,
               ),
               const SizedBox(width: FiftySpacing.xs),
             ],
             Text(
               label,
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelSmall,
+              style: textTheme.labelSmall!.copyWith(
                 fontWeight:
                     isActive ? FiftyTypography.bold : FiftyTypography.medium,
-                color: isActive ? FiftyColors.cream : FiftyColors.slateGrey,
+                color: isActive ? colorScheme.onSurface : colorScheme.onSurfaceVariant,
                 letterSpacing: FiftyTypography.letterSpacingLabel,
               ),
             ),

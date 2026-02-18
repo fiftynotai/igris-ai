@@ -1,7 +1,7 @@
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../shared/widgets/arena_card.dart';
 import '../../controllers/home_view_model.dart';
@@ -16,6 +16,10 @@ class BriefVelocityWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
     final vm = Get.find<HomeViewModel>();
 
     return Obx(() {
@@ -27,10 +31,9 @@ class BriefVelocityWidget extends StatelessWidget {
         return ArenaCard(
           title: 'BRIEF VELOCITY',
           child: Text(
-            '> No briefs tracked',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.bodySmall,
-              color: FiftyColors.slateGrey,
+            'No briefs tracked',
+            style: textTheme.bodySmall!.copyWith(
+              color: colorScheme.onSurfaceVariant,
             ),
           ),
         );
@@ -45,10 +48,9 @@ class BriefVelocityWidget extends StatelessWidget {
         title: 'BRIEF VELOCITY',
         trailing: Text(
           '$done/$total done ($completionRate%)',
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
+          style: textTheme.labelSmall!.copyWith(
             fontWeight: FiftyTypography.medium,
-            color: FiftyColors.slateGrey,
+            color: colorScheme.onSurfaceVariant,
           ),
         ),
         child: Column(
@@ -68,7 +70,7 @@ class BriefVelocityWidget extends StatelessWidget {
                 return _StatusLegend(
                   status: status,
                   count: statusCounts[status]!,
-                  color: _statusColor(status),
+                  color: _statusColor(status, colorScheme, ext),
                 );
               }).toList(),
             ),
@@ -86,20 +88,24 @@ class BriefVelocityWidget extends StatelessWidget {
     'Blocked',
   ];
 
-  static Color _statusColor(String status) {
+  static Color _statusColor(
+    String status,
+    ColorScheme colorScheme,
+    FiftyThemeExtension ext,
+  ) {
     switch (status) {
       case 'Done':
-        return FiftyColors.hunterGreen;
+        return ext.success;
       case 'In Progress':
-        return FiftyColors.warning;
+        return ext.warning;
       case 'Ready':
-        return FiftyColors.slateGrey;
+        return colorScheme.onSurfaceVariant;
       case 'Draft':
-        return FiftyColors.cream.withValues(alpha: 0.3);
+        return colorScheme.onSurface.withValues(alpha: 0.3);
       case 'Blocked':
-        return FiftyColors.burgundy;
+        return colorScheme.primary;
       default:
-        return FiftyColors.slateGrey;
+        return colorScheme.onSurfaceVariant;
     }
   }
 }
@@ -115,6 +121,10 @@ class _StatusBar extends StatelessWidget {
   Widget build(BuildContext context) {
     if (total == 0) return const SizedBox.shrink();
 
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+
     final segments = <_BarSegment>[];
     for (final status in [
       'Done',
@@ -127,7 +137,7 @@ class _StatusBar extends StatelessWidget {
       if (count > 0) {
         segments.add(_BarSegment(
           fraction: count / total,
-          color: BriefVelocityWidget._statusColor(status),
+          color: BriefVelocityWidget._statusColor(status, colorScheme, ext),
         ));
       }
     }
@@ -175,6 +185,10 @@ class _StatusLegend extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -189,10 +203,9 @@ class _StatusLegend extends StatelessWidget {
         const SizedBox(width: FiftySpacing.xs),
         Text(
           '$status ($count)',
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
+          style: textTheme.labelSmall!.copyWith(
             fontWeight: FiftyTypography.medium,
-            color: FiftyColors.cream.withValues(alpha: 0.5),
+            color: colorScheme.onSurface.withValues(alpha: 0.5),
           ),
         ),
       ],

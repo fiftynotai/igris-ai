@@ -1,7 +1,8 @@
+import 'package:crimson_arena/core/theme/arena_text_styles.dart';
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../controllers/instances_view_model.dart';
 
@@ -15,6 +16,9 @@ class CompactVitalsStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
     final vm = Get.find<InstancesViewModel>();
 
     return Container(
@@ -23,10 +27,10 @@ class CompactVitalsStrip extends StatelessWidget {
         vertical: FiftySpacing.sm,
       ),
       decoration: BoxDecoration(
-        color: FiftyColors.surfaceDark,
+        color: colorScheme.surfaceContainerHighest,
         border: Border(
           bottom: BorderSide(
-            color: FiftyColors.borderDark,
+            color: colorScheme.outline,
             width: 1,
           ),
         ),
@@ -39,36 +43,44 @@ class CompactVitalsStrip extends StatelessWidget {
         return Row(
           children: [
             _buildVital(
+              context,
               label: 'INSTANCES',
               value: '$count',
-              color: FiftyColors.burgundy,
+              color: colorScheme.primary,
             ),
             const SizedBox(width: FiftySpacing.lg),
             _buildVital(
+              context,
               label: 'ACTIVE',
               value: '$active',
-              color: FiftyColors.hunterGreen,
+              color: ext.success,
             ),
             const SizedBox(width: FiftySpacing.lg),
             _buildVital(
+              context,
               label: 'IDLE',
               value: '$idle',
-              color: FiftyColors.slateGrey,
+              color: colorScheme.onSurfaceVariant,
             ),
             const Spacer(),
             // Connection quality indicator
-            _buildSyncIndicator(),
+            _buildSyncIndicator(context),
           ],
         );
       }),
     );
   }
 
-  Widget _buildVital({
+  Widget _buildVital(
+    BuildContext context, {
     required String label,
     required String value,
     required Color color,
   }) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -83,17 +95,16 @@ class CompactVitalsStrip extends StatelessWidget {
         const SizedBox(width: FiftySpacing.xs),
         Text(
           label,
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
-            fontWeight: FiftyTypography.semiBold,
-            color: FiftyColors.slateGrey,
+          style: textTheme.labelSmall!.copyWith(
+            color: colorScheme.onSurfaceVariant,
             letterSpacing: FiftyTypography.letterSpacingLabelMedium,
           ),
         ),
         const SizedBox(width: FiftySpacing.xs),
         Text(
           value,
-          style: GoogleFonts.sourceCodePro(
+          style: ArenaTextStyles.mono(
+            context,
             fontSize: FiftyTypography.labelMedium,
             fontWeight: FiftyTypography.bold,
             color: color,
@@ -103,7 +114,12 @@ class CompactVitalsStrip extends StatelessWidget {
     );
   }
 
-  Widget _buildSyncIndicator() {
+  Widget _buildSyncIndicator(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
+
     return Obx(() {
       final wsService = Get.find<InstancesViewModel>();
       final hasData = wsService.instances.isNotEmpty;
@@ -116,17 +132,15 @@ class CompactVitalsStrip extends StatelessWidget {
             height: 6,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: hasData ? FiftyColors.hunterGreen : FiftyColors.slateGrey,
+              color: hasData ? ext.success : colorScheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(width: FiftySpacing.xs),
           Text(
             hasData ? 'SYNCED' : 'NO DATA',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelSmall,
-              fontWeight: FiftyTypography.semiBold,
+            style: textTheme.labelSmall!.copyWith(
               color:
-                  hasData ? FiftyColors.hunterGreen : FiftyColors.slateGrey,
+                  hasData ? ext.success : colorScheme.onSurfaceVariant,
               letterSpacing: FiftyTypography.letterSpacingLabelMedium,
             ),
           ),

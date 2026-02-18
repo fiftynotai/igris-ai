@@ -1,7 +1,7 @@
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../shared/utils/format_utils.dart';
 import '../../../../shared/widgets/arena_card.dart';
@@ -16,6 +16,10 @@ class CostEstimateCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
     final vm = Get.find<HomeViewModel>();
 
     return Obx(() {
@@ -27,10 +31,9 @@ class CostEstimateCard extends StatelessWidget {
         return ArenaCard(
           title: 'COST ESTIMATE',
           child: Text(
-            '> No pricing data available',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.bodySmall,
-              color: FiftyColors.slateGrey,
+            'No pricing data available',
+            style: textTheme.bodySmall!.copyWith(
+              color: colorScheme.onSurfaceVariant,
             ),
           ),
         );
@@ -43,10 +46,9 @@ class CostEstimateCard extends StatelessWidget {
         title: 'COST ESTIMATE',
         trailing: Text(
           '$rangeLabel ($modelName)',
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
+          style: textTheme.labelSmall!.copyWith(
             fontWeight: FiftyTypography.medium,
-            color: FiftyColors.slateGrey,
+            color: colorScheme.onSurfaceVariant,
           ),
         ),
         child: Column(
@@ -58,7 +60,7 @@ class CostEstimateCard extends StatelessWidget {
               tokens: vm.totalInputTokens.value,
               rate: rates?.inputCostPerToken ?? 0,
               amount: cost.inputCost,
-              color: FiftyColors.powderBlush,
+              color: ext.accent,
             ),
             // Output
             _CostRow(
@@ -66,7 +68,7 @@ class CostEstimateCard extends StatelessWidget {
               tokens: vm.totalOutputTokens.value,
               rate: rates?.outputCostPerToken ?? 0,
               amount: cost.outputCost,
-              color: FiftyColors.burgundy,
+              color: colorScheme.primary,
             ),
 
             // Separator
@@ -76,7 +78,7 @@ class CostEstimateCard extends StatelessWidget {
               ),
               child: Divider(
                 height: 1,
-                color: FiftyColors.borderDark,
+                color: colorScheme.outline,
               ),
             ),
 
@@ -86,7 +88,7 @@ class CostEstimateCard extends StatelessWidget {
               tokens: vm.totalCacheReadTokens.value,
               rate: rates?.cacheReadInputTokenCost ?? 0,
               amount: cost.cacheReadCost,
-              color: FiftyColors.hunterGreen,
+              color: ext.success,
             ),
             // Cache Write
             _CostRow(
@@ -94,7 +96,7 @@ class CostEstimateCard extends StatelessWidget {
               tokens: vm.totalCacheCreateTokens.value,
               rate: rates?.cacheCreationInputTokenCost ?? 0,
               amount: cost.cacheCreateCost,
-              color: FiftyColors.slateGrey,
+              color: colorScheme.onSurfaceVariant,
             ),
 
             // Total
@@ -104,18 +106,15 @@ class CostEstimateCard extends StatelessWidget {
               children: [
                 Text(
                   'Estimated Total',
-                  style: GoogleFonts.manrope(
-                    fontSize: FiftyTypography.bodyMedium,
-                    fontWeight: FiftyTypography.bold,
-                    color: FiftyColors.cream,
+                  style: textTheme.labelLarge!.copyWith(
+                    color: colorScheme.onSurface,
                   ),
                 ),
                 Text(
                   FormatUtils.formatCost(cost.total),
-                  style: GoogleFonts.manrope(
-                    fontSize: FiftyTypography.titleMedium,
+                  style: textTheme.titleMedium!.copyWith(
                     fontWeight: FiftyTypography.extraBold,
-                    color: FiftyColors.cream,
+                    color: colorScheme.onSurface,
                   ),
                 ),
               ],
@@ -145,6 +144,10 @@ class _CostRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Padding(
       padding: const EdgeInsets.only(bottom: FiftySpacing.xs),
       child: Row(
@@ -163,10 +166,9 @@ class _CostRow extends StatelessWidget {
             width: 64,
             child: Text(
               label,
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelSmall,
+              style: textTheme.labelSmall!.copyWith(
                 fontWeight: FiftyTypography.medium,
-                color: FiftyColors.cream.withValues(alpha: 0.6),
+                color: colorScheme.onSurface.withValues(alpha: 0.6),
               ),
             ),
           ),
@@ -175,10 +177,9 @@ class _CostRow extends StatelessWidget {
           Expanded(
             child: Text(
               '${FormatUtils.formatTokens(tokens)} x ${FormatUtils.formatRate(rate)}',
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelSmall,
+              style: textTheme.labelSmall!.copyWith(
                 fontWeight: FiftyTypography.medium,
-                color: FiftyColors.cream.withValues(alpha: 0.3),
+                color: colorScheme.onSurface.withValues(alpha: 0.3),
               ),
             ),
           ),
@@ -186,8 +187,7 @@ class _CostRow extends StatelessWidget {
           // Amount
           Text(
             FormatUtils.formatCost(amount),
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelSmall,
+            style: textTheme.labelSmall!.copyWith(
               fontWeight: FiftyTypography.bold,
               color: color,
             ),

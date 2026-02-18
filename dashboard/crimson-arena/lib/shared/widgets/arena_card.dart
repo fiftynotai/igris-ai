@@ -1,6 +1,5 @@
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 /// A styled card container for Crimson Arena dashboard panels.
 ///
@@ -29,12 +28,16 @@ class ArenaCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Container(
       decoration: BoxDecoration(
-        color: FiftyColors.surfaceDark,
+        color: colorScheme.surfaceContainerHighest,
         borderRadius: FiftyRadii.lgRadius,
         border: Border.all(
-          color: FiftyColors.borderDark,
+          color: colorScheme.outline,
           width: 1,
         ),
       ),
@@ -51,10 +54,8 @@ class ArenaCard extends StatelessWidget {
                 children: [
                   Text(
                     title!,
-                    style: GoogleFonts.manrope(
-                      fontSize: FiftyTypography.labelMedium,
-                      fontWeight: FiftyTypography.bold,
-                      color: FiftyColors.slateGrey,
+                    style: textTheme.labelMedium!.copyWith(
+                      color: colorScheme.onSurfaceVariant,
                       letterSpacing: FiftyTypography.letterSpacingLabelMedium,
                     ),
                   ),

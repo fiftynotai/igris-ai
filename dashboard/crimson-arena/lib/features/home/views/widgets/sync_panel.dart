@@ -1,7 +1,7 @@
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../data/models/sync_status_model.dart';
 import '../../../../shared/utils/format_utils.dart';
@@ -17,6 +17,10 @@ class SyncPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
+    final textTheme = theme.textTheme;
     final vm = Get.find<HomeViewModel>();
 
     return Obx(() {
@@ -26,10 +30,9 @@ class SyncPanel extends StatelessWidget {
         return ArenaCard(
           title: 'SYNC PIPELINE',
           child: Text(
-            '> No sync data',
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.bodySmall,
-              color: FiftyColors.slateGrey,
+            'No sync data available',
+            style: textTheme.bodySmall!.copyWith(
+              color: colorScheme.onSurfaceVariant,
             ),
           ),
         );
@@ -37,11 +40,11 @@ class SyncPanel extends StatelessWidget {
 
       final isOnline = sync.isOnline;
       final statusColor =
-          isOnline ? FiftyColors.hunterGreen : FiftyColors.slateGrey;
+          isOnline ? ext.success : colorScheme.onSurfaceVariant;
       final queueDepth = sync.queueDepth;
       final queueColor = queueDepth == 0
-          ? FiftyColors.hunterGreen
-          : (queueDepth > 10 ? FiftyColors.burgundy : FiftyColors.warning);
+          ? ext.success
+          : (queueDepth > 10 ? colorScheme.primary : ext.warning);
 
       return ArenaCard(
         title: 'SYNC PIPELINE',
@@ -59,7 +62,7 @@ class SyncPanel extends StatelessWidget {
             _SyncStat(
               label: 'LAST PUSH',
               value: FormatUtils.timeAgo(sync.lastPush),
-              color: FiftyColors.cream.withValues(alpha: 0.7),
+              color: colorScheme.onSurface.withValues(alpha: 0.7),
             ),
             const SizedBox(width: FiftySpacing.xl),
 
@@ -67,7 +70,7 @@ class SyncPanel extends StatelessWidget {
             _SyncStat(
               label: 'LAST PULL',
               value: FormatUtils.timeAgo(sync.lastPull),
-              color: FiftyColors.cream.withValues(alpha: 0.7),
+              color: colorScheme.onSurface.withValues(alpha: 0.7),
             ),
             const SizedBox(width: FiftySpacing.xl),
 
@@ -98,25 +101,25 @@ class _SyncStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           label,
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.labelSmall,
-            fontWeight: FiftyTypography.semiBold,
-            color: FiftyColors.slateGrey,
+          style: textTheme.labelSmall!.copyWith(
+            color: colorScheme.onSurfaceVariant,
             letterSpacing: FiftyTypography.letterSpacingLabelMedium,
           ),
         ),
         const SizedBox(height: 2),
         Text(
           value,
-          style: GoogleFonts.manrope(
-            fontSize: FiftyTypography.bodyMedium,
-            fontWeight: FiftyTypography.bold,
+          style: textTheme.labelLarge!.copyWith(
             color: color,
           ),
         ),

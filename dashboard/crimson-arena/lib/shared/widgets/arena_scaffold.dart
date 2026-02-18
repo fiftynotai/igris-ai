@@ -1,12 +1,14 @@
+import 'package:fifty_theme/fifty_theme.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:fifty_ui/fifty_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
-import 'package:google_fonts/google_fonts.dart';
 
+import '../../core/constants/arena_breakpoints.dart';
 import '../../core/routing/app_routes.dart';
 import '../../services/brain_websocket_service.dart';
+import 'status_badge.dart';
 
 /// Shared scaffold for all Crimson Arena pages.
 ///
@@ -45,10 +47,13 @@ class ArenaScaffold extends StatelessWidget {
   ];
 
   /// Width threshold below which the nav collapses to compact mode.
-  static const double _narrowBreakpoint = 600;
+  static const double _narrowBreakpoint = ArenaBreakpoints.narrow;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.digit1, control: true):
@@ -63,7 +68,7 @@ class ArenaScaffold extends StatelessWidget {
       child: Focus(
         autofocus: true,
         child: Scaffold(
-          backgroundColor: FiftyColors.darkBurgundy,
+          backgroundColor: colorScheme.surface,
           body: Column(
             children: [
               _buildNavBar(context),
@@ -71,9 +76,9 @@ class ArenaScaffold extends StatelessWidget {
                 child: Stack(
                   children: [
                     // Subtle halftone dot texture for depth.
-                    const Positioned.fill(
+                    Positioned.fill(
                       child: HalftoneOverlay(
-                        color: FiftyColors.cream,
+                        color: colorScheme.onSurface,
                         dotRadius: 0.8,
                         spacing: 10.0,
                         opacity: 0.03,
@@ -92,6 +97,10 @@ class ArenaScaffold extends StatelessWidget {
   }
 
   Widget _buildNavBar(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
+
     return LayoutBuilder(
       builder: (context, constraints) {
         final isNarrow = constraints.maxWidth < _narrowBreakpoint;
@@ -101,10 +110,10 @@ class ArenaScaffold extends StatelessWidget {
         return Container(
           height: 56,
           decoration: BoxDecoration(
-            color: FiftyColors.surfaceDark,
+            color: colorScheme.surfaceContainerHighest,
             border: Border(
               bottom: BorderSide(
-                color: FiftyColors.borderDark,
+                color: colorScheme.outline,
                 width: 1,
               ),
             ),
@@ -115,10 +124,9 @@ class ArenaScaffold extends StatelessWidget {
               // Brand mark -- abbreviated on narrow screens.
               Text(
                 isNarrow ? 'CA' : 'CRIMSON ARENA',
-                style: GoogleFonts.manrope(
-                  fontSize: FiftyTypography.titleSmall,
+                style: textTheme.titleSmall!.copyWith(
                   fontWeight: FiftyTypography.extraBold,
-                  color: FiftyColors.burgundy,
+                  color: colorScheme.primary,
                   letterSpacing: FiftyTypography.letterSpacingLabelMedium,
                 ),
               ),
@@ -126,6 +134,7 @@ class ArenaScaffold extends StatelessWidget {
 
               // Navigation tabs -- short labels on narrow screens.
               ..._tabs.asMap().entries.map((entry) => _buildTab(
+                    context,
                     entry.value,
                     isActive: entry.key == activeTabIndex,
                     onTap: () => _navigateTo(entry.key),
@@ -135,7 +144,7 @@ class ArenaScaffold extends StatelessWidget {
               const Spacer(),
 
               // Connection status badge
-              _buildConnectionBadge(),
+              _buildConnectionBadge(context),
             ],
           ),
         );
@@ -144,11 +153,15 @@ class ArenaScaffold extends StatelessWidget {
   }
 
   Widget _buildTab(
+    BuildContext context,
     _TabDef tab, {
     required bool isActive,
     VoidCallback? onTap,
     bool compact = false,
   }) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final textTheme = theme.textTheme;
     final label = compact ? tab.shortLabel : tab.label;
     final hPad = compact ? FiftySpacing.sm : FiftySpacing.md;
 
@@ -164,24 +177,23 @@ class ArenaScaffold extends StatelessWidget {
           ),
           decoration: BoxDecoration(
             color: isActive
-                ? FiftyColors.burgundy.withValues(alpha: 0.15)
+                ? colorScheme.primary.withValues(alpha: 0.15)
                 : Colors.transparent,
             borderRadius: FiftyRadii.smRadius,
             border: isActive
                 ? Border.all(
-                    color: FiftyColors.burgundy.withValues(alpha: 0.3),
+                    color: colorScheme.primary.withValues(alpha: 0.3),
                     width: 1,
                   )
                 : null,
           ),
           child: Text(
             label,
-            style: GoogleFonts.manrope(
-              fontSize: FiftyTypography.labelMedium,
+            style: textTheme.labelMedium!.copyWith(
               fontWeight: isActive
                   ? FiftyTypography.bold
                   : FiftyTypography.medium,
-              color: isActive ? FiftyColors.cream : FiftyColors.slateGrey,
+              color: isActive ? colorScheme.onSurface : colorScheme.onSurfaceVariant,
               letterSpacing: FiftyTypography.letterSpacingLabelMedium,
             ),
           ),
@@ -190,53 +202,19 @@ class ArenaScaffold extends StatelessWidget {
     );
   }
 
-  Widget _buildConnectionBadge() {
+  Widget _buildConnectionBadge(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final ext = theme.extension<FiftyThemeExtension>()!;
     final wsService = Get.find<BrainWebSocketService>();
 
     return Obx(() {
       final connected = wsService.isConnected.value;
-      final badge = Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: FiftySpacing.sm,
-          vertical: FiftySpacing.xs,
-        ),
-        decoration: BoxDecoration(
-          color: connected
-              ? FiftyColors.hunterGreen.withValues(alpha: 0.15)
-              : FiftyColors.burgundy.withValues(alpha: 0.15),
-          borderRadius: FiftyRadii.smRadius,
-          border: Border.all(
-            color: connected
-                ? FiftyColors.hunterGreen.withValues(alpha: 0.3)
-                : FiftyColors.burgundy.withValues(alpha: 0.3),
-            width: 1,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 6,
-              height: 6,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: connected ? FiftyColors.hunterGreen : FiftyColors.burgundy,
-              ),
-            ),
-            const SizedBox(width: FiftySpacing.xs),
-            Text(
-              connected ? 'LIVE' : 'OFFLINE',
-              style: GoogleFonts.manrope(
-                fontSize: FiftyTypography.labelSmall,
-                fontWeight: FiftyTypography.semiBold,
-                color: connected
-                    ? FiftyColors.hunterGreen
-                    : FiftyColors.burgundy,
-                letterSpacing: FiftyTypography.letterSpacingLabel,
-              ),
-            ),
-          ],
-        ),
+      final statusColor = connected ? ext.success : colorScheme.primary;
+      final badge = StatusBadge(
+        label: connected ? 'LIVE' : 'OFFLINE',
+        color: statusColor,
+        showDot: true,
       );
 
       // Apply glitch effect when disconnected.
