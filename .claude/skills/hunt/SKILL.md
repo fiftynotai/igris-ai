@@ -116,7 +116,14 @@ Proceed to PLANNING phase.
 
 1. Update brief: Phase = PLANNING, Active Agent = architect
 2. Add Agent Log entry: "Starting architect..."
-3. **Delegate to architect agent** using Task tool:
+3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in CURRENT_SESSION.md, call `igris_agent_event` with:
+   - instance_id: {Instance ID from CURRENT_SESSION.md}
+   - agent: "architect"
+   - event_type: "start"
+   - brief_id: {current brief ID}
+   - phase: "PLANNING"
+   Skip silently if MCP unavailable. Never block the hunt workflow.
+4. **Delegate to architect agent** using Task tool:
 
 ```
 Task tool parameters:
@@ -134,25 +141,40 @@ Task tool parameters:
   Write plan to ai/plans/{BRIEF_ID}-plan.md"
 ```
 
-4. After architect returns:
+5. After architect returns:
+   - **Emit agent event (stop):** Call `igris_agent_event` with:
+     - instance_id: {Instance ID}
+     - agent: "architect"
+     - event_type: "stop"
+     - brief_id: {brief ID}
+     - phase: "PLANNING"
+     - result: {brief summary of architect's output}
+     Skip silently if unavailable.
    - Update brief: Active Agent = none
    - Update Agent Log with result
    - Check brief Effort field
 
-5. **If Effort is L or XL:**
+6. **If Effort is L or XL:**
    - Set Phase: APPROVAL
    - Display plan summary to user
    - Ask: "Approve this plan?"
    - Wait for user approval before continuing
 
-6. **If Effort is S or M:**
+7. **If Effort is S or M:**
    - Proceed directly to BUILDING
 
 ### Phase 3: BUILDING
 
 1. Update brief: Phase = BUILDING, Active Agent = forger
 2. Add Agent Log entry: "Starting forger..."
-3. **Delegate to forger agent** using Task tool:
+3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in CURRENT_SESSION.md, call `igris_agent_event` with:
+   - instance_id: {Instance ID}
+   - agent: "forger"
+   - event_type: "start"
+   - brief_id: {current brief ID}
+   - phase: "BUILDING"
+   Skip silently if MCP unavailable.
+4. **Delegate to forger agent** using Task tool:
 
 ```
 Task tool parameters:
@@ -169,7 +191,15 @@ Task tool parameters:
   Add documentation comments to public APIs."
 ```
 
-4. After forger returns:
+5. After forger returns:
+   - **Emit agent event (stop):** Call `igris_agent_event` with:
+     - instance_id: {Instance ID}
+     - agent: "forger"
+     - event_type: "stop"
+     - brief_id: {brief ID}
+     - phase: "BUILDING"
+     - result: {brief summary of forger's output}
+     Skip silently if unavailable.
    - Update brief: Active Agent = none
    - Update Agent Log with result
    - Proceed to TESTING
@@ -178,7 +208,14 @@ Task tool parameters:
 
 1. Update brief: Phase = TESTING, Active Agent = sentinel
 2. Add Agent Log entry: "Starting sentinel..."
-3. **Delegate to sentinel agent** using Task tool:
+3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in CURRENT_SESSION.md, call `igris_agent_event` with:
+   - instance_id: {Instance ID}
+   - agent: "sentinel"
+   - event_type: "start"
+   - brief_id: {current brief ID}
+   - phase: "TESTING"
+   Skip silently if MCP unavailable.
+4. **Delegate to sentinel agent** using Task tool:
 
 ```
 Task tool parameters:
@@ -194,19 +231,36 @@ Task tool parameters:
   Report PASS or FAIL with details."
 ```
 
-4. After sentinel returns:
+5. After sentinel returns:
+   - **Emit agent event (stop or error):** Call `igris_agent_event` with:
+     - instance_id: {Instance ID}
+     - agent: "sentinel"
+     - event_type: "stop" (if PASS) or "error" (if FAIL)
+     - brief_id: {brief ID}
+     - phase: "TESTING"
+     - result: "PASS" or "FAIL" with details
+     - error_message: {failure details, if FAIL}
+     Skip silently if unavailable.
    - Update brief: Active Agent = none
    - Update Agent Log with result
 
-5. **If PASS:**
+6. **If PASS:**
    - Proceed to REVIEWING
 
-6. **If FAIL and Retry Count < 3:**
+7. **If FAIL and Retry Count < 3:**
    - Increment Retry Count
+   - **Emit agent event (retry):** Call `igris_agent_event` with:
+     - instance_id: {Instance ID}
+     - agent: "sentinel"
+     - event_type: "retry"
+     - brief_id: {brief ID}
+     - phase: "TESTING"
+     - metadata: '{"attempt": {retry_count}, "reason": "test failure"}'
+     Skip silently if unavailable.
    - Delegate to mender agent for diagnosis
    - Return to BUILDING with fix instructions
 
-7. **If FAIL and Retry Count >= 3:**
+8. **If FAIL and Retry Count >= 3:**
    - Set Phase: BLOCKED
    - Display: "Tests failing after 3 attempts. Manual intervention required."
    - Add blocker to BLOCKERS.md
@@ -216,7 +270,14 @@ Task tool parameters:
 
 1. Update brief: Phase = REVIEWING, Active Agent = warden
 2. Add Agent Log entry: "Starting warden..."
-3. **Delegate to warden agent** using Task tool:
+3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in CURRENT_SESSION.md, call `igris_agent_event` with:
+   - instance_id: {Instance ID}
+   - agent: "warden"
+   - event_type: "start"
+   - brief_id: {current brief ID}
+   - phase: "REVIEWING"
+   Skip silently if MCP unavailable.
+4. **Delegate to warden agent** using Task tool:
 
 ```
 Task tool parameters:
@@ -233,20 +294,36 @@ Task tool parameters:
   Output: APPROVE or REJECT with feedback."
 ```
 
-4. After warden returns:
+5. After warden returns:
+   - **Emit agent event (stop or error):** Call `igris_agent_event` with:
+     - instance_id: {Instance ID}
+     - agent: "warden"
+     - event_type: "stop" (if APPROVE) or "error" (if REJECT)
+     - brief_id: {brief ID}
+     - phase: "REVIEWING"
+     - result: "APPROVE" or "REJECT" with feedback
+     Skip silently if unavailable.
    - Update brief: Active Agent = none
    - Update Agent Log with result
 
-5. **If APPROVE:**
+6. **If APPROVE:**
    - Evaluate if documentation updates are needed (see Phase 6 conditions)
    - If docs needed: Proceed to DOCUMENTING
    - If no docs needed: Proceed to COMMITTING
 
-6. **If REJECT and Retry Count < 2:**
+7. **If REJECT and Retry Count < 2:**
    - Increment Retry Count
+   - **Emit agent event (retry):** Call `igris_agent_event` with:
+     - instance_id: {Instance ID}
+     - agent: "warden"
+     - event_type: "retry"
+     - brief_id: {brief ID}
+     - phase: "REVIEWING"
+     - metadata: '{"attempt": {retry_count}, "reason": "review rejection"}'
+     Skip silently if unavailable.
    - Return to BUILDING with reviewer feedback
 
-7. **If REJECT and Retry Count >= 2:**
+8. **If REJECT and Retry Count >= 2:**
    - Set Phase: BLOCKED
    - Display: "Review failed after 2 attempts. Manual intervention required."
    - Stop workflow
@@ -269,25 +346,41 @@ Task tool parameters:
 - Test-only changes
 - Session/config changes
 
-4. **If docs needed, invoke /document skill directly** (orchestrator-level operation):
+4. **If docs needed:**
+   - **Emit agent event (start):** If brain MCP is available AND Instance ID exists in CURRENT_SESSION.md, call `igris_agent_event` with:
+     - instance_id: {Instance ID}
+     - agent: "document"
+     - event_type: "start"
+     - brief_id: {current brief ID}
+     - phase: "DOCUMENTING"
+     Skip silently if MCP unavailable.
+   - **Invoke /document skill directly** (orchestrator-level operation):
 
-The orchestrator invokes the `/document` skill using the Skill tool. This is NOT a subagent delegation — it is an orchestrator-level skill invocation, matching the pattern defined in `rules/04-igris-agents.md`.
+     The orchestrator invokes the `/document` skill using the Skill tool. This is NOT a subagent delegation — it is an orchestrator-level skill invocation, matching the pattern defined in `rules/04-igris-agents.md`.
 
-```
-Skill tool parameters:
-- skill: "document"
-- arguments: "{BRIEF_ID} - Update documentation for changes made.
-  Brief: [brief content]
-  Changes made: [summary of implementation changes]
-  Check and update as needed:
-  1. README.md (if user-facing features)
-  2. API documentation (if API changes)
-  3. Module catalog (if new modules)
-  4. Code comments (if public API changes)
-  Only update docs that are relevant to the changes made."
-```
+     ```
+     Skill tool parameters:
+     - skill: "document"
+     - arguments: "{BRIEF_ID} - Update documentation for changes made.
+       Brief: [brief content]
+       Changes made: [summary of implementation changes]
+       Check and update as needed:
+       1. README.md (if user-facing features)
+       2. API documentation (if API changes)
+       3. Module catalog (if new modules)
+       4. Code comments (if public API changes)
+       Only update docs that are relevant to the changes made."
+     ```
 
 5. After /document skill completes (or if skipped):
+   - **Emit agent event (stop):** If /document was invoked, call `igris_agent_event` with:
+     - instance_id: {Instance ID}
+     - agent: "document"
+     - event_type: "stop"
+     - brief_id: {brief ID}
+     - phase: "DOCUMENTING"
+     - result: {brief summary of documentation updates, or "Skipped - no docs needed"}
+     Skip silently if unavailable.
    - Update brief: Active Agent = none
    - Update Agent Log with result (or "Skipped - no docs needed")
    - Proceed to COMMITTING
@@ -351,9 +444,23 @@ If the `igris-brain` MCP server is available AND an instance ID is stored:
    - project_path = absolute path to project directory
    - current_brief = the brief ID being implemented
    - current_phase = the new phase name
+   - current_task = description of current activity (e.g., "architect planning", "forger implementing")
 3. This keeps the instance "active" on the dashboard and shows real-time workflow progress
 
 If brain MCP is not available or no instance ID is stored, skip silently. Do NOT block workflow execution.
+
+## Agent Event Emission (Mandatory When Available)
+
+On each agent invocation, you MUST emit `igris_agent_event` calls if brain MCP is available AND Instance ID exists in CURRENT_SESSION.md.
+
+**Pattern for every agent:**
+
+1. **Before invoking agent:** Call `igris_agent_event` with event_type="start"
+2. **After agent returns successfully:** Call `igris_agent_event` with event_type="stop" and result summary
+3. **On agent failure:** Call `igris_agent_event` with event_type="error" and error_message
+4. **On retry:** Call `igris_agent_event` with event_type="retry" and metadata with attempt count and reason
+
+All agent event emissions are **fire-and-forget**. If the MCP call fails, skip silently. Agent events must NEVER block or delay the hunt workflow.
 
 ## Error Handling
 

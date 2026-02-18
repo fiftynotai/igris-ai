@@ -5,9 +5,9 @@
 **Effort:** S-Small (< 4h)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** In Progress
+**Status:** Done
 **Created:** 2026-02-18
-**Completed:**
+**Completed:** 2026-02-18
 
 ---
 
@@ -103,15 +103,15 @@ All 20 skills should be invocable via the Skill tool when the user requests them
 
 ## Workflow State
 
-**Phase:** COMMITTING
+**Phase:** COMPLETE
 **Active Agent:** none
 **Retry Count:** 0
 
 ### Current Work
-Committing the fix.
+All tasks complete. Brief done.
 
 ### Next Steps
-Complete after commit succeeds.
+Archive brief with `/archive BR-024`.
 
 ### Agent Log
 | Time | Agent | Action | Result |
@@ -121,6 +121,7 @@ Complete after commit succeeds.
 | 2026-02-18 | sentinel | Verify all SKILL.md files | PASS (21/21 correct) |
 | 2026-02-18 | warden | Code review | APPROVE |
 | 2026-02-18 | /document | Documentation check | Skipped — config-only fix |
+| 2026-02-18 | — | Commit d6ced58 | SUCCESS |
 
 ### Blockers
 None

@@ -1,0 +1,61 @@
+name: crimson_arena
+description: Crimson Arena — Igris AI Agent Dashboard (Flutter Web)
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # URL strategy for web
+  flutter_web_plugins:
+    sdk: flutter
+
+  # State management & DI
+  get: ^4.6.6
+
+  # Fifty Flutter Kit (local path references)
+  fifty_tokens:
+    path: ../../../fifty_eco_system/packages/fifty_tokens
+  fifty_theme:
+    path: ../../../fifty_eco_system/packages/fifty_theme
+  fifty_ui:
+    path: ../../../fifty_eco_system/packages/fifty_ui
+  fifty_cache:
+    path: ../../../fifty_eco_system/packages/fifty_cache
+  fifty_utils:
+    path: ../../../fifty_eco_system/packages/fifty_utils
+  fifty_skill_tree:
+    path: ../../../fifty_eco_system/packages/fifty_skill_tree
+  fifty_achievement_engine:
+    path: ../../../fifty_eco_system/packages/fifty_achievement_engine
+
+  # HTTP + WebSocket
+  http: ^1.2.0
+  web_socket_channel: ^3.0.0
+
+  # JSON
+  json_annotation: ^4.9.0
+
+  # Fonts
+  google_fonts: ^6.2.1
+
+  # Charts
+  fl_chart: ^0.69.0
+
+  # Storage (required by fifty_cache)
+  get_storage: ^2.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  build_runner: ^2.4.0
+  json_serializable: ^6.8.0
+  mocktail: ^1.0.0
+
+flutter:
+  uses-material-design: true

@@ -51,7 +51,16 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "arena.db")
 METRICS_FILE = os.path.join(METRICS_DIR, "agent-metrics.json")
 EVENTS_FILE = os.path.join(METRICS_DIR, "events.jsonl")
 BUDGET_FILE = os.path.join(METRICS_DIR, "budget.json")
-STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+# Determine static directory: prefer Flutter build, fall back to vanilla JS
+FLUTTER_BUILD = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crimson-arena", "build", "web")
+VANILLA_STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+if os.path.isdir(FLUTTER_BUILD) and os.path.isfile(os.path.join(FLUTTER_BUILD, "index.html")):
+    STATIC_DIR = FLUTTER_BUILD
+    logger.info("Serving Flutter Web build from %s", FLUTTER_BUILD)
+else:
+    STATIC_DIR = VANILLA_STATIC
+    logger.info("Serving vanilla JS dashboard from %s", VANILLA_STATIC)
 
 # ---------------------------------------------------------------------------
 # Pricing Data
@@ -835,6 +844,41 @@ async def poll_brain(app: FastAPI):
                         "type": "brain_instances",
                         "data": data,
                     })
+
+                    # Fetch agent data for active instances with a current_brief
+                    # Limit to 5 instances per cycle to avoid N+1 explosion
+                    active_instances = [
+                        inst for inst in (data.get("instances") or [])
+                        if inst.get("status") == "active" and inst.get("current_brief")
+                    ][:5]
+
+                    for inst in active_instances:
+                        inst_id = inst.get("id")
+                        if not inst_id:
+                            continue
+                        try:
+                            agent_data = await brain_request(
+                                app, f"/api/instances/{inst_id}/agents"
+                            )
+                            log_data = await brain_request(
+                                app, f"/api/instances/{inst_id}/log",
+                                params={"limit": "20"},
+                            )
+                            if agent_data or log_data:
+                                await manager.broadcast({
+                                    "type": "instance_agent_event",
+                                    "data": {
+                                        "instance_id": inst_id,
+                                        "agents": agent_data,
+                                        "log": log_data,
+                                    },
+                                })
+                        except Exception as exc:
+                            logger.warning(
+                                "Failed to fetch agent data for instance %s: %s",
+                                inst_id, exc,
+                            )
+
                 last_instances = now
 
             # Projects + Briefs + Sessions (every 120s -- less frequent)
@@ -1716,6 +1760,41 @@ async def get_sync_status(request: Request):
     return JSONResponse(await build_sync_status(request.app))
 
 
+@app.get("/api/brain/instances/{instance_id}/agents")
+async def brain_instance_agents(instance_id: str, request: Request):
+    """Per-instance aggregated agent stats from brain server."""
+    data = await brain_request(request.app, f"/api/instances/{instance_id}/agents")
+    if data is None:
+        return {"instance_id": instance_id, "agents": [], "status": "offline"}
+    return data
+
+
+@app.get("/api/brain/instances/{instance_id}/log")
+async def brain_instance_log(
+    instance_id: str,
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    """Per-instance execution event log from brain server."""
+    data = await brain_request(
+        request.app,
+        f"/api/instances/{instance_id}/log",
+        params={"limit": str(limit)},
+    )
+    if data is None:
+        return {"instance_id": instance_id, "events": [], "count": 0, "status": "offline"}
+    return data
+
+
+@app.get("/api/brain/agent-metrics/summary")
+async def brain_agent_metrics_summary(request: Request):
+    """Cross-instance agent performance summary from brain server."""
+    data = await brain_request(request.app, "/api/agent-metrics/summary")
+    if data is None:
+        return {"agents": [], "recent_by_agent": {}, "status": "offline"}
+    return data
+
+
 @app.get("/api/team-status")
 async def get_team_status():
     """Team mode status from file system."""
@@ -1833,9 +1912,16 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             # Client may send ping/pong or other messages
             data = await websocket.receive_text()
-            # Echo back pong for keepalive
+            # Echo back pong for keepalive (support both raw "ping" and JSON {"type":"ping"})
             if data == "ping":
                 await websocket.send_json({"type": "pong"})
+            else:
+                try:
+                    parsed = json.loads(data)
+                    if isinstance(parsed, dict) and parsed.get("type") == "ping":
+                        await websocket.send_json({"type": "pong"})
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)
@@ -1845,11 +1931,16 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 # ---------------------------------------------------------------------------
-# Mount static files (after routes so /api/* takes precedence)
+# Mount static files (after routes so /api/* and /ws take precedence)
 # ---------------------------------------------------------------------------
+# Flutter Web builds expect assets served from root (assets/, canvaskit/, etc.).
+# Mount at "/" so all static files are accessible without a /static prefix.
+# The vanilla JS fallback also works fine with a root mount.
+# This MUST be the last mount — FastAPI checks routes first, then falls through
+# to the mounted StaticFiles app for anything not matched by an explicit route.
 
 if os.path.isdir(STATIC_DIR):
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 
 # ---------------------------------------------------------------------------

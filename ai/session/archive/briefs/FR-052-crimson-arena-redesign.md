@@ -5,7 +5,7 @@
 **Effort:** L-Large (8-24h)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** In Progress
+**Status:** Done
 **Created:** 2026-02-17
 
 ---
@@ -80,7 +80,7 @@ Full wireframes and design decisions: `ai/briefs/FR-052-crimson-arena-redesign-s
 
 ## Workflow State
 
-**Phase:** COMMITTING
+**Phase:** COMPLETE
 **Active Agent:** none
 **Retry Count:** 0
 
@@ -97,6 +97,7 @@ Proceed to PLANNING phase.
 - [2026-02-18] FORGER: Implementation complete — 4 files modified. index.html restructured to two-page SPA, app.js refactored with hash router + page dispatcher + instance rendering, style.css rewritten (2549 lines), server.py enhanced with instance detail endpoint.
 - [2026-02-18] SENTINEL: PASS — Python/JS/HTML/CSS syntax clean, 10/10 acceptance criteria verified, all cross-references valid, server endpoint correct.
 - [2026-02-18] WARDEN: APPROVE — Zero critical/major issues. 5 minor suggestions (CSS selector sanitization, duplicate timeAgo function, server path regex, bound flag pattern, var re-declaration). Security solid, XSS protection thorough, 10/10 AC met.
+- [2026-02-18] COMMIT: 85173ca — feat(dashboard): redesign Crimson Arena to two-page architecture (HOME + INSTANCES)
 
 ---
 

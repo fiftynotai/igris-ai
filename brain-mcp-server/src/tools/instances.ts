@@ -107,6 +107,11 @@ function handleInstanceList(args: InstanceListInput): { content: { type: string;
     "DELETE FROM instances WHERE last_heartbeat_at < datetime('now', '-120 minutes')"
   ).run();
 
+  // Purge agent_events older than 7 days
+  db.prepare(
+    "DELETE FROM agent_events WHERE created_at < datetime('now', '-7 days')"
+  ).run();
+
   // Auto-mark stale instances
   db.prepare(
     "UPDATE instances SET status = 'stale' WHERE last_heartbeat_at < datetime('now', '-30 minutes') AND status != 'stale'"

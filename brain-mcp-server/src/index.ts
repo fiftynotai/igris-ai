@@ -53,6 +53,8 @@ import { handleBriefSync, handleBriefDashboard } from './tools/briefs.js';
 import type { BriefSyncInput, BriefDashboardInput } from './tools/briefs.js';
 import { handleInstanceHeartbeat, handleInstanceList, handleInstanceRemove } from './tools/instances.js';
 import type { InstanceHeartbeatInput, InstanceListInput, InstanceRemoveInput } from './tools/instances.js';
+import { handleAgentEvent, handleAgentEventList, handleAgentEventLog, handleAgentMetricsSummary } from './tools/agent_events.js';
+import type { AgentEventInput } from './tools/agent_events.js';
 import {
   handleBrainPush, handleBrainPull, SYNC_TABLES, mergeRows,
   handleSyncQueueStatus, handleSyncQueueDrain,
@@ -206,6 +208,8 @@ async function dispatchToolCall(
         return await handleFilePush(args as unknown as FilePushInput);
       case 'igris_file_pull':
         return await handleFilePull(args as unknown as FilePullInput);
+      case 'igris_agent_event':
+        return handleAgentEvent(args as unknown as AgentEventInput);
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -708,6 +712,59 @@ function createBrainServer(): Server {
           },
         },
 
+        // === Agent Event Tools ===
+        {
+          name: 'igris_agent_event',
+          description: 'Record an agent lifecycle event for live dashboard tracking. Called during /hunt workflow at each agent phase transition.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              instance_id: {
+                type: 'string',
+                description: 'Instance ID from heartbeat registration',
+              },
+              agent: {
+                type: 'string',
+                description: 'Agent name: architect, forger, sentinel, warden, mender, seeker, sage',
+              },
+              event_type: {
+                type: 'string',
+                enum: ['start', 'stop', 'error', 'retry'],
+                description: 'Event lifecycle type',
+              },
+              phase: {
+                type: 'string',
+                description: 'Hunt phase: PLANNING, BUILDING, TESTING, REVIEWING, DOCUMENTING',
+              },
+              brief_id: {
+                type: 'string',
+                description: 'Active brief ID',
+              },
+              duration_ms: {
+                type: 'number',
+                description: 'Elapsed time in milliseconds (for stop/error events)',
+              },
+              input_tokens: {
+                type: 'number',
+                description: 'Input tokens consumed',
+              },
+              output_tokens: {
+                type: 'number',
+                description: 'Output tokens consumed',
+              },
+              result: {
+                type: 'string',
+                description: 'Result summary (for stop events)',
+              },
+              error_message: {
+                type: 'string',
+                description: 'Error details (for error events)',
+              },
+            },
+            required: ['instance_id', 'agent', 'event_type'],
+          },
+        },
+
         // === Sync Tools ===
         {
           name: 'igris_brain_push',
@@ -1001,6 +1058,10 @@ function createBrainServer(): Server {
         case 'igris_instance_remove':
           return handleInstanceRemove(args as unknown as InstanceRemoveInput);
 
+        // Agent event tools
+        case 'igris_agent_event':
+          return handleAgentEvent(args as unknown as AgentEventInput);
+
         // Sync tools
         case 'igris_brain_push':
           return await handleBrainPush(args as unknown as BrainPushInput);
@@ -1235,6 +1296,11 @@ async function runHttp(config: ServerConfig): Promise<void> {
         "DELETE FROM instances WHERE last_heartbeat_at < datetime('now', '-120 minutes')"
       ).run();
 
+      // Purge agent_events older than 7 days
+      db.prepare(
+        "DELETE FROM agent_events WHERE created_at < datetime('now', '-7 days')"
+      ).run();
+
       db.prepare(
         `UPDATE instances SET status = 'stale' WHERE last_heartbeat_at < datetime('now', '-30 minutes') AND status != 'stale'`
       ).run();
@@ -1407,6 +1473,69 @@ async function runHttp(config: ServerConfig): Promise<void> {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[brain] GET /api/sync-status error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Agent Event endpoints — live agent lifecycle tracking for dashboard
+  // -----------------------------------------------------------------------
+
+  // POST /api/agent-event — Record an agent execution event
+  app.post('/api/agent-event', express.json(), (req: Request, res: Response) => {
+    try {
+      const args = req.body as AgentEventInput;
+
+      if (!args.instance_id || !args.agent || !args.event_type) {
+        res.status(400).json({ error: 'Missing required fields: instance_id, agent, event_type' });
+        return;
+      }
+
+      const result = handleAgentEvent(args);
+      const idMatch = result.content[0].text.match(/id: (\d+)/);
+      const insertedId = idMatch ? parseInt(idMatch[1], 10) : null;
+
+      res.status(201).json({ ok: true, id: insertedId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] POST /api/agent-event error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/instances/:id/agents — Per-instance agent stats (aggregated)
+  app.get('/api/instances/:id/agents', (req: Request, res: Response) => {
+    try {
+      const data = handleAgentEventList({ instance_id: req.params.id as string });
+      res.json(data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] GET /api/instances/:id/agents error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/instances/:id/log — Execution log (recent events)
+  app.get('/api/instances/:id/log', (req: Request, res: Response) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+      const data = handleAgentEventLog({ instance_id: req.params.id as string, limit });
+      res.json(data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] GET /api/instances/:id/log error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/agent-metrics/summary — Cross-instance agent performance
+  app.get('/api/agent-metrics/summary', (_req: Request, res: Response) => {
+    try {
+      const data = handleAgentMetricsSummary();
+      res.json(data);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] GET /api/agent-metrics/summary error:', message);
       res.status(500).json({ error: message });
     }
   });

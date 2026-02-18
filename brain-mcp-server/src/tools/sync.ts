@@ -170,6 +170,17 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     strategy: 'lww',
     columns: ['type', 'name', 'filename', 'content', 'content_hash', 'version', 'updated_at'],
   },
+  {
+    table: 'agent_events',
+    syncKey: ['instance_id', 'agent', 'event_type', 'created_at'],
+    timestampCol: 'created_at',
+    strategy: 'append',
+    columns: [
+      'instance_id', 'agent', 'event_type', 'phase', 'brief_id',
+      'duration_ms', 'input_tokens', 'output_tokens', 'cache_read', 'cache_create',
+      'result', 'error_message', 'metadata', 'created_at',
+    ],
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -427,7 +438,7 @@ async function handleBrainPush(
       const chunkPayload = {
         tables: chunks[i],
         pushed_at: pushedAt,
-        schema_version: 8,
+        schema_version: 9,
       };
 
       const response = await fetchWithRetry(`${remoteUrl}/sync/push`, {
@@ -787,7 +798,7 @@ async function handleSyncQueueDrain(
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${args.api_key}`,
         },
-        body: JSON.stringify({ tables: chunks[i], pushed_at: now, schema_version: 8 }),
+        body: JSON.stringify({ tables: chunks[i], pushed_at: now, schema_version: 9 }),
       });
 
       // Per-chunk success: mark items as sent
