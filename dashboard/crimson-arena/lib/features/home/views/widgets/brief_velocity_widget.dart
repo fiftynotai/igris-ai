@@ -3,6 +3,7 @@ import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
+import '../../../../core/constants/arena_sizes.dart';
 import '../../../../shared/widgets/arena_card.dart';
 import '../../controllers/home_view_model.dart';
 
@@ -145,7 +146,7 @@ class _StatusBar extends StatelessWidget {
     return ClipRRect(
       borderRadius: FiftyRadii.smRadius,
       child: SizedBox(
-        height: 10,
+        height: ArenaSizes.statusBarHeight,
         child: Row(
           children: segments.asMap().entries.map((entry) {
             final seg = entry.value;
@@ -193,8 +194,8 @@ class _StatusLegend extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 6,
-          height: 6,
+          width: ArenaSizes.statusDotDefault,
+          height: ArenaSizes.statusDotDefault,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: color,

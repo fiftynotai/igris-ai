@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 
 import '../../../../data/models/budget_model.dart';
 import '../../../../shared/utils/format_utils.dart';
+import '../../../../core/constants/arena_sizes.dart';
 import '../../../../shared/widgets/arena_card.dart';
 import '../../../../shared/widgets/segmented_bar.dart';
 import '../../controllers/home_view_model.dart';
@@ -214,7 +215,7 @@ class _TokenBar extends StatelessWidget {
     return Row(
       children: [
         SizedBox(
-          width: 64,
+          width: ArenaSizes.tokenBarLabelWidth,
           child: Text(
             label,
             style: textTheme.labelSmall!.copyWith(
@@ -225,7 +226,7 @@ class _TokenBar extends StatelessWidget {
         ),
         Expanded(
           child: Container(
-            height: 6,
+            height: ArenaSizes.tokenBarHeight,
             decoration: BoxDecoration(
               color: colorScheme.onSurface.withValues(alpha: 0.05),
               borderRadius: FiftyRadii.smRadius,
@@ -244,7 +245,7 @@ class _TokenBar extends StatelessWidget {
         ),
         const SizedBox(width: FiftySpacing.sm),
         SizedBox(
-          width: 48,
+          width: ArenaSizes.tokenBarValueWidth,
           child: Text(
             FormatUtils.formatTokens(count),
             textAlign: TextAlign.right,
@@ -255,7 +256,7 @@ class _TokenBar extends StatelessWidget {
           ),
         ),
         SizedBox(
-          width: 32,
+          width: ArenaSizes.tokenBarPercentWidth,
           child: Text(
             '${pct.round()}%',
             textAlign: TextAlign.right,

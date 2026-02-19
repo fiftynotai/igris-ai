@@ -7,6 +7,7 @@ import 'package:get/get.dart';
 import '../../../../core/constants/agent_constants.dart';
 import '../../../../data/models/battle_log_entry.dart';
 import '../../../../shared/utils/format_utils.dart';
+import '../../../../core/constants/arena_sizes.dart';
 import '../../../../shared/widgets/arena_card.dart';
 import '../../controllers/home_view_model.dart';
 
@@ -54,7 +55,7 @@ class BattleLogWidget extends StatelessWidget {
                 ),
               )
             : SizedBox(
-                height: 280,
+                height: ArenaSizes.battleLogHeight,
                 child: ListView.builder(
                   physics: const ClampingScrollPhysics(),
                   itemCount: entries.length,

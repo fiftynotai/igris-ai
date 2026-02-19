@@ -2,6 +2,8 @@ import 'package:fifty_achievement_engine/fifty_achievement_engine.dart';
 import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/constants/arena_colors.dart';
+
 /// Rarity-based visual theme for achievement cards and popups.
 ///
 /// Maps each [AchievementRarity] to FDL v2 colors:
@@ -55,9 +57,9 @@ class RarityTheme {
         );
       case AchievementRarity.legendary:
         return const RarityTheme(
-          glowColor: Color(0xFFD4A843),
-          labelColor: Color(0xFFD4A843),
-          backgroundTint: Color(0x26D4A843),
+          glowColor: ArenaColors.legendaryGold,
+          labelColor: ArenaColors.legendaryGold,
+          backgroundTint: ArenaColors.legendaryGoldTint,
         );
     }
   }

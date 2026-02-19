@@ -48,33 +48,25 @@ class SyncPanel extends StatelessWidget {
 
       return ArenaCard(
         title: 'SYNC PIPELINE',
-        child: Row(
+        child: Wrap(
+          spacing: FiftySpacing.xl,
+          runSpacing: FiftySpacing.md,
           children: [
-            // Status
             _SyncStat(
               label: 'STATUS',
               value: isOnline ? 'ONLINE' : 'OFFLINE',
               color: statusColor,
             ),
-            const SizedBox(width: FiftySpacing.xl),
-
-            // Last push
             _SyncStat(
               label: 'LAST PUSH',
               value: FormatUtils.timeAgo(sync.lastPush),
               color: colorScheme.onSurface.withValues(alpha: 0.7),
             ),
-            const SizedBox(width: FiftySpacing.xl),
-
-            // Last pull
             _SyncStat(
               label: 'LAST PULL',
               value: FormatUtils.timeAgo(sync.lastPull),
               color: colorScheme.onSurface.withValues(alpha: 0.7),
             ),
-            const SizedBox(width: FiftySpacing.xl),
-
-            // Queue
             _SyncStat(
               label: 'QUEUE',
               value: queueDepth.toString(),

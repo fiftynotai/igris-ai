@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../../../../core/constants/agent_constants.dart';
+import '../../../../core/constants/arena_sizes.dart';
 import '../../../../data/models/agent_model.dart';
 import '../../controllers/home_view_model.dart';
 
@@ -25,7 +26,7 @@ class AgentRosterStrip extends StatelessWidget {
       final agentsMap = vm.agents;
 
       return SizedBox(
-        height: 148,
+        height: ArenaSizes.rosterStripHeight,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
           physics: const ClampingScrollPhysics(),
@@ -74,7 +75,7 @@ class _AgentCard extends StatelessWidget {
     final progress = agent?.level.progress ?? 0;
 
     return Container(
-      width: 120,
+      width: ArenaSizes.rosterCardWidth,
       padding: const EdgeInsets.all(FiftySpacing.sm),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest,
@@ -104,8 +105,8 @@ class _AgentCard extends StatelessWidget {
             children: [
               // Monogram circle
               Container(
-                width: 36,
-                height: 36,
+                width: ArenaSizes.monogramMedium,
+                height: ArenaSizes.monogramMedium,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: color.withValues(alpha: 0.15),
@@ -130,8 +131,8 @@ class _AgentCard extends StatelessWidget {
                     ? 'Active'
                     : (invocations > 0 ? 'Ready' : 'Unused'),
                 child: Container(
-                  width: 8,
-                  height: 8,
+                  width: ArenaSizes.statusDotLarge,
+                  height: ArenaSizes.statusDotLarge,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: isActive
@@ -173,7 +174,7 @@ class _AgentCard extends StatelessWidget {
 
           // Level progress bar
           SizedBox(
-            height: 3,
+            height: ArenaSizes.gaugeProgressHeight,
             child: ClipRRect(
               borderRadius: FiftyRadii.smRadius,
               child: LinearProgressIndicator(
@@ -235,17 +236,17 @@ class _MiniBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final height = (value / 100 * 16).clamp(2.0, 16.0);
+    final height = (value / 100 * ArenaSizes.rpgStatBarMiniHeight).clamp(2.0, ArenaSizes.rpgStatBarMiniHeight);
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          width: 4,
-          height: 16,
+          width: ArenaSizes.rpgStatBarMiniWidth,
+          height: ArenaSizes.rpgStatBarMiniHeight,
           alignment: Alignment.bottomCenter,
           child: Container(
-            width: 4,
+            width: ArenaSizes.rpgStatBarMiniWidth,
             height: height,
             decoration: BoxDecoration(
               color: color.withValues(alpha: 0.6),

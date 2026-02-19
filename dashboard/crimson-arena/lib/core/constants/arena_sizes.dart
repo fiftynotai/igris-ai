@@ -125,4 +125,48 @@ class ArenaSizes {
 
   /// Height of the divider between instrument gauges.
   static const double instrumentDividerHeight = 32;
+
+  // ---------------------------------------------------------------------------
+  // Battle log
+  // ---------------------------------------------------------------------------
+
+  /// Height of the battle log scrollable list.
+  static const double battleLogHeight = 280;
+
+  // ---------------------------------------------------------------------------
+  // Agent performance cards
+  // ---------------------------------------------------------------------------
+
+  /// Width of a single agent performance card.
+  static const double perfCardWidth = 160;
+
+  /// Size of the efficiency grade badge.
+  static const double gradeBadgeSize = 24;
+
+  // ---------------------------------------------------------------------------
+  // Skill heatmap
+  // ---------------------------------------------------------------------------
+
+  /// Width of the skill name label column.
+  static const double skillNameWidth = 100;
+
+  /// Width of the skill invocation count column.
+  static const double skillCountWidth = 36;
+
+  /// Height of a skill heatmap bar.
+  static const double skillBarHeight = 10;
+
+  // ---------------------------------------------------------------------------
+  // Brief velocity / status bars
+  // ---------------------------------------------------------------------------
+
+  /// Height of the brief velocity status bar.
+  static const double statusBarHeight = 10;
+
+  // ---------------------------------------------------------------------------
+  // Cost estimate
+  // ---------------------------------------------------------------------------
+
+  /// Diameter of the color dot in cost rows.
+  static const double costDotSize = 4;
 }

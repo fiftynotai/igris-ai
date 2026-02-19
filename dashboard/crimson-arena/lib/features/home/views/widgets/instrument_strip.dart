@@ -6,6 +6,7 @@ import 'package:get/get.dart';
 import '../../../../data/models/budget_model.dart';
 import '../../../../data/models/context_window_model.dart';
 import '../../../../data/models/sync_status_model.dart';
+import '../../../../core/constants/arena_sizes.dart';
 import '../../../../shared/utils/format_utils.dart';
 import '../../controllers/home_view_model.dart';
 
@@ -72,7 +73,7 @@ class InstrumentStrip extends StatelessWidget {
 
     return Container(
       width: 1,
-      height: 32,
+      height: ArenaSizes.instrumentDividerHeight,
       margin: const EdgeInsets.symmetric(horizontal: FiftySpacing.sm),
       color: colorScheme.outline,
     );
@@ -209,8 +210,8 @@ class _Gauge extends StatelessWidget {
         if (progress != null) ...[
           const SizedBox(height: FiftySpacing.xs),
           SizedBox(
-            width: 80,
-            height: 3,
+            width: ArenaSizes.instrumentGaugeWidth,
+            height: ArenaSizes.gaugeProgressHeight,
             child: ClipRRect(
               borderRadius: FiftyRadii.smRadius,
               child: LinearProgressIndicator(

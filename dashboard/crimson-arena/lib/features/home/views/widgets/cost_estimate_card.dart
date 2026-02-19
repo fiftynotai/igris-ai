@@ -3,6 +3,7 @@ import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
+import '../../../../core/constants/arena_sizes.dart';
 import '../../../../shared/utils/format_utils.dart';
 import '../../../../shared/widgets/arena_card.dart';
 import '../../controllers/home_view_model.dart';
@@ -154,8 +155,8 @@ class _CostRow extends StatelessWidget {
         children: [
           // Label with color dot
           Container(
-            width: 4,
-            height: 4,
+            width: ArenaSizes.costDotSize,
+            height: ArenaSizes.costDotSize,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: color,
@@ -163,7 +164,7 @@ class _CostRow extends StatelessWidget {
           ),
           const SizedBox(width: FiftySpacing.xs),
           SizedBox(
-            width: 64,
+            width: ArenaSizes.tokenBarLabelWidth,
             child: Text(
               label,
               style: textTheme.labelSmall!.copyWith(

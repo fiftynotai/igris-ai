@@ -2,8 +2,8 @@
 
 ## Status
 **Mode:** HUNT MODE
-**Updated:** 2026-02-18
-**Active Brief:** FR-059 (Ready)
+**Updated:** 2026-02-19
+**Active Brief:** BR-025 (Crimson Arena — Home Page Layout & Space Utilization)
 
 ---
 
@@ -29,16 +29,17 @@
 
 ## Resume Point
 
-**Last Active:** FR-059 (Crimson Arena Theme-Aware UI/UX Polish)
-**Phase:** INIT (registered, not started)
+**Last Active:** BR-025 (Crimson Arena — Home Page Layout & Space Utilization)
+**Phase:** Ready to HUNT
 
 ---
 
 ## Next Session Instructions
 
-1. **FR-059: Crimson Arena Theme-Aware UI/UX Polish** — Ready to HUNT. 6 phases: Foundation (constants + shared widgets) → Theme-Aware Text → Theme-Aware Colors → fifty_ui Component Adoption → Visual Fixes + Accessibility → Architecture Cleanup. Core principle: all widgets use Theme.of(context) instead of direct FiftyColors/GoogleFonts.
-2. **Publish v4.0** — All blockers resolved, VPS synced, Crimson Arena deployed with grey screen fix.
-3. **Brain v5.0** — FR-052-engine plan complete, awaiting user approval.
+1. **BR-025: Home Page Layout & Space Utilization** — Ready to HUNT. Group BrainHealthCard + SyncPanel side-by-side on wide screens. Adopt ArenaSizes constants. Wire ArenaColors.legendaryGold into rarity_theme.dart.
+2. **FR-057: INSTANCES Page Live Data & Agent Metrics** — Backend agent event pipeline never implemented. L-Large effort, 7 phases. Status: "Superseded by FR-058" but core work never done.
+3. **FR-059: Archive** — Done (commit 911502f), deployed to VPS. Ready to `/archive FR-059`.
+4. **Brain v5.0** — FR-052-engine plan complete, awaiting user approval.
 
 **Note on VPS deploy:** The `igris_vps_update.sh` build step may cache stale TypeScript output. During BR-023 deploy, `dist/index.js` didn't contain new code despite `tsc` running. Manual `npx tsc` + PM2 restart fixed it. Investigate build cache issue.
 
@@ -46,18 +47,19 @@
 
 ---
 
-## Last Session Summary (2026-02-18)
+## Last Session Summary (2026-02-19)
 
-**Date:** 2026-02-18
-**Summary:** Fixed grey screen crash in Crimson Arena (WebSocket .ready handshake + GetX Obx subscription fix). Deployed fix to VPS. Ran comprehensive UI/UX audit with 3 parallel SEEKER agents analyzing all 33 widget files. Registered FR-059: Crimson Arena Theme-Aware UI/UX Polish (6 phases, 46 tasks). Commit: `00bf662`.
+**Date:** 2026-02-19
+**Summary:** Completed FR-059 fifty_ui component adoption — integrated 7 component types (FiftyCard, FiftyBadge, FiftyChip, FiftySectionHeader, FiftyDataSlate) across 12 dashboard files. Deployed to VPS (commit 911502f). Registered BR-025 for home page layout optimization after user feedback on card sizing. Investigated FR-057 (unimplemented backend). Synced data to VPS.
 
 **Completed:**
-- **Grey screen fix** — WebSocket `connect()` used `.ready.then()` for async handshake (brain_websocket_service.dart). Added `.length` access to force Obx subscription in agent_roster_strip.dart.
-- **VPS deployment** — Code pushed, Flutter build SCP'd, dashboard restarted and serving Flutter app.
-- **UI/UX audit** — 3 parallel SEEKER agents: FDL token usage (94% compliance), visual/layout (20 issues), component architecture (5 anti-patterns). Key findings: 201 direct GoogleFonts calls, 89.5% of fifty_ui unused, 109 hardcoded SizedBox heights.
-- **FR-059 registered** — Theme-Aware UI/UX Polish brief with 6 phases, 46 tasks. Core principle: widgets use Theme.of(context) not direct tokens.
-- **FR-058 archived** — Added to archived list.
-- Commit: `00bf662` — `fix(dashboard): handle WebSocket connection failure gracefully`
+- **FR-059 fifty_ui adoption** — ArenaCard wraps FiftyCard (scanline hover), StatusBadge replaced by FiftyBadge everywhere, category chips → FiftyChip, FiftySectionHeader on all 4 pages, brain stats → FiftyDataSlate, battle log + knowledge badges → FiftyBadge. Deleted status_badge.dart. 15 files changed, +169/-374 lines.
+- **VPS deployment** — Commit 911502f pushed, Flutter build SCP'd, crimson-arena restarted, HTTP 200 confirmed. File sizes matched (2,447,909 bytes).
+- **FR-059 audit** — SEEKER verified all 14 acceptance criteria PASS.
+- **BR-025 registered** — Home Page Layout & Space Utilization. User feedback: Brain Status + Sync Pipeline take full width when content fits in 1/3. Group compact widgets side-by-side.
+- **FR-057 investigated** — Backend agent event pipeline never implemented. Status "Superseded by FR-058" but core work never done.
+- **Data sync** — Brain push + SCP files (events.jsonl, agent-metrics.json, budget.json) to VPS.
+- Commit: `911502f` — `feat(dashboard): adopt fifty_ui components for visible UI/UX improvements`
 
 **Previous sessions:**
 - FR-058: Crimson Arena Flutter Web Rewrite. 98 files (+16,418/-74). Commit: `e1d9fae`
@@ -71,8 +73,8 @@
 
 ## Pending
 
-- **FR-059** — Theme-Aware UI/UX Polish (Ready, P1)
-- **Publish v4.0** — All blockers resolved
+- **BR-025** — Home Page Layout & Space Utilization (Ready, P1-High)
+- **FR-057** — INSTANCES Page Live Data & Agent Metrics (needs review)
 - **Brain v5.0** — FR-052-engine awaiting approval
 - FR-013: Context Breakdown Dashboard
 - FR-014: Higgsfield — blocked on URL slugs

@@ -29,9 +29,7 @@ import 'widgets/token_budget_card.dart';
 /// - Two-column layout with:
 ///   - Left: Budget HP, Context Window, Cost Estimate, Agent Performance
 ///   - Right: Battle Log, Skill Heatmap, Brief Velocity
-/// - Brain Command Center (projects, briefs, sessions)
-/// - Knowledge Panel
-/// - Sync Panel
+/// - Brain section (health + sync side-by-side, command center, knowledge)
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
@@ -100,39 +98,34 @@ class HomePage extends StatelessWidget {
 
                     const SizedBox(height: FiftySpacing.md),
 
-                    // Brain health status
+                    // Brain section: status + sync side-by-side, then command center, then knowledge
                     const FiftySectionHeader(
                       title: 'Brain',
                       size: FiftySectionHeaderSize.small,
                       showDivider: false,
                     ),
-                    const BrainHealthCard(),
+                    if (isWide)
+                      const Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: BrainHealthCard()),
+                          SizedBox(width: FiftySpacing.sm),
+                          Expanded(child: SyncPanel()),
+                        ],
+                      )
+                    else ...[
+                      const BrainHealthCard(),
+                      const SizedBox(height: FiftySpacing.sm),
+                      const SyncPanel(),
+                    ],
                     const SizedBox(height: FiftySpacing.md),
 
                     // Brain Command Center
                     const BrainCommandCenter(),
                     const SizedBox(height: FiftySpacing.md),
 
-                    // Bottom row: Knowledge + Sync
-                    const FiftySectionHeader(
-                      title: 'Intelligence',
-                      size: FiftySectionHeaderSize.small,
-                      showDivider: false,
-                    ),
-                    if (isWide)
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Expanded(child: KnowledgePanel()),
-                          const SizedBox(width: FiftySpacing.sm),
-                          const Expanded(child: SyncPanel()),
-                        ],
-                      )
-                    else ...[
-                      const KnowledgePanel(),
-                      const SizedBox(height: FiftySpacing.sm),
-                      const SyncPanel(),
-                    ],
+                    // Knowledge Base
+                    const KnowledgePanel(),
 
                     // Bottom padding
                     const SizedBox(height: FiftySpacing.xxl),

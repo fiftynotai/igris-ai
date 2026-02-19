@@ -2,6 +2,7 @@ import 'package:fifty_tokens/fifty_tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
+import '../../../../core/constants/arena_sizes.dart';
 import '../../../../shared/utils/format_utils.dart';
 import '../../../../shared/widgets/arena_card.dart';
 import '../../controllers/home_view_model.dart';
@@ -104,7 +105,7 @@ class _SkillBar extends StatelessWidget {
         children: [
           // Skill name
           SizedBox(
-            width: 100,
+            width: ArenaSizes.skillNameWidth,
             child: Tooltip(
               message: '/$name',
               child: Text(
@@ -123,7 +124,7 @@ class _SkillBar extends StatelessWidget {
           // Bar
           Expanded(
             child: Container(
-              height: 10,
+              height: ArenaSizes.skillBarHeight,
               decoration: BoxDecoration(
                 color: colorScheme.onSurface.withValues(alpha: 0.05),
                 borderRadius: FiftyRadii.smRadius,
@@ -144,7 +145,7 @@ class _SkillBar extends StatelessWidget {
 
           // Count
           SizedBox(
-            width: 36,
+            width: ArenaSizes.skillCountWidth,
             child: Text(
               count.toString(),
               textAlign: TextAlign.right,

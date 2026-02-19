@@ -6,6 +6,7 @@ import 'package:get/get.dart';
 import '../../../../core/constants/agent_constants.dart';
 import '../../../../data/models/agent_model.dart';
 import '../../../../shared/utils/format_utils.dart';
+import '../../../../core/constants/arena_sizes.dart';
 import '../../../../shared/widgets/arena_card.dart';
 import '../../controllers/home_view_model.dart';
 
@@ -91,7 +92,7 @@ class _AgentPerfCard extends StatelessWidget {
         : 0;
 
     return Container(
-      width: 160,
+      width: ArenaSizes.perfCardWidth,
       padding: const EdgeInsets.all(FiftySpacing.sm),
       decoration: BoxDecoration(
         color: colorScheme.surface,
@@ -125,8 +126,8 @@ class _AgentPerfCard extends StatelessWidget {
                 ),
               ),
               Container(
-                width: 24,
-                height: 24,
+                width: ArenaSizes.gradeBadgeSize,
+                height: ArenaSizes.gradeBadgeSize,
                 decoration: BoxDecoration(
                   color: gradeColor.withValues(alpha: 0.15),
                   borderRadius: FiftyRadii.smRadius,
