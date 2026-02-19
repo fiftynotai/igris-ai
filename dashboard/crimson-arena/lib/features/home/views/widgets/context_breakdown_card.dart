@@ -134,28 +134,9 @@ class _LegendItem extends StatelessWidget {
         ),
         const SizedBox(width: FiftySpacing.xs),
         Text(
-          label,
+          '$label  ${FormatUtils.formatTokens(tokens)}  ${pct.toStringAsFixed(1)}%',
           style: textTheme.labelSmall!.copyWith(
             color: colorScheme.onSurface.withValues(alpha: 0.6),
-          ),
-        ),
-        const SizedBox(width: FiftySpacing.xs),
-        SizedBox(
-          width: ArenaSizes.breakdownLegendValueWidth,
-          child: Text(
-            FormatUtils.formatTokens(tokens),
-            textAlign: TextAlign.right,
-            style: textTheme.labelSmall!.copyWith(
-              fontWeight: FiftyTypography.medium,
-              color: colorScheme.onSurface.withValues(alpha: 0.5),
-            ),
-          ),
-        ),
-        const SizedBox(width: FiftySpacing.xs),
-        Text(
-          '${pct.toStringAsFixed(1)}%',
-          style: textTheme.labelSmall!.copyWith(
-            color: colorScheme.onSurface.withValues(alpha: 0.3),
           ),
         ),
       ],
