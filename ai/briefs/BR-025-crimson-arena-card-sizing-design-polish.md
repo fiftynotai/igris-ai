@@ -5,9 +5,9 @@
 **Effort:** M-Medium (1-2d)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** In Progress
+**Status:** Done
 **Created:** 2026-02-19
-**Completed:**
+**Completed:** 2026-02-19
 
 ---
 
@@ -144,7 +144,7 @@ FiftySectionHeader('Intelligence')
 
 ## Workflow State
 
-**Phase:** COMMITTING
+**Phase:** COMPLETE
 **Active Agent:** none
 **Retry Count:** 0
 
@@ -153,6 +153,7 @@ FiftySectionHeader('Intelligence')
 - [2026-02-19] FORGER — Implementation complete. 11 files modified. flutter analyze clean.
 - [2026-02-19] SENTINEL — PASS. analyze 0 issues, build web success. All code verification checks pass. 1 pre-existing test failure (arena_scaffold nav overflow, not BR-025 related).
 - [2026-02-19] WARDEN — APPROVED. Clean, well-structured. 3 minor nits (tiny magic numbers in private widgets), not blocking.
+- [2026-02-19] COMMIT — dbeaac2. fix(dashboard): optimize Home page layout and adopt ArenaSizes constants
 
 ---
 

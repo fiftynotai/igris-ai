@@ -3,7 +3,7 @@
 ## Status
 **Mode:** HUNT MODE
 **Updated:** 2026-02-19
-**Active Brief:** BR-025 (Crimson Arena — Home Page Layout & Space Utilization)
+**Active Brief:** None
 
 ---
 
@@ -11,6 +11,7 @@
 
 | Brief | Title | Status |
 |-------|-------|--------|
+| BR-025 | Crimson Arena — Home Page Layout & Space Utilization | **Done** (commit: dbeaac2) |
 | FR-059 | Crimson Arena — Theme-Aware UI/UX Polish | **Done** (commit: e08641a) |
 | FR-051 | Brain v5.0 — Modular Architecture + Task Mgmt + Scheduling | In Progress (XL, 5 phases) |
 | FR-052-engine | Brain v5.0 Phase 1 — Engine Foundation | Ready (L, critical path) |
@@ -30,7 +31,7 @@
 ## Resume Point
 
 **Last Active:** BR-025 (Crimson Arena — Home Page Layout & Space Utilization)
-**Phase:** Ready to HUNT
+**Phase:** COMPLETE (commit: dbeaac2)
 
 ---
 

@@ -10,7 +10,7 @@ import 'widgets/agent_performance_summary.dart';
 import 'widgets/agent_roster_strip.dart';
 import 'widgets/battle_log_widget.dart';
 import 'widgets/brain_command_center.dart';
-import 'widgets/brain_health_card.dart';
+import 'widgets/brain_status_strip.dart';
 import 'widgets/brief_velocity_widget.dart';
 import 'widgets/context_window_card.dart';
 import 'widgets/cost_estimate_card.dart';
@@ -18,18 +18,18 @@ import 'widgets/instrument_strip.dart';
 import 'widgets/knowledge_panel.dart';
 import 'widgets/range_filter.dart';
 import 'widgets/skill_heatmap_widget.dart';
-import 'widgets/sync_panel.dart';
 import 'widgets/token_budget_card.dart';
 
 /// Home page -- the primary dashboard view.
 ///
 /// Composes all dashboard widgets in a scrollable layout:
 /// - Instrument strip (compact HP/CTX/SYNC gauges)
+/// - Brain status strip (compact brain health + sync pipeline stats)
 /// - Agent roster (horizontal scrollable strip)
 /// - Two-column layout with:
 ///   - Left: Budget HP, Context Window, Cost Estimate, Agent Performance
 ///   - Right: Battle Log, Skill Heatmap, Brief Velocity
-/// - Brain section (health + sync side-by-side, command center, knowledge)
+/// - Brain command center + knowledge panel
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
@@ -84,6 +84,10 @@ class HomePage extends StatelessWidget {
                       showDivider: false,
                     ),
                     const InstrumentStrip(),
+                    const SizedBox(height: FiftySpacing.sm),
+
+                    // Brain + Sync status strip
+                    const BrainStatusStrip(),
                     const SizedBox(height: FiftySpacing.md),
 
                     // Agent roster strip
@@ -96,28 +100,6 @@ class HomePage extends StatelessWidget {
                     else
                       _NarrowLayout(),
 
-                    const SizedBox(height: FiftySpacing.md),
-
-                    // Brain section: status + sync side-by-side, then command center, then knowledge
-                    const FiftySectionHeader(
-                      title: 'Brain',
-                      size: FiftySectionHeaderSize.small,
-                      showDivider: false,
-                    ),
-                    if (isWide)
-                      const Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(child: BrainHealthCard()),
-                          SizedBox(width: FiftySpacing.sm),
-                          Expanded(child: SyncPanel()),
-                        ],
-                      )
-                    else ...[
-                      const BrainHealthCard(),
-                      const SizedBox(height: FiftySpacing.sm),
-                      const SyncPanel(),
-                    ],
                     const SizedBox(height: FiftySpacing.md),
 
                     // Brain Command Center
