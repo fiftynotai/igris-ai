@@ -121,14 +121,22 @@ export function handleAgentEventList(
   const rows = db.prepare(`
     SELECT
       agent,
-      (SELECT event_type FROM agent_events ae2
+      (SELECT CASE
+         WHEN ae2.event_type = 'start' THEN 'WORKING'
+         WHEN ae2.event_type = 'stop' AND ae2.result IN ('success', 'APPROVE', 'PASS') THEN 'DONE'
+         WHEN ae2.event_type = 'stop' THEN 'FAIL'
+         WHEN ae2.event_type = 'error' THEN 'FAIL'
+         ELSE 'IDLE'
+       END
+       FROM agent_events ae2
        WHERE ae2.instance_id = ae.instance_id AND ae2.agent = ae.agent
-       ORDER BY created_at DESC LIMIT 1) as latest_event_type,
+       ORDER BY created_at DESC LIMIT 1) as status,
       (SELECT phase FROM agent_events ae3
        WHERE ae3.instance_id = ae.instance_id AND ae3.agent = ae.agent
        ORDER BY created_at DESC LIMIT 1) as latest_phase,
       SUM(input_tokens) as total_input_tokens,
       SUM(output_tokens) as total_output_tokens,
+      (SUM(input_tokens) + SUM(output_tokens)) as total_tokens,
       SUM(cache_read) as total_cache_read,
       SUM(cache_create) as total_cache_create,
       SUM(duration_ms) as total_duration_ms,
