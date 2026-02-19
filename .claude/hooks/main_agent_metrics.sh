@@ -55,6 +55,7 @@ ensure_metrics_dir() {
 # Parse transcript incrementally and emit event
 process_transcript() {
   python3 << 'PYEOF'
+import glob
 import json
 import os
 import re
@@ -239,6 +240,79 @@ try:
         context_remaining = 200000
         model_id = ""
 
+    # Context breakdown estimation (fail-safe)
+    context_breakdown = None
+    try:
+        project_dir = os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())
+
+        def estimate_file_tokens(path):
+            try:
+                return os.path.getsize(path) // 4
+            except Exception:
+                return 0
+
+        def glob_estimate(pattern):
+            return sum(estimate_file_tokens(p) for p in glob.glob(pattern))
+
+        # MCP tools: count server entries from config files
+        mcp_server_count = 0
+        try:
+            home_claude = os.path.expanduser("~/.claude.json")
+            if os.path.exists(home_claude):
+                with open(home_claude) as _f:
+                    _data = json.load(_f)
+                mcp_server_count += len(_data.get("mcpServers", {}))
+        except Exception:
+            pass
+        try:
+            proj_mcp = os.path.join(project_dir, ".claude", "mcp.json")
+            if os.path.exists(proj_mcp):
+                with open(proj_mcp) as _f:
+                    _data = json.load(_f)
+                mcp_server_count += len(_data.get("mcpServers", {}))
+        except Exception:
+            pass
+
+        bd_system_prompt = 3000
+        bd_system_tools = 8000
+        bd_mcp_tools = mcp_server_count * 500
+        bd_custom_agents = glob_estimate(os.path.join(project_dir, ".claude", "agents", "*.md"))
+        bd_rules = glob_estimate(os.path.join(project_dir, ".claude", "rules", "*.md"))
+        bd_claude_md = sum(estimate_file_tokens(p) for p in [
+            os.path.join(project_dir, "CLAUDE.md"),
+            os.path.join(project_dir, "CLAUDE.local.md"),
+            os.path.expanduser("~/.claude/CLAUDE.md"),
+        ])
+        bd_memory = sum(estimate_file_tokens(p) for p in [
+            os.path.join(project_dir, "ai", "session", "CURRENT_SESSION.md"),
+            os.path.join(project_dir, "ai", "context", "coding_guidelines.md"),
+            os.path.join(project_dir, "ai", "persona.json"),
+        ])
+        bd_skills = glob_estimate(os.path.join(project_dir, ".claude", "skills", "*", "SKILL.md"))
+        bd_autocompact_buffer = int(context_max * 0.05) if context_max > 0 else 10000
+
+        overhead_sum = (bd_system_prompt + bd_system_tools + bd_mcp_tools
+                        + bd_custom_agents + bd_rules + bd_claude_md
+                        + bd_memory + bd_skills + bd_autocompact_buffer)
+        bd_messages = max(0, context_used - overhead_sum)
+        bd_free_space = context_remaining
+
+        context_breakdown = {
+            "system_prompt": bd_system_prompt,
+            "system_tools": bd_system_tools,
+            "mcp_tools": bd_mcp_tools,
+            "custom_agents": bd_custom_agents,
+            "rules": bd_rules,
+            "claude_md": bd_claude_md,
+            "memory": bd_memory,
+            "skills": bd_skills,
+            "messages": bd_messages,
+            "autocompact_buffer": bd_autocompact_buffer,
+            "free_space": bd_free_space,
+        }
+    except Exception:
+        context_breakdown = None
+
     # Only emit event if tokens > 0
     total_all = sum(totals.values())
     if total_all == 0:
@@ -265,6 +339,9 @@ try:
         "context_remaining": context_remaining,
         "model_id": model_id,
     }
+
+    if context_breakdown is not None:
+        event_data["context_breakdown"] = context_breakdown
 
     # Append to events.jsonl
     events_file = os.path.join(metrics_dir, "events.jsonl")

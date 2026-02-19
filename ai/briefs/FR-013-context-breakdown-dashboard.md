@@ -4,8 +4,8 @@
 **Priority:** P2-Medium
 **Effort:** M-Medium (1-2d)
 **Assignee:** Igris AI
-**Commanded By:** Monarch
-**Status:** Ready
+**Commanded By:** Partner
+**Status:** In Progress
 **Created:** 2026-02-09
 
 ---
@@ -14,11 +14,11 @@
 
 **What is the proposed feature?**
 
-Add a context window category breakdown to the Crimson Arena dashboard, mirroring the data shown by Claude Code's `/context` command. Display how the context window is consumed across categories: system prompt, system tools, MCP tools, custom agents, memory files, skills, messages, free space, and autocompact buffer.
+Add a context window category breakdown to the Crimson Arena Flutter dashboard, mirroring the data shown by Claude Code's `/context` command. Display how the context window is consumed across categories: system prompt, system tools, MCP tools, custom agents, memory files, skills, messages, free space, and autocompact buffer.
 
 **Why is this valuable?**
 
-Gives the Monarch real-time visibility into what's consuming context window space — enabling informed decisions about when to compact, which MCP servers to disable, or when a session is getting heavy on messages vs. tooling overhead.
+Gives the Partner real-time visibility into what's consuming context window space — enabling informed decisions about when to compact, which MCP servers to disable, or when a session is getting heavy on messages vs. tooling overhead.
 
 ---
 
@@ -30,7 +30,7 @@ Gives the Monarch real-time visibility into what's consuming context window spac
 
 ### Pain Point Solved
 **Current situation:**
-The Digivice only shows total context used/max as a single number. No visibility into what's eating the context window.
+The `ContextWindowCard` widget on the Home page only shows total context used/max as a single progress bar. No visibility into what's eating the context window.
 
 **With this feature:**
 A category breakdown shows exactly where context is being consumed — system overhead vs. actual conversation, helping optimize session longevity.
@@ -60,28 +60,142 @@ A category breakdown shows exactly where context is being consumed — system ov
 - Count file sizes in bytes, divide by 4 for token estimate
 - Cache file token counts (files rarely change mid-session)
 
-### Hook Changes (`main_agent_metrics.sh`)
+### Phase 1: Hook Changes (`main_agent_metrics.sh`)
+
+Extend the orchestrator stop event payload with a `context_breakdown` object:
+
 - Add file token counting step after transcript parsing
-- Scan known config file paths and estimate tokens
+- Scan known config file paths and estimate tokens:
+  - `CLAUDE.md` + `CLAUDE.local.md` + `.claude/rules/*.md` → memory
+  - `.claude/agents/*.md` → agents
+  - `.claude/skills/*/SKILL.md` → skills
 - Include category breakdown in the event JSON payload
-- New fields: `context_breakdown: { system_prompt, system_tools, mcp_tools, agents, memory, skills, messages, free, buffer }`
+- New field in event:
+  ```json
+  "context_breakdown": {
+    "system_prompt": 4500,
+    "system_tools": 17000,
+    "mcp_tools": 8000,
+    "agents": 3200,
+    "memory": 6800,
+    "skills": 12000,
+    "messages": 45000,
+    "free": 70000,
+    "buffer": 33000
+  }
+  ```
 
-### Server Changes (`dashboard/server.py`)
-- Extend `context_window` table or add `context_breakdown` table
-- Parse new breakdown fields from events
-- Expose via `/api/state` response
+### Phase 2: Server Changes (`dashboard/server.py`)
 
-### Dashboard UI Changes
-- Add breakdown display to the Digivice panel or as a new sidebar widget
-- Stacked horizontal bar or mini pie chart showing category proportions
-- Color-coded categories matching `/context` visual style
+**Database:**
+- Add `context_breakdown` table (or extend `context_window` with new columns)
+- Schema:
+  ```sql
+  CREATE TABLE IF NOT EXISTS context_breakdown (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    system_prompt INTEGER DEFAULT 0,
+    system_tools INTEGER DEFAULT 0,
+    mcp_tools INTEGER DEFAULT 0,
+    agents INTEGER DEFAULT 0,
+    memory INTEGER DEFAULT 0,
+    skills INTEGER DEFAULT 0,
+    messages INTEGER DEFAULT 0,
+    free INTEGER DEFAULT 0,
+    buffer INTEGER DEFAULT 0,
+    updated_at TEXT NOT NULL
+  );
+  ```
+
+**Event Processing:**
+- In `insert_event()`, parse `context_breakdown` from orchestrator stop events
+- Upsert into `context_breakdown` table (same pattern as `context_window`)
+
+**API:**
+- Extend `build_context_window_state()` to include breakdown data
+- Include in `/api/state` response under `context_window.breakdown`
+- Broadcast via WebSocket `type: "state"` messages
+
+### Phase 3: Flutter Model + Service
+
+**New model:** `lib/data/models/context_breakdown_model.dart`
+
+```dart
+class ContextBreakdownModel {
+  final int systemPrompt;
+  final int systemTools;
+  final int mcpTools;
+  final int agents;
+  final int memory;
+  final int skills;
+  final int messages;
+  final int free;
+  final int buffer;
+
+  // Computed
+  int get totalOverhead => systemPrompt + systemTools + mcpTools + agents + memory + skills;
+  int get totalUsable => messages + free;
+  List<ContextCategory> get categories => [...]; // Sorted list for chart rendering
+}
+
+class ContextCategory {
+  final String label;
+  final int tokens;
+  final Color color;
+  double get percentage => ...; // Relative to context_max
+}
+```
+
+**Extend `ContextWindowModel`:**
+- Add optional `ContextBreakdownModel? breakdown` field
+- Parse from `context_window.breakdown` in `/api/state` response
+
+**Extend `BrainApiService`:**
+- No new endpoint needed — breakdown comes with `/api/state`
+
+**Extend `BrainWebSocketService`:**
+- Breakdown arrives as part of existing `type: "state"` messages
+- Parsed automatically when `ContextWindowModel` is updated
+
+### Phase 4: Flutter ViewModel + Widget
+
+**Extend `HomeViewModel`:**
+- Add `Rx<ContextBreakdownModel?>` observable
+- Parse from `contextWindow` state updates (REST + WebSocket)
+
+**New widget:** `lib/features/home/views/widgets/context_breakdown_card.dart`
+
+- **Layout:** `ArenaCard` with stacked horizontal segmented bar (reuse `SegmentedBar` pattern)
+- **Categories:** Color-coded segments matching `/context` visual style
+- **Labels:** Category name + token count + percentage
+- **Color palette** (using `ArenaColors`):
+  - System prompt → `legendaryGold`
+  - System tools → `epicPurple`
+  - MCP tools → `rareCyan`
+  - Agents → `uncommonGreen`
+  - Memory → `commonBlue`
+  - Skills → `uncommonGreen` (lighter)
+  - Messages → `ArenaColors.crimson`
+  - Free → `ArenaColors.surface` (dimmed)
+  - Buffer → `ArenaColors.surfaceLight`
+- **Empty state:** Show "Awaiting context data..." when no breakdown available
+- **Responsive:** Full-width card below `ContextWindowCard`, or side-by-side on wide screens
+
+**Placement on Home page (`home_page.dart`):**
+- Below existing `ContextWindowCard` widget
+- Or replace it entirely with a richer combined card
 
 ### Components Affected
-- `.claude/hooks/main_agent_metrics.sh` — Token counting + breakdown in event payload
-- `dashboard/server.py` — Store and serve breakdown data
-- `dashboard/static/style.css` — Breakdown widget styles
-- `dashboard/static/index.html` — Breakdown widget HTML
-- `dashboard/static/app.js` — Render breakdown from API data
+
+| File | Change |
+|------|--------|
+| `.claude/hooks/main_agent_metrics.sh` | Add file token counting + breakdown in event payload |
+| `dashboard/server.py` | New table, parse breakdown, include in API/WS |
+| `dashboard/crimson-arena/lib/data/models/context_breakdown_model.dart` | **New** — Breakdown data model |
+| `dashboard/crimson-arena/lib/data/models/context_window_model.dart` | Extend with optional breakdown field |
+| `dashboard/crimson-arena/lib/features/home/controllers/home_view_model.dart` | Add breakdown observable + parsing |
+| `dashboard/crimson-arena/lib/features/home/views/widgets/context_breakdown_card.dart` | **New** — Breakdown visualization widget |
+| `dashboard/crimson-arena/lib/features/home/views/home_page.dart` | Place new widget in layout |
+| `dashboard/crimson-arena/lib/core/constants/arena_colors.dart` | Category color constants (if not already defined) |
 
 ---
 
@@ -89,20 +203,40 @@ A category breakdown shows exactly where context is being consumed — system ov
 
 **The feature is complete when:**
 
-1. [ ] Hook emits `context_breakdown` object with category token counts
-2. [ ] Dashboard API returns breakdown data in `/api/state`
-3. [ ] Digivice or sidebar displays category breakdown visually
-4. [ ] Categories match `/context` output: system prompt, system tools, MCP tools, custom agents, memory files, skills, messages
-5. [ ] Free space and autocompact buffer shown
-6. [ ] Breakdown updates on each hook fire (every assistant response)
-7. [ ] Estimates within ~10% of `/context` actual values
+1. [ ] Hook emits `context_breakdown` object with category token counts in orchestrator stop event
+2. [ ] Server stores breakdown in `context_breakdown` table and includes in `/api/state` response
+3. [ ] `ContextBreakdownModel` parses breakdown data from API/WebSocket
+4. [ ] `ContextBreakdownCard` widget renders stacked segmented bar with all categories
+5. [ ] Categories match `/context` output: system prompt, system tools, MCP tools, custom agents, memory files, skills, messages
+6. [ ] Free space and autocompact buffer shown as distinct segments
+7. [ ] Breakdown updates in real-time via WebSocket on each hook fire
+8. [ ] Estimates within ~10% of `/context` actual values
+9. [ ] Widget follows FDL v2 design system (ArenaCard, ArenaColors, ArenaSizes)
+10. [ ] Responsive layout — works on both narrow and wide viewports
 
 ---
 
 ## Test Plan
 
 ### Functional Tests
-**Test Case 1: Breakdown Accuracy**
+
+**Test Case 1: Hook Payload**
+**Steps:**
+1. Trigger an orchestrator stop event (end a Claude Code session)
+2. Check `ai/session/metrics/events.jsonl` for latest event
+
+**Expected Result:** Event contains `context_breakdown` object with all 9 category fields
+**Status:** [ ] Pass
+
+**Test Case 2: Server Storage & API**
+**Steps:**
+1. POST event with `context_breakdown` to `/api/event`
+2. GET `/api/state` and check `context_window.breakdown`
+
+**Expected Result:** Breakdown data persisted and returned correctly
+**Status:** [ ] Pass
+
+**Test Case 3: Breakdown Accuracy**
 **Steps:**
 1. Run `/context` in Claude Code CLI
 2. Compare category values with dashboard breakdown
@@ -110,16 +244,26 @@ A category breakdown shows exactly where context is being consumed — system ov
 **Expected Result:** Values within ~10% of each other
 **Status:** [ ] Pass
 
-**Test Case 2: Dashboard Display**
+**Test Case 4: Dashboard Display**
 **Steps:**
-1. Open dashboard at localhost:8001
-2. Check breakdown widget renders
+1. Open Crimson Arena at localhost:8001
+2. Navigate to Home page
+3. Check `ContextBreakdownCard` renders below context window
 
-**Expected Result:** All categories shown with proportional bars/segments
+**Expected Result:** All categories shown with proportional colored segments and labels
+**Status:** [ ] Pass
+
+**Test Case 5: Real-Time Updates**
+**Steps:**
+1. Open dashboard, observe current breakdown
+2. Send a few messages in Claude Code session
+3. Watch breakdown update via WebSocket
+
+**Expected Result:** Messages category grows, free space shrinks, updates without page refresh
 **Status:** [ ] Pass
 
 ---
 
 **Created:** 2026-02-09
-**Last Updated:** 2026-02-09
+**Last Updated:** 2026-02-19
 **Brief Owner:** Igris AI

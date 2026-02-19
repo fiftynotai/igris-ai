@@ -12,6 +12,7 @@ import 'widgets/battle_log_widget.dart';
 import 'widgets/brain_command_center.dart';
 import 'widgets/brain_status_strip.dart';
 import 'widgets/brief_velocity_widget.dart';
+import 'widgets/context_breakdown_card.dart';
 import 'widgets/context_window_card.dart';
 import 'widgets/cost_estimate_card.dart';
 import 'widgets/instrument_strip.dart';
@@ -138,6 +139,8 @@ class _WideLayout extends StatelessWidget {
               SizedBox(height: FiftySpacing.sm),
               ContextWindowCard(),
               SizedBox(height: FiftySpacing.sm),
+              ContextBreakdownCard(),
+              SizedBox(height: FiftySpacing.sm),
               CostEstimateCard(),
               SizedBox(height: FiftySpacing.sm),
               AgentPerformanceSummary(),
@@ -173,6 +176,8 @@ class _NarrowLayout extends StatelessWidget {
         TokenBudgetCard(),
         SizedBox(height: FiftySpacing.sm),
         ContextWindowCard(),
+        SizedBox(height: FiftySpacing.sm),
+        ContextBreakdownCard(),
         SizedBox(height: FiftySpacing.sm),
         BattleLogWidget(),
         SizedBox(height: FiftySpacing.sm),

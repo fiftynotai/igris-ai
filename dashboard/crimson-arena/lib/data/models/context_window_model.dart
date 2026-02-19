@@ -1,18 +1,23 @@
+import 'context_breakdown_model.dart';
+
 /// Context window state for the current Claude session.
 ///
 /// Tracks how much of the model's context window has been used,
 /// the maximum capacity, and the active model identifier.
+/// Optionally includes a [breakdown] of token allocation by category.
 class ContextWindowModel {
   final int contextUsed;
   final int contextMax;
   final int contextRemaining;
   final String modelId;
+  final ContextBreakdownModel? breakdown;
 
   const ContextWindowModel({
     required this.contextUsed,
     required this.contextMax,
     required this.contextRemaining,
     required this.modelId,
+    this.breakdown,
   });
 
   factory ContextWindowModel.fromJson(Map<String, dynamic> json) =>
@@ -21,6 +26,10 @@ class ContextWindowModel {
         contextMax: json['context_max'] as int? ?? 200000,
         contextRemaining: json['context_remaining'] as int? ?? 200000,
         modelId: json['model_id'] as String? ?? '',
+        breakdown: json['breakdown'] != null
+            ? ContextBreakdownModel.fromJson(
+                json['breakdown'] as Map<String, dynamic>)
+            : null,
       );
 
   Map<String, dynamic> toJson() => {
@@ -28,6 +37,7 @@ class ContextWindowModel {
         'context_max': contextMax,
         'context_remaining': contextRemaining,
         'model_id': modelId,
+        if (breakdown != null) 'breakdown': breakdown!.toJson(),
       };
 }
 

@@ -50,4 +50,56 @@ class ArenaColors {
 
   /// System category: silver/gray -- infrastructure skills.
   static const Color categorySystem = Color(0xFF78909C);
+
+  // ---------------------------------------------------------------------------
+  // Context breakdown category colors
+  // ---------------------------------------------------------------------------
+
+  /// System prompt segment.
+  static const Color breakdownSystemPrompt = Color(0xFFFF6D00);
+
+  /// System tools segment.
+  static const Color breakdownSystemTools = Color(0xFF42A5F5);
+
+  /// MCP tools segment.
+  static const Color breakdownMcpTools = Color(0xFF5C6BC0);
+
+  /// Custom agents segment.
+  static const Color breakdownAgents = Color(0xFF26A69A);
+
+  /// Rules segment.
+  static const Color breakdownRules = Color(0xFFAB47BC);
+
+  /// CLAUDE.md segment.
+  static const Color breakdownClaudeMd = Color(0xFFFFCA28);
+
+  /// Memory segment (session, guidelines, persona).
+  static const Color breakdownMemory = Color(0xFFEC407A);
+
+  /// Skills segment.
+  static const Color breakdownSkills = Color(0xFF9CCC65);
+
+  /// Conversation messages segment.
+  static const Color breakdownMessages = Color(0xFF00E5FF);
+
+  /// Auto-compact buffer segment.
+  static const Color breakdownAutocompact = Color(0xFF78909C);
+
+  /// Free / remaining space segment.
+  static const Color breakdownFreeSpace = Color(0xFF37474F);
+
+  /// Lookup map from segment key to color.
+  static const Map<String, Color> breakdownColorMap = {
+    'system_prompt': breakdownSystemPrompt,
+    'system_tools': breakdownSystemTools,
+    'mcp_tools': breakdownMcpTools,
+    'custom_agents': breakdownAgents,
+    'rules': breakdownRules,
+    'claude_md': breakdownClaudeMd,
+    'memory': breakdownMemory,
+    'skills': breakdownSkills,
+    'messages': breakdownMessages,
+    'autocompact_buffer': breakdownAutocompact,
+    'free_space': breakdownFreeSpace,
+  };
 }

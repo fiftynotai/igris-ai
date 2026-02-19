@@ -185,4 +185,17 @@ class ArenaSizes {
 
   /// Height of the usage progress bar on skill cards.
   static const double skillCardUsageBarHeight = 6;
+
+  // ---------------------------------------------------------------------------
+  // Context breakdown
+  // ---------------------------------------------------------------------------
+
+  /// Height of the stacked context breakdown bar.
+  static const double breakdownBarHeight = 12;
+
+  /// Diameter of legend color dots.
+  static const double breakdownLegendDotSize = 8;
+
+  /// Width of the legend token value column.
+  static const double breakdownLegendValueWidth = 56;
 }

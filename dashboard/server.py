@@ -420,6 +420,22 @@ CREATE TABLE IF NOT EXISTS context_window (
     model_id TEXT DEFAULT '',
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS context_breakdown (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    system_prompt INTEGER DEFAULT 0,
+    system_tools INTEGER DEFAULT 0,
+    mcp_tools INTEGER DEFAULT 0,
+    custom_agents INTEGER DEFAULT 0,
+    rules INTEGER DEFAULT 0,
+    claude_md INTEGER DEFAULT 0,
+    memory INTEGER DEFAULT 0,
+    skills INTEGER DEFAULT 0,
+    messages INTEGER DEFAULT 0,
+    autocompact_buffer INTEGER DEFAULT 0,
+    free_space INTEGER DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -592,6 +608,31 @@ async def insert_event(db: aiosqlite.Connection, event: dict):
                        VALUES (1, ?, ?, ?, ?, ?)""",
                     (ctx_used, ctx_max, ctx_remaining, model_id, now),
                 )
+
+                # Update context_breakdown if present
+                breakdown = event.get("context_breakdown")
+                if isinstance(breakdown, dict):
+                    await db.execute(
+                        """INSERT OR REPLACE INTO context_breakdown
+                           (id, system_prompt, system_tools, mcp_tools, custom_agents,
+                            rules, claude_md, memory, skills, messages,
+                            autocompact_buffer, free_space, updated_at)
+                           VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            int(breakdown.get("system_prompt", 0)),
+                            int(breakdown.get("system_tools", 0)),
+                            int(breakdown.get("mcp_tools", 0)),
+                            int(breakdown.get("custom_agents", 0)),
+                            int(breakdown.get("rules", 0)),
+                            int(breakdown.get("claude_md", 0)),
+                            int(breakdown.get("memory", 0)),
+                            int(breakdown.get("skills", 0)),
+                            int(breakdown.get("messages", 0)),
+                            int(breakdown.get("autocompact_buffer", 0)),
+                            int(breakdown.get("free_space", 0)),
+                            now,
+                        ),
+                    )
 
     # Handle skill_invoke: insert into skill_invocations table
     if event_type == "skill_invoke":
@@ -1118,19 +1159,47 @@ async def build_context_window_state(db: aiosqlite.Connection) -> dict:
         row = await cursor.fetchone()
 
     if row:
-        return {
+        result = {
             "context_used": row[0],
             "context_max": row[1],
             "context_remaining": row[2],
             "model_id": row[3],
         }
+    else:
+        result = {
+            "context_used": 0,
+            "context_max": 200000,
+            "context_remaining": 200000,
+            "model_id": "",
+        }
 
-    return {
-        "context_used": 0,
-        "context_max": 200000,
-        "context_remaining": 200000,
-        "model_id": "",
-    }
+    # Attach context breakdown if available
+    try:
+        async with db.execute(
+            """SELECT system_prompt, system_tools, mcp_tools, custom_agents,
+                      rules, claude_md, memory, skills, messages,
+                      autocompact_buffer, free_space
+               FROM context_breakdown WHERE id = 1"""
+        ) as cursor:
+            bd_row = await cursor.fetchone()
+        if bd_row:
+            result["breakdown"] = {
+                "system_prompt": bd_row[0],
+                "system_tools": bd_row[1],
+                "mcp_tools": bd_row[2],
+                "custom_agents": bd_row[3],
+                "rules": bd_row[4],
+                "claude_md": bd_row[5],
+                "memory": bd_row[6],
+                "skills": bd_row[7],
+                "messages": bd_row[8],
+                "autocompact_buffer": bd_row[9],
+                "free_space": bd_row[10],
+            }
+    except Exception:
+        pass  # Table may not exist yet
+
+    return result
 
 
 async def build_sync_status(app):
@@ -1601,6 +1670,7 @@ class AgentEvent(BaseModel):
     context_max: int = 0
     context_remaining: int = 0
     model_id: str = ""
+    context_breakdown: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------
