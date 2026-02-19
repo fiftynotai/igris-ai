@@ -3,7 +3,6 @@ import 'package:fifty_ui/fifty_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
-import '../../../core/constants/arena_breakpoints.dart';
 import '../../../core/constants/arena_sizes.dart';
 import '../../../core/constants/skill_constants.dart';
 import '../../../shared/widgets/arena_scaffold.dart';
@@ -267,6 +266,24 @@ class _SortChips extends StatelessWidget {
   }
 }
 
+/// Skill-specific grid column logic — denser than the shared breakpoints
+/// because skill cards are compact.
+///
+/// - >1400 px : 6 columns
+/// - >1100 px : 5 columns
+/// - >800 px  : 4 columns
+/// - >500 px  : 3 columns
+/// - >300 px  : 2 columns
+/// - otherwise: 1 column
+int _skillGridColumns(double width) {
+  if (width > 1400) return 6;
+  if (width > 1100) return 5;
+  if (width > 800) return 4;
+  if (width > 500) return 3;
+  if (width > 300) return 2;
+  return 1;
+}
+
 /// Responsive grid of [SkillCardWidget] cards.
 class _SkillCardGrid extends StatelessWidget {
   final SkillsViewModel vm;
@@ -302,7 +319,7 @@ class _SkillCardGrid extends StatelessWidget {
       return LayoutBuilder(
         builder: (context, constraints) {
           final crossAxisCount =
-              ArenaBreakpoints.gridColumns(constraints.maxWidth);
+              _skillGridColumns(constraints.maxWidth);
 
           return GridView.builder(
             padding: const EdgeInsets.all(FiftySpacing.md),
