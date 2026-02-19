@@ -25,4 +25,29 @@ class ArenaColors {
   /// Equivalent to `legendaryGold.withValues(alpha: 0.15)` but stored as
   /// a compile-time constant for consistency with [RarityTheme].
   static const Color legendaryGoldTint = Color(0x26D4A843);
+
+  // ---------------------------------------------------------------------------
+  // Skill category accents
+  // ---------------------------------------------------------------------------
+
+  /// Combat category: crimson/red -- offensive, action-oriented skills.
+  static const Color categoryCombat = Color(0xFFFF1744);
+
+  /// Utility category: cyan/teal -- tools and maintenance skills.
+  static const Color categoryUtility = Color(0xFF00BCD4);
+
+  /// Support category: green -- helping and organizing skills.
+  static const Color categorySupport = Color(0xFF4CAF50);
+
+  /// Management category: purple -- leadership and oversight skills.
+  static const Color categoryManagement = Color(0xFF7C4DFF);
+
+  /// Research category: gold/amber -- knowledge and discovery skills.
+  static const Color categoryResearch = Color(0xFFFFAB00);
+
+  /// Creative category: magenta/pink -- art and design skills.
+  static const Color categoryCreative = Color(0xFFE040FB);
+
+  /// System category: silver/gray -- infrastructure skills.
+  static const Color categorySystem = Color(0xFF78909C);
 }

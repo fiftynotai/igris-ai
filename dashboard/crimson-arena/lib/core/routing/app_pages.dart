@@ -9,6 +9,8 @@ import '../../features/home/bindings/home_bindings.dart';
 import '../../features/home/views/home_page.dart';
 import '../../features/instances/bindings/instances_bindings.dart';
 import '../../features/instances/views/instances_page.dart';
+import '../../features/skills/bindings/skills_bindings.dart';
+import '../../features/skills/views/skills_page.dart';
 import '../../shared/widgets/slide_page_transition.dart';
 import 'app_routes.dart';
 
@@ -57,6 +59,13 @@ class AppPages {
       name: AppRoutes.achievements,
       page: () => const AchievementsPage(),
       binding: AchievementsBindings(),
+      customTransition: _transition,
+      transitionDuration: FiftyMotion.compiling,
+    ),
+    GetPage(
+      name: AppRoutes.skills,
+      page: () => const SkillsPage(),
+      binding: SkillsBindings(),
       customTransition: _transition,
       transitionDuration: FiftyMotion.compiling,
     ),

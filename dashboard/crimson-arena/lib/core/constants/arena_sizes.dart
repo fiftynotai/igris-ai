@@ -169,4 +169,20 @@ class ArenaSizes {
 
   /// Diameter of the color dot in cost rows.
   static const double costDotSize = 4;
+
+  // ---------------------------------------------------------------------------
+  // Skill cards
+  // ---------------------------------------------------------------------------
+
+  /// Aspect ratio for skill game cards (width:height).
+  static const double skillCardAspectRatio = 0.75;
+
+  /// Border width of skill card frames.
+  static const double skillCardBorderWidth = 1.5;
+
+  /// Diameter of agent monogram circles on skill cards.
+  static const double skillCardMonogramSize = 24;
+
+  /// Height of the usage progress bar on skill cards.
+  static const double skillCardUsageBarHeight = 6;
 }
