@@ -93,9 +93,9 @@ class _BattleLogRow extends StatelessWidget {
     final isSkill = entry.event == 'skill_invoke';
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: FiftySpacing.xs),
+      padding: const EdgeInsets.only(bottom: FiftySpacing.sm),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           // Timestamp
           Text(
