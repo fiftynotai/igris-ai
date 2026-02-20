@@ -252,22 +252,38 @@ if [ -z "$BRAIN_MODE" ]; then
         ;;
       2|remote)
         BRAIN_MODE="remote"
-        read -rp "Remote brain URL (e.g., http://your-vps:3001): " REMOTE_URL
-        read -rsp "API key: " REMOTE_KEY
-        echo ""
+        # Check env vars first, fall back to interactive prompts
+        REMOTE_URL="${IGRIS_REMOTE_BRAIN_URL:-}"
+        REMOTE_KEY="${IGRIS_BRAIN_API_KEY:-}"
+        if [ -z "$REMOTE_URL" ]; then
+          read -rp "Remote brain URL (e.g., http://your-vps:3001): " REMOTE_URL
+        fi
+        if [ -z "$REMOTE_KEY" ]; then
+          read -rsp "API key: " REMOTE_KEY
+          echo ""
+        fi
         if [ -z "$REMOTE_URL" ] || [ -z "$REMOTE_KEY" ]; then
           echo "❌ Error: URL and API key are required for remote mode"
+          echo "   Set IGRIS_REMOTE_BRAIN_URL and IGRIS_BRAIN_API_KEY env vars, or provide interactively."
           exit 1
         fi
         validate_url "$REMOTE_URL" "Remote brain URL"
         ;;
       3|dual)
         BRAIN_MODE="dual"
-        read -rp "Remote brain URL (e.g., http://your-vps:3001): " REMOTE_URL
-        read -rsp "API key: " REMOTE_KEY
-        echo ""
+        # Check env vars first, fall back to interactive prompts
+        REMOTE_URL="${IGRIS_REMOTE_BRAIN_URL:-}"
+        REMOTE_KEY="${IGRIS_BRAIN_API_KEY:-}"
+        if [ -z "$REMOTE_URL" ]; then
+          read -rp "Remote brain URL (e.g., http://your-vps:3001): " REMOTE_URL
+        fi
+        if [ -z "$REMOTE_KEY" ]; then
+          read -rsp "API key: " REMOTE_KEY
+          echo ""
+        fi
         if [ -z "$REMOTE_URL" ] || [ -z "$REMOTE_KEY" ]; then
           echo "❌ Error: URL and API key are required for dual mode"
+          echo "   Set IGRIS_REMOTE_BRAIN_URL and IGRIS_BRAIN_API_KEY env vars, or provide interactively."
           exit 1
         fi
         validate_url "$REMOTE_URL" "Remote brain URL"
@@ -279,8 +295,15 @@ if [ -z "$BRAIN_MODE" ]; then
     esac
     echo ""
   else
-    # Non-interactive: default to local
-    BRAIN_MODE="local"
+    # Non-interactive: check env vars to determine mode
+    if [ -n "${IGRIS_REMOTE_BRAIN_URL:-}" ] && [ -n "${IGRIS_BRAIN_API_KEY:-}" ]; then
+      BRAIN_MODE="dual"
+      REMOTE_URL="${IGRIS_REMOTE_BRAIN_URL}"
+      REMOTE_KEY="${IGRIS_BRAIN_API_KEY}"
+      validate_url "$REMOTE_URL" "Remote brain URL"
+    else
+      BRAIN_MODE="local"
+    fi
   fi
 fi
 

@@ -42,6 +42,10 @@ test-output/
 ai/persona.json
 ai/prompts/persona_loader.md
 
+# Environment variables (secrets, never commit)
+.env
+.env.local
+
 # Local overrides (developer-specific, never commit)
 CLAUDE.local.md
 

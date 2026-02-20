@@ -188,14 +188,55 @@ fi
 # Switch commands (local, remote, dual)
 # ============================================================
 
-# For remote/dual, we need remote_brain config
+# For remote/dual, we need remote_brain config (from config.json or env vars)
 if [ "$COMMAND" = "remote" ] || [ "$COMMAND" = "dual" ]; then
   if [ "$HAS_REMOTE_CONFIG" != "true" ]; then
-    echo "❌ Error: No remote_brain configured in $CONFIG_FILE"
-    echo ""
-    echo "   Add remote brain first:"
-    echo "   ./scripts/igris_brain_init.sh --add-remote <URL> <API_KEY>"
-    exit 1
+    # Fall back to environment variables
+    if [ -n "${IGRIS_REMOTE_BRAIN_URL:-}" ] && [ -n "${IGRIS_BRAIN_API_KEY:-}" ]; then
+      echo "   Using remote credentials from environment variables"
+      # Write remote_brain block into config.json from env vars
+      python3 -c "
+import json, sys
+
+config_file = sys.argv[1]
+remote_url = sys.argv[2]
+remote_key = sys.argv[3]
+
+with open(config_file, 'r') as f:
+    config = json.load(f)
+
+config['remote_brain'] = {
+    'url': remote_url,
+    'api_key': remote_key
+}
+
+with open(config_file, 'w') as f:
+    json.dump(config, f, indent=2)
+    f.write('\n')
+" "$CONFIG_FILE" "${IGRIS_REMOTE_BRAIN_URL}" "${IGRIS_BRAIN_API_KEY}"
+      # Re-detect after updating config
+      _detect_output="$(detect_current_mode)"
+      while IFS='=' read -r key value; do
+        case "$key" in
+          MODE) MODE="$value" ;;
+          HAS_LOCAL) HAS_LOCAL="$value" ;;
+          HAS_REMOTE) HAS_REMOTE="$value" ;;
+          HAS_REMOTE_CONFIG) HAS_REMOTE_CONFIG="$value" ;;
+          REMOTE_URL) REMOTE_URL="$value" ;;
+          REMOTE_KEY_MASKED) REMOTE_KEY_MASKED="$value" ;;
+        esac
+      done <<< "$_detect_output"
+    else
+      echo "❌ Error: No remote_brain configured in $CONFIG_FILE"
+      echo ""
+      echo "   Add remote brain first:"
+      echo "   ./scripts/igris_brain_init.sh --add-remote <URL> <API_KEY>"
+      echo ""
+      echo "   Or set environment variables:"
+      echo "   export IGRIS_REMOTE_BRAIN_URL=http://your-vps:3001"
+      echo "   export IGRIS_BRAIN_API_KEY=your-api-key"
+      exit 1
+    fi
   fi
 fi
 
