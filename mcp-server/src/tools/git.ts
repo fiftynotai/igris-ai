@@ -4,10 +4,10 @@
  * Handles git commands: status, diff, commit, log
  */
 
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 const PROJECT_ROOT = process.env.IGRIS_PROJECT_PATH || process.cwd();
 
 /**
@@ -15,7 +15,7 @@ const PROJECT_ROOT = process.env.IGRIS_PROJECT_PATH || process.cwd();
  */
 async function gitStatus(_args: any) {
   try {
-    const { stdout } = await execAsync('git status --short', {
+    const { stdout } = await execFileAsync('git', ['status', '--short'], {
       cwd: PROJECT_ROOT,
     });
 
@@ -39,14 +39,15 @@ async function gitDiff(args: any) {
   const { file, staged } = args;
 
   try {
-    const cmd = staged
-      ? 'git diff --staged'
-      : file
-      ? `git diff ${file}`
-      : 'git diff';
+    const gitArgs = ['diff'];
+    if (staged) {
+      gitArgs.push('--staged');
+    } else if (file) {
+      gitArgs.push(file);
+    }
 
-    const { stdout } = await execAsync(cmd, {
-      cwd: process.cwd(),
+    const { stdout } = await execFileAsync('git', gitArgs, {
+      cwd: PROJECT_ROOT,
       maxBuffer: 1024 * 1024 * 10, // 10MB buffer for large diffs
     });
 
@@ -70,8 +71,8 @@ async function gitLog(args: any) {
   const { limit = 10 } = args;
 
   try {
-    const { stdout } = await execAsync(`git log --oneline -${limit}`, {
-      cwd: process.cwd(),
+    const { stdout } = await execFileAsync('git', ['log', '--oneline', `-${limit}`], {
+      cwd: PROJECT_ROOT,
     });
 
     return {
@@ -96,14 +97,14 @@ async function gitCommit(args: any) {
   try {
     // Stage files if provided
     if (files && files.length > 0) {
-      await execAsync(`git add ${files.join(' ')}`, {
-        cwd: process.cwd(),
+      await execFileAsync('git', ['add', ...files], {
+        cwd: PROJECT_ROOT,
       });
     }
 
     // Create commit
-    const { stdout } = await execAsync(`git commit -m "${message}"`, {
-      cwd: process.cwd(),
+    const { stdout } = await execFileAsync('git', ['commit', '-m', message], {
+      cwd: PROJECT_ROOT,
     });
 
     return {

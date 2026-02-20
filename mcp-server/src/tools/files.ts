@@ -26,8 +26,8 @@ async function readFile(args: any) {
       throw new Error('Access denied: path outside project root');
     }
 
-    // Read file
-    const content = await fs.readFile(fullPath, 'utf-8');
+    // Read file (use resolvedPath to prevent symlink-based path traversal)
+    const content = await fs.readFile(resolvedPath, 'utf-8');
 
     return {
       content: [
