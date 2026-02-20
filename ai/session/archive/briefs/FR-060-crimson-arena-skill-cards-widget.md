@@ -5,9 +5,9 @@
 **Effort:** M-Medium (2-3d)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** In Progress
+**Status:** Done
 **Created:** 2026-02-19
-**Completed:**
+**Completed:** 2026-02-19
 
 ---
 
@@ -322,15 +322,15 @@ This means frequently-used skills like `hunt` and `scan` naturally become Legend
 
 ## Workflow State
 
-**Phase:** COMMITTING
+**Phase:** COMPLETE
 **Active Agent:** none
 **Retry Count:** 0
 
 ### Current Work
-Architect plan complete. Forger implementing 6 new files + 5 modifications.
+HUNT COMPLETE. All phases passed. Commit: a916778.
 
 ### Next Steps
-BUILDING: Implement skill constants, model, ViewModel, card widget, page, navigation.
+Archive brief. Deploy to VPS via `/sync code`.
 
 ### Agent Log
 | Time | Agent | Action | Result |

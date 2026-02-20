@@ -188,12 +188,12 @@ Tasks 1-24 (built as part of FR-058 Flutter rewrite)
 
 ## Workflow State
 
-**Phase:** COMMITTING
+**Phase:** COMPLETE
 **Active Agent:** none
 **Retry Count:** 0
 
 ### Current Work
-Committing verified fixes.
+Complete. Commit: 0dc77f4
 
 ### Next Steps
 1. Fix SQL aliases in agent_events.ts to match Flutter model
