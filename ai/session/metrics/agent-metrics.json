@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-02-19T20:10:20Z",
+  "last_updated": "2026-02-20T10:55:43Z",
   "agents": {
     "architect": {
       "invocations": 41,
@@ -203,22 +203,102 @@
       "total_cache_create_tokens": 112040
     },
     "general-purpose": {
-      "invocations": 8,
-      "last_used": "2026-02-17T19:08:18Z",
-      "avg_duration_seconds": 185.95,
+      "invocations": 13,
+      "last_used": "2026-02-20T10:45:44Z",
+      "avg_duration_seconds": 145.88,
       "success_rate": 1.0,
-      "total_input_tokens": 55438,
-      "total_output_tokens": 2652,
-      "total_cache_read_tokens": 7395367,
-      "total_cache_create_tokens": 1298819
+      "total_input_tokens": 55482,
+      "total_output_tokens": 2896,
+      "total_cache_read_tokens": 8266405,
+      "total_cache_create_tokens": 1507618
+    },
+    "code-quality-audit": {
+      "invocations": 3,
+      "last_used": "2026-02-20T10:08:05Z",
+      "avg_duration_seconds": 86.89,
+      "success_rate": 1.0,
+      "total_input_tokens": 113,
+      "total_output_tokens": 962,
+      "total_cache_read_tokens": 7182002,
+      "total_cache_create_tokens": 1090222
+    },
+    "docs-audit": {
+      "invocations": 2,
+      "last_used": "2026-02-20T10:08:06Z",
+      "avg_duration_seconds": 82.06,
+      "success_rate": 1.0,
+      "total_input_tokens": 67,
+      "total_output_tokens": 199,
+      "total_cache_read_tokens": 3860787,
+      "total_cache_create_tokens": 1065359
+    },
+    "standards-audit": {
+      "invocations": 2,
+      "last_used": "2026-02-20T10:08:07Z",
+      "avg_duration_seconds": 71.45,
+      "success_rate": 1.0,
+      "total_input_tokens": 67,
+      "total_output_tokens": 210,
+      "total_cache_read_tokens": 5365577,
+      "total_cache_create_tokens": 759479
+    },
+    "dependency-audit": {
+      "invocations": 2,
+      "last_used": "2026-02-20T10:08:07Z",
+      "avg_duration_seconds": 71.34,
+      "success_rate": 1.0,
+      "total_input_tokens": 49,
+      "total_output_tokens": 456,
+      "total_cache_read_tokens": 2279372,
+      "total_cache_create_tokens": 384453
+    },
+    "process-audit": {
+      "invocations": 2,
+      "last_used": "2026-02-20T10:08:08Z",
+      "avg_duration_seconds": 132.96,
+      "success_rate": 1.0,
+      "total_input_tokens": 83,
+      "total_output_tokens": 841,
+      "total_cache_read_tokens": 5938096,
+      "total_cache_create_tokens": 174109
+    },
+    "hunter-br026": {
+      "invocations": 2,
+      "last_used": "2026-02-20T10:49:58Z",
+      "avg_duration_seconds": 84.72,
+      "success_rate": 1.0,
+      "total_input_tokens": 45,
+      "total_output_tokens": 219,
+      "total_cache_read_tokens": 1225462,
+      "total_cache_create_tokens": 73892
+    },
+    "hunter-br028": {
+      "invocations": 2,
+      "last_used": "2026-02-20T10:49:48Z",
+      "avg_duration_seconds": 72.72,
+      "success_rate": 1.0,
+      "total_input_tokens": 36,
+      "total_output_tokens": 191,
+      "total_cache_read_tokens": 1271412,
+      "total_cache_create_tokens": 70168
+    },
+    "hunter-br027": {
+      "invocations": 2,
+      "last_used": "2026-02-20T10:55:43Z",
+      "avg_duration_seconds": 244.39,
+      "success_rate": 1.0,
+      "total_input_tokens": 94,
+      "total_output_tokens": 375,
+      "total_cache_read_tokens": 5307470,
+      "total_cache_create_tokens": 123056
     }
   },
   "totals": {
-    "total_invocations": 328,
+    "total_invocations": 350,
     "most_used_agent": "warden",
     "least_used_agent": "mender",
-    "total_input_tokens": 800664,
-    "total_output_tokens": 54801,
-    "total_cache_tokens": 616770426
+    "total_input_tokens": 801262,
+    "total_output_tokens": 58498,
+    "total_cache_tokens": 654021179
   }
 }
