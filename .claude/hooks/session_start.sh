@@ -129,9 +129,9 @@ main() {
   if command -v jq &> /dev/null; then
     jq -n --arg ctx "$context" '{"additionalContext": $ctx}'
   else
-    python3 -c "
-import json
-context = '''${context}'''
+    CONTEXT_DATA="$context" python3 -c "
+import json, os
+context = os.environ.get('CONTEXT_DATA', '')
 print(json.dumps({'additionalContext': context}))
 " 2>/dev/null || echo '{"additionalContext": "[IGRIS SESSION STATE]\nMode: UNKNOWN\n[/IGRIS SESSION STATE]"}'
   fi

@@ -5,7 +5,7 @@
 **Effort:** M-Medium (1-2d)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** Ready
+**Status:** Done
 **Created:** 2026-02-20
 **Source:** v4.0 Standards Compliance + Code Quality Audit
 
@@ -55,18 +55,18 @@ All scripts use python3 fallback for jq operations. No shell variable injection 
 
 ## Tasks
 
-### Pending
-- [ ] Add python3 fallback to ALL jq calls in `persona_mask.sh` (15+ locations)
-- [ ] Replace shell interpolation in Python heredocs with `os.environ.get()` pattern
-- [ ] Fix triple-quote injection by passing content via env vars or base64
-- [ ] Add platform detection for `stat` in `brief_gate.sh`
-- [ ] Replace `sed -i.bak` with portable pattern in `persona_mask.sh`
+### Completed
+- [x] Add python3 fallback to ALL jq calls in `persona_mask.sh` (15+ locations)
+- [x] Replace shell interpolation in Python heredocs with `os.environ.get()` pattern
+- [x] Fix triple-quote injection by passing content via env vars or base64
+- [x] Add platform detection for `stat` in `brief_gate.sh`
+- [x] Replace `sed -i.bak` with portable pattern in `persona_mask.sh`
 
 ---
 
 ## Workflow State
 
-**Phase:** INIT
+**Phase:** COMPLETE
 **Active Agent:** none
 **Retry Count:** 0
 
@@ -78,11 +78,11 @@ All scripts use python3 fallback for jq operations. No shell variable injection 
 
 ## Acceptance Criteria
 
-1. [ ] `persona_mask.sh` works without jq (python3 fallback for all JSON operations)
-2. [ ] Plugin scripts safe against crafted plugin names with special characters
-3. [ ] Hook Python fallbacks safe against content with triple-quotes
-4. [ ] `brief_gate.sh` works on both macOS and Linux
-5. [ ] `persona_mask.sh` sed operations work on both platforms
+1. [x] `persona_mask.sh` works without jq (python3 fallback for all JSON operations)
+2. [x] Plugin scripts safe against crafted plugin names with special characters
+3. [x] Hook Python fallbacks safe against content with triple-quotes
+4. [x] `brief_gate.sh` works on both macOS and Linux
+5. [x] `persona_mask.sh` sed operations work on both platforms
 
 ---
 

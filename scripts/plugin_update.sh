@@ -33,7 +33,7 @@ validate_json() {
   fi
 
   # Validate JSON syntax
-  if ! python3 -c "import json; json.load(open('$file'))" 2>/dev/null; then
+  if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$file" 2>/dev/null; then
     echo "❌ Error: $desc is corrupted or contains invalid JSON"
     echo "   File: $file"
     return 1
@@ -108,19 +108,21 @@ if [ -z "$PLUGIN_ENTRY" ]; then
 fi
 
 # Extract plugin info from installed.json using python3 (reliable JSON parsing)
-PLUGIN_INFO=$(python3 -c "
-import json
+export _PLUGIN_NAME="$PLUGIN_NAME"
+PLUGIN_INFO=$(python3 <<'PYEOF'
+import json, os
+name = os.environ.get('_PLUGIN_NAME', '')
 with open('ai/plugins/installed.json', 'r') as f:
     data = json.load(f)
     for plugin in data['plugins']:
-        if plugin['name'] == '$PLUGIN_NAME':
+        if plugin['name'] == name:
             print(plugin.get('repo', ''))
             print(plugin.get('version', ''))
-            # Output hooks as JSON string (or empty)
             hooks = plugin.get('hooks', {})
             print(json.dumps(hooks) if hooks else '{}')
             break
-")
+PYEOF
+)
 PLUGIN_REPO=$(echo "$PLUGIN_INFO" | sed -n '1p')
 CURRENT_VERSION=$(echo "$PLUGIN_INFO" | sed -n '2p')
 OLD_HOOKS=$(echo "$PLUGIN_INFO" | sed -n '3p')
@@ -152,14 +154,16 @@ if [ ! -f "$TEMP_DIR/plugin.json" ]; then
 fi
 
 # Extract version and hooks from plugin.json using python3 (reliable JSON parsing)
-REMOTE_INFO=$(python3 -c "
-import json
-with open('$TEMP_DIR/plugin.json', 'r') as f:
+export _PLUGIN_JSON="$TEMP_DIR/plugin.json"
+REMOTE_INFO=$(python3 <<'PYEOF' 2>/dev/null
+import json, os
+with open(os.environ['_PLUGIN_JSON'], 'r') as f:
     data = json.load(f)
     print(data.get('version', ''))
     hooks = data.get('hooks', {})
     print(json.dumps(hooks) if hooks else '{}')
-" 2>/dev/null)
+PYEOF
+)
 REMOTE_VERSION=$(echo "$REMOTE_INFO" | sed -n '1p')
 NEW_HOOKS=$(echo "$REMOTE_INFO" | sed -n '2p')
 
@@ -262,31 +266,39 @@ cd "$PROJECT_DIR"
 
 # Update installed.json (including hooks)
 TEMP_JSON=$(mktemp)
-python3 <<EOF > "$TEMP_JSON"
-import json
+export _PLUGIN_NAME="$PLUGIN_NAME"
+export _REMOTE_VERSION="$REMOTE_VERSION"
+export _UPDATE_DATE="$UPDATE_DATE"
+export _NEW_HOOKS="$NEW_HOOKS"
+python3 <<'PYEOF' > "$TEMP_JSON"
+import json, os
 
 with open('ai/plugins/installed.json', 'r') as f:
     data = json.load(f)
 
+plugin_name = os.environ.get('_PLUGIN_NAME', '')
+remote_version = os.environ.get('_REMOTE_VERSION', '')
+update_date = os.environ.get('_UPDATE_DATE', '')
+new_hooks_str = os.environ.get('_NEW_HOOKS', '{}')
+
 # Parse new hooks
-new_hooks = json.loads('$NEW_HOOKS') if '$NEW_HOOKS' and '$NEW_HOOKS' != '{}' else {}
+new_hooks = json.loads(new_hooks_str) if new_hooks_str and new_hooks_str != '{}' else {}
 
 # Find and update plugin entry
 for plugin in data['plugins']:
-    if plugin['name'] == '$PLUGIN_NAME':
-        plugin['version'] = '$REMOTE_VERSION'
-        plugin['installed_at'] = '$UPDATE_DATE'
-        # Update hooks (add if present, remove if empty)
+    if plugin['name'] == plugin_name:
+        plugin['version'] = remote_version
+        plugin['installed_at'] = update_date
         if new_hooks:
             plugin['hooks'] = new_hooks
         elif 'hooks' in plugin:
             del plugin['hooks']
         break
 
-data['last_updated'] = '$UPDATE_DATE'
+data['last_updated'] = update_date
 
 print(json.dumps(data, indent=2))
-EOF
+PYEOF
 
 if [ $? -eq 0 ] && [ -s "$TEMP_JSON" ]; then
     mv "$TEMP_JSON" ai/plugins/installed.json
@@ -366,17 +378,22 @@ HOOK_EOF
     printf '%s' "$PERSONA_INJECTION" > "$PERSONA_TEMP"
   fi
 
-  python3 <<PYTHON_EOF
-import json
+  export _TEMPLATE_PATH="$IGRIS_DIR/scripts/templates/CLAUDE.md.template"
+  export _IGRIS_VERSION="$IGRIS_VERSION"
+  export _INSTALL_DATE="$INSTALL_DATE"
+  export _INSTALLED_PERSONA="${INSTALLED_PERSONA:-}"
+  export _PERSONA_TEMP="${PERSONA_TEMP:-}"
+  python3 <<'PYEOF'
+import json, os
 
 # Read template
-with open("$IGRIS_DIR/scripts/templates/CLAUDE.md.template", 'r') as f:
+with open(os.environ['_TEMPLATE_PATH'], 'r') as f:
     content = f.read()
 
 # Replace simple variables
-content = content.replace('{{IGRIS_VERSION}}', '$IGRIS_VERSION')
-content = content.replace('{{INSTALL_DATE}}', '$INSTALL_DATE')
-content = content.replace('{{INSTALLED_PERSONA}}', '$INSTALLED_PERSONA')
+content = content.replace('{{IGRIS_VERSION}}', os.environ.get('_IGRIS_VERSION', 'unknown'))
+content = content.replace('{{INSTALL_DATE}}', os.environ.get('_INSTALL_DATE', ''))
+content = content.replace('{{INSTALLED_PERSONA}}', os.environ.get('_INSTALLED_PERSONA', ''))
 
 # Determine hook status
 hook_status = "No enhancement hooks installed"
@@ -390,7 +407,7 @@ try:
         hook_status = f"{plugin_count} plugin(s) with enhancement hooks installed"
         names = [p.get('name', 'unknown') for p in plugins_data.get('plugins', [])]
         installed_plugins = ', '.join(names)
-except:
+except Exception:
     pass
 
 content = content.replace('{{HOOK_STATUS}}', hook_status)
@@ -398,19 +415,19 @@ content = content.replace('{{INSTALLED_ENHANCEMENT_PLUGINS}}', installed_plugins
 
 # Replace persona injection (multi-line safe)
 persona_content = ""
-persona_file = "$PERSONA_TEMP"
+persona_file = os.environ.get('_PERSONA_TEMP', '')
 if persona_file:
     try:
         with open(persona_file, 'r') as f:
             persona_content = f.read()
-    except:
+    except Exception:
         pass
 content = content.replace('{{PERSONA_INJECTION}}', persona_content)
 
 # Write result
 with open('CLAUDE.md', 'w') as f:
     f.write(content)
-PYTHON_EOF
+PYEOF
 
   # Cleanup temp file
   if [ -n "$PERSONA_TEMP" ]; then
@@ -423,24 +440,31 @@ fi
 # Update .igris_version
 if [ -f ".igris_version" ]; then
     TEMP_VERSION=$(mktemp)
-    python3 <<VERSION_EOF > "$TEMP_VERSION"
-import json
+    export _PLUGIN_NAME="$PLUGIN_NAME"
+    export _REMOTE_VERSION="$REMOTE_VERSION"
+    export _UPDATE_DATE="$UPDATE_DATE"
+    python3 <<'PYEOF' > "$TEMP_VERSION"
+import json, os
 
 with open('.igris_version', 'r') as f:
     data = json.load(f)
+
+plugin_name = os.environ.get('_PLUGIN_NAME', '')
+remote_version = os.environ.get('_REMOTE_VERSION', '')
+update_date = os.environ.get('_UPDATE_DATE', '')
 
 # Update plugin version
 if 'plugins' not in data:
     data['plugins'] = {}
 
-if '$PLUGIN_NAME' in data['plugins']:
-    data['plugins']['$PLUGIN_NAME']['version'] = '$REMOTE_VERSION'
-    data['plugins']['$PLUGIN_NAME']['installed_at'] = '$UPDATE_DATE'
+if plugin_name in data['plugins']:
+    data['plugins'][plugin_name]['version'] = remote_version
+    data['plugins'][plugin_name]['installed_at'] = update_date
 
-data['last_updated'] = '$UPDATE_DATE'
+data['last_updated'] = update_date
 
 print(json.dumps(data, indent=2))
-VERSION_EOF
+PYEOF
 
     if [ $? -eq 0 ] && [ -s "$TEMP_VERSION" ]; then
         mv "$TEMP_VERSION" .igris_version

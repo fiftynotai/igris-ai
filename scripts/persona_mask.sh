@@ -41,12 +41,63 @@ usage() {
   exit 1
 }
 
-# Check if jq is available
-if ! command -v jq &> /dev/null; then
-  echo -e "${RED}❌ Error: jq is required but not installed${NC}"
-  echo "Install with: brew install jq (macOS) or apt-get install jq (Linux)"
-  exit 1
-fi
+# JSON read helper: uses jq if available, falls back to python3
+json_read() {
+  local file="$1"
+  local jq_expr="$2"
+  local py_expr="$3"
+  local default="${4:-}"
+
+  if command -v jq &>/dev/null; then
+    jq -r "$jq_expr" "$file" 2>/dev/null || echo "$default"
+  elif command -v python3 &>/dev/null; then
+    python3 -c "import json,sys; data=json.load(open(sys.argv[1])); $py_expr" "$file" 2>/dev/null || echo "$default"
+  else
+    echo -e "${RED}Error: Neither jq nor python3 is available${NC}"
+    echo "Install one of: brew install jq | apt-get install jq | python3"
+    exit 1
+  fi
+}
+
+# JSON write helper: uses jq if available, falls back to python3
+json_write() {
+  local file="$1"
+  local jq_expr="$2"
+  local py_code="$3"
+  shift 3
+  # Remaining args are --arg pairs for jq or env vars already exported
+
+  local tmp_file
+  tmp_file=$(mktemp)
+
+  if command -v jq &>/dev/null; then
+    jq "$@" "$jq_expr" "$file" > "$tmp_file" 2>/dev/null && mv "$tmp_file" "$file"
+  elif command -v python3 &>/dev/null; then
+    python3 -c "
+import json, sys, os
+with open(sys.argv[1], 'r') as f:
+    data = json.load(f)
+$py_code
+with open(sys.argv[1], 'w') as f:
+    json.dump(data, f, indent=2)
+    f.write('\n')
+" "$file" 2>/dev/null
+    rm -f "$tmp_file"
+  else
+    rm -f "$tmp_file"
+    echo -e "${RED}Error: Neither jq nor python3 is available${NC}"
+    exit 1
+  fi
+}
+
+# Portable sed in-place replacement (avoids macOS sed -i.bak issue)
+sed_inplace() {
+  local pattern="$1"
+  local file="$2"
+  local tmp_file
+  tmp_file=$(mktemp)
+  sed "$pattern" "$file" > "$tmp_file" && mv "$tmp_file" "$file"
+}
 
 # Check if persona config exists
 if [ ! -f "$PERSONA_CONFIG" ]; then
@@ -71,9 +122,9 @@ regenerate_hook() {
   cp "$MASK_FILE" "$HOOK_FILE"
 
   # Replace placeholders
-  TITLE=$(jq -r '.branding.title // "User"' "$PERSONA_CONFIG")
-  COMPANY=$(jq -r '.branding.company // "Your Company"' "$PERSONA_CONFIG")
-  TONE_LEVEL=$(jq -r '.tone.level // "C2"' "$PERSONA_CONFIG")
+  TITLE=$(json_read "$PERSONA_CONFIG" '.branding.title // "User"' "print(data.get('branding',{}).get('title','User'))" "User")
+  COMPANY=$(json_read "$PERSONA_CONFIG" '.branding.company // "Your Company"' "print(data.get('branding',{}).get('company','Your Company'))" "Your Company")
+  TONE_LEVEL=$(json_read "$PERSONA_CONFIG" '.tone.level // "C2"' "print(data.get('tone',{}).get('level','C2'))" "C2")
 
   # Map tone level to name and description
   case $TONE_LEVEL in
@@ -95,12 +146,11 @@ regenerate_hook() {
       ;;
   esac
 
-  # Replace placeholders in hook file
-  sed -i.bak "s/{{TITLE}}/$TITLE/g" "$HOOK_FILE"
-  sed -i.bak "s/{{COMPANY}}/$COMPANY/g" "$HOOK_FILE"
-  sed -i.bak "s/{{TONE_NAME}}/$TONE_NAME/g" "$HOOK_FILE"
-  sed -i.bak "s/{{TONE_DESC}}/$TONE_DESC/g" "$HOOK_FILE"
-  rm -f "${HOOK_FILE}.bak"
+  # Replace placeholders in hook file (portable sed)
+  sed_inplace "s/{{TITLE}}/$TITLE/g" "$HOOK_FILE"
+  sed_inplace "s/{{COMPANY}}/$COMPANY/g" "$HOOK_FILE"
+  sed_inplace "s/{{TONE_NAME}}/$TONE_NAME/g" "$HOOK_FILE"
+  sed_inplace "s/{{TONE_DESC}}/$TONE_DESC/g" "$HOOK_FILE"
 }
 
 # Function to regenerate CLAUDE.md
@@ -163,10 +213,12 @@ cmd_wear() {
   echo "🎭 Wearing $MASK_LEVEL mask..."
 
   # Update persona config
-  jq --arg persona "$PERSONA" --arg mask "$MASK_LEVEL" \
-     '.persona = $persona | .mask = $mask' \
-     "$PERSONA_CONFIG" > "${PERSONA_CONFIG}.tmp"
-  mv "${PERSONA_CONFIG}.tmp" "$PERSONA_CONFIG"
+  export _PERSONA="$PERSONA"
+  export _MASK="$MASK_LEVEL"
+  json_write "$PERSONA_CONFIG" \
+    '.persona = $persona | .mask = $mask' \
+    "data['persona'] = os.environ['_PERSONA']; data['mask'] = os.environ['_MASK']" \
+    --arg persona "$PERSONA" --arg mask "$MASK_LEVEL"
 
   # Regenerate hook
   regenerate_hook "$MASK_LEVEL" "$PERSONA"
@@ -203,7 +255,7 @@ cmd_adjust() {
   esac
 
   # Get current persona
-  CURRENT_PERSONA=$(jq -r '.persona' "$PERSONA_CONFIG")
+  CURRENT_PERSONA=$(json_read "$PERSONA_CONFIG" '.persona' "print(data.get('persona',''))")
 
   if [ "$CURRENT_PERSONA" == "null" ] || [ -z "$CURRENT_PERSONA" ]; then
     echo -e "${RED}❌ Error: No persona configured${NC}"
@@ -214,8 +266,11 @@ cmd_adjust() {
   echo "🎭 Adjusting to $MASK_LEVEL mask..."
 
   # Update mask level
-  jq --arg mask "$MASK_LEVEL" '.mask = $mask' "$PERSONA_CONFIG" > "${PERSONA_CONFIG}.tmp"
-  mv "${PERSONA_CONFIG}.tmp" "$PERSONA_CONFIG"
+  export _MASK="$MASK_LEVEL"
+  json_write "$PERSONA_CONFIG" \
+    '.mask = $mask' \
+    "data['mask'] = os.environ['_MASK']" \
+    --arg mask "$MASK_LEVEL"
 
   # Regenerate hook
   regenerate_hook "$MASK_LEVEL" "$CURRENT_PERSONA"
@@ -234,11 +289,12 @@ cmd_remove() {
   echo "🎭 Removing mask..."
 
   # Get current persona
-  CURRENT_PERSONA=$(jq -r '.persona' "$PERSONA_CONFIG")
+  CURRENT_PERSONA=$(json_read "$PERSONA_CONFIG" '.persona' "print(data.get('persona',''))")
 
   # Set mask to none
-  jq '.mask = "none"' "$PERSONA_CONFIG" > "${PERSONA_CONFIG}.tmp"
-  mv "${PERSONA_CONFIG}.tmp" "$PERSONA_CONFIG"
+  json_write "$PERSONA_CONFIG" \
+    '.mask = "none"' \
+    "data['mask'] = 'none'"
 
   # Regenerate hook (empty)
   regenerate_hook "none" "$CURRENT_PERSONA"
@@ -259,15 +315,15 @@ cmd_status() {
   echo "🎭 Current Persona Configuration"
   echo ""
 
-  CURRENT_PERSONA=$(jq -r '.persona' "$PERSONA_CONFIG")
-  CURRENT_MASK=$(jq -r '.mask' "$PERSONA_CONFIG")
-  TITLE=$(jq -r '.branding.title' "$PERSONA_CONFIG")
-  TONE=$(jq -r '.tone.level' "$PERSONA_CONFIG")
-  ADDRESSING=$(jq -r '.tone.addressing_mode' "$PERSONA_CONFIG")
-  COMMANDS=$(jq -r '.features.commands' "$PERSONA_CONFIG")
-  BANNER=$(jq -r '.features.banner' "$PERSONA_CONFIG")
-  VERSION=$(jq -r '.version' "$PERSONA_CONFIG")
-  INSTALLED=$(jq -r '.installed_at' "$PERSONA_CONFIG")
+  CURRENT_PERSONA=$(json_read "$PERSONA_CONFIG" '.persona' "print(data.get('persona',''))")
+  CURRENT_MASK=$(json_read "$PERSONA_CONFIG" '.mask' "print(data.get('mask',''))")
+  TITLE=$(json_read "$PERSONA_CONFIG" '.branding.title' "print(data.get('branding',{}).get('title',''))")
+  TONE=$(json_read "$PERSONA_CONFIG" '.tone.level' "print(data.get('tone',{}).get('level',''))")
+  ADDRESSING=$(json_read "$PERSONA_CONFIG" '.tone.addressing_mode' "print(data.get('tone',{}).get('addressing_mode',''))")
+  COMMANDS=$(json_read "$PERSONA_CONFIG" '.features.commands' "print(data.get('features',{}).get('commands',''))")
+  BANNER=$(json_read "$PERSONA_CONFIG" '.features.banner' "print(data.get('features',{}).get('banner',''))")
+  VERSION=$(json_read "$PERSONA_CONFIG" '.version' "print(data.get('version',''))")
+  INSTALLED=$(json_read "$PERSONA_CONFIG" '.installed_at' "print(data.get('installed_at',''))")
 
   echo "Persona: $CURRENT_PERSONA"
   echo "Mask: $CURRENT_MASK"

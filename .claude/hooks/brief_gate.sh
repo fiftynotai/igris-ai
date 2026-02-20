@@ -83,7 +83,11 @@ check_active_brief() {
     local now
     now=$(date +%s)
     local cache_mtime
-    cache_mtime=$(stat -f %m "$cache_file" 2>/dev/null) || cache_mtime=0
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      cache_mtime=$(stat -f %m "$cache_file" 2>/dev/null) || cache_mtime=0
+    else
+      cache_mtime=$(stat -c %Y "$cache_file" 2>/dev/null) || cache_mtime=0
+    fi
     cache_age=$((now - cache_mtime))
 
     if [ "$cache_age" -lt "$cache_ttl" ]; then

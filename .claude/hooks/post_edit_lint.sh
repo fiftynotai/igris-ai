@@ -88,13 +88,14 @@ except Exception:
       "\n[/SHELLCHECK LINT]"
     ' 2>/dev/null) || context=""
   else
-    context=$(echo "$lint_output" | python3 -c "
-import json, sys
+    context=$(FILE_PATH="$file_path" python3 -c "
+import json, sys, os
 try:
     data = json.load(sys.stdin)
     comments = data.get('comments', [])
+    fp = os.environ.get('FILE_PATH', 'unknown')
     lines = ['[SHELLCHECK LINT]']
-    lines.append(f'File: ${file_path}')
+    lines.append(f'File: {fp}')
     lines.append(f'Issues: {len(comments)}')
     for c in comments:
         lines.append(f'  SC{c[\"code\"]} (line {c[\"line\"]}): {c[\"message\"]}')
@@ -102,7 +103,7 @@ try:
     print('\n'.join(lines))
 except Exception:
     pass
-" 2>/dev/null) || context=""
+" <<< "$lint_output" 2>/dev/null) || context=""
   fi
 
   if [ -z "$context" ]; then
@@ -113,9 +114,9 @@ except Exception:
   if command -v jq &> /dev/null; then
     jq -n --arg ctx "$context" '{"additionalContext": $ctx}'
   else
-    python3 -c "
-import json
-context = '''${context}'''
+    CONTEXT_DATA="$context" python3 -c "
+import json, os
+context = os.environ.get('CONTEXT_DATA', '')
 print(json.dumps({'additionalContext': context}))
 " 2>/dev/null
   fi

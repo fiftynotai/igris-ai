@@ -33,7 +33,7 @@ validate_json() {
   fi
 
   # Validate JSON syntax
-  if ! python3 -c "import json; json.load(open('$file'))" 2>/dev/null; then
+  if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$file" 2>/dev/null; then
     echo "❌ Error: $desc is corrupted or contains invalid JSON"
     echo "   File: $file"
     return 1
@@ -101,14 +101,17 @@ if [ -z "$PLUGIN_INSTALLED" ]; then
 fi
 
 # Get plugin info
-PLUGIN_VERSION=$(cat ai/plugins/installed.json | python3 -c "
-import sys, json
+export _PLUGIN_NAME="$PLUGIN_NAME"
+PLUGIN_VERSION=$(python3 <<'PYEOF' < ai/plugins/installed.json
+import sys, json, os
 data = json.load(sys.stdin)
+name = os.environ.get('_PLUGIN_NAME', '')
 for p in data['plugins']:
-    if p['name'] == '$PLUGIN_NAME':
+    if p['name'] == name:
         print(p['version'])
         break
-")
+PYEOF
+)
 
 echo "📋 Plugin: $PLUGIN_NAME v$PLUGIN_VERSION"
 echo ""
@@ -128,24 +131,28 @@ echo ""
 echo "🗑️  Uninstalling plugin..."
 
 # Get plugin info for cleanup
-PLUGIN_LOCATION=$(python3 -c "
-import sys, json
+export _PLUGIN_NAME="$PLUGIN_NAME"
+PLUGIN_LOCATION=$(python3 <<'PYEOF' < ai/plugins/installed.json
+import sys, json, os
 data = json.load(sys.stdin)
+name = os.environ.get('_PLUGIN_NAME', '')
 for p in data['plugins']:
-    if p['name'] == '$PLUGIN_NAME':
-        # Try 'location' first (new), fallback to 'repo' (old)
+    if p['name'] == name:
         print(p.get('location', p.get('repo', '')))
         break
-" < ai/plugins/installed.json)
+PYEOF
+)
 
-HAS_HOOKS=$(python3 -c "
-import sys, json
+HAS_HOOKS=$(python3 <<'PYEOF' < ai/plugins/installed.json
+import sys, json, os
 data = json.load(sys.stdin)
+name = os.environ.get('_PLUGIN_NAME', '')
 for p in data['plugins']:
-    if p['name'] == '$PLUGIN_NAME':
+    if p['name'] == name:
         print('yes' if 'hooks' in p and p['hooks'] else 'no')
         break
-" < ai/plugins/installed.json)
+PYEOF
+)
 
 # Create backup before removal
 BACKUP_DIR=".igris_backup/uninstall/$(date +%Y%m%d_%H%M%S)_${PLUGIN_NAME}"
@@ -193,26 +200,27 @@ with open('.igris_version', 'r') as f:
   # Regenerate CLAUDE.md without this plugin's hooks
   # Get remaining plugins' hooks (excluding the one being uninstalled)
   PERSONA_INJECTION=""
-  if command -v jq &> /dev/null; then
-    # Get hooks from remaining plugins only
-    PERSONA_HOOK=$(python3 -c "
-import json
+  export _PLUGIN_NAME="$PLUGIN_NAME"
+  # Get hooks from remaining plugins only
+  PERSONA_HOOK=$(python3 <<'PYEOF' 2>/dev/null || echo ""
+import json, os
+name = os.environ.get('_PLUGIN_NAME', '')
 with open('ai/plugins/installed.json', 'r') as f:
     data = json.load(f)
     for plugin in data['plugins']:
-        if plugin['name'] != '$PLUGIN_NAME' and 'hooks' in plugin and 'persona_injection' in plugin['hooks']:
+        if plugin['name'] != name and 'hooks' in plugin and 'persona_injection' in plugin['hooks']:
             hook_path = plugin['hooks']['persona_injection']
             try:
                 with open(hook_path, 'r') as h:
                     print(h.read())
                     break
-            except:
+            except Exception:
                 pass
-" 2>/dev/null)
+PYEOF
+)
 
-    if [ -n "$PERSONA_HOOK" ]; then
-      PERSONA_INJECTION="$PERSONA_HOOK"
-    fi
+  if [ -n "$PERSONA_HOOK" ]; then
+    PERSONA_INJECTION="$PERSONA_HOOK"
   fi
 
   # Regenerate CLAUDE.md
@@ -222,27 +230,36 @@ with open('ai/plugins/installed.json', 'r') as f:
     printf '%s' "$PERSONA_INJECTION" > "$PERSONA_TEMP"
   fi
 
-  python3 <<PYTHON_EOF
+  export _TEMPLATE_PATH="$IGRIS_DIR/scripts/templates/CLAUDE.md.template"
+  export _IGRIS_VERSION="$IGRIS_VERSION"
+  export _INSTALL_DATE="$INSTALL_DATE"
+  export _PERSONA_TEMP="${PERSONA_TEMP:-}"
+  python3 <<'PYEOF'
+import os
+
 # Read template
-with open("$IGRIS_DIR/scripts/templates/CLAUDE.md.template", 'r') as f:
+with open(os.environ['_TEMPLATE_PATH'], 'r') as f:
     content = f.read()
 
 # Replace simple variables
-content = content.replace('{{IGRIS_VERSION}}', '$IGRIS_VERSION')
-content = content.replace('{{INSTALL_DATE}}', '$INSTALL_DATE')
+content = content.replace('{{IGRIS_VERSION}}', os.environ.get('_IGRIS_VERSION', 'unknown'))
+content = content.replace('{{INSTALL_DATE}}', os.environ.get('_INSTALL_DATE', ''))
 
 # Replace persona injection (multi-line safe)
 persona_content = ""
-persona_file = "$PERSONA_TEMP"
+persona_file = os.environ.get('_PERSONA_TEMP', '')
 if persona_file:
-    with open(persona_file, 'r') as f:
-        persona_content = f.read()
+    try:
+        with open(persona_file, 'r') as f:
+            persona_content = f.read()
+    except Exception:
+        pass
 content = content.replace('{{PERSONA_INJECTION}}', persona_content)
 
 # Write result
 with open('CLAUDE.md', 'w') as f:
     f.write(content)
-PYTHON_EOF
+PYEOF
 
   # Cleanup temp file
   if [ -n "$PERSONA_TEMP" ]; then
@@ -254,14 +271,16 @@ fi
 
 # Update installed.json
 TEMP_JSON=$(mktemp)
-cat ai/plugins/installed.json | python3 -c "
-import sys, json
+export _PLUGIN_NAME="$PLUGIN_NAME"
+python3 <<'PYEOF' < ai/plugins/installed.json > "$TEMP_JSON"
+import sys, json, os
 from datetime import datetime
 data = json.load(sys.stdin)
-data['plugins'] = [p for p in data['plugins'] if p['name'] != '$PLUGIN_NAME']
+name = os.environ.get('_PLUGIN_NAME', '')
+data['plugins'] = [p for p in data['plugins'] if p['name'] != name]
 data['last_updated'] = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 json.dump(data, sys.stdout, indent=2)
-" > "$TEMP_JSON"
+PYEOF
 
 mv "$TEMP_JSON" ai/plugins/installed.json
 
