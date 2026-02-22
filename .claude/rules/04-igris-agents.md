@@ -240,4 +240,4 @@ When implementing a brief:
 
 ---
 
-**Rule Purpose:** Ensure proper delegation to 7 specialized agents and 20 skills for consistent, high-quality work.
+**Rule Purpose:** Ensure proper delegation to 7 specialized agents and 20 core skills (+ custom project skills) for consistent, high-quality work.

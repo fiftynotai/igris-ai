@@ -5,7 +5,7 @@
 **Effort:** S-Small (< 4h)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** Ready
+**Status:** Done
 **Created:** 2026-02-20
 **Source:** v4.0 Standards Compliance + Code Quality + Dependency Audit
 
@@ -40,20 +40,23 @@ All version references aligned to v4.0.0. All agent/skill counts accurate.
 
 ## Tasks
 
-### Pending
-- [ ] Update `igris_init.sh` version strings from v3.3 to v4.0
-- [ ] Update `igris_init.sh` "18 subagents" to "7 agents"
-- [ ] Update `mcp-server/package.json` version to 4.0.0
-- [ ] Update `mcp-server/src/index.ts` version to 4.0.0
-- [ ] Update `session_protocol.md` version to 4.0.0
-- [ ] Update skill count references from 20 to 21 (or decide on fifty-kit)
-- [ ] Grep for any remaining v3.x references
+### Completed
+- [x] Update `igris_init.sh` version strings from v3.3 to v4.0
+- [x] Update `igris_init.sh` "18 subagents" to "7 agents"
+- [x] Update `mcp-server/package.json` version to 4.0.0
+- [x] Update `mcp-server/src/index.ts` version to 4.0.0
+- [x] Update `session_protocol.md` version to 4.0.0
+- [x] Update skill count references: clarified "20 core + custom project skills"
+- [x] Update `manifest.yaml` version from 3.4 to 4.0
+- [x] Update `igris_update.sh` v3.2 comment to v4.0
+- [x] Remove `v3.4 behavior` reference from `igris_os.md`
+- [x] Grep for any remaining v3.x references (clean)
 
 ---
 
 ## Workflow State
 
-**Phase:** INIT
+**Phase:** COMPLETE
 **Active Agent:** none
 **Retry Count:** 0
 

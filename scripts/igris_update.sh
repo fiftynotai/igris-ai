@@ -291,9 +291,9 @@ if [ -d "$TEMP_DIR/ai/templates" ]; then
   cp "$TEMP_DIR/ai/templates/"*.md ai/templates/
 fi
 
-# Update native subagents (v3.2)
+# Update native agents (v4.0)
 if [ -d "$TEMP_DIR/.claude/agents" ]; then
-  echo "  - Updating native subagents..."
+  echo "  - Updating native agents..."
   mkdir -p .claude/agents
 
   # Copy all agent .md files (preserves local custom agents, adds new ones)

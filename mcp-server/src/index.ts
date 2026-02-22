@@ -11,7 +11,7 @@
  * Note: LangChain/LangGraph tools removed in v3.1.0
  * These capabilities are now handled by native Claude Code subagents.
  *
- * @version 3.1.0
+ * @version 4.0.0
  * @author Fifty.ai
  */
 
@@ -39,7 +39,7 @@ class IgrisMCPServer {
     this.server = new Server(
       {
         name: 'igris-ai',
-        version: '3.1.0',
+        version: '4.0.0',
       },
       {
         capabilities: {
@@ -350,7 +350,7 @@ class IgrisMCPServer {
     await this.server.connect(transport);
 
     // Server is now running and listening on stdio
-    console.error('Igris AI MCP Server v3.1.0 started');
+    console.error('Igris AI MCP Server v4.0.0 started');
   }
 }
 

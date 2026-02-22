@@ -140,4 +140,4 @@ When context resets:
 ---
 
 **Last Updated:** 2026-02-08
-**IGRIS Version:** 3.4.0
+**IGRIS Version:** 4.0.0

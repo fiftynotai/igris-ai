@@ -13,7 +13,7 @@ if [ -d "$HOME/.igris" ]; then
   echo "   ./scripts/igris_install.sh ${1:-.}"
   echo ""
   echo "   Benefits: shared core files, persistent memory, instant updates"
-  echo "   The v3.4 copy-based install will continue to work."
+  echo "   The v4.0 copy-based install will continue to work."
   echo ""
   # Check if running interactively
   if [ -t 0 ]; then
@@ -24,7 +24,7 @@ if [ -d "$HOME/.igris" ]; then
       exec "$SCRIPT_DIR/igris_install.sh" "${1:-.}"
     fi
   fi
-  echo "Continuing with v3.4 copy-based install..."
+  echo "Continuing with v4.0 copy-based install..."
   echo ""
 fi
 
@@ -241,8 +241,8 @@ mkdir -p .claude/hooks
 cp "$IGRIS_DIR/scripts/templates/startup.sh.template" .claude/hooks/startup.sh
 chmod +x .claude/hooks/startup.sh
 
-# Install native subagents (v3.2)
-echo "🤖 Installing native subagents..."
+# Install native agents (v4.0)
+echo "🤖 Installing native agents..."
 mkdir -p .claude/agents
 if [ -d "$IGRIS_DIR/.claude/agents" ]; then
   cp "$IGRIS_DIR/.claude/agents/"*.md .claude/agents/ 2>/dev/null || true
@@ -577,12 +577,12 @@ except:
 fi
 
 echo ""
-echo "✅ Igris AI v3.3 initialized successfully!"
+echo "✅ Igris AI v4.0 initialized successfully!"
 echo ""
 echo "🤖 Claude Code Integration:"
 echo "   ✓ Startup hook enabled (.claude/hooks/startup.sh)"
 echo "   ✓ Context file created (CLAUDE.md)"
-echo "   ✓ 18 native subagents installed (.claude/agents/)"
+echo "   ✓ 7 native agents installed (.claude/agents/)"
 if [ "$MCP_CONFIGURED" = true ]; then
   echo "   ✓ MCP server configured (enhanced tool integration)"
 elif [ "$MCP_AVAILABLE" = true ]; then
@@ -605,7 +605,7 @@ echo ""
 echo "2. (Optional) Install shell integration:"
 echo "   $ ./scripts/install_shell_integration.sh"
 echo ""
-echo "📚 v3.3 Commands:"
+echo "📚 v4.0 Commands:"
 echo ""
 echo "   STANDARDIZE    - Generate coding_guidelines.md"
 echo "   HUNT <brief>   - Autonomous implementation"

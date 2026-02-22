@@ -346,7 +346,7 @@ IGRIS v4.0 introduces a centralized brain at `~/.igris/` that provides persisten
 - **Dashboard (/dashboard):** Show active briefs and recent sessions across all projects
 
 ### Graceful Degradation
-Brain integration is optional. If `~/.igris/` does not exist or MCP server is not registered, all features work in local-only mode (v3.4 behavior). No errors, no warnings — just local operation.
+Brain integration is optional. If `~/.igris/` does not exist or MCP server is not registered, all features work in local-only mode. No errors, no warnings — just local operation.
 
 ---
 
@@ -516,7 +516,7 @@ Orchestrator:
 - ❌ No quality gates
 - ❌ Monolithic complexity
 
-**We built 7 specialized agents + 20 skills. USE THEM.**
+**We built 7 specialized agents + 20 core skills. USE THEM.**
 
 ---
 
