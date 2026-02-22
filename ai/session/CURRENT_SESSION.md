@@ -2,7 +2,7 @@
 
 ## Status
 **Mode:** HUNT MODE
-**Updated:** 2026-02-20
+**Updated:** 2026-02-22
 **Instance ID:** f9be6a70-49bb-4176-9654-d23cd67d0119
 **Focus:** v4.0 Publication Readiness
 
@@ -12,12 +12,12 @@
 
 | Brief | Title | Status |
 |-------|-------|--------|
-| **BR-026** | **MCP Server Security Hardening** | **Ready (P0, S)** |
-| **BR-027** | **Script & Hook Injection Fixes** | **Ready (P0, M)** |
-| **BR-028** | **Brain Config Security** | **Ready (P0, S)** |
-| **TD-017** | **v4.0 Release Documentation (LICENSE, CHANGELOG, README)** | **Ready (P0, M)** |
+| ~~BR-026~~ | ~~MCP Server Security Hardening~~ | Done (commit `da86fc9`) |
+| ~~BR-027~~ | ~~Script & Hook Injection Fixes~~ | Done (commit `1c1eb71`) |
+| ~~BR-028~~ | ~~Brain Config Security~~ | Done (commit `19e1dc6`) |
+| ~~TD-017~~ | ~~v4.0 Release Documentation~~ | Done (commit `692ed47`) |
 | **TD-018** | **Switch fifty_* to pub.dev packages** | **Blocked (P0, M — awaiting pub.dev publish)** |
-| **TD-019** | **Version Alignment Sweep** | **Ready (P1, S)** |
+| ~~TD-019~~ | ~~Version Alignment Sweep~~ | Done (commit `854e2a3`) |
 | **TD-020** | **Documentation Overhaul for v4.0** | **Ready (P1, L)** |
 | **TD-021** | **Brain Integration Cleanup** | **Ready (P1, M)** |
 | FR-051 | Brain v5.0 — Modular Architecture + Task Mgmt + Scheduling | Deferred (v5.0 scope) |
@@ -36,26 +36,21 @@
 
 ## Resume Point
 
-**Last Active:** v4.0 Publication Audit — Brief Registration
-**Phase:** Briefs registered, ready to hunt
+**Last Active:** TD-017 + TD-019 team hunt complete
+**Phase:** 5 of 8 v4.0 briefs done, 3 remaining
 
 ---
 
 ## Next Session Instructions
 
-### v4.0 Release — Hunt Order (by priority + dependency)
+### v4.0 Release — Remaining Work
 
-**P0 Critical Path (must fix first):**
-1. `hunt BR-026` — MCP Server Security (S, no dependencies)
-2. `hunt BR-028` — Brain Config Security (S, no dependencies)
-3. `hunt BR-027` — Script & Hook Injection Fixes (M, no dependencies)
-4. `hunt TD-017` — Release Documentation: LICENSE + CHANGELOG + README (M, no dependencies)
-5. `hunt TD-018` — fifty_* pub.dev migration (M, **blocked on publish**)
+**P0 Blocked:**
+1. `hunt TD-018` — fifty_* pub.dev migration (M, **blocked on publish**)
 
-**P1 After P0s Complete:**
-6. `hunt TD-019` — Version Alignment Sweep (S, quick grep-and-fix)
-7. `hunt TD-021` — Brain Integration Cleanup (M, config decisions needed)
-8. `hunt TD-020` — Documentation Overhaul (L, biggest job — do last)
+**P1 Ready:**
+2. `hunt TD-021` — Brain Integration Cleanup (M, config decisions needed)
+3. `hunt TD-020` — Documentation Overhaul (L, biggest job — do last)
 
 **Note on VPS deploy:** The `igris_vps_update.sh` build step may cache stale TypeScript output. During BR-023 deploy, `dist/index.js` didn't contain new code despite `tsc` running. Manual `npx tsc` + PM2 restart fixed it. Investigate build cache issue.
 
@@ -63,22 +58,27 @@
 
 ---
 
-## Last Session Summary (2026-02-20)
+## Last Session Summary (2026-02-22)
 
-**Date:** 2026-02-20
-**Summary:** v4.0 Publication Readiness Audit. Ran 5 parallel WARDEN audits (Code Quality, Documentation, Standards Compliance, Dependencies, Process). Found 8 P0 blockers, 14 P1 issues. Registered 8 briefs (BR-026, BR-027, BR-028, TD-017, TD-018, TD-019, TD-020, TD-021). Brain v5.0 features deferred to post-v4.0.
+**Date:** 2026-02-22
+**Summary:** v4.0 Publication Sprint. Hunted 5 briefs via 2 parallel team hunts: security (BR-026, BR-027, BR-028) and docs+versions (TD-017, TD-019). All 5 complete. 3 remaining: TD-018 (blocked), TD-020, TD-021.
 
-**Previous session:**
-- FR-013: Context Breakdown Widget. Commit: `b8781ac`
-- FR-060: Skill Cards Widget. Commit: `a916778`
-- FR-057: Agent event REST API field fix. Commit: `0dc77f4`
+**Commits this session:**
+- `da86fc9` fix(mcp-server): eliminate command injection and path traversal — BR-026
+- `19e1dc6` fix(brain): use environment variables for sensitive config — BR-028
+- `1c1eb71` fix(scripts): eliminate injection vulnerabilities + cross-platform — BR-027
+- `692ed47` docs: add LICENSE, CHANGELOG, README prerequisites — TD-017
+- `854e2a3` chore: align all version references to v4.0.0 — TD-019
+
+**Previous session (2026-02-20):**
+- v4.0 Publication Readiness Audit (5 WARDEN audits, 8 briefs registered)
 
 ---
 
 ## Pending
 
-- 5 P0 briefs to hunt (3 security, 1 docs, 1 blocked)
-- 3 P1 briefs to hunt (versions, brain cleanup, docs overhaul)
+- 1 P0 brief blocked (TD-018 — awaiting pub.dev publish)
+- 2 P1 briefs to hunt (TD-021 brain cleanup, TD-020 docs overhaul)
 - Brain v5.0 deferred to post-publication
 
 ---
