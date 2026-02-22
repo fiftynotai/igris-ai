@@ -3,7 +3,7 @@
 ## Status
 **Mode:** REST MODE
 **Updated:** 2026-02-22
-**Focus:** v4.0 Publication Readiness
+**Focus:** v4.0 Publication — Final Sprint
 
 ---
 
@@ -15,11 +15,12 @@
 | ~~BR-027~~ | ~~Script & Hook Injection Fixes~~ | Done (commit `1c1eb71`) |
 | ~~BR-028~~ | ~~Brain Config Security~~ | Done (commit `19e1dc6`) |
 | ~~TD-017~~ | ~~v4.0 Release Documentation~~ | Done (commit `692ed47`) |
-| **TD-018** | **Switch fifty_* to pub.dev packages** | **Blocked (P0, M — awaiting pub.dev publish)** |
+| ~~TD-018~~ | ~~Switch fifty_* to pub.dev packages~~ | Done (resolved by MG-012, commit `2043cd0`) |
 | ~~TD-019~~ | ~~Version Alignment Sweep~~ | Done (commit `854e2a3`) |
 | ~~TD-020~~ | ~~Documentation Overhaul for v4.0~~ | Done (commit `84529b6`) |
 | ~~TD-021~~ | ~~Brain Integration Cleanup~~ | Done (commit `46a7e7a`) |
 | ~~TD-022~~ | ~~Brain MCP — Add igris_file_push Tool~~ | Done (already implemented in `b43b0f6`) |
+| ~~MG-012~~ | ~~Migrate Crimson Arena to Standalone Repo~~ | Done (commit `2043cd0`) |
 | FR-051 | Brain v5.0 — Modular Architecture + Task Mgmt + Scheduling | Deferred (v5.0 scope) |
 | FR-052-engine | Brain v5.0 Phase 1 — Engine Foundation | Deferred (v5.0 scope) |
 | FR-053 | Brain v5.0 Phase 2 — Task Management System | Deferred (v5.0 scope) |
@@ -36,46 +37,83 @@
 
 ## Resume Point
 
-**Last Active:** TD-022 verified complete (tool already existed)
-**Phase:** 8 of 8 v4.0 briefs done (TD-018 still blocked on pub.dev)
+**Last Active:** Research complete, hunting MG-012 + TD-018
+**Phase:** v4.0 final sprint — 2 briefs to close, then publish
 
 ---
 
 ## Next Session Instructions
 
-### v4.0 Release — Remaining Work
+### v4.0 Publication — Final Sprint Plan
 
-**P0 Blocked:**
-1. `hunt TD-018` — fifty_* pub.dev migration (M, **blocked on publish**)
+**Decision Record (2026-02-22):**
+- Igris-ai as plugin: CANCELLED (stay as repo-based install)
+- Brain sync gaps: DEFERRED to v5.0 (FR-054 cures root cause, patching v4 creates tech debt)
+- Crimson Arena: REMOVE from igris-ai repo, handle separately (own repo, publish with v5 or standalone)
 
-**All other v4.0 briefs complete.** v4.0 is ready to publish (TD-018 is non-blocking for release).
+**Execution Order:**
 
-**Note on igris_file_push:** The MCP tool is deployed and working on VPS but wasn't in Claude Code's deferred tools cache this session. Next session should pick it up automatically. `/sync data` steps 3-5 should then work without skips.
+#### Step 1: Hunt MG-012 — Remove Crimson Arena from igris-ai
+- Remove `dashboard/` directory entirely from igris-ai repo
+- Update README.md — remove dashboard references, note it's a separate project
+- Update CLAUDE.md — remove any dashboard references
+- Update docs/ — remove dashboard setup instructions
+- Clean commit: `refactor(dashboard): extract Crimson Arena to separate project`
+- **Note:** Do NOT create the new crimson-arena repo yet. Just remove from igris-ai. The plugin repo will be created later (v5 or standalone).
 
-**Note on VPS deploy:** The `igris_vps_update.sh` build step may cache stale TypeScript output. During BR-023 deploy, `dist/index.js` didn't contain new code despite `tsc` running. Manual `npx tsc` + PM2 restart fixed it. Investigate build cache issue.
+#### Step 2: Resolve TD-018 — Automatically resolved
+- Removing `dashboard/` eliminates all 7 fifty_* local path dependencies
+- No more pubspec.yaml with hardcoded paths in igris-ai
+- TD-018 becomes Done as side effect of MG-012
+- Mark TD-018 as Done
 
-**Note on Flutter deploy:** VPS has no Flutter SDK. Build locally with `flutter build web --release`, then rsync to VPS. Use `rsync -avz --checksum` instead of `scp -r` to ensure all files are properly overwritten.
+#### Step 3: Publish v4.0
+- Merge develop → main
+- Tag `4.0.0` and create GitHub release
+- Deploy to VPS via `/sync code`
+
+### Key Research Findings (for context)
+
+**Brain sync gaps (5 identified, all deferred to v5):**
+1. Brief content — only metadata in brain, not full content → FR-054
+2. Session files (BLOCKERS, DECISIONS, LEARNINGS) not synced → FR-054
+3. Detailed agent metrics (token usage) incomplete → FR-052
+4. coding_guidelines.md not in brain → FR-051
+5. arena.db completely separate → FR-051
+
+**Why defer:** Sync gaps are symptoms of v4's split-truth architecture (files + DB metadata). v5 cures the root cause by making brain DB the single source of truth. Patching v4 would take ~8-10h and create tech debt that v5 replaces anyway.
+
+**Crimson Arena analysis (15.4K Dart + 2K Python):**
+- Already architecturally independent (API-driven, no source code coupling)
+- 205 files, 62MB build output — significant weight for a monitoring dashboard
+- Will become a Claude Code plugin when ready (plugin format researched and documented in MG-012)
 
 ---
 
 ## Last Session Summary (2026-02-22)
 
 **Date:** 2026-02-22
-**Summary:** Hunted TD-022 (igris_file_push tool). ARCHITECT discovered the tool was already fully implemented in brain-mcp-server (commit b43b0f6). Verified end-to-end: HTTP endpoint works on VPS, MCP tool listed in server's tools/list, compiled code on VPS confirmed. SENTINEL validated 5/5 acceptance criteria PASS. WARDEN approved code quality. Brief closed as Done. v4.0: 8/8 briefs complete, TD-018 blocked on pub.dev.
+**Summary:** Researched Crimson Arena plugin migration feasibility (SEEKER). Researched Claude Code plugin architecture (general-purpose). Registered MG-012 brief. Researched brain sync gaps vs v5 briefs — confirmed gaps are subset of v5 scope. Analyzed brain centralization impact — hybrid approach recommended. Assessed v4 publish readiness — ready to ship after removing dashboard + resolving TD-018.
+
+**Decisions made:**
+- Igris-ai stays as repo (not plugin) — rules support unclear in plugin spec
+- Brain sync gaps deferred to v5 (root cause fix, not symptom patch)
+- Crimson Arena extracted NOW, published separately later
+- v4.0 publishes after MG-012 + TD-018
 
 **Previous session (2026-02-22 earlier):**
-- v4.0 Publication Sprint: /sync (code + data) deploying 14 commits to VPS. Registered TD-022. 7 of 8 briefs complete.
+- Hunted TD-022 (igris_file_push). Already implemented. v4.0: 8/8 briefs done.
 
-**Previous session (2026-02-20):**
-- v4.0 Publication Readiness Audit (5 WARDEN audits, 8 briefs registered)
+**Previous session (2026-02-22 earlier):**
+- v4.0 Publication Sprint: /sync (code + data) deploying 14 commits to VPS.
 
 ---
 
 ## Pending
 
-- 1 P0 brief blocked (TD-018 — awaiting pub.dev publish)
-- Brain v5.0 deferred to post-publication (FR-051 through FR-056)
-- v4.0 ready to publish (all implementation briefs complete)
+- **NOW:** MG-012 DONE, TD-018 DONE → publish v4.0 (merge develop → main, tag 4.0.0)
+- Brain v5.0 deferred (FR-051 through FR-056) — includes sync gap fixes
+- Crimson Arena plugin repo — create when ready (v5 or standalone)
 
 ---
 
