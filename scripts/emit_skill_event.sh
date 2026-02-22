@@ -1,9 +1,9 @@
 #!/bin/bash
 set -e
 
-# Description: Emits a skill_invoke event for the Crimson Arena dashboard.
-#              Appends a JSONL event to events.jsonl, POSTs to local dashboard,
-#              and optionally POSTs to VPS dashboard if configured.
+# Description: Emits a skill_invoke event to events.jsonl and optional dashboard endpoints.
+#              Appends a JSONL event to events.jsonl, POSTs to local endpoint,
+#              and optionally POSTs to VPS endpoint if configured.
 # Usage: emit_skill_event.sh <skill_name>
 #   e.g. emit_skill_event.sh hunt
 #   e.g. emit_skill_event.sh scan

@@ -22,7 +22,7 @@ Welcome! Igris AI is an open-source code quality and architecture management sys
 📄 **[ai/context/coding_guidelines.md](ai/context/coding_guidelines.md)**
 
 This document defines:
-- Bash, TypeScript, Python, and Dart/Flutter standards
+- Bash, TypeScript, and Python standards
 - Error handling patterns
 - Hook and MCP conventions
 - Testing requirements
@@ -380,7 +380,6 @@ igris-ai/
 │   ├── prompts/             # System prompts
 │   ├── session/             # Session tracking + metrics
 │   └── templates/           # PR/commit templates
-├── dashboard/               # Crimson Arena (Flutter web)
 ├── docs/                    # Documentation
 ├── mcp-server/              # Brain MCP server (TypeScript)
 ├── scripts/                 # Shell scripts

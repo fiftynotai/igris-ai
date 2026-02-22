@@ -15,7 +15,7 @@ Guide for migrating between Igris AI versions and bringing existing projects up 
 | Agents | LangChain hooks | Native Claude Code subagents |
 | Persona | Plugin-based (persona.json + personas/) | SOUL.md + USER.md |
 | Plugins | 4 scripts + registry | Removed (native skills replace all) |
-| Dashboard | None | Crimson Arena (Flutter web) |
+| Dashboard | None | Extracted to separate project |
 | MCP | None | 27 brain tools |
 | Skills | None | 21 native Claude Code skills |
 | Brief Types | BR, MG, TD, TS | BR, FR, TD, MG, TS, PI, DU, PF, AC (9 types) |

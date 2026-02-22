@@ -290,60 +290,6 @@ build_server() {
   cd "$REPO_DIR"
 }
 
-deploy_dashboard() {
-  local dashboard_src="$REPO_DIR/dashboard"
-  local dashboard_dst="$BRAIN_DIR/dashboard"
-  local file
-
-  if [ ! -d "$dashboard_src" ]; then
-    echo ""
-    echo "  [skip] No dashboard/ directory in repo. Skipping dashboard deploy."
-    return 0
-  fi
-
-  echo ""
-  echo "Deploying Crimson Arena dashboard..."
-
-  # Ensure destination directories exist
-  mkdir -p "$dashboard_dst/static"
-
-  # Pre-flight checks: permissions and disk space
-  check_write_permissions "$dashboard_dst"
-  check_disk_space "$dashboard_dst" 50
-
-  # Copy dashboard server
-  if [ ! -f "$dashboard_src/server.py" ]; then
-    echo "  [FAIL] server.py not found in $dashboard_src"
-    return 1
-  fi
-  cp "$dashboard_src/server.py" "$dashboard_dst/server.py"
-  echo "  [ok] server.py copied"
-
-  # Copy requirements.txt for dependency tracking
-  if [ -f "$dashboard_src/requirements.txt" ]; then
-    cp "$dashboard_src/requirements.txt" "$dashboard_dst/requirements.txt"
-    echo "  [ok] requirements.txt copied"
-  fi
-
-  # Copy static files
-  for file in index.html app.js style.css; do
-    if [ -f "$dashboard_src/static/$file" ]; then
-      cp "$dashboard_src/static/$file" "$dashboard_dst/static/$file"
-      echo "  [ok] static/$file copied"
-    else
-      echo "  [skip] static/$file not found in source"
-    fi
-  done
-
-  # Restart crimson-arena if it's running under PM2
-  if pm2 describe crimson-arena > /dev/null 2>&1; then
-    pm2 restart crimson-arena 2>&1 | tail -2
-    echo "  [ok] crimson-arena restarted"
-  else
-    echo "  [skip] crimson-arena not found in PM2. Skipping restart."
-  fi
-}
-
 restart_server() {
   echo ""
   echo "Restarting brain server..."
@@ -466,7 +412,6 @@ main() {
 
   pull_latest
   build_server
-  deploy_dashboard
   restart_server
   log_update
   print_summary

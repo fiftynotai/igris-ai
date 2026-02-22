@@ -1,7 +1,7 @@
 # Igris AI Coding Guidelines
 
 **Version:** 4.0.0
-**Languages:** Bash, TypeScript, Python, Dart/Flutter
+**Languages:** Bash, TypeScript, Python
 **Platform:** macOS, Linux, WSL
 **Last Updated:** 2026-02-22
 
@@ -9,7 +9,7 @@
 
 ## Purpose
 
-This document defines the coding standards for **Igris AI itself** - the bash scripts, TypeScript MCP server, Python utilities, Flutter dashboard, and tools that make up the Igris AI system.
+This document defines the coding standards for **Igris AI itself** - the bash scripts, TypeScript MCP server, Python utilities, and tools that make up the Igris AI system.
 
 **Dogfooding:** We enforce `ai/context/coding_guidelines.md` on user projects. This document ensures Igris AI follows its own standards.
 
@@ -22,19 +22,18 @@ This document defines the coding standards for **Igris AI itself** - the bash sc
 3. [Bash Standards](#3-bash-standards)
 4. [TypeScript Standards](#4-typescript-standards)
 5. [Python Standards](#5-python-standards)
-6. [Flutter/Dart Standards](#6-flutterdart-standards)
-7. [Hook Conventions](#7-hook-conventions)
-8. [Brain/MCP Standards](#8-brainmcp-standards)
-9. [Error Handling](#9-error-handling)
-10. [Multi-line Text Handling](#10-multi-line-text-handling)
-11. [JSON Manipulation](#11-json-manipulation)
-12. [User Experience](#12-user-experience)
-13. [Testing Requirements](#13-testing-requirements)
-14. [Documentation](#14-documentation)
-15. [Security](#15-security)
-16. [Performance](#16-performance)
-17. [Conventional Commits](#17-conventional-commits)
-18. [Code Review Checklist](#18-code-review-checklist)
+6. [Hook Conventions](#6-hook-conventions)
+7. [Brain/MCP Standards](#7-brainmcp-standards)
+8. [Error Handling](#8-error-handling)
+9. [Multi-line Text Handling](#9-multi-line-text-handling)
+10. [JSON Manipulation](#10-json-manipulation)
+11. [User Experience](#11-user-experience)
+12. [Testing Requirements](#12-testing-requirements)
+13. [Documentation](#13-documentation)
+14. [Security](#14-security)
+15. [Performance](#15-performance)
+16. [Conventional Commits](#16-conventional-commits)
+17. [Code Review Checklist](#17-code-review-checklist)
 
 ---
 
@@ -58,7 +57,6 @@ igris-ai/
 │   ├── prompts/         # System prompts
 │   ├── session/         # Session tracking + metrics
 │   └── templates/       # PR/commit templates
-├── dashboard/           # Crimson Arena (Flutter web)
 ├── docs/                # Documentation
 ├── mcp-server/          # Brain MCP server (TypeScript)
 ├── scripts/             # Shell scripts
@@ -118,19 +116,12 @@ emit_skill_event.sh
 - **Functions/Variables:** `camelCase`
 - **Constants:** `UPPER_SNAKE_CASE`
 
-### Python (Dashboard/Scripts)
+### Python (Scripts/Utilities)
 
 - **Files:** `snake_case.py`
 - **Classes:** `PascalCase`
 - **Functions/Variables:** `snake_case`
 - **Constants:** `UPPER_SNAKE_CASE`
-
-### Dart/Flutter (Crimson Arena)
-
-- **Files:** `snake_case.dart`
-- **Classes/Widgets:** `PascalCase`
-- **Functions/Variables:** `camelCase`
-- **Constants:** `lowerCamelCase` or `UPPER_SNAKE_CASE`
 
 ### Variables (Bash)
 
@@ -324,7 +315,7 @@ async function queryBrain(sql: string): Promise<QueryResult> {
 
 ## 5. Python Standards
 
-Standards for the dashboard server (`dashboard/`), brain scripts, and utilities.
+Standards for brain scripts and Python utilities.
 
 ### Version
 
@@ -359,59 +350,7 @@ async def get_session_status(project_path: str) -> Optional[dict]:
 
 ---
 
-## 6. Flutter/Dart Standards
-
-Standards for the Crimson Arena dashboard (`dashboard/crimson-arena/`).
-
-### Architecture
-
-- Follow **MVVM + Actions Layer** pattern (Kalvad architecture)
-- Use **GetX** for state management and dependency injection
-- Prefer immutable state objects
-
-### Code Style
-
-```dart
-// Follow effective Dart guidelines
-class BriefController extends GetxController {
-  final RxList<Brief> briefs = <Brief>[].obs;
-  final RxBool isLoading = false.obs;
-
-  Future<void> loadBriefs() async {
-    isLoading.value = true;
-    try {
-      briefs.value = await _briefRepository.getAll();
-    } finally {
-      isLoading.value = false;
-    }
-  }
-}
-```
-
-### Naming
-
-- Files: `snake_case.dart`
-- Classes/Widgets: `PascalCase`
-- Variables/Functions: `camelCase`
-- Private members: prefix with `_`
-
-### State Management
-
-- Reactive state with `.obs` and `Obx()`
-- Controllers extend `GetxController`
-- Actions layer for complex business logic
-- Separate UI from business logic
-
-### Widget Guidelines
-
-- Extract reusable widgets into separate files
-- Keep `build()` methods focused and readable
-- Use `const` constructors where possible
-- Avoid deep widget nesting (max 3-4 levels)
-
----
-
-## 7. Hook Conventions
+## 6. Hook Conventions
 
 Standards for Claude Code hooks (`.claude/hooks/`).
 
@@ -461,7 +400,7 @@ exit 0
 
 ---
 
-## 8. Brain/MCP Standards
+## 7. Brain/MCP Standards
 
 Standards for the centralized brain (`~/.igris/`) and MCP server (`mcp-server/`).
 
@@ -501,7 +440,7 @@ PRAGMA foreign_keys=ON;
 
 ---
 
-## 9. Error Handling
+## 8. Error Handling
 
 ### General Principles (All Languages)
 
@@ -525,7 +464,7 @@ exit 1
 
 ---
 
-## 10. Multi-line Text Handling
+## 9. Multi-line Text Handling
 
 ### The Problem
 
@@ -539,7 +478,7 @@ exit 1
 
 ---
 
-## 11. JSON Manipulation
+## 10. JSON Manipulation
 
 ### Bash: Use Python3
 
@@ -560,7 +499,7 @@ data = json.loads(content)
 
 ---
 
-## 12. User Experience
+## 11. User Experience
 
 ### Clear Error Messages
 
@@ -593,7 +532,7 @@ fi
 
 ---
 
-## 13. Testing Requirements
+## 12. Testing Requirements
 
 ### Test Coverage Targets
 
@@ -627,15 +566,9 @@ bats test/
 - Test MCP tool handlers individually
 - Mock SQLite for unit tests
 
-### Flutter/Dart Tests
-
-- Use `flutter test` for unit and widget tests
-- Follow Flutter testing best practices
-- Test controllers and actions separately
-
 ---
 
-## 14. Documentation
+## 13. Documentation
 
 ### Inline Comments
 
@@ -681,7 +614,7 @@ set -e
 
 ---
 
-## 15. Security
+## 14. Security
 
 ### Quote All Variables (Bash)
 
@@ -709,7 +642,7 @@ db.prepare(`SELECT * FROM projects WHERE slug = '${slug}'`).get();
 
 ---
 
-## 16. Performance
+## 15. Performance
 
 ### Bash
 
@@ -732,7 +665,7 @@ db.prepare(`SELECT * FROM projects WHERE slug = '${slug}'`).get();
 
 ---
 
-## 17. Conventional Commits
+## 16. Conventional Commits
 
 ### Commit Format
 
@@ -760,7 +693,6 @@ db.prepare(`SELECT * FROM projects WHERE slug = '${slug}'`).get();
 - `fix(init): use perl instead of sed for multi-line substitution`
 - `docs(readme): add brain setup instructions`
 - `test(init): add test for directory creation`
-- `feat(dashboard): add skill cards widget`
 
 ### Reference Briefs in Footer
 
@@ -772,7 +704,7 @@ refs #MG-XXX
 
 ---
 
-## 18. Code Review Checklist
+## 17. Code Review Checklist
 
 ### Before Submitting PR
 
@@ -780,8 +712,8 @@ refs #MG-XXX
 
 - [ ] **Follows guidelines:** All sections of this document followed
 - [ ] **Tests added/updated:** New code has corresponding tests
-- [ ] **Tests pass:** All tests green (bats, TypeScript, Flutter)
-- [ ] **Linter passes:** shellcheck for Bash, tsc --noEmit for TypeScript, flutter analyze for Dart
+- [ ] **Tests pass:** All tests green (bats, TypeScript)
+- [ ] **Linter passes:** shellcheck for Bash, tsc --noEmit for TypeScript
 - [ ] **Documentation updated:** Inline comments and README if needed
 - [ ] **Cross-platform tested:** Tested on macOS and Linux (or WSL) for shell scripts
 - [ ] **Error messages clear:** All error messages are actionable
@@ -805,9 +737,6 @@ bats test/
 
 # TypeScript (if modifying MCP server)
 cd mcp-server && npm run build
-
-# Flutter (if modifying dashboard)
-cd dashboard/crimson-arena && flutter analyze
 ```
 
 ---
@@ -842,7 +771,6 @@ If these guidelines don't cover your situation, ask in:
 - [Google Shell Style Guide](https://google.github.io/styleguide/shellguide.html)
 - [shellcheck](https://www.shellcheck.net/) - Static analysis tool for Bash
 - [bats](https://github.com/bats-core/bats-core) - Bash testing framework
-- [Effective Dart](https://dart.dev/effective-dart) - Dart style guide
 - [TypeScript Handbook](https://www.typescriptlang.org/docs/handbook/) - TypeScript reference
 
 ### Related Igris AI Briefs

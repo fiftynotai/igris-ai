@@ -135,32 +135,6 @@ Execute these steps sequentially, displaying progress:
 **[4/4] Code sync summary**
 - Display results of steps 1-3.
 
-### Step 3.5: Flutter Dashboard Build (code and all modes)
-
-Skip this step if mode is `data` or `status`.
-
-Only run if the `dashboard/crimson-arena/` directory exists in the project:
-
-**[Flutter] Building Crimson Arena...**
-1. Check if `$CLAUDE_PROJECT_DIR/dashboard/crimson-arena/` directory exists
-   - If it does NOT exist: display "No Flutter dashboard found, skipping build" and continue
-   - If it exists: proceed with the build
-
-2. Run: `cd $CLAUDE_PROJECT_DIR/dashboard/crimson-arena && flutter build web --release --web-renderer canvaskit`
-   - On success: display "Flutter build complete"
-   - On failure: display WARNING but do NOT abort. The old vanilla JS dashboard will be used as fallback.
-     ```
-     WARNING: Flutter build failed. The vanilla JS dashboard will be served instead.
-     Error: {error message}
-     ```
-
-3. Verify that `$CLAUDE_PROJECT_DIR/dashboard/crimson-arena/build/web/index.html` exists
-   - If missing after a "successful" build: display warning and continue
-
-4. Include `dashboard/crimson-arena/build/web/` in the deployment artifacts
-   - The VPS deploy script (`igris_vps_update.sh`) should pick this up automatically since it pulls the full repo
-   - The server.py will auto-detect the Flutter build and serve it in preference to the vanilla JS static directory
-
 ### Step 4: Data Sync (data and all modes)
 
 Skip this step if mode is `code` or `status`.
@@ -199,7 +173,7 @@ If the `igris-brain` MCP server is NOT available:
     - api_key = value from `remote_brain.api_key`
   - On success: display "Events log pushed (X bytes)"
   - On failure: display WARNING but do NOT abort.
-  - **Note:** The Crimson Arena dashboard watches this file and auto-imports new events into arena.db.
+  - **Note:** This file can be consumed by external dashboards (e.g., Crimson Arena) for event monitoring.
 - If it does not exist:
   - Display: "No events.jsonl found. Skipping."
 
@@ -296,7 +270,6 @@ After code and/or data sync completes, display a summary table:
 |------|--------|
 | Git push | OK (X commits) / SKIPPED / FAILED: {reason} |
 | VPS deploy | OK ({old_hash} -> {new_hash}) / SKIPPED / FAILED: {reason} |
-| Flutter build | OK / SKIPPED (no project) / WARNING: {reason} |
 | Health check | PASSED (v{version}) / WARNING: {reason} / FAILED |
 | Sync queue drain | OK (X items drained) / SKIPPED / FAILED: {reason} |
 | Brain data push | OK (X rows synced) / SKIPPED / FAILED: {reason} |

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Removed
+
+- **Crimson Arena Dashboard** -- Extracted to a separate repository for independent development and release. The `dashboard/` directory and `scripts/dashboard.sh` have been removed from igris-ai. The monitoring dashboard will be available as a standalone project.
+
+---
+
 ## [4.0.0] - 2026-02-22
 
 ### Added

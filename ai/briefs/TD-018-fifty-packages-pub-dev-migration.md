@@ -5,7 +5,7 @@
 **Effort:** M-Medium (1-2d)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** Blocked
+**Status:** Done
 **Created:** 2026-02-20
 **Source:** v4.0 Dependency Audit
 
@@ -83,6 +83,8 @@ All `fifty_*` packages consumed from pub.dev. Dashboard buildable by any user wi
 ## Notes
 
 Audit finding: Deps DU-006. User confirmed packages will be published to pub.dev today.
+
+**Resolution:** Resolved as side effect of MG-012 -- dashboard/ removed from igris-ai, eliminating all 7 fifty_* local path dependencies.
 
 ---
 
