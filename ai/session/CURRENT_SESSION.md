@@ -19,7 +19,7 @@
 | **TD-018** | **Switch fifty_* to pub.dev packages** | **Blocked (P0, M — awaiting pub.dev publish)** |
 | ~~TD-019~~ | ~~Version Alignment Sweep~~ | Done (commit `854e2a3`) |
 | **TD-020** | **Documentation Overhaul for v4.0** | **Ready (P1, L)** |
-| **TD-021** | **Brain Integration Cleanup** | **Ready (P1, M)** |
+| ~~TD-021~~ | ~~Brain Integration Cleanup~~ | Done (commit `46a7e7a`) |
 | FR-051 | Brain v5.0 — Modular Architecture + Task Mgmt + Scheduling | Deferred (v5.0 scope) |
 | FR-052-engine | Brain v5.0 Phase 1 — Engine Foundation | Deferred (v5.0 scope) |
 | FR-053 | Brain v5.0 Phase 2 — Task Management System | Deferred (v5.0 scope) |
@@ -36,8 +36,8 @@
 
 ## Resume Point
 
-**Last Active:** TD-017 + TD-019 team hunt complete
-**Phase:** 5 of 8 v4.0 briefs done, 3 remaining
+**Last Active:** TD-021 hunt complete
+**Phase:** 6 of 8 v4.0 briefs done, 2 remaining
 
 ---
 
@@ -49,8 +49,7 @@
 1. `hunt TD-018` — fifty_* pub.dev migration (M, **blocked on publish**)
 
 **P1 Ready:**
-2. `hunt TD-021` — Brain Integration Cleanup (M, config decisions needed)
-3. `hunt TD-020` — Documentation Overhaul (L, biggest job — do last)
+2. `hunt TD-020` — Documentation Overhaul (L, biggest remaining job)
 
 **Note on VPS deploy:** The `igris_vps_update.sh` build step may cache stale TypeScript output. During BR-023 deploy, `dist/index.js` didn't contain new code despite `tsc` running. Manual `npx tsc` + PM2 restart fixed it. Investigate build cache issue.
 
@@ -69,6 +68,7 @@
 - `1c1eb71` fix(scripts): eliminate injection vulnerabilities + cross-platform — BR-027
 - `692ed47` docs: add LICENSE, CHANGELOG, README prerequisites — TD-017
 - `854e2a3` chore: align all version references to v4.0.0 — TD-019
+- `46a7e7a` refactor(brain): clean up brain integration mismatches — TD-021
 
 **Previous session (2026-02-20):**
 - v4.0 Publication Readiness Audit (5 WARDEN audits, 8 briefs registered)
@@ -78,7 +78,7 @@
 ## Pending
 
 - 1 P0 brief blocked (TD-018 — awaiting pub.dev publish)
-- 2 P1 briefs to hunt (TD-021 brain cleanup, TD-020 docs overhaul)
+- 1 P1 brief to hunt (TD-020 docs overhaul)
 - Brain v5.0 deferred to post-publication
 
 ---
