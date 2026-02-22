@@ -1,46 +1,46 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-02-22T09:20:57Z",
+  "last_updated": "2026-02-22T09:49:10Z",
   "agents": {
     "architect": {
-      "invocations": 41,
-      "last_used": "2026-02-19T19:57:54Z",
-      "avg_duration_seconds": 158.26,
+      "invocations": 42,
+      "last_used": "2026-02-22T09:29:27Z",
+      "avg_duration_seconds": 157.98,
       "success_rate": 1.0,
-      "total_input_tokens": 130390,
-      "total_output_tokens": 3880,
-      "total_cache_read_tokens": 40418618,
-      "total_cache_create_tokens": 12165288
+      "total_input_tokens": 130746,
+      "total_output_tokens": 3945,
+      "total_cache_read_tokens": 41232136,
+      "total_cache_create_tokens": 12351789
     },
     "forger": {
-      "invocations": 66,
-      "last_used": "2026-02-19T20:01:47Z",
-      "avg_duration_seconds": 491.3,
+      "invocations": 67,
+      "last_used": "2026-02-22T09:32:36Z",
+      "avg_duration_seconds": 492.71,
       "success_rate": 1.0,
-      "total_input_tokens": 51561,
-      "total_output_tokens": 12061,
-      "total_cache_read_tokens": 201817036,
-      "total_cache_create_tokens": 18840613
+      "total_input_tokens": 51636,
+      "total_output_tokens": 12377,
+      "total_cache_read_tokens": 205676563,
+      "total_cache_create_tokens": 19231757
     },
     "sentinel": {
-      "invocations": 51,
-      "last_used": "2026-02-19T20:06:58Z",
-      "avg_duration_seconds": 152.71,
+      "invocations": 52,
+      "last_used": "2026-02-22T09:42:43Z",
+      "avg_duration_seconds": 153.18,
       "success_rate": 1.0,
-      "total_input_tokens": 175761,
-      "total_output_tokens": 4490,
-      "total_cache_read_tokens": 34692704,
-      "total_cache_create_tokens": 11760045
+      "total_input_tokens": 175815,
+      "total_output_tokens": 4579,
+      "total_cache_read_tokens": 35140234,
+      "total_cache_create_tokens": 12008075
     },
     "warden": {
-      "invocations": 67,
-      "last_used": "2026-02-19T20:09:01Z",
-      "avg_duration_seconds": 80.45,
+      "invocations": 68,
+      "last_used": "2026-02-22T09:47:55Z",
+      "avg_duration_seconds": 80.36,
       "success_rate": 1.0,
-      "total_input_tokens": 117881,
-      "total_output_tokens": 7384,
-      "total_cache_read_tokens": 67195119,
-      "total_cache_create_tokens": 20443966
+      "total_input_tokens": 117933,
+      "total_output_tokens": 7453,
+      "total_cache_read_tokens": 68280758,
+      "total_cache_create_tokens": 20768395
     },
     "mender": {
       "invocations": 0,
@@ -314,11 +314,11 @@
     }
   },
   "totals": {
-    "total_invocations": 353,
+    "total_invocations": 357,
     "most_used_agent": "warden",
     "least_used_agent": "mender",
-    "total_input_tokens": 801368,
-    "total_output_tokens": 59107,
-    "total_cache_tokens": 658688226
+    "total_input_tokens": 801905,
+    "total_output_tokens": 59646,
+    "total_cache_tokens": 666044544
   }
 }
