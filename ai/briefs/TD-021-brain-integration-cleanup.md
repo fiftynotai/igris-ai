@@ -5,7 +5,7 @@
 **Effort:** M-Medium (1-2d)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** Ready
+**Status:** Done
 **Created:** 2026-02-20
 **Source:** v4.0 Process Audit
 
@@ -41,39 +41,47 @@ Brain config accurately reflects enabled features. Documentation matches reality
 
 ## Tasks
 
-### Pending
-- [ ] Decision: Enable staging pipeline OR remove staging writes from hooks
-- [ ] Decision: Update docs to clarify local-only vs brain MCP mode
-- [ ] Clean up accumulated staging files in `~/.igris/staging/`
-- [ ] Fix `startup.sh` brief counting regex to match `**Status:**` format
-- [ ] Add `set -e` to `startup.sh`
-- [ ] Decision: Register `startup.sh` as a hook or document its loading mechanism
-- [ ] Update config.json feature flags to match actual state
+### Completed
+- [x] Clean up accumulated staging files in `~/.igris/staging/` (43 files removed)
+- [x] Guard staging hooks behind `staging_pipeline` config flag (jq/python3 fallback)
+- [x] Remove `startup.sh` (dead code: unregistered, broken grep, duplicated by session_start.sh)
+- [x] Remove `startup.sh.template` (same bugs)
+- [x] Update `igris_init.sh` to stop copying deleted template
+- [x] Update tests to remove startup.sh assertions
+- [x] Update `01-igris-init.md` step 6.5 to conditionally query MCP
+- [x] Update `igris_os.md` brain docs: MCP optional, staging guarded, feature flags table
+- [x] Verify no remaining `^Status:` / `^Priority:` grep bugs in active scripts
+- [x] Confirm config.json feature flags match actual state
 
 ---
 
 ## Workflow State
 
-**Phase:** INIT
+**Phase:** COMPLETE
 **Active Agent:** none
 **Retry Count:** 0
 
 ### Agent Log
 | Time | Agent | Action | Result |
 |------|-------|--------|--------|
+| 2026-02-22 | architect | Plan implementation (5 phases, 6 files) | SUCCESS |
+| 2026-02-22 | forger | Implement all 5 phases (8 files changed, 2 deleted) | SUCCESS |
+| 2026-02-22 | sentinel | Testing implementation | PASS (2 warnings fixed) |
+| 2026-02-22 | orchestrator | Fix stale startup.sh refs in 6 docs | SUCCESS |
+| 2026-02-22 | warden | Code review | APPROVE (4 minor findings, all fixed) |
 
 ---
 
 ## Acceptance Criteria
 
-1. [ ] No stale staging files accumulating without processing
-2. [ ] Documentation accurately describes which brain features require MCP server
-3. [ ] `startup.sh` correctly counts brief statuses (if kept)
-4. [ ] `startup.sh` has `set -e` (if kept)
-5. [ ] Config feature flags match actual enabled state
+1. [x] No stale staging files accumulating without processing (hooks guarded by config flag)
+2. [x] Documentation accurately describes which brain features require MCP server
+3. [x] `startup.sh` removed (dead code; session_start.sh handles greeting)
+4. [x] N/A (startup.sh removed)
+5. [x] Config feature flags match actual enabled state
 
 ---
 
 **Created:** 2026-02-20
-**Last Updated:** 2026-02-20
+**Last Updated:** 2026-02-22
 **Brief Owner:** Crimson

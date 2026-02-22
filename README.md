@@ -648,8 +648,7 @@ your-project/
 │   │   ├── 04-igris-agents.md     # Agent delegation, workflow state
 │   │   └── 05-igris-persona.md    # Persona config, mask behavior
 │   ├── agent-memory/        # Persistent per-agent memory
-│   └── hooks/
-│       └── startup.sh       # Auto-initialization
+│   └── hooks/               # Claude Code event hooks
 ├── CLAUDE.md                # Context loaded on first message
 ├── ai/
 │   ├── briefs/              # Work items (9 types)

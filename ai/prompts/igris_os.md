@@ -272,11 +272,13 @@ IGRIS v4.0 introduces a centralized brain at `~/.igris/` that provides persisten
 
 ### Brain Components
 - **knowledge.db** — SQLite database with WAL mode (concurrent reads, serialized writes)
-- **MCP Server** — `igris-brain` registered globally in `~/.claude.json`
-- **Staging Pipeline** — Hooks write to `~/.igris/staging/`, processed on server startup
+- **MCP Server** — `igris-brain` registered globally in `~/.claude.json` (optional, requires `features.mcp_server: true` in `~/.igris/config.json`)
+- **Staging Pipeline** — Hooks write to `~/.igris/staging/`, processed on server startup (guarded by `features.staging_pipeline: true` in config; hooks exit early when disabled)
 - **Core Files** — Agents, skills, rules, prompts symlinked from `~/.igris/core/`
 
 ### Brain MCP Tools (27 tools)
+
+**Note:** The following MCP tools require `features.mcp_server: true` in `~/.igris/config.json`. When the MCP server is disabled, brain features using these tools are unavailable. Core Igris features (briefs, sessions, agents, quality gates) work fully in local-only mode.
 
 **Memory domain:**
 | Tool | Purpose |
@@ -346,7 +348,19 @@ IGRIS v4.0 introduces a centralized brain at `~/.igris/` that provides persisten
 - **Dashboard (/dashboard):** Show active briefs and recent sessions across all projects
 
 ### Graceful Degradation
-Brain integration is optional. If `~/.igris/` does not exist or MCP server is not registered, all features work in local-only mode. No errors, no warnings — just local operation.
+Brain integration is optional. If `~/.igris/` does not exist or MCP server is not registered, all features work in local-only mode. No errors, no warnings -- just local operation.
+
+**Feature flags in `~/.igris/config.json` and their effects:**
+
+| Flag | Default | When `false` |
+|------|---------|--------------|
+| `features.mcp_server` | `false` | All 27 MCP tools unavailable; brain queries skipped silently during init |
+| `features.staging_pipeline` | `false` | Post-edit hooks skip staging file writes; no `~/.igris/staging/` accumulation |
+| `features.memory` | `true` | Knowledge DB not used for learning storage/recall |
+| `features.project_registry` | `true` | Project registration disabled |
+| `features.analytics` | `false` | No analytics collection |
+
+Core Igris features (brief management, session tracking, agent delegation, quality gates, commit standards) work fully in local-only mode regardless of these flags.
 
 ---
 

@@ -101,9 +101,9 @@ open ai/personas/cyber-monkey/themes/Crimson.itermcolors
 
 ---
 
-## 🚀 Startup Hook Integration
+## 🚀 Session Hook Integration
 
-The `.claude/hooks/startup.sh` script automatically uses FDL colors when the cyber-monkey persona is active.
+The `.claude/hooks/session_start.sh` hook (registered as a `SessionStart` event) provides session context. FDL colors are used by the persona system when the cyber-monkey persona is active.
 
 **FDL ANSI Color Variables:**
 ```bash
@@ -168,10 +168,7 @@ Following FDL guidelines:
 
 **Test FDL colors in terminal:**
 ```bash
-# Run the startup hook manually
-./.claude/hooks/startup.sh
-
-# Or restart Claude Code CLI (colors appear automatically)
+# Restart Claude Code CLI (persona colors apply automatically via session_start.sh)
 ```
 
 **Run visual color test:**
@@ -210,7 +207,7 @@ Following FDL guidelines:
 
 **To modify colors:**
 1. Update FDL specification in brand documentation
-2. Regenerate ANSI codes in `.claude/hooks/startup.sh`
+2. Regenerate ANSI codes in persona theme files
 3. Regenerate terminal theme files (or edit XML directly)
 4. Update `ai/personas/cyber-monkey/persona.json` branding section
 
@@ -230,7 +227,7 @@ RGB(150, 14, 41) → \033[48;2;150;14;41m  # Background
 
 - **FDL Specification:** Project design system documentation
 - **Persona Config:** `ai/personas/cyber-monkey/persona.json`
-- **Startup Hook:** `.claude/hooks/startup.sh`
+- **Session Hook:** `.claude/hooks/session_start.sh`
 - **Terminal.app Format:** XML plist with NSColor objects
 - **iTerm2 Format:** XML plist with RGB color dictionaries
 - **ANSI Escape Codes:** [ANSI Color Codes](https://en.wikipedia.org/wiki/ANSI_escape_code#Colors)

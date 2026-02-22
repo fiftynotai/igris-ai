@@ -1,17 +1,17 @@
 # Igris AI Hook System Specification
 
-**Version:** 2.0.0
-**Last Updated:** 2025-12-03
-**Status:** v3.2 - Simplified for Native Subagents
+**Version:** 3.0.0
+**Last Updated:** 2026-02-22
+**Status:** v4.0 - Brain integration, config-guarded staging
 
 ---
 
 ## Overview
 
-The **Hook System** allows optional extensions to Igris AI workflows. With v3.2's native subagent architecture, most AI functionality is now built-in. Hooks remain for:
+The **Hook System** allows optional extensions to Igris AI workflows. With v4.0's native subagent architecture, most AI functionality is now built-in. Hooks remain for:
 
 1. **Persona customization** (greetings, theming)
-2. **Startup enhancements** (system assessment)
+2. **Session start enhancements** (system assessment)
 3. **Git workflow hooks** (pre-commit, post-commit)
 
 ---
@@ -65,7 +65,7 @@ Your persona greeting content here...
 **Purpose:** Enhance startup recommendations
 **Input:** None
 **Output:** Enhanced recommendations (markdown)
-**Called by:** `.claude/hooks/startup.sh`
+**Called by:** `.claude/hooks/session_start.sh`
 
 **Example output:**
 ```markdown

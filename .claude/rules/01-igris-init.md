@@ -24,7 +24,7 @@ This applies to:
 4. **Display:** Persona greeting WITH capabilities (see greeting format below)
 5. **Load:** `ai/session/CURRENT_SESSION.md` (silently)
 6. **Load:** `ai/context/coding_guidelines.md` if exists (silently)
-6.5. **Check Brain:** If `~/.igris/` exists, note brain is available. Query `igris_project_status` for current project context.
+6.5. **Check Brain:** If `~/.igris/` exists, note brain is available. If `~/.igris/config.json` has `features.mcp_server: true`, query `igris_project_status` for current project context. If MCP server is disabled, skip silently.
 7. **Analyze:** Execute Post-Initialization Analysis Protocol from igris_os.md
 8. **Display:** Session status + System Assessment + Recommendations
 9. **Display:** "Igris AI initialized. System ready."

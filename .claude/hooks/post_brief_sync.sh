@@ -4,10 +4,37 @@ set -e
 # Description: PostToolUse hook for Write|Edit operations.
 #              Auto-syncs brief changes to brain staging when brief files are modified.
 #              Writes a JSON staging file to ~/.igris/staging/ for the brain MCP server.
+#              Guarded by staging_pipeline feature flag in ~/.igris/config.json.
 # Usage: Called automatically by Claude Code after Write/Edit tool use. Reads JSON from stdin.
 # Dependencies: None (pure bash)
 # Exit codes:
 #   0 - Always (hooks must never fail)
+
+# Early exit if staging_pipeline is not enabled in config
+BRAIN_CONFIG="$HOME/.igris/config.json"
+if [ -f "$BRAIN_CONFIG" ]; then
+  STAGING_ENABLED=""
+  if command -v jq &> /dev/null; then
+    STAGING_ENABLED=$(jq -r '.features.staging_pipeline // false' "$BRAIN_CONFIG" 2>/dev/null || echo "false")
+  elif command -v python3 &> /dev/null; then
+    STAGING_ENABLED=$(python3 -c "
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+    print(str(data.get('features', {}).get('staging_pipeline', False)).lower())
+except Exception:
+    print('false')
+" "$BRAIN_CONFIG" 2>/dev/null || echo "false")
+  else
+    STAGING_ENABLED="false"
+  fi
+  if [ "$STAGING_ENABLED" != "true" ]; then
+    exit 0
+  fi
+else
+  # No config file means no brain — skip staging
+  exit 0
+fi
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 STAGING_DIR="$HOME/.igris/staging"

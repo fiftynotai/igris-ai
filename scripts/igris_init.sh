@@ -237,10 +237,6 @@ EOF
 echo "🤖 Setting up Claude Code integration..."
 mkdir -p .claude/hooks
 
-# Copy startup hook
-cp "$IGRIS_DIR/scripts/templates/startup.sh.template" .claude/hooks/startup.sh
-chmod +x .claude/hooks/startup.sh
-
 # Install native agents (v4.0)
 echo "🤖 Installing native agents..."
 mkdir -p .claude/agents
@@ -580,7 +576,6 @@ echo ""
 echo "✅ Igris AI v4.0 initialized successfully!"
 echo ""
 echo "🤖 Claude Code Integration:"
-echo "   ✓ Startup hook enabled (.claude/hooks/startup.sh)"
 echo "   ✓ Context file created (CLAUDE.md)"
 echo "   ✓ 7 native agents installed (.claude/agents/)"
 if [ "$MCP_CONFIGURED" = true ]; then

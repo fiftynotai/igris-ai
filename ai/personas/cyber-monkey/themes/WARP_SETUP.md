@@ -130,8 +130,7 @@ open -a Warp
 cd /Users/m.elamin/StudioProjects/igris-ai
 ./ai/personas/cyber-monkey/themes/test_colors.sh
 
-# 4. Run startup hook
-./.claude/hooks/startup.sh
+# 4. FDL colors are applied automatically via session_start.sh
 ```
 
 ✅ **FDL colors are WORKING!** The theme is active via ANSI codes. 🎉

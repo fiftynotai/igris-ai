@@ -8,7 +8,7 @@
 
 **The GOOD NEWS:** You're already using FDL colors! 🎉
 
-The startup hook (`.claude/hooks/startup.sh`) outputs **24-bit ANSI escape codes** that work in ANY modern terminal.
+The session hook (`.claude/hooks/session_start.sh`) and persona system use **24-bit ANSI escape codes** that work in ANY modern terminal.
 
 **Test it right now:**
 ```bash

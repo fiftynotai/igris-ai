@@ -1,10 +1,10 @@
 # Hook Integration Points in Igris AI
 
-**Document Purpose:** Define where and how hooks integrate with Igris AI v3.2
+**Document Purpose:** Define where and how hooks integrate with Igris AI v4.0
 
-**Version:** 2.0.0
-**Last Updated:** 2025-12-03
-**Status:** v3.2 - Simplified for Native Subagents
+**Version:** 3.0.0
+**Last Updated:** 2026-02-22
+**Status:** v4.0 - Brain integration, staging guards, session hooks
 
 ---
 
@@ -31,16 +31,12 @@ Most AI-powered hooks have been **replaced by native Claude Code subagents**. Th
 ### 1. SYSTEM_ASSESSMENT Hook
 
 **Integration Point:** Session Initialization
-**Location:** `.claude/hooks/startup.sh`
+**Location:** `.claude/hooks/session_start.sh`
 **Timing:** After loading session state, before displaying recommendations
-**Purpose:** Enhance system assessment with additional analysis
+**Purpose:** Enhance system assessment with additional analysis via `additionalContext`
 
 **How It Works:**
-```bash
-# startup.sh calls SYSTEM_ASSESSMENT hook (if installed)
-# Hook receives: session status, brief count, git status
-# Hook returns: Enhanced recommendations (markdown)
-```
+The `session_start.sh` hook (registered as a `SessionStart` event in `.claude/settings.json`) injects session context including brief counts and git status into the Claude Code session.
 
 **Fallback:** Standard system assessment from igris_os.md
 
@@ -123,7 +119,7 @@ exit 0
 
 | Hook | Integration Point | Trigger | Blocking |
 |------|------------------|---------|----------|
-| SYSTEM_ASSESSMENT | startup.sh | Automatic | No |
+| SYSTEM_ASSESSMENT | session_start.sh | Automatic | No |
 | PERSONA_INJECTION | igris_init.sh | At init | No |
 | PRE_COMMIT | .git/hooks/pre-commit | Before commit | Yes |
 | POST_COMMIT | .git/hooks/post-commit | After commit | No |

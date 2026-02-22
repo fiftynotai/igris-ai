@@ -6,7 +6,6 @@
 # - Creates all required directories
 # - Copies templates correctly
 # - Generates CLAUDE.md
-# - Creates startup hook
 # - Handles existing installation
 # - Validates target directory
 
@@ -71,18 +70,6 @@ load test_helper
 
   assert_success
   assert_file_exists "$TEST_PROJECT_DIR/CLAUDE.md"
-}
-
-@test "igris_init creates startup hook" {
-  setup_test_project
-
-  run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"
-
-  assert_success
-  assert_file_exists "$TEST_PROJECT_DIR/.claude/hooks/startup.sh"
-
-  # Verify startup hook is executable
-  [ -x "$TEST_PROJECT_DIR/.claude/hooks/startup.sh" ]
 }
 
 @test "igris_init creates session files" {
@@ -325,7 +312,6 @@ load test_helper
   assert_dir_exists "$TEST_PROJECT_DIR/ai"
   assert_dir_exists "$TEST_PROJECT_DIR/.claude"
   assert_file_exists "$TEST_PROJECT_DIR/CLAUDE.md"
-  assert_file_exists "$TEST_PROJECT_DIR/.claude/hooks/startup.sh"
   assert_file_exists "$TEST_PROJECT_DIR/ai/session/CURRENT_SESSION.md"
   assert_file_exists "$TEST_PROJECT_DIR/ai/persona.json.default"
   assert_file_exists "$TEST_PROJECT_DIR/ai/briefs/BR-TEMPLATE.md"
