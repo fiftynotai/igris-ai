@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.0.0] - 2026-02-22
+
+### Added
+
+- **Centralized Brain (`~/.igris/`)** — Persistent SQLite memory with WAL mode and FTS5 full-text search, symlink-based core files shared across all projects, cross-project intelligence and pattern recognition
+- **Brain MCP Server (`brain-mcp-server/`)** — 27 MCP tools across 8 domains: memory (store, search, recall, error lookup), projects (register, list, status, pattern suggest), metrics (record, query, velocity), sessions (sync, recall, file sync), briefs (sync, dashboard, file sync), instances (heartbeat, list, remove), sync (push, pull, queue status, queue drain), definitions (sync, pull, session file pull)
+- **Remote Brain Sync** — Local-to-VPS brain push/pull via HTTP API with queue-based retry, enabling cross-machine brain access and redundancy
+- **Agent Teams (experimental)** — Parallel execution layer spawning multiple Claude Code instances for concurrent brief implementation. 4 modes: `/team hunt` (parallel briefs), `/team review` (multi-angle review), `/team investigate` (competitive investigation), `/team refactor` (parallel module refactoring). Requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: 1`
+- **Native Claude Code Skills (21 skills)** — awaken, rest, scan, register, hunt, team, audit, document, standardize, release, dashboard, portfolio, projects, sync, digivolve, ideate, migrate-analyze, ui-design, higgsfield, fifty-kit, keybindings-help. Defined in `.claude/skills/*/SKILL.md` with autocomplete support
+- **Claude Code Hooks (12 hooks, 7 lifecycle events)** — brief_gate (brief-first enforcement), agent_metrics (subagent tracking), post_edit_lint, post_brief_sync, post_session_sync, session_start/end, pre_compact, stop_session_check, notification_sound
+- **Crimson Arena Dashboard** — Flutter web dashboard with real-time WebSocket updates, MVVM architecture, RPG-style skill cards, context breakdown, battle log, brain status monitoring, token budget tracking
+- **Instance Tracking** — Register/deregister live Igris instances via heartbeat, cross-machine visibility through brain MCP tools
+- **Environment Variable Support** — Brain credentials moved to environment variables with backward compatibility (BR-028), `.env.example` added with placeholder values
+
+### Changed
+
+- **Agent architecture simplified:** 18 agents (v3.3) reduced to 7 focused agents (architect, forger, sentinel, warden, mender, seeker, sage). 11 agents retired and replaced by native skills
+- **Tier system simplified:** 6 tiers reduced to 5 tiers. Tier 6 meta-orchestration removed and replaced by Agent Teams parallel execution layer
+- **Brief types expanded:** 3 types (BR, TD, MG) expanded to 9 types (added FR, PI, DU, PF, AC, TS)
+- **Installation model:** Copy-based installation replaced by symlink-based installation via centralized brain. Update brain once, all projects update instantly
+- **Script hardening:** All scripts hardened with `set -euo pipefail` for strict error handling
+- **MCP server security:** `execFile` replaces `exec` for all git operations, eliminating shell interpolation risks (BR-026)
+
+### Fixed
+
+- **Command injection in MCP server** — `git.ts` used `exec()` with string interpolation, enabling arbitrary command execution via crafted branch names or commit messages. Replaced with `execFile()` and argument arrays (BR-026)
+- **Path traversal in MCP server** — `files.ts` did not validate paths, allowing reads outside project root. Added path validation and containment (BR-026)
+- **Shell injection in Python heredocs** — Plugin scripts used `exec()` with f-strings containing user input. Replaced with `subprocess.run()` and proper argument passing (BR-027)
+- **Triple-quote injection in hook fallbacks** — Hook Python fallbacks were vulnerable to injection via JSON values containing triple quotes. Fixed with proper escaping (BR-027)
+- **`persona_mask.sh` jq dependency** — Script required jq with no fallback. Added python3 fallback for environments without jq (BR-027)
+- **Cross-platform `stat` compatibility** — `brief_gate.sh` used GNU `stat` flags not available on macOS. Fixed with cross-platform detection (BR-027)
+
+### Security
+
+- Config credentials moved from plaintext `config.json` to environment variables with backward compatibility (BR-028)
+- `.env.example` added with placeholder values for all credential fields
+- All git MCP operations use argument arrays — no shell interpolation anywhere in the MCP server
+- Path traversal protection on all file-reading MCP tools
+
+---
+
+## [3.4.0] - 2026-01-15
+
+### Added
+
+- **Modular Rules Architecture (`.claude/rules/`)** — 5 rule files loaded automatically by Claude Code, replacing monolithic CLAUDE.md instruction blocks: init, briefs, commits, agents, persona
+- **Hook System** — Shell-based hooks for lifecycle events (post-edit, pre-commit, session start/end), enabling automated linting, brief sync, and metric collection
+- **Session Metrics Tracking** — Agent invocation metrics stored in `ai/session/metrics/agent-metrics.json`, tracking usage frequency, success rates, and token consumption per agent
+- **Brain MCP Server (initial prototype)** — First version of the TypeScript MCP server providing memory storage and retrieval tools
+
+### Changed
+
+- **CLAUDE.md simplified** — Heavy instruction content moved to modular rules, CLAUDE.md now serves as entry point with `@import` directives
+- **Agent count reduced** — Began consolidation from 18 agents toward focused core set, retiring documentation and innovation tier agents in favor of skills
+
+---
+
 ## [3.3.1] - 2025-12-25
 
 ### Fixed
@@ -142,12 +199,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Test Assertions** - Fixed existing installation detection test (exit code 1 is correct)
 - **Prompt File Assertions** - Updated tests for v3.2 consolidated structure
-
----
-
-## [Unreleased]
-
-_Nothing yet - v3.3.0 just released!_
 
 ---
 
@@ -1161,4 +1212,4 @@ Want to contribute? See [CONTRIBUTING.md](ai/CONTRIBUTING.md) for guidelines.
 
 ---
 
-**Last Updated:** 2025-12-24
+**Last Updated:** 2026-02-22

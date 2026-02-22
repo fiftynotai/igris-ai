@@ -303,10 +303,19 @@ For VPS deployment instructions, see [docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md).
 
 ### Prerequisites
 
+**Required:**
 - Git
 - Claude Code CLI
 - Bash (macOS, Linux, or WSL)
-- Node.js 20+ (for brain MCP server)
+- Python 3 (JSON parsing, brain operations)
+- Node.js 20+ (brain MCP server)
+- SQLite 3 with FTS5 support (brain database)
+- Perl (CLAUDE.md template generation)
+
+**Optional:**
+- jq (faster JSON parsing in hooks — python3 fallback available)
+- Flutter 3.9+ (Crimson Arena dashboard — not required for core functionality)
+- Python 3 + pip with FastAPI (dashboard server — not required for core functionality)
 
 ### Install
 
