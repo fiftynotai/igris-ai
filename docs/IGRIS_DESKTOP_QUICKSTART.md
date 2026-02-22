@@ -282,7 +282,7 @@ The desktop app will read/write from the Igris AI CLI repository:
 - `ai/briefs/*.md` - Brief files
 - `ai/session/CURRENT_SESSION.md` - Session tracking
 - `ai/context/coding_guidelines.md` - Architecture
-- `ai/plugins/installed.json` - Plugin status
+- `SOUL.md` - Persona identity
 
 ---
 

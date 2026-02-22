@@ -1,15 +1,15 @@
 # Igris AI Coding Guidelines
 
-**Version:** 2.0.0
-**Language:** Bash
+**Version:** 4.0.0
+**Languages:** Bash, TypeScript, Python, Dart/Flutter
 **Platform:** macOS, Linux, WSL
-**Last Updated:** 2025-10-26
+**Last Updated:** 2026-02-22
 
 ---
 
 ## Purpose
 
-This document defines the coding standards for **Igris AI itself** - the bash scripts, templates, and tools that make up the Igris AI system.
+This document defines the coding standards for **Igris AI itself** - the bash scripts, TypeScript MCP server, Python utilities, Flutter dashboard, and tools that make up the Igris AI system.
 
 **Dogfooding:** We enforce `ai/context/coding_guidelines.md` on user projects. This document ensures Igris AI follows its own standards.
 
@@ -19,22 +19,56 @@ This document defines the coding standards for **Igris AI itself** - the bash sc
 
 1. [File Structure](#1-file-structure)
 2. [Naming Conventions](#2-naming-conventions)
-3. [Error Handling](#3-error-handling)
-4. [Multi-line Text Handling](#4-multi-line-text-handling)
-5. [JSON Manipulation](#5-json-manipulation)
-6. [User Experience](#6-user-experience)
-7. [Testing Requirements](#7-testing-requirements)
-8. [Documentation](#8-documentation)
-9. [Security](#9-security)
-10. [Performance](#10-performance)
-11. [Conventional Commits](#11-conventional-commits)
-12. [Code Review Checklist](#12-code-review-checklist)
+3. [Bash Standards](#3-bash-standards)
+4. [TypeScript Standards](#4-typescript-standards)
+5. [Python Standards](#5-python-standards)
+6. [Flutter/Dart Standards](#6-flutterdart-standards)
+7. [Hook Conventions](#7-hook-conventions)
+8. [Brain/MCP Standards](#8-brainmcp-standards)
+9. [Error Handling](#9-error-handling)
+10. [Multi-line Text Handling](#10-multi-line-text-handling)
+11. [JSON Manipulation](#11-json-manipulation)
+12. [User Experience](#12-user-experience)
+13. [Testing Requirements](#13-testing-requirements)
+14. [Documentation](#14-documentation)
+15. [Security](#15-security)
+16. [Performance](#16-performance)
+17. [Conventional Commits](#17-conventional-commits)
+18. [Code Review Checklist](#18-code-review-checklist)
 
 ---
 
 ## 1. File Structure
 
-### Script Organization
+### v4 Directory Structure
+
+```
+igris-ai/
+├── .claude/
+│   ├── agents/          # 7 native subagents
+│   ├── hooks/           # Session start, pre/post commit
+│   ├── rules/           # 5 modular rules
+│   ├── skills/          # 21 skills
+│   └── settings.json    # Claude Code config
+├── ai/
+│   ├── briefs/          # Work items (9 brief types)
+│   ├── context/         # Architecture docs
+│   ├── hooks/           # Hook specs
+│   ├── masks/           # Mask greeting files
+│   ├── prompts/         # System prompts
+│   ├── session/         # Session tracking + metrics
+│   └── templates/       # PR/commit templates
+├── dashboard/           # Crimson Arena (Flutter web)
+├── docs/                # Documentation
+├── mcp-server/          # Brain MCP server (TypeScript)
+├── scripts/             # Shell scripts
+├── test/                # Test suite (bats)
+├── CLAUDE.md            # Claude Code instructions
+├── SOUL.md              # Igris persona identity
+└── version.txt          # Version (4.0.0)
+```
+
+### Script Organization (Bash)
 
 Every bash script must follow this structure:
 
@@ -59,30 +93,11 @@ main() {
 main "$@"
 ```
 
-### Directory Structure
-
-```
-igris-ai/
-├── scripts/           # Core installation and management scripts
-│   ├── igris_init.sh
-│   ├── plugin_install.sh
-│   └── templates/     # File templates
-├── ai/                # Igris AI operational files
-│   ├── briefs/        # Brief management
-│   ├── session/       # Session tracking
-│   ├── context/       # Project context (including this file)
-│   └── prompts/       # System prompts
-├── test/              # Test files (bats framework)
-│   ├── fixtures/      # Test fixtures
-│   └── *.bats         # Test files
-└── docs/              # Documentation
-```
-
 ---
 
 ## 2. Naming Conventions
 
-### Scripts
+### Scripts (Bash)
 
 - **Format:** `snake_case.sh`
 - **Descriptive:** Name should indicate purpose
@@ -90,29 +105,34 @@ igris-ai/
 
 **Examples:**
 ```bash
-✅ igris_init.sh
-✅ plugin_install.sh
-✅ persona_mask.sh
-❌ init.sh           # Too generic
-❌ installPlugin.sh  # camelCase (wrong)
+igris_init.sh
+igris_install.sh
+igris_brain_init.sh
+emit_skill_event.sh
 ```
 
-### Functions
+### TypeScript (MCP Server)
 
-- **Format:** `snake_case`
-- **Verbs:** Start with action word
-- **Descriptive:** Clear purpose
+- **Files:** `kebab-case.ts` or `camelCase.ts`
+- **Classes/Interfaces:** `PascalCase`
+- **Functions/Variables:** `camelCase`
+- **Constants:** `UPPER_SNAKE_CASE`
 
-**Examples:**
-```bash
-✅ check_python3()
-✅ create_directories()
-✅ validate_plugin_json()
-❌ check()           # Too vague
-❌ doStuff()         # camelCase (wrong)
-```
+### Python (Dashboard/Scripts)
 
-### Variables
+- **Files:** `snake_case.py`
+- **Classes:** `PascalCase`
+- **Functions/Variables:** `snake_case`
+- **Constants:** `UPPER_SNAKE_CASE`
+
+### Dart/Flutter (Crimson Arena)
+
+- **Files:** `snake_case.dart`
+- **Classes/Widgets:** `PascalCase`
+- **Functions/Variables:** `camelCase`
+- **Constants:** `lowerCamelCase` or `UPPER_SNAKE_CASE`
+
+### Variables (Bash)
 
 - **UPPERCASE:** For constants and environment variables
 - **lowercase:** For local variables
@@ -120,16 +140,14 @@ igris-ai/
 
 **Examples:**
 ```bash
-✅ IGRIS_VERSION="2.0.0"
-✅ target_dir="/path/to/dir"
-✅ plugin_name="igris-persona"
-❌ DIR="..."         # Not descriptive enough for non-constant
-❌ x="value"         # Single letter (avoid)
+IGRIS_VERSION="4.0.0"
+target_dir="/path/to/dir"
+brain_path="$HOME/.igris"
 ```
 
 ---
 
-## 3. Error Handling
+## 3. Bash Standards
 
 ### Fail-Fast (MANDATORY)
 
@@ -139,8 +157,6 @@ igris-ai/
 set -e  # Exit immediately if a command exits with non-zero status
 ```
 
-**Why:** Prevents cascading failures. If one command fails, stop immediately rather than continuing in broken state.
-
 ### Dependency Validation
 
 **Validate all dependencies upfront** - before any work is done.
@@ -149,7 +165,7 @@ set -e  # Exit immediately if a command exits with non-zero status
 ```bash
 check_python3() {
   if ! command -v python3 &> /dev/null; then
-    echo "❌ Error: Python 3 is required but not installed"
+    echo "Error: Python 3 is required but not installed"
     echo ""
     echo "Install Python 3:"
     echo "  macOS:  brew install python3"
@@ -167,6 +183,8 @@ check_python3
 **Required dependencies for Igris AI:**
 - `python3` - Always required
 - `git` - Always required
+- `sqlite3` - Required for brain operations
+- `node` (v20+) - Optional (for MCP server)
 - `jq` - Optional (provide fallback or clear error)
 
 ### User Input Validation
@@ -176,20 +194,14 @@ check_python3
 ```bash
 # Validate required parameter
 if [ -z "$TARGET_DIR" ]; then
-  echo "❌ Error: Target directory not specified"
+  echo "Error: Target directory not specified"
   echo "Usage: $0 <directory>"
   exit 1
 fi
 
 # Validate directory exists
 if [ ! -d "$TARGET_DIR" ]; then
-  echo "❌ Error: Directory '$TARGET_DIR' does not exist"
-  exit 1
-fi
-
-# Validate file exists
-if [ ! -f "$CONFIG_FILE" ]; then
-  echo "❌ Error: Config file not found: $CONFIG_FILE"
+  echo "Error: Directory '$TARGET_DIR' does not exist"
   exit 1
 fi
 ```
@@ -200,38 +212,20 @@ fi
 - `1` - General error (validation failure, dependency missing)
 - `2` - Usage error (wrong arguments)
 
----
-
-## 4. Multi-line Text Handling
-
-### The Problem
-
-**Sed breaks with newlines.** Multi-line content (like persona greetings) cannot be reliably substituted using `sed`.
-
-### The Solution: Use perl
+### Multi-line Text Handling
 
 **ALWAYS use perl for multi-line substitution:**
 
 ```bash
-# ❌ WRONG (sed breaks with newlines)
+# WRONG (sed breaks with newlines)
 sed "s|{{PLACEHOLDER}}|$MULTI_LINE_VAR|g" template.md > output.md
 
-# ✅ CORRECT (perl handles newlines)
+# CORRECT (perl handles newlines)
 ESCAPED_VAR=$(printf '%s\n' "$MULTI_LINE_VAR" | perl -pe 's/([\\\/\$])/\\$1/g')
 perl -pe "s/\{\{PLACEHOLDER\}\}/$ESCAPED_VAR/g" template.md > output.md
 ```
 
-**Why:** This pattern was established in BR-005 (plugin install regeneration bug fix). Sed's multi-line handling is inconsistent across platforms.
-
-### Reference Implementation
-
-See `scripts/igris_init.sh` for the canonical implementation of multi-line substitution.
-
----
-
-## 5. JSON Manipulation
-
-### Primary Method: Python3
+### JSON Manipulation
 
 **Use Python3 for JSON operations** (Python3 is a required dependency):
 
@@ -242,28 +236,14 @@ import json, sys
 data = json.load(sys.stdin)
 print(data.get('name', ''))
 ")
-
-# Update JSON file
-python3 <<EOF > updated.json
-import json
-with open('input.json', 'r') as f:
-    data = json.load(f)
-data['new_field'] = 'value'
-print(json.dumps(data, indent=2))
-EOF
 ```
 
-### Optional: jq (with fallback)
-
-**If jq is available, you may use it** - but MUST provide fallback:
+**Optional: jq (with fallback)**
 
 ```bash
-# Check if jq available
 if command -v jq &> /dev/null; then
-  # Use jq (faster)
   PLUGIN_NAME=$(jq -r '.name' plugin.json)
 else
-  # Fallback to python3
   PLUGIN_NAME=$(cat plugin.json | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -272,25 +252,268 @@ print(data.get('name', ''))
 fi
 ```
 
-**Why:** Not all systems have jq installed. Python3 is mandatory, so it's the reliable choice.
+### Quote All Variables
 
-**Reference:** See TD-006 for jq dependency handling patterns.
+```bash
+# GOOD
+cp "$SOURCE_FILE" "$TARGET_DIR"
+cd "$PROJECT_PATH"
+
+# BAD (breaks with spaces in paths)
+cp $SOURCE_FILE $TARGET_DIR
+```
 
 ---
 
-## 6. User Experience
+## 4. TypeScript Standards
 
-### Clear Error Messages
+Standards for the MCP server (`mcp-server/`) and any TypeScript tooling.
 
-**Error messages MUST be:**
-- ✅ Clear about what went wrong
-- ✅ Actionable (tell user how to fix it)
-- ✅ Platform-specific (show install command for their OS)
+### Compiler Settings
 
-**Pattern:**
+- Use strict TypeScript (`strict: true` in tsconfig)
+- Target ES2022 or later
+- Module system: ES modules (`"type": "module"` in package.json)
+
+### Runtime
+
+- Node.js 20+ required
+- Use native Node.js APIs where possible (avoid unnecessary dependencies)
+
+### Code Style
+
+```typescript
+// Use explicit types for function signatures
+function getProjectStatus(slug: string): ProjectStatus {
+  // ...
+}
+
+// Use interfaces for data shapes
+interface ProjectStatus {
+  slug: string;
+  path: string;
+  status: "active" | "archived";
+  lastUpdated: string;
+}
+
+// Use async/await (not raw Promises)
+async function queryBrain(sql: string): Promise<QueryResult> {
+  try {
+    const result = await db.prepare(sql).all();
+    return result;
+  } catch (error) {
+    throw new BrainQueryError(`Query failed: ${error}`);
+  }
+}
+```
+
+### Error Handling
+
+- Use try/catch for all async operations
+- Define custom error types for domain-specific errors
+- Never swallow errors silently
+- Log errors with context (operation name, parameters)
+
+### Dependencies
+
+- `better-sqlite3` for SQLite access
+- Minimize external dependencies
+- Pin dependency versions in package-lock.json
+
+---
+
+## 5. Python Standards
+
+Standards for the dashboard server (`dashboard/`), brain scripts, and utilities.
+
+### Version
+
+- Use Python 3.10+ features
+- Type hints encouraged on all function signatures
+
+### Code Style
+
+```python
+from typing import Optional
+import asyncio
+
+async def get_session_status(project_path: str) -> Optional[dict]:
+    """Return the current session status for a project."""
+    session_file = Path(project_path) / "ai" / "session" / "CURRENT_SESSION.md"
+    if not session_file.exists():
+        return None
+    return parse_session(session_file.read_text())
+```
+
+### Async Operations
+
+- Use `asyncio` for async operations
+- Use `FastAPI` for web servers
+- Use `aiofiles` for async file I/O when needed
+
+### Dependencies
+
+- Keep requirements minimal
+- Use virtual environments for isolation
+- Pin versions in `requirements.txt`
+
+---
+
+## 6. Flutter/Dart Standards
+
+Standards for the Crimson Arena dashboard (`dashboard/crimson-arena/`).
+
+### Architecture
+
+- Follow **MVVM + Actions Layer** pattern (Kalvad architecture)
+- Use **GetX** for state management and dependency injection
+- Prefer immutable state objects
+
+### Code Style
+
+```dart
+// Follow effective Dart guidelines
+class BriefController extends GetxController {
+  final RxList<Brief> briefs = <Brief>[].obs;
+  final RxBool isLoading = false.obs;
+
+  Future<void> loadBriefs() async {
+    isLoading.value = true;
+    try {
+      briefs.value = await _briefRepository.getAll();
+    } finally {
+      isLoading.value = false;
+    }
+  }
+}
+```
+
+### Naming
+
+- Files: `snake_case.dart`
+- Classes/Widgets: `PascalCase`
+- Variables/Functions: `camelCase`
+- Private members: prefix with `_`
+
+### State Management
+
+- Reactive state with `.obs` and `Obx()`
+- Controllers extend `GetxController`
+- Actions layer for complex business logic
+- Separate UI from business logic
+
+### Widget Guidelines
+
+- Extract reusable widgets into separate files
+- Keep `build()` methods focused and readable
+- Use `const` constructors where possible
+- Avoid deep widget nesting (max 3-4 levels)
+
+---
+
+## 7. Hook Conventions
+
+Standards for Claude Code hooks (`.claude/hooks/`).
+
+### Structure
+
+- All hooks use `set -e`
+- Input via stdin, output to stdout
+- Keep hooks fast (< 2 seconds)
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success |
+| `1` | Error (hook failed) |
+| `2` | Skip (hook does not apply) |
+
+### Environment Variables
+
+Hooks receive context through environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `IGRIS_HOOK_TYPE` | Hook type (pre-commit, post-commit, session-start) |
+| `IGRIS_PROJECT_ROOT` | Absolute path to project root |
+| `IGRIS_VERSION` | Current Igris AI version |
+
+### Example Hook
+
 ```bash
-# ✅ GOOD (clear, actionable, helpful)
-echo "❌ Error: Python 3 is required but not installed"
+#!/bin/bash
+set -e
+
+# Description: Pre-commit hook that validates brief references
+# Exit codes: 0=success, 1=error, 2=skip
+
+PROJECT_ROOT="${IGRIS_PROJECT_ROOT:-.}"
+
+# Check if commit message references a brief
+if ! grep -qE "(BR|FR|TD|MG|TS|PI|DU|PF|AC)-[0-9]+" "$1"; then
+  echo "Warning: No brief reference in commit message"
+  exit 2  # Skip (warning only)
+fi
+
+exit 0
+```
+
+---
+
+## 8. Brain/MCP Standards
+
+Standards for the centralized brain (`~/.igris/`) and MCP server (`mcp-server/`).
+
+### SQLite Configuration
+
+- **WAL mode:** Always use Write-Ahead Logging for concurrent reads
+- **FTS5:** Use Full-Text Search 5 for text search operations
+- **Busy timeout:** Set to 5000ms to handle lock contention
+- **Journal mode:** WAL (set on database creation)
+
+```sql
+PRAGMA journal_mode=WAL;
+PRAGMA busy_timeout=5000;
+PRAGMA foreign_keys=ON;
+```
+
+### Brain Operations
+
+- All brain operations are **fire-and-forget** (never block workflows)
+- Brain queries should complete in < 100ms for interactive use
+- Use parameterized queries to prevent SQL injection
+- Always close database connections after use
+
+### Data Integrity
+
+- Use transactions for multi-statement writes
+- Validate data before insertion
+- Use foreign keys for referential integrity
+- Run `PRAGMA integrity_check` periodically
+
+### MCP Tool Design
+
+- Each tool should do one thing well
+- Return structured JSON responses
+- Include error context in failure responses
+- Document all parameters and return types
+
+---
+
+## 9. Error Handling
+
+### General Principles (All Languages)
+
+- **Fail fast:** Detect errors early and report clearly
+- **Actionable messages:** Tell the user how to fix it
+- **Context:** Include what operation failed and why
+- **No silent failures:** Always log or report errors
+
+### Platform-Specific Error Messages
+
+```bash
+echo "Error: Python 3 is required but not installed"
 echo ""
 echo "Install Python 3:"
 echo "  macOS:  brew install python3"
@@ -298,50 +521,71 @@ echo "  Ubuntu: sudo apt install python3"
 echo "  WSL:    sudo apt install python3"
 echo ""
 exit 1
-
-# ❌ BAD (cryptic, no guidance)
-echo "Error: missing dependency"
-exit 1
 ```
+
+---
+
+## 10. Multi-line Text Handling
+
+### The Problem
+
+**Sed breaks with newlines.** Multi-line content cannot be reliably substituted using `sed`.
+
+### The Solution: Use perl
+
+**ALWAYS use perl for multi-line substitution in Bash scripts.**
+
+**Reference:** See `scripts/igris_init.sh` for the canonical implementation.
+
+---
+
+## 11. JSON Manipulation
+
+### Bash: Use Python3
+
+Python3 is a required dependency, making it the reliable choice for JSON operations in shell scripts.
+
+### TypeScript: Use native JSON
+
+```typescript
+const data = JSON.parse(content);
+```
+
+### Python: Use json module
+
+```python
+import json
+data = json.loads(content)
+```
+
+---
+
+## 12. User Experience
+
+### Clear Error Messages
+
+Error messages MUST be clear, actionable, and platform-specific where applicable.
 
 ### Progress Indicators
 
-**Use emojis and clear progress messages:**
+Use clear progress messages in scripts:
 
 ```bash
-echo "⚙️  Igris initializing..."
-echo ""
-echo "📦 Creating directory structure..."
-mkdir -p ai/{briefs,session,context,prompts}
-
-echo "📄 Copying templates..."
-cp -r scripts/templates/* ai/
-
-echo "✅ Igris AI initialized successfully!"
-echo ""
-echo "Next steps:"
-echo "  1. Review CLAUDE.md"
-echo "  2. Run your first session"
+echo "Igris initializing..."
+echo "Creating directory structure..."
+echo "Igris AI initialized successfully!"
 ```
-
-**Standard emojis:**
-- ⚙️ - Initializing / processing
-- 📦 - Creating / installing
-- 📄 - Copying / writing files
-- ✅ - Success
-- ❌ - Error
-- ⚠️  - Warning
 
 ### Confirmation Prompts
 
-**Ask before destructive operations:**
+Ask before destructive operations:
 
 ```bash
 if [ -f "CLAUDE.md" ]; then
-  echo "⚠️  CLAUDE.md already exists"
+  echo "CLAUDE.md already exists"
   read -p "Overwrite? [y/N]: " CONFIRM
   if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-    echo "❌ Operation cancelled"
+    echo "Operation cancelled"
     exit 0
   fi
 fi
@@ -349,7 +593,7 @@ fi
 
 ---
 
-## 7. Testing Requirements
+## 13. Testing Requirements
 
 ### Test Coverage Targets
 
@@ -357,80 +601,49 @@ fi
 - **Error handling:** 80% coverage (all error cases tested)
 - **Edge cases:** 60% coverage (unusual inputs handled)
 
-### Test Framework
+### Bash Tests
 
-**Use bats (Bash Automated Testing System):**
+**Framework:** bats (Bash Automated Testing System)
 
-```bash
-# Install bats
-npm install -g bats
-
-# Run tests
-bats test/
-```
-
-### Test Structure
-
-**Tests live in `test/` directory:**
+**Test files use `.test.bash` extension:**
 
 ```
 test/
-├── igris_init.bats
-├── plugin_install.bats
+├── igris_init.test.bash
+├── igris_install.test.bash
+├── test_helper.bash
 └── fixtures/
-    ├── sample_plugin.json
-    └── sample_persona.json
+    └── sample_data/
 ```
 
-### Test Naming
-
+**Running tests:**
 ```bash
-@test "igris_init creates ai/ directory structure" {
-  run ./scripts/igris_init.sh "$TEST_DIR"
-  [ "$status" -eq 0 ]
-  [ -d "$TEST_DIR/ai/briefs" ]
-  [ -d "$TEST_DIR/ai/session" ]
-  [ -d "$TEST_DIR/ai/context" ]
-}
-
-@test "plugin_install validates plugin.json exists" {
-  run ./scripts/plugin_install.sh nonexistent-plugin.tar.gz
-  [ "$status" -eq 1 ]
-  [[ "$output" =~ "plugin.json not found" ]]
-}
-
-@test "check_python3 fails when python3 not in PATH" {
-  PATH="/usr/bin" run ./scripts/igris_init.sh
-  [ "$status" -eq 1 ]
-  [[ "$output" =~ "Python 3 is required" ]]
-}
+bats test/
 ```
 
-### Test Best Practices
+### TypeScript Tests
 
-- **Isolation:** Each test runs in clean environment
-- **Fixtures:** Use `test/fixtures/` for sample data
-- **Cleanup:** Use `teardown()` to clean up after tests
-- **Fast:** Tests should run in < 5 seconds total
+- Use the project's configured test runner
+- Test MCP tool handlers individually
+- Mock SQLite for unit tests
 
-**Reference:** See TD-005 for automated testing implementation.
+### Flutter/Dart Tests
+
+- Use `flutter test` for unit and widget tests
+- Follow Flutter testing best practices
+- Test controllers and actions separately
 
 ---
 
-## 8. Documentation
+## 14. Documentation
 
 ### Inline Comments
 
 **Comment the WHY, not the WHAT:**
 
 ```bash
-# ✅ GOOD (explains WHY)
 # Use perl instead of sed because sed breaks with multi-line content
 # See BR-005 for details on this bug
-perl -pe "s/{{VAR}}/$VALUE/g" template > output
-
-# ❌ BAD (states the obvious WHAT)
-# Replace VAR with VALUE
 perl -pe "s/{{VAR}}/$VALUE/g" template > output
 ```
 
@@ -441,10 +654,10 @@ perl -pe "s/{{VAR}}/$VALUE/g" template > output
 ```bash
 # Validates that Python 3 is installed and accessible
 # Exits with error code 1 and helpful message if not found
-# Used by: igris_init.sh, plugin_install.sh
+# Used by: igris_init.sh, igris_install.sh
 check_python3() {
   if ! command -v python3 &> /dev/null; then
-    echo "❌ Error: Python 3 is required but not installed"
+    echo "Error: Python 3 is required but not installed"
     exit 1
   fi
 }
@@ -460,7 +673,7 @@ set -e
 
 # Description: Initializes Igris AI in a project directory
 # Usage: igris_init.sh <target_directory>
-# Dependencies: python3, git
+# Dependencies: python3, git, sqlite3
 # Exit codes:
 #   0 - Success
 #   1 - Error (dependency missing, invalid directory, etc.)
@@ -468,102 +681,58 @@ set -e
 
 ---
 
-## 9. Security
+## 15. Security
 
-### Quote All Variables
+### Quote All Variables (Bash)
 
-**ALWAYS quote variables to prevent word splitting and glob expansion:**
-
-```bash
-# ✅ GOOD (prevents word splitting)
-cp "$SOURCE_FILE" "$TARGET_DIR"
-cd "$PROJECT_PATH"
-rm -rf "$TEMP_DIR"
-
-# ❌ BAD (breaks with spaces in paths)
-cp $SOURCE_FILE $TARGET_DIR
-cd $PROJECT_PATH
-rm -rf $TEMP_DIR
-```
+Always quote variables to prevent word splitting and glob expansion.
 
 ### Validate File Paths
 
-**Check file existence before operations:**
+Check file existence before operations in all languages.
 
-```bash
-# Validate before reading
-if [ ! -f "$CONFIG_FILE" ]; then
-  echo "❌ Error: Config file not found: $CONFIG_FILE"
-  exit 1
-fi
+### Avoid eval (Bash)
 
-# Validate before modifying
-if [ ! -w "$TARGET_FILE" ]; then
-  echo "❌ Error: Cannot write to: $TARGET_FILE"
-  exit 1
-fi
-```
+Never use `eval` with user input.
 
-### Avoid eval
+### Parameterized Queries (SQLite)
 
-**Never use `eval` with user input:**
+Always use parameterized queries to prevent SQL injection:
 
-```bash
-# ❌ DANGEROUS
-eval "$USER_INPUT"
+```typescript
+// GOOD
+db.prepare("SELECT * FROM projects WHERE slug = ?").get(slug);
 
-# ✅ SAFE: Use proper substitution
-"${COMMANDS[$USER_CHOICE]}"
+// BAD
+db.prepare(`SELECT * FROM projects WHERE slug = '${slug}'`).get();
 ```
 
 ---
 
-## 10. Performance
+## 16. Performance
 
-### Avoid Unnecessary Subshells
+### Bash
 
-```bash
-# ✅ GOOD (direct read)
-version=$(cat version.txt)
+- Avoid unnecessary subshells
+- Use built-in commands where possible
+- Minimize file operations
 
-# ❌ BAD (unnecessary pipe)
-version=$(cat version.txt | head -n 1)
+### TypeScript (MCP Server)
 
-# ✅ BETTER (bash builtin)
-version=$(<version.txt)
-```
+- Use connection pooling for SQLite
+- Cache frequently accessed data
+- Avoid blocking the event loop
 
-### Use Built-in Commands
+### SQLite (Brain)
 
-```bash
-# ✅ GOOD (bash builtin)
-if [ -d "$DIR" ]; then
-  echo "Directory exists"
-fi
-
-# ❌ BAD (spawns external process)
-if test -d "$DIR"; then
-  echo "Directory exists"
-fi
-```
-
-### Minimize File Operations
-
-```bash
-# ✅ GOOD (single pass)
-while IFS= read -r line; do
-  process_line "$line"
-done < input.txt
-
-# ❌ BAD (reads file multiple times)
-for line in $(cat input.txt); do
-  process_line "$line"
-done
-```
+- Use WAL mode for concurrent access
+- Create indexes for frequently queried columns
+- Use FTS5 for text search (not LIKE queries)
+- Keep transactions short
 
 ---
 
-## 11. Conventional Commits
+## 17. Conventional Commits
 
 ### Commit Format
 
@@ -587,35 +756,11 @@ done
 
 ### Scope Examples
 
-- `feat(plugin): add hook system for persona injection`
+- `feat(mcp): add cross-project search tool`
 - `fix(init): use perl instead of sed for multi-line substitution`
-- `docs(readme): add installation instructions`
+- `docs(readme): add brain setup instructions`
 - `test(init): add test for directory creation`
-
-### Commit Message Guidelines
-
-```
-✅ GOOD:
-feat(plugin): add hook system for persona injection
-
-Implemented {{PERSONA_INJECTION}} placeholder in CLAUDE.md template.
-Plugin install script now reads hooks from plugin.json and injects
-them during igris_init.sh execution.
-
-closes #TD-003
-
-✅ GOOD:
-fix(init): use perl instead of sed for multi-line substitution
-
-Fixes BR-005. The sed approach broke with newlines in persona content.
-Now uses perl which handles newlines correctly across platforms.
-
-❌ BAD:
-fix: fixed bug
-
-❌ BAD:
-update files
-```
+- `feat(dashboard): add skill cards widget`
 
 ### Reference Briefs in Footer
 
@@ -627,7 +772,7 @@ refs #MG-XXX
 
 ---
 
-## 12. Code Review Checklist
+## 18. Code Review Checklist
 
 ### Before Submitting PR
 
@@ -635,32 +780,34 @@ refs #MG-XXX
 
 - [ ] **Follows guidelines:** All sections of this document followed
 - [ ] **Tests added/updated:** New code has corresponding tests
-- [ ] **Tests pass:** `bats test/` runs successfully
+- [ ] **Tests pass:** All tests green (bats, TypeScript, Flutter)
+- [ ] **Linter passes:** shellcheck for Bash, tsc --noEmit for TypeScript, flutter analyze for Dart
 - [ ] **Documentation updated:** Inline comments and README if needed
-- [ ] **shellcheck passes:** `shellcheck scripts/*.sh` shows no errors
-- [ ] **Cross-platform tested:** Tested on macOS and Linux (or WSL)
+- [ ] **Cross-platform tested:** Tested on macOS and Linux (or WSL) for shell scripts
 - [ ] **Error messages clear:** All error messages are actionable
 - [ ] **No hardcoded paths:** Uses variables or derives paths
-- [ ] **Variables quoted:** All variable references use `"$VAR"`
+- [ ] **Variables quoted:** All Bash variable references use `"$VAR"`
+- [ ] **Parameterized queries:** All SQL uses parameterized queries
 - [ ] **Conventional commits:** Commit message follows format
 - [ ] **Brief referenced:** Commit footer references brief (if applicable)
-- [ ] **set -e included:** Script fails fast on errors
-- [ ] **Dependencies validated:** All required commands checked upfront
+- [ ] **set -e included:** Bash scripts fail fast on errors
 
 ### Automated Checks
 
 **Run before committing:**
 
 ```bash
-# Lint all scripts
+# Lint shell scripts
 shellcheck scripts/*.sh
 
-# Run tests
+# Run bash tests
 bats test/
 
-# Check for common issues
-grep -r "eval " scripts/    # Should return nothing
-grep -r '\$[A-Z_]*[^"]' scripts/  # Find unquoted variables
+# TypeScript (if modifying MCP server)
+cd mcp-server && npm run build
+
+# Flutter (if modifying dashboard)
+cd dashboard/crimson-arena && flutter analyze
 ```
 
 ---
@@ -693,9 +840,10 @@ If these guidelines don't cover your situation, ask in:
 ### External Resources
 
 - [Google Shell Style Guide](https://google.github.io/styleguide/shellguide.html)
-- [shellcheck](https://www.shellcheck.net/) - Static analysis tool
-- [Defensive Bash Programming](https://www.kfirlavi.com/blog/2012/11/14/defensive-bash-programming/)
+- [shellcheck](https://www.shellcheck.net/) - Static analysis tool for Bash
 - [bats](https://github.com/bats-core/bats-core) - Bash testing framework
+- [Effective Dart](https://dart.dev/effective-dart) - Dart style guide
+- [TypeScript Handbook](https://www.typescriptlang.org/docs/handbook/) - TypeScript reference
 
 ### Related Igris AI Briefs
 
@@ -703,22 +851,24 @@ If these guidelines don't cover your situation, ask in:
 - **TD-004:** Python3 dependency validation
 - **TD-005:** Automated shell script testing
 - **TD-006:** Inconsistent jq dependency handling
+- **TD-020:** Documentation overhaul for v4.0
 
 ### Internal Documentation
 
 - `ai/prompts/igris_os.md` - Igris AI operating system (for Claude)
 - `ai/templates/commit_message.md` - Commit message template
-- `ai/CONTRIBUTING.md` - Contribution guide
+- `CONTRIBUTING.md` - Contribution guide
 - `README.md` - Project README
 
 ---
 
 **Created:** 2025-10-26
-**Version:** 2.0.0
+**Version:** 4.0.0
+**Last Updated:** 2026-02-22
 **Maintained by:** Igris AI Team
 
 ---
 
-✅ **Remember:** We enforce coding guidelines on user projects. We MUST follow our own standards.
+Remember: We enforce coding guidelines on user projects. We MUST follow our own standards.
 
 Dogfooding is not optional. It's how we build trust.

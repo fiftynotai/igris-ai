@@ -4,7 +4,7 @@
 **Priority:** [P0-Critical | P1-High | P2-Medium | P3-Low]
 **Effort:** [S-Small (< 4h) | M-Medium (1-2d) | L-Large (3-5d) | XL-Extra Large (>1w)]
 **Assignee:** [Igris AI | Human Developer]
-**Commanded By:** [User name from persona.json if available, otherwise "Not specified"]
+**Commanded By:** [User name from ~/.igris/USER.md if available, otherwise "Not specified"]
 **Status:** [Draft | Ready | In Progress | In Review | Done]
 **Created:** [YYYY-MM-DD]
 **Completed:** [YYYY-MM-DD] _(if Status: Done)_

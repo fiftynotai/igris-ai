@@ -10,14 +10,11 @@
 test/
 ├── README.md                    # This file
 ├── test_helper.bash            # Shared test utilities
-├── fixtures/                   # Test data (mock projects, plugins, etc.)
-│   ├── mock_plugin/           # Sample plugin for testing
+├── fixtures/                   # Test data (mock projects, etc.)
 │   └── mock_project/          # Sample project for testing
 ├── igris_init.test.bash       # Tests for igris_init.sh
-├── plugin_install.test.bash   # Tests for plugin_install.sh
-├── plugin_update.test.bash    # Tests for plugin_update.sh
-├── plugin_uninstall.test.bash # Tests for plugin_uninstall.sh
-└── igris_update.test.bash     # Tests for igris_update.sh
+├── igris_update.test.bash     # Tests for igris_update.sh
+└── error_handling.test.bash   # Error handling tests
 ```
 
 ---

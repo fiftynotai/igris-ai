@@ -1,8 +1,8 @@
 # Igris AI Update Guide
 
-**Keep Igris AI and its plugins up to date**
+**Keep Igris AI up to date**
 
-This guide explains how to update Igris AI core and its plugins to the latest versions.
+This guide explains how to update Igris AI v4.0 to the latest version.
 
 ---
 
@@ -10,8 +10,8 @@ This guide explains how to update Igris AI core and its plugins to the latest ve
 
 - [Version Tracking](#version-tracking)
 - [Checking Your Version](#checking-your-version)
+- [Update Models](#update-models)
 - [Updating Igris AI Core](#updating-igris-ai-core)
-- [Updating Plugins](#updating-plugins)
 - [Backup and Safety](#backup-and-safety)
 - [Rollback Instructions](#rollback-instructions)
 - [Troubleshooting](#troubleshooting)
@@ -21,62 +21,92 @@ This guide explains how to update Igris AI core and its plugins to the latest ve
 
 ## Version Tracking
 
-Igris AI automatically tracks versions in your project using the `.igris_version` file:
+Igris AI v4.0 tracks versions in the `.igris_version` file in each installed project:
 
 ```json
 {
-  "igris_ai_version": "1.0.1",
-  "installed_at": "2025-10-14T07:39:23Z",
-  "last_updated": "2025-10-14T07:39:23Z",
-  "plugins": {
-    "igris-ai-distribution-flutter": {
-      "version": "1.0.1",
-      "installed_at": "2025-10-14T07:39:23Z",
-      "repo": "https://github.com/fiftynotai/igris-ai-distribution-flutter"
-    }
-  }
+  "igris_ai_version": "4.0.0",
+  "install_mode": "symlink",
+  "brain_path": "/Users/you/.igris",
+  "installed_at": "2026-02-16T07:37:48Z",
+  "last_updated": "2026-02-22T10:00:00Z"
 }
 ```
 
-This file is automatically created during initialization and updated when you:
-- Install Igris AI (`igris_init.sh`)
-- Install plugins (`plugin_install.sh`)
-- Update Igris AI (`igris_update.sh`)
-- Update plugins (`plugin_update.sh`)
+**Fields:**
+- `igris_ai_version` - The installed Igris AI version
+- `install_mode` - Either `"symlink"` (brain-first) or `"copy"` (standalone)
+- `brain_path` - Path to the centralized brain (symlink mode only)
+- `installed_at` - When Igris AI was first installed in this project
+- `last_updated` - When the installation was last updated
+
+This file is automatically created during initialization and updated by:
+- `igris_init.sh` (copy-based install)
+- `igris_install.sh` (symlink-based install)
+- `igris_update.sh` (update script)
 
 ---
 
 ## Checking Your Version
 
-### Check Igris AI Core Version
-
-```bash
-cat .igris_version | grep igris_ai_version
-```
-
-Or view the full version file:
+### Check Igris AI Version
 
 ```bash
 cat .igris_version
 ```
 
-### Check Installed Plugins
+Or check the source repository version:
 
 ```bash
-./scripts/plugin_list.sh
+cat /path/to/igris-ai/version.txt
 ```
 
-This shows all installed plugins with their versions:
+### Check Brain Status
 
+```bash
+# Verify brain exists
+ls ~/.igris/
+
+# Check brain database
+sqlite3 ~/.igris/memory/knowledge.db "PRAGMA integrity_check;"
+
+# List registered projects
+sqlite3 ~/.igris/memory/knowledge.db "SELECT slug, path, status FROM projects;"
 ```
-🔌 Installed Igris AI Plugins
-==================================
 
-📦 igris-ai-distribution-flutter
-   Version: 1.0.1
-   Installed: 2025-10-14T07:39:23Z
-   Repository: https://github.com/fiftynotai/igris-ai-distribution-flutter
-   Capabilities: distribution, version-management, firebase
+---
+
+## Update Models
+
+Igris AI v4.0 has two update models depending on your install mode.
+
+### Symlink-Based Projects (Auto-Update)
+
+Projects installed with `igris_install.sh` use symlinks to the brain at `~/.igris/`. These projects **automatically receive updates** when you update the source repository:
+
+```bash
+# Update the source repository
+cd /path/to/igris-ai
+git pull origin main
+
+# Re-initialize the brain (picks up new agents, rules, skills)
+./scripts/igris_brain_init.sh
+```
+
+Since `.claude/agents/`, `.claude/rules/`, and `.claude/skills/` are symlinked, all linked projects immediately see the updated files.
+
+### Copy-Based Projects (Manual Update)
+
+Projects installed with `igris_init.sh` have copied files. These require manual updates:
+
+```bash
+# Update the source repository
+cd /path/to/igris-ai
+git pull origin main
+
+# Re-run the update script for each project
+cd /path/to/your-project
+/path/to/igris-ai/scripts/igris_update.sh
 ```
 
 ---
@@ -84,8 +114,6 @@ This shows all installed plugins with their versions:
 ## Updating Igris AI Core
 
 ### Standard Update
-
-Update to the latest version:
 
 ```bash
 ./scripts/igris_update.sh
@@ -96,9 +124,30 @@ Update to the latest version:
 2. Shows what will be updated
 3. Asks for confirmation
 4. Creates backup in `.igris_backup/`
-5. Updates system files (prompts, templates, checks, scripts)
-6. Preserves your data (briefs, session, context, plugins)
+5. Updates system files (agents, rules, skills, prompts, templates)
+6. Preserves your data (briefs, session, context)
 7. Updates `.igris_version`
+
+### Files That Will Be Updated
+
+- `.claude/agents/*.md` - Agent definitions (7 agents)
+- `.claude/rules/*.md` - Modular rules (5 rules)
+- `.claude/skills/` - Skills (21 skills)
+- `.claude/hooks/` - Hook scripts
+- `ai/prompts/*.md` - System prompts
+- `ai/templates/*.md` - Brief and PR templates
+- `scripts/igris_*.sh` - Core scripts
+- `CLAUDE.md` - Claude Code instructions
+
+### Files That Will Be Preserved
+
+- `ai/briefs/*.md` - Your work items (bugs, features, tasks)
+- `ai/session/*.md` - Your session tracking
+- `ai/context/*.md` - Your architecture documentation
+- `ai/masks/*.md` - Your mask greeting files
+- `SOUL.md` - Your persona identity
+- `USER.md` - Your user configuration
+- Your project code and configuration
 
 ### Dry Run Mode
 
@@ -108,160 +157,12 @@ Preview what would be updated without making changes:
 ./scripts/igris_update.sh --dry-run
 ```
 
-**Use this to:**
-- See which files would be updated
-- Check if there are new features
-- Verify before committing to update
-
 ### Force Update
 
-Force update even if versions are the same (useful for fixing corrupted files):
+Force update even if versions are the same:
 
 ```bash
 ./scripts/igris_update.sh --force
-```
-
-### Example Update Session
-
-```bash
-$ ./scripts/igris_update.sh
-
-🔄 Igris AI Update Manager
-==============================
-
-📦 Current version: 1.0.0
-
-🌐 Checking for updates...
-📡 Latest version: 1.0.1
-
-📋 Update Summary:
-  From: 1.0.0
-  To:   1.0.1
-
-📝 Files that will be updated:
-  - ai/prompts/*.md (system prompts)
-  - ai/templates/*.md (brief templates)
-  - ai/CONTRIBUTING.md (documentation)
-  - scripts/plugin_*.sh (plugin management scripts)
-
-🔒 Files that will be preserved:
-  - ai/briefs/*.md (your work items)
-  - ai/session/*.md (your session data)
-  - ai/context/*.md (your architecture docs)
-  - ai/plugins/installed.json (plugin registry)
-
-Continue with update? [y/N]: y
-
-📦 Starting update...
-
-💾 Creating backup at .igris_backup/20251014_083045...
-✅ Backup created
-
-📝 Updating system files...
-  - Updating prompts...
-  - Updating templates...
-  - Updating CONTRIBUTING.md...
-  - Updating plugin management scripts...
-  - Updating version tracking...
-
-✅ Igris AI updated successfully!
-
-📦 Updated to version: 1.0.1
-💾 Backup saved at: .igris_backup/20251014_083045
-
-📝 What's new in 1.0.1:
-  See CHANGELOG.md or visit:
-  https://github.com/fiftynotai/igris-ai/releases
-
-⚠️  Note: If you have plugins installed, update them separately:
-  ./scripts/plugin_update.sh <plugin-name>
-```
-
----
-
-## Updating Plugins
-
-### Update a Specific Plugin
-
-```bash
-./scripts/plugin_update.sh <plugin-name>
-```
-
-**Example:**
-
-```bash
-./scripts/plugin_update.sh igris-ai-distribution-flutter
-```
-
-### Dry Run Mode
-
-Preview plugin update:
-
-```bash
-./scripts/plugin_update.sh igris-ai-distribution-flutter --dry-run
-```
-
-### Force Update
-
-Force plugin update:
-
-```bash
-./scripts/plugin_update.sh igris-ai-distribution-flutter --force
-```
-
-### Example Plugin Update Session
-
-```bash
-$ ./scripts/plugin_update.sh igris-ai-distribution-flutter
-
-🔄 Igris AI Plugin Updater
-==============================
-
-📦 Plugin: igris-ai-distribution-flutter
-📍 Repository: https://github.com/fiftynotai/igris-ai-distribution-flutter
-📌 Current version: 1.0.0
-
-🌐 Checking for updates...
-📡 Latest version: 1.0.1
-
-📋 Update Summary:
-  From: 1.0.0
-  To:   1.0.1
-
-Continue with update? [y/N]: y
-
-📦 Starting plugin update...
-
-💾 Creating backup at .igris_backup/plugins/20251014_083530_igris-ai-distribution-flutter...
-✅ Backup created
-
-🔧 Running plugin update...
-[Plugin install script output]
-
-📝 Updating plugin registry...
-
-✅ Plugin updated successfully!
-
-📦 Plugin: igris-ai-distribution-flutter
-📌 Updated to version: 1.0.1
-💾 Backup saved at: .igris_backup/plugins/20251014_083530_igris-ai-distribution-flutter
-
-📝 What's new in 1.0.1:
-  Check the plugin repository for changelog:
-  https://github.com/fiftynotai/igris-ai-distribution-flutter
-```
-
-### Update All Plugins
-
-Currently there's no "update all" command. To update all plugins:
-
-```bash
-# List installed plugins
-./scripts/plugin_list.sh
-
-# Update each one
-./scripts/plugin_update.sh igris-ai-distribution-flutter
-./scripts/plugin_update.sh other-plugin
 ```
 
 ---
@@ -274,48 +175,41 @@ Every update creates a timestamped backup:
 
 ```
 .igris_backup/
-├── 20251014_083045/              # Core update backup
+├── 20260222_100000/              # Update backup
+│   ├── agents/
+│   ├── rules/
+│   ├── skills/
 │   ├── prompts/
 │   ├── templates/
-│   ├── CONTRIBUTING.md
-│   ├── plugin_*.sh
 │   └── .igris_version
-└── plugins/
-    └── 20251014_083530_igris-ai-distribution-flutter/
-        ├── installed.json
-        └── .igris_version
 ```
 
 ### What Gets Backed Up
 
-**Core Updates:**
-- All files that will be modified
+- All files that will be modified during the update
+- Agent definitions (`.claude/agents/`)
+- Rule files (`.claude/rules/`)
 - System prompts (`ai/prompts/`)
 - Templates (`ai/templates/`)
-- Documentation (`ai/CONTRIBUTING.md`)
-- Plugin scripts (`scripts/plugin_*.sh`)
 - Version file (`.igris_version`)
-
-**Plugin Updates:**
-- Plugin registry (`ai/plugins/installed.json`)
-- Version file (`.igris_version`)
-- Plugin-specific files (varies by plugin)
 
 ### What Never Gets Modified
 
 These files are **always preserved** during updates:
 
-- `ai/briefs/*.md` - Your work items (bugs, features, tasks)
+- `ai/briefs/*.md` - Your work items
 - `ai/session/*.md` - Your session tracking
 - `ai/context/*.md` - Your architecture documentation
-- Custom files in `ai/context/` you've created
-- Your project code and configuration
+- `SOUL.md` - Your persona identity
+- `USER.md` - Your user configuration
+- Custom files you've created
+- Your project code
 
 ---
 
 ## Rollback Instructions
 
-If an update causes issues, you can rollback using the backup.
+If an update causes issues, you can roll back using the backup.
 
 ### Rollback Igris AI Core
 
@@ -323,37 +217,30 @@ If an update causes issues, you can rollback using the backup.
 # Find your backup
 ls -la .igris_backup/
 
-# Example: Rollback to backup from Oct 14, 08:30:45
-BACKUP=".igris_backup/20251014_083045"
+# Example: Rollback to backup from Feb 22
+BACKUP=".igris_backup/20260222_100000"
 
 # Restore files
+cp -r "$BACKUP/agents/"* .claude/agents/
+cp -r "$BACKUP/rules/"* .claude/rules/
 cp -r "$BACKUP/prompts/"* ai/prompts/
 cp -r "$BACKUP/templates/"* ai/templates/
-cp "$BACKUP/CONTRIBUTING.md" ai/
-cp "$BACKUP/plugin_"*.sh scripts/
 cp "$BACKUP/.igris_version" .
 
-echo "✅ Rollback complete"
+echo "Rollback complete"
 ```
 
-### Rollback Plugin Update
+### Rollback Brain (Symlink Mode)
+
+For symlink-based installations, rollback by reverting the source repository:
 
 ```bash
-# Find plugin backup
-ls -la .igris_backup/plugins/
+cd /path/to/igris-ai
+git log --oneline -5  # Find the commit to revert to
+git checkout <commit-hash>
 
-# Example: Rollback distribution plugin update
-BACKUP=".igris_backup/plugins/20251014_083530_igris-ai-distribution-flutter"
-
-# Restore registry
-cp "$BACKUP/installed.json" ai/plugins/
-cp "$BACKUP/.igris_version" .
-
-# Re-run plugin uninstall and install with old version
-./scripts/plugin_uninstall.sh igris-ai-distribution-flutter
-./scripts/plugin_install.sh https://github.com/fiftynotai/igris-ai-distribution-flutter --version 1.0.0
-
-echo "✅ Plugin rollback complete"
+# Re-initialize brain from the reverted state
+./scripts/igris_brain_init.sh
 ```
 
 ---
@@ -364,26 +251,26 @@ echo "✅ Plugin rollback complete"
 
 **Error:**
 ```
-❌ Error: Igris AI not initialized in this directory
+Error: Igris AI not initialized in this directory
 ```
 
 **Solution:**
-You're not in a Igris AI project directory. Make sure:
+You're not in an Igris AI project directory. Make sure:
 1. You're in the correct project directory
 2. Igris AI is initialized (`.igris_version` exists)
-3. If not initialized, run `./scripts/igris_init.sh`
+3. If not initialized, run the appropriate install script
 
 ### "Could not fetch remote version"
 
 **Error:**
 ```
-❌ Error: Could not fetch remote version
+Error: Could not fetch remote version
 ```
 
 **Possible causes:**
 1. No internet connection
 2. GitHub is down
-3. Repository has been moved or deleted
+3. Repository has been moved
 
 **Solution:**
 ```bash
@@ -397,22 +284,6 @@ curl -I https://github.com/fiftynotai/igris-ai
 ./scripts/igris_update.sh
 ```
 
-### "Plugin is not installed"
-
-**Error:**
-```
-❌ Error: Plugin 'xyz' is not installed
-```
-
-**Solution:**
-```bash
-# Check installed plugins
-./scripts/plugin_list.sh
-
-# Install the plugin first
-./scripts/plugin_install.sh <plugin-repo-url>
-```
-
 ### Update Script Fails Mid-Update
 
 **Problem:** Update script crashed or was interrupted.
@@ -423,11 +294,38 @@ curl -I https://github.com/fiftynotai/igris-ai
 3. Check error message for specific issue
 4. Try update again, or use `--dry-run` first
 
+### Symlinks Broken
+
+**Problem:** Symlinks point to a moved or deleted brain directory.
+
+**Solution:**
+```bash
+# Check where symlinks point
+ls -la .claude/agents
+
+# Re-run the install script to recreate symlinks
+/path/to/igris-ai/scripts/igris_install.sh .
+```
+
+### Brain Database Corrupted
+
+**Problem:** SQLite database integrity check fails.
+
+**Solution:**
+```bash
+# Check integrity
+sqlite3 ~/.igris/memory/knowledge.db "PRAGMA integrity_check;"
+
+# If corrupted, re-initialize the brain
+# WARNING: This resets brain data (learnings, cross-project data)
+/path/to/igris-ai/scripts/igris_brain_init.sh
+```
+
 ### Files Look Corrupted After Update
 
 **Solution:**
 ```bash
-# Use --force to re-download all files
+# Use --force to re-copy all files
 ./scripts/igris_update.sh --force
 ```
 
@@ -457,20 +355,27 @@ If still having issues, rollback and report the issue on GitHub.
 
 ### Update Strategy
 
-1. **Update core first:**
+1. **Update source repository first:**
    ```bash
-   ./scripts/igris_update.sh
+   cd /path/to/igris-ai
+   git pull origin main
    ```
 
-2. **Then update plugins:**
+2. **Re-initialize brain (symlink mode):**
    ```bash
-   ./scripts/plugin_update.sh <plugin-name>
+   ./scripts/igris_brain_init.sh
    ```
 
-3. **Test after updating:**
-   - Run your build: `flutter build`
-   - Run tests: `flutter test`
-   - Verify automation scripts still work
+3. **Run update for copy-based projects:**
+   ```bash
+   cd /path/to/your-project
+   /path/to/igris-ai/scripts/igris_update.sh
+   ```
+
+4. **Test after updating:**
+   - Run `/scan` in Claude Code to verify
+   - Check that agents and skills are available
+   - Verify brain connectivity
 
 ### Regular Updates
 
@@ -484,18 +389,32 @@ If still having issues, rollback and report the issue on GitHub.
 - Right before a production release
 - When you don't have time to test
 
+### Brain Maintenance
+
+Periodically check brain health:
+
+```bash
+# Check database integrity
+sqlite3 ~/.igris/memory/knowledge.db "PRAGMA integrity_check;"
+
+# Check journal mode
+sqlite3 ~/.igris/memory/knowledge.db "PRAGMA journal_mode;"
+
+# Check registered projects
+sqlite3 ~/.igris/memory/knowledge.db "SELECT slug, path, status FROM projects;"
+```
+
 ### Version Pinning
 
 If you need to stay on a specific version:
 
-1. **Don't run update scripts**
-2. **Document your version in README:**
+1. Don't run update scripts
+2. Document your version in README:
    ```markdown
    ## Dependencies
-   - Igris AI: 1.0.1 (pinned)
+   - Igris AI: 4.0.0 (pinned)
    ```
-
-3. **Test thoroughly before updating**
+3. Test thoroughly before updating
 
 ---
 
@@ -524,7 +443,3 @@ Each release includes:
 - **Issues:** [GitHub Issues](https://github.com/fiftynotai/igris-ai/issues)
 - **Discussions:** [GitHub Discussions](https://github.com/fiftynotai/igris-ai/discussions)
 - **Documentation:** [Igris AI Docs](https://github.com/fiftynotai/igris-ai)
-
----
-
-**Happy updating! 🚀**

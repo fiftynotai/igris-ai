@@ -1,7 +1,7 @@
 # Igris AI - Project Instructions
 
 @import ai/prompts/igris_os.md
-@import ai/persona.json
+@import SOUL.md
 @import ai/context/coding_guidelines.md
 
 ---
@@ -18,12 +18,12 @@ autonomous multi-agent workflows, and architecture enforcement.
 
 ---
 
-## Installed Persona
+## Persona
 
-**Active:** igris-persona-cyber-monkey (Crimson)
+**Identity:** Igris (Crimson energy)
+**Mask:** Configured in `~/.igris/USER.md`
 
-Persona configuration loaded from `ai/persona.json`.
-Mask level determines greeting style and command vocabulary.
+Persona loaded from `SOUL.md`. User config from `~/.igris/USER.md`.
 
 ---
 
@@ -101,6 +101,7 @@ Igris commands are available as native Claude Code skills:
 | `/portfolio` | Cross-project dashboard | `/portfolio` |
 | `/dashboard` | Cross-project brief & session tracker | `/dashboard` |
 | `/sync` | VPS brain deployment | `/sync code` or `/sync data` or `/sync status` |
+| `/fifty-kit` | Fifty Flutter Kit expert | `/fifty-kit` |
 
 Skills defined in `.claude/skills/*/SKILL.md`
 

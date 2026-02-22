@@ -1,10 +1,90 @@
 # Migration Guide
 
-Guide for bringing existing projects up to architecture standards using Igris AI.
+Guide for migrating between Igris AI versions and bringing existing projects up to architecture standards.
 
 ---
 
-## Overview
+## Migrating from v3 to v4
+
+### What Changed in v4.0
+
+| Feature | v3 | v4 |
+|---------|----|----|
+| Core Files | Copied per-project | Symlinked from ~/.igris/ brain |
+| Memory | Per-project only | Centralized SQLite + cross-project |
+| Agents | LangChain hooks | Native Claude Code subagents |
+| Persona | Plugin-based (persona.json + personas/) | SOUL.md + USER.md |
+| Plugins | 4 scripts + registry | Removed (native skills replace all) |
+| Dashboard | None | Crimson Arena (Flutter web) |
+| MCP | None | 27 brain tools |
+| Skills | None | 21 native Claude Code skills |
+| Brief Types | BR, MG, TD, TS | BR, FR, TD, MG, TS, PI, DU, PF, AC (9 types) |
+
+### Migration Steps
+
+1. **Install the brain:**
+   ```bash
+   cd /path/to/igris-ai
+   ./scripts/igris_brain_init.sh
+   ```
+
+2. **Migrate existing projects:**
+   ```bash
+   cd /path/to/your-project
+   /path/to/igris-ai/scripts/igris_migrate_to_v4.sh
+   ```
+   Or use the symlink installer for a fresh install:
+   ```bash
+   /path/to/igris-ai/scripts/igris_install.sh .
+   ```
+
+3. **Remove deprecated files:**
+   - Delete `ai/plugins/` directory
+   - Delete `ai/persona.json` (replaced by SOUL.md + USER.md)
+   - Delete `ai/personas/` directory
+   - Delete `ai/checks/` directory
+   - Delete `scripts/plugin_*.sh`
+   - Delete `scripts/persona_*.sh`
+
+4. **Optional: Set up MCP server:**
+   ```bash
+   cd /path/to/igris-ai/mcp-server
+   npm install && npm run build
+   ```
+
+### Breaking Changes
+
+- Plugin system completely removed (use native skills instead)
+- Persona system replaced with SOUL.md + USER.md
+- `.igris_version` format updated (now includes `install_mode` and `brain_path`)
+- Brain required for cross-project features (portfolio, dashboard, projects)
+- `ai/checks/` directory removed (QA handled by warden agent)
+- Agent definitions moved from LangChain hooks to `.claude/agents/*.md`
+- Rules moved to `.claude/rules/*.md` (modular, auto-loaded by Claude Code)
+- Skills defined in `.claude/skills/*/SKILL.md`
+
+### Post-Migration Verification
+
+After migrating, verify the installation:
+
+```bash
+# Check v4 structure exists
+ls .claude/agents/    # Should show 7 agent files
+ls .claude/rules/     # Should show 5 rule files
+ls .claude/skills/    # Should show 21 skill directories
+
+# Check brain connectivity
+sqlite3 ~/.igris/memory/knowledge.db "SELECT slug FROM projects;"
+
+# Run a scan to verify
+# In Claude Code: /scan
+```
+
+---
+
+## Migrating Existing Codebases to Architecture Standards
+
+### Overview
 
 When you have an existing codebase that doesn't follow your architecture standards, Igris AI helps you:
 
@@ -20,11 +100,16 @@ When you have an existing codebase that doesn't follow your architecture standar
 ### Phase 0: Setup Igris AI
 
 ```bash
-# Initialize Igris AI
-../igris-ai/scripts/igris_init.sh
+# Initialize Igris AI (see SETUP_GUIDE.md for full instructions)
+# Brain-first (recommended):
+/path/to/igris-ai/scripts/igris_brain_init.sh
+/path/to/igris-ai/scripts/igris_install.sh .
+
+# Or standalone:
+/path/to/igris-ai/scripts/igris_init.sh .
 
 # Generate architecture documentation
-# Use command: DOCUMENT architecture
+# In Claude Code: /document architecture
 ```
 
 This creates your architecture baseline.
@@ -34,7 +119,7 @@ This creates your architecture baseline.
 **Run codebase analysis:**
 
 ```
-MIGRATE analyze
+/migrate-analyze
 ```
 
 **What IGRIS does:**
@@ -137,12 +222,14 @@ How many P0/P1 briefs remain?
 
 1. **Run tests:**
    ```bash
-   flutter test  # or your test command
+   # Run your project's test command
+   # Examples: bats test/, npm test, flutter test, pytest
    ```
 
 2. **Run linter:**
    ```bash
-   flutter analyze  # or your linter
+   # Run your project's linter
+   # Examples: shellcheck scripts/*.sh, npm run lint, flutter analyze
    ```
 
 3. **Manual verification:**
@@ -296,14 +383,14 @@ How many P0/P1 briefs remain?
 ### Week 0: Setup & Analysis
 
 ```bash
-# Initialize Igris AI
-../igris-ai/scripts/igris_init.sh
+# Initialize Igris AI (see SETUP_GUIDE.md)
+/path/to/igris-ai/scripts/igris_install.sh .
 
-# Generate docs (30 min)
-DOCUMENT architecture
+# Generate docs (30 min) - in Claude Code:
+# /document architecture
 
-# Analyze codebase (45 min)
-MIGRATE analyze
+# Analyze codebase (45 min) - in Claude Code:
+# /migrate-analyze
 
 # Review results (30 min)
 cat ai/session/MIGRATION_ROADMAP.md
@@ -446,9 +533,9 @@ After initial migration:
 
 **Ready to migrate?**
 
-```bash
-# Start your migration journey
-MIGRATE analyze
+```
+# Start your migration journey (in Claude Code)
+/migrate-analyze
 ```
 
-Good luck! 🚀
+Good luck!

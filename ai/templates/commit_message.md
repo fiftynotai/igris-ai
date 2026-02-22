@@ -27,7 +27,7 @@
 
 ## Scopes (Module Names)
 
-- `auth`, `event`, `venue`, `details`, `kds`, `settings`, `history`, `home`, `app_version`, `connections`, `locale`
+- `scripts`, `agents`, `rules`, `skills`, `brain`, `session`, `briefs`, `prompts`, `templates`, `hooks`, `docs`, `dashboard`, `mcp-server`
 - `core` (for infrastructure changes)
 - `deps` (for dependency updates)
 
@@ -38,26 +38,24 @@
 ### Example 1: New Feature
 
 ```
-feat(settings): add printer connection status indicator
+feat(skills): add cross-project dashboard skill
 
-- Add checkPrinterStatus() in SettingsViewModel
-- Add PrinterStatusIndicator widget with colored dot
-- Add auto-refresh timer (10s interval)
-- Add manual refresh via pull-to-refresh
-- Add unit tests for status check logic
-- Add i18n keys for Connected/Offline/Connecting
+- Add /dashboard skill with brief and session tracking
+- Add brain MCP integration for cross-project queries
+- Add filtering by project, status, and priority
+- Add unit tests for dashboard rendering logic
 
-closes #BR-001
+closes #FR-045
 ```
 
 ### Example 2: Bug Fix
 
 ```
-fix(event): prevent duplicate events from socket
+fix(session): prevent stale session data after context reset
 
-- Add event ID deduplication in EventsViewModel
-- Clear duplicate events on each socket message
-- Add unit test for deduplication logic
+- Add session file hash comparison before loading
+- Clear cached state on context reset detection
+- Add validation for session timestamp freshness
 
 fixes #BR-042
 ```
@@ -65,39 +63,38 @@ fixes #BR-042
 ### Example 3: Refactor
 
 ```
-refactor(venue): extract zone picker to separate widget
+refactor(agents): extract common agent delegation logic
 
-- Move zone picker logic from VenuePage to ZonePicker widget
-- Improve code reusability
+- Move delegation pattern to shared utility
+- Reduce duplication across orchestrator workflows
 - No functional changes
 ```
 
 ### Example 4: Documentation
 
 ```
-docs: add Igris AI pilot structure
+docs: update setup guide for centralized brain
 
-- Add /ai folder with context, prompts, briefs, checks, templates, session
-- Add architecture_map.md referencing flutter-mvvm-actions-arch
-- Add igris_os.md with session management
-- Add BR-001 pilot brief
-- Update README with Igris AI section
+- Add brain installation instructions
+- Add MCP server configuration steps
+- Update project registration workflow
+- Add troubleshooting section for brain connectivity
 ```
 
 ### Example 5: Breaking Change
 
 ```
-feat(auth): migrate to Firebase Auth
+feat(brain): migrate to centralized brain architecture
 
-BREAKING CHANGE: Custom JWT auth replaced with Firebase Auth.
-Users will need to re-login after this update.
+BREAKING CHANGE: Per-project memory replaced with centralized brain.
+Existing projects must re-register with the brain.
 
-- Replace AuthService with FirebaseAuthService
-- Update AuthViewModel to use Firebase methods
-- Migrate MemoryService token storage
-- Add migration guide in README
+- Replace local memory with ~/.igris/memory/knowledge.db
+- Update MCP server to use brain paths
+- Add migration script for existing installations
+- Add migration guide in docs
 
-closes #BR-089
+closes #MG-003
 ```
 
 ---
@@ -123,4 +120,4 @@ closes #BR-089
 
 ---
 
-**Last Updated:** 2025-10-14
+**Last Updated:** 2026-02-22

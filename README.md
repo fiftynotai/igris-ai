@@ -8,7 +8,7 @@ Igris AI transforms Claude Code from a single general-purpose assistant into a d
 
 It is not a wrapper, a prompt library, or a set of templates. Igris is a complete operating system: agents with defined roles, a brief-first protocol that tracks every change, a centralized brain that remembers across projects, and quality gates that enforce standards before code is committed.
 
-**7 Agents** | **20 Skills** | **27 Brain Tools** | **9 Brief Types** | **19 Scripts**
+**7 Agents** | **21 Skills** | **27 Brain Tools** | **9 Brief Types** | **14 Scripts**
 
 Plan. Build. Test. Review. Document. Ship. Maintain.
 
@@ -171,6 +171,7 @@ Skills are slash commands defined in `.claude/skills/*/SKILL.md`. They replaced 
 | `/portfolio` | Cross-project dashboard and insights |
 | `/dashboard` | Cross-project brief and session tracker |
 | `/sync` | VPS brain deployment and synchronization |
+| `/fifty-kit` | Fifty Flutter Kit expert for FDL design system |
 
 ---
 
@@ -334,7 +335,7 @@ path/to/igris-ai/scripts/igris_install.sh
 This creates:
 - `ai/` directory with templates, prompts, and session tracking (symlinked from brain)
 - `.claude/agents/` with 7 native subagents (symlinked from brain)
-- `.claude/skills/` with 20 skills (symlinked from brain)
+- `.claude/skills/` with 21 skills (symlinked from brain)
 - `.claude/hooks/` with startup hook for auto-initialization
 - `CLAUDE.md` context file for Claude Code
 - Brain MCP server registered globally in `~/.claude.json`
@@ -607,28 +608,21 @@ The dashboard watches `events.jsonl` for new agent events, imports them into its
 
 ---
 
-## Persona System
+## Identity System
 
-Igris ships with the **Crimson** persona (Cyber Monkey Guardian) for consistent AI identity across sessions.
+Igris uses two simple markdown files for identity configuration -- no plugin system required.
 
-**Current configuration:**
-- **Persona:** Crimson (Cyber Monkey Guardian)
-- **Mask:** full (Digimon Battle Mode)
-- **Commands:** Evolution-themed (AWAKEN, HUNT, SCAN, REGISTER, ARCHIVE, REST, DIGIVOLVE)
+- **`SOUL.md`** (project root) -- Defines the AI persona: name, personality, mask level, greeting style. Edit this file to change how Igris presents itself.
+- **`~/.igris/USER.md`** (global) -- Defines the developer: name, preferred addressing mode, preferences. Shared across all projects.
 
 **4 Mask Levels:**
 
-| Level | Mode | Behavior |
-|-------|------|----------|
-| none | Companion | Standard professional tone, minimal personality |
-| light | Smart Monkey | Playful professional, clever and focused |
-| half | Quick Strike | Fast, energetic, efficient |
-| full | Digimon Battle | Full personality expression, evolution commands |
-
-**Adjust anytime:**
-```bash
-./scripts/persona_mask.sh adjust [none|light|half|full]
-```
+| Level | Behavior |
+|-------|----------|
+| none | Standard professional tone, minimal personality |
+| light | Subtle personality, professional but warmer |
+| half | Moderate personality, themed language active |
+| full | Full personality expression, all themed commands active |
 
 ---
 
@@ -640,7 +634,7 @@ Igris ships with the **Crimson** persona (Cyber Monkey Guardian) for consistent 
 your-project/
 ├── .claude/
 │   ├── agents/              # 7 native subagents
-│   ├── skills/              # 20 skills (slash commands)
+│   ├── skills/              # 21 skills (slash commands)
 │   ├── rules/               # 5 modular rules
 │   │   ├── 01-igris-init.md       # Boot sequence, context reset detection
 │   │   ├── 02-igris-briefs.md     # Brief-first protocol gate
@@ -661,7 +655,7 @@ your-project/
 │   ├── server.py            # Backend
 │   ├── requirements.txt     # Python dependencies
 │   └── static/              # Frontend (HTML, JS, CSS)
-└── scripts/                 # 19 utility scripts
+└── scripts/                 # 14 utility scripts
     ├── igris_brain_init.sh
     ├── igris_install.sh
     ├── igris_init.sh
@@ -674,12 +668,7 @@ your-project/
     ├── igris_vps_update.sh
     ├── igris-sync.sh
     ├── install_shell_integration.sh
-    ├── persona_mask.sh
-    ├── persona_install.sh
-    ├── plugin_install.sh
-    ├── plugin_update.sh
-    ├── plugin_uninstall.sh
-    ├── plugin_list.sh
+    ├── emit_skill_event.sh
     └── dashboard.sh
 ```
 
@@ -760,7 +749,6 @@ Igris analyzes your codebase (or a base architecture repo, or both) and generate
 | Setup Guide | `docs/SETUP_GUIDE.md` |
 | Update Guide | `docs/UPDATE_GUIDE.md` |
 | Migration Guide | `docs/MIGRATION_GUIDE.md` |
-| Plugin Development | `docs/PLUGIN_DEVELOPMENT.md` |
 | Contributing | `CONTRIBUTING.md` |
 
 ---

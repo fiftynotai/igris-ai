@@ -38,24 +38,12 @@ build/
 .test/
 test-output/
 
-# Persona system - User configuration (local only, never commit)
-ai/persona.json
-ai/prompts/persona_loader.md
-
 # Environment variables (secrets, never commit)
 .env
 .env.local
 
 # Local overrides (developer-specific, never commit)
 CLAUDE.local.md
-
-# Persona system - Bundled personas and tools (tracked in repo)
-# ai/personas/igris/ - Bundled Igris persona (committed)
-# scripts/persona_*.sh - Persona management tools (committed)
-
-# Persona system - Templates (safe to commit)
-!ai/persona.json.default
-!ai/templates/persona.json.example
 
 # Dashboard build artifacts
 dashboard/.venv/

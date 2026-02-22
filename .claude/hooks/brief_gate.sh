@@ -54,7 +54,7 @@ is_exempt() {
     */ai/prompts/*)    return 0 ;;
     */ai/context/*)    return 0 ;;
     */ai/plans/*)      return 0 ;;
-    */ai/personas/*)   return 0 ;;
+    */ai/masks/*)      return 0 ;;
     */ai/templates/*)  return 0 ;;
     */.claude/*)       return 0 ;;
     */test/*)          return 0 ;;

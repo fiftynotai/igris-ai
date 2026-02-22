@@ -286,7 +286,7 @@ try:
         bd_memory = sum(estimate_file_tokens(p) for p in [
             os.path.join(project_dir, "ai", "session", "CURRENT_SESSION.md"),
             os.path.join(project_dir, "ai", "context", "coding_guidelines.md"),
-            os.path.join(project_dir, "ai", "persona.json"),
+            os.path.join(project_dir, "SOUL.md"),
         ])
         bd_skills = glob_estimate(os.path.join(project_dir, ".claude", "skills", "*", "SKILL.md"))
         bd_autocompact_buffer = int(context_max * 0.05) if context_max > 0 else 10000

@@ -438,13 +438,20 @@ else
 fi
 
 # ============================================================
-# Copy personas
+# Copy masks (v4.0 — replaces personas)
 # ============================================================
-if [ -d "$IGRIS_DIR/ai/personas" ]; then
-  cp -r "$IGRIS_DIR/ai/personas/"* "$BRAIN_DIR/personas/" 2>/dev/null || true
-  echo "   ✅ Personas copied"
+if [ -d "$IGRIS_DIR/ai/masks" ]; then
+  mkdir -p "$BRAIN_DIR/masks"
+  cp "$IGRIS_DIR/ai/masks/"*.md "$BRAIN_DIR/masks/" 2>/dev/null || true
+  echo "   ✅ Masks copied"
 else
-  echo "   ⚠️  No personas directory found"
+  echo "   ⚠️  No masks directory found"
+fi
+
+# Copy SOUL.md if it exists
+if [ -f "$IGRIS_DIR/SOUL.md" ]; then
+  cp "$IGRIS_DIR/SOUL.md" "$BRAIN_DIR/core/" 2>/dev/null || true
+  echo "   ✅ SOUL.md copied"
 fi
 
 # ============================================================
@@ -575,27 +582,34 @@ echo "   ✅ config.json created"
 USER_NAME=""
 USER_ADDRESSING=""
 
-# Extract user info from persona.json if available
-if [ -f "$IGRIS_DIR/ai/persona.json" ]; then
+# Extract user info from USER.md if available (v4.0)
+if [ -f "$HOME/.igris/USER.md" ]; then
   if command -v python3 &> /dev/null; then
     USER_NAME=$(python3 -c "
-import json, sys
+import re, sys
 try:
-    data = json.load(sys.stdin)
-    print(data.get('user', {}).get('name', ''))
+    with open(sys.argv[1], 'r') as f:
+        content = f.read()
+    match = re.search(r'\*\*Name:\*\*\s*(.+)', content)
+    print(match.group(1).strip() if match else '')
 except:
     print('')
-" < "$IGRIS_DIR/ai/persona.json" 2>/dev/null || echo "")
+" "$HOME/.igris/USER.md" 2>/dev/null || echo "")
 
     USER_ADDRESSING=$(python3 -c "
-import json, sys
+import re, sys
 try:
-    data = json.load(sys.stdin)
-    print(data.get('user', {}).get('default_addressing', data.get('tone', {}).get('addressing_mode', '')))
+    with open(sys.argv[1], 'r') as f:
+        content = f.read()
+    match = re.search(r'\*\*Default Addressing:\*\*\s*(.+)', content)
+    print(match.group(1).strip() if match else '')
 except:
     print('')
-" < "$IGRIS_DIR/ai/persona.json" 2>/dev/null || echo "")
+" "$HOME/.igris/USER.md" 2>/dev/null || echo "")
   fi
+elif [ -f "$IGRIS_DIR/SOUL.md" ]; then
+  # Fallback: try SOUL.md for defaults
+  USER_ADDRESSING="Partner"
 fi
 
 python3 -c "

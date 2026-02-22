@@ -58,7 +58,7 @@ fi
 
 # Create directory structure
 echo "📦 Creating directory structure..."
-mkdir -p ai/{briefs,prompts,templates,session/archive,context,plugins}
+mkdir -p ai/{briefs,prompts,templates,session/archive,context,masks}
 mkdir -p scripts
 mkdir -p docs
 
@@ -74,45 +74,8 @@ cp "$IGRIS_DIR/ai/briefs/"*-TEMPLATE.md ai/briefs/
 cp "$IGRIS_DIR/ai/prompts/"*.md ai/prompts/
 cp "$IGRIS_DIR/ai/templates/"*.md ai/templates/
 
-# Copy CLAUDE.md template for persona regeneration
+# Copy CLAUDE.md template for regeneration
 cp "$IGRIS_DIR/scripts/templates/CLAUDE.md.template" scripts/
-
-# Copy persona.json.default
-cp "$IGRIS_DIR/ai/persona.json.default" ai/
-
-# Copy bundled Igris persona
-if [ -d "$IGRIS_DIR/ai/personas/igris" ]; then
-  mkdir -p ai/personas
-  cp -r "$IGRIS_DIR/ai/personas/igris" ai/personas/
-
-  # Create active persona.json with Igris half mask as default
-  cat > ai/persona.json <<'EOF'
-{
-  "persona": "igris",
-  "mask": "half",
-  "installed_at": null,
-  "version": "1.0.0",
-  "branding": {
-    "title": "Igris",
-    "intro": "Welcome to the sanctum of code",
-    "tagline": "Where shadows enforce architecture"
-  },
-  "user": {
-    "name": ""
-  },
-  "tone": {
-    "level": "Shadow Knight",
-    "description": "Dramatic Persona - Complete immersion",
-    "addressing_mode": "Monarch"
-  },
-  "features": {
-    "commands": true,
-    "banner": true,
-    "shadow_commands": true
-  }
-}
-EOF
-fi
 
 # Create empty session files
 echo "📝 Creating session files..."
@@ -199,40 +162,6 @@ DOCUMENT architecture
 The /document skill will ask questions about your architecture and generate comprehensive documentation.
 EOF
 
-# Create plugins README
-cat > ai/plugins/README.md <<'EOF'
-# Igris AI Plugins
-
-This directory tracks installed Igris AI plugins.
-
-## Installed Plugins
-
-See `installed.json` for the list of installed plugins.
-
-## Installing a Plugin
-
-```bash
-./scripts/plugin_install.sh <plugin-repo-url>
-```
-
-## Available Plugins
-
-- **igris-ai-persona-igris** - Shadow Knight persona pack
-- **igris-ai-distribution-flutter** - Smart release automation for Flutter projects
-
-## Creating Your Own Plugin
-
-See the main Igris AI documentation for plugin development guide.
-EOF
-
-# Initialize plugin registry
-cat > ai/plugins/installed.json <<'EOF'
-{
-  "plugins": [],
-  "last_updated": null
-}
-EOF
-
 # Create Claude Code integration (hooks + CLAUDE.md)
 echo "🤖 Setting up Claude Code integration..."
 mkdir -p .claude/hooks
@@ -245,105 +174,33 @@ if [ -d "$IGRIS_DIR/.claude/agents" ]; then
   cp "$IGRIS_DIR/.claude/agents/manifest.yaml" .claude/agents/ 2>/dev/null || true
 fi
 
-# Resolve persona hook (if plugin provides one)
+# Read persona from SOUL.md (if exists) for CLAUDE.md generation
 PERSONA_INJECTION=""
-
-# Check if bundled persona is active
-if [ -f "ai/persona.json" ]; then
-  PERSONA_NAME=$(python3 -c "import json, sys; data=json.load(open('ai/persona.json')); print(data.get('persona', 'none'))" 2>/dev/null || echo "none")
-  PERSONA_MASK=$(python3 -c "import json, sys; data=json.load(open('ai/persona.json')); print(data.get('mask', 'none'))" 2>/dev/null || echo "none")
-
-  if [ "$PERSONA_NAME" != "none" ] && [ "$PERSONA_MASK" != "none" ]; then
-    PERSONA_MASK_FILE="ai/personas/$PERSONA_NAME/masks/${PERSONA_MASK}.md"
-    if [ -f "$PERSONA_MASK_FILE" ]; then
-      PERSONA_INJECTION=$(cat "$PERSONA_MASK_FILE")
-    fi
-  fi
+if [ -f "SOUL.md" ]; then
+  PERSONA_INJECTION=$(cat "SOUL.md")
+elif [ -f "$IGRIS_DIR/SOUL.md" ]; then
+  PERSONA_INJECTION=$(cat "$IGRIS_DIR/SOUL.md")
 fi
 
-# Plugin hooks override bundled persona (if both exist)
-if [ -f "ai/plugins/installed.json" ]; then
-  if command -v jq &> /dev/null; then
-    PERSONA_HOOK=$(jq -r '.plugins[] | select(.hooks.persona_injection) | .hooks.persona_injection' ai/plugins/installed.json 2>/dev/null || echo "")
-    if [ -n "$PERSONA_HOOK" ] && [ -f "$PERSONA_HOOK" ]; then
-      PERSONA_INJECTION=$(cat "$PERSONA_HOOK")
-    fi
-  else
-    echo "⚠️  Note: jq not found - plugin hooks will not be processed"
-    echo "   Install for full plugin support:"
-    echo "   macOS: brew install jq"
-    echo "   Ubuntu/Debian: sudo apt install jq"
-    echo ""
-  fi
+# Read user config from USER.md (if exists)
+USER_INJECTION=""
+if [ -f "$HOME/.igris/USER.md" ]; then
+  USER_INJECTION=$(cat "$HOME/.igris/USER.md")
 fi
 
 # Create CLAUDE.md with variable substitution
-# Use a two-step process to handle multi-line PERSONA_INJECTION
 INSTALL_DATE=$(date -u +"%Y-%m-%d")
-
-# Set INSTALLED_PERSONA display text
-if [ "$PERSONA_NAME" != "none" ] && [ -n "$PERSONA_NAME" ]; then
-  INSTALLED_PERSONA="**Installed Persona:** $PERSONA_NAME"
-else
-  INSTALLED_PERSONA=""
-fi
-
-# Determine hook status
-HOOK_STATUS="No enhancement hooks installed"
-INSTALLED_ENHANCEMENT_PLUGINS="None"
-
-if [ -f "ai/plugins/installed.json" ]; then
-  # Count plugins with hooks
-  if command -v jq &> /dev/null; then
-    PLUGIN_COUNT=$(jq '.plugins | length' ai/plugins/installed.json 2>/dev/null || echo "0")
-    if [ "$PLUGIN_COUNT" -gt 0 ]; then
-      HOOK_STATUS="$PLUGIN_COUNT plugin(s) with enhancement hooks installed"
-      INSTALLED_ENHANCEMENT_PLUGINS=$(jq -r '.plugins[].name' ai/plugins/installed.json 2>/dev/null | paste -sd ", " -)
-    fi
-  else
-    # Python fallback
-    PLUGIN_COUNT=$(python3 <<EOF 2>/dev/null
-import json
-try:
-    with open('ai/plugins/installed.json', 'r') as f:
-        data = json.load(f)
-    print(len(data.get('plugins', [])))
-except:
-    print('0')
-EOF
-)
-    if [ "$PLUGIN_COUNT" != "0" ] && [ -n "$PLUGIN_COUNT" ]; then
-      HOOK_STATUS="$PLUGIN_COUNT plugin(s) with enhancement hooks installed"
-      INSTALLED_ENHANCEMENT_PLUGINS=$(python3 <<EOF 2>/dev/null
-import json
-try:
-    with open('ai/plugins/installed.json', 'r') as f:
-        data = json.load(f)
-    names = [p.get('name', 'unknown') for p in data.get('plugins', [])]
-    print(', '.join(names))
-except:
-    pass
-EOF
-)
-    fi
-  fi
-fi
 
 # First pass: Replace simple variables
 sed -e "s/{{IGRIS_VERSION}}/$IGRIS_VERSION/g" \
     -e "s/{{INSTALL_DATE}}/$INSTALL_DATE/g" \
-    -e "s/{{HOOK_STATUS}}/$HOOK_STATUS/g" \
-    -e "s/{{INSTALLED_ENHANCEMENT_PLUGINS}}/$INSTALLED_ENHANCEMENT_PLUGINS/g" \
-    -e "s/{{INSTALLED_PERSONA}}/$INSTALLED_PERSONA/g" \
     "$IGRIS_DIR/scripts/templates/CLAUDE.md.template" > CLAUDE.md.tmp
 
 # Second pass: Replace persona injection using perl (handles newlines)
 if [ -n "$PERSONA_INJECTION" ]; then
-  # Escape special characters for perl regex
   ESCAPED_INJECTION=$(printf '%s\n' "$PERSONA_INJECTION" | perl -pe 's/([\\\/\$])/\\$1/g')
   perl -i -pe "s/\{\{PERSONA_INJECTION\}\}/$ESCAPED_INJECTION/g" CLAUDE.md.tmp
 else
-  # Remove the placeholder if no injection
   perl -i -pe 's/\{\{PERSONA_INJECTION\}\}//g' CLAUDE.md.tmp
 fi
 
@@ -351,20 +208,8 @@ mv CLAUDE.md.tmp CLAUDE.md
 
 # Copy core scripts
 echo "🔧 Installing Igris AI scripts..."
-cp "$IGRIS_DIR/scripts/plugin_install.sh" scripts/
-cp "$IGRIS_DIR/scripts/plugin_uninstall.sh" scripts/
-cp "$IGRIS_DIR/scripts/plugin_list.sh" scripts/
-cp "$IGRIS_DIR/scripts/plugin_update.sh" scripts/
 cp "$IGRIS_DIR/scripts/igris_update.sh" scripts/
 cp "$IGRIS_DIR/scripts/install_shell_integration.sh" scripts/
-
-# Copy persona management scripts (if they exist)
-if [ -f "$IGRIS_DIR/scripts/persona_install.sh" ]; then
-  cp "$IGRIS_DIR/scripts/persona_install.sh" scripts/
-fi
-if [ -f "$IGRIS_DIR/scripts/persona_mask.sh" ]; then
-  cp "$IGRIS_DIR/scripts/persona_mask.sh" scripts/
-fi
 chmod +x scripts/*.sh
 
 # Create archive README
@@ -386,8 +231,7 @@ cat > .igris_version <<EOF
 {
   "igris_ai_version": "$IGRIS_VERSION",
   "installed_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "last_updated": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-  "plugins": {}
+  "last_updated": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 }
 EOF
 
@@ -400,7 +244,6 @@ echo "--------------------------------"
 
 MCP_AVAILABLE=false
 MCP_CONFIGURED=false
-PERSONA_NAME="${PERSONA_NAME:-none}"
 
 # Check for Node.js
 if command -v node &> /dev/null; then

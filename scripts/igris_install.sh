@@ -59,7 +59,7 @@ echo "📦 Creating project directories..."
 mkdir -p ai/briefs
 mkdir -p ai/session/archive
 mkdir -p ai/context
-mkdir -p ai/plugins
+mkdir -p ai/masks
 mkdir -p ai/prompts
 mkdir -p ai/templates
 mkdir -p .claude/agents
@@ -295,41 +295,12 @@ echo "🤖 Generating CLAUDE.md..."
 
 INSTALL_DATE=$(date -u +"%Y-%m-%d")
 
-# Resolve persona injection (same logic as igris_init.sh)
+# Read persona from SOUL.md (if exists)
 PERSONA_INJECTION=""
-PERSONA_NAME="none"
-INSTALLED_PERSONA=""
-
-if [ -f "ai/persona.json" ]; then
-  if command -v python3 &> /dev/null; then
-    PERSONA_NAME=$(python3 -c "import json, sys; data=json.load(sys.stdin); print(data.get('persona', 'none'))" < ai/persona.json 2>/dev/null || echo "none")
-    PERSONA_MASK=$(python3 -c "import json, sys; data=json.load(sys.stdin); print(data.get('mask', 'none'))" < ai/persona.json 2>/dev/null || echo "none")
-
-    if [ "$PERSONA_NAME" != "none" ] && [ "$PERSONA_MASK" != "none" ]; then
-      PERSONA_MASK_FILE="ai/personas/$PERSONA_NAME/masks/${PERSONA_MASK}.md"
-      if [ -f "$PERSONA_MASK_FILE" ]; then
-        PERSONA_INJECTION=$(cat "$PERSONA_MASK_FILE")
-      fi
-    fi
-  fi
-fi
-
-if [ "$PERSONA_NAME" != "none" ] && [ -n "$PERSONA_NAME" ]; then
-  INSTALLED_PERSONA="**Installed Persona:** $PERSONA_NAME"
-fi
-
-# Determine hook/plugin status
-HOOK_STATUS="No enhancement hooks installed"
-INSTALLED_ENHANCEMENT_PLUGINS="None"
-
-if [ -f "ai/plugins/installed.json" ]; then
-  if command -v jq &> /dev/null; then
-    PLUGIN_COUNT=$(jq '.plugins | length' ai/plugins/installed.json 2>/dev/null || echo "0")
-    if [ "$PLUGIN_COUNT" -gt 0 ]; then
-      HOOK_STATUS="$PLUGIN_COUNT plugin(s) with enhancement hooks installed"
-      INSTALLED_ENHANCEMENT_PLUGINS=$(jq -r '.plugins[].name' ai/plugins/installed.json 2>/dev/null | paste -sd ", " -)
-    fi
-  fi
+if [ -f "SOUL.md" ]; then
+  PERSONA_INJECTION=$(cat "SOUL.md")
+elif [ -f "$IGRIS_DIR/SOUL.md" ]; then
+  PERSONA_INJECTION=$(cat "$IGRIS_DIR/SOUL.md")
 fi
 
 # Generate CLAUDE.md using template
@@ -338,12 +309,9 @@ if [ -f "$TEMPLATE_FILE" ]; then
   # First pass: simple variable substitution
   sed -e "s/{{IGRIS_VERSION}}/$IGRIS_VERSION/g" \
       -e "s/{{INSTALL_DATE}}/$INSTALL_DATE/g" \
-      -e "s/{{HOOK_STATUS}}/$HOOK_STATUS/g" \
-      -e "s/{{INSTALLED_ENHANCEMENT_PLUGINS}}/$INSTALLED_ENHANCEMENT_PLUGINS/g" \
-      -e "s/{{INSTALLED_PERSONA}}/$INSTALLED_PERSONA/g" \
       "$TEMPLATE_FILE" > CLAUDE.md.tmp
 
-  # Second pass: persona injection (multi-line content)
+  # Second pass: persona injection (multi-line content from SOUL.md)
   if [ -n "$PERSONA_INJECTION" ]; then
     ESCAPED_INJECTION=$(printf '%s\n' "$PERSONA_INJECTION" | perl -pe 's/([\\\/\$])/\\$1/g')
     perl -i -pe "s/\{\{PERSONA_INJECTION\}\}/$ESCAPED_INJECTION/g" CLAUDE.md.tmp
@@ -392,8 +360,7 @@ version_info = {
     'install_mode': 'symlink',
     'brain_path': sys.argv[2],
     'installed_at': now,
-    'last_updated': now,
-    'plugins': {}
+    'last_updated': now
 }
 with open('.igris_version', 'w') as f:
     json.dump(version_info, f, indent=2)

@@ -102,7 +102,6 @@ EOF
   echo "📋 What was migrated:"
   echo "  - .blueprint_version → .igris_version"
   echo "  - All briefs, session data, and context preserved"
-  echo "  - Plugins configuration preserved"
   echo ""
   echo "🔄 Continuing with update to latest Igris AI..."
   echo ""
@@ -197,13 +196,11 @@ echo "  - CLAUDE.md (Claude Code context file)"
 echo "  - ai/prompts/*.md (system prompts)"
 echo "  - ai/templates/*.md (brief templates)"
 echo "  - .claude/agents/*.md (native subagents)"
-echo "  - scripts/plugin_*.sh (plugin management scripts)"
 echo ""
 echo "🔒 Files that will be preserved:"
 echo "  - ai/briefs/*.md (your work items)"
 echo "  - ai/session/*.md (your session data)"
 echo "  - ai/context/*.md (your architecture docs)"
-echo "  - ai/plugins/installed.json (plugin registry)"
 echo ""
 
 if [ "$DRY_RUN" = true ]; then
@@ -239,10 +236,6 @@ if [ "$DRY_RUN" = true ]; then
   fi
 
   echo ""
-  echo "Scripts:"
-  ls "$TEMP_DIR/scripts/plugin_"*.sh 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
-
-  echo ""
   echo "✅ Dry run complete. Run without --dry-run to apply update."
   rm -rf "$TEMP_DIR"
   exit 0
@@ -270,7 +263,6 @@ cp CLAUDE.md "$BACKUP_DIR/" 2>/dev/null || true
 cp -r ai/prompts "$BACKUP_DIR/" 2>/dev/null || true
 cp -r ai/templates "$BACKUP_DIR/" 2>/dev/null || true
 cp -r .claude/agents "$BACKUP_DIR/" 2>/dev/null || true
-cp scripts/plugin_*.sh "$BACKUP_DIR/" 2>/dev/null || true
 cp .igris_version "$BACKUP_DIR/" 2>/dev/null || true
 
 echo "✅ Backup created"
@@ -409,28 +401,6 @@ MERGE_MANIFEST
   fi
 fi
 
-# Update plugin management scripts
-if [ -f "$TEMP_DIR/scripts/plugin_install.sh" ]; then
-  echo "  - Updating plugin management scripts..."
-
-  # Create scripts directory if it doesn't exist (for old installations)
-  mkdir -p scripts
-
-  cp "$TEMP_DIR/scripts/plugin_install.sh" scripts/
-  cp "$TEMP_DIR/scripts/plugin_uninstall.sh" scripts/
-  cp "$TEMP_DIR/scripts/plugin_list.sh" scripts/
-
-  # Copy persona management scripts (if they exist)
-  if [ -f "$TEMP_DIR/scripts/persona_install.sh" ]; then
-    cp "$TEMP_DIR/scripts/persona_install.sh" scripts/
-  fi
-  if [ -f "$TEMP_DIR/scripts/persona_mask.sh" ]; then
-    cp "$TEMP_DIR/scripts/persona_mask.sh" scripts/
-  fi
-
-  chmod +x scripts/*.sh
-fi
-
 # Copy CLAUDE.md template for local use
 if [ -f "$TEMP_DIR/scripts/templates/CLAUDE.md.template" ]; then
   echo "  - Copying CLAUDE.md template..."
@@ -441,29 +411,10 @@ fi
 if [ -f "scripts/CLAUDE.md.template" ]; then
   echo "  - Regenerating CLAUDE.md..."
 
-  # Read persona injection from installed plugins (if any)
+  # Read persona from SOUL.md (if exists)
   PERSONA_INJECTION=""
-  if [ -f "ai/plugins/installed.json" ]; then
-    PERSONA_INJECTION=$(python3 <<'PYEOF'
-import json
-import sys
-
-try:
-    with open('ai/plugins/installed.json', 'r') as f:
-        data = json.load(f)
-
-    injection_parts = []
-    for plugin_name, plugin_data in data.get('plugins', {}).items():
-        hooks = plugin_data.get('hooks', {})
-        if 'persona_injection' in hooks:
-            injection_parts.append(hooks['persona_injection'])
-
-    if injection_parts:
-        print('\n\n'.join(injection_parts))
-except:
-    pass
-PYEOF
-    )
+  if [ -f "SOUL.md" ]; then
+    PERSONA_INJECTION=$(cat "SOUL.md")
   fi
 
   # Generate CLAUDE.md with variable substitution
@@ -476,11 +427,9 @@ PYEOF
 
   # Second pass: Replace persona injection using perl (handles newlines)
   if [ -n "$PERSONA_INJECTION" ]; then
-    # Escape special characters for perl regex
     ESCAPED_INJECTION=$(printf '%s\n' "$PERSONA_INJECTION" | perl -pe 's/([\\\/\$])/\\$1/g')
     perl -i -pe "s/\{\{PERSONA_INJECTION\}\}/$ESCAPED_INJECTION/g" CLAUDE.md.tmp
   else
-    # Remove the placeholder if no injection
     perl -i -pe 's/\{\{PERSONA_INJECTION\}\}//g' CLAUDE.md.tmp
   fi
 
@@ -524,7 +473,4 @@ echo ""
 echo "📝 What's new in $REMOTE_VERSION:"
 echo "  See CHANGELOG.md or visit:"
 echo "  https://github.com/fiftynotai/igris-ai/releases"
-echo ""
-echo "⚠️  Note: If you have plugins installed, update them separately:"
-echo "  ./scripts/plugin_update.sh <plugin-name>"
 echo ""

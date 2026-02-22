@@ -25,11 +25,11 @@
 
 ## Architecture Adherence
 
-- [x] Follows MVVM + Actions pattern
-- [x] Layers don't skip (View → Actions → ViewModel → Service → Model)
-- [x] Uses `ApiResponse<T>` for async operations
-- [x] Uses `actionHandler()` for user-triggered actions
-- [x] Models are immutable (`final` fields)
+- [x] Follows project architecture pattern
+- [x] Layer boundaries respected
+- [x] Async operations follow project conventions
+- [x] User actions follow project patterns
+- [x] Data models follow immutability conventions
 
 ---
 
@@ -37,11 +37,11 @@
 
 ### Automated Tests
 - [x] Unit tests added/updated: [file paths]
-- [x] Widget tests added/updated: [file paths if applicable]
-- [x] `flutter test` passes locally
+- [x] Integration tests added/updated: [file paths if applicable]
+- [x] Test suite passes locally
 
 ### Manual Testing
-- [x] Tested on device: [Android 13 / iOS 17]
+- [x] Tested on: [platform/environment]
 - [x] Tested scenarios: [list key scenarios]
 - [x] Regression tested: [critical flows verified]
 
@@ -49,10 +49,10 @@
 
 ## Code Quality
 
-- [x] `flutter analyze` passes (zero issues)
+- [x] Linter/analyzer passes (zero issues)
 - [x] Follows coding guidelines (`ai/context/coding_guidelines.md`)
-- [x] Structured Dart doc-comments added to public APIs
-- [x] No hardcoded strings (i18n keys used)
+- [x] Documentation comments added to public APIs
+- [x] No hardcoded strings (if applicable)
 
 ---
 
@@ -60,7 +60,6 @@
 
 - [x] README updated (if user-facing feature)
 - [x] Module catalog updated (if new module)
-- [x] i18n keys added to `keys.dart` and translations
 - [x] API reference updated (if API changes)
 
 ---

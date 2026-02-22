@@ -31,7 +31,8 @@ bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "awaken" 2>/dev/null || t
 
 Read these files silently:
 - `ai/prompts/igris_os.md` - Operating system
-- `ai/persona.json` - Persona identity
+- `SOUL.md` - Persona identity
+- `~/.igris/USER.md` - User config
 - `ai/context/coding_guidelines.md` - Architecture standards
 
 ### 2. Load Session State
@@ -43,15 +44,15 @@ Read `ai/session/CURRENT_SESSION.md`:
 
 ### 3. Display Persona Greeting
 
-If persona.json exists with mask != "none":
+Read mask level from `~/.igris/USER.md` (default: full). Load greeting from `ai/masks/{level}.md`:
 ```
-I am [branding.title] v[version], developed by Fifty.ai, standing ready to serve, [user.name].
+[MASK GREETING FROM ai/masks/{level}.md]
 
 My capabilities:
 - Brief management, session recovery, architecture enforcement
 - Quality gates, protocol enforcement
 
-Current mode: [mask level description]
+Current mode: [mask level description from SOUL.md]
 ```
 
 ### 3.5. Query Brain for Context (Optional)

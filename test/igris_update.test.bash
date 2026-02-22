@@ -54,14 +54,11 @@ EOF
 
 Installed: {{INSTALL_DATE}}
 
-{{PERSONA_INJECTION}}
+@import SOUL.md
 EOF
 
-  # Create plugin scripts
+  # Ensure scripts directory exists
   mkdir -p "$remote_dir/scripts"
-  echo '#!/bin/bash' > "$remote_dir/scripts/plugin_install.sh"
-  echo 'echo "plugin_install v3.3.0"' >> "$remote_dir/scripts/plugin_install.sh"
-  chmod +x "$remote_dir/scripts/plugin_install.sh"
 
   echo "$remote_dir"
 }

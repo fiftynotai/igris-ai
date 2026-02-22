@@ -81,13 +81,13 @@ load test_helper
   assert_file_exists "$TEST_PROJECT_DIR/ai/session/CURRENT_SESSION.md"
 }
 
-@test "igris_init creates persona.json.default" {
+@test "igris_init creates masks directory" {
   setup_test_project
 
   run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"
 
   assert_success
-  assert_file_exists "$TEST_PROJECT_DIR/ai/persona.json.default"
+  assert_dir_exists "$TEST_PROJECT_DIR/ai/masks"
 }
 
 @test "igris_init creates brief templates" {
@@ -135,15 +135,14 @@ load test_helper
   assert_file_contains "$TEST_PROJECT_DIR/CLAUDE.md" "Version:"
 }
 
-@test "CLAUDE.md contains persona injection placeholder (no plugins)" {
+@test "CLAUDE.md contains SOUL.md import" {
   setup_test_project
 
   run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"
 
   assert_success
 
-  # With no plugins installed, should have empty persona section
-  # (igris_init.sh sets {{PERSONA_INJECTION}} to empty string initially)
+  # CLAUDE.md should import SOUL.md for persona identity
   assert_file_exists "$TEST_PROJECT_DIR/CLAUDE.md"
 }
 
@@ -229,28 +228,25 @@ load test_helper
 }
 
 # =============================================================================
-# PERSONA CONFIGURATION TESTS
+# IDENTITY SYSTEM TESTS (SOUL.md + masks)
 # =============================================================================
 
-@test "igris_init creates persona.json.default with correct structure" {
+@test "igris_init creates SOUL.md in project root" {
   setup_test_project
 
   run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"
 
   assert_success
-  assert_file_exists "$TEST_PROJECT_DIR/ai/persona.json.default"
+  assert_file_exists "$TEST_PROJECT_DIR/SOUL.md"
+}
 
-  # Verify JSON structure (requires jq)
-  require_jq
+@test "igris_init creates mask greeting files" {
+  setup_test_project
 
-  # Check required fields exist
-  run jq -e '.branding' "$TEST_PROJECT_DIR/ai/persona.json.default"
+  run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"
+
   assert_success
-
-  run jq -e '.tone' "$TEST_PROJECT_DIR/ai/persona.json.default"
-  assert_success
-
-  # Note: .user field is personal config, not in defaults
+  assert_dir_exists "$TEST_PROJECT_DIR/ai/masks"
 }
 
 # =============================================================================
@@ -313,7 +309,7 @@ load test_helper
   assert_dir_exists "$TEST_PROJECT_DIR/.claude"
   assert_file_exists "$TEST_PROJECT_DIR/CLAUDE.md"
   assert_file_exists "$TEST_PROJECT_DIR/ai/session/CURRENT_SESSION.md"
-  assert_file_exists "$TEST_PROJECT_DIR/ai/persona.json.default"
+  assert_file_exists "$TEST_PROJECT_DIR/SOUL.md"
   assert_file_exists "$TEST_PROJECT_DIR/ai/briefs/BR-TEMPLATE.md"
   assert_file_exists "$TEST_PROJECT_DIR/ai/prompts/igris_os.md"
 }
@@ -325,7 +321,6 @@ load test_helper
 
   assert_success
 
-  # persona.json should be gitignored (only .default tracked)
-  # This test just verifies .default exists (gitignore is user's responsibility)
-  assert_file_exists "$TEST_PROJECT_DIR/ai/persona.json.default"
+  # SOUL.md is tracked in repo, USER.md lives at ~/.igris/ (machine-wide)
+  assert_file_exists "$TEST_PROJECT_DIR/SOUL.md"
 }

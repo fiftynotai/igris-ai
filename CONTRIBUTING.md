@@ -19,11 +19,12 @@ Welcome! Igris AI is an open-source code quality and architecture management sys
 
 **All contributions MUST follow the Igris AI Coding Guidelines:**
 
-📄 **[ai/context/coding_guidelines.md](context/coding_guidelines.md)**
+📄 **[ai/context/coding_guidelines.md](ai/context/coding_guidelines.md)**
 
 This document defines:
-- Bash scripting standards
+- Bash, TypeScript, Python, and Dart/Flutter standards
 - Error handling patterns
+- Hook and MCP conventions
 - Testing requirements
 - Documentation standards
 - Security best practices
@@ -127,8 +128,11 @@ Follow the coding guidelines:
 # Run shellcheck on modified scripts
 shellcheck scripts/*.sh
 
-# Run tests (once TD-005 is implemented)
+# Run bash tests
 bats test/
+
+# TypeScript (if modifying MCP server)
+cd mcp-server && npm run build
 
 # Manual testing
 ./scripts/igris_init.sh /tmp/test-project
@@ -139,11 +143,11 @@ bats test/
 Follow conventional commits format:
 
 ```bash
-git commit -m "feat(plugin): add hook system for persona injection
+git commit -m "feat(skills): add sync skill for VPS deployment
 
-Implemented {{PERSONA_INJECTION}} placeholder in CLAUDE.md template.
+Implemented /sync skill with code, data, and status modes.
 
-closes #42"
+closes #FR-045"
 ```
 
 **Commit types:**
@@ -154,7 +158,7 @@ closes #42"
 - `chore` - Maintenance
 - `test` - Tests
 
-**See [ai/context/coding_guidelines.md#11-conventional-commits](context/coding_guidelines.md#11-conventional-commits) for details.**
+**See [ai/context/coding_guidelines.md#17-conventional-commits](ai/context/coding_guidelines.md#17-conventional-commits) for details.**
 
 ### 5. Push and Create PR
 
@@ -174,7 +178,7 @@ git push origin feature/my-feature
 
 Before submitting, ensure:
 
-- [ ] Code follows [coding guidelines](context/coding_guidelines.md)
+- [ ] Code follows [coding guidelines](ai/context/coding_guidelines.md)
 - [ ] All scripts pass `shellcheck`
 - [ ] Tests added/updated (if applicable)
 - [ ] Documentation updated (if needed)
@@ -212,7 +216,7 @@ How was this tested?
 
 ### Automated Testing
 
-Igris AI has a comprehensive test suite with 166 tests across 7 test files.
+Igris AI has a comprehensive test suite using the bats framework. Test files use the `.test.bash` extension.
 
 **Test Framework:** [bats-core](https://github.com/bats-core/bats-core)
 
@@ -236,7 +240,7 @@ bats test/
 
 ```bash
 bats test/igris_init.test.bash
-bats test/plugin_install.test.bash
+bats test/hooks.test.bash
 ```
 
 **Run with verbose output:**
@@ -328,7 +332,7 @@ See `.github/workflows/test.yml` for CI configuration.
 
 ### Documentation Standards
 
-See [ai/context/coding_guidelines.md#8-documentation](context/coding_guidelines.md#8-documentation)
+See [ai/context/coding_guidelines.md#14-documentation](ai/context/coding_guidelines.md#14-documentation)
 
 **Key points:**
 - Comment the WHY, not the WHAT
@@ -361,20 +365,29 @@ See [ai/context/coding_guidelines.md#8-documentation](context/coding_guidelines.
 
 ```
 igris-ai/
-├── scripts/                  # Core scripts
-│   ├── igris_init.sh        # Initialize Igris AI
-│   ├── plugin_install.sh    # Install plugins
-│   ├── plugin_update.sh     # Update plugins
-│   └── templates/           # File templates
-├── ai/                      # Igris AI operational files
-│   ├── briefs/              # Brief templates
-│   ├── context/             # Project context
+├── .claude/
+│   ├── agents/              # 7 native subagents
+│   ├── hooks/               # Session start, pre/post commit
+│   ├── rules/               # 5 modular rules
+│   ├── skills/              # 21 skills
+│   └── settings.json        # Claude Code config
+├── ai/
+│   ├── briefs/              # Work items (9 brief types)
+│   ├── context/             # Architecture docs
 │   │   └── coding_guidelines.md  # Coding standards
+│   ├── hooks/               # Hook specs
+│   ├── masks/               # Mask greeting files
 │   ├── prompts/             # System prompts
-│   └── session/             # Session management
+│   ├── session/             # Session tracking + metrics
+│   └── templates/           # PR/commit templates
+├── dashboard/               # Crimson Arena (Flutter web)
 ├── docs/                    # Documentation
+├── mcp-server/              # Brain MCP server (TypeScript)
+├── scripts/                 # Shell scripts
 ├── test/                    # Tests (bats framework)
-└── README.md                # Project README
+├── CLAUDE.md                # Claude Code instructions
+├── SOUL.md                  # Igris persona identity
+└── version.txt              # Version (4.0.0)
 ```
 
 ---
@@ -396,7 +409,7 @@ check_dependency() {
 }
 
 # Good variable naming
-IGRIS_VERSION="2.0.0"  # Constants: UPPERCASE
+IGRIS_VERSION="4.0.0"  # Constants: UPPERCASE
 target_dir="/path"      # Local vars: lowercase
 
 # Good error message
@@ -407,7 +420,7 @@ echo "  macOS:  brew install python3"
 echo "  Ubuntu: sudo apt install python3"
 ```
 
-**Full standards:** [ai/context/coding_guidelines.md](context/coding_guidelines.md)
+**Full standards:** [ai/context/coding_guidelines.md](ai/context/coding_guidelines.md)
 
 ---
 
@@ -439,9 +452,9 @@ echo "  Ubuntu: sudo apt install python3"
 
 ### Documentation
 
-- **[README.md](../README.md)** - Project overview
-- **[ai/context/coding_guidelines.md](context/coding_guidelines.md)** - Coding standards
-- **[ai/prompts/igris_os.md](prompts/igris_os.md)** - Igris AI operating system
+- **[README.md](README.md)** - Project overview
+- **[ai/context/coding_guidelines.md](ai/context/coding_guidelines.md)** - Coding standards
+- **[ai/prompts/igris_os.md](ai/prompts/igris_os.md)** - Igris AI operating system
 
 ### Questions?
 
@@ -472,5 +485,5 @@ We build better code together.
 ---
 
 **Created:** 2025-10-26
-**Last Updated:** 2025-10-26
+**Last Updated:** 2026-02-22
 **Maintained By:** Igris AI Team
