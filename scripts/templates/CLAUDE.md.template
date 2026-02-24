@@ -16,7 +16,7 @@ This applies to:
    - Persona name: Read from SOUL.md title (who you ARE)
    - User name: Read from USER.md Identity > Name, fallback to SOUL.md default addressing (who you SERVE)
 4. **Display:** Persona greeting WITH capabilities (see format below)
-5. **Load:** `ai/session/CURRENT_SESSION.md` (silently)
+5. **Load:** `~/.igris/cache/{project}/session/CURRENT_SESSION.md` (silently)
 6. **Load:** `ai/context/coding_guidelines.md` if exists (silently)
 7. **Analyze:** Execute Post-Initialization Analysis Protocol from igris_os.md
 8. **Display:** Session status + System Assessment + Recommendations (format from igris_os.md)
@@ -194,9 +194,9 @@ Respond:
 Igris AI {{IGRIS_VERSION}} is active
 
 Current configuration:
-- Session tracking: Enabled (ai/session/CURRENT_SESSION.md)
+- Session tracking: Enabled (brain DB + cache)
 - Architecture enforcement: Enabled (ai/context/coding_guidelines.md)
-- Brief workflow: Enabled (ai/briefs/)
+- Brief workflow: Enabled (brain DB + cache)
 - Commit format: Conventional Commits (no AI signatures)
 
 Type your command to begin.
@@ -215,7 +215,7 @@ When you receive your first message from the user:
 - Understand: session management, brief operations, quality standards, checkpoint system
 
 ### 2. Load Session State
-- Read: `ai/session/CURRENT_SESSION.md`
+- Read: `~/.igris/cache/{project}/session/CURRENT_SESSION.md`
 - Parse session status (In Progress / Paused / None)
 - Read "Next Steps When Resuming" section
 - Understand current task context
@@ -227,8 +227,8 @@ When you receive your first message from the user:
 
 ### 4. Perform System Assessment
 - Execute Post-Initialization Analysis Protocol (from igris_os.md)
-- Scan `ai/briefs/` for brief inventory
-- Check `ai/session/BLOCKERS.md` for active blockers
+- Call `igris_brief_list` or scan `~/.igris/cache/{project}/briefs/` for brief inventory
+- Check `~/.igris/cache/{project}/session/BLOCKERS.md` for active blockers
 - Review git status (from context)
 - Generate intelligent recommendations based on priority logic
 
@@ -338,7 +338,7 @@ ERROR STATES:
 ### Phase Execution
 
 #### PHASE 0: INIT (Main Agent)
-1. Read brief: `igris_brief_read(brief_id)`
+1. Read brief: `igris_brief_get(brief_id)`
 2. Validate: Check required fields exist
 3. Branch: `git checkout -b implement/{brief_id}`
 4. Update: `igris_brief_update(status="In Progress")`
@@ -379,7 +379,7 @@ ERROR STATES:
 
 #### BLOCKED State
 When max retries exceeded:
-1. Save state: `ai/session/blocked/{brief_id}.json`
+1. Save state: `~/.igris/cache/{project}/session/blocked/{brief_id}.json`
 2. Update brief: `status = "Blocked"`
 3. Display options:
    - "debug {brief_id}" - Investigate more
@@ -415,7 +415,7 @@ When `DIGIVOLVE status` is invoked, display agent roster with:
 
 ### Agent Metrics
 
-Metrics are tracked in `ai/session/metrics/agent-metrics.json`:
+Metrics are tracked in `~/.igris/cache/{project}/metrics/agent-metrics.json` (or via `igris_metrics_query` MCP tool):
 
 ```json
 {
@@ -438,7 +438,7 @@ Metrics are tracked in `ai/session/metrics/agent-metrics.json`:
 **Trigger phrases:** "register a bug", "create a brief", "don't implement yet", "add to queue"
 
 **Actions:**
-1. Scan `ai/briefs/` to find next available number (BR-001, BR-002, etc.)
+1. Call `igris_brief_list`, fallback to cache glob at `~/.igris/cache/{project}/briefs/` to find next available number (BR-001, BR-002, etc.)
 2. Create brief file from appropriate template
 3. Set Status: "Ready" (or "Draft" if info incomplete)
 4. Set Priority, Effort, Type
@@ -452,7 +452,7 @@ Metrics are tracked in `ai/session/metrics/agent-metrics.json`:
 **Trigger phrases:** "list all bugs", "show P0 bugs", "list features"
 
 **Actions:**
-1. Read all files in `ai/briefs/`
+1. Call `igris_brief_list`, fallback to cache at `~/.igris/cache/{project}/briefs/` (exclude templates)
 2. Filter by Type, Priority, Status if specified
 3. Format as organized table
 
@@ -460,10 +460,10 @@ Metrics are tracked in `ai/session/metrics/agent-metrics.json`:
 **Trigger phrases:** "implement BR-XXX", "fix BR-XXX", "build BR-XXX"
 
 **Actions:**
-1. Read brief from `ai/briefs/[TYPE]-XXX-*.md`
+1. Call `igris_brief_get`, fallback to cache at `~/.igris/cache/{project}/briefs/[TYPE]-XXX-*.md`
 2. Update Status: "Ready" -> "In Progress"
 3. Load context files (coding_guidelines -> architecture_map -> api_pattern)
-4. Create/update `ai/session/CURRENT_SESSION.md`
+4. Create/update `~/.igris/cache/{project}/session/CURRENT_SESSION.md`
 5. Create TodoWrite tasks from acceptance criteria
 6. Follow workflow: **Plan -> Patch -> Tests -> Run -> Commit**
 7. After commit succeeds, update Status: "In Progress" -> "Done"
@@ -519,8 +519,8 @@ The code quality speaks for itself.
 
 Session tracking uses two levels (see `ai/prompts/session_protocol.md` for full details):
 
-- **Project Level:** `ai/session/CURRENT_SESSION.md` - tracks active briefs
-- **Brief Level:** Brief files in `ai/briefs/` - tracks workflow state, tasks, agents
+- **Project Level:** `~/.igris/cache/{project}/session/CURRENT_SESSION.md` - tracks active briefs
+- **Brief Level:** Brain DB (via MCP) or cache at `~/.igris/cache/{project}/briefs/` - tracks workflow state, tasks, agents
 
 ### Quick Reference
 - Update CURRENT_SESSION.md when: starting/completing briefs
@@ -536,7 +536,7 @@ Session tracking uses two levels (see `ai/prompts/session_protocol.md` for full 
 - [ ] Test suite passes (all tests green)
 - [ ] New code has documentation comments
 - [ ] Follows coding_guidelines.md patterns
-- [ ] Session state updated in CURRENT_SESSION.md
+- [ ] Session state updated (brain DB + cache)
 - [ ] Conventional commit format used
 - [ ] No AI signatures in commit message
 
