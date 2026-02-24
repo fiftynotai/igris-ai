@@ -44,6 +44,3 @@ test-output/
 
 # Local overrides (developer-specific, never commit)
 CLAUDE.local.md
-
-# Agent metrics event stream (local-only, regenerated)
-ai/session/metrics/events.jsonl
