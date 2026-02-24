@@ -3,7 +3,7 @@
 ## Status
 **Mode:** REST MODE
 **Updated:** 2026-02-24
-**Focus:** v4.0 Publication — Final Sprint
+**Focus:** v4.0 Published — Post-Release
 
 ---
 
@@ -37,64 +37,74 @@
 
 ## Resume Point
 
-**Last Active:** Documentation alignment complete, v4.0 ready to publish
-**Phase:** v4.0 final sprint — all briefs done, publish pending
+**Last Active:** v4.0 published — tag `v4.0.0`, GitHub release live
+**Phase:** Post-release — deploy to VPS pending
 
 ---
 
 ## Next Session Instructions
 
-### v4.0 Publication — Publish Step
+### v4.0 Published — Post-Release Tasks
 
-All v4.0 blockers are cleared. Steps 1-2 of the final sprint are DONE:
+v4.0 is LIVE:
 - [x] Step 1: Hunt MG-012 — Crimson Arena extracted (commit `2043cd0`)
 - [x] Step 2: TD-018 resolved as side effect of MG-012
-- [x] Documentation aligned with v4.0 codebase (commit `0eae8a6`)
+- [x] Step 3: Documentation aligned with v4.0 codebase (commit `0eae8a6`)
+- [x] Step 4: Crimson Arena repo created (github.com/fiftynotai/crimson-arena)
+- [x] Step 5: Develop pushed, merged to main (fast-forward)
+- [x] Step 6: Tagged `v4.0.0`, GitHub release created
 
-**Next action: Publish v4.0**
-1. Merge develop → main
-2. Tag `4.0.0` and create GitHub release
-3. Deploy to VPS via `/sync code`
+**Next action: Deploy to VPS**
+1. Run `/sync code` to deploy v4.0 to VPS
+2. Run `/sync data` to push brain data
+3. Verify VPS health with `/sync status`
+
+### Post-Release Roadmap
+
+- **Brain v5.0** — FR-051 through FR-056 (6 briefs, XL scope)
+  - Start with FR-052 Engine Foundation (critical path)
+- **Crimson Arena** — Standalone repo created, needs pub.dev dependency updates
+- **Higgsfield** — FR-014 still blocked on URL slugs
 
 ### Key Context
 
 **Decision Record (2026-02-22):**
 - Igris-ai as plugin: CANCELLED (stay as repo-based install)
 - Brain sync gaps: DEFERRED to v5.0 (FR-054 cures root cause)
-- Crimson Arena: Extracted from igris-ai, standalone repo later
-
-**Brain sync gaps (deferred to v5):**
-1. Brief content — only metadata in brain, not full content → FR-054
-2. Session files not synced → FR-054
-3. Detailed agent metrics incomplete → FR-052
-4. coding_guidelines.md not in brain → FR-051
-5. arena.db completely separate → FR-051
+- Crimson Arena: Extracted to github.com/fiftynotai/crimson-arena
 
 ---
 
 ## Last Session Summary (2026-02-24)
 
 **Date:** 2026-02-24
-**Summary:** Resumed from context compaction. Reviewed README.md against current v4.0 architecture via SEEKER audit. Found 5 documentation conflicts (skill count mismatch, script listing incomplete, missing docs in table, phantom keybindings-help skill in CHANGELOG, hook count off-by-one). Delegated fixes to /document skill. All 5 fixes applied and committed.
+**Summary:** Published Igris AI v4.0.0. Created Crimson Arena standalone repo (fiftynotai/crimson-arena) with 109 files extracted from pre-deletion commit. Pushed develop (5 commits), merged to main (fast-forward), tagged v4.0.0, created GitHub release. VPS deploy still pending (/sync code).
 
 **Commits this session:**
+- `347b294` chore(session): update session state and agent metrics for v4.0 publish
 - `0eae8a6` docs: align README and CHANGELOG with v4.0 codebase reality
 
-**Previous session (2026-02-22):**
-- Hunted MG-012 (Crimson Arena extraction): architect → forger → sentinel → warden → commit `2043cd0`
-- TD-018 resolved as side effect (all fifty_* local path deps eliminated)
-- Session update committed as `024f17d`
+**Key actions:**
+- Created github.com/fiftynotai/crimson-arena (109 files, 24.5K lines)
+- Pushed develop to origin (5 unpushed commits)
+- Merged develop → main (fast-forward, no conflicts)
+- Tagged v4.0.0 on main, pushed tag
+- Created GitHub release: github.com/fiftynotai/igris-ai/releases/tag/v4.0.0
 
-**Previous session (2026-02-22 earlier):**
-- Hunted TD-022 (igris_file_push). Already implemented. v4.0: 8/8 briefs done.
+**Previous session (2026-02-24 earlier):**
+- Reviewed README.md via SEEKER audit, fixed 5 doc conflicts, committed `0eae8a6`
+
+**Previous session (2026-02-22):**
+- Hunted MG-012 (Crimson Arena extraction): commit `2043cd0`
+- TD-018 resolved as side effect
 
 ---
 
 ## Pending
 
-- **NOW:** Publish v4.0 (merge develop → main, tag 4.0.0, GitHub release, /sync code)
+- **NOW:** Deploy v4.0 to VPS (`/sync code` + `/sync data`)
 - Brain v5.0 deferred (FR-051 through FR-056) — includes sync gap fixes
-- Crimson Arena plugin repo — create when ready (v5 or standalone)
+- Crimson Arena — standalone repo live, needs pub.dev dep updates for build
 
 ---
 
