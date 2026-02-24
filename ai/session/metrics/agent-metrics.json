@@ -1,46 +1,46 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-02-22T16:25:42Z",
+  "last_updated": "2026-02-24T07:33:26Z",
   "agents": {
     "architect": {
-      "invocations": 45,
-      "last_used": "2026-02-22T16:08:43Z",
-      "avg_duration_seconds": 158.46,
+      "invocations": 46,
+      "last_used": "2026-02-22T17:42:18Z",
+      "avg_duration_seconds": 158.17,
       "success_rate": 1.0,
-      "total_input_tokens": 130929,
-      "total_output_tokens": 4359,
-      "total_cache_read_tokens": 48393501,
-      "total_cache_create_tokens": 13985098
+      "total_input_tokens": 130986,
+      "total_output_tokens": 4478,
+      "total_cache_read_tokens": 51194499,
+      "total_cache_create_tokens": 14841664
     },
     "forger": {
-      "invocations": 70,
-      "last_used": "2026-02-22T11:40:35Z",
-      "avg_duration_seconds": 489.51,
+      "invocations": 71,
+      "last_used": "2026-02-22T17:45:56Z",
+      "avg_duration_seconds": 491.02,
       "success_rate": 1.0,
-      "total_input_tokens": 51897,
-      "total_output_tokens": 13390,
-      "total_cache_read_tokens": 219465278,
-      "total_cache_create_tokens": 20197480
+      "total_input_tokens": 52021,
+      "total_output_tokens": 13923,
+      "total_cache_read_tokens": 228042901,
+      "total_cache_create_tokens": 20680572
     },
     "sentinel": {
-      "invocations": 54,
-      "last_used": "2026-02-22T16:23:13Z",
-      "avg_duration_seconds": 362.94,
+      "invocations": 55,
+      "last_used": "2026-02-22T17:56:30Z",
+      "avg_duration_seconds": 357.87,
       "success_rate": 1.0,
-      "total_input_tokens": 175911,
-      "total_output_tokens": 5709,
-      "total_cache_read_tokens": 38350658,
-      "total_cache_create_tokens": 12328056
+      "total_input_tokens": 175955,
+      "total_output_tokens": 5763,
+      "total_cache_read_tokens": 39052178,
+      "total_cache_create_tokens": 12688693
     },
     "warden": {
-      "invocations": 70,
-      "last_used": "2026-02-22T16:24:17Z",
-      "avg_duration_seconds": 81.76,
+      "invocations": 71,
+      "last_used": "2026-02-22T17:58:22Z",
+      "avg_duration_seconds": 82.13,
       "success_rate": 1.0,
-      "total_input_tokens": 118056,
-      "total_output_tokens": 7691,
-      "total_cache_read_tokens": 73499712,
-      "total_cache_create_tokens": 21762047
+      "total_input_tokens": 118105,
+      "total_output_tokens": 7748,
+      "total_cache_read_tokens": 76167374,
+      "total_cache_create_tokens": 22135894
     },
     "mender": {
       "invocations": 0,
@@ -53,14 +53,14 @@
       "total_cache_create_tokens": 0
     },
     "seeker": {
-      "invocations": 59,
-      "last_used": "2026-02-22T10:43:27Z",
-      "avg_duration_seconds": 934.65,
+      "invocations": 67,
+      "last_used": "2026-02-24T07:32:53Z",
+      "avg_duration_seconds": 882.27,
       "success_rate": 1.0,
-      "total_input_tokens": 296346,
-      "total_output_tokens": 7549,
-      "total_cache_read_tokens": 88955944,
-      "total_cache_create_tokens": 14226111
+      "total_input_tokens": 303769,
+      "total_output_tokens": 8535,
+      "total_cache_read_tokens": 101839482,
+      "total_cache_create_tokens": 15911884
     },
     "sage": {
       "invocations": 7,
@@ -203,14 +203,14 @@
       "total_cache_create_tokens": 112040
     },
     "general-purpose": {
-      "invocations": 14,
-      "last_used": "2026-02-22T10:43:21Z",
-      "avg_duration_seconds": 158.25,
+      "invocations": 15,
+      "last_used": "2026-02-22T16:43:47Z",
+      "avg_duration_seconds": 155.51,
       "success_rate": 1.0,
-      "total_input_tokens": 62183,
-      "total_output_tokens": 3013,
-      "total_cache_read_tokens": 8675751,
-      "total_cache_create_tokens": 1651982
+      "total_input_tokens": 64071,
+      "total_output_tokens": 3160,
+      "total_cache_read_tokens": 8886161,
+      "total_cache_create_tokens": 1808205
     },
     "code-quality-audit": {
       "invocations": 3,
@@ -314,11 +314,11 @@
     }
   },
   "totals": {
-    "total_invocations": 372,
+    "total_invocations": 385,
     "most_used_agent": "forger",
     "least_used_agent": "mender",
-    "total_input_tokens": 860524,
-    "total_output_tokens": 62690,
-    "total_cache_tokens": 703062659
+    "total_input_tokens": 870109,
+    "total_output_tokens": 64586,
+    "total_cache_tokens": 734820548
   }
 }

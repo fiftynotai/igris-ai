@@ -2,7 +2,7 @@
 
 ## Status
 **Mode:** REST MODE
-**Updated:** 2026-02-22
+**Updated:** 2026-02-24
 **Focus:** v4.0 Publication — Final Sprint
 
 ---
@@ -37,81 +37,62 @@
 
 ## Resume Point
 
-**Last Active:** Research complete, hunting MG-012 + TD-018
-**Phase:** v4.0 final sprint — 2 briefs to close, then publish
+**Last Active:** Documentation alignment complete, v4.0 ready to publish
+**Phase:** v4.0 final sprint — all briefs done, publish pending
 
 ---
 
 ## Next Session Instructions
 
-### v4.0 Publication — Final Sprint Plan
+### v4.0 Publication — Publish Step
+
+All v4.0 blockers are cleared. Steps 1-2 of the final sprint are DONE:
+- [x] Step 1: Hunt MG-012 — Crimson Arena extracted (commit `2043cd0`)
+- [x] Step 2: TD-018 resolved as side effect of MG-012
+- [x] Documentation aligned with v4.0 codebase (commit `0eae8a6`)
+
+**Next action: Publish v4.0**
+1. Merge develop → main
+2. Tag `4.0.0` and create GitHub release
+3. Deploy to VPS via `/sync code`
+
+### Key Context
 
 **Decision Record (2026-02-22):**
 - Igris-ai as plugin: CANCELLED (stay as repo-based install)
-- Brain sync gaps: DEFERRED to v5.0 (FR-054 cures root cause, patching v4 creates tech debt)
-- Crimson Arena: REMOVE from igris-ai repo, handle separately (own repo, publish with v5 or standalone)
+- Brain sync gaps: DEFERRED to v5.0 (FR-054 cures root cause)
+- Crimson Arena: Extracted from igris-ai, standalone repo later
 
-**Execution Order:**
-
-#### Step 1: Hunt MG-012 — Remove Crimson Arena from igris-ai
-- Remove `dashboard/` directory entirely from igris-ai repo
-- Update README.md — remove dashboard references, note it's a separate project
-- Update CLAUDE.md — remove any dashboard references
-- Update docs/ — remove dashboard setup instructions
-- Clean commit: `refactor(dashboard): extract Crimson Arena to separate project`
-- **Note:** Do NOT create the new crimson-arena repo yet. Just remove from igris-ai. The plugin repo will be created later (v5 or standalone).
-
-#### Step 2: Resolve TD-018 — Automatically resolved
-- Removing `dashboard/` eliminates all 7 fifty_* local path dependencies
-- No more pubspec.yaml with hardcoded paths in igris-ai
-- TD-018 becomes Done as side effect of MG-012
-- Mark TD-018 as Done
-
-#### Step 3: Publish v4.0
-- Merge develop → main
-- Tag `4.0.0` and create GitHub release
-- Deploy to VPS via `/sync code`
-
-### Key Research Findings (for context)
-
-**Brain sync gaps (5 identified, all deferred to v5):**
+**Brain sync gaps (deferred to v5):**
 1. Brief content — only metadata in brain, not full content → FR-054
-2. Session files (BLOCKERS, DECISIONS, LEARNINGS) not synced → FR-054
-3. Detailed agent metrics (token usage) incomplete → FR-052
+2. Session files not synced → FR-054
+3. Detailed agent metrics incomplete → FR-052
 4. coding_guidelines.md not in brain → FR-051
 5. arena.db completely separate → FR-051
 
-**Why defer:** Sync gaps are symptoms of v4's split-truth architecture (files + DB metadata). v5 cures the root cause by making brain DB the single source of truth. Patching v4 would take ~8-10h and create tech debt that v5 replaces anyway.
-
-**Crimson Arena analysis (15.4K Dart + 2K Python):**
-- Already architecturally independent (API-driven, no source code coupling)
-- 205 files, 62MB build output — significant weight for a monitoring dashboard
-- Will become a Claude Code plugin when ready (plugin format researched and documented in MG-012)
-
 ---
 
-## Last Session Summary (2026-02-22)
+## Last Session Summary (2026-02-24)
 
-**Date:** 2026-02-22
-**Summary:** Researched Crimson Arena plugin migration feasibility (SEEKER). Researched Claude Code plugin architecture (general-purpose). Registered MG-012 brief. Researched brain sync gaps vs v5 briefs — confirmed gaps are subset of v5 scope. Analyzed brain centralization impact — hybrid approach recommended. Assessed v4 publish readiness — ready to ship after removing dashboard + resolving TD-018.
+**Date:** 2026-02-24
+**Summary:** Resumed from context compaction. Reviewed README.md against current v4.0 architecture via SEEKER audit. Found 5 documentation conflicts (skill count mismatch, script listing incomplete, missing docs in table, phantom keybindings-help skill in CHANGELOG, hook count off-by-one). Delegated fixes to /document skill. All 5 fixes applied and committed.
 
-**Decisions made:**
-- Igris-ai stays as repo (not plugin) — rules support unclear in plugin spec
-- Brain sync gaps deferred to v5 (root cause fix, not symptom patch)
-- Crimson Arena extracted NOW, published separately later
-- v4.0 publishes after MG-012 + TD-018
+**Commits this session:**
+- `0eae8a6` docs: align README and CHANGELOG with v4.0 codebase reality
+
+**Previous session (2026-02-22):**
+- Hunted MG-012 (Crimson Arena extraction): architect → forger → sentinel → warden → commit `2043cd0`
+- TD-018 resolved as side effect (all fifty_* local path deps eliminated)
+- Session update committed as `024f17d`
 
 **Previous session (2026-02-22 earlier):**
 - Hunted TD-022 (igris_file_push). Already implemented. v4.0: 8/8 briefs done.
-
-**Previous session (2026-02-22 earlier):**
-- v4.0 Publication Sprint: /sync (code + data) deploying 14 commits to VPS.
 
 ---
 
 ## Pending
 
-- **NOW:** MG-012 DONE, TD-018 DONE → publish v4.0 (merge develop → main, tag 4.0.0)
+- **NOW:** Publish v4.0 (merge develop → main, tag 4.0.0, GitHub release, /sync code)
 - Brain v5.0 deferred (FR-051 through FR-056) — includes sync gap fixes
 - Crimson Arena plugin repo — create when ready (v5 or standalone)
 
