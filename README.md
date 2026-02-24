@@ -145,7 +145,7 @@ Agents are defined as native Claude Code agent files in `.claude/agents/`. Each 
 
 ---
 
-## 20 Skills
+## 21 Skills
 
 Skills are slash commands defined in `.claude/skills/*/SKILL.md`. They replaced 11 retired agents in v3.4, reducing complexity while preserving all capabilities.
 
@@ -575,6 +575,7 @@ your-project/
     ├── igris_brain_deploy.sh
     ├── igris_vps_update.sh
     ├── igris-sync.sh
+    ├── igris_brain_schema.sql
     ├── install_shell_integration.sh
     └── emit_skill_event.sh
 ```
@@ -656,6 +657,9 @@ Igris analyzes your codebase (or a base architecture repo, or both) and generate
 | Setup Guide | `docs/SETUP_GUIDE.md` |
 | Update Guide | `docs/UPDATE_GUIDE.md` |
 | Migration Guide | `docs/MIGRATION_GUIDE.md` |
+| Brand Book | `docs/IGRIS_BRAND_BOOK.md` |
+| Desktop Quickstart | `docs/IGRIS_DESKTOP_QUICKSTART.md` |
+| UI Architecture | `docs/IGRIS_UI_ARCHITECTURE.md` |
 | Contributing | `CONTRIBUTING.md` |
 
 ---
