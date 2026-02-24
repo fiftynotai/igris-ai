@@ -1,9 +1,10 @@
 # Current Session
 
 ## Status
-**Mode:** REST MODE
+**Mode:** HUNT MODE
 **Updated:** 2026-02-24
-**Focus:** v4.0 Published — Post-Release
+**Focus:** Post-release fixes — install script gaps + VPS cleanup
+**Instance ID:** 57cd1b38-6747-4543-9086-d3c5a37943d7
 
 ---
 
@@ -11,16 +12,8 @@
 
 | Brief | Title | Status |
 |-------|-------|--------|
-| ~~BR-026~~ | ~~MCP Server Security Hardening~~ | Done (commit `da86fc9`) |
-| ~~BR-027~~ | ~~Script & Hook Injection Fixes~~ | Done (commit `1c1eb71`) |
-| ~~BR-028~~ | ~~Brain Config Security~~ | Done (commit `19e1dc6`) |
-| ~~TD-017~~ | ~~v4.0 Release Documentation~~ | Done (commit `692ed47`) |
-| ~~TD-018~~ | ~~Switch fifty_* to pub.dev packages~~ | Done (resolved by MG-012, commit `2043cd0`) |
-| ~~TD-019~~ | ~~Version Alignment Sweep~~ | Done (commit `854e2a3`) |
-| ~~TD-020~~ | ~~Documentation Overhaul for v4.0~~ | Done (commit `84529b6`) |
-| ~~TD-021~~ | ~~Brain Integration Cleanup~~ | Done (commit `46a7e7a`) |
-| ~~TD-022~~ | ~~Brain MCP — Add igris_file_push Tool~~ | Done (already implemented in `b43b0f6`) |
-| ~~MG-012~~ | ~~Migrate Crimson Arena to Standalone Repo~~ | Done (commit `2043cd0`) |
+| ~~BR-029~~ | ~~VPS Deploy Script Stale Dashboard References~~ | Done (commit `ab0d7d9`) |
+| ~~BR-030~~ | ~~Install Script Brain Sync & Stale Skills Gaps~~ | Done (commit `194bbf3`) |
 | FR-051 | Brain v5.0 — Modular Architecture + Task Mgmt + Scheduling | Deferred (v5.0 scope) |
 | FR-052-engine | Brain v5.0 Phase 1 — Engine Foundation | Deferred (v5.0 scope) |
 | FR-053 | Brain v5.0 Phase 2 — Task Management System | Deferred (v5.0 scope) |
@@ -37,74 +30,62 @@
 
 ## Resume Point
 
-**Last Active:** v4.0 published — tag `v4.0.0`, GitHub release live
-**Phase:** Post-release — deploy to VPS pending
+**Last Active:** BR-029 + BR-030 parallel hunt
+**Phase:** COMPLETE
 
 ---
 
 ## Next Session Instructions
 
-### v4.0 Published — Post-Release Tasks
+### Post-Release Tasks (Completed)
 
-v4.0 is LIVE:
-- [x] Step 1: Hunt MG-012 — Crimson Arena extracted (commit `2043cd0`)
-- [x] Step 2: TD-018 resolved as side effect of MG-012
-- [x] Step 3: Documentation aligned with v4.0 codebase (commit `0eae8a6`)
-- [x] Step 4: Crimson Arena repo created (github.com/fiftynotai/crimson-arena)
-- [x] Step 5: Develop pushed, merged to main (fast-forward)
-- [x] Step 6: Tagged `v4.0.0`, GitHub release created
+- [x] `/sync code` deployed v4.0 to VPS (6 commits pulled, brain MCP rebuilt)
+- [x] BR-029: Cleaned stale PM2 `crimson-arena` process + dashboard/ directory on VPS
+- [x] BR-030: Created `igris_brain_refresh.sh`, enhanced install script with brain refresh + remote push + tech_stack detection
 
-**Next action: Deploy to VPS**
-1. Run `/sync code` to deploy v4.0 to VPS
-2. Run `/sync data` to push brain data
-3. Verify VPS health with `/sync status`
+### Remaining Tasks
 
-### Post-Release Roadmap
-
-- **Brain v5.0** — FR-051 through FR-056 (6 briefs, XL scope)
-  - Start with FR-052 Engine Foundation (critical path)
-- **Crimson Arena** — Standalone repo created, needs pub.dev dependency updates
-- **Higgsfield** — FR-014 still blocked on URL slugs
+1. **Deploy BR-029 + BR-030 to VPS** — Run `/sync code` to push the 2 new commits
+2. **Run `/sync data`** — Push brain data including attendance_app registration to VPS dashboard
+3. **Brain v5.0** — FR-051 through FR-056 (6 briefs, XL scope). Start with FR-052 Engine Foundation.
+4. **Crimson Arena** — Standalone repo live at github.com/fiftynotai/crimson-arena
+5. **Higgsfield** — FR-014 still blocked on URL slugs
 
 ### Key Context
 
-**Decision Record (2026-02-22):**
-- Igris-ai as plugin: CANCELLED (stay as repo-based install)
-- Brain sync gaps: DEFERRED to v5.0 (FR-054 cures root cause)
-- Crimson Arena: Extracted to github.com/fiftynotai/crimson-arena
+**Decision Record (2026-02-24):**
+- Brain core refresh mechanism added to install workflow
+- All symlinked projects auto-fix when brain is refreshed
+- Remote brain push integrated into install (fire-and-forget)
 
 ---
 
 ## Last Session Summary (2026-02-24)
 
 **Date:** 2026-02-24
-**Summary:** Published Igris AI v4.0.0. Created Crimson Arena standalone repo (fiftynotai/crimson-arena) with 109 files extracted from pre-deletion commit. Pushed develop (5 commits), merged to main (fast-forward), tagged v4.0.0, created GitHub release. VPS deploy still pending (/sync code).
+**Summary:** Parallel hunt of BR-029 + BR-030. Cleaned stale VPS artifacts (PM2 crimson-arena process, dashboard/ directory). Created igris_brain_refresh.sh for on-demand brain core refresh. Enhanced igris_install.sh with brain refresh call, tech_stack detection, ON CONFLICT DO UPDATE registration, and remote brain push. Fixed stale disable-model-invocation flag across all brain-symlinked projects. All tests passed (15/15). WARDEN approved.
 
 **Commits this session:**
-- `347b294` chore(session): update session state and agent metrics for v4.0 publish
-- `0eae8a6` docs: align README and CHANGELOG with v4.0 codebase reality
+- `ab0d7d9` fix(vps): clean stale Crimson Arena artifacts from VPS
+- `194bbf3` fix(install): add brain refresh, remote push, and enhanced registration
 
 **Key actions:**
-- Created github.com/fiftynotai/crimson-arena (109 files, 24.5K lines)
-- Pushed develop to origin (5 unpushed commits)
-- Merged develop → main (fast-forward, no conflicts)
-- Tagged v4.0.0 on main, pushed tag
-- Created GitHub release: github.com/fiftynotai/igris-ai/releases/tag/v4.0.0
-
-**Previous session (2026-02-24 earlier):**
-- Reviewed README.md via SEEKER audit, fixed 5 doc conflicts, committed `0eae8a6`
-
-**Previous session (2026-02-22):**
-- Hunted MG-012 (Crimson Arena extraction): commit `2043cd0`
-- TD-018 resolved as side effect
+- VPS: Deleted stale PM2 `crimson-arena` process, removed `dashboard/` directory
+- Created `scripts/igris_brain_refresh.sh` (standalone brain refresh, --dry-run support)
+- Enhanced `scripts/igris_install.sh` (3 changes: refresh call, registration upsert, remote push)
+- Brain core skills refreshed — all symlinked projects (attendance_app etc.) now have correct `disable-model-invocation: false`
+- 6/6 SENTINEL tests PASS for BR-029, 9/9 SENTINEL tests PASS for BR-030
+- WARDEN: APPROVE (minor fix applied for SOUL.md copy path)
 
 ---
 
 ## Pending
 
-- **NOW:** Deploy v4.0 to VPS (`/sync code` + `/sync data`)
-- Brain v5.0 deferred (FR-051 through FR-056) — includes sync gap fixes
-- Crimson Arena — standalone repo live, needs pub.dev dep updates for build
+- Deploy new commits to VPS (`/sync code`)
+- Push brain data to VPS (`/sync data`)
+- Brain v5.0 deferred (FR-051 through FR-056)
+- Crimson Arena — standalone repo live, needs pub.dev dep updates
+- FR-014 Higgsfield — blocked on URL slugs
 
 ---
 
