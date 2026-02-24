@@ -34,6 +34,7 @@ import { createTasksComponent } from './components/tasks/index.js';
 import { createInstancesComponent } from './components/instances/index.js';
 import { createSyncComponent } from './components/sync/index.js';
 import { createCacheComponent } from './components/cache/index.js';
+import { createSchedulesComponent } from './components/schedules/index.js';
 
 // db.ts bridge
 import { setAdapter } from '../db.js';
@@ -74,7 +75,7 @@ export function bootEngine(config: EngineConfig): Engine {
   // 4. Create registry
   const registry = createRegistry(storage, bus);
 
-  // 5. Register domain components (all 10)
+  // 5. Register domain components (all 11)
   const componentFactories = [
     createMemoryComponent,
     createErrorsComponent,
@@ -86,6 +87,7 @@ export function bootEngine(config: EngineConfig): Engine {
     createInstancesComponent,
     createSyncComponent,
     createCacheComponent,
+    createSchedulesComponent,
   ];
 
   for (const factory of componentFactories) {
@@ -100,6 +102,9 @@ export function bootEngine(config: EngineConfig): Engine {
   // 7. Create gateway and register tools
   const gateway = createGateway();
   gateway.register(allTools);
+
+  // 8. Emit engine.ready — components that need dispatchTool can capture it
+  bus.emit('engine.ready', { dispatch: gateway.dispatch.bind(gateway) });
 
   console.error(
     `[engine] Brain Engine v5.0 ready — ${gateway.toolCount()} tools, ${registry.getBootOrder().length} components`

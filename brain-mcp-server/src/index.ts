@@ -125,6 +125,7 @@ function getEngine(): Engine {
         tasks: { enabled: true },
         instances: { enabled: true },
         sync: { enabled: true },
+        schedules: { enabled: true },
       },
     };
     _engine = bootEngine(config);
