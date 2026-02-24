@@ -122,6 +122,7 @@ function getEngine(): Engine {
         metrics: { enabled: true },
         sessions: { enabled: true },
         briefs: { enabled: true },
+        tasks: { enabled: true },
         instances: { enabled: true },
         sync: { enabled: true },
       },

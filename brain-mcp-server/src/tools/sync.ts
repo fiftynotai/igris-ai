@@ -181,6 +181,34 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'result', 'error_message', 'metadata', 'created_at',
     ],
   },
+  {
+    table: 'tasks',
+    syncKey: ['id'],
+    timestampCol: 'updated_at',
+    strategy: 'lww',
+    columns: [
+      'id', 'task_type', 'scope', 'title', 'description', 'brief_id',
+      'project_slug', 'parent_id', 'status', 'priority', 'assignee',
+      'due_at', 'defer_until', 'created_by', 'metadata',
+      'created_at', 'updated_at',
+    ],
+  },
+  {
+    table: 'task_deps',
+    syncKey: ['task_id', 'depends_on'],
+    timestampCol: 'created_at',
+    strategy: 'lww',
+    columns: ['task_id', 'depends_on', 'created_at'],
+  },
+  {
+    table: 'task_assignments',
+    syncKey: ['id'],
+    timestampCol: 'assigned_at',
+    strategy: 'lww',
+    columns: [
+      'id', 'task_id', 'agent', 'assigned_at', 'completed_at', 'result',
+    ],
+  },
 ];
 
 // ---------------------------------------------------------------------------

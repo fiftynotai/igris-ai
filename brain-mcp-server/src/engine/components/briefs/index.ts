@@ -17,6 +17,7 @@ import type {
 } from '../../types.js';
 import { handleBriefSync, handleBriefDashboard } from '../../../tools/briefs.js';
 import type { BriefSyncInput, BriefDashboardInput } from '../../../tools/briefs.js';
+import { getDb } from '../../../db.js';
 
 export function createBriefsComponent(): BrainComponent {
   let _ctx: ComponentContext | null = null;
@@ -74,11 +75,44 @@ export function createBriefsComponent(): BrainComponent {
             required: ['project', 'brief_id', 'title', 'status'],
           },
           handler: (args) => {
+            const typedArgs = args as Record<string, unknown>;
+            const project = typedArgs.project as string;
+            const briefId = typedArgs.brief_id as string;
+            const status = typedArgs.status as string;
+            const title = typedArgs.title as string;
+
+            // Check if brief exists before upsert to detect new vs update
+            const db = getDb();
+            const existing = db.prepare(
+              'SELECT status FROM brief_status WHERE project = ? AND brief_id = ?'
+            ).get(project, briefId) as { status: string } | undefined;
+
             const result = handleBriefSync(args as unknown as BriefSyncInput);
-            _ctx?.bus.emit('brief.synced', {
-              project: (args as Record<string, unknown>).project,
-              brief_id: (args as Record<string, unknown>).brief_id,
-            });
+
+            if (_ctx) {
+              // Always emit synced
+              _ctx.bus.emit('brief.synced', { project, brief_id: briefId });
+
+              // Emit brief.created if this is a new brief
+              if (!existing) {
+                _ctx.bus.emit('brief.created', {
+                  project,
+                  brief_id: briefId,
+                  title,
+                  status,
+                });
+              }
+
+              // Emit brief.completed if status changed to Done
+              if (status === 'Done' && existing?.status !== 'Done') {
+                _ctx.bus.emit('brief.completed', {
+                  project,
+                  brief_id: briefId,
+                  title,
+                });
+              }
+            }
+
             return result;
           },
         },
@@ -107,6 +141,8 @@ export function createBriefsComponent(): BrainComponent {
       return {
         emits: [
           { name: 'brief.synced', description: 'A brief status was synced' },
+          { name: 'brief.created', description: 'A new brief was synced for the first time' },
+          { name: 'brief.completed', description: 'A brief status changed to Done' },
         ],
         listens: [],
       };

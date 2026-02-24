@@ -300,6 +300,9 @@ export function createSyncComponent(): BrainComponent {
           { name: 'brief.synced', description: 'Queue for remote sync' },
           { name: 'instance.heartbeat', description: 'Queue for remote sync' },
           { name: 'metrics.recorded', description: 'Queue for remote sync' },
+          { name: 'task.created', description: 'Queue for remote sync' },
+          { name: 'task.completed', description: 'Queue for remote sync' },
+          { name: 'task.assigned', description: 'Queue for remote sync' },
         ],
       };
     },
