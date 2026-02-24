@@ -1,0 +1,181 @@
+/**
+ * Brain Engine v5.0 -- Cache Component
+ *
+ * Filesystem cache layer that regenerates markdown files from the brain
+ * DB into ~/.igris/cache/{project}/. Listens to event bus events from
+ * briefs and sessions components to auto-update the cache on writes.
+ *
+ * Provides: igris_cache_rebuild, igris_cache_clean
+ *
+ * Emits: cache.rebuilt, cache.cleaned
+ * Listens: brief.created, brief.synced, session.file.updated
+ *
+ * @module engine/components/cache
+ * @author Fifty.ai
+ */
+
+import type {
+  BrainComponent,
+  ComponentContext,
+  Migration,
+  ToolDefinition,
+  EventDef,
+  EventPayload,
+} from '../../types.js';
+import {
+  cacheBrief,
+  cacheSessionFile,
+  handleCacheRebuild,
+  handleCacheClean,
+} from './handlers.js';
+
+export function createCacheComponent(): BrainComponent {
+  let _ctx: ComponentContext | null = null;
+
+  // -------------------------------------------------------------------
+  // Event handlers
+  // -------------------------------------------------------------------
+
+  /** Handle brief.created and brief.synced — cache the affected brief */
+  function onBriefChanged(payload: EventPayload): void {
+    if (!_ctx) return;
+    const { project, brief_id } = payload.data;
+    if (!project || !brief_id) return;
+
+    try {
+      cacheBrief(project as string, brief_id as string);
+      _ctx.log.info(`Cached brief ${brief_id} for project ${project}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      _ctx.log.error(`Failed to cache brief ${brief_id} for ${project}: ${message}`);
+    }
+  }
+
+  /** Handle session.file.updated — cache the affected session file */
+  function onSessionChanged(payload: EventPayload): void {
+    if (!_ctx) return;
+    const { project, filename } = payload.data;
+    if (!project || !filename) return;
+
+    try {
+      cacheSessionFile(project as string, filename as string);
+      _ctx.log.info(`Cached session file ${filename} for project ${project}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      _ctx.log.error(`Failed to cache session file ${filename} for ${project}: ${message}`);
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // Component definition
+  // -------------------------------------------------------------------
+
+  return {
+    name: 'cache',
+    version: '1.0.0',
+    depends: ['briefs', 'sessions'],
+
+    schema(): Migration[] {
+      // Cache component has no own tables — it reads from briefs/sessions
+      return [];
+    },
+
+    tools(): ToolDefinition[] {
+      return [
+        // -----------------------------------------------------------------
+        // igris_cache_rebuild
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_cache_rebuild',
+          description: 'Rebuild filesystem cache for a project. Regenerates markdown files from brain DB into ~/.igris/cache/{project}/.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project slug',
+              },
+              scope: {
+                type: 'string',
+                enum: ['briefs', 'sessions', 'all'],
+                description: 'Which files to rebuild (default: all)',
+              },
+            },
+            required: ['project'],
+          },
+          handler: (args) => {
+            const result = handleCacheRebuild(args);
+            if (!result.isError && _ctx) {
+              _ctx.bus.emit('cache.rebuilt', {
+                project: args.project as string,
+                scope: (args.scope as string) ?? 'all',
+              });
+            }
+            return result;
+          },
+        },
+
+        // -----------------------------------------------------------------
+        // igris_cache_clean
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_cache_clean',
+          description: 'Remove filesystem cache for a project.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project slug',
+              },
+            },
+            required: ['project'],
+          },
+          handler: (args) => {
+            const result = handleCacheClean(args);
+            if (!result.isError && _ctx) {
+              _ctx.bus.emit('cache.cleaned', {
+                project: args.project as string,
+              });
+            }
+            return result;
+          },
+        },
+      ];
+    },
+
+    events(): { emits: EventDef[]; listens: EventDef[] } {
+      return {
+        emits: [
+          { name: 'cache.rebuilt', description: 'Filesystem cache was rebuilt for a project' },
+          { name: 'cache.cleaned', description: 'Filesystem cache was removed for a project' },
+        ],
+        listens: [
+          { name: 'brief.created', description: 'Auto-cache brief when a new brief is created' },
+          { name: 'brief.synced', description: 'Auto-cache brief when a brief is synced/updated' },
+          { name: 'session.file.updated', description: 'Auto-cache session file when updated' },
+        ],
+      };
+    },
+
+    init(ctx: ComponentContext): void {
+      _ctx = ctx;
+
+      // Wire event listeners
+      ctx.bus.on('brief.created', onBriefChanged);
+      ctx.bus.on('brief.synced', onBriefChanged);
+      ctx.bus.on('session.file.updated', onSessionChanged);
+
+      ctx.log.info('Cache component initialized');
+    },
+
+    destroy(): void {
+      if (_ctx) {
+        _ctx.bus.off('brief.created', onBriefChanged);
+        _ctx.bus.off('brief.synced', onBriefChanged);
+        _ctx.bus.off('session.file.updated', onSessionChanged);
+      }
+      _ctx = null;
+    },
+  };
+}

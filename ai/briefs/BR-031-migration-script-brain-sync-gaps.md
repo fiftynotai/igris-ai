@@ -5,9 +5,9 @@
 **Effort:** S-Small (< 4h)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** In Progress
+**Status:** Done
 **Created:** 2026-02-24
-**Completed:**
+**Completed:** 2026-02-24
 
 ---
 
@@ -100,7 +100,7 @@ Users migrating from v3.4 get an inferior experience compared to fresh installs.
 
 ## Workflow State
 
-**Phase:** COMMITTING
+**Phase:** COMPLETE
 **Active Agent:** none
 **Retry Count:** 0
 

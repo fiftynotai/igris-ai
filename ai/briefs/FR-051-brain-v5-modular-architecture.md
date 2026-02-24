@@ -487,7 +487,15 @@ Extensive research conducted across 4 domains:
 
 ## Phased Delivery
 
-This is an XL effort decomposed into 5 phases. Each phase is a separate brief with its own HUNT cycle.
+This is an XL effort decomposed into 6 phases (Phase 0-5). Each phase is a separate brief with its own HUNT cycle.
+
+### Phase 0: Global Agent/Skill/Rule Installation (M-effort) — FR-058
+**Goal:** Move Igris agents, skills, and rules from per-project symlinks to Claude Code's native global directories.
+- Symlink `~/.igris/core/{agents,skills,rules}` → `~/.claude/{agents,skills,rules}` (one-time, in brain init)
+- Remove all per-project symlink creation from install and migration scripts
+- Clean stale project-level symlinks from existing installations
+- No dependency on engine work — can be done in parallel with FR-052
+- **Success criteria:** Zero per-project symlinks for agents/skills/rules; all projects see definitions via global path
 
 ### Phase 1: Engine Foundation (L-effort) — FR-052
 **Goal:** Replace monolithic index.ts with modular engine architecture.
@@ -549,6 +557,7 @@ This is an XL effort decomposed into 5 phases. Each phase is a separate brief wi
 - [x] Task 3: Register Phase 3 brief (FR-054) — Brief Migration & Cache Layer
 - [x] Task 4: Register Phase 4 brief (FR-055) — Scheduling System
 - [x] Task 5: Register Phase 5 brief (FR-056) — Autonomous Coordination
+- [x] Task 6: Register Phase 0 brief (FR-058) — Global Agent/Skill/Rule Installation
 
 ---
 
@@ -562,11 +571,12 @@ This is an XL effort decomposed into 5 phases. Each phase is a separate brief wi
 All 5 phase briefs registered (FR-052 through FR-056). Ready to begin Phase 1.
 
 ### Next Steps
-1. HUNT FR-052 (Engine Foundation) — critical path for all other phases
-2. Then FR-053 (Task Management) — depends on FR-052
-3. Then FR-054 (Brief Migration) — depends on FR-053
-4. FR-055 (Scheduling) — depends on FR-053
-5. FR-056 (Autonomous Coordination) — depends on FR-055
+1. HUNT FR-058 (Global Install) — no dependencies, simplifies install/migration scripts
+2. HUNT FR-052 (Engine Foundation) — can run in parallel with FR-058
+3. Then FR-053 (Task Management) — depends on FR-052
+4. Then FR-054 (Brief Migration) — depends on FR-053, simplified by FR-058
+5. FR-055 (Scheduling) — depends on FR-053
+6. FR-056 (Autonomous Coordination) — depends on FR-055
 
 ### Agent Log
 | Time | Agent | Action | Result |

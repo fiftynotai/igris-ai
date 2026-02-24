@@ -5,7 +5,7 @@
 **Effort:** M-Medium (1-2d)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** Ready
+**Status:** Done
 **Created:** 2026-02-24
 **Parent Brief:** FR-054
 **Blocked By:** FR-061
@@ -54,6 +54,31 @@ After FR-061 adds CRUD tools, the DB has the data but agents still need markdown
 4. [ ] `igris_cache_rebuild` tool regenerates all cache for a project
 5. [ ] Cache auto-updates on brief_create/update and session_update
 6. [ ] Template files excluded from migration
+
+---
+
+---
+
+## Workflow State
+
+**Phase:** COMPLETE
+**Active Agent:** none
+**Retry Count:** 1
+**Completed:** 2026-02-24
+
+### Agent Log
+| Time | Agent | Action | Result |
+|------|-------|--------|--------|
+| 2026-02-24 | architect | Create implementation plan | SUCCESS — 4 files (3 create, 1 modify), 4 phases |
+| 2026-02-24 | forger | Implement changes | SUCCESS — 3 created, 1 modified, 27 briefs + 6 sessions migrated |
+| 2026-02-24 | sentinel | Run test suite | PASS 10/10 — build clean, migration verified, idempotent, templates excluded |
+| 2026-02-24 | warden | Code review | REJECT — 2 critical (path traversal, missing brief_status table), 2 major (rmSync risk, missing main()) |
+| 2026-02-24 | forger | Fix warden issues | SUCCESS — safePath() added, brief_status table, input validation, main() wrapper |
+| 2026-02-24 | sentinel | Re-test after fixes | PASS 7/7 — build clean, safePath verified, migration confirmed |
+| 2026-02-24 | warden | Re-review after fixes | APPROVE — all 4 fixes verified, no new issues |
+
+### Next Steps
+Done. Ready for archive.
 
 ---
 

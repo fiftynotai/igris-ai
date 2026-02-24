@@ -3,8 +3,8 @@
 ## Status
 **Mode:** HUNT MODE
 **Updated:** 2026-02-24
-**Focus:** Post-release fixes — install script gaps + VPS cleanup
-**Instance ID:** 57cd1b38-6747-4543-9086-d3c5a37943d7
+**Active Brief:** FR-062
+**Instance ID:** 52227e2b-db25-49ab-aaf4-431ccea9381b
 
 ---
 
@@ -14,12 +14,17 @@
 |-------|-------|--------|
 | ~~BR-029~~ | ~~VPS Deploy Script Stale Dashboard References~~ | Done (commit `ab0d7d9`) |
 | ~~BR-030~~ | ~~Install Script Brain Sync & Stale Skills Gaps~~ | Done (commit `194bbf3`) |
-| FR-051 | Brain v5.0 — Modular Architecture + Task Mgmt + Scheduling | Deferred (v5.0 scope) |
-| FR-052-engine | Brain v5.0 Phase 1 — Engine Foundation | Deferred (v5.0 scope) |
-| FR-053 | Brain v5.0 Phase 2 — Task Management System | Deferred (v5.0 scope) |
-| FR-054 | Brain v5.0 Phase 3 — Brief Migration & Cache Layer | Deferred (v5.0 scope) |
-| FR-055 | Brain v5.0 Phase 4 — Scheduling System | Deferred (v5.0 scope) |
-| FR-056 | Brain v5.0 Phase 5 — Autonomous Coordination | Deferred (v5.0 scope) |
+| ~~BR-031~~ | ~~Migration Script Brain Sync & Refresh Gaps~~ | Done (commits `f19794c`, `e6fa4ee`) |
+| ~~FR-058~~ | ~~Brain v5.0 Phase 0 — Global Install~~ | Done (commit `1fd9099`) |
+| ~~FR-052~~ | ~~Brain v5.0 Phase 1 — Engine Foundation~~ | Done (commit `f378111`) |
+| ~~FR-053~~ | ~~Brain v5.0 Phase 2 — Task Management System~~ | Done (commit `42cf3c0`) |
+| FR-054 | Brain v5.0 Phase 3 — Brief Migration & Cache Layer | Split → FR-061/062/063 |
+| ~~FR-061~~ | ~~Brain v5.0 — Brief & Session CRUD Tools~~ | Done (commit `129d35f`) |
+| ~~FR-062~~ | ~~Brain v5.0 — Cache Layer & Migration Script~~ | Done (commit pending) |
+| FR-063 | Brain v5.0 — Skill & Rule Path Migration | Ready (blocked by FR-062) |
+| FR-055 | Brain v5.0 Phase 4 — Scheduling System | Ready (unblocked) |
+| FR-056 | Brain v5.0 Phase 5 — Autonomous Coordination | Ready (blocked by FR-055) |
+| FR-051 | Brain v5.0 — Modular Architecture (parent) | In Progress (Phase 0+1+2+3a done) |
 | FR-014 | Higgsfield Skill — Browser Automation Pivot | Blocked (URL slugs needed) |
 | PI-001 | Multi-Instance Concurrent Brief Workflow | Deferred |
 | TD-008 | Usage Metrics and Error Tracking | Deferred |
@@ -30,61 +35,98 @@
 
 ## Resume Point
 
-**Last Active:** BR-029 + BR-030 parallel hunt
+**Last Active:** FR-061 (Brain v5.0 Brief & Session CRUD Tools)
 **Phase:** COMPLETE
 
 ---
 
 ## Next Session Instructions
 
-### Post-Release Tasks (Completed)
+### Completed This Session
 
-- [x] `/sync code` deployed v4.0 to VPS (6 commits pulled, brain MCP rebuilt)
-- [x] BR-029: Cleaned stale PM2 `crimson-arena` process + dashboard/ directory on VPS
-- [x] BR-030: Created `igris_brain_refresh.sh`, enhanced install script with brain refresh + remote push + tech_stack detection
+- [x] Hunted FR-053 — Task Management System (ARCHITECT > user approval > FORGER > SENTINEL 10/10 > WARDEN APPROVE + 3 fixes) — commit `42cf3c0`, +1,349 lines
+- [x] Split FR-054 (XL) into FR-061/FR-062/FR-063 — architect scope analysis revealed 27+ files, 3 sub-phases
+- [x] Hunted FR-061 — Brief & Session CRUD Tools (ARCHITECT > FORGER > SENTINEL 8/8 > WARDEN APPROVE) — commit `129d35f`, +1,137 lines
+- [x] Brain synced — 19 rows pushed to VPS (5 briefs, 10 agent metrics, 1 session)
 
 ### Remaining Tasks
 
-1. **Deploy BR-029 + BR-030 to VPS** — Run `/sync code` to push the 2 new commits
-2. **Run `/sync data`** — Push brain data including attendance_app registration to VPS dashboard
-3. **Brain v5.0** — FR-051 through FR-056 (6 briefs, XL scope). Start with FR-052 Engine Foundation.
-4. **Crimson Arena** — Standalone repo live at github.com/fiftynotai/crimson-arena
-5. **Higgsfield** — FR-014 still blocked on URL slugs
+1. **Push 4 commits to VPS** — `1fd9099` (FR-058), `f378111` (FR-052), `42cf3c0` (FR-053), `129d35f` (FR-061). Run `/sync code`.
+2. **Hunt FR-062** — Cache Layer & Migration Script (M-effort, unblocked by FR-061). Brief parser, cache generator, migration bash script.
+3. **Hunt FR-055** — Scheduling System (M-effort, unblocked by FR-053). Cron-based scheduler, smart-sleep daemon, Claude Agent SDK. Can run parallel with FR-062.
+4. **Hunt FR-063** — Skill & Rule Path Migration (L-effort, blocked by FR-062). Update 14 skills, 2 rules, 2 prompts. Most disruptive change.
+5. **Hunt FR-056** — Autonomous Coordination (M-effort, blocked by FR-055). Final v5.0 phase.
+6. **FR-014** — Higgsfield still blocked on URL slugs.
 
 ### Key Context
 
-**Decision Record (2026-02-24):**
-- Brain core refresh mechanism added to install workflow
-- All symlinked projects auto-fix when brain is refreshed
-- Remote brain push integrated into install (fire-and-forget)
+**v5.0 Execution Plan:**
+```
+WAVE 1 (DONE): FR-058 + FR-052 — global install + engine foundation
+WAVE 2 (DONE): FR-053 — task management (8 tools, 3 tables, DAG deps)
+WAVE 3a (DONE): FR-061 — brief/session CRUD (6 tools)
+WAVE 3b (NEXT): FR-062 — cache layer + migration script (M)
+WAVE 3c: FR-063 — skill/rule path migration (L)
+WAVE 3d: FR-055 — scheduling system (M, parallel with FR-062)
+WAVE 4: FR-056 — autonomous coordination (M)
+```
+
+**Engine State:**
+- 9 components: memory, errors, projects, metrics, sessions, briefs, tasks, instances, sync
+- 44 MCP tools total
+- Tasks component: 8 tools, 3 tables (tasks, task_deps, task_assignments), DAG cycle detection, atomic task_next
+- Briefs component: 6 tools (2 legacy + 4 new CRUD)
+- Sessions component: 4 tools (2 legacy + 2 new CRUD)
+- brief_files + session_files tables ready for cache layer (FR-062)
+
+**FR-053 Architecture (for FR-062 context):**
+- Tasks table: id, task_type, scope, title, description, brief_id, project_slug, status, priority, assignee, due_at, defer_until, metadata
+- Task IDs: `t-` + 8-char UUID
+- Priority: integer 1-5 (1=highest)
+- Status: pending, active, blocked, done, cancelled
+- Dependency DAG via task_deps with recursive CTE cycle detection
+- Event bus: task.created, task.assigned, task.completed, task.blocked, task.unblocked
+- Brief-task auto-linkage: brief.created → auto-create task, brief.completed → auto-complete task
+
+**FR-061 Architecture (for FR-062 context):**
+- igris_brief_get: JOIN brief_files + brief_status, fallback to metadata-only
+- igris_brief_list: dynamic WHERE clause, optional content inclusion
+- igris_brief_create: atomic transaction to both tables, SHA-256 hash
+- igris_brief_update: partial update, whitelisted columns, status change events
+- igris_session_file_get: read by project + filename
+- igris_session_file_update: upsert with content hash
+
+**WARDEN notes (for follow-up):**
+- FR-053 W2: handleTaskUpdate allows status bypass (use igris_task_complete for 'done')
+- FR-061 W1: handleBriefUpdate existence check outside transaction (low risk with better-sqlite3)
+- FR-061 W2: Event emission before result inspection (events fire even on "not found" errors)
 
 ---
 
 ## Last Session Summary (2026-02-24)
 
 **Date:** 2026-02-24
-**Summary:** Parallel hunt of BR-029 + BR-030. Cleaned stale VPS artifacts (PM2 crimson-arena process, dashboard/ directory). Created igris_brain_refresh.sh for on-demand brain core refresh. Enhanced igris_install.sh with brain refresh call, tech_stack detection, ON CONFLICT DO UPDATE registration, and remote brain push. Fixed stale disable-model-invocation flag across all brain-symlinked projects. All tests passed (15/15). WARDEN approved.
+**Summary:** Brain v5.0 Wave 2+3a complete. Hunted FR-053 (task management — 8 tools, 3 tables, DAG deps) and FR-061 (brief/session CRUD — 6 tools). Split FR-054 XL into 3 sub-briefs. Engine now has 44 MCP tools across 9 components. +2,486 lines across 2 commits.
 
 **Commits this session:**
-- `ab0d7d9` fix(vps): clean stale Crimson Arena artifacts from VPS
-- `194bbf3` fix(install): add brain refresh, remote push, and enhanced registration
+- `42cf3c0` feat(brain): task management system for brain-mcp-server v5.0
+- `129d35f` feat(brain): add brief & session CRUD tools to brain engine
 
 **Key actions:**
-- VPS: Deleted stale PM2 `crimson-arena` process, removed `dashboard/` directory
-- Created `scripts/igris_brain_refresh.sh` (standalone brain refresh, --dry-run support)
-- Enhanced `scripts/igris_install.sh` (3 changes: refresh call, registration upsert, remote push)
-- Brain core skills refreshed — all symlinked projects (attendance_app etc.) now have correct `disable-model-invocation: false`
-- 6/6 SENTINEL tests PASS for BR-029, 9/9 SENTINEL tests PASS for BR-030
-- WARDEN: APPROVE (minor fix applied for SOUL.md copy path)
+- FR-053 full hunt: ARCHITECT (10-phase plan) > user approval > FORGER (3 new + 6 modified) > SENTINEL (10/10 PASS) > WARDEN (APPROVE + 3 fixes applied)
+- FR-054 scope analysis: ARCHITECT revealed XL (27+ files), user approved split into FR-061/062/063
+- FR-061 full hunt: ARCHITECT (M plan) > FORGER (4 files) > SENTINEL (8/8 PASS) > WARDEN (APPROVE, 2 low-risk warnings)
+- Brain push: 19 rows synced to VPS (5 briefs, 10 metrics, 1 session)
 
 ---
 
 ## Pending
 
-- Deploy new commits to VPS (`/sync code`)
-- Push brain data to VPS (`/sync data`)
-- Brain v5.0 deferred (FR-051 through FR-056)
-- Crimson Arena — standalone repo live, needs pub.dev dep updates
+- Push 4 commits to VPS (`/sync code`)
+- Hunt FR-062 (cache + migration) — Wave 3b
+- Hunt FR-055 (scheduling) — Wave 3d (parallel with FR-062)
+- Hunt FR-063 (skill path migration) — Wave 3c (after FR-062)
+- Hunt FR-056 (autonomous coordination) — Wave 4
 - FR-014 Higgsfield — blocked on URL slugs
 
 ---

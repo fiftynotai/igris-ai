@@ -5,7 +5,7 @@
 **Effort:** M-Medium (1-2d)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** In Progress
+**Status:** Done
 **Created:** 2026-02-24
 **Parent Brief:** FR-054
 **Blocked By:** (none — FR-053 complete)
@@ -129,16 +129,20 @@ These tools are the foundation for FR-062 (cache layer) and FR-063 (skill update
 **Retry Count:** 0
 
 ### Current Work
-HUNT initiated. Adding 6 CRUD tools to engine.
+Done. Commit `129d35f`. 9 files, +1,137 lines.
 
 ### Next Steps
-Proceed to PLANNING phase.
+Hunt FR-062 (cache + migration).
 
 ### Agent Log
 | Time | Agent | Action | Result |
 |------|-------|--------|--------|
 | 2026-02-24 | orchestrator | Brief split from FR-054 (sub-phase A) | SUCCESS |
 | 2026-02-24 | orchestrator | HUNT INIT — brief loaded, status In Progress | SUCCESS |
+| 2026-02-24 | architect | Plan — 4 files, 6 tools, M-effort | SUCCESS |
+| 2026-02-24 | forger | Implement 6 CRUD handlers + registrations | SUCCESS |
+| 2026-02-24 | sentinel | Validation — 8/8 PASS, build clean, 44 tools | PASS |
+| 2026-02-24 | warden | Code review — APPROVE (2 low-risk warnings) | APPROVE |
 
 ### Blockers
 (none)
