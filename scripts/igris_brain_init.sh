@@ -85,6 +85,67 @@ done
 BRAIN_DIR="$HOME/.igris"
 
 # ============================================================
+# Global symlink creation function
+# ============================================================
+# Creates symlinks from ~/.igris/core/{agents,skills,rules} -> ~/.claude/{agents,skills,rules}
+# This replaces per-project symlinks with Claude Code's native global directories.
+# Safe: never clobbers existing real directories or symlinks pointing elsewhere.
+create_global_symlinks() {
+  local claude_dir="$HOME/.claude"
+  local brain_core="$BRAIN_DIR/core"
+  local created=0
+  local skipped=0
+  local warned=0
+
+  mkdir -p "$claude_dir"
+
+  for symlink_type in agents skills rules; do
+    local target="$brain_core/$symlink_type"
+    local link="$claude_dir/$symlink_type"
+
+    # Source must exist in brain core
+    if [ ! -d "$target" ]; then
+      echo "   ⚠️  $symlink_type: brain core directory not found at $target"
+      warned=$((warned + 1))
+      continue
+    fi
+
+    if [ -L "$link" ]; then
+      # It's a symlink — check where it points
+      local current_target
+      current_target=$(readlink "$link")
+      if [ "$current_target" = "$target" ]; then
+        echo "   ✅ $symlink_type: already symlinked correctly"
+        skipped=$((skipped + 1))
+        continue
+      else
+        echo "   ⚠️  $symlink_type: symlink exists but points to '$current_target' (expected '$target') — skipping"
+        warned=$((warned + 1))
+        continue
+      fi
+    elif [ -d "$link" ]; then
+      # It's a real directory with content — don't clobber
+      echo "   ⚠️  $symlink_type: real directory exists at $link — skipping (won't clobber user content)"
+      warned=$((warned + 1))
+      continue
+    elif [ -e "$link" ]; then
+      # Some other file type — skip
+      echo "   ⚠️  $symlink_type: unexpected file at $link — skipping"
+      warned=$((warned + 1))
+      continue
+    fi
+
+    # Doesn't exist — create symlink
+    ln -s "$target" "$link"
+    echo "   ✅ $symlink_type: symlinked $link -> $target"
+    created=$((created + 1))
+  done
+
+  echo ""
+  echo "   Global symlinks: $created created, $skipped already correct, $warned warnings"
+}
+
+# ============================================================
 # Input validation helpers
 # ============================================================
 validate_url() {
@@ -314,8 +375,26 @@ echo ""
 # Check if brain already exists
 # ============================================================
 if [ -d "$BRAIN_DIR" ] && [ "$FORCE" = false ]; then
-  echo "✅ Igris Brain already exists at $BRAIN_DIR"
-  echo "   Use --force to reinitialize."
+  # Even without --force, create global symlinks if missing
+  CLAUDE_DIR="$HOME/.claude"
+  MISSING_GLOBAL_SYMLINKS=false
+  for symlink_type in agents skills rules; do
+    if [ ! -e "$CLAUDE_DIR/$symlink_type" ]; then
+      MISSING_GLOBAL_SYMLINKS=true
+      break
+    fi
+  done
+
+  if [ "$MISSING_GLOBAL_SYMLINKS" = true ]; then
+    echo "🧠 Brain exists at $BRAIN_DIR — creating missing global symlinks..."
+    echo ""
+    create_global_symlinks
+    echo ""
+    echo "✅ Global symlinks created. Brain is up to date."
+  else
+    echo "✅ Igris Brain already exists at $BRAIN_DIR"
+    echo "   Use --force to reinitialize."
+  fi
   echo ""
   echo "   To install Igris in a project, run:"
   echo "   ./scripts/igris_install.sh <project-dir>"
@@ -661,7 +740,7 @@ The Igris AI brain is installed at `~/.igris/`.
 
 ## What This Means
 
-- Igris AI agents, rules, and prompts are shared across all projects via symlinks
+- Igris AI agents, rules, and skills are shared across all projects via global directories (~/.claude/)
 - Persistent memory stored in `~/.igris/memory/knowledge.db` (SQLite + FTS5)
 - Projects using Igris are registered in the brain's project registry
 
@@ -686,6 +765,14 @@ CLAUDEEOF
   fi
   echo "   ✅ Global CLAUDE.md created at $CLAUDE_MD"
 fi
+
+# ============================================================
+# Create global symlinks: ~/.igris/core/ -> ~/.claude/
+# ============================================================
+echo ""
+echo "🔗 Setting up global agent/skill/rule symlinks..."
+
+create_global_symlinks
 
 # ============================================================
 # Register Brain MCP in ~/.claude.json
@@ -824,6 +911,7 @@ fi
 echo "⚙️  Config: $BRAIN_DIR/config.json"
 echo "👤 Profile: $BRAIN_DIR/user_profile.json"
 echo "🌐 Global CLAUDE.md: $HOME/.claude/CLAUDE.md"
+echo "🔗 Global symlinks: ~/.claude/{agents,skills,rules} -> ~/.igris/core/"
 
 if [ "$BRAIN_MODE" = "dual" ]; then
   echo ""
@@ -835,7 +923,7 @@ fi
 echo ""
 echo "📚 Next Steps:"
 echo ""
-echo "1. Install Igris in a project (symlink mode):"
+echo "1. Install Igris in a project (global mode):"
 echo "   ./scripts/igris_install.sh /path/to/your/project"
 echo ""
 echo "2. Or install in the current directory:"

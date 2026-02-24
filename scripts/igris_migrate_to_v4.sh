@@ -66,10 +66,21 @@ if [ ! -d "ai/prompts" ]; then
   exit 1
 fi
 
-# Check if already v4.0 (symlinks present)
-if [ -L ".claude/agents/architect.md" ]; then
-  echo "Project already uses v4.0 symlinks. Nothing to migrate."
-  exit 0
+# Check if already migrated to global mode
+if [ -f ".igris_version" ]; then
+  CURRENT_MODE=$(python3 -c "
+import json, sys
+try:
+    with open('.igris_version', 'r') as f:
+        data = json.load(f)
+    print(data.get('install_mode', ''))
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+  if [ "$CURRENT_MODE" = "global" ]; then
+    echo "Project already uses global mode. Nothing to migrate."
+    exit 0
+  fi
 fi
 
 echo "Project: $TARGET_DIR"
@@ -101,45 +112,51 @@ echo "  Backup complete"
 # Ensure directories exist (v3.4 projects may be missing these)
 mkdir -p ai/masks
 mkdir -p ai/templates
-mkdir -p .claude/rules
-mkdir -p .claude/skills
 
-# Replace copied files with symlinks
+# Clean up stale per-project symlinks for agents, rules, and skills
+# These are now handled globally via ~/.claude/ symlinks from brain init
 echo ""
-echo "Replacing copied files with symlinks..."
+echo "Cleaning stale per-project symlinks (agents, rules, skills)..."
+
+STALE_REMOVED=0
+
+for stale_dir in .claude/agents .claude/rules .claude/skills; do
+  if [ ! -d "$stale_dir" ]; then
+    continue
+  fi
+
+  # Remove symlinks that point into ~/.igris/core/
+  for f in "$stale_dir"/*; do
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    if [ -L "$f" ]; then
+      link_target=$(readlink "$f")
+      case "$link_target" in
+        "$BRAIN_DIR/core/"*|"$HOME/.igris/core/"*)
+          rm -f "$f"
+          STALE_REMOVED=$((STALE_REMOVED + 1))
+          ;;
+      esac
+    fi
+  done
+
+  # Remove directory if it's now empty and is NOT a symlink
+  if [ -d "$stale_dir" ] && [ ! -L "$stale_dir" ]; then
+    # Check if empty (no files or subdirs)
+    if [ -z "$(ls -A "$stale_dir" 2>/dev/null)" ]; then
+      rmdir "$stale_dir"
+      echo "  Removed empty directory: $stale_dir"
+    fi
+  fi
+done
+
+echo "  Stale symlinks removed: $STALE_REMOVED"
+echo "  Agents, rules, and skills are now global via ~/.claude/"
+
+# Symlink prompts and templates (still per-project)
+echo ""
+echo "Linking prompts and templates..."
 
 SYMLINK_COUNT=0
-
-# Agents
-if [ -d "$BRAIN_DIR/core/agents" ]; then
-  for f in "$BRAIN_DIR/core/agents/"*.md; do
-    [ -f "$f" ] || continue
-    BASENAME=$(basename "$f")
-    # Remove old copy, create symlink
-    rm -f ".claude/agents/$BASENAME"
-    ln -sf "$f" ".claude/agents/$BASENAME"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
-  done
-  # Also symlink manifest.yaml if it exists
-  if [ -f "$BRAIN_DIR/core/agents/manifest.yaml" ]; then
-    rm -f ".claude/agents/manifest.yaml"
-    ln -sf "$BRAIN_DIR/core/agents/manifest.yaml" ".claude/agents/manifest.yaml"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
-  fi
-  echo "  Agents: symlinked"
-fi
-
-# Rules
-if [ -d "$BRAIN_DIR/core/rules" ]; then
-  for f in "$BRAIN_DIR/core/rules/"*.md; do
-    [ -f "$f" ] || continue
-    BASENAME=$(basename "$f")
-    rm -f ".claude/rules/$BASENAME"
-    ln -sf "$f" ".claude/rules/$BASENAME"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
-  done
-  echo "  Rules: symlinked"
-fi
 
 # Prompts
 if [ -d "$BRAIN_DIR/core/prompts" ]; then
@@ -165,23 +182,7 @@ if [ -d "$BRAIN_DIR/core/templates" ]; then
   echo "  Templates: symlinked"
 fi
 
-# Skills (directory-level, skip existing local overrides)
-if [ -d "$BRAIN_DIR/core/skills" ]; then
-  for d in "$BRAIN_DIR/core/skills/"*/; do
-    [ -d "$d" ] || continue
-    DIRNAME=$(basename "$d")
-    if [ -d ".claude/skills/$DIRNAME" ] && [ ! -L ".claude/skills/$DIRNAME" ]; then
-      echo "  Skipping skill '$DIRNAME' (local override exists)"
-      continue
-    fi
-    rm -rf ".claude/skills/$DIRNAME"
-    ln -sf "$d" ".claude/skills/$DIRNAME"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
-  done
-  echo "  Skills: symlinked"
-fi
-
-echo "  Total symlinks: $SYMLINK_COUNT"
+echo "  Total symlinks: $SYMLINK_COUNT (prompts + templates only)"
 
 # Migrate LEARNINGS.md to brain knowledge.db
 echo ""
@@ -453,7 +454,7 @@ else:
     data = {}
 
 data['igris_ai_version'] = sys.argv[1]
-data['install_mode'] = 'symlink'
+data['install_mode'] = 'global'
 data['brain_path'] = os.path.expanduser('~/.igris')
 data['last_updated'] = now
 data['migrated_from'] = data.get('igris_ai_version', '3.4.0')
@@ -514,11 +515,14 @@ echo "=================================================="
 echo ""
 echo "Summary:"
 echo "  Version: $IGRIS_VERSION"
-echo "  Symlinks created: $SYMLINK_COUNT"
+echo "  Install mode: global (agents/rules/skills via ~/.claude/)"
+echo "  Stale symlinks removed: $STALE_REMOVED"
+echo "  Project symlinks: $SYMLINK_COUNT (prompts + templates only)"
 echo "  Backup location: $BACKUP_DIR"
 echo "  Brain registered: $SLUG (tech_stack: ${TECH_STACK:-none detected})"
 echo ""
 echo "Your project now uses centralized brain at ~/.igris/"
+echo "Agents, rules, and skills are shared globally via ~/.claude/ symlinks."
 echo "All existing briefs, sessions, and context files are preserved."
 echo ""
 echo "Rollback: Copy files from $BACKUP_DIR back to their original locations."

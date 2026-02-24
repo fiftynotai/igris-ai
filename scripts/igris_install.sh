@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-echo "🔗 Igris AI - Project Installer (Symlink Mode)"
+echo "🔗 Igris AI - Project Installer (Global Mode)"
 echo "========================================"
 echo ""
 
@@ -74,54 +74,21 @@ mkdir -p ai/context
 mkdir -p ai/masks
 mkdir -p ai/prompts
 mkdir -p ai/templates
-mkdir -p .claude/agents
 mkdir -p .claude/hooks
-mkdir -p .claude/rules
-mkdir -p .claude/skills
 mkdir -p scripts
 
 echo "   ✅ Project directories created"
 
 # ============================================================
-# Create symlinks: Agents
+# Linking prompts and templates (agents/rules/skills are global)
 # ============================================================
 echo ""
-echo "🔗 Creating symlinks..."
+echo "🔗 Linking prompts and templates..."
+echo "   (agents, rules, and skills are handled globally via ~/.claude/)"
 
 SYMLINK_COUNT=0
 
-# Agents: symlink individual .md files
-if [ -d "$BRAIN_DIR/core/agents" ]; then
-  for f in "$BRAIN_DIR/core/agents/"*.md; do
-    [ -f "$f" ] || continue
-    BASENAME=$(basename "$f")
-    ln -sf "$f" ".claude/agents/$BASENAME"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
-  done
-  # Also symlink manifest.yaml if it exists
-  if [ -f "$BRAIN_DIR/core/agents/manifest.yaml" ]; then
-    ln -sf "$BRAIN_DIR/core/agents/manifest.yaml" ".claude/agents/manifest.yaml"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
-  fi
-  echo "   ✅ Agents linked"
-fi
-
-# ============================================================
-# Create symlinks: Rules
-# ============================================================
-if [ -d "$BRAIN_DIR/core/rules" ]; then
-  for f in "$BRAIN_DIR/core/rules/"*.md; do
-    [ -f "$f" ] || continue
-    BASENAME=$(basename "$f")
-    ln -sf "$f" ".claude/rules/$BASENAME"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
-  done
-  echo "   ✅ Rules linked"
-fi
-
-# ============================================================
-# Create symlinks: Prompts
-# ============================================================
+# Prompts: symlink individual files
 if [ -d "$BRAIN_DIR/core/prompts" ]; then
   for f in "$BRAIN_DIR/core/prompts/"*; do
     [ -f "$f" ] || continue
@@ -132,9 +99,7 @@ if [ -d "$BRAIN_DIR/core/prompts" ]; then
   echo "   ✅ Prompts linked"
 fi
 
-# ============================================================
-# Create symlinks: Templates
-# ============================================================
+# Templates: symlink individual files
 if [ -d "$BRAIN_DIR/core/templates" ]; then
   for f in "$BRAIN_DIR/core/templates/"*; do
     [ -f "$f" ] || continue
@@ -145,25 +110,7 @@ if [ -d "$BRAIN_DIR/core/templates" ]; then
   echo "   ✅ Templates linked"
 fi
 
-# ============================================================
-# Create symlinks: Skills (directory-level, skip existing)
-# ============================================================
-if [ -d "$BRAIN_DIR/core/skills" ]; then
-  for d in "$BRAIN_DIR/core/skills/"*/; do
-    [ -d "$d" ] || continue
-    DIRNAME=$(basename "$d")
-    # Skip if local skill already exists (project-specific override)
-    if [ -d ".claude/skills/$DIRNAME" ] && [ ! -L ".claude/skills/$DIRNAME" ]; then
-      echo "   ⚠️  Skipping skill '$DIRNAME' (local override exists)"
-      continue
-    fi
-    ln -sf "$d" ".claude/skills/$DIRNAME"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
-  done
-  echo "   ✅ Skills linked"
-fi
-
-echo "   📊 Total symlinks: $SYMLINK_COUNT"
+echo "   📊 Total symlinks: $SYMLINK_COUNT (prompts + templates only)"
 
 # ============================================================
 # Create project-local session files (fresh templates, not symlinks)
@@ -465,7 +412,7 @@ from datetime import datetime, timezone
 now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 version_info = {
     'igris_ai_version': sys.argv[1],
-    'install_mode': 'symlink',
+    'install_mode': 'global',
     'brain_path': sys.argv[2],
     'installed_at': now,
     'last_updated': now
@@ -524,11 +471,12 @@ fi
 # ============================================================
 echo ""
 echo "========================================"
-echo "✅ Igris AI installed in $TARGET_DIR (symlink mode)"
+echo "✅ Igris AI installed in $TARGET_DIR (global mode)"
 echo "========================================"
 echo ""
 echo "📊 Summary:"
-echo "   🔗 Symlinks created: $SYMLINK_COUNT"
+echo "   🌐 Global: agents, rules, skills via ~/.claude/ (shared across all projects)"
+echo "   🔗 Project symlinks: $SYMLINK_COUNT (prompts + templates only)"
 echo "   📝 Project files: session, context, CLAUDE.md"
 echo "   🗄️  Registered as: $SLUG"
 echo ""

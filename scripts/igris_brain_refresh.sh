@@ -227,6 +227,52 @@ if [ -f "$IGRIS_DIR/SOUL.md" ]; then
 fi
 
 # ============================================================
+# Verify global symlinks (~/.claude/ -> ~/.igris/core/)
+# ============================================================
+echo ""
+if [ "$DRY_RUN" = true ]; then
+  echo "   Would verify global symlinks in ~/.claude/"
+else
+  echo "Verifying global symlinks..."
+  CLAUDE_DIR="$HOME/.claude"
+  GLOBAL_OK=0
+  GLOBAL_FIXED=0
+  GLOBAL_WARN=0
+
+  for symlink_type in agents skills rules; do
+    local_link="$CLAUDE_DIR/$symlink_type"
+    expected_target="$BRAIN_DIR/core/$symlink_type"
+
+    if [ -L "$local_link" ]; then
+      current_target=$(readlink "$local_link")
+      if [ "$current_target" = "$expected_target" ]; then
+        echo "   ✅ $symlink_type: OK"
+        GLOBAL_OK=$((GLOBAL_OK + 1))
+      else
+        echo "   ⚠️  $symlink_type: points to '$current_target' (expected '$expected_target')"
+        GLOBAL_WARN=$((GLOBAL_WARN + 1))
+      fi
+    elif [ -d "$local_link" ]; then
+      echo "   ⚠️  $symlink_type: real directory at $local_link (not a symlink)"
+      GLOBAL_WARN=$((GLOBAL_WARN + 1))
+    elif [ ! -e "$local_link" ]; then
+      # Missing — recreate
+      if [ -d "$expected_target" ]; then
+        mkdir -p "$CLAUDE_DIR"
+        ln -s "$expected_target" "$local_link"
+        echo "   ✅ $symlink_type: recreated symlink"
+        GLOBAL_FIXED=$((GLOBAL_FIXED + 1))
+      else
+        echo "   ⚠️  $symlink_type: brain core directory missing at $expected_target"
+        GLOBAL_WARN=$((GLOBAL_WARN + 1))
+      fi
+    fi
+  done
+
+  echo "   Global symlinks: $GLOBAL_OK ok, $GLOBAL_FIXED fixed, $GLOBAL_WARN warnings"
+fi
+
+# ============================================================
 # Summary
 # ============================================================
 echo ""
@@ -236,6 +282,6 @@ if [ "$DRY_RUN" = true ]; then
   echo "Run without --dry-run to apply changes."
 else
   echo "Brain core refreshed. $TOTAL_COPIED items updated."
-  echo "All symlinked projects now use the latest versions."
+  echo "Global symlinks verified. All projects see the latest versions."
 fi
 echo "========================================"
