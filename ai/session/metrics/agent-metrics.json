@@ -1,46 +1,46 @@
 {
   "version": "2.0.0",
-  "last_updated": "2026-02-24T07:33:26Z",
+  "last_updated": "2026-02-24T08:47:16Z",
   "agents": {
     "architect": {
-      "invocations": 46,
-      "last_used": "2026-02-22T17:42:18Z",
-      "avg_duration_seconds": 158.17,
+      "invocations": 48,
+      "last_used": "2026-02-24T08:38:38Z",
+      "avg_duration_seconds": 157.04,
       "success_rate": 1.0,
-      "total_input_tokens": 130986,
-      "total_output_tokens": 4478,
-      "total_cache_read_tokens": 51194499,
-      "total_cache_create_tokens": 14841664
+      "total_input_tokens": 171211,
+      "total_output_tokens": 4805,
+      "total_cache_read_tokens": 53663240,
+      "total_cache_create_tokens": 15393063
     },
     "forger": {
-      "invocations": 71,
-      "last_used": "2026-02-22T17:45:56Z",
-      "avg_duration_seconds": 491.02,
+      "invocations": 72,
+      "last_used": "2026-02-24T08:41:55Z",
+      "avg_duration_seconds": 486.02,
       "success_rate": 1.0,
-      "total_input_tokens": 52021,
-      "total_output_tokens": 13923,
-      "total_cache_read_tokens": 228042901,
-      "total_cache_create_tokens": 20680572
+      "total_input_tokens": 52069,
+      "total_output_tokens": 14084,
+      "total_cache_read_tokens": 229458832,
+      "total_cache_create_tokens": 20866827
     },
     "sentinel": {
-      "invocations": 55,
-      "last_used": "2026-02-22T17:56:30Z",
-      "avg_duration_seconds": 357.87,
+      "invocations": 57,
+      "last_used": "2026-02-24T08:44:57Z",
+      "avg_duration_seconds": 351.87,
       "success_rate": 1.0,
-      "total_input_tokens": 175955,
-      "total_output_tokens": 5763,
-      "total_cache_read_tokens": 39052178,
-      "total_cache_create_tokens": 12688693
+      "total_input_tokens": 176004,
+      "total_output_tokens": 5812,
+      "total_cache_read_tokens": 39213883,
+      "total_cache_create_tokens": 12876527
     },
     "warden": {
-      "invocations": 71,
-      "last_used": "2026-02-22T17:58:22Z",
-      "avg_duration_seconds": 82.13,
+      "invocations": 72,
+      "last_used": "2026-02-24T08:45:57Z",
+      "avg_duration_seconds": 82.09,
       "success_rate": 1.0,
-      "total_input_tokens": 118105,
-      "total_output_tokens": 7748,
-      "total_cache_read_tokens": 76167374,
-      "total_cache_create_tokens": 22135894
+      "total_input_tokens": 118128,
+      "total_output_tokens": 7814,
+      "total_cache_read_tokens": 76470439,
+      "total_cache_create_tokens": 22302763
     },
     "mender": {
       "invocations": 0,
@@ -53,14 +53,14 @@
       "total_cache_create_tokens": 0
     },
     "seeker": {
-      "invocations": 67,
-      "last_used": "2026-02-24T07:32:53Z",
-      "avg_duration_seconds": 882.27,
+      "invocations": 70,
+      "last_used": "2026-02-24T08:27:27Z",
+      "avg_duration_seconds": 870.14,
       "success_rate": 1.0,
-      "total_input_tokens": 303769,
-      "total_output_tokens": 8535,
-      "total_cache_read_tokens": 101839482,
-      "total_cache_create_tokens": 15911884
+      "total_input_tokens": 334693,
+      "total_output_tokens": 8733,
+      "total_cache_read_tokens": 104062438,
+      "total_cache_create_tokens": 16285538
     },
     "sage": {
       "invocations": 7,
@@ -311,14 +311,24 @@
       "total_output_tokens": 431,
       "total_cache_read_tokens": 2875066,
       "total_cache_create_tokens": 248838
+    },
+    "Bash": {
+      "invocations": 1,
+      "last_used": "2026-02-24T08:41:35Z",
+      "avg_duration_seconds": 17.88,
+      "success_rate": 1.0,
+      "total_input_tokens": 15,
+      "total_output_tokens": 40,
+      "total_cache_read_tokens": 129257,
+      "total_cache_create_tokens": 30157
     }
   },
   "totals": {
-    "total_invocations": 385,
+    "total_invocations": 395,
     "most_used_agent": "forger",
     "least_used_agent": "mender",
-    "total_input_tokens": 870109,
-    "total_output_tokens": 64586,
-    "total_cache_tokens": 734820548
+    "total_input_tokens": 941393,
+    "total_output_tokens": 65427,
+    "total_cache_tokens": 743018371
   }
 }

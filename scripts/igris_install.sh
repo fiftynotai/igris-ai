@@ -52,6 +52,18 @@ IGRIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 IGRIS_VERSION=$(cat "$IGRIS_DIR/version.txt" 2>/dev/null || echo "4.0.0")
 
 # ============================================================
+# Refresh brain core from source repo
+# ============================================================
+echo ""
+echo "Refreshing brain core..."
+if [ -f "$IGRIS_DIR/scripts/igris_brain_refresh.sh" ]; then
+  bash "$IGRIS_DIR/scripts/igris_brain_refresh.sh"
+else
+  echo "   igris_brain_refresh.sh not found, skipping core refresh"
+fi
+echo ""
+
+# ============================================================
 # Create project-local directories
 # ============================================================
 echo "📦 Creating project directories..."
@@ -333,17 +345,113 @@ echo ""
 echo "📋 Registering project in brain..."
 
 SLUG=$(basename "$TARGET_DIR")
+
+# Detect tech stack from project indicators
+TECH_STACK=$(python3 -c "
+import os, sys, glob
+project_dir = sys.argv[1]
+stacks = []
+indicators = {
+    'pubspec.yaml': 'flutter',
+    'package.json': 'typescript/javascript',
+    'Cargo.toml': 'rust',
+    'go.mod': 'go',
+    'requirements.txt': 'python',
+    'pyproject.toml': 'python',
+}
+for filename, stack in indicators.items():
+    if os.path.isfile(os.path.join(project_dir, filename)):
+        if stack not in stacks:
+            stacks.append(stack)
+# Check for bash scripts
+if glob.glob(os.path.join(project_dir, '*.sh')) or glob.glob(os.path.join(project_dir, 'scripts', '*.sh')):
+    stacks.append('bash')
+print(','.join(stacks) if stacks else '')
+" "$TARGET_DIR" 2>/dev/null || echo "")
+
 python3 -c "
 import sqlite3, sys
+from datetime import datetime, timezone
+now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 db = sqlite3.connect(sys.argv[1])
 db.execute('PRAGMA busy_timeout = 5000')
-db.execute('INSERT OR IGNORE INTO projects (slug, name, path) VALUES (?, ?, ?)',
-           (sys.argv[2], sys.argv[2], sys.argv[3]))
+db.execute('''
+    INSERT INTO projects (slug, name, path, tech_stack, igris_version, last_session_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(slug) DO UPDATE SET
+        name = excluded.name,
+        path = excluded.path,
+        tech_stack = excluded.tech_stack,
+        igris_version = excluded.igris_version,
+        last_session_at = excluded.last_session_at
+''', (sys.argv[2], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], now))
 db.commit()
 db.close()
-" "$BRAIN_DIR/memory/knowledge.db" "$SLUG" "$TARGET_DIR"
+" "$BRAIN_DIR/memory/knowledge.db" "$SLUG" "$TARGET_DIR" "$TECH_STACK" "$IGRIS_VERSION"
 
-echo "   ✅ Project registered: $SLUG"
+echo "   ✅ Project registered: $SLUG (tech_stack: ${TECH_STACK:-none detected})"
+
+# ============================================================
+# Push project to remote brain (if configured)
+# ============================================================
+echo ""
+echo "🌐 Checking remote brain..."
+
+REMOTE_PUSH_RESULT=$(python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1], 'r') as f:
+        config = json.load(f)
+    url = config.get('remote_brain', {}).get('url', '')
+    key = config.get('remote_brain', {}).get('api_key', '')
+    if url and key:
+        print(url + '|' + key)
+    else:
+        print('')
+except Exception:
+    print('')
+" "$BRAIN_DIR/config.json" 2>/dev/null || echo "")
+
+if [ -n "$REMOTE_PUSH_RESULT" ]; then
+  REMOTE_URL="${REMOTE_PUSH_RESULT%%|*}"
+  API_KEY="${REMOTE_PUSH_RESULT##*|}"
+  NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  PUSH_BODY=$(python3 -c "
+import json, sys
+body = {
+    'tables': {
+        'projects': [{
+            'slug': sys.argv[1],
+            'name': sys.argv[1],
+            'path': sys.argv[2],
+            'tech_stack': sys.argv[3],
+            'igris_version': sys.argv[4],
+            'status': 'active',
+            'registered_at': sys.argv[5],
+            'last_session_at': sys.argv[5],
+            'metadata': '{}'
+        }]
+    }
+}
+print(json.dumps(body))
+" "$SLUG" "$TARGET_DIR" "$TECH_STACK" "$IGRIS_VERSION" "$NOW")
+
+  HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+    --connect-timeout 5 --max-time 10 \
+    -X POST "${REMOTE_URL%/}/sync/push" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $API_KEY" \
+    -d "$PUSH_BODY" 2>/dev/null || echo "000")
+
+  if [ "$HTTP_CODE" = "200" ]; then
+    echo "   ✅ Project pushed to remote brain"
+  else
+    echo "   ⚠️  Remote brain push returned HTTP $HTTP_CODE (continuing anyway)"
+  fi
+else
+  echo "   ⚠️  Remote brain not configured, skipping push"
+fi
 
 # ============================================================
 # Create version tracking file
