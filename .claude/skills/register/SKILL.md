@@ -6,6 +6,7 @@ allowed-tools:
   - Read
   - Write
   - Glob
+  - mcp__igris-brain__igris_brief_sync
 triggers:
   - "REGISTER"
   - "register a bug"

@@ -11,6 +11,9 @@ allowed-tools:
   - Grep
   - Glob
   - Task
+  - mcp__igris-brain__igris_brief_sync
+  - mcp__igris-brain__igris_instance_heartbeat
+  - mcp__igris-brain__igris_agent_event
 triggers:
   - "HUNT"
   - "implement brief"

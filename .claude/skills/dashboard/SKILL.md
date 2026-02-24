@@ -5,6 +5,8 @@ disable-model-invocation: false
 allowed-tools:
   - Bash
   - Read
+  - mcp__igris-brain__igris_session_recall
+  - mcp__igris-brain__igris_brief_dashboard
 triggers:
   - "dashboard"
   - "cross-project dashboard"

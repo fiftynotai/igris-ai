@@ -8,6 +8,7 @@ allowed-tools:
   - Edit
   - Bash
   - Glob
+  - mcp__igris-brain__igris_brief_sync
 triggers:
   - "ARCHIVE"
   - "archive brief"

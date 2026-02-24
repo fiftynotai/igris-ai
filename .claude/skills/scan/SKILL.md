@@ -7,6 +7,7 @@ allowed-tools:
   - Grep
   - Glob
   - Bash
+  - mcp__igris-brain__igris_project_status
 triggers:
   - "SCAN"
   - "REPORT"
