@@ -15,8 +15,18 @@ import type {
   ToolDefinition,
   EventDef,
 } from '../../types.js';
-import { handleSessionSync, handleSessionRecall } from '../../../tools/sessions.js';
-import type { SessionSyncInput, SessionRecallInput } from '../../../tools/sessions.js';
+import {
+  handleSessionSync,
+  handleSessionRecall,
+  handleSessionFileGet,
+  handleSessionFileUpdate,
+} from '../../../tools/sessions.js';
+import type {
+  SessionSyncInput,
+  SessionRecallInput,
+  SessionFileGetInput,
+  SessionFileUpdateInput,
+} from '../../../tools/sessions.js';
 
 export function createSessionsComponent(): BrainComponent {
   let _ctx: ComponentContext | null = null;
@@ -81,6 +91,55 @@ export function createSessionsComponent(): BrainComponent {
           },
           handler: (args) => handleSessionRecall(args as unknown as SessionRecallInput),
         },
+        {
+          name: 'igris_session_file_get',
+          description: 'Get a single session file by project and filename. Returns the file content, content hash, and updated timestamp.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project slug',
+              },
+              filename: {
+                type: 'string',
+                description: 'Session filename (e.g., "CURRENT_SESSION.md")',
+              },
+            },
+            required: ['project', 'filename'],
+          },
+          handler: (args) => handleSessionFileGet(args as unknown as SessionFileGetInput),
+        },
+        {
+          name: 'igris_session_file_update',
+          description: 'Create or update a session file in the brain. Upserts into session_files with SHA-256 content hash. Use this to persist session state across context resets.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project slug',
+              },
+              filename: {
+                type: 'string',
+                description: 'Session filename (e.g., "CURRENT_SESSION.md")',
+              },
+              content: {
+                type: 'string',
+                description: 'Full file content to store',
+              },
+            },
+            required: ['project', 'filename', 'content'],
+          },
+          handler: (args) => {
+            const result = handleSessionFileUpdate(args as unknown as SessionFileUpdateInput);
+            _ctx?.bus.emit('session.file.updated', {
+              project: (args as Record<string, unknown>).project,
+              filename: (args as Record<string, unknown>).filename,
+            });
+            return result;
+          },
+        },
       ];
     },
 
@@ -88,6 +147,7 @@ export function createSessionsComponent(): BrainComponent {
       return {
         emits: [
           { name: 'session.synced', description: 'A session was synced to the brain' },
+          { name: 'session.file.updated', description: 'A session file was created or updated in the brain' },
         ],
         listens: [],
       };

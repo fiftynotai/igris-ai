@@ -2,10 +2,10 @@
 
 **Type:** Feature Request
 **Priority:** P1-High
-**Effort:** M-Medium (1-2d)
+**Effort:** XL-Extra Large (5-7d, revised from M)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** Ready
+**Status:** Split (see FR-061, FR-062, FR-063)
 **Created:** 2026-02-17
 **Parent Brief:** FR-051
 **Blocked By:** FR-053
@@ -149,18 +149,27 @@ Cache regenerated on:
 **Retry Count:** 0
 
 ### Current Work
-Brief registered. Blocked on FR-053 (Task Management).
+Split into 3 sub-briefs per ARCHITECT recommendation.
 
 ### Next Steps
-Complete FR-052 and FR-053 first, then HUNT FR-054.
+Hunt FR-061 → FR-062 → FR-063 sequentially.
+
+### Sub-Briefs
+| Brief | Title | Effort | Status |
+|-------|-------|--------|--------|
+| FR-061 | Brief & Session CRUD Tools | M | Ready |
+| FR-062 | Cache Layer & Migration Script | M | Ready (blocked by FR-061) |
+| FR-063 | Skill & Rule Path Migration | L | Ready (blocked by FR-061, FR-062) |
 
 ### Agent Log
 | Time | Agent | Action | Result |
 |------|-------|--------|--------|
 | 2026-02-17 | orchestrator | Brief registration from FR-051 Phase 3 | SUCCESS |
+| 2026-02-24 | orchestrator | HUNT INIT — brief loaded, status In Progress | SUCCESS |
+| 2026-02-24 | architect | Scope analysis — XL (27+ files, 3 sub-phases recommended) | SUCCESS |
 
 ### Blockers
-- FR-053 must complete first (provides briefs-v2 with full content storage)
+- ~~FR-053 must complete first~~ (DONE — commit 42cf3c0)
 
 ---
 

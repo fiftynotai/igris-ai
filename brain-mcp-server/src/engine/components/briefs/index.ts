@@ -15,8 +15,22 @@ import type {
   ToolDefinition,
   EventDef,
 } from '../../types.js';
-import { handleBriefSync, handleBriefDashboard } from '../../../tools/briefs.js';
-import type { BriefSyncInput, BriefDashboardInput } from '../../../tools/briefs.js';
+import {
+  handleBriefSync,
+  handleBriefDashboard,
+  handleBriefGet,
+  handleBriefList,
+  handleBriefCreate,
+  handleBriefUpdate,
+} from '../../../tools/briefs.js';
+import type {
+  BriefSyncInput,
+  BriefDashboardInput,
+  BriefGetInput,
+  BriefListInput,
+  BriefCreateInput,
+  BriefUpdateInput,
+} from '../../../tools/briefs.js';
 import { getDb } from '../../../db.js';
 
 export function createBriefsComponent(): BrainComponent {
@@ -133,6 +147,203 @@ export function createBriefsComponent(): BrainComponent {
             },
           },
           handler: (args) => handleBriefDashboard(args as unknown as BriefDashboardInput),
+        },
+        {
+          name: 'igris_brief_get',
+          description: 'Get a single brief by project and brief_id. Returns content (from brief_files) and metadata (from brief_status). Falls back to metadata-only if no content is stored.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project slug',
+              },
+              brief_id: {
+                type: 'string',
+                description: 'Brief ID (e.g., "BR-008", "FR-051")',
+              },
+            },
+            required: ['project', 'brief_id'],
+          },
+          handler: (args) => handleBriefGet(args as unknown as BriefGetInput),
+        },
+        {
+          name: 'igris_brief_list',
+          description: 'List briefs with optional filters. Supports filtering by project, status, brief_type, and priority. Optionally includes full brief content.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Filter by project slug (optional)',
+              },
+              status: {
+                type: 'string',
+                description: 'Filter by brief status, e.g., "Ready", "In Progress", "Done" (optional)',
+              },
+              brief_type: {
+                type: 'string',
+                description: 'Filter by brief type, e.g., "Bug", "Feature", "Migration" (optional)',
+              },
+              priority: {
+                type: 'string',
+                description: 'Filter by priority, e.g., "P0", "P1-High" (optional)',
+              },
+              include_content: {
+                type: 'boolean',
+                description: 'Include full brief content from brief_files (default: false)',
+              },
+            },
+          },
+          handler: (args) => handleBriefList(args as unknown as BriefListInput),
+        },
+        {
+          name: 'igris_brief_create',
+          description: 'Create a new brief with content and metadata. Atomically inserts into both brief_files and brief_status. Use this to store a complete brief in the brain.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project slug',
+              },
+              brief_id: {
+                type: 'string',
+                description: 'Brief ID (e.g., "BR-032", "FR-052")',
+              },
+              title: {
+                type: 'string',
+                description: 'Brief title',
+              },
+              content: {
+                type: 'string',
+                description: 'Full brief content (markdown)',
+              },
+              filename: {
+                type: 'string',
+                description: 'Filename for the brief (default: "{brief_id}.md")',
+              },
+              brief_type: {
+                type: 'string',
+                description: 'Brief type (e.g., "Bug", "Feature", "Migration")',
+              },
+              status: {
+                type: 'string',
+                description: 'Brief status (default: "Ready")',
+              },
+              priority: {
+                type: 'string',
+                description: 'Priority level (e.g., "P0", "P1-High")',
+              },
+              effort: {
+                type: 'string',
+                description: 'Effort estimate (e.g., "S-Small", "M-Medium")',
+              },
+              phase: {
+                type: 'string',
+                description: 'Current workflow phase',
+              },
+            },
+            required: ['project', 'brief_id', 'title', 'content'],
+          },
+          handler: (args) => {
+            const typedArgs = args as Record<string, unknown>;
+            const result = handleBriefCreate(args as unknown as BriefCreateInput);
+
+            if (_ctx) {
+              _ctx.bus.emit('brief.created', {
+                project: typedArgs.project as string,
+                brief_id: typedArgs.brief_id as string,
+                title: typedArgs.title as string,
+                status: (typedArgs.status as string) ?? 'Ready',
+              });
+            }
+
+            return result;
+          },
+        },
+        {
+          name: 'igris_brief_update',
+          description: 'Update an existing brief\'s content and/or metadata. Only updates fields that are provided. Supports partial updates to both brief_files and brief_status.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project slug',
+              },
+              brief_id: {
+                type: 'string',
+                description: 'Brief ID (e.g., "BR-008", "FR-051")',
+              },
+              content: {
+                type: 'string',
+                description: 'Updated brief content (markdown)',
+              },
+              title: {
+                type: 'string',
+                description: 'Updated brief title',
+              },
+              status: {
+                type: 'string',
+                description: 'Updated brief status',
+              },
+              priority: {
+                type: 'string',
+                description: 'Updated priority level',
+              },
+              effort: {
+                type: 'string',
+                description: 'Updated effort estimate',
+              },
+              phase: {
+                type: 'string',
+                description: 'Updated workflow phase',
+              },
+              brief_type: {
+                type: 'string',
+                description: 'Updated brief type',
+              },
+              filename: {
+                type: 'string',
+                description: 'Updated filename',
+              },
+            },
+            required: ['project', 'brief_id'],
+          },
+          handler: (args) => {
+            const typedArgs = args as Record<string, unknown>;
+            const project = typedArgs.project as string;
+            const briefId = typedArgs.brief_id as string;
+            const newStatus = typedArgs.status as string | undefined;
+
+            // Check current status before update for event detection
+            let previousStatus: string | undefined;
+            if (_ctx && newStatus) {
+              const db = getDb();
+              const existing = db.prepare(
+                'SELECT status FROM brief_status WHERE project = ? AND brief_id = ?'
+              ).get(project, briefId) as { status: string } | undefined;
+              previousStatus = existing?.status;
+            }
+
+            const result = handleBriefUpdate(args as unknown as BriefUpdateInput);
+
+            if (_ctx) {
+              _ctx.bus.emit('brief.synced', { project, brief_id: briefId });
+
+              // Emit brief.completed if status changed to Done
+              if (newStatus === 'Done' && previousStatus !== 'Done') {
+                _ctx.bus.emit('brief.completed', {
+                  project,
+                  brief_id: briefId,
+                  title: (typedArgs.title as string) ?? '',
+                });
+              }
+            }
+
+            return result;
+          },
         },
       ];
     },

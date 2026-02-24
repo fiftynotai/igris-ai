@@ -5,7 +5,7 @@
 **Effort:** L-Large (3-5d)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** In Progress
+**Status:** Done
 **Created:** 2026-02-17
 **Parent Brief:** FR-051
 **Blocked By:** FR-052
@@ -176,15 +176,15 @@ CREATE TABLE task_assignments (
 
 ## Workflow State
 
-**Phase:** COMMITTING
+**Phase:** COMPLETE
 **Active Agent:** none
 **Retry Count:** 0
 
 ### Current Work
-WARDEN APPROVE. 3 fixes applied (task_deps sync, done-guard, status bypass). Build clean. Ready to commit.
+Done. Commit `42cf3c0`. 9 files, +1,349 lines.
 
 ### Next Steps
-Commit and mark Done.
+Archive brief. Hunt FR-054 or FR-055 (Wave 3).
 
 ### Agent Log
 | Time | Agent | Action | Result |
