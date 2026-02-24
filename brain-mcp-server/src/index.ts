@@ -913,11 +913,21 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // Push/pull flat files (events.jsonl, agent-metrics.json, budget.json)
   // -----------------------------------------------------------------------
 
-  /** Map file_type to relative path under BRAIN_DIR */
+  /**
+   * Map file_type to relative path under BRAIN_DIR (~/.igris/ on VPS).
+   *
+   * Local hooks write to ~/.igris/cache/{project}/metrics/ (per-project).
+   * VPS stores metrics globally under BRAIN_DIR/cache/metrics/ because the
+   * file-push payload has no project identifier — all projects merge into
+   * the same files on the server side.
+   *
+   * Future enhancement: add a "project" field to the file-push API so the
+   * VPS can store metrics per-project (cache/{project}/metrics/).
+   */
   const FILE_TYPE_PATHS: Record<string, string> = {
-    events: 'ai/session/metrics/events.jsonl',
-    agent_metrics: 'ai/session/metrics/agent-metrics.json',
-    budget: 'ai/session/metrics/budget.json',
+    events: 'cache/metrics/events.jsonl',
+    agent_metrics: 'cache/metrics/agent-metrics.json',
+    budget: 'cache/metrics/budget.json',
   };
 
   // POST /sync/file-push — receive file content and write to VPS path
