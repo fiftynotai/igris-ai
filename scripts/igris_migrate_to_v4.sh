@@ -98,8 +98,11 @@ for dir in .claude/agents .claude/rules ai/prompts ai/templates; do
 done
 echo "  Backup complete"
 
-# Ensure masks directory exists (added in v4.0)
+# Ensure directories exist (v3.4 projects may be missing these)
 mkdir -p ai/masks
+mkdir -p ai/templates
+mkdir -p .claude/rules
+mkdir -p .claude/skills
 
 # Replace copied files with symlinks
 echo ""
