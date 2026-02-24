@@ -8,6 +8,7 @@ allowed-tools:
   - Glob
   - Bash
   - mcp__igris-brain__igris_project_status
+  - mcp__igris-brain__igris_brief_list
 triggers:
   - "SCAN"
   - "REPORT"
@@ -39,21 +40,21 @@ bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "scan" 2>/dev/null || tru
 
 ### 1. Load Session State
 
-Read `ai/session/CURRENT_SESSION.md` for:
+Read `~/.igris/cache/{project}/session/CURRENT_SESSION.md` for:
 - Current session mode (Active/REST MODE)
 - Active briefs
 - Resume point
 
 ### 2. Scan Briefs
 
-Read all files in `ai/briefs/` (exclude templates):
+Call `igris_brief_list` with project, fallback to cache glob at `~/.igris/cache/{project}/briefs/` (exclude templates):
 - Count by status (Ready, In Progress, Done, Draft)
 - Count by priority (P0, P1, P2, P3)
 - Apply filter if `$ARGUMENTS` provided
 
 ### 3. Check Blockers
 
-Read `ai/session/BLOCKERS.md`:
+Read `~/.igris/cache/{project}/session/BLOCKERS.md`:
 - Count active blockers (not in Resolved section)
 - Flag critical blockers
 

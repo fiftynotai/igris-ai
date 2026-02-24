@@ -43,7 +43,7 @@
 ## Phase Descriptions
 
 ### INIT
-- Load brief from ai/briefs/
+- Load brief via MCP (`igris_brief_get`) or cache (`~/.igris/cache/{project}/briefs/`)
 - Verify status (Ready or In Progress)
 - Update session state
 

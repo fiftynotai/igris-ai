@@ -67,9 +67,9 @@ main() {
     exit 0
   fi
 
-  # Only process brief files in ai/briefs/ (not templates)
+  # Only process brief files in brain cache (not templates)
   case "$file_path" in
-    *ai/briefs/*.md) ;;
+    */.igris/cache/*/briefs/*.md) ;;
     *) exit 0 ;;
   esac
 

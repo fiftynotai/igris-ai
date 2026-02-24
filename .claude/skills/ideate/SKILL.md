@@ -6,6 +6,7 @@ allowed-tools:
   - Read
   - Grep
   - Glob
+  - mcp__igris-brain__igris_brief_create
 triggers:
   - "IDEATE"
   - "ORACLE"
@@ -76,7 +77,7 @@ For each promising idea:
 
 ### Step 4: Create FR Briefs
 For ideas rated DO NOW or QUICK WIN:
-- Create `ai/briefs/FR-XXX-{name}.md` brief
+- Create via `igris_brief_create` MCP tool, fallback to cache write at `~/.igris/cache/{project}/briefs/FR-XXX-{name}.md`
 - Include value assessment and effort estimate
 - Reference related existing features
 

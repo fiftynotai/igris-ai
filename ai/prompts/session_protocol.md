@@ -8,7 +8,7 @@
 
 ## Two Levels (Simplified)
 
-### Project Level: CURRENT_SESSION.md
+### Project Level: `~/.igris/cache/{project}/session/CURRENT_SESSION.md`
 
 Purpose: Track which briefs are active at the project level.
 
@@ -59,9 +59,9 @@ Purpose: Track all work happening within a specific brief.
 | Type | Location | Lifecycle |
 |------|----------|-----------|
 | Project | `ai/context/*.md` | Permanent |
-| Session | `ai/session/CURRENT_SESSION.md` | Per-session |
+| Session | `~/.igris/cache/{project}/session/CURRENT_SESSION.md` | Per-session |
 | Agent | Brief file Agent Log | Per-brief |
-| Recovery | `ai/session/checkpoints/` | 7 days |
+| Recovery | `~/.igris/cache/{project}/session/checkpoints/` | 7 days |
 
 ---
 
@@ -69,10 +69,10 @@ Purpose: Track all work happening within a specific brief.
 
 When context resets:
 
-1. **Read `ai/session/CURRENT_SESSION.md`**
-   → Get active brief ID(s)
+1. **Read `~/.igris/cache/{project}/session/CURRENT_SESSION.md`**
+   -> Get active brief ID(s)
 
-2. **Read active brief file(s) in `ai/briefs/`**
+2. **Read active brief via `igris_brief_get` or cache at `~/.igris/cache/{project}/briefs/`**
    → Check Workflow State section
    → Phase tells you where you are
    → Agent Log shows what happened
@@ -131,11 +131,11 @@ When context resets:
 
 | File | Purpose | Update Frequency |
 |------|---------|------------------|
-| `CURRENT_SESSION.md` | Project-level brief tracking | When briefs start/complete |
+| `~/.igris/cache/{project}/session/CURRENT_SESSION.md` | Project-level brief tracking | When briefs start/complete |
 | `Brief files` | All task/workflow state for that brief | Every task/agent change |
-| `BLOCKERS.md` | Active blockers | When blocked |
-| `DECISIONS.md` | Architectural decisions | When making decisions |
-| `LEARNINGS.md` | Discoveries and patterns | When learning something |
+| `~/.igris/cache/{project}/session/BLOCKERS.md` | Active blockers | When blocked |
+| `~/.igris/cache/{project}/session/DECISIONS.md` | Architectural decisions | When making decisions |
+| `~/.igris/cache/{project}/session/LEARNINGS.md` | Discoveries and patterns | When learning something |
 
 ---
 

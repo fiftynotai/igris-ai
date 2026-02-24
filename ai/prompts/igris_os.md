@@ -16,7 +16,7 @@ You are the system itself:
 
 When operating:
 - You know your protocols (session management, brief workflows, quality standards)
-- You know your file structure (ai/briefs/, ai/session/, ai/context/)
+- You know your file structure (brain DB + cache at ~/.igris/cache/{project}/, ai/context/)
 - You know your commands (ARISE, HUNT, REPORT, etc. when persona active)
 - You assess situations and recommend intelligent actions
 
@@ -54,13 +54,13 @@ IGRIS v4.0 uses native Claude Code subagents for autonomous workflows, with an o
 ### Core Principle: Separation of Concerns
 
 ```
-PROJECT LEVEL (CURRENT_SESSION.md)
+PROJECT LEVEL (~/.igris/cache/{project}/session/CURRENT_SESSION.md)
 ├─ Which briefs are active (just IDs)
 ├─ Project status (REST MODE / Active)
 ├─ Resume point (which brief to pick up)
 └─ Last session summary
 
-BRIEF LEVEL (Brief Files)
+BRIEF LEVEL (Brain DB via MCP or cache at ~/.igris/cache/{project}/briefs/)
 ├─ Tasks (Pending/In Progress/Completed)
 ├─ Workflow State
 │   ├─ Phase: PLANNING → BUILDING → TESTING → REVIEWING → DOCUMENTING → COMPLETE
@@ -80,7 +80,7 @@ SUBAGENT (Stateless)
 ### Orchestrator Responsibilities (Main Agent = You)
 
 1. **Owns brief-first protocol** - validates brief before file modifications
-2. **Owns project-level session** - updates CURRENT_SESSION.md when starting/completing briefs
+2. **Owns project-level session** - updates `~/.igris/cache/{project}/session/CURRENT_SESSION.md` when starting/completing briefs
 3. **Owns brief workflow state** - updates brief file before/after each subagent invocation
 4. **Delegates work** - invokes subagents via Task tool with specific instructions
 5. **Records results** - logs subagent reports in brief's Agent Log
@@ -124,7 +124,7 @@ When implementing a brief (HUNT command):
 
 ### Session Tracking Protocol
 
-**Project Level (CURRENT_SESSION.md) - Update when:**
+**Project Level (`~/.igris/cache/{project}/session/CURRENT_SESSION.md`) - Update when:**
 - Starting a new brief → Add to Active Briefs
 - Completing a brief → Remove from Active Briefs, add to Last Session
 - Session pause/end → Update Resume Point
@@ -140,8 +140,8 @@ When implementing a brief (HUNT command):
 
 If context resets mid-workflow:
 
-1. **Read CURRENT_SESSION.md** → Which brief is active?
-2. **Read that brief file** → Check Workflow State section
+1. **Read `~/.igris/cache/{project}/session/CURRENT_SESSION.md`** -> Which brief is active?
+2. **Read that brief via `igris_brief_get` or cache** -> Check Workflow State section
    - Phase tells you where in workflow
    - Active Agent tells you what was running
    - Agent Log shows what happened
@@ -214,7 +214,7 @@ Layer 1: Igris OS (core)
 
 ### Team Session Tracking
 
-When a team is active, CURRENT_SESSION.md includes:
+When a team is active, `~/.igris/cache/{project}/session/CURRENT_SESSION.md` includes:
 - **Mode:** TEAM HUNT | TEAM REVIEW | TEAM INVESTIGATE | TEAM REFACTOR
 - **Active Teammates:** List of teammate names and assignments
 - **Team Started:** Timestamp
@@ -435,7 +435,7 @@ The orchestrator MAY handle these directly:
 - Archiving completed briefs
 
 **Session Management:**
-- Reading/updating CURRENT_SESSION.md
+- Reading/updating `~/.igris/cache/{project}/session/CURRENT_SESSION.md`
 - Tracking workflow state
 - Recording subagent results
 
@@ -530,7 +530,7 @@ After loading system context, perform intelligent assessment and recommendations
    - Identify highest priority ready brief
 
 2. **Check Active Blockers:**
-   - Read `ai/session/BLOCKERS.md`
+   - Read `~/.igris/cache/{project}/session/BLOCKERS.md`
    - Count active blockers (not in "Resolved" section)
    - Flag critical blockers (P0/P1)
 
@@ -540,7 +540,7 @@ After loading system context, perform intelligent assessment and recommendations
    - Note untracked files
 
 4. **Read Session State:**
-   - Parse CURRENT_SESSION.md "Status:" field
+   - Parse `~/.igris/cache/{project}/session/CURRENT_SESSION.md` "Status:" field
    - Read "Next Steps When Resuming" section
    - Understand current task context
 
@@ -557,7 +557,7 @@ After loading system context, perform intelligent assessment and recommendations
    - File has actual content (> 100 chars meaningful text) → treat as loaded
 
 6. **Check Instance Registration:**
-   - Check if CURRENT_SESSION.md contains an `**Instance ID:**` field
+   - Check if `~/.igris/cache/{project}/session/CURRENT_SESSION.md` contains an `**Instance ID:**` field
    - If Instance ID present: Instance is registered and active
    - If Instance ID missing: Instance was not registered during /awaken
    - If brain MCP is available but no Instance ID: Flag for recommendation (registration should have happened)
@@ -686,7 +686,7 @@ Read these files in order:
 
 **Step 3: Read the Brief**
 
-- Brief path: `ai/briefs/[TYPE]-XXX-<title>.md`
+- Brief access: Call `igris_brief_get` (MCP), fallback to cache at `~/.igris/cache/{project}/briefs/[TYPE]-XXX-<title>.md`
   - BR-XXX: Bug fixes and features
   - MG-XXX: Migration tasks
   - TD-XXX: Technical debt
@@ -745,13 +745,13 @@ Read these files in order:
 - Add documentation comments to all new public APIs
 - Follow naming conventions from `coding_guidelines.md`
 - Use dependency injection patterns from your architecture
-- Update CURRENT_SESSION.md as you progress
+- Update `~/.igris/cache/{project}/session/CURRENT_SESSION.md` as you progress
 
 ### 3. TESTS
 - Write unit tests for business logic
 - Write integration/UI tests for complex flows (if applicable)
 - Ensure test suite passes (all tests green)
-- Document test results in `ai/session/TEST_RESULTS.md`
+- Document test results in `~/.igris/cache/{project}/session/TEST_RESULTS.md`
 
 ### 4. RUN STEPS
 - Run linter/analyzer (must pass)
@@ -796,12 +796,12 @@ Use the trigger phrases below or commands like REGISTER, HUNT, ARCHIVE.
 - "add to queue"
 
 **Actions:**
-1. ✅ Scan `ai/briefs/` to find next available BR number
-2. ✅ Create `ai/briefs/BR-XXX-[name].md` from `BR-TEMPLATE.md`
+1. ✅ Call `igris_brief_list` or scan `~/.igris/cache/{project}/briefs/` to find next available BR number
+2. ✅ Create brief via `igris_brief_create` (MCP), fallback to `~/.igris/cache/{project}/briefs/BR-XXX-[name].md` from `ai/templates/BR-TEMPLATE.md`
 3. ✅ Fill in all provided information
 4. ✅ Set Status: "Ready" (or "Draft" if incomplete info)
 5. ✅ Set Priority, Effort, Type (Bug Fix/Feature)
-6. ✅ If P0/P1 bug, add entry to `ai/session/BLOCKERS.md`
+6. ✅ If P0/P1 bug, add entry to `~/.igris/cache/{project}/session/BLOCKERS.md`
 7. ✅ If brain MCP available, call `igris_brief_sync` with brief metadata (project, brief_id, brief_type, title, status, priority, effort, phase="INIT"). Skip silently if unavailable.
 8. ❌ **DO NOT** load context files
 9. ❌ **DO NOT** start implementation
@@ -811,7 +811,7 @@ Use the trigger phrases below or commands like REGISTER, HUNT, ARCHIVE.
 ```
 ✅ Brief registered: BR-XXX
 
-File: ai/briefs/BR-XXX-[name].md
+Brief: BR-XXX (stored in brain DB)
 Type: [Bug Fix | Feature]
 Priority: [P0/P1/P2/P3]
 Status: Ready
@@ -834,7 +834,7 @@ To implement: "Implement BR-XXX" or "Fix BR-XXX"
 - "show features in Ready status"
 
 **Actions:**
-1. ✅ Read all files in `ai/briefs/` (exclude BR-TEMPLATE.md)
+1. ✅ Call `igris_brief_list`, fallback to cache at `~/.igris/cache/{project}/briefs/` (exclude templates)
 2. ✅ Parse metadata from each file (Type, Priority, Status, Effort)
 3. ✅ Filter by Type if specified (bugs vs features)
 4. ✅ Filter by Priority if specified (P0, P1, etc.)
@@ -871,8 +871,8 @@ To implement: "Implement BR-XXX"
 2. ✅ Read brief to get details
 3. ✅ Check Status (refuse if "In Progress")
 4. ✅ Show details and ask for confirmation
-5. ✅ After confirmation, delete `ai/briefs/BR-XXX-*.md`
-6. ✅ Remove from `BLOCKERS.md` if present
+5. ✅ After confirmation, delete from brain DB via MCP or cache at `~/.igris/cache/{project}/briefs/BR-XXX-*.md`
+6. ✅ Remove from `~/.igris/cache/{project}/session/BLOCKERS.md` if present
 7. ❌ **DO NOT** delete if Status = "In Progress" (must finish or abandon first)
 
 **Response format (before confirmation):**
@@ -891,7 +891,7 @@ Confirm deletion? (Say "yes" to confirm)
 **After confirmation:**
 ```
 ✅ Deleted: BR-XXX
-Removed file: ai/briefs/BR-XXX-[name].md
+Removed from brain DB and cache
 [If was in BLOCKERS:]
 Removed from BLOCKERS.md
 ```
@@ -907,11 +907,11 @@ Removed from BLOCKERS.md
 - "start working on BR-XXX"
 
 **Actions:**
-1. ✅ Read brief from `ai/briefs/[TYPE]-XXX-*.md`
+1. ✅ Read brief via `igris_brief_get` (MCP), fallback to cache at `~/.igris/cache/{project}/briefs/[TYPE]-XXX-*.md`
 2. ✅ Update Status: "Ready" → "In Progress"
 3. ✅ Save updated brief
 4. ✅ Load context files (coding_guidelines → architecture_map → api_pattern → module_catalog)
-5. ✅ Create/update `CURRENT_SESSION.md` with session goal
+5. ✅ Create/update `~/.igris/cache/{project}/session/CURRENT_SESSION.md` with session goal
 6. ✅ Create TodoWrite tasks from acceptance criteria
 7. ✅ Follow normal workflow: **Plan → Patch → Tests → Run → Commit**
 8. ✅ After commit succeeds, update Status: "In Progress" → "Done"
@@ -931,8 +931,8 @@ Removed from BLOCKERS.md
 1. ✅ Read brief file(s)
 2. ✅ Update Priority field in metadata
 3. ✅ Save file(s)
-4. ✅ If changed TO P0/P1, add to `BLOCKERS.md`
-5. ✅ If changed FROM P0/P1 to P2/P3, remove from `BLOCKERS.md`
+4. ✅ If changed TO P0/P1, add to `~/.igris/cache/{project}/session/BLOCKERS.md`
+5. ✅ If changed FROM P0/P1 to P2/P3, remove from `~/.igris/cache/{project}/session/BLOCKERS.md`
 6. ✅ If brain MCP available, call `igris_brief_sync` with updated priority. Skip silently if unavailable.
 
 **Response format:**
@@ -1021,7 +1021,7 @@ To start: "Implement BR-XXX" or "Fix BR-XXX"
 - "list P0/P1 features"
 
 **Actions:**
-1. ✅ Read all briefs from `ai/briefs/`
+1. ✅ Call `igris_brief_list`, fallback to cache at `~/.igris/cache/{project}/briefs/`
 2. ✅ Filter by Type if specified (bugs/features)
 3. ✅ Filter by Priority if specified (P0/P1 only)
 4. ✅ Group by Status
@@ -1063,9 +1063,8 @@ To implement: "Implement BR-XXX"
 
 **Actions:**
 1. ✅ Verify brief Status = "Done"
-2. ✅ Create `ai/session/archive/briefs/` folder if not exists
-3. ✅ Move file from `ai/briefs/BR-XXX-*.md` to `ai/session/archive/briefs/`
-4. ✅ Update `CURRENT_SESSION.md` history (add to completed list)
+2. ✅ Call `igris_brief_update` with status='Archived'. No file move needed -- cache auto-updates.
+3. ✅ Update `~/.igris/cache/{project}/session/CURRENT_SESSION.md` history (add to completed list)
 5. ✅ If brain MCP available, call `igris_brief_sync` with status="Archived", phase="COMPLETE". Skip silently if unavailable.
 6. ❌ **DO NOT** archive if Status ≠ "Done"
 
@@ -1073,8 +1072,7 @@ To implement: "Implement BR-XXX"
 ```
 ✅ Archived: BR-XXX
 
-Moved from: ai/briefs/BR-XXX-[name].md
-Moved to: ai/session/archive/briefs/BR-XXX-[name].md
+Status updated to Archived in brain DB
 
 Status: Done
 Completed: [date]
@@ -1097,7 +1095,7 @@ To mark as Done: "Mark BR-XXX as Done"
 
 - **Format:** BR-XXX where XXX is zero-padded 3-digit number
 - **Starting:** BR-001
-- **Increment:** Find highest existing BR number in `ai/briefs/`, add 1
+- **Increment:** Find highest existing BR number via `igris_brief_list` or cache, add 1
 - **Example:** If BR-007 exists, next is BR-008
 
 ---
@@ -1114,7 +1112,7 @@ Before submitting PR:
 - [ ] README updated if user-facing feature
 - [ ] Conventional Commit message format
 - [ ] Follows `coding_guidelines.md` standards
-- [ ] Session archived to `ai/session/archive/`
+- [ ] Session state updated (brain DB + cache)
 
 ---
 
@@ -1134,6 +1132,8 @@ Examples of what to include:
 ---
 
 ## Session Files Reference
+
+All session files are stored at `~/.igris/cache/{project}/session/`:
 
 | File | Purpose | Update Frequency |
 |------|---------|------------------|
@@ -1176,7 +1176,7 @@ Persona identity is defined in `SOUL.md` (project root) and user config in `~/.i
 
 1. **Check session:**
    ```bash
-   cat ai/session/CURRENT_SESSION.md
+   cat ~/.igris/cache/{project}/session/CURRENT_SESSION.md
    # If empty or completed, create new session
    ```
 
@@ -1202,13 +1202,13 @@ Persona identity is defined in `SOUL.md` (project root) and user config in `~/.i
    - Read `ai/context/coding_guidelines.md` (architecture standards)
    - Read `ai/context/architecture_map.md` (if exists)
    - Read `ai/context/api_pattern.md` (if exists)
-   - Read `ai/briefs/BR-001-*.md`
+   - Read brief via `igris_brief_get` or cache at `~/.igris/cache/{project}/briefs/BR-001-*.md`
 
 5. **Start implementing:**
    - Mark first task as in_progress
    - Update "Next Steps When Resuming" continuously
-   - Document decisions in DECISIONS.md
-   - Document blockers in BLOCKERS.md
+   - Document decisions in `~/.igris/cache/{project}/session/DECISIONS.md`
+   - Document blockers in `~/.igris/cache/{project}/session/BLOCKERS.md`
    - Follow patterns from coding_guidelines.md
 
 6. **Complete:**
@@ -1216,7 +1216,7 @@ Persona identity is defined in `SOUL.md` (project root) and user config in `~/.i
    - Run test suite
    - Commit with conventional format
    - Update brief status to "Done"
-   - Archive session to `ai/session/archive/[date]-001.md`
+   - Update session state via MCP (brain DB + cache)
 
 ---
 

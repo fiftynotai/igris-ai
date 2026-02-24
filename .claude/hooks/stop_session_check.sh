@@ -18,7 +18,9 @@ INPUT=$(cat)
 
 # Check session state
 check_session() {
-  local session_file="ai/session/CURRENT_SESSION.md"
+  local slug
+  slug=$(basename "$PROJECT_DIR")
+  local session_file="$HOME/.igris/cache/$slug/session/CURRENT_SESSION.md"
 
   # No session file: nothing to check
   if [ ! -f "$session_file" ]; then

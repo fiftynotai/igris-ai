@@ -68,8 +68,6 @@ echo ""
 # ============================================================
 echo "📦 Creating project directories..."
 
-mkdir -p ai/briefs
-mkdir -p ai/session/archive
 mkdir -p ai/context
 mkdir -p ai/masks
 mkdir -p ai/prompts
@@ -77,7 +75,14 @@ mkdir -p ai/templates
 mkdir -p .claude/hooks
 mkdir -p scripts
 
+# Create brain cache directories for this project
+CACHE_DIR="$HOME/.igris/cache/$(basename "$TARGET_DIR")"
+mkdir -p "$CACHE_DIR/session"
+mkdir -p "$CACHE_DIR/briefs"
+mkdir -p "$CACHE_DIR/metrics"
+
 echo "   ✅ Project directories created"
+echo "   ✅ Brain cache at $CACHE_DIR"
 
 # ============================================================
 # Linking prompts and templates (agents/rules/skills are global)
@@ -119,8 +124,8 @@ echo ""
 echo "📝 Creating project-local files..."
 
 # CURRENT_SESSION.md
-if [ ! -f "ai/session/CURRENT_SESSION.md" ]; then
-  cat > ai/session/CURRENT_SESSION.md << 'EOF'
+if [ ! -f "$CACHE_DIR/session/CURRENT_SESSION.md" ]; then
+  cat > "$CACHE_DIR/session/CURRENT_SESSION.md" << 'EOF'
 # Current Session
 
 **Status:** No active session
@@ -150,14 +155,14 @@ if [ ! -f "ai/session/CURRENT_SESSION.md" ]; then
 
 [N/A]
 EOF
-  echo "   ✅ CURRENT_SESSION.md created"
+  echo "   ✅ CURRENT_SESSION.md created (in cache)"
 else
   echo "   ⚠️  CURRENT_SESSION.md already exists (skipping)"
 fi
 
 # BLOCKERS.md
-if [ ! -f "ai/session/BLOCKERS.md" ]; then
-  cat > ai/session/BLOCKERS.md << 'EOF'
+if [ ! -f "$CACHE_DIR/session/BLOCKERS.md" ]; then
+  cat > "$CACHE_DIR/session/BLOCKERS.md" << 'EOF'
 # Active Blockers
 
 **Last Updated:** N/A
@@ -166,14 +171,14 @@ if [ ! -f "ai/session/BLOCKERS.md" ]; then
 
 [No active blockers]
 EOF
-  echo "   ✅ BLOCKERS.md created"
+  echo "   ✅ BLOCKERS.md created (in cache)"
 else
   echo "   ⚠️  BLOCKERS.md already exists (skipping)"
 fi
 
 # DECISIONS.md
-if [ ! -f "ai/session/DECISIONS.md" ]; then
-  cat > ai/session/DECISIONS.md << 'EOF'
+if [ ! -f "$CACHE_DIR/session/DECISIONS.md" ]; then
+  cat > "$CACHE_DIR/session/DECISIONS.md" << 'EOF'
 # Architectural Decisions
 
 **Last Updated:** N/A
@@ -182,14 +187,14 @@ if [ ! -f "ai/session/DECISIONS.md" ]; then
 
 [No decisions recorded yet]
 EOF
-  echo "   ✅ DECISIONS.md created"
+  echo "   ✅ DECISIONS.md created (in cache)"
 else
   echo "   ⚠️  DECISIONS.md already exists (skipping)"
 fi
 
 # LEARNINGS.md
-if [ ! -f "ai/session/LEARNINGS.md" ]; then
-  cat > ai/session/LEARNINGS.md << 'EOF'
+if [ ! -f "$CACHE_DIR/session/LEARNINGS.md" ]; then
+  cat > "$CACHE_DIR/session/LEARNINGS.md" << 'EOF'
 # Learnings & Patterns
 
 **Last Updated:** N/A
@@ -198,7 +203,7 @@ if [ ! -f "ai/session/LEARNINGS.md" ]; then
 
 [No learnings recorded yet]
 EOF
-  echo "   ✅ LEARNINGS.md created"
+  echo "   ✅ LEARNINGS.md created (in cache)"
 else
   echo "   ⚠️  LEARNINGS.md already exists (skipping)"
 fi
@@ -230,21 +235,7 @@ else
   echo "   ⚠️  context/README.md already exists (skipping)"
 fi
 
-# Archive README
-if [ ! -f "ai/session/archive/README.md" ]; then
-  cat > ai/session/archive/README.md << 'EOF'
-# Session Archive
-
-Completed sessions are archived here for reference.
-
-## Naming Convention
-
-`YYYY-MM-DD-NNN.md` where NNN is a session number for that day.
-
-Example: `2025-10-13-001.md`
-EOF
-  echo "   ✅ archive/README.md created"
-fi
+# Archive note: Archiving is now handled via brain DB (igris_brief_update with status='Archived')
 
 # ============================================================
 # Generate CLAUDE.md from template

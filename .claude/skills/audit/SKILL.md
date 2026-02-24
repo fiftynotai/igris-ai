@@ -7,6 +7,7 @@ allowed-tools:
   - Grep
   - Glob
   - Bash
+  - mcp__igris-brain__igris_brief_create
 triggers:
   - "AUDIT"
   - "INQUISITOR"
@@ -76,7 +77,7 @@ bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "audit" 2>/dev/null || tr
 - Recommend brief type and priority
 
 ### Step 4: Create Briefs
-- For Critical/High findings, create briefs in `ai/briefs/`
+- For Critical/High findings, create via `igris_brief_create` MCP tool, fallback to cache write at `~/.igris/cache/{project}/briefs/`
 - Use appropriate brief type (TD/BR/PI/DU/PF/AC)
 - Set priority based on severity
 

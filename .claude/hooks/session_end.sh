@@ -34,7 +34,9 @@ except Exception:
 
 # Update session file to REST MODE
 update_session() {
-  local session_file="ai/session/CURRENT_SESSION.md"
+  local slug
+  slug=$(basename "$PROJECT_DIR")
+  local session_file="$HOME/.igris/cache/$slug/session/CURRENT_SESSION.md"
 
   if [ ! -f "$session_file" ]; then
     return 0

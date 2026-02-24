@@ -38,7 +38,7 @@ These rules enforce the brief-first workflow requirement before any file modific
 - "add to queue"
 
 **Actions:**
-1. Scan `ai/briefs/` to find next available number (BR-001, BR-002, etc.)
+1. Call `igris_brief_list`, fallback to cache glob at `~/.igris/cache/{project}/briefs/` to find next available number (BR-001, BR-002, etc.)
 2. Create brief file from appropriate template
 3. Set Status: "Ready" (or "Draft" if info incomplete)
 4. Set Priority, Effort, Type
@@ -59,7 +59,7 @@ These rules enforce the brief-first workflow requirement before any file modific
 - "show features in Ready status"
 
 **Actions:**
-1. Read all files in `ai/briefs/` (exclude templates)
+1. Call `igris_brief_list`, fallback to cache at `~/.igris/cache/{project}/briefs/` (exclude templates)
 2. Parse metadata from each file (Type, Priority, Status, Effort)
 3. Filter by Type if specified (bugs vs features)
 4. Filter by Priority if specified (P0, P1, etc.)
@@ -77,10 +77,10 @@ These rules enforce the brief-first workflow requirement before any file modific
 - "start working on BR-XXX"
 
 **Actions:**
-1. Read brief from `ai/briefs/[TYPE]-XXX-*.md`
+1. Call `igris_brief_get`, fallback to cache at `~/.igris/cache/{project}/briefs/[TYPE]-XXX-*.md`
 2. Update Status: "Ready" -> "In Progress"
 3. Load context files (coding_guidelines -> architecture_map -> api_pattern)
-4. Create/update `ai/session/CURRENT_SESSION.md`
+4. Create/update `~/.igris/cache/{project}/session/CURRENT_SESSION.md`
 5. Create TodoWrite tasks from acceptance criteria
 6. Follow workflow: **Plan -> Patch -> Tests -> Run -> Commit**
 7. After commit succeeds, update Status: "In Progress" -> "Done"
@@ -129,8 +129,8 @@ Every brief MUST have:
 
 ## Session Management
 
-- **Project Level:** `ai/session/CURRENT_SESSION.md` - tracks active briefs
-- **Brief Level:** Brief files in `ai/briefs/` - tracks workflow state, tasks, agents
+- **Project Level:** `~/.igris/cache/{project}/session/CURRENT_SESSION.md` - tracks active briefs
+- **Brief Level:** Brain DB (via MCP) or cache at `~/.igris/cache/{project}/briefs/` - tracks workflow state, tasks, agents
 
 ### Quick Reference
 - Update CURRENT_SESSION.md when: starting/completing briefs

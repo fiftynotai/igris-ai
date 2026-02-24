@@ -8,6 +8,8 @@ allowed-tools:
   - Edit
   - Glob
   - Grep
+  - mcp__igris-brain__igris_brief_list
+  - mcp__igris-brain__igris_session_file_get
 triggers:
   - "AWAKEN"
   - "ARISE"
@@ -37,7 +39,7 @@ Read these files silently:
 
 ### 2. Load Session State
 
-Read `ai/session/CURRENT_SESSION.md`:
+First try `igris_session_file_get` (MCP) for CURRENT_SESSION.md, then read `~/.igris/cache/{project}/session/CURRENT_SESSION.md`:
 - Check if session exists (Mode field)
 - If REST MODE: This is a resume
 - If no session: This is a fresh start
@@ -128,7 +130,7 @@ If the `igris-brain` MCP server is available:
    - machine_os = platform (e.g., "darwin", "linux")
    - project_slug = current project slug
    - project_path = absolute path to project directory
-2. Store the returned `instance_id` in CURRENT_SESSION.md by adding a line: `**Instance ID:** {uuid}` in the Status section
+2. Store the returned `instance_id` in `~/.igris/cache/{project}/session/CURRENT_SESSION.md` by adding a line: `**Instance ID:** {uuid}` in the Status section
 3. Display: "Instance registered: {instance_id}"
 4. This ID will be used for subsequent heartbeats and deregistration on /rest
 
@@ -136,11 +138,11 @@ If brain MCP is NOT available (tool call fails or MCP server not registered), sk
 
 ### 4. Perform System Assessment
 
-Scan `ai/briefs/` for inventory:
+Call `igris_brief_list` with project, fallback to cache glob at `~/.igris/cache/{project}/briefs/` for inventory:
 - Count by status and priority
 - Identify highest priority ready brief
 
-Check `ai/session/BLOCKERS.md` for active blockers.
+Check `~/.igris/cache/{project}/session/BLOCKERS.md` for active blockers.
 
 Check git status.
 

@@ -3,7 +3,7 @@
 ## Status
 **Mode:** HUNT MODE
 **Updated:** 2026-02-24
-**Active Brief:** FR-062
+**Active Brief:** FR-063
 **Instance ID:** 52227e2b-db25-49ab-aaf4-431ccea9381b
 
 ---
@@ -20,11 +20,11 @@
 | ~~FR-053~~ | ~~Brain v5.0 Phase 2 — Task Management System~~ | Done (commit `42cf3c0`) |
 | FR-054 | Brain v5.0 Phase 3 — Brief Migration & Cache Layer | Split → FR-061/062/063 |
 | ~~FR-061~~ | ~~Brain v5.0 — Brief & Session CRUD Tools~~ | Done (commit `129d35f`) |
-| ~~FR-062~~ | ~~Brain v5.0 — Cache Layer & Migration Script~~ | Done (commit pending) |
-| FR-063 | Brain v5.0 — Skill & Rule Path Migration | Ready (blocked by FR-062) |
+| ~~FR-062~~ | ~~Brain v5.0 — Cache Layer & Migration Script~~ | Done (commit `0930df0`) |
+| ~~FR-063~~ | ~~Brain v5.0 — Skill & Rule Path Migration~~ | Done (commit pending) |
 | FR-055 | Brain v5.0 Phase 4 — Scheduling System | Ready (unblocked) |
 | FR-056 | Brain v5.0 Phase 5 — Autonomous Coordination | Ready (blocked by FR-055) |
-| FR-051 | Brain v5.0 — Modular Architecture (parent) | In Progress (Phase 0+1+2+3a done) |
+| FR-051 | Brain v5.0 — Modular Architecture (parent) | In Progress (Phase 0+1+2+3a+3b done) |
 | FR-014 | Higgsfield Skill — Browser Automation Pivot | Blocked (URL slugs needed) |
 | PI-001 | Multi-Instance Concurrent Brief Workflow | Deferred |
 | TD-008 | Usage Metrics and Error Tracking | Deferred |

@@ -5,7 +5,7 @@
 **Effort:** L-Large (2-3d)
 **Assignee:** Igris AI
 **Commanded By:** Fifty.ai
-**Status:** Ready
+**Status:** Done
 **Created:** 2026-02-24
 **Parent Brief:** FR-054
 **Blocked By:** FR-061, FR-062
@@ -50,6 +50,30 @@ Skills use MCP-first: call `igris_brief_get`/`igris_brief_list` etc. Fallback to
 6. [ ] No skill references ai/briefs/ or ai/session/ directly
 7. [ ] All skills work identically post-migration
 8. [ ] allowed-tools headers updated for skills using new MCP tools
+
+---
+
+---
+
+## Workflow State
+
+**Phase:** COMPLETE
+**Active Agent:** none
+**Retry Count:** 0
+**Completed:** 2026-02-24
+
+### Agent Log
+| Time | Agent | Action | Result |
+|------|-------|--------|--------|
+| 2026-02-24 | architect | Create implementation plan | SUCCESS — 17 files (15 modify, 1 delete, 1 no-change), 8 phases |
+| 2026-02-24 | - | User approval | APPROVED — expanded scope to include metrics migration (sync + digivolve) |
+| 2026-02-24 | forger | Implement changes | SUCCESS — 28 modified, 1 deleted (skills, rules, prompts, hooks, scripts) |
+| 2026-02-24 | sentinel | Run test suite | PASS 8/10 (2 legacy hook patterns found) |
+| 2026-02-24 | - | Fix legacy hook patterns | Applied — removed 6 legacy lines from 3 hooks |
+| 2026-02-24 | warden | Code review | APPROVE — clean migration, 2 follow-up notes (CLAUDE.md.template, VPS paths) |
+
+### Next Steps
+Proceeding to commit.
 
 ---
 

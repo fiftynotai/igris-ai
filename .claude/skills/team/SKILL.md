@@ -11,6 +11,9 @@ allowed-tools:
   - Grep
   - Glob
   - Task
+  - mcp__igris-brain__igris_brief_get
+  - mcp__igris-brain__igris_brief_list
+  - mcp__igris-brain__igris_brief_update
 triggers:
   - "TEAM"
   - "team hunt"
@@ -82,14 +85,14 @@ Before every team spawn, execute these checks in order:
      ```
 
 2. **Check for active team:**
-   - Read `ai/session/CURRENT_SESSION.md`
+   - Read `~/.igris/cache/{project}/session/CURRENT_SESSION.md`
    - If Mode contains "TEAM", display error:
      ```
      A team is already active. Run /team shutdown first.
      ```
 
 3. **Validate arguments:**
-   - For `hunt`: Verify each brief ID exists in `ai/briefs/` and has Status: Ready
+   - For `hunt`: Verify each brief ID via `igris_brief_get` (MCP) or cache at `~/.igris/cache/{project}/briefs/` and has Status: Ready
    - For `review`: Verify PR number exists (if provided) or staged changes exist
    - For `investigate`: Verify brief ID exists
    - For `refactor`: Verify each module name maps to a valid directory or file
@@ -107,7 +110,7 @@ Parallel implementation of multiple briefs. Each brief is assigned to one teamma
 ### Step 1: Validate Briefs
 
 For each brief ID in arguments:
-1. Find brief file in `ai/briefs/` matching the ID
+1. Load brief via `igris_brief_get` (MCP) or cache at `~/.igris/cache/{project}/briefs/` matching the ID
 2. Read brief content
 3. Verify Status is "Ready"
 4. If any brief is not Ready, report and exclude it
@@ -154,7 +157,7 @@ Each teammate executes independently:
 
 ### Step 6: Update Session State
 
-Update `ai/session/CURRENT_SESSION.md`:
+Update `~/.igris/cache/{project}/session/CURRENT_SESSION.md`:
 ```markdown
 ## Team State
 
@@ -183,7 +186,7 @@ Files you own: {file list}
 DO NOT modify files outside your ownership boundary.
 
 Workflow:
-1. Read the brief at ai/briefs/{BRIEF_ID}-*.md
+1. Read the brief via igris_brief_get (MCP) or cache at ~/.igris/cache/{project}/briefs/{BRIEF_ID}-*.md
 2. Read ai/context/coding_guidelines.md
 3. Plan implementation
 4. Implement changes
@@ -287,7 +290,7 @@ After all reviewers complete:
 
 ### Step 5: Update Session State
 
-Update `ai/session/CURRENT_SESSION.md`:
+Update `~/.igris/cache/{project}/session/CURRENT_SESSION.md`:
 ```markdown
 ## Team State
 
@@ -357,7 +360,7 @@ Your hypothesis: {hypothesis description}
 Investigation area: {relevant files and modules}
 
 Instructions:
-1. Read the brief at ai/briefs/{BRIEF_ID}-*.md
+1. Read the brief via igris_brief_get (MCP) or cache at ~/.igris/cache/{project}/briefs/{BRIEF_ID}-*.md
 2. Investigate your hypothesis by reading relevant code
 3. Search for evidence that confirms or disproves your theory
 4. Check related modules for contributing factors
@@ -401,7 +404,7 @@ After all investigators complete:
 
 ### Step 6: Update Session State
 
-Update `ai/session/CURRENT_SESSION.md`:
+Update `~/.igris/cache/{project}/session/CURRENT_SESSION.md`:
 ```markdown
 ## Team State
 
@@ -492,7 +495,7 @@ Message the lead BEFORE modifying any shared contract.
 
 ### Step 5: Update Session State
 
-Update `ai/session/CURRENT_SESSION.md`:
+Update `~/.igris/cache/{project}/session/CURRENT_SESSION.md`:
 ```markdown
 ## Team State
 
@@ -514,7 +517,7 @@ Display the current state of the active team.
 
 ### Execution
 
-1. Read `ai/session/CURRENT_SESSION.md`
+1. Read `~/.igris/cache/{project}/session/CURRENT_SESSION.md`
 2. If no Team State section exists, display: "No active team."
 3. If Team State exists, display formatted table:
 
@@ -609,7 +612,7 @@ Commits: {list of commit hashes}
 
 ### Step 5: Update Session State
 
-Update `ai/session/CURRENT_SESSION.md`:
+Update `~/.igris/cache/{project}/session/CURRENT_SESSION.md`:
 - Remove Team State section
 - Add to Last Session Summary: "Team {mode} completed: {results summary}"
 
@@ -624,7 +627,7 @@ For `hunt` mode:
 
 ## Session Tracking
 
-When a team is active, `ai/session/CURRENT_SESSION.md` includes a Team State section:
+When a team is active, `~/.igris/cache/{project}/session/CURRENT_SESSION.md` includes a Team State section:
 
 ```markdown
 ## Team State
@@ -668,7 +671,7 @@ Run /team shutdown to end the current team before starting a new one.
 ### Brief Not Found
 
 ```
-Brief {BRIEF_ID} not found in ai/briefs/.
+Brief {BRIEF_ID} not found in brain DB or cache.
 Available briefs: {list of brief IDs with Status: Ready}
 ```
 
@@ -694,7 +697,7 @@ If a teammate stops responding or errors out:
 
 ### Orphaned Team Session
 
-If CURRENT_SESSION.md shows a Team State but no teammates are active:
+If `~/.igris/cache/{project}/session/CURRENT_SESSION.md` shows a Team State but no teammates are active:
 1. Display warning: "Orphaned team state detected. No active teammates found."
 2. Suggest: "Run /team shutdown to clean up session state."
 

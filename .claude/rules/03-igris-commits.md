@@ -75,7 +75,7 @@ Before submitting PR:
 - [ ] README updated if user-facing feature
 - [ ] Conventional Commit message format
 - [ ] Follows `coding_guidelines.md` standards
-- [ ] Session archived to `ai/session/archive/`
+- [ ] Session state updated (brain DB + cache)
 
 ---
 

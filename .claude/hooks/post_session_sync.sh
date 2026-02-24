@@ -70,9 +70,9 @@ main() {
     exit 0
   fi
 
-  # Only process files in ai/session/
+  # Only process session files in brain cache
   case "$file_path" in
-    *ai/session/*.md) ;;
+    */.igris/cache/*/session/*.md) ;;
     *) exit 0 ;;
   esac
 

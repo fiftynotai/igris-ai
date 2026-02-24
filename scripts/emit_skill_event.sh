@@ -18,7 +18,8 @@ trap 'exit 0' ERR
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 
 # Constants
-METRICS_DIR="${PROJECT_DIR}/ai/session/metrics"
+SLUG=$(basename "$PROJECT_DIR")
+METRICS_DIR="$HOME/.igris/cache/$SLUG/metrics"
 EVENTS_FILE="${METRICS_DIR}/events.jsonl"
 
 # Validate skill name argument

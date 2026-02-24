@@ -67,7 +67,7 @@ bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "digivolve" 2>/dev/null |
 Display all agents with their status and usage metrics.
 
 1. Read `.claude/agents/manifest.yaml` for agent definitions
-2. Read `ai/session/metrics/agent-metrics.json` for usage stats
+2. Read `~/.igris/cache/{project}/metrics/agent-metrics.json` for usage stats (or use `igris_metrics_query` MCP tool)
 3. Format as roster display (see agent-roster.md template)
 
 Output format:

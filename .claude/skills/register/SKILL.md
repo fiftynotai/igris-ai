@@ -7,6 +7,8 @@ allowed-tools:
   - Write
   - Glob
   - mcp__igris-brain__igris_brief_sync
+  - mcp__igris-brain__igris_brief_create
+  - mcp__igris-brain__igris_brief_list
 triggers:
   - "REGISTER"
   - "register a bug"
@@ -82,18 +84,18 @@ Map type to brief prefix:
 
 ### 3. Find Next Available Number
 
-Scan `ai/briefs/` for existing briefs with this prefix.
+Call `igris_brief_list` to find next available number, fallback to cache glob at `~/.igris/cache/{project}/briefs/`.
 Find highest number, add 1.
 Example: If BR-007 exists, next is BR-008.
 
 ### 4. Read Template
 
-Read template from `ai/briefs/{PREFIX}-TEMPLATE.md`.
-Fallback to `ai/briefs/BR-TEMPLATE.md` if specific template not found.
+Read template from `ai/templates/{PREFIX}-TEMPLATE.md`.
+Fallback to `ai/templates/BR-TEMPLATE.md` if specific template not found.
 
 ### 5. Create Brief File
 
-Create `ai/briefs/{PREFIX}-{XXX}-{slug}.md`:
+Call `igris_brief_create` with project, brief_id, content, metadata. If MCP unavailable, write to `~/.igris/cache/{project}/briefs/{PREFIX}-{XXX}-{slug}.md`:
 - Fill in title from arguments
 - Set Status: Ready (or Draft if info incomplete)
 - Set Priority: P2 (default, can be changed)
@@ -102,7 +104,7 @@ Create `ai/briefs/{PREFIX}-{XXX}-{slug}.md`:
 
 ### 6. Handle P0/P1 Priority
 
-If user specifies P0 or P1 priority, also add entry to `ai/session/BLOCKERS.md`.
+If user specifies P0 or P1 priority, also add entry to `~/.igris/cache/{project}/session/BLOCKERS.md`.
 
 ### 7. Sync Brief to Brain
 
@@ -124,7 +126,7 @@ Display:
 ```
 Brief registered: {PREFIX}-{XXX}
 
-File: ai/briefs/{PREFIX}-{XXX}-{slug}.md
+Brief: {PREFIX}-{XXX} (stored in brain DB)
 Type: [Bug Fix | Feature | Migration | etc.]
 Priority: P2 (default)
 Status: Ready

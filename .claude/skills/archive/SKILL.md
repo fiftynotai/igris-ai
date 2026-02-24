@@ -9,6 +9,8 @@ allowed-tools:
   - Bash
   - Glob
   - mcp__igris-brain__igris_brief_sync
+  - mcp__igris-brain__igris_brief_update
+  - mcp__igris-brain__igris_brief_get
 triggers:
   - "ARCHIVE"
   - "archive brief"
@@ -41,10 +43,7 @@ bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "archive" 2>/dev/null || 
 
 ### 1. Find Brief File
 
-Search `ai/briefs/` for file matching `$ARGUMENTS`:
-```
-ai/briefs/*{$ARGUMENTS}*.md
-```
+Call `igris_brief_get` with project and brief_id, fallback to cache at `~/.igris/cache/{project}/briefs/*{$ARGUMENTS}*.md`.
 
 If not found, display error and available briefs.
 
@@ -63,20 +62,15 @@ To mark as Done: "Mark {BRIEF_ID} as Done"
 ```
 Exit without archiving.
 
-### 3. Create Archive Directory
+### 3. Update Status to Archived
 
-Ensure `ai/session/archive/briefs/` exists.
-Create if missing.
+Call `igris_brief_update` with status='Archived'. No file move needed -- cache auto-updates.
 
-### 4. Move Brief File
+### 4. Update Session History
 
-Move from `ai/briefs/{BRIEF_ID}-*.md` to `ai/session/archive/briefs/`.
+Edit `~/.igris/cache/{project}/session/CURRENT_SESSION.md` to add to completed briefs list (if applicable).
 
-### 5. Update Session History
-
-Edit `ai/session/CURRENT_SESSION.md` to add to completed briefs list (if applicable).
-
-### 6. Sync Status to Brain
+### 5. Sync Status to Brain
 
 If the `igris-brain` MCP server is available, call `igris_brief_sync` with:
 - **project:** current project slug (derive from directory name or brain registry)
@@ -90,16 +84,14 @@ If the `igris-brain` MCP server is available, call `igris_brief_sync` with:
 
 If brain MCP is not available, skip silently. No errors.
 
-### 7. Confirm Archive
+### 6. Confirm Archive
 
 Display:
 ```
 Archived: {BRIEF_ID}
 
-Moved from: ai/briefs/{filename}
-Moved to: ai/session/archive/briefs/{filename}
+Status updated to Archived in brain DB.
 
-Status: Done
 Completed: [date from brief]
 [Brief summary if available]
 ```

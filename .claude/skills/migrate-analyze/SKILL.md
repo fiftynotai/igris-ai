@@ -7,6 +7,7 @@ allowed-tools:
   - Grep
   - Glob
   - Bash
+  - mcp__igris-brain__igris_brief_create
 triggers:
   - "MIGRATE"
   - "PATHFINDER"
@@ -64,7 +65,7 @@ Create MG-XXX briefs for each significant gap:
 - Ordered by priority (Critical -> Low)
 - Consider dependencies (some migrations must happen before others)
 - Group related gaps into single briefs where logical
-- Place briefs in `ai/briefs/MG-XXX-{name}.md`
+- Create via `igris_brief_create` MCP tool, fallback to cache write at `~/.igris/cache/{project}/briefs/MG-XXX-{name}.md`
 
 ## Output Format
 

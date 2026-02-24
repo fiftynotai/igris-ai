@@ -16,7 +16,8 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 cd "$PROJECT_DIR"
 
 # Constants
-METRICS_DIR="ai/session/metrics"
+SLUG=$(basename "$PROJECT_DIR")
+METRICS_DIR="$HOME/.igris/cache/$SLUG/metrics"
 METRICS_FILE="${METRICS_DIR}/agent-metrics.json"
 LOCK_FILE="/tmp/igris_agent_metrics.lock"
 TIMESTAMP_DIR="/tmp"

@@ -12,6 +12,8 @@ allowed-tools:
   - Glob
   - Task
   - mcp__igris-brain__igris_brief_sync
+  - mcp__igris-brain__igris_brief_get
+  - mcp__igris-brain__igris_brief_update
   - mcp__igris-brain__igris_instance_heartbeat
   - mcp__igris-brain__igris_agent_event
 triggers:
@@ -77,12 +79,12 @@ bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "hunt" 2>/dev/null || tru
 
 ### Phase 1: INIT
 
-1. Find brief file in `ai/briefs/` matching `$ARGUMENTS`
+1. Load brief via `igris_brief_get` (MCP), fallback to cache at `~/.igris/cache/{project}/briefs/` matching `$ARGUMENTS`
 2. Read brief content
 3. Verify Status is "Ready" or "In Progress"
 4. If Status is "Done" or "Draft", refuse with message
 5. Update Status: "Ready" -> "In Progress" if needed
-6. Update `ai/session/CURRENT_SESSION.md`:
+6. Update `~/.igris/cache/{project}/session/CURRENT_SESSION.md`:
    - Set Active Brief
    - Set Mode: HUNT MODE
 
@@ -113,14 +115,14 @@ Loading brief and preparing for implementation.
 Proceed to PLANNING phase.
 ```
 
-**Heartbeat:** If Instance ID exists in CURRENT_SESSION.md, call `igris_instance_heartbeat` with current_brief and current_phase="INIT". See "Instance Heartbeat" section below.
+**Heartbeat:** If Instance ID exists in `~/.igris/cache/{project}/session/CURRENT_SESSION.md`, call `igris_instance_heartbeat` with current_brief and current_phase="INIT". See "Instance Heartbeat" section below.
 
 ### Phase 2: PLANNING
 
 1. Update brief: Phase = PLANNING, Active Agent = architect
 2. Add Agent Log entry: "Starting architect..."
-3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in CURRENT_SESSION.md, call `igris_agent_event` with:
-   - instance_id: {Instance ID from CURRENT_SESSION.md}
+3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/cache/{project}/session/CURRENT_SESSION.md`, call `igris_agent_event` with:
+   - instance_id: {Instance ID from `~/.igris/cache/{project}/session/CURRENT_SESSION.md`}
    - agent: "architect"
    - event_type: "start"
    - brief_id: {current brief ID}
@@ -170,7 +172,7 @@ Task tool parameters:
 
 1. Update brief: Phase = BUILDING, Active Agent = forger
 2. Add Agent Log entry: "Starting forger..."
-3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in CURRENT_SESSION.md, call `igris_agent_event` with:
+3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/cache/{project}/session/CURRENT_SESSION.md`, call `igris_agent_event` with:
    - instance_id: {Instance ID}
    - agent: "forger"
    - event_type: "start"
@@ -211,7 +213,7 @@ Task tool parameters:
 
 1. Update brief: Phase = TESTING, Active Agent = sentinel
 2. Add Agent Log entry: "Starting sentinel..."
-3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in CURRENT_SESSION.md, call `igris_agent_event` with:
+3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/cache/{project}/session/CURRENT_SESSION.md`, call `igris_agent_event` with:
    - instance_id: {Instance ID}
    - agent: "sentinel"
    - event_type: "start"
@@ -266,14 +268,14 @@ Task tool parameters:
 8. **If FAIL and Retry Count >= 3:**
    - Set Phase: BLOCKED
    - Display: "Tests failing after 3 attempts. Manual intervention required."
-   - Add blocker to BLOCKERS.md
+   - Add blocker to `~/.igris/cache/{project}/session/BLOCKERS.md`
    - Stop workflow
 
 ### Phase 5: REVIEWING
 
 1. Update brief: Phase = REVIEWING, Active Agent = warden
 2. Add Agent Log entry: "Starting warden..."
-3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in CURRENT_SESSION.md, call `igris_agent_event` with:
+3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/cache/{project}/session/CURRENT_SESSION.md`, call `igris_agent_event` with:
    - instance_id: {Instance ID}
    - agent: "warden"
    - event_type: "start"
@@ -350,7 +352,7 @@ Task tool parameters:
 - Session/config changes
 
 4. **If docs needed:**
-   - **Emit agent event (start):** If brain MCP is available AND Instance ID exists in CURRENT_SESSION.md, call `igris_agent_event` with:
+   - **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/cache/{project}/session/CURRENT_SESSION.md`, call `igris_agent_event` with:
      - instance_id: {Instance ID}
      - agent: "document"
      - event_type: "start"
@@ -414,7 +416,7 @@ EOF
 ### Phase 8: COMPLETE
 
 1. Update brief: Phase = COMPLETE
-2. Update `ai/session/CURRENT_SESSION.md`:
+2. Update `~/.igris/cache/{project}/session/CURRENT_SESSION.md`:
    - Add to Last Session Summary
    - Clear Active Brief (or set to next)
 
@@ -435,12 +437,12 @@ Next actions:
 
 ## Instance Heartbeat (Mandatory When Available)
 
-On each phase transition (PLANNING, BUILDING, TESTING, REVIEWING, DOCUMENTING, COMMITTING, COMPLETE), you MUST refresh the instance heartbeat if an instance ID exists in CURRENT_SESSION.md.
+On each phase transition (PLANNING, BUILDING, TESTING, REVIEWING, DOCUMENTING, COMMITTING, COMPLETE), you MUST refresh the instance heartbeat if an instance ID exists in `~/.igris/cache/{project}/session/CURRENT_SESSION.md`.
 
 If the `igris-brain` MCP server is available AND an instance ID is stored:
-1. Read the Instance ID from CURRENT_SESSION.md
+1. Read the Instance ID from `~/.igris/cache/{project}/session/CURRENT_SESSION.md`
 2. Call `igris_instance_heartbeat` with:
-   - instance_id = the instance ID from CURRENT_SESSION.md
+   - instance_id = the instance ID from `~/.igris/cache/{project}/session/CURRENT_SESSION.md`
    - machine_hostname = system hostname
    - machine_os = platform (e.g., "darwin", "linux")
    - project_slug = current project slug
@@ -454,7 +456,7 @@ If brain MCP is not available or no instance ID is stored, skip silently. Do NOT
 
 ## Agent Event Emission (Mandatory When Available)
 
-On each agent invocation, you MUST emit `igris_agent_event` calls if brain MCP is available AND Instance ID exists in CURRENT_SESSION.md.
+On each agent invocation, you MUST emit `igris_agent_event` calls if brain MCP is available AND Instance ID exists in `~/.igris/cache/{project}/session/CURRENT_SESSION.md`.
 
 **Pattern for every agent:**
 

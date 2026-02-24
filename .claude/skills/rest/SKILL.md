@@ -6,6 +6,7 @@ allowed-tools:
   - Read
   - Write
   - Edit
+  - mcp__igris-brain__igris_session_file_update
 triggers:
   - "REST"
   - "REST MODE"
@@ -28,7 +29,7 @@ bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "rest" 2>/dev/null || tru
 
 ### 1. Read Current Session
 
-Read `ai/session/CURRENT_SESSION.md` to understand current state.
+Read `~/.igris/cache/{project}/session/CURRENT_SESSION.md` to understand current state.
 
 ### 2. Confirm with User
 
@@ -39,18 +40,18 @@ Ask: "Save session and enter REST MODE? Any unsaved work will be noted for resum
 You MUST deregister the instance when ending a session. This removes the instance from the VPS dashboard.
 
 If the `igris-brain` MCP server is available:
-1. Read the Instance ID from CURRENT_SESSION.md (look for `**Instance ID:**` field)
+1. Read the Instance ID from `~/.igris/cache/{project}/session/CURRENT_SESSION.md` (look for `**Instance ID:**` field)
 2. If Instance ID exists, call `igris_instance_remove` with the instance_id
 3. Display: "Instance deregistered: {instance_id}"
-4. Remove the `**Instance ID:**` line from CURRENT_SESSION.md (clean up for next session)
+4. Remove the `**Instance ID:**` line from `~/.igris/cache/{project}/session/CURRENT_SESSION.md` (clean up for next session)
 
 If brain MCP is NOT available or no Instance ID is stored, skip gracefully. Do NOT block session end.
 
 ### 2.6. Sync to Brain (Optional)
 
 If the `igris-brain` MCP server is available:
-- Read `ai/session/LEARNINGS.md` — if it has new content since last sync, store each learning via `igris_memory_store` with the current project slug
-- Read `ai/session/DECISIONS.md` — if it has new content, store each decision via `igris_memory_store` with category="decision" and the current project slug
+- Read `~/.igris/cache/{project}/session/LEARNINGS.md` -- if it has new content since last sync, store each learning via `igris_memory_store` with the current project slug
+- Read `~/.igris/cache/{project}/session/DECISIONS.md` -- if it has new content, store each decision via `igris_memory_store` with category="decision" and the current project slug
 - Call `igris_metrics_record` with session summary: project=current project slug, agent="session", action="rest", result="success"
 - Call `igris_session_sync` with:
   - project = current project slug (basename of project directory)
@@ -88,7 +89,7 @@ If remote brain is not configured or push fails, skip with one-line notice: "Bra
 
 ### 3. Update Session File
 
-Edit `ai/session/CURRENT_SESSION.md`:
+Edit `~/.igris/cache/{project}/session/CURRENT_SESSION.md`:
 
 ```markdown
 ## Status

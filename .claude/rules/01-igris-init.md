@@ -22,7 +22,7 @@ This applies to:
    - Persona name: Read from SOUL.md title (who you ARE)
    - User name: Read from USER.md Identity > Name, fallback to SOUL.md default addressing (who you SERVE)
 4. **Display:** Persona greeting WITH capabilities (see greeting format below)
-5. **Load:** `ai/session/CURRENT_SESSION.md` (silently)
+5. **Load:** `~/.igris/cache/{project}/session/CURRENT_SESSION.md` (silently)
 6. **Load:** `ai/context/coding_guidelines.md` if exists (silently)
 6.5. **Check Brain:** If `~/.igris/` exists, note brain is available. Query `igris_project_status` for current project context.
 7. **Analyze:** Execute Post-Initialization Analysis Protocol from igris_os.md
@@ -89,9 +89,9 @@ Respond:
 Igris AI [VERSION] is active
 
 Current configuration:
-- Session tracking: Enabled (ai/session/CURRENT_SESSION.md)
+- Session tracking: Enabled (brain DB + cache)
 - Architecture enforcement: Enabled (ai/context/coding_guidelines.md)
-- Brief workflow: Enabled (ai/briefs/)
+- Brief workflow: Enabled (brain DB + cache)
 - Commit format: Conventional Commits (no AI signatures)
 
 Type your command to begin.
@@ -110,7 +110,7 @@ When you receive your first message from the user:
 - Understand: session management, brief operations, quality standards
 
 ### 2. Load Session State
-- Read: `ai/session/CURRENT_SESSION.md`
+- Read: `~/.igris/cache/{project}/session/CURRENT_SESSION.md`
 - Parse session status (In Progress / Paused / None)
 - Read "Next Steps When Resuming" section
 - Understand current task context
@@ -122,8 +122,8 @@ When you receive your first message from the user:
 
 ### 4. Perform System Assessment
 - Execute Post-Initialization Analysis Protocol (from igris_os.md)
-- Scan `ai/briefs/` for brief inventory
-- Check `ai/session/BLOCKERS.md` for active blockers
+- Call `igris_brief_list` or scan `~/.igris/cache/{project}/briefs/` for brief inventory
+- Check `~/.igris/cache/{project}/session/BLOCKERS.md` for active blockers
 - Review git status (from context)
 - Generate intelligent recommendations based on priority logic
 

@@ -163,7 +163,7 @@ If the `igris-brain` MCP server is NOT available:
 - Display sync summary (rows pushed, errors synced, etc.)
 
 **[3/5] Pushing events log...**
-- Check if `ai/session/metrics/events.jsonl` exists in the project directory.
+- Check if `~/.igris/cache/{project}/metrics/events.jsonl` exists in the project directory.
 - If it exists:
   - Read the file content.
   - Call `igris_file_push` with:
@@ -178,7 +178,7 @@ If the `igris-brain` MCP server is NOT available:
   - Display: "No events.jsonl found. Skipping."
 
 **[4/5] Pushing agent metrics...**
-- Check if `ai/session/metrics/agent-metrics.json` exists in the project directory.
+- Check if `~/.igris/cache/{project}/metrics/agent-metrics.json` exists in the project directory.
 - If it exists:
   - Read the file content.
   - Call `igris_file_push` with:
@@ -192,7 +192,7 @@ If the `igris-brain` MCP server is NOT available:
   - Display: "No agent-metrics.json found. Skipping."
 
 **[5/5] Pushing budget config...**
-- Check if `ai/session/metrics/budget.json` exists in the project directory.
+- Check if `~/.igris/cache/{project}/metrics/budget.json` exists in the project directory.
 - If it exists:
   - Read the file content.
   - Call `igris_file_push` with:
