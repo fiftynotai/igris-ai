@@ -1,26 +1,16 @@
 #!/usr/bin/env node
 /**
- * Igris AI Centralized Brain MCP Server
+ * Igris AI Centralized Brain MCP Server v5.0
  *
- * Exposes persistent memory, project management, and cross-project
- * intelligence via Model Context Protocol. Connects to the centralized
- * knowledge database at ~/.igris/memory/knowledge.db.
+ * Modular engine architecture. Domain components are loaded via the
+ * component registry, tools are dispatched through the API gateway,
+ * and the event bus wires cross-component communication.
  *
  * Supports two transport modes:
  * - stdio  (default) — for local Claude Code integration
  * - http   (--http)  — for remote/VPS access via Streamable HTTP
  *
- * Tools provided:
- * - igris_memory_store, igris_memory_search, igris_memory_recall
- * - igris_pattern_suggest
- * - igris_error_lookup
- * - igris_project_register, igris_project_list, igris_project_status
- * - igris_metrics_record, igris_metrics_query, igris_metrics_velocity
- * - igris_session_sync, igris_session_recall
- * - igris_brief_sync, igris_brief_dashboard
- * - igris_instance_heartbeat, igris_instance_list, igris_instance_remove
- *
- * @version 4.0.0
+ * @version 5.0.0
  * @author Fifty.ai
  */
 
@@ -38,38 +28,16 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 
-// Tool handlers
-import { handleMemoryStore, handleMemorySearch, handleMemoryRecall, handlePatternSuggest } from './tools/memory.js';
-import type { MemoryStoreInput, MemorySearchInput, MemoryRecallInput, PatternSuggestInput } from './tools/memory.js';
-import { handleErrorLookup } from './tools/errors.js';
-import type { ErrorLookupInput } from './tools/errors.js';
-import { handleProjectRegister, handleProjectList, handleProjectStatus } from './tools/projects.js';
-import type { ProjectRegisterInput, ProjectListInput, ProjectStatusInput } from './tools/projects.js';
-import { handleMetricsRecord, handleMetricsQuery, handleMetricsVelocity } from './tools/metrics.js';
-import type { MetricsRecordInput, MetricsQueryInput, MetricsVelocityInput } from './tools/metrics.js';
-import { handleSessionSync, handleSessionRecall } from './tools/sessions.js';
-import type { SessionSyncInput, SessionRecallInput } from './tools/sessions.js';
-import { handleBriefSync, handleBriefDashboard } from './tools/briefs.js';
-import type { BriefSyncInput, BriefDashboardInput } from './tools/briefs.js';
-import { handleInstanceHeartbeat, handleInstanceList, handleInstanceRemove } from './tools/instances.js';
-import type { InstanceHeartbeatInput, InstanceListInput, InstanceRemoveInput } from './tools/instances.js';
+// Engine — replaces monolithic tool imports
+import { bootEngine } from './engine/index.js';
+import type { Engine, EngineConfig } from './engine/index.js';
+
+// REST API helpers (used by HTTP endpoints, not MCP tools)
 import { handleAgentEvent, handleAgentEventList, handleAgentEventLog, handleAgentMetricsSummary } from './tools/agent_events.js';
 import type { AgentEventInput } from './tools/agent_events.js';
-import {
-  handleBrainPush, handleBrainPull, SYNC_TABLES, mergeRows,
-  handleSyncQueueStatus, handleSyncQueueDrain,
-  handleBriefFileSync,
-  handleSessionFileSync, handleSessionFilePull,
-  handleDefinitionSync, handleDefinitionPull,
-  handleFilePush, handleFilePull,
-} from './tools/sync.js';
-import type {
-  BrainPushInput, BrainPullInput, SyncQueueDrainInput,
-  BriefFileSyncInput,
-  SessionFileSyncInput, SessionFilePullInput,
-  DefinitionSyncInput, DefinitionPullInput,
-  FilePushInput, FilePullInput,
-} from './tools/sync.js';
+
+// Sync tables config (used by HTTP /sync/push and /sync/pull endpoints)
+import { SYNC_TABLES, mergeRows } from './tools/sync.js';
 
 // Staging processor
 import { processStagingFiles } from './staging.js';
@@ -134,6 +102,36 @@ function parseConfig(): ServerConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Engine singleton — booted once, shared across stdio and HTTP transports
+// ---------------------------------------------------------------------------
+
+let _engine: Engine | null = null;
+
+/**
+ * Get or boot the engine singleton.
+ * Lazily initializes on first call with the default DB path.
+ */
+function getEngine(): Engine {
+  if (!_engine) {
+    const config: EngineConfig = {
+      dbPath: DB_PATH,
+      components: {
+        memory: { enabled: true },
+        errors: { enabled: true },
+        projects: { enabled: true },
+        metrics: { enabled: true },
+        sessions: { enabled: true },
+        briefs: { enabled: true },
+        instances: { enabled: true },
+        sync: { enabled: true },
+      },
+    };
+    _engine = bootEngine(config);
+  }
+  return _engine;
+}
+
+// ---------------------------------------------------------------------------
 // Direct tool dispatch (bypass MCP transport)
 // ---------------------------------------------------------------------------
 
@@ -142,77 +140,15 @@ function parseConfig(): ServerConfig {
  *
  * Used as a fallback when no active MCP sessions exist (e.g. after a server
  * restart) and Claude Code sends tool calls without re-initializing first.
- * All tool handlers are pure functions that only need the SQLite database.
+ * Delegates to the engine gateway.
  */
 async function dispatchToolCall(
   name: string,
   args: Record<string, unknown>,
 ): Promise<{ content: { type: string; text: string }[]; isError?: boolean }> {
   try {
-    switch (name) {
-      case 'igris_memory_store':
-        return handleMemoryStore(args as unknown as MemoryStoreInput);
-      case 'igris_memory_search':
-        return handleMemorySearch(args as unknown as MemorySearchInput);
-      case 'igris_memory_recall':
-        return handleMemoryRecall(args as unknown as MemoryRecallInput);
-      case 'igris_error_lookup':
-        return handleErrorLookup(args as unknown as ErrorLookupInput);
-      case 'igris_project_register':
-        return handleProjectRegister(args as unknown as ProjectRegisterInput);
-      case 'igris_project_list':
-        return handleProjectList(args as unknown as ProjectListInput);
-      case 'igris_project_status':
-        return handleProjectStatus(args as unknown as ProjectStatusInput);
-      case 'igris_metrics_record':
-        return handleMetricsRecord(args as unknown as MetricsRecordInput);
-      case 'igris_metrics_query':
-        return handleMetricsQuery(args as unknown as MetricsQueryInput);
-      case 'igris_metrics_velocity':
-        return handleMetricsVelocity(args as unknown as MetricsVelocityInput);
-      case 'igris_pattern_suggest':
-        return handlePatternSuggest(args as unknown as PatternSuggestInput);
-      case 'igris_session_sync':
-        return handleSessionSync(args as unknown as SessionSyncInput);
-      case 'igris_session_recall':
-        return handleSessionRecall(args as unknown as SessionRecallInput);
-      case 'igris_brief_sync':
-        return handleBriefSync(args as unknown as BriefSyncInput);
-      case 'igris_brief_dashboard':
-        return handleBriefDashboard(args as unknown as BriefDashboardInput);
-      case 'igris_instance_heartbeat':
-        return handleInstanceHeartbeat(args as unknown as InstanceHeartbeatInput);
-      case 'igris_instance_list':
-        return handleInstanceList(args as unknown as InstanceListInput);
-      case 'igris_instance_remove':
-        return handleInstanceRemove(args as unknown as InstanceRemoveInput);
-      case 'igris_brain_push':
-        return await handleBrainPush(args as unknown as BrainPushInput);
-      case 'igris_brain_pull':
-        return await handleBrainPull(args as unknown as BrainPullInput);
-      case 'igris_sync_queue_status':
-        return handleSyncQueueStatus();
-      case 'igris_sync_queue_drain':
-        return await handleSyncQueueDrain(args as unknown as SyncQueueDrainInput);
-      case 'igris_brief_file_sync':
-        return handleBriefFileSync(args as unknown as BriefFileSyncInput);
-      case 'igris_session_file_sync':
-        return handleSessionFileSync(args as unknown as SessionFileSyncInput);
-      case 'igris_session_file_pull':
-        return handleSessionFilePull(args as unknown as SessionFilePullInput);
-      case 'igris_definition_sync':
-        return handleDefinitionSync(args as unknown as DefinitionSyncInput);
-      case 'igris_definition_pull':
-        return handleDefinitionPull(args as unknown as DefinitionPullInput);
-      case 'igris_file_push':
-        return await handleFilePush(args as unknown as FilePushInput);
-      case 'igris_file_pull':
-        return await handleFilePull(args as unknown as FilePullInput);
-      case 'igris_agent_event':
-        return handleAgentEvent(args as unknown as AgentEventInput);
-      default:
-        throw new Error(`Unknown tool: ${name}`);
-    }
+    const engine = getEngine();
+    return await engine.gateway.dispatch(name, args);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
@@ -228,14 +164,16 @@ async function dispatchToolCall(
 
 /**
  * Create a fully-configured MCP Server instance with all Igris Brain tools
- * registered. Each call returns an independent server, which is important
- * for the HTTP transport where every session gets its own Server.
+ * registered via the engine gateway. Each call returns an independent server,
+ * which is important for the HTTP transport where every session gets its own Server.
  */
 function createBrainServer(): Server {
+  const engine = getEngine();
+
   const server = new Server(
     {
       name: 'igris-brain',
-      version: '4.0.0',
+      version: '5.0.0',
     },
     {
       capabilities: {
@@ -245,860 +183,20 @@ function createBrainServer(): Server {
   );
 
   // ------------------------------------------------------------------
-  // List available tools
+  // List available tools — delegated to gateway
   // ------------------------------------------------------------------
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return {
-      tools: [
-        // === Memory Tools ===
-        {
-          name: 'igris_memory_store',
-          description: 'Store a learning in the Igris knowledge database. Use this to persist patterns, decisions, discoveries, mistakes, and optimizations for future recall.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug (e.g., "igris-ai", "my-app")',
-              },
-              category: {
-                type: 'string',
-                enum: ['pattern', 'decision', 'discovery', 'mistake', 'optimization'],
-                description: 'Category of the learning',
-              },
-              title: {
-                type: 'string',
-                description: 'Short descriptive title for the learning',
-              },
-              content: {
-                type: 'string',
-                description: 'Full content/description of the learning',
-              },
-              tags: {
-                type: 'string',
-                description: 'Comma-separated tags (e.g., "sqlite,fts5,performance")',
-              },
-              tech_stack: {
-                type: 'string',
-                description: 'Technologies involved (e.g., "typescript,sqlite")',
-              },
-              source_brief: {
-                type: 'string',
-                description: 'Brief ID that generated this learning (e.g., "BR-008")',
-              },
-              scope: {
-                type: 'string',
-                enum: ['local', 'global'],
-                description: 'Scope: "local" for project-specific, "global" for cross-project relevance. Default: "local"',
-              },
-            },
-            required: ['project', 'category', 'title', 'content'],
-          },
-        },
-        {
-          name: 'igris_memory_search',
-          description: 'Full-text search across all learnings in the Igris knowledge database. Supports filtering by project and scope. Returns results ranked by relevance.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              query: {
-                type: 'string',
-                description: 'Search query (FTS5 syntax supported: AND, OR, NOT, phrases)',
-              },
-              project: {
-                type: 'string',
-                description: 'Filter by project slug (optional — omit for cross-project search)',
-              },
-              scope: {
-                type: 'string',
-                enum: ['local', 'global'],
-                description: 'Filter by scope: "global" for cross-project learnings only (optional)',
-              },
-              limit: {
-                type: 'number',
-                description: 'Maximum number of results (default: 10)',
-              },
-            },
-            required: ['query'],
-          },
-        },
-        {
-          name: 'igris_memory_recall',
-          description: 'Contextual recall of relevant learnings for the current project. Combines project-local and global learnings matching the given context. Updates access counts for returned results.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug to recall learnings for',
-              },
-              context: {
-                type: 'string',
-                description: 'What you are currently working on — used for FTS5 relevance matching',
-              },
-              limit: {
-                type: 'number',
-                description: 'Maximum number of results (default: 5)',
-              },
-            },
-            required: ['project', 'context'],
-          },
-        },
-
-        // === Error Tools ===
-        {
-          name: 'igris_error_lookup',
-          description: 'Look up known solutions for an error, or store a new error/solution pair. Uses fingerprinting to match errors regardless of file paths or line numbers. When called without a solution, searches for matching errors. When called with a solution, stores or updates the error record.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              message: {
-                type: 'string',
-                description: 'The error message to look up or store',
-              },
-              project: {
-                type: 'string',
-                description: 'Project slug where the error occurred',
-              },
-              solution: {
-                type: 'string',
-                description: 'The solution to store for this error (optional — omit to search)',
-              },
-            },
-            required: ['message', 'project'],
-          },
-        },
-
-        // === Project Tools ===
-        {
-          name: 'igris_project_register',
-          description: 'Register a project in the Igris brain. Creates or updates the project record. Call this when Igris is installed in a new project.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              slug: {
-                type: 'string',
-                description: 'Unique project slug (e.g., "igris-ai", "my-flutter-app")',
-              },
-              name: {
-                type: 'string',
-                description: 'Human-readable project name',
-              },
-              path: {
-                type: 'string',
-                description: 'Absolute path to the project directory',
-              },
-              tech_stack: {
-                type: 'string',
-                description: 'Comma-separated technologies (e.g., "dart,flutter,firebase")',
-              },
-            },
-            required: ['slug', 'name', 'path'],
-          },
-        },
-        {
-          name: 'igris_project_list',
-          description: 'List all projects registered in the Igris brain, optionally filtered by status.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              status: {
-                type: 'string',
-                enum: ['active', 'archived', 'inactive'],
-                description: 'Filter by project status (optional — omit to list all)',
-              },
-            },
-          },
-        },
-        {
-          name: 'igris_project_status',
-          description: 'Get a detailed status dashboard for a specific project, including learning count, error count, and recent agent metrics.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              slug: {
-                type: 'string',
-                description: 'Project slug to query',
-              },
-            },
-            required: ['slug'],
-          },
-        },
-
-        // === Metrics Tools ===
-        {
-          name: 'igris_metrics_record',
-          description: 'Record an agent performance metric. Call this after each agent action to track success rates, durations, and retry counts.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug',
-              },
-              agent: {
-                type: 'string',
-                description: 'Agent name (e.g., "architect", "forger", "sentinel")',
-              },
-              brief_id: {
-                type: 'string',
-                description: 'Brief ID being worked on (e.g., "BR-008")',
-              },
-              action: {
-                type: 'string',
-                description: 'Action performed (e.g., "plan", "implement", "test", "review")',
-              },
-              result: {
-                type: 'string',
-                enum: ['success', 'failure', 'partial', 'blocked'],
-                description: 'Outcome of the action',
-              },
-              duration_ms: {
-                type: 'number',
-                description: 'Duration of the action in milliseconds',
-              },
-              retry_count: {
-                type: 'number',
-                description: 'Number of retries before reaching this result',
-              },
-            },
-            required: ['project', 'agent', 'action', 'result'],
-          },
-        },
-        {
-          name: 'igris_metrics_query',
-          description: 'Query agent performance metrics with summary statistics. Shows success rate by agent, average duration, and recent entries.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Filter by project slug (optional)',
-              },
-              agent: {
-                type: 'string',
-                description: 'Filter by agent name (optional)',
-              },
-              limit: {
-                type: 'number',
-                description: 'Maximum number of recent entries to return (default: 20)',
-              },
-            },
-          },
-        },
-        {
-          name: 'igris_metrics_velocity',
-          description: 'Generate a velocity dashboard showing brief completion rates per week, average completion time, agent utilization, and week-over-week trends.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Filter by project slug (optional — omit for all projects)',
-              },
-              days: {
-                type: 'number',
-                description: 'Time window in days (default: 30)',
-              },
-            },
-          },
-        },
-        {
-          name: 'igris_pattern_suggest',
-          description: 'Suggest relevant patterns for the current context. Searches learnings via FTS5, includes global-scope patterns, and loads matching patterns from the starter-patterns library. Optionally filters by tech stack.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug to search patterns for',
-              },
-              context: {
-                type: 'string',
-                description: 'What you are currently working on — used for pattern matching',
-              },
-              tech_stack: {
-                type: 'string',
-                description: 'Filter by technology (e.g., "typescript", "sqlite") — optional',
-              },
-            },
-            required: ['project', 'context'],
-          },
-        },
-
-        // === Session Tools ===
-        {
-          name: 'igris_session_sync',
-          description: 'Sync a session snapshot to the Igris brain. Called by /rest to record what you were working on. Closes any existing open session for the project before creating a new one.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug',
-              },
-              brief_id: {
-                type: 'string',
-                description: 'Active brief ID (optional)',
-              },
-              phase: {
-                type: 'string',
-                description: 'Current workflow phase (optional)',
-              },
-              mode: {
-                type: 'string',
-                description: 'Session mode (e.g., "HUNT", "REST")',
-              },
-              summary: {
-                type: 'string',
-                description: 'Brief description of work done this session',
-              },
-            },
-            required: ['project', 'summary'],
-          },
-        },
-        {
-          name: 'igris_session_recall',
-          description: 'Recall recent sessions across all projects. Called by /awaken to show cross-project context. Returns sessions grouped by day.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              days: {
-                type: 'number',
-                description: 'Number of days to look back (default: 7)',
-              },
-            },
-          },
-        },
-
-        // === Brief Tools ===
-        {
-          name: 'igris_brief_sync',
-          description: 'Sync a brief status change to the Igris brain. Called when brief status changes during /hunt, /rest, or /archive. Uses upsert to maintain one record per project+brief_id.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug',
-              },
-              brief_id: {
-                type: 'string',
-                description: 'Brief ID (e.g., "BR-008", "MG-010")',
-              },
-              brief_type: {
-                type: 'string',
-                description: 'Brief type (e.g., "Bug", "Migration", "Feature")',
-              },
-              title: {
-                type: 'string',
-                description: 'Brief title',
-              },
-              status: {
-                type: 'string',
-                description: 'Brief status (e.g., "Ready", "In Progress", "Done")',
-              },
-              priority: {
-                type: 'string',
-                description: 'Priority level (e.g., "P0", "P1-High")',
-              },
-              effort: {
-                type: 'string',
-                description: 'Effort estimate (e.g., "S-Small", "L-Large")',
-              },
-              phase: {
-                type: 'string',
-                description: 'Current workflow phase (e.g., "BUILDING", "TESTING")',
-              },
-            },
-            required: ['project', 'brief_id', 'title', 'status'],
-          },
-        },
-        {
-          name: 'igris_brief_dashboard',
-          description: 'Display a cross-project brief dashboard showing all tracked briefs with status counts. Supports filtering by status and project.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              status: {
-                type: 'string',
-                description: 'Filter by brief status (optional)',
-              },
-              project: {
-                type: 'string',
-                description: 'Filter by project slug (optional)',
-              },
-            },
-          },
-        },
-
-        // === Instance Tools ===
-        {
-          name: 'igris_instance_heartbeat',
-          description: 'Register or update a live Igris instance in the brain. Called on /awaken to register, and during /hunt to update current brief/phase. Returns the instance ID for subsequent heartbeats.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              machine_hostname: {
-                type: 'string',
-                description: 'Hostname of the machine running this instance',
-              },
-              machine_os: {
-                type: 'string',
-                description: 'Operating system (e.g., "darwin", "linux")',
-              },
-              project_slug: {
-                type: 'string',
-                description: 'Project slug (e.g., "igris-ai")',
-              },
-              project_path: {
-                type: 'string',
-                description: 'Absolute path to the project directory',
-              },
-              current_brief: {
-                type: 'string',
-                description: 'Currently active brief ID (e.g., "FR-026")',
-              },
-              current_phase: {
-                type: 'string',
-                description: 'Current workflow phase (e.g., "BUILDING")',
-              },
-              current_task: {
-                type: 'string',
-                description: 'Description of current task',
-              },
-              instance_id: {
-                type: 'string',
-                description: 'Existing instance ID for heartbeat updates (omit for new registration)',
-              },
-            },
-            required: ['machine_hostname'],
-          },
-        },
-        {
-          name: 'igris_instance_list',
-          description: 'List all active Igris instances across machines. Auto-marks instances with no heartbeat for 30+ minutes as stale. Purges instances stale for >2 hours.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              status: {
-                type: 'string',
-                enum: ['active', 'idle', 'stale', 'all'],
-                description: 'Filter by instance status (optional — omit or "all" to list everything)',
-              },
-              project: {
-                type: 'string',
-                description: 'Filter by project slug (optional)',
-              },
-              include_stale: {
-                type: 'boolean',
-                description: 'Include stale instances in results (default: false)',
-              },
-            },
-          },
-        },
-        {
-          name: 'igris_instance_remove',
-          description: 'Remove an Igris instance from the registry. Called on /rest to deregister cleanly.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              instance_id: {
-                type: 'string',
-                description: 'The instance ID to remove',
-              },
-            },
-            required: ['instance_id'],
-          },
-        },
-
-        // === Agent Event Tools ===
-        {
-          name: 'igris_agent_event',
-          description: 'Record an agent lifecycle event for live dashboard tracking. Called during /hunt workflow at each agent phase transition.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              instance_id: {
-                type: 'string',
-                description: 'Instance ID from heartbeat registration',
-              },
-              agent: {
-                type: 'string',
-                description: 'Agent name: architect, forger, sentinel, warden, mender, seeker, sage',
-              },
-              event_type: {
-                type: 'string',
-                enum: ['start', 'stop', 'error', 'retry'],
-                description: 'Event lifecycle type',
-              },
-              phase: {
-                type: 'string',
-                description: 'Hunt phase: PLANNING, BUILDING, TESTING, REVIEWING, DOCUMENTING',
-              },
-              brief_id: {
-                type: 'string',
-                description: 'Active brief ID',
-              },
-              duration_ms: {
-                type: 'number',
-                description: 'Elapsed time in milliseconds (for stop/error events)',
-              },
-              input_tokens: {
-                type: 'number',
-                description: 'Input tokens consumed',
-              },
-              output_tokens: {
-                type: 'number',
-                description: 'Output tokens consumed',
-              },
-              result: {
-                type: 'string',
-                description: 'Result summary (for stop events)',
-              },
-              error_message: {
-                type: 'string',
-                description: 'Error details (for error events)',
-              },
-            },
-            required: ['instance_id', 'agent', 'event_type'],
-          },
-        },
-
-        // === Sync Tools ===
-        {
-          name: 'igris_brain_push',
-          description: 'Push local brain changes to a remote brain server. Syncs learnings, errors, projects, sessions, brief_status, agent_metrics changed since last push. Uses last-write-wins for conflict resolution.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              remote_url: {
-                type: 'string',
-                description: 'URL of the remote brain server (e.g., "https://brain.example.com")',
-              },
-              api_key: {
-                type: 'string',
-                description: 'API key for authenticating with the remote brain server',
-              },
-            },
-            required: ['remote_url', 'api_key'],
-          },
-        },
-        {
-          name: 'igris_brain_pull',
-          description: 'Pull remote brain changes to local brain. Syncs all tables changed since last pull. Uses last-write-wins for conflict resolution.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              remote_url: {
-                type: 'string',
-                description: 'URL of the remote brain server (e.g., "https://brain.example.com")',
-              },
-              api_key: {
-                type: 'string',
-                description: 'API key for authenticating with the remote brain server',
-              },
-            },
-            required: ['remote_url', 'api_key'],
-          },
-        },
-
-        // === Sync Queue Tools (FR-036) ===
-        {
-          name: 'igris_sync_queue_status',
-          description: 'Show the current sync queue status. Displays pending, retrying, sent, and failed counts plus per-table breakdown of actionable items.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {},
-          },
-        },
-        {
-          name: 'igris_sync_queue_drain',
-          description: 'Process pending sync queue items by pushing them to the remote brain. Retries failed push operations with exponential backoff tracking.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              remote_url: {
-                type: 'string',
-                description: 'URL of the remote brain server',
-              },
-              api_key: {
-                type: 'string',
-                description: 'API key for authenticating with the remote brain server',
-              },
-            },
-            required: ['remote_url', 'api_key'],
-          },
-        },
-
-        // === Brief File Sync (FR-037) ===
-        {
-          name: 'igris_brief_file_sync',
-          description: 'Sync a brief file content to the brain. Computes content hash and upserts into brief_files table. Use this to store the full markdown content of brief files for cross-device access.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug',
-              },
-              brief_id: {
-                type: 'string',
-                description: 'Brief ID (e.g., "BR-008", "FR-026")',
-              },
-              filename: {
-                type: 'string',
-                description: 'Brief filename (e.g., "FR-026-feature-name.md")',
-              },
-              content: {
-                type: 'string',
-                description: 'Full markdown content of the brief file',
-              },
-            },
-            required: ['project', 'brief_id', 'filename', 'content'],
-          },
-        },
-
-        // === Session File Sync (FR-038) ===
-        {
-          name: 'igris_session_file_sync',
-          description: 'Sync a session file content to the brain. Stores session files (CURRENT_SESSION.md, BLOCKERS.md, etc.) for cross-device access.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug',
-              },
-              filename: {
-                type: 'string',
-                description: 'Session filename (e.g., "CURRENT_SESSION.md")',
-              },
-              content: {
-                type: 'string',
-                description: 'Full content of the session file',
-              },
-            },
-            required: ['project', 'filename', 'content'],
-          },
-        },
-        {
-          name: 'igris_session_file_pull',
-          description: 'Pull all session files for a project from the brain. Returns all stored session files with their content.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug to pull session files for',
-              },
-            },
-            required: ['project'],
-          },
-        },
-
-        // === Definition File Sync (FR-039) ===
-        {
-          name: 'igris_definition_sync',
-          description: 'Sync a definition file (agent, skill, rule, or prompt) to the brain. Stores the full content for cross-device and cross-project sharing.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              type: {
-                type: 'string',
-                enum: ['agent', 'skill', 'rule', 'prompt'],
-                description: 'Definition type',
-              },
-              name: {
-                type: 'string',
-                description: 'Definition name (e.g., "forger", "hunt", "01-igris-init")',
-              },
-              filename: {
-                type: 'string',
-                description: 'Filename (e.g., "forger.md", "SKILL.md")',
-              },
-              content: {
-                type: 'string',
-                description: 'Full content of the definition file',
-              },
-              version: {
-                type: 'string',
-                description: 'Version string (optional)',
-              },
-            },
-            required: ['type', 'name', 'filename', 'content'],
-          },
-        },
-        {
-          name: 'igris_definition_pull',
-          description: 'Pull definitions from the brain. Optionally filter by timestamp to get only recently updated definitions.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              since: {
-                type: 'string',
-                description: 'ISO timestamp — only return definitions updated after this time (optional)',
-              },
-            },
-          },
-        },
-
-        // === File Sync Tools (BR-023) ===
-        {
-          name: 'igris_file_push',
-          description: 'Push a flat file (events.jsonl, agent-metrics.json, budget.json) to the remote brain server via HTTP. Updates sync_state for dashboard tracking.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              file_type: {
-                type: 'string',
-                enum: ['events', 'agent_metrics', 'budget'],
-                description: 'File type: "events" for events.jsonl (cost tracking), "agent_metrics" for agent-metrics.json (agent stats), "budget" for budget.json (daily budget thresholds)',
-              },
-              content: {
-                type: 'string',
-                description: 'Full file content to push',
-              },
-              remote_url: {
-                type: 'string',
-                description: 'URL of the remote brain server (e.g., "https://brain.example.com")',
-              },
-              api_key: {
-                type: 'string',
-                description: 'API key for authenticating with the remote brain server',
-              },
-            },
-            required: ['file_type', 'content', 'remote_url', 'api_key'],
-          },
-        },
-        {
-          name: 'igris_file_pull',
-          description: 'Pull a flat file from the remote brain server.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              file_type: {
-                type: 'string',
-                enum: ['events', 'agent_metrics', 'budget'],
-                description: 'File type: "events" for events.jsonl, "agent_metrics" for agent-metrics.json, "budget" for budget.json',
-              },
-              remote_url: {
-                type: 'string',
-                description: 'URL of the remote brain server',
-              },
-              api_key: {
-                type: 'string',
-                description: 'API key for authenticating with the remote brain server',
-              },
-            },
-            required: ['file_type', 'remote_url', 'api_key'],
-          },
-        },
-      ],
-    };
+    return { tools: engine.gateway.listTools() };
   });
 
   // ------------------------------------------------------------------
-  // Execute tool calls
+  // Execute tool calls — delegated to gateway
   // ------------------------------------------------------------------
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
     try {
-      switch (name) {
-        // Memory tools
-        case 'igris_memory_store':
-          return handleMemoryStore(args as unknown as MemoryStoreInput);
-        case 'igris_memory_search':
-          return handleMemorySearch(args as unknown as MemorySearchInput);
-        case 'igris_memory_recall':
-          return handleMemoryRecall(args as unknown as MemoryRecallInput);
-
-        // Error tools
-        case 'igris_error_lookup':
-          return handleErrorLookup(args as unknown as ErrorLookupInput);
-
-        // Project tools
-        case 'igris_project_register':
-          return handleProjectRegister(args as unknown as ProjectRegisterInput);
-        case 'igris_project_list':
-          return handleProjectList(args as unknown as ProjectListInput);
-        case 'igris_project_status':
-          return handleProjectStatus(args as unknown as ProjectStatusInput);
-
-        // Metrics tools
-        case 'igris_metrics_record':
-          return handleMetricsRecord(args as unknown as MetricsRecordInput);
-        case 'igris_metrics_query':
-          return handleMetricsQuery(args as unknown as MetricsQueryInput);
-        case 'igris_metrics_velocity':
-          return handleMetricsVelocity(args as unknown as MetricsVelocityInput);
-
-        // Pattern tools
-        case 'igris_pattern_suggest':
-          return handlePatternSuggest(args as unknown as PatternSuggestInput);
-
-        // Session tools
-        case 'igris_session_sync':
-          return handleSessionSync(args as unknown as SessionSyncInput);
-        case 'igris_session_recall':
-          return handleSessionRecall(args as unknown as SessionRecallInput);
-
-        // Brief tools
-        case 'igris_brief_sync':
-          return handleBriefSync(args as unknown as BriefSyncInput);
-        case 'igris_brief_dashboard':
-          return handleBriefDashboard(args as unknown as BriefDashboardInput);
-
-        // Instance tools
-        case 'igris_instance_heartbeat':
-          return handleInstanceHeartbeat(args as unknown as InstanceHeartbeatInput);
-        case 'igris_instance_list':
-          return handleInstanceList(args as unknown as InstanceListInput);
-        case 'igris_instance_remove':
-          return handleInstanceRemove(args as unknown as InstanceRemoveInput);
-
-        // Agent event tools
-        case 'igris_agent_event':
-          return handleAgentEvent(args as unknown as AgentEventInput);
-
-        // Sync tools
-        case 'igris_brain_push':
-          return await handleBrainPush(args as unknown as BrainPushInput);
-        case 'igris_brain_pull':
-          return await handleBrainPull(args as unknown as BrainPullInput);
-
-        // Sync queue tools (FR-036)
-        case 'igris_sync_queue_status':
-          return handleSyncQueueStatus();
-        case 'igris_sync_queue_drain':
-          return await handleSyncQueueDrain(args as unknown as SyncQueueDrainInput);
-
-        // Brief file sync (FR-037)
-        case 'igris_brief_file_sync':
-          return handleBriefFileSync(args as unknown as BriefFileSyncInput);
-
-        // Session file sync (FR-038)
-        case 'igris_session_file_sync':
-          return handleSessionFileSync(args as unknown as SessionFileSyncInput);
-        case 'igris_session_file_pull':
-          return handleSessionFilePull(args as unknown as SessionFilePullInput);
-
-        // Definition file sync (FR-039)
-        case 'igris_definition_sync':
-          return handleDefinitionSync(args as unknown as DefinitionSyncInput);
-        case 'igris_definition_pull':
-          return handleDefinitionPull(args as unknown as DefinitionPullInput);
-
-        // File sync (BR-023)
-        case 'igris_file_push':
-          return await handleFilePush(args as unknown as FilePushInput);
-        case 'igris_file_pull':
-          return await handleFilePull(args as unknown as FilePullInput);
-
-        default:
-          throw new Error(`Unknown tool: ${name}`);
-      }
+      return await engine.gateway.dispatch(name, args as Record<string, unknown>);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return {
@@ -1124,6 +222,9 @@ function createBrainServer(): Server {
  * Run the brain server with stdio transport (default, local mode).
  */
 async function runStdio(): Promise<void> {
+  // Boot engine (also bridges db.ts)
+  const engine = getEngine();
+
   // Process any pending staging files before accepting connections
   try {
     processStagingFiles();
@@ -1136,15 +237,15 @@ async function runStdio(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error('Igris Brain MCP Server v4.0.0 started (stdio)');
+  console.error('Igris Brain MCP Server v5.0.0 started (stdio)');
 
   // Clean up on exit
   process.on('SIGINT', () => {
-    closeDb();
+    engine.shutdown();
     process.exit(0);
   });
   process.on('SIGTERM', () => {
-    closeDb();
+    engine.shutdown();
     process.exit(0);
   });
 }
@@ -1175,6 +276,9 @@ function safeCompare(a: string, b: string): boolean {
  * in an in-memory map keyed by session ID with TTL-based cleanup.
  */
 async function runHttp(config: ServerConfig): Promise<void> {
+  // Boot engine (also bridges db.ts)
+  const engine = getEngine();
+
   // Process any pending staging files before accepting connections
   try {
     processStagingFiles();
@@ -1277,7 +381,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
   // Health endpoint (no auth required, minimal info)
   app.get('/health', (_req: Request, res: Response) => {
-    res.json({ status: 'ok', version: '4.0.0' });
+    res.json({ status: 'ok', version: '5.0.0' });
   });
 
   // -----------------------------------------------------------------------
@@ -1422,7 +526,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
       }
 
       res.json({
-        version: '4.0.0',
+        version: '5.0.0',
         db_size_bytes: dbSizeBytes,
         counts: {
           projects: countTable('projects'),
@@ -1963,11 +1067,11 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
   // Start listening
   app.listen(config.port, () => {
-    console.error(`Igris Brain MCP Server v4.0.0 started (http, port ${config.port})`);
+    console.error(`Igris Brain MCP Server v5.0.0 started (http, port ${config.port})`);
   });
 
   // Graceful shutdown
-  const shutdown = async () => {
+  const shutdownHttp = async () => {
     console.error('Shutting down HTTP server...');
     clearInterval(cleanupInterval);
     for (const sid of Object.keys(transports)) {
@@ -1979,11 +1083,11 @@ async function runHttp(config: ServerConfig): Promise<void> {
         console.error(`Error closing session ${sid}:`, err);
       }
     }
-    closeDb();
+    engine.shutdown();
     process.exit(0);
   };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdownHttp);
+  process.on('SIGTERM', shutdownHttp);
 }
 
 // ---------------------------------------------------------------------------
@@ -1995,13 +1099,15 @@ const config = parseConfig();
 if (config.mode === 'http') {
   runHttp(config).catch((error) => {
     console.error('Fatal error:', error);
-    closeDb();
+    if (_engine) _engine.shutdown();
+    else closeDb();
     process.exit(1);
   });
 } else {
   runStdio().catch((error) => {
     console.error('Fatal error:', error);
-    closeDb();
+    if (_engine) _engine.shutdown();
+    else closeDb();
     process.exit(1);
   });
 }
