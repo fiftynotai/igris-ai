@@ -85,6 +85,11 @@ export const taskMigrations: Migration[] = [
     version: 2,
     description: 'Add coordination columns to tasks, create agent_capabilities, autonomous_decisions, and coordination_config tables',
     sql: `
+      -- NOTE: These PRAGMA foreign_keys statements are no-ops because the migration
+      -- runner (sqlite.ts) wraps each migration in a transaction, and SQLite silently
+      -- ignores PRAGMA foreign_keys changes inside transactions. This is benign: the
+      -- table-recreation pattern (CREATE new -> copy -> DROP old -> RENAME) preserves
+      -- FK integrity through explicit FOREIGN KEY clauses in the new table definitions.
       PRAGMA foreign_keys = OFF;
 
       -- Recreate tasks table with new columns and updated CHECK constraint
