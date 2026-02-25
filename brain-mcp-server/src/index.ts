@@ -261,6 +261,7 @@ async function runStdio(): Promise<void> {
 /** Rate limit: max auth failures per IP before temporary block. */
 const AUTH_FAIL_WINDOW_MS = 60 * 1000;
 const AUTH_FAIL_MAX = 10;
+const AUTH_FAIL_MAP_MAX = 10_000;
 
 /**
  * Timing-safe comparison of two strings.
@@ -322,8 +323,20 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       const auth = req.headers.authorization ?? '';
       if (!safeCompare(auth, expectedToken)) {
-        // Track failure
+        // Track failure (with map size cap)
         if (!authFailures[ip] || now >= (authFailures[ip].resetAt)) {
+          // Evict oldest entries if map is at capacity
+          if (Object.keys(authFailures).length >= AUTH_FAIL_MAP_MAX) {
+            let oldestIp = '';
+            let oldestReset = Infinity;
+            for (const [k, v] of Object.entries(authFailures)) {
+              if (v.resetAt < oldestReset) {
+                oldestReset = v.resetAt;
+                oldestIp = k;
+              }
+            }
+            if (oldestIp) delete authFailures[oldestIp];
+          }
           authFailures[ip] = { count: 1, resetAt: now + AUTH_FAIL_WINDOW_MS };
         } else {
           authFailures[ip].count++;
