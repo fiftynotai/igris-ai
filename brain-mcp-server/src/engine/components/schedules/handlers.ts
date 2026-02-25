@@ -34,6 +34,13 @@ interface HandlerContext {
   getDispatch: () => ((name: string, args: Record<string, unknown>) => Promise<unknown>) | null;
 }
 
+/**
+ * Module-level handler context — set once by component init(), cleared by destroy().
+ * This mutable state is acceptable for the schedules component because:
+ * - The brain server is single-process (no concurrent init/destroy)
+ * - Context is set once during startup and never changes until shutdown
+ * - The handler context provides bus + dispatch access needed by fire_now
+ */
 let _handlerCtx: HandlerContext | null = null;
 
 /**
@@ -175,31 +182,35 @@ export function handleScheduleCreate(args: Record<string, unknown>): ToolResult 
   const maxRetries = args.max_retries !== undefined ? Number(args.max_retries) : 0;
   const timeoutMs = args.timeout_ms !== undefined ? Number(args.timeout_ms) : DEFAULT_TIMEOUT_MS;
 
-  db.prepare(`
-    INSERT INTO schedules (id, name, description, cron_expr, handler_type, handler_config,
-                           enabled, project_slug, tags, max_retries, timeout_ms,
-                           next_run_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    id,
-    name,
-    (args.description as string | undefined) ?? null,
-    cronExpr,
-    handlerType,
-    handlerConfig,
-    enabled,
-    (args.project_slug as string | undefined) ?? null,
-    tags,
-    maxRetries,
-    timeoutMs,
-    nextRunAt,
-    timestamp,
-    timestamp,
-  );
+  try {
+    db.prepare(`
+      INSERT INTO schedules (id, name, description, cron_expr, handler_type, handler_config,
+                             enabled, project_slug, tags, max_retries, timeout_ms,
+                             next_run_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      name,
+      (args.description as string | undefined) ?? null,
+      cronExpr,
+      handlerType,
+      handlerConfig,
+      enabled,
+      (args.project_slug as string | undefined) ?? null,
+      tags,
+      maxRetries,
+      timeoutMs,
+      nextRunAt,
+      timestamp,
+      timestamp,
+    );
 
-  const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(id) as Record<string, unknown>;
+    const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(id) as Record<string, unknown>;
 
-  return successResult(JSON.stringify({ schedule }, null, 2));
+    return successResult(JSON.stringify({ schedule }, null, 2));
+  } catch (err) {
+    return errorResult(`Failed to create schedule: ${errMsg(err)}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -227,27 +238,31 @@ export function handleScheduleList(args: Record<string, unknown>): ToolResult {
   const limit = args.limit !== undefined ? Number(args.limit) : 25;
   const offset = args.offset !== undefined ? Number(args.offset) : 0;
 
-  const rows = db.prepare(`
-    SELECT s.*,
-      (SELECT COUNT(*) FROM schedule_runs r WHERE r.schedule_id = s.id) as run_count,
-      (SELECT r2.status FROM schedule_runs r2 WHERE r2.schedule_id = s.id ORDER BY r2.started_at DESC LIMIT 1) as last_status
-    FROM schedules s
-    ${where.toSQL()}
-    ORDER BY s.created_at DESC
-    LIMIT ? OFFSET ?
-  `).all(...where.values(), limit, offset) as Record<string, unknown>[];
+  try {
+    const rows = db.prepare(`
+      SELECT s.*,
+        (SELECT COUNT(*) FROM schedule_runs r WHERE r.schedule_id = s.id) as run_count,
+        (SELECT r2.status FROM schedule_runs r2 WHERE r2.schedule_id = s.id ORDER BY r2.started_at DESC LIMIT 1) as last_status
+      FROM schedules s
+      ${where.toSQL()}
+      ORDER BY s.created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(...where.values(), limit, offset) as Record<string, unknown>[];
 
-  const countRow = db.prepare(
-    `SELECT COUNT(*) as total FROM schedules s ${where.toSQL()}`
-  ).get(...where.values()) as { total: number };
+    const countRow = db.prepare(
+      `SELECT COUNT(*) as total FROM schedules s ${where.toSQL()}`
+    ).get(...where.values()) as { total: number };
 
-  return successResult(JSON.stringify({
-    schedules: rows,
-    count: rows.length,
-    total: countRow.total,
-    limit,
-    offset,
-  }, null, 2));
+    return successResult(JSON.stringify({
+      schedules: rows,
+      count: rows.length,
+      total: countRow.total,
+      limit,
+      offset,
+    }, null, 2));
+  } catch (err) {
+    return errorResult(`Failed to list schedules: ${errMsg(err)}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -267,19 +282,23 @@ export function handleScheduleGet(args: Record<string, unknown>): ToolResult {
 
   const db = getDb();
 
-  const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as Record<string, unknown> | undefined;
-  if (!schedule) {
-    return errorResult(`Schedule not found: ${scheduleId}`);
+  try {
+    const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as Record<string, unknown> | undefined;
+    if (!schedule) {
+      return errorResult(`Schedule not found: ${scheduleId}`);
+    }
+
+    const runs = db.prepare(`
+      SELECT * FROM schedule_runs
+      WHERE schedule_id = ?
+      ORDER BY started_at DESC
+      LIMIT 10
+    `).all(scheduleId) as Record<string, unknown>[];
+
+    return successResult(JSON.stringify({ schedule, recent_runs: runs }, null, 2));
+  } catch (err) {
+    return errorResult(`Failed to get schedule: ${errMsg(err)}`);
   }
-
-  const runs = db.prepare(`
-    SELECT * FROM schedule_runs
-    WHERE schedule_id = ?
-    ORDER BY started_at DESC
-    LIMIT 10
-  `).all(scheduleId) as Record<string, unknown>[];
-
-  return successResult(JSON.stringify({ schedule, recent_runs: runs }, null, 2));
 }
 
 // ---------------------------------------------------------------------------
@@ -299,26 +318,30 @@ export function handleScheduleEnable(args: Record<string, unknown>): ToolResult 
 
   const db = getDb();
 
-  const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as Record<string, unknown> | undefined;
-  if (!schedule) {
-    return errorResult(`Schedule not found: ${scheduleId}`);
-  }
-
-  const timestamp = now();
-  let nextRunAt: string | null = null;
   try {
-    nextRunAt = nextRunAfter(schedule.cron_expr as string);
-  } catch {
-    // Leave null if cron can't compute
+    const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as Record<string, unknown> | undefined;
+    if (!schedule) {
+      return errorResult(`Schedule not found: ${scheduleId}`);
+    }
+
+    const timestamp = now();
+    let nextRunAt: string | null = null;
+    try {
+      nextRunAt = nextRunAfter(schedule.cron_expr as string);
+    } catch {
+      // Leave null if cron can't compute
+    }
+
+    db.prepare(`
+      UPDATE schedules SET enabled = 1, next_run_at = ?, updated_at = ? WHERE id = ?
+    `).run(nextRunAt, timestamp, scheduleId);
+
+    const updated = db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as Record<string, unknown>;
+
+    return successResult(JSON.stringify({ schedule: updated }, null, 2));
+  } catch (err) {
+    return errorResult(`Failed to enable schedule: ${errMsg(err)}`);
   }
-
-  db.prepare(`
-    UPDATE schedules SET enabled = 1, next_run_at = ?, updated_at = ? WHERE id = ?
-  `).run(nextRunAt, timestamp, scheduleId);
-
-  const updated = db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as Record<string, unknown>;
-
-  return successResult(JSON.stringify({ schedule: updated }, null, 2));
 }
 
 // ---------------------------------------------------------------------------
@@ -338,20 +361,24 @@ export function handleScheduleDisable(args: Record<string, unknown>): ToolResult
 
   const db = getDb();
 
-  const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as Record<string, unknown> | undefined;
-  if (!schedule) {
-    return errorResult(`Schedule not found: ${scheduleId}`);
+  try {
+    const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as Record<string, unknown> | undefined;
+    if (!schedule) {
+      return errorResult(`Schedule not found: ${scheduleId}`);
+    }
+
+    const timestamp = now();
+
+    db.prepare(`
+      UPDATE schedules SET enabled = 0, next_run_at = NULL, updated_at = ? WHERE id = ?
+    `).run(timestamp, scheduleId);
+
+    const updated = db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as Record<string, unknown>;
+
+    return successResult(JSON.stringify({ schedule: updated }, null, 2));
+  } catch (err) {
+    return errorResult(`Failed to disable schedule: ${errMsg(err)}`);
   }
-
-  const timestamp = now();
-
-  db.prepare(`
-    UPDATE schedules SET enabled = 0, next_run_at = NULL, updated_at = ? WHERE id = ?
-  `).run(timestamp, scheduleId);
-
-  const updated = db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as Record<string, unknown>;
-
-  return successResult(JSON.stringify({ schedule: updated }, null, 2));
 }
 
 // ---------------------------------------------------------------------------
@@ -449,16 +476,20 @@ export function handleScheduleDelete(args: Record<string, unknown>): ToolResult 
 
   const db = getDb();
 
-  const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as Record<string, unknown> | undefined;
-  if (!schedule) {
-    return errorResult(`Schedule not found: ${scheduleId}`);
+  try {
+    const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as Record<string, unknown> | undefined;
+    if (!schedule) {
+      return errorResult(`Schedule not found: ${scheduleId}`);
+    }
+
+    db.prepare('DELETE FROM schedules WHERE id = ?').run(scheduleId);
+
+    return successResult(JSON.stringify({
+      deleted: true,
+      schedule_id: scheduleId,
+      name: schedule.name,
+    }, null, 2));
+  } catch (err) {
+    return errorResult(`Failed to delete schedule: ${errMsg(err)}`);
   }
-
-  db.prepare('DELETE FROM schedules WHERE id = ?').run(scheduleId);
-
-  return successResult(JSON.stringify({
-    deleted: true,
-    schedule_id: scheduleId,
-    name: schedule.name,
-  }, null, 2));
 }
