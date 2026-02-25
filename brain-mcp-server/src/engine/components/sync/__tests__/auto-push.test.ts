@@ -3,7 +3,7 @@
  *
  * Tests the event-driven auto-push system in the sync component:
  * 1. Config loading (enabled/disabled, missing fields, malformed JSON)
- * 2. SYNC_TABLES completeness (19 entries, new v5 tables)
+ * 2. SYNC_TABLES completeness (21 entries, new v5 tables)
  * 3. Immediate push (brief/session/instance events)
  * 4. Batched push (memory/error/project/metrics events with 10s window)
  * 5. Cleanup (destroy clears timers, listeners, pending set)
@@ -276,8 +276,8 @@ describe('Sync Auto-Push', () => {
   // -------------------------------------------------------------------------
 
   describe('SYNC_TABLES completeness', () => {
-    it('has exactly 20 entries', () => {
-      expect(SYNC_TABLES).toHaveLength(20);
+    it('has exactly 21 entries', () => {
+      expect(SYNC_TABLES).toHaveLength(21);
     });
 
     const newTables = [

@@ -9,6 +9,9 @@
  * retry_count, max_retries, fail_reason, failed status) and
  * three new tables for autonomous coordination.
  *
+ * Version 5 adds the task_results table for structured output
+ * storage (commit SHAs, file paths, text summaries, etc.).
+ *
  * @module engine/components/tasks/schema
  * @author Fifty.ai
  */
@@ -29,6 +32,8 @@ import type { Migration } from '../../types.js';
  *
  * Version 4: Expand task_type CHECK constraint to include semantic types
  * (dev, content, social-media, media-gen, research). Backward compatible.
+ *
+ * Version 5: Add task_results table for structured output storage.
  */
 export const taskMigrations: Migration[] = [
   {
@@ -285,6 +290,25 @@ export const taskMigrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_task_assignments_agent ON task_assignments(agent);
 
       PRAGMA foreign_keys = ON;
+    `,
+  },
+  {
+    version: 5,
+    description: 'Add task_results table for structured output storage',
+    sql: `
+      CREATE TABLE IF NOT EXISTS task_results (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        result_type TEXT NOT NULL CHECK (result_type IN (
+          'commit','file','text','image','url','json','error'
+        )),
+        content TEXT NOT NULL,
+        file_path TEXT,
+        metadata TEXT DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_task_results_task ON task_results(task_id);
+      CREATE INDEX IF NOT EXISTS idx_task_results_type ON task_results(result_type);
     `,
   },
 ];

@@ -1,7 +1,7 @@
 /**
  * Brain Engine v5.0 — Tasks Component Handlers
  *
- * Handler functions for the 8 task management MCP tools.
+ * Handler functions for the 10 task management MCP tools.
  * Each handler takes Record<string, unknown> args, validates
  * at runtime, and returns a ToolResult.
  *
@@ -38,6 +38,14 @@ const VALID_SCOPES = ['project', 'personal', 'system'] as const;
 
 /** Valid task types for create validation */
 const VALID_TYPES = ['brief', 'operational', 'personal', 'system', 'dev', 'content', 'social-media', 'media-gen', 'research'] as const;
+
+/** Valid result types for task_results */
+const VALID_RESULT_TYPES = ['commit', 'file', 'text', 'image', 'url', 'json', 'error'] as const;
+
+/** Generate a task result ID: tr- prefix + first 8 chars of a UUID */
+function generateTaskResultId(): string {
+  return 'tr-' + randomUUID().substring(0, 8);
+}
 
 // ---------------------------------------------------------------------------
 // handleTaskCreate
@@ -833,4 +841,94 @@ export function handleTaskRetry(args: Record<string, unknown>): ToolResult {
   const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown>;
 
   return successResult(JSON.stringify({ task: updated }, null, 2));
+}
+
+// ---------------------------------------------------------------------------
+// handleTaskResultAdd
+// ---------------------------------------------------------------------------
+
+/**
+ * Add a structured result to a task.
+ *
+ * Required: task_id, result_type, content
+ * Optional: file_path, metadata
+ *
+ * Result IDs use the format: tr-{first 8 chars of randomUUID()}
+ */
+export function handleTaskResultAdd(args: Record<string, unknown>): ToolResult {
+  const taskId = args.task_id as string | undefined;
+  const resultType = args.result_type as string | undefined;
+  const content = args.content as string | undefined;
+
+  if (!taskId || !resultType || !content) {
+    return errorResult('Missing required fields: task_id, result_type, content');
+  }
+
+  if (!(VALID_RESULT_TYPES as readonly string[]).includes(resultType)) {
+    return errorResult(`Invalid result_type: ${resultType}. Must be one of: ${VALID_RESULT_TYPES.join(', ')}`);
+  }
+
+  const db = getDb();
+
+  const task = db.prepare('SELECT id FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown> | undefined;
+  if (!task) {
+    return errorResult(`Task not found: ${taskId}`);
+  }
+
+  const id = generateTaskResultId();
+  const timestamp = now();
+  const filePath = (args.file_path as string | undefined) ?? null;
+  const metadata = args.metadata !== undefined ? JSON.stringify(args.metadata) : '{}';
+
+  db.prepare(`
+    INSERT INTO task_results (id, task_id, result_type, content, file_path, metadata, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, taskId, resultType, content, filePath, metadata, timestamp);
+
+  const result = db.prepare('SELECT * FROM task_results WHERE id = ?').get(id) as Record<string, unknown>;
+
+  return successResult(JSON.stringify({ result }, null, 2));
+}
+
+// ---------------------------------------------------------------------------
+// handleTaskResultGet
+// ---------------------------------------------------------------------------
+
+/**
+ * Get all results for a task, optionally filtered by result_type.
+ *
+ * Required: task_id
+ * Optional: result_type (filter)
+ */
+export function handleTaskResultGet(args: Record<string, unknown>): ToolResult {
+  const taskId = args.task_id as string | undefined;
+
+  if (!taskId) {
+    return errorResult('Missing required field: task_id');
+  }
+
+  const db = getDb();
+
+  const task = db.prepare('SELECT id FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown> | undefined;
+  if (!task) {
+    return errorResult(`Task not found: ${taskId}`);
+  }
+
+  const resultType = args.result_type as string | undefined;
+
+  let rows: Record<string, unknown>[];
+  if (resultType) {
+    if (!(VALID_RESULT_TYPES as readonly string[]).includes(resultType)) {
+      return errorResult(`Invalid result_type: ${resultType}. Must be one of: ${VALID_RESULT_TYPES.join(', ')}`);
+    }
+    rows = db.prepare(
+      'SELECT * FROM task_results WHERE task_id = ? AND result_type = ? ORDER BY created_at ASC'
+    ).all(taskId, resultType) as Record<string, unknown>[];
+  } else {
+    rows = db.prepare(
+      'SELECT * FROM task_results WHERE task_id = ? ORDER BY created_at ASC'
+    ).all(taskId) as Record<string, unknown>[];
+  }
+
+  return successResult(JSON.stringify({ results: rows, count: rows.length }, null, 2));
 }

@@ -2,8 +2,9 @@
  * Brain Engine v5.0 — Tasks Component
  *
  * Wraps the task management handlers as a BrainComponent.
- * Provides 10 MCP tools for task CRUD, dependency management,
- * agent assignment, smart next-task selection, fail/retry.
+ * Provides 12 MCP tools for task CRUD, dependency management,
+ * agent assignment, smart next-task selection, fail/retry,
+ * and structured result storage.
  *
  * Emits: task.created, task.assigned, task.completed, task.blocked,
  *        task.unblocked, task.failed
@@ -35,6 +36,8 @@ import {
   handleTaskUpdate,
   handleTaskFail,
   handleTaskRetry,
+  handleTaskResultAdd,
+  handleTaskResultGet,
 } from './handlers.js';
 
 export function createTasksComponent(): BrainComponent {
@@ -567,6 +570,66 @@ export function createTasksComponent(): BrainComponent {
             required: ['task_id'],
           },
           handler: (args) => handleTaskRetry(args),
+        },
+
+        // -----------------------------------------------------------------
+        // igris_task_result_add
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_task_result_add',
+          description: 'Add a structured result to a task (task_id, result_type, content, file_path?, metadata?)',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              task_id: {
+                type: 'string',
+                description: 'Task ID to attach the result to',
+              },
+              result_type: {
+                type: 'string',
+                enum: ['commit', 'file', 'text', 'image', 'url', 'json', 'error'],
+                description: 'Type of result: commit (SHA), file (generated file), text (summary), image (image path), url (link), json (structured data), error (error output)',
+              },
+              content: {
+                type: 'string',
+                description: 'Result content (e.g. commit SHA, file path, text summary, JSON string)',
+              },
+              file_path: {
+                type: 'string',
+                description: 'Associated file path, if applicable (optional)',
+              },
+              metadata: {
+                type: 'object',
+                description: 'Additional metadata as JSON object (optional)',
+              },
+            },
+            required: ['task_id', 'result_type', 'content'],
+          },
+          handler: (args) => handleTaskResultAdd(args),
+        },
+
+        // -----------------------------------------------------------------
+        // igris_task_result_get
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_task_result_get',
+          description: 'Get all results for a task, optionally filtered by result_type',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              task_id: {
+                type: 'string',
+                description: 'Task ID to get results for',
+              },
+              result_type: {
+                type: 'string',
+                enum: ['commit', 'file', 'text', 'image', 'url', 'json', 'error'],
+                description: 'Filter by result type (optional)',
+              },
+            },
+            required: ['task_id'],
+          },
+          handler: (args) => handleTaskResultGet(args),
         },
       ];
     },

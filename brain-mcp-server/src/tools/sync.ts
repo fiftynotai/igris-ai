@@ -202,6 +202,13 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     columns: ['task_id', 'depends_on', 'created_at'],
   },
   {
+    table: 'task_results',
+    syncKey: ['id'],
+    strategy: 'lww',
+    timestampCol: 'created_at',
+    columns: ['id', 'task_id', 'result_type', 'content', 'file_path', 'metadata', 'created_at'],
+  },
+  {
     table: 'task_assignments',
     syncKey: ['id'],
     timestampCol: 'assigned_at',
