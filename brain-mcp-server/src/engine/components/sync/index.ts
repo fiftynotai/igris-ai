@@ -8,16 +8,25 @@
  *           igris_definition_sync, igris_definition_pull,
  *           igris_file_push, igris_file_pull
  *
+ * Event-driven auto-push: When auto_push is enabled in ~/.igris/config.json,
+ * domain events trigger automatic replication to the remote brain.
+ * - Immediate events (brief/session/instance changes): push specific rows instantly
+ * - Batched events (memory/errors/projects/metrics): buffer for 10s then flush
+ *
  * @module engine/components/sync
  * @author Fifty.ai
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import type {
   BrainComponent,
   ComponentContext,
   Migration,
   ToolDefinition,
   EventDef,
+  EventPayload,
 } from '../../types.js';
 import {
   handleBrainPush,
@@ -31,6 +40,10 @@ import {
   handleDefinitionPull,
   handleFilePush,
   handleFilePull,
+  fetchWithRetry,
+  queueFailedRows,
+  chunkTablesForPush,
+  SYNC_TABLES,
 } from '../../../tools/sync.js';
 import type {
   BrainPushInput,
@@ -43,9 +56,297 @@ import type {
   DefinitionPullInput,
   FilePushInput,
   FilePullInput,
+  SyncTableConfig,
 } from '../../../tools/sync.js';
+import { getDb } from '../../../db.js';
+import { errMsg } from '../../helpers.js';
+
+// ---------------------------------------------------------------------------
+// Auto-push config
+// ---------------------------------------------------------------------------
+
+interface AutoPushConfig {
+  enabled: boolean;
+  remoteUrl: string;
+  apiKey: string;
+}
+
+/**
+ * Load auto-push configuration from ~/.igris/config.json.
+ *
+ * Returns a valid config when auto_push is true AND remote_brain.url
+ * AND remote_brain.api_key are present. Returns null otherwise.
+ */
+function loadAutoPushConfig(): AutoPushConfig | null {
+  try {
+    const configPath = join(homedir(), '.igris', 'config.json');
+    const raw = readFileSync(configPath, 'utf-8');
+    const config = JSON.parse(raw) as Record<string, unknown>;
+
+    if (config.auto_push !== true) return null;
+
+    const remote = config.remote_brain as Record<string, unknown> | undefined;
+    if (!remote || typeof remote !== 'object') return null;
+
+    const url = remote.url;
+    const apiKey = remote.api_key;
+    if (typeof url !== 'string' || !url) return null;
+    if (typeof apiKey !== 'string' || !apiKey) return null;
+
+    return {
+      enabled: true,
+      remoteUrl: url.replace(/\/+$/, ''),
+      apiKey,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Event-to-table mapping
+// ---------------------------------------------------------------------------
+
+/** Batched events accumulate tables and flush after a 10s window */
+const BATCH_EVENT_TABLE_MAP: Record<string, string[]> = {
+  'memory.stored': ['learnings'],
+  'error.stored': ['errors'],
+  'project.registered': ['projects'],
+  'metrics.recorded': ['agent_metrics'],
+};
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Look up a SyncTableConfig by table name */
+function findSyncTable(tableName: string): SyncTableConfig | undefined {
+  return SYNC_TABLES.find((t) => t.table === tableName);
+}
+
+/**
+ * Query rows from specified tables and push them to the remote brain.
+ *
+ * On success, updates sync_state with the push timestamp.
+ * On failure, queues rows for retry via sync_queue.
+ * This function is fire-and-forget (async, never awaited by callers).
+ */
+async function pushTables(
+  tables: Record<string, Record<string, unknown>[]>,
+  config: AutoPushConfig,
+  log: ComponentContext['log'],
+): Promise<void> {
+  const totalRows = Object.values(tables).reduce((sum, rows) => sum + rows.length, 0);
+  if (totalRows === 0) return;
+
+  const pushedAt = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const chunks = chunkTablesForPush(tables);
+
+  try {
+    for (const chunk of chunks) {
+      const payload = {
+        tables: chunk,
+        pushed_at: pushedAt,
+        schema_version: 9,
+      };
+
+      await fetchWithRetry(`${config.remoteUrl}/sync/push`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify(payload),
+      });
+    }
+
+    // Update sync_state for each pushed table
+    const db = getDb();
+    const upsertState = db.prepare(`
+      INSERT INTO sync_state (remote_url, table_name, last_push_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(remote_url, table_name)
+      DO UPDATE SET last_push_at = excluded.last_push_at
+    `);
+
+    db.transaction(() => {
+      for (const tableName of Object.keys(tables)) {
+        upsertState.run(config.remoteUrl, tableName, pushedAt);
+      }
+    })();
+  } catch (err) {
+    const message = errMsg(err);
+    log.warn(`Auto-push failed: ${message}`);
+
+    try {
+      const db = getDb();
+      queueFailedRows(db, tables, message);
+    } catch (queueErr) {
+      log.error(`Failed to queue rows for retry: ${errMsg(queueErr)}`);
+    }
+  }
+}
+
+/**
+ * Query rows from specific tables based on column definitions in SYNC_TABLES.
+ */
+function queryTableRows(
+  tableName: string,
+  whereClause: string,
+  params: unknown[],
+): Record<string, unknown>[] {
+  const tableConfig = findSyncTable(tableName);
+  if (!tableConfig) return [];
+
+  const db = getDb();
+  const cols = tableConfig.columns.join(', ');
+  return db.prepare(
+    `SELECT ${cols} FROM ${tableName} ${whereClause}`
+  ).all(...params) as Record<string, unknown>[];
+}
+
+// ---------------------------------------------------------------------------
+// Component factory
+// ---------------------------------------------------------------------------
 
 export function createSyncComponent(): BrainComponent {
+  let _ctx: ComponentContext | null = null;
+  let _autoPushConfig: AutoPushConfig | null = null;
+  let _batchPending: Set<string> = new Set();
+  let _batchTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // -------------------------------------------------------------------------
+  // Immediate event handler
+  // -------------------------------------------------------------------------
+
+  function onImmediateEvent(payload: EventPayload): void {
+    if (!_autoPushConfig || !_ctx) return;
+
+    const config = _autoPushConfig;
+    const log = _ctx.log;
+    const { event, data } = payload;
+    const tables: Record<string, Record<string, unknown>[]> = {};
+
+    switch (event) {
+      case 'brief.synced':
+      case 'brief.created': {
+        const project = data.project as string;
+        const briefId = data.brief_id as string;
+        const statusRows = queryTableRows('brief_status', 'WHERE project = ? AND brief_id = ?', [project, briefId]);
+        if (statusRows.length > 0) tables['brief_status'] = statusRows;
+        const fileRows = queryTableRows('brief_files', 'WHERE project = ? AND brief_id = ?', [project, briefId]);
+        if (fileRows.length > 0) tables['brief_files'] = fileRows;
+        break;
+      }
+
+      case 'brief.completed': {
+        const project = data.project as string;
+        const briefId = data.brief_id as string;
+        const rows = queryTableRows('brief_status', 'WHERE project = ? AND brief_id = ?', [project, briefId]);
+        if (rows.length > 0) tables['brief_status'] = rows;
+        break;
+      }
+
+      case 'session.synced': {
+        const project = data.project as string;
+        const rows = queryTableRows(
+          'sessions',
+          'WHERE project = ? ORDER BY started_at DESC LIMIT 1',
+          [project],
+        );
+        if (rows.length > 0) tables['sessions'] = rows;
+        break;
+      }
+
+      case 'session.file.updated': {
+        const project = data.project as string;
+        const filename = data.filename as string;
+        const rows = queryTableRows('session_files', 'WHERE project = ? AND filename = ?', [project, filename]);
+        if (rows.length > 0) tables['session_files'] = rows;
+        break;
+      }
+
+      case 'instance.heartbeat': {
+        const hostname = data.machine_hostname as string;
+        const rows = queryTableRows(
+          'instances',
+          'WHERE machine_hostname = ? ORDER BY last_heartbeat_at DESC LIMIT 1',
+          [hostname],
+        );
+        if (rows.length > 0) tables['instances'] = rows;
+        break;
+      }
+    }
+
+    // Fire-and-forget push
+    void pushTables(tables, config, log);
+  }
+
+  // -------------------------------------------------------------------------
+  // Batched event handler
+  // -------------------------------------------------------------------------
+
+  function flushBatch(): void {
+    _batchTimer = null;
+
+    if (!_autoPushConfig || !_ctx || _batchPending.size === 0) {
+      _batchPending.clear();
+      return;
+    }
+
+    const config = _autoPushConfig;
+    const log = _ctx.log;
+    const pendingTables = [..._batchPending];
+    _batchPending.clear();
+
+    const tables: Record<string, Record<string, unknown>[]> = {};
+    const db = getDb();
+
+    for (const tableName of pendingTables) {
+      const tableConfig = findSyncTable(tableName);
+      if (!tableConfig) continue;
+
+      // Query rows changed since last push for this table
+      const stateRow = db.prepare(
+        'SELECT last_push_at FROM sync_state WHERE remote_url = ? AND table_name = ?'
+      ).get(config.remoteUrl, tableName) as { last_push_at: string } | undefined;
+
+      const lastPushAt = stateRow?.last_push_at ?? '1970-01-01T00:00:00';
+      const cols = tableConfig.columns.join(', ');
+      const rows = db.prepare(
+        `SELECT ${cols} FROM ${tableName} WHERE ${tableConfig.timestampCol} > ?`
+      ).all(lastPushAt) as Record<string, unknown>[];
+
+      if (rows.length > 0) {
+        tables[tableName] = rows;
+      }
+    }
+
+    // Fire-and-forget push
+    void pushTables(tables, config, log);
+  }
+
+  function onBatchedEvent(payload: EventPayload): void {
+    if (!_autoPushConfig) return;
+
+    const tableNames = BATCH_EVENT_TABLE_MAP[payload.event];
+    if (!tableNames) return;
+
+    for (const t of tableNames) {
+      _batchPending.add(t);
+    }
+
+    // Start timer on FIRST event; do NOT reset on subsequent events
+    if (_batchTimer === null) {
+      _batchTimer = setTimeout(flushBatch, 10_000);
+      _batchTimer.unref();
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Component definition
+  // -------------------------------------------------------------------------
+
   return {
     name: 'sync',
     version: '1.0.0',
@@ -292,17 +593,68 @@ export function createSyncComponent(): BrainComponent {
     events(): { emits: EventDef[]; listens: EventDef[] } {
       return {
         emits: [],
-        listens: [],
+        listens: [
+          // Immediate push events
+          { name: 'brief.synced', description: 'Auto-push brief status and file on sync' },
+          { name: 'brief.created', description: 'Auto-push brief status and file on creation' },
+          { name: 'brief.completed', description: 'Auto-push brief status on completion' },
+          { name: 'session.synced', description: 'Auto-push latest session on sync' },
+          { name: 'session.file.updated', description: 'Auto-push session file on update' },
+          { name: 'instance.heartbeat', description: 'Auto-push instance data on heartbeat' },
+          // Batched push events (10s window)
+          { name: 'memory.stored', description: 'Batch-push learnings table' },
+          { name: 'error.stored', description: 'Batch-push errors table' },
+          { name: 'project.registered', description: 'Batch-push projects table' },
+          { name: 'metrics.recorded', description: 'Batch-push agent_metrics table' },
+        ],
       };
     },
 
     init(ctx: ComponentContext): void {
-      // TODO: Wire event listeners for auto-sync (listen to domain events and auto-push changes)
-      ctx.log.info('Sync component initialized');
+      _ctx = ctx;
+      _autoPushConfig = loadAutoPushConfig();
+
+      // ALWAYS wire listeners (event-bus integrity tests require it).
+      // Handlers early-return when _autoPushConfig is null.
+      ctx.bus.on('brief.synced', onImmediateEvent);
+      ctx.bus.on('brief.created', onImmediateEvent);
+      ctx.bus.on('brief.completed', onImmediateEvent);
+      ctx.bus.on('session.synced', onImmediateEvent);
+      ctx.bus.on('session.file.updated', onImmediateEvent);
+      ctx.bus.on('instance.heartbeat', onImmediateEvent);
+      ctx.bus.on('memory.stored', onBatchedEvent);
+      ctx.bus.on('error.stored', onBatchedEvent);
+      ctx.bus.on('project.registered', onBatchedEvent);
+      ctx.bus.on('metrics.recorded', onBatchedEvent);
+
+      const status = _autoPushConfig
+        ? `enabled, remote: ${_autoPushConfig.remoteUrl}`
+        : 'disabled';
+      ctx.log.info(`Sync component initialized (auto-push ${status})`);
     },
 
     destroy(): void {
-      // No resources to clean up
+      if (_batchTimer !== null) {
+        clearTimeout(_batchTimer);
+        _batchTimer = null;
+      }
+      _batchPending.clear();
+
+      if (_ctx) {
+        _ctx.bus.off('brief.synced', onImmediateEvent);
+        _ctx.bus.off('brief.created', onImmediateEvent);
+        _ctx.bus.off('brief.completed', onImmediateEvent);
+        _ctx.bus.off('session.synced', onImmediateEvent);
+        _ctx.bus.off('session.file.updated', onImmediateEvent);
+        _ctx.bus.off('instance.heartbeat', onImmediateEvent);
+        _ctx.bus.off('memory.stored', onBatchedEvent);
+        _ctx.bus.off('error.stored', onBatchedEvent);
+        _ctx.bus.off('project.registered', onBatchedEvent);
+        _ctx.bus.off('metrics.recorded', onBatchedEvent);
+      }
+
+      _ctx = null;
+      _autoPushConfig = null;
     },
   };
 }
