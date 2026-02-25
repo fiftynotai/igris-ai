@@ -42,7 +42,25 @@ export function createBriefsComponent(): BrainComponent {
     depends: [],
 
     schema(): Migration[] {
-      return [];
+      return [
+        {
+          version: 1,
+          description: 'Create brief_files table (idempotent with legacy v6)',
+          sql: `
+            CREATE TABLE IF NOT EXISTS brief_files (
+              id TEXT PRIMARY KEY,
+              project TEXT NOT NULL,
+              brief_id TEXT NOT NULL,
+              filename TEXT NOT NULL,
+              content TEXT NOT NULL,
+              content_hash TEXT NOT NULL,
+              updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+              UNIQUE(project, brief_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_brief_files_project ON brief_files(project);
+          `,
+        },
+      ];
     },
 
     tools(): ToolDefinition[] {

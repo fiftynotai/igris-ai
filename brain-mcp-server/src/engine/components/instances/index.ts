@@ -39,7 +39,34 @@ export function createInstancesComponent(): BrainComponent {
     depends: [],
 
     schema(): Migration[] {
-      return [];
+      return [
+        {
+          version: 1,
+          description: 'Create agent_events table (idempotent with legacy v9)',
+          sql: `
+            CREATE TABLE IF NOT EXISTS agent_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                instance_id TEXT NOT NULL,
+                agent TEXT NOT NULL,
+                event_type TEXT NOT NULL CHECK (event_type IN ('start', 'stop', 'error', 'retry')),
+                phase TEXT,
+                brief_id TEXT,
+                duration_ms INTEGER DEFAULT 0,
+                input_tokens INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                cache_read INTEGER DEFAULT 0,
+                cache_create INTEGER DEFAULT 0,
+                result TEXT,
+                error_message TEXT,
+                metadata TEXT DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_agent_events_instance ON agent_events(instance_id);
+            CREATE INDEX IF NOT EXISTS idx_agent_events_agent ON agent_events(agent);
+            CREATE INDEX IF NOT EXISTS idx_agent_events_created ON agent_events(created_at);
+          `,
+        },
+      ];
     },
 
     tools(): ToolDefinition[] {

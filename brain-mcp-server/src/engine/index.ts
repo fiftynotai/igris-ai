@@ -39,7 +39,7 @@ import { createCoordinationComponent } from './components/coordination/index.js'
 import { createMonitoringComponent } from './components/monitoring/index.js';
 
 // db.ts bridge
-import { setAdapter } from '../db.js';
+import { setAdapter, migrateSchema } from '../db.js';
 
 /** Result of engine bootstrap */
 export interface Engine {
@@ -68,16 +68,21 @@ export function bootEngine(config: EngineConfig): Engine {
   // 1. Create storage adapter
   const storage = createSqliteAdapter(config.dbPath);
 
-  // 2. Bridge db.ts — all tool modules that call getDb() now use this connection
+  // 2. Run legacy migrations on the engine's connection BEFORE bridging.
+  //    This ensures v1-v9 tables (including sync_queue, brief_files,
+  //    session_files, definition_files, agent_events) exist on fresh DBs.
+  migrateSchema(storage.rawConnection);
+
+  // 3. Bridge db.ts — all tool modules that call getDb() now use this connection
   setAdapter(storage);
 
-  // 3. Create event bus
+  // 4. Create event bus
   const bus = createEventBus();
 
-  // 4. Create registry
+  // 5. Create registry
   const registry = createRegistry(storage, bus);
 
-  // 5. Register domain components (all 13)
+  // 6. Register domain components (all 13)
   const componentFactories = [
     createMemoryComponent,
     createErrorsComponent,
@@ -100,14 +105,14 @@ export function bootEngine(config: EngineConfig): Engine {
     registry.register(component, componentConfig);
   }
 
-  // 6. Boot — runs migrations, init, collects tools
+  // 7. Boot — runs migrations, init, collects tools
   const allTools = registry.boot();
 
-  // 7. Create gateway and register tools
+  // 8. Create gateway and register tools
   const gateway = createGateway();
   gateway.register(allTools);
 
-  // 8. Emit engine.ready — components that need dispatchTool can capture it
+  // 9. Emit engine.ready — components that need dispatchTool can capture it
   bus.emit('engine.ready', { dispatch: gateway.dispatch.bind(gateway) });
 
   console.error(

@@ -37,7 +37,24 @@ export function createSessionsComponent(): BrainComponent {
     depends: [],
 
     schema(): Migration[] {
-      return [];
+      return [
+        {
+          version: 1,
+          description: 'Create session_files table (idempotent with legacy v7)',
+          sql: `
+            CREATE TABLE IF NOT EXISTS session_files (
+              id TEXT PRIMARY KEY,
+              project TEXT NOT NULL,
+              filename TEXT NOT NULL,
+              content TEXT NOT NULL,
+              content_hash TEXT NOT NULL,
+              updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+              UNIQUE(project, filename)
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_files_project ON session_files(project);
+          `,
+        },
+      ];
     },
 
     tools(): ToolDefinition[] {

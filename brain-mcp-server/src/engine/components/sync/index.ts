@@ -353,7 +353,28 @@ export function createSyncComponent(): BrainComponent {
     depends: [],
 
     schema(): Migration[] {
-      return [];
+      return [
+        {
+          version: 1,
+          description: 'Create sync_queue table (idempotent with legacy v5)',
+          sql: `
+            CREATE TABLE IF NOT EXISTS sync_queue (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              table_name TEXT NOT NULL,
+              row_data TEXT NOT NULL,
+              operation TEXT DEFAULT 'push' CHECK (operation IN ('push', 'pull')),
+              status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'retrying', 'sent', 'failed')),
+              retry_count INTEGER DEFAULT 0,
+              max_retries INTEGER DEFAULT 5,
+              error_message TEXT,
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              last_retry_at TEXT,
+              sent_at TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_sync_queue_status ON sync_queue(status);
+          `,
+        },
+      ];
     },
 
     tools(): ToolDefinition[] {

@@ -454,4 +454,4 @@ function closeDb(): void {
   }
 }
 
-export { getDb, closeDb, setAdapter, BRAIN_DIR, DB_PATH };
+export { getDb, closeDb, setAdapter, migrateSchema, BRAIN_DIR, DB_PATH };

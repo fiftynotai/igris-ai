@@ -75,8 +75,27 @@ export function createCacheComponent(): BrainComponent {
     depends: ['briefs', 'sessions'],
 
     schema(): Migration[] {
-      // Cache component has no own tables — it reads from briefs/sessions
-      return [];
+      // Cache component owns the definition_files table and reads from briefs/sessions
+      return [
+        {
+          version: 1,
+          description: 'Create definition_files table (idempotent with legacy v8)',
+          sql: `
+            CREATE TABLE IF NOT EXISTS definition_files (
+              id TEXT PRIMARY KEY,
+              type TEXT NOT NULL CHECK (type IN ('agent', 'skill', 'rule', 'prompt')),
+              name TEXT NOT NULL,
+              filename TEXT NOT NULL,
+              content TEXT NOT NULL,
+              content_hash TEXT NOT NULL,
+              version TEXT,
+              updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+              UNIQUE(type, name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_definition_files_type ON definition_files(type);
+          `,
+        },
+      ];
     },
 
     tools(): ToolDefinition[] {
