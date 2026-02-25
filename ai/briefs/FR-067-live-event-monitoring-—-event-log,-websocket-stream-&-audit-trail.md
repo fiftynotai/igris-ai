@@ -2,8 +2,8 @@
 
 **Type:** FR
 **Priority:** P1
-**Effort:** TBD
-**Status:** Ready
+**Effort:** M-Medium
+**Status:** In Progress
 **Created:** 2026-02-25
 **Completed:** _TBD_
 
@@ -11,74 +11,69 @@
 
 ## Problem
 
-9 orphan monitoring events (schedules, cache, coordination) fire into the void with no storage, no streaming, and no audit trail. The engine does work but nobody can observe it in real-time. There's no event history for debugging or auditing. When FR-065 (task orchestration) lands, task lifecycle events will also need the same observability layer.
+9 orphan monitoring events fire into the void with no storage and no audit trail. The engine does work but nobody can observe it. There's no event history for debugging or auditing.
 
-Specific gaps:
-1. No event storage — events fire and disappear, no historical record
-2. No real-time streaming — no WebSocket support on brain server, no way for dashboards or agents to subscribe to live events
-3. No event query API — no MCP tool to search/filter event history
-4. 9 monitoring events completely unlistened: schedule.created/enabled/disabled/deleted/fire_now/run_start/run_complete, cache.rebuilt/cleaned, coordination.self_heal
-5. No retention policy — no mechanism to age out old events
-6. When FR-065 lands, task lifecycle events (created/assigned/completed/blocked/unblocked) and instance.heartbeat will also need this layer
+**Orphan events (confirmed — zero listeners):**
+- `schedule.created`, `schedule.enabled`, `schedule.disabled`, `schedule.deleted`
+- `schedule.fire_now`, `schedule.run_start`, `schedule.run_complete`
+- `cache.rebuilt`, `cache.cleaned`
+- `coordination.self_heal`
 
 ---
 
 ## Goal
 
-Build the event logging, storage, and real-time streaming infrastructure in the brain engine.
+Build a new **monitoring** engine component (13th component) that:
 
-**Event Log Table:**
-- New `event_log` table in brain: id, event_name, component, payload (JSON), machine_hostname, project_slug, instance_id, created_at
-- Indexed on event_name, component, created_at for fast queries
-- All 9 monitoring events stored automatically via sync component listener
-- Extensible — FR-065 task events and any future events plug into the same table
+1. **Creates `event_log` table** — stores all engine events with structured metadata
+2. **Wires listeners for all 9 orphan events** — stores each event in event_log automatically
+3. **Provides `igris_event_log` MCP tool** — query event history with filters (name, component, project, date range)
+4. **Provides `igris_event_log_cleanup` MCP tool** — purge old events by retention policy
+5. **Runs retention cleanup on init** — purge events older than configured retention_days
 
-**Sync Component Event Listeners:**
-- Wire bus.on() in sync component init() for all 9 monitoring events
-- Each listener writes to event_log table (local brain DB)
-- AND pushes to remote brain via WebSocket if connected (see below)
-- Matching bus.off() in destroy() for clean shutdown
+**Deferred to FR-068:** WebSocket streaming, live subscriptions, dashboard endpoints. The event_log table is the foundation they'll build on.
 
-**WebSocket Support on Brain REST Server:**
-- Add WebSocket endpoint to the brain HTTP server (already exists for REST API in sync component HTTP mode)
-- Clients connect and subscribe to event streams with optional filters (by event_name, component, project)
-- Server broadcasts events to all connected subscribers in real-time
-- Authentication via same API key used for REST
-- Graceful handling: if no WebSocket clients connected, events still stored in DB (no wasted resources)
+---
 
-**Event Query MCP Tool:**
-- `igris_event_log` tool: query event history with filters (event_name, component, project, date range, limit)
-- `igris_event_stream_subscribe` tool: subscribe current session to live events (for agents that want real-time awareness)
-- Returns structured JSON for dashboard consumption
+## Key Files
 
-**Retention Policy:**
-- Configurable in config.json: `event_log.retention_days` (default: 30)
-- Cleanup runs on engine init and periodically (e.g., daily via schedules daemon)
-- Option to set per-event-type retention (e.g., coordination.self_heal kept 90 days for audit, cache.cleaned kept 7 days)
+- `brain-mcp-server/src/engine/components/monitoring/index.ts` — NEW component (13th)
+- `brain-mcp-server/src/engine/components/monitoring/schema.ts` — NEW event_log migration
+- `brain-mcp-server/src/engine/components/monitoring/handlers.ts` — NEW tool handlers
+- `brain-mcp-server/src/engine/index.ts` — Register monitoring component in factory array
+- `brain-mcp-server/src/index.ts` — Enable monitoring in config
+- `brain-mcp-server/src/engine/__tests__/event-bus-integrity.test.ts` — Must pass after changes
 
-**Events Captured (Phase 1 — monitoring orphans):**
-- schedule.created, schedule.enabled, schedule.disabled, schedule.deleted
-- schedule.fire_now, schedule.run_start, schedule.run_complete
-- cache.rebuilt, cache.cleaned
-- coordination.self_heal
+### Event Payloads (from seeker research)
 
-**Events Captured (Phase 2 — after FR-065 lands):**
-- task.created, task.assigned, task.completed, task.blocked, task.unblocked
-- instance.heartbeat
-- brief.synced, session.synced (contention events from FR-064)
-
-**Hybrid Storage + Streaming:**
-- Every event: stored in local event_log table (history/audit)
-- Every event: pushed to remote brain via WebSocket (real-time)
-- Dashboard connects via WebSocket for live feed, queries REST for historical
-- If WebSocket unavailable, events still stored locally and pushed on next sync
+| Event | Payload | Source |
+|-------|---------|--------|
+| `schedule.created` | `{ schedule_id, name, cron_expr }` | schedules/index.ts:131 |
+| `schedule.enabled` | `{ schedule_id }` | schedules/index.ts:215 |
+| `schedule.disabled` | `{ schedule_id }` | schedules/index.ts:243 |
+| `schedule.deleted` | `{ schedule_id, name }` | schedules/index.ts:293 |
+| `schedule.fire_now` | `{ schedule_id, run_id }` | schedules/handlers.ts:419 |
+| `schedule.run_start` | `{ schedule_id, run_id }` | schedules/daemon.ts:92 |
+| `schedule.run_complete` | `{ schedule_id, run_id, status }` | schedules/daemon.ts:127, handlers.ts:451 |
+| `cache.rebuilt` | `{ project, scope }` | cache/index.ts:108 |
+| `cache.cleaned` | `{ project }` | cache/index.ts:136 |
+| `coordination.self_heal` | `{ taskId, reason, retryCount }` | coordination/index.ts:171 |
 
 ---
 
 ## Tasks
 
 ### Pending
-- [ ] TBD
+- [ ] T1: Create monitoring component scaffold (index.ts, schema.ts, handlers.ts)
+- [ ] T2: Create event_log table schema with indexes
+- [ ] T3: Wire 9 orphan event listeners in init() with bus.off() in destroy()
+- [ ] T4: Implement igris_event_log query tool (filters: event_name, component, project, since, until, limit)
+- [ ] T5: Implement igris_event_log_cleanup tool (retention_days param)
+- [ ] T6: Run retention cleanup on component init (default 30 days)
+- [ ] T7: Register component in engine/index.ts and enable in src/index.ts config
+- [ ] T8: Add event_log to SYNC_TABLES in tools/sync.ts
+- [ ] T9: Add unit tests for monitoring component
+- [ ] T10: Verify event-bus-integrity tests pass
 
 ### In Progress
 _(None yet)_
@@ -90,8 +85,10 @@ _(None yet)_
 
 ## Session State
 
-**Current State:** Brief created
-**Next Steps When Resuming:** Define tasks and acceptance criteria
+**Current State:** In Progress
+**Phase:** PLANNING
+**Active Agent:** architect
+**Next Steps:** Architect creates implementation plan
 **Last Updated:** 2026-02-25
 **Blockers:** None
 
@@ -99,7 +96,22 @@ _(None yet)_
 
 ## Acceptance Criteria
 
-1. [ ] TBD
+1. [ ] New `monitoring` component loads as 13th engine component
+2. [ ] `event_log` table created with indexes on event_name, component, created_at
+3. [ ] All 9 orphan events stored in event_log with correct metadata
+4. [ ] `igris_event_log` MCP tool returns filtered event history
+5. [ ] `igris_event_log_cleanup` MCP tool purges events older than retention_days
+6. [ ] Retention cleanup runs on component init (default 30 days)
+7. [ ] `event_log` table added to SYNC_TABLES for remote brain replication
+8. [ ] Event-bus-integrity tests pass (9 new listeners declared and wired)
+9. [ ] All listeners cleaned up in destroy()
+10. [ ] Component is opt-in via engine config (enabled: true)
+
+---
+
+## Agent Log
+
+_(Agents will be logged here during implementation)_
 
 ---
 

@@ -3,9 +3,9 @@
 **Type:** FR
 **Priority:** P1
 **Effort:** M-Medium
-**Status:** In Progress
+**Status:** Done
 **Created:** 2026-02-25
-**Completed:** _TBD_
+**Completed:** 2026-02-25
 
 ---
 

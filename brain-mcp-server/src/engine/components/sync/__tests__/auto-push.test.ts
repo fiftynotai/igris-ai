@@ -276,8 +276,8 @@ describe('Sync Auto-Push', () => {
   // -------------------------------------------------------------------------
 
   describe('SYNC_TABLES completeness', () => {
-    it('has exactly 19 entries', () => {
-      expect(SYNC_TABLES).toHaveLength(19);
+    it('has exactly 20 entries', () => {
+      expect(SYNC_TABLES).toHaveLength(20);
     });
 
     const newTables = [
