@@ -107,6 +107,7 @@ export function createProjectsComponent(): BrainComponent {
     events(): { emits: EventDef[]; listens: EventDef[] } {
       return {
         emits: [
+          // Orphan: sync auto-push extension point — will be consumed when sync auto-push is implemented
           { name: 'project.registered', description: 'A project was registered or updated' },
         ],
         listens: [],

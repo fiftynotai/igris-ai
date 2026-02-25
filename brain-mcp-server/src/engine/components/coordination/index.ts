@@ -336,6 +336,7 @@ export function createCoordinationComponent(): BrainComponent {
       return {
         emits: [
           // TODO: Emit coordination.adjustment from handleAdjustPriorities when wired
+          // Orphan: monitoring/observability extension point — for future dashboard/notification systems
           { name: 'coordination.self_heal', description: 'Self-healing diagnostic task was created for a failed task' },
         ],
         listens: [

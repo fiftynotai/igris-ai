@@ -189,6 +189,7 @@ export function createInstancesComponent(): BrainComponent {
     events(): { emits: EventDef[]; listens: EventDef[] } {
       return {
         emits: [
+          // Orphan: sync auto-push extension point — will be consumed when sync auto-push is implemented
           { name: 'instance.heartbeat', description: 'An instance heartbeat was received' },
         ],
         listens: [],

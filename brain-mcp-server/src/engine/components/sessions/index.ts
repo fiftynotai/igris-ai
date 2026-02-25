@@ -146,6 +146,7 @@ export function createSessionsComponent(): BrainComponent {
     events(): { emits: EventDef[]; listens: EventDef[] } {
       return {
         emits: [
+          // Orphan: sync auto-push extension point — will be consumed when sync auto-push is implemented
           { name: 'session.synced', description: 'A session was synced to the brain' },
           { name: 'session.file.updated', description: 'A session file was created or updated in the brain' },
         ],

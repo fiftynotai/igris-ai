@@ -305,12 +305,19 @@ export function createSchedulesComponent(): BrainComponent {
     events(): { emits: EventDef[]; listens: EventDef[] } {
       return {
         emits: [
+          // Orphan: monitoring/observability extension point — for future dashboard/notification systems
           { name: 'schedule.created', description: 'A new schedule was created' },
+          // Orphan: monitoring/observability extension point — for future dashboard/notification systems
           { name: 'schedule.enabled', description: 'A schedule was enabled' },
+          // Orphan: monitoring/observability extension point — for future dashboard/notification systems
           { name: 'schedule.disabled', description: 'A schedule was disabled' },
+          // Orphan: monitoring/observability extension point — for future dashboard/notification systems
           { name: 'schedule.deleted', description: 'A schedule was deleted' },
+          // Orphan: monitoring/observability extension point — for future dashboard/notification systems
           { name: 'schedule.fire_now', description: 'A schedule was manually fired' },
+          // Orphan: monitoring/observability extension point — for future dashboard/notification systems
           { name: 'schedule.run_start', description: 'A schedule run started (daemon)' },
+          // Orphan: monitoring/observability extension point — for future dashboard/notification systems
           { name: 'schedule.run_complete', description: 'A schedule run completed' },
         ],
         listens: [

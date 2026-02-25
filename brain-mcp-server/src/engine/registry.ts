@@ -168,7 +168,7 @@ export function createRegistry(storage: StorageAdapter, bus: EventBus) {
         // 4. Wire event listeners (component sets them up in init())
         // Events are self-wired by components during init() via ctx.bus.on()
 
-        // 5. Emit lifecycle event
+        // 5. Emit lifecycle event (orphan: infrastructure event — no listener yet)
         bus.emit('component.loaded', {
           component: name,
           version: component.version,
@@ -181,6 +181,7 @@ export function createRegistry(storage: StorageAdapter, bus: EventBus) {
       } catch (err) {
         const message = errMsg(err);
         log.error(`Failed to load: ${message}`);
+        // Orphan: infrastructure lifecycle event — no listener yet
         bus.emit('component.error', { component: name, error: message });
         throw new Error(`Failed to boot component "${name}": ${message}`);
       }

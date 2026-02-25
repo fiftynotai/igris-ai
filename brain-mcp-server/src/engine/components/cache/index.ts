@@ -146,7 +146,9 @@ export function createCacheComponent(): BrainComponent {
     events(): { emits: EventDef[]; listens: EventDef[] } {
       return {
         emits: [
+          // Orphan: monitoring/observability extension point — for future dashboard/notification systems
           { name: 'cache.rebuilt', description: 'Filesystem cache was rebuilt for a project' },
+          // Orphan: monitoring/observability extension point — for future dashboard/notification systems
           { name: 'cache.cleaned', description: 'Filesystem cache was removed for a project' },
         ],
         listens: [

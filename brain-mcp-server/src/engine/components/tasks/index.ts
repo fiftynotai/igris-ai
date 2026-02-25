@@ -574,10 +574,15 @@ export function createTasksComponent(): BrainComponent {
     events(): { emits: EventDef[]; listens: EventDef[] } {
       return {
         emits: [
+          // Orphan: task lifecycle extension point — for future workflow automation
           { name: 'task.created', description: 'A new task was created' },
+          // Orphan: task lifecycle extension point — for future workflow automation
           { name: 'task.assigned', description: 'A task was assigned to an agent' },
+          // Orphan: task lifecycle extension point — for future workflow automation
           { name: 'task.completed', description: 'A task was marked as done' },
+          // Orphan: task lifecycle extension point — for future workflow automation
           { name: 'task.blocked', description: 'A dependency was added, blocking a task' },
+          // Orphan: task lifecycle extension point — for future workflow automation
           { name: 'task.unblocked', description: 'A task became unblocked (all deps done)' },
           { name: 'task.failed', description: 'A task was marked as failed (triggers self-healing)' },
         ],

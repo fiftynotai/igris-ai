@@ -174,6 +174,7 @@ export function createMemoryComponent(): BrainComponent {
     events(): { emits: EventDef[]; listens: EventDef[] } {
       return {
         emits: [
+          // Orphan: sync auto-push extension point — will be consumed when sync auto-push is implemented
           { name: 'memory.stored', description: 'A new learning was stored' },
           // TODO: Add memory.promoted when scope promotion is implemented
         ],
