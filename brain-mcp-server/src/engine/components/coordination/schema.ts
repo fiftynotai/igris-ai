@@ -65,6 +65,7 @@ export function initCoordinationSchema(): void {
 
   const defaultConfig: [string, string][] = [
     ['autonomous_enabled', 'false'],
+    ['auto_route_enabled', 'false'],
     ['max_retries_default', '3'],
     ['priority_ceiling', '1'],
     ['priority_floor', '5'],

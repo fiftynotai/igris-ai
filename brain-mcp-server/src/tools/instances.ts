@@ -28,6 +28,7 @@ interface InstanceHeartbeatInput {
   current_brief?: string;
   current_phase?: string;
   current_task?: string;
+  capabilities?: string[];
 }
 
 /** Input shape for igris_instance_list */
@@ -81,6 +82,24 @@ function handleInstanceHeartbeat(args: InstanceHeartbeatInput): { content: { typ
   );
 
   const action = result.changes > 0 && args.instance_id ? 'heartbeat updated' : 'registered';
+
+  // Upsert capabilities if provided (backward compatible — skips if omitted)
+  if (args.capabilities && Array.isArray(args.capabilities) && args.capabilities.length > 0) {
+    try {
+      db.transaction(() => {
+        db.prepare('DELETE FROM agent_capabilities WHERE agent = ?').run(instanceId);
+
+        const insertCap = db.prepare(
+          "INSERT OR IGNORE INTO agent_capabilities (agent, capability, created_at) VALUES (?, ?, datetime('now'))"
+        );
+        for (const cap of args.capabilities!) {
+          insertCap.run(instanceId, cap);
+        }
+      })();
+    } catch {
+      // agent_capabilities table may not exist yet (pre-v2 migration) — skip silently
+    }
+  }
 
   return {
     content: [{

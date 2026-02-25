@@ -844,6 +844,60 @@ export function handleTaskRetry(args: Record<string, unknown>): ToolResult {
 }
 
 // ---------------------------------------------------------------------------
+// handleTaskClaim
+// ---------------------------------------------------------------------------
+
+/**
+ * Atomically claim a specific task by ID for an agent.
+ *
+ * Required: task_id, agent
+ * Only works on tasks in 'pending' status. Atomically updates the task
+ * status to 'active', sets the assignee, and creates an assignment record.
+ */
+export function handleTaskClaim(args: Record<string, unknown>): ToolResult {
+  const taskId = args.task_id as string | undefined;
+  const agent = args.agent as string | undefined;
+
+  if (!taskId || !agent) {
+    return errorResult('Missing required fields: task_id, agent');
+  }
+
+  const db = getDb();
+
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown> | undefined;
+  if (!task) {
+    return errorResult(`Task not found: ${taskId}`);
+  }
+
+  if (task.status !== 'pending') {
+    return errorResult(
+      `Task ${taskId} is not in pending status (current: ${task.status}). Only pending tasks can be claimed.`
+    );
+  }
+
+  const assignmentId = generateAssignmentId();
+  const timestamp = now();
+
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE tasks SET status = 'active', assignee = ?, updated_at = ? WHERE id = ?
+    `).run(agent, timestamp, taskId);
+
+    db.prepare(`
+      INSERT INTO task_assignments (id, task_id, agent, assigned_at)
+      VALUES (?, ?, ?, ?)
+    `).run(assignmentId, taskId, agent, timestamp);
+  })();
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown>;
+
+  return successResult(JSON.stringify({
+    task: updated,
+    assignment: { id: assignmentId, task_id: taskId, agent, assigned_at: timestamp },
+  }, null, 2));
+}
+
+// ---------------------------------------------------------------------------
 // handleTaskResultAdd
 // ---------------------------------------------------------------------------
 

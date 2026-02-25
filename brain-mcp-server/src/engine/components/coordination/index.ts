@@ -2,8 +2,8 @@
  * Brain Engine v5.0 — Coordination Component
  *
  * Wraps the autonomous coordination handlers as a BrainComponent.
- * Provides 6 MCP tools for agent capability management, priority
- * adjustment, configuration, and audit trail.
+ * Provides 7 MCP tools for agent capability management, priority
+ * adjustment, auto-routing, configuration, and audit trail.
  *
  * Self-healing: listens for task.failed events and creates diagnostic
  * child tasks when autonomous mode and self-healing are enabled.
@@ -33,6 +33,7 @@ import {
   handleCoordinationConfigSet,
   handleCoordinationConfigGet,
   handleAuditList,
+  handleAutoRoute,
 } from './handlers.js';
 
 export function createCoordinationComponent(): BrainComponent {
@@ -256,6 +257,48 @@ export function createCoordinationComponent(): BrainComponent {
         },
 
         // -----------------------------------------------------------------
+        // igris_coordination_auto_route
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_coordination_auto_route',
+          description: 'Auto-assign pending tasks to online agents by capability match. Respects auto_route_enabled config. Matches tasks by required_capabilities against agent capabilities of active instances.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              dry_run: {
+                type: 'boolean',
+                description: 'If true, report what would be assigned without making changes (default: false)',
+              },
+            },
+          },
+          handler: (args) => {
+            const result = handleAutoRoute(args);
+            if (!result.isError && _ctx) {
+              // Emit task.assigned events for each assignment made (non-dry-run only)
+              if (args.dry_run !== true) {
+                try {
+                  const parsed = JSON.parse(result.content[0].text) as {
+                    assignments?: { task_id: string; agent: string }[];
+                  };
+                  if (parsed.assignments) {
+                    for (const assignment of parsed.assignments) {
+                      _ctx.bus.emit('task.assigned', {
+                        task_id: assignment.task_id,
+                        agent: assignment.agent,
+                        source: 'auto_route',
+                      });
+                    }
+                  }
+                } catch {
+                  // Best-effort event emission
+                }
+              }
+            }
+            return result;
+          },
+        },
+
+        // -----------------------------------------------------------------
         // igris_coordination_config_set
         // -----------------------------------------------------------------
         {
@@ -338,6 +381,7 @@ export function createCoordinationComponent(): BrainComponent {
           // TODO: Emit coordination.adjustment from handleAdjustPriorities when wired
           // Orphan: monitoring/observability extension point — for future dashboard/notification systems
           { name: 'coordination.self_heal', description: 'Self-healing diagnostic task was created for a failed task' },
+          { name: 'task.assigned', description: 'A task was auto-routed to an agent instance' },
         ],
         listens: [
           { name: 'task.failed', description: 'React to task failures with self-healing logic' },

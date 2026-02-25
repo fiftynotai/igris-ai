@@ -2,12 +2,12 @@
  * Brain Engine v5.0 — Tasks Component
  *
  * Wraps the task management handlers as a BrainComponent.
- * Provides 12 MCP tools for task CRUD, dependency management,
- * agent assignment, smart next-task selection, fail/retry,
- * and structured result storage.
+ * Provides 13 MCP tools for task CRUD, dependency management,
+ * agent assignment, atomic claim, smart next-task selection,
+ * fail/retry, and structured result storage.
  *
- * Emits: task.created, task.assigned, task.completed, task.blocked,
- *        task.unblocked, task.failed
+ * Emits: task.created, task.assigned, task.completed, task.claimed,
+ *        task.blocked, task.unblocked, task.failed
  * Listens: brief.created, brief.completed
  *
  * @module engine/components/tasks
@@ -36,6 +36,7 @@ import {
   handleTaskUpdate,
   handleTaskFail,
   handleTaskRetry,
+  handleTaskClaim,
   handleTaskResultAdd,
   handleTaskResultGet,
 } from './handlers.js';
@@ -292,6 +293,38 @@ export function createTasksComponent(): BrainComponent {
             const result = handleTaskAssign(args);
             if (!result.isError && _ctx) {
               _ctx.bus.emit('task.assigned', {
+                task_id: args.task_id,
+                agent: args.agent,
+              });
+            }
+            return result;
+          },
+        },
+
+        // -----------------------------------------------------------------
+        // igris_task_claim
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_task_claim',
+          description: 'Atomically claim a specific task by ID for an agent. Fails if task is not in pending status. Creates an assignment record and sets status to active in a single transaction.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              task_id: {
+                type: 'string',
+                description: 'Task ID to claim (e.g. "t-a1b2c3d4")',
+              },
+              agent: {
+                type: 'string',
+                description: 'Agent name claiming the task (e.g. "forger", "sentinel")',
+              },
+            },
+            required: ['task_id', 'agent'],
+          },
+          handler: (args) => {
+            const result = handleTaskClaim(args);
+            if (!result.isError && _ctx) {
+              _ctx.bus.emit('task.claimed', {
                 task_id: args.task_id,
                 agent: args.agent,
               });
@@ -641,6 +674,7 @@ export function createTasksComponent(): BrainComponent {
           { name: 'task.created', description: 'A new task was created' },
           // Orphan: task lifecycle extension point — for future workflow automation
           { name: 'task.assigned', description: 'A task was assigned to an agent' },
+          { name: 'task.claimed', description: 'A task was atomically claimed by an agent' },
           // Orphan: task lifecycle extension point — for future workflow automation
           { name: 'task.completed', description: 'A task was marked as done' },
           // Orphan: task lifecycle extension point — for future workflow automation

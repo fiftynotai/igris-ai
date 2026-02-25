@@ -9,9 +9,15 @@
  * @author Fifty.ai
  */
 
+import { randomUUID } from 'node:crypto';
 import { getDb } from '../../../db.js';
 import type { ToolResult } from '../../types.js';
 import { errorResult, successResult, now, WhereBuilder } from '../../helpers.js';
+
+/** Generate an assignment ID: first 8 chars of a UUID */
+function generateAssignmentId(): string {
+  return randomUUID().substring(0, 8);
+}
 
 // ---------------------------------------------------------------------------
 // handleAgentCapabilitySet
@@ -380,5 +386,215 @@ export function handleAuditList(args: Record<string, unknown>): ToolResult {
   return successResult(JSON.stringify({
     decisions: rows,
     count: rows.length,
+  }, null, 2));
+}
+
+// ---------------------------------------------------------------------------
+// handleAutoRoute — helpers
+// ---------------------------------------------------------------------------
+
+/** Record of a single auto-route assignment (or would-be assignment in dry_run). */
+interface RouteAssignment {
+  task_id: string;
+  task_title: string;
+  agent: string;
+  assignment_id: string | null;
+}
+
+/**
+ * Check if an agent's capabilities are a superset of the required capabilities.
+ * Returns true if every required capability exists in agentCaps.
+ */
+function isSuperset(agentCaps: string[], required: string[]): boolean {
+  return required.every((cap) => agentCaps.includes(cap));
+}
+
+// ---------------------------------------------------------------------------
+// handleAutoRoute
+// ---------------------------------------------------------------------------
+
+/**
+ * Auto-assign pending tasks to online agents by capability match.
+ *
+ * Optional: dry_run (boolean, default false)
+ *
+ * 1. Checks coordination_config for 'auto_route_enabled' — returns early if 'false'
+ * 2. Queries all pending tasks that have required_capabilities (not empty '[]')
+ * 3. Queries all active instances (heartbeat within 30 minutes)
+ * 4. For each instance, looks up capabilities from agent_capabilities table
+ * 5. For each pending task (ordered by priority ASC = highest priority first):
+ *    a. Parses task's required_capabilities JSON array
+ *    b. Finds first instance whose capabilities are a SUPERSET of required
+ *    c. If match found and not dry_run: assigns the task
+ *    d. If match found and dry_run: records the would-be match
+ * 6. Returns summary of assignments made (or would-be assignments if dry_run)
+ */
+export function handleAutoRoute(args: Record<string, unknown>): ToolResult {
+  const db = getDb();
+  const dryRun = args.dry_run === true;
+  const timestamp = now();
+
+  // Check if auto-routing is enabled
+  try {
+    const configRow = db.prepare(
+      "SELECT value FROM coordination_config WHERE key = 'auto_route_enabled'"
+    ).get() as { value: string } | undefined;
+
+    if (!configRow || configRow.value !== 'true') {
+      return successResult(JSON.stringify({
+        message: 'Auto-routing is disabled. Set auto_route_enabled to "true" in coordination config to enable.',
+        assignments: [],
+        count: 0,
+      }, null, 2));
+    }
+  } catch {
+    return errorResult('Failed to read coordination config');
+  }
+
+  // Get pending tasks with non-empty required_capabilities, ordered by priority
+  const pendingTasks = db.prepare(`
+    SELECT id, title, priority, required_capabilities, project_slug, scope
+    FROM tasks
+    WHERE status = 'pending'
+      AND required_capabilities != '[]'
+      AND required_capabilities IS NOT NULL
+    ORDER BY priority ASC, created_at ASC
+  `).all() as {
+    id: string;
+    title: string;
+    priority: number;
+    required_capabilities: string;
+    project_slug: string | null;
+    scope: string;
+  }[];
+
+  if (pendingTasks.length === 0) {
+    return successResult(JSON.stringify({
+      message: 'No pending tasks with required capabilities found.',
+      assignments: [],
+      count: 0,
+    }, null, 2));
+  }
+
+  // Get active instances (heartbeat within 30 minutes)
+  const activeInstances = db.prepare(`
+    SELECT id FROM instances
+    WHERE status = 'active'
+      AND last_heartbeat_at >= datetime('now', '-30 minutes')
+  `).all() as { id: string }[];
+
+  if (activeInstances.length === 0) {
+    return successResult(JSON.stringify({
+      message: 'No active instances online. Cannot auto-route tasks.',
+      assignments: [],
+      count: 0,
+    }, null, 2));
+  }
+
+  // Build capability map for each active instance
+  // Capabilities are stored by agent name in agent_capabilities table
+  // Instances use their instance_id as agent key when capabilities are set via heartbeat
+  const instanceCaps: Map<string, string[]> = new Map();
+  for (const instance of activeInstances) {
+    const caps = db.prepare(
+      'SELECT capability FROM agent_capabilities WHERE agent = ?'
+    ).all(instance.id) as { capability: string }[];
+    if (caps.length > 0) {
+      instanceCaps.set(instance.id, caps.map((c) => c.capability));
+    }
+  }
+
+  if (instanceCaps.size === 0) {
+    return successResult(JSON.stringify({
+      message: 'No active instances have registered capabilities. Use heartbeat with capabilities or igris_agent_capability_set.',
+      assignments: [],
+      count: 0,
+    }, null, 2));
+  }
+
+  // Track which instances have been assigned to avoid double-assigning
+  const assignedInstances = new Set<string>();
+  const assignments: RouteAssignment[] = [];
+
+  const performAssignments = (): void => {
+    for (const task of pendingTasks) {
+      let requiredCaps: string[];
+      try {
+        requiredCaps = JSON.parse(task.required_capabilities) as string[];
+      } catch {
+        continue; // Skip tasks with malformed capabilities
+      }
+
+      if (requiredCaps.length === 0) continue;
+
+      // Find first matching instance (not yet assigned this round)
+      let matchedInstance: string | null = null;
+      for (const [instanceId, caps] of instanceCaps) {
+        if (assignedInstances.has(instanceId)) continue;
+        if (isSuperset(caps, requiredCaps)) {
+          matchedInstance = instanceId;
+          break;
+        }
+      }
+
+      if (!matchedInstance) continue;
+
+      assignedInstances.add(matchedInstance);
+
+      if (dryRun) {
+        assignments.push({
+          task_id: task.id,
+          task_title: task.title,
+          agent: matchedInstance,
+          assignment_id: null,
+        });
+      } else {
+        const assignmentId = generateAssignmentId();
+
+        db.prepare(`
+          UPDATE tasks SET status = 'active', assignee = ?, updated_at = ? WHERE id = ?
+        `).run(matchedInstance, timestamp, task.id);
+
+        db.prepare(`
+          INSERT INTO task_assignments (id, task_id, agent, assigned_at)
+          VALUES (?, ?, ?, ?)
+        `).run(assignmentId, task.id, matchedInstance, timestamp);
+
+        // Log decision in autonomous_decisions
+        db.prepare(`
+          INSERT INTO autonomous_decisions (decision_type, task_id, agent, detail, created_at)
+          VALUES ('auto_route', ?, ?, ?, ?)
+        `).run(
+          task.id,
+          matchedInstance,
+          `Auto-routed task "${task.title}" to instance ${matchedInstance} (capabilities matched)`,
+          timestamp,
+        );
+
+        assignments.push({
+          task_id: task.id,
+          task_title: task.title,
+          agent: matchedInstance,
+          assignment_id: assignmentId,
+        });
+      }
+    }
+  };
+
+  if (dryRun) {
+    performAssignments();
+  } else {
+    db.transaction(() => {
+      performAssignments();
+    })();
+  }
+
+  return successResult(JSON.stringify({
+    dry_run: dryRun,
+    assignments,
+    count: assignments.length,
+    pending_tasks_checked: pendingTasks.length,
+    active_instances: activeInstances.length,
+    instances_with_capabilities: instanceCaps.size,
   }, null, 2));
 }

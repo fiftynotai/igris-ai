@@ -109,6 +109,11 @@ export function createInstancesComponent(): BrainComponent {
                 type: 'string',
                 description: 'Existing instance ID for heartbeat updates (omit for new registration)',
               },
+              capabilities: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'List of capabilities this instance can handle (e.g., ["code", "test", "research"]). When provided, upserts into agent_capabilities table keyed by instance_id.',
+              },
             },
             required: ['machine_hostname'],
           },
