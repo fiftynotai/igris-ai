@@ -400,10 +400,10 @@ describe('Monitoring Component', () => {
       expect(comp.version).toBe('1.0.0');
     });
 
-    it('events() declares 10 listened events', () => {
+    it('events() declares 17 listened events', () => {
       const comp = createMonitoringComponent();
       const { listens } = comp.events();
-      expect(listens).toHaveLength(10);
+      expect(listens).toHaveLength(17);
     });
 
     it('events() declares 0 emitted events', () => {
@@ -501,6 +501,38 @@ describe('Monitoring Component', () => {
 
       const row = db.prepare('SELECT machine_hostname FROM event_log').get() as { machine_hostname: string };
       expect(row.machine_hostname).toBe('test-host');
+
+      comp.destroy();
+    });
+
+    it('task events logged with correct component name', () => {
+      const comp = createMonitoringComponent();
+      comp.init(makeCtx(bus));
+
+      const taskEvents = [
+        'task.created',
+        'task.assigned',
+        'task.completed',
+        'task.blocked',
+        'task.unblocked',
+        'task.failed',
+        'task.claimed',
+      ] as const;
+
+      for (const evt of taskEvents) {
+        bus.emit(evt, { task_id: `t-${evt}` });
+      }
+
+      const rows = db.prepare('SELECT event_name, component FROM event_log ORDER BY id').all() as {
+        event_name: string;
+        component: string;
+      }[];
+
+      expect(rows).toHaveLength(7);
+      for (const row of rows) {
+        expect(row.component).toBe('tasks');
+        expect(row.event_name).toMatch(/^task\./);
+      }
 
       comp.destroy();
     });

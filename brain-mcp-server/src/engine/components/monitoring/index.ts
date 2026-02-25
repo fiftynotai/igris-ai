@@ -12,7 +12,9 @@
  * Listens: schedule.created, schedule.enabled, schedule.disabled,
  *          schedule.deleted, schedule.fire_now, schedule.run_start,
  *          schedule.run_complete, cache.rebuilt, cache.cleaned,
- *          coordination.self_heal
+ *          coordination.self_heal, task.created, task.assigned,
+ *          task.completed, task.blocked, task.unblocked,
+ *          task.failed, task.claimed
  *
  * @module engine/components/monitoring
  * @author Fifty.ai
@@ -48,6 +50,13 @@ const EVENT_COMPONENT_MAP: Record<string, string> = {
   'cache.rebuilt': 'cache',
   'cache.cleaned': 'cache',
   'coordination.self_heal': 'coordination',
+  'task.created': 'tasks',
+  'task.assigned': 'tasks',
+  'task.completed': 'tasks',
+  'task.blocked': 'tasks',
+  'task.unblocked': 'tasks',
+  'task.failed': 'tasks',
+  'task.claimed': 'tasks',
 };
 
 // ---------------------------------------------------------------------------
@@ -177,6 +186,13 @@ export function createMonitoringComponent(): BrainComponent {
           { name: 'cache.rebuilt', description: 'Log cache rebuild events' },
           { name: 'cache.cleaned', description: 'Log cache clean events' },
           { name: 'coordination.self_heal', description: 'Log coordination self-healing events' },
+          { name: 'task.created', description: 'Log task creation events' },
+          { name: 'task.assigned', description: 'Log task assignment events' },
+          { name: 'task.completed', description: 'Log task completion events' },
+          { name: 'task.blocked', description: 'Log task blocked events' },
+          { name: 'task.unblocked', description: 'Log task unblocked events' },
+          { name: 'task.failed', description: 'Log task failure events' },
+          { name: 'task.claimed', description: 'Log task claimed events' },
         ],
       };
     },
@@ -198,6 +214,13 @@ export function createMonitoringComponent(): BrainComponent {
       ctx.bus.on('cache.rebuilt', onEventReceived);
       ctx.bus.on('cache.cleaned', onEventReceived);
       ctx.bus.on('coordination.self_heal', onEventReceived);
+      ctx.bus.on('task.created', onEventReceived);
+      ctx.bus.on('task.assigned', onEventReceived);
+      ctx.bus.on('task.completed', onEventReceived);
+      ctx.bus.on('task.blocked', onEventReceived);
+      ctx.bus.on('task.unblocked', onEventReceived);
+      ctx.bus.on('task.failed', onEventReceived);
+      ctx.bus.on('task.claimed', onEventReceived);
 
       // Run retention cleanup on init (purge events older than 30 days)
       try {
@@ -227,6 +250,13 @@ export function createMonitoringComponent(): BrainComponent {
         _ctx.bus.off('cache.rebuilt', onEventReceived);
         _ctx.bus.off('cache.cleaned', onEventReceived);
         _ctx.bus.off('coordination.self_heal', onEventReceived);
+        _ctx.bus.off('task.created', onEventReceived);
+        _ctx.bus.off('task.assigned', onEventReceived);
+        _ctx.bus.off('task.completed', onEventReceived);
+        _ctx.bus.off('task.blocked', onEventReceived);
+        _ctx.bus.off('task.unblocked', onEventReceived);
+        _ctx.bus.off('task.failed', onEventReceived);
+        _ctx.bus.off('task.claimed', onEventReceived);
       }
       _ctx = null;
     },
