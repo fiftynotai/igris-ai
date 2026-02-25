@@ -292,24 +292,12 @@ export function createSyncComponent(): BrainComponent {
     events(): { emits: EventDef[]; listens: EventDef[] } {
       return {
         emits: [],
-        listens: [
-          { name: 'memory.stored', description: 'Queue for remote sync' },
-          { name: 'error.stored', description: 'Queue for remote sync' },
-          { name: 'project.registered', description: 'Queue for remote sync' },
-          { name: 'session.synced', description: 'Queue for remote sync' },
-          { name: 'brief.synced', description: 'Queue for remote sync' },
-          { name: 'instance.heartbeat', description: 'Queue for remote sync' },
-          { name: 'metrics.recorded', description: 'Queue for remote sync' },
-          { name: 'task.created', description: 'Queue for remote sync' },
-          { name: 'task.completed', description: 'Queue for remote sync' },
-          { name: 'task.assigned', description: 'Queue for remote sync' },
-        ],
+        listens: [],
       };
     },
 
     init(ctx: ComponentContext): void {
-      // Sync component listens to domain events for future auto-sync capability
-      // For Phase 1, these listeners are wired but do not trigger auto-push
+      // TODO: Wire event listeners for auto-sync (listen to domain events and auto-push changes)
       ctx.log.info('Sync component initialized');
     },
 
