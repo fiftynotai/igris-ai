@@ -16,7 +16,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getDb } from '../../../db.js';
 import type { ToolResult, EventBus } from '../../types.js';
-import { errorResult, successResult, errMsg } from '../../helpers.js';
+import { errorResult, successResult, errMsg, WhereBuilder } from '../../helpers.js';
 import { parseCron, nextRunAfter } from './cron.js';
 import { now, generateScheduleId, generateRunId, executeWithRetries } from './utils.js';
 
@@ -219,24 +219,15 @@ export function handleScheduleCreate(args: Record<string, unknown>): ToolResult 
 export function handleScheduleList(args: Record<string, unknown>): ToolResult {
   const db = getDb();
 
-  const conditions: string[] = [];
-  const params: unknown[] = [];
+  const where = new WhereBuilder()
+    .add('s.enabled = ?', args.enabled !== undefined ? (args.enabled ? 1 : 0) : undefined)
+    .add('s.project_slug = ?', args.project_slug);
 
-  if (args.enabled !== undefined) {
-    conditions.push('s.enabled = ?');
-    params.push(args.enabled ? 1 : 0);
-  }
-  if (args.project_slug !== undefined) {
-    conditions.push('s.project_slug = ?');
-    params.push(args.project_slug);
-  }
   if (args.tag !== undefined) {
     // Exact tag match using json_each to avoid substring false positives
-    conditions.push('EXISTS (SELECT 1 FROM json_each(s.tags) WHERE json_each.value = ?)');
-    params.push(args.tag);
+    where.addAlways('EXISTS (SELECT 1 FROM json_each(s.tags) WHERE json_each.value = ?)', args.tag);
   }
 
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const limit = args.limit !== undefined ? Number(args.limit) : 25;
   const offset = args.offset !== undefined ? Number(args.offset) : 0;
 
@@ -245,14 +236,14 @@ export function handleScheduleList(args: Record<string, unknown>): ToolResult {
       (SELECT COUNT(*) FROM schedule_runs r WHERE r.schedule_id = s.id) as run_count,
       (SELECT r2.status FROM schedule_runs r2 WHERE r2.schedule_id = s.id ORDER BY r2.started_at DESC LIMIT 1) as last_status
     FROM schedules s
-    ${whereClause}
+    ${where.toSQL()}
     ORDER BY s.created_at DESC
     LIMIT ? OFFSET ?
-  `).all(...params, limit, offset) as Record<string, unknown>[];
+  `).all(...where.values(), limit, offset) as Record<string, unknown>[];
 
   const countRow = db.prepare(
-    `SELECT COUNT(*) as total FROM schedules s ${whereClause}`
-  ).get(...params) as { total: number };
+    `SELECT COUNT(*) as total FROM schedules s ${where.toSQL()}`
+  ).get(...where.values()) as { total: number };
 
   return successResult(JSON.stringify({
     schedules: rows,

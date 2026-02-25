@@ -11,7 +11,7 @@
 
 import { getDb } from '../../../db.js';
 import type { ToolResult } from '../../types.js';
-import { errorResult, successResult, now } from '../../helpers.js';
+import { errorResult, successResult, now, WhereBuilder } from '../../helpers.js';
 
 // ---------------------------------------------------------------------------
 // handleAgentCapabilitySet
@@ -311,35 +311,20 @@ export function handleCoordinationConfigGet(args: Record<string, unknown>): Tool
 export function handleAuditList(args: Record<string, unknown>): ToolResult {
   const db = getDb();
 
-  const conditions: string[] = [];
-  const params: unknown[] = [];
+  const where = new WhereBuilder()
+    .add('decision_type = ?', args.decision_type)
+    .add('task_id = ?', args.task_id)
+    .add('agent = ?', args.agent)
+    .add('created_at >= ?', args.since);
 
-  if (args.decision_type !== undefined) {
-    conditions.push('decision_type = ?');
-    params.push(args.decision_type);
-  }
-  if (args.task_id !== undefined) {
-    conditions.push('task_id = ?');
-    params.push(args.task_id);
-  }
-  if (args.agent !== undefined) {
-    conditions.push('agent = ?');
-    params.push(args.agent);
-  }
-  if (args.since !== undefined) {
-    conditions.push('created_at >= ?');
-    params.push(args.since);
-  }
-
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const limit = args.limit !== undefined ? Number(args.limit) : 50;
 
   const rows = db.prepare(`
     SELECT * FROM autonomous_decisions
-    ${whereClause}
+    ${where.toSQL()}
     ORDER BY created_at DESC
     LIMIT ?
-  `).all(...params, limit) as Record<string, unknown>[];
+  `).all(...where.values(), limit) as Record<string, unknown>[];
 
   return successResult(JSON.stringify({
     decisions: rows,

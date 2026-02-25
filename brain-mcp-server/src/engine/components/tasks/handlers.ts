@@ -14,7 +14,7 @@
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../../../db.js';
 import type { ToolResult } from '../../types.js';
-import { errorResult, successResult, now } from '../../helpers.js';
+import { errorResult, successResult, now, WhereBuilder } from '../../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -131,43 +131,25 @@ export function handleTaskCreate(args: Record<string, unknown>): ToolResult {
 export function handleTaskList(args: Record<string, unknown>): ToolResult {
   const db = getDb();
 
-  const conditions: string[] = [];
-  const params: unknown[] = [];
+  const where = new WhereBuilder()
+    .add('status = ?', args.status)
+    .add('task_type = ?', args.task_type)
+    .add('scope = ?', args.scope)
+    .add('project_slug = ?', args.project_slug)
+    .add('assignee = ?', args.assignee);
 
-  if (args.status !== undefined) {
-    conditions.push('status = ?');
-    params.push(args.status);
-  }
-  if (args.task_type !== undefined) {
-    conditions.push('task_type = ?');
-    params.push(args.task_type);
-  }
-  if (args.scope !== undefined) {
-    conditions.push('scope = ?');
-    params.push(args.scope);
-  }
-  if (args.project_slug !== undefined) {
-    conditions.push('project_slug = ?');
-    params.push(args.project_slug);
-  }
-  if (args.assignee !== undefined) {
-    conditions.push('assignee = ?');
-    params.push(args.assignee);
-  }
-
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
   const limit = args.limit !== undefined ? Number(args.limit) : 25;
   const offset = args.offset !== undefined ? Number(args.offset) : 0;
 
   const rows = db.prepare(`
-    SELECT * FROM tasks ${whereClause}
+    SELECT * FROM tasks ${where.toSQL()}
     ORDER BY priority ASC, created_at ASC
     LIMIT ? OFFSET ?
-  `).all(...params, limit, offset) as Record<string, unknown>[];
+  `).all(...where.values(), limit, offset) as Record<string, unknown>[];
 
   const countRow = db.prepare(
-    `SELECT COUNT(*) as total FROM tasks ${whereClause}`
-  ).get(...params) as { total: number };
+    `SELECT COUNT(*) as total FROM tasks ${where.toSQL()}`
+  ).get(...where.values()) as { total: number };
 
   return successResult(JSON.stringify({
     tasks: rows,
@@ -489,24 +471,12 @@ export function handleTaskNext(args: Record<string, unknown>): ToolResult {
   const db = getDb();
   const timestamp = now();
 
-  const conditions: string[] = [
-    "tasks.status = 'pending'",
-    "(tasks.defer_until IS NULL OR tasks.defer_until <= ?)",
-  ];
-  const params: unknown[] = [timestamp];
-
-  if (args.project_slug !== undefined) {
-    conditions.push('tasks.project_slug = ?');
-    params.push(args.project_slug);
-  }
-  if (args.scope !== undefined) {
-    conditions.push('tasks.scope = ?');
-    params.push(args.scope);
-  }
-  if (args.task_type !== undefined) {
-    conditions.push('tasks.task_type = ?');
-    params.push(args.task_type);
-  }
+  const where = new WhereBuilder()
+    .addAlways("tasks.status = 'pending'")
+    .addAlways("(tasks.defer_until IS NULL OR tasks.defer_until <= ?)", timestamp)
+    .add('tasks.project_slug = ?', args.project_slug)
+    .add('tasks.scope = ?', args.scope)
+    .add('tasks.task_type = ?', args.task_type);
 
   // Resolve capabilities: explicit param > agent_capabilities table lookup
   let capabilities = args.capabilities as string[] | undefined;
@@ -528,18 +498,17 @@ export function handleTaskNext(args: Record<string, unknown>): ToolResult {
   // Capability-based filtering: match tasks with no requirements OR at least one overlap
   if (capabilities && capabilities.length > 0) {
     const capPlaceholders = capabilities.map(() => '?').join(', ');
-    conditions.push(`
+    where.addAlways(`
       (tasks.required_capabilities = '[]'
        OR EXISTS (
          SELECT 1 FROM json_each(tasks.required_capabilities) je
          WHERE je.value IN (${capPlaceholders})
        ))
-    `);
-    params.push(...capabilities);
+    `, ...capabilities);
   }
 
   // Exclude tasks with undone dependencies
-  conditions.push(`
+  where.addAlways(`
     NOT EXISTS (
       SELECT 1 FROM task_deps td
       JOIN tasks dep ON dep.id = td.depends_on
@@ -547,21 +516,19 @@ export function handleTaskNext(args: Record<string, unknown>): ToolResult {
     )
   `);
 
-  const whereClause = `WHERE ${conditions.join(' AND ')}`;
-
   let resultTask: Record<string, unknown> | null = null;
   let assignment: Record<string, unknown> | null = null;
 
   db.transaction(() => {
     const task = db.prepare(`
-      SELECT * FROM tasks ${whereClause}
+      SELECT * FROM tasks ${where.toSQL()}
       ORDER BY
         priority ASC,
         CASE WHEN tasks.due_at IS NOT NULL THEN 0 ELSE 1 END ASC,
         tasks.due_at ASC,
         created_at ASC
       LIMIT 1
-    `).get(...params) as Record<string, unknown> | undefined;
+    `).get(...where.values()) as Record<string, unknown> | undefined;
 
     if (!task) return;
 
