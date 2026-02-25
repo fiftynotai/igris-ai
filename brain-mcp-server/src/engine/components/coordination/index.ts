@@ -24,6 +24,7 @@ import type {
   EventPayload,
 } from '../../types.js';
 import { getDb } from '../../../db.js';
+import { now } from '../../helpers.js';
 import { initCoordinationSchema } from './schema.js';
 import {
   handleAgentCapabilitySet,
@@ -140,7 +141,7 @@ export function createCoordinationComponent(): BrainComponent {
       const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown> | undefined;
       if (!task) return;
 
-      const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+      const timestamp = now();
 
       // Log the self-healing decision
       db.prepare(`
