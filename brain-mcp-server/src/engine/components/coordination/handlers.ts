@@ -97,6 +97,117 @@ export function handleAgentCapabilityList(args: Record<string, unknown>): ToolRe
 }
 
 // ---------------------------------------------------------------------------
+// handleAdjustPriorities — helpers
+// ---------------------------------------------------------------------------
+
+/** Adjustment record for priority changes and unblocks. */
+interface PriorityAdjustment {
+  type: string;
+  task_id: string;
+  detail: string;
+}
+
+/**
+ * Boost priority of overdue tasks (due_at < now, status pending/active).
+ * Priority is decremented by 1, bounded at the ceiling.
+ */
+function boostOverdueTasks(
+  db: ReturnType<typeof getDb>,
+  timestamp: string,
+  ceiling: number,
+  dryRun: boolean,
+): { count: number; adjustments: PriorityAdjustment[] } {
+  const adjustments: PriorityAdjustment[] = [];
+  let count = 0;
+
+  const overdueTasks = db.prepare(`
+    SELECT id, priority, title FROM tasks
+    WHERE due_at IS NOT NULL AND due_at < ?
+      AND status IN ('pending', 'active')
+      AND priority > ?
+  `).all(timestamp, ceiling) as { id: string; priority: number; title: string }[];
+
+  for (const task of overdueTasks) {
+    const newPriority = Math.max(ceiling, task.priority - 1);
+    if (newPriority !== task.priority) {
+      if (!dryRun) {
+        db.prepare(
+          'UPDATE tasks SET priority = ?, updated_at = ? WHERE id = ?'
+        ).run(newPriority, timestamp, task.id);
+      }
+      adjustments.push({
+        type: 'overdue_boost',
+        task_id: task.id,
+        detail: `Overdue task "${task.title}" priority ${task.priority} -> ${newPriority}`,
+      });
+      count++;
+    }
+  }
+
+  return { count, adjustments };
+}
+
+/**
+ * Unblock stale blocked tasks (blocked >24h where all blockers are done/cancelled)
+ * and boost priority of freshly unblocked tasks with priority > 2.
+ */
+function unblockStaleTasks(
+  db: ReturnType<typeof getDb>,
+  timestamp: string,
+  ceiling: number,
+  dryRun: boolean,
+): { unblocked: number; boosted: number; adjustments: PriorityAdjustment[] } {
+  const adjustments: PriorityAdjustment[] = [];
+  let unblocked = 0;
+  let boosted = 0;
+
+  const staleBlocked = db.prepare(`
+    SELECT t.id, t.title, t.priority, t.updated_at FROM tasks t
+    WHERE t.status = 'blocked'
+      AND datetime(t.updated_at, '+24 hours') < ?
+      AND NOT EXISTS (
+        SELECT 1 FROM task_deps td
+        JOIN tasks dep ON dep.id = td.depends_on
+        WHERE td.task_id = t.id AND dep.status NOT IN ('done', 'cancelled')
+      )
+  `).all(timestamp) as { id: string; title: string; priority: number; updated_at: string }[];
+
+  for (const task of staleBlocked) {
+    if (!dryRun) {
+      db.prepare(
+        "UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?"
+      ).run(timestamp, task.id);
+    }
+    adjustments.push({
+      type: 'stale_unblock',
+      task_id: task.id,
+      detail: `Stale blocked task "${task.title}" unblocked to pending (blocked since ${task.updated_at})`,
+    });
+    unblocked++;
+
+    // Freshly unblocked: boost priority if > 2
+    if (task.priority > 2) {
+      const newPriority = Math.max(ceiling, task.priority - 1);
+      if (newPriority !== task.priority) {
+        if (!dryRun) {
+          db.prepare(
+            'UPDATE tasks SET priority = ?, updated_at = ? WHERE id = ?'
+          ).run(newPriority, timestamp, task.id);
+        }
+        adjustments.push({
+          type: 'unblock_boost',
+          task_id: task.id,
+          detail: `Unblocked task "${task.title}" priority ${task.priority} -> ${newPriority}`,
+        });
+        boosted++;
+      }
+    }
+  }
+
+  return { unblocked, boosted, adjustments };
+}
+
+// ---------------------------------------------------------------------------
 // handleAdjustPriorities
 // ---------------------------------------------------------------------------
 
@@ -131,88 +242,28 @@ export function handleAdjustPriorities(args: Record<string, unknown>): ToolResul
     // Use default
   }
 
+  let allAdjustments: PriorityAdjustment[] = [];
   let overdueAdjusted = 0;
   let staleUnblocked = 0;
   let priorityBoosted = 0;
-  const adjustments: { type: string; task_id: string; detail: string }[] = [];
 
   db.transaction(() => {
-    // 1. Overdue tasks: priority -= 1 (bounded at ceiling)
-    const overdueTasks = db.prepare(`
-      SELECT id, priority, title FROM tasks
-      WHERE due_at IS NOT NULL AND due_at < ?
-        AND status IN ('pending', 'active')
-        AND priority > ?
-    `).all(timestamp, ceiling) as { id: string; priority: number; title: string }[];
+    const overdueResult = boostOverdueTasks(db, timestamp, ceiling, dryRun);
+    overdueAdjusted = overdueResult.count;
+    allAdjustments.push(...overdueResult.adjustments);
 
-    for (const task of overdueTasks) {
-      const newPriority = Math.max(ceiling, task.priority - 1);
-      if (newPriority !== task.priority) {
-        if (!dryRun) {
-          db.prepare(
-            'UPDATE tasks SET priority = ?, updated_at = ? WHERE id = ?'
-          ).run(newPriority, timestamp, task.id);
-        }
-        adjustments.push({
-          type: 'overdue_boost',
-          task_id: task.id,
-          detail: `Overdue task "${task.title}" priority ${task.priority} -> ${newPriority}`,
-        });
-        overdueAdjusted++;
-      }
-    }
-
-    // 2. Stale blocked tasks: blocked >24h where all blockers are done/cancelled
-    const staleBlocked = db.prepare(`
-      SELECT t.id, t.title, t.priority, t.updated_at FROM tasks t
-      WHERE t.status = 'blocked'
-        AND datetime(t.updated_at, '+24 hours') < ?
-        AND NOT EXISTS (
-          SELECT 1 FROM task_deps td
-          JOIN tasks dep ON dep.id = td.depends_on
-          WHERE td.task_id = t.id AND dep.status NOT IN ('done', 'cancelled')
-        )
-    `).all(timestamp) as { id: string; title: string; priority: number; updated_at: string }[];
-
-    for (const task of staleBlocked) {
-      if (!dryRun) {
-        db.prepare(
-          "UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?"
-        ).run(timestamp, task.id);
-      }
-      adjustments.push({
-        type: 'stale_unblock',
-        task_id: task.id,
-        detail: `Stale blocked task "${task.title}" unblocked to pending (blocked since ${task.updated_at})`,
-      });
-      staleUnblocked++;
-
-      // 3. Freshly unblocked: boost priority if > 2
-      if (task.priority > 2) {
-        const newPriority = Math.max(ceiling, task.priority - 1);
-        if (newPriority !== task.priority) {
-          if (!dryRun) {
-            db.prepare(
-              'UPDATE tasks SET priority = ?, updated_at = ? WHERE id = ?'
-            ).run(newPriority, timestamp, task.id);
-          }
-          adjustments.push({
-            type: 'unblock_boost',
-            task_id: task.id,
-            detail: `Unblocked task "${task.title}" priority ${task.priority} -> ${newPriority}`,
-          });
-          priorityBoosted++;
-        }
-      }
-    }
+    const staleResult = unblockStaleTasks(db, timestamp, ceiling, dryRun);
+    staleUnblocked = staleResult.unblocked;
+    priorityBoosted = staleResult.boosted;
+    allAdjustments.push(...staleResult.adjustments);
 
     // Log all adjustments in autonomous_decisions
-    if (!dryRun && adjustments.length > 0) {
+    if (!dryRun && allAdjustments.length > 0) {
       const insertDecision = db.prepare(`
         INSERT INTO autonomous_decisions (decision_type, task_id, detail, created_at)
         VALUES (?, ?, ?, ?)
       `);
-      for (const adj of adjustments) {
+      for (const adj of allAdjustments) {
         insertDecision.run(adj.type, adj.task_id, adj.detail, timestamp);
       }
     }
@@ -223,8 +274,8 @@ export function handleAdjustPriorities(args: Record<string, unknown>): ToolResul
     overdue_adjusted: overdueAdjusted,
     stale_unblocked: staleUnblocked,
     priority_boosted: priorityBoosted,
-    total_adjustments: adjustments.length,
-    adjustments,
+    total_adjustments: allAdjustments.length,
+    adjustments: allAdjustments,
   }, null, 2));
 }
 

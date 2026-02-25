@@ -331,6 +331,108 @@ export function handleTaskComplete(args: Record<string, unknown>): ToolResult {
 }
 
 // ---------------------------------------------------------------------------
+// handleTaskBlock — helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Add a dependency from taskId -> dependsOn with cycle detection.
+ * Blocks the task if the dependency is not done.
+ */
+function addDependency(
+  db: ReturnType<typeof getDb>,
+  taskId: string,
+  dependsOn: string,
+  timestamp: string,
+): ToolResult {
+  // Cycle detection: check if dependsOn transitively depends on taskId
+  const cycle = db.prepare(`
+    WITH RECURSIVE dep_chain(id) AS (
+      SELECT depends_on FROM task_deps WHERE task_id = ?
+      UNION
+      SELECT td.depends_on FROM task_deps td JOIN dep_chain dc ON td.task_id = dc.id
+    )
+    SELECT 1 FROM dep_chain WHERE id = ?
+  `).get(dependsOn, taskId) as Record<string, unknown> | undefined;
+
+  if (cycle) {
+    return errorResult(`Adding this dependency would create a cycle: ${dependsOn} transitively depends on ${taskId}`);
+  }
+
+  // Check if dependency already exists
+  const existing = db.prepare(
+    'SELECT 1 FROM task_deps WHERE task_id = ? AND depends_on = ?'
+  ).get(taskId, dependsOn) as Record<string, unknown> | undefined;
+
+  if (existing) {
+    return errorResult(`Dependency already exists: ${taskId} -> ${dependsOn}`);
+  }
+
+  db.transaction(() => {
+    db.prepare(`
+      INSERT INTO task_deps (task_id, depends_on, created_at) VALUES (?, ?, ?)
+    `).run(taskId, dependsOn, timestamp);
+
+    // If the dependency task is not done, mark the dependent task as blocked
+    const depStatus = db.prepare(
+      'SELECT status FROM tasks WHERE id = ?'
+    ).get(dependsOn) as { status: string };
+
+    if (depStatus.status !== 'done') {
+      db.prepare(`
+        UPDATE tasks SET status = 'blocked', updated_at = ? WHERE id = ?
+      `).run(timestamp, taskId);
+    }
+  })();
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown>;
+  return successResult(JSON.stringify({
+    action: 'added',
+    task: updated,
+    dependency: dependsOn,
+  }, null, 2));
+}
+
+/**
+ * Remove a dependency from taskId -> dependsOn.
+ * Unblocks the task if no remaining undone dependencies exist.
+ */
+function removeDependency(
+  db: ReturnType<typeof getDb>,
+  taskId: string,
+  dependsOn: string,
+  taskStatus: string,
+  timestamp: string,
+): ToolResult {
+  const deleted = db.prepare(
+    'DELETE FROM task_deps WHERE task_id = ? AND depends_on = ?'
+  ).run(taskId, dependsOn);
+
+  if (deleted.changes === 0) {
+    return errorResult(`No dependency found: ${taskId} -> ${dependsOn}`);
+  }
+
+  // Check if the task is now unblocked (no remaining undone deps)
+  const remainingBlockers = db.prepare(`
+    SELECT 1 FROM task_deps td
+    JOIN tasks t ON t.id = td.depends_on
+    WHERE td.task_id = ? AND t.status != 'done'
+  `).get(taskId) as Record<string, unknown> | undefined;
+
+  if (!remainingBlockers && taskStatus === 'blocked') {
+    db.prepare(`
+      UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?
+    `).run(timestamp, taskId);
+  }
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown>;
+  return successResult(JSON.stringify({
+    action: 'removed',
+    task: updated,
+    dependency: dependsOn,
+  }, null, 2));
+}
+
+// ---------------------------------------------------------------------------
 // handleTaskBlock
 // ---------------------------------------------------------------------------
 
@@ -375,82 +477,83 @@ export function handleTaskBlock(args: Record<string, unknown>): ToolResult {
   const timestamp = now();
 
   if (action === 'add') {
-    // Cycle detection: check if dependsOn transitively depends on taskId
-    const cycle = db.prepare(`
-      WITH RECURSIVE dep_chain(id) AS (
-        SELECT depends_on FROM task_deps WHERE task_id = ?
-        UNION
-        SELECT td.depends_on FROM task_deps td JOIN dep_chain dc ON td.task_id = dc.id
-      )
-      SELECT 1 FROM dep_chain WHERE id = ?
-    `).get(dependsOn, taskId) as Record<string, unknown> | undefined;
-
-    if (cycle) {
-      return errorResult(`Adding this dependency would create a cycle: ${dependsOn} transitively depends on ${taskId}`);
-    }
-
-    // Check if dependency already exists
-    const existing = db.prepare(
-      'SELECT 1 FROM task_deps WHERE task_id = ? AND depends_on = ?'
-    ).get(taskId, dependsOn) as Record<string, unknown> | undefined;
-
-    if (existing) {
-      return errorResult(`Dependency already exists: ${taskId} -> ${dependsOn}`);
-    }
-
-    db.transaction(() => {
-      db.prepare(`
-        INSERT INTO task_deps (task_id, depends_on, created_at) VALUES (?, ?, ?)
-      `).run(taskId, dependsOn, timestamp);
-
-      // If the dependency task is not done, mark the dependent task as blocked
-      const depStatus = db.prepare(
-        'SELECT status FROM tasks WHERE id = ?'
-      ).get(dependsOn) as { status: string };
-
-      if (depStatus.status !== 'done') {
-        db.prepare(`
-          UPDATE tasks SET status = 'blocked', updated_at = ? WHERE id = ?
-        `).run(timestamp, taskId);
-      }
-    })();
-
-    const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown>;
-    return successResult(JSON.stringify({
-      action: 'added',
-      task: updated,
-      dependency: dependsOn,
-    }, null, 2));
+    return addDependency(db, taskId, dependsOn, timestamp);
   } else {
-    // Remove dependency
-    const deleted = db.prepare(
-      'DELETE FROM task_deps WHERE task_id = ? AND depends_on = ?'
-    ).run(taskId, dependsOn);
-
-    if (deleted.changes === 0) {
-      return errorResult(`No dependency found: ${taskId} -> ${dependsOn}`);
-    }
-
-    // Check if the task is now unblocked (no remaining undone deps)
-    const remainingBlockers = db.prepare(`
-      SELECT 1 FROM task_deps td
-      JOIN tasks t ON t.id = td.depends_on
-      WHERE td.task_id = ? AND t.status != 'done'
-    `).get(taskId) as Record<string, unknown> | undefined;
-
-    if (!remainingBlockers && task.status === 'blocked') {
-      db.prepare(`
-        UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?
-      `).run(timestamp, taskId);
-    }
-
-    const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown>;
-    return successResult(JSON.stringify({
-      action: 'removed',
-      task: updated,
-      dependency: dependsOn,
-    }, null, 2));
+    return removeDependency(db, taskId, dependsOn, task.status, timestamp);
   }
+}
+
+// ---------------------------------------------------------------------------
+// handleTaskNext — helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve agent capabilities from explicit parameter or agent_capabilities table.
+ * Returns the resolved capabilities array, or undefined if none found.
+ */
+function resolveCapabilities(
+  db: ReturnType<typeof getDb>,
+  agent: string | undefined,
+  explicitCaps: string[] | undefined,
+): string[] | undefined {
+  if (explicitCaps) return explicitCaps;
+  if (!agent) return undefined;
+
+  try {
+    const capRows = db.prepare(
+      'SELECT capability FROM agent_capabilities WHERE agent = ?'
+    ).all(agent) as { capability: string }[];
+    if (capRows.length > 0) {
+      return capRows.map((r) => r.capability);
+    }
+  } catch {
+    // agent_capabilities table may not exist yet (pre-v2 migration)
+  }
+  return undefined;
+}
+
+/**
+ * Assign a task to an agent: create assignment record, update task status,
+ * and log an autonomous_decisions record.
+ * Returns the refreshed task and assignment objects.
+ */
+function assignTaskToAgent(
+  db: ReturnType<typeof getDb>,
+  task: Record<string, unknown>,
+  agent: string,
+  timestamp: string,
+): { task: Record<string, unknown>; assignment: Record<string, unknown> } {
+  const assignmentId = generateAssignmentId();
+
+  db.prepare(`
+    INSERT INTO task_assignments (id, task_id, agent, assigned_at)
+    VALUES (?, ?, ?, ?)
+  `).run(assignmentId, task.id, agent, timestamp);
+
+  db.prepare(`
+    UPDATE tasks SET status = 'active', assignee = ?, updated_at = ? WHERE id = ?
+  `).run(agent, timestamp, task.id);
+
+  // Log assignment decision
+  try {
+    db.prepare(`
+      INSERT INTO autonomous_decisions (decision_type, task_id, agent, detail, created_at)
+      VALUES ('assignment', ?, ?, ?, ?)
+    `).run(
+      task.id as string,
+      agent,
+      `Auto-assigned via task_next to agent ${agent}`,
+      timestamp,
+    );
+  } catch {
+    // autonomous_decisions table may not exist yet (pre-v2 migration)
+  }
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id) as Record<string, unknown>;
+  return {
+    task: updated,
+    assignment: { id: assignmentId, task_id: task.id, agent, assigned_at: timestamp },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -470,6 +573,7 @@ export function handleTaskBlock(args: Record<string, unknown>): ToolResult {
 export function handleTaskNext(args: Record<string, unknown>): ToolResult {
   const db = getDb();
   const timestamp = now();
+  const agent = args.agent as string | undefined;
 
   const where = new WhereBuilder()
     .addAlways("tasks.status = 'pending'")
@@ -479,21 +583,7 @@ export function handleTaskNext(args: Record<string, unknown>): ToolResult {
     .add('tasks.task_type = ?', args.task_type);
 
   // Resolve capabilities: explicit param > agent_capabilities table lookup
-  let capabilities = args.capabilities as string[] | undefined;
-  const agent = args.agent as string | undefined;
-
-  if (!capabilities && agent) {
-    try {
-      const capRows = db.prepare(
-        'SELECT capability FROM agent_capabilities WHERE agent = ?'
-      ).all(agent) as { capability: string }[];
-      if (capRows.length > 0) {
-        capabilities = capRows.map((r) => r.capability);
-      }
-    } catch {
-      // agent_capabilities table may not exist yet (pre-v2 migration)
-    }
-  }
+  const capabilities = resolveCapabilities(db, agent, args.capabilities as string[] | undefined);
 
   // Capability-based filtering: match tasks with no requirements OR at least one overlap
   if (capabilities && capabilities.length > 0) {
@@ -533,33 +623,9 @@ export function handleTaskNext(args: Record<string, unknown>): ToolResult {
     if (!task) return;
 
     if (agent) {
-      const assignmentId = generateAssignmentId();
-      db.prepare(`
-        INSERT INTO task_assignments (id, task_id, agent, assigned_at)
-        VALUES (?, ?, ?, ?)
-      `).run(assignmentId, task.id, agent, timestamp);
-
-      db.prepare(`
-        UPDATE tasks SET status = 'active', assignee = ?, updated_at = ? WHERE id = ?
-      `).run(agent, timestamp, task.id);
-
-      // Log assignment decision
-      try {
-        db.prepare(`
-          INSERT INTO autonomous_decisions (decision_type, task_id, agent, detail, created_at)
-          VALUES ('assignment', ?, ?, ?, ?)
-        `).run(
-          task.id as string,
-          agent,
-          `Auto-assigned via task_next to agent ${agent}`,
-          timestamp,
-        );
-      } catch {
-        // autonomous_decisions table may not exist yet (pre-v2 migration)
-      }
-
-      resultTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id) as Record<string, unknown>;
-      assignment = { id: assignmentId, task_id: task.id, agent, assigned_at: timestamp };
+      const result = assignTaskToAgent(db, task, agent, timestamp);
+      resultTask = result.task;
+      assignment = result.assignment;
     } else {
       resultTask = task;
     }
