@@ -8,7 +8,7 @@
  * Self-healing: listens for task.failed events and creates diagnostic
  * child tasks when autonomous mode and self-healing are enabled.
  *
- * Emits: coordination.adjustment, coordination.self_heal
+ * Emits: coordination.self_heal
  * Listens: task.failed, engine.ready
  *
  * @module engine/components/coordination
@@ -338,7 +338,7 @@ export function createCoordinationComponent(): BrainComponent {
     events(): { emits: EventDef[]; listens: EventDef[] } {
       return {
         emits: [
-          { name: 'coordination.adjustment', description: 'Priority adjustment was performed' },
+          // TODO: Emit coordination.adjustment from handleAdjustPriorities when wired
           { name: 'coordination.self_heal', description: 'Self-healing diagnostic task was created for a failed task' },
         ],
         listens: [

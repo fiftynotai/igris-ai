@@ -175,7 +175,7 @@ export function createMemoryComponent(): BrainComponent {
       return {
         emits: [
           { name: 'memory.stored', description: 'A new learning was stored' },
-          { name: 'memory.promoted', description: 'A learning was promoted to global scope' },
+          // TODO: Add memory.promoted when scope promotion is implemented
         ],
         listens: [],
       };
