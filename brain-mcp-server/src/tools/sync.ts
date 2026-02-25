@@ -252,6 +252,16 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'duration_ms', 'result', 'error', 'attempt',
     ],
   },
+  {
+    table: 'event_log',
+    syncKey: ['id'],
+    timestampCol: 'created_at',
+    strategy: 'append',
+    columns: [
+      'id', 'event_name', 'component', 'payload', 'machine_hostname',
+      'project_slug', 'instance_id', 'created_at',
+    ],
+  },
 ];
 
 // ---------------------------------------------------------------------------

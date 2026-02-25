@@ -36,6 +36,7 @@ import { createSyncComponent } from './components/sync/index.js';
 import { createCacheComponent } from './components/cache/index.js';
 import { createSchedulesComponent } from './components/schedules/index.js';
 import { createCoordinationComponent } from './components/coordination/index.js';
+import { createMonitoringComponent } from './components/monitoring/index.js';
 
 // db.ts bridge
 import { setAdapter } from '../db.js';
@@ -76,7 +77,7 @@ export function bootEngine(config: EngineConfig): Engine {
   // 4. Create registry
   const registry = createRegistry(storage, bus);
 
-  // 5. Register domain components (all 12)
+  // 5. Register domain components (all 13)
   const componentFactories = [
     createMemoryComponent,
     createErrorsComponent,
@@ -90,6 +91,7 @@ export function bootEngine(config: EngineConfig): Engine {
     createCacheComponent,
     createSchedulesComponent,
     createCoordinationComponent,
+    createMonitoringComponent,
   ];
 
   for (const factory of componentFactories) {

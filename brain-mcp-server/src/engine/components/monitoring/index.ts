@@ -1,0 +1,234 @@
+/**
+ * Brain Engine v5.0 -- Monitoring Component
+ *
+ * Logs all orphan engine events (schedules, cache, coordination) into
+ * an event_log table for observability and audit purposes.
+ *
+ * Provides 2 MCP tools:
+ * - igris_event_log: Query the event log with filters
+ * - igris_event_log_cleanup: Purge old event log entries
+ *
+ * Emits: (none)
+ * Listens: schedule.created, schedule.enabled, schedule.disabled,
+ *          schedule.deleted, schedule.fire_now, schedule.run_start,
+ *          schedule.run_complete, cache.rebuilt, cache.cleaned,
+ *          coordination.self_heal
+ *
+ * @module engine/components/monitoring
+ * @author Fifty.ai
+ */
+
+import * as os from 'node:os';
+import { getDb } from '../../../db.js';
+import type {
+  BrainComponent,
+  ComponentContext,
+  Migration,
+  ToolDefinition,
+  EventDef,
+  EventPayload,
+} from '../../types.js';
+import { errMsg } from '../../helpers.js';
+import { monitoringMigrations } from './schema.js';
+import { handleEventLogQuery, handleEventLogCleanup } from './handlers.js';
+
+// ---------------------------------------------------------------------------
+// Event-to-component mapping
+// ---------------------------------------------------------------------------
+
+/** Static map from event name to the component that emits it */
+const EVENT_COMPONENT_MAP: Record<string, string> = {
+  'schedule.created': 'schedules',
+  'schedule.enabled': 'schedules',
+  'schedule.disabled': 'schedules',
+  'schedule.deleted': 'schedules',
+  'schedule.fire_now': 'schedules',
+  'schedule.run_start': 'schedules',
+  'schedule.run_complete': 'schedules',
+  'cache.rebuilt': 'cache',
+  'cache.cleaned': 'cache',
+  'coordination.self_heal': 'coordination',
+};
+
+// ---------------------------------------------------------------------------
+// Component factory
+// ---------------------------------------------------------------------------
+
+export function createMonitoringComponent(): BrainComponent {
+  let _ctx: ComponentContext | null = null;
+  let _hostname: string = '';
+
+  /**
+   * Generic event handler -- logs any received event into event_log.
+   *
+   * Derives the component name from EVENT_COMPONENT_MAP,
+   * extracts project_slug from payload data, and inserts a row.
+   * Wrapped in try/catch -- never throws.
+   */
+  function onEventReceived(payload: EventPayload): void {
+    try {
+      const db = getDb();
+      const eventName = payload.event;
+      const component = EVENT_COMPONENT_MAP[eventName] ?? 'unknown';
+      const projectSlug =
+        (payload.data.project as string) ??
+        (payload.data.project_slug as string) ??
+        null;
+
+      db.prepare(
+        `INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(
+        eventName,
+        component,
+        JSON.stringify(payload.data),
+        _hostname,
+        projectSlug,
+        payload.timestamp,
+      );
+    } catch (err) {
+      _ctx?.log.error(`Failed to log event ${payload.event}: ${errMsg(err)}`);
+    }
+  }
+
+  return {
+    name: 'monitoring',
+    version: '1.0.0',
+    depends: [],
+
+    schema(): Migration[] {
+      return monitoringMigrations;
+    },
+
+    tools(): ToolDefinition[] {
+      return [
+        // -----------------------------------------------------------------
+        // igris_event_log
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_event_log',
+          description: 'Query the engine event log. Supports filtering by event name, component, project, and time range. Returns paginated results.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              event_name: {
+                type: 'string',
+                description: 'Filter by event name (e.g. "schedule.created")',
+              },
+              component: {
+                type: 'string',
+                description: 'Filter by source component (e.g. "schedules", "cache", "coordination")',
+              },
+              project_slug: {
+                type: 'string',
+                description: 'Filter by project slug',
+              },
+              since: {
+                type: 'string',
+                description: 'Only show events after this ISO datetime',
+              },
+              until: {
+                type: 'string',
+                description: 'Only show events before this ISO datetime',
+              },
+              limit: {
+                type: 'number',
+                description: 'Max results per page (default: 100, max: 1000)',
+              },
+              offset: {
+                type: 'number',
+                description: 'Offset for pagination (default: 0)',
+              },
+            },
+          },
+          handler: (args) => handleEventLogQuery(args),
+        },
+
+        // -----------------------------------------------------------------
+        // igris_event_log_cleanup
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_event_log_cleanup',
+          description: 'Delete old event log entries. Removes events older than the specified retention period.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              retention_days: {
+                type: 'number',
+                description: 'Number of days to retain (default: 30, minimum: 1)',
+              },
+            },
+          },
+          handler: (args) => handleEventLogCleanup(args),
+        },
+      ];
+    },
+
+    events(): { emits: EventDef[]; listens: EventDef[] } {
+      return {
+        emits: [],
+        listens: [
+          { name: 'schedule.created', description: 'Log schedule creation events' },
+          { name: 'schedule.enabled', description: 'Log schedule enable events' },
+          { name: 'schedule.disabled', description: 'Log schedule disable events' },
+          { name: 'schedule.deleted', description: 'Log schedule deletion events' },
+          { name: 'schedule.fire_now', description: 'Log manual schedule fire events' },
+          { name: 'schedule.run_start', description: 'Log schedule run start events' },
+          { name: 'schedule.run_complete', description: 'Log schedule run completion events' },
+          { name: 'cache.rebuilt', description: 'Log cache rebuild events' },
+          { name: 'cache.cleaned', description: 'Log cache clean events' },
+          { name: 'coordination.self_heal', description: 'Log coordination self-healing events' },
+        ],
+      };
+    },
+
+    init(ctx: ComponentContext): void {
+      _ctx = ctx;
+
+      // Cache hostname for event logging
+      _hostname = os.hostname();
+
+      // Wire all event listeners -- EXPLICIT per-event calls for regex-based integrity tests
+      ctx.bus.on('schedule.created', onEventReceived);
+      ctx.bus.on('schedule.enabled', onEventReceived);
+      ctx.bus.on('schedule.disabled', onEventReceived);
+      ctx.bus.on('schedule.deleted', onEventReceived);
+      ctx.bus.on('schedule.fire_now', onEventReceived);
+      ctx.bus.on('schedule.run_start', onEventReceived);
+      ctx.bus.on('schedule.run_complete', onEventReceived);
+      ctx.bus.on('cache.rebuilt', onEventReceived);
+      ctx.bus.on('cache.cleaned', onEventReceived);
+      ctx.bus.on('coordination.self_heal', onEventReceived);
+
+      // Run retention cleanup on init (purge events older than 30 days)
+      try {
+        const db = getDb();
+        const result = db.prepare(
+          `DELETE FROM event_log WHERE created_at < datetime('now', '-30 days')`
+        ).run();
+        if (result.changes > 0) {
+          ctx.log.info(`Purged ${result.changes} event log entries older than 30 days`);
+        }
+      } catch (err) {
+        ctx.log.warn(`Retention cleanup failed: ${errMsg(err)}`);
+      }
+
+      ctx.log.info('Monitoring component initialized');
+    },
+
+    destroy(): void {
+      if (_ctx) {
+        _ctx.bus.off('schedule.created', onEventReceived);
+        _ctx.bus.off('schedule.enabled', onEventReceived);
+        _ctx.bus.off('schedule.disabled', onEventReceived);
+        _ctx.bus.off('schedule.deleted', onEventReceived);
+        _ctx.bus.off('schedule.fire_now', onEventReceived);
+        _ctx.bus.off('schedule.run_start', onEventReceived);
+        _ctx.bus.off('schedule.run_complete', onEventReceived);
+        _ctx.bus.off('cache.rebuilt', onEventReceived);
+        _ctx.bus.off('cache.cleaned', onEventReceived);
+        _ctx.bus.off('coordination.self_heal', onEventReceived);
+      }
+      _ctx = null;
+    },
+  };
+}

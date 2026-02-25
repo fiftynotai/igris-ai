@@ -129,6 +129,7 @@ function getEngine(): Engine {
         cache: { enabled: true },
         schedules: { enabled: true },
         coordination: { enabled: true },
+        monitoring: { enabled: true },
       },
     };
     _engine = bootEngine(config);
