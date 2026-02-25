@@ -483,7 +483,8 @@ async function handleBrainPush(
 
       // Validate remote response before continuing
       if (!result.ok || !result.results) {
-        throw new Error(`Remote returned invalid response for chunk ${i + 1}/${chunks.length}: missing 'ok' or 'results' field. Response: ${JSON.stringify(result)}`);
+        console.error(`[brain] Remote sync response missing 'ok' or 'results' for chunk ${i + 1}/${chunks.length}:`, JSON.stringify(result));
+        throw new Error(`Remote returned invalid response for chunk ${i + 1}/${chunks.length}`);
       }
     }
 

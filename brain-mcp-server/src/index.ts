@@ -496,7 +496,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
   app.get('/api/sessions', (req: Request, res: Response) => {
     try {
       const db = getDb();
-      const days = parseInt(req.query.days as string, 10) || 7;
+      const days = Math.min(365, Math.max(1, parseInt(req.query.days as string, 10) || 7));
       const rows = db.prepare(
         `SELECT id, project, brief_id, phase, mode, summary, started_at, ended_at FROM sessions WHERE started_at >= datetime('now', '-' || ? || ' days') ORDER BY started_at DESC`
       ).all(days);
@@ -636,7 +636,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // GET /api/instances/:id/log — Execution log (recent events)
   app.get('/api/instances/:id/log', (req: Request, res: Response) => {
     try {
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+      const limit = req.query.limit ? Math.min(1000, Math.max(1, parseInt(req.query.limit as string, 10) || 50)) : undefined;
       const data = handleAgentEventLog({ instance_id: req.params.id as string, limit });
       res.json(data);
     } catch (err) {
