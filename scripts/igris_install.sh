@@ -81,8 +81,17 @@ mkdir -p "$CACHE_DIR/session"
 mkdir -p "$CACHE_DIR/briefs"
 mkdir -p "$CACHE_DIR/metrics"
 
+# Create worker and output directories (idempotent)
+mkdir -p "$HOME/.igris/logs/worker"
+mkdir -p "$HOME/.igris/output/content"
+mkdir -p "$HOME/.igris/output/social-media"
+mkdir -p "$HOME/.igris/output/media-gen"
+mkdir -p "$HOME/.igris/output/research"
+mkdir -p "$HOME/.igris/output/operational"
+
 echo "   ✅ Project directories created"
 echo "   ✅ Brain cache at $CACHE_DIR"
+echo "   ✅ Worker and output directories created"
 
 # ============================================================
 # Linking prompts and templates (agents/rules/skills are global)
@@ -414,6 +423,30 @@ with open('.igris_version', 'w') as f:
 " "$IGRIS_VERSION" "$BRAIN_DIR"
 
 echo "   ✅ .igris_version created"
+
+# ============================================================
+# Copy worker scripts to brain
+# ============================================================
+echo ""
+echo "🔧 Installing worker scripts..."
+
+mkdir -p "$HOME/.igris/scripts"
+
+if [ -f "$IGRIS_DIR/scripts/igris_worker.sh" ]; then
+  cp "$IGRIS_DIR/scripts/igris_worker.sh" "$HOME/.igris/scripts/igris_worker.sh"
+  chmod +x "$HOME/.igris/scripts/igris_worker.sh"
+  echo "   ✅ igris_worker.sh installed"
+else
+  echo "   ⚠️  igris_worker.sh not found in source repo"
+fi
+
+if [ -f "$IGRIS_DIR/scripts/igris_worker_config.sh" ]; then
+  cp "$IGRIS_DIR/scripts/igris_worker_config.sh" "$HOME/.igris/scripts/igris_worker_config.sh"
+  chmod +x "$HOME/.igris/scripts/igris_worker_config.sh"
+  echo "   ✅ igris_worker_config.sh installed"
+else
+  echo "   ⚠️  igris_worker_config.sh not found in source repo"
+fi
 
 # ============================================================
 # Brain health check

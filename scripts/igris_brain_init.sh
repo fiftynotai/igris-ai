@@ -639,6 +639,16 @@ config = {
         'path': '~/.igris/memory/knowledge.db',
         'wal_mode': True,
         'busy_timeout_ms': 5000
+    },
+    'worker': {
+        'enabled': False,
+        'poll_interval_seconds': 30,
+        'max_concurrent_tasks': 2,
+        'allowed_task_types': ['dev', 'research', 'operational'],
+        'agent_name': 'worker',
+        'capabilities': ['code', 'test', 'research'],
+        'auto_sleep_minutes': 60,
+        'log_dir': '~/.igris/logs/worker'
     }
 }
 
@@ -755,6 +765,23 @@ Check brain health:
 ```
 sqlite3 ~/.igris/memory/knowledge.db "PRAGMA integrity_check; PRAGMA journal_mode;"
 ```
+
+## Worker Mode
+
+When running as a worker daemon (`igris_worker.sh`), Claude Code sessions are spawned
+with task-specific handler skills. The worker identity includes:
+
+- **Role:** Task executor (not interactive assistant)
+- **MCP Connection:** Brain MCP server at ~/.igris/memory/knowledge.db
+- **Task Flow:** Claim -> Execute -> Store Results -> Complete/Fail
+- **Required Tools:** igris_task_get, igris_task_result_add, igris_task_complete, igris_task_fail
+
+When you receive a task prompt from the worker daemon:
+1. Read the full task via igris_task_get
+2. Follow the handler skill instructions
+3. Store ALL outputs via igris_task_result_add
+4. Complete the task via igris_task_complete (or igris_task_fail on error)
+5. Do NOT ask for user input -- work autonomously
 
 ## Note
 
