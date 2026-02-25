@@ -2,8 +2,8 @@
 
 **Type:** FR
 **Priority:** P1
-**Effort:** TBD
-**Status:** Ready
+**Effort:** M-Medium
+**Status:** In Progress
 **Created:** 2026-02-25
 **Completed:** _TBD_
 
@@ -11,50 +11,62 @@
 
 ## Problem
 
-Brain data changes require manual `/sync data` to reach the VPS. In a multi-user scenario, this means stale data — brief claims aren't reflected immediately, session presence is invisible, and 19 of 25 tables never sync at all. The sync component has orphan event listeners (TODO) that were designed for this but never wired.
+Brain data changes require manual `/sync data` to reach the VPS. The sync component has a TODO stub in `init()` designed for event-driven auto-push but never wired. Without this, brief claims aren't reflected immediately, session presence is invisible, and changes only sync on manual `/sync data`.
 
-Specific gaps:
-1. Only 6 of 25 tables push to VPS (learnings, errors, projects, sessions, brief_status, agent_metrics)
-2. `brief_files` and `session_files` content never pushes — other devices can't read full briefs/sessions
-3. Tasks, coordination, schedules, instances, agent_events, definition_files all local-only
-4. No event-driven push — all sync is manual via `/sync data`
-5. Instance heartbeats only fire on `/awaken` and `/rest`, not continuously
+**Current state (after BR-034 audit):**
+- SYNC_TABLES already covers 14 of ~19 syncable tables
+- 5 remaining syncable tables: `agent_capabilities`, `autonomous_decisions`, `coordination_config`, `schedules`, `schedule_runs`
+- 10 domain events emitted but no listeners in sync component
+- `sync/index.ts` init() has a TODO stub, events() declares empty listens/emits
+- Remote brain URL/API key always passed as tool args — MCP server doesn't read config.json
 
 ---
 
 ## Goal
 
-Wire the sync component to listen to engine events and auto-push changes to the remote brain. Use a two-tier strategy:
+Wire the sync component to listen to engine events and auto-push changes to the remote brain. Two-tier strategy:
 
 **Immediate push (contention-sensitive):**
-- `brief.synced` — brief status/claim changes must reflect instantly for multi-user coordination
-- `session.synced` — shows who's working on what right now
-- `instance.heartbeat` — live presence in Crimson Arena, event-driven (not tied to /awaken or /rest)
+- `brief.synced` — brief status changes must reflect instantly
+- `brief.created` — new briefs visible across devices
+- `brief.completed` — completion status propagates
+- `session.synced` — shows who's working on what
+- `session.file.updated` — session file content propagates
+- `instance.heartbeat` — live presence in Crimson Arena
 
 **Batched push (10s window):**
-- `memory.stored` — learnings are append-only, no contention
-- `error.stored` — error catalog is informational
+- `memory.stored` — append-only, no contention
+- `error.stored` — informational
 - `project.registered` — rare event
-- `metrics.recorded` — agent metrics are informational
+- `metrics.recorded` — informational
 
-**Table coverage expansion:**
-- Add `brief_files`, `session_files`, `definition_files` to push tables
-- Add `tasks`, `task_deps`, `task_assignments`, `agent_capabilities` to push tables
-- Add `autonomous_decisions`, `coordination_config` to push tables
-- Add `schedules`, `schedule_runs` to push tables
-- Add `instances`, `agent_events` to push tables
+**Table coverage:** Add 5 missing tables to SYNC_TABLES.
 
-**Configuration:**
-- Opt-in via `config.json` (`"auto_push": true`) — users without VPS are unaffected
-- Failures queue to existing sync_queue for retry on next drain
-- Batch buffer collects changes for 10s then flushes in one HTTP call
+**Config:** Opt-in via `config.json` (`"auto_push": true`). Read config inside MCP server init(). Failures queue to existing sync_queue.
+
+---
+
+## Key Files
+
+- `brain-mcp-server/src/engine/components/sync/index.ts` — Component with TODO stub (line 299)
+- `brain-mcp-server/src/tools/sync.ts` — Push/pull handlers, SYNC_TABLES (line 77), fetchWithRetry
+- `brain-mcp-server/src/db.ts` — BRAIN_DIR, schema definitions
+- `brain-mcp-server/src/index.ts` — Remote API endpoints, cleanup interval pattern
+- `brain-mcp-server/src/engine/__tests__/event-bus-integrity.test.ts` — Must pass after changes
 
 ---
 
 ## Tasks
 
 ### Pending
-- [ ] TBD
+- [ ] T1: Add `auto_push` config flag to config.json and read it in sync component init()
+- [ ] T2: Add 5 missing tables to SYNC_TABLES (agent_capabilities, autonomous_decisions, coordination_config, schedules, schedule_runs)
+- [ ] T3: Implement immediate push handler — listen to 6 events, push affected table rows on each event
+- [ ] T4: Implement batched push handler — 10s buffer for 4 events, flush in single HTTP call
+- [ ] T5: Update sync component events() to declare all listened events
+- [ ] T6: Add listener cleanup to destroy()
+- [ ] T7: Update event-bus-integrity tests for new sync listeners
+- [ ] T8: Add unit tests for auto-push logic (immediate + batched)
 
 ### In Progress
 _(None yet)_
@@ -66,8 +78,10 @@ _(None yet)_
 
 ## Session State
 
-**Current State:** Brief created
-**Next Steps When Resuming:** Define tasks and acceptance criteria
+**Current State:** In Progress
+**Phase:** PLANNING
+**Active Agent:** architect
+**Next Steps:** Architect creates implementation plan
 **Last Updated:** 2026-02-25
 **Blockers:** None
 
@@ -75,7 +89,22 @@ _(None yet)_
 
 ## Acceptance Criteria
 
-1. [ ] TBD
+1. [ ] `auto_push: true` in config.json enables event-driven sync; `false` or absent disables it
+2. [ ] Brief status changes (`brief.synced`, `brief.created`, `brief.completed`) push to VPS within 1s
+3. [ ] Session changes (`session.synced`, `session.file.updated`) push to VPS within 1s
+4. [ ] Instance heartbeats push to VPS within 1s
+5. [ ] Memory, error, project, metrics events batch and push within 10s window
+6. [ ] All 19 syncable tables are in SYNC_TABLES
+7. [ ] Failed pushes queue to sync_queue with existing retry mechanism
+8. [ ] Event-bus-integrity tests pass (no orphan listeners, all declared)
+9. [ ] Sync component destroy() cleans up all listeners and timers
+10. [ ] Auto-push is silent when remote brain is not configured
+
+---
+
+## Agent Log
+
+_(Agents will be logged here during implementation)_
 
 ---
 
