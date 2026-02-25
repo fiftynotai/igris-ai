@@ -125,6 +125,7 @@ function getEngine(): Engine {
         tasks: { enabled: true },
         instances: { enabled: true },
         sync: { enabled: true },
+        cache: { enabled: true },
         schedules: { enabled: true },
         coordination: { enabled: true },
       },
