@@ -82,7 +82,7 @@ export function createSchedulesComponent(): BrainComponent {
               },
               cron_expr: {
                 type: 'string',
-                description: 'Cron expression (5-field: minute hour day-of-month month day-of-week). Examples: "0 * * * *" (hourly), "30 2 * * 1" (Mon 2:30am)',
+                description: 'Cron expression (5-field: minute hour day-of-month month day-of-week). Note: uses AND logic when both day-of-month and day-of-week are specified (differs from POSIX OR semantics). Examples: "0 * * * *" (hourly), "30 2 * * 1" (Mon 2:30am)',
               },
               handler_type: {
                 type: 'string',

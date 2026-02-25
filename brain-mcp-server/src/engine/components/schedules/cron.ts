@@ -191,7 +191,11 @@ export function nextOccurrence(schedule: CronSchedule, after: Date): Date {
       continue;
     }
 
-    // Check day — both dayOfMonth AND dayOfWeek must match
+    // Check day — both dayOfMonth AND dayOfWeek must match.
+    // NOTE: Uses AND logic for dayOfMonth/dayOfWeek when both are non-wildcard.
+    // POSIX cron (vixie) uses OR semantics — this is a deliberate deviation.
+    // Rationale: AND is more intuitive for scheduling ("3rd AND Monday" vs
+    // "3rd OR Monday").
     const dayOfMonth = cursor.getDate();
     const dayOfWeek = cursor.getDay(); // 0=Sunday
 
