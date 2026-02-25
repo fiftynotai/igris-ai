@@ -123,9 +123,17 @@ export function createSchedulesComponent(): BrainComponent {
           },
           handler: (args) => {
             const result = handleScheduleCreate(args);
-            // Recalculate daemon timer when a new schedule is created
-            if (!result.isError && _daemon) {
-              _daemon.recalculate();
+            if (!result.isError) {
+              if (_daemon) _daemon.recalculate();
+              // Parse result to get schedule_id for event payload
+              try {
+                const data = JSON.parse(result.content[0].text);
+                _ctx?.bus.emit('schedule.created', {
+                  schedule_id: data.schedule?.id,
+                  name: args.name as string,
+                  cron_expr: args.cron_expr as string,
+                });
+              } catch { /* event emission is best-effort */ }
             }
             return result;
           },
@@ -202,8 +210,11 @@ export function createSchedulesComponent(): BrainComponent {
           },
           handler: (args) => {
             const result = handleScheduleEnable(args);
-            if (!result.isError && _daemon) {
-              _daemon.recalculate();
+            if (!result.isError) {
+              if (_daemon) _daemon.recalculate();
+              _ctx?.bus.emit('schedule.enabled', {
+                schedule_id: args.schedule_id as string,
+              });
             }
             return result;
           },
@@ -227,8 +238,11 @@ export function createSchedulesComponent(): BrainComponent {
           },
           handler: (args) => {
             const result = handleScheduleDisable(args);
-            if (!result.isError && _daemon) {
-              _daemon.recalculate();
+            if (!result.isError) {
+              if (_daemon) _daemon.recalculate();
+              _ctx?.bus.emit('schedule.disabled', {
+                schedule_id: args.schedule_id as string,
+              });
             }
             return result;
           },
@@ -271,8 +285,16 @@ export function createSchedulesComponent(): BrainComponent {
           },
           handler: (args) => {
             const result = handleScheduleDelete(args);
-            if (!result.isError && _daemon) {
-              _daemon.recalculate();
+            if (!result.isError) {
+              if (_daemon) _daemon.recalculate();
+              // Parse result to get schedule name for event payload
+              try {
+                const data = JSON.parse(result.content[0].text);
+                _ctx?.bus.emit('schedule.deleted', {
+                  schedule_id: args.schedule_id as string,
+                  name: data.name,
+                });
+              } catch { /* event emission is best-effort */ }
             }
             return result;
           },

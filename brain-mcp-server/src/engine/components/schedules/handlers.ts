@@ -199,10 +199,6 @@ export function handleScheduleCreate(args: Record<string, unknown>): ToolResult 
 
   const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(id) as Record<string, unknown>;
 
-  if (_handlerCtx) {
-    _handlerCtx.bus.emit('schedule.created', { schedule_id: id, name, cron_expr: cronExpr });
-  }
-
   return successResult(JSON.stringify({ schedule }, null, 2));
 }
 
@@ -322,10 +318,6 @@ export function handleScheduleEnable(args: Record<string, unknown>): ToolResult 
 
   const updated = db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as Record<string, unknown>;
 
-  if (_handlerCtx) {
-    _handlerCtx.bus.emit('schedule.enabled', { schedule_id: scheduleId });
-  }
-
   return successResult(JSON.stringify({ schedule: updated }, null, 2));
 }
 
@@ -359,16 +351,15 @@ export function handleScheduleDisable(args: Record<string, unknown>): ToolResult
 
   const updated = db.prepare('SELECT * FROM schedules WHERE id = ?').get(scheduleId) as Record<string, unknown>;
 
-  if (_handlerCtx) {
-    _handlerCtx.bus.emit('schedule.disabled', { schedule_id: scheduleId });
-  }
-
   return successResult(JSON.stringify({ schedule: updated }, null, 2));
 }
 
 // ---------------------------------------------------------------------------
 // handleScheduleFireNow
 // ---------------------------------------------------------------------------
+
+// NOTE: fire_now and run_complete events are emitted here (not in index.ts)
+// because they need generated data (run_id, outcome) only available inside the handler.
 
 /**
  * Immediately fire a schedule's handler, creating a run record.
@@ -464,13 +455,6 @@ export function handleScheduleDelete(args: Record<string, unknown>): ToolResult 
   }
 
   db.prepare('DELETE FROM schedules WHERE id = ?').run(scheduleId);
-
-  if (_handlerCtx) {
-    _handlerCtx.bus.emit('schedule.deleted', {
-      schedule_id: scheduleId,
-      name: schedule.name,
-    });
-  }
 
   return successResult(JSON.stringify({
     deleted: true,
