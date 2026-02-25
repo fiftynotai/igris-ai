@@ -11,30 +11,7 @@
 
 import { getDb } from '../../../db.js';
 import type { ToolResult } from '../../types.js';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Return an error ToolResult */
-function errorResult(message: string): ToolResult {
-  return {
-    content: [{ type: 'text', text: `Error: ${message}` }],
-    isError: true,
-  };
-}
-
-/** Return a success ToolResult with text */
-function successResult(text: string): ToolResult {
-  return {
-    content: [{ type: 'text', text }],
-  };
-}
-
-/** Current timestamp in ISO 8601 format */
-function now(): string {
-  return new Date().toISOString();
-}
+import { errorResult, successResult, now } from '../../helpers.js';
 
 // ---------------------------------------------------------------------------
 // handleAgentCapabilitySet

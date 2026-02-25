@@ -14,6 +14,7 @@
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../../../db.js';
 import type { ToolResult } from '../../types.js';
+import { errorResult, successResult, now } from '../../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -27,26 +28,6 @@ function generateTaskId(): string {
 /** Generate an assignment ID: first 8 chars of a UUID */
 function generateAssignmentId(): string {
   return randomUUID().substring(0, 8);
-}
-
-/** Return an error ToolResult */
-function errorResult(message: string): ToolResult {
-  return {
-    content: [{ type: 'text', text: `Error: ${message}` }],
-    isError: true,
-  };
-}
-
-/** Return a success ToolResult with text */
-function successResult(text: string): ToolResult {
-  return {
-    content: [{ type: 'text', text }],
-  };
-}
-
-/** Current timestamp in ISO 8601 format */
-function now(): string {
-  return new Date().toISOString();
 }
 
 // ---------------------------------------------------------------------------

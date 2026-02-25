@@ -14,6 +14,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { getDb } from '../../../db.js';
 import type { ToolResult } from '../../types.js';
+import { errorResult, successResult } from '../../helpers.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -35,21 +36,6 @@ function safePath(base: string, ...segments: string[]): string {
     throw new Error(`Path traversal detected: ${segments.join('/')}`);
   }
   return resolved;
-}
-
-/** Return an error ToolResult */
-function errorResult(message: string): ToolResult {
-  return {
-    content: [{ type: 'text', text: `Error: ${message}` }],
-    isError: true,
-  };
-}
-
-/** Return a success ToolResult with text */
-function successResult(text: string): ToolResult {
-  return {
-    content: [{ type: 'text', text }],
-  };
 }
 
 /** Root cache directory: ~/.igris/cache */

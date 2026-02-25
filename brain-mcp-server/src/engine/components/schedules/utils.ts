@@ -12,19 +12,7 @@
 import { randomUUID } from 'node:crypto';
 import { executeHandler } from './handlers.js';
 
-// ---------------------------------------------------------------------------
-// Timestamps
-// ---------------------------------------------------------------------------
-
-/**
- * Current timestamp in ISO 8601 format.
- *
- * All schedule timestamps use ISO format (e.g. "2026-02-25T10:30:00.000Z")
- * for consistent lexicographic comparison with cron.ts nextRunAfter() output.
- */
-export function now(): string {
-  return new Date().toISOString();
-}
+export { now } from '../../helpers.js';
 
 // ---------------------------------------------------------------------------
 // ID Generation

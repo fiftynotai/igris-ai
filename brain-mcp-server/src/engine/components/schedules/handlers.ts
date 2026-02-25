@@ -16,6 +16,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getDb } from '../../../db.js';
 import type { ToolResult, EventBus } from '../../types.js';
+import { errorResult, successResult } from '../../helpers.js';
 import { parseCron, nextRunAfter } from './cron.js';
 import { now, generateScheduleId, generateRunId, executeWithRetries } from './utils.js';
 
@@ -38,25 +39,6 @@ let _handlerCtx: HandlerContext | null = null;
  */
 export function setHandlerContext(ctx: HandlerContext): void {
   _handlerCtx = ctx;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Return an error ToolResult */
-function errorResult(message: string): ToolResult {
-  return {
-    content: [{ type: 'text', text: `Error: ${message}` }],
-    isError: true,
-  };
-}
-
-/** Return a success ToolResult with text */
-function successResult(text: string): ToolResult {
-  return {
-    content: [{ type: 'text', text }],
-  };
 }
 
 // ---------------------------------------------------------------------------
