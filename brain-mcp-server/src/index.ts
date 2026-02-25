@@ -126,6 +126,7 @@ function getEngine(): Engine {
         instances: { enabled: true },
         sync: { enabled: true },
         schedules: { enabled: true },
+        coordination: { enabled: true },
       },
     };
     _engine = bootEngine(config);

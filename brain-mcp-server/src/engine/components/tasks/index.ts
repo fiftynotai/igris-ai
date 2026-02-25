@@ -2,10 +2,11 @@
  * Brain Engine v5.0 — Tasks Component
  *
  * Wraps the task management handlers as a BrainComponent.
- * Provides 8 MCP tools for task CRUD, dependency management,
- * agent assignment, and smart next-task selection.
+ * Provides 10 MCP tools for task CRUD, dependency management,
+ * agent assignment, smart next-task selection, fail/retry.
  *
- * Emits: task.created, task.assigned, task.completed, task.blocked, task.unblocked
+ * Emits: task.created, task.assigned, task.completed, task.blocked,
+ *        task.unblocked, task.failed
  * Listens: brief.created, brief.completed
  *
  * @module engine/components/tasks
@@ -31,6 +32,8 @@ import {
   handleTaskBlock,
   handleTaskNext,
   handleTaskUpdate,
+  handleTaskFail,
+  handleTaskRetry,
 } from './handlers.js';
 
 export function createTasksComponent(): BrainComponent {
@@ -149,7 +152,7 @@ export function createTasksComponent(): BrainComponent {
               },
               status: {
                 type: 'string',
-                enum: ['pending', 'active', 'blocked', 'done', 'cancelled'],
+                enum: ['pending', 'active', 'blocked', 'done', 'cancelled', 'failed'],
                 description: 'Initial status (default: pending)',
               },
               assignee: {
@@ -171,6 +174,15 @@ export function createTasksComponent(): BrainComponent {
               metadata: {
                 type: 'object',
                 description: 'Additional metadata as JSON object (optional)',
+              },
+              required_capabilities: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Capabilities required to work on this task (e.g. ["code", "test"]). Used by task_next to match agents. (optional)',
+              },
+              max_retries: {
+                type: 'number',
+                description: 'Maximum retry attempts if the task fails (default: 3)',
               },
             },
             required: ['task_type', 'title', 'scope'],
@@ -201,7 +213,7 @@ export function createTasksComponent(): BrainComponent {
             properties: {
               status: {
                 type: 'string',
-                enum: ['pending', 'active', 'blocked', 'done', 'cancelled'],
+                enum: ['pending', 'active', 'blocked', 'done', 'cancelled', 'failed'],
                 description: 'Filter by status (optional)',
               },
               task_type: {
@@ -384,13 +396,18 @@ export function createTasksComponent(): BrainComponent {
         // -----------------------------------------------------------------
         {
           name: 'igris_task_next',
-          description: 'Find the highest-priority unblocked, non-deferred, pending task. Optionally auto-assigns to an agent. Ideal for agents picking up work.',
+          description: 'Find the highest-priority unblocked, non-deferred, pending task. Optionally auto-assigns to an agent. Supports capability-based matching. Ideal for agents picking up work.',
           inputSchema: {
             type: 'object' as const,
             properties: {
               agent: {
                 type: 'string',
-                description: 'Agent name — if provided, auto-assigns the found task (optional)',
+                description: 'Agent name — if provided, auto-assigns the found task. Also used to look up capabilities from agent_capabilities table if capabilities param is omitted. (optional)',
+              },
+              capabilities: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Explicit capability list to match against task required_capabilities. Overrides agent_capabilities lookup. (optional)',
               },
               project_slug: {
                 type: 'string',
@@ -455,7 +472,7 @@ export function createTasksComponent(): BrainComponent {
               },
               status: {
                 type: 'string',
-                enum: ['pending', 'active', 'blocked', 'done', 'cancelled'],
+                enum: ['pending', 'active', 'blocked', 'done', 'cancelled', 'failed'],
                 description: 'New status (optional)',
               },
               due_at: {
@@ -484,6 +501,74 @@ export function createTasksComponent(): BrainComponent {
           },
           handler: (args) => handleTaskUpdate(args),
         },
+
+        // -----------------------------------------------------------------
+        // igris_task_fail
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_task_fail',
+          description: 'Mark a task as failed with a reason. Increments retry_count and records fail_reason. The coordination component can listen for task.failed events to trigger self-healing.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              task_id: {
+                type: 'string',
+                description: 'Task ID to mark as failed',
+              },
+              reason: {
+                type: 'string',
+                description: 'Reason for the failure',
+              },
+            },
+            required: ['task_id', 'reason'],
+          },
+          handler: (args) => {
+            const result = handleTaskFail(args);
+            if (!result.isError && _ctx) {
+              try {
+                const parsed = JSON.parse(result.content[0].text) as {
+                  task?: { retry_count?: number; max_retries?: number };
+                };
+                _ctx.bus.emit('task.failed', {
+                  taskId: args.task_id,
+                  reason: args.reason,
+                  retryCount: parsed.task?.retry_count ?? 0,
+                  maxRetries: parsed.task?.max_retries ?? 3,
+                });
+              } catch {
+                // Best-effort event emission
+                _ctx.bus.emit('task.failed', {
+                  taskId: args.task_id,
+                  reason: args.reason,
+                });
+              }
+            }
+            return result;
+          },
+        },
+
+        // -----------------------------------------------------------------
+        // igris_task_retry
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_task_retry',
+          description: 'Retry a failed task by resetting its status to pending. Only works on tasks in failed status. Optionally merge fix_context into metadata.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              task_id: {
+                type: 'string',
+                description: 'Task ID to retry',
+              },
+              fix_context: {
+                type: 'string',
+                description: 'Context about the fix to merge into task metadata (optional)',
+              },
+            },
+            required: ['task_id'],
+          },
+          handler: (args) => handleTaskRetry(args),
+        },
       ];
     },
 
@@ -495,6 +580,7 @@ export function createTasksComponent(): BrainComponent {
           { name: 'task.completed', description: 'A task was marked as done' },
           { name: 'task.blocked', description: 'A dependency was added, blocking a task' },
           { name: 'task.unblocked', description: 'A task became unblocked (all deps done)' },
+          { name: 'task.failed', description: 'A task was marked as failed (triggers self-healing)' },
         ],
         listens: [
           { name: 'brief.created', description: 'Auto-create a linked task when a brief is synced for the first time' },

@@ -10,6 +10,10 @@ allowed-tools:
   - Grep
   - mcp__igris-brain__igris_brief_list
   - mcp__igris-brain__igris_session_file_get
+  - mcp__igris-brain__igris_coordination_config_get
+  - mcp__igris-brain__igris_task_next
+  - mcp__igris-brain__igris_agent_capability_list
+  - mcp__igris-brain__igris_coordination_audit
 triggers:
   - "AWAKEN"
   - "ARISE"
@@ -150,6 +154,28 @@ If brain is connected (from step 3.5), include brain stats in assessment:
 - Brain: Connected (X learnings, Y errors cataloged) | Not available
 - Active Instances: X (from `igris_instance_list` with status="active")
 - Cross-project insights if relevant
+
+### 4.5. Show Work Queue and Coordination Status (Optional)
+
+If the `igris-brain` MCP server is available:
+
+1. Call `igris_coordination_config_get` to check autonomous mode status
+2. Call `igris_task_next` (no agent filter) to peek at the top pending task
+3. Call `igris_task_list` with status="pending" and limit=5 to show the work queue
+4. Display a work queue summary:
+
+```
+### Work Queue
+| Task | Priority | Type | Due |
+|------|----------|------|-----|
+| t-abc123: Fix auth flow | P1 | brief | 2026-02-26 |
+| t-def456: Update docs | P3 | operational | -- |
+
+Autonomous Mode: [Enabled/Disabled]
+Self-Healing: [Enabled/Disabled]
+```
+
+If brain MCP is NOT available or calls fail, skip silently. Do NOT block session start.
 
 ### 5. Display Resume Point (if resuming)
 

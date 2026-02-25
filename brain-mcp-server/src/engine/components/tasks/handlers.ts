@@ -58,7 +58,8 @@ function now(): string {
  *
  * Required: task_type, title, scope
  * Optional: description, brief_id, project_slug, parent_id, priority,
- *           assignee, due_at, defer_until, created_by, metadata, status
+ *           assignee, due_at, defer_until, created_by, metadata, status,
+ *           required_capabilities, max_retries
  */
 export function handleTaskCreate(args: Record<string, unknown>): ToolResult {
   const taskType = args.task_type as string | undefined;
@@ -85,7 +86,7 @@ export function handleTaskCreate(args: Record<string, unknown>): ToolResult {
   }
 
   const status = (args.status as string | undefined) ?? 'pending';
-  const validStatuses = ['pending', 'active', 'blocked', 'done', 'cancelled'];
+  const validStatuses = ['pending', 'active', 'blocked', 'done', 'cancelled', 'failed'];
   if (!validStatuses.includes(status)) {
     return errorResult(`Invalid status: ${status}. Must be one of: ${validStatuses.join(', ')}`);
   }
@@ -94,12 +95,17 @@ export function handleTaskCreate(args: Record<string, unknown>): ToolResult {
   const id = generateTaskId();
   const timestamp = now();
   const metadata = args.metadata !== undefined ? JSON.stringify(args.metadata) : '{}';
+  const requiredCapabilities = args.required_capabilities !== undefined
+    ? JSON.stringify(args.required_capabilities)
+    : '[]';
+  const maxRetries = args.max_retries !== undefined ? Number(args.max_retries) : 3;
 
   db.prepare(`
     INSERT INTO tasks (id, task_type, scope, title, description, brief_id, project_slug,
                        parent_id, status, priority, assignee, due_at, defer_until,
-                       created_by, metadata, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       created_by, metadata, created_at, updated_at,
+                       required_capabilities, max_retries)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     taskType,
@@ -118,6 +124,8 @@ export function handleTaskCreate(args: Record<string, unknown>): ToolResult {
     metadata,
     timestamp,
     timestamp,
+    requiredCapabilities,
+    maxRetries,
   );
 
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as Record<string, unknown>;
@@ -485,8 +493,11 @@ export function handleTaskBlock(args: Record<string, unknown>): ToolResult {
 /**
  * Find the next highest-priority unblocked, non-deferred, pending task.
  *
- * Optional: agent, project_slug, scope, task_type
- * If agent is provided, auto-assigns the found task.
+ * Optional: agent, project_slug, scope, task_type, capabilities
+ * If agent is provided, auto-assigns the found task and logs an
+ * autonomous_decisions assignment record.
+ * If capabilities provided, filters tasks by matching required_capabilities.
+ * If agent is provided without capabilities, looks up agent_capabilities table.
  * Uses a transaction for atomicity.
  */
 export function handleTaskNext(args: Record<string, unknown>): ToolResult {
@@ -512,6 +523,36 @@ export function handleTaskNext(args: Record<string, unknown>): ToolResult {
     params.push(args.task_type);
   }
 
+  // Resolve capabilities: explicit param > agent_capabilities table lookup
+  let capabilities = args.capabilities as string[] | undefined;
+  const agent = args.agent as string | undefined;
+
+  if (!capabilities && agent) {
+    try {
+      const capRows = db.prepare(
+        'SELECT capability FROM agent_capabilities WHERE agent = ?'
+      ).all(agent) as { capability: string }[];
+      if (capRows.length > 0) {
+        capabilities = capRows.map((r) => r.capability);
+      }
+    } catch {
+      // agent_capabilities table may not exist yet (pre-v2 migration)
+    }
+  }
+
+  // Capability-based filtering: match tasks with no requirements OR at least one overlap
+  if (capabilities && capabilities.length > 0) {
+    const capPlaceholders = capabilities.map(() => '?').join(', ');
+    conditions.push(`
+      (tasks.required_capabilities = '[]'
+       OR EXISTS (
+         SELECT 1 FROM json_each(tasks.required_capabilities) je
+         WHERE je.value IN (${capPlaceholders})
+       ))
+    `);
+    params.push(...capabilities);
+  }
+
   // Exclude tasks with undone dependencies
   conditions.push(`
     NOT EXISTS (
@@ -526,12 +567,14 @@ export function handleTaskNext(args: Record<string, unknown>): ToolResult {
   let resultTask: Record<string, unknown> | null = null;
   let assignment: Record<string, unknown> | null = null;
 
-  const agent = args.agent as string | undefined;
-
   db.transaction(() => {
     const task = db.prepare(`
       SELECT * FROM tasks ${whereClause}
-      ORDER BY priority ASC, created_at ASC
+      ORDER BY
+        priority ASC,
+        CASE WHEN tasks.due_at IS NOT NULL THEN 0 ELSE 1 END ASC,
+        tasks.due_at ASC,
+        created_at ASC
       LIMIT 1
     `).get(...params) as Record<string, unknown> | undefined;
 
@@ -547,6 +590,21 @@ export function handleTaskNext(args: Record<string, unknown>): ToolResult {
       db.prepare(`
         UPDATE tasks SET status = 'active', assignee = ?, updated_at = ? WHERE id = ?
       `).run(agent, timestamp, task.id);
+
+      // Log assignment decision
+      try {
+        db.prepare(`
+          INSERT INTO autonomous_decisions (decision_type, task_id, agent, detail, created_at)
+          VALUES ('assignment', ?, ?, ?, ?)
+        `).run(
+          task.id as string,
+          agent,
+          `Auto-assigned via task_next to agent ${agent}`,
+          timestamp,
+        );
+      } catch {
+        // autonomous_decisions table may not exist yet (pre-v2 migration)
+      }
 
       resultTask = db.prepare('SELECT * FROM tasks WHERE id = ?').get(task.id) as Record<string, unknown>;
       assignment = { id: assignmentId, task_id: task.id, agent, assigned_at: timestamp };
@@ -617,12 +675,15 @@ export function handleTaskUpdate(args: Record<string, unknown>): ToolResult {
   }
 
   if (args.status !== undefined) {
-    const validStatuses = ['pending', 'active', 'blocked', 'done', 'cancelled'];
+    const validStatuses = ['pending', 'active', 'blocked', 'done', 'cancelled', 'failed'];
     if (!validStatuses.includes(args.status as string)) {
       return errorResult(`Invalid status: ${args.status}. Must be one of: ${validStatuses.join(', ')}`);
     }
     if (args.status === 'done') {
       return errorResult('Use igris_task_complete to mark tasks as done (ensures cascade unblocking)');
+    }
+    if (args.status === 'failed') {
+      return errorResult('Use igris_task_fail to mark tasks as failed (ensures retry tracking)');
     }
     setClauses.push('status = ?');
     setValues.push(args.status);
@@ -654,6 +715,102 @@ export function handleTaskUpdate(args: Record<string, unknown>): ToolResult {
   db.prepare(
     `UPDATE tasks SET ${setClauses.join(', ')} WHERE id = ?`
   ).run(...setValues);
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown>;
+
+  return successResult(JSON.stringify({ task: updated }, null, 2));
+}
+
+// ---------------------------------------------------------------------------
+// handleTaskFail
+// ---------------------------------------------------------------------------
+
+/**
+ * Mark a task as failed with a reason.
+ *
+ * Required: task_id, reason
+ * Increments retry_count and sets fail_reason. Does NOT auto-retry —
+ * the coordination component listens for task.failed events to handle
+ * self-healing logic.
+ */
+export function handleTaskFail(args: Record<string, unknown>): ToolResult {
+  const taskId = args.task_id as string | undefined;
+  const reason = args.reason as string | undefined;
+
+  if (!taskId || !reason) {
+    return errorResult('Missing required fields: task_id, reason');
+  }
+
+  const db = getDb();
+
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown> | undefined;
+  if (!task) {
+    return errorResult(`Task not found: ${taskId}`);
+  }
+
+  const timestamp = now();
+
+  db.prepare(`
+    UPDATE tasks
+    SET status = 'failed', fail_reason = ?, retry_count = retry_count + 1, updated_at = ?
+    WHERE id = ?
+  `).run(reason, timestamp, taskId);
+
+  const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown>;
+
+  return successResult(JSON.stringify({ task: updated }, null, 2));
+}
+
+// ---------------------------------------------------------------------------
+// handleTaskRetry
+// ---------------------------------------------------------------------------
+
+/**
+ * Retry a failed task by resetting its status to pending.
+ *
+ * Required: task_id
+ * Optional: fix_context (string merged into metadata as "fix_context" key)
+ * Only works on tasks in 'failed' status.
+ */
+export function handleTaskRetry(args: Record<string, unknown>): ToolResult {
+  const taskId = args.task_id as string | undefined;
+
+  if (!taskId) {
+    return errorResult('Missing required field: task_id');
+  }
+
+  const db = getDb();
+
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown> | undefined;
+  if (!task) {
+    return errorResult(`Task not found: ${taskId}`);
+  }
+
+  if (task.status !== 'failed') {
+    return errorResult(`Task ${taskId} is not in failed status (current: ${task.status}). Only failed tasks can be retried.`);
+  }
+
+  const timestamp = now();
+  const fixContext = args.fix_context as string | undefined;
+
+  if (fixContext) {
+    // Merge fix_context into existing metadata
+    let metadata: Record<string, unknown> = {};
+    try {
+      metadata = JSON.parse((task.metadata as string) || '{}') as Record<string, unknown>;
+    } catch {
+      metadata = {};
+    }
+    metadata.fix_context = fixContext;
+
+    db.prepare(`
+      UPDATE tasks SET status = 'pending', metadata = ?, updated_at = ? WHERE id = ?
+    `).run(JSON.stringify(metadata), timestamp, taskId);
+  } else {
+    db.prepare(`
+      UPDATE tasks SET status = 'pending', updated_at = ? WHERE id = ?
+    `).run(timestamp, taskId);
+  }
 
   const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as Record<string, unknown>;
 
