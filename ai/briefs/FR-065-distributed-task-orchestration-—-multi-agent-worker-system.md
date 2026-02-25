@@ -3,7 +3,7 @@
 **Type:** FR
 **Priority:** P1
 **Effort:** TBD
-**Status:** Ready
+**Status:** In Progress
 **Created:** 2026-02-25
 **Completed:** _TBD_
 

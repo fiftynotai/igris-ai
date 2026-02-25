@@ -36,6 +36,9 @@ const VALID_STATUSES = ['pending', 'active', 'blocked', 'done', 'cancelled', 'fa
 /** Valid task scopes for create/update validation */
 const VALID_SCOPES = ['project', 'personal', 'system'] as const;
 
+/** Valid task types for create validation */
+const VALID_TYPES = ['brief', 'operational', 'personal', 'system', 'dev', 'content', 'social-media', 'media-gen', 'research'] as const;
+
 // ---------------------------------------------------------------------------
 // handleTaskCreate
 // ---------------------------------------------------------------------------
@@ -57,9 +60,8 @@ export function handleTaskCreate(args: Record<string, unknown>): ToolResult {
     return errorResult('Missing required fields: task_type, title, scope');
   }
 
-  const validTypes = ['brief', 'operational', 'personal', 'system'];
-  if (!validTypes.includes(taskType)) {
-    return errorResult(`Invalid task_type: ${taskType}. Must be one of: ${validTypes.join(', ')}`);
+  if (!(VALID_TYPES as readonly string[]).includes(taskType)) {
+    return errorResult(`Invalid task_type: ${taskType}. Must be one of: ${VALID_TYPES.join(', ')}`);
   }
 
   if (!(VALID_SCOPES as readonly string[]).includes(scope)) {

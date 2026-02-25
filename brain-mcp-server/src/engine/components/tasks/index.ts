@@ -117,8 +117,8 @@ export function createTasksComponent(): BrainComponent {
             properties: {
               task_type: {
                 type: 'string',
-                enum: ['brief', 'operational', 'personal', 'system'],
-                description: 'Task type: brief (linked to a brief), operational (workflow task), personal (user task), system (internal)',
+                enum: ['brief', 'operational', 'personal', 'system', 'dev', 'content', 'social-media', 'media-gen', 'research'],
+                description: 'Task type: brief (linked to a brief), operational (workflow task), personal (user task), system (internal), dev (code implementation), content (writing/docs), social-media (social posts), media-gen (AI media generation), research (investigation/analysis)',
               },
               title: {
                 type: 'string',
@@ -217,7 +217,7 @@ export function createTasksComponent(): BrainComponent {
               },
               task_type: {
                 type: 'string',
-                enum: ['brief', 'operational', 'personal', 'system'],
+                enum: ['brief', 'operational', 'personal', 'system', 'dev', 'content', 'social-media', 'media-gen', 'research'],
                 description: 'Filter by task type (optional)',
               },
               scope: {
@@ -419,7 +419,7 @@ export function createTasksComponent(): BrainComponent {
               },
               task_type: {
                 type: 'string',
-                enum: ['brief', 'operational', 'personal', 'system'],
+                enum: ['brief', 'operational', 'personal', 'system', 'dev', 'content', 'social-media', 'media-gen', 'research'],
                 description: 'Filter by task type (optional)',
               },
             },
