@@ -210,6 +210,48 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'id', 'task_id', 'agent', 'assigned_at', 'completed_at', 'result',
     ],
   },
+  {
+    table: 'agent_capabilities',
+    syncKey: ['agent', 'capability'],
+    timestampCol: 'created_at',
+    strategy: 'lww',
+    columns: ['agent', 'capability', 'created_at'],
+  },
+  {
+    table: 'autonomous_decisions',
+    syncKey: ['id'],
+    timestampCol: 'created_at',
+    strategy: 'append',
+    columns: ['id', 'decision_type', 'task_id', 'agent', 'detail', 'created_at'],
+  },
+  {
+    table: 'coordination_config',
+    syncKey: ['key'],
+    timestampCol: 'updated_at',
+    strategy: 'lww',
+    columns: ['key', 'value', 'updated_at'],
+  },
+  {
+    table: 'schedules',
+    syncKey: ['id'],
+    timestampCol: 'updated_at',
+    strategy: 'lww',
+    columns: [
+      'id', 'name', 'description', 'cron_expr', 'handler_type', 'handler_config',
+      'enabled', 'project_slug', 'tags', 'max_retries', 'timeout_ms',
+      'next_run_at', 'last_run_at', 'created_at', 'updated_at',
+    ],
+  },
+  {
+    table: 'schedule_runs',
+    syncKey: ['id'],
+    timestampCol: 'started_at',
+    strategy: 'append',
+    columns: [
+      'id', 'schedule_id', 'status', 'started_at', 'finished_at',
+      'duration_ms', 'result', 'error', 'attempt',
+    ],
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -241,7 +283,7 @@ function mergeTags(localTags: string, remoteTags: string): string {
  * @param maxRetries - Maximum number of retries (default: 2)
  * @returns The successful Response object
  */
-async function fetchWithRetry(
+export async function fetchWithRetry(
   url: string,
   options: RequestInit,
   maxRetries: number = 2
@@ -281,7 +323,7 @@ const CHUNK_SIZE_LIMIT = 5 * 1024 * 1024;
  * Iterates rows across tables, accumulating into chunks. A single oversized
  * row is allowed in its own chunk (never split a row).
  */
-function chunkTablesForPush(
+export function chunkTablesForPush(
   tables: Record<string, Record<string, unknown>[]>
 ): Record<string, Record<string, unknown>[]>[] {
   const chunks: Record<string, Record<string, unknown>[]>[] = [];
@@ -673,7 +715,7 @@ export interface SyncQueueDrainInput {
  * @param tables - Map of table name to rows that failed to push
  * @param error - The error message from the failed push
  */
-function queueFailedRows(
+export function queueFailedRows(
   db: Database.Database,
   tables: Record<string, Record<string, unknown>[]>,
   error: string
