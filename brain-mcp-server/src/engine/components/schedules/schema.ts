@@ -17,6 +17,9 @@ import type { Migration } from '../../types.js';
  * Version 1: Core schedule tables (schedules, schedule_runs)
  * with indexes for enabled, next_run, project, schedule, status,
  * and started_at lookups.
+ *
+ * Version 2: Add composite index on (enabled, next_run_at) for daemon
+ * polling query.
  */
 export const scheduleMigrations: Migration[] = [
   {
@@ -60,6 +63,13 @@ export const scheduleMigrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_schedule_runs_schedule ON schedule_runs(schedule_id);
       CREATE INDEX IF NOT EXISTS idx_schedule_runs_status ON schedule_runs(status);
       CREATE INDEX IF NOT EXISTS idx_schedule_runs_started ON schedule_runs(started_at);
+    `,
+  },
+  {
+    version: 2,
+    description: 'Add composite index for daemon polling query',
+    sql: `
+      CREATE INDEX IF NOT EXISTS idx_schedules_enabled_next ON schedules(enabled, next_run_at);
     `,
   },
 ];

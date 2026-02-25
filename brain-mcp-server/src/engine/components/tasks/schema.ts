@@ -24,6 +24,8 @@ import type { Migration } from '../../types.js';
  *
  * Version 2: Add coordination columns to tasks, create agent_capabilities,
  * autonomous_decisions, and coordination_config tables.
+ *
+ * Version 3: Add index on autonomous_decisions.agent for audit queries.
  */
 export const taskMigrations: Migration[] = [
   {
@@ -193,6 +195,13 @@ export const taskMigrations: Migration[] = [
       );
 
       PRAGMA foreign_keys = ON;
+    `,
+  },
+  {
+    version: 3,
+    description: 'Add index on autonomous_decisions.agent for audit queries',
+    sql: `
+      CREATE INDEX IF NOT EXISTS idx_auto_decisions_agent ON autonomous_decisions(agent);
     `,
   },
 ];
