@@ -31,9 +31,9 @@ function successResult(text: string): ToolResult {
   };
 }
 
-/** Current timestamp in SQLite format */
+/** Current timestamp in ISO 8601 format */
 function now(): string {
-  return new Date().toISOString().replace('T', ' ').substring(0, 19);
+  return new Date().toISOString();
 }
 
 // ---------------------------------------------------------------------------
