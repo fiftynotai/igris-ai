@@ -22,6 +22,7 @@ import type {
   EventPayload,
 } from '../../types.js';
 import { getDb } from '../../../db.js';
+import { errMsg } from '../../helpers.js';
 import { taskMigrations } from './schema.js';
 import {
   handleTaskCreate,
@@ -64,8 +65,7 @@ export function createTasksComponent(): BrainComponent {
         _ctx.log.info(`Auto-created task for brief ${brief_id}`);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      _ctx.log.error(`Failed to auto-create task for brief ${brief_id}: ${message}`);
+      _ctx.log.error(`Failed to auto-create task for brief ${brief_id}: ${errMsg(err)}`);
     }
   }
 
@@ -91,8 +91,7 @@ export function createTasksComponent(): BrainComponent {
         }
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      _ctx.log.error(`Failed to auto-complete task for brief ${brief_id}: ${message}`);
+      _ctx.log.error(`Failed to auto-complete task for brief ${brief_id}: ${errMsg(err)}`);
     }
   }
 

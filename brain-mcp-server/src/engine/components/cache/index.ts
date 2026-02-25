@@ -22,6 +22,7 @@ import type {
   EventDef,
   EventPayload,
 } from '../../types.js';
+import { errMsg } from '../../helpers.js';
 import {
   cacheBrief,
   cacheSessionFile,
@@ -46,8 +47,7 @@ export function createCacheComponent(): BrainComponent {
       cacheBrief(project as string, brief_id as string);
       _ctx.log.info(`Cached brief ${brief_id} for project ${project}`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      _ctx.log.error(`Failed to cache brief ${brief_id} for ${project}: ${message}`);
+      _ctx.log.error(`Failed to cache brief ${brief_id} for ${project}: ${errMsg(err)}`);
     }
   }
 
@@ -61,8 +61,7 @@ export function createCacheComponent(): BrainComponent {
       cacheSessionFile(project as string, filename as string);
       _ctx.log.info(`Cached session file ${filename} for project ${project}`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      _ctx.log.error(`Failed to cache session file ${filename} for ${project}: ${message}`);
+      _ctx.log.error(`Failed to cache session file ${filename} for ${project}: ${errMsg(err)}`);
     }
   }
 

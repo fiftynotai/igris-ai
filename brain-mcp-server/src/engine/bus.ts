@@ -13,6 +13,7 @@
  */
 
 import type { EventBus, EventHandler, EventPayload } from './types.js';
+import { errMsg } from './helpers.js';
 
 /**
  * Create a new event bus instance.
@@ -71,8 +72,7 @@ export function createEventBus(): EventBus {
         try {
           handler(payload);
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          console.error(`[bus] Handler error for "${event}": ${message}`);
+          console.error(`[bus] Handler error for "${event}": ${errMsg(err)}`);
         }
       }
     }
@@ -85,8 +85,7 @@ export function createEventBus(): EventBus {
           try {
             handler(payload);
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            console.error(`[bus] Wildcard handler error for "${event}" (pattern: "${prefix}.*"): ${message}`);
+            console.error(`[bus] Wildcard handler error for "${event}" (pattern: "${prefix}.*"): ${errMsg(err)}`);
           }
         }
       }

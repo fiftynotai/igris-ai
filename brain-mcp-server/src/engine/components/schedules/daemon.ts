@@ -16,6 +16,7 @@
  */
 
 import { getDb } from '../../../db.js';
+import { errMsg } from '../../helpers.js';
 import { nextRunAfter } from './cron.js';
 import { now, generateRunId, executeWithRetries } from './utils.js';
 
@@ -152,13 +153,11 @@ export function startDaemon(ctx: DaemonContext): DaemonHandle {
         try {
           await fireSchedule(schedule);
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          console.error(`[schedules] Error firing schedule ${schedule.id}: ${message}`);
+          console.error(`[schedules] Error firing schedule ${schedule.id}: ${errMsg(err)}`);
         }
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[schedules] Daemon tick error: ${message}`);
+      console.error(`[schedules] Daemon tick error: ${errMsg(err)}`);
     }
 
     // Schedule next tick
@@ -206,8 +205,7 @@ export function startDaemon(ctx: DaemonContext): DaemonHandle {
 
       timer = setTimeout(() => { void tick(); }, delay);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[schedules] Error scheduling next tick: ${message}`);
+      console.error(`[schedules] Error scheduling next tick: ${errMsg(err)}`);
       // Retry after default interval on error
       timer = setTimeout(() => { void tick(); }, DEFAULT_SLEEP_MS);
     }

@@ -29,6 +29,7 @@ import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 
 // Engine — replaces monolithic tool imports
+import { errMsg } from './engine/helpers.js';
 import { bootEngine } from './engine/index.js';
 import type { Engine, EngineConfig } from './engine/index.js';
 
@@ -154,9 +155,8 @@ async function dispatchToolCall(
     const engine = getEngine();
     return await engine.gateway.dispatch(name, args);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     return {
-      content: [{ type: 'text', text: `Error executing ${name}: ${message}` }],
+      content: [{ type: 'text', text: `Error executing ${name}: ${errMsg(error)}` }],
       isError: true,
     };
   }
@@ -202,12 +202,11 @@ function createBrainServer(): Server {
     try {
       return await engine.gateway.dispatch(name, args as Record<string, unknown>);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
       return {
         content: [
           {
             type: 'text',
-            text: `Error executing ${name}: ${message}`,
+            text: `Error executing ${name}: ${errMsg(error)}`,
           },
         ],
         isError: true,
@@ -233,8 +232,7 @@ async function runStdio(): Promise<void> {
   try {
     processStagingFiles();
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`[brain] Staging processing error: ${message}`);
+    console.error(`[brain] Staging processing error: ${errMsg(err)}`);
   }
 
   const server = createBrainServer();
@@ -288,8 +286,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
   try {
     processStagingFiles();
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`[brain] Staging processing error: ${message}`);
+    console.error(`[brain] Staging processing error: ${errMsg(err)}`);
   }
 
   // Create Express app WITHOUT global express.json() middleware.
@@ -432,7 +429,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
       ).all();
       res.json({ instances: rows, count: rows.length });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/instances error:', message);
       res.status(500).json({ error: message });
     }
@@ -447,7 +444,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
       ).all();
       res.json({ projects: rows, count: rows.length });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/projects error:', message);
       res.status(500).json({ error: message });
     }
@@ -489,7 +486,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.json({ briefs: rows, summary, count: rows.length });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/briefs error:', message);
       res.status(500).json({ error: message });
     }
@@ -505,7 +502,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
       ).all(days);
       res.json({ sessions: rows, count: rows.length });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/sessions error:', message);
       res.status(500).json({ error: message });
     }
@@ -556,7 +553,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
         uptime_seconds: Math.floor((Date.now() - SERVER_START_TIME) / 1000),
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/brain-stats error:', message);
       res.status(500).json({ error: message });
     }
@@ -592,7 +589,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
         failed,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/sync-status error:', message);
       res.status(500).json({ error: message });
     }
@@ -618,7 +615,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.status(201).json({ ok: true, id: insertedId });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] POST /api/agent-event error:', message);
       res.status(500).json({ error: message });
     }
@@ -630,7 +627,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
       const data = handleAgentEventList({ instance_id: req.params.id as string });
       res.json(data);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/instances/:id/agents error:', message);
       res.status(500).json({ error: message });
     }
@@ -643,7 +640,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
       const data = handleAgentEventLog({ instance_id: req.params.id as string, limit });
       res.json(data);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/instances/:id/log error:', message);
       res.status(500).json({ error: message });
     }
@@ -655,7 +652,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
       const data = handleAgentMetricsSummary();
       res.json(data);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/agent-metrics/summary error:', message);
       res.status(500).json({ error: message });
     }
@@ -886,7 +883,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.json({ ok: true, results });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] Sync push error:', message);
       if (!res.headersSent) {
         res.status(500).json({ error: message });
@@ -916,7 +913,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.json({ tables });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] Sync pull error:', message);
       if (!res.headersSent) {
         res.status(500).json({ error: message });
@@ -987,7 +984,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.json({ ok: true, file_type, bytes_written: bytesWritten });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] POST /sync/file-push error:', message);
       if (!res.headersSent) {
         res.status(500).json({ error: message });
@@ -1018,7 +1015,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.json({ file_type: fileType, content, size });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error(`[brain] GET /sync/file-pull/${req.params.type} error:`, message);
       if (!res.headersSent) {
         res.status(500).json({ error: message });
@@ -1045,7 +1042,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.json(row);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/briefs/:project/:briefId/content error:', message);
       res.status(500).json({ error: message });
     }
@@ -1061,7 +1058,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.json({ files: rows, count: rows.length });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/sessions/:project/files error:', message);
       res.status(500).json({ error: message });
     }
@@ -1086,7 +1083,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.json({ definitions: rows, count: rows.length });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/definitions error:', message);
       res.status(500).json({ error: message });
     }

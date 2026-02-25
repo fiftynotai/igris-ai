@@ -16,11 +16,14 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getDb } from '../../../db.js';
 import type { ToolResult, EventBus } from '../../types.js';
-import { errorResult, successResult } from '../../helpers.js';
+import { errorResult, successResult, errMsg } from '../../helpers.js';
 import { parseCron, nextRunAfter } from './cron.js';
 import { now, generateScheduleId, generateRunId, executeWithRetries } from './utils.js';
 
 const execFileAsync = promisify(execFile);
+
+/** Default timeout for schedule handler execution (30 seconds) */
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 // ---------------------------------------------------------------------------
 // Context — set by component init()
@@ -58,7 +61,7 @@ export async function executeHandler(
 ): Promise<{ status: string; result?: string; error?: string }> {
   const handlerType = schedule.handler_type as string;
   const config = JSON.parse((schedule.handler_config as string) || '{}') as Record<string, unknown>;
-  const timeoutMs = (schedule.timeout_ms as number) || 30000;
+  const timeoutMs = (schedule.timeout_ms as number) || DEFAULT_TIMEOUT_MS;
 
   if (handlerType === 'noop') {
     return { status: 'success', result: 'noop' };
@@ -80,8 +83,7 @@ export async function executeHandler(
       const toolResult = await dispatchTool(toolName, toolArgs);
       return { status: 'success', result: JSON.stringify(toolResult) };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { status: 'failed', error: message };
+      return { status: 'failed', error: errMsg(err) };
     }
   }
 
@@ -106,7 +108,7 @@ export async function executeHandler(
       });
       return { status: 'success', result: (stdout || stderr || '').trim() };
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       // Check for timeout
       if (message.includes('ETIMEDOUT') || message.includes('killed')) {
         return { status: 'timeout', error: `Command timed out after ${timeoutMs}ms` };
@@ -149,8 +151,7 @@ export function handleScheduleCreate(args: Record<string, unknown>): ToolResult 
   try {
     parseCron(cronExpr);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return errorResult(`Invalid cron_expr: ${message}`);
+    return errorResult(`Invalid cron_expr: ${errMsg(err)}`);
   }
 
   // Compute next_run_at
@@ -172,7 +173,7 @@ export function handleScheduleCreate(args: Record<string, unknown>): ToolResult 
     : '{}';
   const tags = args.tags !== undefined ? JSON.stringify(args.tags) : '[]';
   const maxRetries = args.max_retries !== undefined ? Number(args.max_retries) : 0;
-  const timeoutMs = args.timeout_ms !== undefined ? Number(args.timeout_ms) : 30000;
+  const timeoutMs = args.timeout_ms !== undefined ? Number(args.timeout_ms) : DEFAULT_TIMEOUT_MS;
 
   db.prepare(`
     INSERT INTO schedules (id, name, description, cron_expr, handler_type, handler_config,

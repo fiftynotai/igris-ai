@@ -24,7 +24,7 @@ import type {
   EventPayload,
 } from '../../types.js';
 import { getDb } from '../../../db.js';
-import { now } from '../../helpers.js';
+import { now, errMsg } from '../../helpers.js';
 import { initCoordinationSchema } from './schema.js';
 import {
   handleAgentCapabilitySet,
@@ -76,14 +76,12 @@ export function createCoordinationComponent(): BrainComponent {
             }).then(() => {
               _ctx?.log.info('Created autonomous priority adjustment schedule');
             }).catch((err) => {
-              const message = err instanceof Error ? err.message : String(err);
-              _ctx?.log.warn(`Failed to create priority adjustment schedule: ${message}`);
+              _ctx?.log.warn(`Failed to create priority adjustment schedule: ${errMsg(err)}`);
             });
           }
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        _ctx?.log.warn(`Error checking autonomous mode: ${message}`);
+        _ctx?.log.warn(`Error checking autonomous mode: ${errMsg(err)}`);
       }
     }
   }
@@ -177,12 +175,10 @@ export function createCoordinationComponent(): BrainComponent {
         });
         _ctx?.log.info(`Created diagnostic child task for failed task ${taskId}`);
       }).catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        _ctx?.log.error(`Failed to create diagnostic task for ${taskId}: ${message}`);
+        _ctx?.log.error(`Failed to create diagnostic task for ${taskId}: ${errMsg(err)}`);
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      _ctx?.log.error(`Self-healing error for task ${taskId}: ${message}`);
+      _ctx?.log.error(`Self-healing error for task ${taskId}: ${errMsg(err)}`);
     }
   }
 
@@ -360,8 +356,7 @@ export function createCoordinationComponent(): BrainComponent {
       try {
         initCoordinationSchema();
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        ctx.log.warn(`Failed to seed coordination defaults: ${message}`);
+        ctx.log.warn(`Failed to seed coordination defaults: ${errMsg(err)}`);
       }
 
       ctx.log.info('Coordination component initialized');

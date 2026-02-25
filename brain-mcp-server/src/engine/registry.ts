@@ -18,6 +18,7 @@ import type {
   EventBus,
   ToolDefinition,
 } from './types.js';
+import { errMsg } from './helpers.js';
 
 /** Internal tracking of a registered component */
 interface RegisteredComponent {
@@ -178,7 +179,7 @@ export function createRegistry(storage: StorageAdapter, bus: EventBus) {
           `Loaded v${component.version} (${tools.length} tools, ${migrations.length} migrations)`
         );
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errMsg(err);
         log.error(`Failed to load: ${message}`);
         bus.emit('component.error', { component: name, error: message });
         throw new Error(`Failed to boot component "${name}": ${message}`);
@@ -200,8 +201,7 @@ export function createRegistry(storage: StorageAdapter, bus: EventBus) {
           entry.component.destroy();
           entry.initialized = false;
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          console.error(`[registry] Error shutting down "${name}": ${message}`);
+          console.error(`[registry] Error shutting down "${name}": ${errMsg(err)}`);
         }
       }
     }

@@ -24,6 +24,7 @@ import type Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../db.js';
+import { errMsg } from '../engine/helpers.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -520,7 +521,7 @@ async function handleBrainPush(
       }],
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errMsg(err);
 
     // Queue failed rows for later retry via sync_queue
     let queued = 0;
@@ -643,7 +644,7 @@ async function handleBrainPull(
       }],
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errMsg(err);
     return {
       content: [{
         type: 'text',
@@ -837,7 +838,7 @@ async function handleSyncQueueDrain(
       })();
       totalSent += chunkItemIds[i].length;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
 
       // Per-chunk failure: mark items as retrying/failed
       db.transaction(() => {
@@ -1201,7 +1202,7 @@ async function handleFilePush(
       }],
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errMsg(err);
     return {
       content: [{
         type: 'text',
@@ -1251,7 +1252,7 @@ async function handleFilePull(
       }],
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errMsg(err);
     return {
       content: [{
         type: 'text',

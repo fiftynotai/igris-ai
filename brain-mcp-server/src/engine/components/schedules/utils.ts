@@ -15,6 +15,13 @@ import { executeHandler } from './handlers.js';
 export { now } from '../../helpers.js';
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Base delay for linear retry backoff (1 second per attempt) */
+const RETRY_BACKOFF_MS = 1_000;
+
+// ---------------------------------------------------------------------------
 // ID Generation
 // ---------------------------------------------------------------------------
 
@@ -52,7 +59,7 @@ export async function executeWithRetries(
 
   while (outcome.status === 'failed' && attempt < maxRetries + 1) {
     attempt++;
-    await new Promise((r) => setTimeout(r, 1000 * attempt));
+    await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS * attempt));
     outcome = await executeHandler(schedule, dispatchTool);
   }
 

@@ -30,6 +30,12 @@ function generateAssignmentId(): string {
   return randomUUID().substring(0, 8);
 }
 
+/** Valid task statuses for create/update validation */
+const VALID_STATUSES = ['pending', 'active', 'blocked', 'done', 'cancelled', 'failed'] as const;
+
+/** Valid task scopes for create/update validation */
+const VALID_SCOPES = ['project', 'personal', 'system'] as const;
+
 // ---------------------------------------------------------------------------
 // handleTaskCreate
 // ---------------------------------------------------------------------------
@@ -56,9 +62,8 @@ export function handleTaskCreate(args: Record<string, unknown>): ToolResult {
     return errorResult(`Invalid task_type: ${taskType}. Must be one of: ${validTypes.join(', ')}`);
   }
 
-  const validScopes = ['project', 'personal', 'system'];
-  if (!validScopes.includes(scope)) {
-    return errorResult(`Invalid scope: ${scope}. Must be one of: ${validScopes.join(', ')}`);
+  if (!(VALID_SCOPES as readonly string[]).includes(scope)) {
+    return errorResult(`Invalid scope: ${scope}. Must be one of: ${VALID_SCOPES.join(', ')}`);
   }
 
   const priority = args.priority !== undefined ? Number(args.priority) : 3;
@@ -67,9 +72,8 @@ export function handleTaskCreate(args: Record<string, unknown>): ToolResult {
   }
 
   const status = (args.status as string | undefined) ?? 'pending';
-  const validStatuses = ['pending', 'active', 'blocked', 'done', 'cancelled', 'failed'];
-  if (!validStatuses.includes(status)) {
-    return errorResult(`Invalid status: ${status}. Must be one of: ${validStatuses.join(', ')}`);
+  if (!(VALID_STATUSES as readonly string[]).includes(status)) {
+    return errorResult(`Invalid status: ${status}. Must be one of: ${VALID_STATUSES.join(', ')}`);
   }
 
   const db = getDb();
@@ -656,9 +660,8 @@ export function handleTaskUpdate(args: Record<string, unknown>): ToolResult {
   }
 
   if (args.status !== undefined) {
-    const validStatuses = ['pending', 'active', 'blocked', 'done', 'cancelled', 'failed'];
-    if (!validStatuses.includes(args.status as string)) {
-      return errorResult(`Invalid status: ${args.status}. Must be one of: ${validStatuses.join(', ')}`);
+    if (!(VALID_STATUSES as readonly string[]).includes(args.status as string)) {
+      return errorResult(`Invalid status: ${args.status}. Must be one of: ${VALID_STATUSES.join(', ')}`);
     }
     if (args.status === 'done') {
       return errorResult('Use igris_task_complete to mark tasks as done (ensures cascade unblocking)');
@@ -671,9 +674,8 @@ export function handleTaskUpdate(args: Record<string, unknown>): ToolResult {
   }
 
   if (args.scope !== undefined) {
-    const validScopes = ['project', 'personal', 'system'];
-    if (!validScopes.includes(args.scope as string)) {
-      return errorResult(`Invalid scope: ${args.scope}. Must be one of: ${validScopes.join(', ')}`);
+    if (!(VALID_SCOPES as readonly string[]).includes(args.scope as string)) {
+      return errorResult(`Invalid scope: ${args.scope}. Must be one of: ${VALID_SCOPES.join(', ')}`);
     }
   }
 
