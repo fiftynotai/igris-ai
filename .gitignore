@@ -44,3 +44,6 @@ test-output/
 
 # Local overrides (developer-specific, never commit)
 CLAUDE.local.md
+
+# Agent working memory (local-only)
+.claude/agent-memory/
