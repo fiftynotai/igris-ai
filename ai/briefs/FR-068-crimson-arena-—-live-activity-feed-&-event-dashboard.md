@@ -2,8 +2,8 @@
 
 **Type:** FR
 **Priority:** P2
-**Effort:** TBD
-**Status:** Ready
+**Effort:** L-Large
+**Status:** In Progress
 **Created:** 2026-02-25
 **Completed:** _TBD_
 
@@ -51,11 +51,20 @@ Add a Live Activity panel to Crimson Arena that connects to the brain WebSocket 
 
 ## Tasks
 
-### Pending
-- [ ] TBD
+### Wave 1: Brain REST Endpoints (igris-ai)
+- [ ] Add `GET /api/events` — query event_log with filters (event_name, component, project, since, until, limit, offset)
+- [ ] Add `GET /api/events/stream` — SSE endpoint streaming real-time engine events via EventBus wildcard
+- [ ] Add `GET /api/tasks` — list tasks with filters (status, type, project, assignee, scope, limit, offset)
+- [ ] Verify existing tests pass (vitest + bats)
+
+### Wave 2-5: Crimson Arena Dashboard (crimson-arena repo, separate hunt)
+- [ ] Wave 2: FastAPI proxy endpoints + SSE bridge + WS broadcast
+- [ ] Wave 3: Flutter data layer (models, API service, WS service, routing)
+- [ ] Wave 4: Events page UI (live feed + history table + filters + export)
+- [ ] Wave 5: Tasks page (kanban board) + instance heartbeat pulse
 
 ### In Progress
-_(None yet)_
+- Wave 1: Brain REST Endpoints
 
 ### Completed
 _(None yet)_
@@ -64,16 +73,28 @@ _(None yet)_
 
 ## Session State
 
-**Current State:** Brief created
-**Next Steps When Resuming:** Define tasks and acceptance criteria
-**Last Updated:** 2026-02-25
+**Current State:** BUILDING (Wave 1)
+**Next Steps When Resuming:** Implement 3 REST endpoints in brain-mcp-server/src/index.ts
+**Last Updated:** 2026-02-26
 **Blockers:** None
 
 ---
 
 ## Acceptance Criteria
 
-1. [ ] TBD
+### Wave 1 (Brain REST Endpoints)
+1. [ ] `GET /api/events` returns paginated event_log entries with filter support
+2. [ ] `GET /api/events/stream` emits SSE events in real-time from EventBus
+3. [ ] `GET /api/tasks` returns paginated tasks with filter support and status summary
+4. [ ] All 3 endpoints require Bearer token auth (existing middleware)
+5. [ ] Existing vitest suite passes (180 tests)
+6. [ ] Existing bats suite passes (32 tests)
+
+### Wave 2-5 (Crimson Arena — separate hunt)
+7. [ ] EVENTS page shows live feed with color-coded event cards
+8. [ ] EVENTS page shows historical events with filters, pagination, export
+9. [ ] TASKS page shows kanban board with status columns
+10. [ ] Instance cards show heartbeat pulse (green/yellow/red)
 
 ---
 

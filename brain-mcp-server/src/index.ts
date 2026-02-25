@@ -597,6 +597,200 @@ async function runHttp(config: ServerConfig): Promise<void> {
   });
 
   // -----------------------------------------------------------------------
+  // Engine event & task endpoints — dashboard data feeds
+  // -----------------------------------------------------------------------
+
+  // GET /api/events — query the event_log table with filters and pagination
+  app.get('/api/events', (req: Request, res: Response) => {
+    try {
+      const db = getDb();
+
+      const eventName = req.query.event_name as string | undefined;
+      const component = req.query.component as string | undefined;
+      const project = req.query.project as string | undefined;
+      const since = req.query.since as string | undefined;
+      const until = req.query.until as string | undefined;
+      const limit = Math.min(Math.max(1, parseInt(req.query.limit as string, 10) || 100), 1000);
+      const offset = Math.max(0, parseInt(req.query.offset as string, 10) || 0);
+
+      const conditions: string[] = [];
+      const params: unknown[] = [];
+
+      if (eventName) {
+        conditions.push('event_name = ?');
+        params.push(eventName);
+      }
+      if (component) {
+        conditions.push('component = ?');
+        params.push(component);
+      }
+      if (project) {
+        conditions.push('project_slug = ?');
+        params.push(project);
+      }
+      if (since) {
+        conditions.push('created_at >= ?');
+        params.push(since);
+      }
+      if (until) {
+        conditions.push('created_at <= ?');
+        params.push(until);
+      }
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+      const events = db.prepare(
+        `SELECT id, event_name, component, payload, machine_hostname, project_slug, instance_id, created_at FROM event_log ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+      ).all(...params, limit, offset);
+
+      const countRow = db.prepare(
+        `SELECT COUNT(*) as total FROM event_log ${whereClause}`
+      ).get(...params) as { total: number };
+
+      res.json({ events, total: countRow.total, limit, offset });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] GET /api/events error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/events/stream — SSE endpoint streaming real-time engine events
+  app.get('/api/events/stream', (req: Request, res: Response) => {
+    try {
+      const componentFilter = req.query.component as string | undefined;
+      const projectFilter = req.query.project as string | undefined;
+
+      // Set SSE headers
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders();
+
+      // Subscribe to all engine events via wildcard
+      const handler = (payload: { event: string; data: Record<string, unknown>; timestamp: string }) => {
+        try {
+          if (res.writableEnded) return;
+
+          // Extract component from event name (e.g. "tasks.created" -> "tasks")
+          const eventComponent = payload.event.split('.')[0];
+
+          // Apply optional filters
+          if (componentFilter && eventComponent !== componentFilter) return;
+          if (projectFilter) {
+            const payloadProject = payload.data.project_slug ?? payload.data.project;
+            if (payloadProject && payloadProject !== projectFilter) return;
+          }
+
+          const sseData = JSON.stringify({
+            event_name: payload.event,
+            component: eventComponent,
+            payload: payload.data,
+            timestamp: payload.timestamp,
+          });
+          res.write(`data: ${sseData}\n\n`);
+        } catch {
+          // Silently ignore write errors (client may have disconnected)
+        }
+      };
+
+      engine.bus.on('*', handler);
+
+      // Keepalive every 25 seconds to prevent TCP idle timeout
+      const keepaliveTimer = setInterval(() => {
+        try {
+          if (!res.writableEnded) {
+            res.write(': keepalive\n\n');
+          } else {
+            clearInterval(keepaliveTimer);
+          }
+        } catch {
+          clearInterval(keepaliveTimer);
+        }
+      }, 25_000);
+
+      // Clean up on client disconnect
+      res.on('close', () => {
+        engine.bus.off('*', handler);
+        clearInterval(keepaliveTimer);
+      });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] GET /api/events/stream error:', message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: message });
+      }
+    }
+  });
+
+  // GET /api/tasks — query the tasks table with filters, pagination, and summary
+  app.get('/api/tasks', (req: Request, res: Response) => {
+    try {
+      const db = getDb();
+
+      const status = req.query.status as string | undefined;
+      const taskType = req.query.task_type as string | undefined;
+      const projectSlug = req.query.project_slug as string | undefined;
+      const assignee = req.query.assignee as string | undefined;
+      const scope = req.query.scope as string | undefined;
+      const limit = Math.min(Math.max(1, parseInt(req.query.limit as string, 10) || 50), 500);
+      const offset = Math.max(0, parseInt(req.query.offset as string, 10) || 0);
+
+      const conditions: string[] = [];
+      const params: unknown[] = [];
+
+      if (status) {
+        conditions.push('status = ?');
+        params.push(status);
+      }
+      if (taskType) {
+        conditions.push('task_type = ?');
+        params.push(taskType);
+      }
+      if (projectSlug) {
+        conditions.push('project_slug = ?');
+        params.push(projectSlug);
+      }
+      if (assignee) {
+        conditions.push('assignee = ?');
+        params.push(assignee);
+      }
+      if (scope) {
+        conditions.push('scope = ?');
+        params.push(scope);
+      }
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+      const tasks = db.prepare(
+        `SELECT id, task_type, scope, title, description, brief_id, project_slug, parent_id, status, priority, assignee, due_at, defer_until, created_by, required_capabilities, retry_count, max_retries, fail_reason, metadata, created_at, updated_at FROM tasks ${whereClause} ORDER BY priority ASC, created_at ASC LIMIT ? OFFSET ?`
+      ).all(...params, limit, offset);
+
+      const countRow = db.prepare(
+        `SELECT COUNT(*) as total FROM tasks ${whereClause}`
+      ).get(...params) as { total: number };
+
+      // Summary counts by status (unfiltered to show full picture)
+      const summaryRows = db.prepare(
+        `SELECT status, COUNT(*) as count FROM tasks GROUP BY status`
+      ).all() as { status: string; count: number }[];
+
+      const summary: Record<string, number> = {
+        pending: 0, active: 0, blocked: 0, done: 0, cancelled: 0, failed: 0,
+      };
+      for (const row of summaryRows) {
+        summary[row.status] = row.count;
+      }
+
+      res.json({ tasks, total: countRow.total, limit, offset, summary });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] GET /api/tasks error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // -----------------------------------------------------------------------
   // Agent Event endpoints — live agent lifecycle tracking for dashboard
   // -----------------------------------------------------------------------
 
