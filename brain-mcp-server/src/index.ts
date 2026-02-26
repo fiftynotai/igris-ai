@@ -628,6 +628,11 @@ async function runHttp(config: ServerConfig): Promise<void> {
         conditions.push('project_slug = ?');
         params.push(project);
       }
+      const instanceId = req.query.instance_id as string | undefined;
+      if (instanceId) {
+        conditions.push('instance_id = ?');
+        params.push(instanceId);
+      }
       if (since) {
         conditions.push('created_at >= ?');
         params.push(since);
