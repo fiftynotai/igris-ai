@@ -121,6 +121,8 @@ export function createInstancesComponent(): BrainComponent {
             const result = handleInstanceHeartbeat(args as unknown as InstanceHeartbeatInput);
             _ctx?.bus.emit('instance.heartbeat', {
               machine_hostname: (args as Record<string, unknown>).machine_hostname,
+              project_slug: (args as Record<string, unknown>).project_slug,
+              instance_id: (args as Record<string, unknown>).instance_id,
             });
             return result;
           },

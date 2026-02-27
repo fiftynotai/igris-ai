@@ -84,13 +84,13 @@ export function createTasksComponent(): BrainComponent {
 
       // Find the linked task
       const task = db.prepare(
-        "SELECT id FROM tasks WHERE brief_id = ? AND status != 'done' AND status != 'cancelled' LIMIT 1"
-      ).get(brief_id) as { id: string } | undefined;
+        "SELECT id, project_slug FROM tasks WHERE brief_id = ? AND status != 'done' AND status != 'cancelled' LIMIT 1"
+      ).get(brief_id) as { id: string; project_slug?: string } | undefined;
 
       if (task) {
         const result = handleTaskComplete({ task_id: task.id, result: 'Brief completed' });
         if (!result.isError) {
-          _ctx.bus.emit('task.completed', { task_id: task.id, brief_id, source: 'brief.completed' });
+          _ctx.bus.emit('task.completed', { task_id: task.id, brief_id, source: 'brief.completed', project_slug: task.project_slug ?? payload.data.project });
           _ctx.log.info(`Auto-completed task ${task.id} for brief ${brief_id}`);
         }
       }
@@ -356,13 +356,13 @@ export function createTasksComponent(): BrainComponent {
           handler: (args) => {
             const result = handleTaskComplete(args);
             if (!result.isError && _ctx) {
-              _ctx.bus.emit('task.completed', {
-                task_id: args.task_id,
-              });
-
-              // Emit unblocked events for newly unblocked tasks
+              // Extract project_slug from result for event enrichment
+              let projectSlug: string | undefined;
               try {
-                const parsed = JSON.parse(result.content[0].text) as { unblocked?: string[] };
+                const parsed = JSON.parse(result.content[0].text) as { task?: { project_slug?: string }; unblocked?: string[] };
+                projectSlug = parsed.task?.project_slug ?? undefined;
+
+                // Emit unblocked events for newly unblocked tasks
                 if (parsed.unblocked) {
                   for (const unblockedId of parsed.unblocked) {
                     _ctx.bus.emit('task.unblocked', { task_id: unblockedId });
@@ -371,6 +371,11 @@ export function createTasksComponent(): BrainComponent {
               } catch {
                 // Ignore parse errors — events are best-effort
               }
+
+              _ctx.bus.emit('task.completed', {
+                task_id: args.task_id,
+                project_slug: projectSlug,
+              });
             }
             return result;
           },
