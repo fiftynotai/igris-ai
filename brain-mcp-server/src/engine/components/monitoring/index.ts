@@ -14,7 +14,10 @@
  *          schedule.run_complete, cache.rebuilt, cache.cleaned,
  *          coordination.self_heal, task.created, task.assigned,
  *          task.completed, task.blocked, task.unblocked,
- *          task.failed, task.claimed
+ *          task.failed, task.claimed, brief.synced, brief.created,
+ *          brief.completed, session.synced, session.file.updated,
+ *          instance.heartbeat, memory.stored, error.stored,
+ *          project.registered, metrics.recorded
  *
  * @module engine/components/monitoring
  * @author Fifty.ai
@@ -57,6 +60,16 @@ const EVENT_COMPONENT_MAP: Record<string, string> = {
   'task.unblocked': 'tasks',
   'task.failed': 'tasks',
   'task.claimed': 'tasks',
+  'brief.synced': 'briefs',
+  'brief.created': 'briefs',
+  'brief.completed': 'briefs',
+  'session.synced': 'sessions',
+  'session.file.updated': 'sessions',
+  'instance.heartbeat': 'instances',
+  'memory.stored': 'memory',
+  'error.stored': 'errors',
+  'project.registered': 'projects',
+  'metrics.recorded': 'metrics',
 };
 
 // ---------------------------------------------------------------------------
@@ -83,15 +96,20 @@ export function createMonitoringComponent(): BrainComponent {
         (payload.data.project as string) ??
         (payload.data.project_slug as string) ??
         null;
+      const instanceId =
+        (payload.data.instance_id as string) ??
+        (payload.data.machine_hostname as string) ??
+        null;
 
       db.prepare(
-        `INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
       ).run(
         eventName,
         component,
         JSON.stringify(payload.data),
         _hostname,
         projectSlug,
+        instanceId,
         payload.timestamp,
       );
     } catch (err) {
@@ -193,6 +211,16 @@ export function createMonitoringComponent(): BrainComponent {
           { name: 'task.unblocked', description: 'Log task unblocked events' },
           { name: 'task.failed', description: 'Log task failure events' },
           { name: 'task.claimed', description: 'Log task claimed events' },
+          { name: 'brief.synced', description: 'Log brief sync events' },
+          { name: 'brief.created', description: 'Log brief creation events' },
+          { name: 'brief.completed', description: 'Log brief completion events' },
+          { name: 'session.synced', description: 'Log session sync events' },
+          { name: 'session.file.updated', description: 'Log session file update events' },
+          { name: 'instance.heartbeat', description: 'Log instance heartbeat events' },
+          { name: 'memory.stored', description: 'Log memory storage events' },
+          { name: 'error.stored', description: 'Log error storage events' },
+          { name: 'project.registered', description: 'Log project registration events' },
+          { name: 'metrics.recorded', description: 'Log metrics recording events' },
         ],
       };
     },
@@ -221,6 +249,16 @@ export function createMonitoringComponent(): BrainComponent {
       ctx.bus.on('task.unblocked', onEventReceived);
       ctx.bus.on('task.failed', onEventReceived);
       ctx.bus.on('task.claimed', onEventReceived);
+      ctx.bus.on('brief.synced', onEventReceived);
+      ctx.bus.on('brief.created', onEventReceived);
+      ctx.bus.on('brief.completed', onEventReceived);
+      ctx.bus.on('session.synced', onEventReceived);
+      ctx.bus.on('session.file.updated', onEventReceived);
+      ctx.bus.on('instance.heartbeat', onEventReceived);
+      ctx.bus.on('memory.stored', onEventReceived);
+      ctx.bus.on('error.stored', onEventReceived);
+      ctx.bus.on('project.registered', onEventReceived);
+      ctx.bus.on('metrics.recorded', onEventReceived);
 
       // Run retention cleanup on init (purge events older than 30 days)
       try {
@@ -257,6 +295,16 @@ export function createMonitoringComponent(): BrainComponent {
         _ctx.bus.off('task.unblocked', onEventReceived);
         _ctx.bus.off('task.failed', onEventReceived);
         _ctx.bus.off('task.claimed', onEventReceived);
+        _ctx.bus.off('brief.synced', onEventReceived);
+        _ctx.bus.off('brief.created', onEventReceived);
+        _ctx.bus.off('brief.completed', onEventReceived);
+        _ctx.bus.off('session.synced', onEventReceived);
+        _ctx.bus.off('session.file.updated', onEventReceived);
+        _ctx.bus.off('instance.heartbeat', onEventReceived);
+        _ctx.bus.off('memory.stored', onEventReceived);
+        _ctx.bus.off('error.stored', onEventReceived);
+        _ctx.bus.off('project.registered', onEventReceived);
+        _ctx.bus.off('metrics.recorded', onEventReceived);
       }
       _ctx = null;
     },

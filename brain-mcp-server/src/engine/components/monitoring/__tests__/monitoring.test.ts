@@ -400,10 +400,10 @@ describe('Monitoring Component', () => {
       expect(comp.version).toBe('1.0.0');
     });
 
-    it('events() declares 17 listened events', () => {
+    it('events() declares 27 listened events', () => {
       const comp = createMonitoringComponent();
       const { listens } = comp.events();
-      expect(listens).toHaveLength(17);
+      expect(listens).toHaveLength(27);
     });
 
     it('events() declares 0 emitted events', () => {
@@ -533,6 +533,182 @@ describe('Monitoring Component', () => {
         expect(row.component).toBe('tasks');
         expect(row.event_name).toMatch(/^task\./);
       }
+
+      comp.destroy();
+    });
+
+    it('brief events logged with correct component name', () => {
+      const comp = createMonitoringComponent();
+      comp.init(makeCtx(bus));
+
+      const briefEvents = [
+        'brief.synced',
+        'brief.created',
+        'brief.completed',
+      ] as const;
+
+      for (const evt of briefEvents) {
+        bus.emit(evt, { brief_id: `b-${evt}` });
+      }
+
+      const rows = db.prepare('SELECT event_name, component FROM event_log ORDER BY id').all() as {
+        event_name: string;
+        component: string;
+      }[];
+
+      expect(rows).toHaveLength(3);
+      for (const row of rows) {
+        expect(row.component).toBe('briefs');
+        expect(row.event_name).toMatch(/^brief\./);
+      }
+
+      comp.destroy();
+    });
+
+    it('session events logged with correct component name', () => {
+      const comp = createMonitoringComponent();
+      comp.init(makeCtx(bus));
+
+      const sessionEvents = [
+        'session.synced',
+        'session.file.updated',
+      ] as const;
+
+      for (const evt of sessionEvents) {
+        bus.emit(evt, { session_id: `s-${evt}` });
+      }
+
+      const rows = db.prepare('SELECT event_name, component FROM event_log ORDER BY id').all() as {
+        event_name: string;
+        component: string;
+      }[];
+
+      expect(rows).toHaveLength(2);
+      for (const row of rows) {
+        expect(row.component).toBe('sessions');
+        expect(row.event_name).toMatch(/^session\./);
+      }
+
+      comp.destroy();
+    });
+
+    it('instance.heartbeat logged with correct component name', () => {
+      const comp = createMonitoringComponent();
+      comp.init(makeCtx(bus));
+
+      bus.emit('instance.heartbeat', { instance_id: 'inst-1' });
+
+      const rows = db.prepare('SELECT event_name, component FROM event_log').all() as {
+        event_name: string;
+        component: string;
+      }[];
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toEqual({ event_name: 'instance.heartbeat', component: 'instances' });
+
+      comp.destroy();
+    });
+
+    it('memory.stored logged with correct component name', () => {
+      const comp = createMonitoringComponent();
+      comp.init(makeCtx(bus));
+
+      bus.emit('memory.stored', { key: 'test-key' });
+
+      const rows = db.prepare('SELECT event_name, component FROM event_log').all() as {
+        event_name: string;
+        component: string;
+      }[];
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toEqual({ event_name: 'memory.stored', component: 'memory' });
+
+      comp.destroy();
+    });
+
+    it('error.stored logged with correct component name', () => {
+      const comp = createMonitoringComponent();
+      comp.init(makeCtx(bus));
+
+      bus.emit('error.stored', { error: 'test-error' });
+
+      const rows = db.prepare('SELECT event_name, component FROM event_log').all() as {
+        event_name: string;
+        component: string;
+      }[];
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toEqual({ event_name: 'error.stored', component: 'errors' });
+
+      comp.destroy();
+    });
+
+    it('project.registered logged with correct component name', () => {
+      const comp = createMonitoringComponent();
+      comp.init(makeCtx(bus));
+
+      bus.emit('project.registered', { project: 'my-project' });
+
+      const rows = db.prepare('SELECT event_name, component FROM event_log').all() as {
+        event_name: string;
+        component: string;
+      }[];
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toEqual({ event_name: 'project.registered', component: 'projects' });
+
+      comp.destroy();
+    });
+
+    it('metrics.recorded logged with correct component name', () => {
+      const comp = createMonitoringComponent();
+      comp.init(makeCtx(bus));
+
+      bus.emit('metrics.recorded', { metric: 'tokens', value: 100 });
+
+      const rows = db.prepare('SELECT event_name, component FROM event_log').all() as {
+        event_name: string;
+        component: string;
+      }[];
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toEqual({ event_name: 'metrics.recorded', component: 'metrics' });
+
+      comp.destroy();
+    });
+
+    it('instance_id extracted from payload.data.instance_id', () => {
+      const comp = createMonitoringComponent();
+      comp.init(makeCtx(bus));
+
+      bus.emit('instance.heartbeat', { instance_id: 'inst-abc-123' });
+
+      const row = db.prepare('SELECT instance_id FROM event_log').get() as { instance_id: string };
+      expect(row.instance_id).toBe('inst-abc-123');
+
+      comp.destroy();
+    });
+
+    it('instance_id falls back to payload.data.machine_hostname', () => {
+      const comp = createMonitoringComponent();
+      comp.init(makeCtx(bus));
+
+      bus.emit('schedule.created', { machine_hostname: 'worker-01' });
+
+      const row = db.prepare('SELECT instance_id FROM event_log').get() as { instance_id: string };
+      expect(row.instance_id).toBe('worker-01');
+
+      comp.destroy();
+    });
+
+    it('instance_id is null when neither instance_id nor machine_hostname in payload', () => {
+      const comp = createMonitoringComponent();
+      comp.init(makeCtx(bus));
+
+      bus.emit('cache.rebuilt', { reason: 'manual' });
+
+      const row = db.prepare('SELECT instance_id FROM event_log').get() as { instance_id: string | null };
+      expect(row.instance_id).toBeNull();
 
       comp.destroy();
     });
