@@ -129,7 +129,7 @@ export function createInstancesComponent(): BrainComponent {
         },
         {
           name: 'igris_instance_list',
-          description: 'List all active Igris instances across machines. Auto-marks instances with no heartbeat for 30+ minutes as stale. Purges instances stale for >2 hours.',
+          description: 'List all active Igris instances across machines. Auto-marks instances with no heartbeat for 45+ minutes as stale. Purges instances stale for >4 hours.',
           inputSchema: {
             type: 'object' as const,
             properties: {

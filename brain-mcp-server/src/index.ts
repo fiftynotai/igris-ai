@@ -36,6 +36,7 @@ import type { Engine, EngineConfig } from './engine/index.js';
 // REST API helpers (used by HTTP endpoints, not MCP tools)
 import { handleAgentEvent, handleAgentEventList, handleAgentEventLog, handleAgentMetricsSummary } from './tools/agent_events.js';
 import type { AgentEventInput } from './tools/agent_events.js';
+import { handleInstanceRemove } from './tools/instances.js';
 
 // Sync tables config (used by HTTP /sync/push and /sync/pull endpoints)
 import { SYNC_TABLES, mergeRows } from './tools/sync.js';
@@ -410,9 +411,9 @@ async function runHttp(config: ServerConfig): Promise<void> {
       const db = getDb();
       const includeStale = req.query.include_stale === 'true';
 
-      // Purge instances stale for >2 hours
+      // Purge instances stale for >4 hours
       db.prepare(
-        "DELETE FROM instances WHERE last_heartbeat_at < datetime('now', '-120 minutes')"
+        "DELETE FROM instances WHERE last_heartbeat_at < datetime('now', '-240 minutes')"
       ).run();
 
       // Purge agent_events older than 7 days
@@ -421,7 +422,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
       ).run();
 
       db.prepare(
-        `UPDATE instances SET status = 'stale' WHERE last_heartbeat_at < datetime('now', '-30 minutes') AND status != 'stale'`
+        `UPDATE instances SET status = 'stale' WHERE last_heartbeat_at < datetime('now', '-45 minutes') AND status != 'stale'`
       ).run();
 
       const whereClause = includeStale ? '' : "WHERE status != 'stale'";
@@ -432,6 +433,18 @@ async function runHttp(config: ServerConfig): Promise<void> {
     } catch (err) {
       const message = errMsg(err);
       console.error('[brain] GET /api/instances error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // DELETE /api/instances/:id — deregister an instance
+  app.delete('/api/instances/:id', (req: Request, res: Response) => {
+    try {
+      const result = handleInstanceRemove({ instance_id: req.params.id as string });
+      res.json({ ok: true, message: typeof result.content?.[0]?.text === 'string' ? result.content[0].text : 'Instance removed' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] DELETE /api/instances/:id error:', message);
       res.status(500).json({ error: message });
     }
   });

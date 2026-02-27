@@ -454,6 +454,16 @@ If the `igris-brain` MCP server is available AND an instance ID is stored:
 
 If brain MCP is not available or no instance ID is stored, skip silently. Do NOT block workflow execution.
 
+### Mid-Phase Heartbeats for Long-Running Phases
+
+During long phases (BUILDING, TESTING), the active subagent may run for extended periods. To prevent the instance from being marked stale mid-workflow:
+
+- When delegating to **forger** (BUILDING phase), include in the Task prompt: "If you have access to `igris_instance_heartbeat` and the instance_id from `~/.igris/cache/{project}/session/CURRENT_SESSION.md`, call it periodically during long implementations to keep the instance active."
+- When delegating to **sentinel** (TESTING phase), include the same heartbeat reminder in the Task prompt.
+- The orchestrator should also call `igris_instance_heartbeat` immediately before each Task delegation (not just on phase transitions) to maximize the heartbeat window for the subagent.
+
+This ensures instances remain visible on the dashboard even during phases that exceed the 45-minute stale threshold.
+
 ## Agent Event Emission (Mandatory When Available)
 
 On each agent invocation, you MUST emit `igris_agent_event` calls if brain MCP is available AND Instance ID exists in `~/.igris/cache/{project}/session/CURRENT_SESSION.md`.

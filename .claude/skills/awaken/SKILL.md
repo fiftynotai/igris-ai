@@ -14,6 +14,9 @@ allowed-tools:
   - mcp__igris-brain__igris_task_next
   - mcp__igris-brain__igris_agent_capability_list
   - mcp__igris-brain__igris_coordination_audit
+  - mcp__igris-brain__igris_instance_heartbeat
+  - mcp__igris-brain__igris_instance_remove
+  - mcp__igris-brain__igris_instance_list
 triggers:
   - "AWAKEN"
   - "ARISE"
@@ -123,6 +126,20 @@ If the `igris-brain` MCP server is available:
 3. Display summary of definitions updated (e.g., "Updated 1 agent, 2 rules from remote brain")
 
 If brain MCP is NOT available or pull fails, skip silently. Do NOT block session start.
+
+### 3.6.4. Clean Stale Previous Instance (Mandatory)
+
+Before registering a new instance, check if the previous session left an orphaned instance:
+
+1. Read `~/.igris/cache/{project}/session/CURRENT_SESSION.md`
+2. Look for the `**Instance ID:**` field
+3. If a previous instance_id exists:
+   a. Call `igris_instance_remove` with that specific instance_id
+   b. Display: "Cleaned stale instance: {previous_instance_id}"
+   c. Remove the `**Instance ID:**` line from CURRENT_SESSION.md
+4. Do NOT call `igris_instance_list` and remove other instances — only the exact ID from session file
+
+This ensures /rest → /awaken cycles never produce duplicates, while preserving other instances on the same machine (multi-instance is valid).
 
 ### 3.7. Register Instance (Mandatory)
 

@@ -7,6 +7,7 @@ allowed-tools:
   - Write
   - Edit
   - mcp__igris-brain__igris_session_file_update
+  - mcp__igris-brain__igris_instance_remove
 triggers:
   - "REST"
   - "REST MODE"
