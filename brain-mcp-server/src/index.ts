@@ -37,6 +37,7 @@ import type { Engine, EngineConfig } from './engine/index.js';
 import { handleAgentEvent, handleAgentEventList, handleAgentEventLog, handleAgentMetricsSummary } from './tools/agent_events.js';
 import type { AgentEventInput } from './tools/agent_events.js';
 import { handleInstanceRemove } from './tools/instances.js';
+import { handleProjectBudget, handleProjectBudgetSet } from './tools/projects.js';
 
 // Sync tables config (used by HTTP /sync/push and /sync/pull endpoints)
 import { SYNC_TABLES, mergeRows } from './tools/sync.js';
@@ -49,6 +50,9 @@ import { getDb, closeDb, DB_PATH, BRAIN_DIR } from './db.js';
 
 /** Timestamp when this server process started, used for uptime calculation. */
 const SERVER_START_TIME = Date.now();
+
+/** Valid project slug format: lowercase alphanumeric with hyphens, 1-64 chars. */
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -867,6 +871,47 @@ async function runHttp(config: ServerConfig): Promise<void> {
     } catch (err) {
       const message = errMsg(err);
       console.error('[brain] GET /api/agent-metrics/summary error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/projects/:slug/budget — Per-project token usage and budget config
+  app.get('/api/projects/:slug/budget', (req: Request, res: Response) => {
+    if (!SLUG_RE.test(req.params.slug as string)) {
+      res.status(400).json({ error: 'Invalid project slug format' });
+      return;
+    }
+    try {
+      const data = handleProjectBudget({ slug: req.params.slug as string });
+      res.json(data);
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] GET /api/projects/:slug/budget error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // PUT /api/projects/:slug/budget — Set/update project budget threshold
+  app.put('/api/projects/:slug/budget', express.json(), (req: Request, res: Response) => {
+    if (!SLUG_RE.test(req.params.slug as string)) {
+      res.status(400).json({ error: 'Invalid project slug format' });
+      return;
+    }
+    try {
+      const { budget_limit, budget_period } = req.body;
+      if (typeof budget_limit !== 'number' || budget_limit < 0) {
+        res.status(400).json({ error: 'budget_limit must be a non-negative number' });
+        return;
+      }
+      const data = handleProjectBudgetSet({
+        slug: req.params.slug as string,
+        budget_limit,
+        budget_period,
+      });
+      res.json(data);
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] PUT /api/projects/:slug/budget error:', message);
       res.status(500).json({ error: message });
     }
   });
