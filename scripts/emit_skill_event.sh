@@ -51,11 +51,16 @@ if not skill_name or not events_file:
 # Generate UTC ISO timestamp
 ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+# Derive project slug from CLAUDE_PROJECT_DIR
+project_dir = os.environ.get("CLAUDE_PROJECT_DIR", "")
+project_slug = os.path.basename(project_dir) if project_dir else ""
+
 # Construct event payload
 event_data = {
     "ts": ts,
     "event": "skill_invoke",
     "skill_name": skill_name,
+    "project_slug": project_slug,
     "agent": "orchestrator",
     "agent_id": "",
 }
