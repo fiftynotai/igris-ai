@@ -34,7 +34,7 @@ import { bootEngine } from './engine/index.js';
 import type { Engine, EngineConfig } from './engine/index.js';
 
 // REST API helpers (used by HTTP endpoints, not MCP tools)
-import { handleAgentEvent, handleAgentEventList, handleAgentEventLog, handleAgentMetricsSummary } from './tools/agent_events.js';
+import { handleAgentEvent, handleAgentEventList, handleAgentEventLog, handleAgentMetricsSummary, handleAgentMetricsByProject } from './tools/agent_events.js';
 import type { AgentEventInput } from './tools/agent_events.js';
 import { handleInstanceRemove } from './tools/instances.js';
 import { handleProjectBudget, handleProjectBudgetSet } from './tools/projects.js';
@@ -864,13 +864,35 @@ async function runHttp(config: ServerConfig): Promise<void> {
   });
 
   // GET /api/agent-metrics/summary — Cross-instance agent performance
-  app.get('/api/agent-metrics/summary', (_req: Request, res: Response) => {
+  // Optional query param: ?project_slug=<slug> to filter by project
+  app.get('/api/agent-metrics/summary', (req: Request, res: Response) => {
     try {
-      const data = handleAgentMetricsSummary();
+      const projectSlug = req.query.project_slug as string | undefined;
+      const data = handleAgentMetricsSummary(
+        projectSlug ? { project_slug: projectSlug } : undefined
+      );
       res.json(data);
     } catch (err) {
       const message = errMsg(err);
       console.error('[brain] GET /api/agent-metrics/summary error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/agent-metrics/by-project — Per-project breakdown for a specific agent
+  // Required query param: ?agent=<agent_name>
+  app.get('/api/agent-metrics/by-project', (req: Request, res: Response) => {
+    const agent = req.query.agent as string | undefined;
+    if (!agent) {
+      res.status(400).json({ error: 'Missing required query parameter: agent' });
+      return;
+    }
+    try {
+      const data = handleAgentMetricsByProject({ agent });
+      res.json(data);
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] GET /api/agent-metrics/by-project error:', message);
       res.status(500).json({ error: message });
     }
   });
