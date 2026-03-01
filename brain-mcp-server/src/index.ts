@@ -38,6 +38,7 @@ import { handleAgentEvent, handleAgentEventList, handleAgentEventLog, handleAgen
 import type { AgentEventInput } from './tools/agent_events.js';
 import { handleInstanceRemove } from './tools/instances.js';
 import { handleProjectBudget, handleProjectBudgetSet } from './tools/projects.js';
+import { handleBriefVelocity } from './tools/briefs.js';
 
 // Sync tables config (used by HTTP /sync/push and /sync/pull endpoints)
 import { SYNC_TABLES, mergeRows } from './tools/sync.js';
@@ -506,6 +507,20 @@ async function runHttp(config: ServerConfig): Promise<void> {
     } catch (err) {
       const message = errMsg(err);
       console.error('[brain] GET /api/briefs error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/briefs/velocity — brief completion velocity metrics
+  app.get('/api/briefs/velocity', (req: Request, res: Response) => {
+    try {
+      const project = req.query.project as string | undefined;
+      const weeks = req.query.weeks ? parseInt(req.query.weeks as string, 10) || 4 : undefined;
+      const data = handleBriefVelocity({ project, weeks });
+      res.json(data);
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] GET /api/briefs/velocity error:', message);
       res.status(500).json({ error: message });
     }
   });

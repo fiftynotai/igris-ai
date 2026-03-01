@@ -619,5 +619,105 @@ function handleBriefUpdate(args: BriefUpdateInput): { content: { type: string; t
   };
 }
 
-export { handleBriefSync, handleBriefDashboard, handleBriefGet, handleBriefList, handleBriefCreate, handleBriefUpdate };
-export type { BriefSyncInput, BriefDashboardInput, BriefGetInput, BriefListInput, BriefCreateInput, BriefUpdateInput };
+// ---------------------------------------------------------------------------
+// Brief Velocity (FR-079)
+// ---------------------------------------------------------------------------
+
+/** Input shape for brief velocity query */
+interface BriefVelocityInput {
+  /** Optional project slug filter */
+  project?: string;
+  /** Number of weeks to include (default 4, max 52) */
+  weeks?: number;
+}
+
+/** Output shape for brief velocity query */
+interface BriefVelocityOutput {
+  project: string | null;
+  weeks: number;
+  weekly: { week: string; completed: number }[];
+  completion_rate: { done: number; total: number; percentage: number };
+  trend: { current_week: number; previous_week: number; change_pct: number | null; direction: string } | null;
+}
+
+/**
+ * Compute brief completion velocity metrics.
+ *
+ * Returns weekly completion counts, overall completion rate, and a week-over-week
+ * trend indicator. All queries use parameterized statements against `brief_status`.
+ */
+function handleBriefVelocity(input?: BriefVelocityInput): BriefVelocityOutput {
+  const db = getDb();
+  const projectFilter = input?.project;
+  const weeks = Math.min(52, Math.max(1, input?.weeks ?? 4));
+
+  // Build optional project filter clause
+  const projectCondition = projectFilter ? ' AND project = ?' : '';
+  const projectParams = projectFilter ? [projectFilter] : [];
+
+  // 1. Weekly completions — Done briefs grouped by ISO week, last N weeks
+  const weeklyRows = db.prepare(
+    `SELECT strftime('%Y-W%W', updated_at) AS week, COUNT(*) AS completed
+     FROM brief_status
+     WHERE status = 'Done'
+       AND updated_at >= datetime('now', '-' || ? || ' days')${projectCondition}
+     GROUP BY week
+     ORDER BY week ASC`
+  ).all(weeks * 7, ...projectParams) as { week: string; completed: number }[];
+
+  // 2. Completion rate — Done vs total (optionally filtered by project)
+  const totalRow = db.prepare(
+    `SELECT
+       SUM(CASE WHEN status = 'Done' THEN 1 ELSE 0 END) AS done,
+       COUNT(*) AS total
+     FROM brief_status
+     WHERE 1=1${projectCondition}`
+  ).get(...projectParams) as { done: number; total: number } | undefined;
+
+  const done = totalRow?.done ?? 0;
+  const total = totalRow?.total ?? 0;
+  const percentage = total > 0 ? Math.round((done / total) * 1000) / 10 : 0;
+
+  // 3. Trend — compare last 7 days vs 7-14 days ago
+  const currentWeekRow = db.prepare(
+    `SELECT COUNT(*) AS count FROM brief_status
+     WHERE status = 'Done'
+       AND updated_at >= datetime('now', '-7 days')${projectCondition}`
+  ).get(...projectParams) as { count: number } | undefined;
+
+  const previousWeekRow = db.prepare(
+    `SELECT COUNT(*) AS count FROM brief_status
+     WHERE status = 'Done'
+       AND updated_at >= datetime('now', '-14 days')
+       AND updated_at < datetime('now', '-7 days')${projectCondition}`
+  ).get(...projectParams) as { count: number } | undefined;
+
+  const currentWeek = currentWeekRow?.count ?? 0;
+  const previousWeek = previousWeekRow?.count ?? 0;
+
+  let trend: BriefVelocityOutput['trend'] = null;
+  if (currentWeek > 0 || previousWeek > 0) {
+    let changePct: number | null = null;
+    let direction = 'flat';
+    if (previousWeek > 0) {
+      changePct = Math.round(((currentWeek - previousWeek) / previousWeek) * 1000) / 10;
+      direction = changePct > 0 ? 'up' : changePct < 0 ? 'down' : 'flat';
+    } else if (currentWeek > 0) {
+      // Previous week was zero, current is positive — "up" but no meaningful percentage
+      changePct = null;
+      direction = 'up';
+    }
+    trend = { current_week: currentWeek, previous_week: previousWeek, change_pct: changePct, direction };
+  }
+
+  return {
+    project: projectFilter ?? null,
+    weeks,
+    weekly: weeklyRows,
+    completion_rate: { done, total, percentage },
+    trend,
+  };
+}
+
+export { handleBriefSync, handleBriefDashboard, handleBriefGet, handleBriefList, handleBriefCreate, handleBriefUpdate, handleBriefVelocity };
+export type { BriefSyncInput, BriefDashboardInput, BriefGetInput, BriefListInput, BriefCreateInput, BriefUpdateInput, BriefVelocityInput, BriefVelocityOutput };
