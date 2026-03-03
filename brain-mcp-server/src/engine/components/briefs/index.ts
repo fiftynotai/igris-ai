@@ -187,7 +187,7 @@ export function createBriefsComponent(): BrainComponent {
         },
         {
           name: 'igris_brief_list',
-          description: 'List briefs with optional filters. Supports filtering by project, status, brief_type, and priority. Optionally includes full brief content.',
+          description: 'List briefs with optional filters and pagination. Supports filtering by project, status, brief_type, and priority. Returns paginated results (default 25 per page) with total count. Set limit=0 to return all.',
           inputSchema: {
             type: 'object' as const,
             properties: {
@@ -210,6 +210,14 @@ export function createBriefsComponent(): BrainComponent {
               include_content: {
                 type: 'boolean',
                 description: 'Include full brief content from brief_files (default: false)',
+              },
+              limit: {
+                type: 'integer',
+                description: 'Maximum number of briefs to return (default: 25, 0 = return all)',
+              },
+              offset: {
+                type: 'integer',
+                description: 'Number of briefs to skip for pagination (default: 0)',
               },
             },
           },

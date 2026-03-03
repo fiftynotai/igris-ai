@@ -47,6 +47,8 @@ interface BriefListInput {
   brief_type?: string;
   priority?: string;
   include_content?: boolean;
+  limit?: number;
+  offset?: number;
 }
 
 /** Input shape for igris_brief_create */
@@ -331,6 +333,10 @@ function handleBriefGet(args: BriefGetInput): { content: { type: string; text: s
 function handleBriefList(args: BriefListInput): { content: { type: string; text: string }[] } {
   const db = getDb();
 
+  // Resolve pagination params (0 = return all, default 25, clamped to non-negative integers)
+  const limit = args.limit === 0 ? 0 : Math.max(1, Math.floor(args.limit ?? 25));
+  const offset = Math.max(0, Math.floor(args.offset ?? 0));
+
   const conditions: string[] = [];
   const params: unknown[] = [];
 
@@ -353,6 +359,12 @@ function handleBriefList(args: BriefListInput): { content: { type: string; text:
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
+  // Total count (same filters, no pagination)
+  const countRow = db.prepare(`
+    SELECT COUNT(*) AS total FROM brief_status bs ${whereClause}
+  `).get(...params) as { total: number };
+  const total = countRow.total;
+
   const includeContent = args.include_content === true;
 
   const selectCols = includeContent
@@ -366,18 +378,27 @@ function handleBriefList(args: BriefListInput): { content: { type: string; text:
     ? 'LEFT JOIN brief_files bf ON bf.project = bs.project AND bf.brief_id = bs.brief_id'
     : '';
 
+  // Build LIMIT/OFFSET clause conditionally
+  const dataParams = [...params];
+  let limitClause = '';
+  if (limit > 0) {
+    limitClause = 'LIMIT ? OFFSET ?';
+    dataParams.push(limit, offset);
+  }
+
   const rows = db.prepare(`
     SELECT ${selectCols}
     FROM brief_status bs
     ${joinClause}
     ${whereClause}
     ORDER BY bs.updated_at DESC
-  `).all(...params) as Record<string, unknown>[];
+    ${limitClause}
+  `).all(...dataParams) as Record<string, unknown>[];
 
   return {
     content: [{
       type: 'text',
-      text: JSON.stringify({ briefs: rows, count: rows.length }, null, 2),
+      text: JSON.stringify({ briefs: rows, count: rows.length, total, limit, offset }, null, 2),
     }],
   };
 }
