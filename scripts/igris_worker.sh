@@ -335,17 +335,17 @@ spawn_task() {
   local task_id="$1"
   local task_type="$2"
 
-  # Resolve handler skill path — check both global and project-local locations
+  # Resolve handler path — check both global and project-local locations
   local handler_path=""
   local global_handler="$HOME/.claude/skills/task-handlers/${task_type}.md"
-  local project_handler="$SCRIPT_DIR/../.claude/skills/task-handlers/${task_type}.md"
+  local project_handler="$SCRIPT_DIR/../ai/reference/task-handlers/${task_type}.md"
 
   if [ -f "$global_handler" ]; then
     handler_path="$global_handler"
   elif [ -f "$project_handler" ]; then
     handler_path="$project_handler"
   else
-    log_error "No handler skill found for task type '$task_type' (checked $global_handler and $project_handler)"
+    log_error "No handler found for task type '$task_type' (checked $global_handler and $project_handler)"
     return 1
   fi
 

@@ -2,7 +2,7 @@
  * Staging File Processor
  *
  * Processes JSON files from ~/.igris/staging/{project}/ directory.
- * Files are created by the igris-sync.sh hook on SessionEnd.
+ * Files are created by the post_session_sync.sh hook on SessionEnd.
  * Processed files are deleted after successful ingestion.
  *
  * Supported staging file types:

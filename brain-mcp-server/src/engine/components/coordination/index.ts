@@ -8,7 +8,7 @@
  * Self-healing: listens for task.failed events and creates diagnostic
  * child tasks when autonomous mode and self-healing are enabled.
  *
- * Emits: coordination.self_heal
+ * Emits: coordination.adjustment, coordination.self_heal
  * Listens: task.failed, engine.ready
  *
  * @module engine/components/coordination
@@ -253,7 +253,30 @@ export function createCoordinationComponent(): BrainComponent {
               },
             },
           },
-          handler: (args) => handleAdjustPriorities(args),
+          handler: (args) => {
+            const result = handleAdjustPriorities(args);
+            if (!result.isError && _ctx && args.dry_run !== true) {
+              try {
+                const parsed = JSON.parse(result.content[0].text) as {
+                  total_adjustments?: number;
+                  overdue_adjusted?: number;
+                  stale_unblocked?: number;
+                  priority_boosted?: number;
+                };
+                if (parsed.total_adjustments && parsed.total_adjustments > 0) {
+                  _ctx.bus.emit('coordination.adjustment', {
+                    overdue_adjusted: parsed.overdue_adjusted ?? 0,
+                    stale_unblocked: parsed.stale_unblocked ?? 0,
+                    priority_boosted: parsed.priority_boosted ?? 0,
+                    total: parsed.total_adjustments,
+                  });
+                }
+              } catch {
+                // Best-effort event emission
+              }
+            }
+            return result;
+          },
         },
 
         // -----------------------------------------------------------------
@@ -378,8 +401,7 @@ export function createCoordinationComponent(): BrainComponent {
     events(): { emits: EventDef[]; listens: EventDef[] } {
       return {
         emits: [
-          // TODO: Emit coordination.adjustment from handleAdjustPriorities when wired
-          // Orphan: monitoring/observability extension point — for future dashboard/notification systems
+          { name: 'coordination.adjustment', description: 'Priority adjustments were made by the autonomous algorithm' },
           { name: 'coordination.self_heal', description: 'Self-healing diagnostic task was created for a failed task' },
           { name: 'task.assigned', description: 'A task was auto-routed to an agent instance' },
         ],
