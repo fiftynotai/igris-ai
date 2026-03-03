@@ -1,6 +1,6 @@
 {
   "name": "igris-mcp-server",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "description": "Igris AI MCP Server - Code quality and architecture management via Model Context Protocol",
   "main": "dist/index.js",
   "type": "module",

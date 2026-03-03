@@ -1,10 +1,10 @@
 # Hook Integration Points in Igris AI
 
-**Document Purpose:** Define where and how hooks integrate with Igris AI v4.0
+**Document Purpose:** Define where and how hooks integrate with Igris AI v5.0
 
 **Version:** 3.0.0
 **Last Updated:** 2026-02-22
-**Status:** v4.0 - Brain integration, staging guards, session hooks
+**Status:** v5.0 - Brain integration, staging guards, session hooks
 
 ---
 

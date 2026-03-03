@@ -12,7 +12,7 @@
 for Claude Code. It provides structured brief management, session recovery,
 autonomous multi-agent workflows, and architecture enforcement.
 
-- **Version:** v4.0
+- **Version:** v5.0
 - **Installed:** 2025-10-25
 - **Repository:** [github.com/fiftynotai/igris-ai](https://github.com/fiftynotai/igris-ai)
 
@@ -29,7 +29,7 @@ Persona loaded from `SOUL.md`. User config from `~/.igris/USER.md`.
 
 ## Agent Registry
 
-IGRIS v4.0 uses **7 native Claude Code subagents** for autonomous workflows.
+IGRIS v5.0 uses **7 native Claude Code subagents** for autonomous workflows.
 
 | Tier | Purpose |
 |------|---------|
@@ -44,14 +44,7 @@ IGRIS v4.0 uses **7 native Claude Code subagents** for autonomous workflows.
 
 ## Enhancement
 
-Run `/init` in Claude Code CLI to enhance with project-specific analysis:
-
-- Project-specific architecture details
-- Module structure analysis
-- Existing patterns and conventions
-- Technology stack documentation
-
-IGRIS will analyze your codebase and merge findings with these instructions.
+Run `/scan` in Claude Code CLI to check system status and get recommendations.
 
 ---
 
@@ -123,7 +116,7 @@ Skills defined in `.claude/skills/*/SKILL.md`
 
 ## Notes
 
-Project-specific notes can be added here after running `/init`.
+Project-specific notes can be added here after running `/scan`.
 
 ---
 

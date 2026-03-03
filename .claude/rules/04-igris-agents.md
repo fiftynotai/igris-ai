@@ -14,7 +14,7 @@ The main agent (orchestrator) is NOT a do-everything agent. It is a workflow coo
 
 ---
 
-## Agent Registry (v4.0 - 7 Agents)
+## Agent Registry (v5.0 - 7 Agents)
 
 ### Tier 1: Core Workflow
 

@@ -386,7 +386,7 @@ igris-ai/
 ├── test/                    # Tests (bats framework)
 ├── CLAUDE.md                # Claude Code instructions
 ├── SOUL.md                  # Igris persona identity
-└── version.txt              # Version (4.0.0)
+└── version.txt              # Version (5.0.0)
 ```
 
 ---
@@ -408,7 +408,7 @@ check_dependency() {
 }
 
 # Good variable naming
-IGRIS_VERSION="4.0.0"  # Constants: UPPERCASE
+IGRIS_VERSION="5.0.0"  # Constants: UPPERCASE
 target_dir="/path"      # Local vars: lowercase
 
 # Good error message

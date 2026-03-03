@@ -2,7 +2,7 @@
 
 **An operating system for AI-assisted engineering.**
 
-**Version 4.0.0** | [MIT License](LICENSE)
+**Version 5.0.0** | [MIT License](LICENSE)
 
 Igris AI transforms Claude Code from a single general-purpose assistant into a disciplined multi-agent engineering team -- with persistent memory that survives context resets, syncs across machines, and learns across projects.
 
@@ -28,7 +28,7 @@ The result was not engineering. It was chaos with better autocomplete.
 
 ---
 
-## What is Igris v4.0
+## What is Igris v5.0
 
 Igris is a multi-agent AI engineering system built on top of Claude Code. It provides the workflow, agents, memory, and quality gates that turn AI-assisted coding into AI-assisted engineering.
 
@@ -574,7 +574,6 @@ your-project/
     ├── igris_brain_restore.sh
     ├── igris_brain_deploy.sh
     ├── igris_vps_update.sh
-    ├── igris-sync.sh
     ├── igris_brain_schema.sql
     ├── install_shell_integration.sh
     └── emit_skill_event.sh

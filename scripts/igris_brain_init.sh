@@ -447,7 +447,7 @@ echo ""
 # Get Igris AI source directory
 # ============================================================
 IGRIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-IGRIS_VERSION=$(cat "$IGRIS_DIR/version.txt" 2>/dev/null || echo "4.0.0")
+IGRIS_VERSION=$(cat "$IGRIS_DIR/version.txt" 2>/dev/null || echo "5.0.0")
 
 echo "📁 Source repo: $IGRIS_DIR"
 echo "📌 Version: $IGRIS_VERSION"
@@ -618,7 +618,7 @@ remote_url = sys.argv[5] if len(sys.argv) > 5 else ''
 remote_key = sys.argv[6] if len(sys.argv) > 6 else ''
 
 config = {
-    'version': '4.0.0',
+    'version': '5.0.0',
     'installed_at': sys.argv[1],
     'source_repo': sys.argv[2],
     'features': {
@@ -738,7 +738,7 @@ else
   # Use template if available, otherwise generate directly
   TEMPLATE_FILE="$IGRIS_DIR/scripts/templates/CLAUDE.global.md.template"
   if [ -f "$TEMPLATE_FILE" ]; then
-    sed -e "s|{{IGRIS_VERSION}}|4.0.0|g" \
+    sed -e "s|{{IGRIS_VERSION}}|5.0.0|g" \
         -e "s|{{INSTALL_DATE}}|$INSTALL_DATE|g" \
         -e "s|{{SOURCE_REPO}}|$IGRIS_DIR|g" \
         "$TEMPLATE_FILE" > "$CLAUDE_MD"

@@ -219,19 +219,19 @@ if [ "$DRY_RUN" = true ]; then
   if [ -d "$TEMP_DIR/ai/prompts" ]; then
     echo ""
     echo "Prompts:"
-    ls "$TEMP_DIR/ai/prompts/"*.md 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
+    find "$TEMP_DIR/ai/prompts" -maxdepth 1 -name "*.md" -print0 2>/dev/null | xargs -0 -n1 basename | sed 's/^/  - /'
   fi
 
   if [ -d "$TEMP_DIR/ai/templates" ]; then
     echo ""
     echo "Templates:"
-    ls "$TEMP_DIR/ai/templates/"*.md 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
+    find "$TEMP_DIR/ai/templates" -maxdepth 1 -name "*.md" -print0 2>/dev/null | xargs -0 -n1 basename | sed 's/^/  - /'
   fi
 
   if [ -d "$TEMP_DIR/.claude/agents" ]; then
     echo ""
     echo "Native Subagents:"
-    ls "$TEMP_DIR/.claude/agents/"*.md 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
+    find "$TEMP_DIR/.claude/agents" -maxdepth 1 -name "*.md" -print0 2>/dev/null | xargs -0 -n1 basename | sed 's/^/  - /'
     echo "  - manifest.yaml"
   fi
 
@@ -283,7 +283,7 @@ if [ -d "$TEMP_DIR/ai/templates" ]; then
   cp "$TEMP_DIR/ai/templates/"*.md ai/templates/
 fi
 
-# Update native agents (v4.0)
+# Update native agents (v5.0)
 if [ -d "$TEMP_DIR/.claude/agents" ]; then
   echo "  - Updating native agents..."
   mkdir -p .claude/agents
@@ -474,3 +474,10 @@ echo "📝 What's new in $REMOTE_VERSION:"
 echo "  See CHANGELOG.md or visit:"
 echo "  https://github.com/fiftynotai/igris-ai/releases"
 echo ""
+
+# Refresh global brain with updated files
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+if [ -d "$HOME/.igris" ] && [ -f "$SCRIPT_DIR/igris_brain_refresh.sh" ]; then
+  echo "Refreshing global brain..."
+  bash "$SCRIPT_DIR/igris_brain_refresh.sh" 2>/dev/null || echo "Brain refresh skipped"
+fi

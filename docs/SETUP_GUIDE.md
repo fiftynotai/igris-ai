@@ -1,6 +1,6 @@
 # Igris AI Setup Guide
 
-Complete guide to setting up Igris AI v4.0 in your project.
+Complete guide to setting up Igris AI v5.0 in your project.
 
 ---
 
@@ -19,7 +19,7 @@ Before you begin, ensure you have:
 
 ## Installation
 
-Igris AI v4.0 offers two installation paths.
+Igris AI v5.0 offers two installation paths.
 
 ### Path 1: Brain-First Install (Recommended)
 
@@ -326,4 +326,4 @@ After setup:
 
 ---
 
-**Setup complete! You're ready to use Igris AI v4.0.**
+**Setup complete! You're ready to use Igris AI v5.0.**

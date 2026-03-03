@@ -5,7 +5,13 @@
 
 set -euo pipefail
 
-# v4.0 Brain Check — suggest igris_install.sh if brain exists
+# ============================================================
+# DEPRECATED: This is the v4 legacy copy-based installer.
+# For v5+, use: ./scripts/igris_install.sh <target_directory>
+# The symlink installer uses the centralized brain at ~/.igris/
+# ============================================================
+
+# v5.0 Brain Check — suggest igris_install.sh if brain exists
 if [ -d "$HOME/.igris" ]; then
   echo ""
   echo "💡 Igris Brain detected at ~/.igris/"
@@ -13,7 +19,7 @@ if [ -d "$HOME/.igris" ]; then
   echo "   ./scripts/igris_install.sh ${1:-.}"
   echo ""
   echo "   Benefits: shared core files, persistent memory, instant updates"
-  echo "   The v4.0 copy-based install will continue to work."
+  echo "   The v5.0 copy-based install will continue to work."
   echo ""
   # Check if running interactively
   if [ -t 0 ]; then
@@ -24,7 +30,7 @@ if [ -d "$HOME/.igris" ]; then
       exec "$SCRIPT_DIR/igris_install.sh" "${1:-.}"
     fi
   fi
-  echo "Continuing with v4.0 copy-based install..."
+  echo "Continuing with v5.0 copy-based install..."
   echo ""
 fi
 
@@ -166,7 +172,7 @@ EOF
 echo "🤖 Setting up Claude Code integration..."
 mkdir -p .claude/hooks
 
-# Install native agents (v4.0)
+# Install native agents (v5.0)
 echo "🤖 Installing native agents..."
 mkdir -p .claude/agents
 if [ -d "$IGRIS_DIR/.claude/agents" ]; then
@@ -180,12 +186,6 @@ if [ -f "SOUL.md" ]; then
   PERSONA_INJECTION=$(cat "SOUL.md")
 elif [ -f "$IGRIS_DIR/SOUL.md" ]; then
   PERSONA_INJECTION=$(cat "$IGRIS_DIR/SOUL.md")
-fi
-
-# Read user config from USER.md (if exists)
-USER_INJECTION=""
-if [ -f "$HOME/.igris/USER.md" ]; then
-  USER_INJECTION=$(cat "$HOME/.igris/USER.md")
 fi
 
 # Create CLAUDE.md with variable substitution
@@ -416,7 +416,7 @@ except:
 fi
 
 echo ""
-echo "✅ Igris AI v4.0 initialized successfully!"
+echo "✅ Igris AI v5.0 initialized successfully!"
 echo ""
 echo "🤖 Claude Code Integration:"
 echo "   ✓ Context file created (CLAUDE.md)"
@@ -443,7 +443,7 @@ echo ""
 echo "2. (Optional) Install shell integration:"
 echo "   $ ./scripts/install_shell_integration.sh"
 echo ""
-echo "📚 v4.0 Commands:"
+echo "📚 v5.0 Commands:"
 echo ""
 echo "   STANDARDIZE    - Generate coding_guidelines.md"
 echo "   HUNT <brief>   - Autonomous implementation"

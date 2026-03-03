@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS projects (
     name TEXT NOT NULL,                     -- Display name
     path TEXT NOT NULL,                     -- Absolute path
     tech_stack TEXT DEFAULT '',             -- e.g., "bash,typescript"
-    igris_version TEXT DEFAULT '4.0.0',
+    igris_version TEXT DEFAULT '5.0.0',
     status TEXT DEFAULT 'active' CHECK (status IN ('active', 'archived', 'inactive')),
     registered_at TEXT NOT NULL DEFAULT (datetime('now')),
     last_session_at TEXT,

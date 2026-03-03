@@ -9,9 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [5.0.0] - 2026-03-03
+
+### Added
+
+- **Modular Engine Architecture** -- 13 domain components (memory, errors, projects, metrics, sessions, briefs, tasks, instances, sync, cache, schedules, coordination, monitoring) with event bus, dependency resolution, and lifecycle management
+- **67 MCP Tools** -- expanded from 27 tools in v4.0 to 67 across 13 components
+- **29 REST API Endpoints** -- full HTTP API with auth, rate limiting, SSE streaming
+- **Task Management System** -- 13 task tools, DAG dependencies, atomic claim, capability-filtered routing, 9 task types
+- **Task Results Storage** -- `task_results` table with 7 result types (commit, file, text, image, url, json, error)
+- **Distributed Worker Daemon** -- `igris_worker.sh` polling daemon with concurrency control, auto-sleep, capability-based task matching
+- **6 Task Handler Skills** -- portable markdown handlers for dev, content, research, media-gen, operational, social-media
+- **Scheduling System** -- cron-based smart-sleep daemon with 7 schedule tools
+- **Autonomous Coordination** -- capability-based auto-routing, priority adjustment, self-healing on task failure
+- **Event Monitoring** -- `event_log` table, 2 monitoring tools, SSE streaming
+- **Cache Layer** -- brain-to-filesystem cache rebuild/clean for offline access
+- **Brief & Session CRUD** -- 6 new MCP tools for direct brief/session management
+- **Sync Auto-Push** -- event-driven brain replication with batched window and queue retry
+- **Skill & Rule Path Migration** -- all 21 skills, 5 rules, prompts moved to MCP-first with cache fallback
+
+### Changed
+
+- **Brain engine rewritten** -- monolithic index.ts replaced with modular component architecture
+- **Database expanded** -- ~30 tables (up from ~15 in v4.0), 4 migration waves
+- **Tool count tripled** -- 27 tools (v4.0) -> 67 tools (v5.0)
+
 ### Removed
 
-- **Crimson Arena Dashboard** -- Extracted to a separate repository for independent development and release. The `dashboard/` directory and `scripts/dashboard.sh` have been removed from igris-ai. The monitoring dashboard will be available as a standalone project.
+- **Crimson Arena Dashboard** -- extracted to separate repository (crimson-arena) for independent development
 
 ---
 

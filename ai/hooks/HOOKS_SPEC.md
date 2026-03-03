@@ -2,13 +2,13 @@
 
 **Version:** 3.0.0
 **Last Updated:** 2026-02-22
-**Status:** v4.0 - Brain integration, config-guarded staging
+**Status:** v5.0 - Brain integration, config-guarded staging
 
 ---
 
 ## Overview
 
-The **Hook System** allows optional extensions to Igris AI workflows. With v4.0's native subagent architecture, most AI functionality is now built-in. Hooks remain for:
+The **Hook System** allows optional extensions to Igris AI workflows. With v5.0's native subagent architecture, most AI functionality is now built-in. Hooks remain for:
 
 1. **Persona customization** (greetings, theming)
 2. **Session start enhancements** (system assessment)

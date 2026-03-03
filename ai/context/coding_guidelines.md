@@ -1,6 +1,6 @@
 # Igris AI Coding Guidelines
 
-**Version:** 4.0.0
+**Version:** 5.0.0
 **Languages:** Bash, TypeScript, Python
 **Platform:** macOS, Linux, WSL
 **Last Updated:** 2026-02-22
@@ -63,7 +63,7 @@ igris-ai/
 ├── test/                # Test suite (bats)
 ├── CLAUDE.md            # Claude Code instructions
 ├── SOUL.md              # Igris persona identity
-└── version.txt          # Version (4.0.0)
+└── version.txt          # Version (5.0.0)
 ```
 
 ### Script Organization (Bash)
@@ -131,7 +131,7 @@ emit_skill_event.sh
 
 **Examples:**
 ```bash
-IGRIS_VERSION="4.0.0"
+IGRIS_VERSION="5.0.0"
 target_dir="/path/to/dir"
 brain_path="$HOME/.igris"
 ```
@@ -791,7 +791,7 @@ If these guidelines don't cover your situation, ask in:
 ---
 
 **Created:** 2025-10-26
-**Version:** 4.0.0
+**Version:** 5.0.0
 **Last Updated:** 2026-02-22
 **Maintained by:** Igris AI Team
 

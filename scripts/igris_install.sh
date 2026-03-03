@@ -49,7 +49,7 @@ echo ""
 # Get source repo and version info
 # ============================================================
 IGRIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-IGRIS_VERSION=$(cat "$IGRIS_DIR/version.txt" 2>/dev/null || echo "4.0.0")
+IGRIS_VERSION=$(cat "$IGRIS_DIR/version.txt" 2>/dev/null || echo "5.0.0")
 
 # ============================================================
 # Refresh brain core from source repo

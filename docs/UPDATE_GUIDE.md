@@ -25,7 +25,7 @@ Igris AI v4.0 tracks versions in the `.igris_version` file in each installed pro
 
 ```json
 {
-  "igris_ai_version": "4.0.0",
+  "igris_ai_version": "5.0.0",
   "install_mode": "symlink",
   "brain_path": "/Users/you/.igris",
   "installed_at": "2026-02-16T07:37:48Z",
@@ -412,7 +412,7 @@ If you need to stay on a specific version:
 2. Document your version in README:
    ```markdown
    ## Dependencies
-   - Igris AI: 4.0.0 (pinned)
+   - Igris AI: 5.0.0 (pinned)
    ```
 3. Test thoroughly before updating
 

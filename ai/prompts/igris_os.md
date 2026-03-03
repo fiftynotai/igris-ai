@@ -47,9 +47,9 @@ I am Igris, at your command, Fifty.ai.
 
 ---
 
-## Multi-Agent Architecture (v4.0)
+## Multi-Agent Architecture (v5.0)
 
-IGRIS v4.0 uses native Claude Code subagents for autonomous workflows, with an optional Agent Teams parallel execution layer and a centralized brain for persistent memory. The main agent (you) is the orchestrator that delegates work to 7 specialized subagents, and can spawn independent teammate sessions for parallel workloads via `/team`.
+IGRIS v5.0 uses native Claude Code subagents for autonomous workflows, with an optional Agent Teams parallel execution layer and a centralized brain for persistent memory. The main agent (you) is the orchestrator that delegates work to 7 specialized subagents, and can spawn independent teammate sessions for parallel workloads via `/team`.
 
 ### Core Principle: Separation of Concerns
 
@@ -160,7 +160,7 @@ If context resets mid-workflow:
 3. Update Phase based on result (advance or retry)
 4. Update Next Steps
 
-### Agent Registry (v4.0 - 7 Agents)
+### Agent Registry (v5.0 - 7 Agents)
 
 Agents are defined in `.claude/agents/`:
 
@@ -252,7 +252,7 @@ Team state is ephemeral -- not recoverable after context reset. Each teammate's 
 
 ## Centralized Brain (`~/.igris/`)
 
-IGRIS v4.0 introduces a centralized brain at `~/.igris/` that provides persistent memory and cross-project intelligence.
+IGRIS v5.0 introduces a centralized brain at `~/.igris/` that provides persistent memory and cross-project intelligence.
 
 ### Brain Components
 - **knowledge.db** — SQLite database with WAL mode (concurrent reads, serialized writes)
@@ -1224,7 +1224,7 @@ Persona identity is defined in `SOUL.md` (project root) and user config in `~/.i
 
 Igris AI can perform 10 maintenance operations on ANY project (not just Igris AI itself). These operations analyze code, identify issues, and create appropriate briefs for tracking improvements.
 
-**In v4.0, these operations are distributed across agents and skills:**
+**In v5.0, these operations are distributed across agents and skills:**
 - **warden** (audit mode) or `/audit` skill - CODE_QUALITY_AUDIT, BUG_HUNT, STANDARDS_COMPLIANCE_CHECK, PROCESS_AUDIT, DEPENDENCY_AUDIT
 - **sentinel** - TEST_COVERAGE_ANALYSIS
 - `/ideate` skill - FEATURE_IDEATION
@@ -1309,7 +1309,7 @@ Each type has independent numbering (PI-001, FR-001, etc.)
 ---
 
 **Last Updated:** 2026-02-16
-**Igris AI Version:** 4.0.0
+**Igris AI Version:** 5.0.0
 **Documentation:** https://github.com/fiftynotai/igris-ai
 
 **Tip:** Customize this prompt for your project by adding project-specific patterns to the "Project-Specific Notes" section.
