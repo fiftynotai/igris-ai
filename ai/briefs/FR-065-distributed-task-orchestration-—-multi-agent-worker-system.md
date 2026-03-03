@@ -2,10 +2,11 @@
 
 **Type:** FR
 **Priority:** P1
-**Effort:** TBD
-**Status:** In Progress
+**Effort:** XL-Extra Large
+**Status:** Done
 **Created:** 2026-02-25
-**Completed:** _TBD_
+**Completed:** 2026-02-25
+**Verified:** 2026-03-03 (BR-047 audit)
 
 ---
 
@@ -87,31 +88,44 @@ Build the execution layer for distributed task orchestration across machines and
 
 ## Tasks
 
-### Pending
-- [ ] TBD
-
-### In Progress
-_(None yet)_
-
 ### Completed
-_(None yet)_
+- [x] Expand task_type CHECK constraint with 5 semantic types (dev, content, social-media, media-gen, research)
+- [x] Add `task_results` table (id, task_id, result_type, content, file_path, metadata)
+- [x] Implement `igris_task_result_add` and `igris_task_result_get` MCP tools
+- [x] Add `igris_task_claim` atomic claim handler (prevents double-assignment)
+- [x] Extend `igris_task_next` with capability filtering via `resolveCapabilities()`
+- [x] Extend `igris_instance_heartbeat` to accept capabilities list → `agent_capabilities` table
+- [x] Create 6 task handler skills: dev.md, content.md, research.md, media-gen.md, operational.md, social-media.md
+- [x] Build `igris_worker.sh` daemon (polling, concurrency, auto-sleep, heartbeat, graceful shutdown)
+- [x] Build `igris_worker_config.sh` (JSON config loading, all worker settings)
+- [x] Wire orphan task lifecycle events to coordination component
+- [x] Enhance global CLAUDE.md template with worker identity
 
 ---
 
 ## Session State
 
-**Current State:** Brief created
-**Next Steps When Resuming:** Define tasks and acceptance criteria
-**Last Updated:** 2026-02-25
+**Current State:** Complete — all features implemented and verified
+**Next Steps When Resuming:** None — feature complete
+**Last Updated:** 2026-03-03
 **Blockers:** None
+
+**Known Gap:** `WORKER_ALLOWED_TYPES` config key is loaded by `igris_worker_config.sh` but never passed to the poll request — only `WORKER_CAPABILITIES` is used. Document as intended or file follow-up.
 
 ---
 
 ## Acceptance Criteria
 
-1. [ ] TBD
+1. [x] Worker daemon (`igris_worker.sh`) polls brain, spawns Claude sessions, manages concurrency
+2. [x] Task claim (`igris_task_claim`) atomically claims tasks with status verification
+3. [x] Task next (`igris_task_next`) filters by agent capabilities via `resolveCapabilities()`
+4. [x] Task results stored via `igris_task_result_add` with 7 result types (commit, file, text, image, url, json, error)
+5. [x] Task results retrieved via `igris_task_result_get` with optional type filter
+6. [x] All 6 task handler skills present with meaningful execution instructions
+7. [x] Expanded task type system (9 types total) in schema and handler validation
+8. [x] Instance heartbeat accepts capabilities list for agent registration
 
 ---
 
 **Created:** 2026-02-25
-**Last Updated:** 2026-02-25
+**Last Updated:** 2026-03-03
