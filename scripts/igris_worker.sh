@@ -128,64 +128,57 @@ is_daemon_running() {
 # Brain HTTP API interaction
 # ============================================================
 
-# Calls a brain MCP tool via the HTTP API using curl
-# Much lighter than spawning a full claude session for each poll
-# Usage: brain_api_call <tool_name> <json_args>
-# Returns: tool response JSON on stdout, exit code 0 on success
-brain_api_call() {
-  local tool_name="$1"
-  local json_args="$2"
+# Makes an authenticated HTTP request to the brain REST API
+# Usage: brain_rest_call <method> <path> [json_body]
+# Returns: response body on stdout, exit code 0 on success
+brain_rest_call() {
+  local method="$1"
+  local path="$2"
+  local body="${3:-}"
 
-  local response
-  response=$(curl -s --connect-timeout 10 --max-time 30 \
-    -X POST "${REMOTE_BRAIN_URL%/}/api/tools/${tool_name}" \
+  local url="${REMOTE_BRAIN_URL%/}${path}"
+  local curl_args=(-s --connect-timeout 10 --max-time 30 \
+    -X "$method" \
     -H "Content-Type: application/json" \
-    -H "Authorization: Bearer ${REMOTE_BRAIN_API_KEY}" \
-    -d "$json_args" 2>/dev/null) || return 1
+    -H "Authorization: Bearer ${REMOTE_BRAIN_API_KEY}")
 
-  echo "$response"
+  if [ -n "$body" ]; then
+    curl_args+=(-d "$body")
+  fi
+
+  curl "${curl_args[@]}" "$url" 2>/dev/null || return 1
 }
 
 # Polls the brain for the next available task matching worker capabilities
 # Returns task JSON on stdout if a task is found, empty string otherwise
 poll_for_task() {
-  local capabilities_json
-  capabilities_json=$(python3 -c "
+  local request_body
+  request_body=$(python3 -c "
 import json, sys
 caps = sys.argv[1].split(',')
-print(json.dumps({'capabilities': caps, 'agent_name': sys.argv[2]}))
+print(json.dumps({
+    'capabilities': caps,
+    'agent_name': sys.argv[2]
+}))
 " "$WORKER_CAPABILITIES" "$WORKER_AGENT_NAME")
 
   local response
-  response=$(brain_api_call "igris_task_next" "$capabilities_json" 2>/dev/null) || {
+  response=$(brain_rest_call "POST" "/api/tasks/next" "$request_body" 2>/dev/null) || {
     log_error "Failed to poll brain for tasks"
     echo ""
     return 0
   }
 
-  # Check if a task was returned (vs empty/null/error response)
   local has_task
   has_task=$(python3 -c "
 import json, sys
 try:
     data = json.loads(sys.argv[1])
-    # The response might be nested under 'result' or 'content'
-    result = data if isinstance(data, dict) else {}
-    if result.get('result'):
-        result = result['result']
-    if isinstance(result, dict) and result.get('content'):
-        content = result['content']
-        if isinstance(content, list) and len(content) > 0:
-            text = content[0].get('text', '')
-            parsed = json.loads(text) if text else {}
-            if parsed.get('task_id') or parsed.get('id'):
-                print('yes')
-                sys.exit(0)
-    # Direct task object
-    if result.get('task_id') or result.get('id'):
+    task = data.get('task')
+    if task and task.get('id'):
         print('yes')
-        sys.exit(0)
-    print('no')
+    else:
+        print('no')
 except Exception:
     print('no')
 " "$response" 2>/dev/null) || has_task="no"
@@ -197,7 +190,7 @@ except Exception:
   fi
 }
 
-# Extracts the task ID from a brain API response JSON
+# Extracts the task ID from a brain REST API response JSON
 # Usage: extract_task_id <response_json>
 extract_task_id() {
   local response="$1"
@@ -205,25 +198,14 @@ extract_task_id() {
 import json, sys
 try:
     data = json.loads(sys.argv[1])
-    result = data if isinstance(data, dict) else {}
-    if result.get('result'):
-        result = result['result']
-    if isinstance(result, dict) and result.get('content'):
-        content = result['content']
-        if isinstance(content, list) and len(content) > 0:
-            text = content[0].get('text', '')
-            parsed = json.loads(text) if text else {}
-            task_id = parsed.get('task_id') or parsed.get('id') or ''
-            print(task_id)
-            sys.exit(0)
-    task_id = result.get('task_id') or result.get('id') or ''
-    print(task_id)
+    task = data.get('task', {})
+    print(task.get('id', ''))
 except Exception:
     print('')
 " "$response" 2>/dev/null || echo ""
 }
 
-# Extracts the task type from a brain API response JSON
+# Extracts the task type from a brain REST API response JSON
 # Usage: extract_task_type <response_json>
 extract_task_type() {
   local response="$1"
@@ -231,17 +213,8 @@ extract_task_type() {
 import json, sys
 try:
     data = json.loads(sys.argv[1])
-    result = data if isinstance(data, dict) else {}
-    if result.get('result'):
-        result = result['result']
-    if isinstance(result, dict) and result.get('content'):
-        content = result['content']
-        if isinstance(content, list) and len(content) > 0:
-            text = content[0].get('text', '')
-            parsed = json.loads(text) if text else {}
-            print(parsed.get('task_type', 'dev'))
-            sys.exit(0)
-    print(result.get('task_type', 'dev'))
+    task = data.get('task', {})
+    print(task.get('task_type', 'dev'))
 except Exception:
     print('dev')
 " "$response" 2>/dev/null || echo "dev"
@@ -266,8 +239,8 @@ caps = sys.argv[1].split(',')
 print(json.dumps(caps))
 " "$WORKER_CAPABILITIES")
 
-  local args
-  args=$(python3 -c "
+  local body
+  body=$(python3 -c "
 import json, sys
 print(json.dumps({
     'machine_hostname': sys.argv[1],
@@ -277,42 +250,55 @@ print(json.dumps({
 }))
 " "$hostname_val" "$os_val" "$capabilities_json")
 
-  brain_api_call "igris_instance_heartbeat" "$args" > /dev/null 2>&1 || {
+  local response
+  response=$(brain_rest_call "POST" "/api/instances/heartbeat" "$body" 2>/dev/null) || {
     log_error "Failed to register instance heartbeat"
     return 0
   }
 
-  log "Instance registered (hostname=$hostname_val, os=$os_val, capabilities=$WORKER_CAPABILITIES)"
+  local instance_id
+  instance_id=$(python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+    print(data.get('instance_id', ''))
+except Exception:
+    print('')
+" "$response" 2>/dev/null) || instance_id=""
+
+  if [ -n "$instance_id" ]; then
+    WORKER_INSTANCE_ID="$instance_id"
+  fi
+
+  log "Instance registered (id=$WORKER_INSTANCE_ID, hostname=$hostname_val, os=$os_val, capabilities=$WORKER_CAPABILITIES)"
 }
 
 # Removes this worker instance from the brain registry on shutdown
 remove_instance() {
-  local hostname_val
-  hostname_val=$(hostname)
+  if [ -z "$WORKER_INSTANCE_ID" ]; then
+    log "No instance ID stored, skipping removal"
+    return 0
+  fi
 
-  local args
-  args=$(python3 -c "
-import json, sys
-print(json.dumps({'machine_hostname': sys.argv[1], 'project_slug': 'igris-worker'}))
-" "$hostname_val")
-
-  brain_api_call "igris_instance_remove" "$args" > /dev/null 2>&1 || {
+  brain_rest_call "DELETE" "/api/instances/${WORKER_INSTANCE_ID}" > /dev/null 2>&1 || {
     log_error "Failed to remove instance from brain"
     return 0
   }
 
-  log "Instance removed from brain registry"
+  log "Instance removed from brain registry (id=$WORKER_INSTANCE_ID)"
 }
 
 # ============================================================
 # Task execution
 # ============================================================
 
-# Array to track spawned child process PIDs
+# Associative array mapping PID -> task_id for lifecycle tracking
+declare -A PID_TASK_MAP=()
+# Indexed array for backwards-compatible PID iteration
 declare -a CHILD_PIDS=()
 
 # Returns the count of currently running child processes
-# Cleans up finished processes from the tracking array
+# Reaps finished processes and reports their completion/failure to the brain
 count_running_tasks() {
   local running=0
   local new_pids=()
@@ -321,6 +307,26 @@ count_running_tasks() {
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       running=$((running + 1))
       new_pids+=("$pid")
+    elif [ -n "$pid" ]; then
+      # Process finished — report result to brain
+      local exit_code=0
+      wait "$pid" 2>/dev/null || exit_code=$?
+      local task_id="${PID_TASK_MAP[$pid]:-}"
+      if [ -n "$task_id" ]; then
+        if [ "$exit_code" -eq 0 ]; then
+          brain_rest_call "POST" "/api/tasks/${task_id}/complete" \
+            '{"result":"Completed by worker daemon"}' > /dev/null 2>&1 || \
+            log_error "Failed to report completion for task $task_id"
+          log "Task ${task_id} completed (PID: ${pid}, exit: 0)"
+        else
+          local reason="Worker process exited with code $exit_code"
+          brain_rest_call "POST" "/api/tasks/${task_id}/fail" \
+            "{\"reason\":\"$reason\"}" > /dev/null 2>&1 || \
+            log_error "Failed to report failure for task $task_id"
+          log "Task ${task_id} failed (PID: ${pid}, exit: ${exit_code})"
+        fi
+        unset "PID_TASK_MAP[$pid]"
+      fi
     fi
   done
 
@@ -365,6 +371,7 @@ ${handler_content}"
   claude -p "$prompt" >> "$WORKER_LOG_DIR/task_${task_id}.log" 2>&1 &
   local child_pid=$!
   CHILD_PIDS+=("$child_pid")
+  PID_TASK_MAP[$child_pid]="$task_id"
 
   log "Task ${task_id} (type=${task_type}) spawned (PID: ${child_pid})"
 }
@@ -375,6 +382,7 @@ ${handler_content}"
 
 # Flag to signal the main loop to stop
 SHUTDOWN_REQUESTED=false
+WORKER_INSTANCE_ID=""
 
 # Handles SIGINT/SIGTERM for clean daemon shutdown
 # Waits for child processes with a timeout, then cleans up

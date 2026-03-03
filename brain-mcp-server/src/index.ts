@@ -36,7 +36,8 @@ import type { Engine, EngineConfig } from './engine/index.js';
 // REST API helpers (used by HTTP endpoints, not MCP tools)
 import { handleAgentEvent, handleAgentEventList, handleAgentEventLog, handleAgentMetricsSummary, handleAgentMetricsByProject } from './tools/agent_events.js';
 import type { AgentEventInput } from './tools/agent_events.js';
-import { handleInstanceRemove } from './tools/instances.js';
+import { handleInstanceRemove, handleInstanceHeartbeat } from './tools/instances.js';
+import { handleTaskNext, handleTaskClaim, handleTaskComplete, handleTaskFail } from './engine/components/tasks/handlers.js';
 import { handleProjectBudget, handleProjectBudgetSet } from './tools/projects.js';
 import { handleBriefVelocity } from './tools/briefs.js';
 
@@ -402,7 +403,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
   // Health endpoint (no auth required, minimal info)
   app.get('/health', (_req: Request, res: Response) => {
-    res.json({ status: 'ok', version: '5.0.0' });
+    res.json({ status: 'ok' });
   });
 
   // -----------------------------------------------------------------------
@@ -450,6 +451,25 @@ async function runHttp(config: ServerConfig): Promise<void> {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error('[brain] DELETE /api/instances/:id error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // POST /api/instances/heartbeat — register/update worker instance
+  app.post('/api/instances/heartbeat', express.json(), (req: Request, res: Response) => {
+    try {
+      if (!req.body.machine_hostname) {
+        res.status(400).json({ error: 'Missing required field: machine_hostname' });
+        return;
+      }
+      const result = handleInstanceHeartbeat(req.body);
+      const text = result.content[0].text;
+      const idMatch = text.match(/:\s*(.+)$/);
+      const instanceId = idMatch ? idMatch[1].trim() : null;
+      res.json({ ok: true, message: text, instance_id: instanceId });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] POST /api/instances/heartbeat error:', message);
       res.status(500).json({ error: message });
     }
   });
@@ -823,6 +843,91 @@ async function runHttp(config: ServerConfig): Promise<void> {
     } catch (err) {
       const message = errMsg(err);
       console.error('[brain] GET /api/tasks error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // POST /api/tasks/next — get next available task with capability filtering
+  app.post('/api/tasks/next', express.json(), (req: Request, res: Response) => {
+    try {
+      const args: Record<string, unknown> = {};
+      if (req.body.capabilities) args.capabilities = req.body.capabilities;
+      if (req.body.agent_name) args.agent = req.body.agent_name;
+      if (req.body.project_slug) args.project_slug = req.body.project_slug;
+      if (req.body.scope) args.scope = req.body.scope;
+      if (req.body.task_type) args.task_type = req.body.task_type;
+
+      const result = handleTaskNext(args);
+      if (result.isError) {
+        res.status(400).json({ error: result.content[0].text });
+        return;
+      }
+      const parsed = JSON.parse(result.content[0].text);
+      res.json({ ok: true, ...parsed });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] POST /api/tasks/next error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // POST /api/tasks/:id/claim — atomically claim a task
+  app.post('/api/tasks/:id/claim', express.json(), (req: Request, res: Response) => {
+    try {
+      const agent = req.body.agent as string | undefined;
+      if (!agent) {
+        res.status(400).json({ error: 'Missing required field: agent' });
+        return;
+      }
+      const result = handleTaskClaim({ task_id: req.params.id, agent });
+      if (result.isError) {
+        res.status(400).json({ error: result.content[0].text });
+        return;
+      }
+      const parsed = JSON.parse(result.content[0].text);
+      res.json({ ok: true, ...parsed });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] POST /api/tasks/:id/claim error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // POST /api/tasks/:id/complete — mark task as complete
+  app.post('/api/tasks/:id/complete', express.json(), (req: Request, res: Response) => {
+    try {
+      const result = handleTaskComplete({ task_id: req.params.id, result: req.body.result });
+      if (result.isError) {
+        res.status(400).json({ error: result.content[0].text });
+        return;
+      }
+      const parsed = JSON.parse(result.content[0].text);
+      res.json({ ok: true, ...parsed });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] POST /api/tasks/:id/complete error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // POST /api/tasks/:id/fail — mark task as failed
+  app.post('/api/tasks/:id/fail', express.json(), (req: Request, res: Response) => {
+    try {
+      const reason = req.body.reason as string | undefined;
+      if (!reason) {
+        res.status(400).json({ error: 'Missing required field: reason' });
+        return;
+      }
+      const result = handleTaskFail({ task_id: req.params.id, reason });
+      if (result.isError) {
+        res.status(400).json({ error: result.content[0].text });
+        return;
+      }
+      const parsed = JSON.parse(result.content[0].text);
+      res.json({ ok: true, ...parsed });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] POST /api/tasks/:id/fail error:', message);
       res.status(500).json({ error: message });
     }
   });
