@@ -297,6 +297,12 @@ async function runHttp(config: ServerConfig): Promise<void> {
     console.error(`[brain] Staging processing error: ${errMsg(err)}`);
   }
 
+  // Require API key for HTTP mode — refuse to start without auth
+  if (!config.apiKey) {
+    console.error('[brain] FATAL: BRAIN_API_KEY is required for HTTP mode. Set the BRAIN_API_KEY environment variable.');
+    process.exit(1);
+  }
+
   // Create Express app WITHOUT global express.json() middleware.
   // createMcpExpressApp adds app.use(express.json()) which consumes the
   // request body for ALL routes, breaking route-specific parsers like
@@ -308,64 +314,64 @@ async function runHttp(config: ServerConfig): Promise<void> {
   const authFailures: Record<string, { count: number; resetAt: number }> = {};
 
   // API key middleware — reusable across /mcp and /sync routes
-  if (config.apiKey) {
-    const expectedToken = `Bearer ${config.apiKey}`;
+  const expectedToken = `Bearer ${config.apiKey}`;
 
-    const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
-      const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
+  const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
+    const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
 
-      // Check rate limit
-      const now = Date.now();
-      const entry = authFailures[ip];
-      if (entry && entry.count >= AUTH_FAIL_MAX && now < entry.resetAt) {
-        res.status(429).json({
-          jsonrpc: '2.0',
-          error: { code: -32001, message: 'Too many failed authentication attempts' },
-          id: null,
-        });
-        return;
-      }
+    // Check rate limit
+    const now = Date.now();
+    const entry = authFailures[ip];
+    if (entry && entry.count >= AUTH_FAIL_MAX && now < entry.resetAt) {
+      res.status(429).json({
+        jsonrpc: '2.0',
+        error: { code: -32001, message: 'Too many failed authentication attempts' },
+        id: null,
+      });
+      return;
+    }
 
-      const auth = req.headers.authorization ?? '';
-      if (!safeCompare(auth, expectedToken)) {
-        // Track failure (with map size cap)
-        if (!authFailures[ip] || now >= (authFailures[ip].resetAt)) {
-          // Evict oldest entries if map is at capacity
-          if (Object.keys(authFailures).length >= AUTH_FAIL_MAP_MAX) {
-            let oldestIp = '';
-            let oldestReset = Infinity;
-            for (const [k, v] of Object.entries(authFailures)) {
-              if (v.resetAt < oldestReset) {
-                oldestReset = v.resetAt;
-                oldestIp = k;
-              }
+    // Accept both Authorization: Bearer <key> and X-API-Key: <key>
+    const xApiKey = req.headers['x-api-key'];
+    const auth = typeof xApiKey === 'string' && xApiKey
+      ? `Bearer ${xApiKey}`
+      : (req.headers.authorization ?? '');
+    if (!safeCompare(auth, expectedToken)) {
+      // Track failure (with map size cap)
+      if (!authFailures[ip] || now >= (authFailures[ip].resetAt)) {
+        // Evict oldest entries if map is at capacity
+        if (Object.keys(authFailures).length >= AUTH_FAIL_MAP_MAX) {
+          let oldestIp = '';
+          let oldestReset = Infinity;
+          for (const [k, v] of Object.entries(authFailures)) {
+            if (v.resetAt < oldestReset) {
+              oldestReset = v.resetAt;
+              oldestIp = k;
             }
-            if (oldestIp) delete authFailures[oldestIp];
           }
-          authFailures[ip] = { count: 1, resetAt: now + AUTH_FAIL_WINDOW_MS };
-        } else {
-          authFailures[ip].count++;
+          if (oldestIp) delete authFailures[oldestIp];
         }
-
-        res.status(401).json({
-          jsonrpc: '2.0',
-          error: { code: -32001, message: 'Unauthorized: Invalid or missing API key' },
-          id: null,
-        });
-        return;
+        authFailures[ip] = { count: 1, resetAt: now + AUTH_FAIL_WINDOW_MS };
+      } else {
+        authFailures[ip].count++;
       }
 
-      // Reset failures on successful auth
-      delete authFailures[ip];
-      next();
-    };
+      res.status(401).json({
+        jsonrpc: '2.0',
+        error: { code: -32001, message: 'Unauthorized: Invalid or missing API key' },
+        id: null,
+      });
+      return;
+    }
 
-    app.use('/mcp', authMiddleware);
-    app.use('/sync', authMiddleware);
-    app.use('/api', authMiddleware);
-  } else {
-    console.error('[brain] WARNING: No BRAIN_API_KEY set. Server is running without authentication.');
-  }
+    // Reset failures on successful auth
+    delete authFailures[ip];
+    next();
+  };
+
+  app.use('/mcp', authMiddleware);
+  app.use('/sync', authMiddleware);
+  app.use('/api', authMiddleware);
 
   // Session management: map session IDs to their transports + last-activity timestamps.
   // The SDK's StreamableHTTPServerTransport validates session IDs internally via the
