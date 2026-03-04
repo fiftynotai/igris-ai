@@ -88,39 +88,66 @@ Call `igris_brief_list` to find next available number, fallback to cache glob at
 Find highest number, add 1.
 Example: If BR-007 exists, next is BR-008.
 
-### 4. Read Template
+### 4. Build Brief Content
 
-Read template from `ai/templates/{PREFIX}-TEMPLATE.md`.
-Fallback to `ai/templates/BR-TEMPLATE.md` if specific template not found.
+Construct brief markdown content using this structure:
 
-### 5. Create Brief File
+```markdown
+# {PREFIX}-{XXX}: {title}
 
-Call `igris_brief_create` with project, brief_id, content, metadata. If MCP unavailable, write to `~/.igris/cache/{project}/briefs/{PREFIX}-{XXX}-{slug}.md`:
-- Fill in title from arguments
-- Set Status: Ready (or Draft if info incomplete)
-- Set Priority: P2 (default, can be changed)
-- Set Created date: today
-- Leave other fields for user to complete
+## Metadata
+- **Type:** {Bug Fix | Feature | Migration | Tech Debt | Testing | ...}
+- **Priority:** {priority, default P2}
+- **Status:** Ready
+- **Effort:** {effort if known, otherwise omit}
+- **Created:** {today's date}
+
+## Problem
+
+{Description of the problem or need — ask user if not clear from title}
+
+## Goal
+
+{What should happen after this is implemented}
+
+## Context and Inputs
+
+{Relevant files, modules, APIs — fill in what's known}
+
+## Acceptance Criteria
+
+{Testable outcomes — fill in what's known, leave for user to complete if unclear}
+
+## Test Plan
+
+{How to verify — fill in what's known}
+
+## Delivery
+
+{Migrations, feature flags, docs to update — fill in what's known}
+```
+
+### 5. Store Brief in Brain
+
+Call `igris_brief_create` with:
+- **project:** current project slug
+- **brief_id:** the new brief ID (e.g., "FR-031")
+- **title:** the brief title
+- **content:** the constructed markdown from step 4
+- **brief_type:** type (Bug, Feature, Migration, etc.)
+- **status:** "Ready" (or "Draft" if info incomplete)
+- **priority:** the assigned priority (default "P2")
+- **effort:** the assigned effort if known
+
+If `igris_brief_create` fails or MCP is unavailable, write to `~/.igris/cache/{project}/briefs/{PREFIX}-{XXX}-{slug}.md` as fallback.
+
+**DO NOT write brief files to the repo (e.g., `ai/briefs/`).** Briefs live in the brain DB only.
 
 ### 6. Handle P0/P1 Priority
 
 If user specifies P0 or P1 priority, also add entry to `~/.igris/cache/{project}/session/BLOCKERS.md`.
 
-### 7. Sync Brief to Brain
-
-If the `igris-brain` MCP server is available, call `igris_brief_sync` with:
-- **project:** current project slug (derive from directory name or brain registry)
-- **brief_id:** the new brief ID (e.g., "FR-031")
-- **brief_type:** type from the brief (feature, bug, tech_debt, migration, testing, process, dependency, performance, architecture)
-- **title:** the brief title
-- **status:** "Ready" (or "Draft" if incomplete)
-- **priority:** the assigned priority (e.g., "P2")
-- **effort:** the assigned effort (e.g., "S", "M", "L", "XL") if known
-- **phase:** "INIT"
-
-If brain MCP is not available, skip silently. No errors.
-
-### 8. Confirm Registration
+### 7. Confirm Registration
 
 Display:
 ```
@@ -140,4 +167,5 @@ To change priority: "change {PREFIX}-{XXX} priority to P0"
 - DO NOT load context files
 - DO NOT start implementation
 - DO NOT create tasks
-- ONLY create the brief file and sync to brain
+- ONLY store the brief in the brain DB via `igris_brief_create`
+- DO NOT write brief files to the repo (e.g., `ai/briefs/`)
