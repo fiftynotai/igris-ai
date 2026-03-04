@@ -152,25 +152,34 @@ brain_rest_call() {
 # Polls the brain for the next available task matching worker capabilities
 # Returns task JSON on stdout if a task is found, empty string otherwise
 poll_for_task() {
-  local request_body
-  request_body=$(python3 -c "
+  # Cycle through each allowed task type to avoid claiming unsupported types
+  local remaining="$WORKER_ALLOWED_TYPES"
+  while [ -n "$remaining" ]; do
+    local task_type="${remaining%%,*}"
+    if [ "$remaining" = "$task_type" ]; then
+      remaining=""
+    else
+      remaining="${remaining#*,}"
+    fi
+    local request_body
+    request_body=$(python3 -c "
 import json, sys
 caps = sys.argv[1].split(',')
 print(json.dumps({
     'capabilities': caps,
-    'agent_name': sys.argv[2]
+    'agent_name': sys.argv[2],
+    'task_type': sys.argv[3]
 }))
-" "$WORKER_CAPABILITIES" "$WORKER_AGENT_NAME")
+" "$WORKER_CAPABILITIES" "$WORKER_AGENT_NAME" "$task_type")
 
-  local response
-  response=$(brain_rest_call "POST" "/api/tasks/next" "$request_body" 2>/dev/null) || {
-    log_error "Failed to poll brain for tasks"
-    echo ""
-    return 0
-  }
+    local response
+    response=$(brain_rest_call "POST" "/api/tasks/next" "$request_body" 2>/dev/null) || {
+      log_error "Failed to poll brain for tasks (type=$task_type)"
+      continue
+    }
 
-  local has_task
-  has_task=$(python3 -c "
+    local has_task
+    has_task=$(python3 -c "
 import json, sys
 try:
     data = json.loads(sys.argv[1])
@@ -183,11 +192,13 @@ except Exception:
     print('no')
 " "$response" 2>/dev/null) || has_task="no"
 
-  if [ "$has_task" = "yes" ]; then
-    echo "$response"
-  else
-    echo ""
-  fi
+    if [ "$has_task" = "yes" ]; then
+      echo "$response"
+      return 0
+    fi
+  done
+
+  echo ""
 }
 
 # Extracts the task ID from a brain REST API response JSON
