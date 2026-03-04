@@ -493,7 +493,8 @@ Handler Instructions:
 ${handler_content}"
 
   # Spawn claude in the project directory so it loads the project's CLAUDE.md
-  (cd "$project_path" && claude -p "$prompt" >> "$WORKER_LOG_DIR/task_${task_id}.log" 2>&1) &
+  # --dangerously-skip-permissions is required for autonomous execution (no human to approve)
+  (cd "$project_path" && claude -p "$prompt" --dangerously-skip-permissions >> "$WORKER_LOG_DIR/task_${task_id}.log" 2>&1) &
   local child_pid=$!
   CHILD_PIDS+=("$child_pid")
   pid_task_set "$child_pid" "$task_id"
