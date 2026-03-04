@@ -932,6 +932,29 @@ async function runHttp(config: ServerConfig): Promise<void> {
     }
   });
 
+  // POST /api/tasks/:id/release — unclaim a task back to pending (no retry burn)
+  app.post('/api/tasks/:id/release', express.json(), (req: Request, res: Response) => {
+    try {
+      const reason = (req.body.reason as string) || 'Released by worker';
+      const result = handleTaskUpdate({
+        task_id: req.params.id,
+        status: 'pending',
+        assignee: '',
+        metadata: { last_release_reason: reason },
+      });
+      if (result.isError) {
+        res.status(400).json({ error: result.content[0].text });
+        return;
+      }
+      const parsed = JSON.parse(result.content[0].text);
+      res.json({ ok: true, ...parsed });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] POST /api/tasks/:id/release error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
   // -----------------------------------------------------------------------
   // Agent Event endpoints — live agent lifecycle tracking for dashboard
   // -----------------------------------------------------------------------

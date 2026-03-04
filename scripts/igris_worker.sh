@@ -446,9 +446,9 @@ spawn_task() {
   fi
 
   if [ -z "$project_path" ] || [ ! -d "$project_path" ]; then
-    log_error "Cannot resolve project path for slug '$project_slug' (task $task_id). Skipping."
-    brain_rest_call "POST" "/api/tasks/${task_id}/fail" \
-      "{\"reason\":\"Worker cannot resolve project path for slug '${project_slug}'\"}" > /dev/null 2>&1 || true
+    log_error "Cannot resolve project path for slug '$project_slug' (task $task_id). Releasing."
+    brain_rest_call "POST" "/api/tasks/${task_id}/release" \
+      "{\"reason\":\"Project path not found locally for slug '${project_slug}'\"}" > /dev/null 2>&1 || true
     return 1
   fi
 
@@ -462,7 +462,9 @@ spawn_task() {
   elif [ -f "$brain_handler" ]; then
     handler_path="$brain_handler"
   else
-    log_error "No handler found for task type '$task_type' (checked $project_handler and $brain_handler)"
+    log_error "No handler found for task type '$task_type' (checked $project_handler and $brain_handler). Releasing."
+    brain_rest_call "POST" "/api/tasks/${task_id}/release" \
+      "{\"reason\":\"No handler for task type '${task_type}'\"}" > /dev/null 2>&1 || true
     return 1
   fi
 
