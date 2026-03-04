@@ -759,7 +759,7 @@ Read these files in order:
 - Manual smoke test if UI/behavior changes
 
 ### 5. COMMIT
-- Use Conventional Commits format (see `ai/templates/commit_message.md`)
+- Use Conventional Commits format
 - Reference brief in commit body
 - Include "closes #BR-XXX" if applicable
 - ❌ **DO NOT** add AI signatures or co-author tags
@@ -797,7 +797,7 @@ Use the trigger phrases below or commands like REGISTER, HUNT, ARCHIVE.
 
 **Actions:**
 1. ✅ Call `igris_brief_list` or scan `~/.igris/cache/{project}/briefs/` to find next available BR number
-2. ✅ Create brief via `igris_brief_create` (MCP), fallback to `~/.igris/cache/{project}/briefs/BR-XXX-[name].md` from `ai/templates/BR-TEMPLATE.md`
+2. ✅ Create brief via `igris_brief_create` (MCP), fallback to `~/.igris/cache/{project}/briefs/BR-XXX-[name].md` (construct content inline — templates no longer exist as files)
 3. ✅ Fill in all provided information
 4. ✅ Set Status: "Ready" (or "Draft" if incomplete info)
 5. ✅ Set Priority, Effort, Type (Bug Fix/Feature)

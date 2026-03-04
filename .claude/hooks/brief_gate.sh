@@ -54,7 +54,7 @@ is_exempt() {
     */ai/context/*)    return 0 ;;
     */ai/plans/*)      return 0 ;;
     */ai/masks/*)      return 0 ;;
-    */ai/templates/*)  return 0 ;;
+    # ai/templates/ removed — templates no longer exist as files
     */.claude/*)       return 0 ;;
     */test/*)          return 0 ;;
     */tests/*)         return 0 ;;
