@@ -37,7 +37,7 @@ import type { Engine, EngineConfig } from './engine/index.js';
 import { handleAgentEvent, handleAgentEventList, handleAgentEventLog, handleAgentMetricsSummary, handleAgentMetricsByProject } from './tools/agent_events.js';
 import type { AgentEventInput } from './tools/agent_events.js';
 import { handleInstanceRemove, handleInstanceHeartbeat } from './tools/instances.js';
-import { handleTaskNext, handleTaskClaim, handleTaskComplete, handleTaskFail } from './engine/components/tasks/handlers.js';
+import { handleTaskNext, handleTaskClaim, handleTaskComplete, handleTaskFail, handleTaskUpdate } from './engine/components/tasks/handlers.js';
 import { handleProjectBudget, handleProjectBudgetSet } from './tools/projects.js';
 import { handleBriefVelocity } from './tools/briefs.js';
 
