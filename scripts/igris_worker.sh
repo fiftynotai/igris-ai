@@ -452,17 +452,17 @@ spawn_task() {
     return 1
   fi
 
-  # Resolve handler path — check global then project-local locations
+  # Resolve handler path — project-local overrides brain global
   local handler_path=""
-  local global_handler="$HOME/.claude/skills/task-handlers/${task_type}.md"
+  local brain_handler="$HOME/.igris/core/task-handlers/${task_type}.md"
   local project_handler="${project_path}/.claude/skills/task-handlers/${task_type}.md"
 
   if [ -f "$project_handler" ]; then
     handler_path="$project_handler"
-  elif [ -f "$global_handler" ]; then
-    handler_path="$global_handler"
+  elif [ -f "$brain_handler" ]; then
+    handler_path="$brain_handler"
   else
-    log_error "No handler found for task type '$task_type' (checked $global_handler and $project_handler)"
+    log_error "No handler found for task type '$task_type' (checked $project_handler and $brain_handler)"
     return 1
   fi
 
