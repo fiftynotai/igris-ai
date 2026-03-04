@@ -405,17 +405,19 @@ pid_task_unset() {
 
 # Returns the count of currently running child processes
 # Reaps finished processes and reports their completion/failure to the brain
-count_running_tasks() {
-  local running=0
+# Reaps finished child processes, reports results, updates CHILD_PIDS.
+# Sets RUNNING_COUNT global variable (NOT stdout) to avoid subshell issues.
+# Must be called directly — NOT via $() command substitution.
+reap_and_count_tasks() {
+  RUNNING_COUNT=0
   local new_pids=()
 
   for pid in "${CHILD_PIDS[@]}"; do
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      running=$((running + 1))
+      RUNNING_COUNT=$((RUNNING_COUNT + 1))
       new_pids+=("$pid")
     elif [ -n "$pid" ]; then
       # Process finished — report result to brain
-      # NOTE: Use log_file_only here since this function returns via stdout
       local exit_code=0
       wait "$pid" 2>/dev/null || exit_code=$?
       local task_id
@@ -424,14 +426,14 @@ count_running_tasks() {
         if [ "$exit_code" -eq 0 ]; then
           brain_rest_call "POST" "/api/tasks/${task_id}/complete" \
             '{"result":"Completed by worker daemon"}' > /dev/null 2>&1 || \
-            log_file_only "ERROR: Failed to report completion for task $task_id"
-          log_file_only "Task ${task_id} completed (PID: ${pid}, exit: 0)"
+            log_error "Failed to report completion for task $task_id"
+          log "Task ${task_id} completed (PID: ${pid}, exit: 0)"
         else
           local reason="Worker process exited with code $exit_code"
           brain_rest_call "POST" "/api/tasks/${task_id}/fail" \
             "{\"reason\":\"$reason\"}" > /dev/null 2>&1 || \
-            log_file_only "ERROR: Failed to report failure for task $task_id"
-          log_file_only "Task ${task_id} failed (PID: ${pid}, exit: ${exit_code})"
+            log_error "Failed to report failure for task $task_id"
+          log "Task ${task_id} failed (PID: ${pid}, exit: ${exit_code})"
         fi
         pid_task_unset "$pid"
       fi
@@ -439,7 +441,6 @@ count_running_tasks() {
   done
 
   CHILD_PIDS=("${new_pids[@]}")
-  echo "$running"
 }
 
 # Spawns a Claude Code session to execute a task
@@ -519,16 +520,17 @@ handle_shutdown() {
   local timeout=60
   local elapsed=0
 
-  while [ "$(count_running_tasks)" -gt 0 ] && [ "$elapsed" -lt "$timeout" ]; do
+  reap_and_count_tasks
+  while [ "$RUNNING_COUNT" -gt 0 ] && [ "$elapsed" -lt "$timeout" ]; do
     sleep 2
     elapsed=$((elapsed + 2))
-    log "Waiting for $(count_running_tasks) child process(es)... (${elapsed}s/${timeout}s)"
+    reap_and_count_tasks
+    log "Waiting for $RUNNING_COUNT child process(es)... (${elapsed}s/${timeout}s)"
   done
 
-  local remaining
-  remaining=$(count_running_tasks)
-  if [ "$remaining" -gt 0 ]; then
-    log "Timeout reached with $remaining process(es) still running, sending SIGTERM"
+  reap_and_count_tasks
+  if [ "$RUNNING_COUNT" -gt 0 ]; then
+    log "Timeout reached with $RUNNING_COUNT process(es) still running, sending SIGTERM"
     for pid in "${CHILD_PIDS[@]}"; do
       if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
         kill "$pid" 2>/dev/null || true
@@ -650,11 +652,10 @@ cmd_start() {
 
   # Main polling loop
   while [ "$SHUTDOWN_REQUESTED" = false ]; do
-    local running
-    running=$(count_running_tasks)
+    reap_and_count_tasks
 
     # Poll for tasks if under concurrency limit
-    if [ "$running" -lt "$WORKER_MAX_CONCURRENT" ]; then
+    if [ "$RUNNING_COUNT" -lt "$WORKER_MAX_CONCURRENT" ]; then
       local task_response
       task_response=$(poll_for_task)
 
@@ -680,7 +681,7 @@ cmd_start() {
         idle_count=$((idle_count + 1))
       fi
     else
-      log "At max concurrent tasks ($running/$WORKER_MAX_CONCURRENT), skipping poll"
+      log "At max concurrent tasks ($RUNNING_COUNT/$WORKER_MAX_CONCURRENT), skipping poll"
     fi
 
     # Increase sleep interval when idle for too long (auto-sleep behavior)
