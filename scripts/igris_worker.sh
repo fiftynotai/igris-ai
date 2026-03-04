@@ -79,6 +79,16 @@ log() {
   echo "$message" >> "$WORKER_LOG_DIR/worker.log"
 }
 
+# Writes a timestamped message to the log file only (no stdout)
+# Use inside functions that return values via stdout to avoid contamination
+# Usage: log_file_only "message"
+log_file_only() {
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local message="[$timestamp] $1"
+  echo "$message" >> "$WORKER_LOG_DIR/worker.log"
+}
+
 # Writes an error-level timestamped message to the log and stderr
 # Usage: log_error "message"
 log_error() {
@@ -405,6 +415,7 @@ count_running_tasks() {
       new_pids+=("$pid")
     elif [ -n "$pid" ]; then
       # Process finished — report result to brain
+      # NOTE: Use log_file_only here since this function returns via stdout
       local exit_code=0
       wait "$pid" 2>/dev/null || exit_code=$?
       local task_id
@@ -413,14 +424,14 @@ count_running_tasks() {
         if [ "$exit_code" -eq 0 ]; then
           brain_rest_call "POST" "/api/tasks/${task_id}/complete" \
             '{"result":"Completed by worker daemon"}' > /dev/null 2>&1 || \
-            log_error "Failed to report completion for task $task_id"
-          log "Task ${task_id} completed (PID: ${pid}, exit: 0)"
+            log_file_only "ERROR: Failed to report completion for task $task_id"
+          log_file_only "Task ${task_id} completed (PID: ${pid}, exit: 0)"
         else
           local reason="Worker process exited with code $exit_code"
           brain_rest_call "POST" "/api/tasks/${task_id}/fail" \
             "{\"reason\":\"$reason\"}" > /dev/null 2>&1 || \
-            log_error "Failed to report failure for task $task_id"
-          log "Task ${task_id} failed (PID: ${pid}, exit: ${exit_code})"
+            log_file_only "ERROR: Failed to report failure for task $task_id"
+          log_file_only "Task ${task_id} failed (PID: ${pid}, exit: ${exit_code})"
         fi
         pid_task_unset "$pid"
       fi
