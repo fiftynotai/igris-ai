@@ -220,6 +220,52 @@ except Exception:
 " "$response" 2>/dev/null || echo "dev"
 }
 
+# Extracts the project_slug from a brain REST API response JSON
+# Usage: extract_project_slug <response_json>
+extract_project_slug() {
+  local response="$1"
+  python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+    task = data.get('task', {})
+    print(task.get('project_slug', ''))
+except Exception:
+    print('')
+" "$response" 2>/dev/null || echo ""
+}
+
+# Resolves a project slug to its filesystem path via the brain REST API
+# Usage: resolve_project_path <project_slug>
+# Returns: project path on stdout, empty string if not found
+resolve_project_path() {
+  local slug="$1"
+  if [ -z "$slug" ]; then
+    echo ""
+    return 0
+  fi
+
+  local response
+  response=$(brain_rest_call "GET" "/api/projects" 2>/dev/null) || {
+    echo ""
+    return 0
+  }
+
+  python3 -c "
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+    slug = sys.argv[2]
+    for p in data.get('projects', []):
+        if p.get('slug') == slug:
+            print(p.get('path', ''))
+            sys.exit(0)
+    print('')
+except Exception:
+    print('')
+" "$response" "$slug" 2>/dev/null || echo ""
+}
+
 # ============================================================
 # Instance registration
 # ============================================================
@@ -292,10 +338,49 @@ remove_instance() {
 # Task execution
 # ============================================================
 
-# Associative array mapping PID -> task_id for lifecycle tracking
-declare -A PID_TASK_MAP=()
-# Indexed array for backwards-compatible PID iteration
-declare -a CHILD_PIDS=()
+# Parallel arrays for PID-to-task mapping (bash 3.2 compatible)
+# PID_TASK_PIDS[i] and PID_TASK_IDS[i] form key-value pairs
+PID_TASK_PIDS=()
+PID_TASK_IDS=()
+# Indexed array for PID iteration
+CHILD_PIDS=()
+
+# Look up task_id for a given PID
+pid_task_lookup() {
+  local target_pid="$1"
+  local i=0
+  for p in "${PID_TASK_PIDS[@]}"; do
+    if [ "$p" = "$target_pid" ]; then
+      echo "${PID_TASK_IDS[$i]}"
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  echo ""
+}
+
+# Add a PID-task mapping
+pid_task_set() {
+  PID_TASK_PIDS+=("$1")
+  PID_TASK_IDS+=("$2")
+}
+
+# Remove a PID-task mapping
+pid_task_unset() {
+  local target_pid="$1"
+  local new_pids=()
+  local new_ids=()
+  local i=0
+  for p in "${PID_TASK_PIDS[@]}"; do
+    if [ "$p" != "$target_pid" ]; then
+      new_pids+=("$p")
+      new_ids+=("${PID_TASK_IDS[$i]}")
+    fi
+    i=$((i + 1))
+  done
+  PID_TASK_PIDS=("${new_pids[@]}")
+  PID_TASK_IDS=("${new_ids[@]}")
+}
 
 # Returns the count of currently running child processes
 # Reaps finished processes and reports their completion/failure to the brain
@@ -311,7 +396,8 @@ count_running_tasks() {
       # Process finished — report result to brain
       local exit_code=0
       wait "$pid" 2>/dev/null || exit_code=$?
-      local task_id="${PID_TASK_MAP[$pid]:-}"
+      local task_id
+      task_id=$(pid_task_lookup "$pid")
       if [ -n "$task_id" ]; then
         if [ "$exit_code" -eq 0 ]; then
           brain_rest_call "POST" "/api/tasks/${task_id}/complete" \
@@ -325,7 +411,7 @@ count_running_tasks() {
             log_error "Failed to report failure for task $task_id"
           log "Task ${task_id} failed (PID: ${pid}, exit: ${exit_code})"
         fi
-        unset "PID_TASK_MAP[$pid]"
+        pid_task_unset "$pid"
       fi
     fi
   done
@@ -335,21 +421,35 @@ count_running_tasks() {
 }
 
 # Spawns a Claude Code session to execute a task
-# Loads the task handler skill for the given task type and passes it to claude
-# Usage: spawn_task <task_id> <task_type>
+# Resolves the task's project path and runs claude in that directory
+# Usage: spawn_task <task_id> <task_type> <project_slug>
 spawn_task() {
   local task_id="$1"
   local task_type="$2"
+  local project_slug="${3:-}"
 
-  # Resolve handler path — check both global and project-local locations
+  # Resolve project path from brain registry
+  local project_path=""
+  if [ -n "$project_slug" ]; then
+    project_path=$(resolve_project_path "$project_slug")
+  fi
+
+  if [ -z "$project_path" ] || [ ! -d "$project_path" ]; then
+    log_error "Cannot resolve project path for slug '$project_slug' (task $task_id). Skipping."
+    brain_rest_call "POST" "/api/tasks/${task_id}/fail" \
+      "{\"reason\":\"Worker cannot resolve project path for slug '${project_slug}'\"}" > /dev/null 2>&1 || true
+    return 1
+  fi
+
+  # Resolve handler path — check global then project-local locations
   local handler_path=""
   local global_handler="$HOME/.claude/skills/task-handlers/${task_type}.md"
-  local project_handler="$SCRIPT_DIR/../ai/reference/task-handlers/${task_type}.md"
+  local project_handler="${project_path}/.claude/skills/task-handlers/${task_type}.md"
 
-  if [ -f "$global_handler" ]; then
-    handler_path="$global_handler"
-  elif [ -f "$project_handler" ]; then
+  if [ -f "$project_handler" ]; then
     handler_path="$project_handler"
+  elif [ -f "$global_handler" ]; then
+    handler_path="$global_handler"
   else
     log_error "No handler found for task type '$task_type' (checked $global_handler and $project_handler)"
     return 1
@@ -363,17 +463,18 @@ Read the handler instructions below and execute the task.
 
 Task ID: ${task_id}
 Task Type: ${task_type}
+Project: ${project_slug}
 
 Handler Instructions:
 ${handler_content}"
 
-  # Spawn claude in the background — it reads global CLAUDE.md automatically
-  claude -p "$prompt" >> "$WORKER_LOG_DIR/task_${task_id}.log" 2>&1 &
+  # Spawn claude in the project directory so it loads the project's CLAUDE.md
+  (cd "$project_path" && claude -p "$prompt" >> "$WORKER_LOG_DIR/task_${task_id}.log" 2>&1) &
   local child_pid=$!
   CHILD_PIDS+=("$child_pid")
-  PID_TASK_MAP[$child_pid]="$task_id"
+  pid_task_set "$child_pid" "$task_id"
 
-  log "Task ${task_id} (type=${task_type}) spawned (PID: ${child_pid})"
+  log "Task ${task_id} (type=${task_type}, project=${project_slug}) spawned in ${project_path} (PID: ${child_pid})"
 }
 
 # ============================================================
@@ -539,8 +640,10 @@ cmd_start() {
         task_type=$(extract_task_type "$task_response")
 
         if [ -n "$task_id" ]; then
-          log "Task found: ${task_id} (type=${task_type})"
-          spawn_task "$task_id" "$task_type" || log_error "Failed to spawn task $task_id"
+          local project_slug
+          project_slug=$(extract_project_slug "$task_response")
+          log "Task found: ${task_id} (type=${task_type}, project=${project_slug})"
+          spawn_task "$task_id" "$task_type" "$project_slug" || log_error "Failed to spawn task $task_id"
 
           # Reset idle state on task found
           idle_count=0
