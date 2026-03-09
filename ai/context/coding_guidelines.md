@@ -784,7 +784,6 @@ If these guidelines don't cover your situation, ask in:
 ### Internal Documentation
 
 - `ai/prompts/igris_os.md` - Igris AI operating system (for Claude)
-- `ai/templates/commit_message.md` - Commit message template
 - `CONTRIBUTING.md` - Contribution guide
 - `README.md` - Project README
 

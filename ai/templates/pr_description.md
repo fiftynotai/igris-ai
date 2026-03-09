@@ -4,7 +4,7 @@
 [1-2 sentences describing what this PR does]
 
 ## Brief Reference
-**Closes:** BR-XXX ([link to brief file: ai/briefs/BR-XXX-title.md])
+**Closes:** BR-XXX (brief stored in brain DB)
 
 ---
 

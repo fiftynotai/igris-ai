@@ -177,7 +177,7 @@ echo "Project Statistics"
 echo ""
 
 # Count briefs
-brief_count=$(ls ai/briefs/*.md 2>/dev/null | grep -v TEMPLATE | wc -l)
+brief_count=$(ls ~/.igris/cache/$(basename "$PWD")/briefs/*.md 2>/dev/null | wc -l)
 echo "Total briefs: $brief_count"
 
 # Recent commits
