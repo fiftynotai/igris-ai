@@ -8,7 +8,7 @@ allowed-tools:
   - Edit
   - Glob
   - Grep
-  - mcp__igris-brain__igris_brief_list
+  - mcp__igris-brain__igris_brief_dashboard
   - mcp__igris-brain__igris_session_file_get
   - mcp__igris-brain__igris_coordination_config_get
   - mcp__igris-brain__igris_task_next
@@ -183,9 +183,9 @@ If brain MCP is NOT available (tool call fails or MCP server not registered), sk
 
 ### 4. Perform System Assessment
 
-Call `igris_brief_list` with project, fallback to cache glob at `~/.igris/cache/{project}/briefs/` for inventory:
-- Count by status and priority
-- Identify highest priority ready brief
+Call `igris_brief_dashboard` with `project` and `summary_only=true`, fallback to cache glob at `~/.igris/cache/{project}/briefs/` for inventory:
+- The dashboard returns aggregate counts by status and priority — no need to fetch individual briefs
+- Use the counts to identify if there are Ready briefs to work on
 
 Check `~/.igris/cache/{project}/session/BLOCKERS.md` for active blockers.
 

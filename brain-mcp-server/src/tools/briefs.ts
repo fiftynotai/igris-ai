@@ -32,6 +32,7 @@ interface BriefSyncInput {
 interface BriefDashboardInput {
   status?: string;
   project?: string;
+  summary_only?: boolean;
 }
 
 /** Input shape for igris_brief_get */
@@ -160,17 +161,6 @@ function handleBriefDashboard(args: BriefDashboardInput): { content: { type: str
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  // Query briefs
-  const rows = db.prepare(`
-    SELECT bs.project, bs.brief_id, bs.brief_type, bs.title, bs.status,
-           bs.priority, bs.effort, bs.phase, bs.updated_at,
-           p.name as project_name
-    FROM brief_status bs
-    LEFT JOIN projects p ON p.slug = bs.project
-    ${whereClause}
-    ORDER BY bs.updated_at DESC
-  `).all(...params) as Record<string, unknown>[];
-
   // Summary counts (project filter only, not status filter)
   const summaryConditions: string[] = [];
   const summaryParams: string[] = [];
@@ -188,7 +178,7 @@ function handleBriefDashboard(args: BriefDashboardInput): { content: { type: str
     ORDER BY count DESC
   `).all(...summaryParams) as Record<string, unknown>[];
 
-  if (rows.length === 0 && summaryCounts.length === 0) {
+  if (summaryCounts.length === 0) {
     return {
       content: [{
         type: 'text',
@@ -197,8 +187,59 @@ function handleBriefDashboard(args: BriefDashboardInput): { content: { type: str
     };
   }
 
-  // Format summary
+  // Format summary by status
   const summaryLines = summaryCounts.map(s => `- ${s.status}: ${s.count}`);
+
+  // Priority breakdown (project filter only, not status filter)
+  const priorityCounts = db.prepare(`
+    SELECT priority, COUNT(*) as count
+    FROM brief_status
+    ${summaryWhere}
+    GROUP BY priority
+    ORDER BY count DESC
+  `).all(...summaryParams) as Record<string, unknown>[];
+
+  const priorityLines = priorityCounts.map(p => `- ${p.priority || 'Unset'}: ${p.count}`);
+
+  // Total count
+  const totalCount = summaryCounts.reduce((sum, s) => sum + (s.count as number), 0);
+
+  // Build filter description
+  const filters: string[] = [];
+  if (args.status) filters.push(`status=${args.status}`);
+  if (args.project) filters.push(`project=${args.project}`);
+  const filterDesc = filters.length > 0 ? ` (filtered: ${filters.join(', ')})` : '';
+
+  // If summary_only, return just the counts — no full brief table
+  if (args.summary_only) {
+    return {
+      content: [{
+        type: 'text',
+        text: [
+          `# Brief Dashboard Summary${filterDesc}`,
+          '',
+          `Total: ${totalCount}`,
+          '',
+          '## By Status',
+          ...summaryLines,
+          '',
+          '## By Priority',
+          ...priorityLines,
+        ].join('\n'),
+      }],
+    };
+  }
+
+  // Full dashboard: query all briefs for the table
+  const rows = db.prepare(`
+    SELECT bs.project, bs.brief_id, bs.brief_type, bs.title, bs.status,
+           bs.priority, bs.effort, bs.phase, bs.updated_at,
+           p.name as project_name
+    FROM brief_status bs
+    LEFT JOIN projects p ON p.slug = bs.project
+    ${whereClause}
+    ORDER BY bs.updated_at DESC
+  `).all(...params) as Record<string, unknown>[];
 
   // Format table
   const header = '| Project | Brief | Type | Title | Status | Priority | Phase | Updated |';
@@ -206,12 +247,6 @@ function handleBriefDashboard(args: BriefDashboardInput): { content: { type: str
   const tableRows = rows.map(r =>
     `| ${r.project_name || r.project} | ${r.brief_id} | ${r.brief_type || '-'} | ${r.title} | ${r.status} | ${r.priority || '-'} | ${r.phase || '-'} | ${r.updated_at} |`
   );
-
-  // Build filter description
-  const filters: string[] = [];
-  if (args.status) filters.push(`status=${args.status}`);
-  if (args.project) filters.push(`project=${args.project}`);
-  const filterDesc = filters.length > 0 ? ` (filtered: ${filters.join(', ')})` : '';
 
   return {
     content: [{
@@ -221,6 +256,9 @@ function handleBriefDashboard(args: BriefDashboardInput): { content: { type: str
         '',
         '## Summary',
         ...summaryLines,
+        '',
+        '## By Priority',
+        ...priorityLines,
         '',
         `## Briefs (${rows.length})`,
         header,

@@ -8,7 +8,7 @@ allowed-tools:
   - Glob
   - Bash
   - mcp__igris-brain__igris_project_status
-  - mcp__igris-brain__igris_brief_list
+  - mcp__igris-brain__igris_brief_dashboard
 triggers:
   - "SCAN"
   - "REPORT"
@@ -47,10 +47,9 @@ Read `~/.igris/cache/{project}/session/CURRENT_SESSION.md` for:
 
 ### 2. Scan Briefs
 
-Call `igris_brief_list` with project, fallback to cache glob at `~/.igris/cache/{project}/briefs/` (exclude templates):
-- Count by status (Ready, In Progress, Done, Draft)
-- Count by priority (P0, P1, P2, P3)
-- Apply filter if `$ARGUMENTS` provided
+Call `igris_brief_dashboard` with `project` and `summary_only=true`, fallback to cache glob at `~/.igris/cache/{project}/briefs/` (exclude templates):
+- The dashboard returns aggregate counts by status and priority — no need to fetch individual briefs
+- Apply filter if `$ARGUMENTS` provided (e.g., pass `status` parameter for status filter)
 
 ### 3. Check Blockers
 

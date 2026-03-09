@@ -150,7 +150,7 @@ export function createBriefsComponent(): BrainComponent {
         },
         {
           name: 'igris_brief_dashboard',
-          description: 'Display a cross-project brief dashboard showing all tracked briefs with status counts. Supports filtering by status and project.',
+          description: 'Display a cross-project brief dashboard showing all tracked briefs with status counts. Supports filtering by status and project. Use summary_only=true to get only aggregate counts (by status and priority) without the full briefs table — ideal for /scan and /awaken where only counts are needed.',
           inputSchema: {
             type: 'object' as const,
             properties: {
@@ -161,6 +161,10 @@ export function createBriefsComponent(): BrainComponent {
               project: {
                 type: 'string',
                 description: 'Filter by project slug (optional)',
+              },
+              summary_only: {
+                type: 'boolean',
+                description: 'When true, return only aggregate counts (by status and priority) without the full briefs table. Keeps response under 500 tokens. Default: false.',
               },
             },
           },
