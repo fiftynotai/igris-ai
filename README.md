@@ -165,7 +165,6 @@ Skills are slash commands defined in `.claude/skills/*/SKILL.md`. They replaced 
 | `/migrate-analyze` | Migration analysis and roadmap generation |
 | `/audit` | Codebase audit (7 types), generates briefs |
 | `/ui-design` | UI specs, design systems, accessibility review |
-| `/higgsfield` | Higgsfield media generation |
 | `/team` | Parallel execution with Agent Teams |
 | `/projects` | List all brain-registered projects |
 | `/portfolio` | Cross-project dashboard and insights |

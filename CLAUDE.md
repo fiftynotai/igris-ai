@@ -88,7 +88,6 @@ Igris commands are available as native Claude Code skills:
 | `/migrate-analyze` | Migration analysis | `/migrate-analyze` |
 | `/audit` | Codebase audit | `/audit code_quality` |
 | `/ui-design` | UI design guidelines | `/ui-design` |
-| `/higgsfield` | Higgsfield media generation | `/higgsfield` |
 | `/team` | Parallel execution (Agent Teams) | `/team hunt FR-022 FR-023` |
 | `/projects` | List brain-registered projects | `/projects` |
 | `/portfolio` | Cross-project dashboard | `/portfolio` |
