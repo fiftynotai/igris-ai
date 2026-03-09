@@ -6,6 +6,9 @@ allowed-tools:
   - Read
   - Bash
   - Grep
+  - Edit
+  - mcp__igris-brain__igris_brief_sync
+  - mcp__igris-brain__igris_brief_create
 triggers:
   - "SYNC"
   - "sync to vps"
@@ -150,6 +153,20 @@ If the `igris-brain` MCP server is NOT available:
   Check ~/.claude.json for MCP server registration.
   ```
 
+**[0/5] Draining local sync queue...**
+- Check if `~/.igris/cache/{project}/sync_queue.jsonl` exists
+- If it exists and has entries:
+  a. Read each JSON line
+  b. For each entry, call the appropriate MCP tool based on the `operation` field:
+     - `"brief_sync"` -> call `igris_brief_sync` with the stored parameters
+     - `"brief_create"` -> call `igris_brief_create` with the stored parameters (read content from `cache_path` if present)
+  c. On success: remove the processed line from the file
+  d. On failure: leave the line in the file for next attempt
+  e. Display summary: `Drained X of Y local sync queue entries`
+- If all entries processed successfully, delete the queue file
+- If some entries failed, display: `WARNING: {N} local sync queue entries could not be processed`
+- If file does not exist: display "No local sync queue entries."
+
 **[1/5] Draining sync queue...**
 - Call `igris_sync_queue_drain` with:
   - remote_url = value from `remote_brain.url`
@@ -271,6 +288,7 @@ After code and/or data sync completes, display a summary table:
 | Git push | OK (X commits) / SKIPPED / FAILED: {reason} |
 | VPS deploy | OK ({old_hash} -> {new_hash}) / SKIPPED / FAILED: {reason} |
 | Health check | PASSED (v{version}) / WARNING: {reason} / FAILED |
+| Local sync queue | OK (X items drained) / SKIPPED (no file) / PARTIAL: {N} failed |
 | Sync queue drain | OK (X items drained) / SKIPPED / FAILED: {reason} |
 | Brain data push | OK (X rows synced) / SKIPPED / FAILED: {reason} |
 | Events log | OK (X bytes pushed) / SKIPPED (no file) / FAILED: {reason} |

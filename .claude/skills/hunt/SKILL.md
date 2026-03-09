@@ -88,7 +88,7 @@ bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "hunt" 2>/dev/null || tru
    - Set Active Brief
    - Set Mode: HUNT MODE
 
-7. If brain MCP available, call `igris_brief_sync` with:
+7. Call `igris_brief_sync` with:
    - project: current project slug
    - brief_id: the brief ID
    - brief_type: type from the brief
@@ -98,7 +98,13 @@ bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "hunt" 2>/dev/null || tru
    - effort: the brief's effort
    - phase: "INIT"
 
-   If brain MCP is not available, skip silently. No errors.
+   **If brain MCP is NOT available or the call fails:**
+   - Display: `WARNING: Brain sync skipped for {BRIEF_ID} — MCP unavailable. Queued locally for next /awaken or /sync data.`
+   - Append a JSON line to `~/.igris/cache/{project}/sync_queue.jsonl`:
+     ```json
+     {"timestamp":"{ISO-8601 now}","operation":"brief_sync","project":"{project}","brief_id":"{BRIEF_ID}","title":"{title}","status":"In Progress","priority":"{priority}","effort":"{effort}","brief_type":"{type}","phase":"INIT"}
+     ```
+   - Do NOT block the hunt workflow — continue to next step after warning.
 
 **Update brief Workflow State:**
 ```markdown
@@ -410,7 +416,14 @@ EOF
 
 3. Verify commit succeeded
 4. Update brief: Status = "Done", Completed = today
-5. If brain MCP available, call `igris_brief_sync` with status="Done", phase="COMMITTING". Skip silently if unavailable.
+5. Call `igris_brief_sync` with status="Done", phase="COMMITTING".
+   **If brain MCP is NOT available or the call fails:**
+   - Display: `WARNING: Brain sync skipped for {BRIEF_ID} (status=Done) — MCP unavailable. Queued locally for next /awaken or /sync data.`
+   - Append a JSON line to `~/.igris/cache/{project}/sync_queue.jsonl`:
+     ```json
+     {"timestamp":"{ISO-8601 now}","operation":"brief_sync","project":"{project}","brief_id":"{BRIEF_ID}","title":"{title}","status":"Done","phase":"COMMITTING"}
+     ```
+   - Do NOT block the hunt workflow — continue to COMPLETE.
 6. Proceed to COMPLETE
 
 ### Phase 8: COMPLETE
