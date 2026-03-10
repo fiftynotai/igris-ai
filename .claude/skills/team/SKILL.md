@@ -703,6 +703,56 @@ If `~/.igris/cache/{project}/session/CURRENT_SESSION.md` shows a Team State but 
 
 ---
 
+## Quality Gate Hooks (FR-090)
+
+Agent Teams integrates two Claude Code hooks for automated quality enforcement:
+
+### TaskCompleted Hook
+
+**Trigger:** When a teammate attempts to mark a task as complete.
+
+**Behavior:**
+- Inspects the teammate's `last_assistant_message` for test pass/fail evidence
+- If tests explicitly failed: exit code 2 prevents completion, sends feedback:
+  "Tests must pass before completing. Run tests, fix failures, and try again."
+- If tests passed or no test evidence (non-test tasks): allows completion
+- Events are logged to the brain API as `team.task_completed`
+
+**Gate Logic:**
+- Explicit failure indicators (e.g., "tests failed", "lint errors") trigger denial
+- Explicit pass indicators (e.g., "all tests passed", "lint passed") allow through
+- Ambiguous or missing evidence allows completion (avoids blocking non-test tasks)
+
+### TeammateIdle Hook
+
+**Trigger:** When a teammate is about to go idle (finished all assigned work).
+
+**Behavior:**
+- Queries the brain task queue via `POST /api/tasks/next` for the project
+- If a task is found: exit code 2 sends the assignment as feedback, keeps teammate working
+- If no tasks available: exit code 0 allows the teammate to go idle
+- Assignment includes task ID, title, description, priority, and instructions
+- Events are logged to the brain API as `team.teammate_idle`
+
+**Task Assignment Flow:**
+1. Check local brain (localhost:3001)
+2. If no local brain, check remote brain (~/.igris/config.json)
+3. If a task is found, auto-assign it to the teammate
+4. Teammate receives the task description as feedback and continues working
+
+### Distinction: Agent Teams vs Brain-Level Quality Gates
+
+| Layer | Scope | Mechanism |
+|-------|-------|-----------|
+| **Agent Teams hooks** (CLI-native) | Intra-CLI parallelism | `TaskCompleted` exit code 2 prevents completion |
+| **Brain task verification** (universal) | Inter-CLI orchestration | `igris_task_complete` validates before status change |
+
+Agent Teams hooks are CLI-specific quality gates that work within a single Claude Code session. Brain-level task completion verification (`igris_task_complete`) is the universal gate that works across all CLIs and agents, including non-Claude Code agents in v6 cross-CLI workflows.
+
+Both layers can coexist: the Agent Teams hook provides fast, local quality enforcement, while the brain provides the source of truth for task status across all agents.
+
+---
+
 ## Limitations
 
 - **No session resume:** If the lead session ends, all teammates are lost. Committed work persists independently via git, but team coordination state is not recoverable.

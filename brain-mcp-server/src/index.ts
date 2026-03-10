@@ -1185,9 +1185,11 @@ async function runHttp(config: ServerConfig): Promise<void> {
   //   ?project=<slug> — project slug (set statically in settings.json URL)
   //
   // Supported hook_event_name values:
-  //   - SubagentStart  → agent_events (start) + event_log
-  //   - SubagentStop   → agent_events (stop) + agent_metrics + event_log
-  //   - Stop           → event_log (session.stop)
+  //   - SubagentStart   → agent_events (start) + event_log
+  //   - SubagentStop    → agent_events (stop) + agent_metrics + event_log
+  //   - TaskCompleted   → event_log (team.task_completed) — quality gate result
+  //   - TeammateIdle    → event_log (team.teammate_idle) — work assignment result
+  //   - Stop            → event_log (session.stop)
   app.post('/api/hooks/event', express.json(), (req: Request, res: Response) => {
     try {
       const body = req.body as Record<string, unknown>;
@@ -1293,6 +1295,50 @@ async function runHttp(config: ServerConfig): Promise<void> {
         results.push({ table: 'event_log', id: elResult.lastInsertRowid });
 
         res.status(201).json({ ok: true, hook: hookEvent, agent: agentType, result: agentResult, results });
+
+      } else if (hookEvent === 'TaskCompleted') {
+        const taskId = body.task_id as string | undefined;
+        const gateResult = (body.gate_result as string) || 'unknown';
+
+        // Insert into event_log
+        const elResult = db.prepare(`
+          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
+          VALUES ('team.task_completed', 'hooks', ?, ?, ?, ?, ?)
+        `).run(
+          JSON.stringify({ task_id: taskId, gate_result: gateResult, hook: 'TaskCompleted' }),
+          hostname, projectSlug || null, instanceId || null, now
+        );
+        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
+
+        res.status(201).json({ ok: true, hook: hookEvent, gate_result: gateResult, results });
+
+      } else if (hookEvent === 'TeammateIdle') {
+        const teammateId = body.teammate_id as string | undefined;
+        const assignedTaskId = body.assigned_task_id as string | undefined;
+        const assignedTaskTitle = body.assigned_task_title as string | undefined;
+
+        // Insert into event_log
+        const elResult = db.prepare(`
+          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
+          VALUES ('team.teammate_idle', 'hooks', ?, ?, ?, ?, ?)
+        `).run(
+          JSON.stringify({
+            teammate_id: teammateId,
+            assigned_task_id: assignedTaskId,
+            assigned_task_title: assignedTaskTitle,
+            hook: 'TeammateIdle',
+          }),
+          hostname, projectSlug || null, instanceId || null, now
+        );
+        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
+
+        res.status(201).json({
+          ok: true,
+          hook: hookEvent,
+          assigned: !!assignedTaskId,
+          assigned_task_id: assignedTaskId || null,
+          results,
+        });
 
       } else if (hookEvent === 'Stop') {
         const sessionId = body.session_id as string | undefined;
