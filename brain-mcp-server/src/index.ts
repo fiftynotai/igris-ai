@@ -40,6 +40,8 @@ import { handleInstanceRemove, handleInstanceHeartbeat } from './tools/instances
 import { handleTaskNext, handleTaskClaim, handleTaskComplete, handleTaskFail, handleTaskUpdate } from './engine/components/tasks/handlers.js';
 import { handleProjectBudget, handleProjectBudgetSet } from './tools/projects.js';
 import { handleBriefVelocity } from './tools/briefs.js';
+import { handleMetricsRecord } from './tools/metrics.js';
+import type { MetricsRecordInput } from './tools/metrics.js';
 
 // Sync tables config (used by HTTP /sync/push and /sync/pull endpoints)
 import { SYNC_TABLES, mergeRows } from './tools/sync.js';
@@ -1042,6 +1044,34 @@ async function runHttp(config: ServerConfig): Promise<void> {
     } catch (err) {
       const message = errMsg(err);
       console.error('[brain] GET /api/agent-metrics/by-project error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // POST /api/metrics — Record an agent performance metric (used by SubagentStop hook)
+  app.post('/api/metrics', express.json(), (req: Request, res: Response) => {
+    try {
+      const args = req.body as MetricsRecordInput;
+
+      if (!args.project || !args.agent || !args.action || !args.result) {
+        res.status(400).json({ error: 'Missing required fields: project, agent, action, result' });
+        return;
+      }
+
+      const validResults = ['success', 'failure', 'partial', 'blocked'];
+      if (!validResults.includes(args.result)) {
+        res.status(400).json({ error: `Invalid result: ${args.result}. Must be one of: ${validResults.join(', ')}` });
+        return;
+      }
+
+      const result = handleMetricsRecord(args);
+      const idMatch = result.content[0].text.match(/ID: (\d+)/);
+      const insertedId = idMatch ? parseInt(idMatch[1], 10) : null;
+
+      res.status(201).json({ ok: true, id: insertedId });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] POST /api/metrics error:', message);
       res.status(500).json({ error: message });
     }
   });
