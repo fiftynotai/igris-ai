@@ -3,7 +3,7 @@ set -e  # Note: overridden at main() invocation because hooks must always exit 0
 
 # Description: SubagentStart/SubagentStop hook for Claude Code lifecycle integration.
 #              Tracks agent invocations, timing, token usage, and success rates in the
-#              Igris AI metrics system. Uses flock for concurrency safety.
+#              local Igris AI metrics system. Uses flock for concurrency safety.
 #              v3.0.0: Auto-records agent metrics to the brain via REST API on SubagentStop.
 #              Parses last_assistant_message for success/failure verdict, maps agent_type
 #              to action, and reads active brief from CURRENT_SESSION.md.
@@ -13,6 +13,15 @@ set -e  # Note: overridden at main() invocation because hooks must always exit 0
 # Dependencies: python3, flock (optional - degrades gracefully)
 # Exit codes:
 #   0 - Always (hooks must never fail)
+#
+# DEPRECATION NOTICE (FR-088):
+#   As of FR-088, SubagentStart/SubagentStop hooks are now HTTP hooks that POST
+#   directly to the brain REST API (POST /api/hooks/event). This shell script is
+#   no longer registered in settings.json but is kept for:
+#   - Local metrics file tracking (agent-metrics.json, events.jsonl)
+#   - Transcript token parsing (requires local file I/O)
+#   - Dashboard POST (non-brain dashboard endpoints)
+#   The brain-side agent_events/agent_metrics recording is handled by the HTTP hook.
 
 # Navigate to project root
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"

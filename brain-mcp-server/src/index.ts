@@ -51,6 +51,7 @@ import { processStagingFiles } from './staging.js';
 
 // Database lifecycle
 import { getDb, closeDb, DB_PATH, BRAIN_DIR } from './db.js';
+import * as os from 'node:os';
 
 /** Timestamp when this server process started, used for uptime calculation. */
 const SERVER_START_TIME = Date.now();
@@ -1072,6 +1073,258 @@ async function runHttp(config: ServerConfig): Promise<void> {
     } catch (err) {
       const message = errMsg(err);
       console.error('[brain] POST /api/metrics error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // HTTP Hook Event Ingestion (FR-088)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Agent name normalization map: Claude Code built-in agent names to
+   * Igris canonical agent names. Same mapping as agent_metrics.sh.
+   */
+  const AGENT_NAME_MAP: Record<string, string> = {
+    planner: 'architect',
+    coder: 'forger',
+    tester: 'sentinel',
+    reviewer: 'warden',
+    debugger: 'mender',
+    explorer: 'seeker',
+    Explore: 'seeker',
+    'claude-code-guide': 'seeker',
+    documenter: 'forger',
+    releaser: 'forger',
+    auditor: 'warden',
+    ideator: 'architect',
+  };
+
+  /**
+   * Agent-to-action mapping for metrics recording.
+   */
+  const AGENT_ACTION_MAP: Record<string, string> = {
+    architect: 'plan',
+    forger: 'implement',
+    sentinel: 'test',
+    warden: 'review',
+    mender: 'debug',
+    seeker: 'research',
+    sage: 'advise',
+  };
+
+  /**
+   * Parse the last_assistant_message to determine success or failure.
+   * Returns 'success' or 'failure'.
+   */
+  function parseAgentResult(lastMsg: string | undefined): 'success' | 'failure' {
+    if (!lastMsg) return 'success';
+    const lower = lastMsg.toLowerCase();
+
+    const failIndicators = [
+      'fail', 'failed', 'failure',
+      'reject', 'rejected',
+      'error', 'errors found',
+      'blocked',
+      'not pass', 'did not pass',
+      'tests failing',
+    ];
+    const passIndicators = [
+      'pass', 'passed', 'success',
+      'approve', 'approved',
+      'complete', 'completed',
+      'all tests pass',
+      'lgtm', 'looks good',
+    ];
+
+    const hasFail = failIndicators.some(ind => lower.includes(ind));
+    const hasPass = passIndicators.some(ind => lower.includes(ind));
+
+    if (hasFail && !hasPass) return 'failure';
+    if (hasFail && hasPass) {
+      // Ambiguous: check last occurrence position
+      const lastFailPos = Math.max(...failIndicators.map(ind => lower.lastIndexOf(ind)).filter(p => p >= 0));
+      const lastPassPos = Math.max(...passIndicators.map(ind => lower.lastIndexOf(ind)).filter(p => p >= 0));
+      return lastPassPos > lastFailPos ? 'success' : 'failure';
+    }
+    return 'success';
+  }
+
+  /**
+   * Read the active brief ID from a session file content string.
+   */
+  function extractBriefFromSession(sessionContent: string): string {
+    for (const line of sessionContent.split('\n')) {
+      if (line.includes('Active Brief') || line.includes('Last Active')) {
+        const match = line.match(/([A-Z]+-\d+)/);
+        if (match) return match[1];
+      }
+    }
+    return '';
+  }
+
+  /**
+   * Read the instance ID from a session file content string.
+   */
+  function extractInstanceIdFromSession(sessionContent: string): string {
+    for (const line of sessionContent.split('\n')) {
+      if (line.includes('Instance ID')) {
+        const match = line.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+        if (match) return match[1];
+      }
+    }
+    return '';
+  }
+
+  // POST /api/hooks/event — Ingest raw Claude Code hook payloads (FR-088)
+  //
+  // Accepts the JSON that Claude Code sends to HTTP hooks and routes it
+  // to the appropriate brain tables based on hook_event_name.
+  //
+  // Query params:
+  //   ?project=<slug> — project slug (set statically in settings.json URL)
+  //
+  // Supported hook_event_name values:
+  //   - SubagentStart  → agent_events (start) + event_log
+  //   - SubagentStop   → agent_events (stop) + agent_metrics + event_log
+  //   - Stop           → event_log (session.stop)
+  app.post('/api/hooks/event', express.json(), (req: Request, res: Response) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+      const hookEvent = body.hook_event_name as string | undefined;
+
+      if (!hookEvent) {
+        res.status(400).json({ error: 'Missing hook_event_name field' });
+        return;
+      }
+
+      const db = getDb();
+      const hostname = os.hostname();
+      const now = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+      const projectSlug = (req.query.project as string) || '';
+
+      // Read session file for instance_id and brief_id if project is known
+      let instanceId = '';
+      let briefId = '';
+      if (projectSlug) {
+        try {
+          const sessionPath = path.join(BRAIN_DIR, 'cache', projectSlug, 'session', 'CURRENT_SESSION.md');
+          if (existsSync(sessionPath)) {
+            const content = readFileSync(sessionPath, 'utf-8');
+            instanceId = extractInstanceIdFromSession(content);
+            briefId = extractBriefFromSession(content);
+          }
+        } catch { /* session file read is best-effort */ }
+      }
+
+      const results: { table: string; id: number | bigint | null }[] = [];
+
+      if (hookEvent === 'SubagentStart') {
+        const rawAgentType = (body.agent_type as string) || (body.agent_id as string) || 'unknown';
+        const agentType = AGENT_NAME_MAP[rawAgentType] ?? rawAgentType;
+
+        // Insert into agent_events
+        if (instanceId) {
+          const aeResult = db.prepare(`
+            INSERT INTO agent_events
+              (instance_id, agent, event_type, phase, brief_id,
+               duration_ms, input_tokens, output_tokens, cache_read, cache_create,
+               result, error_message, metadata)
+            VALUES (?, ?, 'start', NULL, ?, 0, 0, 0, 0, 0, NULL, NULL, '{}')
+          `).run(instanceId, agentType, briefId);
+          results.push({ table: 'agent_events', id: aeResult.lastInsertRowid });
+        }
+
+        // Insert into event_log
+        const elResult = db.prepare(`
+          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
+          VALUES ('agent.start', 'hooks', ?, ?, ?, ?, ?)
+        `).run(
+          JSON.stringify({ agent: agentType, raw_type: rawAgentType, hook: 'SubagentStart' }),
+          hostname, projectSlug || null, instanceId || null, now
+        );
+        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
+
+        res.status(201).json({ ok: true, hook: hookEvent, agent: agentType, results });
+
+      } else if (hookEvent === 'SubagentStop') {
+        const rawAgentType = (body.agent_type as string) || (body.agent_id as string) || 'unknown';
+        const agentType = AGENT_NAME_MAP[rawAgentType] ?? rawAgentType;
+        const lastMsg = body.last_assistant_message as string | undefined;
+        const agentResult = parseAgentResult(lastMsg);
+        const action = AGENT_ACTION_MAP[agentType] ?? 'execute';
+
+        // Token parsing from transcript is not possible server-side (local file),
+        // so we accept zeros here. The main_agent_metrics.sh command hook handles
+        // transcript parsing separately and posts to /api/metrics.
+        // If the hook payload includes token data in the future, we'll use it.
+
+        // Insert into agent_events
+        if (instanceId) {
+          const aeResult = db.prepare(`
+            INSERT INTO agent_events
+              (instance_id, agent, event_type, phase, brief_id,
+               duration_ms, input_tokens, output_tokens, cache_read, cache_create,
+               result, error_message, metadata)
+            VALUES (?, ?, 'stop', NULL, ?, 0, 0, 0, 0, 0, ?, NULL, '{}')
+          `).run(instanceId, agentType, briefId, agentResult);
+          results.push({ table: 'agent_events', id: aeResult.lastInsertRowid });
+        }
+
+        // Insert into agent_metrics
+        if (projectSlug) {
+          try {
+            const mResult = db.prepare(`
+              INSERT INTO agent_metrics (project, agent, brief_id, action, result, duration_ms, retry_count)
+              VALUES (?, ?, ?, ?, ?, 0, 0)
+            `).run(projectSlug, agentType, briefId, action, agentResult);
+            results.push({ table: 'agent_metrics', id: mResult.lastInsertRowid });
+          } catch { /* metrics insert is best-effort */ }
+        }
+
+        // Insert into event_log
+        const elResult = db.prepare(`
+          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
+          VALUES ('agent.stop', 'hooks', ?, ?, ?, ?, ?)
+        `).run(
+          JSON.stringify({ agent: agentType, raw_type: rawAgentType, result: agentResult, hook: 'SubagentStop' }),
+          hostname, projectSlug || null, instanceId || null, now
+        );
+        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
+
+        res.status(201).json({ ok: true, hook: hookEvent, agent: agentType, result: agentResult, results });
+
+      } else if (hookEvent === 'Stop') {
+        const sessionId = body.session_id as string | undefined;
+
+        // Insert into event_log
+        const elResult = db.prepare(`
+          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
+          VALUES ('session.stop', 'hooks', ?, ?, ?, ?, ?)
+        `).run(
+          JSON.stringify({ session_id: sessionId, hook: 'Stop' }),
+          hostname, projectSlug || null, instanceId || null, now
+        );
+        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
+
+        res.status(201).json({ ok: true, hook: hookEvent, results });
+
+      } else {
+        // Unknown hook event — log it generically
+        const elResult = db.prepare(`
+          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
+          VALUES (?, 'hooks', ?, ?, ?, ?, ?)
+        `).run(
+          `hook.${hookEvent.toLowerCase()}`, JSON.stringify(body),
+          hostname, projectSlug || null, instanceId || null, now
+        );
+        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
+
+        res.status(201).json({ ok: true, hook: hookEvent, results });
+      }
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] POST /api/hooks/event error:', message);
       res.status(500).json({ error: message });
     }
   });
