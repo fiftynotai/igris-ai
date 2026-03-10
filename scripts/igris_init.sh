@@ -172,6 +172,31 @@ EOF
 echo "🤖 Setting up Claude Code integration..."
 mkdir -p .claude/hooks
 
+# Disable Claude Code built-in git instructions (BR-058)
+# Igris commit standards (03-igris-commits.md) are the sole authority
+SETTINGS_FILE=".claude/settings.json"
+if [ -f "$SETTINGS_FILE" ]; then
+  python3 -c "
+import json, sys
+settings_file = sys.argv[1]
+with open(settings_file, 'r') as f:
+    settings = json.load(f)
+settings['includeGitInstructions'] = False
+with open(settings_file, 'w') as f:
+    json.dump(settings, f, indent=2)
+    f.write('\n')
+" "$SETTINGS_FILE"
+else
+  python3 -c "
+import json, sys
+settings = {'includeGitInstructions': False}
+with open(sys.argv[1], 'w') as f:
+    json.dump(settings, f, indent=2)
+    f.write('\n')
+" "$SETTINGS_FILE"
+fi
+echo "   ✅ Git instructions disabled (Igris commit rules take priority)"
+
 # Install native agents (v5.0)
 echo "🤖 Installing native agents..."
 mkdir -p .claude/agents

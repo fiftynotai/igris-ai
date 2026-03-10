@@ -702,6 +702,18 @@ fixes #BR-XXX
 refs #MG-XXX
 ```
 
+### Disable Built-in Git Instructions
+
+Claude Code includes built-in git commit instructions that add `Co-Authored-By` tags and other AI signatures. Igris explicitly disables these via `.claude/settings.json`:
+
+```json
+{
+  "includeGitInstructions": false
+}
+```
+
+**Why:** Igris commit standards (`03-igris-commits.md`) are the sole authority on commit format. The built-in instructions conflict with our no-AI-signatures rule. Both installers (`igris_init.sh` and `igris_install.sh`) set this automatically for new projects.
+
 ---
 
 ## 17. Code Review Checklist

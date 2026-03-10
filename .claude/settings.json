@@ -1,4 +1,5 @@
 {
+  "includeGitInstructions": false,
   "permissions": {
     "allow": [
       "mcp__igris-brain__*"
