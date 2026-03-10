@@ -8,7 +8,7 @@ Igris AI transforms Claude Code from a single general-purpose assistant into a d
 
 It is not a wrapper, a prompt library, or a set of templates. Igris is a complete operating system: agents with defined roles, a brief-first protocol that tracks every change, a centralized brain that remembers across projects, and quality gates that enforce standards before code is committed.
 
-**7 Agents** | **21 Skills** | **27 Brain Tools** | **9 Brief Types** | **13 Scripts**
+**7 Agents** | **20 Skills** | **67 Brain Tools** | **9 Brief Types** | **13 Scripts**
 
 Plan. Build. Test. Review. Document. Ship. Maintain.
 
@@ -50,7 +50,7 @@ Layer 3: Agent Teams (experimental)
 
 ### The Centralized Brain
 
-Every Igris installation connects to a centralized brain at `~/.igris/`. The brain stores persistent memory in SQLite (WAL + FTS5), serves 27 MCP tools, and keeps core files in sync across all projects through symlinks.
+Every Igris installation connects to a centralized brain at `~/.igris/`. The brain stores persistent memory in SQLite (WAL + FTS5), serves 67 MCP tools across 13 components, and keeps core files in sync across all projects through symlinks.
 
 Update the brain once -- every project gets the update instantly.
 
@@ -145,7 +145,7 @@ Agents are defined as native Claude Code agent files in `.claude/agents/`. Each 
 
 ---
 
-## 21 Skills
+## 20 Skills
 
 Skills are slash commands defined in `.claude/skills/*/SKILL.md`. They replaced 11 retired agents in v3.4, reducing complexity while preserving all capabilities.
 
@@ -200,76 +200,46 @@ The brain lives at `~/.igris/` and provides persistent memory, cross-project int
            +---------------------+
 ```
 
-### 27 MCP Tools
+### 67 MCP Tools (13 Components)
 
 Tools are available globally via the `igris-brain` MCP server.
 
-**Memory (4 tools)**
+| Component | Tools | Purpose |
+|-----------|-------|---------|
+| **Memory** | 4 | Store, search, recall learnings; error solution catalog |
+| **Projects** | 4 | Register, list, status, pattern recommendations |
+| **Metrics** | 3 | Record, query, velocity dashboards |
+| **Sessions** | 5 | Sync, recall, file push/pull across projects |
+| **Briefs** | 8 | CRUD, sync, dashboard, file management |
+| **Tasks** | 13 | Create, claim, assign, block, complete, fail, retry, list, results |
+| **Instances** | 3 | Heartbeat, list, remove live instances |
+| **Sync** | 4 | Push/pull brain data, queue management |
+| **Cache** | 2 | Rebuild/clean brain-to-filesystem cache |
+| **Schedules** | 7 | Create, list, enable/disable, fire, delete cron jobs |
+| **Coordination** | 4 | Auto-route, adjust priorities, audit, self-heal |
+| **Monitoring** | 2 | Event log, event log cleanup |
+| **Definitions** | 3 | Sync/pull agent, skill, and rule definitions |
+| **Files** | 3 | Push/pull files to/from remote brain |
+| **Capabilities** | 2 | List/set agent capabilities per instance |
 
-| Tool | Purpose |
-|------|---------|
-| `igris_memory_store` | Store a learning |
-| `igris_memory_search` | Full-text search learnings |
-| `igris_memory_recall` | Contextual retrieval |
-| `igris_error_lookup` | Error solution catalog |
+### 31 REST API Endpoints
 
-**Projects (4 tools)**
+Full HTTP API with API key authentication, rate limiting, and SSE streaming:
 
-| Tool | Purpose |
-|------|---------|
-| `igris_project_register` | Register a project |
-| `igris_project_list` | List all projects |
-| `igris_project_status` | Project dashboard |
-| `igris_pattern_suggest` | Pattern recommendations |
-
-**Metrics (3 tools)**
-
-| Tool | Purpose |
-|------|---------|
-| `igris_metrics_record` | Record agent metric |
-| `igris_metrics_query` | Query metrics |
-| `igris_metrics_velocity` | Velocity dashboard |
-
-**Sessions (3 tools)**
-
-| Tool | Purpose |
-|------|---------|
-| `igris_session_sync` | Sync session snapshot |
-| `igris_session_recall` | Recall recent sessions |
-| `igris_session_file_sync` | Push session file to brain |
-
-**Briefs (3 tools)**
-
-| Tool | Purpose |
-|------|---------|
-| `igris_brief_sync` | Sync brief status |
-| `igris_brief_dashboard` | Cross-project brief dashboard |
-| `igris_brief_file_sync` | Push brief file to brain |
-
-**Instances (3 tools)**
-
-| Tool | Purpose |
-|------|---------|
-| `igris_instance_heartbeat` | Register or refresh instance |
-| `igris_instance_list` | List active instances |
-| `igris_instance_remove` | Remove an instance |
-
-**Sync (4 tools)**
-
-| Tool | Purpose |
-|------|---------|
-| `igris_brain_push` | Push data to remote brain |
-| `igris_brain_pull` | Pull data from remote brain |
-| `igris_sync_queue_status` | Check sync queue |
-| `igris_sync_queue_drain` | Drain pending sync operations |
-
-**Definitions (3 tools)**
-
-| Tool | Purpose |
-|------|---------|
-| `igris_definition_sync` | Push agent/skill definitions to brain |
-| `igris_definition_pull` | Pull definitions from brain |
-| `igris_session_file_pull` | Pull session file from brain |
+| Category | Endpoints | Highlights |
+|----------|-----------|------------|
+| **Health & Auth** | 2 | Health check, API key validation |
+| **Projects** | 3 | List, status, budget tracking |
+| **Briefs** | 4 | List, dashboard, velocity, status updates |
+| **Tasks** | 5 | List, lifecycle (claim, complete, fail, release) |
+| **Instances** | 2 | List active, heartbeat |
+| **Events** | 2 | Query event log, SSE streaming |
+| **Metrics** | 2 | Agent metrics, record metrics |
+| **Hooks** | 1 | Ingest Claude Code hook events (`POST /api/hooks/event`) |
+| **Skills** | 2 | List skills, usage tracking |
+| **Sync** | 4 | Push, pull, file push, file pull |
+| **Definitions** | 2 | Sync, pull definitions |
+| **Schedules** | 2 | List, fire now |
 
 ### Concurrency
 
@@ -510,6 +480,8 @@ Agent Teams is an experimental parallel execution layer that spawns multiple ind
 | Parallel Refactoring | `/team refactor mod-a mod-b` | Each module refactored independently |
 
 **Management:** `/team status`, `/team message <name> <msg>`, `/team broadcast <msg>`, `/team shutdown`
+
+**Quality Gates:** `TaskCompleted` hook verifies test evidence before allowing completion. `TeammateIdle` hook auto-assigns the next brain task to idle teammates.
 
 **When to use:** Single brief -- use `/hunt`. Multiple briefs in parallel -- use `/team hunt`.
 

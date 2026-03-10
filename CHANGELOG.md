@@ -11,13 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [5.0.0] - 2026-03-03
+## [5.0.0] - 2026-03-10
 
 ### Added
 
 - **Modular Engine Architecture** -- 13 domain components (memory, errors, projects, metrics, sessions, briefs, tasks, instances, sync, cache, schedules, coordination, monitoring) with event bus, dependency resolution, and lifecycle management
 - **67 MCP Tools** -- expanded from 27 tools in v4.0 to 67 across 13 components
-- **29 REST API Endpoints** -- full HTTP API with auth, rate limiting, SSE streaming
+- **31 REST API Endpoints** -- full HTTP API with auth, rate limiting, SSE streaming, hook event ingestion, metrics recording
 - **Task Management System** -- 13 task tools, DAG dependencies, atomic claim, capability-filtered routing, 9 task types
 - **Task Results Storage** -- `task_results` table with 7 result types (commit, file, text, image, url, json, error)
 - **Distributed Worker Daemon** -- `igris_worker.sh` polling daemon with concurrency control, auto-sleep, capability-based task matching
@@ -28,17 +28,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Cache Layer** -- brain-to-filesystem cache rebuild/clean for offline access
 - **Brief & Session CRUD** -- 6 new MCP tools for direct brief/session management
 - **Sync Auto-Push** -- event-driven brain replication with batched window and queue retry
-- **Skill & Rule Path Migration** -- all 21 skills, 5 rules, prompts moved to MCP-first with cache fallback
+- **Skill & Rule Path Migration** -- all 20 skills, 5 rules, prompts moved to MCP-first with cache fallback
+- **HTTP Hooks for Brain Events** -- SubagentStart, SubagentStop, and Stop hooks POST directly to brain REST API (`POST /api/hooks/event`), replacing shell script event pipeline (FR-088)
+- **Auto Agent Metrics via SubagentStop** -- hook automatically records agent type, duration, and result to brain on every subagent completion, eliminating manual orchestrator metrics calls (FR-089)
+- **Agent Teams Quality Gate Hooks** -- `TaskCompleted` hook verifies test evidence before allowing completion; `TeammateIdle` hook assigns next brain task to idle teammates (FR-090)
+- **Hook Event JSON Schema** -- `docs/HOOK_EVENT_SCHEMA.md` documents the event format for cross-CLI adapter reuse in v6 (FR-088)
+- **Auto-Allow Brain MCP Tools** -- glob pattern in `.claude/settings.json` pre-approves all `mcp__igris-brain__*` tools
+- **Brief Dashboard Summary Mode** -- `igris_brief_dashboard` supports `summary_only: true` to return counts without full brief content, preventing context bloat (BR-057)
+- **Sync Queue for MCP Outages** -- skills queue brain operations locally when MCP server is unavailable, with visible warnings (BR-045)
 
 ### Changed
 
 - **Brain engine rewritten** -- monolithic index.ts replaced with modular component architecture
 - **Database expanded** -- ~30 tables (up from ~15 in v4.0), 4 migration waves
 - **Tool count tripled** -- 27 tools (v4.0) -> 67 tools (v5.0)
+- **Built-in git instructions disabled** -- `includeGitInstructions: false` in settings.json ensures Igris commit standards are the sole authority, preventing Co-Authored-By tag conflicts (BR-058)
+- **Shared FTS5 sanitizer** -- extracted to `brain-mcp-server/src/utils/fts5.ts` with empty-string guards, used by memory, errors, and briefs components (BR-055)
+- **Stale references cleaned** -- removed all remaining `ai/` directory references from prompts, hooks, and templates (BR-053)
 
 ### Removed
 
 - **Crimson Arena Dashboard** -- extracted to separate repository (crimson-arena) for independent development
+- **Higgsfield MCP Server** -- removed `tools/higgsfield-mcp/` and `/higgsfield` skill; functionality replaced by browser automation via `claude-in-chrome` (BR-056)
 
 ---
 
