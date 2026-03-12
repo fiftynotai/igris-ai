@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Modular Engine Architecture** -- 13 domain components (memory, errors, projects, metrics, sessions, briefs, tasks, instances, sync, cache, schedules, coordination, monitoring) with event bus, dependency resolution, and lifecycle management
 - **67 MCP Tools** -- expanded from 27 tools in v4.0 to 67 across 13 components
-- **31 REST API Endpoints** -- full HTTP API with auth, rate limiting, SSE streaming, hook event ingestion, metrics recording
+- **34 REST API Endpoints** -- full HTTP API with auth, rate limiting, SSE streaming, hook event ingestion, metrics recording
 - **Task Management System** -- 13 task tools, DAG dependencies, atomic claim, capability-filtered routing, 9 task types
 - **Task Results Storage** -- `task_results` table with 7 result types (commit, file, text, image, url, json, error)
 - **Distributed Worker Daemon** -- `igris_worker.sh` polling daemon with concurrency control, auto-sleep, capability-based task matching
