@@ -90,40 +90,9 @@ No copy drift. No sync scripts. No version mismatch between projects. One source
 /hunt BR-005
 ```
 
-```
-INIT (orchestrator)
-  Read brief, assess complexity, update status to In Progress
-      |
-PLANNING (architect)
-  Analyze requirements, create implementation plan
-  Read-only agent: Grep, Glob, Read -- cannot modify files
-      |
-APPROVAL GATE
-  S/M complexity: auto-approve
-  L/XL complexity: requires user approval
-      |
-BUILDING (forger)
-  Implement code following the plan and coding_guidelines.md
-  Full write access: Read, Write, Edit, Bash, Grep, Glob
-      |
-TESTING (sentinel) -----> FAIL? -----> MENDER diagnoses
-  Run linter, tests, validation                |
-  Max 3 retries                           FORGER fixes
-      |                                        |
-      |  <-------- re-test <-------------------+
-      |
-REVIEWING (warden) -----> REJECT? -----> FORGER fixes
-  Quality, security, architecture               |
-  Max 2 rejects                                  |
-      |  <-------- re-review <------------------+
-      |
-DOCUMENTING (conditional)
-  New APIs or component changes: /document skill runs
-  Bug fixes or internal refactors: skipped
-      |
-COMMITTING (orchestrator)
-  Conventional commit, update brief to Done, record metrics
-```
+![HUNT Workflow](docs/images/hunt-workflow.png)
+
+**Eight phases, fully autonomous.** The orchestrator reads the brief, the architect plans (read-only), the forger builds, the sentinel tests, the warden reviews (read-only), and the orchestrator commits. Documenting runs conditionally for new APIs and component changes.
 
 **Self-healing loop:** Test failures route through mender (diagnosis) and forger (fix) automatically. Three failures and the brief enters BLOCKED -- human intervention required. Review rejections follow the same pattern with a two-reject limit.
 
@@ -133,25 +102,7 @@ COMMITTING (orchestrator)
 
 ## The Brain
 
-```
-+-----------+  +-----------+  +-----------+
-| Project A |  | Project B |  | Project C |
-|  (Claude) |  |  (Claude) |  |  (Claude) |
-+-----+-----+  +-----+-----+  +-----+-----+
-      |               |               |
-      |  symlinks +   |  symlinks +   |  symlinks +
-      |  MCP calls    |  MCP calls    |  MCP calls
-      +---------------+---------------+
-                      |
-           +----------v----------+
-           |  ~/.igris/ (BRAIN)  |
-           |                     |
-           |  core/ (symlinked)  |
-           |  knowledge.db (WAL) |
-           |  staging/ (hooks)   |
-           |  mcp-server/        |
-           +---------------------+
-```
+![Brain Architecture](docs/images/brain-architecture.png)
 
 ### 67 MCP Tools (13 Components)
 
