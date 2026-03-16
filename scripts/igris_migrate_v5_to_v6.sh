@@ -731,11 +731,161 @@ setup_project_symlinks() {
 }
 
 # ============================================================
-# Step 9: Verification
+# Step 9: Migrate repo briefs (ai/briefs/) → brain DB
+# ============================================================
+
+migrate_repo_briefs() {
+  echo "Step 9: Migrate repo briefs to brain DB"
+  echo "----------------------------------------"
+
+  if [ ! -f "$DB_PATH" ]; then
+    log_warn "No knowledge.db — skipping brief migration"
+    echo ""
+    return
+  fi
+
+  local projects
+  projects=$(sqlite3 "$DB_PATH" "SELECT slug, path FROM projects WHERE status = 'active';" 2>/dev/null) || true
+
+  if [ -z "$projects" ]; then
+    log_skip "No active projects in DB"
+    echo ""
+    return
+  fi
+
+  local total_migrated=0
+  local total_skipped=0
+  local total_failed=0
+
+  echo "$projects" | while IFS='|' read -r slug proj_path; do
+    local briefs_dir="$proj_path/ai/briefs"
+
+    # Skip if no ai/briefs/ directory
+    if [ ! -d "$briefs_dir" ]; then
+      continue
+    fi
+
+    # Count brief files (exclude templates and non-brief files)
+    local brief_files
+    brief_files=$(find "$briefs_dir" -maxdepth 1 -name "*.md" \
+      ! -name "*TEMPLATE*" ! -name "*template*" ! -name "README*" \
+      2>/dev/null) || true
+
+    if [ -z "$brief_files" ]; then
+      log_skip "$slug: ai/briefs/ exists but no brief files"
+      continue
+    fi
+
+    local file_count
+    file_count=$(echo "$brief_files" | wc -l | tr -d ' ')
+    log_info "$slug: Found $file_count brief file(s) in ai/briefs/"
+
+    echo "$brief_files" | while read -r brief_file; do
+      [ ! -f "$brief_file" ] && continue
+
+      local filename
+      filename=$(basename "$brief_file" .md)
+
+      # Extract brief ID from filename (e.g., BR-008-fix-login → BR-008)
+      local brief_id
+      brief_id=$(echo "$filename" | grep -oE '^[A-Z]{2}-[0-9]{3}' 2>/dev/null) || true
+
+      if [ -z "$brief_id" ]; then
+        log_skip "  $filename: no valid brief ID found"
+        continue
+      fi
+
+      # Check if brief already exists in brain DB
+      local exists
+      exists=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM brief_files WHERE project_slug='$slug' AND brief_id='$brief_id';" 2>/dev/null) || exists="0"
+
+      if [ "$exists" -gt 0 ]; then
+        log_skip "  $brief_id: already in brain DB"
+        total_skipped=$((total_skipped + 1))
+        continue
+      fi
+
+      # Extract metadata from brief content
+      local title=""
+      local brief_type=""
+      local priority=""
+      local status=""
+
+      # Read title from first H1
+      title=$(grep -m1 '^# ' "$brief_file" 2>/dev/null | sed 's/^# //' | sed "s/^${brief_id}: //" | head -1) || true
+      [ -z "$title" ] && title="$filename"
+
+      # Read metadata fields
+      brief_type=$(grep -m1 '^\*\*Type:\*\*' "$brief_file" 2>/dev/null | sed 's/.*\*\*Type:\*\* *//' | tr -d ' ') || true
+      priority=$(grep -m1 '^\*\*Priority:\*\*' "$brief_file" 2>/dev/null | sed 's/.*\*\*Priority:\*\* *//' | tr -d ' ') || true
+      status=$(grep -m1 '^\*\*Status:\*\*' "$brief_file" 2>/dev/null | sed 's/.*\*\*Status:\*\* *//' | tr -d ' ') || true
+
+      # Defaults
+      [ -z "$brief_type" ] && brief_type="Bug"
+      [ -z "$priority" ] && priority="P2-Medium"
+      [ -z "$status" ] && status="Ready"
+
+      log_action "  $brief_id: Importing → brain DB (title: $title)"
+
+      if [ "$DRY_RUN" = false ]; then
+        # Read full content
+        local content
+        content=$(cat "$brief_file")
+
+        # Escape content for SQL (single quotes)
+        local escaped_content
+        escaped_content=$(echo "$content" | sed "s/'/''/g")
+        local escaped_title
+        escaped_title=$(echo "$title" | sed "s/'/''/g")
+
+        # Insert into brief_files
+        sqlite3 "$DB_PATH" "INSERT OR IGNORE INTO brief_files (project_slug, brief_id, filename, content, content_hash, updated_at)
+          VALUES ('$slug', '$brief_id', '$filename.md', '$escaped_content', '', datetime('now'));" 2>/dev/null || true
+
+        # Insert into brief_status
+        sqlite3 "$DB_PATH" "INSERT OR IGNORE INTO brief_status (project_slug, brief_id, title, status, priority, brief_type, updated_at)
+          VALUES ('$slug', '$brief_id', '$escaped_title', '$status', '$priority', '$brief_type', datetime('now'));" 2>/dev/null || true
+
+        if [ $? -eq 0 ]; then
+          total_migrated=$((total_migrated + 1))
+        else
+          log_error "  $brief_id: Failed to import"
+          total_failed=$((total_failed + 1))
+        fi
+      fi
+    done
+
+    # Also copy brief files to ~/.igris/projects/{slug}/briefs/ as filesystem backup
+    local dest_briefs="$BRAIN_DIR/projects/$slug/briefs"
+    if [ -d "$dest_briefs" ]; then
+      local copied=0
+      echo "$brief_files" | while read -r brief_file; do
+        [ ! -f "$brief_file" ] && continue
+        local bname
+        bname=$(basename "$brief_file")
+        if [ ! -f "$dest_briefs/$bname" ]; then
+          if [ "$DRY_RUN" = false ]; then
+            cp "$brief_file" "$dest_briefs/"
+            copied=$((copied + 1))
+          fi
+        fi
+      done
+      if [ "$copied" -gt 0 ] || [ "$DRY_RUN" = true ]; then
+        log_action "$slug: Copying brief files to ~/.igris/projects/$slug/briefs/"
+      fi
+    fi
+
+  done
+
+  echo ""
+}
+
+# ============================================================
+# Step 10: Verification
 # ============================================================
 
 verify() {
-  echo "Step 9: Verification"
+  echo "Step 10: Verification"
   echo "----------------------------------------"
 
   local checks_passed=0
@@ -848,6 +998,7 @@ main() {
   update_config
   update_db_paths
   setup_project_symlinks
+  migrate_repo_briefs
 
   if [ "$DRY_RUN" = false ]; then
     verify
