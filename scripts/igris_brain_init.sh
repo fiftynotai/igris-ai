@@ -447,7 +447,7 @@ echo ""
 # Get Igris AI source directory
 # ============================================================
 IGRIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-IGRIS_VERSION=$(cat "$IGRIS_DIR/version.txt" 2>/dev/null || echo "5.0.0")
+IGRIS_VERSION=$(cat "$IGRIS_DIR/version.txt" 2>/dev/null || echo "6.0.0")
 
 echo "📁 Source repo: $IGRIS_DIR"
 echo "📌 Version: $IGRIS_VERSION"
@@ -463,9 +463,9 @@ mkdir -p "$BRAIN_DIR/core/agents"
 mkdir -p "$BRAIN_DIR/core/skills"
 mkdir -p "$BRAIN_DIR/core/rules"
 mkdir -p "$BRAIN_DIR/core/templates"
-mkdir -p "$BRAIN_DIR/personas"
+mkdir -p "$BRAIN_DIR/core/task-handlers"
 mkdir -p "$BRAIN_DIR/memory/patterns"
-mkdir -p "$BRAIN_DIR/staging"
+mkdir -p "$BRAIN_DIR/projects"
 mkdir -p "$BRAIN_DIR/mcp-server"
 
 echo "   ✅ Directory tree created at $BRAIN_DIR"
@@ -476,60 +476,63 @@ echo "   ✅ Directory tree created at $BRAIN_DIR"
 echo "📄 Copying core files..."
 
 # Prompts
-if [ -d "$IGRIS_DIR/ai/prompts" ]; then
-  cp "$IGRIS_DIR/ai/prompts/"*.md "$BRAIN_DIR/core/prompts/" 2>/dev/null || true
+if [ -d "$IGRIS_DIR/core/prompts" ]; then
+  cp "$IGRIS_DIR/core/prompts/"*.md "$BRAIN_DIR/core/prompts/" 2>/dev/null || true
   echo "   ✅ Prompts copied"
 else
   echo "   ⚠️  No prompts directory found"
 fi
 
 # Agents
-if [ -d "$IGRIS_DIR/.claude/agents" ]; then
-  cp "$IGRIS_DIR/.claude/agents/"*.md "$BRAIN_DIR/core/agents/" 2>/dev/null || true
-  [ -f "$IGRIS_DIR/.claude/agents/manifest.yaml" ] && cp "$IGRIS_DIR/.claude/agents/manifest.yaml" "$BRAIN_DIR/core/agents/"
+if [ -d "$IGRIS_DIR/core/agents" ]; then
+  cp "$IGRIS_DIR/core/agents/"*.md "$BRAIN_DIR/core/agents/" 2>/dev/null || true
+  [ -f "$IGRIS_DIR/core/agents/manifest.yaml" ] && cp "$IGRIS_DIR/core/agents/manifest.yaml" "$BRAIN_DIR/core/agents/"
   echo "   ✅ Agents copied"
 else
   echo "   ⚠️  No agents directory found"
 fi
 
 # Skills
-if [ -d "$IGRIS_DIR/.claude/skills" ]; then
-  cp -r "$IGRIS_DIR/.claude/skills/"* "$BRAIN_DIR/core/skills/" 2>/dev/null || true
+if [ -d "$IGRIS_DIR/core/skills" ]; then
+  cp -r "$IGRIS_DIR/core/skills/"* "$BRAIN_DIR/core/skills/" 2>/dev/null || true
   echo "   ✅ Skills copied"
 else
   echo "   ⚠️  No skills directory found"
 fi
 
 # Rules
-if [ -d "$IGRIS_DIR/.claude/rules" ]; then
-  cp "$IGRIS_DIR/.claude/rules/"*.md "$BRAIN_DIR/core/rules/" 2>/dev/null || true
+if [ -d "$IGRIS_DIR/core/rules" ]; then
+  cp "$IGRIS_DIR/core/rules/"*.md "$BRAIN_DIR/core/rules/" 2>/dev/null || true
   echo "   ✅ Rules copied"
 else
   echo "   ⚠️  No rules directory found"
 fi
 
 # Templates
-if [ -d "$IGRIS_DIR/ai/templates" ]; then
-  cp "$IGRIS_DIR/ai/templates/"*.md "$BRAIN_DIR/core/templates/" 2>/dev/null || true
+if [ -d "$IGRIS_DIR/core/templates" ]; then
+  cp "$IGRIS_DIR/core/templates/"*.md "$BRAIN_DIR/core/templates/" 2>/dev/null || true
   echo "   ✅ Templates copied"
 else
   echo "   ⚠️  No templates directory found"
 fi
 
-# ============================================================
-# Copy masks (v4.0 — replaces personas)
-# ============================================================
-if [ -d "$IGRIS_DIR/ai/masks" ]; then
-  mkdir -p "$BRAIN_DIR/masks"
-  cp "$IGRIS_DIR/ai/masks/"*.md "$BRAIN_DIR/masks/" 2>/dev/null || true
-  echo "   ✅ Masks copied"
+# Task handlers
+if [ -d "$IGRIS_DIR/core/task-handlers" ]; then
+  cp "$IGRIS_DIR/core/task-handlers/"*.md "$BRAIN_DIR/core/task-handlers/" 2>/dev/null || true
+  echo "   ✅ Task handlers copied"
 else
-  echo "   ⚠️  No masks directory found"
+  echo "   ⚠️  No task-handlers directory found"
+fi
+
+# igris_tree.json
+if [ -f "$IGRIS_DIR/core/igris_tree.json" ]; then
+  cp "$IGRIS_DIR/core/igris_tree.json" "$BRAIN_DIR/core/igris_tree.json"
+  echo "   ✅ igris_tree.json copied"
 fi
 
 # Copy SOUL.md if it exists
-if [ -f "$IGRIS_DIR/SOUL.md" ]; then
-  cp "$IGRIS_DIR/SOUL.md" "$BRAIN_DIR/core/" 2>/dev/null || true
+if [ -f "$IGRIS_DIR/core/SOUL.md" ]; then
+  cp "$IGRIS_DIR/core/SOUL.md" "$BRAIN_DIR/core/" 2>/dev/null || true
   echo "   ✅ SOUL.md copied"
 fi
 
@@ -618,7 +621,7 @@ remote_url = sys.argv[5] if len(sys.argv) > 5 else ''
 remote_key = sys.argv[6] if len(sys.argv) > 6 else ''
 
 config = {
-    'version': '5.0.0',
+    'version': '6.0.0',
     'installed_at': sys.argv[1],
     'source_repo': sys.argv[2],
     'features': {
@@ -633,7 +636,7 @@ config = {
         'brain': '~/.igris',
         'core': '~/.igris/core',
         'memory': '~/.igris/memory',
-        'staging': '~/.igris/staging'
+        'projects': '~/.igris/projects'
     },
     'database': {
         'path': '~/.igris/memory/knowledge.db',
@@ -671,7 +674,7 @@ echo "   ✅ config.json created"
 USER_NAME=""
 USER_ADDRESSING=""
 
-# Extract user info from USER.md if available (v4.0)
+# Extract user info from USER.md if available
 if [ -f "$HOME/.igris/USER.md" ]; then
   if command -v python3 &> /dev/null; then
     USER_NAME=$(python3 -c "
@@ -696,7 +699,7 @@ except:
     print('')
 " "$HOME/.igris/USER.md" 2>/dev/null || echo "")
   fi
-elif [ -f "$IGRIS_DIR/SOUL.md" ]; then
+elif [ -f "$IGRIS_DIR/core/SOUL.md" ]; then
   # Fallback: try SOUL.md for defaults
   USER_ADDRESSING="Partner"
 fi
@@ -707,8 +710,6 @@ profile = {
     'name': sys.argv[1],
     'default_addressing': sys.argv[2],
     'preferences': {
-        'default_mask': 'half',
-        'default_persona': 'igris',
         'auto_register_projects': True
     },
     'created_at': sys.argv[3]
@@ -738,7 +739,7 @@ else
   # Use template if available, otherwise generate directly
   TEMPLATE_FILE="$IGRIS_DIR/scripts/templates/CLAUDE.global.md.template"
   if [ -f "$TEMPLATE_FILE" ]; then
-    sed -e "s|{{IGRIS_VERSION}}|5.0.0|g" \
+    sed -e "s|{{IGRIS_VERSION}}|6.0.0|g" \
         -e "s|{{INSTALL_DATE}}|$INSTALL_DATE|g" \
         -e "s|{{SOURCE_REPO}}|$IGRIS_DIR|g" \
         "$TEMPLATE_FILE" > "$CLAUDE_MD"
@@ -950,10 +951,10 @@ fi
 echo ""
 echo "📚 Next Steps:"
 echo ""
-echo "1. Install Igris in a project (global mode):"
+echo "1. Register a project with Igris:"
 echo "   ./scripts/igris_install.sh /path/to/your/project"
 echo ""
-echo "2. Or install in the current directory:"
+echo "2. Or register the current directory:"
 echo "   ./scripts/igris_install.sh ."
 echo ""
 

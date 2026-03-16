@@ -510,12 +510,17 @@ class CommandPalette extends StatelessWidget {
 // lib/data/repositories/brief_repository.dart
 
 class BriefRepository {
-  final String projectPath;
+  final String projectSlug;
+  final String igrisHome;
 
-  BriefRepository({required this.projectPath});
+  BriefRepository({required this.projectSlug, this.igrisHome = '~/.igris'});
 
+  String get _briefsPath => '$igrisHome/projects/$projectSlug/briefs';
+
+  /// Primary: use brain MCP tools (igris_brief_list / igris_brief_get).
+  /// Fallback: read from filesystem at ~/.igris/projects/{project}/briefs/.
   Future<List<Brief>> getAllBriefs() async {
-    final briefsDir = Directory('$projectPath/ai/briefs');
+    final briefsDir = Directory(_briefsPath);
     final files = briefsDir.listSync()
         .where((f) => f.path.endsWith('.md'))
         .toList();
@@ -524,7 +529,7 @@ class BriefRepository {
   }
 
   Future<Brief> saveBrief(Brief brief) async {
-    final file = File('$projectPath/ai/briefs/${brief.filename}');
+    final file = File('$_briefsPath/${brief.filename}');
     await file.writeAsString(brief.toMarkdown());
     return brief;
   }
@@ -659,8 +664,8 @@ Following FDL:
 ## 🔗 **Integration Points**
 
 **With Igris AI CLI:**
-- Read/write briefs in `ai/briefs/`
-- Monitor session in `ai/session/CURRENT_SESSION.md`
+- Read/write briefs via brain MCP tools (filesystem: `~/.igris/projects/{project}/briefs/`)
+- Monitor session in `~/.igris/projects/{project}/session/CURRENT_SESSION.md`
 - Update decisions, blockers, learnings
 - Execute git commands
 

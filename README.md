@@ -4,7 +4,7 @@ The engineering operating system for Claude Code.
 
 Brief-first. Brain-backed. Self-healing.
 
-**7 Agents** | **20 Skills** | **67 MCP Tools** | **34 REST Endpoints**
+**7 Agents** | **20 Skills** | **70 MCP Tools** | **34 REST Endpoints**
 
 ---
 
@@ -62,7 +62,7 @@ This is the hero feature. Details in [The HUNT Workflow](#the-hunt-workflow).
 
 ### 3. The Brain
 
-Centralized at `~/.igris/`. SQLite WAL + FTS5. 67 MCP tools across 13 components. 34 REST API endpoints.
+Centralized at `~/.igris/`. SQLite WAL + FTS5. 67 MCP tools across 14 components. 34 REST API endpoints.
 
 The brain remembers across projects, sessions, and context resets. Error catalogs, pattern suggestions, velocity metrics, cross-project learnings -- all stored in a single database, all searchable with full-text search, all accessible via MCP or HTTP.
 
@@ -120,6 +120,7 @@ Tools are available globally via the `igris-brain` MCP server.
 | Instances | 4 | Heartbeat, list, remove, agent events |
 | Sync | 11 | Push/pull brain data, queue management, file/session/brief/definition sync |
 | Cache | 2 | Rebuild/clean brain-to-filesystem cache |
+| Context | 3 | Register, get, tree routing (v6) |
 | Schedules | 7 | Create, list, get, enable/disable, fire, delete |
 | Coordination | 7 | Auto-route, priorities, config, audit, agent capabilities |
 | Monitoring | 2 | Event log, event log cleanup |
@@ -274,7 +275,7 @@ cd your-project
 path/to/igris-ai/scripts/igris_install.sh
 ```
 
-This creates symlinks from `~/.igris/core/` into your project: agents, skills, rules, prompts, templates. Registers the brain MCP server globally in `~/.claude.json`. Your project gets the full system with zero file duplication.
+This creates `~/.igris/` with the brain database, copies core files (agents, skills, rules, prompts, context tree), and sets up `.claude/` symlinks. Registers the brain MCP server globally in `~/.claude.json`. Your project gets the full system with zero file duplication.
 
 ### First 5 Minutes
 
@@ -339,7 +340,7 @@ Honest comparison. No competitor has all five pillars.
 No. Igris requires Claude Code CLI for hooks, subagents (Task tool), MCP tools, and skills. The web interface does not support these features.
 
 **Can I use Igris with other AI CLIs?**
-Currently built for Claude Code. The v6 roadmap includes a cross-CLI adapter layer. The architecture is designed for it.
+Currently built for Claude Code. The v6 context architecture is CLI-agnostic -- any tool that can query brain MCP tools can resolve the context tree. Cross-CLI adapters are on the roadmap.
 
 **Do I need briefs for everything?**
 Only for file modifications. Research, questions, analysis, listing -- all brief-free.
@@ -365,7 +366,8 @@ When sentinel detects test failure, mender analyzes the error, forger applies th
 
 | Resource | Location |
 |----------|----------|
-| Operating System | `ai/prompts/igris_os.md` |
+| Operating System | `~/.igris/core/prompts/igris_os.md` |
+| Context Tree | `~/.igris/core/igris_tree.json` |
 | Setup Guide | `docs/SETUP_GUIDE.md` |
 | Update Guide | `docs/UPDATE_GUIDE.md` |
 | Migration Guide | `docs/MIGRATION_GUIDE.md` |
@@ -384,6 +386,6 @@ When sentinel detects test failure, mender analyzes the error, forger applies th
 
 ---
 
-**Version 5.0.0** | [MIT License](LICENSE)
+**Version 6.0.0** | [MIT License](LICENSE)
 
 Built by [Fifty.ai](https://github.com/fiftynotai)

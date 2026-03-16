@@ -49,7 +49,7 @@ echo ""
 # Get source repo and version info
 # ============================================================
 IGRIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-IGRIS_VERSION=$(cat "$IGRIS_DIR/version.txt" 2>/dev/null || echo "5.0.0")
+IGRIS_VERSION=$(cat "$IGRIS_DIR/version.txt" 2>/dev/null || echo "6.0.0")
 
 # ============================================================
 # Refresh brain core from source repo
@@ -68,10 +68,6 @@ echo ""
 # ============================================================
 echo "📦 Creating project directories..."
 
-mkdir -p ai/context
-mkdir -p ai/masks
-mkdir -p ai/prompts
-mkdir -p ai/templates
 mkdir -p .claude/hooks
 mkdir -p scripts
 
@@ -108,56 +104,54 @@ with open(sys.argv[1], 'w') as f:
   echo "   ✅ Created $SETTINGS_FILE (includeGitInstructions: false)"
 fi
 
-# Create brain cache directories for this project
-CACHE_DIR="$HOME/.igris/cache/$(basename "$TARGET_DIR")"
-mkdir -p "$CACHE_DIR/session"
-mkdir -p "$CACHE_DIR/briefs"
-mkdir -p "$CACHE_DIR/metrics"
+# Create per-project directories in brain
+PROJECT_DIR="$HOME/.igris/projects/$(basename "$TARGET_DIR")"
+mkdir -p "$PROJECT_DIR/session"
+mkdir -p "$PROJECT_DIR/briefs"
+mkdir -p "$PROJECT_DIR/metrics"
+mkdir -p "$PROJECT_DIR/context"
+mkdir -p "$PROJECT_DIR/plans"
+mkdir -p "$PROJECT_DIR/hooks"
+mkdir -p "$PROJECT_DIR/reference"
 
-# Create worker and output directories (idempotent)
+# Create worker logs directory (idempotent)
 mkdir -p "$HOME/.igris/logs/worker"
-mkdir -p "$HOME/.igris/output/content"
-mkdir -p "$HOME/.igris/output/social-media"
-mkdir -p "$HOME/.igris/output/media-gen"
-mkdir -p "$HOME/.igris/output/research"
-mkdir -p "$HOME/.igris/output/operational"
 
 echo "   ✅ Project directories created"
-echo "   ✅ Brain cache at $CACHE_DIR"
-echo "   ✅ Worker and output directories created"
+echo "   ✅ Project dir at $PROJECT_DIR"
 
 # ============================================================
-# Linking prompts and templates (agents/rules/skills are global)
+# Create per-project .claude/ symlinks for Claude Code
 # ============================================================
 echo ""
-echo "🔗 Linking prompts and templates..."
-echo "   (agents, rules, and skills are handled globally via ~/.claude/)"
+echo "🔗 Creating .claude/ symlinks..."
 
-SYMLINK_COUNT=0
+mkdir -p .claude/agents
+mkdir -p .claude/rules
+mkdir -p .claude/skills
 
-# Prompts: symlink individual files
-if [ -d "$BRAIN_DIR/core/prompts" ]; then
-  for f in "$BRAIN_DIR/core/prompts/"*; do
-    [ -f "$f" ] || continue
-    BASENAME=$(basename "$f")
-    ln -sf "$f" "ai/prompts/$BASENAME"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
+# Agents: symlink individual files
+if [ -d "$BRAIN_DIR/core/agents" ]; then
+  for agent in "$BRAIN_DIR/core/agents/"*.md; do
+    [ -f "$agent" ] && ln -sf "$agent" ".claude/agents/$(basename "$agent")"
   done
-  echo "   ✅ Prompts linked"
+  [ -f "$BRAIN_DIR/core/agents/manifest.yaml" ] && ln -sf "$BRAIN_DIR/core/agents/manifest.yaml" ".claude/agents/manifest.yaml"
+  echo "   ✅ Agents linked"
 fi
 
-# Templates: symlink individual files
-if [ -d "$BRAIN_DIR/core/templates" ]; then
-  for f in "$BRAIN_DIR/core/templates/"*; do
-    [ -f "$f" ] || continue
-    BASENAME=$(basename "$f")
-    ln -sf "$f" "ai/templates/$BASENAME"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
-  done
-  echo "   ✅ Templates linked"
+# Rules: symlink universal rule
+if [ -f "$BRAIN_DIR/core/rules/00-igris-universal.md" ]; then
+  ln -sf "$BRAIN_DIR/core/rules/00-igris-universal.md" ".claude/rules/00-igris-universal.md"
+  echo "   ✅ Rules linked"
 fi
 
-echo "   📊 Total symlinks: $SYMLINK_COUNT (prompts + templates only)"
+# Skills: symlink skill directories
+if [ -d "$BRAIN_DIR/core/skills" ]; then
+  for skill in "$BRAIN_DIR/core/skills/"*/; do
+    [ -d "$skill" ] && ln -sf "$skill" ".claude/skills/$(basename "$skill")"
+  done
+  echo "   ✅ Skills linked"
+fi
 
 # ============================================================
 # Create project-local session files (fresh templates, not symlinks)
@@ -166,8 +160,8 @@ echo ""
 echo "📝 Creating project-local files..."
 
 # CURRENT_SESSION.md
-if [ ! -f "$CACHE_DIR/session/CURRENT_SESSION.md" ]; then
-  cat > "$CACHE_DIR/session/CURRENT_SESSION.md" << 'EOF'
+if [ ! -f "$PROJECT_DIR/session/CURRENT_SESSION.md" ]; then
+  cat > "$PROJECT_DIR/session/CURRENT_SESSION.md" << 'EOF'
 # Current Session
 
 **Status:** No active session
@@ -203,8 +197,8 @@ else
 fi
 
 # BLOCKERS.md
-if [ ! -f "$CACHE_DIR/session/BLOCKERS.md" ]; then
-  cat > "$CACHE_DIR/session/BLOCKERS.md" << 'EOF'
+if [ ! -f "$PROJECT_DIR/session/BLOCKERS.md" ]; then
+  cat > "$PROJECT_DIR/session/BLOCKERS.md" << 'EOF'
 # Active Blockers
 
 **Last Updated:** N/A
@@ -219,8 +213,8 @@ else
 fi
 
 # DECISIONS.md
-if [ ! -f "$CACHE_DIR/session/DECISIONS.md" ]; then
-  cat > "$CACHE_DIR/session/DECISIONS.md" << 'EOF'
+if [ ! -f "$PROJECT_DIR/session/DECISIONS.md" ]; then
+  cat > "$PROJECT_DIR/session/DECISIONS.md" << 'EOF'
 # Architectural Decisions
 
 **Last Updated:** N/A
@@ -235,8 +229,8 @@ else
 fi
 
 # LEARNINGS.md
-if [ ! -f "$CACHE_DIR/session/LEARNINGS.md" ]; then
-  cat > "$CACHE_DIR/session/LEARNINGS.md" << 'EOF'
+if [ ! -f "$PROJECT_DIR/session/LEARNINGS.md" ]; then
+  cat > "$PROJECT_DIR/session/LEARNINGS.md" << 'EOF'
 # Learnings & Patterns
 
 **Last Updated:** N/A
@@ -248,33 +242,6 @@ EOF
   echo "   ✅ LEARNINGS.md created (in cache)"
 else
   echo "   ⚠️  LEARNINGS.md already exists (skipping)"
-fi
-
-# Context README
-if [ ! -f "ai/context/README.md" ]; then
-  cat > ai/context/README.md << 'EOF'
-# Architecture Context
-
-This directory should contain project-specific architecture documentation:
-
-- **architecture_map.md** - Architecture pattern, layer boundaries, module structure
-- **api_pattern.md** - API call patterns, state management, error handling
-- **coding_guidelines.md** - Naming conventions, doc-comments, linting rules
-- **module_catalog.md** - Module inventory, purposes, dependencies
-
-## How to Generate
-
-Use the DOCUMENT command to have IGRIS analyze your project and create these files:
-
-```
-DOCUMENT architecture
-```
-
-The /document skill will ask questions about your architecture and generate comprehensive documentation.
-EOF
-  echo "   ✅ context/README.md created"
-else
-  echo "   ⚠️  context/README.md already exists (skipping)"
 fi
 
 # Archive note: Archiving is now handled via brain DB (igris_brief_update with status='Archived')
@@ -289,10 +256,10 @@ INSTALL_DATE=$(date -u +"%Y-%m-%d")
 
 # Read persona from SOUL.md (if exists)
 PERSONA_INJECTION=""
-if [ -f "SOUL.md" ]; then
-  PERSONA_INJECTION=$(cat "SOUL.md")
-elif [ -f "$IGRIS_DIR/SOUL.md" ]; then
-  PERSONA_INJECTION=$(cat "$IGRIS_DIR/SOUL.md")
+if [ -f "$BRAIN_DIR/core/SOUL.md" ]; then
+  PERSONA_INJECTION=$(cat "$BRAIN_DIR/core/SOUL.md")
+elif [ -f "$IGRIS_DIR/core/SOUL.md" ]; then
+  PERSONA_INJECTION=$(cat "$IGRIS_DIR/core/SOUL.md")
 fi
 
 # Generate CLAUDE.md using template
@@ -532,9 +499,9 @@ echo "✅ Igris AI installed in $TARGET_DIR (global mode)"
 echo "========================================"
 echo ""
 echo "📊 Summary:"
-echo "   🌐 Global: agents, rules, skills via ~/.claude/ (shared across all projects)"
-echo "   🔗 Project symlinks: $SYMLINK_COUNT (prompts + templates only)"
-echo "   📝 Project files: session, context, CLAUDE.md"
+echo "   🌐 Global: agents, rules, skills via .claude/ symlinks to ~/.igris/core/"
+echo "   📝 Project files: session, context, plans, hooks, reference"
+echo "   🤖 CLAUDE.md generated with persona injection"
 echo "   🗄️  Registered as: $SLUG"
 echo ""
 echo "📚 Getting Started:"

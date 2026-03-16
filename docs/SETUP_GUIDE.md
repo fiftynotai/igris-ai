@@ -141,7 +141,7 @@ After installation, generate project-specific documentation:
 This will:
 1. Scan your project structure
 2. Ask clarifying questions about your architecture
-3. Generate documentation files in `ai/context/`:
+3. Generate documentation files in `~/.igris/projects/{project}/context/`:
    - `architecture_map.md` - Architecture overview
    - `api_pattern.md` - API interaction patterns
    - `coding_guidelines.md` - Code style and conventions
@@ -218,7 +218,7 @@ What should I work on next?
 /rest
 ```
 
-This archives the current session to `ai/session/archive/`.
+This archives the current session to `~/.igris/projects/{project}/session/archive/`.
 
 ---
 

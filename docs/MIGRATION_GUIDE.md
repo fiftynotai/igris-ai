@@ -124,10 +124,10 @@ This creates your architecture baseline.
 
 **What IGRIS does:**
 1. Scans all source files
-2. Compares against architecture standards (from `ai/context/`)
+2. Compares against architecture standards (from `~/.igris/projects/{project}/context/`)
 3. Identifies violations, bugs, debt, and testing gaps
 4. Generates categorized briefs
-5. Creates `ai/session/MIGRATION_ROADMAP.md`
+5. Creates `~/.igris/projects/{project}/session/MIGRATION_ROADMAP.md`
 
 **Expected output:**
 ```
@@ -140,8 +140,8 @@ Found 47 issues across 5 categories:
 - Testing (TS): 7 gaps
 - Enhancements (EN): 5 recommendations
 
-Created 47 briefs in ai/briefs/
-Created migration roadmap in ai/session/MIGRATION_ROADMAP.md
+Created 47 briefs in brain DB
+Created migration roadmap in ~/.igris/projects/{project}/session/MIGRATION_ROADMAP.md
 
 Estimated migration time: 4-5 weeks
 ```
@@ -166,7 +166,7 @@ Change TD-003 to P3   # Can wait
 **Review the roadmap:**
 
 ```bash
-cat ai/session/MIGRATION_ROADMAP.md
+cat ~/.igris/projects/{project}/session/MIGRATION_ROADMAP.md
 ```
 
 Example roadmap structure:
@@ -393,7 +393,7 @@ How many P0/P1 briefs remain?
 # /migrate-analyze
 
 # Review results (30 min)
-cat ai/session/MIGRATION_ROADMAP.md
+cat ~/.igris/projects/{project}/session/MIGRATION_ROADMAP.md
 ```
 
 **Output:** 35 briefs created, 4-week estimate

@@ -49,12 +49,8 @@ is_exempt() {
 
   # Check exempt patterns
   case "$file_path" in
-    */.igris/cache/*)  return 0 ;;
-    */ai/prompts/*)    return 0 ;;
-    */ai/context/*)    return 0 ;;
-    */ai/plans/*)      return 0 ;;
-    */ai/masks/*)      return 0 ;;
-    # ai/templates/ removed — templates no longer exist as files
+    */.igris/*)        return 0 ;;
+    */core/*)          return 0 ;;
     */.claude/*)       return 0 ;;
     */test/*)          return 0 ;;
     */tests/*)         return 0 ;;
@@ -104,7 +100,7 @@ check_active_brief() {
   local active_brief=""
   local slug
   slug=$(basename "$PROJECT_DIR")
-  local cache_briefs="$HOME/.igris/cache/$slug/briefs"
+  local cache_briefs="$HOME/.igris/projects/$slug/briefs"
   if [ -d "$cache_briefs" ]; then
     active_brief=$(grep -rl '^\*\*Status:\*\* In Progress' "$cache_briefs/" 2>/dev/null | head -1) || true
   fi

@@ -106,13 +106,13 @@ count_files() {
 # ============================================================
 # Refresh: Prompts
 # ============================================================
-if [ -d "$IGRIS_DIR/ai/prompts" ]; then
-  COUNT=$(count_files "$IGRIS_DIR/ai/prompts" "*.md")
+if [ -d "$IGRIS_DIR/core/prompts" ]; then
+  COUNT=$(count_files "$IGRIS_DIR/core/prompts" "*.md")
   if [ "$DRY_RUN" = true ]; then
     echo "   Would copy $COUNT prompts -> $BRAIN_DIR/core/prompts/"
   else
     mkdir -p "$BRAIN_DIR/core/prompts"
-    cp "$IGRIS_DIR/ai/prompts/"*.md "$BRAIN_DIR/core/prompts/" 2>/dev/null || true
+    cp "$IGRIS_DIR/core/prompts/"*.md "$BRAIN_DIR/core/prompts/" 2>/dev/null || true
     echo "   Prompts refreshed ($COUNT files)"
   fi
   TOTAL_COPIED=$((TOTAL_COPIED + COUNT))
@@ -123,15 +123,15 @@ fi
 # ============================================================
 # Refresh: Agents
 # ============================================================
-if [ -d "$IGRIS_DIR/.claude/agents" ]; then
-  COUNT=$(count_files "$IGRIS_DIR/.claude/agents" "*.md")
+if [ -d "$IGRIS_DIR/core/agents" ]; then
+  COUNT=$(count_files "$IGRIS_DIR/core/agents" "*.md")
   if [ "$DRY_RUN" = true ]; then
     echo "   Would copy $COUNT agents -> $BRAIN_DIR/core/agents/"
   else
     mkdir -p "$BRAIN_DIR/core/agents"
-    cp "$IGRIS_DIR/.claude/agents/"*.md "$BRAIN_DIR/core/agents/" 2>/dev/null || true
+    cp "$IGRIS_DIR/core/agents/"*.md "$BRAIN_DIR/core/agents/" 2>/dev/null || true
     # Also copy manifest.yaml if it exists
-    [ -f "$IGRIS_DIR/.claude/agents/manifest.yaml" ] && cp "$IGRIS_DIR/.claude/agents/manifest.yaml" "$BRAIN_DIR/core/agents/"
+    [ -f "$IGRIS_DIR/core/agents/manifest.yaml" ] && cp "$IGRIS_DIR/core/agents/manifest.yaml" "$BRAIN_DIR/core/agents/"
     echo "   Agents refreshed ($COUNT files)"
   fi
   TOTAL_COPIED=$((TOTAL_COPIED + COUNT))
@@ -142,9 +142,9 @@ fi
 # ============================================================
 # Refresh: Skills (clear + re-copy to remove stale skills)
 # ============================================================
-if [ -d "$IGRIS_DIR/.claude/skills" ]; then
+if [ -d "$IGRIS_DIR/core/skills" ]; then
   COUNT=0
-  for d in "$IGRIS_DIR/.claude/skills/"*/; do
+  for d in "$IGRIS_DIR/core/skills/"*/; do
     [ -d "$d" ] && COUNT=$((COUNT + 1))
   done
   if [ "$DRY_RUN" = true ]; then
@@ -154,7 +154,7 @@ if [ -d "$IGRIS_DIR/.claude/skills" ]; then
     # Clear existing skills to remove stale copies
     rm -rf "$BRAIN_DIR/core/skills/"*
     # Re-copy all skill directories
-    cp -r "$IGRIS_DIR/.claude/skills/"* "$BRAIN_DIR/core/skills/" 2>/dev/null || true
+    cp -r "$IGRIS_DIR/core/skills/"* "$BRAIN_DIR/core/skills/" 2>/dev/null || true
     echo "   Skills refreshed ($COUNT directories, stale copies cleared)"
   fi
   TOTAL_COPIED=$((TOTAL_COPIED + COUNT))
@@ -165,13 +165,13 @@ fi
 # ============================================================
 # Refresh: Rules
 # ============================================================
-if [ -d "$IGRIS_DIR/.claude/rules" ]; then
-  COUNT=$(count_files "$IGRIS_DIR/.claude/rules" "*.md")
+if [ -d "$IGRIS_DIR/core/rules" ]; then
+  COUNT=$(count_files "$IGRIS_DIR/core/rules" "*.md")
   if [ "$DRY_RUN" = true ]; then
     echo "   Would copy $COUNT rules -> $BRAIN_DIR/core/rules/"
   else
     mkdir -p "$BRAIN_DIR/core/rules"
-    cp "$IGRIS_DIR/.claude/rules/"*.md "$BRAIN_DIR/core/rules/" 2>/dev/null || true
+    cp "$IGRIS_DIR/core/rules/"*.md "$BRAIN_DIR/core/rules/" 2>/dev/null || true
     echo "   Rules refreshed ($COUNT files)"
   fi
   TOTAL_COPIED=$((TOTAL_COPIED + COUNT))
@@ -182,13 +182,13 @@ fi
 # ============================================================
 # Refresh: Templates
 # ============================================================
-if [ -d "$IGRIS_DIR/ai/templates" ]; then
-  COUNT=$(count_files "$IGRIS_DIR/ai/templates" "*.md")
+if [ -d "$IGRIS_DIR/core/templates" ]; then
+  COUNT=$(count_files "$IGRIS_DIR/core/templates" "*.md")
   if [ "$DRY_RUN" = true ]; then
     echo "   Would copy $COUNT templates -> $BRAIN_DIR/core/templates/"
   else
     mkdir -p "$BRAIN_DIR/core/templates"
-    cp "$IGRIS_DIR/ai/templates/"*.md "$BRAIN_DIR/core/templates/" 2>/dev/null || true
+    cp "$IGRIS_DIR/core/templates/"*.md "$BRAIN_DIR/core/templates/" 2>/dev/null || true
     echo "   Templates refreshed ($COUNT files)"
   fi
   TOTAL_COPIED=$((TOTAL_COPIED + COUNT))
@@ -197,33 +197,49 @@ else
 fi
 
 # ============================================================
-# Refresh: Masks
-# ============================================================
-if [ -d "$IGRIS_DIR/ai/masks" ]; then
-  COUNT=$(count_files "$IGRIS_DIR/ai/masks" "*.md")
-  if [ "$DRY_RUN" = true ]; then
-    echo "   Would copy $COUNT masks -> $BRAIN_DIR/masks/"
-  else
-    mkdir -p "$BRAIN_DIR/masks"
-    cp "$IGRIS_DIR/ai/masks/"*.md "$BRAIN_DIR/masks/" 2>/dev/null || true
-    echo "   Masks refreshed ($COUNT files)"
-  fi
-  TOTAL_COPIED=$((TOTAL_COPIED + COUNT))
-else
-  echo "   No masks directory found in source repo"
-fi
-
-# ============================================================
 # Refresh: SOUL.md
 # ============================================================
-if [ -f "$IGRIS_DIR/SOUL.md" ]; then
+if [ -f "$IGRIS_DIR/core/SOUL.md" ]; then
   if [ "$DRY_RUN" = true ]; then
     echo "   Would copy SOUL.md -> $BRAIN_DIR/core/SOUL.md"
   else
-    cp "$IGRIS_DIR/SOUL.md" "$BRAIN_DIR/core/" 2>/dev/null || true
+    cp "$IGRIS_DIR/core/SOUL.md" "$BRAIN_DIR/core/" 2>/dev/null || true
     echo "   SOUL.md refreshed"
   fi
   TOTAL_COPIED=$((TOTAL_COPIED + 1))
+fi
+
+# ============================================================
+# Refresh: igris_tree.json
+# ============================================================
+if [ -f "$IGRIS_DIR/core/igris_tree.json" ]; then
+  if [ "$DRY_RUN" = true ]; then
+    echo "   Would copy igris_tree.json -> $BRAIN_DIR/core/igris_tree.json"
+  else
+    cp "$IGRIS_DIR/core/igris_tree.json" "$BRAIN_DIR/core/" 2>/dev/null || true
+    echo "   igris_tree.json refreshed"
+  fi
+  TOTAL_COPIED=$((TOTAL_COPIED + 1))
+fi
+
+# ============================================================
+# Refresh: Task Handlers
+# ============================================================
+if [ -d "$IGRIS_DIR/core/task-handlers" ]; then
+  COUNT=0
+  for f in "$IGRIS_DIR/core/task-handlers/"*; do
+    [ -e "$f" ] && COUNT=$((COUNT + 1))
+  done
+  if [ "$DRY_RUN" = true ]; then
+    echo "   Would copy $COUNT task-handlers -> $BRAIN_DIR/core/task-handlers/"
+  else
+    mkdir -p "$BRAIN_DIR/core/task-handlers"
+    cp -r "$IGRIS_DIR/core/task-handlers/"* "$BRAIN_DIR/core/task-handlers/" 2>/dev/null || true
+    echo "   Task handlers refreshed ($COUNT items)"
+  fi
+  TOTAL_COPIED=$((TOTAL_COPIED + COUNT))
+else
+  echo "   No task-handlers directory found in source repo"
 fi
 
 # ============================================================

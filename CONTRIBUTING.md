@@ -19,7 +19,7 @@ Welcome! Igris AI is an open-source code quality and architecture management sys
 
 **All contributions MUST follow the Igris AI Coding Guidelines:**
 
-📄 **[ai/context/coding_guidelines.md](ai/context/coding_guidelines.md)**
+📄 **`~/.igris/projects/{project}/context/coding_guidelines.md`**
 
 This document defines:
 - Bash, TypeScript, and Python standards
@@ -132,10 +132,10 @@ shellcheck scripts/*.sh
 bats test/
 
 # TypeScript (if modifying MCP server)
-cd mcp-server && npm run build
+cd brain-mcp-server && npm run build
 
 # Manual testing
-./scripts/igris_init.sh /tmp/test-project
+./scripts/igris_install.sh /tmp/test-project
 ```
 
 ### 4. Commit Your Changes
@@ -158,7 +158,7 @@ closes #FR-045"
 - `chore` - Maintenance
 - `test` - Tests
 
-**See [ai/context/coding_guidelines.md#17-conventional-commits](ai/context/coding_guidelines.md#17-conventional-commits) for details.**
+**See the coding guidelines (section 17: Conventional Commits) for details.**
 
 ### 5. Push and Create PR
 
@@ -178,7 +178,7 @@ git push origin feature/my-feature
 
 Before submitting, ensure:
 
-- [ ] Code follows [coding guidelines](ai/context/coding_guidelines.md)
+- [ ] Code follows coding guidelines (`~/.igris/projects/{project}/context/coding_guidelines.md`)
 - [ ] All scripts pass `shellcheck`
 - [ ] Tests added/updated (if applicable)
 - [ ] Documentation updated (if needed)
@@ -332,7 +332,7 @@ See `.github/workflows/test.yml` for CI configuration.
 
 ### Documentation Standards
 
-See [ai/context/coding_guidelines.md#14-documentation](ai/context/coding_guidelines.md#14-documentation)
+See the coding guidelines (section 14: Documentation)
 
 **Key points:**
 - Comment the WHY, not the WHAT
@@ -366,27 +366,26 @@ See [ai/context/coding_guidelines.md#14-documentation](ai/context/coding_guideli
 ```
 igris-ai/
 ├── .claude/
-│   ├── agents/              # 7 native subagents
-│   ├── hooks/               # Session start, pre/post commit
-│   ├── rules/               # 5 modular rules
-│   ├── skills/              # 21 skills
+│   ├── agents/              # Symlinks → ~/.igris/core/agents/
+│   ├── hooks/               # Hook scripts
+│   ├── rules/               # Symlink → ~/.igris/core/rules/
+│   ├── skills/              # Symlinks → ~/.igris/core/skills/
 │   └── settings.json        # Claude Code config
-├── ai/
-│   ├── briefs/              # Work items (9 brief types)
-│   ├── context/             # Architecture docs
-│   │   └── coding_guidelines.md  # Coding standards
-│   ├── hooks/               # Hook specs
-│   ├── masks/               # Mask greeting files
-│   ├── prompts/             # System prompts
-│   ├── session/             # Session tracking + metrics
-│   └── templates/           # PR/commit templates
+├── core/                    # Distribution source for ~/.igris/core/
+│   ├── agents/              # 7 native subagents
+│   ├── prompts/             # System prompts (igris_os.md)
+│   ├── rules/               # 1 universal rule (v6)
+│   ├── skills/              # 20 skills
+│   ├── templates/           # PR/brief templates
+│   ├── task-handlers/       # Worker daemon handlers
+│   ├── SOUL.md              # Persona identity
+│   └── igris_tree.json      # Context routing tree (v6)
+├── brain-mcp-server/        # Brain MCP server (TypeScript)
 ├── docs/                    # Documentation
-├── mcp-server/              # Brain MCP server (TypeScript)
-├── scripts/                 # Shell scripts
+├── scripts/                 # Install/update scripts
 ├── test/                    # Tests (bats framework)
-├── CLAUDE.md                # Claude Code instructions
-├── SOUL.md                  # Igris persona identity
-└── version.txt              # Version (5.0.0)
+├── CLAUDE.md                # Slim context pointer (v6)
+└── version.txt              # Version (6.0.0)
 ```
 
 ---
@@ -419,7 +418,7 @@ echo "  macOS:  brew install python3"
 echo "  Ubuntu: sudo apt install python3"
 ```
 
-**Full standards:** [ai/context/coding_guidelines.md](ai/context/coding_guidelines.md)
+**Full standards:** `~/.igris/projects/{project}/context/coding_guidelines.md`
 
 ---
 
@@ -452,8 +451,8 @@ echo "  Ubuntu: sudo apt install python3"
 ### Documentation
 
 - **[README.md](README.md)** - Project overview
-- **[ai/context/coding_guidelines.md](ai/context/coding_guidelines.md)** - Coding standards
-- **[ai/prompts/igris_os.md](ai/prompts/igris_os.md)** - Igris AI operating system
+- **`~/.igris/projects/{project}/context/coding_guidelines.md`** - Coding standards
+- **`~/.igris/core/prompts/igris_os.md`** - Igris AI operating system
 
 ### Questions?
 
