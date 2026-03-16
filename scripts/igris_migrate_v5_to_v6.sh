@@ -797,7 +797,7 @@ migrate_repo_briefs() {
 
       # Check if brief already exists in brain DB
       local exists
-      exists=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM brief_files WHERE project_slug='$slug' AND brief_id='$brief_id';" 2>/dev/null) || exists="0"
+      exists=$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM brief_files WHERE project='$slug' AND brief_id='$brief_id';" 2>/dev/null) || exists="0"
 
       if [ "$exists" -gt 0 ]; then
         log_skip "  $brief_id: already in brain DB"
@@ -838,12 +838,17 @@ migrate_repo_briefs() {
         local escaped_title
         escaped_title=$(echo "$title" | sed "s/'/''/g")
 
+        # Generate unique ID for brief_files (project:brief_id)
+        local file_id="${slug}:${brief_id}"
+        local escaped_file_id
+        escaped_file_id=$(echo "$file_id" | sed "s/'/''/g")
+
         # Insert into brief_files
-        sqlite3 "$DB_PATH" "INSERT OR IGNORE INTO brief_files (project_slug, brief_id, filename, content, content_hash, updated_at)
-          VALUES ('$slug', '$brief_id', '$filename.md', '$escaped_content', '', datetime('now'));" 2>/dev/null || true
+        sqlite3 "$DB_PATH" "INSERT OR IGNORE INTO brief_files (id, project, brief_id, filename, content, content_hash, updated_at)
+          VALUES ('$escaped_file_id', '$slug', '$brief_id', '$filename.md', '$escaped_content', '', datetime('now'));" 2>/dev/null || true
 
         # Insert into brief_status
-        sqlite3 "$DB_PATH" "INSERT OR IGNORE INTO brief_status (project_slug, brief_id, title, status, priority, brief_type, updated_at)
+        sqlite3 "$DB_PATH" "INSERT OR IGNORE INTO brief_status (project, brief_id, title, status, priority, brief_type, updated_at)
           VALUES ('$slug', '$brief_id', '$escaped_title', '$status', '$priority', '$brief_type', datetime('now'));" 2>/dev/null || true
 
         if [ $? -eq 0 ]; then
