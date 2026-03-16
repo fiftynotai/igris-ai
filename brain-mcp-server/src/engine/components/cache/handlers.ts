@@ -2,7 +2,7 @@
  * Brain Engine v5.0 -- Cache Component Handlers
  *
  * Handler functions for filesystem cache generation. Writes markdown
- * files from brain DB into ~/.igris/cache/{project}/ so that agents
+ * files from brain DB into ~/.igris/projects/{project}/ so that agents
  * can read briefs/sessions without querying the MCP server.
  *
  * @module engine/components/cache/handlers
@@ -38,8 +38,8 @@ function safePath(base: string, ...segments: string[]): string {
   return resolved;
 }
 
-/** Root cache directory: ~/.igris/cache */
-const CACHE_ROOT = path.join(os.homedir(), '.igris', 'cache');
+/** Root cache directory: ~/.igris/projects (v6: renamed from cache) */
+const CACHE_ROOT = path.join(os.homedir(), '.igris', 'projects');
 
 // ---------------------------------------------------------------------------
 // ensureCacheDir
@@ -48,8 +48,8 @@ const CACHE_ROOT = path.join(os.homedir(), '.igris', 'cache');
 /**
  * Create cache directories for a project.
  *
- * Ensures ~/.igris/cache/{project}/briefs/ and
- * ~/.igris/cache/{project}/session/ exist.
+ * Ensures ~/.igris/projects/{project}/briefs/ and
+ * ~/.igris/projects/{project}/session/ exist.
  *
  * @param project - Project slug
  * @returns The project cache root path
@@ -69,7 +69,7 @@ export function ensureCacheDir(project: string): string {
  * Write a single brief from the DB to the filesystem cache.
  *
  * Queries brief_files for the given project+briefId. Writes content
- * to ~/.igris/cache/{project}/briefs/{filename}. Skips silently
+ * to ~/.igris/projects/{project}/briefs/{filename}. Skips silently
  * if no row is found.
  *
  * @param project - Project slug
@@ -95,7 +95,7 @@ export function cacheBrief(project: string, briefId: string): void {
  * Write a single session file from the DB to the filesystem cache.
  *
  * Queries session_files for the given project+filename. Writes content
- * to ~/.igris/cache/{project}/session/{filename}. Skips silently
+ * to ~/.igris/projects/{project}/session/{filename}. Skips silently
  * if no row is found.
  *
  * @param project - Project slug
@@ -185,7 +185,7 @@ export function handleCacheRebuild(args: Record<string, unknown>): ToolResult {
  *
  * Required: project (string)
  *
- * Deletes ~/.igris/cache/{project}/ recursively.
+ * Deletes ~/.igris/projects/{project}/ recursively.
  */
 export function handleCacheClean(args: Record<string, unknown>): ToolResult {
   const project = args.project as string | undefined;

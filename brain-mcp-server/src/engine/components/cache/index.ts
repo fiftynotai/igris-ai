@@ -2,7 +2,7 @@
  * Brain Engine v5.0 -- Cache Component
  *
  * Filesystem cache layer that regenerates markdown files from the brain
- * DB into ~/.igris/cache/{project}/. Listens to event bus events from
+ * DB into ~/.igris/projects/{project}/. Listens to event bus events from
  * briefs and sessions components to auto-update the cache on writes.
  *
  * Provides: igris_cache_rebuild, igris_cache_clean
@@ -105,7 +105,7 @@ export function createCacheComponent(): BrainComponent {
         // -----------------------------------------------------------------
         {
           name: 'igris_cache_rebuild',
-          description: 'Rebuild filesystem cache for a project. Regenerates markdown files from brain DB into ~/.igris/cache/{project}/.',
+          description: 'Rebuild filesystem cache for a project. Regenerates markdown files from brain DB into ~/.igris/projects/{project}/.',
           inputSchema: {
             type: 'object' as const,
             properties: {

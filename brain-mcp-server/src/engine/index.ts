@@ -37,6 +37,7 @@ import { createCacheComponent } from './components/cache/index.js';
 import { createSchedulesComponent } from './components/schedules/index.js';
 import { createCoordinationComponent } from './components/coordination/index.js';
 import { createMonitoringComponent } from './components/monitoring/index.js';
+import { createContextComponent } from './components/context/index.js';
 
 // db.ts bridge
 import { setAdapter, migrateSchema } from '../db.js';
@@ -82,11 +83,12 @@ export function bootEngine(config: EngineConfig): Engine {
   // 5. Create registry
   const registry = createRegistry(storage, bus);
 
-  // 6. Register domain components (all 13)
+  // 6. Register domain components (all 14)
   const componentFactories = [
     createMemoryComponent,
     createErrorsComponent,
     createProjectsComponent,
+    createContextComponent,
     createMetricsComponent,
     createSessionsComponent,
     createBriefsComponent,

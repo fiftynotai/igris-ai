@@ -47,3 +47,8 @@ CLAUDE.local.md
 
 # Agent working memory (local-only)
 .claude/agent-memory/
+
+# Igris v6 — symlinks created by `igris register` (machine-specific)
+.claude/agents/
+.claude/rules/
+.claude/skills/

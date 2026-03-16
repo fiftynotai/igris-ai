@@ -1687,7 +1687,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
   /**
    * Map file_type to relative path under BRAIN_DIR (~/.igris/ on VPS).
    *
-   * Local hooks write to ~/.igris/cache/{project}/metrics/ (per-project).
+   * Local hooks write to ~/.igris/projects/{project}/metrics/ (per-project).
    * VPS stores metrics globally under BRAIN_DIR/cache/metrics/ because the
    * file-push payload has no project identifier — all projects merge into
    * the same files on the server side.
