@@ -44,6 +44,15 @@ You do NOT need: igris_os.md, SOUL.md, session files, brief protocol.
 | **Moderate** | Multiple issues, refactor needed | Multiple fixes |
 | **Complex** | Architectural issue | Human needed |
 
+## WORKFLOW
+
+1. **Receive** error report from orchestrator (test output, stack trace, logs)
+2. **Parse** the error — identify type, location, severity
+3. **Investigate** root cause using Read, Grep, Glob, Bash
+4. **Diagnose** — determine immediate cause and underlying issue
+5. **Recommend** specific fix with file:line and code snippets
+6. **Return** structured diagnosis to orchestrator
+
 ## SELF-HEALING INTEGRATION
 
 When part of workflow loop:

@@ -26,7 +26,7 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 
 # Constants
 SLUG=$(basename "$PROJECT_DIR")
-METRICS_DIR="$HOME/.igris/cache/$SLUG/metrics"
+METRICS_DIR="$HOME/.igris/projects/$SLUG/metrics"
 EVENTS_FILE="${METRICS_DIR}/events.jsonl"
 
 # Validate skill name argument

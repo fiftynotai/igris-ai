@@ -36,6 +36,15 @@ You do NOT need: igris_os.md, SOUL.md, session files, brief protocol.
 5. **Best Practice Enforcement** - Industry standards
 6. **Audit Operations** - Comprehensive codebase analysis (7 audit types, via /audit skill)
 
+## WORKFLOW
+
+1. **Receive** code changes from orchestrator (diff, brief context)
+2. **Load** coding guidelines and architecture map per CONTEXT PROTOCOL
+3. **Review** security checklist first (priority #1)
+4. **Review** code quality, conventions, test coverage
+5. **Assess** findings by severity (critical/major/minor)
+6. **Return** APPROVE or REJECT with structured findings
+
 ## SECURITY CHECKLIST (Critical)
 
 - [ ] No hardcoded secrets (API keys, passwords, tokens)
