@@ -15,6 +15,9 @@ import * as path from 'path';
 import * as os from 'os';
 import type { StorageAdapter } from './engine/types.js';
 
+/** Whether sqlite-vec extension loaded successfully */
+let _vecAvailable = false;
+
 /** Root directory for the Igris brain */
 const BRAIN_DIR = path.join(os.homedir(), '.igris');
 
@@ -31,6 +34,39 @@ let _db: Database.Database | null = null;
  * in tool handler functions.
  */
 let _adapter: StorageAdapter | null = null;
+
+/**
+ * Load the sqlite-vec extension into a database connection.
+ *
+ * Returns true if successfully loaded, false otherwise.
+ * Failure is non-fatal — vector search will be unavailable
+ * but FTS5 search continues to work.
+ *
+ * @param db - The database instance to load the extension into
+ * @returns Whether sqlite-vec was loaded successfully
+ */
+function loadSqliteVec(db: Database.Database): boolean {
+  try {
+    // Dynamic import resolved at build time — sqlite-vec provides a load() helper
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const sqliteVec = require('sqlite-vec');
+    sqliteVec.load(db);
+    console.error('[brain] sqlite-vec extension loaded successfully');
+    return true;
+  } catch (err) {
+    console.error('[brain] sqlite-vec extension not available — vector search disabled:', err);
+    return false;
+  }
+}
+
+/**
+ * Check whether the sqlite-vec extension is available.
+ *
+ * @returns true if sqlite-vec was loaded on the current connection
+ */
+function isVecAvailable(): boolean {
+  return _vecAvailable;
+}
 
 /**
  * Run incremental schema migrations.
@@ -393,6 +429,36 @@ function migrateSchema(db: Database.Database): void {
     })();
     console.error('[brain] Schema migrated to version 9 (agent_events)');
   }
+
+  if (currentVersion < 10) {
+    db.transaction(() => {
+      db.exec(`
+        ALTER TABLE learnings ADD COLUMN embedding BLOB;
+        ALTER TABLE learnings ADD COLUMN embedding_model TEXT DEFAULT '';
+
+        INSERT OR IGNORE INTO schema_version (version) VALUES (10);
+      `);
+    })();
+    console.error('[brain] Schema migrated to version 10 (embedding columns)');
+
+    // Create vec0 virtual table and cleanup trigger only if sqlite-vec is available
+    if (_vecAvailable) {
+      try {
+        db.exec(`
+          CREATE VIRTUAL TABLE IF NOT EXISTS learnings_vec USING vec0(
+            embedding float[384]
+          );
+
+          CREATE TRIGGER IF NOT EXISTS learnings_vec_ad AFTER DELETE ON learnings BEGIN
+            DELETE FROM learnings_vec WHERE rowid = old.id;
+          END;
+        `);
+        console.error('[brain] Created learnings_vec virtual table and cleanup trigger');
+      } catch (err) {
+        console.error('[brain] Failed to create learnings_vec table:', err);
+      }
+    }
+  }
 }
 
 /**
@@ -419,6 +485,10 @@ function getDb(): Database.Database {
     _db.pragma('synchronous = NORMAL');
     _db.pragma('foreign_keys = ON');
     _db.pragma('trusted_schema = OFF');
+
+    // Load sqlite-vec extension (graceful degradation if unavailable)
+    _vecAvailable = loadSqliteVec(_db);
+
     migrateSchema(_db);
   }
   return _db;
@@ -454,4 +524,4 @@ function closeDb(): void {
   }
 }
 
-export { getDb, closeDb, setAdapter, migrateSchema, BRAIN_DIR, DB_PATH };
+export { getDb, closeDb, setAdapter, migrateSchema, loadSqliteVec, isVecAvailable, BRAIN_DIR, DB_PATH };

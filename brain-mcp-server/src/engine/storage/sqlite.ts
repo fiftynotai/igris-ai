@@ -32,6 +32,16 @@ export function createSqliteAdapter(dbPath: string): StorageAdapter {
   db.pragma('foreign_keys = ON');
   db.pragma('trusted_schema = OFF');
 
+  // Load sqlite-vec extension (graceful degradation if unavailable)
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const sqliteVec = require('sqlite-vec');
+    sqliteVec.load(db);
+    console.error('[engine] sqlite-vec extension loaded successfully');
+  } catch (err) {
+    console.error('[engine] sqlite-vec extension not available — vector search disabled:', err);
+  }
+
   // Create engine migration tracking table
   db.exec(`
     CREATE TABLE IF NOT EXISTS engine_migrations (

@@ -18,9 +18,11 @@
   "author": "Fifty.ai",
   "license": "MIT",
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.22.0",
     "better-sqlite3": "^11.0.0",
-    "express": "^4.21.0"
+    "express": "^4.21.0",
+    "sqlite-vec": "^0.1.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",

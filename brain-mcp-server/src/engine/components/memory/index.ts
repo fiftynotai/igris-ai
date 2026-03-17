@@ -21,6 +21,8 @@ import {
   handleMemorySearch,
   handleMemoryRecall,
   handleMemoryGet,
+  handleMemoryHybridSearch,
+  handleMemoryBackfillEmbeddings,
   handlePatternSuggest,
 } from '../../../tools/memory.js';
 import type {
@@ -28,6 +30,8 @@ import type {
   MemorySearchInput,
   MemoryRecallInput,
   MemoryGetInput,
+  HybridSearchInput,
+  BackfillInput,
   PatternSuggestInput,
 } from '../../../tools/memory.js';
 
@@ -90,8 +94,8 @@ export function createMemoryComponent(): BrainComponent {
             },
             required: ['project', 'category', 'title', 'content'],
           },
-          handler: (args) => {
-            const result = handleMemoryStore(args as unknown as MemoryStoreInput);
+          handler: async (args) => {
+            const result = await handleMemoryStore(args as unknown as MemoryStoreInput);
             _ctx?.bus.emit('memory.stored', { project: (args as Record<string, unknown>).project });
             return result;
           },
@@ -165,6 +169,60 @@ export function createMemoryComponent(): BrainComponent {
             required: ['id'],
           },
           handler: (args) => handleMemoryGet(args as unknown as MemoryGetInput),
+        },
+        {
+          name: 'igris_memory_hybrid_search',
+          description: 'Hybrid search combining BM25 (keyword) and vector (semantic) results via Reciprocal Rank Fusion. Falls back to BM25-only if vector search is unavailable. Use this for the best search quality — it finds results that match both keywords and meaning.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              query: {
+                type: 'string',
+                description: 'Search query — used for both FTS5 keyword matching and semantic vector search',
+              },
+              project: {
+                type: 'string',
+                description: 'Filter by project slug (optional — omit for cross-project search)',
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum number of results (default: 10)',
+              },
+              bm25_weight: {
+                type: 'number',
+                description: 'Weight for BM25 keyword results in RRF fusion (default: 0.5)',
+              },
+              vector_weight: {
+                type: 'number',
+                description: 'Weight for vector semantic results in RRF fusion (default: 0.5)',
+              },
+              rrf_k: {
+                type: 'number',
+                description: 'RRF constant — higher values reduce the influence of rank position (default: 60)',
+              },
+            },
+            required: ['query'],
+          },
+          handler: async (args) => handleMemoryHybridSearch(args as unknown as HybridSearchInput),
+        },
+        {
+          name: 'igris_memory_backfill_embeddings',
+          description: 'Batch-generate embeddings for existing learnings that lack them. Processes learnings in batches — run multiple times to process all. Resumable: only processes learnings without embeddings.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              batch_size: {
+                type: 'number',
+                description: 'Number of learnings to process per batch (default: 50)',
+              },
+              project: {
+                type: 'string',
+                description: 'Filter by project slug (optional — omit to backfill all projects)',
+              },
+            },
+            required: [],
+          },
+          handler: async (args) => handleMemoryBackfillEmbeddings(args as unknown as BackfillInput),
         },
         {
           name: 'igris_pattern_suggest',

@@ -1,18 +1,22 @@
 /**
  * Igris Brain — Memory Tools
  *
- * Provides persistent learning storage, full-text search, and contextual
- * recall across projects. Backed by SQLite FTS5 for relevance-ranked retrieval.
+ * Provides persistent learning storage, full-text search, hybrid search
+ * (BM25 + vector via sqlite-vec), and contextual recall across projects.
+ * Backed by SQLite FTS5 for BM25 retrieval and sqlite-vec for vector KNN.
  *
  * Tools:
- * - igris_memory_store: Store a learning in the knowledge DB
+ * - igris_memory_store: Store a learning in the knowledge DB (auto-embeds)
  * - igris_memory_search: Full-text search across learnings (with pagination)
- * - igris_memory_recall: Contextual retrieval for current project + global (truncated content, composite ranking)
+ * - igris_memory_recall: Contextual retrieval for current project + global
  * - igris_memory_get: Fetch full content of a single learning by ID
+ * - igris_memory_hybrid_search: RRF-fused BM25 + vector search
+ * - igris_memory_backfill_embeddings: Batch-embed learnings missing embeddings
  * - igris_pattern_suggest: Suggest relevant patterns for current context
  *
  * Internal functions:
  * - promoteToGlobal: Auto-promote local learnings to global when found in 2+ projects
+ * - computeRRF: Reciprocal Rank Fusion scoring
  *
  * @module tools/memory
  * @author Fifty.ai
@@ -20,6 +24,9 @@
 
 import { getDb, BRAIN_DIR } from '../db.js';
 import { sanitizeFts5Query } from '../utils/fts5.js';
+import { generateEmbedding, embeddingToBuffer, EMBEDDING_MODEL } from '../utils/embeddings.js';
+import { isVectorSearchAvailable, insertEmbedding, vectorSearch } from '../utils/vector-search.js';
+import type { VectorSearchResult } from '../utils/vector-search.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -84,7 +91,7 @@ function validateMemoryInput(args: MemoryStoreInput): string | null {
   return null;
 }
 
-function handleMemoryStore(args: MemoryStoreInput): { content: { type: string; text: string }[] } {
+async function handleMemoryStore(args: MemoryStoreInput): Promise<{ content: { type: string; text: string }[] }> {
   const validationError = validateMemoryInput(args);
   if (validationError) {
     return { content: [{ type: 'text', text: `Validation error: ${validationError}` }] };
@@ -108,6 +115,23 @@ function handleMemoryStore(args: MemoryStoreInput): { content: { type: string; t
     args.scope ?? 'local'
   );
 
+  const learningId = result.lastInsertRowid as number;
+
+  // Auto-embed: generate embedding and store in vec table (non-blocking on failure)
+  let embeddingNote = '';
+  try {
+    if (isVectorSearchAvailable(db)) {
+      const embedding = await generateEmbedding(`${args.title} ${args.content}`);
+      db.prepare('UPDATE learnings SET embedding = ?, embedding_model = ? WHERE id = ?')
+        .run(embeddingToBuffer(embedding), EMBEDDING_MODEL, learningId);
+      insertEmbedding(db, learningId, embedding);
+      embeddingNote = '\nEmbedding: generated';
+    }
+  } catch (err) {
+    console.error('[memory] Auto-embed failed for learning', learningId, ':', err);
+    embeddingNote = '\nEmbedding: skipped (will be generated on backfill)';
+  }
+
   // After storing, check if any local learnings should be promoted to global
   const promoted = promoteToGlobal();
   const promotedNote = promoted > 0 ? `\nAuto-promoted: ${promoted} learning(s) to global scope` : '';
@@ -115,7 +139,7 @@ function handleMemoryStore(args: MemoryStoreInput): { content: { type: string; t
   return {
     content: [{
       type: 'text',
-      text: `Learning stored successfully.\n\nID: ${result.lastInsertRowid}\nProject: ${args.project}\nCategory: ${args.category}\nTitle: ${args.title}\nScope: ${args.scope ?? 'local'}${promotedNote}`,
+      text: `Learning stored successfully.\n\nID: ${learningId}\nProject: ${args.project}\nCategory: ${args.category}\nTitle: ${args.title}\nScope: ${args.scope ?? 'local'}${embeddingNote}${promotedNote}`,
     }],
   };
 }
@@ -503,6 +527,379 @@ function handlePatternSuggest(args: PatternSuggestInput): { content: { type: str
   };
 }
 
+// ---------------------------------------------------------------------------
+// Hybrid Search (BM25 + Vector via RRF)
+// ---------------------------------------------------------------------------
+
+/** Input shape for igris_memory_hybrid_search */
+interface HybridSearchInput {
+  query: string;
+  project?: string;
+  limit?: number;
+  bm25_weight?: number;
+  vector_weight?: number;
+  rrf_k?: number;
+}
+
+/** A BM25 result row from FTS5 */
+interface Bm25Row {
+  id: number;
+  project: string;
+  category: string;
+  title: string;
+  content: string;
+  tags: string;
+  tech_stack: string;
+  scope: string;
+  source_brief: string;
+  confidence: number;
+  created_at: string;
+  access_count: number;
+  rank: number;
+}
+
+/** An entry in the RRF-scored merged result set */
+interface RrfEntry {
+  id: number;
+  score: number;
+  bm25_rank: number | null;
+  vector_rank: number | null;
+  vector_distance: number | null;
+}
+
+/**
+ * Compute Reciprocal Rank Fusion (RRF) scores from two ranked lists.
+ *
+ * RRF formula: score(doc) = w1/(k + rank_bm25) + w2/(k + rank_vec)
+ * Where rank is 1-based (first result = rank 1).
+ *
+ * @param bm25Rows - BM25-ranked results (position in array = rank - 1)
+ * @param vecResults - Vector KNN results (position in array = rank - 1)
+ * @param bm25Weight - Weight for BM25 component (default 0.5)
+ * @param vectorWeight - Weight for vector component (default 0.5)
+ * @param k - RRF constant (default 60)
+ * @returns Merged results sorted by combined RRF score descending
+ */
+function computeRRF(
+  bm25Rows: Bm25Row[],
+  vecResults: VectorSearchResult[],
+  bm25Weight: number = 0.5,
+  vectorWeight: number = 0.5,
+  k: number = 60,
+): RrfEntry[] {
+  const scoreMap = new Map<number, RrfEntry>();
+
+  // Score BM25 results
+  for (let i = 0; i < bm25Rows.length; i++) {
+    const id = bm25Rows[i].id;
+    const rank = i + 1;
+    scoreMap.set(id, {
+      id,
+      score: bm25Weight / (k + rank),
+      bm25_rank: rank,
+      vector_rank: null,
+      vector_distance: null,
+    });
+  }
+
+  // Score vector results and merge
+  for (let i = 0; i < vecResults.length; i++) {
+    const id = vecResults[i].rowid;
+    const rank = i + 1;
+    const existing = scoreMap.get(id);
+    if (existing) {
+      existing.score += vectorWeight / (k + rank);
+      existing.vector_rank = rank;
+      existing.vector_distance = vecResults[i].distance;
+    } else {
+      scoreMap.set(id, {
+        id,
+        score: vectorWeight / (k + rank),
+        bm25_rank: null,
+        vector_rank: rank,
+        vector_distance: vecResults[i].distance,
+      });
+    }
+  }
+
+  // Sort by combined score descending
+  return Array.from(scoreMap.values()).sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Hybrid search combining BM25 (FTS5) and vector KNN results via RRF.
+ *
+ * Falls back to BM25-only when sqlite-vec is unavailable or embedding fails.
+ *
+ * @param args - Search parameters including query, weights, and RRF constant
+ * @returns MCP-formatted response with ranked results
+ */
+async function handleMemoryHybridSearch(args: HybridSearchInput): Promise<{ content: { type: string; text: string }[] }> {
+  const db = getDb();
+  const limit = args.limit ?? 10;
+  const bm25Weight = args.bm25_weight ?? 0.5;
+  const vectorWeight = args.vector_weight ?? 0.5;
+  const k = args.rrf_k ?? 60;
+
+  // --- 1. BM25 search via FTS5 ---
+  const sanitized = sanitizeFts5Query(args.query);
+  let bm25Rows: Bm25Row[] = [];
+
+  if (sanitized) {
+    let bm25Sql = `
+      SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
+             l.tech_stack, l.scope, l.source_brief, l.confidence,
+             l.created_at, l.access_count, rank
+      FROM learnings_fts fts
+      JOIN learnings l ON l.id = fts.rowid
+      WHERE learnings_fts MATCH ?
+    `;
+    const bm25Params: (string | number)[] = [sanitized];
+
+    if (args.project) {
+      bm25Sql += ' AND l.project = ?';
+      bm25Params.push(args.project);
+    }
+
+    bm25Sql += ' ORDER BY rank LIMIT ?';
+    bm25Params.push(limit * 2);
+
+    try {
+      bm25Rows = db.prepare(bm25Sql).all(...bm25Params) as Bm25Row[];
+    } catch {
+      bm25Rows = [];
+    }
+  }
+
+  // --- 2. Vector search (with graceful fallback) ---
+  let vecResults: VectorSearchResult[] = [];
+  let vectorAvailable = false;
+
+  try {
+    if (isVectorSearchAvailable(db)) {
+      const queryEmbedding = await generateEmbedding(args.query);
+      vecResults = vectorSearch(db, queryEmbedding, limit * 2);
+      vectorAvailable = true;
+
+      // If project filter is set, filter vector results to matching project
+      if (args.project && vecResults.length > 0) {
+        const ids = vecResults.map(r => r.rowid);
+        const placeholders = ids.map(() => '?').join(',');
+        const projectRows = db.prepare(
+          `SELECT id FROM learnings WHERE id IN (${placeholders}) AND project = ?`,
+        ).all(...ids, args.project) as { id: number }[];
+        const projectIdSet = new Set(projectRows.map(r => r.id));
+        vecResults = vecResults.filter(r => projectIdSet.has(r.rowid));
+      }
+    }
+  } catch (err) {
+    console.error('[memory] Vector search failed, using BM25 only:', err);
+  }
+
+  // --- 3. No results at all ---
+  if (bm25Rows.length === 0 && vecResults.length === 0) {
+    return {
+      content: [{
+        type: 'text',
+        text: `No learnings found matching "${args.query}".`,
+      }],
+    };
+  }
+
+  // --- 4. BM25-only fallback if vector unavailable ---
+  if (!vectorAvailable || vecResults.length === 0) {
+    const results = bm25Rows.slice(0, limit).map((row, i) => formatHybridResult(row, i, null, null, null));
+    return {
+      content: [{
+        type: 'text',
+        text: `Found ${results.length} learning(s) matching "${args.query}" (BM25 only):\n\n${results.join('\n\n')}`,
+      }],
+    };
+  }
+
+  // --- 5. RRF merge ---
+  const rrfEntries = computeRRF(bm25Rows, vecResults, bm25Weight, vectorWeight, k);
+  const topEntries = rrfEntries.slice(0, limit);
+
+  // Fetch full records for top results
+  const topIds = topEntries.map(e => e.id);
+  if (topIds.length === 0) {
+    return {
+      content: [{
+        type: 'text',
+        text: `No learnings found matching "${args.query}".`,
+      }],
+    };
+  }
+
+  const placeholders = topIds.map(() => '?').join(',');
+  const fullRows = db.prepare(
+    `SELECT id, project, category, title, content, tags, tech_stack, scope,
+            source_brief, confidence, created_at, access_count
+     FROM learnings WHERE id IN (${placeholders})`,
+  ).all(...topIds) as Bm25Row[];
+
+  // Build lookup by ID
+  const rowMap = new Map<number, Bm25Row>();
+  for (const row of fullRows) {
+    rowMap.set(row.id, row);
+  }
+
+  // Format results in RRF order
+  const results = topEntries.map((entry, i) => {
+    const row = rowMap.get(entry.id);
+    if (!row) return `--- Result ${i + 1} ---\nID: ${entry.id}\n(record not found)`;
+    return formatHybridResult(row, i, entry.score, entry.bm25_rank, entry.vector_rank);
+  });
+
+  return {
+    content: [{
+      type: 'text',
+      text: `Found ${results.length} learning(s) matching "${args.query}" (hybrid BM25 + vector):\n\n${results.join('\n\n')}`,
+    }],
+  };
+}
+
+/**
+ * Format a single hybrid search result for display.
+ */
+function formatHybridResult(
+  row: Bm25Row,
+  index: number,
+  rrfScore: number | null,
+  bm25Rank: number | null,
+  vectorRank: number | null,
+): string {
+  const fullContent = row.content;
+  const truncated = fullContent.length > 300
+    ? fullContent.substring(0, 300) + '...'
+    : fullContent;
+
+  const lines = [
+    `--- Result ${index + 1} ---`,
+    `ID: ${row.id}`,
+    `Project: ${row.project}`,
+    `Category: ${row.category}`,
+    `Title: ${row.title}`,
+    `Content: ${truncated}`,
+    `Tags: ${row.tags || '(none)'}`,
+    `Scope: ${row.scope}`,
+    `Confidence: ${row.confidence}`,
+  ];
+
+  if (rrfScore !== null) {
+    lines.push(`RRF Score: ${rrfScore.toFixed(6)}`);
+  }
+  if (bm25Rank !== null) {
+    lines.push(`BM25 Rank: ${bm25Rank}`);
+  }
+  if (vectorRank !== null) {
+    lines.push(`Vector Rank: ${vectorRank}`);
+  }
+
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Backfill Embeddings
+// ---------------------------------------------------------------------------
+
+/** Input shape for igris_memory_backfill_embeddings */
+interface BackfillInput {
+  batch_size?: number;
+  project?: string;
+}
+
+/**
+ * Batch-embed existing learnings that lack embeddings.
+ *
+ * Processes learnings where embedding IS NULL in batches, generating
+ * embeddings and storing them in both the learnings.embedding column
+ * and the learnings_vec virtual table.
+ *
+ * Resumable: only processes learnings without embeddings, so it can
+ * be safely re-run after partial completion.
+ *
+ * @param args - Optional batch_size and project filter
+ * @returns MCP-formatted response with processing summary
+ */
+async function handleMemoryBackfillEmbeddings(args: BackfillInput): Promise<{ content: { type: string; text: string }[] }> {
+  const db = getDb();
+  const batchSize = args.batch_size ?? 50;
+
+  if (!isVectorSearchAvailable(db)) {
+    return {
+      content: [{
+        type: 'text',
+        text: 'Backfill skipped: sqlite-vec extension is not available. Vector search is disabled.',
+      }],
+    };
+  }
+
+  let sql = 'SELECT id, title, content FROM learnings WHERE embedding IS NULL';
+  const params: string[] = [];
+  if (args.project) {
+    sql += ' AND project = ?';
+    params.push(args.project);
+  }
+  sql += ' ORDER BY id LIMIT ?';
+
+  const learnings = db.prepare(sql).all(...params, batchSize) as { id: number; title: string; content: string }[];
+
+  if (learnings.length === 0) {
+    // Check total count to give context
+    let countSql = 'SELECT COUNT(*) as total FROM learnings';
+    const countParams: string[] = [];
+    if (args.project) {
+      countSql += ' WHERE project = ?';
+      countParams.push(args.project);
+    }
+    const countRow = db.prepare(countSql).get(...countParams) as { total: number };
+
+    return {
+      content: [{
+        type: 'text',
+        text: `Backfill complete — all ${countRow.total} learnings already have embeddings.`,
+      }],
+    };
+  }
+
+  let processed = 0;
+  let failed = 0;
+  const startTime = Date.now();
+
+  for (const learning of learnings) {
+    try {
+      const embedding = await generateEmbedding(`${learning.title} ${learning.content}`);
+      db.prepare('UPDATE learnings SET embedding = ?, embedding_model = ? WHERE id = ?')
+        .run(embeddingToBuffer(embedding), EMBEDDING_MODEL, learning.id);
+      insertEmbedding(db, learning.id, embedding);
+      processed++;
+    } catch (err) {
+      failed++;
+      console.error(`[backfill] Failed to embed learning ${learning.id}:`, err);
+    }
+  }
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+  // Check remaining
+  let remainingSql = 'SELECT COUNT(*) as remaining FROM learnings WHERE embedding IS NULL';
+  const remainingParams: string[] = [];
+  if (args.project) {
+    remainingSql += ' AND project = ?';
+    remainingParams.push(args.project);
+  }
+  const remainingRow = db.prepare(remainingSql).get(...remainingParams) as { remaining: number };
+
+  return {
+    content: [{
+      type: 'text',
+      text: `Backfill batch complete.\n\nProcessed: ${processed}\nFailed: ${failed}\nRemaining: ${remainingRow.remaining}\nTime: ${elapsed}s\n\n${remainingRow.remaining > 0 ? 'Run again to process more.' : 'All learnings now have embeddings.'}`,
+    }],
+  };
+}
+
 /**
  * Compute word-level Jaccard similarity between two strings.
  *
@@ -604,5 +1001,24 @@ function promoteToGlobal(): number {
   return promotedCount;
 }
 
-export { handleMemoryStore, handleMemorySearch, handleMemoryRecall, handleMemoryGet, handlePatternSuggest, promoteToGlobal, wordJaccardSimilarity };
-export type { MemoryStoreInput, MemorySearchInput, MemoryRecallInput, MemoryGetInput, PatternSuggestInput };
+export {
+  handleMemoryStore,
+  handleMemorySearch,
+  handleMemoryRecall,
+  handleMemoryGet,
+  handleMemoryHybridSearch,
+  handleMemoryBackfillEmbeddings,
+  handlePatternSuggest,
+  promoteToGlobal,
+  wordJaccardSimilarity,
+  computeRRF,
+};
+export type {
+  MemoryStoreInput,
+  MemorySearchInput,
+  MemoryRecallInput,
+  MemoryGetInput,
+  HybridSearchInput,
+  BackfillInput,
+  PatternSuggestInput,
+};
