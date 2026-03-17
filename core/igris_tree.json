@@ -1,0 +1,117 @@
+{
+  "version": "6.0.0",
+
+  "context_files": {
+    "igris_os": {
+      "path": "~/.igris/core/prompts/igris_os.md",
+      "brain_key": "igris_os",
+      "size_kb": 45.4,
+      "scope": "core",
+      "sections": {
+        "identity": { "lines": "7-50", "kb": 1.2, "tier": "boot" },
+        "agent_delegation": { "lines": "54-525", "kb": 18.0, "tier": "task" },
+        "session_management": { "lines": "529-705", "kb": 7.0, "tier": "task" },
+        "operating_rules": { "lines": "709-745", "kb": 1.2, "tier": "boot" },
+        "quality_standards": { "lines": "749-788", "kb": 1.6, "tier": "task" },
+        "brief_protocol": { "lines": "792-1123", "kb": 13.0, "tier": "task" },
+        "examples_walkthroughs": { "lines": "1195-1343", "kb": 6.0, "tier": "reference" }
+      }
+    },
+    "coding_guidelines": {
+      "path": "~/.igris/projects/{project}/context/coding_guidelines.md",
+      "brain_key": "coding_guidelines",
+      "scope": "project",
+      "tier": "task"
+    },
+    "architecture_map": {
+      "path": "~/.igris/projects/{project}/context/architecture_map.md",
+      "brain_key": "architecture_map",
+      "scope": "project",
+      "tier": "task",
+      "optional": true
+    },
+    "api_pattern": {
+      "path": "~/.igris/projects/{project}/context/api_pattern.md",
+      "brain_key": "api_pattern",
+      "scope": "project",
+      "tier": "task",
+      "optional": true
+    },
+    "design_system": {
+      "path": "~/.igris/projects/{project}/context/design_system.md",
+      "brain_key": "design_system",
+      "scope": "project",
+      "tier": "task",
+      "optional": true
+    },
+    "test_standards": {
+      "path": "~/.igris/projects/{project}/context/test_standards.md",
+      "brain_key": "test_standards",
+      "scope": "project",
+      "tier": "task",
+      "optional": true
+    },
+    "soul": {
+      "path": "~/.igris/core/SOUL.md",
+      "brain_key": "soul",
+      "scope": "core",
+      "tier": "boot"
+    }
+  },
+
+  "tasks": {
+    "/awaken": {
+      "load": ["igris_os", "soul", "coding_guidelines"],
+      "sections": { "igris_os": "ALL" },
+      "note": "Full load on boot"
+    },
+    "/hunt": {
+      "load": ["coding_guidelines"],
+      "sections": { "igris_os": ["identity", "brief_protocol", "agent_delegation", "quality_standards"] }
+    },
+    "/register": {
+      "load": [],
+      "sections": { "igris_os": ["identity", "brief_protocol"] }
+    },
+    "commit": {
+      "load": [],
+      "sections": { "igris_os": ["identity", "quality_standards"] }
+    },
+    "/scan": {
+      "load": [],
+      "sections": { "igris_os": ["identity", "session_management"] }
+    },
+    "research": {
+      "load": [],
+      "sections": { "igris_os": ["identity"] }
+    }
+  },
+
+  "agents": {
+    "architect": {
+      "load": ["coding_guidelines", "architecture_map"],
+      "note": "Brief content passed via orchestrator prompt"
+    },
+    "forger": {
+      "load": ["coding_guidelines", "architecture_map", "api_pattern"],
+      "load_if": { "ui_task": ["design_system"] }
+    },
+    "sentinel": {
+      "load": ["coding_guidelines", "test_standards"]
+    },
+    "warden": {
+      "load": ["coding_guidelines", "architecture_map"]
+    },
+    "mender": {
+      "load": [],
+      "note": "Investigates on demand"
+    },
+    "seeker": {
+      "load": [],
+      "note": "Investigates on demand"
+    },
+    "sage": {
+      "load": ["coding_guidelines"]
+    }
+  }
+}

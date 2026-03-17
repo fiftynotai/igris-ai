@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-echo "🔗 Igris AI - Project Installer (Symlink Mode)"
+echo "🔗 Igris AI - Project Installer (Global Mode)"
 echo "========================================"
 echo ""
 
@@ -49,109 +49,109 @@ echo ""
 # Get source repo and version info
 # ============================================================
 IGRIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-IGRIS_VERSION=$(cat "$IGRIS_DIR/version.txt" 2>/dev/null || echo "4.0.0")
+IGRIS_VERSION=$(cat "$IGRIS_DIR/version.txt" 2>/dev/null || echo "6.0.0")
+
+# ============================================================
+# Refresh brain core from source repo
+# ============================================================
+echo ""
+echo "Refreshing brain core..."
+if [ -f "$IGRIS_DIR/scripts/igris_brain_refresh.sh" ]; then
+  bash "$IGRIS_DIR/scripts/igris_brain_refresh.sh"
+else
+  echo "   igris_brain_refresh.sh not found, skipping core refresh"
+fi
+echo ""
 
 # ============================================================
 # Create project-local directories
 # ============================================================
 echo "📦 Creating project directories..."
 
-mkdir -p ai/briefs
-mkdir -p ai/session/archive
-mkdir -p ai/context
-mkdir -p ai/masks
-mkdir -p ai/prompts
-mkdir -p ai/templates
-mkdir -p .claude/agents
 mkdir -p .claude/hooks
-mkdir -p .claude/rules
-mkdir -p .claude/skills
 mkdir -p scripts
 
-echo "   ✅ Project directories created"
-
 # ============================================================
-# Create symlinks: Agents
+# Disable Claude Code built-in git instructions (BR-058)
+# Igris commit standards (03-igris-commits.md) are the sole authority
 # ============================================================
 echo ""
-echo "🔗 Creating symlinks..."
+echo "🔧 Configuring Claude Code settings..."
 
-SYMLINK_COUNT=0
+SETTINGS_FILE=".claude/settings.json"
+if [ -f "$SETTINGS_FILE" ]; then
+  # Merge includeGitInstructions into existing settings
+  python3 -c "
+import json, sys
+settings_file = sys.argv[1]
+with open(settings_file, 'r') as f:
+    settings = json.load(f)
+settings['includeGitInstructions'] = False
+with open(settings_file, 'w') as f:
+    json.dump(settings, f, indent=2)
+    f.write('\n')
+" "$SETTINGS_FILE"
+  echo "   ✅ Updated $SETTINGS_FILE (includeGitInstructions: false)"
+else
+  # Create new settings with includeGitInstructions disabled
+  python3 -c "
+import json, sys
+settings = {'includeGitInstructions': False}
+with open(sys.argv[1], 'w') as f:
+    json.dump(settings, f, indent=2)
+    f.write('\n')
+" "$SETTINGS_FILE"
+  echo "   ✅ Created $SETTINGS_FILE (includeGitInstructions: false)"
+fi
 
-# Agents: symlink individual .md files
+# Create per-project directories in brain
+PROJECT_DIR="$HOME/.igris/projects/$(basename "$TARGET_DIR")"
+mkdir -p "$PROJECT_DIR/session"
+mkdir -p "$PROJECT_DIR/briefs"
+mkdir -p "$PROJECT_DIR/metrics"
+mkdir -p "$PROJECT_DIR/context"
+mkdir -p "$PROJECT_DIR/plans"
+mkdir -p "$PROJECT_DIR/hooks"
+mkdir -p "$PROJECT_DIR/reference"
+
+# Create worker logs directory (idempotent)
+mkdir -p "$HOME/.igris/logs/worker"
+
+echo "   ✅ Project directories created"
+echo "   ✅ Project dir at $PROJECT_DIR"
+
+# ============================================================
+# Create per-project .claude/ symlinks for Claude Code
+# ============================================================
+echo ""
+echo "🔗 Creating .claude/ symlinks..."
+
+mkdir -p .claude/agents
+mkdir -p .claude/rules
+mkdir -p .claude/skills
+
+# Agents: symlink individual files
 if [ -d "$BRAIN_DIR/core/agents" ]; then
-  for f in "$BRAIN_DIR/core/agents/"*.md; do
-    [ -f "$f" ] || continue
-    BASENAME=$(basename "$f")
-    ln -sf "$f" ".claude/agents/$BASENAME"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
+  for agent in "$BRAIN_DIR/core/agents/"*.md; do
+    [ -f "$agent" ] && ln -sf "$agent" ".claude/agents/$(basename "$agent")"
   done
-  # Also symlink manifest.yaml if it exists
-  if [ -f "$BRAIN_DIR/core/agents/manifest.yaml" ]; then
-    ln -sf "$BRAIN_DIR/core/agents/manifest.yaml" ".claude/agents/manifest.yaml"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
-  fi
+  [ -f "$BRAIN_DIR/core/agents/manifest.yaml" ] && ln -sf "$BRAIN_DIR/core/agents/manifest.yaml" ".claude/agents/manifest.yaml"
   echo "   ✅ Agents linked"
 fi
 
-# ============================================================
-# Create symlinks: Rules
-# ============================================================
-if [ -d "$BRAIN_DIR/core/rules" ]; then
-  for f in "$BRAIN_DIR/core/rules/"*.md; do
-    [ -f "$f" ] || continue
-    BASENAME=$(basename "$f")
-    ln -sf "$f" ".claude/rules/$BASENAME"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
-  done
+# Rules: symlink universal rule
+if [ -f "$BRAIN_DIR/core/rules/00-igris-universal.md" ]; then
+  ln -sf "$BRAIN_DIR/core/rules/00-igris-universal.md" ".claude/rules/00-igris-universal.md"
   echo "   ✅ Rules linked"
 fi
 
-# ============================================================
-# Create symlinks: Prompts
-# ============================================================
-if [ -d "$BRAIN_DIR/core/prompts" ]; then
-  for f in "$BRAIN_DIR/core/prompts/"*; do
-    [ -f "$f" ] || continue
-    BASENAME=$(basename "$f")
-    ln -sf "$f" "ai/prompts/$BASENAME"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
-  done
-  echo "   ✅ Prompts linked"
-fi
-
-# ============================================================
-# Create symlinks: Templates
-# ============================================================
-if [ -d "$BRAIN_DIR/core/templates" ]; then
-  for f in "$BRAIN_DIR/core/templates/"*; do
-    [ -f "$f" ] || continue
-    BASENAME=$(basename "$f")
-    ln -sf "$f" "ai/templates/$BASENAME"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
-  done
-  echo "   ✅ Templates linked"
-fi
-
-# ============================================================
-# Create symlinks: Skills (directory-level, skip existing)
-# ============================================================
+# Skills: symlink skill directories
 if [ -d "$BRAIN_DIR/core/skills" ]; then
-  for d in "$BRAIN_DIR/core/skills/"*/; do
-    [ -d "$d" ] || continue
-    DIRNAME=$(basename "$d")
-    # Skip if local skill already exists (project-specific override)
-    if [ -d ".claude/skills/$DIRNAME" ] && [ ! -L ".claude/skills/$DIRNAME" ]; then
-      echo "   ⚠️  Skipping skill '$DIRNAME' (local override exists)"
-      continue
-    fi
-    ln -sf "$d" ".claude/skills/$DIRNAME"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
+  for skill in "$BRAIN_DIR/core/skills/"*/; do
+    [ -d "$skill" ] && ln -sf "$skill" ".claude/skills/$(basename "$skill")"
   done
   echo "   ✅ Skills linked"
 fi
-
-echo "   📊 Total symlinks: $SYMLINK_COUNT"
 
 # ============================================================
 # Create project-local session files (fresh templates, not symlinks)
@@ -160,8 +160,8 @@ echo ""
 echo "📝 Creating project-local files..."
 
 # CURRENT_SESSION.md
-if [ ! -f "ai/session/CURRENT_SESSION.md" ]; then
-  cat > ai/session/CURRENT_SESSION.md << 'EOF'
+if [ ! -f "$PROJECT_DIR/session/CURRENT_SESSION.md" ]; then
+  cat > "$PROJECT_DIR/session/CURRENT_SESSION.md" << 'EOF'
 # Current Session
 
 **Status:** No active session
@@ -191,14 +191,14 @@ if [ ! -f "ai/session/CURRENT_SESSION.md" ]; then
 
 [N/A]
 EOF
-  echo "   ✅ CURRENT_SESSION.md created"
+  echo "   ✅ CURRENT_SESSION.md created (in cache)"
 else
   echo "   ⚠️  CURRENT_SESSION.md already exists (skipping)"
 fi
 
 # BLOCKERS.md
-if [ ! -f "ai/session/BLOCKERS.md" ]; then
-  cat > ai/session/BLOCKERS.md << 'EOF'
+if [ ! -f "$PROJECT_DIR/session/BLOCKERS.md" ]; then
+  cat > "$PROJECT_DIR/session/BLOCKERS.md" << 'EOF'
 # Active Blockers
 
 **Last Updated:** N/A
@@ -207,14 +207,14 @@ if [ ! -f "ai/session/BLOCKERS.md" ]; then
 
 [No active blockers]
 EOF
-  echo "   ✅ BLOCKERS.md created"
+  echo "   ✅ BLOCKERS.md created (in cache)"
 else
   echo "   ⚠️  BLOCKERS.md already exists (skipping)"
 fi
 
 # DECISIONS.md
-if [ ! -f "ai/session/DECISIONS.md" ]; then
-  cat > ai/session/DECISIONS.md << 'EOF'
+if [ ! -f "$PROJECT_DIR/session/DECISIONS.md" ]; then
+  cat > "$PROJECT_DIR/session/DECISIONS.md" << 'EOF'
 # Architectural Decisions
 
 **Last Updated:** N/A
@@ -223,14 +223,14 @@ if [ ! -f "ai/session/DECISIONS.md" ]; then
 
 [No decisions recorded yet]
 EOF
-  echo "   ✅ DECISIONS.md created"
+  echo "   ✅ DECISIONS.md created (in cache)"
 else
   echo "   ⚠️  DECISIONS.md already exists (skipping)"
 fi
 
 # LEARNINGS.md
-if [ ! -f "ai/session/LEARNINGS.md" ]; then
-  cat > ai/session/LEARNINGS.md << 'EOF'
+if [ ! -f "$PROJECT_DIR/session/LEARNINGS.md" ]; then
+  cat > "$PROJECT_DIR/session/LEARNINGS.md" << 'EOF'
 # Learnings & Patterns
 
 **Last Updated:** N/A
@@ -239,53 +239,12 @@ if [ ! -f "ai/session/LEARNINGS.md" ]; then
 
 [No learnings recorded yet]
 EOF
-  echo "   ✅ LEARNINGS.md created"
+  echo "   ✅ LEARNINGS.md created (in cache)"
 else
   echo "   ⚠️  LEARNINGS.md already exists (skipping)"
 fi
 
-# Context README
-if [ ! -f "ai/context/README.md" ]; then
-  cat > ai/context/README.md << 'EOF'
-# Architecture Context
-
-This directory should contain project-specific architecture documentation:
-
-- **architecture_map.md** - Architecture pattern, layer boundaries, module structure
-- **api_pattern.md** - API call patterns, state management, error handling
-- **coding_guidelines.md** - Naming conventions, doc-comments, linting rules
-- **module_catalog.md** - Module inventory, purposes, dependencies
-
-## How to Generate
-
-Use the DOCUMENT command to have IGRIS analyze your project and create these files:
-
-```
-DOCUMENT architecture
-```
-
-The /document skill will ask questions about your architecture and generate comprehensive documentation.
-EOF
-  echo "   ✅ context/README.md created"
-else
-  echo "   ⚠️  context/README.md already exists (skipping)"
-fi
-
-# Archive README
-if [ ! -f "ai/session/archive/README.md" ]; then
-  cat > ai/session/archive/README.md << 'EOF'
-# Session Archive
-
-Completed sessions are archived here for reference.
-
-## Naming Convention
-
-`YYYY-MM-DD-NNN.md` where NNN is a session number for that day.
-
-Example: `2025-10-13-001.md`
-EOF
-  echo "   ✅ archive/README.md created"
-fi
+# Archive note: Archiving is now handled via brain DB (igris_brief_update with status='Archived')
 
 # ============================================================
 # Generate CLAUDE.md from template
@@ -297,10 +256,10 @@ INSTALL_DATE=$(date -u +"%Y-%m-%d")
 
 # Read persona from SOUL.md (if exists)
 PERSONA_INJECTION=""
-if [ -f "SOUL.md" ]; then
-  PERSONA_INJECTION=$(cat "SOUL.md")
-elif [ -f "$IGRIS_DIR/SOUL.md" ]; then
-  PERSONA_INJECTION=$(cat "$IGRIS_DIR/SOUL.md")
+if [ -f "$BRAIN_DIR/core/SOUL.md" ]; then
+  PERSONA_INJECTION=$(cat "$BRAIN_DIR/core/SOUL.md")
+elif [ -f "$IGRIS_DIR/core/SOUL.md" ]; then
+  PERSONA_INJECTION=$(cat "$IGRIS_DIR/core/SOUL.md")
 fi
 
 # Generate CLAUDE.md using template
@@ -333,17 +292,113 @@ echo ""
 echo "📋 Registering project in brain..."
 
 SLUG=$(basename "$TARGET_DIR")
+
+# Detect tech stack from project indicators
+TECH_STACK=$(python3 -c "
+import os, sys, glob
+project_dir = sys.argv[1]
+stacks = []
+indicators = {
+    'pubspec.yaml': 'flutter',
+    'package.json': 'typescript/javascript',
+    'Cargo.toml': 'rust',
+    'go.mod': 'go',
+    'requirements.txt': 'python',
+    'pyproject.toml': 'python',
+}
+for filename, stack in indicators.items():
+    if os.path.isfile(os.path.join(project_dir, filename)):
+        if stack not in stacks:
+            stacks.append(stack)
+# Check for bash scripts
+if glob.glob(os.path.join(project_dir, '*.sh')) or glob.glob(os.path.join(project_dir, 'scripts', '*.sh')):
+    stacks.append('bash')
+print(','.join(stacks) if stacks else '')
+" "$TARGET_DIR" 2>/dev/null || echo "")
+
 python3 -c "
 import sqlite3, sys
+from datetime import datetime, timezone
+now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 db = sqlite3.connect(sys.argv[1])
 db.execute('PRAGMA busy_timeout = 5000')
-db.execute('INSERT OR IGNORE INTO projects (slug, name, path) VALUES (?, ?, ?)',
-           (sys.argv[2], sys.argv[2], sys.argv[3]))
+db.execute('''
+    INSERT INTO projects (slug, name, path, tech_stack, igris_version, last_session_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(slug) DO UPDATE SET
+        name = excluded.name,
+        path = excluded.path,
+        tech_stack = excluded.tech_stack,
+        igris_version = excluded.igris_version,
+        last_session_at = excluded.last_session_at
+''', (sys.argv[2], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], now))
 db.commit()
 db.close()
-" "$BRAIN_DIR/memory/knowledge.db" "$SLUG" "$TARGET_DIR"
+" "$BRAIN_DIR/memory/knowledge.db" "$SLUG" "$TARGET_DIR" "$TECH_STACK" "$IGRIS_VERSION"
 
-echo "   ✅ Project registered: $SLUG"
+echo "   ✅ Project registered: $SLUG (tech_stack: ${TECH_STACK:-none detected})"
+
+# ============================================================
+# Push project to remote brain (if configured)
+# ============================================================
+echo ""
+echo "🌐 Checking remote brain..."
+
+REMOTE_PUSH_RESULT=$(python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1], 'r') as f:
+        config = json.load(f)
+    url = config.get('remote_brain', {}).get('url', '')
+    key = config.get('remote_brain', {}).get('api_key', '')
+    if url and key:
+        print(url + '|' + key)
+    else:
+        print('')
+except Exception:
+    print('')
+" "$BRAIN_DIR/config.json" 2>/dev/null || echo "")
+
+if [ -n "$REMOTE_PUSH_RESULT" ]; then
+  REMOTE_URL="${REMOTE_PUSH_RESULT%%|*}"
+  API_KEY="${REMOTE_PUSH_RESULT##*|}"
+  NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  PUSH_BODY=$(python3 -c "
+import json, sys
+body = {
+    'tables': {
+        'projects': [{
+            'slug': sys.argv[1],
+            'name': sys.argv[1],
+            'path': sys.argv[2],
+            'tech_stack': sys.argv[3],
+            'igris_version': sys.argv[4],
+            'status': 'active',
+            'registered_at': sys.argv[5],
+            'last_session_at': sys.argv[5],
+            'metadata': '{}'
+        }]
+    }
+}
+print(json.dumps(body))
+" "$SLUG" "$TARGET_DIR" "$TECH_STACK" "$IGRIS_VERSION" "$NOW")
+
+  HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+    --connect-timeout 5 --max-time 10 \
+    -X POST "${REMOTE_URL%/}/sync/push" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $API_KEY" \
+    -d "$PUSH_BODY" 2>/dev/null || echo "000")
+
+  if [ "$HTTP_CODE" = "200" ]; then
+    echo "   ✅ Project pushed to remote brain"
+  else
+    echo "   ⚠️  Remote brain push returned HTTP $HTTP_CODE (continuing anyway)"
+  fi
+else
+  echo "   ⚠️  Remote brain not configured, skipping push"
+fi
 
 # ============================================================
 # Create version tracking file
@@ -357,7 +412,7 @@ from datetime import datetime, timezone
 now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 version_info = {
     'igris_ai_version': sys.argv[1],
-    'install_mode': 'symlink',
+    'install_mode': 'global',
     'brain_path': sys.argv[2],
     'installed_at': now,
     'last_updated': now
@@ -368,6 +423,30 @@ with open('.igris_version', 'w') as f:
 " "$IGRIS_VERSION" "$BRAIN_DIR"
 
 echo "   ✅ .igris_version created"
+
+# ============================================================
+# Copy worker scripts to brain
+# ============================================================
+echo ""
+echo "🔧 Installing worker scripts..."
+
+mkdir -p "$HOME/.igris/scripts"
+
+if [ -f "$IGRIS_DIR/scripts/igris_worker.sh" ]; then
+  cp "$IGRIS_DIR/scripts/igris_worker.sh" "$HOME/.igris/scripts/igris_worker.sh"
+  chmod +x "$HOME/.igris/scripts/igris_worker.sh"
+  echo "   ✅ igris_worker.sh installed"
+else
+  echo "   ⚠️  igris_worker.sh not found in source repo"
+fi
+
+if [ -f "$IGRIS_DIR/scripts/igris_worker_config.sh" ]; then
+  cp "$IGRIS_DIR/scripts/igris_worker_config.sh" "$HOME/.igris/scripts/igris_worker_config.sh"
+  chmod +x "$HOME/.igris/scripts/igris_worker_config.sh"
+  echo "   ✅ igris_worker_config.sh installed"
+else
+  echo "   ⚠️  igris_worker_config.sh not found in source repo"
+fi
 
 # ============================================================
 # Brain health check
@@ -416,12 +495,13 @@ fi
 # ============================================================
 echo ""
 echo "========================================"
-echo "✅ Igris AI installed in $TARGET_DIR (symlink mode)"
+echo "✅ Igris AI installed in $TARGET_DIR (global mode)"
 echo "========================================"
 echo ""
 echo "📊 Summary:"
-echo "   🔗 Symlinks created: $SYMLINK_COUNT"
-echo "   📝 Project files: session, context, CLAUDE.md"
+echo "   🌐 Global: agents, rules, skills via .claude/ symlinks to ~/.igris/core/"
+echo "   📝 Project files: session, context, plans, hooks, reference"
+echo "   🤖 CLAUDE.md generated with persona injection"
 echo "   🗄️  Registered as: $SLUG"
 echo ""
 echo "📚 Getting Started:"

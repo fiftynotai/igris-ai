@@ -1,1 +1,0 @@
-"""Higgsfield MCP tool handlers."""

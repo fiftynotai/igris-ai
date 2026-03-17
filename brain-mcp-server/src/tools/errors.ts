@@ -13,14 +13,7 @@
  */
 
 import { getDb } from '../db.js';
-
-/**
- * Sanitize a string for use in FTS5 MATCH queries.
- */
-function sanitizeFts5Query(input: string): string {
-  const cleaned = input.replace(/[",():*+\-^]/g, ' ');
-  return cleaned.replace(/\s+/g, ' ').trim();
-}
+import { sanitizeFts5Query } from '../utils/fts5.js';
 
 /** Input shape for igris_error_lookup */
 interface ErrorLookupInput {
@@ -176,36 +169,40 @@ function handleErrorLookup(args: ErrorLookupInput): { content: { type: string; t
   }
 
   // Fallback to FTS5 search
-  const ftsResults = db.prepare(`
-    SELECT e.id, e.project, e.fingerprint, e.message, e.solution, e.context,
-           e.occurrence_count, e.first_seen_at, e.last_seen_at, e.resolved_at,
-           rank
-    FROM errors_fts fts
-    JOIN errors e ON e.id = fts.rowid
-    WHERE errors_fts MATCH ?
-    ORDER BY rank
-    LIMIT 5
-  `).all(sanitizeFts5Query(args.message)) as Record<string, unknown>[];
+  const sanitized = sanitizeFts5Query(args.message);
 
-  if (ftsResults.length > 0) {
-    const results = ftsResults.map((row, i) => {
-      return [
-        `--- Match ${i + 1} (FTS) ---`,
-        `ID: ${row.id}`,
-        `Project: ${row.project}`,
-        `Message: ${row.message}`,
-        `Solution: ${row.solution || '(no solution recorded)'}`,
-        `Occurrences: ${row.occurrence_count}`,
-        `Rank: ${row.rank}`,
-      ].join('\n');
-    });
+  if (sanitized) {
+    const ftsResults = db.prepare(`
+      SELECT e.id, e.project, e.fingerprint, e.message, e.solution, e.context,
+             e.occurrence_count, e.first_seen_at, e.last_seen_at, e.resolved_at,
+             rank
+      FROM errors_fts fts
+      JOIN errors e ON e.id = fts.rowid
+      WHERE errors_fts MATCH ?
+      ORDER BY rank
+      LIMIT 5
+    `).all(sanitized) as Record<string, unknown>[];
 
-    return {
-      content: [{
-        type: 'text',
-        text: `Found ${ftsResults.length} similar error(s) via full-text search:\n\n${results.join('\n\n')}`,
-      }],
-    };
+    if (ftsResults.length > 0) {
+      const results = ftsResults.map((row, i) => {
+        return [
+          `--- Match ${i + 1} (FTS) ---`,
+          `ID: ${row.id}`,
+          `Project: ${row.project}`,
+          `Message: ${row.message}`,
+          `Solution: ${row.solution || '(no solution recorded)'}`,
+          `Occurrences: ${row.occurrence_count}`,
+          `Rank: ${row.rank}`,
+        ].join('\n');
+      });
+
+      return {
+        content: [{
+          type: 'text',
+          text: `Found ${ftsResults.length} similar error(s) via full-text search:\n\n${results.join('\n\n')}`,
+        }],
+      };
+    }
   }
 
   return {

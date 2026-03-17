@@ -85,6 +85,67 @@ done
 BRAIN_DIR="$HOME/.igris"
 
 # ============================================================
+# Global symlink creation function
+# ============================================================
+# Creates symlinks from ~/.igris/core/{agents,skills,rules} -> ~/.claude/{agents,skills,rules}
+# This replaces per-project symlinks with Claude Code's native global directories.
+# Safe: never clobbers existing real directories or symlinks pointing elsewhere.
+create_global_symlinks() {
+  local claude_dir="$HOME/.claude"
+  local brain_core="$BRAIN_DIR/core"
+  local created=0
+  local skipped=0
+  local warned=0
+
+  mkdir -p "$claude_dir"
+
+  for symlink_type in agents skills rules; do
+    local target="$brain_core/$symlink_type"
+    local link="$claude_dir/$symlink_type"
+
+    # Source must exist in brain core
+    if [ ! -d "$target" ]; then
+      echo "   ⚠️  $symlink_type: brain core directory not found at $target"
+      warned=$((warned + 1))
+      continue
+    fi
+
+    if [ -L "$link" ]; then
+      # It's a symlink — check where it points
+      local current_target
+      current_target=$(readlink "$link")
+      if [ "$current_target" = "$target" ]; then
+        echo "   ✅ $symlink_type: already symlinked correctly"
+        skipped=$((skipped + 1))
+        continue
+      else
+        echo "   ⚠️  $symlink_type: symlink exists but points to '$current_target' (expected '$target') — skipping"
+        warned=$((warned + 1))
+        continue
+      fi
+    elif [ -d "$link" ]; then
+      # It's a real directory with content — don't clobber
+      echo "   ⚠️  $symlink_type: real directory exists at $link — skipping (won't clobber user content)"
+      warned=$((warned + 1))
+      continue
+    elif [ -e "$link" ]; then
+      # Some other file type — skip
+      echo "   ⚠️  $symlink_type: unexpected file at $link — skipping"
+      warned=$((warned + 1))
+      continue
+    fi
+
+    # Doesn't exist — create symlink
+    ln -s "$target" "$link"
+    echo "   ✅ $symlink_type: symlinked $link -> $target"
+    created=$((created + 1))
+  done
+
+  echo ""
+  echo "   Global symlinks: $created created, $skipped already correct, $warned warnings"
+}
+
+# ============================================================
 # Input validation helpers
 # ============================================================
 validate_url() {
@@ -314,8 +375,26 @@ echo ""
 # Check if brain already exists
 # ============================================================
 if [ -d "$BRAIN_DIR" ] && [ "$FORCE" = false ]; then
-  echo "✅ Igris Brain already exists at $BRAIN_DIR"
-  echo "   Use --force to reinitialize."
+  # Even without --force, create global symlinks if missing
+  CLAUDE_DIR="$HOME/.claude"
+  MISSING_GLOBAL_SYMLINKS=false
+  for symlink_type in agents skills rules; do
+    if [ ! -e "$CLAUDE_DIR/$symlink_type" ]; then
+      MISSING_GLOBAL_SYMLINKS=true
+      break
+    fi
+  done
+
+  if [ "$MISSING_GLOBAL_SYMLINKS" = true ]; then
+    echo "🧠 Brain exists at $BRAIN_DIR — creating missing global symlinks..."
+    echo ""
+    create_global_symlinks
+    echo ""
+    echo "✅ Global symlinks created. Brain is up to date."
+  else
+    echo "✅ Igris Brain already exists at $BRAIN_DIR"
+    echo "   Use --force to reinitialize."
+  fi
   echo ""
   echo "   To install Igris in a project, run:"
   echo "   ./scripts/igris_install.sh <project-dir>"
@@ -368,7 +447,7 @@ echo ""
 # Get Igris AI source directory
 # ============================================================
 IGRIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
-IGRIS_VERSION=$(cat "$IGRIS_DIR/version.txt" 2>/dev/null || echo "4.0.0")
+IGRIS_VERSION=$(cat "$IGRIS_DIR/version.txt" 2>/dev/null || echo "6.0.0")
 
 echo "📁 Source repo: $IGRIS_DIR"
 echo "📌 Version: $IGRIS_VERSION"
@@ -384,9 +463,9 @@ mkdir -p "$BRAIN_DIR/core/agents"
 mkdir -p "$BRAIN_DIR/core/skills"
 mkdir -p "$BRAIN_DIR/core/rules"
 mkdir -p "$BRAIN_DIR/core/templates"
-mkdir -p "$BRAIN_DIR/personas"
+mkdir -p "$BRAIN_DIR/core/task-handlers"
 mkdir -p "$BRAIN_DIR/memory/patterns"
-mkdir -p "$BRAIN_DIR/staging"
+mkdir -p "$BRAIN_DIR/projects"
 mkdir -p "$BRAIN_DIR/mcp-server"
 
 echo "   ✅ Directory tree created at $BRAIN_DIR"
@@ -397,60 +476,63 @@ echo "   ✅ Directory tree created at $BRAIN_DIR"
 echo "📄 Copying core files..."
 
 # Prompts
-if [ -d "$IGRIS_DIR/ai/prompts" ]; then
-  cp "$IGRIS_DIR/ai/prompts/"*.md "$BRAIN_DIR/core/prompts/" 2>/dev/null || true
+if [ -d "$IGRIS_DIR/core/prompts" ]; then
+  cp "$IGRIS_DIR/core/prompts/"*.md "$BRAIN_DIR/core/prompts/" 2>/dev/null || true
   echo "   ✅ Prompts copied"
 else
   echo "   ⚠️  No prompts directory found"
 fi
 
 # Agents
-if [ -d "$IGRIS_DIR/.claude/agents" ]; then
-  cp "$IGRIS_DIR/.claude/agents/"*.md "$BRAIN_DIR/core/agents/" 2>/dev/null || true
-  [ -f "$IGRIS_DIR/.claude/agents/manifest.yaml" ] && cp "$IGRIS_DIR/.claude/agents/manifest.yaml" "$BRAIN_DIR/core/agents/"
+if [ -d "$IGRIS_DIR/core/agents" ]; then
+  cp "$IGRIS_DIR/core/agents/"*.md "$BRAIN_DIR/core/agents/" 2>/dev/null || true
+  [ -f "$IGRIS_DIR/core/agents/manifest.yaml" ] && cp "$IGRIS_DIR/core/agents/manifest.yaml" "$BRAIN_DIR/core/agents/"
   echo "   ✅ Agents copied"
 else
   echo "   ⚠️  No agents directory found"
 fi
 
 # Skills
-if [ -d "$IGRIS_DIR/.claude/skills" ]; then
-  cp -r "$IGRIS_DIR/.claude/skills/"* "$BRAIN_DIR/core/skills/" 2>/dev/null || true
+if [ -d "$IGRIS_DIR/core/skills" ]; then
+  cp -r "$IGRIS_DIR/core/skills/"* "$BRAIN_DIR/core/skills/" 2>/dev/null || true
   echo "   ✅ Skills copied"
 else
   echo "   ⚠️  No skills directory found"
 fi
 
 # Rules
-if [ -d "$IGRIS_DIR/.claude/rules" ]; then
-  cp "$IGRIS_DIR/.claude/rules/"*.md "$BRAIN_DIR/core/rules/" 2>/dev/null || true
+if [ -d "$IGRIS_DIR/core/rules" ]; then
+  cp "$IGRIS_DIR/core/rules/"*.md "$BRAIN_DIR/core/rules/" 2>/dev/null || true
   echo "   ✅ Rules copied"
 else
   echo "   ⚠️  No rules directory found"
 fi
 
 # Templates
-if [ -d "$IGRIS_DIR/ai/templates" ]; then
-  cp "$IGRIS_DIR/ai/templates/"*.md "$BRAIN_DIR/core/templates/" 2>/dev/null || true
+if [ -d "$IGRIS_DIR/core/templates" ]; then
+  cp "$IGRIS_DIR/core/templates/"*.md "$BRAIN_DIR/core/templates/" 2>/dev/null || true
   echo "   ✅ Templates copied"
 else
   echo "   ⚠️  No templates directory found"
 fi
 
-# ============================================================
-# Copy masks (v4.0 — replaces personas)
-# ============================================================
-if [ -d "$IGRIS_DIR/ai/masks" ]; then
-  mkdir -p "$BRAIN_DIR/masks"
-  cp "$IGRIS_DIR/ai/masks/"*.md "$BRAIN_DIR/masks/" 2>/dev/null || true
-  echo "   ✅ Masks copied"
+# Task handlers
+if [ -d "$IGRIS_DIR/core/task-handlers" ]; then
+  cp "$IGRIS_DIR/core/task-handlers/"*.md "$BRAIN_DIR/core/task-handlers/" 2>/dev/null || true
+  echo "   ✅ Task handlers copied"
 else
-  echo "   ⚠️  No masks directory found"
+  echo "   ⚠️  No task-handlers directory found"
+fi
+
+# igris_tree.json
+if [ -f "$IGRIS_DIR/core/igris_tree.json" ]; then
+  cp "$IGRIS_DIR/core/igris_tree.json" "$BRAIN_DIR/core/igris_tree.json"
+  echo "   ✅ igris_tree.json copied"
 fi
 
 # Copy SOUL.md if it exists
-if [ -f "$IGRIS_DIR/SOUL.md" ]; then
-  cp "$IGRIS_DIR/SOUL.md" "$BRAIN_DIR/core/" 2>/dev/null || true
+if [ -f "$IGRIS_DIR/core/SOUL.md" ]; then
+  cp "$IGRIS_DIR/core/SOUL.md" "$BRAIN_DIR/core/" 2>/dev/null || true
   echo "   ✅ SOUL.md copied"
 fi
 
@@ -539,7 +621,7 @@ remote_url = sys.argv[5] if len(sys.argv) > 5 else ''
 remote_key = sys.argv[6] if len(sys.argv) > 6 else ''
 
 config = {
-    'version': '4.0.0',
+    'version': '6.0.0',
     'installed_at': sys.argv[1],
     'source_repo': sys.argv[2],
     'features': {
@@ -554,12 +636,22 @@ config = {
         'brain': '~/.igris',
         'core': '~/.igris/core',
         'memory': '~/.igris/memory',
-        'staging': '~/.igris/staging'
+        'projects': '~/.igris/projects'
     },
     'database': {
         'path': '~/.igris/memory/knowledge.db',
         'wal_mode': True,
         'busy_timeout_ms': 5000
+    },
+    'worker': {
+        'enabled': False,
+        'poll_interval_seconds': 30,
+        'max_concurrent_tasks': 2,
+        'allowed_task_types': ['dev', 'research', 'operational'],
+        'agent_name': 'worker',
+        'capabilities': ['code', 'test', 'research'],
+        'auto_sleep_minutes': 60,
+        'log_dir': '~/.igris/logs/worker'
     }
 }
 
@@ -582,7 +674,7 @@ echo "   ✅ config.json created"
 USER_NAME=""
 USER_ADDRESSING=""
 
-# Extract user info from USER.md if available (v4.0)
+# Extract user info from USER.md if available
 if [ -f "$HOME/.igris/USER.md" ]; then
   if command -v python3 &> /dev/null; then
     USER_NAME=$(python3 -c "
@@ -607,7 +699,7 @@ except:
     print('')
 " "$HOME/.igris/USER.md" 2>/dev/null || echo "")
   fi
-elif [ -f "$IGRIS_DIR/SOUL.md" ]; then
+elif [ -f "$IGRIS_DIR/core/SOUL.md" ]; then
   # Fallback: try SOUL.md for defaults
   USER_ADDRESSING="Partner"
 fi
@@ -618,8 +710,6 @@ profile = {
     'name': sys.argv[1],
     'default_addressing': sys.argv[2],
     'preferences': {
-        'default_mask': 'half',
-        'default_persona': 'igris',
         'auto_register_projects': True
     },
     'created_at': sys.argv[3]
@@ -649,7 +739,7 @@ else
   # Use template if available, otherwise generate directly
   TEMPLATE_FILE="$IGRIS_DIR/scripts/templates/CLAUDE.global.md.template"
   if [ -f "$TEMPLATE_FILE" ]; then
-    sed -e "s|{{IGRIS_VERSION}}|4.0.0|g" \
+    sed -e "s|{{IGRIS_VERSION}}|6.0.0|g" \
         -e "s|{{INSTALL_DATE}}|$INSTALL_DATE|g" \
         -e "s|{{SOURCE_REPO}}|$IGRIS_DIR|g" \
         "$TEMPLATE_FILE" > "$CLAUDE_MD"
@@ -661,7 +751,7 @@ The Igris AI brain is installed at `~/.igris/`.
 
 ## What This Means
 
-- Igris AI agents, rules, and prompts are shared across all projects via symlinks
+- Igris AI agents, rules, and skills are shared across all projects via global directories (~/.claude/)
 - Persistent memory stored in `~/.igris/memory/knowledge.db` (SQLite + FTS5)
 - Projects using Igris are registered in the brain's project registry
 
@@ -677,6 +767,23 @@ Check brain health:
 sqlite3 ~/.igris/memory/knowledge.db "PRAGMA integrity_check; PRAGMA journal_mode;"
 ```
 
+## Worker Mode
+
+When running as a worker daemon (`igris_worker.sh`), Claude Code sessions are spawned
+with task-specific handler skills. The worker identity includes:
+
+- **Role:** Task executor (not interactive assistant)
+- **MCP Connection:** Brain MCP server at ~/.igris/memory/knowledge.db
+- **Task Flow:** Claim -> Execute -> Store Results -> Complete/Fail
+- **Required Tools:** igris_task_get, igris_task_result_add, igris_task_complete, igris_task_fail
+
+When you receive a task prompt from the worker daemon:
+1. Read the full task via igris_task_get
+2. Follow the handler skill instructions
+3. Store ALL outputs via igris_task_result_add
+4. Complete the task via igris_task_complete (or igris_task_fail on error)
+5. Do NOT ask for user input -- work autonomously
+
 ## Note
 
 This file is auto-generated by `igris_brain_init.sh`.
@@ -686,6 +793,14 @@ CLAUDEEOF
   fi
   echo "   ✅ Global CLAUDE.md created at $CLAUDE_MD"
 fi
+
+# ============================================================
+# Create global symlinks: ~/.igris/core/ -> ~/.claude/
+# ============================================================
+echo ""
+echo "🔗 Setting up global agent/skill/rule symlinks..."
+
+create_global_symlinks
 
 # ============================================================
 # Register Brain MCP in ~/.claude.json
@@ -824,6 +939,7 @@ fi
 echo "⚙️  Config: $BRAIN_DIR/config.json"
 echo "👤 Profile: $BRAIN_DIR/user_profile.json"
 echo "🌐 Global CLAUDE.md: $HOME/.claude/CLAUDE.md"
+echo "🔗 Global symlinks: ~/.claude/{agents,skills,rules} -> ~/.igris/core/"
 
 if [ "$BRAIN_MODE" = "dual" ]; then
   echo ""
@@ -835,10 +951,10 @@ fi
 echo ""
 echo "📚 Next Steps:"
 echo ""
-echo "1. Install Igris in a project (symlink mode):"
+echo "1. Register a project with Igris:"
 echo "   ./scripts/igris_install.sh /path/to/your/project"
 echo ""
-echo "2. Or install in the current directory:"
+echo "2. Or register the current directory:"
 echo "   ./scripts/igris_install.sh ."
 echo ""
 

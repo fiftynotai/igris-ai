@@ -1,26 +1,16 @@
 #!/usr/bin/env node
 /**
- * Igris AI Centralized Brain MCP Server
+ * Igris AI Centralized Brain MCP Server v5.0
  *
- * Exposes persistent memory, project management, and cross-project
- * intelligence via Model Context Protocol. Connects to the centralized
- * knowledge database at ~/.igris/memory/knowledge.db.
+ * Modular engine architecture. Domain components are loaded via the
+ * component registry, tools are dispatched through the API gateway,
+ * and the event bus wires cross-component communication.
  *
  * Supports two transport modes:
  * - stdio  (default) — for local Claude Code integration
  * - http   (--http)  — for remote/VPS access via Streamable HTTP
  *
- * Tools provided:
- * - igris_memory_store, igris_memory_search, igris_memory_recall
- * - igris_pattern_suggest
- * - igris_error_lookup
- * - igris_project_register, igris_project_list, igris_project_status
- * - igris_metrics_record, igris_metrics_query, igris_metrics_velocity
- * - igris_session_sync, igris_session_recall
- * - igris_brief_sync, igris_brief_dashboard
- * - igris_instance_heartbeat, igris_instance_list, igris_instance_remove
- *
- * @version 4.0.0
+ * @version 5.0.0
  * @author Fifty.ai
  */
 
@@ -38,47 +28,36 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 
-// Tool handlers
-import { handleMemoryStore, handleMemorySearch, handleMemoryRecall, handlePatternSuggest } from './tools/memory.js';
-import type { MemoryStoreInput, MemorySearchInput, MemoryRecallInput, PatternSuggestInput } from './tools/memory.js';
-import { handleErrorLookup } from './tools/errors.js';
-import type { ErrorLookupInput } from './tools/errors.js';
-import { handleProjectRegister, handleProjectList, handleProjectStatus } from './tools/projects.js';
-import type { ProjectRegisterInput, ProjectListInput, ProjectStatusInput } from './tools/projects.js';
-import { handleMetricsRecord, handleMetricsQuery, handleMetricsVelocity } from './tools/metrics.js';
-import type { MetricsRecordInput, MetricsQueryInput, MetricsVelocityInput } from './tools/metrics.js';
-import { handleSessionSync, handleSessionRecall } from './tools/sessions.js';
-import type { SessionSyncInput, SessionRecallInput } from './tools/sessions.js';
-import { handleBriefSync, handleBriefDashboard } from './tools/briefs.js';
-import type { BriefSyncInput, BriefDashboardInput } from './tools/briefs.js';
-import { handleInstanceHeartbeat, handleInstanceList, handleInstanceRemove } from './tools/instances.js';
-import type { InstanceHeartbeatInput, InstanceListInput, InstanceRemoveInput } from './tools/instances.js';
-import { handleAgentEvent, handleAgentEventList, handleAgentEventLog, handleAgentMetricsSummary } from './tools/agent_events.js';
+// Engine — replaces monolithic tool imports
+import { errMsg } from './engine/helpers.js';
+import { bootEngine } from './engine/index.js';
+import type { Engine, EngineConfig } from './engine/index.js';
+
+// REST API helpers (used by HTTP endpoints, not MCP tools)
+import { handleAgentEvent, handleAgentEventList, handleAgentEventLog, handleAgentMetricsSummary, handleAgentMetricsByProject } from './tools/agent_events.js';
 import type { AgentEventInput } from './tools/agent_events.js';
-import {
-  handleBrainPush, handleBrainPull, SYNC_TABLES, mergeRows,
-  handleSyncQueueStatus, handleSyncQueueDrain,
-  handleBriefFileSync,
-  handleSessionFileSync, handleSessionFilePull,
-  handleDefinitionSync, handleDefinitionPull,
-  handleFilePush, handleFilePull,
-} from './tools/sync.js';
-import type {
-  BrainPushInput, BrainPullInput, SyncQueueDrainInput,
-  BriefFileSyncInput,
-  SessionFileSyncInput, SessionFilePullInput,
-  DefinitionSyncInput, DefinitionPullInput,
-  FilePushInput, FilePullInput,
-} from './tools/sync.js';
+import { handleInstanceRemove, handleInstanceHeartbeat } from './tools/instances.js';
+import { handleTaskNext, handleTaskClaim, handleTaskComplete, handleTaskFail, handleTaskUpdate } from './engine/components/tasks/handlers.js';
+import { handleProjectBudget, handleProjectBudgetSet } from './tools/projects.js';
+import { handleBriefVelocity } from './tools/briefs.js';
+import { handleMetricsRecord } from './tools/metrics.js';
+import type { MetricsRecordInput } from './tools/metrics.js';
+
+// Sync tables config (used by HTTP /sync/push and /sync/pull endpoints)
+import { SYNC_TABLES, mergeRows } from './tools/sync.js';
 
 // Staging processor
 import { processStagingFiles } from './staging.js';
 
 // Database lifecycle
 import { getDb, closeDb, DB_PATH, BRAIN_DIR } from './db.js';
+import * as os from 'node:os';
 
 /** Timestamp when this server process started, used for uptime calculation. */
 const SERVER_START_TIME = Date.now();
+
+/** Valid project slug format: lowercase alphanumeric with hyphens, 1-64 chars. */
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -134,6 +113,41 @@ function parseConfig(): ServerConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Engine singleton — booted once, shared across stdio and HTTP transports
+// ---------------------------------------------------------------------------
+
+let _engine: Engine | null = null;
+
+/**
+ * Get or boot the engine singleton.
+ * Lazily initializes on first call with the default DB path.
+ */
+function getEngine(): Engine {
+  if (!_engine) {
+    const config: EngineConfig = {
+      dbPath: DB_PATH,
+      components: {
+        memory: { enabled: true },
+        errors: { enabled: true },
+        projects: { enabled: true },
+        metrics: { enabled: true },
+        sessions: { enabled: true },
+        briefs: { enabled: true },
+        tasks: { enabled: true },
+        instances: { enabled: true },
+        sync: { enabled: true },
+        cache: { enabled: true },
+        schedules: { enabled: true },
+        coordination: { enabled: true },
+        monitoring: { enabled: true },
+      },
+    };
+    _engine = bootEngine(config);
+  }
+  return _engine;
+}
+
+// ---------------------------------------------------------------------------
 // Direct tool dispatch (bypass MCP transport)
 // ---------------------------------------------------------------------------
 
@@ -142,81 +156,18 @@ function parseConfig(): ServerConfig {
  *
  * Used as a fallback when no active MCP sessions exist (e.g. after a server
  * restart) and Claude Code sends tool calls without re-initializing first.
- * All tool handlers are pure functions that only need the SQLite database.
+ * Delegates to the engine gateway.
  */
 async function dispatchToolCall(
   name: string,
   args: Record<string, unknown>,
 ): Promise<{ content: { type: string; text: string }[]; isError?: boolean }> {
   try {
-    switch (name) {
-      case 'igris_memory_store':
-        return handleMemoryStore(args as unknown as MemoryStoreInput);
-      case 'igris_memory_search':
-        return handleMemorySearch(args as unknown as MemorySearchInput);
-      case 'igris_memory_recall':
-        return handleMemoryRecall(args as unknown as MemoryRecallInput);
-      case 'igris_error_lookup':
-        return handleErrorLookup(args as unknown as ErrorLookupInput);
-      case 'igris_project_register':
-        return handleProjectRegister(args as unknown as ProjectRegisterInput);
-      case 'igris_project_list':
-        return handleProjectList(args as unknown as ProjectListInput);
-      case 'igris_project_status':
-        return handleProjectStatus(args as unknown as ProjectStatusInput);
-      case 'igris_metrics_record':
-        return handleMetricsRecord(args as unknown as MetricsRecordInput);
-      case 'igris_metrics_query':
-        return handleMetricsQuery(args as unknown as MetricsQueryInput);
-      case 'igris_metrics_velocity':
-        return handleMetricsVelocity(args as unknown as MetricsVelocityInput);
-      case 'igris_pattern_suggest':
-        return handlePatternSuggest(args as unknown as PatternSuggestInput);
-      case 'igris_session_sync':
-        return handleSessionSync(args as unknown as SessionSyncInput);
-      case 'igris_session_recall':
-        return handleSessionRecall(args as unknown as SessionRecallInput);
-      case 'igris_brief_sync':
-        return handleBriefSync(args as unknown as BriefSyncInput);
-      case 'igris_brief_dashboard':
-        return handleBriefDashboard(args as unknown as BriefDashboardInput);
-      case 'igris_instance_heartbeat':
-        return handleInstanceHeartbeat(args as unknown as InstanceHeartbeatInput);
-      case 'igris_instance_list':
-        return handleInstanceList(args as unknown as InstanceListInput);
-      case 'igris_instance_remove':
-        return handleInstanceRemove(args as unknown as InstanceRemoveInput);
-      case 'igris_brain_push':
-        return await handleBrainPush(args as unknown as BrainPushInput);
-      case 'igris_brain_pull':
-        return await handleBrainPull(args as unknown as BrainPullInput);
-      case 'igris_sync_queue_status':
-        return handleSyncQueueStatus();
-      case 'igris_sync_queue_drain':
-        return await handleSyncQueueDrain(args as unknown as SyncQueueDrainInput);
-      case 'igris_brief_file_sync':
-        return handleBriefFileSync(args as unknown as BriefFileSyncInput);
-      case 'igris_session_file_sync':
-        return handleSessionFileSync(args as unknown as SessionFileSyncInput);
-      case 'igris_session_file_pull':
-        return handleSessionFilePull(args as unknown as SessionFilePullInput);
-      case 'igris_definition_sync':
-        return handleDefinitionSync(args as unknown as DefinitionSyncInput);
-      case 'igris_definition_pull':
-        return handleDefinitionPull(args as unknown as DefinitionPullInput);
-      case 'igris_file_push':
-        return await handleFilePush(args as unknown as FilePushInput);
-      case 'igris_file_pull':
-        return await handleFilePull(args as unknown as FilePullInput);
-      case 'igris_agent_event':
-        return handleAgentEvent(args as unknown as AgentEventInput);
-      default:
-        throw new Error(`Unknown tool: ${name}`);
-    }
+    const engine = getEngine();
+    return await engine.gateway.dispatch(name, args);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     return {
-      content: [{ type: 'text', text: `Error executing ${name}: ${message}` }],
+      content: [{ type: 'text', text: `Error executing ${name}: ${errMsg(error)}` }],
       isError: true,
     };
   }
@@ -228,14 +179,16 @@ async function dispatchToolCall(
 
 /**
  * Create a fully-configured MCP Server instance with all Igris Brain tools
- * registered. Each call returns an independent server, which is important
- * for the HTTP transport where every session gets its own Server.
+ * registered via the engine gateway. Each call returns an independent server,
+ * which is important for the HTTP transport where every session gets its own Server.
  */
 function createBrainServer(): Server {
+  const engine = getEngine();
+
   const server = new Server(
     {
       name: 'igris-brain',
-      version: '4.0.0',
+      version: '5.0.0',
     },
     {
       capabilities: {
@@ -245,867 +198,26 @@ function createBrainServer(): Server {
   );
 
   // ------------------------------------------------------------------
-  // List available tools
+  // List available tools — delegated to gateway
   // ------------------------------------------------------------------
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return {
-      tools: [
-        // === Memory Tools ===
-        {
-          name: 'igris_memory_store',
-          description: 'Store a learning in the Igris knowledge database. Use this to persist patterns, decisions, discoveries, mistakes, and optimizations for future recall.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug (e.g., "igris-ai", "my-app")',
-              },
-              category: {
-                type: 'string',
-                enum: ['pattern', 'decision', 'discovery', 'mistake', 'optimization'],
-                description: 'Category of the learning',
-              },
-              title: {
-                type: 'string',
-                description: 'Short descriptive title for the learning',
-              },
-              content: {
-                type: 'string',
-                description: 'Full content/description of the learning',
-              },
-              tags: {
-                type: 'string',
-                description: 'Comma-separated tags (e.g., "sqlite,fts5,performance")',
-              },
-              tech_stack: {
-                type: 'string',
-                description: 'Technologies involved (e.g., "typescript,sqlite")',
-              },
-              source_brief: {
-                type: 'string',
-                description: 'Brief ID that generated this learning (e.g., "BR-008")',
-              },
-              scope: {
-                type: 'string',
-                enum: ['local', 'global'],
-                description: 'Scope: "local" for project-specific, "global" for cross-project relevance. Default: "local"',
-              },
-            },
-            required: ['project', 'category', 'title', 'content'],
-          },
-        },
-        {
-          name: 'igris_memory_search',
-          description: 'Full-text search across all learnings in the Igris knowledge database. Supports filtering by project and scope. Returns results ranked by relevance.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              query: {
-                type: 'string',
-                description: 'Search query (FTS5 syntax supported: AND, OR, NOT, phrases)',
-              },
-              project: {
-                type: 'string',
-                description: 'Filter by project slug (optional — omit for cross-project search)',
-              },
-              scope: {
-                type: 'string',
-                enum: ['local', 'global'],
-                description: 'Filter by scope: "global" for cross-project learnings only (optional)',
-              },
-              limit: {
-                type: 'number',
-                description: 'Maximum number of results (default: 10)',
-              },
-            },
-            required: ['query'],
-          },
-        },
-        {
-          name: 'igris_memory_recall',
-          description: 'Contextual recall of relevant learnings for the current project. Combines project-local and global learnings matching the given context. Updates access counts for returned results.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug to recall learnings for',
-              },
-              context: {
-                type: 'string',
-                description: 'What you are currently working on — used for FTS5 relevance matching',
-              },
-              limit: {
-                type: 'number',
-                description: 'Maximum number of results (default: 5)',
-              },
-            },
-            required: ['project', 'context'],
-          },
-        },
-
-        // === Error Tools ===
-        {
-          name: 'igris_error_lookup',
-          description: 'Look up known solutions for an error, or store a new error/solution pair. Uses fingerprinting to match errors regardless of file paths or line numbers. When called without a solution, searches for matching errors. When called with a solution, stores or updates the error record.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              message: {
-                type: 'string',
-                description: 'The error message to look up or store',
-              },
-              project: {
-                type: 'string',
-                description: 'Project slug where the error occurred',
-              },
-              solution: {
-                type: 'string',
-                description: 'The solution to store for this error (optional — omit to search)',
-              },
-            },
-            required: ['message', 'project'],
-          },
-        },
-
-        // === Project Tools ===
-        {
-          name: 'igris_project_register',
-          description: 'Register a project in the Igris brain. Creates or updates the project record. Call this when Igris is installed in a new project.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              slug: {
-                type: 'string',
-                description: 'Unique project slug (e.g., "igris-ai", "my-flutter-app")',
-              },
-              name: {
-                type: 'string',
-                description: 'Human-readable project name',
-              },
-              path: {
-                type: 'string',
-                description: 'Absolute path to the project directory',
-              },
-              tech_stack: {
-                type: 'string',
-                description: 'Comma-separated technologies (e.g., "dart,flutter,firebase")',
-              },
-            },
-            required: ['slug', 'name', 'path'],
-          },
-        },
-        {
-          name: 'igris_project_list',
-          description: 'List all projects registered in the Igris brain, optionally filtered by status.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              status: {
-                type: 'string',
-                enum: ['active', 'archived', 'inactive'],
-                description: 'Filter by project status (optional — omit to list all)',
-              },
-            },
-          },
-        },
-        {
-          name: 'igris_project_status',
-          description: 'Get a detailed status dashboard for a specific project, including learning count, error count, and recent agent metrics.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              slug: {
-                type: 'string',
-                description: 'Project slug to query',
-              },
-            },
-            required: ['slug'],
-          },
-        },
-
-        // === Metrics Tools ===
-        {
-          name: 'igris_metrics_record',
-          description: 'Record an agent performance metric. Call this after each agent action to track success rates, durations, and retry counts.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug',
-              },
-              agent: {
-                type: 'string',
-                description: 'Agent name (e.g., "architect", "forger", "sentinel")',
-              },
-              brief_id: {
-                type: 'string',
-                description: 'Brief ID being worked on (e.g., "BR-008")',
-              },
-              action: {
-                type: 'string',
-                description: 'Action performed (e.g., "plan", "implement", "test", "review")',
-              },
-              result: {
-                type: 'string',
-                enum: ['success', 'failure', 'partial', 'blocked'],
-                description: 'Outcome of the action',
-              },
-              duration_ms: {
-                type: 'number',
-                description: 'Duration of the action in milliseconds',
-              },
-              retry_count: {
-                type: 'number',
-                description: 'Number of retries before reaching this result',
-              },
-            },
-            required: ['project', 'agent', 'action', 'result'],
-          },
-        },
-        {
-          name: 'igris_metrics_query',
-          description: 'Query agent performance metrics with summary statistics. Shows success rate by agent, average duration, and recent entries.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Filter by project slug (optional)',
-              },
-              agent: {
-                type: 'string',
-                description: 'Filter by agent name (optional)',
-              },
-              limit: {
-                type: 'number',
-                description: 'Maximum number of recent entries to return (default: 20)',
-              },
-            },
-          },
-        },
-        {
-          name: 'igris_metrics_velocity',
-          description: 'Generate a velocity dashboard showing brief completion rates per week, average completion time, agent utilization, and week-over-week trends.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Filter by project slug (optional — omit for all projects)',
-              },
-              days: {
-                type: 'number',
-                description: 'Time window in days (default: 30)',
-              },
-            },
-          },
-        },
-        {
-          name: 'igris_pattern_suggest',
-          description: 'Suggest relevant patterns for the current context. Searches learnings via FTS5, includes global-scope patterns, and loads matching patterns from the starter-patterns library. Optionally filters by tech stack.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug to search patterns for',
-              },
-              context: {
-                type: 'string',
-                description: 'What you are currently working on — used for pattern matching',
-              },
-              tech_stack: {
-                type: 'string',
-                description: 'Filter by technology (e.g., "typescript", "sqlite") — optional',
-              },
-            },
-            required: ['project', 'context'],
-          },
-        },
-
-        // === Session Tools ===
-        {
-          name: 'igris_session_sync',
-          description: 'Sync a session snapshot to the Igris brain. Called by /rest to record what you were working on. Closes any existing open session for the project before creating a new one.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug',
-              },
-              brief_id: {
-                type: 'string',
-                description: 'Active brief ID (optional)',
-              },
-              phase: {
-                type: 'string',
-                description: 'Current workflow phase (optional)',
-              },
-              mode: {
-                type: 'string',
-                description: 'Session mode (e.g., "HUNT", "REST")',
-              },
-              summary: {
-                type: 'string',
-                description: 'Brief description of work done this session',
-              },
-            },
-            required: ['project', 'summary'],
-          },
-        },
-        {
-          name: 'igris_session_recall',
-          description: 'Recall recent sessions across all projects. Called by /awaken to show cross-project context. Returns sessions grouped by day.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              days: {
-                type: 'number',
-                description: 'Number of days to look back (default: 7)',
-              },
-            },
-          },
-        },
-
-        // === Brief Tools ===
-        {
-          name: 'igris_brief_sync',
-          description: 'Sync a brief status change to the Igris brain. Called when brief status changes during /hunt, /rest, or /archive. Uses upsert to maintain one record per project+brief_id.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug',
-              },
-              brief_id: {
-                type: 'string',
-                description: 'Brief ID (e.g., "BR-008", "MG-010")',
-              },
-              brief_type: {
-                type: 'string',
-                description: 'Brief type (e.g., "Bug", "Migration", "Feature")',
-              },
-              title: {
-                type: 'string',
-                description: 'Brief title',
-              },
-              status: {
-                type: 'string',
-                description: 'Brief status (e.g., "Ready", "In Progress", "Done")',
-              },
-              priority: {
-                type: 'string',
-                description: 'Priority level (e.g., "P0", "P1-High")',
-              },
-              effort: {
-                type: 'string',
-                description: 'Effort estimate (e.g., "S-Small", "L-Large")',
-              },
-              phase: {
-                type: 'string',
-                description: 'Current workflow phase (e.g., "BUILDING", "TESTING")',
-              },
-            },
-            required: ['project', 'brief_id', 'title', 'status'],
-          },
-        },
-        {
-          name: 'igris_brief_dashboard',
-          description: 'Display a cross-project brief dashboard showing all tracked briefs with status counts. Supports filtering by status and project.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              status: {
-                type: 'string',
-                description: 'Filter by brief status (optional)',
-              },
-              project: {
-                type: 'string',
-                description: 'Filter by project slug (optional)',
-              },
-            },
-          },
-        },
-
-        // === Instance Tools ===
-        {
-          name: 'igris_instance_heartbeat',
-          description: 'Register or update a live Igris instance in the brain. Called on /awaken to register, and during /hunt to update current brief/phase. Returns the instance ID for subsequent heartbeats.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              machine_hostname: {
-                type: 'string',
-                description: 'Hostname of the machine running this instance',
-              },
-              machine_os: {
-                type: 'string',
-                description: 'Operating system (e.g., "darwin", "linux")',
-              },
-              project_slug: {
-                type: 'string',
-                description: 'Project slug (e.g., "igris-ai")',
-              },
-              project_path: {
-                type: 'string',
-                description: 'Absolute path to the project directory',
-              },
-              current_brief: {
-                type: 'string',
-                description: 'Currently active brief ID (e.g., "FR-026")',
-              },
-              current_phase: {
-                type: 'string',
-                description: 'Current workflow phase (e.g., "BUILDING")',
-              },
-              current_task: {
-                type: 'string',
-                description: 'Description of current task',
-              },
-              instance_id: {
-                type: 'string',
-                description: 'Existing instance ID for heartbeat updates (omit for new registration)',
-              },
-            },
-            required: ['machine_hostname'],
-          },
-        },
-        {
-          name: 'igris_instance_list',
-          description: 'List all active Igris instances across machines. Auto-marks instances with no heartbeat for 30+ minutes as stale. Purges instances stale for >2 hours.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              status: {
-                type: 'string',
-                enum: ['active', 'idle', 'stale', 'all'],
-                description: 'Filter by instance status (optional — omit or "all" to list everything)',
-              },
-              project: {
-                type: 'string',
-                description: 'Filter by project slug (optional)',
-              },
-              include_stale: {
-                type: 'boolean',
-                description: 'Include stale instances in results (default: false)',
-              },
-            },
-          },
-        },
-        {
-          name: 'igris_instance_remove',
-          description: 'Remove an Igris instance from the registry. Called on /rest to deregister cleanly.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              instance_id: {
-                type: 'string',
-                description: 'The instance ID to remove',
-              },
-            },
-            required: ['instance_id'],
-          },
-        },
-
-        // === Agent Event Tools ===
-        {
-          name: 'igris_agent_event',
-          description: 'Record an agent lifecycle event for live dashboard tracking. Called during /hunt workflow at each agent phase transition.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              instance_id: {
-                type: 'string',
-                description: 'Instance ID from heartbeat registration',
-              },
-              agent: {
-                type: 'string',
-                description: 'Agent name: architect, forger, sentinel, warden, mender, seeker, sage',
-              },
-              event_type: {
-                type: 'string',
-                enum: ['start', 'stop', 'error', 'retry'],
-                description: 'Event lifecycle type',
-              },
-              phase: {
-                type: 'string',
-                description: 'Hunt phase: PLANNING, BUILDING, TESTING, REVIEWING, DOCUMENTING',
-              },
-              brief_id: {
-                type: 'string',
-                description: 'Active brief ID',
-              },
-              duration_ms: {
-                type: 'number',
-                description: 'Elapsed time in milliseconds (for stop/error events)',
-              },
-              input_tokens: {
-                type: 'number',
-                description: 'Input tokens consumed',
-              },
-              output_tokens: {
-                type: 'number',
-                description: 'Output tokens consumed',
-              },
-              result: {
-                type: 'string',
-                description: 'Result summary (for stop events)',
-              },
-              error_message: {
-                type: 'string',
-                description: 'Error details (for error events)',
-              },
-            },
-            required: ['instance_id', 'agent', 'event_type'],
-          },
-        },
-
-        // === Sync Tools ===
-        {
-          name: 'igris_brain_push',
-          description: 'Push local brain changes to a remote brain server. Syncs learnings, errors, projects, sessions, brief_status, agent_metrics changed since last push. Uses last-write-wins for conflict resolution.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              remote_url: {
-                type: 'string',
-                description: 'URL of the remote brain server (e.g., "https://brain.example.com")',
-              },
-              api_key: {
-                type: 'string',
-                description: 'API key for authenticating with the remote brain server',
-              },
-            },
-            required: ['remote_url', 'api_key'],
-          },
-        },
-        {
-          name: 'igris_brain_pull',
-          description: 'Pull remote brain changes to local brain. Syncs all tables changed since last pull. Uses last-write-wins for conflict resolution.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              remote_url: {
-                type: 'string',
-                description: 'URL of the remote brain server (e.g., "https://brain.example.com")',
-              },
-              api_key: {
-                type: 'string',
-                description: 'API key for authenticating with the remote brain server',
-              },
-            },
-            required: ['remote_url', 'api_key'],
-          },
-        },
-
-        // === Sync Queue Tools (FR-036) ===
-        {
-          name: 'igris_sync_queue_status',
-          description: 'Show the current sync queue status. Displays pending, retrying, sent, and failed counts plus per-table breakdown of actionable items.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {},
-          },
-        },
-        {
-          name: 'igris_sync_queue_drain',
-          description: 'Process pending sync queue items by pushing them to the remote brain. Retries failed push operations with exponential backoff tracking.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              remote_url: {
-                type: 'string',
-                description: 'URL of the remote brain server',
-              },
-              api_key: {
-                type: 'string',
-                description: 'API key for authenticating with the remote brain server',
-              },
-            },
-            required: ['remote_url', 'api_key'],
-          },
-        },
-
-        // === Brief File Sync (FR-037) ===
-        {
-          name: 'igris_brief_file_sync',
-          description: 'Sync a brief file content to the brain. Computes content hash and upserts into brief_files table. Use this to store the full markdown content of brief files for cross-device access.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug',
-              },
-              brief_id: {
-                type: 'string',
-                description: 'Brief ID (e.g., "BR-008", "FR-026")',
-              },
-              filename: {
-                type: 'string',
-                description: 'Brief filename (e.g., "FR-026-feature-name.md")',
-              },
-              content: {
-                type: 'string',
-                description: 'Full markdown content of the brief file',
-              },
-            },
-            required: ['project', 'brief_id', 'filename', 'content'],
-          },
-        },
-
-        // === Session File Sync (FR-038) ===
-        {
-          name: 'igris_session_file_sync',
-          description: 'Sync a session file content to the brain. Stores session files (CURRENT_SESSION.md, BLOCKERS.md, etc.) for cross-device access.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug',
-              },
-              filename: {
-                type: 'string',
-                description: 'Session filename (e.g., "CURRENT_SESSION.md")',
-              },
-              content: {
-                type: 'string',
-                description: 'Full content of the session file',
-              },
-            },
-            required: ['project', 'filename', 'content'],
-          },
-        },
-        {
-          name: 'igris_session_file_pull',
-          description: 'Pull all session files for a project from the brain. Returns all stored session files with their content.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              project: {
-                type: 'string',
-                description: 'Project slug to pull session files for',
-              },
-            },
-            required: ['project'],
-          },
-        },
-
-        // === Definition File Sync (FR-039) ===
-        {
-          name: 'igris_definition_sync',
-          description: 'Sync a definition file (agent, skill, rule, or prompt) to the brain. Stores the full content for cross-device and cross-project sharing.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              type: {
-                type: 'string',
-                enum: ['agent', 'skill', 'rule', 'prompt'],
-                description: 'Definition type',
-              },
-              name: {
-                type: 'string',
-                description: 'Definition name (e.g., "forger", "hunt", "01-igris-init")',
-              },
-              filename: {
-                type: 'string',
-                description: 'Filename (e.g., "forger.md", "SKILL.md")',
-              },
-              content: {
-                type: 'string',
-                description: 'Full content of the definition file',
-              },
-              version: {
-                type: 'string',
-                description: 'Version string (optional)',
-              },
-            },
-            required: ['type', 'name', 'filename', 'content'],
-          },
-        },
-        {
-          name: 'igris_definition_pull',
-          description: 'Pull definitions from the brain. Optionally filter by timestamp to get only recently updated definitions.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              since: {
-                type: 'string',
-                description: 'ISO timestamp — only return definitions updated after this time (optional)',
-              },
-            },
-          },
-        },
-
-        // === File Sync Tools (BR-023) ===
-        {
-          name: 'igris_file_push',
-          description: 'Push a flat file (events.jsonl, agent-metrics.json, budget.json) to the remote brain server via HTTP. Updates sync_state for dashboard tracking.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              file_type: {
-                type: 'string',
-                enum: ['events', 'agent_metrics', 'budget'],
-                description: 'File type: "events" for events.jsonl (cost tracking), "agent_metrics" for agent-metrics.json (agent stats), "budget" for budget.json (daily budget thresholds)',
-              },
-              content: {
-                type: 'string',
-                description: 'Full file content to push',
-              },
-              remote_url: {
-                type: 'string',
-                description: 'URL of the remote brain server (e.g., "https://brain.example.com")',
-              },
-              api_key: {
-                type: 'string',
-                description: 'API key for authenticating with the remote brain server',
-              },
-            },
-            required: ['file_type', 'content', 'remote_url', 'api_key'],
-          },
-        },
-        {
-          name: 'igris_file_pull',
-          description: 'Pull a flat file from the remote brain server.',
-          inputSchema: {
-            type: 'object' as const,
-            properties: {
-              file_type: {
-                type: 'string',
-                enum: ['events', 'agent_metrics', 'budget'],
-                description: 'File type: "events" for events.jsonl, "agent_metrics" for agent-metrics.json, "budget" for budget.json',
-              },
-              remote_url: {
-                type: 'string',
-                description: 'URL of the remote brain server',
-              },
-              api_key: {
-                type: 'string',
-                description: 'API key for authenticating with the remote brain server',
-              },
-            },
-            required: ['file_type', 'remote_url', 'api_key'],
-          },
-        },
-      ],
-    };
+    return { tools: engine.gateway.listTools() };
   });
 
   // ------------------------------------------------------------------
-  // Execute tool calls
+  // Execute tool calls — delegated to gateway
   // ------------------------------------------------------------------
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
     try {
-      switch (name) {
-        // Memory tools
-        case 'igris_memory_store':
-          return handleMemoryStore(args as unknown as MemoryStoreInput);
-        case 'igris_memory_search':
-          return handleMemorySearch(args as unknown as MemorySearchInput);
-        case 'igris_memory_recall':
-          return handleMemoryRecall(args as unknown as MemoryRecallInput);
-
-        // Error tools
-        case 'igris_error_lookup':
-          return handleErrorLookup(args as unknown as ErrorLookupInput);
-
-        // Project tools
-        case 'igris_project_register':
-          return handleProjectRegister(args as unknown as ProjectRegisterInput);
-        case 'igris_project_list':
-          return handleProjectList(args as unknown as ProjectListInput);
-        case 'igris_project_status':
-          return handleProjectStatus(args as unknown as ProjectStatusInput);
-
-        // Metrics tools
-        case 'igris_metrics_record':
-          return handleMetricsRecord(args as unknown as MetricsRecordInput);
-        case 'igris_metrics_query':
-          return handleMetricsQuery(args as unknown as MetricsQueryInput);
-        case 'igris_metrics_velocity':
-          return handleMetricsVelocity(args as unknown as MetricsVelocityInput);
-
-        // Pattern tools
-        case 'igris_pattern_suggest':
-          return handlePatternSuggest(args as unknown as PatternSuggestInput);
-
-        // Session tools
-        case 'igris_session_sync':
-          return handleSessionSync(args as unknown as SessionSyncInput);
-        case 'igris_session_recall':
-          return handleSessionRecall(args as unknown as SessionRecallInput);
-
-        // Brief tools
-        case 'igris_brief_sync':
-          return handleBriefSync(args as unknown as BriefSyncInput);
-        case 'igris_brief_dashboard':
-          return handleBriefDashboard(args as unknown as BriefDashboardInput);
-
-        // Instance tools
-        case 'igris_instance_heartbeat':
-          return handleInstanceHeartbeat(args as unknown as InstanceHeartbeatInput);
-        case 'igris_instance_list':
-          return handleInstanceList(args as unknown as InstanceListInput);
-        case 'igris_instance_remove':
-          return handleInstanceRemove(args as unknown as InstanceRemoveInput);
-
-        // Agent event tools
-        case 'igris_agent_event':
-          return handleAgentEvent(args as unknown as AgentEventInput);
-
-        // Sync tools
-        case 'igris_brain_push':
-          return await handleBrainPush(args as unknown as BrainPushInput);
-        case 'igris_brain_pull':
-          return await handleBrainPull(args as unknown as BrainPullInput);
-
-        // Sync queue tools (FR-036)
-        case 'igris_sync_queue_status':
-          return handleSyncQueueStatus();
-        case 'igris_sync_queue_drain':
-          return await handleSyncQueueDrain(args as unknown as SyncQueueDrainInput);
-
-        // Brief file sync (FR-037)
-        case 'igris_brief_file_sync':
-          return handleBriefFileSync(args as unknown as BriefFileSyncInput);
-
-        // Session file sync (FR-038)
-        case 'igris_session_file_sync':
-          return handleSessionFileSync(args as unknown as SessionFileSyncInput);
-        case 'igris_session_file_pull':
-          return handleSessionFilePull(args as unknown as SessionFilePullInput);
-
-        // Definition file sync (FR-039)
-        case 'igris_definition_sync':
-          return handleDefinitionSync(args as unknown as DefinitionSyncInput);
-        case 'igris_definition_pull':
-          return handleDefinitionPull(args as unknown as DefinitionPullInput);
-
-        // File sync (BR-023)
-        case 'igris_file_push':
-          return await handleFilePush(args as unknown as FilePushInput);
-        case 'igris_file_pull':
-          return await handleFilePull(args as unknown as FilePullInput);
-
-        default:
-          throw new Error(`Unknown tool: ${name}`);
-      }
+      return await engine.gateway.dispatch(name, args as Record<string, unknown>);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
       return {
         content: [
           {
             type: 'text',
-            text: `Error executing ${name}: ${message}`,
+            text: `Error executing ${name}: ${errMsg(error)}`,
           },
         ],
         isError: true,
@@ -1124,27 +236,29 @@ function createBrainServer(): Server {
  * Run the brain server with stdio transport (default, local mode).
  */
 async function runStdio(): Promise<void> {
+  // Boot engine (also bridges db.ts)
+  const engine = getEngine();
+
   // Process any pending staging files before accepting connections
   try {
     processStagingFiles();
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`[brain] Staging processing error: ${message}`);
+    console.error(`[brain] Staging processing error: ${errMsg(err)}`);
   }
 
   const server = createBrainServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error('Igris Brain MCP Server v4.0.0 started (stdio)');
+  console.error('Igris Brain MCP Server v5.0.0 started (stdio)');
 
   // Clean up on exit
   process.on('SIGINT', () => {
-    closeDb();
+    engine.shutdown();
     process.exit(0);
   });
   process.on('SIGTERM', () => {
-    closeDb();
+    engine.shutdown();
     process.exit(0);
   });
 }
@@ -1156,6 +270,7 @@ async function runStdio(): Promise<void> {
 /** Rate limit: max auth failures per IP before temporary block. */
 const AUTH_FAIL_WINDOW_MS = 60 * 1000;
 const AUTH_FAIL_MAX = 10;
+const AUTH_FAIL_MAP_MAX = 10_000;
 
 /**
  * Timing-safe comparison of two strings.
@@ -1175,12 +290,20 @@ function safeCompare(a: string, b: string): boolean {
  * in an in-memory map keyed by session ID with TTL-based cleanup.
  */
 async function runHttp(config: ServerConfig): Promise<void> {
+  // Boot engine (also bridges db.ts)
+  const engine = getEngine();
+
   // Process any pending staging files before accepting connections
   try {
     processStagingFiles();
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`[brain] Staging processing error: ${message}`);
+    console.error(`[brain] Staging processing error: ${errMsg(err)}`);
+  }
+
+  // Require API key for HTTP mode — refuse to start without auth
+  if (!config.apiKey) {
+    console.error('[brain] FATAL: BRAIN_API_KEY is required for HTTP mode. Set the BRAIN_API_KEY environment variable.');
+    process.exit(1);
   }
 
   // Create Express app WITHOUT global express.json() middleware.
@@ -1194,52 +317,64 @@ async function runHttp(config: ServerConfig): Promise<void> {
   const authFailures: Record<string, { count: number; resetAt: number }> = {};
 
   // API key middleware — reusable across /mcp and /sync routes
-  if (config.apiKey) {
-    const expectedToken = `Bearer ${config.apiKey}`;
+  const expectedToken = `Bearer ${config.apiKey}`;
 
-    const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
-      const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
+  const authMiddleware = (req: Request, res: Response, next: NextFunction) => {
+    const ip = req.ip ?? req.socket.remoteAddress ?? 'unknown';
 
-      // Check rate limit
-      const now = Date.now();
-      const entry = authFailures[ip];
-      if (entry && entry.count >= AUTH_FAIL_MAX && now < entry.resetAt) {
-        res.status(429).json({
-          jsonrpc: '2.0',
-          error: { code: -32001, message: 'Too many failed authentication attempts' },
-          id: null,
-        });
-        return;
-      }
+    // Check rate limit
+    const now = Date.now();
+    const entry = authFailures[ip];
+    if (entry && entry.count >= AUTH_FAIL_MAX && now < entry.resetAt) {
+      res.status(429).json({
+        jsonrpc: '2.0',
+        error: { code: -32001, message: 'Too many failed authentication attempts' },
+        id: null,
+      });
+      return;
+    }
 
-      const auth = req.headers.authorization ?? '';
-      if (!safeCompare(auth, expectedToken)) {
-        // Track failure
-        if (!authFailures[ip] || now >= (authFailures[ip].resetAt)) {
-          authFailures[ip] = { count: 1, resetAt: now + AUTH_FAIL_WINDOW_MS };
-        } else {
-          authFailures[ip].count++;
+    // Accept both Authorization: Bearer <key> and X-API-Key: <key>
+    const xApiKey = req.headers['x-api-key'];
+    const auth = typeof xApiKey === 'string' && xApiKey
+      ? `Bearer ${xApiKey}`
+      : (req.headers.authorization ?? '');
+    if (!safeCompare(auth, expectedToken)) {
+      // Track failure (with map size cap)
+      if (!authFailures[ip] || now >= (authFailures[ip].resetAt)) {
+        // Evict oldest entries if map is at capacity
+        if (Object.keys(authFailures).length >= AUTH_FAIL_MAP_MAX) {
+          let oldestIp = '';
+          let oldestReset = Infinity;
+          for (const [k, v] of Object.entries(authFailures)) {
+            if (v.resetAt < oldestReset) {
+              oldestReset = v.resetAt;
+              oldestIp = k;
+            }
+          }
+          if (oldestIp) delete authFailures[oldestIp];
         }
-
-        res.status(401).json({
-          jsonrpc: '2.0',
-          error: { code: -32001, message: 'Unauthorized: Invalid or missing API key' },
-          id: null,
-        });
-        return;
+        authFailures[ip] = { count: 1, resetAt: now + AUTH_FAIL_WINDOW_MS };
+      } else {
+        authFailures[ip].count++;
       }
 
-      // Reset failures on successful auth
-      delete authFailures[ip];
-      next();
-    };
+      res.status(401).json({
+        jsonrpc: '2.0',
+        error: { code: -32001, message: 'Unauthorized: Invalid or missing API key' },
+        id: null,
+      });
+      return;
+    }
 
-    app.use('/mcp', authMiddleware);
-    app.use('/sync', authMiddleware);
-    app.use('/api', authMiddleware);
-  } else {
-    console.error('[brain] WARNING: No BRAIN_API_KEY set. Server is running without authentication.');
-  }
+    // Reset failures on successful auth
+    delete authFailures[ip];
+    next();
+  };
+
+  app.use('/mcp', authMiddleware);
+  app.use('/sync', authMiddleware);
+  app.use('/api', authMiddleware);
 
   // Session management: map session IDs to their transports + last-activity timestamps.
   // The SDK's StreamableHTTPServerTransport validates session IDs internally via the
@@ -1277,7 +412,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
   // Health endpoint (no auth required, minimal info)
   app.get('/health', (_req: Request, res: Response) => {
-    res.json({ status: 'ok', version: '4.0.0' });
+    res.json({ status: 'ok' });
   });
 
   // -----------------------------------------------------------------------
@@ -1291,9 +426,9 @@ async function runHttp(config: ServerConfig): Promise<void> {
       const db = getDb();
       const includeStale = req.query.include_stale === 'true';
 
-      // Purge instances stale for >2 hours
+      // Purge instances stale for >4 hours
       db.prepare(
-        "DELETE FROM instances WHERE last_heartbeat_at < datetime('now', '-120 minutes')"
+        "DELETE FROM instances WHERE last_heartbeat_at < datetime('now', '-240 minutes')"
       ).run();
 
       // Purge agent_events older than 7 days
@@ -1302,7 +437,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
       ).run();
 
       db.prepare(
-        `UPDATE instances SET status = 'stale' WHERE last_heartbeat_at < datetime('now', '-30 minutes') AND status != 'stale'`
+        `UPDATE instances SET status = 'stale' WHERE last_heartbeat_at < datetime('now', '-45 minutes') AND status != 'stale'`
       ).run();
 
       const whereClause = includeStale ? '' : "WHERE status != 'stale'";
@@ -1311,8 +446,39 @@ async function runHttp(config: ServerConfig): Promise<void> {
       ).all();
       res.json({ instances: rows, count: rows.length });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/instances error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // DELETE /api/instances/:id — deregister an instance
+  app.delete('/api/instances/:id', (req: Request, res: Response) => {
+    try {
+      const result = handleInstanceRemove({ instance_id: req.params.id as string });
+      res.json({ ok: true, message: typeof result.content?.[0]?.text === 'string' ? result.content[0].text : 'Instance removed' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error('[brain] DELETE /api/instances/:id error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // POST /api/instances/heartbeat — register/update worker instance
+  app.post('/api/instances/heartbeat', express.json(), (req: Request, res: Response) => {
+    try {
+      if (!req.body.machine_hostname) {
+        res.status(400).json({ error: 'Missing required field: machine_hostname' });
+        return;
+      }
+      const result = handleInstanceHeartbeat(req.body);
+      const text = result.content[0].text;
+      const idMatch = text.match(/:\s*(.+)$/);
+      const instanceId = idMatch ? idMatch[1].trim() : null;
+      res.json({ ok: true, message: text, instance_id: instanceId });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] POST /api/instances/heartbeat error:', message);
       res.status(500).json({ error: message });
     }
   });
@@ -1326,7 +492,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
       ).all();
       res.json({ projects: rows, count: rows.length });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/projects error:', message);
       res.status(500).json({ error: message });
     }
@@ -1368,8 +534,22 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.json({ briefs: rows, summary, count: rows.length });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/briefs error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/briefs/velocity — brief completion velocity metrics
+  app.get('/api/briefs/velocity', (req: Request, res: Response) => {
+    try {
+      const project = req.query.project as string | undefined;
+      const weeks = req.query.weeks ? parseInt(req.query.weeks as string, 10) || 4 : undefined;
+      const data = handleBriefVelocity({ project, weeks });
+      res.json(data);
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] GET /api/briefs/velocity error:', message);
       res.status(500).json({ error: message });
     }
   });
@@ -1378,13 +558,13 @@ async function runHttp(config: ServerConfig): Promise<void> {
   app.get('/api/sessions', (req: Request, res: Response) => {
     try {
       const db = getDb();
-      const days = parseInt(req.query.days as string, 10) || 7;
+      const days = Math.min(365, Math.max(1, parseInt(req.query.days as string, 10) || 7));
       const rows = db.prepare(
         `SELECT id, project, brief_id, phase, mode, summary, started_at, ended_at FROM sessions WHERE started_at >= datetime('now', '-' || ? || ' days') ORDER BY started_at DESC`
       ).all(days);
       res.json({ sessions: rows, count: rows.length });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/sessions error:', message);
       res.status(500).json({ error: message });
     }
@@ -1422,7 +602,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
       }
 
       res.json({
-        version: '4.0.0',
+        version: '5.0.0',
         db_size_bytes: dbSizeBytes,
         counts: {
           projects: countTable('projects'),
@@ -1435,7 +615,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
         uptime_seconds: Math.floor((Date.now() - SERVER_START_TIME) / 1000),
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/brain-stats error:', message);
       res.status(500).json({ error: message });
     }
@@ -1471,8 +651,315 @@ async function runHttp(config: ServerConfig): Promise<void> {
         failed,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/sync-status error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Engine event & task endpoints — dashboard data feeds
+  // -----------------------------------------------------------------------
+
+  // GET /api/events — query the event_log table with filters and pagination
+  app.get('/api/events', (req: Request, res: Response) => {
+    try {
+      const db = getDb();
+
+      const eventName = req.query.event_name as string | undefined;
+      const component = req.query.component as string | undefined;
+      const project = req.query.project as string | undefined;
+      const since = req.query.since as string | undefined;
+      const until = req.query.until as string | undefined;
+      const limit = Math.min(Math.max(1, parseInt(req.query.limit as string, 10) || 100), 1000);
+      const offset = Math.max(0, parseInt(req.query.offset as string, 10) || 0);
+
+      const conditions: string[] = [];
+      const params: unknown[] = [];
+
+      if (eventName) {
+        conditions.push('event_name = ?');
+        params.push(eventName);
+      }
+      if (component) {
+        conditions.push('component = ?');
+        params.push(component);
+      }
+      if (project) {
+        conditions.push('project_slug = ?');
+        params.push(project);
+      }
+      const instanceId = req.query.instance_id as string | undefined;
+      if (instanceId) {
+        conditions.push('instance_id = ?');
+        params.push(instanceId);
+      }
+      if (since) {
+        conditions.push('created_at >= ?');
+        params.push(since);
+      }
+      if (until) {
+        conditions.push('created_at <= ?');
+        params.push(until);
+      }
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+      const events = db.prepare(
+        `SELECT id, event_name, component, payload, machine_hostname, project_slug, instance_id, created_at FROM event_log ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+      ).all(...params, limit, offset);
+
+      const countRow = db.prepare(
+        `SELECT COUNT(*) as total FROM event_log ${whereClause}`
+      ).get(...params) as { total: number };
+
+      res.json({ events, total: countRow.total, limit, offset });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] GET /api/events error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/events/stream — SSE endpoint streaming real-time engine events
+  app.get('/api/events/stream', (req: Request, res: Response) => {
+    try {
+      const componentFilter = req.query.component as string | undefined;
+      const projectFilter = req.query.project as string | undefined;
+
+      // Set SSE headers
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders();
+
+      // Subscribe to all engine events via wildcard
+      const handler = (payload: { event: string; data: Record<string, unknown>; timestamp: string }) => {
+        try {
+          if (res.writableEnded) return;
+
+          // Extract component from event name (e.g. "tasks.created" -> "tasks")
+          const eventComponent = payload.event.split('.')[0];
+
+          // Apply optional filters
+          if (componentFilter && eventComponent !== componentFilter) return;
+          if (projectFilter) {
+            const payloadProject = payload.data.project_slug ?? payload.data.project;
+            if (payloadProject && payloadProject !== projectFilter) return;
+          }
+
+          const sseData = JSON.stringify({
+            event_name: payload.event,
+            component: eventComponent,
+            payload: payload.data,
+            timestamp: payload.timestamp,
+          });
+          res.write(`data: ${sseData}\n\n`);
+        } catch {
+          // Silently ignore write errors (client may have disconnected)
+        }
+      };
+
+      engine.bus.on('*', handler);
+
+      // Keepalive every 25 seconds to prevent TCP idle timeout
+      const keepaliveTimer = setInterval(() => {
+        try {
+          if (!res.writableEnded) {
+            res.write(': keepalive\n\n');
+          } else {
+            clearInterval(keepaliveTimer);
+          }
+        } catch {
+          clearInterval(keepaliveTimer);
+        }
+      }, 25_000);
+
+      // Clean up on client disconnect
+      res.on('close', () => {
+        engine.bus.off('*', handler);
+        clearInterval(keepaliveTimer);
+      });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] GET /api/events/stream error:', message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: message });
+      }
+    }
+  });
+
+  // GET /api/tasks — query the tasks table with filters, pagination, and summary
+  app.get('/api/tasks', (req: Request, res: Response) => {
+    try {
+      const db = getDb();
+
+      const status = req.query.status as string | undefined;
+      const taskType = req.query.task_type as string | undefined;
+      const projectSlug = req.query.project_slug as string | undefined;
+      const assignee = req.query.assignee as string | undefined;
+      const scope = req.query.scope as string | undefined;
+      const limit = Math.min(Math.max(1, parseInt(req.query.limit as string, 10) || 50), 500);
+      const offset = Math.max(0, parseInt(req.query.offset as string, 10) || 0);
+
+      const conditions: string[] = [];
+      const params: unknown[] = [];
+
+      if (status) {
+        conditions.push('status = ?');
+        params.push(status);
+      }
+      if (taskType) {
+        conditions.push('task_type = ?');
+        params.push(taskType);
+      }
+      if (projectSlug) {
+        conditions.push('project_slug = ?');
+        params.push(projectSlug);
+      }
+      if (assignee) {
+        conditions.push('assignee = ?');
+        params.push(assignee);
+      }
+      if (scope) {
+        conditions.push('scope = ?');
+        params.push(scope);
+      }
+
+      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+      const tasks = db.prepare(
+        `SELECT id, task_type, scope, title, description, brief_id, project_slug, parent_id, status, priority, assignee, due_at, defer_until, created_by, required_capabilities, retry_count, max_retries, fail_reason, metadata, created_at, updated_at FROM tasks ${whereClause} ORDER BY priority ASC, created_at ASC LIMIT ? OFFSET ?`
+      ).all(...params, limit, offset);
+
+      const countRow = db.prepare(
+        `SELECT COUNT(*) as total FROM tasks ${whereClause}`
+      ).get(...params) as { total: number };
+
+      // Summary counts by status (unfiltered to show full picture)
+      const summaryRows = db.prepare(
+        `SELECT status, COUNT(*) as count FROM tasks GROUP BY status`
+      ).all() as { status: string; count: number }[];
+
+      const summary: Record<string, number> = {
+        pending: 0, active: 0, blocked: 0, done: 0, cancelled: 0, failed: 0,
+      };
+      for (const row of summaryRows) {
+        summary[row.status] = row.count;
+      }
+
+      res.json({ tasks, total: countRow.total, limit, offset, summary });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] GET /api/tasks error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // POST /api/tasks/next — get next available task with capability filtering
+  app.post('/api/tasks/next', express.json(), (req: Request, res: Response) => {
+    try {
+      const args: Record<string, unknown> = {};
+      if (req.body.capabilities) args.capabilities = req.body.capabilities;
+      if (req.body.agent_name) args.agent = req.body.agent_name;
+      if (req.body.project_slug) args.project_slug = req.body.project_slug;
+      if (req.body.scope) args.scope = req.body.scope;
+      if (req.body.task_type) args.task_type = req.body.task_type;
+
+      const result = handleTaskNext(args);
+      if (result.isError) {
+        res.status(400).json({ error: result.content[0].text });
+        return;
+      }
+      const parsed = JSON.parse(result.content[0].text);
+      res.json({ ok: true, ...parsed });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] POST /api/tasks/next error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // POST /api/tasks/:id/claim — atomically claim a task
+  app.post('/api/tasks/:id/claim', express.json(), (req: Request, res: Response) => {
+    try {
+      const agent = req.body.agent as string | undefined;
+      if (!agent) {
+        res.status(400).json({ error: 'Missing required field: agent' });
+        return;
+      }
+      const result = handleTaskClaim({ task_id: req.params.id, agent });
+      if (result.isError) {
+        res.status(400).json({ error: result.content[0].text });
+        return;
+      }
+      const parsed = JSON.parse(result.content[0].text);
+      res.json({ ok: true, ...parsed });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] POST /api/tasks/:id/claim error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // POST /api/tasks/:id/complete — mark task as complete
+  app.post('/api/tasks/:id/complete', express.json(), (req: Request, res: Response) => {
+    try {
+      const result = handleTaskComplete({ task_id: req.params.id, result: req.body.result });
+      if (result.isError) {
+        res.status(400).json({ error: result.content[0].text });
+        return;
+      }
+      const parsed = JSON.parse(result.content[0].text);
+      res.json({ ok: true, ...parsed });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] POST /api/tasks/:id/complete error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // POST /api/tasks/:id/fail — mark task as failed
+  app.post('/api/tasks/:id/fail', express.json(), (req: Request, res: Response) => {
+    try {
+      const reason = req.body.reason as string | undefined;
+      if (!reason) {
+        res.status(400).json({ error: 'Missing required field: reason' });
+        return;
+      }
+      const result = handleTaskFail({ task_id: req.params.id, reason });
+      if (result.isError) {
+        res.status(400).json({ error: result.content[0].text });
+        return;
+      }
+      const parsed = JSON.parse(result.content[0].text);
+      res.json({ ok: true, ...parsed });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] POST /api/tasks/:id/fail error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // POST /api/tasks/:id/release — unclaim a task back to pending (no retry burn)
+  app.post('/api/tasks/:id/release', express.json(), (req: Request, res: Response) => {
+    try {
+      const reason = (req.body.reason as string) || 'Released by worker';
+      const result = handleTaskUpdate({
+        task_id: req.params.id,
+        status: 'pending',
+        assignee: '',
+        metadata: { last_release_reason: reason },
+      });
+      if (result.isError) {
+        res.status(400).json({ error: result.content[0].text });
+        return;
+      }
+      const parsed = JSON.parse(result.content[0].text);
+      res.json({ ok: true, ...parsed });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] POST /api/tasks/:id/release error:', message);
       res.status(500).json({ error: message });
     }
   });
@@ -1497,7 +984,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.status(201).json({ ok: true, id: insertedId });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] POST /api/agent-event error:', message);
       res.status(500).json({ error: message });
     }
@@ -1509,7 +996,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
       const data = handleAgentEventList({ instance_id: req.params.id as string });
       res.json(data);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/instances/:id/agents error:', message);
       res.status(500).json({ error: message });
     }
@@ -1518,24 +1005,413 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // GET /api/instances/:id/log — Execution log (recent events)
   app.get('/api/instances/:id/log', (req: Request, res: Response) => {
     try {
-      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+      const limit = req.query.limit ? Math.min(1000, Math.max(1, parseInt(req.query.limit as string, 10) || 50)) : undefined;
       const data = handleAgentEventLog({ instance_id: req.params.id as string, limit });
       res.json(data);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/instances/:id/log error:', message);
       res.status(500).json({ error: message });
     }
   });
 
   // GET /api/agent-metrics/summary — Cross-instance agent performance
-  app.get('/api/agent-metrics/summary', (_req: Request, res: Response) => {
+  // Optional query param: ?project_slug=<slug> to filter by project
+  app.get('/api/agent-metrics/summary', (req: Request, res: Response) => {
     try {
-      const data = handleAgentMetricsSummary();
+      const projectSlug = req.query.project_slug as string | undefined;
+      const data = handleAgentMetricsSummary(
+        projectSlug ? { project_slug: projectSlug } : undefined
+      );
       res.json(data);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/agent-metrics/summary error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/agent-metrics/by-project — Per-project breakdown for a specific agent
+  // Required query param: ?agent=<agent_name>
+  app.get('/api/agent-metrics/by-project', (req: Request, res: Response) => {
+    const agent = req.query.agent as string | undefined;
+    if (!agent) {
+      res.status(400).json({ error: 'Missing required query parameter: agent' });
+      return;
+    }
+    try {
+      const data = handleAgentMetricsByProject({ agent });
+      res.json(data);
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] GET /api/agent-metrics/by-project error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // POST /api/metrics — Record an agent performance metric (used by SubagentStop hook)
+  app.post('/api/metrics', express.json(), (req: Request, res: Response) => {
+    try {
+      const args = req.body as MetricsRecordInput;
+
+      if (!args.project || !args.agent || !args.action || !args.result) {
+        res.status(400).json({ error: 'Missing required fields: project, agent, action, result' });
+        return;
+      }
+
+      const validResults = ['success', 'failure', 'partial', 'blocked'];
+      if (!validResults.includes(args.result)) {
+        res.status(400).json({ error: `Invalid result: ${args.result}. Must be one of: ${validResults.join(', ')}` });
+        return;
+      }
+
+      const result = handleMetricsRecord(args);
+      const idMatch = result.content[0].text.match(/ID: (\d+)/);
+      const insertedId = idMatch ? parseInt(idMatch[1], 10) : null;
+
+      res.status(201).json({ ok: true, id: insertedId });
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] POST /api/metrics error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // HTTP Hook Event Ingestion (FR-088)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Agent name normalization map: Claude Code built-in agent names to
+   * Igris canonical agent names. Same mapping as agent_metrics.sh.
+   */
+  const AGENT_NAME_MAP: Record<string, string> = {
+    planner: 'architect',
+    coder: 'forger',
+    tester: 'sentinel',
+    reviewer: 'warden',
+    debugger: 'mender',
+    explorer: 'seeker',
+    Explore: 'seeker',
+    'claude-code-guide': 'seeker',
+    documenter: 'forger',
+    releaser: 'forger',
+    auditor: 'warden',
+    ideator: 'architect',
+  };
+
+  /**
+   * Agent-to-action mapping for metrics recording.
+   */
+  const AGENT_ACTION_MAP: Record<string, string> = {
+    architect: 'plan',
+    forger: 'implement',
+    sentinel: 'test',
+    warden: 'review',
+    mender: 'debug',
+    seeker: 'research',
+    sage: 'advise',
+  };
+
+  /**
+   * Parse the last_assistant_message to determine success or failure.
+   * Returns 'success' or 'failure'.
+   */
+  function parseAgentResult(lastMsg: string | undefined): 'success' | 'failure' {
+    if (!lastMsg) return 'success';
+    const lower = lastMsg.toLowerCase();
+
+    const failIndicators = [
+      'fail', 'failed', 'failure',
+      'reject', 'rejected',
+      'error', 'errors found',
+      'blocked',
+      'not pass', 'did not pass',
+      'tests failing',
+    ];
+    const passIndicators = [
+      'pass', 'passed', 'success',
+      'approve', 'approved',
+      'complete', 'completed',
+      'all tests pass',
+      'lgtm', 'looks good',
+    ];
+
+    const hasFail = failIndicators.some(ind => lower.includes(ind));
+    const hasPass = passIndicators.some(ind => lower.includes(ind));
+
+    if (hasFail && !hasPass) return 'failure';
+    if (hasFail && hasPass) {
+      // Ambiguous: check last occurrence position
+      const lastFailPos = Math.max(...failIndicators.map(ind => lower.lastIndexOf(ind)).filter(p => p >= 0));
+      const lastPassPos = Math.max(...passIndicators.map(ind => lower.lastIndexOf(ind)).filter(p => p >= 0));
+      return lastPassPos > lastFailPos ? 'success' : 'failure';
+    }
+    return 'success';
+  }
+
+  /**
+   * Read the active brief ID from a session file content string.
+   */
+  function extractBriefFromSession(sessionContent: string): string {
+    for (const line of sessionContent.split('\n')) {
+      if (line.includes('Active Brief') || line.includes('Last Active')) {
+        const match = line.match(/([A-Z]+-\d+)/);
+        if (match) return match[1];
+      }
+    }
+    return '';
+  }
+
+  /**
+   * Read the instance ID from a session file content string.
+   */
+  function extractInstanceIdFromSession(sessionContent: string): string {
+    for (const line of sessionContent.split('\n')) {
+      if (line.includes('Instance ID')) {
+        const match = line.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+        if (match) return match[1];
+      }
+    }
+    return '';
+  }
+
+  // POST /api/hooks/event — Ingest raw Claude Code hook payloads (FR-088)
+  //
+  // Accepts the JSON that Claude Code sends to HTTP hooks and routes it
+  // to the appropriate brain tables based on hook_event_name.
+  //
+  // Query params:
+  //   ?project=<slug> — project slug (set statically in settings.json URL)
+  //
+  // Supported hook_event_name values:
+  //   - SubagentStart   → agent_events (start) + event_log
+  //   - SubagentStop    → agent_events (stop) + agent_metrics + event_log
+  //   - TaskCompleted   → event_log (team.task_completed) — quality gate result
+  //   - TeammateIdle    → event_log (team.teammate_idle) — work assignment result
+  //   - Stop            → event_log (session.stop)
+  app.post('/api/hooks/event', express.json(), (req: Request, res: Response) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+      const hookEvent = body.hook_event_name as string | undefined;
+
+      if (!hookEvent) {
+        res.status(400).json({ error: 'Missing hook_event_name field' });
+        return;
+      }
+
+      const db = getDb();
+      const hostname = os.hostname();
+      const now = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
+      const projectSlug = (req.query.project as string) || '';
+
+      // Read session file for instance_id and brief_id if project is known
+      let instanceId = '';
+      let briefId = '';
+      if (projectSlug) {
+        try {
+          const sessionPath = path.join(BRAIN_DIR, 'cache', projectSlug, 'session', 'CURRENT_SESSION.md');
+          if (existsSync(sessionPath)) {
+            const content = readFileSync(sessionPath, 'utf-8');
+            instanceId = extractInstanceIdFromSession(content);
+            briefId = extractBriefFromSession(content);
+          }
+        } catch { /* session file read is best-effort */ }
+      }
+
+      const results: { table: string; id: number | bigint | null }[] = [];
+
+      if (hookEvent === 'SubagentStart') {
+        const rawAgentType = (body.agent_type as string) || (body.agent_id as string) || 'unknown';
+        const agentType = AGENT_NAME_MAP[rawAgentType] ?? rawAgentType;
+
+        // Insert into agent_events
+        if (instanceId) {
+          const aeResult = db.prepare(`
+            INSERT INTO agent_events
+              (instance_id, agent, event_type, phase, brief_id,
+               duration_ms, input_tokens, output_tokens, cache_read, cache_create,
+               result, error_message, metadata)
+            VALUES (?, ?, 'start', NULL, ?, 0, 0, 0, 0, 0, NULL, NULL, '{}')
+          `).run(instanceId, agentType, briefId);
+          results.push({ table: 'agent_events', id: aeResult.lastInsertRowid });
+        }
+
+        // Insert into event_log
+        const elResult = db.prepare(`
+          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
+          VALUES ('agent.start', 'hooks', ?, ?, ?, ?, ?)
+        `).run(
+          JSON.stringify({ agent: agentType, raw_type: rawAgentType, hook: 'SubagentStart' }),
+          hostname, projectSlug || null, instanceId || null, now
+        );
+        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
+
+        res.status(201).json({ ok: true, hook: hookEvent, agent: agentType, results });
+
+      } else if (hookEvent === 'SubagentStop') {
+        const rawAgentType = (body.agent_type as string) || (body.agent_id as string) || 'unknown';
+        const agentType = AGENT_NAME_MAP[rawAgentType] ?? rawAgentType;
+        const lastMsg = body.last_assistant_message as string | undefined;
+        const agentResult = parseAgentResult(lastMsg);
+        const action = AGENT_ACTION_MAP[agentType] ?? 'execute';
+
+        // Token parsing from transcript is not possible server-side (local file),
+        // so we accept zeros here. The main_agent_metrics.sh command hook handles
+        // transcript parsing separately and posts to /api/metrics.
+        // If the hook payload includes token data in the future, we'll use it.
+
+        // Insert into agent_events
+        if (instanceId) {
+          const aeResult = db.prepare(`
+            INSERT INTO agent_events
+              (instance_id, agent, event_type, phase, brief_id,
+               duration_ms, input_tokens, output_tokens, cache_read, cache_create,
+               result, error_message, metadata)
+            VALUES (?, ?, 'stop', NULL, ?, 0, 0, 0, 0, 0, ?, NULL, '{}')
+          `).run(instanceId, agentType, briefId, agentResult);
+          results.push({ table: 'agent_events', id: aeResult.lastInsertRowid });
+        }
+
+        // Insert into agent_metrics
+        if (projectSlug) {
+          try {
+            const mResult = db.prepare(`
+              INSERT INTO agent_metrics (project, agent, brief_id, action, result, duration_ms, retry_count)
+              VALUES (?, ?, ?, ?, ?, 0, 0)
+            `).run(projectSlug, agentType, briefId, action, agentResult);
+            results.push({ table: 'agent_metrics', id: mResult.lastInsertRowid });
+          } catch { /* metrics insert is best-effort */ }
+        }
+
+        // Insert into event_log
+        const elResult = db.prepare(`
+          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
+          VALUES ('agent.stop', 'hooks', ?, ?, ?, ?, ?)
+        `).run(
+          JSON.stringify({ agent: agentType, raw_type: rawAgentType, result: agentResult, hook: 'SubagentStop' }),
+          hostname, projectSlug || null, instanceId || null, now
+        );
+        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
+
+        res.status(201).json({ ok: true, hook: hookEvent, agent: agentType, result: agentResult, results });
+
+      } else if (hookEvent === 'TaskCompleted') {
+        const taskId = body.task_id as string | undefined;
+        const gateResult = (body.gate_result as string) || 'unknown';
+
+        // Insert into event_log
+        const elResult = db.prepare(`
+          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
+          VALUES ('team.task_completed', 'hooks', ?, ?, ?, ?, ?)
+        `).run(
+          JSON.stringify({ task_id: taskId, gate_result: gateResult, hook: 'TaskCompleted' }),
+          hostname, projectSlug || null, instanceId || null, now
+        );
+        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
+
+        res.status(201).json({ ok: true, hook: hookEvent, gate_result: gateResult, results });
+
+      } else if (hookEvent === 'TeammateIdle') {
+        const teammateId = body.teammate_id as string | undefined;
+        const assignedTaskId = body.assigned_task_id as string | undefined;
+        const assignedTaskTitle = body.assigned_task_title as string | undefined;
+
+        // Insert into event_log
+        const elResult = db.prepare(`
+          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
+          VALUES ('team.teammate_idle', 'hooks', ?, ?, ?, ?, ?)
+        `).run(
+          JSON.stringify({
+            teammate_id: teammateId,
+            assigned_task_id: assignedTaskId,
+            assigned_task_title: assignedTaskTitle,
+            hook: 'TeammateIdle',
+          }),
+          hostname, projectSlug || null, instanceId || null, now
+        );
+        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
+
+        res.status(201).json({
+          ok: true,
+          hook: hookEvent,
+          assigned: !!assignedTaskId,
+          assigned_task_id: assignedTaskId || null,
+          results,
+        });
+
+      } else if (hookEvent === 'Stop') {
+        const sessionId = body.session_id as string | undefined;
+
+        // Insert into event_log
+        const elResult = db.prepare(`
+          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
+          VALUES ('session.stop', 'hooks', ?, ?, ?, ?, ?)
+        `).run(
+          JSON.stringify({ session_id: sessionId, hook: 'Stop' }),
+          hostname, projectSlug || null, instanceId || null, now
+        );
+        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
+
+        res.status(201).json({ ok: true, hook: hookEvent, results });
+
+      } else {
+        // Unknown hook event — log it generically
+        const elResult = db.prepare(`
+          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
+          VALUES (?, 'hooks', ?, ?, ?, ?, ?)
+        `).run(
+          `hook.${hookEvent.toLowerCase()}`, JSON.stringify(body),
+          hostname, projectSlug || null, instanceId || null, now
+        );
+        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
+
+        res.status(201).json({ ok: true, hook: hookEvent, results });
+      }
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] POST /api/hooks/event error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // GET /api/projects/:slug/budget — Per-project token usage and budget config
+  app.get('/api/projects/:slug/budget', (req: Request, res: Response) => {
+    if (!SLUG_RE.test(req.params.slug as string)) {
+      res.status(400).json({ error: 'Invalid project slug format' });
+      return;
+    }
+    try {
+      const data = handleProjectBudget({ slug: req.params.slug as string });
+      res.json(data);
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] GET /api/projects/:slug/budget error:', message);
+      res.status(500).json({ error: message });
+    }
+  });
+
+  // PUT /api/projects/:slug/budget — Set/update project budget threshold
+  app.put('/api/projects/:slug/budget', express.json(), (req: Request, res: Response) => {
+    if (!SLUG_RE.test(req.params.slug as string)) {
+      res.status(400).json({ error: 'Invalid project slug format' });
+      return;
+    }
+    try {
+      const { budget_limit, budget_period } = req.body;
+      if (typeof budget_limit !== 'number' || budget_limit < 0) {
+        res.status(400).json({ error: 'budget_limit must be a non-negative number' });
+        return;
+      }
+      const data = handleProjectBudgetSet({
+        slug: req.params.slug as string,
+        budget_limit,
+        budget_period,
+      });
+      res.json(data);
+    } catch (err) {
+      const message = errMsg(err);
+      console.error('[brain] PUT /api/projects/:slug/budget error:', message);
       res.status(500).json({ error: message });
     }
   });
@@ -1765,7 +1641,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.json({ ok: true, results });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] Sync push error:', message);
       if (!res.headersSent) {
         res.status(500).json({ error: message });
@@ -1795,7 +1671,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.json({ tables });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] Sync pull error:', message);
       if (!res.headersSent) {
         res.status(500).json({ error: message });
@@ -1808,11 +1684,21 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // Push/pull flat files (events.jsonl, agent-metrics.json, budget.json)
   // -----------------------------------------------------------------------
 
-  /** Map file_type to relative path under BRAIN_DIR */
+  /**
+   * Map file_type to relative path under BRAIN_DIR (~/.igris/ on VPS).
+   *
+   * Local hooks write to ~/.igris/projects/{project}/metrics/ (per-project).
+   * VPS stores metrics globally under BRAIN_DIR/cache/metrics/ because the
+   * file-push payload has no project identifier — all projects merge into
+   * the same files on the server side.
+   *
+   * Future enhancement: add a "project" field to the file-push API so the
+   * VPS can store metrics per-project (cache/{project}/metrics/).
+   */
   const FILE_TYPE_PATHS: Record<string, string> = {
-    events: 'ai/session/metrics/events.jsonl',
-    agent_metrics: 'ai/session/metrics/agent-metrics.json',
-    budget: 'ai/session/metrics/budget.json',
+    events: 'cache/metrics/events.jsonl',
+    agent_metrics: 'cache/metrics/agent-metrics.json',
+    budget: 'cache/metrics/budget.json',
   };
 
   // POST /sync/file-push — receive file content and write to VPS path
@@ -1856,7 +1742,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.json({ ok: true, file_type, bytes_written: bytesWritten });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] POST /sync/file-push error:', message);
       if (!res.headersSent) {
         res.status(500).json({ error: message });
@@ -1887,7 +1773,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.json({ file_type: fileType, content, size });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error(`[brain] GET /sync/file-pull/${req.params.type} error:`, message);
       if (!res.headersSent) {
         res.status(500).json({ error: message });
@@ -1914,7 +1800,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.json(row);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/briefs/:project/:briefId/content error:', message);
       res.status(500).json({ error: message });
     }
@@ -1930,7 +1816,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.json({ files: rows, count: rows.length });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/sessions/:project/files error:', message);
       res.status(500).json({ error: message });
     }
@@ -1955,7 +1841,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       res.json({ definitions: rows, count: rows.length });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
       console.error('[brain] GET /api/definitions error:', message);
       res.status(500).json({ error: message });
     }
@@ -1963,11 +1849,11 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
   // Start listening
   app.listen(config.port, () => {
-    console.error(`Igris Brain MCP Server v4.0.0 started (http, port ${config.port})`);
+    console.error(`Igris Brain MCP Server v5.0.0 started (http, port ${config.port})`);
   });
 
   // Graceful shutdown
-  const shutdown = async () => {
+  const shutdownHttp = async () => {
     console.error('Shutting down HTTP server...');
     clearInterval(cleanupInterval);
     for (const sid of Object.keys(transports)) {
@@ -1979,11 +1865,11 @@ async function runHttp(config: ServerConfig): Promise<void> {
         console.error(`Error closing session ${sid}:`, err);
       }
     }
-    closeDb();
+    engine.shutdown();
     process.exit(0);
   };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdownHttp);
+  process.on('SIGTERM', shutdownHttp);
 }
 
 // ---------------------------------------------------------------------------
@@ -1995,13 +1881,15 @@ const config = parseConfig();
 if (config.mode === 'http') {
   runHttp(config).catch((error) => {
     console.error('Fatal error:', error);
-    closeDb();
+    if (_engine) _engine.shutdown();
+    else closeDb();
     process.exit(1);
   });
 } else {
   runStdio().catch((error) => {
     console.error('Fatal error:', error);
-    closeDb();
+    if (_engine) _engine.shutdown();
+    else closeDb();
     process.exit(1);
   });
 }

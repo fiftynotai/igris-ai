@@ -279,9 +279,9 @@ The desktop app will read/write from the Igris AI CLI repository:
 **Project Path:** `/Users/m.elamin/StudioProjects/igris-ai`
 
 **Data Sources:**
-- `ai/briefs/*.md` - Brief files
-- `ai/session/CURRENT_SESSION.md` - Session tracking
-- `ai/context/coding_guidelines.md` - Architecture
+- Brain DB via MCP tools (`igris_brief_get`/`igris_brief_list`) - Briefs (filesystem: `~/.igris/projects/{project}/briefs/`)
+- `~/.igris/projects/{project}/session/CURRENT_SESSION.md` - Session tracking
+- `~/.igris/projects/{project}/context/coding_guidelines.md` - Architecture
 - `SOUL.md` - Persona identity
 
 ---

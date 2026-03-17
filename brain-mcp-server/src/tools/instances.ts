@@ -4,7 +4,7 @@
  * Provides live instance registry for tracking active Igris sessions
  * across machines. Instances heartbeat to the brain with machine info,
  * current project, brief, and phase. Stale instances are auto-detected
- * when no heartbeat is received for 30+ minutes.
+ * when no heartbeat is received for 45+ minutes.
  *
  * Tools:
  * - igris_instance_heartbeat: Register or update a live instance
@@ -28,6 +28,7 @@ interface InstanceHeartbeatInput {
   current_brief?: string;
   current_phase?: string;
   current_task?: string;
+  capabilities?: string[];
 }
 
 /** Input shape for igris_instance_list */
@@ -82,6 +83,24 @@ function handleInstanceHeartbeat(args: InstanceHeartbeatInput): { content: { typ
 
   const action = result.changes > 0 && args.instance_id ? 'heartbeat updated' : 'registered';
 
+  // Upsert capabilities if provided (backward compatible — skips if omitted)
+  if (args.capabilities && Array.isArray(args.capabilities) && args.capabilities.length > 0) {
+    try {
+      db.transaction(() => {
+        db.prepare('DELETE FROM agent_capabilities WHERE agent = ?').run(instanceId);
+
+        const insertCap = db.prepare(
+          "INSERT OR IGNORE INTO agent_capabilities (agent, capability, created_at) VALUES (?, ?, datetime('now'))"
+        );
+        for (const cap of args.capabilities!) {
+          insertCap.run(instanceId, cap);
+        }
+      })();
+    } catch {
+      // agent_capabilities table may not exist yet (pre-v2 migration) — skip silently
+    }
+  }
+
   return {
     content: [{
       type: 'text',
@@ -93,7 +112,7 @@ function handleInstanceHeartbeat(args: InstanceHeartbeatInput): { content: { typ
 /**
  * List all active Igris instances across machines.
  *
- * Automatically marks instances with no heartbeat for 30+ minutes as stale
+ * Automatically marks instances with no heartbeat for 45+ minutes as stale
  * before returning results. Supports filtering by status and project.
  *
  * @param args - Optional filters for status and project
@@ -102,9 +121,9 @@ function handleInstanceHeartbeat(args: InstanceHeartbeatInput): { content: { typ
 function handleInstanceList(args: InstanceListInput): { content: { type: string; text: string }[] } {
   const db = getDb();
 
-  // Purge instances stale for longer than 2 hours (120 minutes)
+  // Purge instances stale for longer than 4 hours (240 minutes)
   db.prepare(
-    "DELETE FROM instances WHERE last_heartbeat_at < datetime('now', '-120 minutes')"
+    "DELETE FROM instances WHERE last_heartbeat_at < datetime('now', '-240 minutes')"
   ).run();
 
   // Purge agent_events older than 7 days
@@ -114,7 +133,7 @@ function handleInstanceList(args: InstanceListInput): { content: { type: string;
 
   // Auto-mark stale instances
   db.prepare(
-    "UPDATE instances SET status = 'stale' WHERE last_heartbeat_at < datetime('now', '-30 minutes') AND status != 'stale'"
+    "UPDATE instances SET status = 'stale' WHERE last_heartbeat_at < datetime('now', '-45 minutes') AND status != 'stale'"
   ).run();
 
   // Build dynamic WHERE clause

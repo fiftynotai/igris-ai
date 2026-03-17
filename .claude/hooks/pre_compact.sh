@@ -19,7 +19,9 @@ INPUT=$(cat)
 
 # Read session mode from CURRENT_SESSION.md
 read_session_mode() {
-  local session_file="ai/session/CURRENT_SESSION.md"
+  local slug
+  slug=$(basename "$PROJECT_DIR")
+  local session_file="$HOME/.igris/cache/$slug/session/CURRENT_SESSION.md"
   if [ -f "$session_file" ]; then
     grep '\*\*Mode:\*\*' "$session_file" 2>/dev/null | head -1 | sed 's/.*\*\*Mode:\*\* //' || echo "UNKNOWN"
   else
@@ -29,7 +31,9 @@ read_session_mode() {
 
 # Find active briefs and extract workflow state
 find_active_briefs() {
-  local briefs_dir="ai/briefs"
+  local slug
+  slug=$(basename "$PROJECT_DIR")
+  local briefs_dir="$HOME/.igris/cache/$slug/briefs"
   if [ ! -d "$briefs_dir" ]; then
     return
   fi
@@ -65,7 +69,9 @@ find_active_briefs() {
 
 # Read blockers
 read_blockers() {
-  local blockers_file="ai/session/BLOCKERS.md"
+  local slug
+  slug=$(basename "$PROJECT_DIR")
+  local blockers_file="$HOME/.igris/cache/$slug/session/BLOCKERS.md"
   if [ -f "$blockers_file" ]; then
     local count
     count=$(grep -c '^## ' "$blockers_file" 2>/dev/null) || count=0

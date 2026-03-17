@@ -3,20 +3,33 @@ set -e  # Note: overridden at main() invocation because hooks must always exit 0
 
 # Description: SubagentStart/SubagentStop hook for Claude Code lifecycle integration.
 #              Tracks agent invocations, timing, token usage, and success rates in the
-#              Igris AI metrics system. Uses flock for concurrency safety.
+#              local Igris AI metrics system. Uses flock for concurrency safety.
+#              v3.0.0: Auto-records agent metrics to the brain via REST API on SubagentStop.
+#              Parses last_assistant_message for success/failure verdict, maps agent_type
+#              to action, and reads active brief from CURRENT_SESSION.md.
 #              v2.0.0: Adds token parsing from transcripts, schema migration, events.jsonl,
 #              agent name normalization, and non-blocking dashboard POST.
 # Usage: Called automatically by Claude Code on subagent start/stop. Reads JSON from stdin.
 # Dependencies: python3, flock (optional - degrades gracefully)
 # Exit codes:
 #   0 - Always (hooks must never fail)
+#
+# DEPRECATION NOTICE (FR-088):
+#   As of FR-088, SubagentStart/SubagentStop hooks are now HTTP hooks that POST
+#   directly to the brain REST API (POST /api/hooks/event). This shell script is
+#   no longer registered in settings.json but is kept for:
+#   - Local metrics file tracking (agent-metrics.json, events.jsonl)
+#   - Transcript token parsing (requires local file I/O)
+#   - Dashboard POST (non-brain dashboard endpoints)
+#   The brain-side agent_events/agent_metrics recording is handled by the HTTP hook.
 
 # Navigate to project root
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 cd "$PROJECT_DIR"
 
 # Constants
-METRICS_DIR="ai/session/metrics"
+SLUG=$(basename "$PROJECT_DIR")
+METRICS_DIR="$HOME/.igris/cache/$SLUG/metrics"
 METRICS_FILE="${METRICS_DIR}/agent-metrics.json"
 LOCK_FILE="/tmp/igris_agent_metrics.lock"
 TIMESTAMP_DIR="/tmp"
@@ -24,13 +37,14 @@ TIMESTAMP_DIR="/tmp"
 # Read stdin (Claude Code sends JSON with hook_event_name, agent_type or agent_id)
 INPUT=$(cat)
 
-# Parse hook event name, agent type, agent id, and transcript path from input
+# Parse hook event name, agent type, agent id, transcript path, and last_assistant_message from input
 parse_input() {
   if command -v jq &> /dev/null; then
     HOOK_EVENT=$(echo "$INPUT" | jq -r '.hook_event_name // ""' 2>/dev/null) || HOOK_EVENT=""
     AGENT_TYPE=$(echo "$INPUT" | jq -r '.agent_type // .agent_id // "unknown"' 2>/dev/null) || AGENT_TYPE="unknown"
     AGENT_TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.agent_transcript_path // ""' 2>/dev/null) || AGENT_TRANSCRIPT_PATH=""
     AGENT_ID=$(echo "$INPUT" | jq -r '.agent_id // ""' 2>/dev/null) || AGENT_ID=""
+    LAST_ASSISTANT_MSG=$(echo "$INPUT" | jq -r '.last_assistant_message // ""' 2>/dev/null) || LAST_ASSISTANT_MSG=""
   else
     local py_output
     py_output=$(echo "$INPUT" | python3 -c "
@@ -41,9 +55,11 @@ try:
     print(data.get('agent_type', data.get('agent_id', 'unknown')))
     print(data.get('agent_transcript_path', ''))
     print(data.get('agent_id', ''))
+    print(data.get('last_assistant_message', ''))
 except Exception:
     print('')
     print('unknown')
+    print('')
     print('')
     print('')
 " 2>/dev/null) || {
@@ -51,6 +67,7 @@ except Exception:
       AGENT_TYPE="unknown"
       AGENT_TRANSCRIPT_PATH=""
       AGENT_ID=""
+      LAST_ASSISTANT_MSG=""
       return
     }
     # Read each line into its own variable - no eval needed
@@ -58,6 +75,7 @@ except Exception:
     AGENT_TYPE=$(echo "$py_output" | sed -n '2p')
     AGENT_TRANSCRIPT_PATH=$(echo "$py_output" | sed -n '3p')
     AGENT_ID=$(echo "$py_output" | sed -n '4p')
+    LAST_ASSISTANT_MSG=$(echo "$py_output" | sed -n '5p')
   fi
 }
 
@@ -95,20 +113,25 @@ agent_id = os.environ.get("_IGRIS_AGENT_ID", "")
 transcript_path = os.environ.get("_IGRIS_TRANSCRIPT_PATH", "")
 metrics_file = os.environ.get("_IGRIS_METRICS_FILE", "")
 timestamp_file = os.environ.get("_IGRIS_TIMESTAMP_FILE", "")
+last_assistant_msg = os.environ.get("_IGRIS_LAST_ASSISTANT_MSG", "")
+project_slug = os.environ.get("_IGRIS_PROJECT_SLUG", "")
 
-# Read VPS dashboard URL from config
+# Read VPS dashboard URL and brain API URL from config
 vps_dashboard_url = None
+brain_api_url = None
+brain_api_key = None
 try:
     config_path = os.path.expanduser("~/.igris/config.json")
     if os.path.exists(config_path):
         with open(config_path) as f:
             config = json.load(f)
         vps_dashboard_url = config.get("remote_dashboard", {}).get("url")
+        brain_api_url = config.get("remote_brain", {}).get("url")
+        brain_api_key = config.get("remote_brain", {}).get("api_key")
         if not vps_dashboard_url:
             # Derive from remote_brain.url (swap port 3001 -> 8001)
-            brain_url = config.get("remote_brain", {}).get("url", "")
-            if brain_url:
-                vps_dashboard_url = brain_url.replace(":3001", ":8001")
+            if brain_api_url:
+                vps_dashboard_url = brain_api_url.replace(":3001", ":8001")
 except Exception:
     pass
 
@@ -390,6 +413,122 @@ if event_data:
             urllib.request.urlopen(req, timeout=2)
         except Exception:
             pass  # VPS dashboard unreachable, that's fine
+
+# -------------------------------------------------------------------
+# Brain metrics auto-recording on SubagentStop (FR-089)
+# Posts agent performance metrics to the brain API so the orchestrator
+# no longer needs to manually call igris_metrics_record.
+# -------------------------------------------------------------------
+if hook_event == "SubagentStop" and brain_api_url:
+    try:
+        # Agent-to-action mapping
+        AGENT_ACTION_MAP = {
+            "architect": "plan",
+            "forger": "implement",
+            "sentinel": "test",
+            "warden": "review",
+            "mender": "debug",
+            "seeker": "research",
+            "sage": "advise",
+        }
+        action = AGENT_ACTION_MAP.get(agent_type, "execute")
+
+        # Parse result from last_assistant_message
+        result = "success"  # default optimistic
+        if last_assistant_msg:
+            msg_lower = last_assistant_msg.lower()
+            # Check for explicit failure indicators
+            fail_indicators = [
+                "fail", "failed", "failure",
+                "reject", "rejected",
+                "error", "errors found",
+                "blocked",
+                "not pass", "did not pass",
+                "tests failing",
+            ]
+            pass_indicators = [
+                "pass", "passed", "success",
+                "approve", "approved",
+                "complete", "completed",
+                "all tests pass",
+                "lgtm", "looks good",
+            ]
+            # Check failure first (more specific)
+            has_fail = any(ind in msg_lower for ind in fail_indicators)
+            has_pass = any(ind in msg_lower for ind in pass_indicators)
+            if has_fail and not has_pass:
+                result = "failure"
+            elif has_fail and has_pass:
+                # Ambiguous: check last occurrence position
+                last_fail_pos = max(msg_lower.rfind(ind) for ind in fail_indicators if ind in msg_lower)
+                last_pass_pos = max(msg_lower.rfind(ind) for ind in pass_indicators if ind in msg_lower)
+                result = "success" if last_pass_pos > last_fail_pos else "failure"
+
+        # Read active brief from CURRENT_SESSION.md
+        brief_id = ""
+        try:
+            session_file = os.path.expanduser(
+                f"~/.igris/cache/{project_slug}/session/CURRENT_SESSION.md"
+            )
+            if os.path.isfile(session_file):
+                with open(session_file, "r") as sf:
+                    for line in sf:
+                        # Look for "Active Brief" or brief ID pattern in session
+                        if "Active Brief" in line or "Last Active" in line:
+                            import re as _re
+                            m = _re.search(r'([A-Z]+-\d+)', line)
+                            if m:
+                                brief_id = m.group(1)
+                                break
+        except Exception:
+            pass
+
+        # Duration in milliseconds (convert from seconds)
+        duration_ms = int(duration * 1000) if duration > 0 else 0
+
+        # Build metrics payload
+        metrics_payload = {
+            "project": project_slug,
+            "agent": agent_type,
+            "action": action,
+            "result": result,
+            "duration_ms": duration_ms,
+            "brief_id": brief_id,
+        }
+
+        # POST to local brain API (localhost:3001)
+        try:
+            local_url = "http://localhost:3001/api/metrics"
+            req = urllib.request.Request(
+                local_url,
+                data=json.dumps(metrics_payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=2)
+        except Exception:
+            pass  # Local brain not running, try remote
+
+        # POST to remote brain API (VPS) if configured
+        if brain_api_key:
+            try:
+                remote_url = brain_api_url.rstrip("/") + "/api/metrics"
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {brain_api_key}",
+                }
+                req = urllib.request.Request(
+                    remote_url,
+                    data=json.dumps(metrics_payload).encode("utf-8"),
+                    headers=headers,
+                    method="POST",
+                )
+                urllib.request.urlopen(req, timeout=3)
+            except Exception:
+                pass  # Remote brain unreachable, that's fine
+
+    except Exception:
+        pass  # Brain metrics are fire-and-forget, never block
 PYEOF
 }
 
@@ -410,6 +549,8 @@ main() {
   export _IGRIS_TRANSCRIPT_PATH="$AGENT_TRANSCRIPT_PATH"
   export _IGRIS_METRICS_FILE="$METRICS_FILE"
   export _IGRIS_TIMESTAMP_FILE="${TIMESTAMP_DIR}/igris_agent_${AGENT_TYPE}_start"
+  export _IGRIS_LAST_ASSISTANT_MSG="$LAST_ASSISTANT_MSG"
+  export _IGRIS_PROJECT_SLUG="$SLUG"
 
   # Use flock for concurrency safety if available
   if command -v flock &> /dev/null; then

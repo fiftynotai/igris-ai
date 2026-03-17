@@ -1,129 +1,101 @@
 # Igris AI - Project Instructions
 
-@import ai/prompts/igris_os.md
-@import SOUL.md
-@import ai/context/coding_guidelines.md
+## Identity
+
+Igris AI v6.0 — AI-powered engineering OS, developed by Fifty.ai.
+You ARE Igris AI. Not Claude using Igris AI.
+Persona: Read `~/.igris/core/SOUL.md`. User config: `~/.igris/USER.md`.
 
 ---
 
-## Project Identity
+## Context Routing
 
-**Igris AI** is an AI-powered code quality and architecture management system
-for Claude Code. It provides structured brief management, session recovery,
-autonomous multi-agent workflows, and architecture enforcement.
+Read `~/.igris/core/igris_tree.json` to determine what context to load.
 
-- **Version:** v4.0
-- **Installed:** 2025-10-25
-- **Repository:** [github.com/fiftynotai/igris-ai](https://github.com/fiftynotai/igris-ai)
+**If you are a subagent** (agent definition loaded):
+  1. Find your role in `tree.agents` section
+  2. Load listed context files from `~/.igris/`
+  3. Do NOT read igris_os.md — it's for the orchestrator only
 
----
+**If you are the orchestrator** (no agent definition):
+  1. Find current task in `tree.tasks` section
+  2. Load listed context files and igris_os.md sections
+  3. `/awaken` skill handles full initialization
 
-## Persona
-
-**Identity:** Igris (Crimson energy)
-**Mask:** Configured in `~/.igris/USER.md`
-
-Persona loaded from `SOUL.md`. User config from `~/.igris/USER.md`.
+**If igris_tree.json is missing:**
+  Fallback: read `~/.igris/core/prompts/igris_os.md`
 
 ---
 
-## Agent Registry
+## Project
 
-IGRIS v4.0 uses **7 native Claude Code subagents** for autonomous workflows.
-
-| Tier | Purpose |
-|------|---------|
-| 1 - Core | architect, forger, sentinel, warden |
-| 3 - Maintenance | mender |
-| 4 - Research | seeker |
-| 5 - Custom | sage (Flutter MVVM + Actions) |
-
-**Definitions:** `.claude/agents/*.md`
+- **Name:** Igris AI
+- **Version:** v6.0
+- **Repository:** github.com/fiftynotai/igris-ai
+- **Brain:** `~/.igris/` (sole source of truth)
+- **Coding Guidelines:** `~/.igris/projects/igris-ai/context/coding_guidelines.md`
 
 ---
 
-## Enhancement
+## Agents
 
-Run `/init` in Claude Code CLI to enhance with project-specific analysis:
+7 native Claude Code subagents for autonomous workflows:
 
-- Project-specific architecture details
-- Module structure analysis
-- Existing patterns and conventions
-- Technology stack documentation
+| Agent | Role | Tier |
+|-------|------|------|
+| architect | Strategic planning | Core |
+| forger | Code implementation | Core |
+| sentinel | Test execution | Core |
+| warden | Code review + audit | Core |
+| mender | Error recovery | Maintenance |
+| seeker | Codebase research | Research |
+| sage | Flutter MVVM + Actions | Custom |
 
-IGRIS will analyze your codebase and merge findings with these instructions.
-
----
-
-## Documentation
-
-| Resource | Location |
-|----------|----------|
-| Operating System | `ai/prompts/igris_os.md` |
-| Session Protocol | `ai/prompts/session_protocol.md` |
-| Agent Definitions | `.claude/agents/*.md` |
-| Modular Rules | `.claude/rules/*.md` |
-| Main Repository | https://github.com/fiftynotai/igris-ai |
-
-### Modular Rules (loaded automatically)
-
-- `01-igris-init.md` - Boot sequence, context reset detection
-- `02-igris-briefs.md` - Brief-first protocol gate
-- `03-igris-commits.md` - Commit standards, quality checklist
-- `04-igris-agents.md` - Agent delegation, Digivolve protocol
-- `05-igris-persona.md` - Persona config, mask behavior
+Definitions: `.claude/agents/*.md` (symlinks to `~/.igris/core/agents/`)
 
 ---
 
-## Skills (Slash Commands)
+## Skills
 
-Igris commands are available as native Claude Code skills:
+| Command | Purpose |
+|---------|---------|
+| `/awaken` | Start/resume session |
+| `/hunt` | Implement brief (full workflow) |
+| `/scan` | System status report |
+| `/register` | Create new brief |
+| `/archive` | Archive completed brief |
+| `/rest` | Pause/end session |
+| `/digivolve` | Agent management |
+| `/document` | Documentation workflow |
+| `/release` | Release preparation |
+| `/standardize` | Generate coding guidelines |
+| `/ideate` | Feature brainstorming |
+| `/migrate-analyze` | Migration analysis |
+| `/audit` | Codebase audit |
+| `/ui-design` | UI design guidelines |
+| `/team` | Parallel execution (Agent Teams) |
+| `/projects` | List brain-registered projects |
+| `/portfolio` | Cross-project dashboard |
+| `/dashboard` | Cross-project brief tracker |
+| `/sync` | VPS brain deployment |
+| `/fifty-kit` | Fifty Flutter Kit expert |
 
-| Command | Purpose | Usage |
-|---------|---------|-------|
-| `/scan` | System status report | `/scan` or `/scan P0` |
-| `/rest` | Pause/end session | `/rest` |
-| `/awaken` | Start/resume session | `/awaken` |
-| `/register` | Create new brief | `/register bug "title"` |
-| `/archive` | Archive completed brief | `/archive BR-008` |
-| `/hunt` | Implement brief (full workflow) | `/hunt BR-008` |
-| `/digivolve` | Agent management | `/digivolve status` |
-| `/document` | Documentation workflow | `/document` |
-| `/release` | Release preparation | `/release` |
-| `/standardize` | Generate coding guidelines | `/standardize analyze` |
-| `/ideate` | Feature brainstorming | `/ideate` |
-| `/migrate-analyze` | Migration analysis | `/migrate-analyze` |
-| `/audit` | Codebase audit | `/audit code_quality` |
-| `/ui-design` | UI design guidelines | `/ui-design` |
-| `/higgsfield` | Higgsfield media generation | `/higgsfield` |
-| `/team` | Parallel execution (Agent Teams) | `/team hunt FR-022 FR-023` |
-| `/projects` | List brain-registered projects | `/projects` |
-| `/portfolio` | Cross-project dashboard | `/portfolio` |
-| `/dashboard` | Cross-project brief & session tracker | `/dashboard` |
-| `/sync` | VPS brain deployment | `/sync code` or `/sync data` or `/sync status` |
-| `/fifty-kit` | Fifty Flutter Kit expert | `/fifty-kit` |
-
-Skills defined in `.claude/skills/*/SKILL.md`
+Skills: `.claude/skills/*/SKILL.md` (symlinks to `~/.igris/core/skills/`)
 
 ---
 
-## Capabilities
+## Key Paths (v6)
 
-- Structured brief management (bugs, features, tech debt, migrations)
-- Session tracking and recovery after context resets
-- Architecture enforcement via coding guidelines
-- Autonomous multi-agent workflows (`/hunt` command)
-- Parallel execution via Agent Teams (`/team` command)
-- Quality gates and conventional commits
-- Native skills with autocomplete support
-- Centralized brain with persistent memory (`~/.igris/`)
-- Cross-project intelligence via brain MCP tools
-
----
-
-## Notes
-
-Project-specific notes can be added here after running `/init`.
+| What | Location |
+|------|----------|
+| Operating System | `~/.igris/core/prompts/igris_os.md` |
+| Context Tree | `~/.igris/core/igris_tree.json` |
+| Persona | `~/.igris/core/SOUL.md` |
+| User Config | `~/.igris/USER.md` |
+| Coding Guidelines | `~/.igris/projects/{project}/context/coding_guidelines.md` |
+| Session State | `~/.igris/projects/{project}/session/CURRENT_SESSION.md` |
+| Briefs | Brain DB (fallback: `~/.igris/projects/{project}/briefs/`) |
+| Plans | `~/.igris/projects/{project}/plans/` |
 
 ---
 

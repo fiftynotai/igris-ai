@@ -1,15 +1,22 @@
 #!/bin/bash
 set -e
 
-# Description: Emits a skill_invoke event to events.jsonl and optional dashboard endpoints.
+# Description: Emits a skill_invoke event to events.jsonl, dashboard endpoints,
+#              and the brain API (POST /api/hooks/event).
 #              Appends a JSONL event to events.jsonl, POSTs to local endpoint,
-#              and optionally POSTs to VPS endpoint if configured.
+#              optionally POSTs to VPS endpoint if configured, and POSTs to
+#              the brain REST API for event_log ingestion.
 # Usage: emit_skill_event.sh <skill_name>
 #   e.g. emit_skill_event.sh hunt
 #   e.g. emit_skill_event.sh scan
 # Dependencies: python3
 # Exit codes:
 #   0 - Always (this script must NEVER cause a skill to fail)
+#
+# DEPRECATION NOTICE (FR-088):
+#   This script will be replaced by HTTP hooks or a direct brain API call
+#   when FR-066 (cross-CLI adapters) lands. Skills currently invoke this
+#   script from SKILL.md bash commands. Keep functional until then.
 
 # Trap any error to guarantee exit 0 — skill execution must not break
 trap 'exit 0' ERR
@@ -18,7 +25,8 @@ trap 'exit 0' ERR
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 
 # Constants
-METRICS_DIR="${PROJECT_DIR}/ai/session/metrics"
+SLUG=$(basename "$PROJECT_DIR")
+METRICS_DIR="$HOME/.igris/projects/$SLUG/metrics"
 EVENTS_FILE="${METRICS_DIR}/events.jsonl"
 
 # Validate skill name argument
@@ -50,11 +58,16 @@ if not skill_name or not events_file:
 # Generate UTC ISO timestamp
 ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+# Derive project slug from CLAUDE_PROJECT_DIR
+project_dir = os.environ.get("CLAUDE_PROJECT_DIR", "")
+project_slug = os.path.basename(project_dir) if project_dir else ""
+
 # Construct event payload
 event_data = {
     "ts": ts,
     "event": "skill_invoke",
     "skill_name": skill_name,
+    "project_slug": project_slug,
     "agent": "orchestrator",
     "agent_id": "",
 }
@@ -101,6 +114,24 @@ try:
             urllib.request.urlopen(req, timeout=1)
 except Exception:
     pass  # VPS dashboard unreachable, that's fine
+
+# 4. POST to brain API for event_log ingestion (FR-088)
+try:
+    brain_payload = {
+        "hook_event_name": "SkillInvoke",
+        "skill_name": skill_name,
+        "project_slug": project_slug,
+    }
+    brain_url = f"http://localhost:3001/api/hooks/event?project={project_slug}"
+    req = urllib.request.Request(
+        brain_url,
+        data=json.dumps(brain_payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    urllib.request.urlopen(req, timeout=2)
+except Exception:
+    pass  # Brain API unreachable, that's fine
 PYEOF
 }
 

@@ -24,6 +24,7 @@ import type Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../db.js';
+import { errMsg } from '../engine/helpers.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -181,6 +182,93 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'result', 'error_message', 'metadata', 'created_at',
     ],
   },
+  {
+    table: 'tasks',
+    syncKey: ['id'],
+    timestampCol: 'updated_at',
+    strategy: 'lww',
+    columns: [
+      'id', 'task_type', 'scope', 'title', 'description', 'brief_id',
+      'project_slug', 'parent_id', 'status', 'priority', 'assignee',
+      'due_at', 'defer_until', 'created_by', 'metadata',
+      'created_at', 'updated_at',
+    ],
+  },
+  {
+    table: 'task_deps',
+    syncKey: ['task_id', 'depends_on'],
+    timestampCol: 'created_at',
+    strategy: 'lww',
+    columns: ['task_id', 'depends_on', 'created_at'],
+  },
+  {
+    table: 'task_results',
+    syncKey: ['id'],
+    strategy: 'lww',
+    timestampCol: 'created_at',
+    columns: ['id', 'task_id', 'result_type', 'content', 'file_path', 'metadata', 'created_at'],
+  },
+  {
+    table: 'task_assignments',
+    syncKey: ['id'],
+    timestampCol: 'assigned_at',
+    strategy: 'lww',
+    columns: [
+      'id', 'task_id', 'agent', 'assigned_at', 'completed_at', 'result',
+    ],
+  },
+  {
+    table: 'agent_capabilities',
+    syncKey: ['agent', 'capability'],
+    timestampCol: 'created_at',
+    strategy: 'lww',
+    columns: ['agent', 'capability', 'created_at'],
+  },
+  {
+    table: 'autonomous_decisions',
+    syncKey: ['id'],
+    timestampCol: 'created_at',
+    strategy: 'append',
+    columns: ['id', 'decision_type', 'task_id', 'agent', 'detail', 'created_at'],
+  },
+  {
+    table: 'coordination_config',
+    syncKey: ['key'],
+    timestampCol: 'updated_at',
+    strategy: 'lww',
+    columns: ['key', 'value', 'updated_at'],
+  },
+  {
+    table: 'schedules',
+    syncKey: ['id'],
+    timestampCol: 'updated_at',
+    strategy: 'lww',
+    columns: [
+      'id', 'name', 'description', 'cron_expr', 'handler_type', 'handler_config',
+      'enabled', 'project_slug', 'tags', 'max_retries', 'timeout_ms',
+      'next_run_at', 'last_run_at', 'created_at', 'updated_at',
+    ],
+  },
+  {
+    table: 'schedule_runs',
+    syncKey: ['id'],
+    timestampCol: 'started_at',
+    strategy: 'append',
+    columns: [
+      'id', 'schedule_id', 'status', 'started_at', 'finished_at',
+      'duration_ms', 'result', 'error', 'attempt',
+    ],
+  },
+  {
+    table: 'event_log',
+    syncKey: ['id'],
+    timestampCol: 'created_at',
+    strategy: 'append',
+    columns: [
+      'id', 'event_name', 'component', 'payload', 'machine_hostname',
+      'project_slug', 'instance_id', 'created_at',
+    ],
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -212,7 +300,7 @@ function mergeTags(localTags: string, remoteTags: string): string {
  * @param maxRetries - Maximum number of retries (default: 2)
  * @returns The successful Response object
  */
-async function fetchWithRetry(
+export async function fetchWithRetry(
   url: string,
   options: RequestInit,
   maxRetries: number = 2
@@ -252,7 +340,7 @@ const CHUNK_SIZE_LIMIT = 5 * 1024 * 1024;
  * Iterates rows across tables, accumulating into chunks. A single oversized
  * row is allowed in its own chunk (never split a row).
  */
-function chunkTablesForPush(
+export function chunkTablesForPush(
   tables: Record<string, Record<string, unknown>[]>
 ): Record<string, Record<string, unknown>[]>[] {
   const chunks: Record<string, Record<string, unknown>[]>[] = [];
@@ -454,7 +542,8 @@ async function handleBrainPush(
 
       // Validate remote response before continuing
       if (!result.ok || !result.results) {
-        throw new Error(`Remote returned invalid response for chunk ${i + 1}/${chunks.length}: missing 'ok' or 'results' field. Response: ${JSON.stringify(result)}`);
+        console.error(`[brain] Remote sync response missing 'ok' or 'results' for chunk ${i + 1}/${chunks.length}:`, JSON.stringify(result));
+        throw new Error(`Remote returned invalid response for chunk ${i + 1}/${chunks.length}`);
       }
     }
 
@@ -492,7 +581,7 @@ async function handleBrainPush(
       }],
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errMsg(err);
 
     // Queue failed rows for later retry via sync_queue
     let queued = 0;
@@ -615,7 +704,7 @@ async function handleBrainPull(
       }],
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errMsg(err);
     return {
       content: [{
         type: 'text',
@@ -643,7 +732,7 @@ export interface SyncQueueDrainInput {
  * @param tables - Map of table name to rows that failed to push
  * @param error - The error message from the failed push
  */
-function queueFailedRows(
+export function queueFailedRows(
   db: Database.Database,
   tables: Record<string, Record<string, unknown>[]>,
   error: string
@@ -809,7 +898,7 @@ async function handleSyncQueueDrain(
       })();
       totalSent += chunkItemIds[i].length;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errMsg(err);
 
       // Per-chunk failure: mark items as retrying/failed
       db.transaction(() => {
@@ -1173,7 +1262,7 @@ async function handleFilePush(
       }],
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errMsg(err);
     return {
       content: [{
         type: 'text',
@@ -1223,7 +1312,7 @@ async function handleFilePull(
       }],
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errMsg(err);
     return {
       content: [{
         type: 'text',

@@ -8,6 +8,11 @@ set -e
 # Dependencies: none (pure bash)
 # Exit codes:
 #   0 - Always (hooks must never fail)
+#
+# DEPRECATION NOTICE (FR-088):
+#   This hook is no longer registered in settings.json. The Stop event is now
+#   handled by an HTTP hook that POSTs to the brain API (POST /api/hooks/event).
+#   Session state is tracked server-side by the brain.
 
 # Navigate to project root
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
@@ -18,7 +23,9 @@ INPUT=$(cat)
 
 # Check session state
 check_session() {
-  local session_file="ai/session/CURRENT_SESSION.md"
+  local slug
+  slug=$(basename "$PROJECT_DIR")
+  local session_file="$HOME/.igris/cache/$slug/session/CURRENT_SESSION.md"
 
   # No session file: nothing to check
   if [ ! -f "$session_file" ]; then

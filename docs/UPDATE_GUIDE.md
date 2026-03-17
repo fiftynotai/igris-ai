@@ -25,7 +25,7 @@ Igris AI v4.0 tracks versions in the `.igris_version` file in each installed pro
 
 ```json
 {
-  "igris_ai_version": "4.0.0",
+  "igris_ai_version": "5.0.0",
   "install_mode": "symlink",
   "brain_path": "/Users/you/.igris",
   "installed_at": "2026-02-16T07:37:48Z",
@@ -134,19 +134,18 @@ cd /path/to/your-project
 - `.claude/rules/*.md` - Modular rules (5 rules)
 - `.claude/skills/` - Skills (21 skills)
 - `.claude/hooks/` - Hook scripts
-- `ai/prompts/*.md` - System prompts
-- `ai/templates/*.md` - Brief and PR templates
+- `~/.igris/core/prompts/*.md` - System prompts
+- `~/.igris/core/templates/*.md` - Brief and PR templates
 - `scripts/igris_*.sh` - Core scripts
 - `CLAUDE.md` - Claude Code instructions
 
 ### Files That Will Be Preserved
 
-- `ai/briefs/*.md` - Your work items (bugs, features, tasks)
-- `ai/session/*.md` - Your session tracking
-- `ai/context/*.md` - Your architecture documentation
-- `ai/masks/*.md` - Your mask greeting files
+- `~/.igris/projects/{project}/briefs/*.md` - Your work items (briefs also in brain DB)
+- `~/.igris/projects/{project}/session/*.md` - Your session tracking
+- `~/.igris/projects/{project}/context/*.md` - Your architecture documentation
 - `SOUL.md` - Your persona identity
-- `USER.md` - Your user configuration
+- `~/.igris/USER.md` - Your user configuration
 - Your project code and configuration
 
 ### Dry Run Mode
@@ -189,19 +188,19 @@ Every update creates a timestamped backup:
 - All files that will be modified during the update
 - Agent definitions (`.claude/agents/`)
 - Rule files (`.claude/rules/`)
-- System prompts (`ai/prompts/`)
-- Templates (`ai/templates/`)
+- System prompts (`~/.igris/core/prompts/`)
+- Templates (`~/.igris/core/templates/`)
 - Version file (`.igris_version`)
 
 ### What Never Gets Modified
 
 These files are **always preserved** during updates:
 
-- `ai/briefs/*.md` - Your work items
-- `ai/session/*.md` - Your session tracking
-- `ai/context/*.md` - Your architecture documentation
+- `~/.igris/projects/{project}/briefs/*.md` - Your work items (briefs also in brain DB)
+- `~/.igris/projects/{project}/session/*.md` - Your session tracking
+- `~/.igris/projects/{project}/context/*.md` - Your architecture documentation
 - `SOUL.md` - Your persona identity
-- `USER.md` - Your user configuration
+- `~/.igris/USER.md` - Your user configuration
 - Custom files you've created
 - Your project code
 
@@ -223,8 +222,8 @@ BACKUP=".igris_backup/20260222_100000"
 # Restore files
 cp -r "$BACKUP/agents/"* .claude/agents/
 cp -r "$BACKUP/rules/"* .claude/rules/
-cp -r "$BACKUP/prompts/"* ai/prompts/
-cp -r "$BACKUP/templates/"* ai/templates/
+cp -r "$BACKUP/prompts/"* ~/.igris/core/prompts/
+cp -r "$BACKUP/templates/"* ~/.igris/core/templates/
 cp "$BACKUP/.igris_version" .
 
 echo "Rollback complete"
@@ -412,7 +411,7 @@ If you need to stay on a specific version:
 2. Document your version in README:
    ```markdown
    ## Dependencies
-   - Igris AI: 4.0.0 (pinned)
+   - Igris AI: 5.0.0 (pinned)
    ```
 3. Test thoroughly before updating
 

@@ -49,13 +49,8 @@ is_exempt() {
 
   # Check exempt patterns
   case "$file_path" in
-    */ai/briefs/*)     return 0 ;;
-    */ai/session/*)    return 0 ;;
-    */ai/prompts/*)    return 0 ;;
-    */ai/context/*)    return 0 ;;
-    */ai/plans/*)      return 0 ;;
-    */ai/masks/*)      return 0 ;;
-    */ai/templates/*)  return 0 ;;
+    */.igris/*)        return 0 ;;
+    */core/*)          return 0 ;;
     */.claude/*)       return 0 ;;
     */test/*)          return 0 ;;
     */tests/*)         return 0 ;;
@@ -101,10 +96,13 @@ check_active_brief() {
     fi
   fi
 
-  # Cache stale or missing: check briefs directory
+  # Cache stale or missing: check briefs in brain cache directory
   local active_brief=""
-  if [ -d "ai/briefs" ]; then
-    active_brief=$(grep -rl '^\*\*Status:\*\* In Progress' ai/briefs/ 2>/dev/null | head -1) || true
+  local slug
+  slug=$(basename "$PROJECT_DIR")
+  local cache_briefs="$HOME/.igris/projects/$slug/briefs"
+  if [ -d "$cache_briefs" ]; then
+    active_brief=$(grep -rl '^\*\*Status:\*\* In Progress' "$cache_briefs/" 2>/dev/null | head -1) || true
   fi
 
   # Write to cache

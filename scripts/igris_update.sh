@@ -141,7 +141,7 @@ if [ ! -f ".igris_version" ]; then
   echo "❌ Error: Igris AI not initialized in this directory"
   echo ""
   echo "This doesn't appear to be an Igris AI project."
-  echo "Please run: ./scripts/igris_init.sh"
+  echo "Please run: ./scripts/igris_install.sh"
   exit 1
 fi
 
@@ -193,14 +193,14 @@ echo "  To:   $REMOTE_VERSION"
 echo ""
 echo "📝 Files that will be updated:"
 echo "  - CLAUDE.md (Claude Code context file)"
-echo "  - ai/prompts/*.md (system prompts)"
-echo "  - ai/templates/*.md (brief templates)"
-echo "  - .claude/agents/*.md (native subagents)"
+echo "  - ~/.igris/core/prompts/*.md (system prompts)"
+echo "  - ~/.igris/core/templates/*.md (brief templates)"
+echo "  - ~/.igris/core/agents/*.md (native subagents)"
 echo ""
 echo "🔒 Files that will be preserved:"
-echo "  - ai/briefs/*.md (your work items)"
-echo "  - ai/session/*.md (your session data)"
-echo "  - ai/context/*.md (your architecture docs)"
+echo "  - ~/.igris/projects/*/session/ (your session data)"
+echo "  - ~/.igris/projects/*/context/ (your architecture docs)"
+echo "  - ~/.igris/projects/*/briefs/ (your work items)"
 echo ""
 
 if [ "$DRY_RUN" = true ]; then
@@ -216,22 +216,22 @@ if [ "$DRY_RUN" = true ]; then
   fi
 
   # List files that would be updated
-  if [ -d "$TEMP_DIR/ai/prompts" ]; then
+  if [ -d "$TEMP_DIR/core/prompts" ]; then
     echo ""
     echo "Prompts:"
-    ls "$TEMP_DIR/ai/prompts/"*.md 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
+    find "$TEMP_DIR/core/prompts" -maxdepth 1 -name "*.md" -print0 2>/dev/null | xargs -0 -n1 basename | sed 's/^/  - /'
   fi
 
-  if [ -d "$TEMP_DIR/ai/templates" ]; then
+  if [ -d "$TEMP_DIR/core/templates" ]; then
     echo ""
     echo "Templates:"
-    ls "$TEMP_DIR/ai/templates/"*.md 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
+    find "$TEMP_DIR/core/templates" -maxdepth 1 -name "*.md" -print0 2>/dev/null | xargs -0 -n1 basename | sed 's/^/  - /'
   fi
 
-  if [ -d "$TEMP_DIR/.claude/agents" ]; then
+  if [ -d "$TEMP_DIR/core/agents" ]; then
     echo ""
     echo "Native Subagents:"
-    ls "$TEMP_DIR/.claude/agents/"*.md 2>/dev/null | xargs -n1 basename | sed 's/^/  - /'
+    find "$TEMP_DIR/core/agents" -maxdepth 1 -name "*.md" -print0 2>/dev/null | xargs -0 -n1 basename | sed 's/^/  - /'
     echo "  - manifest.yaml"
   fi
 
@@ -260,9 +260,9 @@ mkdir -p "$BACKUP_DIR"
 
 # Backup files that will be updated
 cp CLAUDE.md "$BACKUP_DIR/" 2>/dev/null || true
-cp -r ai/prompts "$BACKUP_DIR/" 2>/dev/null || true
-cp -r ai/templates "$BACKUP_DIR/" 2>/dev/null || true
-cp -r .claude/agents "$BACKUP_DIR/" 2>/dev/null || true
+cp -r "$HOME/.igris/core/prompts" "$BACKUP_DIR/" 2>/dev/null || true
+cp -r "$HOME/.igris/core/templates" "$BACKUP_DIR/" 2>/dev/null || true
+cp -r "$HOME/.igris/core/agents" "$BACKUP_DIR/" 2>/dev/null || true
 cp .igris_version "$BACKUP_DIR/" 2>/dev/null || true
 
 echo "✅ Backup created"
@@ -272,35 +272,37 @@ echo ""
 echo "📝 Updating system files..."
 
 # Update prompts
-if [ -d "$TEMP_DIR/ai/prompts" ]; then
+if [ -d "$TEMP_DIR/core/prompts" ]; then
   echo "  - Updating prompts..."
-  cp "$TEMP_DIR/ai/prompts/"*.md ai/prompts/
+  mkdir -p "$HOME/.igris/core/prompts"
+  cp "$TEMP_DIR/core/prompts/"*.md "$HOME/.igris/core/prompts/"
 fi
 
 # Update templates (but preserve user's custom templates)
-if [ -d "$TEMP_DIR/ai/templates" ]; then
+if [ -d "$TEMP_DIR/core/templates" ]; then
   echo "  - Updating templates..."
-  cp "$TEMP_DIR/ai/templates/"*.md ai/templates/
+  mkdir -p "$HOME/.igris/core/templates"
+  cp "$TEMP_DIR/core/templates/"*.md "$HOME/.igris/core/templates/"
 fi
 
-# Update native agents (v4.0)
-if [ -d "$TEMP_DIR/.claude/agents" ]; then
+# Update native agents (v6.0)
+if [ -d "$TEMP_DIR/core/agents" ]; then
   echo "  - Updating native agents..."
-  mkdir -p .claude/agents
+  mkdir -p "$HOME/.igris/core/agents"
 
   # Copy all agent .md files (preserves local custom agents, adds new ones)
-  cp "$TEMP_DIR/.claude/agents/"*.md .claude/agents/ 2>/dev/null || true
+  cp "$TEMP_DIR/core/agents/"*.md "$HOME/.igris/core/agents/" 2>/dev/null || true
 
   # Merge manifest.yaml to preserve local Tier 5 custom agents
-  if [ -f ".claude/agents/manifest.yaml" ] && [ -f "$TEMP_DIR/.claude/agents/manifest.yaml" ]; then
+  if [ -f "$HOME/.igris/core/agents/manifest.yaml" ] && [ -f "$TEMP_DIR/core/agents/manifest.yaml" ]; then
     echo "  - Merging agent manifest (preserving custom Tier 5 agents)..."
 
     TEMP_DIR="$TEMP_DIR" python3 <<'MERGE_MANIFEST'
 import re
 import os
 
-LOCAL_MANIFEST = ".claude/agents/manifest.yaml"
-REMOTE_MANIFEST = os.environ.get('TEMP_DIR', '/tmp') + "/.claude/agents/manifest.yaml"
+LOCAL_MANIFEST = os.path.expanduser("~/.igris/core/agents/manifest.yaml")
+REMOTE_MANIFEST = os.environ.get('TEMP_DIR', '/tmp') + "/core/agents/manifest.yaml"
 
 def parse_yaml_agents(content):
     """Simple YAML parser for agent entries."""
@@ -397,43 +399,29 @@ except Exception as e:
 MERGE_MANIFEST
   else
     # No local manifest, just copy remote
-    cp "$TEMP_DIR/.claude/agents/manifest.yaml" .claude/agents/ 2>/dev/null || true
+    cp "$TEMP_DIR/core/agents/manifest.yaml" "$HOME/.igris/core/agents/" 2>/dev/null || true
   fi
 fi
 
-# Copy CLAUDE.md template for local use
+# Copy CLAUDE.md template to core
 if [ -f "$TEMP_DIR/scripts/templates/CLAUDE.md.template" ]; then
   echo "  - Copying CLAUDE.md template..."
-  cp "$TEMP_DIR/scripts/templates/CLAUDE.md.template" scripts/
+  mkdir -p "$HOME/.igris/core/templates"
+  cp "$TEMP_DIR/scripts/templates/CLAUDE.md.template" "$HOME/.igris/core/templates/"
 fi
 
 # Regenerate CLAUDE.md with latest template
-if [ -f "scripts/CLAUDE.md.template" ]; then
+TEMPLATE_FILE="$HOME/.igris/core/templates/CLAUDE.md.template"
+if [ -f "$TEMPLATE_FILE" ]; then
   echo "  - Regenerating CLAUDE.md..."
 
-  # Read persona from SOUL.md (if exists)
-  PERSONA_INJECTION=""
-  if [ -f "SOUL.md" ]; then
-    PERSONA_INJECTION=$(cat "SOUL.md")
-  fi
-
-  # Generate CLAUDE.md with variable substitution
+  # Generate CLAUDE.md with variable substitution (v6: no persona injection)
   INSTALL_DATE=$(date -u +"%Y-%m-%d")
 
-  # First pass: Replace simple variables
   sed -e "s/{{IGRIS_VERSION}}/$REMOTE_VERSION/g" \
       -e "s/{{INSTALL_DATE}}/$INSTALL_DATE/g" \
-      "$TEMP_DIR/scripts/templates/CLAUDE.md.template" > CLAUDE.md.tmp
+      "$TEMPLATE_FILE" > CLAUDE.md
 
-  # Second pass: Replace persona injection using perl (handles newlines)
-  if [ -n "$PERSONA_INJECTION" ]; then
-    ESCAPED_INJECTION=$(printf '%s\n' "$PERSONA_INJECTION" | perl -pe 's/([\\\/\$])/\\$1/g')
-    perl -i -pe "s/\{\{PERSONA_INJECTION\}\}/$ESCAPED_INJECTION/g" CLAUDE.md.tmp
-  else
-    perl -i -pe 's/\{\{PERSONA_INJECTION\}\}//g' CLAUDE.md.tmp
-  fi
-
-  mv CLAUDE.md.tmp CLAUDE.md
 fi
 
 # Update .igris_version
@@ -474,3 +462,10 @@ echo "📝 What's new in $REMOTE_VERSION:"
 echo "  See CHANGELOG.md or visit:"
 echo "  https://github.com/fiftynotai/igris-ai/releases"
 echo ""
+
+# Refresh global brain with updated files
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+if [ -d "$HOME/.igris" ] && [ -f "$SCRIPT_DIR/igris_brain_refresh.sh" ]; then
+  echo "Refreshing global brain..."
+  bash "$SCRIPT_DIR/igris_brain_refresh.sh" 2>/dev/null || echo "Brain refresh skipped"
+fi

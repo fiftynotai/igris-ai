@@ -56,19 +56,43 @@ TARGET_DIR="${1:-.}"
 cd "$TARGET_DIR"
 TARGET_DIR=$(pwd)
 
+# Resolve source repo and version
+IGRIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+IGRIS_VERSION=$(cat "$IGRIS_DIR/version.txt" 2>/dev/null || echo "4.0.0")
+
 # Check this is a v3.4 project (has ai/ directory with non-symlinked files)
 if [ ! -d "ai/prompts" ]; then
   echo "Error: Not an Igris AI project (no ai/prompts/ directory)"
   exit 1
 fi
 
-# Check if already v4.0 (symlinks present)
-if [ -L ".claude/agents/architect.md" ]; then
-  echo "Project already uses v4.0 symlinks. Nothing to migrate."
-  exit 0
+# Check if already migrated to global mode
+if [ -f ".igris_version" ]; then
+  CURRENT_MODE=$(python3 -c "
+import json, sys
+try:
+    with open('.igris_version', 'r') as f:
+        data = json.load(f)
+    print(data.get('install_mode', ''))
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+  if [ "$CURRENT_MODE" = "global" ]; then
+    echo "Project already uses global mode. Nothing to migrate."
+    exit 0
+  fi
 fi
 
 echo "Project: $TARGET_DIR"
+echo ""
+
+# Refresh brain core from source repo
+echo "Refreshing brain core..."
+if [ -f "$IGRIS_DIR/scripts/igris_brain_refresh.sh" ]; then
+  bash "$IGRIS_DIR/scripts/igris_brain_refresh.sh"
+else
+  echo "  igris_brain_refresh.sh not found, skipping core refresh"
+fi
 echo ""
 
 # Backup current files
@@ -85,36 +109,54 @@ for dir in .claude/agents .claude/rules ai/prompts ai/templates; do
 done
 echo "  Backup complete"
 
-# Replace copied files with symlinks
+# Ensure directories exist (v3.4 projects may be missing these)
+mkdir -p ai/masks
+mkdir -p ai/templates
+
+# Clean up stale per-project symlinks for agents, rules, and skills
+# These are now handled globally via ~/.claude/ symlinks from brain init
 echo ""
-echo "Replacing copied files with symlinks..."
+echo "Cleaning stale per-project symlinks (agents, rules, skills)..."
+
+STALE_REMOVED=0
+
+for stale_dir in .claude/agents .claude/rules .claude/skills; do
+  if [ ! -d "$stale_dir" ]; then
+    continue
+  fi
+
+  # Remove symlinks that point into ~/.igris/core/
+  for f in "$stale_dir"/*; do
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    if [ -L "$f" ]; then
+      link_target=$(readlink "$f")
+      case "$link_target" in
+        "$BRAIN_DIR/core/"*|"$HOME/.igris/core/"*)
+          rm -f "$f"
+          STALE_REMOVED=$((STALE_REMOVED + 1))
+          ;;
+      esac
+    fi
+  done
+
+  # Remove directory if it's now empty and is NOT a symlink
+  if [ -d "$stale_dir" ] && [ ! -L "$stale_dir" ]; then
+    # Check if empty (no files or subdirs)
+    if [ -z "$(ls -A "$stale_dir" 2>/dev/null)" ]; then
+      rmdir "$stale_dir"
+      echo "  Removed empty directory: $stale_dir"
+    fi
+  fi
+done
+
+echo "  Stale symlinks removed: $STALE_REMOVED"
+echo "  Agents, rules, and skills are now global via ~/.claude/"
+
+# Symlink prompts and templates (still per-project)
+echo ""
+echo "Linking prompts and templates..."
 
 SYMLINK_COUNT=0
-
-# Agents
-if [ -d "$BRAIN_DIR/core/agents" ]; then
-  for f in "$BRAIN_DIR/core/agents/"*.md; do
-    [ -f "$f" ] || continue
-    BASENAME=$(basename "$f")
-    # Remove old copy, create symlink
-    rm -f ".claude/agents/$BASENAME"
-    ln -sf "$f" ".claude/agents/$BASENAME"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
-  done
-  echo "  Agents: symlinked"
-fi
-
-# Rules
-if [ -d "$BRAIN_DIR/core/rules" ]; then
-  for f in "$BRAIN_DIR/core/rules/"*.md; do
-    [ -f "$f" ] || continue
-    BASENAME=$(basename "$f")
-    rm -f ".claude/rules/$BASENAME"
-    ln -sf "$f" ".claude/rules/$BASENAME"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
-  done
-  echo "  Rules: symlinked"
-fi
 
 # Prompts
 if [ -d "$BRAIN_DIR/core/prompts" ]; then
@@ -140,23 +182,7 @@ if [ -d "$BRAIN_DIR/core/templates" ]; then
   echo "  Templates: symlinked"
 fi
 
-# Skills (directory-level, skip existing local overrides)
-if [ -d "$BRAIN_DIR/core/skills" ]; then
-  for d in "$BRAIN_DIR/core/skills/"*/; do
-    [ -d "$d" ] || continue
-    DIRNAME=$(basename "$d")
-    if [ -d ".claude/skills/$DIRNAME" ] && [ ! -L ".claude/skills/$DIRNAME" ]; then
-      echo "  Skipping skill '$DIRNAME' (local override exists)"
-      continue
-    fi
-    rm -rf ".claude/skills/$DIRNAME"
-    ln -sf "$d" ".claude/skills/$DIRNAME"
-    SYMLINK_COUNT=$((SYMLINK_COUNT + 1))
-  done
-  echo "  Skills: symlinked"
-fi
-
-echo "  Total symlinks: $SYMLINK_COUNT"
+echo "  Total symlinks: $SYMLINK_COUNT (prompts + templates only)"
 
 # Migrate LEARNINGS.md to brain knowledge.db
 echo ""
@@ -240,23 +266,54 @@ else
   echo "  No DECISIONS.md found (skipping)"
 fi
 
+# Detect tech stack
+TECH_STACK=$(python3 -c "
+import os, sys, glob
+project_dir = sys.argv[1]
+stacks = []
+indicators = {
+    'pubspec.yaml': 'flutter',
+    'package.json': 'typescript/javascript',
+    'Cargo.toml': 'rust',
+    'go.mod': 'go',
+    'requirements.txt': 'python',
+    'pyproject.toml': 'python',
+}
+for filename, stack in indicators.items():
+    if os.path.isfile(os.path.join(project_dir, filename)):
+        if stack not in stacks:
+            stacks.append(stack)
+# Check for bash scripts
+if glob.glob(os.path.join(project_dir, '*.sh')) or glob.glob(os.path.join(project_dir, 'scripts', '*.sh')):
+    stacks.append('bash')
+print(','.join(stacks) if stacks else '')
+" "$TARGET_DIR" 2>/dev/null || echo "")
+
 # Register project in brain
 echo ""
 echo "Registering project in brain..."
 
 python3 -c "
-import sqlite3, sys, os
-
-db_path = os.path.expanduser('~/.igris/memory/knowledge.db')
-db = sqlite3.connect(db_path)
+import sqlite3, sys
+from datetime import datetime, timezone
+now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+db = sqlite3.connect(sys.argv[1])
 db.execute('PRAGMA busy_timeout = 5000')
-db.execute('INSERT OR IGNORE INTO projects (slug, name, path) VALUES (?, ?, ?)',
-           (sys.argv[1], sys.argv[1], sys.argv[2]))
+db.execute('''
+    INSERT INTO projects (slug, name, path, tech_stack, igris_version, last_session_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(slug) DO UPDATE SET
+        name = excluded.name,
+        path = excluded.path,
+        tech_stack = excluded.tech_stack,
+        igris_version = excluded.igris_version,
+        last_session_at = excluded.last_session_at
+''', (sys.argv[2], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], now))
 db.commit()
 db.close()
-" "$SLUG" "$TARGET_DIR"
+" "$BRAIN_DIR/memory/knowledge.db" "$SLUG" "$TARGET_DIR" "$TECH_STACK" "$IGRIS_VERSION"
 
-echo "  Registered: $SLUG"
+echo "  Registered: $SLUG (tech_stack: ${TECH_STACK:-none detected})"
 
 # Sync existing briefs to brain
 echo ""
@@ -319,6 +376,66 @@ db.close()
 print(f'  Synced {count} briefs to brain')
 " "$SLUG" "$TARGET_DIR/ai/briefs"
 
+# Push project to remote brain (if configured)
+echo ""
+echo "Checking remote brain..."
+
+REMOTE_PUSH_RESULT=$(python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1], 'r') as f:
+        config = json.load(f)
+    url = config.get('remote_brain', {}).get('url', '')
+    key = config.get('remote_brain', {}).get('api_key', '')
+    if url and key:
+        print(url + '|' + key)
+    else:
+        print('')
+except Exception:
+    print('')
+" "$BRAIN_DIR/config.json" 2>/dev/null || echo "")
+
+if [ -n "$REMOTE_PUSH_RESULT" ]; then
+  REMOTE_URL="${REMOTE_PUSH_RESULT%%|*}"
+  API_KEY="${REMOTE_PUSH_RESULT##*|}"
+  NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  PUSH_BODY=$(python3 -c "
+import json, sys
+body = {
+    'tables': {
+        'projects': [{
+            'slug': sys.argv[1],
+            'name': sys.argv[1],
+            'path': sys.argv[2],
+            'tech_stack': sys.argv[3],
+            'igris_version': sys.argv[4],
+            'status': 'active',
+            'registered_at': sys.argv[5],
+            'last_session_at': sys.argv[5],
+            'metadata': '{}'
+        }]
+    }
+}
+print(json.dumps(body))
+" "$SLUG" "$TARGET_DIR" "$TECH_STACK" "$IGRIS_VERSION" "$NOW")
+
+  HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
+    --connect-timeout 5 --max-time 10 \
+    -X POST "${REMOTE_URL%/}/sync/push" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $API_KEY" \
+    -d "$PUSH_BODY" 2>/dev/null || echo "000")
+
+  if [ "$HTTP_CODE" = "200" ]; then
+    echo "  Project pushed to remote brain"
+  else
+    echo "  Remote brain push returned HTTP $HTTP_CODE (continuing anyway)"
+  fi
+else
+  echo "  Remote brain not configured, skipping push"
+fi
+
 # Update .igris_version
 echo ""
 echo "Updating version tracking..."
@@ -336,8 +453,8 @@ if os.path.exists(version_file):
 else:
     data = {}
 
-data['igris_ai_version'] = '4.0.0'
-data['install_mode'] = 'symlink'
+data['igris_ai_version'] = sys.argv[1]
+data['install_mode'] = 'global'
 data['brain_path'] = os.path.expanduser('~/.igris')
 data['last_updated'] = now
 data['migrated_from'] = data.get('igris_ai_version', '3.4.0')
@@ -346,9 +463,49 @@ data['migration_date'] = now
 with open(version_file, 'w') as f:
     json.dump(data, f, indent=2)
     f.write('\n')
-"
+" "$IGRIS_VERSION"
 
-echo "  .igris_version updated to 4.0.0"
+echo "  .igris_version updated to $IGRIS_VERSION"
+
+# Brain health check
+echo ""
+echo "Brain health check..."
+
+if [ -f "$BRAIN_DIR/memory/knowledge.db" ]; then
+  INTEGRITY=$(sqlite3 "$BRAIN_DIR/memory/knowledge.db" "PRAGMA integrity_check;" 2>/dev/null || echo "failed")
+  if [ "$INTEGRITY" = "ok" ]; then
+    echo "  Local brain: knowledge.db OK"
+  else
+    echo "  Local brain: knowledge.db integrity issue detected"
+  fi
+else
+  echo "  Local brain: knowledge.db not found (may be remote-only mode)"
+fi
+
+# Check if remote brain is configured
+if [ -f "$BRAIN_DIR/config.json" ]; then
+  HEALTH_REMOTE_URL=$(python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1], 'r') as f:
+        config = json.load(f)
+    print(config.get('remote_brain', {}).get('url', ''))
+except Exception:
+    print('')
+" "$BRAIN_DIR/config.json" 2>/dev/null || echo "")
+
+  if [ -n "$HEALTH_REMOTE_URL" ]; then
+    HEALTH_URL="${HEALTH_REMOTE_URL%/}/health"
+    if command -v curl &> /dev/null; then
+      HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 "$HEALTH_URL" 2>/dev/null || echo "000")
+      if [ "$HTTP_CODE" = "200" ]; then
+        echo "  Remote brain: healthy (HTTP $HTTP_CODE)"
+      else
+        echo "  Remote brain: HTTP $HTTP_CODE (may not be running)"
+      fi
+    fi
+  fi
+fi
 
 # Done
 echo ""
@@ -357,11 +514,15 @@ echo "Migration complete!"
 echo "=================================================="
 echo ""
 echo "Summary:"
-echo "  Symlinks created: $SYMLINK_COUNT"
+echo "  Version: $IGRIS_VERSION"
+echo "  Install mode: global (agents/rules/skills via ~/.claude/)"
+echo "  Stale symlinks removed: $STALE_REMOVED"
+echo "  Project symlinks: $SYMLINK_COUNT (prompts + templates only)"
 echo "  Backup location: $BACKUP_DIR"
-echo "  Brain registered: $SLUG"
+echo "  Brain registered: $SLUG (tech_stack: ${TECH_STACK:-none detected})"
 echo ""
 echo "Your project now uses centralized brain at ~/.igris/"
+echo "Agents, rules, and skills are shared globally via ~/.claude/ symlinks."
 echo "All existing briefs, sessions, and context files are preserved."
 echo ""
 echo "Rollback: Copy files from $BACKUP_DIR back to their original locations."

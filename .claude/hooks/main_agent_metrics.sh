@@ -15,7 +15,8 @@ PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 cd "$PROJECT_DIR"
 
 # Constants
-METRICS_DIR="ai/session/metrics"
+SLUG=$(basename "$PROJECT_DIR")
+METRICS_DIR="$HOME/.igris/cache/$SLUG/metrics"
 LOCK_FILE="/tmp/igris_main_agent_metrics.lock"
 
 # Read stdin (Claude Code sends JSON with session_id, transcript_path, etc.)
@@ -284,7 +285,7 @@ try:
             os.path.expanduser("~/.claude/CLAUDE.md"),
         ])
         bd_memory = sum(estimate_file_tokens(p) for p in [
-            os.path.join(project_dir, "ai", "session", "CURRENT_SESSION.md"),
+            os.path.join(os.path.expanduser("~"), ".igris", "cache", os.path.basename(project_dir), "session", "CURRENT_SESSION.md"),
             os.path.join(project_dir, "ai", "context", "coding_guidelines.md"),
             os.path.join(project_dir, "SOUL.md"),
         ])

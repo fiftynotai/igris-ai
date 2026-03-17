@@ -2,7 +2,7 @@
  * Staging File Processor
  *
  * Processes JSON files from ~/.igris/staging/{project}/ directory.
- * Files are created by the igris-sync.sh hook on SessionEnd.
+ * Files are created by the post_session_sync.sh hook on SessionEnd.
  * Processed files are deleted after successful ingestion.
  *
  * Supported staging file types:
@@ -17,6 +17,7 @@
  */
 
 import { getDb, BRAIN_DIR } from './db.js';
+import { errMsg } from './engine/helpers.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -66,13 +67,11 @@ function processStagingFiles(): void {
         try {
           fs.unlinkSync(filePath);
         } catch (unlinkErr) {
-          const unlinkMsg = unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr);
-          console.error(`[staging] Failed to delete ${filePath}: ${unlinkMsg}`);
+          console.error(`[staging] Failed to delete ${filePath}: ${errMsg(unlinkErr)}`);
         }
         totalProcessed++;
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[staging] Error processing ${filePath}: ${message}`);
+        console.error(`[staging] Error processing ${filePath}: ${errMsg(err)}`);
         totalErrors++;
       }
     }

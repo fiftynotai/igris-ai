@@ -52,11 +52,11 @@ load test_helper
   assert_dir_exists "$TEST_PROJECT_DIR/.claude/agents"
   assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/manifest.yaml"
 
-  # Verify core agents installed
-  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/planner.md"
-  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/coder.md"
-  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/tester.md"
-  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/reviewer.md"
+  # Verify core agents installed (v4/v5 names)
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/architect.md"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/forger.md"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/sentinel.md"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/warden.md"
 }
 
 # =============================================================================
@@ -231,13 +231,14 @@ load test_helper
 # IDENTITY SYSTEM TESTS (SOUL.md + masks)
 # =============================================================================
 
-@test "igris_init creates SOUL.md in project root" {
+@test "igris_init generates CLAUDE.md without requiring SOUL.md" {
   setup_test_project
 
+  # SOUL.md is optional — igris_init reads it if present but never copies it
   run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"
 
   assert_success
-  assert_file_exists "$TEST_PROJECT_DIR/SOUL.md"
+  assert_file_exists "$TEST_PROJECT_DIR/CLAUDE.md"
 }
 
 @test "igris_init creates mask greeting files" {
@@ -309,7 +310,6 @@ load test_helper
   assert_dir_exists "$TEST_PROJECT_DIR/.claude"
   assert_file_exists "$TEST_PROJECT_DIR/CLAUDE.md"
   assert_file_exists "$TEST_PROJECT_DIR/ai/session/CURRENT_SESSION.md"
-  assert_file_exists "$TEST_PROJECT_DIR/SOUL.md"
   assert_file_exists "$TEST_PROJECT_DIR/ai/briefs/BR-TEMPLATE.md"
   assert_file_exists "$TEST_PROJECT_DIR/ai/prompts/igris_os.md"
 }
@@ -321,6 +321,7 @@ load test_helper
 
   assert_success
 
-  # SOUL.md is tracked in repo, USER.md lives at ~/.igris/ (machine-wide)
-  assert_file_exists "$TEST_PROJECT_DIR/SOUL.md"
+  # Core directories and files are present for gitignore-ready structure
+  assert_dir_exists "$TEST_PROJECT_DIR/.claude"
+  assert_file_exists "$TEST_PROJECT_DIR/CLAUDE.md"
 }

@@ -18,21 +18,9 @@
  */
 
 import { getDb, BRAIN_DIR } from '../db.js';
+import { sanitizeFts5Query } from '../utils/fts5.js';
 import * as fs from 'fs';
 import * as path from 'path';
-
-/**
- * Sanitize a string for use in FTS5 MATCH queries.
- * FTS5 treats characters like commas, colons, parentheses, and quotes as
- * operators. This function strips them and joins words with spaces so FTS5
- * treats the input as a simple OR query of individual tokens.
- */
-function sanitizeFts5Query(input: string): string {
-  // Remove FTS5 special characters: " ( ) * : , + - ^
-  const cleaned = input.replace(/[",():*+\-^]/g, ' ');
-  // Collapse whitespace and trim
-  return cleaned.replace(/\s+/g, ' ').trim();
-}
 
 /** Input shape for igris_memory_store */
 interface MemoryStoreInput {
@@ -138,6 +126,16 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
   const db = getDb();
   const limit = args.limit ?? 10;
 
+  const sanitized = sanitizeFts5Query(args.query);
+  if (!sanitized) {
+    return {
+      content: [{
+        type: 'text',
+        text: 'No learnings found matching the query.',
+      }],
+    };
+  }
+
   let sql = `
     SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
            l.tech_stack, l.scope, l.source_brief, l.confidence,
@@ -148,7 +146,7 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
     WHERE learnings_fts MATCH ?
   `;
 
-  const params: (string | number)[] = [sanitizeFts5Query(args.query)];
+  const params: (string | number)[] = [sanitized];
 
   if (args.project) {
     sql += ' AND l.project = ?';
@@ -214,6 +212,16 @@ function handleMemoryRecall(args: MemoryRecallInput): { content: { type: string;
   const db = getDb();
   const limit = args.limit ?? 5;
 
+  const sanitized = sanitizeFts5Query(args.context);
+  if (!sanitized) {
+    return {
+      content: [{
+        type: 'text',
+        text: `No relevant learnings found for project "${args.project}" with context "${args.context}".`,
+      }],
+    };
+  }
+
   // Combine project-local and global learnings matching context
   const sql = `
     SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
@@ -228,7 +236,7 @@ function handleMemoryRecall(args: MemoryRecallInput): { content: { type: string;
     LIMIT ?
   `;
 
-  const rows = db.prepare(sql).all(sanitizeFts5Query(args.context), args.project, limit) as Record<string, unknown>[];
+  const rows = db.prepare(sql).all(sanitized, args.project, limit) as Record<string, unknown>[];
 
   if (rows.length === 0) {
     return {
@@ -310,30 +318,34 @@ function handlePatternSuggest(args: PatternSuggestInput): { content: { type: str
   const db = getDb();
 
   // --- Search learnings via FTS5 ---
-  let learningSql = `
-    SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
-           l.tech_stack, l.scope, l.confidence, l.access_count,
-           rank
-    FROM learnings_fts fts
-    JOIN learnings l ON l.id = fts.rowid
-    WHERE learnings_fts MATCH ?
-      AND (l.project = ? OR l.scope = 'global')
-  `;
-  const learningParams: (string | number)[] = [sanitizeFts5Query(args.context), args.project];
-
-  if (args.tech_stack) {
-    learningSql += ' AND l.tech_stack LIKE ?';
-    learningParams.push(`%${args.tech_stack}%`);
-  }
-
-  learningSql += ' ORDER BY rank LIMIT 10';
-
+  const sanitized = sanitizeFts5Query(args.context);
   let learningRows: Record<string, unknown>[] = [];
-  try {
-    learningRows = db.prepare(learningSql).all(...learningParams) as Record<string, unknown>[];
-  } catch (_err) {
-    // FTS5 match may fail on certain query syntax; treat as no results
-    learningRows = [];
+
+  if (sanitized) {
+    let learningSql = `
+      SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
+             l.tech_stack, l.scope, l.confidence, l.access_count,
+             rank
+      FROM learnings_fts fts
+      JOIN learnings l ON l.id = fts.rowid
+      WHERE learnings_fts MATCH ?
+        AND (l.project = ? OR l.scope = 'global')
+    `;
+    const learningParams: (string | number)[] = [sanitized, args.project];
+
+    if (args.tech_stack) {
+      learningSql += ' AND l.tech_stack LIKE ?';
+      learningParams.push(`%${args.tech_stack}%`);
+    }
+
+    learningSql += ' ORDER BY rank LIMIT 10';
+
+    try {
+      learningRows = db.prepare(learningSql).all(...learningParams) as Record<string, unknown>[];
+    } catch (_err) {
+      // FTS5 match may fail on certain query syntax; treat as no results
+      learningRows = [];
+    }
   }
 
   // --- Load starter patterns from JSON ---

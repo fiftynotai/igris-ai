@@ -4,6 +4,86 @@ Guide for migrating between Igris AI versions and bringing existing projects up 
 
 ---
 
+## Migrating from v5 to v6
+
+### What Changed in v6.0
+
+| Feature | v5 | v6 |
+|---------|----|----|
+| Project data | `~/.igris/cache/{project}/` | `~/.igris/projects/{project}/` |
+| Rules | 5 files (01-05-igris-*.md, 25.7KB) | 1 file (00-igris-universal.md, 1.8KB) |
+| Context loading | CLAUDE.md @imports 67.5KB into every agent | igris_tree.json routes context per actor |
+| CLAUDE.md | 3 @import directives + inline docs | Slim pointer to tree (~2.5KB) |
+| Persona | SOUL.md + masks (4 levels) | SOUL.md only (masks removed) |
+| Agents | Copy-based, load full context | Symlink-based, self-routing via tree |
+| Skills | Copy-based | Symlink-based |
+| Igris files in repo | `ai/` folder (legacy v4) | None — `~/.igris/` is sole source |
+| Install | `igris_init.sh` (copy-based) | `igris_install.sh` (symlink-based) |
+| MCP tools | 67 tools, 13 components | 70 tools, 14 components (+context) |
+| Context overhead | ~93KB per subagent | ~5-8KB per subagent |
+
+### Automated Migration
+
+Run the migration script from the igris-ai repository:
+
+```bash
+# Preview changes (no modifications)
+cd /path/to/igris-ai
+./scripts/igris_migrate_v5_to_v6.sh --dry-run
+
+# Run migration
+./scripts/igris_migrate_v5_to_v6.sh
+```
+
+The script automatically:
+1. Moves `~/.igris/cache/` → `~/.igris/projects/` (creates backward-compat symlink)
+2. Creates v6 subdirs for each project (context, plans, hooks, reference)
+3. Removes old rules 01-05, installs `00-igris-universal.md`
+4. Updates core files (igris_tree.json, agents, skills, prompts, templates, task-handlers)
+5. Removes deprecated directories (staging, personas)
+6. Updates `config.json` to v6.0.0
+7. Updates DB project paths
+8. Converts `.claude/` to symlinks for all registered projects
+
+### Manual Steps After Migration
+
+1. **Start a new Claude Code session** — rules reload on session start
+2. **Delete `ai/` folder** from any project that still has it (v6 uses `~/.igris/` only)
+3. **Delete `SOUL.md`** from project root if present (now at `~/.igris/core/SOUL.md`)
+4. **Run `/scan`** to verify system status
+5. **Run `/awaken`** to test full initialization
+
+### Breaking Changes
+
+- `ai/` folder no longer used — all content lives in `~/.igris/`
+- Mask system removed — persona uses SOUL.md only, no mask levels
+- `igris_init.sh` deprecated — use `igris_install.sh` for project registration
+- `~/.igris/cache/` renamed to `~/.igris/projects/` (symlink preserves backward compat)
+- `~/.igris/staging/` and `~/.igris/personas/` removed
+- CLAUDE.md no longer uses `@import` directives
+- 5 rule files replaced by 1 universal rule
+
+### Post-Migration Verification
+
+```bash
+# Check v6 structure
+ls ~/.igris/core/igris_tree.json     # Should exist
+ls ~/.igris/core/rules/              # Should have ONLY 00-igris-universal.md
+ls ~/.igris/projects/                # Should have project dirs
+cat ~/.igris/config.json | grep version  # Should show 6.0.0
+
+# Check symlinks in project
+ls -la .claude/agents/   # Should show symlinks → ~/.igris/core/agents/
+ls -la .claude/rules/    # Should show symlink → ~/.igris/core/rules/
+
+# Run validation
+./scripts/validate_agent.sh ~/.igris/core/agents/architect.md
+
+# In Claude Code: /scan
+```
+
+---
+
 ## Migrating from v3 to v4
 
 ### What Changed in v4.0
@@ -124,10 +204,10 @@ This creates your architecture baseline.
 
 **What IGRIS does:**
 1. Scans all source files
-2. Compares against architecture standards (from `ai/context/`)
+2. Compares against architecture standards (from `~/.igris/projects/{project}/context/`)
 3. Identifies violations, bugs, debt, and testing gaps
 4. Generates categorized briefs
-5. Creates `ai/session/MIGRATION_ROADMAP.md`
+5. Creates `~/.igris/projects/{project}/session/MIGRATION_ROADMAP.md`
 
 **Expected output:**
 ```
@@ -140,8 +220,8 @@ Found 47 issues across 5 categories:
 - Testing (TS): 7 gaps
 - Enhancements (EN): 5 recommendations
 
-Created 47 briefs in ai/briefs/
-Created migration roadmap in ai/session/MIGRATION_ROADMAP.md
+Created 47 briefs in brain DB
+Created migration roadmap in ~/.igris/projects/{project}/session/MIGRATION_ROADMAP.md
 
 Estimated migration time: 4-5 weeks
 ```
@@ -166,7 +246,7 @@ Change TD-003 to P3   # Can wait
 **Review the roadmap:**
 
 ```bash
-cat ai/session/MIGRATION_ROADMAP.md
+cat ~/.igris/projects/{project}/session/MIGRATION_ROADMAP.md
 ```
 
 Example roadmap structure:
@@ -393,7 +473,7 @@ How many P0/P1 briefs remain?
 # /migrate-analyze
 
 # Review results (30 min)
-cat ai/session/MIGRATION_ROADMAP.md
+cat ~/.igris/projects/{project}/session/MIGRATION_ROADMAP.md
 ```
 
 **Output:** 35 briefs created, 4-week estimate

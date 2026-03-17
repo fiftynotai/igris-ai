@@ -13,6 +13,7 @@
 import Database from 'better-sqlite3';
 import * as path from 'path';
 import * as os from 'os';
+import type { StorageAdapter } from './engine/types.js';
 
 /** Root directory for the Igris brain */
 const BRAIN_DIR = path.join(os.homedir(), '.igris');
@@ -22,6 +23,14 @@ const DB_PATH = path.join(BRAIN_DIR, 'memory', 'knowledge.db');
 
 /** Singleton database instance */
 let _db: Database.Database | null = null;
+
+/**
+ * Engine adapter bridge.
+ * Once the engine calls setAdapter(), all tool modules that use getDb()
+ * will get the adapter's underlying connection. Zero code changes needed
+ * in tool handler functions.
+ */
+let _adapter: StorageAdapter | null = null;
 
 /**
  * Run incremental schema migrations.
@@ -388,12 +397,21 @@ function migrateSchema(db: Database.Database): void {
 
 /**
  * Get the singleton database connection.
- * Initializes with WAL mode, busy timeout, and foreign keys on first call.
- * Runs pending schema migrations after initial connection.
+ *
+ * If setAdapter() has been called by the engine, returns the adapter's
+ * underlying connection — ensuring all tool modules share the same DB.
+ * Otherwise falls back to legacy singleton initialization with WAL mode,
+ * busy timeout, and foreign keys.
  *
  * @returns The SQLite database instance
  */
 function getDb(): Database.Database {
+  // Engine bridge: if adapter is set, delegate to it
+  if (_adapter) {
+    return _adapter.rawConnection;
+  }
+
+  // Legacy fallback (pre-engine boot or standalone usage)
   if (!_db) {
     _db = new Database(DB_PATH);
     _db.pragma('journal_mode = WAL');
@@ -407,6 +425,26 @@ function getDb(): Database.Database {
 }
 
 /**
+ * Bridge the engine's storage adapter to the getDb() singleton.
+ *
+ * Once called, all tool modules that import getDb() will receive
+ * the adapter's underlying better-sqlite3 connection. This ensures
+ * a single shared connection across the entire server.
+ *
+ * @param adapter - The engine's StorageAdapter instance
+ */
+function setAdapter(adapter: StorageAdapter): void {
+  _adapter = adapter;
+  // Clear legacy singleton if it exists — adapter takes over
+  if (_db) {
+    // Do NOT close _db here — if something already has a reference,
+    // closing it would break ongoing queries. The adapter's connection
+    // is the canonical one from now on.
+    _db = null;
+  }
+}
+
+/**
  * Close the database connection and clear the singleton.
  */
 function closeDb(): void {
@@ -416,4 +454,4 @@ function closeDb(): void {
   }
 }
 
-export { getDb, closeDb, BRAIN_DIR, DB_PATH };
+export { getDb, closeDb, setAdapter, migrateSchema, BRAIN_DIR, DB_PATH };
