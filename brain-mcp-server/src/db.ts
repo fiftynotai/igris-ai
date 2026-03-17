@@ -459,6 +459,47 @@ function migrateSchema(db: Database.Database): void {
       }
     }
   }
+
+  if (currentVersion < 11) {
+    db.transaction(() => {
+      db.exec(`
+        ALTER TABLE errors ADD COLUMN embedding BLOB;
+        ALTER TABLE errors ADD COLUMN embedding_model TEXT DEFAULT '';
+
+        ALTER TABLE brief_status ADD COLUMN embedding BLOB;
+        ALTER TABLE brief_status ADD COLUMN embedding_model TEXT DEFAULT '';
+
+        INSERT OR IGNORE INTO schema_version (version) VALUES (11);
+      `);
+    })();
+    console.error('[brain] Schema migrated to version 11 (embedding columns for errors + brief_status)');
+
+    // Create vec0 virtual tables and cleanup triggers only if sqlite-vec is available
+    if (_vecAvailable) {
+      try {
+        db.exec(`
+          CREATE VIRTUAL TABLE IF NOT EXISTS errors_vec USING vec0(
+            embedding float[384]
+          );
+
+          CREATE VIRTUAL TABLE IF NOT EXISTS briefs_vec USING vec0(
+            embedding float[384]
+          );
+
+          CREATE TRIGGER IF NOT EXISTS errors_vec_ad AFTER DELETE ON errors BEGIN
+            DELETE FROM errors_vec WHERE rowid = old.id;
+          END;
+
+          CREATE TRIGGER IF NOT EXISTS briefs_vec_ad AFTER DELETE ON brief_status BEGIN
+            DELETE FROM briefs_vec WHERE rowid = old.id;
+          END;
+        `);
+        console.error('[brain] Created errors_vec and briefs_vec virtual tables with cleanup triggers');
+      } catch (err) {
+        console.error('[brain] Failed to create errors_vec/briefs_vec tables:', err);
+      }
+    }
+  }
 }
 
 /**

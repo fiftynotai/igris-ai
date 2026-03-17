@@ -153,7 +153,7 @@ export function createMemoryComponent(): BrainComponent {
             },
             required: ['project', 'context'],
           },
-          handler: (args) => handleMemoryRecall(args as unknown as MemoryRecallInput),
+          handler: async (args) => handleMemoryRecall(args as unknown as MemoryRecallInput),
         },
         {
           name: 'igris_memory_get',

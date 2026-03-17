@@ -22,6 +22,8 @@ import {
   handleBriefList,
   handleBriefCreate,
   handleBriefUpdate,
+  handleBriefSimilar,
+  handleBriefBackfillEmbeddings,
 } from '../../../tools/briefs.js';
 import type {
   BriefSyncInput,
@@ -30,6 +32,8 @@ import type {
   BriefListInput,
   BriefCreateInput,
   BriefUpdateInput,
+  BriefSimilarInput,
+  BriefBackfillInput,
 } from '../../../tools/briefs.js';
 import { getDb } from '../../../db.js';
 
@@ -276,9 +280,9 @@ export function createBriefsComponent(): BrainComponent {
             },
             required: ['project', 'brief_id', 'title', 'content'],
           },
-          handler: (args) => {
+          handler: async (args) => {
             const typedArgs = args as Record<string, unknown>;
-            const result = handleBriefCreate(args as unknown as BriefCreateInput);
+            const result = await handleBriefCreate(args as unknown as BriefCreateInput);
 
             if (_ctx) {
               _ctx.bus.emit('brief.created', {
@@ -287,6 +291,15 @@ export function createBriefsComponent(): BrainComponent {
                 title: typedArgs.title as string,
                 status: (typedArgs.status as string) ?? 'Ready',
               });
+
+              // Check if similarity warning was emitted in the response
+              const text = result.content[0]?.text ?? '';
+              if (text.includes('similar brief(s) detected')) {
+                _ctx.bus.emit('brief.similar_detected', {
+                  project: typedArgs.project as string,
+                  brief_id: typedArgs.brief_id as string,
+                });
+              }
             }
 
             return result;
@@ -375,6 +388,52 @@ export function createBriefsComponent(): BrainComponent {
             return result;
           },
         },
+        {
+          name: 'igris_brief_similar',
+          description: 'Find briefs that are semantically similar to a query. Uses vector embeddings to detect near-duplicate briefs. Returns matches above the cosine similarity threshold (default: 0.85).',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              query: {
+                type: 'string',
+                description: 'Brief title and/or problem description to search for similar briefs',
+              },
+              project: {
+                type: 'string',
+                description: 'Filter by project slug (optional)',
+              },
+              threshold: {
+                type: 'number',
+                description: 'Minimum cosine similarity threshold (default: 0.85)',
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum results (default: 5)',
+              },
+            },
+            required: ['query'],
+          },
+          handler: async (args) => handleBriefSimilar(args as unknown as BriefSimilarInput),
+        },
+        {
+          name: 'igris_brief_backfill_embeddings',
+          description: 'Batch-generate embeddings for existing briefs that lack them. Processes briefs in batches -- run multiple times to process all. Resumable: only processes briefs without embeddings.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              batch_size: {
+                type: 'number',
+                description: 'Number of briefs to process per batch (default: 50)',
+              },
+              project: {
+                type: 'string',
+                description: 'Filter by project slug (optional -- omit to backfill all projects)',
+              },
+            },
+            required: [],
+          },
+          handler: async (args) => handleBriefBackfillEmbeddings(args as unknown as BriefBackfillInput),
+        },
       ];
     },
 
@@ -384,6 +443,7 @@ export function createBriefsComponent(): BrainComponent {
           { name: 'brief.synced', description: 'A brief status was synced' },
           { name: 'brief.created', description: 'A new brief was synced for the first time' },
           { name: 'brief.completed', description: 'A brief status changed to Done' },
+          { name: 'brief.similar_detected', description: 'Similar briefs were detected during creation' },
         ],
         listens: [],
       };

@@ -27,6 +27,8 @@ import { sanitizeFts5Query } from '../utils/fts5.js';
 import { generateEmbedding, embeddingToBuffer, EMBEDDING_MODEL } from '../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbedding, vectorSearch } from '../utils/vector-search.js';
 import type { VectorSearchResult } from '../utils/vector-search.js';
+import { computeRRF } from '../utils/hybrid-search.js';
+import type { RrfEntry } from '../utils/hybrid-search.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -233,14 +235,15 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
 /**
  * Contextual recall for the current project.
  *
- * Retrieves project-local learnings matching the context via FTS5,
- * combined with global-scope learnings. Increments access_count and
- * updates last_accessed_at for returned results.
+ * Uses hybrid search (BM25 + vector via RRF) when available, with a 1.5x
+ * boost for project-local results. Falls back to FTS5-only when sqlite-vec
+ * is unavailable. Increments access_count and updates last_accessed_at for
+ * returned results.
  *
  * @param args - Recall parameters with project and context
  * @returns MCP-formatted response with relevant learnings
  */
-function handleMemoryRecall(args: MemoryRecallInput): { content: { type: string; text: string }[] } {
+async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: { type: string; text: string }[] }> {
   const db = getDb();
   const limit = args.limit ?? 5;
 
@@ -254,11 +257,8 @@ function handleMemoryRecall(args: MemoryRecallInput): { content: { type: string;
     };
   }
 
-  // Combine project-local and global learnings matching context
-  // Composite score: FTS5 rank (negative, more negative = better match) * 0.6
-  //   minus confidence bonus (0-0.2) minus access popularity bonus (0-0.2)
-  // Subtracting positive bonuses from negative rank makes better items sort first
-  const sql = `
+  // --- 1. BM25 search via FTS5 (project-local + global scope) ---
+  const bm25Sql = `
     SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
            l.tech_stack, l.scope, l.source_brief, l.confidence,
            l.created_at, l.access_count,
@@ -272,9 +272,40 @@ function handleMemoryRecall(args: MemoryRecallInput): { content: { type: string;
     LIMIT ?
   `;
 
-  const rows = db.prepare(sql).all(sanitized, args.project, limit) as Record<string, unknown>[];
+  let bm25Rows: Bm25Row[] = [];
+  try {
+    bm25Rows = db.prepare(bm25Sql).all(sanitized, args.project, limit * 2) as Bm25Row[];
+  } catch {
+    bm25Rows = [];
+  }
 
-  if (rows.length === 0) {
+  // --- 2. Vector search with graceful fallback ---
+  let vecResults: VectorSearchResult[] = [];
+  let vectorAvailable = false;
+
+  try {
+    if (isVectorSearchAvailable(db)) {
+      const queryEmbedding = await generateEmbedding(args.context);
+      vecResults = vectorSearch(db, queryEmbedding, limit * 2);
+      vectorAvailable = true;
+
+      // Filter vector results to project-local + global scope
+      if (vecResults.length > 0) {
+        const ids = vecResults.map(r => r.rowid);
+        const placeholders = ids.map(() => '?').join(',');
+        const scopeRows = db.prepare(
+          `SELECT id FROM learnings WHERE id IN (${placeholders}) AND (project = ? OR scope = 'global')`,
+        ).all(...ids, args.project) as { id: number }[];
+        const scopeIdSet = new Set(scopeRows.map(r => r.id));
+        vecResults = vecResults.filter(r => scopeIdSet.has(r.rowid));
+      }
+    }
+  } catch (err) {
+    console.error('[memory] Vector search failed in recall, using BM25 only:', err);
+  }
+
+  // --- 3. No results at all ---
+  if (bm25Rows.length === 0 && vecResults.length === 0) {
     return {
       content: [{
         type: 'text',
@@ -283,7 +314,64 @@ function handleMemoryRecall(args: MemoryRecallInput): { content: { type: string;
     };
   }
 
-  // Update access counts for returned results
+  // --- 4. Determine final ordering ---
+  type RecallRow = Bm25Row & { rrf_score?: number; composite_score?: number };
+  let finalRows: RecallRow[];
+  let searchSource: string;
+
+  if (vectorAvailable && vecResults.length > 0) {
+    // Hybrid: RRF merge + project-local boost
+    const rrfEntries = computeRRF(bm25Rows, vecResults);
+
+    // Fetch full records for RRF results
+    const topIds = rrfEntries.map(e => e.id);
+    const placeholders = topIds.map(() => '?').join(',');
+    const fullRows = db.prepare(
+      `SELECT id, project, category, title, content, tags, tech_stack, scope,
+              source_brief, confidence, created_at, access_count
+       FROM learnings WHERE id IN (${placeholders})`,
+    ).all(...topIds) as Bm25Row[];
+
+    const rowMap = new Map<number, Bm25Row>();
+    for (const row of fullRows) {
+      rowMap.set(row.id, row);
+    }
+
+    // Apply 1.5x project-local boost
+    for (const entry of rrfEntries) {
+      const row = rowMap.get(entry.id);
+      if (row && row.project === args.project) {
+        entry.score *= 1.5;
+      }
+    }
+    rrfEntries.sort((a, b) => b.score - a.score);
+
+    // Build final rows in RRF order (skip entries without full row data)
+    finalRows = [];
+    for (const entry of rrfEntries.slice(0, limit)) {
+      const row = rowMap.get(entry.id);
+      if (row) {
+        finalRows.push({ ...row, rrf_score: entry.score });
+      }
+    }
+
+    searchSource = 'hybrid';
+  } else {
+    // BM25-only fallback
+    finalRows = bm25Rows.slice(0, limit);
+    searchSource = 'bm25-only';
+  }
+
+  if (finalRows.length === 0) {
+    return {
+      content: [{
+        type: 'text',
+        text: `No relevant learnings found for project "${args.project}" with context "${args.context}".`,
+      }],
+    };
+  }
+
+  // --- 5. Update access counts ---
   const updateStmt = db.prepare(`
     UPDATE learnings
     SET access_count = access_count + 1,
@@ -297,14 +385,15 @@ function handleMemoryRecall(args: MemoryRecallInput): { content: { type: string;
     }
   });
 
-  updateAll(rows.map(r => r.id));
+  updateAll(finalRows.map(r => r.id));
 
-  const results = rows.map((row, i) => {
+  // --- 6. Format results ---
+  const results = finalRows.map((row, i) => {
     const fullContent = row.content as string;
     const truncated = fullContent.length > 200
       ? fullContent.substring(0, 200) + '...'
       : fullContent;
-    return [
+    const lines = [
       `--- Recall ${i + 1} ---`,
       `ID: ${row.id}`,
       `Project: ${row.project}`,
@@ -314,14 +403,22 @@ function handleMemoryRecall(args: MemoryRecallInput): { content: { type: string;
       `Tags: ${row.tags || '(none)'}`,
       `Scope: ${row.scope}`,
       `Confidence: ${row.confidence}`,
-      `Score: ${row.composite_score}`,
-    ].join('\n');
+    ];
+    if (row.rrf_score !== undefined) {
+      lines.push(`Score: ${(row.rrf_score as number).toFixed(6)}`);
+    } else if (row.composite_score !== undefined) {
+      lines.push(`Score: ${row.composite_score}`);
+    }
+    if (row.project === args.project) {
+      lines.push('Boost: project-local');
+    }
+    return lines.join('\n');
   });
 
   return {
     content: [{
       type: 'text',
-      text: `Recalled ${rows.length} relevant learning(s) for "${args.project}" (use igris_memory_get for full content):\n\n${results.join('\n\n')}`,
+      text: `Recalled ${finalRows.length} relevant learning(s) for "${args.project}" (${searchSource}, use igris_memory_get for full content):\n\n${results.join('\n\n')}`,
     }],
   };
 }
@@ -556,74 +653,6 @@ interface Bm25Row {
   created_at: string;
   access_count: number;
   rank: number;
-}
-
-/** An entry in the RRF-scored merged result set */
-interface RrfEntry {
-  id: number;
-  score: number;
-  bm25_rank: number | null;
-  vector_rank: number | null;
-  vector_distance: number | null;
-}
-
-/**
- * Compute Reciprocal Rank Fusion (RRF) scores from two ranked lists.
- *
- * RRF formula: score(doc) = w1/(k + rank_bm25) + w2/(k + rank_vec)
- * Where rank is 1-based (first result = rank 1).
- *
- * @param bm25Rows - BM25-ranked results (position in array = rank - 1)
- * @param vecResults - Vector KNN results (position in array = rank - 1)
- * @param bm25Weight - Weight for BM25 component (default 0.5)
- * @param vectorWeight - Weight for vector component (default 0.5)
- * @param k - RRF constant (default 60)
- * @returns Merged results sorted by combined RRF score descending
- */
-function computeRRF(
-  bm25Rows: Bm25Row[],
-  vecResults: VectorSearchResult[],
-  bm25Weight: number = 0.5,
-  vectorWeight: number = 0.5,
-  k: number = 60,
-): RrfEntry[] {
-  const scoreMap = new Map<number, RrfEntry>();
-
-  // Score BM25 results
-  for (let i = 0; i < bm25Rows.length; i++) {
-    const id = bm25Rows[i].id;
-    const rank = i + 1;
-    scoreMap.set(id, {
-      id,
-      score: bm25Weight / (k + rank),
-      bm25_rank: rank,
-      vector_rank: null,
-      vector_distance: null,
-    });
-  }
-
-  // Score vector results and merge
-  for (let i = 0; i < vecResults.length; i++) {
-    const id = vecResults[i].rowid;
-    const rank = i + 1;
-    const existing = scoreMap.get(id);
-    if (existing) {
-      existing.score += vectorWeight / (k + rank);
-      existing.vector_rank = rank;
-      existing.vector_distance = vecResults[i].distance;
-    } else {
-      scoreMap.set(id, {
-        id,
-        score: vectorWeight / (k + rank),
-        bm25_rank: null,
-        vector_rank: rank,
-        vector_distance: vecResults[i].distance,
-      });
-    }
-  }
-
-  // Sort by combined score descending
-  return Array.from(scoreMap.values()).sort((a, b) => b.score - a.score);
 }
 
 /**
@@ -1021,4 +1050,5 @@ export type {
   HybridSearchInput,
   BackfillInput,
   PatternSuggestInput,
+  RrfEntry,
 };

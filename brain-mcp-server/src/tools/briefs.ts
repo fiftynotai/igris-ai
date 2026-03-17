@@ -15,6 +15,9 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { getDb } from '../db.js';
+import { generateEmbedding, embeddingToBuffer, EMBEDDING_MODEL } from '../utils/embeddings.js';
+import { isVectorSearchAvailable, insertEmbeddingInto, vectorSearchFrom } from '../utils/vector-search.js';
+import { l2ToCosine } from '../utils/hybrid-search.js';
 
 /** Input shape for igris_brief_sync */
 interface BriefSyncInput {
@@ -445,12 +448,13 @@ function handleBriefList(args: BriefListInput): { content: { type: string; text:
  * Create a new brief with content and metadata.
  *
  * Atomically inserts/upserts into both brief_files and brief_status
- * within a transaction.
+ * within a transaction. Auto-embeds the brief for similarity search
+ * and warns if similar briefs are detected (>= 0.85 cosine similarity).
  *
  * @param args - Brief data including project, brief_id, title, content
  * @returns MCP-formatted response confirming creation
  */
-function handleBriefCreate(args: BriefCreateInput): { content: { type: string; text: string }[] } {
+async function handleBriefCreate(args: BriefCreateInput): Promise<{ content: { type: string; text: string }[] }> {
   if (!args.project || !args.brief_id || !args.title || !args.content) {
     return {
       content: [{
@@ -504,6 +508,63 @@ function handleBriefCreate(args: BriefCreateInput): { content: { type: string; t
     );
   })();
 
+  // Get the brief_status.id (integer PK) for embedding storage
+  const statusRow = db.prepare(
+    'SELECT id FROM brief_status WHERE project = ? AND brief_id = ?',
+  ).get(args.project, args.brief_id) as { id: number } | undefined;
+
+  // Auto-embed and similarity check (non-blocking on failure)
+  let embeddingNote = '';
+  let similarityWarning = '';
+
+  try {
+    if (statusRow && isVectorSearchAvailable(db)) {
+      const textToEmbed = extractBriefProblem(args.title, args.content);
+      const embedding = await generateEmbedding(textToEmbed);
+
+      // Store embedding in brief_status
+      db.prepare('UPDATE brief_status SET embedding = ?, embedding_model = ? WHERE id = ?')
+        .run(embeddingToBuffer(embedding), EMBEDDING_MODEL, statusRow.id);
+
+      // Insert into briefs_vec
+      insertEmbeddingInto(db, 'briefs_vec', statusRow.id, embedding);
+      embeddingNote = '\nEmbedding: generated';
+
+      // Check for similar briefs
+      const vecResults = vectorSearchFrom(db, 'briefs_vec', embedding, 10);
+      const similarBriefs: { brief_id: string; title: string; similarity: number }[] = [];
+
+      for (const result of vecResults) {
+        // Skip self
+        if (result.rowid === statusRow.id) continue;
+
+        const similarity = l2ToCosine(result.distance);
+        if (similarity >= 0.85) {
+          const row = db.prepare(
+            'SELECT brief_id, title FROM brief_status WHERE id = ?',
+          ).get(result.rowid) as { brief_id: string; title: string } | undefined;
+          if (row) {
+            similarBriefs.push({
+              brief_id: row.brief_id,
+              title: row.title,
+              similarity,
+            });
+          }
+        }
+      }
+
+      if (similarBriefs.length > 0) {
+        const warnings = similarBriefs.map(
+          b => `- ${b.brief_id}: ${b.title} (similarity: ${b.similarity.toFixed(4)})`,
+        );
+        similarityWarning = `\n\nWARNING: ${similarBriefs.length} similar brief(s) detected (similarity >= 0.85):\n${warnings.join('\n')}`;
+      }
+    }
+  } catch (err) {
+    console.error('[briefs] Auto-embed failed for brief', args.brief_id, ':', err);
+    embeddingNote = '\nEmbedding: skipped (will be generated on backfill)';
+  }
+
   return {
     content: [{
       type: 'text',
@@ -516,7 +577,7 @@ function handleBriefCreate(args: BriefCreateInput): { content: { type: string; t
         `Status: ${status}`,
         `Content hash: ${contentHash.substring(0, 12)}...`,
         `Size: ${args.content.length} chars`,
-      ].join('\n'),
+      ].join('\n') + embeddingNote + similarityWarning,
     }],
   };
 }
@@ -778,5 +839,290 @@ function handleBriefVelocity(input?: BriefVelocityInput): BriefVelocityOutput {
   };
 }
 
-export { handleBriefSync, handleBriefDashboard, handleBriefGet, handleBriefList, handleBriefCreate, handleBriefUpdate, handleBriefVelocity };
-export type { BriefSyncInput, BriefDashboardInput, BriefGetInput, BriefListInput, BriefCreateInput, BriefUpdateInput, BriefVelocityInput, BriefVelocityOutput };
+// ---------------------------------------------------------------------------
+// Brief Similarity Detection (FR-094)
+// ---------------------------------------------------------------------------
+
+/** Input shape for igris_brief_similar */
+interface BriefSimilarInput {
+  query: string;
+  project?: string;
+  threshold?: number;
+  limit?: number;
+}
+
+/** Input shape for backfill tools */
+interface BriefBackfillInput {
+  batch_size?: number;
+  project?: string;
+}
+
+/**
+ * Extract the problem/intent text from a brief's content for embedding.
+ *
+ * Looks for a `## Problem` or `## Problem Statement` section and extracts
+ * the text up to the next heading. Falls back to the first 500 characters
+ * of content if no structured section is found.
+ *
+ * @param title - The brief title
+ * @param content - The full brief content (markdown)
+ * @returns Combined text suitable for embedding
+ */
+function extractBriefProblem(title: string, content: string): string {
+  // Try to find ## Problem or ## Problem Statement section
+  const problemMatch = content.match(
+    /##\s+Problem(?:\s+Statement)?\s*\n([\s\S]*?)(?=\n##\s|\n---\s|$)/i,
+  );
+
+  const problemText = problemMatch
+    ? problemMatch[1].trim()
+    : content.substring(0, 500).trim();
+
+  return `${title} ${problemText}`;
+}
+
+/**
+ * Find briefs that are semantically similar to a query.
+ *
+ * Uses vector search against briefs_vec and converts L2 distance to
+ * cosine similarity, filtering by threshold.
+ *
+ * @param args - Search parameters
+ * @returns MCP-formatted response with similar briefs
+ */
+async function handleBriefSimilar(args: BriefSimilarInput): Promise<{ content: { type: string; text: string }[] }> {
+  const db = getDb();
+  const threshold = args.threshold ?? 0.85;
+  const limit = args.limit ?? 5;
+
+  if (!isVectorSearchAvailable(db)) {
+    return {
+      content: [{
+        type: 'text',
+        text: 'Brief similarity search unavailable: sqlite-vec extension is not loaded.',
+      }],
+    };
+  }
+
+  let queryEmbedding: Float32Array;
+  try {
+    queryEmbedding = await generateEmbedding(args.query);
+  } catch (err) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Failed to generate embedding for query: ${err instanceof Error ? err.message : String(err)}`,
+      }],
+    };
+  }
+
+  // Search with extra headroom for filtering
+  const vecResults = vectorSearchFrom(db, 'briefs_vec', queryEmbedding, limit * 3);
+
+  if (vecResults.length === 0) {
+    return {
+      content: [{
+        type: 'text',
+        text: 'No similar briefs found.',
+      }],
+    };
+  }
+
+  // Convert to cosine similarity and filter by threshold
+  const candidates = vecResults
+    .map(r => ({ rowid: r.rowid, similarity: l2ToCosine(r.distance) }))
+    .filter(r => r.similarity >= threshold);
+
+  if (candidates.length === 0) {
+    return {
+      content: [{
+        type: 'text',
+        text: `No briefs found above similarity threshold (${threshold}).`,
+      }],
+    };
+  }
+
+  // Fetch full brief metadata
+  const ids = candidates.map(c => c.rowid);
+  const placeholders = ids.map(() => '?').join(',');
+  let sql = `
+    SELECT bs.id, bs.project, bs.brief_id, bs.title, bs.status, bs.priority, bs.brief_type
+    FROM brief_status bs
+    WHERE bs.id IN (${placeholders})
+  `;
+  const params: unknown[] = [...ids];
+
+  if (args.project) {
+    sql += ' AND bs.project = ?';
+    params.push(args.project);
+  }
+
+  const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
+
+  // Build lookup
+  const rowMap = new Map<number, Record<string, unknown>>();
+  for (const row of rows) {
+    rowMap.set(row.id as number, row);
+  }
+
+  // Format results in similarity order
+  const results: string[] = [];
+  for (const candidate of candidates) {
+    const row = rowMap.get(candidate.rowid);
+    if (!row) continue;
+    results.push([
+      `--- Similarity: ${candidate.similarity.toFixed(4)} ---`,
+      `Brief: ${row.brief_id}`,
+      `Project: ${row.project}`,
+      `Title: ${row.title}`,
+      `Status: ${row.status}`,
+      `Priority: ${row.priority || '(none)'}`,
+      `Type: ${row.brief_type || '(none)'}`,
+    ].join('\n'));
+    if (results.length >= limit) break;
+  }
+
+  if (results.length === 0) {
+    return {
+      content: [{
+        type: 'text',
+        text: args.project
+          ? `No similar briefs found in project "${args.project}" above threshold (${threshold}).`
+          : `No briefs found above similarity threshold (${threshold}).`,
+      }],
+    };
+  }
+
+  return {
+    content: [{
+      type: 'text',
+      text: `Found ${results.length} similar brief(s) (threshold >= ${threshold}):\n\n${results.join('\n\n')}`,
+    }],
+  };
+}
+
+/**
+ * Batch-embed existing briefs that lack embeddings.
+ *
+ * Processes briefs where brief_status.embedding IS NULL in batches,
+ * generating embeddings from brief_files content and storing them in
+ * both the brief_status.embedding column and the briefs_vec virtual table.
+ *
+ * @param args - Optional batch_size and project filter
+ * @returns MCP-formatted response with processing summary
+ */
+async function handleBriefBackfillEmbeddings(args: BriefBackfillInput): Promise<{ content: { type: string; text: string }[] }> {
+  const db = getDb();
+  const batchSize = args.batch_size ?? 50;
+
+  if (!isVectorSearchAvailable(db)) {
+    return {
+      content: [{
+        type: 'text',
+        text: 'Backfill skipped: sqlite-vec extension is not available. Vector search is disabled.',
+      }],
+    };
+  }
+
+  let sql = `
+    SELECT bs.id, bs.brief_id, bs.title, bf.content
+    FROM brief_status bs
+    JOIN brief_files bf ON bs.project = bf.project AND bs.brief_id = bf.brief_id
+    WHERE bs.embedding IS NULL
+  `;
+  const params: unknown[] = [];
+  if (args.project) {
+    sql += ' AND bs.project = ?';
+    params.push(args.project);
+  }
+  sql += ' ORDER BY bs.id LIMIT ?';
+
+  const briefs = db.prepare(sql).all(...params, batchSize) as { id: number; brief_id: string; title: string; content: string }[];
+
+  if (briefs.length === 0) {
+    let countSql = `
+      SELECT COUNT(*) as total
+      FROM brief_status bs
+      JOIN brief_files bf ON bs.project = bf.project AND bs.brief_id = bf.brief_id
+    `;
+    const countParams: unknown[] = [];
+    if (args.project) {
+      countSql += ' WHERE bs.project = ?';
+      countParams.push(args.project);
+    }
+    const countRow = db.prepare(countSql).get(...countParams) as { total: number };
+
+    return {
+      content: [{
+        type: 'text',
+        text: `Backfill complete -- all ${countRow.total} briefs already have embeddings.`,
+      }],
+    };
+  }
+
+  let processed = 0;
+  let failed = 0;
+  const startTime = Date.now();
+
+  for (const brief of briefs) {
+    try {
+      const textToEmbed = extractBriefProblem(brief.title, brief.content);
+      const embedding = await generateEmbedding(textToEmbed);
+      db.prepare('UPDATE brief_status SET embedding = ?, embedding_model = ? WHERE id = ?')
+        .run(embeddingToBuffer(embedding), EMBEDDING_MODEL, brief.id);
+      insertEmbeddingInto(db, 'briefs_vec', brief.id, embedding);
+      processed++;
+    } catch (err) {
+      failed++;
+      console.error(`[backfill] Failed to embed brief ${brief.brief_id}:`, err);
+    }
+  }
+
+  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+  // Check remaining
+  let remainingSql = `
+    SELECT COUNT(*) as remaining
+    FROM brief_status bs
+    JOIN brief_files bf ON bs.project = bf.project AND bs.brief_id = bf.brief_id
+    WHERE bs.embedding IS NULL
+  `;
+  const remainingParams: unknown[] = [];
+  if (args.project) {
+    remainingSql += ' AND bs.project = ?';
+    remainingParams.push(args.project);
+  }
+  const remainingRow = db.prepare(remainingSql).get(...remainingParams) as { remaining: number };
+
+  return {
+    content: [{
+      type: 'text',
+      text: `Backfill batch complete.\n\nProcessed: ${processed}\nFailed: ${failed}\nRemaining: ${remainingRow.remaining}\nTime: ${elapsed}s\n\n${remainingRow.remaining > 0 ? 'Run again to process more.' : 'All briefs now have embeddings.'}`,
+    }],
+  };
+}
+
+export {
+  handleBriefSync,
+  handleBriefDashboard,
+  handleBriefGet,
+  handleBriefList,
+  handleBriefCreate,
+  handleBriefUpdate,
+  handleBriefVelocity,
+  handleBriefSimilar,
+  handleBriefBackfillEmbeddings,
+  extractBriefProblem,
+};
+export type {
+  BriefSyncInput,
+  BriefDashboardInput,
+  BriefGetInput,
+  BriefListInput,
+  BriefCreateInput,
+  BriefUpdateInput,
+  BriefVelocityInput,
+  BriefVelocityOutput,
+  BriefSimilarInput,
+  BriefBackfillInput,
+};

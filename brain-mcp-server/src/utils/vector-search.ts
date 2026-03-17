@@ -34,11 +34,77 @@ function isVectorSearchAvailable(db: Database.Database): boolean {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Generic helpers (work with any vec0 table name)
+// ---------------------------------------------------------------------------
+
+/**
+ * Insert (or replace) an embedding into a named vec0 virtual table.
+ *
+ * @param db - Database connection
+ * @param tableName - The vec0 table name (e.g. 'learnings_vec', 'briefs_vec')
+ * @param rowid - The integer rowid for the embedding
+ * @param embedding - The Float32Array embedding to store
+ */
+function insertEmbeddingInto(
+  db: Database.Database,
+  tableName: string,
+  rowid: number,
+  embedding: Float32Array,
+): void {
+  db.prepare(
+    `INSERT OR REPLACE INTO ${tableName}(rowid, embedding) VALUES (?, ?)`,
+  ).run(rowid, embeddingToBuffer(embedding));
+}
+
+/**
+ * Delete an embedding from a named vec0 virtual table.
+ *
+ * @param db - Database connection
+ * @param tableName - The vec0 table name
+ * @param rowid - The rowid to remove
+ */
+function deleteEmbeddingFrom(db: Database.Database, tableName: string, rowid: number): void {
+  db.prepare(`DELETE FROM ${tableName} WHERE rowid = ?`).run(rowid);
+}
+
+/** Row returned by a KNN vector search */
+interface VectorSearchResult {
+  rowid: number;
+  distance: number;
+}
+
+/**
+ * Run a KNN (K-Nearest Neighbour) vector search against a named vec0 table.
+ *
+ * Returns the closest `limit` embeddings ordered by L2 distance
+ * (ascending — smaller distance = more similar).
+ *
+ * @param db - Database connection
+ * @param tableName - The vec0 table name
+ * @param queryEmbedding - The query vector (384 dimensions)
+ * @param limit - Maximum number of results (default 10)
+ * @returns Array of { rowid, distance } ordered by distance ascending
+ */
+function vectorSearchFrom(
+  db: Database.Database,
+  tableName: string,
+  queryEmbedding: Float32Array,
+  limit: number = 10,
+): VectorSearchResult[] {
+  return db.prepare(
+    `SELECT rowid, distance FROM ${tableName} WHERE embedding MATCH ? ORDER BY distance LIMIT ?`,
+  ).all(embeddingToBuffer(queryEmbedding), limit) as VectorSearchResult[];
+}
+
+// ---------------------------------------------------------------------------
+// Convenience wrappers for learnings_vec (backward compatibility)
+// ---------------------------------------------------------------------------
+
 /**
  * Insert (or replace) an embedding in the learnings_vec virtual table.
  *
- * The rowid must correspond to a learnings.id for the cleanup trigger
- * to work correctly on DELETE.
+ * Convenience wrapper around insertEmbeddingInto for the learnings domain.
  *
  * @param db - Database connection
  * @param learningId - The learning ID (becomes the vec table rowid)
@@ -49,36 +115,25 @@ function insertEmbedding(
   learningId: number,
   embedding: Float32Array,
 ): void {
-  db.prepare(
-    'INSERT OR REPLACE INTO learnings_vec(rowid, embedding) VALUES (?, ?)',
-  ).run(learningId, embeddingToBuffer(embedding));
+  insertEmbeddingInto(db, 'learnings_vec', learningId, embedding);
 }
 
 /**
  * Delete an embedding from the learnings_vec virtual table.
  *
- * Note: There is also an AFTER DELETE trigger on the learnings table
- * that handles this automatically. This function is provided for
- * explicit cleanup when needed outside of a DELETE cascade.
+ * Convenience wrapper around deleteEmbeddingFrom for the learnings domain.
  *
  * @param db - Database connection
  * @param learningId - The learning ID whose embedding to remove
  */
 function deleteEmbedding(db: Database.Database, learningId: number): void {
-  db.prepare('DELETE FROM learnings_vec WHERE rowid = ?').run(learningId);
-}
-
-/** Row returned by a KNN vector search */
-interface VectorSearchResult {
-  rowid: number;
-  distance: number;
+  deleteEmbeddingFrom(db, 'learnings_vec', learningId);
 }
 
 /**
- * Run a KNN (K-Nearest Neighbour) vector search.
+ * Run a KNN vector search against the learnings_vec table.
  *
- * Returns the closest `limit` embeddings ordered by L2 distance
- * (ascending — smaller distance = more similar).
+ * Convenience wrapper around vectorSearchFrom for the learnings domain.
  *
  * @param db - Database connection
  * @param queryEmbedding - The query vector (384 dimensions)
@@ -90,9 +145,7 @@ function vectorSearch(
   queryEmbedding: Float32Array,
   limit: number = 10,
 ): VectorSearchResult[] {
-  return db.prepare(
-    'SELECT rowid, distance FROM learnings_vec WHERE embedding MATCH ? ORDER BY distance LIMIT ?',
-  ).all(embeddingToBuffer(queryEmbedding), limit) as VectorSearchResult[];
+  return vectorSearchFrom(db, 'learnings_vec', queryEmbedding, limit);
 }
 
 export {
@@ -100,5 +153,8 @@ export {
   insertEmbedding,
   deleteEmbedding,
   vectorSearch,
+  insertEmbeddingInto,
+  deleteEmbeddingFrom,
+  vectorSearchFrom,
 };
 export type { VectorSearchResult };

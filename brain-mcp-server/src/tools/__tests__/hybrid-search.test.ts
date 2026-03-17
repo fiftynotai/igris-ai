@@ -95,8 +95,8 @@ import {
   handleMemoryStore,
   handleMemoryHybridSearch,
   handleMemoryBackfillEmbeddings,
-  computeRRF,
 } from '../memory.js';
+import { computeRRF } from '../../utils/hybrid-search.js';
 import { embeddingToBuffer, bufferToEmbedding } from '../../utils/embeddings.js';
 
 // ---------------------------------------------------------------------------

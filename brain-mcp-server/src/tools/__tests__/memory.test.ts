@@ -23,6 +23,29 @@ vi.mock('../../db.js', () => ({
   BRAIN_DIR: '/tmp/igris-test',
 }));
 
+// Mock embedding utilities — handleMemoryRecall now uses hybrid search
+vi.mock('../../utils/embeddings.js', () => ({
+  generateEmbedding: vi.fn(async () => new Float32Array(384)),
+  embeddingToBuffer: vi.fn((embedding: Float32Array) =>
+    Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength),
+  ),
+  bufferToEmbedding: vi.fn(),
+  isEmbeddingAvailable: vi.fn(() => true),
+  EMBEDDING_MODEL: 'Xenova/all-MiniLM-L6-v2',
+  EMBEDDING_DIMENSIONS: 384,
+}));
+
+// Mock vector-search — not available in these tests (recall falls back to BM25)
+vi.mock('../../utils/vector-search.js', () => ({
+  isVectorSearchAvailable: vi.fn(() => false),
+  insertEmbedding: vi.fn(),
+  deleteEmbedding: vi.fn(),
+  vectorSearch: vi.fn(() => []),
+  insertEmbeddingInto: vi.fn(),
+  deleteEmbeddingFrom: vi.fn(),
+  vectorSearchFrom: vi.fn(() => []),
+}));
+
 // ---------------------------------------------------------------------------
 // Import after mocks
 // ---------------------------------------------------------------------------
@@ -157,11 +180,11 @@ describe('Memory Tools (FR-092)', () => {
   // -------------------------------------------------------------------------
 
   describe('handleMemoryRecall — truncated content', () => {
-    it('should return truncated content (200 chars + ellipsis) for long learnings', () => {
+    it('should return truncated content (200 chars + ellipsis) for long learnings', async () => {
       const longContent = 'A'.repeat(500);
       insertLearning(db, { content: longContent, title: 'Long Learning' });
 
-      const result = handleMemoryRecall({
+      const result = await handleMemoryRecall({
         project: 'test-project',
         context: 'Long Learning',
       });
@@ -171,11 +194,11 @@ describe('Memory Tools (FR-092)', () => {
       expect(text).not.toContain('A'.repeat(201));
     });
 
-    it('should return full content when under 200 chars', () => {
+    it('should return full content when under 200 chars', async () => {
       const shortContent = 'Short content here';
       insertLearning(db, { content: shortContent, title: 'Short Learning' });
 
-      const result = handleMemoryRecall({
+      const result = await handleMemoryRecall({
         project: 'test-project',
         context: 'Short Learning',
       });
@@ -185,10 +208,10 @@ describe('Memory Tools (FR-092)', () => {
       expect(text).not.toContain('...');
     });
 
-    it('should mention igris_memory_get in recall output', () => {
+    it('should mention igris_memory_get in recall output', async () => {
       insertLearning(db, { title: 'Recall Hint' });
 
-      const result = handleMemoryRecall({
+      const result = await handleMemoryRecall({
         project: 'test-project',
         context: 'Recall Hint',
       });
@@ -202,7 +225,7 @@ describe('Memory Tools (FR-092)', () => {
   // -------------------------------------------------------------------------
 
   describe('handleMemoryRecall — composite ranking', () => {
-    it('should rank higher-confidence learnings above lower-confidence for same FTS match', () => {
+    it('should rank higher-confidence learnings above lower-confidence for same FTS match', async () => {
       // Insert two learnings with same title/content but different confidence
       insertLearning(db, {
         title: 'SQLite optimization pattern',
@@ -217,7 +240,7 @@ describe('Memory Tools (FR-092)', () => {
         access_count: 0,
       });
 
-      const result = handleMemoryRecall({
+      const result = await handleMemoryRecall({
         project: 'test-project',
         context: 'SQLite WAL optimization',
         limit: 2,
@@ -233,7 +256,7 @@ describe('Memory Tools (FR-092)', () => {
       expect(parseFloat(recall1Match![1])).toBeGreaterThanOrEqual(parseFloat(recall2Match![1]));
     });
 
-    it('should rank frequently-accessed learnings higher', () => {
+    it('should rank frequently-accessed learnings higher', async () => {
       insertLearning(db, {
         title: 'Rarely accessed pattern for testing',
         content: 'Some testing pattern that is rarely used in practice',
@@ -247,7 +270,7 @@ describe('Memory Tools (FR-092)', () => {
         access_count: 100,
       });
 
-      const result = handleMemoryRecall({
+      const result = await handleMemoryRecall({
         project: 'test-project',
         context: 'testing pattern',
         limit: 2,
@@ -260,10 +283,10 @@ describe('Memory Tools (FR-092)', () => {
       expect(recall1Match![1]).toContain('Popular');
     });
 
-    it('should include composite score in output', () => {
+    it('should include composite score in output', async () => {
       insertLearning(db, { title: 'Score Check' });
 
-      const result = handleMemoryRecall({
+      const result = await handleMemoryRecall({
         project: 'test-project',
         context: 'Score Check',
       });
