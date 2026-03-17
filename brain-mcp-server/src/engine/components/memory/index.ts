@@ -20,12 +20,14 @@ import {
   handleMemoryStore,
   handleMemorySearch,
   handleMemoryRecall,
+  handleMemoryGet,
   handlePatternSuggest,
 } from '../../../tools/memory.js';
 import type {
   MemoryStoreInput,
   MemorySearchInput,
   MemoryRecallInput,
+  MemoryGetInput,
   PatternSuggestInput,
 } from '../../../tools/memory.js';
 
@@ -117,6 +119,10 @@ export function createMemoryComponent(): BrainComponent {
                 type: 'number',
                 description: 'Maximum number of results (default: 10)',
               },
+              offset: {
+                type: 'number',
+                description: 'Number of results to skip for pagination (default: 0)',
+              },
             },
             required: ['query'],
           },
@@ -144,6 +150,21 @@ export function createMemoryComponent(): BrainComponent {
             required: ['project', 'context'],
           },
           handler: (args) => handleMemoryRecall(args as unknown as MemoryRecallInput),
+        },
+        {
+          name: 'igris_memory_get',
+          description: 'Fetch the full content of a single learning by ID. Use after igris_memory_recall returns truncated previews to get the complete content of a specific learning.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              id: {
+                type: 'number',
+                description: 'The learning ID to fetch (from recall or search results)',
+              },
+            },
+            required: ['id'],
+          },
+          handler: (args) => handleMemoryGet(args as unknown as MemoryGetInput),
         },
         {
           name: 'igris_pattern_suggest',
