@@ -38,13 +38,23 @@ Silently emit a skill invocation event (never blocks execution):
 bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "awaken" 2>/dev/null || true
 ```
 
-### 1. Load System Context
+### 1. Load Context via Tree
 
-Read these files silently:
-- `~/.igris/core/prompts/igris_os.md` - Operating system
-- `~/.igris/core/SOUL.md` - Persona identity
-- `~/.igris/USER.md` - User config
-- `~/.igris/projects/{project}/context/coding_guidelines.md` - Architecture standards
+Read `~/.igris/core/igris_tree.json` first — this is the **sole router** for what context to load.
+
+1. Read `~/.igris/core/igris_tree.json`
+2. Look up `tasks["/awaken"].load` to get the context file keys (e.g., `["igris_os", "soul", "coding_guidelines"]`)
+3. For each key, resolve the file path from `context_files[key].path` (replace `{project}` with current project slug)
+4. If `tasks["/awaken"].sections.igris_os` is set, use it to determine which sections to load:
+   - `"ALL"` → read the entire file
+   - Array (e.g., `["identity", "brief_protocol"]`) → read only those section ranges from `context_files.igris_os.sections`
+5. Read all resolved files silently
+
+**Always-needed files** (not in tree, needed for awaken mechanics):
+- `~/.igris/USER.md` - User config (addressing mode, mask preference)
+- `~/.igris/config.json` - Remote brain URL and API key
+
+Do NOT hardcode context file paths — always derive them from the tree.
 
 ### 2. Load Session State
 
@@ -55,15 +65,15 @@ First try `igris_session_file_get` (MCP) for CURRENT_SESSION.md, then read `~/.i
 
 ### 3. Display Persona Greeting
 
-Read persona from `~/.igris/core/SOUL.md` and user config from `~/.igris/USER.md`:
+Use the persona (from `soul`) and user config (from `USER.md`) already loaded in Step 1:
 ```
-[PERSONA GREETING FROM ~/.igris/core/SOUL.md]
+[PERSONA GREETING FROM soul context]
 
 My capabilities:
 - Brief management, session recovery, architecture enforcement
 - Quality gates, protocol enforcement
 
-Current mode: [mask level description from ~/.igris/core/SOUL.md]
+Current mode: [mask level description from soul context]
 ```
 
 ### 3.5. Query Brain for Context (Optional)
