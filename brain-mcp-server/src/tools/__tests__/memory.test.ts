@@ -31,6 +31,19 @@ vi.mock('../../utils/embeddings.js', () => ({
   ),
   bufferToEmbedding: vi.fn(),
   isEmbeddingAvailable: vi.fn(() => true),
+  processInBatches: vi.fn(async (items: unknown[], fn: (item: unknown) => Promise<void>) => {
+    let succeeded = 0;
+    let failed = 0;
+    for (const item of items) {
+      try {
+        await fn(item);
+        succeeded++;
+      } catch {
+        failed++;
+      }
+    }
+    return { succeeded, failed };
+  }),
   EMBEDDING_MODEL: 'Xenova/all-MiniLM-L6-v2',
   EMBEDDING_DIMENSIONS: 384,
 }));

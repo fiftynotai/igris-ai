@@ -17,13 +17,7 @@ import Database from 'better-sqlite3';
 // Module mocks — declared before imports
 // ---------------------------------------------------------------------------
 
-vi.mock('../../db.js', () => ({
-  getDb: vi.fn(),
-  BRAIN_DIR: '/tmp/igris-test',
-}));
-
-// Mock embedding utilities
-vi.mock('../../utils/embeddings.js', () => {
+const { fakeEmbedding } = vi.hoisted(() => {
   function fakeEmbedding(text: string): Float32Array {
     const arr = new Float32Array(384);
     let hash = 0;
@@ -40,12 +34,34 @@ vi.mock('../../utils/embeddings.js', () => {
     for (let i = 0; i < 384; i++) arr[i] /= norm;
     return arr;
   }
+  return { fakeEmbedding };
+});
 
+vi.mock('../../db.js', () => ({
+  getDb: vi.fn(),
+  BRAIN_DIR: '/tmp/igris-test',
+}));
+
+// Mock embedding utilities
+vi.mock('../../utils/embeddings.js', () => {
   return {
     generateEmbedding: vi.fn(async (text: string) => fakeEmbedding(text)),
     embeddingToBuffer: vi.fn((embedding: Float32Array) =>
       Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength),
     ),
+    processInBatches: vi.fn(async (items: unknown[], fn: (item: unknown) => Promise<void>) => {
+      let succeeded = 0;
+      let failed = 0;
+      for (const item of items) {
+        try {
+          await fn(item);
+          succeeded++;
+        } catch {
+          failed++;
+        }
+      }
+      return { succeeded, failed };
+    }),
     EMBEDDING_MODEL: 'Xenova/all-MiniLM-L6-v2',
     EMBEDDING_DIMENSIONS: 384,
   };

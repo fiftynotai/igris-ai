@@ -15,7 +15,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { getDb } from '../db.js';
-import { generateEmbedding, embeddingToBuffer, EMBEDDING_MODEL } from '../utils/embeddings.js';
+import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL } from '../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbeddingInto, vectorSearchFrom } from '../utils/vector-search.js';
 import { l2ToCosine } from '../utils/hybrid-search.js';
 
@@ -1060,23 +1060,18 @@ async function handleBriefBackfillEmbeddings(args: BriefBackfillInput): Promise<
     };
   }
 
-  let processed = 0;
-  let failed = 0;
   const startTime = Date.now();
 
-  for (const brief of briefs) {
-    try {
+  const { succeeded: processed, failed } = await processInBatches(
+    briefs,
+    async (brief) => {
       const textToEmbed = extractBriefProblem(brief.title, brief.content);
       const embedding = await generateEmbedding(textToEmbed);
       db.prepare('UPDATE brief_status SET embedding = ?, embedding_model = ? WHERE id = ?')
         .run(embeddingToBuffer(embedding), EMBEDDING_MODEL, brief.id);
       insertEmbeddingInto(db, 'briefs_vec', brief.id, embedding);
-      processed++;
-    } catch (err) {
-      failed++;
-      console.error(`[backfill] Failed to embed brief ${brief.brief_id}:`, err);
-    }
-  }
+    },
+  );
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 

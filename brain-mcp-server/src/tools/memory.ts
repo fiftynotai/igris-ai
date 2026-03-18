@@ -16,7 +16,6 @@
  *
  * Internal functions:
  * - promoteToGlobal: Auto-promote local learnings to global when found in 2+ projects
- * - computeRRF: Reciprocal Rank Fusion scoring
  *
  * @module tools/memory
  * @author Fifty.ai
@@ -24,13 +23,15 @@
 
 import { getDb, BRAIN_DIR } from '../db.js';
 import { sanitizeFts5Query } from '../utils/fts5.js';
-import { generateEmbedding, embeddingToBuffer, EMBEDDING_MODEL } from '../utils/embeddings.js';
+import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL } from '../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbedding, vectorSearch } from '../utils/vector-search.js';
 import type { VectorSearchResult } from '../utils/vector-search.js';
 import { computeRRF } from '../utils/hybrid-search.js';
-import type { RrfEntry } from '../utils/hybrid-search.js';
 import * as fs from 'fs';
 import * as path from 'path';
+
+/** Max query length for hybrid search */
+const MAX_QUERY_LENGTH = 10000;
 
 /** Input shape for igris_memory_store */
 interface MemoryStoreInput {
@@ -63,6 +64,23 @@ interface MemoryRecallInput {
 /** Input shape for igris_memory_get */
 interface MemoryGetInput {
   id: number;
+}
+
+/** A BM25 result row from FTS5 */
+interface Bm25Row {
+  id: number;
+  project: string;
+  category: string;
+  title: string;
+  content: string;
+  tags: string;
+  tech_stack: string;
+  scope: string;
+  source_brief: string;
+  confidence: number;
+  created_at: string;
+  access_count: number;
+  rank: number;
 }
 
 /**
@@ -638,23 +656,6 @@ interface HybridSearchInput {
   rrf_k?: number;
 }
 
-/** A BM25 result row from FTS5 */
-interface Bm25Row {
-  id: number;
-  project: string;
-  category: string;
-  title: string;
-  content: string;
-  tags: string;
-  tech_stack: string;
-  scope: string;
-  source_brief: string;
-  confidence: number;
-  created_at: string;
-  access_count: number;
-  rank: number;
-}
-
 /**
  * Hybrid search combining BM25 (FTS5) and vector KNN results via RRF.
  *
@@ -664,6 +665,10 @@ interface Bm25Row {
  * @returns MCP-formatted response with ranked results
  */
 async function handleMemoryHybridSearch(args: HybridSearchInput): Promise<{ content: { type: string; text: string }[] }> {
+  if (!args.query || args.query.length > MAX_QUERY_LENGTH) {
+    return { content: [{ type: 'text', text: `Validation error: query must be 1-${MAX_QUERY_LENGTH} characters.` }] };
+  }
+
   const db = getDb();
   const limit = args.limit ?? 10;
   const bm25Weight = args.bm25_weight ?? 0.5;
@@ -893,22 +898,17 @@ async function handleMemoryBackfillEmbeddings(args: BackfillInput): Promise<{ co
     };
   }
 
-  let processed = 0;
-  let failed = 0;
   const startTime = Date.now();
 
-  for (const learning of learnings) {
-    try {
+  const { succeeded: processed, failed } = await processInBatches(
+    learnings,
+    async (learning) => {
       const embedding = await generateEmbedding(`${learning.title} ${learning.content}`);
       db.prepare('UPDATE learnings SET embedding = ?, embedding_model = ? WHERE id = ?')
         .run(embeddingToBuffer(embedding), EMBEDDING_MODEL, learning.id);
       insertEmbedding(db, learning.id, embedding);
-      processed++;
-    } catch (err) {
-      failed++;
-      console.error(`[backfill] Failed to embed learning ${learning.id}:`, err);
-    }
-  }
+    },
+  );
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
@@ -1040,7 +1040,6 @@ export {
   handlePatternSuggest,
   promoteToGlobal,
   wordJaccardSimilarity,
-  computeRRF,
 };
 export type {
   MemoryStoreInput,
@@ -1050,5 +1049,4 @@ export type {
   HybridSearchInput,
   BackfillInput,
   PatternSuggestInput,
-  RrfEntry,
 };

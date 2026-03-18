@@ -14,7 +14,7 @@
 
 import { getDb } from '../db.js';
 import { sanitizeFts5Query } from '../utils/fts5.js';
-import { generateEmbedding, embeddingToBuffer, EMBEDDING_MODEL } from '../utils/embeddings.js';
+import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL } from '../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbeddingInto, vectorSearchFrom } from '../utils/vector-search.js';
 import { computeRRF } from '../utils/hybrid-search.js';
 
@@ -273,6 +273,10 @@ interface ErrorBackfillInput {
  * @returns MCP-formatted response with similar errors
  */
 async function handleErrorSimilar(args: ErrorSimilarInput): Promise<{ content: { type: string; text: string }[] }> {
+  if (!args.message || args.message.length > MAX_CONTENT_LENGTH) {
+    return { content: [{ type: 'text', text: `Validation error: message must be 1-${MAX_CONTENT_LENGTH} characters (1 MB max).` }] };
+  }
+
   const db = getDb();
   const limit = args.limit ?? 10;
   const includeCrossProject = args.include_cross_project !== false;
@@ -448,22 +452,17 @@ async function handleErrorBackfillEmbeddings(args: ErrorBackfillInput): Promise<
     };
   }
 
-  let processed = 0;
-  let failed = 0;
   const startTime = Date.now();
 
-  for (const error of errors) {
-    try {
+  const { succeeded: processed, failed } = await processInBatches(
+    errors,
+    async (error) => {
       const embedding = await generateEmbedding(`${error.message} ${error.solution}`);
       db.prepare('UPDATE errors SET embedding = ?, embedding_model = ? WHERE id = ?')
         .run(embeddingToBuffer(embedding), EMBEDDING_MODEL, error.id);
       insertEmbeddingInto(db, 'errors_vec', error.id, embedding);
-      processed++;
-    } catch (err) {
-      failed++;
-      console.error(`[backfill] Failed to embed error ${error.id}:`, err);
-    }
-  }
+    },
+  );
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 

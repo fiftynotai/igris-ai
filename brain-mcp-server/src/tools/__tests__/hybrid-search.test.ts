@@ -23,17 +23,10 @@ import Database from 'better-sqlite3';
 // Module mocks — declared before imports
 // ---------------------------------------------------------------------------
 
-vi.mock('../../db.js', () => ({
-  getDb: vi.fn(),
-  BRAIN_DIR: '/tmp/igris-test',
-}));
-
-// Mock embedding utilities — avoid loading the actual HF model in tests
-vi.mock('../../utils/embeddings.js', () => {
-  /** Generate a deterministic fake embedding based on text hash */
+const { fakeEmbedding } = vi.hoisted(() => {
+  // Hoisted copy of fakeEmbedding from test-helpers.ts for use in vi.mock() factories
   function fakeEmbedding(text: string): Float32Array {
     const arr = new Float32Array(384);
-    // Simple hash-based seeding for deterministic but text-dependent vectors
     let hash = 0;
     for (let i = 0; i < text.length; i++) {
       hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
@@ -42,14 +35,22 @@ vi.mock('../../utils/embeddings.js', () => {
       hash = ((hash << 5) - hash + i) | 0;
       arr[i] = (hash & 0xffff) / 0xffff;
     }
-    // Normalize
     let norm = 0;
     for (let i = 0; i < 384; i++) norm += arr[i] * arr[i];
     norm = Math.sqrt(norm);
     for (let i = 0; i < 384; i++) arr[i] /= norm;
     return arr;
   }
+  return { fakeEmbedding };
+});
 
+vi.mock('../../db.js', () => ({
+  getDb: vi.fn(),
+  BRAIN_DIR: '/tmp/igris-test',
+}));
+
+// Mock embedding utilities — avoid loading the actual HF model in tests
+vi.mock('../../utils/embeddings.js', () => {
   return {
     generateEmbedding: vi.fn(async (text: string) => fakeEmbedding(text)),
     embeddingToBuffer: vi.fn((embedding: Float32Array) =>
@@ -59,6 +60,19 @@ vi.mock('../../utils/embeddings.js', () => {
       new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4),
     ),
     isEmbeddingAvailable: vi.fn(() => true),
+    processInBatches: vi.fn(async (items: unknown[], fn: (item: unknown) => Promise<void>) => {
+      let succeeded = 0;
+      let failed = 0;
+      for (const item of items) {
+        try {
+          await fn(item);
+          succeeded++;
+        } catch {
+          failed++;
+        }
+      }
+      return { succeeded, failed };
+    }),
     EMBEDDING_MODEL: 'Xenova/all-MiniLM-L6-v2',
     EMBEDDING_DIMENSIONS: 384,
   };

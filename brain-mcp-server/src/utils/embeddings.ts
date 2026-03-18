@@ -117,11 +117,41 @@ function isEmbeddingAvailable(): boolean | null {
 const EMBEDDING_MODEL = MODEL_NAME;
 const EMBEDDING_DIMENSIONS = EMBEDDING_DIMS;
 
+/**
+ * Process an array of items in parallel batches.
+ *
+ * Runs `fn` on up to `batchSize` items concurrently using Promise.allSettled,
+ * then moves to the next batch. Returns counts of succeeded and failed items.
+ *
+ * @param items - The items to process
+ * @param fn - Async function to run on each item
+ * @param batchSize - Maximum concurrency per batch (default 5)
+ * @returns Counts of succeeded and failed items
+ */
+async function processInBatches<T>(
+  items: T[],
+  fn: (item: T) => Promise<void>,
+  batchSize: number = 5,
+): Promise<{ succeeded: number; failed: number }> {
+  let succeeded = 0;
+  let failed = 0;
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const results = await Promise.allSettled(batch.map(fn));
+    for (const r of results) {
+      if (r.status === 'fulfilled') succeeded++;
+      else failed++;
+    }
+  }
+  return { succeeded, failed };
+}
+
 export {
   generateEmbedding,
   embeddingToBuffer,
   bufferToEmbedding,
   isEmbeddingAvailable,
+  processInBatches,
   EMBEDDING_MODEL,
   EMBEDDING_DIMENSIONS,
 };

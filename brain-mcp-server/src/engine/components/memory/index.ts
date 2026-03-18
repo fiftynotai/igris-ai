@@ -255,7 +255,7 @@ export function createMemoryComponent(): BrainComponent {
         emits: [
           // Orphan: sync auto-push extension point — will be consumed when sync auto-push is implemented
           { name: 'memory.stored', description: 'A new learning was stored' },
-          // TODO: Add memory.promoted when scope promotion is implemented
+          // Note: promoteToGlobal() runs inline in handleMemoryStore and results are included in the response text. No separate event needed.
         ],
         listens: [],
       };

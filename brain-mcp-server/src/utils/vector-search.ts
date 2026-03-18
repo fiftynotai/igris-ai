@@ -17,6 +17,9 @@
 import type Database from 'better-sqlite3';
 import { embeddingToBuffer } from './embeddings.js';
 
+/** Whitelist of allowed vec0 virtual table names */
+const ALLOWED_VEC_TABLES = new Set(['learnings_vec', 'briefs_vec', 'errors_vec']);
+
 /**
  * Check whether sqlite-vec is available on the given connection.
  *
@@ -52,6 +55,9 @@ function insertEmbeddingInto(
   rowid: number,
   embedding: Float32Array,
 ): void {
+  if (!ALLOWED_VEC_TABLES.has(tableName)) {
+    throw new Error(`Invalid vec table name: "${tableName}"`);
+  }
   db.prepare(
     `INSERT OR REPLACE INTO ${tableName}(rowid, embedding) VALUES (?, ?)`,
   ).run(rowid, embeddingToBuffer(embedding));
@@ -65,6 +71,9 @@ function insertEmbeddingInto(
  * @param rowid - The rowid to remove
  */
 function deleteEmbeddingFrom(db: Database.Database, tableName: string, rowid: number): void {
+  if (!ALLOWED_VEC_TABLES.has(tableName)) {
+    throw new Error(`Invalid vec table name: "${tableName}"`);
+  }
   db.prepare(`DELETE FROM ${tableName} WHERE rowid = ?`).run(rowid);
 }
 
@@ -92,6 +101,9 @@ function vectorSearchFrom(
   queryEmbedding: Float32Array,
   limit: number = 10,
 ): VectorSearchResult[] {
+  if (!ALLOWED_VEC_TABLES.has(tableName)) {
+    throw new Error(`Invalid vec table name: "${tableName}"`);
+  }
   return db.prepare(
     `SELECT rowid, distance FROM ${tableName} WHERE embedding MATCH ? ORDER BY distance LIMIT ?`,
   ).all(embeddingToBuffer(queryEmbedding), limit) as VectorSearchResult[];
@@ -156,5 +168,6 @@ export {
   insertEmbeddingInto,
   deleteEmbeddingFrom,
   vectorSearchFrom,
+  ALLOWED_VEC_TABLES,
 };
 export type { VectorSearchResult };

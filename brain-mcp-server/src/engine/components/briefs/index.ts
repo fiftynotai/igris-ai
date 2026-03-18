@@ -22,6 +22,7 @@ import {
   handleBriefList,
   handleBriefCreate,
   handleBriefUpdate,
+  handleBriefVelocity,
   handleBriefSimilar,
   handleBriefBackfillEmbeddings,
 } from '../../../tools/briefs.js';
@@ -32,6 +33,7 @@ import type {
   BriefListInput,
   BriefCreateInput,
   BriefUpdateInput,
+  BriefVelocityInput,
   BriefSimilarInput,
   BriefBackfillInput,
 } from '../../../tools/briefs.js';
@@ -386,6 +388,27 @@ export function createBriefsComponent(): BrainComponent {
             }
 
             return result;
+          },
+        },
+        {
+          name: 'igris_brief_velocity',
+          description: 'Compute brief completion velocity metrics. Returns weekly completion counts, overall completion rate, and a week-over-week trend indicator.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Filter by project slug (optional -- omit for cross-project velocity)',
+              },
+              weeks: {
+                type: 'number',
+                description: 'Number of weeks to include (default: 4, max: 52)',
+              },
+            },
+          },
+          handler: (args) => {
+            const result = handleBriefVelocity(args as unknown as BriefVelocityInput);
+            return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
           },
         },
         {
