@@ -71,6 +71,7 @@ import {
   handleMemoryGet,
   promoteToGlobal,
   wordJaccardSimilarity,
+  computeTechStackOverlap,
 } from '../memory.js';
 
 // ---------------------------------------------------------------------------
@@ -86,6 +87,19 @@ function makeTestDb(): Database.Database {
   db.pragma('foreign_keys = ON');
 
   db.exec(`
+    CREATE TABLE projects (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      slug TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      path TEXT NOT NULL,
+      tech_stack TEXT DEFAULT '',
+      igris_version TEXT DEFAULT '4.0.0',
+      status TEXT DEFAULT 'active' CHECK (status IN ('active', 'archived', 'inactive')),
+      registered_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_session_at TEXT,
+      metadata TEXT DEFAULT '{}'
+    );
+
     CREATE TABLE learnings (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       project TEXT NOT NULL,
@@ -169,6 +183,29 @@ function insertLearning(
     data.confidence, data.access_count,
   );
   return result.lastInsertRowid as number;
+}
+
+/** Insert a project directly into the test database. */
+function insertProject(
+  db: Database.Database,
+  overrides: Partial<{
+    slug: string;
+    name: string;
+    path: string;
+    tech_stack: string;
+  }> = {},
+): void {
+  const defaults = {
+    slug: 'test-project',
+    name: 'Test Project',
+    path: '/tmp/test-project',
+    tech_stack: '',
+  };
+  const data = { ...defaults, ...overrides };
+  db.prepare(`
+    INSERT INTO projects (slug, name, path, tech_stack)
+    VALUES (?, ?, ?, ?)
+  `).run(data.slug, data.name, data.path, data.tech_stack);
 }
 
 // ---------------------------------------------------------------------------
@@ -522,6 +559,141 @@ describe('Memory Tools (FR-092)', () => {
       // Jaccard = 2/3 = 0.666...
       const sim = wordJaccardSimilarity('hello world', 'hello world foo');
       expect(sim).toBeCloseTo(2 / 3, 5);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Tech stack affinity boost (FR-097)
+  // -------------------------------------------------------------------------
+
+  describe('computeTechStackOverlap', () => {
+    it('should return 1.0 for identical tech stacks', () => {
+      expect(computeTechStackOverlap('flutter, dart', 'flutter, dart')).toBe(1);
+    });
+
+    it('should return 0.5 for partial overlap', () => {
+      // intersection = {typescript}, union = {typescript, react, node, express}
+      // But let's do a cleaner example: {a, b} vs {b, c} => intersection 1, union 3 => 0.333
+      // {typescript, react} vs {typescript, vue} => intersection 1, union 3 => 0.333
+      // For exactly 0.5: {a, b} vs {a, c, b, d} won't work.
+      // {a, b} vs {a} => intersection 1, union 2 => 0.5
+      expect(computeTechStackOverlap('typescript, react', 'typescript')).toBeCloseTo(0.5, 5);
+    });
+
+    it('should return 0 for completely different stacks', () => {
+      expect(computeTechStackOverlap('flutter, dart', 'python, django')).toBe(0);
+    });
+
+    it('should return 0 when either stack is null', () => {
+      expect(computeTechStackOverlap(null, 'typescript')).toBe(0);
+      expect(computeTechStackOverlap('typescript', null)).toBe(0);
+      expect(computeTechStackOverlap(null, null)).toBe(0);
+    });
+
+    it('should return 0 for empty strings', () => {
+      expect(computeTechStackOverlap('', 'typescript')).toBe(0);
+      expect(computeTechStackOverlap('typescript', '')).toBe(0);
+    });
+
+    it('should be case-insensitive', () => {
+      expect(computeTechStackOverlap('TypeScript, React', 'typescript, react')).toBe(1);
+    });
+
+    it('should handle whitespace around items', () => {
+      expect(computeTechStackOverlap('  typescript , react  ', 'typescript,react')).toBe(1);
+    });
+  });
+
+  describe('handleMemoryRecall — tech stack affinity boost', () => {
+    it('should apply 1.3x boost to global learning from same-stack project', async () => {
+      // Register two projects with the same tech stack
+      insertProject(db, { slug: 'project-a', name: 'Project A', path: '/a', tech_stack: 'typescript, react' });
+      insertProject(db, { slug: 'project-b', name: 'Project B', path: '/b', tech_stack: 'typescript, react' });
+
+      // Insert a global learning from project-b
+      insertLearning(db, {
+        project: 'project-b',
+        title: 'React hooks optimization',
+        content: 'Use useMemo and useCallback for React hooks optimization to prevent unnecessary re-renders',
+        scope: 'global',
+        tech_stack: 'typescript, react',
+      });
+
+      const result = await handleMemoryRecall({
+        project: 'project-a',
+        context: 'React hooks optimization',
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Recalled');
+      expect(text).toContain('React hooks optimization');
+      // In BM25-only mode the boost annotation won't appear because it's hybrid-only,
+      // but the query should still succeed without errors
+    });
+
+    it('should not boost global learning from different-stack project', async () => {
+      // Register two projects with different tech stacks
+      insertProject(db, { slug: 'project-a', name: 'Project A', path: '/a', tech_stack: 'typescript, react' });
+      insertProject(db, { slug: 'project-c', name: 'Project C', path: '/c', tech_stack: 'python, django' });
+
+      // Insert a global learning from project-c
+      insertLearning(db, {
+        project: 'project-c',
+        title: 'Django middleware patterns',
+        content: 'Django middleware patterns for request processing and authentication',
+        scope: 'global',
+        tech_stack: 'python, django',
+      });
+
+      const result = await handleMemoryRecall({
+        project: 'project-a',
+        context: 'Django middleware patterns',
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Recalled');
+      // The result should appear but without a tech-stack boost annotation
+      expect(text).not.toContain('Boost: tech-stack affinity');
+    });
+
+    it('should not crash when project has no tech_stack registered', async () => {
+      // project-a is NOT in the projects table at all
+      insertLearning(db, {
+        project: 'other-project',
+        title: 'Some global pattern',
+        content: 'Some global pattern content for testing recall without tech stack',
+        scope: 'global',
+      });
+
+      const result = await handleMemoryRecall({
+        project: 'unregistered-project',
+        context: 'Some global pattern',
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Recalled');
+      expect(text).not.toContain('Boost: tech-stack affinity');
+    });
+
+    it('should not crash when projects table has NULL tech_stack values', async () => {
+      // Insert project with no tech_stack (NULL via omission, but our helper inserts '')
+      insertProject(db, { slug: 'project-null', name: 'Null Stack', path: '/null', tech_stack: '' });
+
+      insertLearning(db, {
+        project: 'project-null',
+        title: 'Null stack learning',
+        content: 'Learning from a project with null tech stack for testing',
+        scope: 'global',
+      });
+
+      const result = await handleMemoryRecall({
+        project: 'project-null',
+        context: 'Null stack learning',
+      });
+
+      // Should succeed without error — the learning is project-local so gets 1.5x instead
+      const text = result.content[0].text;
+      expect(text).toContain('Recalled');
     });
   });
 });

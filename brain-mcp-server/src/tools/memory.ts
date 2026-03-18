@@ -33,6 +33,27 @@ import * as path from 'path';
 /** Max query length for hybrid search */
 const MAX_QUERY_LENGTH = 10000;
 
+/**
+ * Compute Jaccard similarity between two comma-separated tech stack strings.
+ *
+ * Splits each string on commas, normalises to lowercase, and returns the
+ * ratio of intersection size to union size. Returns 0 when either stack
+ * is null/empty.
+ *
+ * @param stackA - First tech stack (comma-separated)
+ * @param stackB - Second tech stack (comma-separated)
+ * @returns Overlap score between 0 and 1
+ */
+function computeTechStackOverlap(stackA: string | null, stackB: string | null): number {
+  if (!stackA || !stackB) return 0;
+  const setA = new Set(stackA.split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
+  const setB = new Set(stackB.split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
+  if (setA.size === 0 || setB.size === 0) return 0;
+  const intersection = new Set([...setA].filter(x => setB.has(x)));
+  const union = new Set([...setA, ...setB]);
+  return intersection.size / union.size;
+}
+
 /** Input shape for igris_memory_store */
 interface MemoryStoreInput {
   project: string;
@@ -337,8 +358,18 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
   let finalRows: RecallRow[];
   let searchSource: string;
 
+  // Query all project tech stacks in one call for affinity boost
+  const projectStacks = new Map<string, string>();
+  const stackRows = db.prepare(
+    'SELECT slug, tech_stack FROM projects WHERE tech_stack IS NOT NULL',
+  ).all() as { slug: string; tech_stack: string }[];
+  for (const sr of stackRows) {
+    projectStacks.set(sr.slug, sr.tech_stack);
+  }
+  const currentStack = projectStacks.get(args.project) ?? null;
+
   if (vectorAvailable && vecResults.length > 0) {
-    // Hybrid: RRF merge + project-local boost
+    // Hybrid: RRF merge + project-local boost + tech stack affinity
     const rrfEntries = computeRRF(bm25Rows, vecResults);
 
     // Fetch full records for RRF results
@@ -355,11 +386,17 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
       rowMap.set(row.id, row);
     }
 
-    // Apply 1.5x project-local boost
+    // Apply boosts: 1.5x project-local, 1.3x tech-stack affinity, 1.0x otherwise
     for (const entry of rrfEntries) {
       const row = rowMap.get(entry.id);
       if (row && row.project === args.project) {
         entry.score *= 1.5;
+      } else if (row && currentStack) {
+        const rowStack = projectStacks.get(row.project) ?? null;
+        const overlap = computeTechStackOverlap(currentStack, rowStack);
+        if (overlap >= 0.5) {
+          entry.score *= 1.3;
+        }
       }
     }
     rrfEntries.sort((a, b) => b.score - a.score);
@@ -429,6 +466,11 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
     }
     if (row.project === args.project) {
       lines.push('Boost: project-local');
+    } else if (currentStack) {
+      const rowStack = projectStacks.get(row.project) ?? null;
+      if (computeTechStackOverlap(currentStack, rowStack) >= 0.5) {
+        lines.push('Boost: tech-stack affinity');
+      }
     }
     return lines.join('\n');
   });
@@ -1040,6 +1082,7 @@ export {
   handlePatternSuggest,
   promoteToGlobal,
   wordJaccardSimilarity,
+  computeTechStackOverlap,
 };
 export type {
   MemoryStoreInput,
