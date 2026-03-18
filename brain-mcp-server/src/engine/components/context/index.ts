@@ -5,7 +5,7 @@
  * in the brain DB. Provides registration, retrieval by key, and access to
  * the global context routing tree from ~/.igris/core/igris_tree.json.
  *
- * Provides: igris_context_register, igris_context_get, igris_context_tree
+ * Provides: igris_context_register, igris_context_get, igris_context_tree, igris_context_load
  *
  * @module engine/components/context
  * @author Fifty.ai
@@ -20,9 +20,94 @@ import type {
 } from '../../types.js';
 import { errorResult, successResult, errMsg } from '../../helpers.js';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+
+// ---------------------------------------------------------------------------
+// Section extraction helpers (marker-based, not line-number-based)
+// ---------------------------------------------------------------------------
+
+/** Regex to match `<!-- SECTION: name -->` ... `<!-- /SECTION: name -->` blocks */
+const SECTION_OPEN_RE = /^<!--\s*SECTION:\s*(\S+)\s*-->/;
+const SECTION_CLOSE_PREFIX = '<!-- /SECTION:';
+
+/**
+ * Extract named sections from a file that uses `<!-- SECTION: name -->` markers.
+ *
+ * Returns the concatenated content of only the requested sections.
+ * Sections not found in the file are silently skipped.
+ */
+export function extractSections(fileContent: string, sectionNames: string[]): string {
+  const wanted = new Set(sectionNames);
+  const lines = fileContent.split('\n');
+  const parts: string[] = [];
+  let capturing = false;
+  let currentSection = '';
+
+  for (const line of lines) {
+    const openMatch = SECTION_OPEN_RE.exec(line);
+    if (openMatch) {
+      const name = openMatch[1];
+      if (wanted.has(name)) {
+        capturing = true;
+        currentSection = name;
+        parts.push(line);
+      }
+      continue;
+    }
+
+    if (capturing && line.trimStart().startsWith(SECTION_CLOSE_PREFIX) && line.includes(currentSection)) {
+      parts.push(line);
+      capturing = false;
+      currentSection = '';
+      continue;
+    }
+
+    if (capturing) {
+      parts.push(line);
+    }
+  }
+
+  return parts.join('\n');
+}
+
+/**
+ * Resolve a context file path, replacing `~` with homedir
+ * and `{project}` with the project slug.
+ */
+export function resolveContextPath(rawPath: string, project: string): string {
+  if (/[\/\\]|\.\./.test(project)) {
+    throw new Error(`Invalid project slug: "${project}" contains path traversal characters`);
+  }
+  return rawPath
+    .replace(/^~/, homedir())
+    .replace(/\{project\}/g, project);
+}
+
+// ---------------------------------------------------------------------------
+// Tree types (minimal, for internal use only)
+// ---------------------------------------------------------------------------
+
+interface TreeContextFile {
+  path: string;
+  sections?: Record<string, { lines: string; kb: number; tier: string }>;
+  optional?: boolean;
+}
+
+interface TreeActorConfig {
+  load: string[];
+  sections?: Record<string, string | string[]>;
+  load_if?: Record<string, string[]>;
+  note?: string;
+}
+
+interface ContextTree {
+  version: string;
+  context_files: Record<string, TreeContextFile>;
+  tasks: Record<string, TreeActorConfig>;
+  agents: Record<string, TreeActorConfig>;
+}
 
 export function createContextComponent(): BrainComponent {
   let _ctx: ComponentContext | null = null;
@@ -189,6 +274,140 @@ export function createContextComponent(): BrainComponent {
               return errorResult(
                 `Failed to read igris_tree.json: ${errMsg(err)}. Ensure ~/.igris/core/igris_tree.json exists.`
               );
+            }
+          },
+        },
+
+        // -----------------------------------------------------------------
+        // igris_context_load
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_context_load',
+          description:
+            'One-call context resolver. Given an actor (task name like "/hunt" or agent name like "forger") ' +
+            'and a project slug, reads igris_tree.json, resolves all context file paths, reads their contents ' +
+            '(extracting specific sections from igris_os.md when configured), and returns the concatenated result. ' +
+            'Use this instead of manually reading the tree + resolving paths + reading files.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              actor: {
+                type: 'string',
+                description:
+                  'Actor identifier. A task name (e.g., "/hunt", "/awaken", "/register") ' +
+                  'or an agent name (e.g., "forger", "architect", "sentinel").',
+              },
+              project: {
+                type: 'string',
+                description: 'Project slug for path resolution (e.g., "igris-ai").',
+              },
+            },
+            required: ['actor', 'project'],
+          },
+          handler: (args) => {
+            try {
+              const actor = args.actor as string;
+              const project = args.project as string;
+
+              // 1. Read the tree
+              const treePath = join(homedir(), '.igris', 'core', 'igris_tree.json');
+              if (!existsSync(treePath)) {
+                return errorResult(
+                  'igris_tree.json not found at ~/.igris/core/igris_tree.json. ' +
+                  'Fallback: read the full igris_os.md at ~/.igris/core/prompts/igris_os.md instead.'
+                );
+              }
+
+              const tree: ContextTree = JSON.parse(readFileSync(treePath, 'utf-8'));
+
+              // 2. Resolve actor config — try tasks first, then agents
+              let actorConfig: TreeActorConfig | undefined;
+              let actorType: 'task' | 'agent';
+
+              if (tree.tasks[actor]) {
+                actorConfig = tree.tasks[actor];
+                actorType = 'task';
+              } else if (tree.agents[actor]) {
+                actorConfig = tree.agents[actor];
+                actorType = 'agent';
+              } else {
+                const availableTasks = Object.keys(tree.tasks).join(', ');
+                const availableAgents = Object.keys(tree.agents).join(', ');
+                return errorResult(
+                  `Actor "${actor}" not found in igris_tree.json. ` +
+                  `Available tasks: ${availableTasks}. ` +
+                  `Available agents: ${availableAgents}.`
+                );
+              }
+
+              // 3. Resolve and read each context file
+              const files: Array<{ key: string; path: string; content: string; size_bytes: number }> = [];
+              const missing: string[] = [];
+              const sectionsLoaded: Record<string, string[]> = {};
+
+              const keysToLoad = new Set(actorConfig.load || []);
+              if (actorConfig.sections) {
+                for (const key of Object.keys(actorConfig.sections)) {
+                  keysToLoad.add(key);
+                }
+              }
+
+              for (const key of keysToLoad) {
+                const fileEntry = tree.context_files[key];
+                if (!fileEntry) {
+                  missing.push(key);
+                  continue;
+                }
+
+                const resolvedPath = resolveContextPath(fileEntry.path, project);
+
+                if (!existsSync(resolvedPath)) {
+                  // Optional files are expected to be absent sometimes
+                  missing.push(key);
+                  continue;
+                }
+
+                let content = readFileSync(resolvedPath, 'utf-8');
+
+                // If this key has section restrictions in the actor config, extract only those sections
+                const sectionSpec = actorConfig.sections?.[key];
+                if (sectionSpec && fileEntry.sections) {
+                  if (Array.isArray(sectionSpec)) {
+                    content = extractSections(content, sectionSpec);
+                    sectionsLoaded[key] = sectionSpec;
+                  }
+                  // "ALL" means use the full file content — no extraction needed
+                }
+
+                files.push({
+                  key,
+                  path: resolvedPath,
+                  content,
+                  size_bytes: Buffer.byteLength(content, 'utf-8'),
+                });
+              }
+
+              const totalBytes = files.reduce((sum, f) => sum + f.size_bytes, 0);
+              const totalKb = +(totalBytes / 1024).toFixed(1);
+
+              const result: Record<string, unknown> = {
+                actor,
+                actor_type: actorType,
+                project,
+                files,
+                total_kb: totalKb,
+              };
+
+              if (Object.keys(sectionsLoaded).length > 0) {
+                result.sections_loaded = sectionsLoaded;
+              }
+              if (missing.length > 0) {
+                result.missing = missing;
+              }
+
+              return successResult(JSON.stringify(result, null, 2));
+            } catch (err) {
+              return errorResult(`Failed to load context: ${errMsg(err)}`);
             }
           },
         },
