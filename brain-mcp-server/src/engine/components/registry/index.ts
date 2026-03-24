@@ -3,7 +3,7 @@
  *
  * Wraps the registry tool handlers as a BrainComponent.
  * Provides: igris_registry_add, igris_registry_search, igris_registry_get,
- *           igris_registry_list, igris_registry_remove
+ *           igris_registry_list, igris_registry_remove, igris_registry_update
  *
  * @module engine/components/registry
  * @author Fifty.ai
@@ -22,6 +22,7 @@ import {
   handleRegistryGet,
   handleRegistryList,
   handleRegistryRemove,
+  handleRegistryUpdate,
 } from '../../../tools/registry.js';
 import type {
   RegistryAddInput,
@@ -29,6 +30,7 @@ import type {
   RegistryGetInput,
   RegistryListInput,
   RegistryRemoveInput,
+  RegistryUpdateInput,
 } from '../../../tools/registry.js';
 
 export function createRegistryComponent(): BrainComponent {
@@ -229,6 +231,87 @@ export function createRegistryComponent(): BrainComponent {
             return result;
           },
         },
+        {
+          name: 'igris_registry_update',
+          description: 'Update an existing registry entry. Only provided fields are modified; others are preserved. Use this to update descriptions, tags, install commands, rebrand checklists, etc.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              id: {
+                type: 'string',
+                description: 'Registry entry ID to update',
+              },
+              name: {
+                type: 'string',
+                description: 'Updated name',
+              },
+              type: {
+                type: 'string',
+                enum: ['template', 'module'],
+                description: 'Updated type',
+              },
+              archetype: {
+                type: 'string',
+                description: 'Updated archetype',
+              },
+              framework: {
+                type: 'string',
+                description: 'Updated framework',
+              },
+              github_repo: {
+                type: 'string',
+                description: 'Updated GitHub repo URL',
+              },
+              github_path: {
+                type: 'string',
+                description: 'Updated path within repo',
+              },
+              github_branch: {
+                type: 'string',
+                description: 'Updated branch',
+              },
+              description: {
+                type: 'string',
+                description: 'Updated description',
+              },
+              install_command: {
+                type: 'string',
+                description: 'Updated install command',
+              },
+              standalone: {
+                type: 'boolean',
+                description: 'Updated standalone flag',
+              },
+              parent_template: {
+                type: 'string',
+                description: 'Updated parent template ID',
+              },
+              tags: {
+                type: 'string',
+                description: 'Updated tags (JSON array)',
+              },
+              rebrand_checklist: {
+                type: 'string',
+                description: 'Updated rebrand checklist (markdown)',
+              },
+              source_project: {
+                type: 'string',
+                description: 'Updated source project slug',
+              },
+              status: {
+                type: 'string',
+                enum: ['available', 'deprecated', 'draft'],
+                description: 'Updated status',
+              },
+            },
+            required: ['id'],
+          },
+          handler: (args) => {
+            const result = handleRegistryUpdate(args as unknown as RegistryUpdateInput);
+            _ctx?.bus.emit('registry.updated', { id: (args as Record<string, unknown>).id });
+            return result;
+          },
+        },
       ];
     },
 
@@ -237,6 +320,7 @@ export function createRegistryComponent(): BrainComponent {
         emits: [
           { name: 'registry.added', description: 'A new template or module was registered' },
           { name: 'registry.removed', description: 'A registry entry was removed or deprecated' },
+          { name: 'registry.updated', description: 'A registry entry was updated' },
         ],
         listens: [],
       };

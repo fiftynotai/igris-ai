@@ -10,6 +10,7 @@
  * - igris_registry_get: Get full details of a registry entry
  * - igris_registry_list: List entries with optional filters
  * - igris_registry_remove: Soft-delete or hard-delete an entry
+ * - igris_registry_update: Partial update of an existing entry
  *
  * @module tools/registry
  * @author Fifty.ai
@@ -70,6 +71,26 @@ export interface RegistryListInput {
 export interface RegistryRemoveInput {
   id: string;
   hard_delete?: boolean;
+}
+
+/** Input shape for igris_registry_update */
+export interface RegistryUpdateInput {
+  id: string;
+  name?: string;
+  type?: 'template' | 'module';
+  archetype?: string;
+  framework?: string;
+  github_repo?: string;
+  github_path?: string;
+  github_branch?: string;
+  description?: string;
+  install_command?: string;
+  standalone?: boolean;
+  parent_template?: string;
+  tags?: string;
+  rebrand_checklist?: string;
+  source_project?: string;
+  status?: 'available' | 'deprecated' | 'draft';
 }
 
 /** Row shape from registry table */
@@ -393,10 +414,77 @@ function handleRegistryRemove(args: RegistryRemoveInput): { content: { type: str
   };
 }
 
+/**
+ * Update an existing registry entry.
+ *
+ * Only fields provided in the input are modified; others are preserved.
+ * The updated_at timestamp is always refreshed.
+ *
+ * @param args - Entry ID and fields to update
+ * @returns MCP-formatted response with the updated entry
+ */
+function handleRegistryUpdate(args: RegistryUpdateInput): { content: { type: string; text: string }[] } {
+  const db = getDb();
+
+  const existing = db.prepare('SELECT * FROM registry WHERE id = ?').get(args.id) as RegistryRow | undefined;
+  if (!existing) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Registry entry "${args.id}" not found.`,
+      }],
+    };
+  }
+
+  const updates: string[] = [];
+  const params: (string | number)[] = [];
+
+  if (args.name !== undefined) { updates.push('name = ?'); params.push(args.name); }
+  if (args.type !== undefined) { updates.push('type = ?'); params.push(args.type); }
+  if (args.archetype !== undefined) { updates.push('archetype = ?'); params.push(args.archetype); }
+  if (args.framework !== undefined) { updates.push('framework = ?'); params.push(args.framework); }
+  if (args.github_repo !== undefined) { updates.push('github_repo = ?'); params.push(args.github_repo); }
+  if (args.github_path !== undefined) { updates.push('github_path = ?'); params.push(args.github_path); }
+  if (args.github_branch !== undefined) { updates.push('github_branch = ?'); params.push(args.github_branch); }
+  if (args.description !== undefined) { updates.push('description = ?'); params.push(args.description); }
+  if (args.install_command !== undefined) { updates.push('install_command = ?'); params.push(args.install_command); }
+  if (args.standalone !== undefined) { updates.push('standalone = ?'); params.push(args.standalone ? 1 : 0); }
+  if (args.parent_template !== undefined) { updates.push('parent_template = ?'); params.push(args.parent_template); }
+  if (args.tags !== undefined) { updates.push('tags = ?'); params.push(args.tags); }
+  if (args.rebrand_checklist !== undefined) { updates.push('rebrand_checklist = ?'); params.push(args.rebrand_checklist); }
+  if (args.source_project !== undefined) { updates.push('source_project = ?'); params.push(args.source_project); }
+  if (args.status !== undefined) { updates.push('status = ?'); params.push(args.status); }
+
+  if (updates.length === 0) {
+    return {
+      content: [{
+        type: 'text',
+        text: 'No fields to update.',
+      }],
+    };
+  }
+
+  // Always refresh the updated_at timestamp
+  updates.push("updated_at = datetime('now')");
+  params.push(args.id);
+
+  db.prepare(`UPDATE registry SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+
+  const row = db.prepare('SELECT * FROM registry WHERE id = ?').get(args.id) as RegistryRow;
+
+  return {
+    content: [{
+      type: 'text',
+      text: `Registry entry updated successfully.\n\n${formatEntry(row)}`,
+    }],
+  };
+}
+
 export {
   handleRegistryAdd,
   handleRegistrySearch,
   handleRegistryGet,
   handleRegistryList,
   handleRegistryRemove,
+  handleRegistryUpdate,
 };

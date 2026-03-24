@@ -1,12 +1,13 @@
 /**
  * Registry Tool Handler Tests (FR-099)
  *
- * Tests the 5 registry CRUD tools:
+ * Tests the 6 registry CRUD tools:
  * 1. igris_registry_add — register a template or module
  * 2. igris_registry_search — full-text + filter search
  * 3. igris_registry_get — get single entry by ID
  * 4. igris_registry_list — list with filters
  * 5. igris_registry_remove — soft-delete and hard-delete
+ * 6. igris_registry_update — partial update of an existing entry
  *
  * @module tools/__tests__/registry.test
  */
@@ -34,6 +35,7 @@ import {
   handleRegistryGet,
   handleRegistryList,
   handleRegistryRemove,
+  handleRegistryUpdate,
 } from '../registry.js';
 
 // ---------------------------------------------------------------------------
@@ -479,6 +481,94 @@ describe('Registry Tools (FR-099)', () => {
       const result = handleRegistryRemove({ id: 'nonexistent' });
       const text = result.content[0].text;
       expect(text).toContain('not found');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 6. handleRegistryUpdate
+  // -------------------------------------------------------------------------
+
+  describe('handleRegistryUpdate', () => {
+    beforeEach(() => {
+      handleRegistryAdd({
+        id: 'update-test',
+        name: 'Update Test Module',
+        type: 'module',
+        archetype: 'brand-website',
+        framework: 'flutter',
+        github_repo: 'github.com/org/repo',
+        description: 'Original description',
+        tags: '["original"]',
+        standalone: true,
+      });
+    });
+
+    it('should update a single field and preserve others', () => {
+      const result = handleRegistryUpdate({
+        id: 'update-test',
+        description: 'Updated description',
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Registry entry updated successfully');
+      expect(text).toContain('Updated description');
+      // Name should be preserved
+      expect(text).toContain('Update Test Module');
+    });
+
+    it('should update multiple fields at once', () => {
+      const result = handleRegistryUpdate({
+        id: 'update-test',
+        name: 'Renamed Module',
+        tags: '["updated", "new-tag"]',
+        description: 'Multi-field update',
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Registry entry updated successfully');
+      expect(text).toContain('Renamed Module');
+      expect(text).toContain('updated');
+      expect(text).toContain('Multi-field update');
+    });
+
+    it('should reject non-existent ID', () => {
+      const result = handleRegistryUpdate({
+        id: 'nonexistent-id',
+        name: 'Ghost Entry',
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('not found');
+    });
+
+    it('should return message when no fields provided', () => {
+      const result = handleRegistryUpdate({
+        id: 'update-test',
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('No fields to update');
+    });
+
+    it('should update FTS5 index after update', () => {
+      handleRegistryUpdate({
+        id: 'update-test',
+        description: 'Completely unique searchable phrase xyz123',
+      });
+
+      const result = handleRegistrySearch({ query: 'xyz123' });
+      const text = result.content[0].text;
+      expect(text).toContain('Update Test Module');
+    });
+
+    it('should map standalone boolean to integer correctly', () => {
+      handleRegistryUpdate({
+        id: 'update-test',
+        standalone: false,
+      });
+
+      const row = db.prepare('SELECT standalone FROM registry WHERE id = ?').get('update-test') as { standalone: number };
+      expect(row.standalone).toBe(0);
     });
   });
 });
