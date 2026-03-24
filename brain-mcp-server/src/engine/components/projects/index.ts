@@ -62,6 +62,10 @@ export function createProjectsComponent(): BrainComponent {
                 type: 'string',
                 description: 'Comma-separated technologies (e.g., "dart,flutter,firebase")',
               },
+              archetype: {
+                type: 'string',
+                description: 'Project archetype (e.g., "brand-website", "enterprise-mvvm-mobile", "ai-agent-system", "design-kit")',
+              },
             },
             required: ['slug', 'name', 'path'],
           },

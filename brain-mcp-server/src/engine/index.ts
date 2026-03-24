@@ -38,6 +38,7 @@ import { createSchedulesComponent } from './components/schedules/index.js';
 import { createCoordinationComponent } from './components/coordination/index.js';
 import { createMonitoringComponent } from './components/monitoring/index.js';
 import { createContextComponent } from './components/context/index.js';
+import { createRegistryComponent } from './components/registry/index.js';
 
 // db.ts bridge
 import { setAdapter, migrateSchema } from '../db.js';
@@ -99,6 +100,7 @@ export function bootEngine(config: EngineConfig): Engine {
     createSchedulesComponent,
     createCoordinationComponent,
     createMonitoringComponent,
+    createRegistryComponent,
   ];
 
   for (const factory of componentFactories) {

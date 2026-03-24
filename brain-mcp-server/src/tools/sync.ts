@@ -105,7 +105,7 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     timestampCol: 'last_session_at',
     strategy: 'lww',
     columns: [
-      'slug', 'name', 'path', 'tech_stack', 'igris_version', 'status',
+      'slug', 'name', 'path', 'tech_stack', 'archetype', 'igris_version', 'status',
       'registered_at', 'last_session_at', 'metadata',
     ],
   },
@@ -267,6 +267,18 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     columns: [
       'id', 'event_name', 'component', 'payload', 'machine_hostname',
       'project_slug', 'instance_id', 'created_at',
+    ],
+  },
+  {
+    table: 'registry',
+    syncKey: ['id'],
+    timestampCol: 'updated_at',
+    strategy: 'lww',
+    columns: [
+      'id', 'name', 'type', 'archetype', 'framework', 'github_repo',
+      'github_path', 'github_branch', 'description', 'install_command',
+      'standalone', 'parent_template', 'tags', 'rebrand_checklist',
+      'source_project', 'status', 'created_at', 'updated_at',
     ],
   },
 ];

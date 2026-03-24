@@ -500,6 +500,69 @@ function migrateSchema(db: Database.Database): void {
       }
     }
   }
+
+  if (currentVersion < 12) {
+    db.transaction(() => {
+      db.exec(`
+        ALTER TABLE projects ADD COLUMN archetype TEXT DEFAULT 'unclassified';
+        CREATE INDEX IF NOT EXISTS idx_projects_archetype ON projects(archetype);
+
+        CREATE TABLE IF NOT EXISTS registry (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          type TEXT NOT NULL CHECK(type IN ('template', 'module')),
+          archetype TEXT,
+          framework TEXT,
+          github_repo TEXT NOT NULL,
+          github_path TEXT,
+          github_branch TEXT DEFAULT 'main',
+          description TEXT,
+          install_command TEXT,
+          standalone INTEGER DEFAULT 1,
+          parent_template TEXT,
+          tags TEXT DEFAULT '[]',
+          rebrand_checklist TEXT,
+          source_project TEXT,
+          status TEXT DEFAULT 'available' CHECK(status IN ('available', 'deprecated', 'draft')),
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_registry_type ON registry(type);
+        CREATE INDEX IF NOT EXISTS idx_registry_archetype ON registry(archetype);
+        CREATE INDEX IF NOT EXISTS idx_registry_framework ON registry(framework);
+        CREATE INDEX IF NOT EXISTS idx_registry_status ON registry(status);
+
+        -- FTS5 for registry search
+        CREATE VIRTUAL TABLE IF NOT EXISTS registry_fts USING fts5(
+          name, description, tags, framework,
+          content=registry,
+          content_rowid=rowid
+        );
+
+        -- FTS5 triggers: registry
+        CREATE TRIGGER IF NOT EXISTS registry_ai AFTER INSERT ON registry BEGIN
+          INSERT INTO registry_fts(rowid, name, description, tags, framework)
+          VALUES (new.rowid, new.name, new.description, new.tags, new.framework);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS registry_au AFTER UPDATE ON registry BEGIN
+          INSERT INTO registry_fts(registry_fts, rowid, name, description, tags, framework)
+          VALUES ('delete', old.rowid, old.name, old.description, old.tags, old.framework);
+          INSERT INTO registry_fts(rowid, name, description, tags, framework)
+          VALUES (new.rowid, new.name, new.description, new.tags, new.framework);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS registry_ad AFTER DELETE ON registry BEGIN
+          INSERT INTO registry_fts(registry_fts, rowid, name, description, tags, framework)
+          VALUES ('delete', old.rowid, old.name, old.description, old.tags, old.framework);
+        END;
+
+        INSERT OR IGNORE INTO schema_version (version) VALUES (12);
+      `);
+    })();
+    console.error('[brain] Schema migrated to version 12 (archetype column + registry table + FTS5)');
+  }
 }
 
 /**

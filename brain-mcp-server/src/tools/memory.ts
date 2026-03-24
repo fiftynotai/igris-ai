@@ -358,15 +358,18 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
   let finalRows: RecallRow[];
   let searchSource: string;
 
-  // Query all project tech stacks in one call for affinity boost
+  // Query all project tech stacks and archetypes in one call for affinity boosts
   const projectStacks = new Map<string, string>();
+  const projectArchetypes = new Map<string, string>();
   const stackRows = db.prepare(
-    'SELECT slug, tech_stack FROM projects WHERE tech_stack IS NOT NULL',
-  ).all() as { slug: string; tech_stack: string }[];
+    'SELECT slug, tech_stack, archetype FROM projects WHERE tech_stack IS NOT NULL OR archetype IS NOT NULL',
+  ).all() as { slug: string; tech_stack: string; archetype: string | null }[];
   for (const sr of stackRows) {
-    projectStacks.set(sr.slug, sr.tech_stack);
+    if (sr.tech_stack) projectStacks.set(sr.slug, sr.tech_stack);
+    if (sr.archetype) projectArchetypes.set(sr.slug, sr.archetype);
   }
   const currentStack = projectStacks.get(args.project) ?? null;
+  const currentArchetype = projectArchetypes.get(args.project) ?? null;
 
   if (vectorAvailable && vecResults.length > 0) {
     // Hybrid: RRF merge + project-local boost + tech stack affinity
@@ -386,16 +389,27 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
       rowMap.set(row.id, row);
     }
 
-    // Apply boosts: 1.5x project-local, 1.3x tech-stack affinity, 1.0x otherwise
+    // Apply boosts (stackable): 1.5x project-local, 1.3x tech-stack affinity, 1.2x archetype match
     for (const entry of rrfEntries) {
       const row = rowMap.get(entry.id);
-      if (row && row.project === args.project) {
+      if (!row) continue;
+
+      // Boost 1: project-local vs tech-stack affinity (mutually exclusive)
+      if (row.project === args.project) {
         entry.score *= 1.5;
-      } else if (row && currentStack) {
+      } else if (currentStack) {
         const rowStack = projectStacks.get(row.project) ?? null;
         const overlap = computeTechStackOverlap(currentStack, rowStack);
         if (overlap >= 0.5) {
           entry.score *= 1.3;
+        }
+      }
+
+      // Boost 2: archetype affinity (stacks with above)
+      if (currentArchetype && currentArchetype !== 'unclassified' && row.project !== args.project) {
+        const rowArchetype = projectArchetypes.get(row.project) ?? null;
+        if (rowArchetype && rowArchetype === currentArchetype) {
+          entry.score *= 1.2;
         }
       }
     }

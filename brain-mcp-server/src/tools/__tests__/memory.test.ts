@@ -93,6 +93,7 @@ function makeTestDb(): Database.Database {
       name TEXT NOT NULL,
       path TEXT NOT NULL,
       tech_stack TEXT DEFAULT '',
+      archetype TEXT DEFAULT 'unclassified',
       igris_version TEXT DEFAULT '4.0.0',
       status TEXT DEFAULT 'active' CHECK (status IN ('active', 'archived', 'inactive')),
       registered_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -193,6 +194,7 @@ function insertProject(
     name: string;
     path: string;
     tech_stack: string;
+    archetype: string;
   }> = {},
 ): void {
   const defaults = {
@@ -200,12 +202,13 @@ function insertProject(
     name: 'Test Project',
     path: '/tmp/test-project',
     tech_stack: '',
+    archetype: 'unclassified',
   };
   const data = { ...defaults, ...overrides };
   db.prepare(`
-    INSERT INTO projects (slug, name, path, tech_stack)
-    VALUES (?, ?, ?, ?)
-  `).run(data.slug, data.name, data.path, data.tech_stack);
+    INSERT INTO projects (slug, name, path, tech_stack, archetype)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(data.slug, data.name, data.path, data.tech_stack, data.archetype);
 }
 
 // ---------------------------------------------------------------------------
@@ -692,6 +695,95 @@ describe('Memory Tools (FR-092)', () => {
       });
 
       // Should succeed without error — the learning is project-local so gets 1.5x instead
+      const text = result.content[0].text;
+      expect(text).toContain('Recalled');
+    });
+  });
+
+  describe('handleMemoryRecall — archetype affinity boost', () => {
+    it('should recall learnings from project with matching archetype', async () => {
+      // Register two projects with the same archetype
+      insertProject(db, { slug: 'proj-brand-a', name: 'Brand A', path: '/a', tech_stack: 'dart,flutter', archetype: 'brand-website' });
+      insertProject(db, { slug: 'proj-brand-b', name: 'Brand B', path: '/b', tech_stack: 'dart,flutter', archetype: 'brand-website' });
+
+      // Insert a global learning from brand-b
+      insertLearning(db, {
+        project: 'proj-brand-b',
+        title: 'Hero scroll animation pattern',
+        content: 'Hero scroll animation pattern for brand website using Flutter custom scroll view',
+        scope: 'global',
+        tech_stack: 'dart,flutter',
+      });
+
+      const result = await handleMemoryRecall({
+        project: 'proj-brand-a',
+        context: 'Hero scroll animation pattern',
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Recalled');
+      expect(text).toContain('Hero scroll animation pattern');
+    });
+
+    it('should recall learning from different-archetype project without boost', async () => {
+      insertProject(db, { slug: 'proj-brand', name: 'Brand', path: '/brand', tech_stack: 'dart,flutter', archetype: 'brand-website' });
+      insertProject(db, { slug: 'proj-saas', name: 'SaaS', path: '/saas', tech_stack: 'typescript,react', archetype: 'saas-dashboard' });
+
+      insertLearning(db, {
+        project: 'proj-saas',
+        title: 'Dashboard layout pattern',
+        content: 'Dashboard layout pattern with sidebar navigation for SaaS applications',
+        scope: 'global',
+        tech_stack: 'typescript,react',
+      });
+
+      const result = await handleMemoryRecall({
+        project: 'proj-brand',
+        context: 'Dashboard layout pattern',
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Recalled');
+      // Still found but no archetype boost applied
+    });
+
+    it('should not apply archetype boost when archetype is unclassified', async () => {
+      insertProject(db, { slug: 'proj-unclassified', name: 'Unclassified', path: '/unc', tech_stack: 'typescript', archetype: 'unclassified' });
+      insertProject(db, { slug: 'proj-also-unclassified', name: 'Also Unclassified', path: '/unc2', tech_stack: 'typescript', archetype: 'unclassified' });
+
+      insertLearning(db, {
+        project: 'proj-also-unclassified',
+        title: 'Unclassified project pattern',
+        content: 'Unclassified project pattern for testing archetype boost exclusion',
+        scope: 'global',
+        tech_stack: 'typescript',
+      });
+
+      const result = await handleMemoryRecall({
+        project: 'proj-unclassified',
+        context: 'Unclassified project pattern',
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Recalled');
+      // No archetype boost for 'unclassified' — the condition explicitly filters it out
+    });
+
+    it('should not crash when project has no archetype set', async () => {
+      insertProject(db, { slug: 'proj-no-arch', name: 'No Arch', path: '/noarch', tech_stack: 'typescript' });
+
+      insertLearning(db, {
+        project: 'proj-no-arch',
+        title: 'No archetype learning',
+        content: 'No archetype learning content for testing graceful handling',
+        scope: 'local',
+      });
+
+      const result = await handleMemoryRecall({
+        project: 'proj-no-arch',
+        context: 'No archetype learning',
+      });
+
       const text = result.content[0].text;
       expect(text).toContain('Recalled');
     });
