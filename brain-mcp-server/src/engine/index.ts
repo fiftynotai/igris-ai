@@ -84,7 +84,7 @@ export function bootEngine(config: EngineConfig): Engine {
   // 5. Create registry
   const registry = createRegistry(storage, bus);
 
-  // 6. Register domain components (all 14)
+  // 6. Register domain components (all 15)
   const componentFactories = [
     createMemoryComponent,
     createErrorsComponent,

@@ -15,7 +15,6 @@ set -euo pipefail
 # ============================================================
 BRAIN_DIR="${IGRIS_BRAIN_DIR:-$HOME/.igris}"
 BRAIN_ENV="$BRAIN_DIR/brain.env"
-MCP_SERVER_DIR="$BRAIN_DIR/mcp-server"
 REPO_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
 PM2_APP_NAME="${IGRIS_PM2_APP_NAME:-igris-brain}"
 DEFAULT_PORT="${IGRIS_BRAIN_PORT:-3001}"
@@ -112,10 +111,10 @@ check_prerequisites() {
     exit 1
   fi
 
-  # Verify brain has been deployed
-  if [ ! -d "$MCP_SERVER_DIR" ]; then
-    echo "ERROR: Brain MCP server not found at $MCP_SERVER_DIR"
-    echo "       Run igris_brain_deploy.sh first to perform initial deployment."
+  # Verify brain-mcp-server exists in the repo
+  if [ ! -d "$REPO_DIR/brain-mcp-server" ]; then
+    echo "ERROR: brain-mcp-server/ not found in $REPO_DIR"
+    echo "       Make sure the repository contains the brain-mcp-server directory."
     exit 1
   fi
 }
@@ -223,30 +222,29 @@ check_write_permissions() {
 build_server() {
   echo "Building brain-mcp-server..."
 
-  if [ ! -d "$REPO_DIR/brain-mcp-server" ]; then
+  local BUILD_DIR="$REPO_DIR/brain-mcp-server"
+
+  if [ ! -d "$BUILD_DIR" ]; then
     echo "ERROR: brain-mcp-server/ not found in $REPO_DIR"
     echo "       Make sure the repository contains the brain-mcp-server directory."
     exit 1
   fi
 
   # Pre-flight checks: permissions and disk space
-  check_write_permissions "$MCP_SERVER_DIR"
-  check_disk_space "$MCP_SERVER_DIR" 100
+  check_write_permissions "$BUILD_DIR"
+  check_disk_space "$BUILD_DIR" 100
 
   # Back up existing dist directory for rollback on failure
   local has_backup=false
-  if [ -d "$MCP_SERVER_DIR/dist" ]; then
-    cp -r "$MCP_SERVER_DIR/dist" "$MCP_SERVER_DIR/dist.backup"
+  if [ -d "$BUILD_DIR/dist" ]; then
+    cp -r "$BUILD_DIR/dist" "$BUILD_DIR/dist.backup"
     has_backup=true
     echo "  [ok] Existing build backed up to dist.backup"
   fi
 
-  # Copy source files
-  cp -r "$REPO_DIR/brain-mcp-server/"* "$MCP_SERVER_DIR/"
-  echo "  [ok] Source files copied."
-
-  # Install dependencies and build
-  cd "$MCP_SERVER_DIR"
+  # Install dependencies and build in the repo directory
+  # PM2 runs from this location, so we build here directly
+  cd "$BUILD_DIR"
 
   echo "  Installing dependencies..."
   if ! npm ci --silent 2>&1 | tail -1; then
@@ -254,8 +252,8 @@ build_server() {
     echo "  [FAIL] npm ci failed."
     if [ "$has_backup" = true ]; then
       echo "  Restoring previous build from backup..."
-      rm -rf "$MCP_SERVER_DIR/dist"
-      mv "$MCP_SERVER_DIR/dist.backup" "$MCP_SERVER_DIR/dist"
+      rm -rf "$BUILD_DIR/dist"
+      mv "$BUILD_DIR/dist.backup" "$BUILD_DIR/dist"
       echo "  [ok] Previous build restored."
       echo "  Restarting PM2 with previous build..."
       pm2 restart "$PM2_APP_NAME" 2>&1 | tail -2 || true
@@ -271,8 +269,8 @@ build_server() {
     echo "  [FAIL] npm run build failed."
     if [ "$has_backup" = true ]; then
       echo "  Restoring previous build from backup..."
-      rm -rf "$MCP_SERVER_DIR/dist"
-      mv "$MCP_SERVER_DIR/dist.backup" "$MCP_SERVER_DIR/dist"
+      rm -rf "$BUILD_DIR/dist"
+      mv "$BUILD_DIR/dist.backup" "$BUILD_DIR/dist"
       echo "  [ok] Previous build restored."
       echo "  Restarting PM2 with previous build..."
       pm2 restart "$PM2_APP_NAME" 2>&1 | tail -2 || true
@@ -284,7 +282,7 @@ build_server() {
 
   # Build succeeded, remove backup
   if [ "$has_backup" = true ]; then
-    rm -rf "$MCP_SERVER_DIR/dist.backup"
+    rm -rf "$BUILD_DIR/dist.backup"
   fi
 
   cd "$REPO_DIR"

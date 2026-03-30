@@ -125,7 +125,10 @@ export function createRegistryComponent(): BrainComponent {
           },
           handler: (args) => {
             const result = handleRegistryAdd(args as unknown as RegistryAddInput);
-            _ctx?.bus.emit('registry.added', { id: (args as Record<string, unknown>).id, name: (args as Record<string, unknown>).name });
+            const text = result.content[0]?.text ?? '';
+            if (!text.startsWith('Error:')) {
+              _ctx?.bus.emit('registry.added', { id: (args as Record<string, unknown>).id, name: (args as Record<string, unknown>).name });
+            }
             return result;
           },
         },
@@ -308,7 +311,10 @@ export function createRegistryComponent(): BrainComponent {
           },
           handler: (args) => {
             const result = handleRegistryUpdate(args as unknown as RegistryUpdateInput);
-            _ctx?.bus.emit('registry.updated', { id: (args as Record<string, unknown>).id });
+            const text = result.content[0]?.text ?? '';
+            if (!text.startsWith('Error:') && text !== 'No fields to update.') {
+              _ctx?.bus.emit('registry.updated', { id: (args as Record<string, unknown>).id });
+            }
             return result;
           },
         },

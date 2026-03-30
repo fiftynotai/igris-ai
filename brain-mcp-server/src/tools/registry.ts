@@ -258,7 +258,8 @@ function handleRegistrySearch(args: RegistrySearchInput): { content: { type: str
   let rows: RegistryRow[];
   try {
     rows = db.prepare(sql).all(...params) as RegistryRow[];
-  } catch {
+  } catch (err) {
+    console.error('[registry] FTS5 search error:', err);
     rows = [];
   }
 
