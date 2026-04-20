@@ -237,6 +237,10 @@ export function createTasksComponent(): BrainComponent {
                 type: 'string',
                 description: 'Filter by assigned agent (optional)',
               },
+              brief_id: {
+                type: 'string',
+                description: 'Filter by linked brief ID, e.g. "BR-008" (optional)',
+              },
               limit: {
                 type: 'number',
                 description: 'Max results (default: 25)',

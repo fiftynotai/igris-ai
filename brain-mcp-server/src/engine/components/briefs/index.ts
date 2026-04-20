@@ -141,8 +141,18 @@ export function createBriefsComponent(): BrainComponent {
                 });
               }
 
-              // Emit brief.completed if status changed to Done
-              if (status === 'Done' && existing?.status !== 'Done') {
+              // Emit brief.completed if status transitioned to a terminal state
+              // (Done or Archived). The guard `!prevTerminal` prevents double-fire
+              // within the same terminal class, but Done -> Archived fires only
+              // once because Done is already terminal.
+              // Listener `onBriefCompleted` in tasks/index.ts is idempotent
+              // (skips already-done/cancelled tasks) so re-firing is safe.
+              const TERMINAL_STATUSES = ['Done', 'Archived'] as const;
+              const prevTerminal = existing?.status
+                ? (TERMINAL_STATUSES as readonly string[]).includes(existing.status)
+                : false;
+              const nowTerminal = (TERMINAL_STATUSES as readonly string[]).includes(status);
+              if (nowTerminal && !prevTerminal) {
                 _ctx.bus.emit('brief.completed', {
                   project,
                   brief_id: briefId,
@@ -377,13 +387,25 @@ export function createBriefsComponent(): BrainComponent {
             if (_ctx) {
               _ctx.bus.emit('brief.synced', { project, brief_id: briefId });
 
-              // Emit brief.completed if status changed to Done
-              if (newStatus === 'Done' && previousStatus !== 'Done') {
-                _ctx.bus.emit('brief.completed', {
-                  project,
-                  brief_id: briefId,
-                  title: (typedArgs.title as string) ?? '',
-                });
+              // Emit brief.completed if status transitioned to a terminal state
+              // (Done or Archived). The guard `!prevTerminal` prevents double-fire
+              // within the same terminal class, but Done -> Archived fires only
+              // once because Done is already terminal.
+              // Listener `onBriefCompleted` in tasks/index.ts is idempotent
+              // (skips already-done/cancelled tasks) so re-firing is safe.
+              if (newStatus !== undefined) {
+                const TERMINAL_STATUSES = ['Done', 'Archived'] as const;
+                const prevTerminal = previousStatus
+                  ? (TERMINAL_STATUSES as readonly string[]).includes(previousStatus)
+                  : false;
+                const nowTerminal = (TERMINAL_STATUSES as readonly string[]).includes(newStatus);
+                if (nowTerminal && !prevTerminal) {
+                  _ctx.bus.emit('brief.completed', {
+                    project,
+                    brief_id: briefId,
+                    title: (typedArgs.title as string) ?? '',
+                  });
+                }
               }
             }
 
@@ -465,7 +487,7 @@ export function createBriefsComponent(): BrainComponent {
         emits: [
           { name: 'brief.synced', description: 'A brief status was synced' },
           { name: 'brief.created', description: 'A new brief was synced for the first time' },
-          { name: 'brief.completed', description: 'A brief status changed to Done' },
+          { name: 'brief.completed', description: 'A brief status transitioned to a terminal state (Done or Archived)' },
           { name: 'brief.similar_detected', description: 'Similar briefs were detected during creation' },
         ],
         listens: [],
