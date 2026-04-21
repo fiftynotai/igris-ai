@@ -30,6 +30,32 @@ fi
 echo "🧠 Brain detected at $BRAIN_DIR"
 
 # ============================================================
+# Parse arguments: --cli=<list> and positional TARGET_DIR
+# ============================================================
+CLI_TARGETS=""
+POSITIONAL_ARGS=()
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --cli=*)
+      CLI_TARGETS="${1#--cli=}"
+      ;;
+    --cli)
+      # Support space-separated form: --cli <list>
+      shift
+      CLI_TARGETS="${1:-}"
+      ;;
+    *)
+      POSITIONAL_ARGS+=("$1")
+      ;;
+  esac
+  shift
+done
+
+# Restore positional args so the rest of the script sees them as $1, $2, ...
+set -- "${POSITIONAL_ARGS[@]}"
+
+# ============================================================
 # Get target project directory
 # ============================================================
 TARGET_DIR="${1:-.}"
@@ -151,6 +177,26 @@ if [ -d "$BRAIN_DIR/core/skills" ]; then
     [ -d "$skill" ] && ln -sf "$skill" ".claude/skills/$(basename "$skill")"
   done
   echo "   ✅ Skills linked"
+fi
+
+# ============================================================
+# Multi-CLI skill distribution (FR-103)
+# Delegate to igris_cli_sync.sh when --cli=<list> is passed and the list
+# includes targets beyond plain "claude" (which is already handled above).
+# ============================================================
+if [ -n "$CLI_TARGETS" ]; then
+  # Skip the dispatcher only when CLI_TARGETS is exactly "claude" (regression
+  # preservation for AC#2 — symlinks above already satisfy the Claude case).
+  if [ "$CLI_TARGETS" != "claude" ]; then
+    echo ""
+    echo "🔀 Multi-CLI sync: $CLI_TARGETS"
+    CLI_SYNC_SCRIPT="$IGRIS_DIR/scripts/igris_cli_sync.sh"
+    if [ -f "$CLI_SYNC_SCRIPT" ]; then
+      bash "$CLI_SYNC_SCRIPT" --cli="$CLI_TARGETS" --project-dir="$TARGET_DIR"
+    else
+      echo "   ⚠️  igris_cli_sync.sh not found at $CLI_SYNC_SCRIPT — skipping multi-CLI sync"
+    fi
+  fi
 fi
 
 # ============================================================
@@ -503,6 +549,9 @@ echo "   🌐 Global: agents, rules, skills via .claude/ symlinks to ~/.igris/co
 echo "   📝 Project files: session, context, plans, hooks, reference"
 echo "   🤖 CLAUDE.md generated with persona injection"
 echo "   🗄️  Registered as: $SLUG"
+if [ -n "$CLI_TARGETS" ] && [ "$CLI_TARGETS" != "claude" ]; then
+  echo "   🔀 CLI targets synced: $CLI_TARGETS"
+fi
 echo ""
 echo "📚 Getting Started:"
 echo ""
