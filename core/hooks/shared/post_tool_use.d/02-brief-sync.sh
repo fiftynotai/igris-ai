@@ -1,14 +1,22 @@
 #!/bin/bash
-set -e
 
-# Description: PostToolUse hook for Write|Edit operations.
-#              Auto-syncs brief changes to brain staging when brief files are modified.
-#              Writes a JSON staging file to ~/.igris/staging/ for the brain MCP server.
-#              Guarded by staging_pipeline feature flag in ~/.igris/config.json.
-# Usage: Called automatically by Claude Code after Write/Edit tool use. Reads JSON from stdin.
+# Description: PostToolUse handler (order: 02). Auto-syncs brief changes to brain
+#              staging when brief files are modified. Writes a JSON staging file to
+#              ~/.igris/staging/ for the brain MCP server to consume. Guarded by
+#              `features.staging_pipeline` feature flag in ~/.igris/config.json.
+# Usage: Invoked by the dispatcher `post_tool_use.sh`. Reads JSON from stdin.
+#
+# Input contract:
+#   stdin (preferred): JSON object. Two shapes accepted:
+#     Unified shape: { "payload": { "tool_input": { "file_path": "..." } } }
+#     Claude native: { "tool_input": { "file_path": "..." } }
+#   env fallback: IGRIS_FILE_PATH
+#
 # Dependencies: None (pure bash)
 # Exit codes:
 #   0 - Always (hooks must never fail)
+
+set -e
 
 # Early exit if staging_pipeline is not enabled in config
 BRAIN_CONFIG="$HOME/.igris/config.json"
@@ -32,33 +40,40 @@ except Exception:
     exit 0
   fi
 else
-  # No config file means no brain — skip staging
   exit 0
 fi
 
-PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-${IGRIS_PROJECT_DIR:-$PWD}}"
 STAGING_DIR="$HOME/.igris/staging"
 
-# Read stdin (Claude Code sends JSON with tool_input)
-INPUT=$(cat)
+INPUT=$(cat 2>/dev/null || true)
 
-# Extract file_path from tool_input
 extract_file_path() {
+  if [ -z "$INPUT" ]; then
+    echo "${IGRIS_FILE_PATH:-}"
+    return
+  fi
   if command -v jq &> /dev/null; then
-    echo "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null || echo ""
+    echo "$INPUT" | jq -r '.payload.tool_input.file_path // .tool_input.file_path // ""' 2>/dev/null || echo ""
   else
     echo "$INPUT" | python3 -c "
-import json, sys
+import json, sys, os
 try:
     data = json.load(sys.stdin)
-    print(data.get('tool_input', {}).get('file_path', ''))
+    p = data.get('payload') or {}
+    tool_input = p.get('tool_input') if isinstance(p, dict) else None
+    if not tool_input:
+        tool_input = data.get('tool_input')
+    if isinstance(tool_input, dict):
+        print(tool_input.get('file_path', ''))
+    else:
+        print(os.environ.get('IGRIS_FILE_PATH', ''))
 except Exception:
-    print('')
-" 2>/dev/null || echo ""
+    print(os.environ.get('IGRIS_FILE_PATH', ''))
+" 2>/dev/null || echo "${IGRIS_FILE_PATH:-}"
   fi
 }
 
-# Main logic
 main() {
   local file_path
   file_path=$(extract_file_path)
@@ -70,6 +85,7 @@ main() {
   # Only process brief files in brain cache (not templates)
   case "$file_path" in
     */.igris/cache/*/briefs/*.md) ;;
+    */.igris/projects/*/briefs/*.md) ;;
     *) exit 0 ;;
   esac
 
@@ -77,10 +93,8 @@ main() {
     *TEMPLATE*) exit 0 ;;
   esac
 
-  # Ensure staging directory exists
   mkdir -p "$STAGING_DIR"
 
-  # Extract brief_id from filename (e.g., FR-033 from FR-033-brain-mcp-http-transport-fix.md)
   local basename_noext
   basename_noext=$(basename "$file_path" .md)
   local brief_id
@@ -90,22 +104,18 @@ main() {
     exit 0
   fi
 
-  # Check the file actually exists before reading metadata
   if [ ! -f "$file_path" ]; then
     exit 0
   fi
 
-  # Extract project slug
   local project_slug
   project_slug=$(basename "$PROJECT_DIR")
 
-  # Extract metadata from the brief file
   local status priority title
   status=$(grep -m1 '^\*\*Status:\*\*' "$file_path" 2>/dev/null | sed 's/.*\*\*Status:\*\* //' || echo "Unknown")
   priority=$(grep -m1 '^\*\*Priority:\*\*' "$file_path" 2>/dev/null | sed 's/.*\*\*Priority:\*\* //' || echo "Unknown")
   title=$(grep -m1 '^# ' "$file_path" 2>/dev/null | sed 's/^# //' | sed 's/^[A-Z]*-[0-9]*: //' || echo "Unknown")
 
-  # Write staging file for brain MCP server to pick up
   local staging_file="$STAGING_DIR/brief_sync_${project_slug}_${brief_id}.json"
   cat > "$staging_file" <<EOF
 {
@@ -123,5 +133,4 @@ EOF
   exit 0
 }
 
-# Run main, catch any unexpected errors
 main "$@" 2>/dev/null || exit 0

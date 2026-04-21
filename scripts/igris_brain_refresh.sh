@@ -243,6 +243,41 @@ else
 fi
 
 # ============================================================
+# Refresh: Hooks (shared scripts + per-CLI bridges)
+# ------------------------------------------------------------
+# The hook tree is the source of truth for ~/.igris/core/hooks/. Mirror the
+# layout verbatim (shared/*.sh, shared/post_tool_use.d/*.sh, bridges/*.sh,
+# bridges/opencode/*.ts). Files under the source repo are populated into the
+# brain so per-CLI adapters (install_claude_hooks.sh / install_opencode_hooks.sh
+# / install_codex_hooks.sh) find the scripts they reference on a fresh install.
+# Executable bits are restored via chmod after copy because `cp` may not carry
+# them across filesystems.
+# ============================================================
+if [ -d "$IGRIS_DIR/core/hooks" ]; then
+  COUNT=0
+  # shellcheck disable=SC2044  # globbing `find` is fine; names come from our repo.
+  for f in $(find "$IGRIS_DIR/core/hooks" -type f 2>/dev/null); do
+    [ -e "$f" ] && COUNT=$((COUNT + 1))
+  done
+  if [ "$DRY_RUN" = true ]; then
+    echo "   Would copy $COUNT hook files -> $BRAIN_DIR/core/hooks/"
+  else
+    mkdir -p "$BRAIN_DIR/core/hooks"
+    cp -r "$IGRIS_DIR/core/hooks/"* "$BRAIN_DIR/core/hooks/" 2>/dev/null || true
+    # Restore executable bits on all shell scripts. The .ts OpenCode plugin is
+    # read by Bun — no +x required. `2>/dev/null || true` because empty globs
+    # on older bash return non-zero.
+    chmod +x "$BRAIN_DIR/core/hooks/shared/"*.sh 2>/dev/null || true
+    chmod +x "$BRAIN_DIR/core/hooks/shared/post_tool_use.d/"*.sh 2>/dev/null || true
+    chmod +x "$BRAIN_DIR/core/hooks/bridges/"*.sh 2>/dev/null || true
+    echo "   Hooks refreshed ($COUNT files)"
+  fi
+  TOTAL_COPIED=$((TOTAL_COPIED + COUNT))
+else
+  echo "   No hooks directory found in source repo"
+fi
+
+# ============================================================
 # Verify global symlinks (~/.claude/ -> ~/.igris/core/)
 # ============================================================
 echo ""

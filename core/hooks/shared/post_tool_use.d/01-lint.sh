@@ -1,58 +1,71 @@
 #!/bin/bash
-set -e
 
-# Description: PostToolUse hook for Write|Edit operations.
-#              Runs shellcheck on .sh files after they are modified,
-#              providing lint feedback as additionalContext to Claude.
-# Usage: Called automatically by Claude Code after Write/Edit tool use. Reads JSON from stdin.
-# Dependencies: shellcheck (optional - skips gracefully if not installed)
+# Description: PostToolUse handler (order: 01 — runs first).
+#              Runs shellcheck on .sh files after they are modified, providing lint
+#              feedback as additionalContext to the CLI (Claude reads additionalContext
+#              natively; other CLIs ignore it).
+# Usage: Invoked by the dispatcher `post_tool_use.sh`. Reads JSON from stdin.
+#
+# Input contract:
+#   stdin (preferred): JSON object. Two shapes accepted:
+#     Unified shape: { "payload": { "tool_input": { "file_path": "..." } } }
+#     Claude native: { "tool_input": { "file_path": "..." } }
+#   env fallback: IGRIS_FILE_PATH
+#
+# Dependencies: shellcheck (optional — skips gracefully if not installed)
 # Exit codes:
 #   0 - Always (hooks must never fail)
 
+set -e
+
 # Navigate to project root
-PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-${IGRIS_PROJECT_DIR:-$PWD}}"
 cd "$PROJECT_DIR"
 
-# Read stdin (Claude Code sends JSON with tool_input)
-INPUT=$(cat)
+INPUT=$(cat 2>/dev/null || true)
 
-# Extract file_path from tool_input
 extract_file_path() {
+  if [ -z "$INPUT" ]; then
+    echo "${IGRIS_FILE_PATH:-}"
+    return
+  fi
   if command -v jq &> /dev/null; then
-    echo "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null || echo ""
+    echo "$INPUT" | jq -r '.payload.tool_input.file_path // .tool_input.file_path // ""' 2>/dev/null || echo ""
   else
     echo "$INPUT" | python3 -c "
-import json, sys
+import json, sys, os
 try:
     data = json.load(sys.stdin)
-    print(data.get('tool_input', {}).get('file_path', ''))
+    p = data.get('payload') or {}
+    tool_input = p.get('tool_input') if isinstance(p, dict) else None
+    if not tool_input:
+        tool_input = data.get('tool_input')
+    if isinstance(tool_input, dict):
+        print(tool_input.get('file_path', ''))
+    else:
+        print(os.environ.get('IGRIS_FILE_PATH', ''))
 except Exception:
-    print('')
-" 2>/dev/null || echo ""
+    print(os.environ.get('IGRIS_FILE_PATH', ''))
+" 2>/dev/null || echo "${IGRIS_FILE_PATH:-}"
   fi
 }
 
-# Run shellcheck and format results
 run_lint() {
   local file_path="$1"
 
-  # Only lint .sh files
   case "$file_path" in
     *.sh) ;;
     *) exit 0 ;;
   esac
 
-  # Check if shellcheck is available
   if ! command -v shellcheck &> /dev/null; then
     exit 0
   fi
 
-  # Check if file exists
   if [ ! -f "$file_path" ]; then
     exit 0
   fi
 
-  # Run shellcheck with JSON output
   local lint_output
   lint_output=$(shellcheck --format=json1 "$file_path" 2>/dev/null) || true
 
@@ -60,7 +73,6 @@ run_lint() {
     exit 0
   fi
 
-  # Parse issues and build context string
   local issue_count
   if command -v jq &> /dev/null; then
     issue_count=$(echo "$lint_output" | jq '.comments | length' 2>/dev/null) || issue_count=0
@@ -79,7 +91,6 @@ except Exception:
     exit 0
   fi
 
-  # Format issues into a readable context string
   local context
   if command -v jq &> /dev/null; then
     context=$(echo "$lint_output" | jq -r '
@@ -110,7 +121,6 @@ except Exception:
     exit 0
   fi
 
-  # Output JSON with additionalContext
   if command -v jq &> /dev/null; then
     jq -n --arg ctx "$context" '{"additionalContext": $ctx}'
   else
@@ -124,7 +134,6 @@ print(json.dumps({'additionalContext': context}))
   exit 0
 }
 
-# Main execution
 main() {
   local file_path
   file_path=$(extract_file_path)
@@ -136,5 +145,4 @@ main() {
   run_lint "$file_path"
 }
 
-# Run main, catch any unexpected errors
 main "$@" 2>/dev/null || exit 0

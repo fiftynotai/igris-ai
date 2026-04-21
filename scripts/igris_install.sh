@@ -30,9 +30,14 @@ fi
 echo "🧠 Brain detected at $BRAIN_DIR"
 
 # ============================================================
-# Parse arguments: --cli=<list> and positional TARGET_DIR
+# Parse arguments: --cli=<list>, --include=<list>, and positional TARGET_DIR
+#
+# --cli controls which CLIs receive Igris surfaces (claude/opencode/gemini/codex).
+# --include is orthogonal: it controls *which Igris surfaces* ship to those CLIs.
+#   Accepted values: skills, hooks, all (default).
 # ============================================================
 CLI_TARGETS=""
+INCLUDE_TARGETS="all"
 POSITIONAL_ARGS=()
 
 while [ "$#" -gt 0 ]; do
@@ -45,6 +50,13 @@ while [ "$#" -gt 0 ]; do
       shift
       CLI_TARGETS="${1:-}"
       ;;
+    --include=*)
+      INCLUDE_TARGETS="${1#--include=}"
+      ;;
+    --include)
+      shift
+      INCLUDE_TARGETS="${1:-all}"
+      ;;
     *)
       POSITIONAL_ARGS+=("$1")
       ;;
@@ -52,8 +64,25 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
+# Normalize INCLUDE_TARGETS (strip spaces; default to "all" when empty).
+INCLUDE_TARGETS=$(echo "$INCLUDE_TARGETS" | tr -d '[:space:]')
+if [ -z "$INCLUDE_TARGETS" ]; then
+  INCLUDE_TARGETS="all"
+fi
+
 # Restore positional args so the rest of the script sees them as $1, $2, ...
 set -- "${POSITIONAL_ARGS[@]}"
+
+# Helper: returns 0 when INCLUDE_TARGETS covers the requested surface.
+# Usage: include_has skills|hooks
+include_has() {
+  local surface="$1"
+  case ",${INCLUDE_TARGETS}," in
+    *,all,*)        return 0 ;;
+    *,"$surface",*) return 0 ;;
+    *)              return 1 ;;
+  esac
+}
 
 # ============================================================
 # Get target project directory
@@ -183,19 +212,38 @@ fi
 # Multi-CLI skill distribution (FR-103)
 # Delegate to igris_cli_sync.sh when --cli=<list> is passed and the list
 # includes targets beyond plain "claude" (which is already handled above).
+# Gated on --include=skills|all (default: all).
 # ============================================================
-if [ -n "$CLI_TARGETS" ]; then
+if [ -n "$CLI_TARGETS" ] && include_has skills; then
   # Skip the dispatcher only when CLI_TARGETS is exactly "claude" (regression
   # preservation for AC#2 — symlinks above already satisfy the Claude case).
   if [ "$CLI_TARGETS" != "claude" ]; then
     echo ""
-    echo "🔀 Multi-CLI sync: $CLI_TARGETS"
+    echo "🔀 Multi-CLI skill sync: $CLI_TARGETS"
     CLI_SYNC_SCRIPT="$IGRIS_DIR/scripts/igris_cli_sync.sh"
     if [ -f "$CLI_SYNC_SCRIPT" ]; then
       bash "$CLI_SYNC_SCRIPT" --cli="$CLI_TARGETS" --project-dir="$TARGET_DIR"
     else
       echo "   ⚠️  igris_cli_sync.sh not found at $CLI_SYNC_SCRIPT — skipping multi-CLI sync"
     fi
+  fi
+fi
+
+# ============================================================
+# Multi-CLI hook sync (FR-104)
+# Delegate to igris_hooks_sync.sh when --cli=<list> is passed and the
+# includes list contains `hooks` (or `all`). Default include=all covers this.
+# Unlike skill sync, hook sync runs for *every* CLI in the list (including
+# plain "claude") because the Claude path is the settings.json regen step.
+# ============================================================
+if [ -n "$CLI_TARGETS" ] && include_has hooks; then
+  echo ""
+  echo "🪝 Multi-CLI hook sync: $CLI_TARGETS"
+  HOOK_SYNC_SCRIPT="$IGRIS_DIR/scripts/igris_hooks_sync.sh"
+  if [ -f "$HOOK_SYNC_SCRIPT" ]; then
+    bash "$HOOK_SYNC_SCRIPT" --cli="$CLI_TARGETS" --project-dir="$TARGET_DIR"
+  else
+    echo "   ⚠️  igris_hooks_sync.sh not found at $HOOK_SYNC_SCRIPT — skipping hook sync"
   fi
 fi
 
@@ -549,9 +597,15 @@ echo "   🌐 Global: agents, rules, skills via .claude/ symlinks to ~/.igris/co
 echo "   📝 Project files: session, context, plans, hooks, reference"
 echo "   🤖 CLAUDE.md generated with persona injection"
 echo "   🗄️  Registered as: $SLUG"
-if [ -n "$CLI_TARGETS" ] && [ "$CLI_TARGETS" != "claude" ]; then
-  echo "   🔀 CLI targets synced: $CLI_TARGETS"
+if [ -n "$CLI_TARGETS" ]; then
+  if include_has skills && [ "$CLI_TARGETS" != "claude" ]; then
+    echo "   🔀 CLI skills synced: $CLI_TARGETS"
+  fi
+  if include_has hooks; then
+    echo "   🪝 CLI hooks synced: $CLI_TARGETS"
+  fi
 fi
+echo "   📦 Include: $INCLUDE_TARGETS"
 echo ""
 echo "📚 Getting Started:"
 echo ""

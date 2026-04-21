@@ -1,0 +1,6 @@
+model = "claude-3-5-sonnet"
+notify = ["/Users/example/.igris/core/hooks/bridges/codex-notify.sh"]
+other_flag = true
+
+[profiles]
+default = "main"

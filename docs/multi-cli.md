@@ -1,12 +1,28 @@
-# Multi-CLI Skill Distribution
+# Multi-CLI Support
 
-**Brief:** FR-103
+**Briefs:** FR-103 (Skill Distribution), FR-104 (Hook Bridge Layer)
 **Status:** Stable
 **Last Updated:** 2026-04-20
 
-Igris skills live canonically under `~/.igris/core/skills/`. This document defines how
-those skills are distributed to multiple CLI agents (Claude Code, OpenCode, Gemini CLI,
-Codex CLI) via filesystem routing — no duplication, no drift.
+Igris skills and hooks live canonically under `~/.igris/core/`. This document defines
+how those surfaces are distributed to multiple CLI agents (Claude Code, OpenCode,
+Gemini CLI, Codex CLI) via filesystem routing — no duplication, no drift.
+
+Two independent axes of coverage:
+
+- **Skills Distribution** (FR-103) — canonical skills in `~/.igris/core/skills/` shipped
+  per-CLI via symlink / converter / compiler / none. See [Skills](#skills-distribution)
+  below.
+- **Hook Coverage** (FR-104) — shared bash hooks in `~/.igris/core/hooks/shared/`
+  routed through per-CLI bridges. See [Hook Coverage](#hook-coverage) below.
+
+Both axes use the same `cli_targets` block in `~/.igris/config.json` and the same
+`--cli=<list>` flag. An orthogonal `--include=<list>` flag controls which surfaces
+ship (defaults to `all`).
+
+---
+
+## Skills Distribution
 
 ---
 
@@ -152,9 +168,191 @@ silent no-ops).
 
 ---
 
+## Hook Coverage
+
+Igris hooks are the lifecycle integration layer: session start/end, pre/post tool use,
+and pre/post compact. Before FR-104 these lived only as per-project Claude Code scripts
+(`.claude/hooks/*.sh`). FR-104 extracts the six cross-CLI-portable events into a shared
+bash layer and adds per-CLI bridges that route each CLI's native events into it.
+
+### Portable Events
+
+The following six events are CLI-portable — they have a semantically equivalent trigger
+across all three supported CLIs (Claude, OpenCode, Codex):
+
+| Igris event | Script | Purpose |
+|-------------|--------|---------|
+| `session_start` | `~/.igris/core/hooks/shared/session_start.sh` | Inject session state and active brief summary. |
+| `session_end` | `~/.igris/core/hooks/shared/session_end.sh` | Flip CURRENT_SESSION.md to REST MODE; deregister instance from brain. |
+| `pre_compact` | `~/.igris/core/hooks/shared/pre_compact.sh` | Emit recovery context before context compaction. |
+| `post_compact` | `~/.igris/core/hooks/shared/post_compact.sh` | Log compact completion; future hook point. |
+| `pre_tool_use` | `~/.igris/core/hooks/shared/pre_tool_use.sh` | Brief-first gate for Write/Edit tool calls. |
+| `post_tool_use` | `~/.igris/core/hooks/shared/post_tool_use.sh` | Dispatcher for `post_tool_use.d/*.sh` handlers (lint, brief sync, session sync). |
+
+### Per-CLI Coverage
+
+| CLI | Wired events | Mechanism | Notes |
+|-----|--------------|-----------|-------|
+| Claude Code | All 6 portable + Claude-only (SubagentStop, Stop, TaskCompleted, TeammateIdle, Notification) | `.claude/settings.json` entries point directly at shared script paths | Claude-only events continue to use project-local `.claude/hooks/` since no other CLI has an equivalent. |
+| OpenCode | All 6 portable | TypeScript plugin at `~/.config/opencode/plugins/igris-bridge.ts` | Auto-loaded by Bun at startup; raw `.ts` — no build step. |
+| Codex CLI | `session_end` only | `notify` program wrapper at `~/.igris/core/hooks/bridges/codex-notify.sh` | Codex exposes only post-turn notification. The user's original `notify` program is backed up to `~/.igris/config.json → cli_targets.codex.user_notify_backup` and invoked first. |
+| Gemini CLI | None | Not supported | Gemini CLI has no hook API. Igris hook layer is a no-op for Gemini. |
+
+### Shared Script Input Contract
+
+Every shared script accepts two input shapes. Bridges translate native events to the
+unified shape before piping; legacy Claude-native shape is also accepted for backward
+compatibility (direct `settings.json` invocation with no bridge).
+
+**Unified shape (preferred, from bridges):**
+```json
+{
+  "source": "claude" | "opencode" | "codex",
+  "event":  "session_start",
+  "project_dir": "/absolute/path",
+  "payload": { /* CLI-specific fields */ }
+}
+```
+
+**Native Claude shape (back-compat):**
+```json
+{ "tool_name": "Write", "tool_input": { "file_path": "/..." } }
+```
+
+**Environment variable fallback** (when stdin is empty):
+
+| Variable | Meaning |
+|----------|---------|
+| `IGRIS_HOOK_SOURCE` | `claude` / `opencode` / `codex` |
+| `IGRIS_HOOK_EVENT` | Matches filename: `session_start`, `pre_tool_use`, etc. |
+| `IGRIS_PROJECT_DIR` | Absolute path to project root. |
+| `IGRIS_TOOL_NAME` | Tool name for `pre_tool_use` / `post_tool_use`. |
+| `IGRIS_FILE_PATH` | File path for Write/Edit operations. |
+
+### Post-Tool-Use Dispatcher
+
+`post_tool_use.sh` is a dispatcher — it reads the JSON input once, then fans out to every
+executable file under `post_tool_use.d/` in lexicographic sort order. Each handler runs
+in its own subshell with a 10s timeout (configurable via `IGRIS_POST_TOOL_USE_TIMEOUT`).
+Handler failures are isolated: one crashing handler does not block the others.
+
+Default handlers:
+
+| File | Purpose |
+|------|---------|
+| `01-lint.sh` | Run shellcheck on modified `.sh` files. |
+| `02-brief-sync.sh` | Write brief changes to `~/.igris/staging/` for brain pickup. |
+| `03-session-sync.sh` | Write session file changes to `~/.igris/staging/`. |
+
+Add new handlers by dropping a `NN-name.sh` file into `~/.igris/core/hooks/shared/post_tool_use.d/`
+and `chmod +x`. Disable without deletion via `chmod -x`.
+
+### Config Block
+
+`~/.igris/config.json` extends `cli_targets.*` with a `hooks` sub-block:
+
+```json
+{
+  "cli_targets": {
+    "claude": {
+      "hooks": {
+        "settings_file": "$CLAUDE_PROJECT_DIR/.claude/settings.json",
+        "events_covered": ["session_start","session_end","pre_tool_use","post_tool_use","pre_compact","post_compact"],
+        "claude_only_events": ["SubagentStop","Stop","Notification","TaskCompleted","TeammateIdle"]
+      }
+    },
+    "opencode": {
+      "hooks": {
+        "plugin_dir": "~/.config/opencode/plugins/",
+        "plugin_file": "igris-bridge.ts",
+        "events_covered": ["session_start","session_end","pre_tool_use","post_tool_use","pre_compact","post_compact"]
+      }
+    },
+    "codex": {
+      "hooks": {
+        "notify_wrapper": "~/.igris/core/hooks/bridges/codex-notify.sh",
+        "events_covered": ["session_end"]
+      },
+      "user_notify_backup": []
+    },
+    "gemini": {
+      "hooks": {
+        "events_covered": [],
+        "note": "Gemini CLI has no hook API. Not supported."
+      }
+    }
+  }
+}
+```
+
+### Installation
+
+Installation is controlled by `scripts/igris_install.sh` via two flags:
+
+- `--cli=<list>` — which CLIs to target (e.g. `claude,opencode,codex` or `all`).
+- `--include=<list>` — which surfaces to ship (`skills`, `hooks`, or `all`; default `all`).
+
+Examples:
+
+```bash
+# Ship everything everywhere (default):
+bash scripts/igris_install.sh --cli=all /path/to/project
+
+# Hooks only, on Claude + Codex:
+bash scripts/igris_install.sh --cli=claude,codex --include=hooks /path/to/project
+
+# Skills only, on all CLIs:
+bash scripts/igris_install.sh --cli=all --include=skills /path/to/project
+```
+
+Runtime refresh:
+
+```bash
+# Skills:
+bash scripts/igris_cli_sync.sh   --cli=all
+# Hooks:
+bash scripts/igris_hooks_sync.sh --cli=all --project-dir=$PWD
+```
+
+### Degradation on Gemini
+
+Because Gemini has no hook API, these Igris behaviors are unavailable in a Gemini
+session:
+
+- No session_start context injection — Gemini will not see the active brief / session
+  mode / blockers summary on session start.
+- No `pre_tool_use` brief-first gate — Gemini can write files without requiring an
+  active brief.
+- No `post_tool_use` lint / brief-sync / session-sync — file changes are not staged
+  to the brain automatically.
+- No session_end REST MODE flip — CURRENT_SESSION.md remains at its last state until
+  something else flips it.
+
+All other Igris surfaces (skills, agents, rules) continue to work on Gemini via
+`scripts/cli-adapters/md_to_gemini_toml.sh`.
+
+### Testing
+
+Hook coverage tests live at `test/igris_hooks_sync.test.bash`. Fixtures at
+`test/fixtures/hooks/`:
+
+- `settings_pristine.json` — user's Claude settings with no Igris entries.
+- `settings_with_existing.json` — mixed user + stale-Igris entries (tests merge-replace).
+- `codex_config_pristine.toml` — user's Codex config with a non-Igris `notify`.
+- `codex_config_post_install.toml` — expected output after Igris wrap.
+
+Run with `bats test/igris_hooks_sync.test.bash`. All tests should pass on macOS and
+Linux.
+
+---
+
 ## Related
 
 - Brief: FR-103 Multi-CLI Skill Distribution
+- Brief: FR-104 Multi-CLI Hook Bridge Layer
 - Canonical skills: `~/.igris/core/skills/`
-- Adapters: `scripts/cli-adapters/`
+- Canonical shared hooks: `~/.igris/core/hooks/shared/`
+- Bridges: `~/.igris/core/hooks/bridges/`
+- Skill adapters: `scripts/cli-adapters/`
+- Hook adapters: `scripts/hook-adapters/`
 - Config: `~/.igris/config.json` → `cli_targets`

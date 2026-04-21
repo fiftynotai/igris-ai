@@ -1,0 +1,41 @@
+{
+  "includeGitInstructions": false,
+  "permissions": {
+    "allow": [
+      "mcp__user-custom__*"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/user-session-start.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/example/my-gate.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://localhost:9999/my-webhook"
+          }
+        ]
+      }
+    ]
+  }
+}

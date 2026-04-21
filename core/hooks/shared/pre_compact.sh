@@ -1,27 +1,66 @@
 #!/bin/bash
-set -e
 
-# Description: PreCompact hook for Claude Code lifecycle integration.
+# Description: Portable PreCompact hook for multi-CLI lifecycle integration.
 #              Captures critical Igris AI session state before context compaction,
 #              ensuring session recovery information survives the compact operation.
-# Usage: Called automatically by Claude Code before context compaction. Reads JSON from stdin.
+# Usage: Invoked by a per-CLI bridge. Reads JSON from stdin.
+#
+# Input contract:
+#   stdin (preferred): JSON object. Two shapes accepted:
+#     Unified shape (from bridges):
+#       { "source": "claude"|"opencode", "event": "pre_compact",
+#         "project_dir": "...", "payload": {...} }
+#     Native Claude shape:
+#       { "trigger": "manual"|"auto", ... }
+#   env fallback:
+#     IGRIS_HOOK_SOURCE, IGRIS_HOOK_EVENT, IGRIS_PROJECT_DIR
+#
 # Dependencies: jq (preferred), python3 (fallback)
 # Exit codes:
 #   0 - Always (hooks must never fail)
 
-# Navigate to project root
-PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
-cd "$PROJECT_DIR"
+set -e
 
-# Read stdin (Claude Code sends JSON with trigger: manual/auto)
 # shellcheck disable=SC2034  # INPUT is unused but stdin must be consumed
-INPUT=$(cat)
+INPUT=$(cat 2>/dev/null || true)
 
+resolve_project_dir() {
+  local from_input=""
+  if [ -n "$INPUT" ]; then
+    if command -v jq &> /dev/null; then
+      from_input=$(echo "$INPUT" | jq -r '.project_dir // .cwd // ""' 2>/dev/null || echo "")
+    else
+      from_input=$(echo "$INPUT" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get('project_dir') or d.get('cwd') or '')
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+    fi
+  fi
+  if [ -n "$from_input" ]; then
+    echo "$from_input"
+  elif [ -n "${IGRIS_PROJECT_DIR:-}" ]; then
+    echo "$IGRIS_PROJECT_DIR"
+  elif [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
+    echo "$CLAUDE_PROJECT_DIR"
+  else
+    echo "$PWD"
+  fi
+}
+
+PROJECT_DIR=$(resolve_project_dir)
+[ -d "$PROJECT_DIR" ] && cd "$PROJECT_DIR"
+
+# ---------------------------------------------------------------------------
 # Read session mode from CURRENT_SESSION.md
+# ---------------------------------------------------------------------------
 read_session_mode() {
   local slug
   slug=$(basename "$PROJECT_DIR")
-  local session_file="$HOME/.igris/cache/$slug/session/CURRENT_SESSION.md"
+  local session_file="$HOME/.igris/projects/$slug/session/CURRENT_SESSION.md"
   if [ -f "$session_file" ]; then
     grep '\*\*Mode:\*\*' "$session_file" 2>/dev/null | head -1 | sed 's/.*\*\*Mode:\*\* //' || echo "UNKNOWN"
   else
@@ -29,11 +68,13 @@ read_session_mode() {
   fi
 }
 
+# ---------------------------------------------------------------------------
 # Find active briefs and extract workflow state
+# ---------------------------------------------------------------------------
 find_active_briefs() {
   local slug
   slug=$(basename "$PROJECT_DIR")
-  local briefs_dir="$HOME/.igris/cache/$slug/briefs"
+  local briefs_dir="$HOME/.igris/projects/$slug/briefs"
   if [ ! -d "$briefs_dir" ]; then
     return
   fi
@@ -67,11 +108,13 @@ find_active_briefs() {
   done
 }
 
+# ---------------------------------------------------------------------------
 # Read blockers
+# ---------------------------------------------------------------------------
 read_blockers() {
   local slug
   slug=$(basename "$PROJECT_DIR")
-  local blockers_file="$HOME/.igris/cache/$slug/session/BLOCKERS.md"
+  local blockers_file="$HOME/.igris/projects/$slug/session/BLOCKERS.md"
   if [ -f "$blockers_file" ]; then
     local count
     count=$(grep -c '^## ' "$blockers_file" 2>/dev/null) || count=0
@@ -85,7 +128,9 @@ read_blockers() {
   fi
 }
 
+# ---------------------------------------------------------------------------
 # Build recovery context
+# ---------------------------------------------------------------------------
 build_recovery_context() {
   local mode
   mode=$(read_session_mode)
@@ -111,12 +156,13 @@ build_recovery_context() {
   echo "$context"
 }
 
+# ---------------------------------------------------------------------------
 # Main execution
+# ---------------------------------------------------------------------------
 main() {
   local context
   context=$(build_recovery_context 2>/dev/null) || context="[IGRIS SESSION RECOVERY - Context was compacted]\nSession Mode: UNKNOWN\nActive Brief: None\nBlockers: None\n[/IGRIS SESSION RECOVERY]"
 
-  # Output JSON with additionalContext
   if command -v jq &> /dev/null; then
     jq -n --arg ctx "$context" '{"additionalContext": $ctx}'
   else
@@ -130,6 +176,5 @@ print(json.dumps({'additionalContext': context}))
   exit 0
 }
 
-# Run main, catch any unexpected errors
 main "$@" 2>/dev/null || echo '{"additionalContext": "[IGRIS SESSION RECOVERY - Context was compacted]\nSession Mode: UNKNOWN\n[/IGRIS SESSION RECOVERY]"}'
 exit 0

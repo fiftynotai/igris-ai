@@ -1,42 +1,86 @@
 #!/bin/bash
-set -e
 
-# Description: SessionEnd hook for Claude Code lifecycle integration.
-#              Updates CURRENT_SESSION.md to REST MODE when a session ends,
-#              ensuring clean session state for next startup.
-# Usage: Called automatically by Claude Code on session end. Reads JSON from stdin.
+# Description: Portable SessionEnd hook for multi-CLI lifecycle integration.
+#              Updates CURRENT_SESSION.md to REST MODE and deregisters the Igris
+#              instance from the brain (if registered).
+# Usage: Invoked by a per-CLI bridge. Reads JSON from stdin.
+#
+# Input contract:
+#   stdin (preferred): JSON object. Two shapes accepted:
+#     Unified shape (from bridges):
+#       { "source": "claude"|"opencode"|"codex", "event": "session_end",
+#         "project_dir": "...", "payload": {...}, "reason": "..." }
+#     Native Claude shape:
+#       { "session_id": "...", "reason": "..." }
+#   env fallback:
+#     IGRIS_HOOK_SOURCE, IGRIS_HOOK_EVENT, IGRIS_PROJECT_DIR
+#
 # Dependencies: python3
 # Exit codes:
 #   0 - Always (hooks must never fail)
 
-# Navigate to project root
-PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
-cd "$PROJECT_DIR"
+set -e
 
-# Read stdin (Claude Code sends JSON with session_id, reason)
-INPUT=$(cat)
+INPUT=$(cat 2>/dev/null || true)
 
-# Parse reason field
+resolve_project_dir() {
+  local from_input=""
+  if [ -n "$INPUT" ]; then
+    if command -v jq &> /dev/null; then
+      from_input=$(echo "$INPUT" | jq -r '.project_dir // .cwd // ""' 2>/dev/null || echo "")
+    else
+      from_input=$(echo "$INPUT" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get('project_dir') or d.get('cwd') or '')
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+    fi
+  fi
+  if [ -n "$from_input" ]; then
+    echo "$from_input"
+  elif [ -n "${IGRIS_PROJECT_DIR:-}" ]; then
+    echo "$IGRIS_PROJECT_DIR"
+  elif [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
+    echo "$CLAUDE_PROJECT_DIR"
+  else
+    echo "$PWD"
+  fi
+}
+
+PROJECT_DIR=$(resolve_project_dir)
+[ -d "$PROJECT_DIR" ] && cd "$PROJECT_DIR"
+
 parse_reason() {
+  if [ -z "$INPUT" ]; then
+    echo "unknown"
+    return
+  fi
   if command -v jq &> /dev/null; then
-    echo "$INPUT" | jq -r '.reason // "unknown"' 2>/dev/null || echo "unknown"
+    echo "$INPUT" | jq -r '.reason // .payload.reason // "unknown"' 2>/dev/null || echo "unknown"
   else
     echo "$INPUT" | python3 -c "
 import json, sys
 try:
-    data = json.load(sys.stdin)
-    print(data.get('reason', 'unknown'))
+    d = json.load(sys.stdin)
+    p = d.get('payload') or {}
+    reason = d.get('reason') or (p.get('reason') if isinstance(p, dict) else None) or 'unknown'
+    print(reason)
 except Exception:
     print('unknown')
 " 2>/dev/null || echo "unknown"
   fi
 }
 
+# ---------------------------------------------------------------------------
 # Update session file to REST MODE
+# ---------------------------------------------------------------------------
 update_session() {
   local slug
   slug=$(basename "$PROJECT_DIR")
-  local session_file="$HOME/.igris/cache/$slug/session/CURRENT_SESSION.md"
+  local session_file="$HOME/.igris/projects/$slug/session/CURRENT_SESSION.md"
 
   if [ ! -f "$session_file" ]; then
     return 0
@@ -48,7 +92,6 @@ update_session() {
   local reason
   reason=$(parse_reason)
 
-  # Use python3 for reliable file manipulation
   python3 << PYEOF
 import re
 import os
@@ -62,21 +105,18 @@ try:
     with open(session_file, 'r') as f:
         content = f.read()
 
-    # Replace Mode: ACTIVE with Mode: REST MODE
     content = re.sub(
         r'\*\*Mode:\*\* ACTIVE',
         '**Mode:** REST MODE',
         content
     )
 
-    # Update the Updated date
     content = re.sub(
         r'\*\*Updated:\*\* \d{4}-\d{2}-\d{2}',
         f'**Updated:** {today}',
         content
     )
 
-    # Write via temp file for atomic operation
     dir_name = os.path.dirname(os.path.abspath(session_file))
     fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix='.tmp')
     with os.fdopen(fd, 'w') as f:
@@ -89,17 +129,18 @@ except Exception as e:
 PYEOF
 }
 
+# ---------------------------------------------------------------------------
 # Deregister instance from brain before session ends
+# ---------------------------------------------------------------------------
 deregister_instance() {
   local slug
   slug=$(basename "$PROJECT_DIR")
-  local session_file="$HOME/.igris/cache/$slug/session/CURRENT_SESSION.md"
+  local session_file="$HOME/.igris/projects/$slug/session/CURRENT_SESSION.md"
 
   if [ ! -f "$session_file" ]; then
     return 0
   fi
 
-  # Extract Instance ID from session file
   local instance_id
   instance_id=$(sed -n 's/^\*\*Instance ID:\*\* *//p' "$session_file" 2>/dev/null | tr -d '[:space:]' || true)
 
@@ -107,7 +148,6 @@ deregister_instance() {
     return 0
   fi
 
-  # Read remote brain config
   local config_file="$HOME/.igris/config.json"
   local brain_url=""
   local api_key=""
@@ -140,7 +180,6 @@ except Exception:
 
   local deregistered=false
 
-  # Try remote brain first
   if [ -n "$brain_url" ] && [ -n "$api_key" ] && command -v curl &> /dev/null; then
     local http_code
     http_code=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
@@ -152,7 +191,6 @@ except Exception:
     fi
   fi
 
-  # Try localhost fallback (local brain)
   if [ "$deregistered" = "false" ] && command -v curl &> /dev/null; then
     curl -s -o /dev/null -X DELETE \
       "http://localhost:3001/api/instances/${instance_id}" \
@@ -180,13 +218,14 @@ except Exception:
 PYEOF2
 }
 
+# ---------------------------------------------------------------------------
 # Main execution
+# ---------------------------------------------------------------------------
 main() {
   deregister_instance 2>/dev/null || true
   update_session 2>/dev/null || true
   exit 0
 }
 
-# Run main, catch any unexpected errors
 main "$@" 2>/dev/null || true
 exit 0

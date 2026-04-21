@@ -1,14 +1,22 @@
 #!/bin/bash
-set -e
 
-# Description: PostToolUse hook for Write|Edit operations.
-#              Auto-syncs session file changes to brain staging when session files are modified.
-#              Writes a JSON staging file to ~/.igris/staging/ for the brain MCP server.
-#              Guarded by staging_pipeline feature flag in ~/.igris/config.json.
-# Usage: Called automatically by Claude Code after Write/Edit tool use. Reads JSON from stdin.
+# Description: PostToolUse handler (order: 03). Auto-syncs session file changes to
+#              brain staging when session files are modified. Writes a JSON staging
+#              file to ~/.igris/staging/ for the brain MCP server to consume. Guarded
+#              by `features.staging_pipeline` feature flag in ~/.igris/config.json.
+# Usage: Invoked by the dispatcher `post_tool_use.sh`. Reads JSON from stdin.
+#
+# Input contract:
+#   stdin (preferred): JSON object. Two shapes accepted:
+#     Unified shape: { "payload": { "tool_input": { "file_path": "..." } } }
+#     Claude native: { "tool_input": { "file_path": "..." } }
+#   env fallback: IGRIS_FILE_PATH
+#
 # Dependencies: shasum (standard on macOS/Linux)
 # Exit codes:
 #   0 - Always (hooks must never fail)
+
+set -e
 
 # Early exit if staging_pipeline is not enabled in config
 BRAIN_CONFIG="$HOME/.igris/config.json"
@@ -32,36 +40,42 @@ except Exception:
     exit 0
   fi
 else
-  # No config file means no brain — skip staging
   exit 0
 fi
 
-PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-${IGRIS_PROJECT_DIR:-$PWD}}"
 STAGING_DIR="$HOME/.igris/staging"
 
-# Known session files that trigger sync
 SESSION_FILES="CURRENT_SESSION.md LEARNINGS.md DECISIONS.md BLOCKERS.md TEST_RESULTS.md"
 
-# Read stdin (Claude Code sends JSON with tool_input)
-INPUT=$(cat)
+INPUT=$(cat 2>/dev/null || true)
 
-# Extract file_path from tool_input
 extract_file_path() {
+  if [ -z "$INPUT" ]; then
+    echo "${IGRIS_FILE_PATH:-}"
+    return
+  fi
   if command -v jq &> /dev/null; then
-    echo "$INPUT" | jq -r '.tool_input.file_path // ""' 2>/dev/null || echo ""
+    echo "$INPUT" | jq -r '.payload.tool_input.file_path // .tool_input.file_path // ""' 2>/dev/null || echo ""
   else
     echo "$INPUT" | python3 -c "
-import json, sys
+import json, sys, os
 try:
     data = json.load(sys.stdin)
-    print(data.get('tool_input', {}).get('file_path', ''))
+    p = data.get('payload') or {}
+    tool_input = p.get('tool_input') if isinstance(p, dict) else None
+    if not tool_input:
+        tool_input = data.get('tool_input')
+    if isinstance(tool_input, dict):
+        print(tool_input.get('file_path', ''))
+    else:
+        print(os.environ.get('IGRIS_FILE_PATH', ''))
 except Exception:
-    print('')
-" 2>/dev/null || echo ""
+    print(os.environ.get('IGRIS_FILE_PATH', ''))
+" 2>/dev/null || echo "${IGRIS_FILE_PATH:-}"
   fi
 }
 
-# Main logic
 main() {
   local file_path
   file_path=$(extract_file_path)
@@ -70,13 +84,12 @@ main() {
     exit 0
   fi
 
-  # Only process session files in brain cache
   case "$file_path" in
     */.igris/cache/*/session/*.md) ;;
+    */.igris/projects/*/session/*.md) ;;
     *) exit 0 ;;
   esac
 
-  # Only process known session files (not archive or other files)
   local filename
   filename=$(basename "$file_path")
   local matched=false
@@ -91,19 +104,15 @@ main() {
     exit 0
   fi
 
-  # Check the file actually exists
   if [ ! -f "$file_path" ]; then
     exit 0
   fi
 
-  # Ensure staging directory exists
   mkdir -p "$STAGING_DIR"
 
-  # Extract project slug
   local project_slug
   project_slug=$(basename "$PROJECT_DIR")
 
-  # Compute content hash for change detection
   local content_hash
   if command -v shasum &> /dev/null; then
     content_hash=$(shasum -a 256 "$file_path" 2>/dev/null | cut -d' ' -f1 || echo "")
@@ -113,17 +122,14 @@ main() {
     content_hash=""
   fi
 
-  # Extract session mode from CURRENT_SESSION.md
   local session_mode=""
   if [ "$filename" = "CURRENT_SESSION.md" ]; then
     session_mode=$(grep -m1 '^\*\*Mode:\*\*' "$file_path" 2>/dev/null | sed 's/.*\*\*Mode:\*\* //' || echo "Unknown")
   fi
 
-  # Derive a safe key from filename (e.g., CURRENT_SESSION, LEARNINGS)
   local file_key
   file_key=$(echo "$filename" | sed 's/\.md$//')
 
-  # Write staging file for brain MCP server to pick up
   local staging_file="$STAGING_DIR/session_sync_${project_slug}_${file_key}.json"
   cat > "$staging_file" <<EOF
 {
@@ -140,5 +146,4 @@ EOF
   exit 0
 }
 
-# Run main, catch any unexpected errors
 main "$@" 2>/dev/null || exit 0
