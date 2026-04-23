@@ -334,6 +334,131 @@ print(c['cli_targets']['codex']['user_notify_backup'])
 }
 
 # =============================================================================
+# TD-045: Codex TOML writer — nested tables, datetimes, arrays-of-tables,
+#         inline tables, multi-line strings.
+#
+# Asserts BEHAVIOR (user data survives the round-trip, notify bridge is in
+# place), not formatting. Per TD-045 D3: the file layout is allowed to change
+# (tomli_w normalizes key ordering and inline-vs-standard-table choices);
+# user DATA is what must be preserved. This is the pattern that avoids the
+# TD-043 retry trap of asserting on brittle side-effects like grep matches.
+# =============================================================================
+
+@test "TD-045: Codex install preserves nested tables, datetimes, arrays-of-tables, and multi-line strings" {
+  cp "$FIXTURES_DIR/codex_config_rich.toml" "$TEST_CODEX_FILE"
+  run_codex_install
+  [ "$status" -eq 0 ] || fail "codex install failed: $output"
+
+  # Parse the post-install TOML and assert every user key survived. Uses
+  # tomllib to decode datetimes to native Python datetime/date/time objects
+  # so we can assert the type was preserved, not just the string content.
+  python3 - "$TEST_CODEX_FILE" <<'PY'
+import sys
+import datetime
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib
+    except ImportError:
+        print("skip: no tomllib/tomli available")
+        sys.exit(0)
+
+with open(sys.argv[1], "rb") as f:
+    data = tomllib.load(f)
+
+# --- Notify rewritten to Igris bridge ---
+assert isinstance(data.get("notify"), list), f"notify missing or wrong type: {data.get('notify')!r}"
+assert data["notify"][0].endswith("codex-notify.sh"), f"notify not bridge: {data['notify']}"
+assert len(data["notify"]) == 1, f"notify should be [bridge], got: {data['notify']}"
+
+# --- Top-level scalars preserved ---
+assert data["model"] == "claude-3-5-sonnet", f"model: {data.get('model')}"
+assert data["other_flag"] is True, f"other_flag: {data.get('other_flag')!r}"
+assert data["max_tokens"] == 4096, f"max_tokens: {data.get('max_tokens')}"
+assert abs(data["temperature"] - 0.7) < 1e-9, f"temperature: {data.get('temperature')}"
+
+# --- Array of strings preserved ---
+assert data["keywords"] == ["alpha", "beta", "gamma"], f"keywords: {data.get('keywords')}"
+
+# --- Datetime values keep their native types (THE core TD-045 regression) ---
+assert isinstance(data["last_sync"], datetime.datetime), (
+    f"last_sync type: {type(data.get('last_sync')).__name__}"
+)
+assert data["last_sync"].year == 2026 and data["last_sync"].hour == 14, (
+    f"last_sync value: {data['last_sync']}"
+)
+assert isinstance(data["created_date"], datetime.date) and not isinstance(
+    data["created_date"], datetime.datetime
+), f"created_date type: {type(data.get('created_date')).__name__}"
+assert data["created_date"] == datetime.date(2026, 1, 15)
+assert isinstance(data["cutoff_time"], datetime.time), (
+    f"cutoff_time type: {type(data.get('cutoff_time')).__name__}"
+)
+assert data["cutoff_time"] == datetime.time(10, 30, 0)
+
+# --- Inline table preserved (layout may change to [cache]; data must match) ---
+assert data["cache"]["enabled"] is True
+assert data["cache"]["ttl_seconds"] == 3600
+assert data["cache"]["path"] == "~/.codex/cache"
+
+# --- Flat + nested + doubly-nested tables preserved ---
+# The doubly-nested [profiles.main.limits] is the EXACT regression TD-045
+# fixes: the old _parse_toml silently flattened these into top-level keys.
+assert data["profiles"]["default"] == "main"
+assert data["profiles"]["backup"] == "fallback"
+assert data["profiles"]["main"]["model"] == "claude-3-5-sonnet"
+assert abs(data["profiles"]["main"]["temperature"] - 0.5) < 1e-9
+assert data["profiles"]["main"]["limits"]["max_tokens"] == 8000, (
+    f"[profiles.main.limits].max_tokens: {data['profiles']['main']['limits'].get('max_tokens')}"
+)
+assert data["profiles"]["main"]["limits"]["timeout_seconds"] == 120
+
+# --- Array of tables preserved ---
+# Source used [[log.sinks]]; tomli_w may emit this nested inside a [log]
+# table with `sinks = [ ... ]` inline-array-of-inline-tables. Structurally
+# equivalent — the assertion drills into the dict shape, not the layout.
+assert "log" in data, f"log table missing; top-level keys: {sorted(data.keys())}"
+sinks = data["log"]["sinks"]
+assert len(sinks) == 2, f"expected 2 sinks, got {len(sinks)}"
+assert sinks[0]["name"] == "primary"
+assert sinks[0]["host"] == "api.example.com"
+assert sinks[0]["port"] == 443
+assert sinks[1]["name"] == "backup"
+assert sinks[1]["host"] == "api-backup.example.com"
+
+# --- Multi-line basic string preserved (newlines intact) ---
+assert "helpful assistant" in data["prompts"]["system"]
+assert "Follow instructions" in data["prompts"]["system"]
+assert "\n" in data["prompts"]["system"], "multi-line string lost its newlines"
+
+print("ok")
+PY
+}
+
+@test "TD-045: Codex rich-config install is idempotent on re-run" {
+  cp "$FIXTURES_DIR/codex_config_rich.toml" "$TEST_CODEX_FILE"
+  run_codex_install
+  [ "$status" -eq 0 ] || fail "first install failed: $output"
+  local first_config
+  first_config=$(cat "$TEST_CODEX_FILE")
+
+  run_codex_install
+  [ "$status" -eq 0 ] || fail "second install failed: $output"
+  local second_config
+  second_config=$(cat "$TEST_CODEX_FILE")
+
+  # After the first install normalizes through tomli_w, subsequent runs must
+  # be byte-identical — same idempotency invariant as AC#6, now covering the
+  # rich set of TOML types.
+  if [ "$first_config" != "$second_config" ]; then
+    echo "Rich-config install not idempotent. Diff:" >&2
+    diff <(echo "$first_config") <(echo "$second_config") >&2 || true
+    return 1
+  fi
+}
+
+# =============================================================================
 # AC#7: Shared scripts handle all three input shapes
 # =============================================================================
 
