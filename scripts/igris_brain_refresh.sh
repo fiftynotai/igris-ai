@@ -255,10 +255,12 @@ fi
 # ============================================================
 if [ -d "$IGRIS_DIR/core/hooks" ]; then
   COUNT=0
-  # shellcheck disable=SC2044  # globbing `find` is fine; names come from our repo.
-  for f in $(find "$IGRIS_DIR/core/hooks" -type f 2>/dev/null); do
+  # Null-delimited find output survives filenames with spaces/unicode.
+  # Process substitution (`< <(...)`) keeps COUNT in the parent shell scope
+  # (unlike `find | while`, which would run the loop body in a subshell).
+  while IFS= read -r -d '' f; do
     [ -e "$f" ] && COUNT=$((COUNT + 1))
-  done
+  done < <(find "$IGRIS_DIR/core/hooks" -type f -print0 2>/dev/null)
   if [ "$DRY_RUN" = true ]; then
     echo "   Would copy $COUNT hook files -> $BRAIN_DIR/core/hooks/"
   else
