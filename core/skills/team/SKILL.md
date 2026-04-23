@@ -2,7 +2,6 @@
 name: team
 description: Parallel execution with Agent Teams - spawn teammates for parallel briefs, reviews, investigations
 disable-model-invocation: false
-context: fork
 allowed-tools:
   - Read
   - Write
@@ -10,7 +9,7 @@ allowed-tools:
   - Bash
   - Grep
   - Glob
-  - Task
+  - Agent
   - mcp__igris-brain__igris_brief_get
   - mcp__igris-brain__igris_brief_list
   - mcp__igris-brain__igris_brief_update

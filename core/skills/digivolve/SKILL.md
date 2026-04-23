@@ -116,7 +116,7 @@ File: .claude/agents/{name}.md
 Tier: 5 (Custom)
 Role: {role}
 
-To use: Delegate tasks via Task tool with subagent_type="{name}"
+To use: Delegate tasks via Agent tool with subagent_type="{name}"
 ```
 
 ### upgrade {agent_name}

@@ -2,7 +2,6 @@
 name: hunt
 description: Implement a brief with full workflow - usage: /hunt BR-008
 disable-model-invocation: false
-context: fork
 allowed-tools:
   - Read
   - Write
@@ -10,7 +9,7 @@ allowed-tools:
   - Bash
   - Grep
   - Glob
-  - Task
+  - Agent
   - mcp__igris-brain__igris_brief_sync
   - mcp__igris-brain__igris_brief_get
   - mcp__igris-brain__igris_brief_update
@@ -134,10 +133,10 @@ Proceed to PLANNING phase.
    - brief_id: {current brief ID}
    - phase: "PLANNING"
    Skip silently if MCP unavailable. Never block the hunt workflow.
-4. **Delegate to architect agent** using Task tool:
+4. **Delegate to architect agent** using Agent tool:
 
 ```
-Task tool parameters:
+Agent tool parameters:
 - subagent_type: "architect"
 - description: "Plan implementation for {BRIEF_ID}"
 - prompt: "Create implementation plan for brief {BRIEF_ID}.
@@ -185,10 +184,10 @@ Task tool parameters:
    - brief_id: {current brief ID}
    - phase: "BUILDING"
    Skip silently if MCP unavailable.
-4. **Delegate to forger agent** using Task tool:
+4. **Delegate to forger agent** using Agent tool:
 
 ```
-Task tool parameters:
+Agent tool parameters:
 - subagent_type: "forger"
 - description: "Implement {BRIEF_ID}"
 - prompt: "Implement the following brief according to the plan.
@@ -226,10 +225,10 @@ Task tool parameters:
    - brief_id: {current brief ID}
    - phase: "TESTING"
    Skip silently if MCP unavailable.
-4. **Delegate to sentinel agent** using Task tool:
+4. **Delegate to sentinel agent** using Agent tool:
 
 ```
-Task tool parameters:
+Agent tool parameters:
 - subagent_type: "sentinel"
 - description: "Test {BRIEF_ID} implementation"
 - prompt: "Run tests for the implementation.
@@ -288,10 +287,10 @@ Task tool parameters:
    - brief_id: {current brief ID}
    - phase: "REVIEWING"
    Skip silently if MCP unavailable.
-4. **Delegate to warden agent** using Task tool:
+4. **Delegate to warden agent** using Agent tool:
 
 ```
-Task tool parameters:
+Agent tool parameters:
 - subagent_type: "warden"
 - description: "Review {BRIEF_ID} implementation"
 - prompt: "Review the implementation for quality.
