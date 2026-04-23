@@ -23,7 +23,8 @@
 #
 # Dependencies:
 #   timeout (or gtimeout on macOS via brew coreutils). If neither is present the
-#   dispatcher falls back to running the handler without a watchdog.
+#   dispatcher uses a pure-bash watchdog fallback (see run_with_watchdog) that
+#   enforces the same per-handler time budget.
 #
 # Exit codes:
 #   0 - Always (hooks must never fail)
@@ -42,8 +43,8 @@ fi
 INPUT=$(cat 2>/dev/null || true)
 
 # Resolve a timeout binary. macOS base install lacks `timeout`; `gtimeout` comes
-# with `brew install coreutils`. If neither is available, we run handlers without
-# a watchdog — hook contract still exits 0.
+# with `brew install coreutils`. If neither is available, the run_with_watchdog
+# function below enforces the timeout in pure bash.
 TIMEOUT_BIN=""
 TIMEOUT_SECS="${IGRIS_POST_TOOL_USE_TIMEOUT:-10}"
 if command -v timeout &> /dev/null; then
@@ -51,6 +52,74 @@ if command -v timeout &> /dev/null; then
 elif command -v gtimeout &> /dev/null; then
   TIMEOUT_BIN="gtimeout"
 fi
+
+# Pure-bash watchdog fallback for hosts without `timeout`/`gtimeout` (macOS base).
+# Runs a handler with the caller's stdin piped in, sends SIGTERM after $1 seconds,
+# then escalates to SIGKILL after a 1s grace period. Reaps the watchdog subshell
+# AND its `sleep` child on the normal-exit path — see trap below for details.
+#
+# Args:
+#   $1 - timeout in seconds (integer)
+#   $2 - absolute handler path
+# Stdin: payload — callers pipe via `printf '%s' "$INPUT" | run_with_watchdog ...`
+# Stdout/stderr: suppressed (handlers must not write to the hook pipeline)
+# Side effects: spawns two background processes (handler + watchdog subshell).
+#               Both (and the watchdog's backgrounded `sleep` grandchild) are
+#               guaranteed reaped before return — the trap in the subshell
+#               propagates SIGTERM to its `sleep` child so no orphan is left.
+# Returns: handler's exit code on clean exit, or the signal-based code when killed
+run_with_watchdog() {
+  local secs="$1"
+  local handler="$2"
+  local pid watchdog rc
+
+  # Background the handler. Its stdin is the stdin of this function — the caller
+  # pipes INPUT in via `printf '%s' "$INPUT" | run_with_watchdog ...`, and the
+  # backgrounded `bash` inherits that pipe fd. Must stay inside the function so
+  # the subsequent `wait "$pid"` sees the correct child.
+  bash "$handler" > /dev/null 2>&1 &
+  pid=$!
+
+  # Watchdog subshell. The subshell backgrounds its `sleep` and installs an
+  # EXIT trap that kills the sleep child on any subshell exit. A TERM trap
+  # forwards SIGTERM to `exit` so the EXIT handler actually runs (default
+  # SIGTERM action skips traps). This matters on the clean-exit path, where
+  # the parent sends SIGTERM to reap us — without the TERM trap, bash would
+  # die default-style and the sleep would reparent to init, leaking one
+  # orphan per PostToolUse event. `kill` stderr is silenced because the
+  # target pid may already be dead (benign fast-path race).
+  (
+    sleep "$secs" &
+    sleep_pid=$!
+    # shellcheck disable=SC2064  # Expand sleep_pid NOW, not when trap fires.
+    trap "kill \"$sleep_pid\" 2>/dev/null; wait \"$sleep_pid\" 2>/dev/null" EXIT
+    trap 'exit 0' TERM
+    wait "$sleep_pid" 2>/dev/null
+    # Sleep expired naturally — handler overran the budget. Escalate.
+    # (The EXIT trap still fires when we `exit` below, but sleep is already
+    #  dead by then, so `kill` silently no-ops.)
+    kill -TERM "$pid" 2>/dev/null || exit 0
+    sleep 1
+    kill -KILL "$pid" 2>/dev/null || true
+  ) &
+  watchdog=$!
+
+  # Block on the handler. `rc` captures its exit code, or the 128+signal code
+  # if the watchdog killed it. `2>/dev/null` swallows the "Terminated" message
+  # bash 3.2 prints when a child dies by signal.
+  wait "$pid" 2>/dev/null
+  rc=$?
+
+  # Handler exited — reap the watchdog. `kill -TERM` fires the trap above,
+  # which kills the watchdog's `sleep` child and exits the subshell. This is
+  # the contract that prevents the orphan-sleep leak. `kill` may fail with
+  # "no such process" if the watchdog already completed its own sleep+kill
+  # cycle (handler ran past TIMEOUT_SECS); that's fine.
+  kill -TERM "$watchdog" 2>/dev/null || true
+  wait "$watchdog" 2>/dev/null || true
+
+  return "$rc"
+}
 
 # No handlers directory = nothing to do; still exit success.
 if [ ! -d "$DISPATCHER_DIR" ]; then
@@ -66,7 +135,9 @@ for handler in $(LC_ALL=C ls "$DISPATCHER_DIR"/*.sh 2>/dev/null | sort); do
     # shellcheck disable=SC2086  # TIMEOUT_BIN / TIMEOUT_SECS intentionally unquoted.
     printf '%s' "$INPUT" | $TIMEOUT_BIN "$TIMEOUT_SECS" bash "$handler" > /dev/null 2>&1 || true
   else
-    printf '%s' "$INPUT" | bash "$handler" > /dev/null 2>&1 || true
+    # macOS base install lacks `timeout`/`gtimeout`. Fall back to the pure-bash
+    # watchdog so handlers still get time-enforced isolation.
+    printf '%s' "$INPUT" | run_with_watchdog "$TIMEOUT_SECS" "$handler" || true
   fi
 done
 

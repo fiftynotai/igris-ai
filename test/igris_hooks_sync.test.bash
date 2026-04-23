@@ -467,6 +467,147 @@ EOF
 }
 
 # =============================================================================
+# TD-043: Watchdog fallback when timeout/gtimeout unavailable
+# =============================================================================
+
+@test "TD-043: watchdog kills hung handler when timeout binaries missing" {
+  local disp="$HOME/.igris/core/hooks/shared/post_tool_use.sh"
+  [ -f "$disp" ] || skip "live dispatcher not installed"
+
+  local handler_dir="$TEST_TEMP_DIR/ptu_td043_hang.d"
+  mkdir -p "$handler_dir"
+  # Handler hangs for 30s; watchdog at 1s should terminate it within ~2s.
+  cat > "$handler_dir/01-hang.sh" <<'EOF'
+#!/bin/bash
+sleep 30
+EOF
+  chmod +x "$handler_dir"/*.sh
+
+  # Strip timeout/gtimeout from PATH to force the watchdog branch.
+  # Point PATH at a scratch bin dir containing only the handful of binaries
+  # post_tool_use.sh actually invokes. MUST include `dirname` — the dispatcher
+  # calls it at line 34 (`SCRIPT_DIR="$(cd "$(dirname ...)" && pwd)"`). If it's
+  # missing, the dispatcher dies before reaching the watchdog branch and the
+  # test green-lights nothing. If the dispatcher grows a new dependency, add
+  # the symlink here.
+  local scratch_bin="$TEST_TEMP_DIR/scratch_bin"
+  mkdir -p "$scratch_bin"
+  for bin in bash ls sort cat sleep kill printf echo dirname; do
+    ln -sf "$(command -v "$bin")" "$scratch_bin/$bin" 2>/dev/null || true
+  done
+
+  local start_ts end_ts elapsed
+  start_ts=$(date +%s)
+  IGRIS_POST_TOOL_USE_D="$handler_dir" \
+  IGRIS_POST_TOOL_USE_TIMEOUT=1 \
+  PATH="$scratch_bin" \
+    run bash -c "echo '{}' | bash '$disp'"
+  end_ts=$(date +%s)
+  elapsed=$((end_ts - start_ts))
+
+  [ "$status" -eq 0 ] || fail "dispatcher exit non-zero: $output"
+  # Watchdog fires at 1s + 1s grace; tolerate up to 5s for CI jitter.
+  # If the watchdog is broken the handler runs the full 30s sleep.
+  [ "$elapsed" -lt 5 ] || fail "watchdog did not fire (${elapsed}s elapsed, expected < 5s)"
+}
+
+@test "TD-043: watchdog clean path leaves no orphaned sleep process" {
+  local disp="$HOME/.igris/core/hooks/shared/post_tool_use.sh"
+  [ -f "$disp" ] || skip "live dispatcher not installed"
+
+  local handler_dir="$TEST_TEMP_DIR/ptu_td043_clean.d"
+  mkdir -p "$handler_dir"
+  # Handler finishes fast; the watchdog's `sleep $UNIQUE_BUDGET` must be reaped.
+  # Unquoted heredoc so $TEST_TEMP_DIR expands at write time into the script body.
+  cat > "$handler_dir/01-fast.sh" <<EOF
+#!/bin/bash
+echo "ran" > "$TEST_TEMP_DIR/fast.flag"
+exit 0
+EOF
+  chmod +x "$handler_dir"/*.sh
+
+  # MUST include `dirname` — dispatcher uses it at SCRIPT_DIR resolution. Omitting
+  # it means the dispatcher dies at line 34 BEFORE it ever reaches the watchdog,
+  # and the test green-lights nothing. Same list as the hang test above.
+  local scratch_bin="$TEST_TEMP_DIR/scratch_bin_clean"
+  mkdir -p "$scratch_bin"
+  for bin in bash ls sort cat sleep kill printf echo dirname; do
+    ln -sf "$(command -v "$bin")" "$scratch_bin/$bin" 2>/dev/null || true
+  done
+
+  # Use a prime-ish unique timeout value so `pgrep` matches ONLY our watchdog
+  # sleeps, not unrelated sleep processes from the rest of the system/CI. The
+  # old `sleep 10` match was overbroad; 10 is a popular number for lots of
+  # unrelated tooling.
+  local unique_budget=137
+
+  # Run dispatcher with the watchdog-only PATH. Handler is instant (< 1s), so
+  # the watchdog's `sleep $unique_budget` must be killed + reaped before we check.
+  IGRIS_POST_TOOL_USE_D="$handler_dir" \
+  IGRIS_POST_TOOL_USE_TIMEOUT="$unique_budget" \
+  PATH="$scratch_bin" \
+    run bash -c "echo '{}' | bash '$disp'"
+  [ "$status" -eq 0 ] || fail "dispatcher exit non-zero: $output"
+  [ -f "$TEST_TEMP_DIR/fast.flag" ] || fail "handler did not run"
+
+  # Pause so the shell fully reaps the backgrounded watchdog subshell + its sleep.
+  sleep 1
+
+  # Tight assertion: ZERO `sleep $unique_budget` processes alive anywhere. The
+  # budget is unique enough to never collide with ambient processes; any match
+  # is an orphan from our dispatcher run. Use `ps` (not `pgrep`) — on macOS,
+  # `pgrep` occasionally returns PIDs that have already been reaped, yielding
+  # a flaky false-positive. `ps -eo` is authoritative.
+  local leaked
+  leaked=$(ps -eo pid,command | awk -v b="$unique_budget" '$0 ~ ("sleep " b) && !/awk/ {c++} END {print c+0}')
+  [ "${leaked:-0}" -eq 0 ] || fail "watchdog orphaned sleep process: $leaked 'sleep $unique_budget' processes alive after clean run"
+}
+
+@test "TD-043: watchdog has zero orphan accumulation across 3 consecutive runs" {
+  # Deliberate leak-amplification test. If the clean-path reap is broken, the
+  # orphan count grows linearly with invocations. One run could be random
+  # timing; three runs makes a real leak unambiguous.
+  local disp="$HOME/.igris/core/hooks/shared/post_tool_use.sh"
+  [ -f "$disp" ] || skip "live dispatcher not installed"
+
+  local handler_dir="$TEST_TEMP_DIR/ptu_td043_loop.d"
+  mkdir -p "$handler_dir"
+  cat > "$handler_dir/01-fast.sh" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+  chmod +x "$handler_dir"/*.sh
+
+  local scratch_bin="$TEST_TEMP_DIR/scratch_bin_loop"
+  mkdir -p "$scratch_bin"
+  for bin in bash ls sort cat sleep kill printf echo dirname; do
+    ln -sf "$(command -v "$bin")" "$scratch_bin/$bin" 2>/dev/null || true
+  done
+
+  # Unique timeout to scope pgrep to THIS test only. Different from the other
+  # TD-043 test so concurrent bats runs don't cross-contaminate.
+  local unique_budget=139
+
+  local i
+  for i in 1 2 3; do
+    IGRIS_POST_TOOL_USE_D="$handler_dir" \
+    IGRIS_POST_TOOL_USE_TIMEOUT="$unique_budget" \
+    PATH="$scratch_bin" \
+      run bash -c "echo '{}' | bash '$disp'"
+    [ "$status" -eq 0 ] || fail "run $i: dispatcher exit non-zero: $output"
+  done
+
+  # Give the shell time to reap the last subshell.
+  sleep 2
+
+  # Use `ps` (not `pgrep`) — macOS `pgrep` is known to return stale PIDs. See
+  # matching note in the clean-path test above.
+  local leaked
+  leaked=$(ps -eo pid,command | awk -v b="$unique_budget" '$0 ~ ("sleep " b) && !/awk/ {c++} END {print c+0}')
+  [ "${leaked:-0}" -eq 0 ] || fail "orphan accumulation: $leaked 'sleep $unique_budget' processes alive after 3 runs — watchdog reap is broken"
+}
+
+# =============================================================================
 # Cross-cutting: end-to-end install simulation
 # =============================================================================
 
