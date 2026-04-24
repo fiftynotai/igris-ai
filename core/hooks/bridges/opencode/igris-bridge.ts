@@ -28,11 +28,26 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { appendFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 const SHARED_DIR = join(homedir(), ".igris", "core", "hooks", "shared");
 const HANDLER_TIMEOUT_MS = 15_000;
+const TRACE_PATH = process.env.IGRIS_BRIDGE_TRACE;
+const seenSessions = new Set<string>();
+const endedSessions = new Set<string>();
+// Dedupe: session.idle may re-fire during the same logical session (e.g. mid-stream
+// status flips). We only want one session_end dispatch per session id.
+
+function trace(line: string): void {
+  if (!TRACE_PATH) return;
+  try {
+    appendFileSync(TRACE_PATH, `${new Date().toISOString()} ${line}\n`);
+  } catch {
+    // Trace is debug-only; never let it break the hook flow.
+  }
+}
 
 type UnknownCtx = unknown;
 
@@ -67,6 +82,8 @@ function dispatch(
     payload,
   };
 
+  trace(`dispatch event=${event} project_dir=${unified.project_dir}`);
+
   try {
     const result = spawnSync("bash", [join(SHARED_DIR, `${event}.sh`)], {
       input: JSON.stringify(unified),
@@ -74,6 +91,8 @@ function dispatch(
       stdio: ["pipe", "pipe", "pipe"],
       encoding: "utf-8",
     });
+
+    trace(`dispatch-exit event=${event} status=${result.status ?? "null"}`);
 
     if (result.status !== 0 && result.status !== null) {
       // Non-zero exit — log but do not throw. Shared scripts already exit 0 by
@@ -109,14 +128,35 @@ export const IgrisBridge = async (ctx: Record<string, unknown>) => {
     event: async ({ event }: { event: { type: string; [k: string]: unknown } }) => {
       if (!event || typeof event.type !== "string") return;
 
+      trace(`event-seen type=${event.type}`);
+
       switch (event.type) {
         case "session.created":
           dispatch("session_start", event, pluginCtx);
+          markSessionSeen(event);
           break;
+        case "session.updated":
+        case "session.status": {
+          // Fallback: `opencode run` mode does not fire `session.created`
+          // (empirically verified 2026-04-24 against opencode 1.14.22).
+          // Synthesize session_start on first-seen session id from these events.
+          const sid = extractSessionId(event);
+          if (sid && !seenSessions.has(sid)) {
+            seenSessions.add(sid);
+            dispatch("session_start", event, pluginCtx);
+          }
+          break;
+        }
         case "session.idle":
-        case "session.deleted":
-          dispatch("session_end", event, pluginCtx);
+        case "session.deleted": {
+          const sid = extractSessionId(event);
+          const key = sid || "__unknown__";
+          if (!endedSessions.has(key)) {
+            endedSessions.add(key);
+            dispatch("session_end", event, pluginCtx);
+          }
           break;
+        }
         case "session.compacted":
           dispatch("post_compact", event, pluginCtx);
           break;
@@ -129,6 +169,7 @@ export const IgrisBridge = async (ctx: Record<string, unknown>) => {
     // Pre-tool-use gate — mirrors Claude's Write|Edit matcher.
     "tool.execute.before": async (input: unknown, _output: unknown) => {
       const toolName = readToolName(input);
+      trace(`tool-before name=${toolName}`);
       if (!isWriteLikeTool(toolName)) return;
       dispatch("pre_tool_use", { input, tool_name: toolName, tool_input: readToolInput(input) }, pluginCtx);
     },
@@ -136,6 +177,7 @@ export const IgrisBridge = async (ctx: Record<string, unknown>) => {
     // Post-tool-use dispatcher — same gating as pre_tool_use.
     "tool.execute.after": async (input: unknown, output: unknown) => {
       const toolName = readToolName(input);
+      trace(`tool-after name=${toolName}`);
       if (!isWriteLikeTool(toolName)) return;
       dispatch(
         "post_tool_use",
@@ -162,6 +204,27 @@ function readToolName(input: unknown): string {
     if (typeof obj.name === "string") return obj.name;
   }
   return "";
+}
+
+function extractSessionId(event: Record<string, unknown>): string | undefined {
+  const direct = event["sessionID"];
+  if (typeof direct === "string" && direct) return direct;
+  const props = event["properties"];
+  if (props && typeof props === "object") {
+    const info = (props as Record<string, unknown>)["info"];
+    if (info && typeof info === "object") {
+      const id = (info as Record<string, unknown>)["id"];
+      if (typeof id === "string" && id) return id;
+    }
+    const sid = (props as Record<string, unknown>)["sessionID"];
+    if (typeof sid === "string" && sid) return sid;
+  }
+  return undefined;
+}
+
+function markSessionSeen(event: Record<string, unknown>): void {
+  const sid = extractSessionId(event);
+  if (sid) seenSessions.add(sid);
 }
 
 function readToolInput(input: unknown): unknown {

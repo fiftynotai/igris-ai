@@ -247,6 +247,36 @@ Default handlers:
 Add new handlers by dropping a `NN-name.sh` file into `~/.igris/core/hooks/shared/post_tool_use.d/`
 and `chmod +x`. Disable without deletion via `chmod -x`.
 
+### OpenCode-Specific Notes
+
+OpenCode's plugin event model was verified end-to-end against `opencode 1.14.22` on
+2026-04-24 (TD-044). Findings:
+
+**Event-name drift vs. docs.** OpenCode's plugin docs list `session.created`, but in
+headless `opencode run` mode it never fires — sessions come into existence via
+`session.updated` / `session.status` on the same event bus. The bridge synthesises
+`session_start` from the first `session.updated`/`session.status` per unique session id,
+with an in-memory `seenSessions` set guarding against re-fire.
+
+**End-event dedupe.** `session.idle` reliably fires in both run and TUI modes; the bridge
+dedupes via an `endedSessions` set keyed by session id so `session_end` dispatches exactly
+once per session. `server.instance.disposed` is a server-lifecycle event, **not** a
+session-end signal — the bridge ignores it.
+
+**Tool-hook coverage.** `tool.execute.before` / `tool.execute.after` subscriptions are
+wired per OpenCode's documented API and compile clean, but exercising them depends on
+the provider issuing tool calls. During TD-044 verification the Z.AI Coding Plan endpoint
+(anthropic-compatible) returned clean sessions with zero tool invocations, so
+write-tool flow through the bridge was not observed live. Re-test with a provider that
+reliably emits tool calls before relying on that path.
+
+**Trace flag for debugging.** Set `IGRIS_BRIDGE_TRACE=/path/to/trace.log` before launching
+OpenCode to capture every event the bridge sees and every dispatch it fires. Zero impact
+when unset.
+
+**E2E script.** `test/e2e/opencode_bridge.sh` smoke-tests the session lifecycle path.
+Skips with exit code 77 when `opencode`, `bun`, or `ZAI_API_KEY` are unavailable.
+
 ### Config Block
 
 `~/.igris/config.json` extends `cli_targets.*` with a `hooks` sub-block:
