@@ -2,17 +2,19 @@
  * Brain Engine v5.0 — Edges Component
  *
  * Wraps the typed-edges graph layer as a BrainComponent.
- * Provides 3 MCP tools (igris_edge_create / list / remove) and
- * subscribes to brief.created so structural Parent edges are
- * captured at insert time without coupling the briefs component
- * to edge logic.
+ * Provides 6 MCP tools:
+ *   CRUD (FR-105): igris_edge_create / list / remove
+ *   Graph (FR-113): igris_graph_neighbors / path / subgraph
+ * Subscribes to brief.created so structural Parent edges are captured
+ * at insert time without coupling the briefs component to edge logic.
+ * Self-listens on edge.created and edge.removed to invalidate the
+ * subgraph traversal cache.
  *
- * Emits: edge.created
- * Listens: brief.created
+ * Emits: edge.created, edge.removed
+ * Listens: brief.created, edge.created (self), edge.removed (self)
  *
  * Foundation for FR-107 (provenance), FR-110 (goals), FR-111
- * (visualization), FR-112 (community detection), FR-113 (graph
- * traversal MCP tools).
+ * (visualization), FR-112 (community detection).
  *
  * @module engine/components/edges
  * @author Fifty.ai
@@ -22,6 +24,7 @@ import type {
   BrainComponent,
   ComponentContext,
   EventDef,
+  EventHandler,
   EventPayload,
   Migration,
   ToolDefinition,
@@ -36,6 +39,12 @@ import {
   VALID_ENTITY_TYPES,
   VALID_PROVENANCE,
 } from './handlers.js';
+import {
+  handleGraphNeighbors,
+  handleGraphPath,
+  handleGraphSubgraph,
+  invalidateSubgraphCache,
+} from './traversal.js';
 
 /**
  * Build the edges component instance.
@@ -103,9 +112,16 @@ export function createEdgesComponent(): BrainComponent {
     }
   }
 
+  // Cache-invalidation listeners are stable function references so they can
+  // be passed to both bus.on() and bus.off() — typed loosely to satisfy the
+  // EventHandler signature even though we ignore the payload.
+  const onEdgeMutated: EventHandler = () => {
+    invalidateSubgraphCache();
+  };
+
   return {
     name: 'edges',
-    version: '1.0.0',
+    version: '1.1.0',
     depends: ['briefs'],
 
     schema(): Migration[] {
@@ -228,7 +244,138 @@ export function createEdgesComponent(): BrainComponent {
             },
             required: ['id'],
           },
-          handler: (args) => handleEdgeRemove(args),
+          handler: (args) => {
+            const result = handleEdgeRemove(args);
+            if (!result.isError && _ctx) {
+              // Emit edge.removed so cache layers (traversal subgraph cache)
+              // and any future subscribers can react to the deletion.
+              _ctx.bus.emit('edge.removed', {
+                id: args.id,
+                hard: args.hard === true,
+                source: 'tool',
+              });
+            }
+            return result;
+          },
+        },
+
+        // -----------------------------------------------------------------
+        // FR-113: igris_graph_neighbors
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_graph_neighbors',
+          description:
+            "Return all entity nodes within N hops of a seed node. Direction-aware: 'out' follows from→to, 'in' follows to→from, 'both' is undirected. Excludes soft-deleted edges by default. Caps depth at 10 and result count at 100.",
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              node_type: {
+                type: 'string',
+                enum: [...VALID_ENTITY_TYPES],
+                description: 'Type of the seed entity',
+              },
+              node_id: {
+                type: 'string',
+                description: 'Stable id of the seed entity',
+              },
+              depth: {
+                type: 'integer',
+                description: 'Maximum hops from seed (default 1, max 10)',
+                minimum: 1,
+                maximum: 10,
+              },
+              edge_types: {
+                type: 'array',
+                items: { type: 'string', enum: [...VALID_EDGE_TYPES] },
+                description: 'Optional edge_type filter (subset of catalog)',
+              },
+              direction: {
+                type: 'string',
+                enum: ['in', 'out', 'both'],
+                description: 'Edge direction to follow (default both)',
+              },
+              max_nodes: {
+                type: 'integer',
+                description: 'Maximum nodes to return (default 100, max 100)',
+                minimum: 1,
+                maximum: 100,
+              },
+              include_deleted: {
+                type: 'boolean',
+                description: 'Include soft-deleted edges (default false)',
+              },
+            },
+            required: ['node_type', 'node_id'],
+          },
+          handler: (args) => handleGraphNeighbors(args),
+        },
+
+        // -----------------------------------------------------------------
+        // FR-113: igris_graph_path
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_graph_path',
+          description:
+            'Find the shortest directed path from one entity to another following outgoing edges. Returns found=false when no path exists within max_depth. Cycle-safe via visited-set tracking. Excludes soft-deleted edges by default.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              from_type: { type: 'string', enum: [...VALID_ENTITY_TYPES] },
+              from_id: { type: 'string' },
+              to_type: { type: 'string', enum: [...VALID_ENTITY_TYPES] },
+              to_id: { type: 'string' },
+              edge_types: {
+                type: 'array',
+                items: { type: 'string', enum: [...VALID_EDGE_TYPES] },
+                description: 'Optional edge_type filter',
+              },
+              max_depth: {
+                type: 'integer',
+                description: 'Maximum hops to explore (default 5, max 10)',
+                minimum: 1,
+                maximum: 10,
+              },
+              include_deleted: {
+                type: 'boolean',
+                description: 'Include soft-deleted edges (default false)',
+              },
+            },
+            required: ['from_type', 'from_id', 'to_type', 'to_id'],
+          },
+          handler: (args) => handleGraphPath(args),
+        },
+
+        // -----------------------------------------------------------------
+        // FR-113: igris_graph_subgraph
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_graph_subgraph',
+          description:
+            'Return the connected subgraph (nodes + edges) reachable from a seed node, bounded by max_nodes. Useful for visualization. Results cached for 5 minutes; cache invalidated by edge mutations.',
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              seed_node_type: { type: 'string', enum: [...VALID_ENTITY_TYPES] },
+              seed_node_id: { type: 'string' },
+              max_nodes: {
+                type: 'integer',
+                description: 'Maximum nodes to include (default 20, max 100)',
+                minimum: 1,
+                maximum: 100,
+              },
+              edge_types: {
+                type: 'array',
+                items: { type: 'string', enum: [...VALID_EDGE_TYPES] },
+                description: 'Optional edge_type filter',
+              },
+              include_deleted: {
+                type: 'boolean',
+                description: 'Include soft-deleted edges (default false)',
+              },
+            },
+            required: ['seed_node_type', 'seed_node_id'],
+          },
+          handler: (args) => handleGraphSubgraph(args),
         },
       ];
     },
@@ -240,11 +387,24 @@ export function createEdgesComponent(): BrainComponent {
             name: 'edge.created',
             description: 'A typed edge was created (via tool or auto-hook)',
           },
+          {
+            name: 'edge.removed',
+            description:
+              'A typed edge was soft- or hard-deleted (cache invalidation signal for downstream subscribers)',
+          },
         ],
         listens: [
           {
             name: 'brief.created',
             description: 'Auto-create parent_of edge when payload contains parent_brief_id',
+          },
+          {
+            name: 'edge.created',
+            description: 'Self-listen to invalidate the FR-113 subgraph traversal cache',
+          },
+          {
+            name: 'edge.removed',
+            description: 'Self-listen to invalidate the FR-113 subgraph traversal cache',
           },
         ],
       };
@@ -253,13 +413,20 @@ export function createEdgesComponent(): BrainComponent {
     init(ctx: ComponentContext): void {
       _ctx = ctx;
       ctx.bus.on('brief.created', onBriefCreated);
-      ctx.log.info('Edges component initialized');
+      // Self-listen for cache invalidation (FR-113 subgraph cache).
+      ctx.bus.on('edge.created', onEdgeMutated);
+      ctx.bus.on('edge.removed', onEdgeMutated);
+      ctx.log.info('Edges component initialized (v1.1.0 — FR-113 traversal)');
     },
 
     destroy(): void {
       if (_ctx) {
         _ctx.bus.off('brief.created', onBriefCreated);
+        _ctx.bus.off('edge.created', onEdgeMutated);
+        _ctx.bus.off('edge.removed', onEdgeMutated);
       }
+      // Clear cache on shutdown so a re-init doesn't see stale data.
+      invalidateSubgraphCache();
       _ctx = null;
     },
   };

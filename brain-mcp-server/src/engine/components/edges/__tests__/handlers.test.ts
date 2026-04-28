@@ -405,14 +405,19 @@ describe('edges handlers', () => {
         expect(() => db.exec(migration.sql)).not.toThrow();
       }
 
-      // The 3 indexes should still be present (and only those 3 from this component).
+      // FR-105 ships 3 indexes; FR-113 v2 migration adds the compound index.
       const indexes = db
         .prepare(
           "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'entity_edges' AND name NOT LIKE 'sqlite_autoindex_%'",
         )
         .all() as { name: string }[];
       const names = indexes.map((i) => i.name).sort();
-      expect(names).toEqual(['idx_edges_from', 'idx_edges_to', 'idx_edges_type']);
+      expect(names).toEqual([
+        'idx_edges_compound',
+        'idx_edges_from',
+        'idx_edges_to',
+        'idx_edges_type',
+      ]);
     });
 
     it('UNIQUE constraint enforces (from_type,from_id,to_type,to_id,edge_type)', () => {

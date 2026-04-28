@@ -70,11 +70,17 @@ describe('edges component integration', () => {
     vi.restoreAllMocks();
   });
 
-  it('exposes the three FR-105 MCP tools', () => {
+  it('exposes the FR-105 CRUD tools and FR-113 traversal tools', () => {
     const comp = createEdgesComponent();
     const tools = comp.tools();
     const names = tools.map((t) => t.name).sort();
-    expect(names).toEqual(['igris_edge_create', 'igris_edge_list', 'igris_edge_remove']);
+    // FR-105 baseline must remain present; FR-113 added 3 traversal tools.
+    expect(names).toContain('igris_edge_create');
+    expect(names).toContain('igris_edge_list');
+    expect(names).toContain('igris_edge_remove');
+    expect(names).toContain('igris_graph_neighbors');
+    expect(names).toContain('igris_graph_path');
+    expect(names).toContain('igris_graph_subgraph');
   });
 
   it('declares dependency on the briefs component', () => {
