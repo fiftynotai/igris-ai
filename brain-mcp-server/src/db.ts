@@ -10,10 +10,19 @@
  * @author Fifty.ai
  */
 
+import { createRequire } from 'node:module';
 import Database from 'better-sqlite3';
 import * as path from 'path';
 import * as os from 'os';
 import type { StorageAdapter } from './engine/types.js';
+
+/**
+ * CommonJS require shim. The package is ESM (`"type": "module"`),
+ * so a bare `require()` throws `ReferenceError: require is not defined`.
+ * `sqlite-vec` ships both CJS and ESM entries; createRequire keeps
+ * `loadSqliteVec` synchronous (callers expect a sync boolean).
+ */
+const requireCjs = createRequire(import.meta.url);
 
 /** Whether sqlite-vec extension loaded successfully */
 let _vecAvailable = false;
@@ -46,12 +55,16 @@ let _adapter: StorageAdapter | null = null;
  * @returns Whether sqlite-vec was loaded successfully
  */
 function loadSqliteVec(db: Database.Database): boolean {
+  if (process.env.IGRIS_DISABLE_VEC === '1') {
+    console.error('[brain] sqlite-vec disabled via IGRIS_DISABLE_VEC=1');
+    return false;
+  }
   try {
-    // Dynamic import resolved at build time — sqlite-vec provides a load() helper
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const sqliteVec = require('sqlite-vec');
+    const sqliteVec = requireCjs('sqlite-vec') as { load: (db: Database.Database) => void };
     sqliteVec.load(db);
-    console.error('[brain] sqlite-vec extension loaded successfully');
+    // Smoke check — confirms the native binary actually loaded.
+    const row = db.prepare('SELECT vec_version() AS v').get() as { v: string };
+    console.error(`[brain] sqlite-vec extension loaded successfully (vec_version=${row.v})`);
     return true;
   } catch (err) {
     console.error('[brain] sqlite-vec extension not available — vector search disabled:', err);
