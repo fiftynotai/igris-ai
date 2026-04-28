@@ -58,9 +58,15 @@ function insertEmbeddingInto(
   if (!ALLOWED_VEC_TABLES.has(tableName)) {
     throw new Error(`Invalid vec table name: "${tableName}"`);
   }
+  // sqlite-vec v0.1.7 requires BigInt for rowid bindings on vec0 virtual
+  // tables; plain JS numbers throw "Only integers are allows for primary
+  // key values" even when the value IS an integer. Internal IDs stay as
+  // JS number for caller convenience; conversion happens here. BigInt is
+  // safe up to Number.MAX_SAFE_INTEGER (9.0e15), well above any realistic
+  // id range.
   db.prepare(
     `INSERT OR REPLACE INTO ${tableName}(rowid, embedding) VALUES (?, ?)`,
-  ).run(rowid, embeddingToBuffer(embedding));
+  ).run(BigInt(rowid), embeddingToBuffer(embedding));
 }
 
 /**
@@ -74,7 +80,9 @@ function deleteEmbeddingFrom(db: Database.Database, tableName: string, rowid: nu
   if (!ALLOWED_VEC_TABLES.has(tableName)) {
     throw new Error(`Invalid vec table name: "${tableName}"`);
   }
-  db.prepare(`DELETE FROM ${tableName} WHERE rowid = ?`).run(rowid);
+  // sqlite-vec v0.1.7 requires BigInt for rowid bindings (see
+  // insertEmbeddingInto for the full rationale).
+  db.prepare(`DELETE FROM ${tableName} WHERE rowid = ?`).run(BigInt(rowid));
 }
 
 /** Row returned by a KNN vector search */
