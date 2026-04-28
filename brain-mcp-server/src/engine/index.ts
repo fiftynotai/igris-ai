@@ -31,6 +31,7 @@ import { createMetricsComponent } from './components/metrics/index.js';
 import { createSessionsComponent } from './components/sessions/index.js';
 import { createBriefsComponent } from './components/briefs/index.js';
 import { createEdgesComponent } from './components/edges/index.js';
+import { createGoalsComponent } from './components/goals/index.js';
 import { createTasksComponent } from './components/tasks/index.js';
 import { createInstancesComponent } from './components/instances/index.js';
 import { createSyncComponent } from './components/sync/index.js';
@@ -85,7 +86,7 @@ export function bootEngine(config: EngineConfig): Engine {
   // 5. Create registry
   const registry = createRegistry(storage, bus);
 
-  // 6. Register domain components (all 15)
+  // 6. Register domain components (all 17)
   const componentFactories = [
     createMemoryComponent,
     createErrorsComponent,
@@ -95,6 +96,7 @@ export function bootEngine(config: EngineConfig): Engine {
     createSessionsComponent,
     createBriefsComponent,
     createEdgesComponent,
+    createGoalsComponent,
     createTasksComponent,
     createInstancesComponent,
     createSyncComponent,

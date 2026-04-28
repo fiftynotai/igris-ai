@@ -276,8 +276,8 @@ describe('Sync Auto-Push', () => {
   // -------------------------------------------------------------------------
 
   describe('SYNC_TABLES completeness', () => {
-    it('has exactly 23 entries', () => {
-      expect(SYNC_TABLES).toHaveLength(23);
+    it('has exactly 24 entries', () => {
+      expect(SYNC_TABLES).toHaveLength(24);
     });
 
     const newTables = [
@@ -292,6 +292,13 @@ describe('Sync Auto-Push', () => {
         syncKey: ['from_type', 'from_id', 'to_type', 'to_id', 'edge_type'],
         strategy: 'append',
         timestampCol: 'created_at',
+      },
+      // FR-110: goals (outcome-level entities)
+      {
+        table: 'goals',
+        syncKey: ['goal_id'],
+        strategy: 'lww',
+        timestampCol: 'updated_at',
       },
     ];
 

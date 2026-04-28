@@ -296,6 +296,23 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'confidence', 'provenance', 'created_at', 'metadata',
     ],
   },
+  {
+    // FR-110: goals (outcome-level entities).
+    // LWW on goal_id (UNIQUE) using updated_at — matches the briefs/projects
+    // pattern. The auto-increment `id` column is intentionally omitted from
+    // the synced columns; goal_id is the portable identity. achieved_at is
+    // a derived timestamp (server-set on status->achieved) so it ships with
+    // the row to preserve the transition timestamp across machines.
+    table: 'goals',
+    syncKey: ['goal_id'],
+    timestampCol: 'updated_at',
+    strategy: 'lww',
+    columns: [
+      'goal_id', 'project_slug', 'title', 'description', 'outcome',
+      'deadline', 'status', 'priority', 'created_at', 'updated_at',
+      'achieved_at', 'metadata',
+    ],
+  },
 ];
 
 // ---------------------------------------------------------------------------
