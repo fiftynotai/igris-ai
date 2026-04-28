@@ -4,7 +4,7 @@ The engineering operating system for Claude Code.
 
 Brief-first. Brain-backed. Self-healing.
 
-**7 Agents** | **20 Skills** | **70 MCP Tools** | **34 REST Endpoints**
+**7 Agents** | **20 Skills** | **88 MCP Tools** | **34 REST Endpoints**
 
 ---
 
@@ -62,7 +62,7 @@ This is the hero feature. Details in [The HUNT Workflow](#the-hunt-workflow).
 
 ### 3. The Brain
 
-Centralized at `~/.igris/`. SQLite WAL + FTS5. 67 MCP tools across 14 components. 34 REST API endpoints.
+Centralized at `~/.igris/`. SQLite WAL + FTS5. 88 MCP tools across 16 components. 34 REST API endpoints.
 
 The brain remembers across projects, sessions, and context resets. Error catalogs, pattern suggestions, velocity metrics, cross-project learnings -- all stored in a single database, all searchable with full-text search, all accessible via MCP or HTTP.
 
@@ -104,26 +104,28 @@ No copy drift. No sync scripts. No version mismatch between projects. One source
 
 ![Brain Architecture](docs/images/brain-architecture.png)
 
-### 67 MCP Tools (13 Components)
+### 88 MCP Tools (16 Components)
 
 Tools are available globally via the `igris-brain` MCP server.
 
 | Component | Tools | Purpose |
 |-----------|-------|---------|
-| Memory | 4 | Store, search, recall learnings; pattern suggestions |
-| Errors | 1 | Error lookup with solution catalog (FTS5) |
+| Memory | 7 | Store, search, recall, hybrid search, embedding backfill |
+| Errors | 3 | Lookup, similar errors, embedding backfill |
 | Projects | 3 | Register, list, status |
 | Metrics | 3 | Record, query, velocity dashboards |
 | Sessions | 4 | Sync, recall, file get/update |
-| Briefs | 6 | CRUD, sync, dashboard, file management |
+| Briefs | 9 | CRUD, sync, dashboard, file management, similar, velocity |
 | Tasks | 13 | Create, claim, assign, block, complete, fail, retry, list, results |
 | Instances | 4 | Heartbeat, list, remove, agent events |
 | Sync | 11 | Push/pull brain data, queue management, file/session/brief/definition sync |
 | Cache | 2 | Rebuild/clean brain-to-filesystem cache |
-| Context | 3 | Register, get, tree routing (v6) |
+| Context | 4 | Register, get, load, tree routing (v6) |
 | Schedules | 7 | Create, list, get, enable/disable, fire, delete |
 | Coordination | 7 | Auto-route, priorities, config, audit, agent capabilities |
 | Monitoring | 2 | Event log, event log cleanup |
+| Registry | 6 | Module/template registry: add, search, get, list, remove, update |
+| Edges | 3 | Typed graph edges across briefs/learnings/errors (create, list, remove) |
 
 ### 34 REST API Endpoints
 
@@ -317,7 +319,7 @@ Honest comparison. No competitor has all five pillars.
 | Capability | Igris | Multi-Agent Frameworks | AI IDEs |
 |------------|-------|------------------------|---------|
 | Brief-first audit trail | Enforced -- 9 types, full lifecycle | No | No |
-| Cross-project brain | SQLite WAL + FTS5, 67 MCP tools | File-based or none | Session-only |
+| Cross-project brain | SQLite WAL + FTS5, 88 MCP tools | File-based or none | Session-only |
 | Self-healing pipeline | mender + sentinel, 3 retries | Manual intervention | Manual intervention |
 | Zero-drift install | Symlinks from single brain | Copy-based, drift-prone | N/A |
 | Tool-enforced roles | Agent definitions restrict tools | Prompt-based, bypassable | N/A |
@@ -330,7 +332,7 @@ Honest comparison. No competitor has all five pillars.
 
 - **vs. multi-agent frameworks** (Ruflo, Oh-My-ClaudeCode, metaswarm): They have agents. Igris has agents with enforced tool restrictions, a persistent brain, brief-first audit trail, and self-healing pipelines. More agents is not the differentiator -- discipline is.
 - **vs. AI IDEs** (Cursor, Copilot): They accelerate typing. Igris manages engineering workflow. Different problems, different tools.
-- **vs. memory-focused tools** (Claude CodePro): File-based memory banks per project. Igris has a database-backed brain that works across projects, survives context resets, and serves 67 tools via MCP.
+- **vs. memory-focused tools** (Claude CodePro): File-based memory banks per project. Igris has a database-backed brain that works across projects, survives context resets, and serves 88 tools via MCP.
 
 ---
 

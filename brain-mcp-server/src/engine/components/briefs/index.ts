@@ -25,6 +25,7 @@ import {
   handleBriefVelocity,
   handleBriefSimilar,
   handleBriefBackfillEmbeddings,
+  extractParentBriefId,
 } from '../../../tools/briefs.js';
 import type {
   BriefSyncInput,
@@ -289,6 +290,10 @@ export function createBriefsComponent(): BrainComponent {
                 type: 'string',
                 description: 'Current workflow phase',
               },
+              parent_brief: {
+                type: 'string',
+                description: 'Parent brief id (e.g., "FR-051"). When omitted, the briefs component scans the markdown content for "**Parent Brief:** FR-XXX". Used to auto-create a parent_of edge (FR-105).',
+              },
             },
             required: ['project', 'brief_id', 'title', 'content'],
           },
@@ -297,11 +302,22 @@ export function createBriefsComponent(): BrainComponent {
             const result = await handleBriefCreate(args as unknown as BriefCreateInput);
 
             if (_ctx) {
+              // FR-105: enrich payload with parent_brief_id so the edges
+              // component can auto-create a parent_of edge. Prefer the
+              // explicit field, fall back to scanning markdown content.
+              const explicitParent = typedArgs.parent_brief as string | undefined;
+              const content = (typedArgs.content as string | undefined) ?? '';
+              const parsedParent = explicitParent ?? extractParentBriefId(content) ?? undefined;
+              const briefId = typedArgs.brief_id as string;
+              // Defensive: never let a brief claim itself as its own parent.
+              const parentBriefId = parsedParent && parsedParent !== briefId ? parsedParent : undefined;
+
               _ctx.bus.emit('brief.created', {
                 project: typedArgs.project as string,
-                brief_id: typedArgs.brief_id as string,
+                brief_id: briefId,
                 title: typedArgs.title as string,
                 status: (typedArgs.status as string) ?? 'Ready',
+                ...(parentBriefId ? { parent_brief_id: parentBriefId } : {}),
               });
 
               // Check if similarity warning was emitted in the response
@@ -309,7 +325,7 @@ export function createBriefsComponent(): BrainComponent {
               if (text.includes('similar brief(s) detected')) {
                 _ctx.bus.emit('brief.similar_detected', {
                   project: typedArgs.project as string,
-                  brief_id: typedArgs.brief_id as string,
+                  brief_id: briefId,
                 });
               }
             }

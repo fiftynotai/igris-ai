@@ -281,6 +281,21 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'source_project', 'status', 'created_at', 'updated_at',
     ],
   },
+  {
+    // FR-105: typed-edges graph layer.
+    // Append strategy + composite syncKey including edge_type matches the
+    // local UNIQUE(from_type, from_id, to_type, to_id, edge_type) so remote
+    // INSERT OR IGNORE has the same idempotency semantics. Soft-deletes are
+    // captured as metadata mutations, not row deletions.
+    table: 'entity_edges',
+    syncKey: ['from_type', 'from_id', 'to_type', 'to_id', 'edge_type'],
+    timestampCol: 'created_at',
+    strategy: 'append',
+    columns: [
+      'from_type', 'from_id', 'to_type', 'to_id', 'edge_type',
+      'confidence', 'provenance', 'created_at', 'metadata',
+    ],
+  },
 ];
 
 // ---------------------------------------------------------------------------

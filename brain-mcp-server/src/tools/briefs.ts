@@ -67,6 +67,35 @@ interface BriefCreateInput {
   priority?: string;
   effort?: string;
   phase?: string;
+  /**
+   * Explicit parent brief id (e.g. "FR-051"). When omitted the briefs
+   * component falls back to scanning the markdown for a `**Parent Brief:**`
+   * header. Surfaced in the brief.created event payload so the edges
+   * component can auto-create a parent_of edge (FR-105).
+   */
+  parent_brief?: string;
+}
+
+/**
+ * Extract a parent brief id from markdown content.
+ *
+ * Recognizes the canonical Igris brief header format `**Parent Brief:** FR-XXX`
+ * (and a few common variants: `Parent: FR-XXX`, `## Parent: FR-XXX`).
+ * Returns the first match or null. Used by the briefs component to enrich
+ * the brief.created event payload (FR-105 hook target).
+ *
+ * Exported for unit tests.
+ */
+export function extractParentBriefId(content: string): string | null {
+  if (!content) return null;
+  // Tolerant pattern: optional bold/heading prefix, "Parent" optionally
+  // followed by " Brief", a colon, optional closing bold stars, then a
+  // brief id (FR-/BR-/TD-/MG- + digits). In markdown bold the colon lives
+  // BEFORE the closing `**` (`**Parent Brief:**`), so the colon is matched
+  // before the optional trailing `\*?\*?`.
+  const re = /(?:\*\*|^|\n)\s*(?:#+\s*)?\*?\*?Parent(?:\s+Brief)?:\*?\*?\s*([A-Z]{2,3}-\d+)/im;
+  const match = re.exec(content);
+  return match ? match[1] : null;
 }
 
 /** Input shape for igris_brief_update */

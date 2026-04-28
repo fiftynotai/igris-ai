@@ -30,6 +30,7 @@ import { createProjectsComponent } from './components/projects/index.js';
 import { createMetricsComponent } from './components/metrics/index.js';
 import { createSessionsComponent } from './components/sessions/index.js';
 import { createBriefsComponent } from './components/briefs/index.js';
+import { createEdgesComponent } from './components/edges/index.js';
 import { createTasksComponent } from './components/tasks/index.js';
 import { createInstancesComponent } from './components/instances/index.js';
 import { createSyncComponent } from './components/sync/index.js';
@@ -93,6 +94,7 @@ export function bootEngine(config: EngineConfig): Engine {
     createMetricsComponent,
     createSessionsComponent,
     createBriefsComponent,
+    createEdgesComponent,
     createTasksComponent,
     createInstancesComponent,
     createSyncComponent,

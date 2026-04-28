@@ -3,7 +3,7 @@
  *
  * Tests the event-driven auto-push system in the sync component:
  * 1. Config loading (enabled/disabled, missing fields, malformed JSON)
- * 2. SYNC_TABLES completeness (21 entries, new v5 tables)
+ * 2. SYNC_TABLES completeness (23 entries — FR-105 added entity_edges)
  * 3. Immediate push (brief/session/instance events)
  * 4. Batched push (memory/error/project/metrics events with 10s window)
  * 5. Cleanup (destroy clears timers, listeners, pending set)
@@ -276,8 +276,8 @@ describe('Sync Auto-Push', () => {
   // -------------------------------------------------------------------------
 
   describe('SYNC_TABLES completeness', () => {
-    it('has exactly 21 entries', () => {
-      expect(SYNC_TABLES).toHaveLength(22);
+    it('has exactly 23 entries', () => {
+      expect(SYNC_TABLES).toHaveLength(23);
     });
 
     const newTables = [
@@ -286,6 +286,13 @@ describe('Sync Auto-Push', () => {
       { table: 'coordination_config', syncKey: ['key'], strategy: 'lww', timestampCol: 'updated_at' },
       { table: 'schedules', syncKey: ['id'], strategy: 'lww', timestampCol: 'updated_at' },
       { table: 'schedule_runs', syncKey: ['id'], strategy: 'append', timestampCol: 'started_at' },
+      // FR-105: typed-edges graph layer
+      {
+        table: 'entity_edges',
+        syncKey: ['from_type', 'from_id', 'to_type', 'to_id', 'edge_type'],
+        strategy: 'append',
+        timestampCol: 'created_at',
+      },
     ];
 
     for (const expected of newTables) {
