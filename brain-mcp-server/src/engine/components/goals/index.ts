@@ -68,7 +68,7 @@ export function createGoalsComponent(): BrainComponent {
         {
           name: 'igris_goal_create',
           description:
-            'Create a new goal (outcome-level entity). Auto-allocates the next sequential GL-XXX id server-side. Use this when the user describes an outcome with a deadline, not a unit of work — register a brief instead for tasks. Pass project=null (omit the field) for cross-project goals.',
+            'Create a new goal (outcome-level entity). Auto-allocates the next sequential GL-XXX id server-side. Use this when the user describes an outcome with a deadline, not a unit of work — register a brief instead for tasks. The project field is optional — omit or pass null for cross-project goals.',
           inputSchema: {
             type: 'object' as const,
             properties: {

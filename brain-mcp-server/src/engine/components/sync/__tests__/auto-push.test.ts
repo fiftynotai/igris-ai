@@ -3,7 +3,7 @@
  *
  * Tests the event-driven auto-push system in the sync component:
  * 1. Config loading (enabled/disabled, missing fields, malformed JSON)
- * 2. SYNC_TABLES completeness (23 entries — FR-105 added entity_edges)
+ * 2. SYNC_TABLES completeness (24 entries — FR-110 added goals)
  * 3. Immediate push (brief/session/instance events)
  * 4. Batched push (memory/error/project/metrics events with 10s window)
  * 5. Cleanup (destroy clears timers, listeners, pending set)

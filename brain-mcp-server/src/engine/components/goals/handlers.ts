@@ -58,6 +58,16 @@ export const TERMINAL_BRIEF_STATUSES = ['Done', 'Archived'] as const;
 /** Goal ID prefix for auto-allocation. */
 const GOAL_ID_PREFIX = 'GL-';
 
+/**
+ * Length caps for free-text goal fields. Enforced pre-INSERT/UPDATE so
+ * pathological payloads don't bloat the goals table or the JSON envelopes
+ * `igris_goal_get` returns. Caps were chosen to match typical product
+ * limits: ~256 chars for headline-style fields, ~4KB for descriptions.
+ */
+export const MAX_TITLE_LEN = 256;
+export const MAX_DESCRIPTION_LEN = 4096;
+export const MAX_OUTCOME_LEN = 256;
+
 /** ISO-8601 date validator (YYYY-MM-DD or full ISO timestamp). */
 const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
 
@@ -271,6 +281,12 @@ export function handleGoalCreate(args: Record<string, unknown>): ToolResult {
   if (!title || !outcome) {
     return errorResult('Missing required fields: title, outcome');
   }
+  if (title.length > MAX_TITLE_LEN) {
+    return errorResult(`title exceeds maximum length of ${MAX_TITLE_LEN} characters`);
+  }
+  if (outcome.length > MAX_OUTCOME_LEN) {
+    return errorResult(`outcome exceeds maximum length of ${MAX_OUTCOME_LEN} characters`);
+  }
   // project is required by the brief but goals may also be cross-project
   // (project_slug = NULL). Accept undefined/empty -> stored as NULL so the
   // /portfolio surface can render "Cross-project" without a sentinel value.
@@ -278,6 +294,9 @@ export function handleGoalCreate(args: Record<string, unknown>): ToolResult {
     projectSlug && projectSlug.length > 0 ? projectSlug : null;
 
   const description = (args.description as string | undefined) ?? null;
+  if (description !== null && description.length > MAX_DESCRIPTION_LEN) {
+    return errorResult(`description exceeds maximum length of ${MAX_DESCRIPTION_LEN} characters`);
+  }
   const deadline = (args.deadline as string | undefined) ?? null;
   if (deadline !== null && !isValidIsoDate(deadline)) {
     return errorResult(`Invalid deadline: ${deadline}. Expected ISO-8601 date (e.g. "2026-05-01").`);
@@ -535,14 +554,24 @@ export function handleGoalUpdate(args: Record<string, unknown>): ToolResult {
     if (typeof args.title !== 'string' || args.title.length === 0) {
       return errorResult('title must be a non-empty string');
     }
+    if (args.title.length > MAX_TITLE_LEN) {
+      return errorResult(`title exceeds maximum length of ${MAX_TITLE_LEN} characters`);
+    }
     updates.push({ col: 'title', value: args.title });
   }
   if (args.description !== undefined) {
-    updates.push({ col: 'description', value: args.description as string | null });
+    const desc = args.description as string | null;
+    if (desc !== null && typeof desc === 'string' && desc.length > MAX_DESCRIPTION_LEN) {
+      return errorResult(`description exceeds maximum length of ${MAX_DESCRIPTION_LEN} characters`);
+    }
+    updates.push({ col: 'description', value: desc });
   }
   if (args.outcome !== undefined) {
     if (typeof args.outcome !== 'string' || args.outcome.length === 0) {
       return errorResult('outcome must be a non-empty string');
+    }
+    if (args.outcome.length > MAX_OUTCOME_LEN) {
+      return errorResult(`outcome exceeds maximum length of ${MAX_OUTCOME_LEN} characters`);
     }
     updates.push({ col: 'outcome', value: args.outcome });
   }
@@ -638,11 +667,13 @@ export function handleGoalProgress(args: Record<string, unknown>): ToolResult {
   const db = getDb();
 
   // Verify the goal exists so we don't silently return a "0/0" row for a
-  // typo'd id — that's a validation surface, not a data surface.
-  const goal = db
-    .prepare('SELECT goal_id FROM goals WHERE goal_id = ?')
-    .get(goalId) as { goal_id: string } | undefined;
-  if (!goal) {
+  // typo'd id — that's a validation surface, not a data surface. Use
+  // EXISTS-style probe (SELECT 1 ... LIMIT 1) so SQLite doesn't bother
+  // materializing column data we'll never read.
+  const exists = db
+    .prepare('SELECT 1 FROM goals WHERE goal_id = ? LIMIT 1')
+    .get(goalId) as { 1: number } | undefined;
+  if (!exists) {
     return errorResult(`Goal not found: ${goalId}`);
   }
 

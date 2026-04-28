@@ -196,6 +196,16 @@ describe('goals handlers', () => {
       expect(r2.isError).toBe(true);
     });
 
+    it('rejects title longer than 256 chars (defense-in-depth)', () => {
+      const result = handleGoalCreate({
+        project: 'p',
+        title: 'x'.repeat(257),
+        outcome: 'shipped',
+      });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('title exceeds maximum length');
+    });
+
     it('accepts cross-project goals (project omitted -> NULL)', () => {
       const result = parseResult<CreateResult>(
         handleGoalCreate({ title: 'global', outcome: 'measured' }),

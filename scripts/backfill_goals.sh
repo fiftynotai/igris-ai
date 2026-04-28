@@ -176,7 +176,17 @@ write_proposal() {
   # Find candidate master briefs: any brief with at least one outgoing
   # parent_of edge to another brief, scoped to the requested project.
   # We join through brief_status to scope candidates to the project.
-  CANDIDATES_JSON=$(sqlite3 -json "$DB_PATH" "
+  # Use python3 + sqlite3 module with parameterized query to avoid the
+  # SQL-injection surface of inlining $PROJECT into a sqlite3 CLI string.
+  CANDIDATES_JSON=$(DB_PATH="$DB_PATH" PROJECT="$PROJECT" python3 - <<'PYEOF'
+import json, os, sqlite3
+db = os.environ["DB_PATH"]
+project = os.environ["PROJECT"]
+conn = sqlite3.connect(db)
+conn.row_factory = sqlite3.Row
+cur = conn.cursor()
+cur.execute(
+    """
     SELECT
       bs.brief_id      AS brief_id,
       bs.title         AS title,
@@ -189,11 +199,18 @@ write_proposal() {
      AND e.to_type = 'brief'
      AND e.from_type = 'brief'
      AND e.edge_type = 'parent_of'
-     AND COALESCE(json_extract(e.metadata, '\$.deleted'), 0) != 1
-    WHERE bs.project = '$(printf '%s' "$PROJECT" | sed "s/'/''/g")'
+     AND COALESCE(json_extract(e.metadata, '$.deleted'), 0) != 1
+    WHERE bs.project = ?
     GROUP BY bs.brief_id, bs.title, bs.priority
     ORDER BY bs.brief_id
-  ")
+    """,
+    (project,),
+)
+rows = [dict(r) for r in cur.fetchall()]
+conn.close()
+print(json.dumps(rows))
+PYEOF
+)
 
   if [ -z "$CANDIDATES_JSON" ] || [ "$CANDIDATES_JSON" = "[]" ]; then
     echo "No master briefs (parent_of children) found for project '$PROJECT'."
@@ -203,15 +220,18 @@ write_proposal() {
 
   # Render candidates into the proposal markdown using python3 for
   # multi-line composition (avoiding sed pitfalls with newlines).
-  python3 <<PYEOF > "$PROPOSAL_FILE"
-import json
-candidates = json.loads('''${CANDIDATES_JSON}''')
-print("# Goals Backfill Proposal — ${PROJECT}")
+  # Pass JSON + project via env vars and use a quoted heredoc delimiter
+  # so bash never interpolates user data into the Python source.
+  CANDIDATES_JSON="$CANDIDATES_JSON" PROJECT="$PROJECT" python3 - <<'PYEOF' > "$PROPOSAL_FILE"
+import json, os
+candidates = json.loads(os.environ["CANDIDATES_JSON"])
+project = os.environ["PROJECT"]
+print(f"# Goals Backfill Proposal — {project}")
 print("")
 print("Tick [x] on candidates you want to promote to goals, fill in the")
 print("outcome and (optional) deadline, then re-run:")
 print("")
-print("    scripts/backfill_goals.sh --project ${PROJECT} --apply")
+print(f"    scripts/backfill_goals.sh --project {project} --apply")
 print("")
 print("Each ticked candidate will:")
 print("  1. Create a new goal via igris_goal_create")
@@ -330,21 +350,16 @@ PYEOF
   # For each entry, allocate a goal_id, insert the goal, and add edges.
   # We use sqlite3 for writes (no MCP client dependency) and rely on
   # the same SQL the handler runs.
-  python3 <<PYEOF
-import json, os, subprocess, sys
-entries = json.loads('''${ENTRIES_JSON}''')
-db = "${DB_PATH}"
-project = "${PROJECT}"
-
-def sql(query, *params):
-    args = ["sqlite3", db, query]
-    if params:
-        # Use parameterized via .param? Easier: inline-escape via json — bad.
-        # Instead, use python's sqlite3 module directly.
-        pass
-    raise RuntimeError("use python sqlite3 directly")
-
+  # Pass JSON + db path + project via env vars and use a quoted heredoc
+  # delimiter so bash never interpolates user data into the Python source.
+  ENTRIES_JSON="$ENTRIES_JSON" DB_PATH="$DB_PATH" PROJECT="$PROJECT" python3 - <<'PYEOF'
+import json, os, sys
 import sqlite3
+
+entries = json.loads(os.environ["ENTRIES_JSON"])
+db = os.environ["DB_PATH"]
+project = os.environ["PROJECT"]
+
 conn = sqlite3.connect(db)
 conn.execute("PRAGMA foreign_keys = ON")
 cur = conn.cursor()
@@ -364,7 +379,7 @@ for entry in entries:
             f"""SELECT to_id FROM entity_edges
                 WHERE from_type='brief' AND edge_type='serves_goal'
                   AND from_id IN ({placeholders})
-                  AND COALESCE(json_extract(metadata, '\$.deleted'), 0) != 1
+                  AND COALESCE(json_extract(metadata, '$.deleted'), 0) != 1
                 LIMIT 1""",
             children,
         )
