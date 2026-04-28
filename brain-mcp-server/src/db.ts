@@ -576,6 +576,133 @@ function migrateSchema(db: Database.Database): void {
     })();
     console.error('[brain] Schema migrated to version 12 (archetype column + registry table + FTS5)');
   }
+
+  if (currentVersion < 13) {
+    // TD-050: Backfill missing vec0 virtual tables + AFTER DELETE triggers.
+    //
+    // Background: TD-048 fixed the sqlite-vec ESM loader. Before that fix,
+    // migrations v10/v11 ran with `_vecAvailable=false` (loader threw silently),
+    // so the gated `if (_vecAvailable)` blocks did nothing — but v10/v11 still
+    // recorded their version rows. Result on the live brain DB:
+    // schema_version=12, but `learnings_vec`, `errors_vec`, `briefs_vec` and
+    // their `*_vec_ad` triggers are missing.
+    //
+    // v13 creates the 3 vec tables + triggers idempotently and backfills any
+    // existing BLOB embeddings stored in `learnings.embedding`,
+    // `errors.embedding`, `brief_status.embedding`.
+    //
+    // Self-healing skip: when vec is NOT available on the connection, we do
+    // NOT record version 13 in `schema_version`. This means the next boot
+    // (after vec becomes available) will retry. This deliberately avoids
+    // repeating the v10/v11 bug pattern where skipping while still recording
+    // permanently masked the missing tables.
+    //
+    // We probe the connection directly (not the module-level `_vecAvailable`)
+    // because `migrateSchema` can run via two paths:
+    //   1. `getDb()` legacy fallback — sets `_vecAvailable` correctly.
+    //   2. `bootEngine()` — loads vec via the adapter but does NOT update
+    //      `_vecAvailable` (it stays false). The connection itself has vec
+    //      loaded; only the module flag is stale. Probing the connection is
+    //      the source of truth.
+    let vecOnConnection = false;
+    try {
+      db.prepare('SELECT vec_version()').get();
+      vecOnConnection = true;
+    } catch {
+      vecOnConnection = false;
+    }
+
+    if (!vecOnConnection) {
+      console.error(
+        '[brain] migration v13 skipped — sqlite-vec not loaded on connection. schema_version NOT advanced; will retry next boot.',
+      );
+    } else {
+      db.transaction(() => {
+        // Idempotent DDL — safe whether tables/triggers already exist or not.
+        // Mirrors v10/v11 SQL exactly so a fresh DB and a healed DB converge
+        // to the same schema.
+        db.exec(`
+          CREATE VIRTUAL TABLE IF NOT EXISTS learnings_vec USING vec0(
+            embedding float[384]
+          );
+
+          CREATE VIRTUAL TABLE IF NOT EXISTS errors_vec USING vec0(
+            embedding float[384]
+          );
+
+          CREATE VIRTUAL TABLE IF NOT EXISTS briefs_vec USING vec0(
+            embedding float[384]
+          );
+
+          CREATE TRIGGER IF NOT EXISTS learnings_vec_ad AFTER DELETE ON learnings BEGIN
+            DELETE FROM learnings_vec WHERE rowid = old.id;
+          END;
+
+          CREATE TRIGGER IF NOT EXISTS errors_vec_ad AFTER DELETE ON errors BEGIN
+            DELETE FROM errors_vec WHERE rowid = old.id;
+          END;
+
+          CREATE TRIGGER IF NOT EXISTS briefs_vec_ad AFTER DELETE ON brief_status BEGIN
+            DELETE FROM briefs_vec WHERE rowid = old.id;
+          END;
+        `);
+
+        // Backfill: copy existing BLOB embeddings into the vec0 tables.
+        // - INSERT OR IGNORE → safe to re-run if a developer already populated
+        //   some rows manually.
+        // - Per-row try/catch → one corrupt embedding doesn't abort the
+        //   migration; it gets logged and skipped.
+        // - 384 floats * 4 bytes = 1536-byte length check catches dimension
+        //   drift before sqlite-vec throws an opaque internal error.
+        const EXPECTED_BYTES = 384 * 4;
+        const sources: Array<{ src: string; vec: string }> = [
+          { src: 'learnings', vec: 'learnings_vec' },
+          { src: 'errors', vec: 'errors_vec' },
+          { src: 'brief_status', vec: 'briefs_vec' },
+        ];
+
+        for (const { src, vec } of sources) {
+          const rows = db.prepare(
+            `SELECT id, embedding FROM ${src} WHERE embedding IS NOT NULL`,
+          ).all() as Array<{ id: number; embedding: Buffer | Uint8Array | null }>;
+
+          const insert = db.prepare(
+            `INSERT OR IGNORE INTO ${vec}(rowid, embedding) VALUES (?, ?)`,
+          );
+
+          let ok = 0;
+          let skipped = 0;
+          for (const r of rows) {
+            try {
+              if (!r.embedding || (r.embedding as Buffer).length !== EXPECTED_BYTES) {
+                skipped++;
+                continue;
+              }
+              // sqlite-vec's vec0 virtual table requires the rowid to be
+              // bound as a BigInt — a plain JS number raises "Only integers
+              // are allows for primary key values" even when the value IS an
+              // integer. BigInt(r.id) is safe up to Number.MAX_SAFE_INTEGER
+              // (9.0e15), well above any realistic id range.
+              insert.run(BigInt(r.id), r.embedding);
+              ok++;
+            } catch (err) {
+              skipped++;
+              console.error(
+                `[brain] v13 backfill skip ${src}#${r.id}:`,
+                err instanceof Error ? err.message : err,
+              );
+            }
+          }
+          console.error(
+            `[brain] v13 backfilled ${vec}: ${ok} ok, ${skipped} skipped (of ${rows.length})`,
+          );
+        }
+
+        db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (13)').run();
+      })();
+      console.error('[brain] Schema migrated to version 13 (vec0 backfill + triggers)');
+    }
+  }
 }
 
 /**
