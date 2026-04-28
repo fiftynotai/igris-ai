@@ -169,7 +169,9 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       expect(triggerExists(db, 'errors_vec_ad')).toBe(true);
       expect(triggerExists(db, 'briefs_vec_ad')).toBe(true);
 
-      expect(getSchemaVersion(db)).toBe(13);
+      // v14 (FR-107) runs immediately after v13 in the same migrate call,
+      // so MAX(version) is 14 once v13 has been successfully applied.
+      expect(getSchemaVersion(db)).toBe(14);
     },
   );
 
@@ -191,7 +193,9 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       loadVec(db);
       migrateSchema(db);
 
-      expect(getSchemaVersion(db)).toBe(13);
+      // v14 (FR-107) runs immediately after v13 in the same migrate call,
+      // so MAX(version) is 14 once v13 has been successfully applied.
+      expect(getSchemaVersion(db)).toBe(14);
 
       const learningsCount = db
         .prepare('SELECT COUNT(*) AS n FROM learnings_vec')
@@ -243,7 +247,9 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       loadVec(db);
       migrateSchema(db);
 
-      expect(getSchemaVersion(db)).toBe(13);
+      // v14 (FR-107) runs immediately after v13 in the same migrate call,
+      // so MAX(version) is 14 once v13 has been successfully applied.
+      expect(getSchemaVersion(db)).toBe(14);
       expect(tableExists(db, 'learnings_vec')).toBe(true);
       expect(tableExists(db, 'errors_vec')).toBe(true);
       expect(tableExists(db, 'briefs_vec')).toBe(true);
@@ -278,7 +284,9 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
         .prepare('SELECT COUNT(*) AS n FROM learnings_vec')
         .get() as { n: number };
       expect(after.n).toBe(2);
-      expect(getSchemaVersion(db)).toBe(13);
+      // v14 (FR-107) runs immediately after v13 in the same migrate call,
+      // so MAX(version) is 14 once v13 has been successfully applied.
+      expect(getSchemaVersion(db)).toBe(14);
     },
   );
 
@@ -293,7 +301,9 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       loadVec(db);
       migrateSchema(db);
 
-      expect(getSchemaVersion(db)).toBe(13);
+      // v14 (FR-107) runs immediately after v13 in the same migrate call,
+      // so MAX(version) is 14 once v13 has been successfully applied.
+      expect(getSchemaVersion(db)).toBe(14);
 
       // 3 rows seeded, row 0 had a malformed (100-byte) embedding → skipped.
       // Other 2 must still be backfilled.

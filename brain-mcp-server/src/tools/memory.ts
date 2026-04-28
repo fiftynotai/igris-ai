@@ -64,6 +64,7 @@ interface MemoryStoreInput {
   tech_stack?: string;
   source_brief?: string;
   scope?: 'local' | 'global';
+  provenance?: 'observed' | 'inferred' | 'synthesized' | 'ambiguous' | 'human_asserted';
 }
 
 /** Input shape for igris_memory_search */
@@ -102,6 +103,7 @@ interface Bm25Row {
   created_at: string;
   access_count: number;
   rank: number;
+  provenance: string;
 }
 
 /**
@@ -115,6 +117,22 @@ const MAX_CONTENT_LENGTH = 1_048_576;
 const MAX_PROJECT_LENGTH = 255;
 const MAX_TITLE_LENGTH = 500;
 const VALID_CATEGORIES = ['pattern', 'decision', 'discovery', 'mistake', 'optimization'];
+/**
+ * Provenance vocabulary for learnings (FR-107).
+ *
+ * Intentionally distinct from edges.VALID_PROVENANCE (`observed`, `backfill`,
+ * `inferred`, `user`) — different domain (knowledge artifacts vs. graph
+ * relationships). Do NOT extract a shared constant.
+ *
+ * See docs/architecture/provenance.md for semantics.
+ */
+const VALID_LEARNING_PROVENANCE = [
+  'observed',
+  'inferred',
+  'synthesized',
+  'ambiguous',
+  'human_asserted',
+] as const;
 
 function validateMemoryInput(args: MemoryStoreInput): string | null {
   if (!args.project || args.project.length > MAX_PROJECT_LENGTH) {
@@ -129,6 +147,12 @@ function validateMemoryInput(args: MemoryStoreInput): string | null {
   if (!VALID_CATEGORIES.includes(args.category)) {
     return `Invalid category: must be one of ${VALID_CATEGORIES.join(', ')}.`;
   }
+  if (
+    args.provenance !== undefined &&
+    !(VALID_LEARNING_PROVENANCE as readonly string[]).includes(args.provenance)
+  ) {
+    return `Invalid provenance: must be one of ${VALID_LEARNING_PROVENANCE.join(', ')}.`;
+  }
   return null;
 }
 
@@ -141,8 +165,8 @@ async function handleMemoryStore(args: MemoryStoreInput): Promise<{ content: { t
   const db = getDb();
 
   const stmt = db.prepare(`
-    INSERT INTO learnings (project, category, title, content, tags, tech_stack, source_brief, scope)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO learnings (project, category, title, content, tags, tech_stack, source_brief, scope, provenance)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const result = stmt.run(
@@ -153,7 +177,8 @@ async function handleMemoryStore(args: MemoryStoreInput): Promise<{ content: { t
     args.tags ?? '',
     args.tech_stack ?? '',
     args.source_brief ?? '',
-    args.scope ?? 'local'
+    args.scope ?? 'local',
+    args.provenance ?? 'observed',
   );
 
   const learningId = result.lastInsertRowid as number;
@@ -180,7 +205,7 @@ async function handleMemoryStore(args: MemoryStoreInput): Promise<{ content: { t
   return {
     content: [{
       type: 'text',
-      text: `Learning stored successfully.\n\nID: ${learningId}\nProject: ${args.project}\nCategory: ${args.category}\nTitle: ${args.title}\nScope: ${args.scope ?? 'local'}${embeddingNote}${promotedNote}`,
+      text: `Learning stored successfully.\n\nID: ${learningId}\nProject: ${args.project}\nCategory: ${args.category}\nTitle: ${args.title}\nScope: ${args.scope ?? 'local'}\nProvenance: ${args.provenance ?? 'observed'}${embeddingNote}${promotedNote}`,
     }],
   };
 }
@@ -212,7 +237,7 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
   let sql = `
     SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
            l.tech_stack, l.scope, l.source_brief, l.confidence,
-           l.created_at, l.access_count,
+           l.created_at, l.access_count, l.provenance,
            rank
     FROM learnings_fts fts
     JOIN learnings l ON l.id = fts.rowid
@@ -257,6 +282,7 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
       `Scope: ${row.scope}`,
       `Source Brief: ${row.source_brief || '(none)'}`,
       `Confidence: ${row.confidence}`,
+      `Provenance: ${row.provenance}`,
       `Created: ${row.created_at}`,
       `Access Count: ${row.access_count}`,
       `Rank: ${row.rank}`,
@@ -300,7 +326,7 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
   const bm25Sql = `
     SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
            l.tech_stack, l.scope, l.source_brief, l.confidence,
-           l.created_at, l.access_count,
+           l.created_at, l.access_count, l.provenance,
            rank,
            (rank * 0.6 - l.confidence * 0.2 - MIN(l.access_count, 100) / 100.0 * 0.2) AS composite_score
     FROM learnings_fts fts
@@ -380,7 +406,7 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
     const placeholders = topIds.map(() => '?').join(',');
     const fullRows = db.prepare(
       `SELECT id, project, category, title, content, tags, tech_stack, scope,
-              source_brief, confidence, created_at, access_count
+              source_brief, confidence, created_at, access_count, provenance
        FROM learnings WHERE id IN (${placeholders})`,
     ).all(...topIds) as Bm25Row[];
 
@@ -472,6 +498,7 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
       `Tags: ${row.tags || '(none)'}`,
       `Scope: ${row.scope}`,
       `Confidence: ${row.confidence}`,
+      `Provenance: ${row.provenance}`,
     ];
     if (row.rrf_score !== undefined) {
       lines.push(`Score: ${(row.rrf_score as number).toFixed(6)}`);
@@ -512,7 +539,7 @@ function handleMemoryGet(args: MemoryGetInput): { content: { type: string; text:
   const row = db.prepare(`
     SELECT id, project, category, title, content, tags,
            tech_stack, scope, source_brief, confidence,
-           created_at, access_count
+           created_at, access_count, provenance
     FROM learnings
     WHERE id = ?
   `).get(args.id) as Record<string, unknown> | undefined;
@@ -545,6 +572,7 @@ function handleMemoryGet(args: MemoryGetInput): { content: { type: string; text:
     `Scope: ${row.scope}`,
     `Source Brief: ${row.source_brief || '(none)'}`,
     `Confidence: ${row.confidence}`,
+    `Provenance: ${row.provenance}`,
     `Created: ${row.created_at}`,
     `Access Count: ${(row.access_count as number) + 1}`,
   ].join('\n');
@@ -739,7 +767,7 @@ async function handleMemoryHybridSearch(args: HybridSearchInput): Promise<{ cont
     let bm25Sql = `
       SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
              l.tech_stack, l.scope, l.source_brief, l.confidence,
-             l.created_at, l.access_count, rank
+             l.created_at, l.access_count, l.provenance, rank
       FROM learnings_fts fts
       JOIN learnings l ON l.id = fts.rowid
       WHERE learnings_fts MATCH ?
@@ -825,7 +853,7 @@ async function handleMemoryHybridSearch(args: HybridSearchInput): Promise<{ cont
   const placeholders = topIds.map(() => '?').join(',');
   const fullRows = db.prepare(
     `SELECT id, project, category, title, content, tags, tech_stack, scope,
-            source_brief, confidence, created_at, access_count
+            source_brief, confidence, created_at, access_count, provenance
      FROM learnings WHERE id IN (${placeholders})`,
   ).all(...topIds) as Bm25Row[];
 
@@ -875,6 +903,7 @@ function formatHybridResult(
     `Tags: ${row.tags || '(none)'}`,
     `Scope: ${row.scope}`,
     `Confidence: ${row.confidence}`,
+    `Provenance: ${row.provenance}`,
   ];
 
   if (rrfScore !== null) {

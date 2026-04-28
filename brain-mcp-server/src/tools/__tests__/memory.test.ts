@@ -115,7 +115,9 @@ function makeTestDb(): Database.Database {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       access_count INTEGER DEFAULT 0,
-      last_accessed_at TEXT
+      last_accessed_at TEXT,
+      provenance TEXT NOT NULL DEFAULT 'observed'
+        CHECK(provenance IN ('observed','inferred','synthesized','ambiguous','human_asserted'))
     );
 
     CREATE VIRTUAL TABLE learnings_fts USING fts5(
@@ -786,6 +788,108 @@ describe('Memory Tools (FR-092)', () => {
 
       const text = result.content[0].text;
       expect(text).toContain('Recalled');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // FR-107: Provenance tags on learnings
+  // -------------------------------------------------------------------------
+
+  describe('Provenance tags (FR-107)', () => {
+    it('store + recall round-trips a non-default provenance value', async () => {
+      const storeResult = await handleMemoryStore({
+        project: 'test-project',
+        category: 'pattern',
+        title: 'Inferred reasoning learning',
+        content: 'A learning derived from inference, not direct observation, for round-trip test',
+        provenance: 'inferred',
+      });
+
+      expect(storeResult.content[0].text).toContain('Provenance: inferred');
+
+      const recallResult = await handleMemoryRecall({
+        project: 'test-project',
+        context: 'Inferred reasoning learning',
+      });
+
+      expect(recallResult.content[0].text).toContain('Provenance: inferred');
+    });
+
+    it('defaults provenance to "observed" when not provided on store', async () => {
+      const storeResult = await handleMemoryStore({
+        project: 'test-project',
+        category: 'pattern',
+        title: 'Default provenance learning',
+        content: 'A learning stored without explicit provenance for default test',
+      });
+
+      expect(storeResult.content[0].text).toContain('Provenance: observed');
+
+      const recallResult = await handleMemoryRecall({
+        project: 'test-project',
+        context: 'Default provenance learning',
+      });
+
+      expect(recallResult.content[0].text).toContain('Provenance: observed');
+    });
+
+    it('rejects an invalid provenance value at the handler', async () => {
+      const result = await handleMemoryStore({
+        project: 'test-project',
+        category: 'pattern',
+        title: 'Bad provenance learning',
+        content: 'A learning with an invalid provenance value for validation test',
+        // @ts-expect-error -- intentionally invalid value to exercise validator
+        provenance: 'totally_made_up',
+      });
+
+      expect(result.content[0].text).toContain('Validation error');
+      expect(result.content[0].text).toContain('Invalid provenance');
+    });
+
+    it('accepts all five vocabulary values', async () => {
+      const values = ['observed', 'inferred', 'synthesized', 'ambiguous', 'human_asserted'] as const;
+      for (const p of values) {
+        const result = await handleMemoryStore({
+          project: 'test-project',
+          category: 'pattern',
+          title: `Provenance ${p} learning`,
+          content: `A learning with provenance value ${p} for vocabulary coverage test`,
+          provenance: p,
+        });
+        expect(result.content[0].text).toContain(`Provenance: ${p}`);
+      }
+    });
+
+    it('backfills existing rows to provenance="observed" via DEFAULT', async () => {
+      // Insert a row WITHOUT specifying provenance — the column DEFAULT should fill it.
+      const id = insertLearning(db, {
+        title: 'Pre-existing learning',
+        content: 'Inserted via raw SQL helper; relies on column DEFAULT to set provenance',
+      });
+
+      const row = db
+        .prepare('SELECT provenance FROM learnings WHERE id = ?')
+        .get(id) as { provenance: string };
+      expect(row.provenance).toBe('observed');
+
+      const recallResult = await handleMemoryRecall({
+        project: 'test-project',
+        context: 'Pre-existing learning',
+      });
+      expect(recallResult.content[0].text).toContain('Provenance: observed');
+    });
+
+    it('handleMemoryGet returns provenance for the requested learning', () => {
+      const id = insertLearning(db, {
+        title: 'Get-by-id provenance test',
+        content: 'Content for get-by-id provenance test',
+      });
+      // Set the row's provenance via a direct UPDATE to simulate a non-default value.
+      db.prepare("UPDATE learnings SET provenance = 'human_asserted' WHERE id = ?").run(id);
+
+      const result = handleMemoryGet({ id });
+      expect(result.content[0].text).toContain('Provenance: human_asserted');
     });
   });
 });

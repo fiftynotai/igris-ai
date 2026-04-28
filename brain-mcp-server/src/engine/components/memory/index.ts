@@ -91,6 +91,11 @@ export function createMemoryComponent(): BrainComponent {
                 enum: ['local', 'global'],
                 description: 'Scope: "local" for project-specific, "global" for cross-project relevance. Default: "local"',
               },
+              provenance: {
+                type: 'string',
+                enum: ['observed', 'inferred', 'synthesized', 'ambiguous', 'human_asserted'],
+                description: 'Origin and trust level of this learning. Defaults to "observed". See docs/architecture/provenance.md.',
+              },
             },
             required: ['project', 'category', 'title', 'content'],
           },

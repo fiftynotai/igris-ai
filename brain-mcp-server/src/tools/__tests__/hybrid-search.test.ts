@@ -142,7 +142,9 @@ function makeTestDb(): Database.Database {
       access_count INTEGER DEFAULT 0,
       last_accessed_at TEXT,
       embedding BLOB,
-      embedding_model TEXT DEFAULT ''
+      embedding_model TEXT DEFAULT '',
+      provenance TEXT NOT NULL DEFAULT 'observed'
+        CHECK(provenance IN ('observed','inferred','synthesized','ambiguous','human_asserted'))
     );
 
     CREATE VIRTUAL TABLE learnings_fts USING fts5(
@@ -673,6 +675,50 @@ describe('Hybrid Search — FR-093', () => {
 
       const text = result.content[0].text;
       expect(text).toContain('Failed: 1');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // FR-107: Provenance flows through hybrid search results
+  // -------------------------------------------------------------------------
+
+  describe('Hybrid search — provenance pass-through (FR-107)', () => {
+    it('returns provenance per row from BM25-only fallback', async () => {
+      _vecAvailable = false;
+
+      // Insert two learnings with distinct provenance values via direct UPDATE
+      const idA = insertLearning(db, {
+        title: 'Provenance flow A',
+        content: 'Content for provenance flow A in BM25-only path',
+      });
+      const idB = insertLearning(db, {
+        title: 'Provenance flow B',
+        content: 'Content for provenance flow B in BM25-only path',
+      });
+      db.prepare("UPDATE learnings SET provenance = 'inferred' WHERE id = ?").run(idA);
+      db.prepare("UPDATE learnings SET provenance = 'human_asserted' WHERE id = ?").run(idB);
+
+      const result = await handleMemoryHybridSearch({ query: 'provenance flow' });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Provenance: inferred');
+      expect(text).toContain('Provenance: human_asserted');
+    });
+
+    it('returns provenance per row in hybrid (BM25 + vector) path', async () => {
+      _vecAvailable = true;
+
+      const id = insertLearning(db, {
+        title: 'Hybrid provenance result',
+        content: 'Content for hybrid provenance result vector flow',
+      });
+      db.prepare("UPDATE learnings SET provenance = 'synthesized' WHERE id = ?").run(id);
+      _vecStore.set(id, Buffer.alloc(384 * 4));
+
+      const result = await handleMemoryHybridSearch({ query: 'hybrid provenance result' });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Provenance: synthesized');
     });
   });
 });

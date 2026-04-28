@@ -703,6 +703,42 @@ function migrateSchema(db: Database.Database): void {
       console.error('[brain] Schema migrated to version 13 (vec0 backfill + triggers)');
     }
   }
+
+  // v14: provenance tag on learnings (FR-107)
+  // Adds an optional `provenance` column to the learnings table that records
+  // how/why a learning was acquired. Default 'observed' backfills existing rows
+  // in O(1) via SQLite's ALTER TABLE DEFAULT clause.
+  // Vocabulary intentionally diverges from edges.provenance — see
+  // docs/architecture/provenance.md.
+  //
+  // Gate v14 behind v13's actual completion (re-read schema_version) so that
+  // a vec-unavailable boot — which deliberately skips v13 without recording —
+  // also defers v14 instead of leap-frogging the missing v13.
+  let postV13Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV13Version = row.version;
+  } catch {
+    // table may not exist on a fresh empty DB, but if we got here v1+ ran.
+  }
+  if (postV13Version >= 13 && postV13Version < 14) {
+    db.transaction(() => {
+      // Defensive: detect the column on partially-applied migrations so a re-run
+      // of an older DB that already has the column doesn't fail.
+      const cols = db.prepare(`PRAGMA table_info(learnings)`).all() as Array<{ name: string }>;
+      const hasProvenance = cols.some((c) => c.name === 'provenance');
+      if (!hasProvenance) {
+        db.exec(`
+          ALTER TABLE learnings ADD COLUMN provenance TEXT NOT NULL DEFAULT 'observed'
+            CHECK(provenance IN ('observed','inferred','synthesized','ambiguous','human_asserted'))
+        `);
+      }
+      db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (14)').run();
+    })();
+    console.error('[brain] Schema migrated to version 14 (learnings.provenance)');
+  }
 }
 
 /**
