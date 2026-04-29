@@ -139,6 +139,17 @@ export async function runAllDetectors(
     ...detectPattern(roDb, config),
   ];
 
+  // Snapshot existing pending suggestions once for fast dedupe.
+  // Dedupe key uses evidence_signature (stable across days) rather than title
+  // (which can drift — e.g. "stalled for N days" increments daily).
+  //
+  // Sourced BEFORE `verifyConflictCandidates` so the verifier short-circuit
+  // (perf: skip LLM call on candidates already in the pending set) has the
+  // snapshot available. Read-only — `verifyConflictCandidates` and
+  // `smoothPatterns` don't write to `suggestions`, so the snapshot stays
+  // accurate through the rest of the pipeline.
+  const existingPending = getExistingPendingKeys(db);
+
   // 2a. LLM verifier gate (FR-108). Only conflict-class candidates are
   //     submitted; the verifier is heuristic-first (only ratifies what
   //     the cosine/Jaccard heuristic short-listed). Defensive default:
@@ -151,8 +162,14 @@ export async function runAllDetectors(
   //     per project × 10 projects × ~30s) ≈ 25 min, comfortably inside
   //     the 6h cron interval. Parallelize via `Promise.all` if profiling
   //     ever shows pipeline duration as a concern — future TD.
+  //
+  //     PERF (FR-108 follow-up / TD-055 nit 1): the verifier ALSO short-
+  //     circuits on candidates whose dedupe key is already in
+  //     `existingPending`. Without this, a verified-conflict that survived
+  //     a previous run and is still pending re-triggers a 3-7s LLM call
+  //     on every 6h cron, only to be deduped pre-INSERT in the main loop.
   const { kept: verifierKept, rejectionEvents } =
-    await verifyConflictCandidates(db, rawCandidates, verifier);
+    await verifyConflictCandidates(db, rawCandidates, verifier, existingPending);
   const candidates: SuggestionCandidate[] = verifierKept;
 
   // 3. Smooth pattern candidates against `pattern_observations`. Patterns
@@ -173,11 +190,6 @@ export async function runAllDetectors(
     expired_observations: expired.observations,
     events: [...rejectionEvents],
   };
-
-  // Snapshot existing pending suggestions once for fast dedupe.
-  // Dedupe key uses evidence_signature (stable across days) rather than title
-  // (which can drift — e.g. "stalled for N days" increments daily).
-  const existingPending = getExistingPendingKeys(db);
 
   for (const candidate of smoothed) {
     const signature = computeEvidenceSignature(
@@ -215,6 +227,11 @@ export async function runAllDetectors(
     // yield (verified vs rejected_by_verifier) independently of the
     // dismiss-loop suppression signal.
     if (candidate.source_module === 'conflict') {
+      // Defense-in-depth: verifyConflictCandidates always tags evidence with
+      // verifier_status (every survival path enriches it — verified,
+      // cli_missing via noopVerifier, spawn_failed, parse_failed, timeout),
+      // but if a future change skips tagging, fall back to 'cli_missing'
+      // rather than emitting an undefined value on the bus.
       const verifierStatus =
         ((candidate.evidence as Record<string, unknown>).verifier_status as string | undefined) ??
         'cli_missing';
@@ -240,10 +257,12 @@ export async function runAllDetectors(
  * candidates pass through unchanged.
  *
  * For each conflict candidate:
- *   - Look up the two learnings by id (content + created_at) in a single
- *     `WHERE id IN (?, ?)` query so the verifier prompt has the full
- *     content body, not just the heuristic numbers.
- *   - Call `await verifier(a, b)`.
+ *   - Compute the dedupe key first; if it's already in `existingPending`,
+ *     SHORT-CIRCUIT — pass the candidate through with verifier_status
+ *     `skipped_already_pending`, skipping the LLM call entirely. The main
+ *     loop will dedupe it pre-INSERT anyway, so the LLM round-trip
+ *     (~3-7s + tokens) is wasted on a candidate that will not persist.
+ *   - Otherwise: look up the two learnings by id and call the verifier.
  *   - If `is_conflict === false` AND `status === 'verified'` → drop the
  *     candidate; emit a `suggestion_rejected_by_verifier` event.
  *   - Otherwise → keep the candidate, enrich `evidence` with
@@ -261,6 +280,7 @@ async function verifyConflictCandidates(
   db: Database.Database,
   candidates: SuggestionCandidate[],
   verifier: ConflictVerifier,
+  existingPending: Set<string>,
 ): Promise<{ kept: SuggestionCandidate[]; rejectionEvents: RunEvent[] }> {
   const kept: SuggestionCandidate[] = [];
   const rejectionEvents: RunEvent[] = [];
@@ -288,6 +308,28 @@ async function verifyConflictCandidates(
   for (const c of candidates) {
     if (c.source_module !== 'conflict') {
       kept.push(c);
+      continue;
+    }
+
+    // Short-circuit: if this candidate's dedupe key is already in the
+    // pending snapshot, the main loop will discard it pre-INSERT. Skip
+    // the LLM call (saves ~3-7s + tokens per cron run for verified-
+    // conflicts that re-surface across runs). We still pass the candidate
+    // through (kept) so it follows the same dedupe path as before — it'll
+    // be filtered out by `existingPending.has(dedupeKey)` in runAllDetectors.
+    const sigForSkipCheck = computeEvidenceSignature(c.source_module, c.evidence);
+    const dedupeKey = `${c.source_module}|${c.project_slug ?? ''}|${sigForSkipCheck}`;
+    if (existingPending.has(dedupeKey)) {
+      kept.push({
+        ...c,
+        evidence: {
+          ...c.evidence,
+          verifier: 'claude-headless',
+          verifier_status: 'skipped_already_pending',
+          verifier_reason: 'candidate already pending; verifier skipped to avoid redundant LLM call',
+          verified_at: verifiedAt,
+        },
+      });
       continue;
     }
 

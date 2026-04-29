@@ -345,6 +345,50 @@ describe('runAllDetectors — verifier integration (FR-108)', () => {
     const verifiedEvents = summary.events.filter((e) => e.kind === 'suggestion_verified');
     expect(verifiedEvents).toHaveLength(0);
   });
+
+  it('short-circuits verifier on candidates whose dedupe key is already pending (TD-055 nit 1)', async () => {
+    // Perf guard: a verified-conflict that survived a previous run is still
+    // pending in `suggestions`. On the next 6h cron, the heuristic re-emits
+    // the same candidate. Without the short-circuit, we'd burn ~3-7s + tokens
+    // on an LLM call just to dedupe pre-INSERT in the main loop.
+    //
+    // Setup: seed a conflict pair, then pre-seed a pending suggestion with
+    // the SAME evidence_signature (`conflict:1:2`) the heuristic will produce.
+    // The runner's `existingPending` snapshot must include this row, and
+    // `verifyConflictCandidates` must skip the LLM call for that candidate.
+    seedConflictPair(db);
+
+    // Pre-seed pending suggestion. seedConflictPair inserts learning ids 1,2,
+    // so the conflict detector will produce evidence.learning_ids=[1,2] and
+    // computeEvidenceSignature returns 'conflict:1:2'. The dedupe key is
+    // 'conflict|p1|conflict:1:2'.
+    db.prepare(
+      `INSERT INTO suggestions (source_module, project_slug, title, evidence, priority, status)
+       VALUES ('conflict', 'p1', 'Possible contradiction: Learning #1 vs #2',
+               ?, 'medium', 'pending')`,
+    ).run(JSON.stringify({ learning_ids: [1, 2] }));
+
+    let callCount = 0;
+    const stub: ConflictVerifier = async () => {
+      callCount += 1;
+      return { is_conflict: true, reason: 'should not be called', status: 'verified' };
+    };
+
+    const summary = await runAllDetectors(db, {
+      config: conflictOnlyConfig(),
+      verifier: stub,
+    });
+
+    // Verifier MUST NOT have been invoked — short-circuit kicked in.
+    expect(callCount).toBe(0);
+
+    // No new suggestion persisted; the existing pending row dedupes it out.
+    expect(summary.by_module.conflict).toBe(0);
+    const row = db
+      .prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE source_module = 'conflict'`)
+      .get() as { n: number };
+    expect(row.n).toBe(1); // only the pre-seeded row
+  });
 });
 
 // Mark the local helper as used to avoid lint complaints in case the

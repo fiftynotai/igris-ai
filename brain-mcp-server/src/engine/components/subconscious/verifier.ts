@@ -286,9 +286,15 @@ function truncate(s: string, max: number): string {
 export interface ClaudeHeadlessVerifierOptions {
   /** Hard wall-clock budget per call. Default 45_000 (45s). */
   timeoutMs?: number;
-  /** Override the binary name — primarily for testing. */
+  /**
+   * Override the subprocess command.
+   * @internal — used by tests to inject `node` as a stub. Do not use in production callers.
+   */
   command?: string;
-  /** Override argv — primarily for testing. */
+  /**
+   * Override the subprocess argv.
+   * @internal — used by tests to inject a stub script path. Do not use in production callers.
+   */
   args?: string[];
 }
 
@@ -351,6 +357,10 @@ export function makeClaudeHeadlessVerifier(
       });
 
       // Timeout: SIGTERM, then SIGKILL 5s later if still alive.
+      // Promise resolves on SIGTERM via settle(); SIGKILL fallback runs in
+      // detached cleanup after consumer's await returns. The `settled` flag
+      // prevents the close handler from double-resolving when the child
+      // exits normally after we've already returned a timeout result.
       const softTimer = setTimeout(() => {
         try {
           child.kill('SIGTERM');

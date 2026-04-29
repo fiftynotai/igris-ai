@@ -294,6 +294,19 @@ describe('subconscious handlers', () => {
       }>(result);
       expect(parsed.emitted).toBeGreaterThanOrEqual(1);
       expect(parsed.by_module.stalled).toBeGreaterThanOrEqual(1);
+
+      // Pin the priority explicitly. With updated_days_ago=35 and the
+      // default `stalled_in_progress_high_days=30`, the stalled detector
+      // emits at 'high' priority. If anyone bumps the high threshold to 40+
+      // without updating this seed, the suggestion would silently downgrade
+      // to 'medium' and this test would still pass on count alone — pin the
+      // priority to fail loudly on threshold drift.
+      const stalledRow = db
+        .prepare(
+          `SELECT priority FROM suggestions WHERE source_module = 'stalled' ORDER BY id LIMIT 1`,
+        )
+        .get() as { priority: string };
+      expect(stalledRow.priority).toBe('high');
     });
 
     it('does not duplicate within-run on repeated invocations', async () => {
