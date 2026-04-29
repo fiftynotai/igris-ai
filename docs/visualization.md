@@ -67,6 +67,28 @@ cd brain-mcp-server
 npx tsx scripts/render_brief_graph.ts --project igris-ai --out /tmp/graph.html
 ```
 
+## Empty graph?
+
+If `/visualize` renders briefs as a starfield with zero edges, the
+`entity_edges` table has no rows for that project. The auto-edge hook on
+`brief.created` only writes `parent_of` edges, and only fires for briefs
+that were synced *after* the hook landed (FR-105). Older briefs whose
+markdown carries `**Hard:**`, `**Soft:**`, `**Blocks:**`, `**Blocked by:**`,
+`**Supersedes:**`, or `**Goal:**` labels never produced edges.
+
+Run the one-shot backfill (TD-057):
+
+```bash
+cd brain-mcp-server
+npm run backfill-edges -- --project igris-ai --dry-run   # preview
+npm run backfill-edges -- --project igris-ai             # write
+```
+
+Drop `--project` to scan every project at once. The script is idempotent
+— re-running produces zero new inserts. Backfilled edges are tagged
+`provenance='backfill'` so analytics can distinguish them from edges
+created at runtime by the `brief.created` auto-hook.
+
 ## Layout & Color Legend
 
 ### Node colors (by `brief_id` prefix)

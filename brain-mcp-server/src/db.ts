@@ -30,8 +30,36 @@ let _vecAvailable = false;
 /** Root directory for the Igris brain */
 const BRAIN_DIR = path.join(os.homedir(), '.igris');
 
-/** Path to the SQLite knowledge database */
-const DB_PATH = path.join(BRAIN_DIR, 'memory', 'knowledge.db');
+/** Default path to the SQLite knowledge database. */
+const DEFAULT_DB_PATH = path.join(BRAIN_DIR, 'memory', 'knowledge.db');
+
+/**
+ * Resolve the active DB path. Honors `IGRIS_DB_PATH` env var (if set and
+ * non-empty) so test harnesses and CLI scripts (e.g. backfill_brief_edges
+ * with `--db /tmp/sandbox.db`) can sandbox writes without touching the
+ * production brain DB. Falls back to the default `~/.igris/memory/knowledge.db`.
+ *
+ * Resolved at call time, not module load time, so a script can set the
+ * env var before its first `getDb()` call.
+ */
+function resolveDbPath(): string {
+  const override = process.env.IGRIS_DB_PATH;
+  if (override && override.length > 0) return override;
+  return DEFAULT_DB_PATH;
+}
+
+/**
+ * Path to the SQLite knowledge database.
+ *
+ * Kept as a const for backwards compatibility with existing imports
+ * (src/index.ts uses it for startup banner + size reporting). The
+ * env-var override is honored by `getDb()` at runtime, not by this
+ * constant — callers that read DB_PATH at module load time will get
+ * the default path. That's acceptable because the override is only
+ * meant for CLI/test sandboxing, where the importer (the script) is
+ * what holds the connection.
+ */
+const DB_PATH = DEFAULT_DB_PATH;
 
 /** Singleton database instance */
 let _db: Database.Database | null = null;
@@ -757,9 +785,15 @@ function getDb(): Database.Database {
     return _adapter.rawConnection;
   }
 
-  // Legacy fallback (pre-engine boot or standalone usage)
+  // Legacy fallback (pre-engine boot or standalone usage).
+  // Resolve the path at call time so IGRIS_DB_PATH overrides set
+  // *before* the first getDb() call (e.g. by backfill_brief_edges
+  // CLI's --db flag) take effect. Once the singleton is created
+  // it persists for the process — subsequent env var changes are
+  // ignored, which is the correct semantic for a connection pool.
   if (!_db) {
-    _db = new Database(DB_PATH);
+    const dbPath = resolveDbPath();
+    _db = new Database(dbPath);
     _db.pragma('journal_mode = WAL');
     _db.pragma('busy_timeout = 5000');
     _db.pragma('synchronous = NORMAL');
