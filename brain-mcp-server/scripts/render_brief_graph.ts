@@ -20,6 +20,7 @@ import Database from 'better-sqlite3';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import {
   renderGraphFromDb,
@@ -122,10 +123,12 @@ async function main(): Promise<void> {
 }
 
 // Run main only when invoked directly via tsx, not when imported by tests/handlers.
-const entryPoint = process.argv[1] ?? '';
-const isDirectRun = /render_brief_graph(\.ts|\.js)?$/.test(entryPoint);
+// Exact-equality guard: compares the resolved module path to the resolved argv[1].
+// More portable than basename regex — survives renames, transpiled .js entry,
+// and avoids false positives from any caller whose script ends with the same name.
+const isMain = fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? '');
 
-if (isDirectRun) {
+if (isMain) {
   main().catch((err) => {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);

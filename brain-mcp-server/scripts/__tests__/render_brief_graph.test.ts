@@ -20,6 +20,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 import { renderGraphFromDb } from '../../src/engine/components/edges/visualization-tool.js';
 import { edgeMigrations } from '../../src/engine/components/edges/schema.js';
@@ -153,8 +154,10 @@ describe('renderGraphFromDb integration', () => {
   let db: Database.Database;
   let tmpDir: string;
   // Path to the actual template (resolved relative to this test file).
+  // Uses fileURLToPath for cross-platform portability (Windows file URLs
+  // produce paths like `/C:/...` from `URL.pathname`).
   const templateFile = path.resolve(
-    path.dirname(new URL(import.meta.url).pathname),
+    path.dirname(fileURLToPath(import.meta.url)),
     '..',
     'render_brief_graph.template.html',
   );

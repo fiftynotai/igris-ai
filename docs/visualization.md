@@ -76,12 +76,12 @@ npx tsx scripts/render_brief_graph.ts --project igris-ai --out /tmp/graph.html
 | FR     | Blue     | Feature Request          |
 | TD     | Orange   | Technical Debt           |
 | BR     | Red      | Bug Report               |
-| PI     | Purple   | Performance Improvement  |
+| PI     | Purple   | Process Improvement      |
 | MG     | Green    | Migration                |
 | AC     | Teal     | Acceptance Criteria      |
 | TS     | Light Green | Test Strategy         |
 | DU     | Gray     | Documentation Update     |
-| PF     | Yellow   | Performance Fix          |
+| PF     | Yellow   | Performance              |
 | goal   | Gold     | Goal (diamond shape)     |
 
 ### Edge colors (by `edge_type`)
@@ -158,6 +158,14 @@ planned for Phase 2.
   that vendors the JS into the HTML.
 - **No edge weighting.** Edge thickness reflects `confidence` (0..1) but
   there's no weight slider in the UI.
+- **`output_path` is unrestricted.** The `igris_brief_graph_render` MCP
+  tool accepts arbitrary file paths writable by the brain process — by
+  design, since the tool is internal and called by trusted skills (`/visualize`)
+  or operators. Shared-environment deployments should default callers to
+  the per-project visualization directory under
+  `~/.igris/projects/{project}/visualizations/` rather than passing a
+  user-supplied `output_path`. See
+  `src/engine/components/edges/visualization-tool.ts` for the handler.
 
 ## Architecture
 

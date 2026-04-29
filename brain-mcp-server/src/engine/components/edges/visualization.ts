@@ -305,6 +305,12 @@ export function fetchProjectGraphRows(
   let goals: GoalRow[] = [];
   if (goalEdges.length > 0 && tableExists(db, 'goals')) {
     const goalIds = [...new Set(goalEdges.map((e) => e.to_id))];
+    // Single IN-clause, no chunked-fallback: SQLITE_PARAM_LIMIT is 999, and a
+    // single project's brief graph carrying >999 distinct goals is implausible
+    // (projects typically hold O(10s) of goals). If the cap is breached we
+    // silently render zero goals — acceptable trade-off vs. the chunked-IN
+    // pattern used for the brief table above. Mirror that pattern here if a
+    // real project ever exceeds the limit.
     if (goalIds.length > 0 && goalIds.length <= SQLITE_PARAM_LIMIT) {
       const placeholders = goalIds.map(() => '?').join(',');
       goals = db
