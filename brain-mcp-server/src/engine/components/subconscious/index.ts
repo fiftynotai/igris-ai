@@ -1,13 +1,16 @@
 /**
  * Brain Engine v5.0 — Subconscious Component
  *
- * Passive observer (FR-106). Phase 1 ships two deterministic detectors
+ * Passive observer (FR-106). Phase 1 shipped two deterministic detectors
  * (`stalled`, `gap`), four MCP tools, and a self-bootstrapping cron
  * schedule (`subconscious_engine`) that fires the pipeline every six
- * hours. Phase 2 will add the `conflict` and `pattern` detectors.
+ * hours. Phase 2 adds `conflict` and `pattern` detectors plus
+ * `pattern_observations` for 3-run smoothing — same component surface,
+ * no new MCP tools, no new event names.
  *
  * Component contract:
- *   - schema()   : suggestions + dismissed_patterns tables (v1).
+ *   - schema()   : suggestions + dismissed_patterns (v1) +
+ *                  pattern_observations (v2).
  *   - tools()    : 4 MCP tools — list/dismiss/acted/run.
  *   - events()   : emits run_start, run_complete, suggestion_emitted,
  *                  suggestion_suppressed; listens engine.ready.
@@ -118,7 +121,7 @@ export function createSubconsciousComponent(): BrainComponent {
 
   return {
     name: 'subconscious',
-    version: '1.0.0',
+    version: '1.1.0',
     depends: [],
 
     schema(): Migration[] {

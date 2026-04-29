@@ -1,14 +1,14 @@
 /**
  * Brain Engine v5.0 — Subconscious Component Schema
  *
- * Database migrations for FR-106. Phase 1 ships two tables in a single v1
- * migration so the engine_migrations row count stays tight:
+ * Database migrations for FR-106. Phase 1 shipped two tables in a single v1
+ * migration:
  *   - `suggestions` — canonical store for queued findings
  *   - `dismissed_patterns` — UPSERT-target for the dismiss-reason learning
  *     loop (Q3=B in the FR-106 plan answers).
  *
- * Phase 2 will add `pattern_observations` (multi-run smoothing for the
- * pattern detector) as v2.
+ * Phase 2 adds `pattern_observations` for multi-run smoothing of the
+ * pattern detector (v2).
  *
  * Idempotent via IF NOT EXISTS; safe to re-run.
  *
@@ -28,6 +28,14 @@ import type { Migration } from '../../types.js';
  *   SQLite treats NULL as distinct in UNIQUE constraints, which is fine
  *   here: we always serialize the project_slug to a stable empty-string
  *   sentinel before persisting to avoid that quirk (see runner.ts).
+ *
+ * Version 2 (FR-106 Phase 2): pattern_observations + 2 indexes.
+ *   The pattern detector's 3-run smoothing gate reads
+ *   `COUNT(DISTINCT run_id) WHERE pattern_key = ? AND observed_at within
+ *   pattern_smoothing_window_days`. Working table — auto-pruned in
+ *   `runner.ts:expireStaleRows` based on `pattern_observation_ttl_days`.
+ *   Not added to SYNC_TABLES (re-derivable from raw aggregations on the
+ *   next run; no cross-machine merge value).
  */
 export const subconsciousMigrations: Migration[] = [
   {
@@ -71,6 +79,27 @@ export const subconsciousMigrations: Migration[] = [
 
       CREATE INDEX IF NOT EXISTS idx_dismissed_patterns_lookup
         ON dismissed_patterns(source_module, project_slug, evidence_signature);
+    `,
+  },
+  {
+    version: 2,
+    description:
+      'Add pattern_observations working table for multi-run smoothing (FR-106 Phase 2)',
+    sql: `
+      CREATE TABLE IF NOT EXISTS pattern_observations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pattern_key TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        observed_at TEXT NOT NULL DEFAULT (datetime('now')),
+        effect_size REAL NOT NULL,
+        sample_size INTEGER NOT NULL,
+        metadata TEXT NOT NULL DEFAULT '{}'
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_pattern_observations_key
+        ON pattern_observations(pattern_key, observed_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_pattern_observations_run
+        ON pattern_observations(run_id);
     `,
   },
 ];

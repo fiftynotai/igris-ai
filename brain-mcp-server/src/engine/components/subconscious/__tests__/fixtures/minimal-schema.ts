@@ -2,23 +2,30 @@
  * Brain Engine v5.0 — Subconscious Test Fixtures
  *
  * Minimal slice of the production schema covering only the tables the
- * Phase 1 detectors and runner reference. Lives in the test fixtures
- * directory so the engine's real migrations stay untouched and the
- * fixture remains independently auditable.
+ * detectors and runner reference. Lives in the test fixtures directory so
+ * the engine's real migrations stay untouched and the fixture remains
+ * independently auditable.
  *
  * Tables included:
  *   - projects        : status (active/archived), registered_at
- *   - learnings       : created_at — for project-quiet activity max
+ *   - learnings       : created_at, embedding BLOB — for project-quiet
+ *                       activity max + conflict detector
  *   - brief_status    : status / updated_at — for stalled + project-quiet
  *   - brief_files     : content — for done-with-unchecked-AC scan
+ *   - agent_metrics   : retry_count / agent / recorded_at — for the
+ *                       pattern detector's agent-retry sub-detector
  *
- * Phase 2 will extend with `learnings_vec` and `agent_metrics` for the
- * conflict and pattern detectors.
+ * No `learnings_vec` virtual table — the conflict detector reads the raw
+ * `learnings.embedding` BLOB directly (see plan §"Vector access — the
+ * cosine-vs-L2 trap"). Tests construct embeddings via
+ * `seedLearningWithEmbedding` which uses `embeddingToBuffer` from the
+ * production utility, so test BLOBs are byte-identical to production.
  *
  * @module engine/components/subconscious/__tests__/fixtures/minimal-schema
  */
 
 import type Database from 'better-sqlite3';
+import { embeddingToBuffer } from '../../../../../utils/embeddings.js';
 
 export const minimalSchemaSql = `
   CREATE TABLE IF NOT EXISTS projects (
@@ -36,6 +43,7 @@ export const minimalSchemaSql = `
     category TEXT NOT NULL DEFAULT 'pattern',
     title TEXT NOT NULL,
     content TEXT NOT NULL,
+    embedding BLOB,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -59,6 +67,19 @@ export const minimalSchemaSql = `
     content_hash TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(project, brief_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS agent_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project TEXT NOT NULL,
+    agent TEXT NOT NULL,
+    brief_id TEXT DEFAULT '',
+    action TEXT NOT NULL,
+    result TEXT NOT NULL CHECK (result IN ('success', 'failure', 'partial', 'blocked')),
+    duration_ms INTEGER DEFAULT 0,
+    retry_count INTEGER DEFAULT 0,
+    metadata TEXT DEFAULT '{}',
+    recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `;
 
@@ -160,5 +181,72 @@ export function seedLearning(db: Database.Database, opts: SeedLearningOptions): 
     opts.title,
     opts.content ?? 'body',
     daysAgo(opts.created_days_ago ?? 0),
+  );
+}
+
+export interface SeedLearningWithEmbeddingOptions {
+  project: string;
+  title: string;
+  content: string;
+  embedding: Float32Array;
+  created_days_ago?: number;
+}
+
+/**
+ * Seed a learning row with a real embedding BLOB. Uses the production
+ * `embeddingToBuffer` utility so the byte representation is identical to
+ * what the brain writes — the conflict detector reads via the same path,
+ * so a divergence here would silently mask production bugs.
+ *
+ * The embedding length is NOT validated client-side; tests should pass
+ * a Float32Array of length 384 (production dim) so the
+ * `length(embedding) = 1536` filter in `detectConflict` admits the row.
+ */
+export function seedLearningWithEmbedding(
+  db: Database.Database,
+  opts: SeedLearningWithEmbeddingOptions,
+): void {
+  const buf = embeddingToBuffer(opts.embedding);
+  db.prepare(
+    `INSERT INTO learnings (project, category, title, content, embedding, created_at)
+     VALUES (?, 'pattern', ?, ?, ?, ?)`,
+  ).run(
+    opts.project,
+    opts.title,
+    opts.content,
+    buf,
+    daysAgo(opts.created_days_ago ?? 0),
+  );
+}
+
+export interface SeedAgentMetricOptions {
+  project?: string;
+  agent: string;
+  action?: string;
+  result?: 'success' | 'failure' | 'partial' | 'blocked';
+  retry_count?: number;
+  recorded_days_ago?: number;
+}
+
+/**
+ * Seed an `agent_metrics` row. Defaults are tuned for the pattern
+ * detector tests: `result='success'` and `action='run'`. Setting
+ * `retry_count > 0` is what the agent-retry sub-detector counts as a
+ * "retry occurrence" against the rolling baseline.
+ */
+export function seedAgentMetric(
+  db: Database.Database,
+  opts: SeedAgentMetricOptions,
+): void {
+  db.prepare(
+    `INSERT INTO agent_metrics (project, agent, action, result, retry_count, recorded_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    opts.project ?? 'igris-ai',
+    opts.agent,
+    opts.action ?? 'run',
+    opts.result ?? 'success',
+    opts.retry_count ?? 0,
+    daysAgo(opts.recorded_days_ago ?? 0),
   );
 }

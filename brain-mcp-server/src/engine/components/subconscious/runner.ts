@@ -39,6 +39,8 @@ import {
 } from './types.js';
 import { detectStalled } from './detectors/stalled.js';
 import { detectGap } from './detectors/gap.js';
+import { detectConflict } from './detectors/conflict.js';
+import { detectPattern } from './detectors/pattern.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -51,6 +53,8 @@ export interface RunSummary {
   by_module: Record<SuggestionSourceModule, number>;
   expired_pending: number;
   expired_dismissed: number;
+  /** Pattern observation rows pruned by `expireStaleRows` (Phase 2). */
+  expired_observations: number;
   /** Per-suggestion events the caller should bus.emit; kept here so the
    *  runner remains pure and the event-bus integrity scanner (which only
    *  inspects index.ts / handlers.ts / daemon.ts) sees the literal
@@ -84,14 +88,21 @@ export interface RunOptions {
  * every literal `bus.emit('subconscious.*', ...)` call inside the
  * files the integrity scanner reads.
  *
- * Phase 1 invokes `stalled` + `gap`; Phase 2 will append `conflict` +
- * `pattern` here without changing the runner contract.
+ * Phase 1 invoked `stalled` + `gap`. Phase 2 appends `conflict` +
+ * `pattern`; pattern candidates pass through `smoothPatterns` (3-run
+ * gate) before joining the dedupe + suppression pipeline.
+ *
+ * `runId` is generated once at the top and threaded through the
+ * smoothing helper. A single `new Date().toISOString()` is unique enough
+ * for a 6-hourly schedule plus manual fires (sub-second double-fires
+ * still produce distinct ISO strings — different milliseconds).
  */
 export function runAllDetectors(
   db: Database.Database,
   options: RunOptions = {},
 ): RunSummary {
   const config = options.config ?? DEFAULT_DETECTOR_CONFIG;
+  const runId = new Date().toISOString();
 
   // 1. Auto-expire — DELETE on the raw db. Idempotent; uses the same
   //    config knobs as the detectors so a test can shrink the windows.
@@ -102,15 +113,26 @@ export function runAllDetectors(
   const candidates: SuggestionCandidate[] = [
     ...detectStalled(roDb, config),
     ...detectGap(roDb, config),
+    ...detectConflict(roDb, config),
+    ...detectPattern(roDb, config),
   ];
 
-  // 3. Persist with dismiss-loop suppression and within-run dedupe.
+  // 3. Smooth pattern candidates against `pattern_observations`. Patterns
+  //    that haven't appeared in `pattern_smoothing_runs` distinct runs
+  //    within the recency window are dropped here BEFORE dedupe and
+  //    suppression. This is a write step (records the current
+  //    observations) but it only writes to `pattern_observations`,
+  //    which is internal to this component.
+  const smoothed = smoothPatterns(db, candidates, runId, config);
+
+  // 4. Persist with dismiss-loop suppression and within-run dedupe.
   const summary: RunSummary = {
     emitted: 0,
     suppressed: 0,
     by_module: { stalled: 0, conflict: 0, gap: 0, pattern: 0 },
     expired_pending: expired.pending,
     expired_dismissed: expired.dismissed,
+    expired_observations: expired.observations,
     events: [],
   };
 
@@ -119,7 +141,7 @@ export function runAllDetectors(
   // (which can drift — e.g. "stalled for N days" increments daily).
   const existingPending = getExistingPendingKeys(db);
 
-  for (const candidate of candidates) {
+  for (const candidate of smoothed) {
     const signature = computeEvidenceSignature(
       candidate.source_module,
       candidate.evidence,
@@ -152,6 +174,87 @@ export function runAllDetectors(
   }
 
   return summary;
+}
+
+// ---------------------------------------------------------------------------
+// Pattern smoothing helper (Phase 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Pattern smoothing: record this run's pattern observations, then gate
+ * each candidate on whether `pattern_observations` has at least
+ * `pattern_smoothing_runs` distinct `run_id` values for the same
+ * `pattern_key` within `pattern_smoothing_window_days`.
+ *
+ * Record-then-gate ordering: this run's observation IS counted toward
+ * the threshold, so on the 3rd consecutive run the candidate emits in
+ * the same run rather than waiting for a 4th. This matches the spirit
+ * of "persists across last 3 runs" most naturally.
+ *
+ * Non-pattern candidates pass through unchanged. Returns a single merged
+ * array preserving the original (stalled, gap, conflict, pattern) order.
+ */
+function smoothPatterns(
+  db: Database.Database,
+  candidates: SuggestionCandidate[],
+  runId: string,
+  config: DetectorConfig,
+): SuggestionCandidate[] {
+  const patternCandidates: SuggestionCandidate[] = [];
+  const otherCandidates: SuggestionCandidate[] = [];
+  for (const c of candidates) {
+    if (c.source_module === 'pattern') patternCandidates.push(c);
+    else otherCandidates.push(c);
+  }
+  if (patternCandidates.length === 0) return candidates;
+
+  // Record observations FIRST so the gate sees the current run.
+  const insertObservation = db.prepare(
+    `INSERT INTO pattern_observations
+       (pattern_key, run_id, effect_size, sample_size, metadata)
+     VALUES (?, ?, ?, ?, ?)`,
+  );
+  for (const c of patternCandidates) {
+    const ev = c.evidence as Record<string, unknown>;
+    const patternKey =
+      typeof ev.pattern_key === 'string' && ev.pattern_key.length > 0
+        ? ev.pattern_key
+        : '';
+    if (patternKey === '') continue; // defensive — should never happen
+    const effectSize = typeof ev.effect === 'number' ? ev.effect : 0;
+    const sampleSize = typeof ev.sample_size === 'number' ? ev.sample_size : 0;
+    insertObservation.run(
+      patternKey,
+      runId,
+      effectSize,
+      sampleSize,
+      JSON.stringify(ev),
+    );
+  }
+
+  // THEN gate. Distinct-run count over the recency window.
+  const distinctRunsStmt = db.prepare(
+    `SELECT COUNT(DISTINCT run_id) AS n
+     FROM pattern_observations
+     WHERE pattern_key = ?
+       AND julianday('now') - julianday(observed_at) <= ?`,
+  );
+  const eligible: SuggestionCandidate[] = [];
+  for (const c of patternCandidates) {
+    const ev = c.evidence as Record<string, unknown>;
+    const patternKey =
+      typeof ev.pattern_key === 'string' && ev.pattern_key.length > 0
+        ? ev.pattern_key
+        : '';
+    if (patternKey === '') continue;
+    const row = distinctRunsStmt.get(
+      patternKey,
+      config.pattern_smoothing_window_days,
+    ) as { n: number };
+    if (row.n >= config.pattern_smoothing_runs) eligible.push(c);
+  }
+
+  return [...otherCandidates, ...eligible];
 }
 
 // ---------------------------------------------------------------------------
@@ -327,14 +430,20 @@ export function recordDismissPattern(
 
 /**
  * Auto-expire stale rows. Pending suggestions older than
- * `pending_ttl_days` and dismissed ones older than `dismissed_ttl_days`
- * are deleted in two separate statements so the change counts can be
- * reported.
+ * `pending_ttl_days`, dismissed ones older than `dismissed_ttl_days`,
+ * and pattern_observations older than `pattern_observation_ttl_days`
+ * (Phase 2) are deleted in three separate statements so the change
+ * counts can be reported individually.
+ *
+ * pattern_observations is a working table — it can be missing if the v2
+ * migration hasn't applied (e.g. tests using only Phase 1 schema). We
+ * try/catch the DELETE so an absent table reports `observations: 0`
+ * rather than aborting the whole run.
  */
 function expireStaleRows(
   db: Database.Database,
   config: DetectorConfig,
-): { pending: number; dismissed: number } {
+): { pending: number; dismissed: number; observations: number } {
   const pendingResult = db
     .prepare(
       `DELETE FROM suggestions
@@ -350,9 +459,23 @@ function expireStaleRows(
          AND julianday('now') - julianday(dismissed_at) > ?`,
     )
     .run(config.dismissed_ttl_days);
+  let observations = 0;
+  try {
+    const obsResult = db
+      .prepare(
+        `DELETE FROM pattern_observations
+         WHERE julianday('now') - julianday(observed_at) > ?`,
+      )
+      .run(config.pattern_observation_ttl_days);
+    observations = obsResult.changes ?? 0;
+  } catch {
+    // pattern_observations table absent (Phase 1 schema only) — fail-soft.
+    observations = 0;
+  }
   return {
     pending: pendingResult.changes ?? 0,
     dismissed: dismissedResult.changes ?? 0,
+    observations,
   };
 }
 

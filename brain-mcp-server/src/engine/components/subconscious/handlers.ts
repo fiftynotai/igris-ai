@@ -371,6 +371,7 @@ export function handleSubconsciousRun(_args: Record<string, unknown>): ToolResul
           by_module: summary.by_module,
           expired_pending: summary.expired_pending,
           expired_dismissed: summary.expired_dismissed,
+          expired_observations: summary.expired_observations,
         },
         null,
         2,

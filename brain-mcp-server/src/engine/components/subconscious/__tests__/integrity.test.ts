@@ -24,6 +24,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { detectStalled } from '../detectors/stalled.js';
 import { detectGap } from '../detectors/gap.js';
+import { detectConflict } from '../detectors/conflict.js';
+import { detectPattern } from '../detectors/pattern.js';
 import { makeReadOnlyDb } from '../readonly-db.js';
 import { DEFAULT_DETECTOR_CONFIG } from '../types.js';
 import { subconsciousMigrations } from '../schema.js';
@@ -151,10 +153,26 @@ describe('subconscious integrity', () => {
       expect(after).toBe(before);
     });
 
+    it('detectConflict does not change data_version', () => {
+      const before = dataVersion(db);
+      detectConflict(makeReadOnlyDb(db), DEFAULT_DETECTOR_CONFIG);
+      const after = dataVersion(db);
+      expect(after).toBe(before);
+    });
+
+    it('detectPattern does not change data_version', () => {
+      const before = dataVersion(db);
+      detectPattern(makeReadOnlyDb(db), DEFAULT_DETECTOR_CONFIG);
+      const after = dataVersion(db);
+      expect(after).toBe(before);
+    });
+
     it('all detectors composed do not change data_version', () => {
       const before = dataVersion(db);
       detectStalled(makeReadOnlyDb(db), DEFAULT_DETECTOR_CONFIG);
       detectGap(makeReadOnlyDb(db), DEFAULT_DETECTOR_CONFIG);
+      detectConflict(makeReadOnlyDb(db), DEFAULT_DETECTOR_CONFIG);
+      detectPattern(makeReadOnlyDb(db), DEFAULT_DETECTOR_CONFIG);
       const after = dataVersion(db);
       expect(after).toBe(before);
     });

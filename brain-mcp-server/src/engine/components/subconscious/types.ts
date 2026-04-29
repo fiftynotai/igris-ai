@@ -108,6 +108,28 @@ export interface DetectorConfig {
   dismiss_cooldown_days: number;
   /** Max number of dismiss reasons to retain per signature. */
   dismiss_reasons_cap: number;
+
+  // Pattern detector (Phase 2)
+  /** Minimum observations required before a pattern can emit. */
+  pattern_min_samples: number;
+  /** Minimum |effect-size| (deviation from baseline) for emission. */
+  pattern_min_effect: number;
+  /** Number of distinct runs a pattern_key must appear in to surface. */
+  pattern_smoothing_runs: number;
+  /** Recency window (days) for the smoothing distinct-runs count. */
+  pattern_smoothing_window_days: number;
+  /** TTL for pattern_observations rows (days). */
+  pattern_observation_ttl_days: number;
+
+  // Conflict detector (Phase 2)
+  /** Minimum cosine similarity (after L2-normalisation) to consider a pair. */
+  conflict_cosine_threshold: number;
+  /** Maximum Jaccard similarity to flag a high-cosine pair as conflict. */
+  conflict_jaccard_threshold: number;
+  /** Top-N most-recent learnings per project considered for the O(N^2) sweep. */
+  conflict_max_pairs_per_project: number;
+  /** Maximum conflict candidates emitted per project per run. */
+  conflict_max_pairs_emitted: number;
 }
 
 /** Defaults aligned with priority tables in the FR-106 plan, Concern 7. */
@@ -123,4 +145,31 @@ export const DEFAULT_DETECTOR_CONFIG: DetectorConfig = {
   dismiss_suppress_count: 2,
   dismiss_cooldown_days: 7,
   dismiss_reasons_cap: 5,
+  pattern_min_samples: 30,
+  pattern_min_effect: 0.15,
+  pattern_smoothing_runs: 3,
+  pattern_smoothing_window_days: 14,
+  pattern_observation_ttl_days: 30,
+  conflict_cosine_threshold: 0.85,
+  conflict_jaccard_threshold: 0.5,
+  conflict_max_pairs_per_project: 100,
+  conflict_max_pairs_emitted: 5,
 };
+
+/**
+ * Row shape for the `pattern_observations` working table (Phase 2,
+ * migration v2). One row per (pattern_key, run_id). The smoothing gate
+ * counts `DISTINCT run_id` for a key within
+ * `pattern_smoothing_window_days` and only emits the candidate when the
+ * count reaches `pattern_smoothing_runs`.
+ */
+export interface PatternObservationRow {
+  id: number;
+  pattern_key: string;
+  run_id: string;
+  observed_at: string;
+  effect_size: number;
+  sample_size: number;
+  /** JSON-serialized metadata; opaque to the gate, useful for forensics. */
+  metadata: string;
+}
