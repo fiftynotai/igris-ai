@@ -1,8 +1,12 @@
 #!/bin/bash
 
 # Description: Update the Igris Brain MCP Server on a VPS from GitHub
-# Usage: igris_vps_update.sh [--if-changed] [--force] [--branch <name>]
-# Dependencies: git, node 20+, npm, pm2
+# Usage: igris_vps_update.sh [--if-changed] [--force] [--branch <name>] [--skip-backfill]
+# Dependencies: git, node 20+, npm, pm2, sqlite3 (optional, used by edges backfill gate)
+# Env vars:
+#   SKIP_BACKFILL=1   Skip the entity_edges backfill (emergency deploys)
+#   IGRIS_DB_PATH     Override brain DB path (default: $BRAIN_DIR/memory/knowledge.db)
+# Deploy steps: pull_latest -> build_server -> restart_server -> backfill_edges -> log_update
 # Exit codes:
 #   0 - Success (or no changes when --if-changed)
 #   1 - Error (missing dependency, build failure, pull failure)
@@ -33,12 +37,13 @@ NEW_COMMIT=""
 # ============================================================
 
 print_usage() {
-  echo "Usage: igris_vps_update.sh [--if-changed] [--force] [--branch <name>]"
+  echo "Usage: igris_vps_update.sh [--if-changed] [--force] [--branch <name>] [--skip-backfill]"
   echo ""
   echo "Options:"
-  echo "  --if-changed   Only update if remote has new commits (for cron usage)"
-  echo "  --force        Skip change check, always rebuild"
-  echo "  --branch NAME  Override branch (default: main)"
+  echo "  --if-changed     Only update if remote has new commits (for cron usage)"
+  echo "  --force          Skip change check, always rebuild"
+  echo "  --branch NAME    Override branch (default: main)"
+  echo "  --skip-backfill  Skip entity_edges backfill after restart (TD-049)"
   echo ""
   echo "Examples:"
   echo "  igris_vps_update.sh                        # Update from main"
@@ -128,6 +133,10 @@ parse_arguments() {
         ;;
       --force)
         FORCE=true
+        shift
+        ;;
+      --skip-backfill)
+        export SKIP_BACKFILL=1
         shift
         ;;
       --branch)
@@ -319,6 +328,71 @@ restart_server() {
   fi
 }
 
+# ============================================================
+# Backfill (TD-049)
+# ============================================================
+# Runs the brief-edges backfill once per deploy if the edges
+# migration is detected. Idempotent via UNIQUE constraint on
+# entity_edges, so re-running is a no-op after the first
+# successful run. Soft-fails: a backfill error logs a warning
+# but does not fail the deploy.
+backfill_edges() {
+  if [ "${SKIP_BACKFILL:-0}" = "1" ]; then
+    echo ""
+    echo "Skipping entity_edges backfill (SKIP_BACKFILL=1)."
+    return 0
+  fi
+
+  echo ""
+  echo "Running entity_edges backfill (TD-049)..."
+
+  local DB_PATH="${IGRIS_DB_PATH:-$BRAIN_DIR/memory/knowledge.db}"
+  local BUILD_DIR="$REPO_DIR/brain-mcp-server"
+
+  # Guard 1: sqlite3 CLI must exist for the migration gate query.
+  if ! command -v sqlite3 &> /dev/null; then
+    echo "  [WARN] sqlite3 CLI not found -- skipping backfill gate check."
+    return 0
+  fi
+
+  # Guard 2: DB must exist.
+  if [ ! -f "$DB_PATH" ]; then
+    echo "  [WARN] Brain DB not found at $DB_PATH -- skipping backfill."
+    return 0
+  fi
+
+  # Guard 3: edges migration must have been applied.
+  # engine_migrations schema: (component TEXT, version INTEGER, applied_at TEXT)
+  local edges_version
+  edges_version=$(sqlite3 "$DB_PATH" \
+    "SELECT COALESCE(MAX(version), 0) FROM engine_migrations WHERE component='edges';" \
+    2>/dev/null || echo "0")
+
+  if [ "${edges_version:-0}" -lt 1 ]; then
+    echo "  [WARN] edges migration not applied (version=$edges_version) -- skipping backfill."
+    return 0
+  fi
+
+  echo "  [ok] edges migration at v$edges_version, running backfill..."
+
+  # Run the backfill. Soft-fail: a non-zero exit is logged but does
+  # not fail the deploy. The handler is idempotent (INSERT OR IGNORE)
+  # so re-runs are safe. Use a subshell + temporary 'set +e' so the
+  # outer 'set -euo pipefail' does not abort the deploy on failure.
+  cd "$BUILD_DIR"
+  set +e
+  npm run backfill-edges --silent 2>&1 | sed 's/^/    /'
+  local backfill_status=${PIPESTATUS[0]}
+  set -e
+  if [ "$backfill_status" -eq 0 ]; then
+    echo "  [ok] Backfill complete."
+  else
+    echo "  [WARN] Backfill exited non-zero (status=$backfill_status) -- see output above. Deploy continues."
+  fi
+  cd "$REPO_DIR"
+  return 0
+}
+
 log_update() {
   local log_dir="$BRAIN_DIR/logs"
   local log_file="$log_dir/update.log"
@@ -411,6 +485,7 @@ main() {
   pull_latest
   build_server
   restart_server
+  backfill_edges       # TD-049: run brief-edges backfill (idempotent, soft-fail)
   log_update
   print_summary
 
