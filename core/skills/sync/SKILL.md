@@ -179,17 +179,64 @@ If the `igris-brain` MCP server is NOT available:
   - api_key = value from `remote_brain.api_key`
 - Display sync summary (rows pushed, errors synced, etc.)
 
+**File push strategy (steps [3/5] - [5/5])**
+
+These three steps push flat metric files. They use a two-tier dispatch
+based on file size:
+
+- **Small files (< 200 KB):** Use the `igris_file_push` MCP tool. The
+  file content travels through the model's context window as the tool's
+  `content` parameter. This is the default path for typical files.
+- **Large files (>= 200 KB):** Shell out directly to curl against the
+  brain's `/sync/file-push` HTTP endpoint. **Why this dual path exists:**
+  the Read tool caps at 256 KB per call AND ~25,000 tokens per chunk, so
+  large `events.jsonl` files (a 341 KB file is ~85 K tokens) require 6+
+  Read chunks, string concatenation, and re-emission as the tool arg —
+  burning ~85-100 K tokens per sync for what amounts to a binary upload.
+  The HTTP endpoint already accepts up to 50 MB JSON; curl bypasses the
+  context-window round-trip cleanly.
+
+For each push step below, decide the path with `wc -c <FILE_PATH>`:
+- If `wc -c` reports `< 204800` bytes (200 KB) → MCP tool path
+- If `wc -c` reports `>= 204800` bytes → curl direct path
+- If `wc -c` is unavailable for any reason → default to MCP tool path
+
+**Curl direct path (large files):**
+
+```bash
+API_KEY="..."        # from remote_brain.api_key
+REMOTE_URL="..."     # from remote_brain.url
+FILE_PATH="..."      # absolute path to the metric file
+FILE_TYPE="events"   # one of: events | agent_metrics | budget
+
+python3 -c "
+import json, sys
+with open('$FILE_PATH') as f:
+    print(json.dumps({'file_type': '$FILE_TYPE', 'content': f.read()}))
+" | curl -sS -X POST \
+  -H "X-API-Key: $API_KEY" \
+  -H "Content-Type: application/json" \
+  --data-binary @- "$REMOTE_URL/sync/file-push"
+```
+
+The HTTP response on success is JSON like
+`{"ok": true, "bytes_written": NNN, "file_type": "..."}` — display
+`bytes_written` so the operator sees confirmation. On non-2xx response,
+display the response body as a WARNING but do NOT abort.
+
 **[3/5] Pushing events log...**
 - Check if `~/.igris/projects/{project}/metrics/events.jsonl` exists in the project directory.
 - If it exists:
-  - Read the file content.
-  - Call `igris_file_push` with:
+  - Run `wc -c <path>` to get the size.
+  - **If size < 200 KB:** call `igris_file_push` with:
     - file_type = `events`
     - content = file contents
     - remote_url = value from `remote_brain.url`
     - api_key = value from `remote_brain.api_key`
-  - On success: display "Events log pushed (X bytes)"
-  - On failure: display WARNING but do NOT abort.
+    On success: display "Events log pushed via MCP (X bytes)"
+  - **If size >= 200 KB:** use the curl direct path with `FILE_TYPE=events`.
+    On 2xx: display "Events log pushed via curl (X bytes_written)"
+  - On failure (either path): display WARNING but do NOT abort.
   - **Note:** This file can be consumed by external dashboards (e.g., Crimson Arena) for event monitoring.
 - If it does not exist:
   - Display: "No events.jsonl found. Skipping."
@@ -197,28 +244,32 @@ If the `igris-brain` MCP server is NOT available:
 **[4/5] Pushing agent metrics...**
 - Check if `~/.igris/projects/{project}/metrics/agent-metrics.json` exists in the project directory.
 - If it exists:
-  - Read the file content.
-  - Call `igris_file_push` with:
+  - Run `wc -c <path>` to get the size.
+  - **If size < 200 KB:** call `igris_file_push` with:
     - file_type = `agent_metrics`
     - content = file contents
     - remote_url = value from `remote_brain.url`
     - api_key = value from `remote_brain.api_key`
-  - On success: display "Agent metrics pushed (X bytes)"
-  - On failure: display WARNING but do NOT abort.
+    On success: display "Agent metrics pushed via MCP (X bytes)"
+  - **If size >= 200 KB:** use the curl direct path with `FILE_TYPE=agent_metrics`.
+    On 2xx: display "Agent metrics pushed via curl (X bytes_written)"
+  - On failure (either path): display WARNING but do NOT abort.
 - If it does not exist:
   - Display: "No agent-metrics.json found. Skipping."
 
 **[5/5] Pushing budget config...**
 - Check if `~/.igris/projects/{project}/metrics/budget.json` exists in the project directory.
 - If it exists:
-  - Read the file content.
-  - Call `igris_file_push` with:
+  - Run `wc -c <path>` to get the size.
+  - **If size < 200 KB:** call `igris_file_push` with:
     - file_type = `budget`
     - content = file contents
     - remote_url = value from `remote_brain.url`
     - api_key = value from `remote_brain.api_key`
-  - On success: display "Budget config pushed (X bytes)"
-  - On failure: display WARNING but do NOT abort.
+    On success: display "Budget config pushed via MCP (X bytes)"
+  - **If size >= 200 KB:** use the curl direct path with `FILE_TYPE=budget`.
+    On 2xx: display "Budget config pushed via curl (X bytes_written)"
+  - On failure (either path): display WARNING but do NOT abort.
 - If it does not exist:
   - Display: "No budget.json found. Skipping."
 
