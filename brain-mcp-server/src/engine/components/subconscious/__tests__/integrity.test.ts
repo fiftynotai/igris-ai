@@ -33,10 +33,12 @@ import { detectGap } from '../detectors/gap.js';
 import { detectConflict } from '../detectors/conflict.js';
 import { detectPattern } from '../detectors/pattern.js';
 import { makeReadOnlyDb } from '../readonly-db.js';
+import { runAllDetectors } from '../runner.js';
 import { DEFAULT_DETECTOR_CONFIG } from '../types.js';
 import { subconsciousMigrations } from '../schema.js';
 import {
   applyMinimalSchema,
+  seedAgentMetric,
   seedBrief,
   seedBriefFile,
   seedLearning,
@@ -271,6 +273,75 @@ describe('subconscious integrity', () => {
       detectPattern(makeReadOnlyDb(db), DEFAULT_DETECTOR_CONFIG);
       const after = dataVersion(db);
       expect(after).toBe(before);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Phase 1-only schema: smoothPatterns fail-soft (TD-054 Nit 1)
+  //
+  // If a partial migration leaves the brain on Phase 1 schema (no
+  // pattern_observations table) while running Phase 2 code, the runner
+  // must NOT throw. It should pass pattern candidates through unfiltered
+  // (smoothing is a noise gate, not a correctness gate) so the rest of
+  // the pipeline proceeds normally.
+  // -----------------------------------------------------------------------
+
+  describe('Phase 1-only schema fail-soft', () => {
+    it('runAllDetectors does not throw when pattern_observations table is missing', () => {
+      const phase1Db = new Database(':memory:');
+      try {
+        applyMinimalSchema(phase1Db);
+        // Apply ONLY v1 migration — leave v2 (pattern_observations) absent.
+        const v1 = subconsciousMigrations.find((m) => m.version === 1);
+        expect(v1).toBeDefined();
+        phase1Db.exec(v1!.sql);
+
+        // Confirm the table truly is missing.
+        const tables = phase1Db
+          .prepare(
+            `SELECT name FROM sqlite_master WHERE type='table' AND name='pattern_observations'`,
+          )
+          .all();
+        expect(tables).toHaveLength(0);
+
+        // Seed an agent_retry pattern candidate (no DOW so we control which
+        // pattern fires). 50% retry rate vs ~10% baseline → effect ≈ 0.27.
+        seedProject(phase1Db, { slug: 'igris-ai' });
+        for (let i = 0; i < 100; i++) {
+          seedAgentMetric(phase1Db, {
+            agent: 'forger',
+            retry_count: i < 50 ? 1 : 0,
+            recorded_days_ago: 5,
+          });
+        }
+        for (const agent of ['sentinel', 'warden']) {
+          for (let i = 0; i < 100; i++) {
+            seedAgentMetric(phase1Db, {
+              agent,
+              retry_count: i < 10 ? 1 : 0,
+              recorded_days_ago: 5,
+            });
+          }
+        }
+
+        // Silence the expected console.warn so the test output stays clean.
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        let summary: ReturnType<typeof runAllDetectors> | null = null;
+        expect(() => {
+          summary = runAllDetectors(phase1Db);
+        }).not.toThrow();
+
+        // Pattern candidate passes through unfiltered (smoothing skipped).
+        expect(summary).not.toBeNull();
+        expect(summary!.by_module.pattern).toBeGreaterThanOrEqual(1);
+
+        // The fail-soft path warned exactly once.
+        expect(warnSpy).toHaveBeenCalled();
+        warnSpy.mockRestore();
+      } finally {
+        phase1Db.close();
+      }
     });
   });
 });

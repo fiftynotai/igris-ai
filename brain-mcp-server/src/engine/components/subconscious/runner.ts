@@ -193,6 +193,14 @@ export function runAllDetectors(
  *
  * Non-pattern candidates pass through unchanged. Returns a single merged
  * array preserving the original (stalled, gap, conflict, pattern) order.
+ *
+ * Fail-soft on missing `pattern_observations` table (mirrors
+ * `expireStaleRows`): if the v2 migration hasn't applied (e.g. partial
+ * Phase 1-only schema during a rollout), the INSERT will throw "no such
+ * table". We catch it once for both the INSERT loop and the gating
+ * SELECT (both depend on the same table), then let pattern candidates
+ * pass through UNFILTERED — preferable to silently dropping them, since
+ * the smoothing gate is a noise-reduction layer, not a correctness one.
  */
 function smoothPatterns(
   db: Database.Database,
@@ -208,53 +216,64 @@ function smoothPatterns(
   }
   if (patternCandidates.length === 0) return candidates;
 
-  // Record observations FIRST so the gate sees the current run.
-  const insertObservation = db.prepare(
-    `INSERT INTO pattern_observations
-       (pattern_key, run_id, effect_size, sample_size, metadata)
-     VALUES (?, ?, ?, ?, ?)`,
-  );
-  for (const c of patternCandidates) {
-    const ev = c.evidence as Record<string, unknown>;
-    const patternKey =
-      typeof ev.pattern_key === 'string' && ev.pattern_key.length > 0
-        ? ev.pattern_key
-        : '';
-    if (patternKey === '') continue; // defensive — should never happen
-    const effectSize = typeof ev.effect === 'number' ? ev.effect : 0;
-    const sampleSize = typeof ev.sample_size === 'number' ? ev.sample_size : 0;
-    insertObservation.run(
-      patternKey,
-      runId,
-      effectSize,
-      sampleSize,
-      JSON.stringify(ev),
+  try {
+    // Record observations FIRST so the gate sees the current run.
+    const insertObservation = db.prepare(
+      `INSERT INTO pattern_observations
+         (pattern_key, run_id, effect_size, sample_size, metadata)
+       VALUES (?, ?, ?, ?, ?)`,
     );
-  }
+    for (const c of patternCandidates) {
+      const ev = c.evidence as Record<string, unknown>;
+      const patternKey =
+        typeof ev.pattern_key === 'string' && ev.pattern_key.length > 0
+          ? ev.pattern_key
+          : '';
+      if (patternKey === '') continue; // defensive — should never happen
+      const effectSize = typeof ev.effect === 'number' ? ev.effect : 0;
+      const sampleSize = typeof ev.sample_size === 'number' ? ev.sample_size : 0;
+      insertObservation.run(
+        patternKey,
+        runId,
+        effectSize,
+        sampleSize,
+        JSON.stringify(ev),
+      );
+    }
 
-  // THEN gate. Distinct-run count over the recency window.
-  const distinctRunsStmt = db.prepare(
-    `SELECT COUNT(DISTINCT run_id) AS n
-     FROM pattern_observations
-     WHERE pattern_key = ?
-       AND julianday('now') - julianday(observed_at) <= ?`,
-  );
-  const eligible: SuggestionCandidate[] = [];
-  for (const c of patternCandidates) {
-    const ev = c.evidence as Record<string, unknown>;
-    const patternKey =
-      typeof ev.pattern_key === 'string' && ev.pattern_key.length > 0
-        ? ev.pattern_key
-        : '';
-    if (patternKey === '') continue;
-    const row = distinctRunsStmt.get(
-      patternKey,
-      config.pattern_smoothing_window_days,
-    ) as { n: number };
-    if (row.n >= config.pattern_smoothing_runs) eligible.push(c);
-  }
+    // THEN gate. Distinct-run count over the recency window.
+    const distinctRunsStmt = db.prepare(
+      `SELECT COUNT(DISTINCT run_id) AS n
+       FROM pattern_observations
+       WHERE pattern_key = ?
+         AND julianday('now') - julianday(observed_at) <= ?`,
+    );
+    const eligible: SuggestionCandidate[] = [];
+    for (const c of patternCandidates) {
+      const ev = c.evidence as Record<string, unknown>;
+      const patternKey =
+        typeof ev.pattern_key === 'string' && ev.pattern_key.length > 0
+          ? ev.pattern_key
+          : '';
+      if (patternKey === '') continue;
+      const row = distinctRunsStmt.get(
+        patternKey,
+        config.pattern_smoothing_window_days,
+      ) as { n: number };
+      if (row.n >= config.pattern_smoothing_runs) eligible.push(c);
+    }
 
-  return [...otherCandidates, ...eligible];
+    return [...otherCandidates, ...eligible];
+  } catch (err) {
+    // pattern_observations absent (Phase 1 schema only) — fail-soft.
+    // Pass pattern candidates through unfiltered rather than drop them
+    // silently; smoothing is a noise gate, not a correctness gate.
+    console.warn(
+      '[subconscious] pattern smoothing skipped (no such table: pattern_observations?); pattern candidates passing through unfiltered:',
+      err instanceof Error ? err.message : String(err),
+    );
+    return [...otherCandidates, ...patternCandidates];
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -303,7 +322,15 @@ export function computeEvidenceSignature(
     case 'conflict': {
       const ids = evidence.learning_ids;
       if (Array.isArray(ids) && ids.length === 2) {
-        const sorted = [...ids].map(String).sort((a, b) => a.localeCompare(b));
+        // Numeric sort — `learning_ids` are stored as numbers (see
+        // `conflict.ts` evidence shape), so we compare numerically.
+        // Without this, ids `[2, 10]` produce signature `conflict:10:2`
+        // (lex order) while the evidence array stores them `[2, 10]`
+        // (numeric order). Stable today but visually inconsistent.
+        const sorted = (ids as Array<number | string>)
+          .slice()
+          .map((v) => Number(v))
+          .sort((a, b) => a - b);
         return `conflict:${sorted[0]}:${sorted[1]}`;
       }
       break;

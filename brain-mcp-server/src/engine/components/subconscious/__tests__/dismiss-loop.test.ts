@@ -296,6 +296,32 @@ describe('dismiss-reason learning loop', () => {
       const b = computeEvidenceSignature('gap', {});
       expect(a).not.toBe(b);
     });
+
+    // -------------------------------------------------------------------
+    // TD-054 Nit 2: conflict signatures sort learning_ids numerically
+    // (not lexicographically) so `[2, 10]` and `[10, 2]` both produce
+    // `conflict:2:10`. Lex sort would yield `conflict:10:2` for `[10, 2]`
+    // — stable but visually inconsistent with the numeric storage in
+    // `evidence.learning_ids`.
+    // -------------------------------------------------------------------
+
+    it('sorts conflict learning_ids numerically (not lex) for the signature', () => {
+      const ascending = computeEvidenceSignature('conflict', { learning_ids: [2, 10] });
+      const descending = computeEvidenceSignature('conflict', { learning_ids: [10, 2] });
+      expect(ascending).toBe(descending);
+      expect(ascending).toBe('conflict:2:10');
+    });
+
+    it('numeric conflict sort handles single-digit pairs identically to lex', () => {
+      // For ids in [0..9] lex and numeric agree; ensures we didn't break
+      // the common case while fixing the multi-digit one.
+      expect(computeEvidenceSignature('conflict', { learning_ids: [3, 7] })).toBe(
+        'conflict:3:7',
+      );
+      expect(computeEvidenceSignature('conflict', { learning_ids: [7, 3] })).toBe(
+        'conflict:3:7',
+      );
+    });
   });
 
   // -----------------------------------------------------------------------

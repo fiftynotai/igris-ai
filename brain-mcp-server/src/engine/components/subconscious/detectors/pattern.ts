@@ -120,6 +120,10 @@ function detectDowForProject(
 ): SuggestionCandidate | null {
   let rows: DowRow[];
   try {
+    // Uses updated_at as a creation-day proxy (brief_status doesn't track
+    // created_at separately). See docs/architecture/subconscious_engine.md
+    // §13 Open Questions for the trade-off; switch to brief_files.created_at
+    // via outer join only if drift is observed empirically.
     rows = db
       .prepare(
         `SELECT

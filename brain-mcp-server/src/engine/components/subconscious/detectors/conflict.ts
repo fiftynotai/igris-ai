@@ -152,6 +152,11 @@ function detectForProject(
   // (Float32Array view over the underlying buffer), so the cost is the
   // tokenisation, which is cheap enough to do up-front for the entire
   // sample window.
+  //
+  // NOTE: tokens pre-built per row (O(N)) rather than per-pair (O(N^2))
+  // — bounded memory cost (~5k strings/project), avoids re-tokenizing
+  // the same row across all its pairs. Plan §1 said "only for pairs
+  // that pass cosine"; deviation is intentional + cheap.
   const decoded: Decoded[] = rows.map((r) => ({
     id: r.id,
     vec: bufferToEmbedding(r.embedding),
@@ -175,6 +180,11 @@ function detectForProject(
   // Sort by cosine descending so the strongest conflicts surface first;
   // cap per-project emissions so a project full of similar bug-fix
   // learnings can't drown the user in noise.
+  //
+  // NOTE: cap is applied to the cosine-sorted candidate pool before
+  // priorityForConflict() can null-filter. With real float arithmetic
+  // the cap-vs-priority interaction is non-pathological (cosine ==
+  // exact threshold is vanishingly rare); flagged for future readers.
   matches.sort((m1, m2) => m2.cosine - m1.cosine);
   const capped = matches.slice(0, config.conflict_max_pairs_emitted);
 
