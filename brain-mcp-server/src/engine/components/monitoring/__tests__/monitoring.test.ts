@@ -400,10 +400,10 @@ describe('Monitoring Component', () => {
       expect(comp.version).toBe('1.0.0');
     });
 
-    it('events() declares 31 listened events', () => {
+    it('events() declares 32 listened events', () => {
       const comp = createMonitoringComponent();
       const { listens } = comp.events();
-      expect(listens).toHaveLength(31);
+      expect(listens).toHaveLength(32);
     });
 
     it('events() declares 0 emitted events', () => {

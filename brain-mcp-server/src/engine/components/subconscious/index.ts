@@ -91,9 +91,9 @@ export function createSubconsciousComponent(): BrainComponent {
     try {
       const db = getDb();
       const existing = db
-        .prepare(`SELECT 1 FROM schedules WHERE name = ? LIMIT 1`)
-        .get(SCHEDULE_NAME) as { 1: number } | undefined;
-      if (existing) {
+        .prepare(`SELECT id FROM schedules WHERE name = ? LIMIT 1`)
+        .get(SCHEDULE_NAME) as { id: number } | undefined;
+      if (existing !== undefined) {
         _ctx.log.info(`Schedule "${SCHEDULE_NAME}" already exists; skipping bootstrap`);
         return;
       }
@@ -115,7 +115,14 @@ export function createSubconsciousComponent(): BrainComponent {
       });
       _ctx.log.info(`Bootstrapped schedule: ${SCHEDULE_NAME} (${SCHEDULE_CRON_EXPR})`);
     } catch (err) {
-      _ctx.log.warn(`Failed to bootstrap schedule "${SCHEDULE_NAME}": ${errMsg(err)}`);
+      const message = errMsg(err);
+      _ctx.log.warn(`Failed to bootstrap schedule "${SCHEDULE_NAME}": ${message}`);
+      // Emit `subconscious.bootstrap_failed` so the monitoring component
+      // captures the failure in event_log. The warn-log alone is not a
+      // signal that downstream observability picks up.
+      _ctx.bus.emit('subconscious.bootstrap_failed', {
+        error_message: message,
+      });
     }
   }
 
@@ -254,6 +261,11 @@ export function createSubconsciousComponent(): BrainComponent {
           {
             name: 'subconscious.suggestion_suppressed',
             description: 'A candidate suggestion was suppressed by the dismiss-reason learning loop',
+          },
+          {
+            name: 'subconscious.bootstrap_failed',
+            description:
+              'The subconscious_engine schedule failed to bootstrap on engine.ready (TD-053)',
           },
         ],
         listens: [

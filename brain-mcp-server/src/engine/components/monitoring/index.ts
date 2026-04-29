@@ -17,7 +17,11 @@
  *          task.failed, task.claimed, brief.synced, brief.created,
  *          brief.completed, session.synced, session.file.updated,
  *          instance.heartbeat, memory.stored, error.stored,
- *          project.registered, metrics.recorded
+ *          project.registered, metrics.recorded,
+ *          subconscious.run_start, subconscious.run_complete,
+ *          subconscious.suggestion_emitted,
+ *          subconscious.suggestion_suppressed,
+ *          subconscious.bootstrap_failed
  *
  * @module engine/components/monitoring
  * @author Fifty.ai
@@ -74,6 +78,7 @@ const EVENT_COMPONENT_MAP: Record<string, string> = {
   'subconscious.run_complete': 'subconscious',
   'subconscious.suggestion_emitted': 'subconscious',
   'subconscious.suggestion_suppressed': 'subconscious',
+  'subconscious.bootstrap_failed': 'subconscious',
 };
 
 // ---------------------------------------------------------------------------
@@ -229,6 +234,7 @@ export function createMonitoringComponent(): BrainComponent {
           { name: 'subconscious.run_complete', description: 'Log subconscious detector run completion events' },
           { name: 'subconscious.suggestion_emitted', description: 'Log subconscious suggestion emission events' },
           { name: 'subconscious.suggestion_suppressed', description: 'Log subconscious suggestion suppression events (dismiss-loop)' },
+          { name: 'subconscious.bootstrap_failed', description: 'Log subconscious schedule bootstrap failures (TD-053)' },
         ],
       };
     },
@@ -271,6 +277,7 @@ export function createMonitoringComponent(): BrainComponent {
       ctx.bus.on('subconscious.run_complete', onEventReceived);
       ctx.bus.on('subconscious.suggestion_emitted', onEventReceived);
       ctx.bus.on('subconscious.suggestion_suppressed', onEventReceived);
+      ctx.bus.on('subconscious.bootstrap_failed', onEventReceived);
 
       // Run retention cleanup on init (purge events older than 30 days)
       try {
@@ -321,6 +328,7 @@ export function createMonitoringComponent(): BrainComponent {
         _ctx.bus.off('subconscious.run_complete', onEventReceived);
         _ctx.bus.off('subconscious.suggestion_emitted', onEventReceived);
         _ctx.bus.off('subconscious.suggestion_suppressed', onEventReceived);
+        _ctx.bus.off('subconscious.bootstrap_failed', onEventReceived);
       }
       _ctx = null;
     },
