@@ -1,8 +1,8 @@
 # Subconscious Engine
 
-**Brief:** FR-106 — Subconscious Engine (Light)
-**Status:** Phase 1 (stalled + gap + lifecycle) shipped (commit `99b709d`). Phase 2 (conflict + pattern + smoothing + arch doc) shipped together with this PR.
-**Schema:** Per-component migrations v1 + v2 in `brain-mcp-server/src/engine/components/subconscious/schema.ts`.
+**Briefs:** FR-106 — Subconscious Engine (Light) + FR-108 — Conflict Detector for Learnings (LLM verification layer)
+**Status:** Phase 1 (stalled + gap + lifecycle) shipped (`99b709d`). Phase 2 (conflict + pattern + smoothing + arch doc) shipped (`3a0e424`). FR-108 (LLM verification + acted-action edge materialization) shipped this PR.
+**Schema:** Per-component migrations v1 + v2 in `brain-mcp-server/src/engine/components/subconscious/schema.ts`. No v3 — FR-108 fits in existing `suggestions.evidence` JSON.
 
 ---
 
@@ -11,8 +11,14 @@
 The subconscious engine is the system's quiet hand. It sweeps the brain on a
 6-hour cron, looks for things that *might* be worth noticing, and queues them
 as `suggestions` rows. It does NOT mutate briefs, learnings, goals, edges, or
-any other domain table. It does NOT call an LLM, does NOT write to disk
+any other domain table from the detector layer. It does NOT write to disk
 outside its own working tables, and does NOT block any user-facing surface.
+
+**FR-108 update:** the engine now optionally calls an LLM via headless Claude
+Code (`claude -p`) to verify conflict candidates. The call is gated on the
+heuristic — the LLM never scans pair-wise. When `claude` is not on PATH (e.g.
+on the VPS), a `noopVerifier` activates automatically and heuristic candidates
+surface unchanged. See "Conflict — LLM verification" below.
 
 What "passive" buys us:
 
@@ -175,6 +181,48 @@ Per-project candidate cap: matches sort by `cosine DESC` and the top
 project full of similar bug-fix learnings could emit dozens of "conflicts"
 per run.
 
+### Conflict — LLM verification (FR-108)
+
+Heuristic candidates are passed through a verifier before they reach the
+suggestion store. The verifier shells out to `claude -p` via
+`child_process.spawn`, sends the two learnings as a stdin prompt, and parses
+the response (`{is_conflict: bool, reason: string}`). Implementation:
+`brain-mcp-server/src/engine/components/subconscious/verifier.ts`.
+
+Three properties make the verifier safe to add to a passive observer:
+
+1. **Heuristic-first gate.** The verifier ONLY runs on candidates the
+   heuristic already flagged. It never scans all pairs. Bounded cost: at
+   most `conflict_max_pairs_emitted` calls per project per run.
+2. **Defensive failure mode.** Only an explicit clean rejection
+   (`{is_conflict: false, status: 'verified'}`) drops a candidate. Every
+   other outcome — `cli_missing`, `spawn_failed`, `timeout`, `parse_failed`
+   — surfaces the candidate with `verifier_status` in evidence. Verifier
+   failure NEVER silently swallows a real conflict.
+3. **VPS-safe via auto-fallback.** `isClaudeCliAvailable()` runs at
+   component init (cached). When `claude` is absent, `noopVerifier`
+   activates and stamps `verifier_status='cli_missing'` on each candidate
+   so dashboards can distinguish "verifier disabled" from "verified".
+
+The subprocess uses array-form `spawn('claude', ['-p'], ...)` (no shell
+interpolation), prompts via stdin (no argv quoting issues), enforces a
+30s timeout (configurable via `verifier_timeout_ms`), and runs sequential
+SIGTERM→SIGKILL cleanup with double-resolution prevention. JSON extraction
+handles bare, fenced, preamble-prefixed, and Anthropic envelope shapes via
+`extractJsonReply`.
+
+Two new events fire from this layer:
+- `subconscious.suggestion_verified` — emitted alongside `suggestion_emitted`
+  for verifier-confirmed candidates.
+- `subconscious.suggestion_rejected_by_verifier` — emitted when an explicit
+  clean rejection drops a heuristic candidate. Monitoring listens to both
+  for visibility into verifier behavior.
+
+**Why headless Claude Code, not the API SDK.** Avoids new dependencies, no
+API key management, billing flows through the user's existing Claude plan.
+Trade-off: requires `claude` CLI on PATH and an interactive auth state, so
+this layer is local-daemon-only by design (not VPS).
+
 ### Pattern (Phase 2)
 
 Two heuristic sub-detectors that surface "interesting deviations" from a
@@ -285,6 +333,8 @@ cosine reduces to a 384-dim dot product. The detector clips the result to
 | Engine NEVER mutates other tables   | ReadOnlyDb + integrity test | (still holds) |
 | Unit tests per module               | stalled.test, gap.test | conflict.test, pattern.test |
 | Architecture doc                    | — | this file |
+| LLM verification layer (FR-108)     | — | ✓ (this PR) — `verifier.ts` |
+| Acted-action edge materialization (FR-108) | — | ✓ (this PR) — `handlers.ts:323-420` |
 
 ---
 
@@ -311,6 +361,27 @@ Suppression rules in `runner.ts:shouldSuppress` at lines 228-259:
 Acting on a suggestion (`igris_suggestion_acted`) is **not** fed into the
 suppression loop. Acting is a positive signal — the suggestion was useful, so
 surface it again next time it qualifies. We don't want to silence what works.
+
+### Acted-action edge materialization (FR-108)
+
+For conflict-class suggestions, the user's resolution choice writes a typed
+edge to `entity_edges` (FR-105). This is the only path where the engine
+mutates a domain table — and it's gated on explicit user intent via the
+`igris_suggestion_acted` MCP tool, not detector logic.
+
+| `action` | Edge written | Direction | Metadata |
+|----------|--------------|-----------|----------|
+| `'superseded'` | `supersedes` | `from=winner_id → to=loser_id` ("winner supersedes loser") | none |
+| `'kept_both'` | `related_to` | `from=min(a,b) → to=max(a,b)` (sorted-pair, idempotent) | `{"reason":"non-conflict-on-review"}` |
+| (omitted) | none | — | — (backward-compat for non-conflict suggestions) |
+
+The suggestion UPDATE and the edge INSERT happen in a single
+`db.transaction()` — if edge creation fails (e.g., entity_edges table
+absent), the suggestion stays `pending`. Tests verify the rollback path.
+
+Validation (handlers.ts:323-348): `action='superseded'` requires both
+`winner_id` and `loser_id` (clear error if missing); ids must be distinct,
+positive integers; invalid action values rejected with the enum list.
 
 ---
 
@@ -348,13 +419,11 @@ sync table count remains 26 unchanged.
 
 ## Open questions / Phase 3+ candidates
 
-- **FR-108 — LLM-assisted semantic conflict.** Today's heuristic catches
-  most contradictions but not all (e.g., "this approach scales linearly"
-  vs "we should use exponential backoff" — semantically incompatible but
-  cosine-close in embedding space). An LLM call gated on the candidate
-  pairs the heuristic surfaces would close the long tail. FR-108 is currently
-  closed as duplicate (FR-106 plan, Concern 4); a follow-up TD will re-open
-  it as an enhancement to this detector.
+- **Parallel verifier batching.** Today the verifier loop is sequential
+  (`Promise` per candidate awaited in order). Worst-case latency: 5 candidates
+  × ~7s × N projects, well inside the 6h cron interval. If profiling shows
+  pipeline duration as a concern, a `Promise.all` batch with a
+  rate-limited semaphore is a future TD.
 - **Memory consolidator.** Find clusters of paraphrases (high cosine + high
   Jaccard) and recommend merging. Current logic filters them out as noise,
   but they are themselves a valid signal — duplicate knowledge accumulates
@@ -399,6 +468,7 @@ sync table count remains 26 unchanged.
 | `brain-mcp-server/src/engine/components/subconscious/detectors/gap.ts` | Gap detector (project-quiet + done-with-unchecked-AC) |
 | `brain-mcp-server/src/engine/components/subconscious/detectors/conflict.ts` | Conflict detector (cosine + Jaccard) |
 | `brain-mcp-server/src/engine/components/subconscious/detectors/pattern.ts` | Pattern detector (DOW + agent retry) |
+| `brain-mcp-server/src/engine/components/subconscious/verifier.ts` | LLM verifier — Claude headless subprocess + JSON extractor (FR-108) |
 | `brain-mcp-server/src/engine/components/subconscious/__tests__/` | Per-module + integrity tests |
 
 ### Related briefs and docs
@@ -406,7 +476,9 @@ sync table count remains 26 unchanged.
 - **FR-105** — Typed Edges. Source of `goal` entity type and `serves_goal` edge type.
 - **FR-107** — Provenance on Learnings. Same per-component migration pattern.
   See `docs/architecture/provenance.md`.
-- **FR-108** — Conflict Detector for Learnings (closed as duplicate of FR-106).
-  Future enhancement: LLM-assisted semantic conflict.
+- **FR-108** — Conflict Detector for Learnings. Repositioned from "simple
+  cosine+Jaccard detector" (which shipped as part of FR-106 Phase 2) to
+  "LLM verification layer + acted-action edge materialization." See
+  "Conflict — LLM verification" and "Acted-action edge materialization" above.
 - **FR-110** — Goals as First-Class Entities. Cross-references this engine
   for future auto-status-transition detector. See `docs/architecture/goals.md`.

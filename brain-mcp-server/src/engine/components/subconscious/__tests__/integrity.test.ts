@@ -287,7 +287,7 @@ describe('subconscious integrity', () => {
   // -----------------------------------------------------------------------
 
   describe('Phase 1-only schema fail-soft', () => {
-    it('runAllDetectors does not throw when pattern_observations table is missing', () => {
+    it('runAllDetectors does not throw when pattern_observations table is missing', async () => {
       const phase1Db = new Database(':memory:');
       try {
         applyMinimalSchema(phase1Db);
@@ -327,10 +327,10 @@ describe('subconscious integrity', () => {
         // Silence the expected console.warn so the test output stays clean.
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-        let summary: ReturnType<typeof runAllDetectors> | null = null;
-        expect(() => {
-          summary = runAllDetectors(phase1Db);
-        }).not.toThrow();
+        let summary: Awaited<ReturnType<typeof runAllDetectors>> | null = null;
+        await expect((async () => {
+          summary = await runAllDetectors(phase1Db);
+        })()).resolves.not.toThrow();
 
         // Pattern candidate passes through unfiltered (smoothing skipped).
         expect(summary).not.toBeNull();

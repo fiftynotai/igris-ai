@@ -256,8 +256,8 @@ describe('pattern smoothing (runAllDetectors)', () => {
 
   afterEach(() => db.close());
 
-  it('does NOT emit a pattern suggestion on the first run only', () => {
-    const summary = runAllDetectors(db);
+  it('does NOT emit a pattern suggestion on the first run only', async () => {
+    const summary = await runAllDetectors(db);
     // Pattern is gated by 3-distinct-runs default; first run records
     // observation #1, count distinct = 1, gate not met.
     expect(summary.by_module.pattern).toBe(0);
@@ -265,7 +265,7 @@ describe('pattern smoothing (runAllDetectors)', () => {
     expect(summary.emitted).toBeGreaterThanOrEqual(0);
   });
 
-  it('emits the pattern suggestion on the 3rd distinct run', () => {
+  it('emits the pattern suggestion on the 3rd distinct run', async () => {
     // Simulate two prior runs by seeding pattern_observations directly.
     const patternKey = 'dow:1:igris-ai';
     const insertObs = db.prepare(
@@ -276,7 +276,7 @@ describe('pattern smoothing (runAllDetectors)', () => {
     insertObs.run(patternKey, '2026-04-26T00:00:00Z', daysAgo(2), 0.46, 50, '{}');
     insertObs.run(patternKey, '2026-04-27T00:00:00Z', daysAgo(1), 0.46, 50, '{}');
 
-    const summary = runAllDetectors(db);
+    const summary = await runAllDetectors(db);
     // 3rd distinct run inside the 14-day window → emit.
     expect(summary.by_module.pattern).toBeGreaterThanOrEqual(1);
     // Find the suggestion row to confirm shape.
@@ -292,7 +292,7 @@ describe('pattern smoothing (runAllDetectors)', () => {
     expect(ev.pattern_key).toBe(patternKey);
   });
 
-  it('does NOT emit if oldest observation is outside the 14d window', () => {
+  it('does NOT emit if oldest observation is outside the 14d window', async () => {
     // Seed two prior observations OUTSIDE the smoothing window.
     const patternKey = 'dow:1:igris-ai';
     const insertObs = db.prepare(
@@ -303,7 +303,7 @@ describe('pattern smoothing (runAllDetectors)', () => {
     insertObs.run(patternKey, 'old-run-1', daysAgo(20), 0.46, 50, '{}');
     insertObs.run(patternKey, 'old-run-2', daysAgo(16), 0.46, 50, '{}');
 
-    const summary = runAllDetectors(db);
+    const summary = await runAllDetectors(db);
     // Window default = 14d; both prior obs are stale (>14d). Distinct
     // runs in-window = 1 (this run). Gate fails → no emission.
     expect(summary.by_module.pattern).toBe(0);
@@ -315,7 +315,7 @@ describe('pattern smoothing (runAllDetectors)', () => {
 // ---------------------------------------------------------------------------
 
 describe('pattern_observations TTL pruning', () => {
-  it('expireStaleRows reports observations pruned in summary', () => {
+  it('expireStaleRows reports observations pruned in summary', async () => {
     const db = makeDb();
     seedProject(db, { slug: 'igris-ai' });
     // Seed an observation 60 days old — outside the default TTL of 30d.
@@ -325,7 +325,7 @@ describe('pattern_observations TTL pruning', () => {
        VALUES (?, ?, ?, ?, ?, ?)`,
     ).run('dow:1:igris-ai', 'ancient-run', daysAgo(60), 0.46, 50, '{}');
 
-    const summary = runAllDetectors(db);
+    const summary = await runAllDetectors(db);
     expect(summary.expired_observations).toBeGreaterThanOrEqual(1);
     db.close();
   });

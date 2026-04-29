@@ -51,6 +51,11 @@ import {
   VALID_STATUSES,
 } from './handlers.js';
 import { DEFAULT_DETECTOR_CONFIG } from './types.js';
+import {
+  isClaudeCliAvailable,
+  makeClaudeHeadlessVerifier,
+  noopVerifier,
+} from './verifier.js';
 
 /** The well-known name used to detect an existing schedule on init. */
 const SCHEDULE_NAME = 'subconscious_engine';
@@ -209,7 +214,7 @@ export function createSubconsciousComponent(): BrainComponent {
         {
           name: 'igris_suggestion_acted',
           description:
-            "Mark a suggestion as acted on. Optional brief_id records which brief the user opened in response. Acted does NOT feed the suppression loop — it is a positive signal.",
+            "Mark a suggestion as acted on. Optional brief_id records which brief the user opened in response. Acted does NOT feed the suppression loop — it is a positive signal. For conflict-class suggestions, optionally pass action='superseded' (with winner_id + loser_id) to materialise a typed `supersedes` edge between the two learnings, or action='kept_both' to materialise a `related_to` edge marking the pair as reviewed-and-non-conflicting.",
           inputSchema: {
             type: 'object' as const,
             properties: {
@@ -220,6 +225,22 @@ export function createSubconsciousComponent(): BrainComponent {
               brief_id: {
                 type: 'string',
                 description: 'Optional brief id linking the action that resolved the suggestion',
+              },
+              action: {
+                type: 'string',
+                enum: ['superseded', 'kept_both'],
+                description:
+                  "For conflict suggestions: how the conflict was resolved. Omit for non-conflict suggestions or when no edge should be created.",
+              },
+              winner_id: {
+                type: 'integer',
+                description:
+                  'Required when action is set: id of the learning that survives (or first of the kept pair).',
+              },
+              loser_id: {
+                type: 'integer',
+                description:
+                  'Required when action is set: id of the other learning in the pair.',
               },
             },
             required: ['id'],
@@ -238,7 +259,7 @@ export function createSubconsciousComponent(): BrainComponent {
             type: 'object' as const,
             properties: {},
           },
-          handler: (args) => handleSubconsciousRun(args),
+          handler: async (args) => handleSubconsciousRun(args),
         },
       ];
     },
@@ -263,6 +284,16 @@ export function createSubconsciousComponent(): BrainComponent {
             description: 'A candidate suggestion was suppressed by the dismiss-reason learning loop',
           },
           {
+            name: 'subconscious.suggestion_verified',
+            description:
+              'A conflict-class suggestion survived the LLM verifier gate (FR-108). Carries verifier_status so dashboards can distinguish verified-true from defensive-default cases.',
+          },
+          {
+            name: 'subconscious.suggestion_rejected_by_verifier',
+            description:
+              'The LLM verifier rejected a heuristic conflict candidate (FR-108). Distinct from dismiss-loop suppression — counts model-driven false-positive filtering.',
+          },
+          {
             name: 'subconscious.bootstrap_failed',
             description:
               'The subconscious_engine schedule failed to bootstrap on engine.ready (TD-053)',
@@ -280,8 +311,20 @@ export function createSubconsciousComponent(): BrainComponent {
     init(ctx: ComponentContext): void {
       _ctx = ctx;
       ctx.bus.on('engine.ready', onEngineReady);
-      setHandlerContext({ bus: ctx.bus, config: DEFAULT_DETECTOR_CONFIG });
-      ctx.log.info('Subconscious component initialized');
+
+      // FR-108: probe the `claude` CLI once at init time. On VPS (CLI
+      // absent) we fall back to noopVerifier and log the disabled state
+      // so deploy logs make the degraded mode observable.
+      const cliPresent = isClaudeCliAvailable();
+      const verifier = cliPresent ? makeClaudeHeadlessVerifier() : noopVerifier;
+      setHandlerContext({
+        bus: ctx.bus,
+        config: DEFAULT_DETECTOR_CONFIG,
+        verifier,
+      });
+      ctx.log.info(
+        `Subconscious component initialized (verifier=${cliPresent ? 'claude-headless' : 'disabled'})`,
+      );
     },
 
     destroy(): void {

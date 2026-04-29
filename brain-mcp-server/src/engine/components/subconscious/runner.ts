@@ -41,6 +41,11 @@ import { detectStalled } from './detectors/stalled.js';
 import { detectGap } from './detectors/gap.js';
 import { detectConflict } from './detectors/conflict.js';
 import { detectPattern } from './detectors/pattern.js';
+import {
+  type ConflictVerifier,
+  type VerifierLearning,
+  noopVerifier,
+} from './verifier.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -75,10 +80,26 @@ export type RunEvent =
       source_module: SuggestionSourceModule;
       project_slug: string | null;
       evidence_signature: string;
+    }
+  | {
+      kind: 'suggestion_verified';
+      source_module: SuggestionSourceModule;
+      project_slug: string | null;
+      title: string;
+      verifier_status: string;
+    }
+  | {
+      kind: 'suggestion_rejected_by_verifier';
+      source_module: SuggestionSourceModule;
+      project_slug: string | null;
+      title: string;
+      verifier_reason: string;
     };
 
 export interface RunOptions {
   config?: DetectorConfig;
+  /** Optional LLM verifier (FR-108). Defaults to `noopVerifier` (heuristic-only). */
+  verifier?: ConflictVerifier;
 }
 
 /**
@@ -97,11 +118,12 @@ export interface RunOptions {
  * for a 6-hourly schedule plus manual fires (sub-second double-fires
  * still produce distinct ISO strings — different milliseconds).
  */
-export function runAllDetectors(
+export async function runAllDetectors(
   db: Database.Database,
   options: RunOptions = {},
-): RunSummary {
+): Promise<RunSummary> {
   const config = options.config ?? DEFAULT_DETECTOR_CONFIG;
+  const verifier = options.verifier ?? noopVerifier;
   const runId = new Date().toISOString();
 
   // 1. Auto-expire — DELETE on the raw db. Idempotent; uses the same
@@ -110,12 +132,28 @@ export function runAllDetectors(
 
   // 2. Run detectors against a read-only view.
   const roDb = makeReadOnlyDb(db);
-  const candidates: SuggestionCandidate[] = [
+  const rawCandidates: SuggestionCandidate[] = [
     ...detectStalled(roDb, config),
     ...detectGap(roDb, config),
     ...detectConflict(roDb, config),
     ...detectPattern(roDb, config),
   ];
+
+  // 2a. LLM verifier gate (FR-108). Only conflict-class candidates are
+  //     submitted; the verifier is heuristic-first (only ratifies what
+  //     the cosine/Jaccard heuristic short-listed). Defensive default:
+  //     anything that isn't an explicit, parsed `{is_conflict: false}`
+  //     reply preserves the candidate — a missing CLI, parse failure, or
+  //     timeout MUST NOT silently drop a heuristic signal. Rejection
+  //     events are returned so handlers can emit them on the bus.
+  //
+  //     PERF: sequential `await` loop. Worst-case (5 conflict candidates
+  //     per project × 10 projects × ~30s) ≈ 25 min, comfortably inside
+  //     the 6h cron interval. Parallelize via `Promise.all` if profiling
+  //     ever shows pipeline duration as a concern — future TD.
+  const { kept: verifierKept, rejectionEvents } =
+    await verifyConflictCandidates(db, rawCandidates, verifier);
+  const candidates: SuggestionCandidate[] = verifierKept;
 
   // 3. Smooth pattern candidates against `pattern_observations`. Patterns
   //    that haven't appeared in `pattern_smoothing_runs` distinct runs
@@ -133,7 +171,7 @@ export function runAllDetectors(
     expired_pending: expired.pending,
     expired_dismissed: expired.dismissed,
     expired_observations: expired.observations,
-    events: [],
+    events: [...rejectionEvents],
   };
 
   // Snapshot existing pending suggestions once for fast dedupe.
@@ -171,9 +209,168 @@ export function runAllDetectors(
       title: candidate.title,
       priority: candidate.priority,
     });
+
+    // Companion `suggestion_verified` event for conflict-class candidates
+    // that survived the verifier gate. Lets dashboards track verifier
+    // yield (verified vs rejected_by_verifier) independently of the
+    // dismiss-loop suppression signal.
+    if (candidate.source_module === 'conflict') {
+      const verifierStatus =
+        ((candidate.evidence as Record<string, unknown>).verifier_status as string | undefined) ??
+        'cli_missing';
+      summary.events.push({
+        kind: 'suggestion_verified',
+        source_module: candidate.source_module,
+        project_slug: candidate.project_slug,
+        title: candidate.title,
+        verifier_status: verifierStatus,
+      });
+    }
   }
 
   return summary;
+}
+
+// ---------------------------------------------------------------------------
+// Verifier helper (FR-108)
+// ---------------------------------------------------------------------------
+
+/**
+ * Run the LLM verifier over conflict-class candidates only. Non-conflict
+ * candidates pass through unchanged.
+ *
+ * For each conflict candidate:
+ *   - Look up the two learnings by id (content + created_at) in a single
+ *     `WHERE id IN (?, ?)` query so the verifier prompt has the full
+ *     content body, not just the heuristic numbers.
+ *   - Call `await verifier(a, b)`.
+ *   - If `is_conflict === false` AND `status === 'verified'` → drop the
+ *     candidate; emit a `suggestion_rejected_by_verifier` event.
+ *   - Otherwise → keep the candidate, enrich `evidence` with
+ *     `verifier`, `verifier_status`, `verifier_reason`, `verified_at`.
+ *
+ * Returns `{ kept, rejectionEvents }`. The kept array preserves input
+ * order across both conflict and non-conflict modules so downstream
+ * dedupe / smoothing sees a stable iteration order.
+ *
+ * Failure path: if the learnings table is missing or the lookup throws,
+ * we pass conflict candidates through UNCHANGED (defensive default —
+ * surface heuristic signals rather than swallow them).
+ */
+async function verifyConflictCandidates(
+  db: Database.Database,
+  candidates: SuggestionCandidate[],
+  verifier: ConflictVerifier,
+): Promise<{ kept: SuggestionCandidate[]; rejectionEvents: RunEvent[] }> {
+  const kept: SuggestionCandidate[] = [];
+  const rejectionEvents: RunEvent[] = [];
+  const verifiedAt = new Date().toISOString();
+
+  // Cache learnings as we look them up — multiple candidate pairs may
+  // overlap on the same learning id (one popular learning can collide
+  // with several others within the same project sweep).
+  const learningCache = new Map<number, VerifierLearning | null>();
+  const fetchLearning = (id: number): VerifierLearning | null => {
+    if (learningCache.has(id)) return learningCache.get(id) ?? null;
+    let row: { id: number; content: string; created_at: string } | undefined;
+    try {
+      row = db
+        .prepare(`SELECT id, content, created_at FROM learnings WHERE id = ?`)
+        .get(id) as { id: number; content: string; created_at: string } | undefined;
+    } catch {
+      row = undefined;
+    }
+    const value = row ? { id: row.id, content: row.content, created_at: row.created_at } : null;
+    learningCache.set(id, value);
+    return value;
+  };
+
+  for (const c of candidates) {
+    if (c.source_module !== 'conflict') {
+      kept.push(c);
+      continue;
+    }
+
+    const ids = (c.evidence as Record<string, unknown>).learning_ids;
+    if (!Array.isArray(ids) || ids.length !== 2) {
+      // Malformed evidence — keep the candidate (defensive default), tag
+      // verifier_status so triage can see the verifier was bypassed.
+      kept.push({
+        ...c,
+        evidence: {
+          ...c.evidence,
+          verifier: 'claude-headless',
+          verifier_status: 'parse_failed',
+          verifier_reason: 'malformed evidence.learning_ids',
+          verified_at: verifiedAt,
+        },
+      });
+      continue;
+    }
+
+    const aId = Number(ids[0]);
+    const bId = Number(ids[1]);
+    const a = fetchLearning(aId);
+    const b = fetchLearning(bId);
+    if (!a || !b) {
+      // Lookup failure — defensive default, keep the candidate.
+      kept.push({
+        ...c,
+        evidence: {
+          ...c.evidence,
+          verifier: 'claude-headless',
+          verifier_status: 'parse_failed',
+          verifier_reason: 'learning lookup failed',
+          verified_at: verifiedAt,
+        },
+      });
+      continue;
+    }
+
+    let result;
+    try {
+      result = await verifier(a, b);
+    } catch (err) {
+      // Verifier itself threw — defensive default, keep the candidate.
+      kept.push({
+        ...c,
+        evidence: {
+          ...c.evidence,
+          verifier: 'claude-headless',
+          verifier_status: 'spawn_failed',
+          verifier_reason: err instanceof Error ? err.message : String(err),
+          verified_at: verifiedAt,
+        },
+      });
+      continue;
+    }
+
+    // Only an explicit, parse-clean rejection drops the candidate.
+    if (result.is_conflict === false && result.status === 'verified') {
+      rejectionEvents.push({
+        kind: 'suggestion_rejected_by_verifier',
+        source_module: c.source_module,
+        project_slug: c.project_slug,
+        title: c.title,
+        verifier_reason: result.reason,
+      });
+      continue;
+    }
+
+    // Keep the candidate, enrich evidence with verifier metadata.
+    kept.push({
+      ...c,
+      evidence: {
+        ...c.evidence,
+        verifier: 'claude-headless',
+        verifier_status: result.status,
+        verifier_reason: result.reason,
+        verified_at: verifiedAt,
+      },
+    });
+  }
+
+  return { kept, rejectionEvents };
 }
 
 // ---------------------------------------------------------------------------

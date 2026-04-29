@@ -21,6 +21,8 @@
  *          subconscious.run_start, subconscious.run_complete,
  *          subconscious.suggestion_emitted,
  *          subconscious.suggestion_suppressed,
+ *          subconscious.suggestion_verified,
+ *          subconscious.suggestion_rejected_by_verifier,
  *          subconscious.bootstrap_failed
  *
  * @module engine/components/monitoring
@@ -78,6 +80,8 @@ const EVENT_COMPONENT_MAP: Record<string, string> = {
   'subconscious.run_complete': 'subconscious',
   'subconscious.suggestion_emitted': 'subconscious',
   'subconscious.suggestion_suppressed': 'subconscious',
+  'subconscious.suggestion_verified': 'subconscious',
+  'subconscious.suggestion_rejected_by_verifier': 'subconscious',
   'subconscious.bootstrap_failed': 'subconscious',
 };
 
@@ -234,6 +238,8 @@ export function createMonitoringComponent(): BrainComponent {
           { name: 'subconscious.run_complete', description: 'Log subconscious detector run completion events' },
           { name: 'subconscious.suggestion_emitted', description: 'Log subconscious suggestion emission events' },
           { name: 'subconscious.suggestion_suppressed', description: 'Log subconscious suggestion suppression events (dismiss-loop)' },
+          { name: 'subconscious.suggestion_verified', description: 'Log subconscious LLM-verified conflict suggestion events (FR-108)' },
+          { name: 'subconscious.suggestion_rejected_by_verifier', description: 'Log subconscious LLM-rejected heuristic conflict events (FR-108)' },
           { name: 'subconscious.bootstrap_failed', description: 'Log subconscious schedule bootstrap failures (TD-053)' },
         ],
       };
@@ -277,6 +283,8 @@ export function createMonitoringComponent(): BrainComponent {
       ctx.bus.on('subconscious.run_complete', onEventReceived);
       ctx.bus.on('subconscious.suggestion_emitted', onEventReceived);
       ctx.bus.on('subconscious.suggestion_suppressed', onEventReceived);
+      ctx.bus.on('subconscious.suggestion_verified', onEventReceived);
+      ctx.bus.on('subconscious.suggestion_rejected_by_verifier', onEventReceived);
       ctx.bus.on('subconscious.bootstrap_failed', onEventReceived);
 
       // Run retention cleanup on init (purge events older than 30 days)
@@ -328,6 +336,8 @@ export function createMonitoringComponent(): BrainComponent {
         _ctx.bus.off('subconscious.run_complete', onEventReceived);
         _ctx.bus.off('subconscious.suggestion_emitted', onEventReceived);
         _ctx.bus.off('subconscious.suggestion_suppressed', onEventReceived);
+        _ctx.bus.off('subconscious.suggestion_verified', onEventReceived);
+        _ctx.bus.off('subconscious.suggestion_rejected_by_verifier', onEventReceived);
         _ctx.bus.off('subconscious.bootstrap_failed', onEventReceived);
       }
       _ctx = null;

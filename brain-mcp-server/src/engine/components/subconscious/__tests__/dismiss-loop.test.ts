@@ -168,7 +168,7 @@ describe('dismiss-reason learning loop', () => {
   // (d) Suppression after dismiss_count >= dismiss_suppress_count
   // -----------------------------------------------------------------------
 
-  it('suppresses new suggestions when dismiss_count >= 2', () => {
+  it('suppresses new suggestions when dismiss_count >= 2', async () => {
     seedProject(db, { slug: 'p1' });
     seedBrief(db, {
       project: 'p1',
@@ -185,7 +185,7 @@ describe('dismiss-reason learning loop', () => {
        VALUES ('stalled', 'p1', ?, 2, datetime('now'), '["a","b"]')`,
     ).run(sig);
 
-    const summary = runAllDetectors(db);
+    const summary = await runAllDetectors(db);
     // Stalled detector saw the brief but the suppression filter killed it.
     expect(summary.suppressed).toBeGreaterThanOrEqual(1);
     // No suggestions row because suppression skipped insertion.
@@ -201,7 +201,7 @@ describe('dismiss-reason learning loop', () => {
   // (e) After cooldown elapses (>7d), single-dismiss signature re-emits
   // -----------------------------------------------------------------------
 
-  it('re-emits when single-dismiss cooldown has elapsed', () => {
+  it('re-emits when single-dismiss cooldown has elapsed', async () => {
     seedProject(db, { slug: 'p1' });
     seedBrief(db, {
       project: 'p1',
@@ -217,7 +217,7 @@ describe('dismiss-reason learning loop', () => {
        VALUES ('stalled', 'p1', ?, 1, datetime('now', '-8 days'), '["test"]')`,
     ).run(sig);
 
-    const summary = runAllDetectors(db);
+    const summary = await runAllDetectors(db);
     expect(summary.emitted).toBeGreaterThanOrEqual(1);
     const inserted = db
       .prepare(
@@ -231,7 +231,7 @@ describe('dismiss-reason learning loop', () => {
   // (f) Within cooldown window (<7d), single-dismiss signature suppressed
   // -----------------------------------------------------------------------
 
-  it('suppresses within cooldown window for single-dismiss signature', () => {
+  it('suppresses within cooldown window for single-dismiss signature', async () => {
     seedProject(db, { slug: 'p1' });
     seedBrief(db, {
       project: 'p1',
@@ -247,7 +247,7 @@ describe('dismiss-reason learning loop', () => {
        VALUES ('stalled', 'p1', ?, 1, datetime('now', '-3 days'), '["test"]')`,
     ).run(sig);
 
-    const summary = runAllDetectors(db);
+    const summary = await runAllDetectors(db);
     expect(summary.suppressed).toBeGreaterThanOrEqual(1);
     const inserted = db
       .prepare(
@@ -328,7 +328,7 @@ describe('dismiss-reason learning loop', () => {
   // Sanity: dismiss-loop flow against the suggestion lifecycle
   // -----------------------------------------------------------------------
 
-  it('end-to-end: dismiss twice then run -> next run suppresses', () => {
+  it('end-to-end: dismiss twice then run -> next run suppresses', async () => {
     seedProject(db, { slug: 'p1' });
     seedBrief(db, {
       project: 'p1',
@@ -338,7 +338,7 @@ describe('dismiss-reason learning loop', () => {
     });
 
     // Cycle 1: detector creates the suggestion, user dismisses it.
-    runAllDetectors(db);
+    await runAllDetectors(db);
     const cycle1 = db
       .prepare(
         `SELECT id FROM suggestions WHERE source_module = 'stalled' AND project_slug = 'p1'`,
@@ -348,7 +348,7 @@ describe('dismiss-reason learning loop', () => {
     handleSuggestionDismiss({ id: cycle1[0].id, reason: 'cycle-1' });
 
     // Cycle 2: detector tries again, but signature suppressed via cooldown.
-    runAllDetectors(db);
+    await runAllDetectors(db);
     const cycle2New = db
       .prepare(
         `SELECT COUNT(*) AS n FROM suggestions
