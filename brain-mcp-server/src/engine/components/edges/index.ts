@@ -2,9 +2,10 @@
  * Brain Engine v5.0 — Edges Component
  *
  * Wraps the typed-edges graph layer as a BrainComponent.
- * Provides 6 MCP tools:
- *   CRUD (FR-105): igris_edge_create / list / remove
- *   Graph (FR-113): igris_graph_neighbors / path / subgraph
+ * Provides 7 MCP tools:
+ *   CRUD (FR-105):       igris_edge_create / list / remove
+ *   Graph (FR-113):      igris_graph_neighbors / path / subgraph
+ *   Visualization (FR-111): igris_brief_graph_render
  * Subscribes to brief.created so structural Parent edges are captured
  * at insert time without coupling the briefs component to edge logic.
  * Self-listens on edge.created and edge.removed to invalidate the
@@ -45,6 +46,7 @@ import {
   handleGraphSubgraph,
   invalidateSubgraphCache,
 } from './traversal.js';
+import { handleBriefGraphRender } from './visualization-tool.js';
 
 /**
  * Build the edges component instance.
@@ -121,7 +123,7 @@ export function createEdgesComponent(): BrainComponent {
 
   return {
     name: 'edges',
-    version: '1.1.0',
+    version: '1.2.0',
     depends: ['briefs'],
 
     schema(): Migration[] {
@@ -377,6 +379,31 @@ export function createEdgesComponent(): BrainComponent {
           },
           handler: (args) => handleGraphSubgraph(args),
         },
+
+        // -----------------------------------------------------------------
+        // FR-111: igris_brief_graph_render
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_brief_graph_render',
+          description:
+            "Render an interactive HTML force-directed graph of a project's briefs and typed edges. Briefs are nodes, typed edges are connections, goals appear as anchor nodes when at least one brief in the project links to them via serves_goal. Output is a single self-contained HTML file (vis-network via CDN, vanilla JS, no build step). Soft-deleted edges are excluded. Brief content is capped at 8 KB per brief to bound output size. Returns the output path, node/edge/goal counts, top god nodes by degree, and render time.",
+          inputSchema: {
+            type: 'object' as const,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project slug (matches brief_status.project).',
+              },
+              output_path: {
+                type: 'string',
+                description:
+                  "Output HTML path. Defaults to ~/.igris/projects/{project}/visualizations/briefs-graph-{timestamp}.html (parent directory auto-created).",
+              },
+            },
+            required: ['project'],
+          },
+          handler: (args) => handleBriefGraphRender(args),
+        },
       ];
     },
 
@@ -416,7 +443,7 @@ export function createEdgesComponent(): BrainComponent {
       // Self-listen for cache invalidation (FR-113 subgraph cache).
       ctx.bus.on('edge.created', onEdgeMutated);
       ctx.bus.on('edge.removed', onEdgeMutated);
-      ctx.log.info('Edges component initialized (v1.1.0 — FR-113 traversal)');
+      ctx.log.info('Edges component initialized (v1.2.0 — FR-111 visualization)');
     },
 
     destroy(): void {
