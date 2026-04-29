@@ -12,7 +12,7 @@ origin and trust level. The five accepted values are:
 | Value            | Meaning                                                                                  |
 |------------------|------------------------------------------------------------------------------------------|
 | `observed`       | Directly captured from a concrete event, log, file, or user-pasted artifact. Default.    |
-| `inferred`       | Derived by reasoning over other learnings or evidence; not directly seen.                |
+| `inferred`       | Derived by reasoning over other learnings or evidence; not directly seen. Covers BOTH rule-based and LLM-extracted candidates from the perception channel (FR-109). The `learnings.source_extractor` column disambiguates (`rule:learned_marker` / `rule:retry_chain` / `rule:blocker_resolution` / `rule:error_fingerprint` / `llm`). |
 | `synthesized`    | Fused from multiple sources (e.g., recall + research + edges) into a new artifact.       |
 | `ambiguous`      | Source provenance is unclear or contested; treat with caution.                           |
 | `human_asserted` | A human explicitly told us this fact and asserted it as ground truth.                    |

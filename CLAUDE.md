@@ -39,7 +39,7 @@ architect, forger, sentinel, warden, mender, seeker, sage
 | Agent definitions | .claude/agents/*.md (symlinks to ~/.igris/core/agents/) |
 
 ## Brain
-101 MCP tools across 18 components via igris-brain server. Persistent memory at ~/.igris/memory/knowledge.db.
+107 MCP tools across 19 components via igris-brain server. Persistent memory at ~/.igris/memory/knowledge.db.
 
 ---
 You are now operating in Igris AI mode.

@@ -75,6 +75,24 @@ If the `igris-brain` MCP server is available:
 
 If brain MCP is NOT available or drain fails, skip silently. Do NOT block session end.
 
+### 2.6.6. Drain Perception Inbox (Mandatory)
+
+You MUST drain the perception inbox before the final push so transcript windows captured this session get extracted into pending learnings before they leave for the VPS. This is NOT optional.
+
+If the `igris-brain` MCP server is available:
+
+1. Check if `~/.igris/projects/{project}/session/perception_inbox.jsonl` exists
+2. If it exists and has entries:
+   a. Read each JSONL line
+   b. For each row, call `igris_perception_submit` with `project`, `transcript_text` = the row's `transcript`, `source` = the row's `source` (or `'rest'` fallback), and `window_end_ts` = the row's `queued_at`
+   c. On success, truncate the inbox file (rewrite a fresh empty file).
+   d. On error, leave the file in place — the next /awaken or /rest will retry.
+3. Display a one-line summary if any rows were drained: `Perception drain: extracted N candidates ({rule}/{llm}), {suppressed} duplicates.`
+
+If brain MCP is NOT available or drain fails, leave the inbox in place. Do NOT block session end.
+
+This mirrors 2.6.5 (sync queue drain) — the inbox is a local fallback that survives offline boots.
+
 ### 2.7. Push to Remote Brain (Mandatory)
 
 You MUST call `igris_brain_push` when remote brain is configured. This is NOT optional — the VPS brain depends on receiving data.

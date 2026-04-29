@@ -117,7 +117,9 @@ function makeTestDb(): Database.Database {
       access_count INTEGER DEFAULT 0,
       last_accessed_at TEXT,
       provenance TEXT NOT NULL DEFAULT 'observed'
-        CHECK(provenance IN ('observed','inferred','synthesized','ambiguous','human_asserted'))
+        CHECK(provenance IN ('observed','inferred','synthesized','ambiguous','human_asserted')),
+      review_status TEXT NOT NULL DEFAULT 'approved',
+      source_extractor TEXT NOT NULL DEFAULT 'manual'
     );
 
     CREATE VIRTUAL TABLE learnings_fts USING fts5(
@@ -890,6 +892,95 @@ describe('Memory Tools (FR-092)', () => {
 
       const result = handleMemoryGet({ id });
       expect(result.content[0].text).toContain('Provenance: human_asserted');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // FR-109: review_status default filter
+  // -------------------------------------------------------------------------
+
+  describe('review_status default filter (FR-109)', () => {
+    it('handleMemorySearch hides pending_review rows', () => {
+      insertLearning(db, {
+        title: 'Approved entry for review filter',
+        content: 'Content for approved review-filter test',
+      });
+      const pendingId = insertLearning(db, {
+        title: 'Pending review entry for review filter',
+        content: 'Content for pending review-filter test',
+      });
+      db.prepare("UPDATE learnings SET review_status = 'pending_review' WHERE id = ?").run(pendingId);
+
+      const result = handleMemorySearch({ query: 'review filter' });
+      const text = result.content[0].text;
+      expect(text).toContain('Approved entry for review filter');
+      expect(text).not.toContain('Pending review entry for review filter');
+    });
+
+    it('handleMemoryRecall hides pending_review rows', async () => {
+      insertProject(db, { slug: 'review-test-project' });
+      insertLearning(db, {
+        project: 'review-test-project',
+        title: 'Approved recall entry',
+        content: 'Content for approved recall flow',
+      });
+      const pendingId = insertLearning(db, {
+        project: 'review-test-project',
+        title: 'Pending recall entry',
+        content: 'Content for pending recall flow',
+      });
+      db.prepare("UPDATE learnings SET review_status = 'pending_review' WHERE id = ?").run(pendingId);
+
+      const result = await handleMemoryRecall({
+        project: 'review-test-project',
+        context: 'recall flow',
+      });
+      const text = result.content[0].text;
+      expect(text).toContain('Approved recall entry');
+      expect(text).not.toContain('Pending recall entry');
+    });
+
+    it('handleMemoryStore defaults review_status to approved', async () => {
+      const result = await handleMemoryStore({
+        project: 'review-test-project',
+        category: 'pattern',
+        title: 'Store default review status',
+        content: 'Content for default review status test',
+      });
+      expect(result.content[0].text).toContain('Review status: approved');
+
+      const idMatch = result.content[0].text.match(/ID: (\d+)/);
+      expect(idMatch).not.toBeNull();
+      const id = parseInt(idMatch![1], 10);
+
+      const row = db.prepare('SELECT review_status FROM learnings WHERE id = ?').get(id) as { review_status: string };
+      expect(row.review_status).toBe('approved');
+    });
+
+    it('handleMemoryStore accepts pending_review and hides the row from search', async () => {
+      const result = await handleMemoryStore({
+        project: 'review-test-project',
+        category: 'discovery',
+        title: 'Pending store entry hidden',
+        content: 'Content that should be hidden from default search',
+        review_status: 'pending_review',
+      });
+      expect(result.content[0].text).toContain('Review status: pending_review');
+
+      const searchResult = handleMemorySearch({ query: 'Pending store entry hidden' });
+      expect(searchResult.content[0].text).toContain('No learnings found');
+    });
+
+    it('handleMemoryStore rejects an invalid review_status', async () => {
+      const result = await handleMemoryStore({
+        project: 'review-test-project',
+        category: 'pattern',
+        title: 'Invalid review status test',
+        content: 'Content for invalid review status',
+        // @ts-expect-error — testing runtime validation
+        review_status: 'bogus',
+      });
+      expect(result.content[0].text).toContain('Invalid review_status');
     });
   });
 });

@@ -144,7 +144,9 @@ function makeTestDb(): Database.Database {
       embedding BLOB,
       embedding_model TEXT DEFAULT '',
       provenance TEXT NOT NULL DEFAULT 'observed'
-        CHECK(provenance IN ('observed','inferred','synthesized','ambiguous','human_asserted'))
+        CHECK(provenance IN ('observed','inferred','synthesized','ambiguous','human_asserted')),
+      review_status TEXT NOT NULL DEFAULT 'approved',
+      source_extractor TEXT NOT NULL DEFAULT 'manual'
     );
 
     CREATE VIRTUAL TABLE learnings_fts USING fts5(

@@ -39,6 +39,7 @@ import { createCacheComponent } from './components/cache/index.js';
 import { createSchedulesComponent } from './components/schedules/index.js';
 import { createCoordinationComponent } from './components/coordination/index.js';
 import { createSubconsciousComponent } from './components/subconscious/index.js';
+import { createPerceptionComponent } from './components/perception/index.js';
 import { createMonitoringComponent } from './components/monitoring/index.js';
 import { createContextComponent } from './components/context/index.js';
 import { createRegistryComponent } from './components/registry/index.js';
@@ -87,7 +88,9 @@ export function bootEngine(config: EngineConfig): Engine {
   // 5. Create registry
   const registry = createRegistry(storage, bus);
 
-  // 6. Register domain components (all 17)
+  // 6. Register domain components (all 19)
+  // FR-109: perception is registered AFTER memory because it depends on the
+  // memory schema (learnings.review_status, added in db.ts v15).
   const componentFactories = [
     createMemoryComponent,
     createErrorsComponent,
@@ -105,6 +108,7 @@ export function bootEngine(config: EngineConfig): Engine {
     createSchedulesComponent,
     createCoordinationComponent,
     createSubconsciousComponent,
+    createPerceptionComponent,
     createMonitoringComponent,
     createRegistryComponent,
   ];

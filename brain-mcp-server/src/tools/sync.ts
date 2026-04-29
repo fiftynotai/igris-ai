@@ -85,6 +85,12 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'project', 'category', 'title', 'content', 'tags', 'tech_stack',
       'scope', 'source_brief', 'confidence', 'created_at', 'updated_at',
       'access_count', 'last_accessed_at',
+      // FR-109 perception channel: review_status gates conscious-channel
+      // visibility, provenance records origin/trust. Defense-in-depth: the
+      // push SELECT also filters review_status='approved' so pending rows
+      // stay LOCAL until a human approves them. Listed last to minimize diff
+      // churn against the original column ordering.
+      'review_status', 'provenance', 'source_extractor',
     ],
   },
   {
@@ -582,10 +588,18 @@ async function handleBrainPush(
 
     const lastPushAt = stateRow?.last_push_at ?? '1970-01-01T00:00:00';
 
-    // Query rows changed since last push
+    // Query rows changed since last push.
+    //
+    // FR-109 perception channel: defense-in-depth filter. `learnings` rows
+    // with `review_status='pending_review'` stay LOCAL — only approved rows
+    // propagate to the VPS. Pairs with the column-list addition above:
+    // even if the column list ever drifts, this filter keeps the privacy
+    // posture intact (pending candidates are session-private until approved).
+    // Other tables remain unfiltered.
     const cols = config.columns.join(', ');
+    const extraFilter = config.table === 'learnings' ? " AND review_status = 'approved'" : '';
     const rows = db.prepare(
-      `SELECT ${cols} FROM ${config.table} WHERE ${config.timestampCol} > ?`
+      `SELECT ${cols} FROM ${config.table} WHERE ${config.timestampCol} > ?${extraFilter}`
     ).all(lastPushAt) as Record<string, unknown>[];
 
     if (rows.length > 0) {

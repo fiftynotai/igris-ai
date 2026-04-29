@@ -767,6 +767,73 @@ function migrateSchema(db: Database.Database): void {
     })();
     console.error('[brain] Schema migrated to version 14 (learnings.provenance)');
   }
+
+  // v15: review_status + source_extractor on learnings (FR-109 perception channel)
+  // Adds two columns:
+  //   1. `review_status` — gates conscious-channel visibility
+  //      (`igris_memory_recall`, `_search`, etc.). Default 'approved' backfills
+  //      existing rows so the migration is a no-op for the conscious channel:
+  //      every pre-FR-109 row stays visible.
+  //   2. `source_extractor` — records which extractor produced the row
+  //      (`rule:learned_marker`, `rule:retry_chain`, `rule:blocker_resolution`,
+  //      `rule:error_fingerprint`, `llm`, or `manual` for direct memory_store
+  //      calls). Persisted on the row (not buried in evidence JSON) so /awaken
+  //      4.9 can render terse `[rule:learned_marker, conf 0.85]` labels without
+  //      a JSON parse on every row. Default 'manual' covers existing rows
+  //      created via `igris_memory_store` directly.
+  //
+  // Why no CHECK constraint via ALTER TABLE: SQLite cannot add a CHECK
+  // constraint via ALTER TABLE without rewriting the table. Mirroring v14's
+  // strategy (constraint at handler layer + index for fast filtering) keeps
+  // the migration O(1).
+  //
+  // Vocabulary for review_status: `'pending_review' | 'approved'`. A future
+  // status like `'rejected'` is unnecessary because perception-channel
+  // rejection is a hard DELETE — no soft-delete row needed.
+  let postV14Version = postV13Version;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV14Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+  if (postV14Version >= 14 && postV14Version < 15) {
+    db.transaction(() => {
+      // Defensive PRAGMA check: tolerate partial migrations / hot reloads where
+      // one column landed but the other did not. Mirror v14's pattern.
+      const cols = db.prepare(`PRAGMA table_info(learnings)`).all() as Array<{ name: string }>;
+      const hasReviewStatus = cols.some((c) => c.name === 'review_status');
+      if (!hasReviewStatus) {
+        db.exec(`
+          ALTER TABLE learnings ADD COLUMN review_status TEXT NOT NULL DEFAULT 'approved'
+        `);
+      }
+      const hasSourceExtractor = cols.some((c) => c.name === 'source_extractor');
+      if (!hasSourceExtractor) {
+        db.exec(`
+          ALTER TABLE learnings ADD COLUMN source_extractor TEXT NOT NULL DEFAULT 'manual'
+        `);
+      }
+      // Index for the lazy-on-read filter that gates recall/search/hybrid/pattern.
+      // Composite (review_status, project) means the most common filter
+      // (review_status='approved' AND project=?) hits the index head.
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_learnings_review_status
+          ON learnings(review_status, project)
+      `);
+      // Index on source_extractor for /awaken's pending-review render path.
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_learnings_source_extractor
+          ON learnings(source_extractor)
+      `);
+      db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (15)').run();
+    })();
+    console.error(
+      '[brain] Schema migrated to version 15 (learnings.review_status + source_extractor)',
+    );
+  }
 }
 
 /**

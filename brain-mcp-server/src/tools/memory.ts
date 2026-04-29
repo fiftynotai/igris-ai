@@ -65,6 +65,22 @@ interface MemoryStoreInput {
   source_brief?: string;
   scope?: 'local' | 'global';
   provenance?: 'observed' | 'inferred' | 'synthesized' | 'ambiguous' | 'human_asserted';
+  /**
+   * Lifecycle gate for the perception channel (FR-109). Default `'approved'`
+   * makes every existing call path opt-in to the conscious channel. Perception
+   * extractors pass `'pending_review'` so candidates are hidden from default
+   * recall/search until `igris_perception_approve` flips the flag.
+   */
+  review_status?: 'pending_review' | 'approved';
+  /**
+   * Which extractor produced this row (FR-109). Default `'manual'` covers the
+   * conscious-channel use case where a human or agent calls the tool directly.
+   * Perception extractors pass their identifier (`rule:learned_marker`,
+   * `rule:retry_chain`, `rule:blocker_resolution`, `rule:error_fingerprint`,
+   * or `llm`) so /awaken can render terse `[rule:X, conf 0.85]` labels on the
+   * pending-review surface without a JSON parse on every row.
+   */
+  source_extractor?: string;
 }
 
 /** Input shape for igris_memory_search */
@@ -134,6 +150,22 @@ const VALID_LEARNING_PROVENANCE = [
   'human_asserted',
 ] as const;
 
+/**
+ * Review-status vocabulary for learnings (FR-109 perception channel).
+ *
+ * Conscious-channel callers (everywhere except the perception ingest path)
+ * default to `'approved'`. Perception extractors pass `'pending_review'` so
+ * the learning stays hidden from default recall/search/hybrid/pattern_suggest
+ * until a human approves it.
+ *
+ * Enum is enforced at the handler layer (here) instead of as a SQLite CHECK
+ * constraint because ALTER TABLE cannot add CHECK constraints cleanly —
+ * mirrors the FR-107 v14 pattern. The composite index
+ * `idx_learnings_review_status(review_status, project)` keeps the lazy-on-read
+ * filter cheap.
+ */
+const VALID_REVIEW_STATUS = ['pending_review', 'approved'] as const;
+
 function validateMemoryInput(args: MemoryStoreInput): string | null {
   if (!args.project || args.project.length > MAX_PROJECT_LENGTH) {
     return `Invalid project: must be 1-${MAX_PROJECT_LENGTH} characters.`;
@@ -153,6 +185,12 @@ function validateMemoryInput(args: MemoryStoreInput): string | null {
   ) {
     return `Invalid provenance: must be one of ${VALID_LEARNING_PROVENANCE.join(', ')}.`;
   }
+  if (
+    args.review_status !== undefined &&
+    !(VALID_REVIEW_STATUS as readonly string[]).includes(args.review_status)
+  ) {
+    return `Invalid review_status: must be one of ${VALID_REVIEW_STATUS.join(', ')}.`;
+  }
   return null;
 }
 
@@ -165,8 +203,8 @@ async function handleMemoryStore(args: MemoryStoreInput): Promise<{ content: { t
   const db = getDb();
 
   const stmt = db.prepare(`
-    INSERT INTO learnings (project, category, title, content, tags, tech_stack, source_brief, scope, provenance)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO learnings (project, category, title, content, tags, tech_stack, source_brief, scope, provenance, review_status, source_extractor)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const result = stmt.run(
@@ -179,11 +217,15 @@ async function handleMemoryStore(args: MemoryStoreInput): Promise<{ content: { t
     args.source_brief ?? '',
     args.scope ?? 'local',
     args.provenance ?? 'observed',
+    args.review_status ?? 'approved',
+    args.source_extractor ?? 'manual',
   );
 
   const learningId = result.lastInsertRowid as number;
 
   // Auto-embed: generate embedding and store in vec table (non-blocking on failure)
+  // Note: pending_review rows are still embedded — approval is a status flip,
+  // not a re-embed. Saves cost on the approval path.
   let embeddingNote = '';
   try {
     if (isVectorSearchAvailable(db)) {
@@ -198,14 +240,18 @@ async function handleMemoryStore(args: MemoryStoreInput): Promise<{ content: { t
     embeddingNote = '\nEmbedding: skipped (will be generated on backfill)';
   }
 
-  // After storing, check if any local learnings should be promoted to global
-  const promoted = promoteToGlobal();
+  // After storing, check if any local learnings should be promoted to global.
+  // Skip for pending_review rows — they aren't fully part of the conscious
+  // channel yet, and we don't want to leak title-collisions across projects
+  // before a human has approved the inference.
+  const reviewStatus = args.review_status ?? 'approved';
+  const promoted = reviewStatus === 'approved' ? promoteToGlobal() : 0;
   const promotedNote = promoted > 0 ? `\nAuto-promoted: ${promoted} learning(s) to global scope` : '';
 
   return {
     content: [{
       type: 'text',
-      text: `Learning stored successfully.\n\nID: ${learningId}\nProject: ${args.project}\nCategory: ${args.category}\nTitle: ${args.title}\nScope: ${args.scope ?? 'local'}\nProvenance: ${args.provenance ?? 'observed'}${embeddingNote}${promotedNote}`,
+      text: `Learning stored successfully.\n\nID: ${learningId}\nProject: ${args.project}\nCategory: ${args.category}\nTitle: ${args.title}\nScope: ${args.scope ?? 'local'}\nProvenance: ${args.provenance ?? 'observed'}\nReview status: ${reviewStatus}${embeddingNote}${promotedNote}`,
     }],
   };
 }
@@ -234,6 +280,9 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
     };
   }
 
+  // FR-109 default filter: pending_review learnings (perception-channel
+  // candidates) are hidden from the conscious channel. Approval flips the
+  // gate; rejection deletes the row.
   let sql = `
     SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
            l.tech_stack, l.scope, l.source_brief, l.confidence,
@@ -242,6 +291,7 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
     FROM learnings_fts fts
     JOIN learnings l ON l.id = fts.rowid
     WHERE learnings_fts MATCH ?
+      AND l.review_status = 'approved'
   `;
 
   const params: (string | number)[] = [sanitized];
@@ -323,6 +373,7 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
   }
 
   // --- 1. BM25 search via FTS5 (project-local + global scope) ---
+  // FR-109 filter: pending_review rows excluded from conscious-channel recall.
   const bm25Sql = `
     SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
            l.tech_stack, l.scope, l.source_brief, l.confidence,
@@ -333,6 +384,7 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
     JOIN learnings l ON l.id = fts.rowid
     WHERE learnings_fts MATCH ?
       AND (l.project = ? OR l.scope = 'global')
+      AND l.review_status = 'approved'
     ORDER BY composite_score
     LIMIT ?
   `;
@@ -354,12 +406,14 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
       vecResults = vectorSearch(db, queryEmbedding, limit * 2);
       vectorAvailable = true;
 
-      // Filter vector results to project-local + global scope
+      // Filter vector results to project-local + global scope.
+      // FR-109: also gate on review_status='approved' so pending_review rows
+      // never bubble through the vector channel.
       if (vecResults.length > 0) {
         const ids = vecResults.map(r => r.rowid);
         const placeholders = ids.map(() => '?').join(',');
         const scopeRows = db.prepare(
-          `SELECT id FROM learnings WHERE id IN (${placeholders}) AND (project = ? OR scope = 'global')`,
+          `SELECT id FROM learnings WHERE id IN (${placeholders}) AND (project = ? OR scope = 'global') AND review_status = 'approved'`,
         ).all(...ids, args.project) as { id: number }[];
         const scopeIdSet = new Set(scopeRows.map(r => r.id));
         vecResults = vecResults.filter(r => scopeIdSet.has(r.rowid));
@@ -621,6 +675,7 @@ function handlePatternSuggest(args: PatternSuggestInput): { content: { type: str
   let learningRows: Record<string, unknown>[] = [];
 
   if (sanitized) {
+    // FR-109 filter: hide pending_review rows from conscious pattern suggestions.
     let learningSql = `
       SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
              l.tech_stack, l.scope, l.confidence, l.access_count,
@@ -629,6 +684,7 @@ function handlePatternSuggest(args: PatternSuggestInput): { content: { type: str
       JOIN learnings l ON l.id = fts.rowid
       WHERE learnings_fts MATCH ?
         AND (l.project = ? OR l.scope = 'global')
+        AND l.review_status = 'approved'
     `;
     const learningParams: (string | number)[] = [sanitized, args.project];
 
@@ -764,6 +820,9 @@ async function handleMemoryHybridSearch(args: HybridSearchInput): Promise<{ cont
   let bm25Rows: Bm25Row[] = [];
 
   if (sanitized) {
+    // FR-109 filter: hybrid search is part of the conscious channel.
+    // Pending_review rows must not surface here — only `igris_perception_*`
+    // tools see them.
     let bm25Sql = `
       SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
              l.tech_stack, l.scope, l.source_brief, l.confidence,
@@ -771,6 +830,7 @@ async function handleMemoryHybridSearch(args: HybridSearchInput): Promise<{ cont
       FROM learnings_fts fts
       JOIN learnings l ON l.id = fts.rowid
       WHERE learnings_fts MATCH ?
+        AND l.review_status = 'approved'
     `;
     const bm25Params: (string | number)[] = [sanitized];
 
@@ -799,15 +859,22 @@ async function handleMemoryHybridSearch(args: HybridSearchInput): Promise<{ cont
       vecResults = vectorSearch(db, queryEmbedding, limit * 2);
       vectorAvailable = true;
 
-      // If project filter is set, filter vector results to matching project
-      if (args.project && vecResults.length > 0) {
+      // If project filter is set, filter vector results to matching project.
+      // FR-109: always gate on review_status='approved' (whether or not the
+      // caller passed a project filter) so pending_review rows are hidden
+      // from the conscious channel via the vector path too.
+      if (vecResults.length > 0) {
         const ids = vecResults.map(r => r.rowid);
         const placeholders = ids.map(() => '?').join(',');
-        const projectRows = db.prepare(
-          `SELECT id FROM learnings WHERE id IN (${placeholders}) AND project = ?`,
-        ).all(...ids, args.project) as { id: number }[];
-        const projectIdSet = new Set(projectRows.map(r => r.id));
-        vecResults = vecResults.filter(r => projectIdSet.has(r.rowid));
+        let filterSql = `SELECT id FROM learnings WHERE id IN (${placeholders}) AND review_status = 'approved'`;
+        const filterParams: unknown[] = [...ids];
+        if (args.project) {
+          filterSql += ' AND project = ?';
+          filterParams.push(args.project);
+        }
+        const filterRows = db.prepare(filterSql).all(...filterParams) as { id: number }[];
+        const filterIdSet = new Set(filterRows.map(r => r.id));
+        vecResults = vecResults.filter(r => filterIdSet.has(r.rowid));
       }
     }
   } catch (err) {

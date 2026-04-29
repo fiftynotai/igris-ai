@@ -224,6 +224,12 @@ PYEOF2
 main() {
   deregister_instance 2>/dev/null || true
   update_session 2>/dev/null || true
+  # FR-109 perception channel: queue transcript window for offline extraction.
+  # Re-feeds stdin via the captured INPUT — perception_extract.sh expects the
+  # same JSON the parent hook received.
+  if [ -x "$HOME/.igris/core/hooks/shared/perception_extract.sh" ]; then
+    printf '%s' "$INPUT" | "$HOME/.igris/core/hooks/shared/perception_extract.sh" 2>/dev/null || true
+  fi
   exit 0
 }
 

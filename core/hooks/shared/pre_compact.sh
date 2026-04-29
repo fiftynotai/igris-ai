@@ -173,6 +173,13 @@ print(json.dumps({'additionalContext': context}))
 " 2>/dev/null || echo '{"additionalContext": "[IGRIS SESSION RECOVERY - Context was compacted]\nSession Mode: UNKNOWN\n[/IGRIS SESSION RECOVERY]"}'
   fi
 
+  # FR-109 perception channel: queue transcript window for offline extraction.
+  # We forward INPUT (the original stdin payload) so perception_extract.sh can
+  # locate transcript_path the same way the parent hook did.
+  if [ -x "$HOME/.igris/core/hooks/shared/perception_extract.sh" ]; then
+    printf '%s' "$INPUT" | "$HOME/.igris/core/hooks/shared/perception_extract.sh" 2>/dev/null || true
+  fi
+
   exit 0
 }
 

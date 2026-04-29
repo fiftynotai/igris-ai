@@ -19,6 +19,8 @@ allowed-tools:
   - mcp__igris-brain__igris_instance_list
   - mcp__igris-brain__igris_brief_sync
   - mcp__igris-brain__igris_brief_create
+  - mcp__igris-brain__igris_goal_list
+  - mcp__igris-brain__igris_suggestion_list
 triggers:
   - "AWAKEN"
   - "ARISE"
@@ -161,6 +163,24 @@ If the `igris-brain` MCP server is available:
 
 If brain MCP is NOT available or pull fails, skip silently. Do NOT block session start.
 
+### 3.6.5. Drain Perception Inbox (Mandatory)
+
+You MUST drain the perception inbox so transcript windows captured by `session_end.sh` and `pre_compact.sh` get extracted into pending learnings.
+
+If the `igris-brain` MCP server is available:
+
+1. Check if `~/.igris/projects/{project}/session/perception_inbox.jsonl` exists
+2. If it exists and has entries:
+   a. Read each JSONL line
+   b. For each row, call `igris_perception_submit` with `project`, `transcript_text` = the row's `transcript`, `source` = the row's `source` (or `'session_end'` fallback), and `window_end_ts` = the row's `queued_at`
+   c. On success, the inbox file is truncated atomically (rewrite a fresh empty file).
+   d. On any error, leave the file in place so the next /awaken can retry.
+3. Display a one-line summary if any rows were drained: `Perception drain: extracted N candidates ({rule}/{llm}), {suppressed} duplicates suppressed.`
+
+If brain MCP is NOT available, leave the inbox in place. Do NOT block session start.
+
+This mirrors section 3.6.1.1 (sync queue drain) — the inbox is a local fallback that survives offline boots.
+
 ### 3.6.4. Clean Stale Previous Instance (Mandatory)
 
 Before registering a new instance, check if the previous session left an orphaned instance:
@@ -227,6 +247,86 @@ Self-Healing: [Enabled/Disabled]
 ```
 
 If brain MCP is NOT available or calls fail, skip silently. Do NOT block session start.
+
+### 4.7. Goals Approaching Deadline (FR-110)
+
+If `igris-brain` MCP is available, call `igris_goal_list` with:
+- `project` = current project slug
+- `status` = `'active'`
+- `upcoming_days` = `14`
+- `limit` = `3`
+
+Token budget: this surface is bounded to ≤3 rows by the `limit` parameter. Render at most ~120 tokens.
+
+If results are returned, render:
+
+```
+## Goals approaching deadline
+- GL-003 "Ship v6.1" — due 2026-05-01 (3 days), 4/7 briefs done
+- GL-001 "Compliance audit" — due 2026-05-12 (14 days), 1/5 briefs done
+```
+
+The "X/Y briefs done" comes from each goal's `serving_briefs_count` field plus a per-goal call (only if the count is non-zero) — but for the awaken surface, prefer using just `serving_briefs_count` from the list response and rendering "N briefs serving" rather than calling `igris_goal_progress` per goal (token budget).
+
+If zero results, render nothing — no "No goals" line. Do NOT call any further goal tools when zero rows are returned.
+
+If `>3` active goals exist beyond the 14-day window, append a single trailing line: `(+N other active goals — run /scan for full list)`. Only display this trailing line if you happen to have called `igris_goal_list` without `upcoming_days` separately; if you only called the bounded version, omit the trailing line.
+
+If the goal tools are unavailable (older brain), skip silently.
+
+### 4.8. Subconscious Suggestions (FR-106)
+
+If `igris-brain` MCP is available, call `igris_suggestion_list` with:
+- `status` = `'pending'`
+- `project_slug` = current project slug
+- `limit` = `3`
+
+Token budget: bounded to <=3 rows by `limit`. Render at most ~120 tokens.
+
+If results are returned, render:
+
+```
+## Suggestions ({total} pending)
+- [{priority}] {title} ({source_module})
+- [{priority}] {title} ({source_module})
+- [{priority}] {title} ({source_module})
+```
+
+Use the `total` count from the response (may exceed `limit`) so the user
+knows how many are queued in total. Format each row as:
+`- [{priority}] {title} ({source_module})` — keep it terse; the user can
+run `igris_suggestion_list` directly for full details.
+
+If zero results, render nothing — no "No suggestions" line. If the tool
+is unavailable (older brain), skip silently.
+
+### 4.9. Pending Perception Candidates (FR-109)
+
+If `igris-brain` MCP is available, call `igris_perception_review_pending` with:
+- `project` = current project slug
+- `limit` = `5`
+
+Token budget: bounded to <=5 rows by `limit`. Render at most ~150 tokens.
+
+If results are returned, render:
+
+```
+## Pending Learnings ({total} pending review)
+- [{source_extractor}, conf {confidence}] {title}
+- [{source_extractor}, conf {confidence}] {title}
+```
+
+Use the `total` count from the response (may exceed `limit`) so the user
+knows the queue depth. The `source_extractor` field is read directly from
+the row (column added in DB v15 — FR-109): values are `rule:learned_marker`,
+`rule:retry_chain`, `rule:blocker_resolution`, `rule:error_fingerprint`,
+`llm`, or `manual` for direct memory_store calls. Render the value verbatim
+so the user can distinguish deterministic rule extractions from
+non-deterministic LLM inferences when approving. Show `approve` and `reject`
+MCP tools as next-step hints once per session, not per row.
+
+If zero results, render nothing — no "No pending" line. If the tool is
+unavailable (older brain), skip silently.
 
 ### 5. Display Resume Point (if resuming)
 
