@@ -313,6 +313,47 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'achieved_at', 'metadata',
     ],
   },
+  {
+    // FR-106 Phase 1: subconscious engine output.
+    // LWW on auto-incrementing id is meaningless across machines, so we
+    // sync on the natural identity (source_module, project_slug, title)
+    // — which is the same key the runner uses to dedupe within a run.
+    // updated_at proxy: created_at | dismissed_at | acted_at — pick
+    // dismissed_at where present, else acted_at, else created_at via
+    // COALESCE in a generated column would be ideal, but to stay
+    // schema-light we sync on created_at and let LWW resolve based on
+    // status changes via a separate sync pass when statuses flip.
+    // Acceptable trade-off: a dismiss on machine A and an act on
+    // machine B will resolve last-write-wins on created_at — but the
+    // suggestion table is regenerated every 6h anyway, so divergence
+    // self-corrects within a cycle.
+    table: 'suggestions',
+    syncKey: ['source_module', 'project_slug', 'title'],
+    timestampCol: 'created_at',
+    strategy: 'lww',
+    columns: [
+      'source_module', 'project_slug', 'title', 'evidence', 'priority',
+      'status', 'created_at', 'expires_at', 'dismissed_at',
+      'dismissed_reason', 'acted_at', 'acted_brief_id',
+    ],
+  },
+  {
+    // FR-106 Phase 1: dismiss-reason learning loop.
+    // LWW on (source_module, project_slug, evidence_signature) so a
+    // dismiss recorded on one machine raises dismiss_count on the merged
+    // brain. The mergeFields entry promotes dismiss_count via max() so
+    // independent dismisses on two machines accumulate correctly rather
+    // than overwriting.
+    table: 'dismissed_patterns',
+    syncKey: ['source_module', 'project_slug', 'evidence_signature'],
+    timestampCol: 'last_dismissed_at',
+    strategy: 'lww',
+    mergeFields: { dismiss_count: 'max' },
+    columns: [
+      'source_module', 'project_slug', 'evidence_signature',
+      'dismiss_count', 'last_dismissed_at', 'reasons',
+    ],
+  },
 ];
 
 // ---------------------------------------------------------------------------

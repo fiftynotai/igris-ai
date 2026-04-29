@@ -70,6 +70,10 @@ const EVENT_COMPONENT_MAP: Record<string, string> = {
   'error.stored': 'errors',
   'project.registered': 'projects',
   'metrics.recorded': 'metrics',
+  'subconscious.run_start': 'subconscious',
+  'subconscious.run_complete': 'subconscious',
+  'subconscious.suggestion_emitted': 'subconscious',
+  'subconscious.suggestion_suppressed': 'subconscious',
 };
 
 // ---------------------------------------------------------------------------
@@ -221,6 +225,10 @@ export function createMonitoringComponent(): BrainComponent {
           { name: 'error.stored', description: 'Log error storage events' },
           { name: 'project.registered', description: 'Log project registration events' },
           { name: 'metrics.recorded', description: 'Log metrics recording events' },
+          { name: 'subconscious.run_start', description: 'Log subconscious detector run start events' },
+          { name: 'subconscious.run_complete', description: 'Log subconscious detector run completion events' },
+          { name: 'subconscious.suggestion_emitted', description: 'Log subconscious suggestion emission events' },
+          { name: 'subconscious.suggestion_suppressed', description: 'Log subconscious suggestion suppression events (dismiss-loop)' },
         ],
       };
     },
@@ -259,6 +267,10 @@ export function createMonitoringComponent(): BrainComponent {
       ctx.bus.on('error.stored', onEventReceived);
       ctx.bus.on('project.registered', onEventReceived);
       ctx.bus.on('metrics.recorded', onEventReceived);
+      ctx.bus.on('subconscious.run_start', onEventReceived);
+      ctx.bus.on('subconscious.run_complete', onEventReceived);
+      ctx.bus.on('subconscious.suggestion_emitted', onEventReceived);
+      ctx.bus.on('subconscious.suggestion_suppressed', onEventReceived);
 
       // Run retention cleanup on init (purge events older than 30 days)
       try {
@@ -305,6 +317,10 @@ export function createMonitoringComponent(): BrainComponent {
         _ctx.bus.off('error.stored', onEventReceived);
         _ctx.bus.off('project.registered', onEventReceived);
         _ctx.bus.off('metrics.recorded', onEventReceived);
+        _ctx.bus.off('subconscious.run_start', onEventReceived);
+        _ctx.bus.off('subconscious.run_complete', onEventReceived);
+        _ctx.bus.off('subconscious.suggestion_emitted', onEventReceived);
+        _ctx.bus.off('subconscious.suggestion_suppressed', onEventReceived);
       }
       _ctx = null;
     },

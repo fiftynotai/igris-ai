@@ -3,7 +3,7 @@
  *
  * Tests the event-driven auto-push system in the sync component:
  * 1. Config loading (enabled/disabled, missing fields, malformed JSON)
- * 2. SYNC_TABLES completeness (24 entries — FR-110 added goals)
+ * 2. SYNC_TABLES completeness (26 entries — FR-106 added suggestions + dismissed_patterns)
  * 3. Immediate push (brief/session/instance events)
  * 4. Batched push (memory/error/project/metrics events with 10s window)
  * 5. Cleanup (destroy clears timers, listeners, pending set)
@@ -276,8 +276,8 @@ describe('Sync Auto-Push', () => {
   // -------------------------------------------------------------------------
 
   describe('SYNC_TABLES completeness', () => {
-    it('has exactly 24 entries', () => {
-      expect(SYNC_TABLES).toHaveLength(24);
+    it('has exactly 26 entries', () => {
+      expect(SYNC_TABLES).toHaveLength(26);
     });
 
     const newTables = [
@@ -299,6 +299,20 @@ describe('Sync Auto-Push', () => {
         syncKey: ['goal_id'],
         strategy: 'lww',
         timestampCol: 'updated_at',
+      },
+      // FR-106 Phase 1: suggestions (subconscious engine output)
+      {
+        table: 'suggestions',
+        syncKey: ['source_module', 'project_slug', 'title'],
+        strategy: 'lww',
+        timestampCol: 'created_at',
+      },
+      // FR-106 Phase 1: dismissed_patterns (learning loop)
+      {
+        table: 'dismissed_patterns',
+        syncKey: ['source_module', 'project_slug', 'evidence_signature'],
+        strategy: 'lww',
+        timestampCol: 'last_dismissed_at',
       },
     ];
 

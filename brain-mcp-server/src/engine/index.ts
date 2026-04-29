@@ -38,6 +38,7 @@ import { createSyncComponent } from './components/sync/index.js';
 import { createCacheComponent } from './components/cache/index.js';
 import { createSchedulesComponent } from './components/schedules/index.js';
 import { createCoordinationComponent } from './components/coordination/index.js';
+import { createSubconsciousComponent } from './components/subconscious/index.js';
 import { createMonitoringComponent } from './components/monitoring/index.js';
 import { createContextComponent } from './components/context/index.js';
 import { createRegistryComponent } from './components/registry/index.js';
@@ -103,6 +104,7 @@ export function bootEngine(config: EngineConfig): Engine {
     createCacheComponent,
     createSchedulesComponent,
     createCoordinationComponent,
+    createSubconsciousComponent,
     createMonitoringComponent,
     createRegistryComponent,
   ];
