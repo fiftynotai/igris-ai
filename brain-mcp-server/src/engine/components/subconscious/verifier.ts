@@ -392,6 +392,23 @@ export function makeClaudeHeadlessVerifier(
         });
       });
 
+      // TD-073: EPIPE on child.stdin arrives as an asynchronous 'error'
+      // event. Without this listener Node treats it as unhandled and
+      // crashes the entire process — same latent bug as the perception
+      // extractor (FR-108 shipped this verifier path before TD-073
+      // surfaced). The verifier prompts are tiny (two learning rows,
+      // typically < 4 KB), so no byte cap is needed; the listener alone
+      // is the fix. Defensive settle to is_conflict=true preserves the
+      // heuristic candidate per existing convention.
+      child.stdin?.on('error', (err: NodeJS.ErrnoException) => {
+        clearTimeout(softTimer);
+        settle({
+          is_conflict: true,
+          reason: `stdin ${err.code ?? 'error'}: ${err.message}`,
+          status: 'spawn_failed',
+        });
+      });
+
       child.on('close', (code) => {
         clearTimeout(softTimer);
         if (code !== 0) {

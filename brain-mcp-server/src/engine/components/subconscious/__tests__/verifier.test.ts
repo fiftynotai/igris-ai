@@ -265,6 +265,36 @@ describe('makeClaudeHeadlessVerifier', () => {
     expect(result.status).toBe('timeout');
   }, 10_000);
 
+  it('does not crash when the child destroys stdin during the parent write (TD-073)', async () => {
+    // EPIPE on child.stdin during/after .end(prompt) is asynchronous — the
+    // verifier must attach an 'error' listener so the event does not become
+    // an unhandled throw. Settle defensively to is_conflict=true so the
+    // heuristic candidate still surfaces.
+    //
+    // To force the EPIPE race we (a) make the prompt large enough to span
+    // multiple write chunks, and (b) use a stub that destroys stdin
+    // immediately on first data, before the parent finishes writing.
+    const verifier = makeClaudeHeadlessVerifier({
+      command: 'node',
+      args: [
+        '-e',
+        'process.stdin.once("data", () => process.stdin.destroy()); ' +
+          'setTimeout(() => process.exit(0), 100);',
+      ],
+      timeoutMs: 5_000,
+    });
+    const result = await verifier(
+      { id: 1, content: 'a'.repeat(200_000), created_at: 'x' },
+      { id: 2, content: 'b'.repeat(200_000), created_at: 'y' },
+    );
+    expect(result.is_conflict).toBe(true);
+    // Either spawn_failed (EPIPE-captured path) or parse_failed (clean
+    // exit with no stdout) is acceptable — both are defensive defaults.
+    // The critical property is the test completed without an unhandled
+    // 'error' event crashing the process.
+    expect(['spawn_failed', 'parse_failed']).toContain(result.status);
+  }, 10_000);
+
   it('handles fenced JSON output from the subprocess', async () => {
     const verifier = makeClaudeHeadlessVerifier({
       command: 'node',

@@ -273,6 +273,56 @@ function tryParseArray(text: string): unknown[] | null {
 }
 
 // ---------------------------------------------------------------------------
+// Prompt byte cap (TD-073)
+// ---------------------------------------------------------------------------
+
+/**
+ * Hard byte cap on the user prompt body sent to `claude -p`.
+ *
+ * TD-073: prevents EPIPE crashes from oversize transcripts overflowing
+ * `claude -p`'s stdin buffer (the 2026-04-30 incident was a single-line
+ * 3.4 MB transcript that closed the model's stdin mid-write). Strategy:
+ * **tail-slice on byte boundary** — recent content wins because it is the
+ * most likely to be the relevant retrospective material the model needs
+ * to reason about. A mid-codepoint slice at the leading edge can produce
+ * a few U+FFFD replacement chars; this is acceptable since the LLM
+ * tolerates leading-edge garbage and the cap targets logical size, not
+ * character cleanliness.
+ */
+export const DEFAULT_MAX_PROMPT_BYTES = 256 * 1024;
+
+/**
+ * Tail-truncate `prompt` to at most `maxBytes` UTF-8 bytes.
+ *
+ * Counts bytes via `Buffer.byteLength` (NOT JS char count, which would
+ * undercount multi-byte codepoints). When the prompt is already within
+ * the cap, returns the original string unchanged.
+ */
+export function capPromptBytes(prompt: string, maxBytes: number): string {
+  const buf = Buffer.from(prompt, 'utf-8');
+  if (buf.length <= maxBytes) return prompt;
+  const tail = buf.subarray(buf.length - maxBytes);
+  return tail.toString('utf-8');
+}
+
+/**
+ * Resolve the effective prompt byte cap from the environment.
+ *
+ * `IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES`, when set to a positive
+ * integer, overrides `DEFAULT_MAX_PROMPT_BYTES`. Anything else
+ * (unset, blank, non-numeric, zero, negative) falls back to the
+ * default. Operators can raise this without a code change if the
+ * default proves too aggressive for a given project's transcripts.
+ */
+export function resolveMaxPromptBytes(): number {
+  const raw = process.env.IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES;
+  if (!raw) return DEFAULT_MAX_PROMPT_BYTES;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_MAX_PROMPT_BYTES;
+  return n;
+}
+
+// ---------------------------------------------------------------------------
 // Headless Claude factory
 // ---------------------------------------------------------------------------
 
@@ -281,6 +331,12 @@ export interface ClaudeExtractorOptions {
   timeoutMs?: number;
   /** Max candidates the LLM is permitted to emit per call. Default 10. */
   maxCandidates?: number;
+  /**
+   * Maximum bytes of the user prompt piped to `claude -p`. Tail-sliced
+   * on overflow. Default {@link DEFAULT_MAX_PROMPT_BYTES} (256 KB).
+   * Production callers should pass {@link resolveMaxPromptBytes}().
+   */
+  maxPromptBytes?: number;
   /** Override subprocess command. @internal — tests inject `node` stub. */
   command?: string;
   /** Override subprocess argv (BEFORE the `--system` flag the factory appends). @internal — tests inject. */
@@ -306,6 +362,7 @@ export interface ClaudeExtractorOptions {
 export function makeClaudeLlmExtractor(opts: ClaudeExtractorOptions = {}): LlmExtractor {
   const timeoutMs = opts.timeoutMs ?? 60_000;
   const maxCandidates = opts.maxCandidates ?? 10;
+  const maxPromptBytes = opts.maxPromptBytes ?? DEFAULT_MAX_PROMPT_BYTES;
   const command = opts.command ?? 'claude';
   const baseArgs = opts.args ?? ['-p', '--output-format', 'json'];
   const log = opts.log ?? NULL_LOGGER;
@@ -315,6 +372,10 @@ export function makeClaudeLlmExtractor(opts: ClaudeExtractorOptions = {}): LlmEx
 
     const systemPrompt = buildSystemPrompt();
     const userPrompt = buildUserPrompt(events, ctx);
+    // TD-073: cap the prompt body BEFORE spawn so a too-large transcript
+    // cannot saturate `claude -p`'s stdin buffer and provoke EPIPE.
+    const cappedPrompt = capPromptBytes(userPrompt, maxPromptBytes);
+    const promptBytes = Buffer.byteLength(cappedPrompt, 'utf-8');
 
     return new Promise<PerceptionCandidate[]>((resolve) => {
       let settled = false;
@@ -373,6 +434,23 @@ export function makeClaudeLlmExtractor(opts: ClaudeExtractorOptions = {}): LlmEx
         settle([]);
       });
 
+      // TD-073: EPIPE on child.stdin arrives as an asynchronous 'error'
+      // event. Without this listener Node treats it as unhandled and
+      // crashes the entire process — exactly the 2026-04-30T21:10:40
+      // incident (3.4MB single-line transcript, perception silenced for
+      // 7+ hours). The listener MUST be attached before the synchronous
+      // `child.stdin?.end(cappedPrompt)` call below so a fast EPIPE in
+      // the same tick is not missed.
+      // TODO(TD-074): replace log.warn with bus.emit('perception.run_failed').
+      child.stdin?.on('error', (err: NodeJS.ErrnoException) => {
+        clearTimeout(softTimer);
+        log.warn(
+          `llm_extractor stdin ${err.code ?? 'error'}: child closed stdin during write ` +
+            `(prompt_bytes=${promptBytes} msg=${err.message})`,
+        );
+        settle([]);
+      });
+
       child.on('close', (code) => {
         clearTimeout(softTimer);
         if (code !== 0) {
@@ -395,12 +473,15 @@ export function makeClaudeLlmExtractor(opts: ClaudeExtractorOptions = {}): LlmEx
         settle(validated);
       });
 
+      // The async EPIPE listener above handles a child-side stdin close.
+      // The try/catch here only catches synchronous throws from .end()
+      // (e.g. stdin already destroyed before this tick).
       try {
-        child.stdin?.end(userPrompt);
+        child.stdin?.end(cappedPrompt);
       } catch (err) {
         clearTimeout(softTimer);
         log.warn(
-          `llm_extractor stdin write failed: ${err instanceof Error ? err.message : String(err)}`,
+          `llm_extractor stdin write failed (sync): ${err instanceof Error ? err.message : String(err)}`,
         );
         settle([]);
       }
@@ -429,6 +510,7 @@ export function selectLlmExtractor(
   return makeClaudeLlmExtractor({
     timeoutMs: config.llm_timeout_ms,
     maxCandidates: config.llm_max_candidates,
+    maxPromptBytes: resolveMaxPromptBytes(),
     log,
   });
 }

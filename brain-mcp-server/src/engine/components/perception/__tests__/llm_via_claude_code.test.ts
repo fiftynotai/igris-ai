@@ -13,20 +13,28 @@
  * @module engine/components/perception/__tests__/llm_via_claude_code.test
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   buildSystemPrompt,
   buildUserPrompt,
+  capPromptBytes,
+  DEFAULT_MAX_PROMPT_BYTES,
   extractJsonArrayReply,
+  type ExtractorLogger,
   LLM_CONFIDENCE_CAP,
   makeClaudeLlmExtractor,
   noopLlmExtractor,
+  resolveMaxPromptBytes,
   sanitizeTranscript,
   selectLlmExtractor,
   validateAndCoerce,
 } from '../extractors/llm_via_claude_code.js';
 import { resetClaudeCliProbeCache } from '../../subconscious/verifier.js';
-import { DEFAULT_PERCEPTION_CONFIG } from '../types.js';
+import {
+  DEFAULT_PERCEPTION_CONFIG,
+  type PerceptionExtractorConfig,
+  type TranscriptEvent,
+} from '../types.js';
 import {
   transcriptWithSubtlePattern,
   transcriptWithSingleLearned,
@@ -493,4 +501,249 @@ describeIntegration('makeClaudeLlmExtractor (real claude CLI, opt-in)', () => {
       expect(c.confidence).toBeGreaterThanOrEqual(0);
     }
   }, 90_000);
+});
+
+// ---------------------------------------------------------------------------
+// TD-073 regression suite — EPIPE handling + transcript byte cap
+// ---------------------------------------------------------------------------
+//
+// Pins down two surgical fixes to the headless Claude perception extractor:
+//   1. EPIPE on `child.stdin` during/after `.end(prompt)` must not crash
+//      the parent process. The async `'error'` event must be caught and
+//      drained to a defensive `[]` settle.
+//   2. The user prompt body must be tail-truncated to a configurable byte
+//      cap (default 256 KB) before being piped to `claude -p`, with the
+//      cap overridable via `IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES`.
+//
+// Reference incident: 2026-04-30T21:10:40 — 3.4 MB single-line transcript
+// triggered EPIPE on stdin write, crashing the perception extractor and
+// silencing the channel for 7+ hours (0 learnings produced).
+//
+// Stub convention: trailing `'--'` in `args` terminates node's option
+// parsing so the factory's appended `--system <prompt>` flag does not
+// trip node's own argument validator.
+
+interface CapturedLogger extends ExtractorLogger {
+  warns: string[];
+  infos: string[];
+}
+
+function makeCapturedLogger(): CapturedLogger {
+  const warns: string[] = [];
+  const infos: string[] = [];
+  return {
+    warn: (msg) => warns.push(msg),
+    info: (msg) => infos.push(msg),
+    warns,
+    infos,
+  };
+}
+
+/** Build a single transcript event of approximately `targetBytes` UTF-8. */
+function buildEventsOfBytes(targetBytes: number, marker = ''): TranscriptEvent[] {
+  const filler = 'x'.repeat(Math.max(0, targetBytes - marker.length));
+  return [
+    {
+      timestamp: '2026-04-30T00:00:00Z',
+      role: 'user',
+      content: filler + marker,
+    },
+  ];
+}
+
+describe('TD-073 — capPromptBytes', () => {
+  it('returns the original string when below the cap', () => {
+    const s = 'short';
+    expect(capPromptBytes(s, 1024)).toBe(s);
+  });
+
+  it('tail-truncates to exactly maxBytes UTF-8', () => {
+    const s = 'x'.repeat(2048);
+    const out = capPromptBytes(s, 512);
+    expect(Buffer.byteLength(out, 'utf-8')).toBe(512);
+  });
+
+  it('preserves the trailing bytes (tail-slice strategy)', () => {
+    const s = 'leading' + 'x'.repeat(2000) + 'TRAIL';
+    const out = capPromptBytes(s, 100);
+    expect(out.endsWith('TRAIL')).toBe(true);
+  });
+});
+
+describe('TD-073 — makeClaudeLlmExtractor: EPIPE on stdin', () => {
+  it('does not crash when the child destroys stdin before parent finishes writing', async () => {
+    const log = makeCapturedLogger();
+    // Stub: immediately destroy stdin, then exit cleanly after a short delay.
+    // The parent is writing into a half-closed pipe → async EPIPE on stdin.
+    const extractor = makeClaudeLlmExtractor({
+      command: 'node',
+      args: [
+        '-e',
+        'process.stdin.destroy(); setTimeout(() => process.exit(0), 50);',
+        '--',
+      ],
+      timeoutMs: 5_000,
+      log,
+    });
+
+    const events = buildEventsOfBytes(100_000);
+    const result = await extractor(events, { project: 'test-project' });
+
+    expect(result).toEqual([]);
+    // At least one warn must mention the stdin failure (EPIPE or related).
+    expect(log.warns.some((m) => /stdin|EPIPE|epipe/i.test(m))).toBe(true);
+  }, 10_000);
+});
+
+describe('TD-073 — makeClaudeLlmExtractor: byte cap', () => {
+  it('passes exactly 256 KB (default cap) to the child stdin when given a 1 MB prompt', async () => {
+    const log = makeCapturedLogger();
+    // Stub asserts the received byte count equals the default cap. If the
+    // cap fails, the stub exits 1 → extractor returns [] AND emits a
+    // non-zero exit warn. Surface the warn as a useful failure diagnostic.
+    const expectedCap = 256 * 1024;
+    const extractor = makeClaudeLlmExtractor({
+      command: 'node',
+      args: [
+        '-e',
+        `let n=0; process.stdin.on("data", c => n += c.length); ` +
+          `process.stdin.on("end", () => { ` +
+          `if (n !== ${expectedCap}) { process.stderr.write("got=" + n + " expected=${expectedCap}"); process.exit(1); } ` +
+          `process.stdout.write("[]"); ` +
+          `});`,
+        '--',
+      ],
+      timeoutMs: 10_000,
+      log,
+    });
+
+    const events = buildEventsOfBytes(1_024 * 1024);
+    const result = await extractor(events, { project: 'test-project' });
+
+    const nonZeroWarns = log.warns.filter((m) => /non-zero exit/.test(m));
+    if (nonZeroWarns.length > 0) {
+      throw new Error(`Cap mismatch — stub failed: ${nonZeroWarns.join(' | ')}`);
+    }
+    expect(result).toEqual([]);
+  }, 15_000);
+});
+
+describe('TD-073 — makeClaudeLlmExtractor: tail preservation', () => {
+  it('preserves a trailing marker after a 1 MB → 256 KB tail-slice', async () => {
+    const marker = '__TAIL_MARKER_TD073__';
+    // Stub reads stdin to a buffer, scans for the marker, returns one
+    // candidate marking found/missing. We cannot inspect the literal
+    // last N bytes because `buildUserPrompt` wraps content in
+    // `<transcript>...</transcript>` so the trailing bytes are the
+    // closing tag. The load-bearing assertion is that the marker survived
+    // the byte slice somewhere inside the cap window.
+    const extractor = makeClaudeLlmExtractor({
+      command: 'node',
+      args: [
+        '-e',
+        `const chunks = []; process.stdin.on("data", c => chunks.push(c)); ` +
+          `process.stdin.on("end", () => { ` +
+          `const buf = Buffer.concat(chunks); ` +
+          `const found = buf.includes("${marker}"); ` +
+          `process.stdout.write(JSON.stringify([{` +
+          `category:"discovery",` +
+          `title: found ? "TAIL_PRESERVED_${marker}" : "TAIL_MISSING",` +
+          `content: "stdin_bytes=" + buf.length + " marker_found=" + found,` +
+          `tags:[],` +
+          `confidence:0.5,` +
+          `evidence:{transcript_excerpt:""}` +
+          `}])); ` +
+          `});`,
+        '--',
+      ],
+      timeoutMs: 10_000,
+      log: makeCapturedLogger(),
+    });
+
+    const events = buildEventsOfBytes(1_024 * 1024, marker);
+    const result = await extractor(events, { project: 'test-project' });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]!.title).toContain(marker);
+    expect(result[0]!.content).toContain('marker_found=true');
+  }, 15_000);
+});
+
+describe('TD-073 — selectLlmExtractor: IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES override', () => {
+  afterEach(() => {
+    delete process.env.IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES;
+  });
+
+  it('reads IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES via resolveMaxPromptBytes', () => {
+    process.env.IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES = '1024';
+    expect(resolveMaxPromptBytes()).toBe(1024);
+  });
+
+  it('falls back to the default when the env var is unset, blank, or invalid', () => {
+    delete process.env.IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES;
+    expect(resolveMaxPromptBytes()).toBe(DEFAULT_MAX_PROMPT_BYTES);
+    process.env.IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES = '';
+    expect(resolveMaxPromptBytes()).toBe(DEFAULT_MAX_PROMPT_BYTES);
+    process.env.IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES = 'not-a-number';
+    expect(resolveMaxPromptBytes()).toBe(DEFAULT_MAX_PROMPT_BYTES);
+    process.env.IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES = '0';
+    expect(resolveMaxPromptBytes()).toBe(DEFAULT_MAX_PROMPT_BYTES);
+    process.env.IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES = '-5';
+    expect(resolveMaxPromptBytes()).toBe(DEFAULT_MAX_PROMPT_BYTES);
+  });
+
+  it('honors the env override end-to-end through selectLlmExtractor + a byte-counter stub', async () => {
+    process.env.IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES = '1024';
+
+    // Smoke-call selectLlmExtractor so the env-resolution path through the
+    // public production entry is exercised. Result depends on whether
+    // `claude` is on PATH on this host: either noopLlmExtractor ([]) or a
+    // real factory. Either way the call must not throw and must resolve to
+    // an array. Use a dedicated logger so smoke warns (e.g. "claude:
+    // unknown option '--system'" on a divergent CLI version) do not
+    // contaminate the cap-validation logger below. Tight timeout keeps the
+    // test fast even when the real CLI is slow.
+    const smokeLog = makeCapturedLogger();
+    const config: PerceptionExtractorConfig = {
+      ...DEFAULT_PERCEPTION_CONFIG,
+      llm_timeout_ms: 2_000,
+    };
+    const selected = selectLlmExtractor(config, smokeLog);
+    const smokeResult = await selected(
+      [{ timestamp: 't', role: 'user', content: 'small' }],
+      { project: 'test-project' },
+    );
+    expect(Array.isArray(smokeResult)).toBe(true);
+
+    // Now prove the env override actually constrains the byte stream that
+    // hits the child's stdin. Build a stub-bound factory using the same
+    // resolveMaxPromptBytes() helper selectLlmExtractor delegates to —
+    // assertion fires inside the stub and surfaces as a non-zero exit warn.
+    const log = makeCapturedLogger();
+    const expectedCap = 1024;
+    const extractor = makeClaudeLlmExtractor({
+      command: 'node',
+      args: [
+        '-e',
+        `let n=0; process.stdin.on("data", c => n += c.length); ` +
+          `process.stdin.on("end", () => { ` +
+          `if (n !== ${expectedCap}) { process.stderr.write("got=" + n + " expected=${expectedCap}"); process.exit(1); } ` +
+          `process.stdout.write("[]"); ` +
+          `});`,
+        '--',
+      ],
+      timeoutMs: 10_000,
+      log,
+      maxPromptBytes: resolveMaxPromptBytes(),
+    });
+
+    const events = buildEventsOfBytes(5_000);
+    const result = await extractor(events, { project: 'test-project' });
+
+    const nonZeroWarns = log.warns.filter((m) => /non-zero exit/.test(m));
+    if (nonZeroWarns.length > 0) {
+      throw new Error(`Env override failed — stub: ${nonZeroWarns.join(' | ')}`);
+    }
+    expect(result).toEqual([]);
+  }, 30_000);
 });
