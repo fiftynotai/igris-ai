@@ -12,6 +12,8 @@
 #   stdin: same JSON the parent hook received (project_dir, transcript_path,
 #          payload, etc.)
 #   args:  $1 = project slug (required — derived by caller via basename)
+#          $2 = trigger label (optional, default 'detached'; e.g. 'session_end',
+#               'pre_compact'). Threaded to the CLI as --source for log/audit.
 #
 # Min-window guard:
 #   ~/.igris/projects/{slug}/session/perception_extract_watermark.txt
@@ -27,6 +29,8 @@
 # Exit codes:   0 — always (hooks must never fail).
 
 set -e
+set -u
+set -o pipefail
 
 # ---------------------------------------------------------------------------
 # Argument validation
@@ -37,6 +41,11 @@ if [ -z "$PROJECT_SLUG" ]; then
   echo "perception_extract_and_persist: project slug arg is required" >&2
   exit 0
 fi
+
+# Trigger label threaded from the parent hook ($2). Default 'detached' so a
+# direct invocation (or older caller without the 2nd arg) still labels its
+# events. Safe under set -u via ${2:-default}.
+TRIGGER_LABEL="${2:-detached}"
 
 # ---------------------------------------------------------------------------
 # Read stdin (the JSON payload the parent hook received)
@@ -75,9 +84,9 @@ if [ -f "$WATERMARK_FILE" ]; then
   fi
 fi
 
-# Update watermark before invoking — even if the CLI fails, we don't want to
-# retry within 60s.
-echo "$now_epoch" > "$WATERMARK_FILE" 2>/dev/null || true
+# Watermark write deferred to immediately before the CLI invocation so a
+# pre-flight failure (missing brain dir, missing npx, no transcript) does not
+# burn the next 60s window. See finding #5 in TD-068.
 
 # ---------------------------------------------------------------------------
 # Locate transcript path from stdin JSON
@@ -163,15 +172,25 @@ fi
 
 cd "$BRAIN_DIR" 2>/dev/null || exit 0
 
+# Risk #1: give the parent hook's async fsync a beat before the child re-opens
+# the transcript / log files. Cheap insurance against a half-flushed transcript
+# being read at offset zero.
+sleep 1
+
+# Watermark only written here, after all dependency checks succeed and right
+# before we hand off to the CLI. If the CLI is killed mid-run we still record
+# this attempt to prevent thrash within the 60s window. See finding #5 / TD-068.
+echo "$now_epoch" > "$WATERMARK_FILE" 2>/dev/null || true
+
 {
   echo "---"
-  echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] perception_extract_and_persist: starting (project=$PROJECT_SLUG transcript=$TRANSCRIPT_PATH)"
+  echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] perception_extract_and_persist: starting (project=$PROJECT_SLUG transcript=$TRANSCRIPT_PATH source=$TRIGGER_LABEL)"
 } >> "$LOG_FILE" 2>/dev/null || true
 
 "$NPX_BIN" tsx scripts/perception_extract_cli.ts \
   --project "$PROJECT_SLUG" \
   --transcript-path "$TRANSCRIPT_PATH" \
-  --source "detached" \
+  --source "$TRIGGER_LABEL" \
   >> "$LOG_FILE" 2>&1 || true
 
 exit 0

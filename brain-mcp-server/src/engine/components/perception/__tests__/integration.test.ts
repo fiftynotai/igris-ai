@@ -477,11 +477,15 @@ describe('Perception channel — end-to-end', () => {
     // defense-in-depth review_status filter. We don't import handleBrainPush
     // here (heavy dependencies); we exercise the SQL directly to ensure the
     // pending row is excluded.
+    //
+    // Schema enforces NOT NULL DEFAULT 'approved' for review_status (migration v15);
+    // NULL is impossible going forward. Production sync filter at tools/sync.ts:600
+    // uses only `review_status = 'approved'` — this test mirrors that.
     const rows = db
       .prepare(
         `SELECT title, review_status FROM learnings
          WHERE project = ?
-           AND (review_status = 'approved' OR review_status IS NULL)`,
+           AND review_status = 'approved'`,
       )
       .all('p') as Array<{ title: string; review_status: string }>;
     expect(rows).toHaveLength(1);

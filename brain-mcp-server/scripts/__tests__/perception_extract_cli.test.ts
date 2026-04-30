@@ -151,6 +151,21 @@ describe('parseCliArgs', () => {
       parseCliArgs(['node', 's', '--project', '--transcript-path', '/x']),
     ).toThrow(/--project/);
   });
+
+  it('returns help sentinel on --help without requiring other flags', () => {
+    const args = parseCliArgs(['node', 'script.ts', '--help']);
+    expect(args.help).toBe(true);
+    // Required-flag validation is intentionally skipped on --help.
+    expect(args.project).toBe('');
+    expect(args.transcriptPath).toBe('');
+  });
+
+  it('also accepts -h short flag without requiring other flags', () => {
+    const args = parseCliArgs(['node', 'script.ts', '-h']);
+    expect(args.help).toBe(true);
+    expect(args.project).toBe('');
+    expect(args.transcriptPath).toBe('');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -426,5 +441,6 @@ const _typeCheck: CliArgs = {
   inboxPath: undefined,
   dbPathOverride: undefined,
   source: 'detached',
+  help: false,
 };
 void _typeCheck;

@@ -49,6 +49,42 @@ import type { LlmExtractor } from '../src/engine/components/perception/extractor
 import type { PerceptionExtractorConfig } from '../src/engine/components/perception/types.js';
 
 // ---------------------------------------------------------------------------
+// Usage block — printed on --help / -h. Kept in sync with the file header.
+// ---------------------------------------------------------------------------
+
+export const USAGE = `perception_extract_cli — TD-066 detached perception extraction CLI
+
+Reads a transcript file, runs the LLM perception extractor, persists pending
+candidate learnings to the brain DB, and truncates the project's perception
+inbox on success. Spawned by the session_end / pre_compact hooks via the
+perception_extract_and_persist.sh wrapper. Exits 0 on success or empty
+transcript; exits 1 only on hard error (DB unreachable, malformed args).
+
+Usage:
+  npx tsx scripts/perception_extract_cli.ts \\
+    --project <slug> \\
+    --transcript-path <path> \\
+    [--brief-id <id>] [--inbox-path <path>] [--db <path>] [--source <label>]
+
+Required flags:
+  --project <slug>            Project slug (e.g. igris-ai)
+  --transcript-path <path>    Absolute path to the transcript file
+
+Optional flags:
+  --brief-id <id>             Brief context for the prompt (e.g. TD-066)
+  --inbox-path <path>         Override inbox path (default: ~/.igris/projects/{slug}/session/perception_inbox.jsonl)
+  --db <path>                 Override IGRIS_DB_PATH (test override)
+  --source <label>            Trigger source label (default: detached)
+  --help, -h                  Print this help and exit 0
+
+Examples:
+  npx tsx scripts/perception_extract_cli.ts --project igris-ai \\
+    --transcript-path /tmp/session.jsonl --source session_end
+
+  npx tsx scripts/perception_extract_cli.ts --help
+`;
+
+// ---------------------------------------------------------------------------
 // CLI args
 // ---------------------------------------------------------------------------
 
@@ -57,9 +93,9 @@ import type { PerceptionExtractorConfig } from '../src/engine/components/percept
  * directly without spawning a subprocess.
  */
 export interface CliArgs {
-  /** Project slug. Required. */
+  /** Project slug. Required (unless `help` is true). */
   project: string;
-  /** Absolute path to the transcript file. Required. */
+  /** Absolute path to the transcript file. Required (unless `help` is true). */
   transcriptPath: string;
   /** Optional brief id passed through to extractor context. */
   briefId: string | undefined;
@@ -69,15 +105,35 @@ export interface CliArgs {
   dbPathOverride: string | undefined;
   /** Trigger source label (default 'detached'). */
   source: string;
+  /** Set when `--help` / `-h` is in argv. Caller should print USAGE and exit 0. */
+  help: boolean;
 }
 
 /**
  * Parse process.argv (or any string array) into a CliArgs struct.
  *
+ * If `--help` or `-h` is present, returns a sentinel CliArgs with
+ * `help: true` and empty required fields — required-flag validation is
+ * skipped so users can ask for help without supplying anything else.
+ *
  * Throws on missing required flags (`--project`, `--transcript-path`) or
  * when a flag that takes a value is followed by another flag.
  */
 export function parseCliArgs(argv: string[]): CliArgs {
+  // --help / -h short-circuit. Returned BEFORE required-flag checks so
+  // `--help` works on its own. main() detects help=true and prints USAGE.
+  if (argv.includes('--help') || argv.includes('-h')) {
+    return {
+      project: '',
+      transcriptPath: '',
+      briefId: undefined,
+      inboxPath: undefined,
+      dbPathOverride: undefined,
+      source: 'detached',
+      help: true,
+    };
+  }
+
   const requireValue = (flag: string): string => {
     const idx = argv.indexOf(flag);
     if (idx < 0) return '';
@@ -110,6 +166,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
     inboxPath,
     dbPathOverride,
     source,
+    help: false,
   };
 }
 
@@ -241,6 +298,12 @@ export async function main(argv: string[] = process.argv): Promise<number> {
   } catch (err) {
     console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
     return 1;
+  }
+
+  // --help / -h: print usage to stdout (success channel) and exit 0.
+  if (args.help) {
+    console.log(USAGE);
+    return 0;
   }
 
   // --db override is honored by setting the env var that getDb() reads

@@ -1,19 +1,20 @@
 /**
  * Brain Engine v5.0 — Perception LLM Extractor (FR-109 Phase 2)
  *
- * Headless Claude extractor for the perception channel. Mirrors FR-108's
- * `verifier.ts` pattern: spawn `claude -p`, stream the prompt to stdin,
- * parse JSON stdout, fall back defensively on every error path.
+ * Headless Claude extractor for the perception channel — the sole extractor
+ * in the LLM-only pipeline (TD-066). Mirrors FR-108's `verifier.ts` pattern:
+ * spawn `claude -p`, stream the prompt to stdin, parse JSON stdout, fall
+ * back defensively on every error path.
  *
  * VPS-safe: when `claude` CLI is absent (cached probe at component init,
  * reused from FR-108's `isClaudeCliAvailable`), the factory returns the
  * `noopLlmExtractor` which yields an empty array. The runner's cost gate
- * also skips the LLM call entirely when rules already produced enough
- * candidates (heuristic-first per L-065).
+ * is bytes-only (skips invocation when the transcript falls below the
+ * configured floor) and is bypassable via `force_llm`.
  *
  * Output contract: array of PerceptionCandidate. The LLM is asked to
  * self-rate confidence; we cap to [0.0, 0.85] post-parse so an over-
- * confident model can't outrank rule-based candidates.
+ * confident model cannot outrank a human-reviewed approval.
  *
  * Prompt-injection mitigations (4 layers):
  *   1. `--system` flag delivers the extractor instructions on a separate

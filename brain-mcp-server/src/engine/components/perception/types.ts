@@ -1,12 +1,12 @@
 /**
  * Brain Engine v5.0 — Perception Component Types (FR-109)
  *
- * Shared types for the perception channel: rule extractors + Phase 2 LLM
- * extractor + runner + handlers.
+ * Shared types for the perception channel: LLM extractor + runner + handlers.
  *
- * Detectors and extractors are pure functions over `TranscriptEvent[]`. The
- * runner orchestrates rule extractors first, then a heuristic-first cost gate
- * decides whether to invoke the LLM extractor (Mode B per the FR-109 plan).
+ * The pipeline is LLM-only (TD-066): the runner reads the transcript, applies
+ * a bytes-floor cost gate, and invokes the single LLM extractor. Extractors
+ * are pure async functions over `TranscriptEvent[]` returning candidates;
+ * they never throw on malformed input.
  *
  * @module engine/components/perception/types
  * @author Fifty.ai

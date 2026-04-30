@@ -115,7 +115,7 @@ export function createPerceptionComponent(): BrainComponent {
         {
           name: 'igris_perception_submit',
           description:
-            'Ingest a transcript window and queue candidate learnings for review. Called by the session_end / pre_compact hooks via the perception inbox drain. Inserts pending_review learnings tagged provenance=inferred. Returns counts and the LLM gate status.',
+            'Ingest a transcript window and queue candidate learnings for review. Called by the detached background extractor (`scripts/perception_extract_cli.ts`), itself spawned by the session_end / pre_compact hooks. Runs the LLM-only extractor pipeline, inserts pending_review learnings tagged provenance=inferred, and returns counts plus the LLM gate status.',
           inputSchema: {
             type: 'object' as const,
             properties: {
@@ -213,7 +213,7 @@ export function createPerceptionComponent(): BrainComponent {
         {
           name: 'igris_perception_extract_now',
           description:
-            'Manual perception extraction with optional force_llm bypass of the heuristic-first cost gate. Useful for /distill integration and operator triage. Watermark advance is opt-in (defaults false) so manual runs do not shadow the next session_end.',
+            'Manual perception extraction with optional force_llm bypass of the bytes-floor cost gate. Useful for /distill integration and operator triage. Watermark advance is opt-in (defaults false) so manual runs do not shadow the next session_end.',
           inputSchema: {
             type: 'object' as const,
             properties: {
@@ -223,7 +223,7 @@ export function createPerceptionComponent(): BrainComponent {
               force_llm: {
                 type: 'boolean',
                 description:
-                  'Bypass cost gates (transcript bytes + rules-sufficient). The disabled gate (extractor_llm_enabled=false) is NEVER bypassed.',
+                  'Bypass the bytes-floor cost gate and force LLM extraction. The disabled gate (extractor_llm_enabled=false) is NEVER bypassed.',
               },
               advance_watermark: {
                 type: 'boolean',

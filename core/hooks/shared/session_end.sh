@@ -231,7 +231,7 @@ main() {
   if [ -x "$HOME/.igris/core/hooks/shared/perception_extract_and_persist.sh" ]; then
     local slug
     slug=$(basename "$PROJECT_DIR")
-    printf '%s' "$INPUT" | nohup bash "$HOME/.igris/core/hooks/shared/perception_extract_and_persist.sh" "$slug" >/dev/null 2>&1 & disown
+    printf '%s' "$INPUT" | nohup bash "$HOME/.igris/core/hooks/shared/perception_extract_and_persist.sh" "$slug" "session_end" >/dev/null 2>&1 & disown
   fi
   exit 0
 }
