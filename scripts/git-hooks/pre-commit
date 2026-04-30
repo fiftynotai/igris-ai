@@ -1,0 +1,58 @@
+#!/bin/bash
+set -e
+
+# Description: Igris pre-commit hook. Runs validators ONLY when their
+#   relevant files are staged, so unrelated commits stay fast.
+#
+# Validators:
+#   - validate_memory_agency_enums.sh  (DRIFT-1, TD-070)
+#       Triggers if: core/prompts/igris_os.md OR
+#                    brain-mcp-server/src/engine/components/memory/index.ts
+#                    is staged.
+#   - validate_igris_tree_lineranges.py  (DRIFT-3, TD-070)
+#       Triggers if: core/prompts/igris_os.md OR core/igris_tree.json
+#                    is staged.
+#
+# Bypass: `git commit --no-verify` (use sparingly; CI will catch it)
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+# Get list of staged files (added/copied/modified, not deleted).
+staged="$(git diff --cached --name-only --diff-filter=ACM)"
+
+needs_enum_check=0
+needs_lineranges_check=0
+
+if echo "$staged" | grep -qE '^(core/prompts/igris_os\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
+  needs_enum_check=1
+fi
+
+if echo "$staged" | grep -qE '^(core/prompts/igris_os\.md|core/igris_tree\.json)$'; then
+  needs_lineranges_check=1
+fi
+
+failed=0
+
+if [ "$needs_enum_check" = "1" ]; then
+  echo "[pre-commit] Validating memory_agency enums..."
+  if ! bash "$REPO_ROOT/scripts/validate_memory_agency_enums.sh"; then
+    failed=1
+  fi
+fi
+
+if [ "$needs_lineranges_check" = "1" ]; then
+  echo "[pre-commit] Validating igris_tree.json line ranges..."
+  if ! python3 "$REPO_ROOT/scripts/validate_igris_tree_lineranges.py"; then
+    failed=1
+  fi
+fi
+
+if [ "$failed" = "1" ]; then
+  echo ""
+  echo "Pre-commit checks failed. Fix the drift, then re-stage and re-commit."
+  echo "To bypass (not recommended): git commit --no-verify"
+  exit 1
+fi
+
+exit 0

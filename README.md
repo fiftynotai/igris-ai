@@ -279,6 +279,16 @@ path/to/igris-ai/scripts/igris_install.sh
 
 This creates `~/.igris/` with the brain database, copies core files (agents, skills, rules, prompts, context tree), and sets up `.claude/` symlinks. Registers the brain MCP server globally in `~/.claude.json`. Your project gets the full system with zero file duplication.
 
+### Git hooks (one-time setup)
+
+Install pre-commit hooks that catch drift between actor-facing docs and the brain schema:
+
+```bash
+bash scripts/install_git_hooks.sh
+```
+
+See [docs/architecture/git_hooks.md](docs/architecture/git_hooks.md) for what's enforced, the trigger matrix, and how to extend with new validators.
+
 ### First 5 Minutes
 
 ```bash

@@ -858,6 +858,8 @@ Mapping common phrasings to the legal `category` enum:
 
 **Scope guidance.** Default `scope=local`. Promote to `global` only when the same lesson applies across project archetypes (bash quoting, secret handling, generic algorithmic patterns). Cross-project promotion is normally automatic when the same memory is observed in 2+ projects (see `/distill`) — don't pre-promote out of optimism.
 
+**Decision log mirror.** Architectural decisions stored as `category=decision` should also be mirrored to the project's `DECISIONS.md` log when one exists — the memory captures the lesson for future recall, the file gives reviewers an in-repo audit trail. The two are complements, not alternatives.
+
 **Tag-namespace hygiene.** Tags are free-form, but prefer existing tags from prior memories — call `igris_memory_search` with a candidate tag first to check for collisions or synonyms. Otherwise the namespace drifts (`flutter` / `flutter-app` / `flutterapp`) and recall quality decays.
 
 ### Quality Bar
