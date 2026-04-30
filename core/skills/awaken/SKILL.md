@@ -163,24 +163,6 @@ If the `igris-brain` MCP server is available:
 
 If brain MCP is NOT available or pull fails, skip silently. Do NOT block session start.
 
-### 3.6.5. Drain Perception Inbox (Mandatory)
-
-You MUST drain the perception inbox so transcript windows captured by `session_end.sh` and `pre_compact.sh` get extracted into pending learnings.
-
-If the `igris-brain` MCP server is available:
-
-1. Check if `~/.igris/projects/{project}/session/perception_inbox.jsonl` exists
-2. If it exists and has entries:
-   a. Read each JSONL line
-   b. For each row, call `igris_perception_submit` with `project`, `transcript_text` = the row's `transcript`, `source` = the row's `source` (or `'session_end'` fallback), and `window_end_ts` = the row's `queued_at`
-   c. On success, the inbox file is truncated atomically (rewrite a fresh empty file).
-   d. On any error, leave the file in place so the next /awaken can retry.
-3. Display a one-line summary if any rows were drained: `Perception drain: extracted N candidates ({rule}/{llm}), {suppressed} duplicates suppressed.`
-
-If brain MCP is NOT available, leave the inbox in place. Do NOT block session start.
-
-This mirrors section 3.6.1.1 (sync queue drain) — the inbox is a local fallback that survives offline boots.
-
 ### 3.6.4. Clean Stale Previous Instance (Mandatory)
 
 Before registering a new instance, check if the previous session left an orphaned instance:
@@ -300,7 +282,12 @@ run `igris_suggestion_list` directly for full details.
 If zero results, render nothing — no "No suggestions" line. If the tool
 is unavailable (older brain), skip silently.
 
-### 4.9. Pending Perception Candidates (FR-109)
+### 4.9. Pending Perception Candidates (FR-109 / TD-066)
+
+Extraction happens in a detached background process at session-end (spawned
+by `session_end.sh` / `pre_compact.sh` via `perception_extract_and_persist.sh`).
+This section is purely a SELECT — it surfaces whatever the background process
+has committed since the last awaken. /awaken does NOT drain any inbox.
 
 If `igris-brain` MCP is available, call `igris_perception_review_pending` with:
 - `project` = current project slug
@@ -317,16 +304,21 @@ If results are returned, render:
 ```
 
 Use the `total` count from the response (may exceed `limit`) so the user
-knows the queue depth. The `source_extractor` field is read directly from
-the row (column added in DB v15 — FR-109): values are `rule:learned_marker`,
-`rule:retry_chain`, `rule:blocker_resolution`, `rule:error_fingerprint`,
-`llm`, or `manual` for direct memory_store calls. Render the value verbatim
-so the user can distinguish deterministic rule extractions from
-non-deterministic LLM inferences when approving. Show `approve` and `reject`
-MCP tools as next-step hints once per session, not per row.
+knows the queue depth. The `source_extractor` field values are typically
+`llm` (from background extraction) or `manual` (from direct memory_store
+calls). Legacy rows from pre-TD-066 extractions may render as
+`rule:learned_marker`, `rule:retry_chain`, `rule:blocker_resolution`, or
+`rule:error_fingerprint` — these are read-side compatible and surface
+verbatim. Show `approve` and `reject` MCP tools as next-step hints once per
+session, not per row.
 
 If zero results, render nothing — no "No pending" line. If the tool is
 unavailable (older brain), skip silently.
+
+If `auto_approve_enabled=true` is set in `~/.igris/config.json`'s `perception`
+section, the background extractor inserts new rows as `approved` directly
+and they bypass this surface — they appear in `recall`/`search` immediately
+without operator review. Default is opt-in (off).
 
 ### 5. Display Resume Point (if resuming)
 

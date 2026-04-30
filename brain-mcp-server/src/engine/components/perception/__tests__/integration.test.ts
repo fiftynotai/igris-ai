@@ -1,12 +1,14 @@
 /**
- * Perception channel — end-to-end integration tests (FR-109 Phase F).
+ * Perception channel — end-to-end integration tests (FR-109 + TD-066).
  *
  * Drives the full pipeline:
- *   submit -> rule extraction -> dedupe -> persist as pending_review
+ *   submit -> LLM extraction -> dedupe -> persist
  *   review_pending -> approve -> recall now sees the row
  *   reject -> row is hard-deleted
  *
- * Plus Mode B: rule + LLM both fire, dedupe handles overlap.
+ * Plus regression tests for:
+ *   - source_extractor persistence across approval
+ *   - Risk #3: legacy `rule:*` rows remain visible to review_pending
  *
  * @module engine/components/perception/__tests__/integration.test
  */
@@ -125,13 +127,12 @@ function makeFullSchemaDb(): Database.Database {
 
 const noopBus = { on: vi.fn(), off: vi.fn(), emit: vi.fn() };
 
-beforeEach(() => {
-  setHandlerContext({
-    bus: noopBus,
-    config: DEFAULT_PERCEPTION_CONFIG,
-    llmExtractor: async () => [],
-  });
-});
+/** Default config tuned for tests: bytes gate floored so any non-empty content triggers LLM. */
+const TEST_CONFIG = {
+  ...DEFAULT_PERCEPTION_CONFIG,
+  extractor_llm_enabled: true,
+  llm_min_transcript_bytes: 1,
+};
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -150,13 +151,27 @@ describe('Perception channel — end-to-end', () => {
   });
 
   it('submit -> review -> approve -> recall sees the row', async () => {
-    const transcript = [
-      JSON.stringify({
-        role: 'assistant',
-        content: 'LEARNED: parametrise SQL queries in better-sqlite3 to avoid injection',
-        timestamp: '2026-04-29T10:00:00Z',
-      }),
-    ].join('\n');
+    setHandlerContext({
+      bus: noopBus,
+      config: TEST_CONFIG,
+      llmExtractor: async (): Promise<PerceptionCandidate[]> => [
+        {
+          category: 'pattern',
+          title: 'parametrise SQL queries in better-sqlite3 to avoid injection',
+          content: 'Always use parameterised SQL queries to avoid SQL injection.',
+          tags: ['sql', 'security'],
+          confidence: 0.7,
+          source_extractor: 'llm',
+          evidence: { transcript_excerpt: 'parametrise SQL' },
+        },
+      ],
+    });
+
+    const transcript = JSON.stringify({
+      role: 'assistant',
+      content: 'discussion about parametrise SQL queries in better-sqlite3 to avoid injection',
+      timestamp: '2026-04-29T10:00:00Z',
+    });
 
     // 1. Submit
     const submitResult = await handlePerceptionSubmit({
@@ -198,7 +213,7 @@ describe('Perception channel — end-to-end', () => {
       project: 'p',
       context: 'parametrise SQL injection',
     });
-    expect(recallAfter.content[0].text).toContain('parametrise SQL queries');
+    expect(recallAfter.content[0].text).toContain('parametrise SQL');
 
     // 7. provenance permanence: still 'inferred' even after approval
     const row = db.prepare('SELECT provenance, review_status FROM learnings WHERE id = ?').get(learningId) as {
@@ -210,14 +225,29 @@ describe('Perception channel — end-to-end', () => {
   });
 
   it('reject deletes the row entirely', async () => {
-    const transcript = JSON.stringify({
-      role: 'assistant',
-      content: 'LEARNED: noisy and not useful',
-      timestamp: '',
+    setHandlerContext({
+      bus: noopBus,
+      config: TEST_CONFIG,
+      llmExtractor: async (): Promise<PerceptionCandidate[]> => [
+        {
+          category: 'pattern',
+          title: 'noisy and not useful',
+          content: 'should be rejected',
+          tags: [],
+          confidence: 0.4,
+          source_extractor: 'llm',
+          evidence: { transcript_excerpt: 'noisy' },
+        },
+      ],
     });
+
     await handlePerceptionSubmit({
       project: 'p',
-      transcript_text: transcript,
+      transcript_text: JSON.stringify({
+        role: 'assistant',
+        content: 'noisy content body',
+        timestamp: '',
+      }),
       source: 'session_end',
     });
 
@@ -236,52 +266,53 @@ describe('Perception channel — end-to-end', () => {
     expect(row).toBeUndefined();
   });
 
-  it('Mode B: rule + LLM both fire, dedupe with rule priority preserves rule', async () => {
-    // Big enough transcript to pass the bytes gate; rules sparse enough to
-    // pass the rules-sufficient gate.
-    const transcript = [
-      JSON.stringify({
-        role: 'assistant',
-        content: `LEARNED: Mode B integration pattern — rules and LLM both fire on the same window.\n${'X'.repeat(2000)}`,
-        timestamp: '',
-      }),
-    ].join('\n');
-
+  it('LLM extractor + dedupe handles overlapping titles within a single window', async () => {
     const stubLlm = vi.fn(async (): Promise<PerceptionCandidate[]> => [
       {
         category: 'pattern',
-        title: 'LLM-only finding from this window',
-        content: 'A unique observation only the LLM caught — not present in rules.',
+        title: 'Shared finding',
+        content: 'first phrasing',
+        tags: ['llm-test'],
+        confidence: 0.5,
+        source_extractor: 'llm',
+        evidence: { transcript_excerpt: 'one' },
+      },
+      {
+        category: 'pattern',
+        title: 'shared finding', // same after normalize
+        content: 'second phrasing',
+        tags: ['llm-test'],
+        confidence: 0.85,
+        source_extractor: 'llm',
+        evidence: { transcript_excerpt: 'two' },
+      },
+      {
+        category: 'pattern',
+        title: 'Unique finding',
+        content: 'distinct',
         tags: ['llm-test'],
         confidence: 0.7,
         source_extractor: 'llm',
-        evidence: { transcript_excerpt: 'unique observation' },
-      },
-      {
-        // Will dedupe with the rule-extracted LEARNED finding (same normalized title).
-        category: 'pattern',
-        title: 'Mode B integration pattern — rules and LLM both fire on the same window.',
-        content: 'LLM phrasing of the same idea.',
-        tags: ['llm-test'],
-        confidence: 0.85, // tied with rule
-        source_extractor: 'llm',
-        evidence: { transcript_excerpt: 'mode b' },
+        evidence: { transcript_excerpt: 'three' },
       },
     ]);
 
     setHandlerContext({
       bus: noopBus,
-      config: { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, llm_skip_threshold: 99 },
+      config: TEST_CONFIG,
       llmExtractor: stubLlm,
     });
 
     const result = await handlePerceptionSubmit({
       project: 'p',
-      transcript_text: transcript,
+      transcript_text: JSON.stringify({
+        role: 'assistant',
+        content: 'X'.repeat(2000),
+        timestamp: '',
+      }),
       source: 'session_end',
     });
     const out = JSON.parse(result.content[0].text) as {
-      rule_extracted: number;
       llm_extracted: number;
       suppressed: number;
       inserted: number;
@@ -291,28 +322,34 @@ describe('Perception channel — end-to-end', () => {
 
     expect(stubLlm).toHaveBeenCalledTimes(1);
     expect(out.llm_status).toBe('ran');
-    expect(out.rule_extracted).toBe(1);
-    expect(out.llm_extracted).toBe(2);
-    expect(out.suppressed).toBe(1); // dedupe killed the LLM-vs-rule overlap
-    expect(out.inserted).toBe(2); // rule + 1 unique llm survived
-    expect(out.by_source['rule:learned_marker']).toBe(1);
-    expect(out.by_source.llm).toBe(1);
-
-    // Confirm both pending rows visible to review.
-    const review = handlePerceptionReviewPending({ project: 'p' });
-    const reviewOut = JSON.parse(review.content[0].text) as {
-      count: number;
-      candidates: Array<{ title: string }>;
-    };
-    expect(reviewOut.count).toBe(2);
+    expect(out.llm_extracted).toBe(3);
+    expect(out.suppressed).toBe(1);
+    expect(out.inserted).toBe(2);
+    expect(out.by_source.llm).toBe(2);
   });
 
   it('regression: pending rows never returned by recall, search, or hybrid', async () => {
+    setHandlerContext({
+      bus: noopBus,
+      config: TEST_CONFIG,
+      llmExtractor: async (): Promise<PerceptionCandidate[]> => [
+        {
+          category: 'pattern',
+          title: 'regression check pattern phrase',
+          content: 'still pending — should not appear in conscious channel',
+          tags: [],
+          confidence: 0.6,
+          source_extractor: 'llm',
+          evidence: { transcript_excerpt: 'snippet' },
+        },
+      ],
+    });
+
     await handlePerceptionSubmit({
       project: 'p',
       transcript_text: JSON.stringify({
         role: 'assistant',
-        content: 'LEARNED: regression check pattern phrase',
+        content: 'arbitrary content',
         timestamp: '',
       }),
       source: 'session_end',
@@ -326,114 +363,130 @@ describe('Perception channel — end-to-end', () => {
   });
 
   // -------------------------------------------------------------------------
-  // FR-109 round-2 review fix: source_extractor persists on the row
-  // (was: discarded via `void evidence;` — /awaken couldn't tell rule from LLM)
+  // FR-109 round-2 review fix: source_extractor persists on the row + survives approval
   // -------------------------------------------------------------------------
-  it('persists source_extractor on the row for both rule and LLM candidates', async () => {
-    // Rule trigger (LEARNED:) + LLM stub. Force the LLM gate via a large
-    // transcript and a high skip threshold.
-    const transcript = JSON.stringify({
-      role: 'assistant',
-      content: `LEARNED: rule-extracted finding for source_extractor test\n${'Y'.repeat(2000)}`,
-      timestamp: '',
-    });
 
-    const stubLlm = vi.fn(async (): Promise<PerceptionCandidate[]> => [
-      {
-        category: 'pattern',
-        title: 'LLM-only candidate for source_extractor test',
-        content: 'Distinct from the rule candidate so dedupe leaves both alive.',
-        tags: [],
-        confidence: 0.7,
-        source_extractor: 'llm',
-        evidence: { transcript_excerpt: 'llm-only' },
-      },
-    ]);
-
+  it('persists source_extractor on the row and preserves it across approval', async () => {
     setHandlerContext({
       bus: noopBus,
-      config: { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, llm_skip_threshold: 99 },
-      llmExtractor: stubLlm,
+      config: TEST_CONFIG,
+      llmExtractor: async (): Promise<PerceptionCandidate[]> => [
+        {
+          category: 'pattern',
+          title: 'LLM finding for source_extractor test',
+          content: 'body content',
+          tags: [],
+          confidence: 0.7,
+          source_extractor: 'llm',
+          evidence: { transcript_excerpt: 'snippet' },
+        },
+      ],
     });
 
     const result = await handlePerceptionSubmit({
       project: 'p',
-      transcript_text: transcript,
-      source: 'session_end',
-    });
-    expect(result.isError).toBeFalsy();
-
-    // Both rows persisted with their source_extractor value.
-    const rows = db
-      .prepare(
-        `SELECT title, source_extractor, review_status, provenance
-         FROM learnings WHERE project = ? ORDER BY id ASC`,
-      )
-      .all('p') as Array<{
-        title: string;
-        source_extractor: string;
-        review_status: string;
-        provenance: string;
-      }>;
-    expect(rows).toHaveLength(2);
-
-    const ruleRow = rows.find((r) => r.title.includes('rule-extracted finding'));
-    const llmRow = rows.find((r) => r.title.includes('LLM-only candidate'));
-    expect(ruleRow?.source_extractor).toBe('rule:learned_marker');
-    expect(llmRow?.source_extractor).toBe('llm');
-    // All perception rows are pending+inferred until approved.
-    expect(ruleRow?.review_status).toBe('pending_review');
-    expect(llmRow?.review_status).toBe('pending_review');
-    expect(ruleRow?.provenance).toBe('inferred');
-    expect(llmRow?.provenance).toBe('inferred');
-
-    // Approve both — source_extractor must remain UNCHANGED (permanent, like
-    // provenance). Approval is a status flip, not a re-extraction.
-    const ruleId = db
-      .prepare('SELECT id FROM learnings WHERE title LIKE ?')
-      .get('%rule-extracted finding%') as { id: number };
-    const llmId = db
-      .prepare('SELECT id FROM learnings WHERE title LIKE ?')
-      .get('%LLM-only candidate%') as { id: number };
-    handlePerceptionApprove({ learning_id: ruleId.id });
-    handlePerceptionApprove({ learning_id: llmId.id });
-
-    const afterApproval = db
-      .prepare(
-        `SELECT title, source_extractor, review_status FROM learnings
-         WHERE id IN (?, ?) ORDER BY id ASC`,
-      )
-      .all(ruleId.id, llmId.id) as Array<{
-        title: string;
-        source_extractor: string;
-        review_status: string;
-      }>;
-    expect(afterApproval[0].source_extractor).toBe('rule:learned_marker');
-    expect(afterApproval[1].source_extractor).toBe('llm');
-    expect(afterApproval[0].review_status).toBe('approved');
-    expect(afterApproval[1].review_status).toBe('approved');
-
-    // review_pending response must include source_extractor — emit one new
-    // pending row to verify the SELECT shape (existing rows are now approved).
-    setHandlerContext({
-      bus: noopBus,
-      config: DEFAULT_PERCEPTION_CONFIG,
-      llmExtractor: async () => [],
-    });
-    await handlePerceptionSubmit({
-      project: 'p',
       transcript_text: JSON.stringify({
         role: 'assistant',
-        content: 'LEARNED: review surface check phrase',
+        content: 'X'.repeat(2000),
         timestamp: '',
       }),
       source: 'session_end',
     });
-    const review = handlePerceptionReviewPending({ project: 'p' });
-    const out = JSON.parse(review.content[0].text) as {
+    expect(result.isError).toBeFalsy();
+
+    const row = db
+      .prepare(
+        `SELECT id, title, source_extractor, review_status, provenance
+         FROM learnings WHERE project = ?`,
+      )
+      .get('p') as {
+        id: number;
+        title: string;
+        source_extractor: string;
+        review_status: string;
+        provenance: string;
+      };
+    expect(row.source_extractor).toBe('llm');
+    expect(row.review_status).toBe('pending_review');
+    expect(row.provenance).toBe('inferred');
+
+    handlePerceptionApprove({ learning_id: row.id });
+
+    const after = db
+      .prepare(`SELECT source_extractor, review_status FROM learnings WHERE id = ?`)
+      .get(row.id) as { source_extractor: string; review_status: string };
+    // Approval is a status flip, not a re-extraction — source_extractor unchanged.
+    expect(after.source_extractor).toBe('llm');
+    expect(after.review_status).toBe('approved');
+  });
+
+  // -------------------------------------------------------------------------
+  // TD-066 / Risk #3: legacy `rule:*` rows remain visible to review_pending
+  // (the source_extractor enum narrowing is insert-side ONLY; existing
+  //  pre-TD-066 rows must keep flowing through the read surface unchanged.)
+  // -------------------------------------------------------------------------
+
+  it('Risk #3 regression: legacy rule:* rows still surfaced by review_pending', async () => {
+    // Insert a row with the legacy source_extractor value, mimicking what the
+    // pre-TD-066 runner would have written. The TS narrowing does NOT change
+    // the DB column type — it stays plain TEXT.
+    db.prepare(
+      `INSERT INTO learnings (project, category, title, content, provenance,
+        review_status, source_extractor)
+       VALUES ('p', 'pattern', 'legacy LEARNED finding', 'body', 'inferred',
+        'pending_review', 'rule:learned_marker')`,
+    ).run();
+
+    const r = handlePerceptionReviewPending({ project: 'p' });
+    expect(r.isError).toBeFalsy();
+    const out = JSON.parse(r.content[0].text) as {
+      count: number;
       candidates: Array<{ title: string; source_extractor: string }>;
     };
-    expect(out.candidates).toHaveLength(1);
+    expect(out.count).toBe(1);
+    expect(out.candidates[0].title).toBe('legacy LEARNED finding');
+    // Read-side widening: legacy values render verbatim.
     expect(out.candidates[0].source_extractor).toBe('rule:learned_marker');
+  });
+
+  // -------------------------------------------------------------------------
+  // TD-066 / Risk #3: sync push still excludes pending_review rows
+  // (defense-in-depth filter `review_status='approved' OR null` in sync.ts)
+  // -------------------------------------------------------------------------
+
+  it('Risk #3 regression: pending rows excluded from sync push payload', async () => {
+    // Insert a legacy rule:* pending row. The sync push SELECT should NOT
+    // emit it because review_status is 'pending_review'.
+    db.prepare(
+      `INSERT INTO learnings (project, category, title, content, provenance,
+        review_status, source_extractor, created_at, updated_at)
+       VALUES ('p', 'pattern', 'legacy pending row', 'body', 'inferred',
+        'pending_review', 'rule:learned_marker',
+        datetime('now'), datetime('now'))`,
+    ).run();
+
+    db.prepare(
+      `INSERT INTO learnings (project, category, title, content, provenance,
+        review_status, source_extractor, created_at, updated_at)
+       VALUES ('p', 'pattern', 'approved row', 'body', 'inferred',
+        'approved', 'llm',
+        datetime('now'), datetime('now'))`,
+    ).run();
+
+    // Mirror the SELECT used in handleBrainPush: changed-rows filter +
+    // defense-in-depth review_status filter. We don't import handleBrainPush
+    // here (heavy dependencies); we exercise the SQL directly to ensure the
+    // pending row is excluded.
+    const rows = db
+      .prepare(
+        `SELECT title, review_status FROM learnings
+         WHERE project = ?
+           AND (review_status = 'approved' OR review_status IS NULL)`,
+      )
+      .all('p') as Array<{ title: string; review_status: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].title).toBe('approved row');
+    // Pending row stays out of the push payload.
+    expect(rows.find((r) => r.title === 'legacy pending row')).toBeUndefined();
   });
 });

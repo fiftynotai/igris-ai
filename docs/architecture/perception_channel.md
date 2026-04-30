@@ -1,48 +1,64 @@
 # Perception Channel
 
-**Brief:** FR-109 — Auto-extract learnings from session transcripts
-**Status:** Phase 1 (rule extractors) and Phase 2 (LLM extractor) shipped together.
+**Briefs:** FR-109 (initial design), TD-066 (LLM-only + detached architecture)
+**Status:** LLM-only background extraction. Rule extractors removed.
 **Schema:** `learnings.review_status` (DB v15) + `perception_watermarks` (component v1).
 
 ## Overview
 
 The perception channel is a passive, post-session pipeline that scans
-transcript windows for candidate learnings and queues them for human review
-before they enter the conscious channel (i.e., the default `igris_memory_*`
-recall surfaces).
+transcript windows for candidate learnings using a headless LLM and queues
+them for human review before they enter the conscious channel (i.e., the
+default `igris_memory_*` recall surfaces).
 
 ```
-session_end / pre_compact
-   -> hook writes perception_inbox.jsonl
-/awaken or /rest
-   -> drains inbox via igris_perception_submit
-   -> runs rule extractors + (optional) LLM extractor
-   -> dedupes + persists pending_review rows
+session_end / pre_compact hook
+   -> spawn DETACHED process (nohup ... & disown)
+       perception_extract_and_persist.sh
+         -> 60s min-window guard
+         -> resolve transcript_path from stdin JSON
+         -> resolve brain-mcp-server location (env or ~/.igris/config.json)
+         -> npx tsx scripts/perception_extract_cli.ts
+              -> open brain DB
+              -> resolve perception config (3-layer chain)
+              -> select LLM extractor (probe claude CLI)
+              -> runPerception (LLM-only)
+              -> INSERT learnings (review_status='pending_review' OR 'approved'
+                 if auto_approve_enabled=true)
+              -> truncate perception_inbox.jsonl on success
 /awaken section 4.9
-   -> renders top 5 pending candidates (limit=5)
+   -> SELECT pending candidates (igris_perception_review_pending, limit=5)
 user
    -> approves (igris_perception_approve) or rejects (igris_perception_reject)
 default recall
    -> filters review_status='approved' (pending hidden)
 ```
 
+The hook returns immediately after spawning the detached process. The
+parent Claude Code session never blocks on extraction. /awaken and /rest
+are read-only with respect to perception state — no inbox drain, no
+synchronous LLM calls.
+
 This keeps the conscious channel deterministic: only learnings that a human
 actively approved (or were directly stored) ever surface in `recall`,
-`search`, `hybrid_search`, or `pattern_suggest`.
+`search`, `hybrid_search`, or `pattern_suggest`. (Operators can opt into
+`auto_approve_enabled` to bypass the review step — see "Auto-Approve" below.)
 
 ## Two-Channel Model
 
 The conscious channel (default) and the perception channel share the
 `learnings` table but are gated by `review_status`:
 
-| Channel    | review_status   | Visible in recall?  | Source                     |
-|------------|-----------------|---------------------|----------------------------|
-| Conscious  | `approved`      | Yes                 | `igris_memory_store`       |
-| Perception | `pending_review`| No                  | `igris_perception_submit`  |
+| Channel    | review_status   | Visible in recall?  | Source                      |
+|------------|-----------------|---------------------|-----------------------------|
+| Conscious  | `approved`      | Yes                 | `igris_memory_store`        |
+| Perception | `pending_review`| No                  | LLM extractor via detached  |
+| Perception | `approved`      | Yes                 | LLM extractor + auto_approve|
 
 `review_status='approved'` is the default — every existing call path stays
-visible. Perception extractors pass `'pending_review'` so the row is hidden
-until a human approves it.
+visible. Perception extraction defaults to `'pending_review'` so the row is
+hidden until a human approves it. `auto_approve_enabled=true` flips perception
+inserts directly to `'approved'`.
 
 The vocabulary is enforced at the handler layer (validator in
 `tools/memory.ts`). The composite index `idx_learnings_review_status(review_status, project)`
@@ -54,58 +70,17 @@ Every perception-generated row is tagged `provenance='inferred'`. Approval
 flips `review_status` to `'approved'` but does NOT change `provenance` —
 inference is permanent. The forensic trail is preserved across the lifecycle:
 
-- `provenance='inferred'` → derived (rules or LLM), not directly observed.
-- `evidence.source_extractor` → which extractor produced it (`rule:learned_marker`,
-  `rule:retry_chain`, `rule:blocker_resolution`, `rule:error_fingerprint`, `llm`).
+- `provenance='inferred'` → derived by LLM, not directly observed.
+- `learnings.source_extractor` → which extractor produced it.
+  - Post-TD-066: `'llm'`, `'manual'` (direct memory_store), or `'distill'` (/distill skill).
+  - Pre-TD-066 historical rows may carry `'rule:learned_marker'`,
+    `'rule:retry_chain'`, `'rule:blocker_resolution'`, or
+    `'rule:error_fingerprint'` — read-compatible, no migration needed.
 
 Combined, you can compute precision per source: `approved_count / inferred_count`
 broken down by `source_extractor`.
 
-## Run Mode (Mode B)
-
-Rules and LLM both fire on the same transcript window. Dedupe handles overlap:
-
-```
-runRuleExtractors(events)
-   |
-   v
-[heuristic-first cost gate]
-   - skip:disabled       (extractor_llm_enabled = false)
-   - skip:bytes          (transcript_bytes < llm_min_transcript_bytes)
-   - skip:rules_sufficient (rule_candidates.length >= llm_skip_threshold)
-   - ran                  (otherwise)
-   |
-   v
-runLlmExtractor(events) when ran
-   |
-   v
-dedupeWithRulePriority(rules ++ llm)
-   |
-   v
-persistAsPendingReview(...)
-```
-
-`force_llm=true` (only via `igris_perception_extract_now`) bypasses the cost
-gates (bytes + rules-sufficient) but NEVER bypasses the disabled gate — that's
-an operator decision, not a cost decision.
-
-## Rule Extractors (Phase 1)
-
-Four deterministic regex/state-machine extractors, each producing
-`source_extractor='rule:<name>'`:
-
-| Extractor          | Confidence | What it finds                                         |
-|--------------------|------------|-------------------------------------------------------|
-| `learned_marker`   | 0.85       | Anchored `LEARNED:` lines in transcript content       |
-| `retry_chain`      | 0.6        | sentinel-FAIL → forger-fix → sentinel-PASS triples    |
-| `blocker_resolution`| 0.7        | `BLOCKER:` paired with subsequent `RESOLVED:` line    |
-| `error_fingerprint`| 0.75       | TypeError/Exception/Traceback lines, signature-deduped|
-
-Confidence ladder is intentional: `LEARNED:` is the highest-precision signal
-because the human is explicitly tagging "remember this." LLM output is capped
-at 0.85 (see below) so an over-confident model can never outrank `LEARNED:`.
-
-## LLM Extractor (Phase 2)
+## LLM Extractor
 
 A headless `claude -p` subprocess that mirrors FR-108's `verifier.ts` shape:
 
@@ -113,19 +88,48 @@ A headless `claude -p` subprocess that mirrors FR-108's `verifier.ts` shape:
 - **Spawn:** `spawn('claude', ['-p', '--output-format', 'json', '--system', <prompt>])`.
 - **Timeout:** SIGTERM at 60s, hard SIGKILL 5s later.
 - **Defensive fallbacks:** spawn-fail, parse-fail, non-zero exit, empty stdout
-  all return `[]` (the runner proceeds with rule candidates only).
+  all return `[]` (the runner inserts nothing for that window).
 
 **Confidence cap.** LLM-reported confidence is post-parse coerced to
 `min(0.85, llm.confidence)`. The original is preserved in
 `evidence.llm_self_confidence` for forensics.
 
-**Tie-breaking.** When a rule and the LLM produce the same dedupe key with
-equal confidence, the rule source wins (`source_extractor` starting with
-`rule:`). This is the deterministic-over-non-deterministic invariant.
+**No rule extractors.** TD-066 removed the four rule-based extractors
+(`learned_marker`, `retry_chain`, `blocker_resolution`, `error_fingerprint`)
+plus the rule-vs-llm dedupe tie-breaks and the `llm_skip_threshold` cost
+gate. The LLM proved more reliable than brittle regexes.
+
+## Detached Process Pattern
+
+```
+hook (parent session)
+  | nohup bash perception_extract_and_persist.sh "<slug>" </dev/null >/dev/null 2>&1 & disown
+  v
+detached child
+  | 60s min-window guard (perception_extract_watermark.txt)
+  | locate transcript via stdin JSON
+  | resolve brain MCP (env IGRIS_BRAIN_MCP_DIR | source_repo from ~/.igris/config.json)
+  | log to ~/.igris/projects/<slug>/session/perception_extract.log (rotated at 1MB)
+  | invoke npx tsx scripts/perception_extract_cli.ts
+  v
+CLI (TS via tsx)
+  | parse args, open brain DB, pre-flight learnings table check
+  | read transcript file (4MB cap, tail-read on oversize)
+  | resolvePerceptionConfig + selectLlmExtractor
+  | runPerception (LLM-only)
+  | truncate perception_inbox.jsonl atomically
+```
+
+The 60s min-window guard prevents thrash from rapid hook fires. The atomic
+inbox truncation (write empty temp file + rename) is safe for concurrent
+appenders.
+
+This pattern is the canonical detached-process template for FR-116
+(background brain maintenance) and any future hook-spawned background work.
 
 ## Prompt-Injection Mitigations
 
-Four layered defenses — any one breaking does not compromise the system:
+Five layered defenses — any one breaking does not compromise the system:
 
 1. **`--system` flag:** the system prompt rides on a separate channel from
    user content. The transcript is never concatenated with instructions in
@@ -138,9 +142,10 @@ Four layered defenses — any one breaking does not compromise the system:
    array. `validateAndCoerce` rejects malformed or oversize candidates
    silently. Even if the model is fooled, the output is structured data, not
    executable instructions.
-5. **Human review gate:** every candidate goes through the same approve/reject
-   flow as a rule-based one. A successful injection still produces a
-   `pending_review` row that the human sees before it lands in recall.
+5. **Human review gate (default):** every candidate goes through the same
+   approve/reject flow as a manual one. A successful injection still produces
+   a `pending_review` row that the human sees before it lands in recall.
+   Auto-approve operators trade this gate for convenience.
 
 ## MCP Tools
 
@@ -148,7 +153,7 @@ Six tools surface the lifecycle:
 
 | Tool                                 | Purpose                                                    |
 |--------------------------------------|------------------------------------------------------------|
-| `igris_perception_submit`            | Hook entry: ingest a transcript window                     |
+| `igris_perception_submit`            | Direct ingest (CLI bypasses this; manual triage uses it)   |
 | `igris_perception_review_pending`    | List pending candidates for `/awaken` (limit=5)            |
 | `igris_perception_approve`           | Flip review_status='approved' (with optional edit)         |
 | `igris_perception_reject`            | DELETE the pending row (hard delete, no soft-delete state) |
@@ -161,40 +166,36 @@ tool reclaims them.
 
 ## Cost Gates
 
-Five gates control LLM spend:
+Four gates control LLM spend:
 
 | Gate                           | Default | Override                                |
 |--------------------------------|---------|-----------------------------------------|
-| `extractor_llm_enabled`        | `false` | `~/.igris/config.json` `perception` section, env `IGRIS_PERCEPTION_LLM_ENABLED=1` |
+| `extractor_llm_enabled`        | `true`  | `~/.igris/config.json` `perception` section, env `IGRIS_PERCEPTION_LLM_ENABLED=0\|1` |
 | `claude` CLI present           | probed  | (none — environmental)                  |
 | `llm_min_transcript_bytes`     | `1024`  | config or `force_llm=true`              |
-| `llm_skip_threshold` (rules N) | `3`     | config or `force_llm=true`              |
 | `llm_max_candidates`           | `10`    | config (cap on output regardless)       |
 | `llm_timeout_ms`               | `60000` | config or env `IGRIS_PERCEPTION_LLM_TIMEOUT_MS` |
 
-**Default is OFF.** The LLM extractor is opt-in. Operators flip
-`extractor_llm_enabled=true` once they're comfortable with their cost
-profile. Rules-only stays the no-cost default.
+**Default is ON** (TD-066). The LLM extractor runs by default; operators
+flip `extractor_llm_enabled=false` if they want to disable. The pre-TD-066
+`llm_skip_threshold` cost gate was removed — it was rule-count dependent,
+and rules are gone.
 
-## Inbox + Watermark
+## Auto-Approve
 
-The hook is dumb — it appends a JSONL row to
-`~/.igris/projects/{slug}/session/perception_inbox.jsonl` and exits. Server-
-side extraction happens when `/awaken` (section 3.6.5) or `/rest`
-(section 2.6.6) drains the inbox via `igris_perception_submit`.
+`auto_approve_enabled=false` is the default. Set it to `true` (in
+`~/.igris/config.json` `perception` section, or env
+`IGRIS_PERCEPTION_AUTO_APPROVE=1`) to insert perception rows directly as
+`review_status='approved'`. They appear in `recall`/`search` immediately
+without operator review.
 
-Each inbox row:
+**Tradeoffs:**
+- Pro: zero review backlog; LLM findings surface automatically.
+- Con: no human gate for low-quality/noisy LLM output; relies entirely on
+  the LLM_CONFIDENCE_CAP=0.85 ceiling and validator.
 
-```json
-{"project": "p", "source": "session_end", "transcript": "<JSONL or text>", "queued_at": "2026-04-29T10:00:00Z"}
-```
-
-The watermark file
-`~/.igris/projects/{slug}/session/perception_watermark.txt`
-records the last successfully-extracted ISO timestamp so the next ingest
-can clamp to a forward-only window. Submit-path always advances the
-watermark on success; manual `extract_now` only advances when
-`advance_watermark=true`.
+The setting is global — same flag applies to all projects on this machine.
+Per-project override is not currently supported (YAGNI; revisit if needed).
 
 ## Auto-Expire
 
@@ -228,7 +229,10 @@ can compute precision per source over time.
 
 ## References
 
-- **Plan:** `~/.igris/projects/igris-ai/plans/FR-109-plan.md`
+- **Plans:** `~/.igris/projects/igris-ai/plans/FR-109-plan.md`,
+             `~/.igris/projects/igris-ai/plans/TD-066-plan.md`
 - **Migration:** `brain-mcp-server/src/db.ts:735` (v14, v15)
 - **Component:** `brain-mcp-server/src/engine/components/perception/`
+- **CLI:** `brain-mcp-server/scripts/perception_extract_cli.ts`
+- **Wrapper:** `~/.igris/core/hooks/shared/perception_extract_and_persist.sh`
 - **FR-108 verifier (canonical headless `claude -p` pattern):** `brain-mcp-server/src/engine/components/subconscious/verifier.ts`

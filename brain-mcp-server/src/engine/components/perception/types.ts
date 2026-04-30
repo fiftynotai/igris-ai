@@ -44,17 +44,13 @@ export interface TranscriptEvent {
 // ---------------------------------------------------------------------------
 
 /**
- * Identifier for the extractor that produced a candidate.
+ * Identifier for the extractor that produced a candidate (TD-066).
  *
- * `rule:*` extractors are deterministic (same transcript → same candidate).
- * `llm` is non-deterministic but human-reviewed before promotion.
+ * Narrowed after rule extractors removed — only LLM-driven and direct
+ * memory_store / distill flows remain. Legacy `rule:*` values may still
+ * exist on historical DB rows and are read-compatible (TS-only narrowing).
  */
-export type SourceExtractor =
-  | 'rule:learned_marker'
-  | 'rule:retry_chain'
-  | 'rule:blocker_resolution'
-  | 'rule:error_fingerprint'
-  | 'llm';
+export type SourceExtractor = 'llm' | 'manual' | 'distill';
 
 /**
  * Categories aligned with `learnings.category`. Perception currently emits
@@ -102,11 +98,8 @@ export interface PerceptionCandidate {
  * the struct directly.
  */
 export interface PerceptionExtractorConfig {
-  /** Toggle the rule-extractor sweep. Disabling leaves the LLM path untouched. */
-  rule_extractors_enabled: boolean;
-
-  // Phase 2 LLM knobs
-  /** Master switch for the headless `claude -p` extractor. Default false (opt-in). */
+  // LLM knobs
+  /** Master switch for the headless `claude -p` extractor. Default true (TD-066). */
   extractor_llm_enabled: boolean;
   /** Hard wall-clock budget for the LLM subprocess. Default 60s. */
   llm_timeout_ms: number;
@@ -114,8 +107,6 @@ export interface PerceptionExtractorConfig {
   llm_max_candidates: number;
   /** Minimum transcript size (UTF-8 bytes) to bother invoking the LLM. */
   llm_min_transcript_bytes: number;
-  /** Skip the LLM when rules already produced this many candidates. */
-  llm_skip_threshold: number;
 
   // Persistence knobs
   /** Days a pending_review row remains visible before lazy-on-read filter excludes it. */
@@ -124,19 +115,24 @@ export interface PerceptionExtractorConfig {
   max_title_length: number;
   /** Cap on content length surviving from extractors → INSERT. */
   max_content_length: number;
+  /**
+   * If true, runner inserts approved rows directly (review_status='approved').
+   * Default false — operator opts in once they trust the LLM extractor.
+   * TD-066.
+   */
+  auto_approve_enabled: boolean;
 }
 
 /** Defaults — all kept here so tests can shrink/widen individual gates. */
 export const DEFAULT_PERCEPTION_CONFIG: PerceptionExtractorConfig = {
-  rule_extractors_enabled: true,
-  extractor_llm_enabled: false,
+  extractor_llm_enabled: true,
   llm_timeout_ms: 60_000,
   llm_max_candidates: 10,
   llm_min_transcript_bytes: 1024,
-  llm_skip_threshold: 3,
   pending_review_ttl_days: 14,
   max_title_length: 500,
   max_content_length: 4000,
+  auto_approve_enabled: false,
 };
 
 // ---------------------------------------------------------------------------

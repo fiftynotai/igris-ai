@@ -167,9 +167,26 @@ describe('handlePerceptionSubmit', () => {
     expect(r.isError).toBe(true);
   });
 
-  it('persists rule candidates and advances watermark', async () => {
+  it('persists LLM candidates and advances watermark', async () => {
+    // Inject stub LLM extractor that emits one candidate per submit call.
+    setHandlerContext({
+      bus: noopBus,
+      config: { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, llm_min_transcript_bytes: 1 },
+      llmExtractor: async () => [
+        {
+          category: 'pattern',
+          title: 'use parametrised SQL',
+          content: 'Always parameterise SQL queries.',
+          tags: [],
+          confidence: 0.7,
+          source_extractor: 'llm',
+          evidence: { transcript_excerpt: 'snippet' },
+        },
+      ],
+    });
+
     const transcript = [
-      JSON.stringify({ role: 'assistant', content: 'LEARNED: use parametrised SQL', timestamp: '' }),
+      JSON.stringify({ role: 'assistant', content: 'use parametrised SQL', timestamp: '' }),
     ].join('\n');
 
     const r = await handlePerceptionSubmit({
@@ -419,9 +436,24 @@ describe('handlePerceptionExtractNow', () => {
   });
   afterEach(() => db.close());
 
-  it('extracts from inline transcript', async () => {
+  it('extracts from inline transcript via LLM extractor', async () => {
+    setHandlerContext({
+      bus: noopBus,
+      config: { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, llm_min_transcript_bytes: 1 },
+      llmExtractor: async () => [
+        {
+          category: 'pattern',
+          title: 'finding x',
+          content: 'body x',
+          tags: [],
+          confidence: 0.7,
+          source_extractor: 'llm',
+          evidence: { transcript_excerpt: 'snippet' },
+        },
+      ],
+    });
     const transcript = [
-      JSON.stringify({ role: 'assistant', content: 'LEARNED: x', timestamp: '' }),
+      JSON.stringify({ role: 'assistant', content: 'arbitrary content body', timestamp: '' }),
     ].join('\n');
     const r = await handlePerceptionExtractNow({
       project: 'p',
@@ -434,8 +466,23 @@ describe('handlePerceptionExtractNow', () => {
   });
 
   it('advances watermark when advance_watermark=true', async () => {
+    setHandlerContext({
+      bus: noopBus,
+      config: { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, llm_min_transcript_bytes: 1 },
+      llmExtractor: async () => [
+        {
+          category: 'pattern',
+          title: 'finding y',
+          content: 'body y',
+          tags: [],
+          confidence: 0.7,
+          source_extractor: 'llm',
+          evidence: { transcript_excerpt: 'snippet' },
+        },
+      ],
+    });
     const transcript = [
-      JSON.stringify({ role: 'assistant', content: 'LEARNED: y', timestamp: '' }),
+      JSON.stringify({ role: 'assistant', content: 'arbitrary content body', timestamp: '' }),
     ].join('\n');
     await handlePerceptionExtractNow({
       project: 'p',
@@ -473,6 +520,49 @@ describe('handlePerceptionExtractNow', () => {
     });
     expect(r.isError).toBeFalsy();
     expect(stubLlm).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // TD-066: auto_approve_enabled round-trip via the submit handler
+  // -------------------------------------------------------------------------
+
+  it('auto_approve_enabled config flag round-trips to inserted row review_status', async () => {
+    setHandlerContext({
+      bus: noopBus,
+      config: {
+        ...DEFAULT_PERCEPTION_CONFIG,
+        extractor_llm_enabled: true,
+        llm_min_transcript_bytes: 1,
+        auto_approve_enabled: true,
+      },
+      llmExtractor: async () => [
+        {
+          category: 'pattern',
+          title: 'auto-approve via handler test',
+          content: 'body',
+          tags: [],
+          confidence: 0.7,
+          source_extractor: 'llm',
+          evidence: { transcript_excerpt: 'snippet' },
+        },
+      ],
+    });
+    const transcript = JSON.stringify({
+      role: 'assistant',
+      content: 'arbitrary content body',
+      timestamp: '',
+    });
+    const r = await handlePerceptionExtractNow({
+      project: 'p',
+      transcript_text: transcript,
+    });
+    expect(r.isError).toBeFalsy();
+    const row = db.prepare('SELECT review_status, provenance FROM learnings').get() as {
+      review_status: string;
+      provenance: string;
+    };
+    expect(row.review_status).toBe('approved');
+    expect(row.provenance).toBe('inferred');
   });
 });
 

@@ -50,7 +50,8 @@ import { selectLlmExtractor } from './extractors/llm_via_claude_code.js';
  * Resolve the active config via the 3-layer chain:
  *   1. `DEFAULT_PERCEPTION_CONFIG` (typed defaults)
  *   2. `~/.igris/config.json` `perception` section (operator override)
- *   3. Env vars: `IGRIS_PERCEPTION_LLM_ENABLED`, `IGRIS_PERCEPTION_LLM_TIMEOUT_MS`
+ *   3. Env vars: `IGRIS_PERCEPTION_LLM_ENABLED`, `IGRIS_PERCEPTION_LLM_TIMEOUT_MS`,
+ *      `IGRIS_PERCEPTION_AUTO_APPROVE` (TD-066)
  *
  * Mirrors `subconscious/runner.ts` config handling. Failure to read the
  * file is silent — defaults still apply.
@@ -75,6 +76,9 @@ export function resolvePerceptionConfig(log?: { info: (m: string) => void; warn:
   if (process.env.IGRIS_PERCEPTION_LLM_ENABLED === '1') cfg.extractor_llm_enabled = true;
   if (process.env.IGRIS_PERCEPTION_LLM_ENABLED === '0') cfg.extractor_llm_enabled = false;
 
+  if (process.env.IGRIS_PERCEPTION_AUTO_APPROVE === '1') cfg.auto_approve_enabled = true;
+  if (process.env.IGRIS_PERCEPTION_AUTO_APPROVE === '0') cfg.auto_approve_enabled = false;
+
   const timeoutEnv = process.env.IGRIS_PERCEPTION_LLM_TIMEOUT_MS;
   if (timeoutEnv) {
     const n = parseInt(timeoutEnv, 10);
@@ -83,7 +87,7 @@ export function resolvePerceptionConfig(log?: { info: (m: string) => void; warn:
 
   if (log) {
     log.info(
-      `perception config resolved (llm_enabled=${cfg.extractor_llm_enabled}, timeout=${cfg.llm_timeout_ms}ms, skip_threshold=${cfg.llm_skip_threshold}, min_bytes=${cfg.llm_min_transcript_bytes})`,
+      `perception config resolved (llm_enabled=${cfg.extractor_llm_enabled}, timeout=${cfg.llm_timeout_ms}ms, min_bytes=${cfg.llm_min_transcript_bytes}, auto_approve=${cfg.auto_approve_enabled})`,
     );
   }
   return cfg;

@@ -180,7 +180,6 @@ interface SubmitInput {
 }
 
 interface SubmitOutput {
-  rule_extracted: number;
   llm_extracted: number;
   suppressed: number;
   inserted: number;
@@ -200,7 +199,6 @@ async function submitInternal(input: SubmitInput): Promise<SubmitOutput | { erro
   const events = parseTranscript(input.transcript_text);
   if (events.length === 0) {
     return {
-      rule_extracted: 0,
       llm_extracted: 0,
       suppressed: 0,
       inserted: 0,
@@ -235,7 +233,6 @@ async function submitInternal(input: SubmitInput): Promise<SubmitOutput | { erro
   if (bus) {
     bus.emit('perception.run_complete', {
       project: input.project,
-      rule_extracted: result.rule_extracted,
       llm_extracted: result.llm_extracted,
       suppressed: result.suppressed,
       inserted: result.inserted,
@@ -245,7 +242,6 @@ async function submitInternal(input: SubmitInput): Promise<SubmitOutput | { erro
   }
 
   return {
-    rule_extracted: result.rule_extracted,
     llm_extracted: result.llm_extracted,
     suppressed: result.suppressed,
     inserted: result.inserted,

@@ -1,11 +1,13 @@
 /**
- * Perception runner — cost gate + dedupe + persist tests (FR-109).
+ * Perception runner — cost gate + dedupe + persist tests (FR-109 + TD-066).
  *
  * Covers:
- *   - evaluateLlmGate ladder (disabled / bytes / rules-sufficient / ran)
- *   - dedupeWithRulePriority tie-breaks
- *   - runPerception end-to-end with rule + LLM stubs persisting against
- *     an in-memory SQLite database
+ *   - evaluateLlmGate ladder (disabled / bytes / ran)
+ *   - dedupeByTitle: highest-confidence wins on collision
+ *   - runPerception end-to-end with stub LLM extractor against an in-memory
+ *     SQLite database
+ *   - auto_approve_enabled flag round-trip (TD-066)
+ *   - sync-visibility regression for legacy `rule:*` source_extractor rows
  *
  * @module engine/components/perception/__tests__/runner.test
  */
@@ -14,15 +16,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import {
   evaluateLlmGate,
-  dedupeWithRulePriority,
+  dedupeByTitle,
   runPerception,
-  runRuleExtractors,
 } from '../runner.js';
 import { DEFAULT_PERCEPTION_CONFIG, type PerceptionCandidate, type TranscriptEvent } from '../types.js';
-import {
-  transcriptWithRetryChain,
-  transcriptWithSubtlePattern,
-} from './fixtures/synthetic-transcripts.js';
 
 // Mock embeddings + vector-search — perception runner calls them per insert.
 vi.mock('../../../../utils/embeddings.js', () => ({
@@ -73,8 +70,8 @@ function makeCandidate(over: Partial<PerceptionCandidate> = {}): PerceptionCandi
     content: 'Default content body for the candidate.',
     tags: ['test'],
     confidence: 0.7,
-    source_extractor: 'rule:learned_marker',
-    evidence: { marker: 'LEARNED:' },
+    source_extractor: 'llm',
+    evidence: { transcript_excerpt: 'snippet' },
     ...over,
   };
 }
@@ -109,55 +106,43 @@ describe('evaluateLlmGate', () => {
     expect(out.shouldRun).toBe(true);
   });
 
-  it('skips when rules already produced enough candidates', () => {
-    const out = evaluateLlmGate(5, 10_000, { ...cfg, llm_skip_threshold: 3 }, false);
-    expect(out.shouldRun).toBe(false);
-    expect(out.status).toBe('skipped:rules_sufficient');
-  });
-
-  it('force_llm bypasses rules-sufficient gate', () => {
-    const out = evaluateLlmGate(5, 10_000, { ...cfg, llm_skip_threshold: 3 }, true);
+  it('runs when enabled and transcript large', () => {
+    const out = evaluateLlmGate(0, 10_000, { ...cfg, llm_min_transcript_bytes: 1024 }, false);
     expect(out.shouldRun).toBe(true);
+    expect(out.status).toBe('ran');
   });
 
-  it('runs when enabled, transcript large, rules sparse', () => {
-    const out = evaluateLlmGate(1, 10_000, { ...cfg, llm_skip_threshold: 3, llm_min_transcript_bytes: 1024 }, false);
+  it('TD-066 regression: ruleCount param is ignored (no skipped:rules_sufficient)', () => {
+    // Pass huge ruleCount — gate must still run.
+    const out = evaluateLlmGate(9999, 10_000, cfg, false);
     expect(out.shouldRun).toBe(true);
     expect(out.status).toBe('ran');
   });
 });
 
 // ---------------------------------------------------------------------------
-// dedupeWithRulePriority
+// dedupeByTitle
 // ---------------------------------------------------------------------------
 
-describe('dedupeWithRulePriority', () => {
+describe('dedupeByTitle', () => {
   it('keeps a single candidate untouched', () => {
-    const out = dedupeWithRulePriority([makeCandidate({ title: 'one' })]);
+    const out = dedupeByTitle([makeCandidate({ title: 'one' })]);
     expect(out.kept).toHaveLength(1);
     expect(out.suppressed).toBe(0);
   });
 
   it('keeps the higher-confidence candidate when titles match', () => {
-    const out = dedupeWithRulePriority([
-      makeCandidate({ title: 'X', confidence: 0.5, source_extractor: 'llm' }),
-      makeCandidate({ title: 'X', confidence: 0.8, source_extractor: 'rule:learned_marker' }),
+    const out = dedupeByTitle([
+      makeCandidate({ title: 'X', confidence: 0.5 }),
+      makeCandidate({ title: 'X', confidence: 0.8 }),
     ]);
     expect(out.kept).toHaveLength(1);
     expect(out.kept[0].confidence).toBe(0.8);
     expect(out.suppressed).toBe(1);
   });
 
-  it('prefers a rule source on confidence tie', () => {
-    const out = dedupeWithRulePriority([
-      makeCandidate({ title: 'tie', confidence: 0.7, source_extractor: 'llm' }),
-      makeCandidate({ title: 'tie', confidence: 0.7, source_extractor: 'rule:retry_chain' }),
-    ]);
-    expect(out.kept[0].source_extractor).toBe('rule:retry_chain');
-  });
-
   it('treats whitespace and case differences as equal', () => {
-    const out = dedupeWithRulePriority([
+    const out = dedupeByTitle([
       makeCandidate({ title: 'Same Title' }),
       makeCandidate({ title: '  same   title  ' }),
     ]);
@@ -166,29 +151,13 @@ describe('dedupeWithRulePriority', () => {
   });
 
   it('keeps multiple distinct titles', () => {
-    const out = dedupeWithRulePriority([
+    const out = dedupeByTitle([
       makeCandidate({ title: 'A' }),
       makeCandidate({ title: 'B' }),
       makeCandidate({ title: 'C' }),
     ]);
     expect(out.kept).toHaveLength(3);
     expect(out.suppressed).toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// runRuleExtractors
-// ---------------------------------------------------------------------------
-
-describe('runRuleExtractors', () => {
-  it('returns [] for empty input', () => {
-    expect(runRuleExtractors([])).toHaveLength(0);
-  });
-
-  it('aggregates candidates from all rules over a single transcript', () => {
-    const out = runRuleExtractors(transcriptWithRetryChain);
-    expect(out.length).toBeGreaterThanOrEqual(1);
-    expect(out.every((c) => c.source_extractor.startsWith('rule:'))).toBe(true);
   });
 });
 
@@ -207,49 +176,34 @@ describe('runPerception', () => {
     db.close();
   });
 
-  it('extracts rule candidates and persists as pending_review with provenance=inferred', async () => {
+  it('returns empty result for empty events', async () => {
     const result = await runPerception(
       db,
-      { events: transcriptWithRetryChain, project: 'p', source: 'session_end' },
+      { events: [], project: 'p', source: 's' },
       DEFAULT_PERCEPTION_CONFIG,
     );
-    expect(result.rule_extracted).toBeGreaterThan(0);
-    expect(result.inserted).toBe(result.rule_extracted - result.suppressed);
-    const rows = db.prepare('SELECT review_status, provenance FROM learnings').all() as Array<{ review_status: string; provenance: string }>;
-    expect(rows.length).toBe(result.inserted);
-    expect(rows.every((r) => r.review_status === 'pending_review')).toBe(true);
-    expect(rows.every((r) => r.provenance === 'inferred')).toBe(true);
+    expect(result.llm_extracted).toBe(0);
+    expect(result.inserted).toBe(0);
+    expect(result.suppressed).toBe(0);
   });
 
-  it('skips LLM by default (extractor_llm_enabled=false)', async () => {
+  it('skips LLM when explicitly disabled (extractor_llm_enabled=false)', async () => {
     const stubLlm = vi.fn(async () => []);
     const result = await runPerception(
       db,
-      { events: transcriptWithRetryChain, project: 'p', source: 's' },
-      DEFAULT_PERCEPTION_CONFIG,
+      {
+        events: [{ role: 'user', content: 'X'.repeat(2000), timestamp: '' }],
+        project: 'p',
+        source: 's',
+      },
+      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: false },
       stubLlm,
     );
     expect(stubLlm).not.toHaveBeenCalled();
     expect(result.llm_status).toBe('skipped:disabled');
   });
 
-  it('skips LLM when rules sufficient', async () => {
-    const events: TranscriptEvent[] = [
-      { role: 'assistant', content: 'LEARNED: a\nLEARNED: b\nLEARNED: c\nLEARNED: d', timestamp: '' },
-    ];
-    const stubLlm = vi.fn(async () => []);
-    const result = await runPerception(
-      db,
-      { events, project: 'p', source: 's' },
-      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, llm_skip_threshold: 3, llm_min_transcript_bytes: 1 },
-      stubLlm,
-    );
-    expect(stubLlm).not.toHaveBeenCalled();
-    expect(result.llm_status).toBe('skipped:rules_sufficient');
-    expect(result.rule_extracted).toBeGreaterThanOrEqual(3);
-  });
-
-  it('skips LLM on tiny transcript even when enabled', async () => {
+  it('skips LLM on tiny transcript', async () => {
     const events: TranscriptEvent[] = [{ role: 'user', content: 'small', timestamp: '' }];
     const stubLlm = vi.fn(async () => []);
     const result = await runPerception(
@@ -262,19 +216,11 @@ describe('runPerception', () => {
     expect(result.llm_status).toBe('skipped:bytes');
   });
 
-  it('runs LLM when enabled, transcript large, rules sparse', async () => {
+  it('runs LLM when enabled and transcript large enough', async () => {
     const big = 'X'.repeat(2000);
     const events: TranscriptEvent[] = [{ role: 'user', content: big, timestamp: '' }];
     const stubLlm = vi.fn(async () => [
-      {
-        category: 'pattern' as const,
-        title: 'LLM-only finding',
-        content: 'Only the LLM caught this.',
-        tags: [],
-        confidence: 0.7,
-        source_extractor: 'llm' as const,
-        evidence: { transcript_excerpt: 'big' },
-      },
+      makeCandidate({ title: 'LLM-only finding', confidence: 0.7 }),
     ]);
     const result = await runPerception(
       db,
@@ -289,9 +235,29 @@ describe('runPerception', () => {
     expect(result.by_source.llm).toBe(1);
   });
 
+  it('persists pending_review with provenance=inferred and source_extractor=llm', async () => {
+    const events: TranscriptEvent[] = [{ role: 'user', content: 'X'.repeat(2000), timestamp: '' }];
+    const stubLlm = vi.fn(async () => [makeCandidate({ title: 'finding A' })]);
+    await runPerception(
+      db,
+      { events, project: 'p', source: 'session_end' },
+      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true },
+      stubLlm,
+    );
+    const row = db.prepare('SELECT review_status, provenance, source_extractor FROM learnings').get() as {
+      review_status: string;
+      provenance: string;
+      source_extractor: string;
+    };
+    expect(row.review_status).toBe('pending_review');
+    expect(row.provenance).toBe('inferred');
+    expect(row.source_extractor).toBe('llm');
+  });
+
   it('force_llm bypasses cost gates but not the disabled gate', async () => {
     const stubLlm = vi.fn(async () => []);
     const events: TranscriptEvent[] = [{ role: 'user', content: 'x', timestamp: '' }];
+
     // Disabled — force should NOT bypass.
     const r1 = await runPerception(
       db,
@@ -313,43 +279,24 @@ describe('runPerception', () => {
     expect(r2.llm_status).toBe('ran');
   });
 
-  it('dedupes overlapping rule + LLM candidates with rule priority', async () => {
+  it('dedupes overlapping LLM candidates by title', async () => {
     const events: TranscriptEvent[] = [
-      { role: 'assistant', content: 'LEARNED: shared finding text body', timestamp: '' },
+      { role: 'user', content: 'X'.repeat(2000), timestamp: '' },
     ];
     const stubLlm = vi.fn(async () => [
-      {
-        category: 'pattern' as const,
-        title: 'shared finding text body',
-        content: 'LLM phrasing of the same idea.',
-        tags: [],
-        confidence: 0.85, // tied with rule
-        source_extractor: 'llm' as const,
-        evidence: { transcript_excerpt: 'shared' },
-      },
+      makeCandidate({ title: 'shared finding', confidence: 0.5 }),
+      makeCandidate({ title: 'SHARED FINDING', confidence: 0.8 }),
+      makeCandidate({ title: 'unique finding', confidence: 0.6 }),
     ]);
     const result = await runPerception(
       db,
       { events, project: 'p', source: 's' },
-      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, llm_min_transcript_bytes: 1, llm_skip_threshold: 99 },
+      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, llm_min_transcript_bytes: 1 },
       stubLlm,
     );
-    expect(result.rule_extracted).toBe(1);
-    expect(result.llm_extracted).toBe(1);
+    expect(result.llm_extracted).toBe(3);
     expect(result.suppressed).toBe(1);
-    expect(result.inserted).toBe(1);
-    expect(result.by_source['rule:learned_marker']).toBe(1);
-    expect(result.by_source.llm).toBe(0);
-  });
-
-  it('returns empty result for empty events', async () => {
-    const result = await runPerception(
-      db,
-      { events: [], project: 'p', source: 's' },
-      DEFAULT_PERCEPTION_CONFIG,
-    );
-    expect(result.rule_extracted).toBe(0);
-    expect(result.inserted).toBe(0);
+    expect(result.inserted).toBe(2);
   });
 
   it('handles a failing LLM extractor without crashing', async () => {
@@ -368,14 +315,65 @@ describe('runPerception', () => {
     expect(result.inserted).toBe(0);
   });
 
-  it('persists rule extractor results from a multi-finding transcript', async () => {
+  // -------------------------------------------------------------------------
+  // TD-066: auto_approve_enabled config flag
+  // -------------------------------------------------------------------------
+
+  it('auto_approve_enabled=true inserts rows with review_status=approved', async () => {
+    const events: TranscriptEvent[] = [
+      { role: 'user', content: 'X'.repeat(2000), timestamp: '' },
+    ];
+    const stubLlm = vi.fn(async () => [makeCandidate({ title: 'auto-approve finding' })]);
     const result = await runPerception(
       db,
-      { events: transcriptWithSubtlePattern, project: 'p', source: 's' },
-      DEFAULT_PERCEPTION_CONFIG,
+      { events, project: 'p', source: 'session_end' },
+      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, auto_approve_enabled: true },
+      stubLlm,
     );
-    // Subtle pattern transcript may yield 0 rule candidates — that's fine.
-    // What matters is the runner returns cleanly.
-    expect(result.llm_status).toBe('skipped:disabled');
+    expect(result.inserted).toBeGreaterThan(0);
+    const rows = db.prepare('SELECT review_status, provenance FROM learnings').all() as Array<{
+      review_status: string;
+      provenance: string;
+    }>;
+    expect(rows.every((r) => r.review_status === 'approved')).toBe(true);
+    // provenance stays 'inferred' so the forensic trail survives.
+    expect(rows.every((r) => r.provenance === 'inferred')).toBe(true);
+  });
+
+  it('auto_approve_enabled=false (default) inserts as pending_review', async () => {
+    const events: TranscriptEvent[] = [
+      { role: 'user', content: 'X'.repeat(2000), timestamp: '' },
+    ];
+    const stubLlm = vi.fn(async () => [makeCandidate({ title: 'pending finding' })]);
+    const result = await runPerception(
+      db,
+      { events, project: 'p', source: 'session_end' },
+      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true }, // auto_approve_enabled defaults false
+      stubLlm,
+    );
+    expect(result.inserted).toBeGreaterThan(0);
+    const rows = db.prepare('SELECT review_status FROM learnings').all() as Array<{ review_status: string }>;
+    expect(rows.every((r) => r.review_status === 'pending_review')).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // TD-066 / Risk #3 regression: legacy `rule:*` rows remain readable
+  // -------------------------------------------------------------------------
+
+  it('legacy source_extractor=rule:* rows persist to DB and are readable post-narrowing', async () => {
+    // Insert with a legacy rule:* value directly (simulating pre-TD-066 row).
+    // The TS narrowing is insert-side only; the DB column is just TEXT.
+    db.prepare(
+      `INSERT INTO learnings (project, category, title, content, provenance,
+        review_status, source_extractor)
+       VALUES ('p', 'pattern', 'legacy rule row', 'body', 'inferred',
+        'pending_review', 'rule:learned_marker')`,
+    ).run();
+
+    const row = db
+      .prepare(`SELECT source_extractor, review_status FROM learnings WHERE title = 'legacy rule row'`)
+      .get() as { source_extractor: string; review_status: string };
+    expect(row.source_extractor).toBe('rule:learned_marker');
+    expect(row.review_status).toBe('pending_review');
   });
 });
