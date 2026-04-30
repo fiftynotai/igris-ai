@@ -789,6 +789,93 @@ Read these files in order:
 
 ---
 
+<!-- SECTION: memory_agency -->
+
+## Memory Agency
+
+You have a persistent knowledge database accessed through `igris_memory_store`, `igris_memory_recall`, and `igris_memory_search`. Use it as a first-class extension of your reasoning, not an afterthought. The goal is to accumulate hard-won lessons that make future sessions sharper — patterns, decisions, mistakes, and optimizations that aren't already obvious from the code.
+
+### When to Store
+
+Call `igris_memory_store` when you discover something that:
+
+- Isn't already documented in `coding_guidelines.md`, `architecture_map.md`, or `CLAUDE.md`.
+- Won't be obvious to a future actor reading the code cold (a non-trivial rationale, a counter-intuitive constraint, a surprising failure mode).
+- Will plausibly apply again — either later in this project or across projects.
+- Is the *lesson* extracted from a fix, not the fix itself (the fix is in the commit).
+
+Good triggers:
+- Architectural decision with a load-bearing rationale ("we picked X over Y because Z").
+- A bug whose root cause was non-obvious — capture the misleading symptom and the actual cause.
+- A reusable pattern that worked well and would be reached for again.
+- A performance win whose mechanism is worth remembering.
+- A user correction that overrides a default behavior or assumption.
+
+### What's NOT Worth Remembering
+
+Do NOT store:
+
+- **Ephemeral conversation state or current task progress.** Use plans and tasks for in-flight work.
+- **Anything already in `coding_guidelines.md`, `architecture_map.md`, or `CLAUDE.md`.** That content is already loaded into context — duplicating it just adds noise.
+- **Code snippets that can be re-derived by reading the file.** The code is the source of truth; memory is for what the code can't tell you.
+- **Git-history facts.** `git log` and `git blame` are authoritative — don't snapshot who-changed-what.
+- **Routine debugging fixes.** The fix lives in the commit; only capture the *non-obvious lesson* worth surfacing on a future bug.
+
+When in doubt, ask: *"Will a future actor reading the code learn this on their own?"* If yes, skip the store.
+
+### When to Recall
+
+`/awaken` already pulls relevant memories at session start, so the orchestrator's baseline context is covered. Use `igris_memory_recall` and `igris_memory_search` *in addition to* that automatic recall, on-demand:
+
+- When the user asks about a topic you don't recognize from the loaded context.
+- When you switch domains mid-session (e.g., from frontend work into a database migration).
+- Before making a decision with likely historical precedent ("have we made a call on this before?").
+- Before recommending a function/file/flag that a memory references — verify it still exists in the current code.
+
+Avoid redundant recalls within the same session over the same topic — once you have the relevant memories in context, work from them.
+
+### How to Tag a Stored Memory
+
+`igris_memory_store` requires `project`, `category`, `title`, and `content`. The enums are strict — use them exactly:
+
+| Field | Allowed values |
+|---|---|
+| `category` | `pattern`, `decision`, `discovery`, `mistake`, `optimization` |
+| `provenance` | `observed`, `inferred`, `synthesized`, `ambiguous`, `human_asserted` |
+| `scope` | `local`, `global` |
+
+Mapping common phrasings to the legal `category` enum:
+
+| If the lesson is... | Use |
+|---|---|
+| A bug, regression, or incident | `mistake` |
+| An architectural choice with rationale | `decision` |
+| A new insight or finding | `discovery` |
+| A reusable rule or convention | `pattern` |
+| A performance or efficiency win | `optimization` |
+
+**Provenance defaults.** If you don't specify `provenance`, it defaults to `observed`. Use `human_asserted` only when the user explicitly told you the rule; use `inferred` when you derived it from code without confirmation; use `synthesized` when you combined multiple sources; use `ambiguous` only when you genuinely can't tell.
+
+**Scope guidance.** Default `scope=local`. Promote to `global` only when the same lesson applies across project archetypes (bash quoting, secret handling, generic algorithmic patterns). Cross-project promotion is normally automatic when the same memory is observed in 2+ projects (see `/distill`) — don't pre-promote out of optimism.
+
+**Tag-namespace hygiene.** Tags are free-form, but prefer existing tags from prior memories — call `igris_memory_search` with a candidate tag first to check for collisions or synonyms. Otherwise the namespace drifts (`flutter` / `flutter-app` / `flutterapp`) and recall quality decays.
+
+### Quality Bar
+
+A good memory entry is:
+- **Self-contained.** A future reader who has never seen this project can act on it.
+- **Specific.** "Always validate input" is useless; "When parsing the X header, callers send `Foo:Bar` with no space — split on `:` first, then trim, because trim-first eats the value when empty" is useful.
+- **Honest about confidence.** Pick the right `provenance`. Don't mark `human_asserted` to inflate weight.
+- **Tagged for findability.** A future `igris_memory_search` should reach this entry from natural keywords.
+
+If you're about to write something low-signal, skip it. Over-storing degrades recall quality for everyone.
+
+See also `/distill` for end-of-session extraction across larger work.
+
+<!-- /SECTION: memory_agency -->
+
+---
+
 <!-- SECTION: brief_protocol -->
 
 ## Brief Format Expectations
