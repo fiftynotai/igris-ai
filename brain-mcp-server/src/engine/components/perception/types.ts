@@ -101,7 +101,7 @@ export interface PerceptionExtractorConfig {
   // LLM knobs
   /** Master switch for the headless `claude -p` extractor. Default true (TD-066). */
   extractor_llm_enabled: boolean;
-  /** Hard wall-clock budget for the LLM subprocess. Default 60s. */
+  /** Hard wall-clock budget for the LLM subprocess. Default 300s. */
   llm_timeout_ms: number;
   /** Hard cap on candidates the LLM may emit per call. Default 10. */
   llm_max_candidates: number;
@@ -126,7 +126,7 @@ export interface PerceptionExtractorConfig {
 /** Defaults — all kept here so tests can shrink/widen individual gates. */
 export const DEFAULT_PERCEPTION_CONFIG: PerceptionExtractorConfig = {
   extractor_llm_enabled: true,
-  llm_timeout_ms: 60_000,
+  llm_timeout_ms: 300_000,
   llm_max_candidates: 10,
   llm_min_transcript_bytes: 1024,
   pending_review_ttl_days: 14,

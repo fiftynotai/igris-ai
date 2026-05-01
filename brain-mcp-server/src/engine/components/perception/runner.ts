@@ -49,8 +49,49 @@ import { isVectorSearchAvailable, insertEmbedding } from '../../../utils/vector-
  * Post-TD-066 ladder: `disabled` | `bytes` | `ran`. The pre-TD-066
  * `'skipped:rules_sufficient'` value was removed along with the rule
  * extractors.
+ *
+ * TD-079: extended with `failed:*` variants. The runner observes the
+ * extractor's terminal `perception.run_failed` event via `wrappedLog.onEvent`
+ * and overwrites `result.llm_status` so callers (the CLI summary line, MCP
+ * tool surface, dashboards) see the actual failure reason instead of the
+ * misleading `'ran'` that the gate set when the LLM was invoked.
  */
-export type LlmStatus = 'ran' | 'skipped:disabled' | 'skipped:cost' | 'skipped:cli_missing' | 'skipped:bytes';
+export type LlmStatus =
+  | 'ran'
+  | 'skipped:disabled'
+  | 'skipped:cost'
+  | 'skipped:cli_missing'
+  | 'skipped:bytes'
+  | 'failed:timeout'
+  | 'failed:epipe'
+  | 'failed:spawn_error'
+  | 'failed:non_zero_exit'
+  | 'failed:unknown';
+
+/**
+ * Map the extractor's `perception.run_failed` reason string onto the
+ * `failed:*` member of `LlmStatus`. Used by both `wrappedLog.onEvent` (when
+ * the extractor pre-emits a terminal failure) and the runner-level catch
+ * blocks (when the extractor throws or DB infra fails) so all three
+ * call sites stay consistent.
+ *
+ * Unknown reasons collapse to `'failed:unknown'` rather than throwing — the
+ * runner never aborts a run because of an unrecognised reason string.
+ */
+function mapFailureReasonToLlmStatus(reason: string): LlmStatus {
+  switch (reason) {
+    case 'timeout':
+      return 'failed:timeout';
+    case 'epipe_on_llm_stdin':
+      return 'failed:epipe';
+    case 'spawn_error':
+      return 'failed:spawn_error';
+    case 'non_zero_exit':
+      return 'failed:non_zero_exit';
+    default:
+      return 'failed:unknown';
+  }
+}
 
 export interface RunPerceptionOptions {
   /** Parsed transcript events to scan. */
@@ -336,6 +377,12 @@ export async function runPerception(
   // Wrap the extractor's onEvent so the runner observes its emissions and
   // updates `terminalEmitted`. The closure-bound `emit` writes via the
   // shared helper and tags every event with project / trigger / duration.
+  //
+  // TD-079: when the extractor pre-emits `perception.run_failed`, mutate
+  // `result.llm_status` from the gate-set `'ran'` to the matching `failed:*`
+  // variant before the runner returns. The mutation is bounded to terminal
+  // failure events; `terminalEmitted` (set by `emit`) enforces one-shot
+  // semantics so repeat emissions cannot ratchet the status further.
   const wrappedLog: ExtractorLogger = {
     info: (msg) => extractorLog?.info(msg),
     warn: (msg) => extractorLog?.warn(msg),
@@ -344,6 +391,9 @@ export async function runPerception(
       // calls), then re-emit through the runner's `emit` so the row lands
       // in event_log with the standard envelope.
       extractorLog?.onEvent?.(name, payload);
+      if (name === 'perception.run_failed' && typeof payload.reason === 'string') {
+        result.llm_status = mapFailureReasonToLlmStatus(payload.reason);
+      }
       emit(name, payload);
     },
   };
@@ -369,6 +419,9 @@ export async function runPerception(
           '[perception] LLM extractor threw — continuing without LLM candidates:',
           msg,
         );
+        // TD-079: keep the result.llm_status in sync with the emitted
+        // failure event. `emit` itself does not mutate the result struct.
+        result.llm_status = mapFailureReasonToLlmStatus('unknown');
         emit('perception.run_failed', {
           reason: 'unknown',
           error_message: msg.slice(0, 500),
@@ -415,6 +468,10 @@ export async function runPerception(
     // yet — otherwise we would violate the lifecycle invariant.
     const msg = err instanceof Error ? err.message : String(err);
     if (!terminalEmitted) {
+      // TD-079: keep the result.llm_status in sync with the emitted
+      // failure event for callers that read the result before the
+      // exception propagates (e.g. handlers that catch and log).
+      result.llm_status = mapFailureReasonToLlmStatus('unknown');
       emit('perception.run_failed', {
         reason: 'unknown',
         error_message: msg.slice(0, 500),

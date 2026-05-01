@@ -353,7 +353,7 @@ export function resolveMaxPromptBytes(): number {
 // ---------------------------------------------------------------------------
 
 export interface ClaudeExtractorOptions {
-  /** Hard wall-clock budget. Default 60_000 (60s — perception is heavier than verifier). */
+  /** Hard wall-clock budget. Default 300_000 (300s — perception is heavier than verifier; real transcripts ~2MB). */
   timeoutMs?: number;
   /** Max candidates the LLM is permitted to emit per call. Default 10. */
   maxCandidates?: number;
@@ -386,7 +386,7 @@ export interface ClaudeExtractorOptions {
  * transcript cannot break out and rewrite the system prompt.
  */
 export function makeClaudeLlmExtractor(opts: ClaudeExtractorOptions = {}): LlmExtractor {
-  const timeoutMs = opts.timeoutMs ?? 60_000;
+  const timeoutMs = opts.timeoutMs ?? 300_000;
   const maxCandidates = opts.maxCandidates ?? 10;
   const maxPromptBytes = opts.maxPromptBytes ?? DEFAULT_MAX_PROMPT_BYTES;
   const command = opts.command ?? 'claude';

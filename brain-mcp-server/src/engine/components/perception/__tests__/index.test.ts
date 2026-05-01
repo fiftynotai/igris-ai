@@ -49,6 +49,14 @@ describe('resolvePerceptionConfig', () => {
     expect(cfg.auto_approve_enabled).toBe(false);
   });
 
+  it('default llm_timeout_ms is 300_000 (TD-079)', () => {
+    // Lock the constant directly so a future bump cannot silently regress.
+    expect(DEFAULT_PERCEPTION_CONFIG.llm_timeout_ms).toBe(300_000);
+    // And verify the resolved config picks it up when no override is set.
+    const cfg = resolvePerceptionConfig();
+    expect(cfg.llm_timeout_ms).toBe(300_000);
+  });
+
   it('IGRIS_PERCEPTION_LLM_ENABLED=0 disables the LLM extractor', () => {
     process.env.IGRIS_PERCEPTION_LLM_ENABLED = '0';
     const cfg = resolvePerceptionConfig();

@@ -43,7 +43,23 @@ vi.mock('../../src/db.js', () => ({
   BRAIN_DIR: '/tmp/igris-test',
 }));
 
+// Mock the LLM extractor selection so individual tests can inject a stub
+// without spawning `claude -p` (TD-079 timeout-summary test). The default
+// implementation is `noopLlmExtractor` which returns []; tests override it
+// via `mockedSelectLlmExtractor.mockReturnValue(...)`.
+vi.mock('../../src/engine/components/perception/extractors/llm_via_claude_code.js', async () => {
+  const actual = await vi.importActual<
+    typeof import('../../src/engine/components/perception/extractors/llm_via_claude_code.js')
+  >('../../src/engine/components/perception/extractors/llm_via_claude_code.js');
+  return {
+    ...actual,
+    selectLlmExtractor: vi.fn(() => actual.noopLlmExtractor),
+  };
+});
+
 import { getDb } from '../../src/db.js';
+import { selectLlmExtractor } from '../../src/engine/components/perception/extractors/llm_via_claude_code.js';
+import type { LlmExtractor } from '../../src/engine/components/perception/extractors/llm_via_claude_code.js';
 import {
   parseCliArgs,
   readTranscriptFile,
@@ -56,6 +72,7 @@ import {
 import { DEFAULT_PERCEPTION_CONFIG, type PerceptionCandidate } from '../../src/engine/components/perception/types.js';
 
 const mockedGetDb = vi.mocked(getDb);
+const mockedSelectLlmExtractor = vi.mocked(selectLlmExtractor);
 
 // ---------------------------------------------------------------------------
 // Test DB setup — minimal schema needed by runPerception
@@ -86,6 +103,16 @@ function makeTestDb(): Database.Database {
       provenance TEXT NOT NULL DEFAULT 'observed',
       review_status TEXT NOT NULL DEFAULT 'approved',
       source_extractor TEXT NOT NULL DEFAULT 'manual'
+    );
+    CREATE TABLE event_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_name TEXT NOT NULL,
+      component TEXT NOT NULL,
+      payload TEXT NOT NULL DEFAULT '{}',
+      machine_hostname TEXT,
+      project_slug TEXT,
+      instance_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
   return db;
@@ -314,10 +341,16 @@ describe('main', () => {
   let originalIgrisDbPath: string | undefined;
   const cleanupFiles: string[] = [];
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = makeTestDb();
     mockedGetDb.mockReturnValue(db);
     originalIgrisDbPath = process.env.IGRIS_DB_PATH;
+    // Reset the LLM-extractor mock to its default noop implementation so
+    // a previous test's stub does not leak into this one.
+    const llmModule = await vi.importActual<
+      typeof import('../../src/engine/components/perception/extractors/llm_via_claude_code.js')
+    >('../../src/engine/components/perception/extractors/llm_via_claude_code.js');
+    mockedSelectLlmExtractor.mockReturnValue(llmModule.noopLlmExtractor);
   });
 
   afterEach(() => {
@@ -407,6 +440,58 @@ describe('main', () => {
       } else {
         process.env.IGRIS_PERCEPTION_LLM_ENABLED = prevEnv;
       }
+    }
+  });
+
+  it('CLI summary line shows llm_status=failed:timeout when LLM extractor times out (TD-079)', async () => {
+    // Stub mirrors what llm_via_claude_code.ts does on the soft timer:
+    // emit `perception.run_failed` with reason='timeout' via onEvent, then
+    // settle the promise with []. The runner mutates result.llm_status to
+    // 'failed:timeout', and main()'s console.log line prints it verbatim.
+    const stubLlm: LlmExtractor = async (_evts, _ctx, log) => {
+      log?.onEvent?.('perception.run_failed', {
+        reason: 'timeout',
+        timeout_ms: 300_000,
+        prompt_bytes: 1234,
+      });
+      return [];
+    };
+    mockedSelectLlmExtractor.mockReturnValue(stubLlm);
+
+    // Transcript must be larger than llm_min_transcript_bytes (default 1024)
+    // for the gate to fire and the extractor to be invoked.
+    const tp = tempPath('timeout-transcript');
+    fs.writeFileSync(tp, 'X'.repeat(2000));
+    cleanupFiles.push(tp);
+
+    const inbox = tempPath('inbox-timeout');
+    fs.writeFileSync(inbox, 'old\n');
+    cleanupFiles.push(inbox);
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const exitCode = await main([
+        'node',
+        'script.ts',
+        '--project',
+        'p',
+        '--transcript-path',
+        tp,
+        '--inbox-path',
+        inbox,
+      ]);
+      expect(exitCode).toBe(0);
+
+      // Stitch all console.log calls so we don't depend on which specific
+      // call carried the summary line.
+      const combinedOutput = logSpy.mock.calls
+        .map((call) => call.map((arg) => String(arg)).join(' '))
+        .join('\n');
+      expect(combinedOutput).toContain('llm_status=failed:timeout');
+      // And — critically — the misleading 'llm_status=ran' must NOT appear.
+      expect(combinedOutput).not.toContain('llm_status=ran');
+    } finally {
+      logSpy.mockRestore();
     }
   });
 

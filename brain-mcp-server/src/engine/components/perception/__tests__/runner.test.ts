@@ -20,6 +20,7 @@ import {
   runPerception,
 } from '../runner.js';
 import { DEFAULT_PERCEPTION_CONFIG, type PerceptionCandidate, type TranscriptEvent } from '../types.js';
+import type { LlmExtractor } from '../extractors/llm_via_claude_code.js';
 
 // Mock embeddings + vector-search — perception runner calls them per insert.
 vi.mock('../../../../utils/embeddings.js', () => ({
@@ -58,6 +59,16 @@ function makeTestDb(): Database.Database {
       provenance TEXT NOT NULL DEFAULT 'observed',
       review_status TEXT NOT NULL DEFAULT 'approved',
       source_extractor TEXT NOT NULL DEFAULT 'manual'
+    );
+    CREATE TABLE event_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_name TEXT NOT NULL,
+      component TEXT NOT NULL,
+      payload TEXT NOT NULL DEFAULT '{}',
+      machine_hostname TEXT,
+      project_slug TEXT,
+      instance_id TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
   return db;
@@ -310,7 +321,10 @@ describe('runPerception', () => {
       { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true },
       failingLlm,
     );
-    expect(result.llm_status).toBe('ran'); // gate ran, but extractor threw
+    // TD-079: extractor throws map to `failed:unknown` (the inner catch
+    // emits `perception.run_failed` with reason='unknown' and the runner
+    // mirrors that into result.llm_status).
+    expect(result.llm_status).toBe('failed:unknown');
     expect(result.llm_extracted).toBe(0);
     expect(result.inserted).toBe(0);
   });
@@ -354,6 +368,133 @@ describe('runPerception', () => {
     expect(result.inserted).toBeGreaterThan(0);
     const rows = db.prepare('SELECT review_status FROM learnings').all() as Array<{ review_status: string }>;
     expect(rows.every((r) => r.review_status === 'pending_review')).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // TD-079: extractor terminal failure reasons mirror onto result.llm_status
+  // -------------------------------------------------------------------------
+
+  it('runPerception: timeout from extractor lands in result.llm_status as failed:timeout (TD-079)', async () => {
+    // Stub mirrors what llm_via_claude_code.ts does on the soft timer:
+    // emit `perception.run_failed` with reason='timeout' via onEvent, then
+    // settle the promise with []. The runner observes the event through
+    // wrappedLog and rewrites result.llm_status from 'ran' to 'failed:timeout'.
+    const events: TranscriptEvent[] = [{ role: 'user', content: 'X'.repeat(2000), timestamp: '' }];
+    const stub: LlmExtractor = async (_evts, _ctx, log) => {
+      log?.onEvent?.('perception.run_failed', {
+        reason: 'timeout',
+        timeout_ms: 300_000,
+        prompt_bytes: 1234,
+      });
+      return [];
+    };
+
+    const result = await runPerception(
+      db,
+      { events, project: 'p', source: 's', trigger: 'detached' },
+      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, llm_min_transcript_bytes: 0 },
+      stub,
+    );
+
+    expect(result.llm_status).toBe('failed:timeout');
+    expect(result.inserted).toBe(0);
+    expect(result.llm_extracted).toBe(0);
+
+    // Lifecycle invariant: exactly one terminal event per run_started.
+    // The extractor pre-emitted run_failed, so the runner's trailing
+    // run_succeeded MUST be suppressed.
+    const lifecycle = db
+      .prepare(
+        "SELECT event_name FROM event_log WHERE component = 'perception' ORDER BY id ASC",
+      )
+      .all() as { event_name: string }[];
+    expect(lifecycle.map((r) => r.event_name)).toEqual([
+      'perception.run_started',
+      'perception.run_failed',
+    ]);
+  });
+
+  it('runPerception: epipe from extractor lands as failed:epipe (TD-079)', async () => {
+    // Locks the reason → status mapping for the EPIPE failure mode.
+    const events: TranscriptEvent[] = [{ role: 'user', content: 'X'.repeat(2000), timestamp: '' }];
+    const stub: LlmExtractor = async (_evts, _ctx, log) => {
+      log?.onEvent?.('perception.run_failed', {
+        reason: 'epipe_on_llm_stdin',
+        error_message: 'write EPIPE',
+        prompt_bytes: 262144,
+      });
+      return [];
+    };
+
+    const result = await runPerception(
+      db,
+      { events, project: 'p', source: 's' },
+      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, llm_min_transcript_bytes: 0 },
+      stub,
+    );
+
+    expect(result.llm_status).toBe('failed:epipe');
+    expect(result.inserted).toBe(0);
+  });
+
+  it('runPerception: spawn_error from extractor lands as failed:spawn_error (TD-079)', async () => {
+    const events: TranscriptEvent[] = [{ role: 'user', content: 'X'.repeat(2000), timestamp: '' }];
+    const stub: LlmExtractor = async (_evts, _ctx, log) => {
+      log?.onEvent?.('perception.run_failed', {
+        reason: 'spawn_error',
+        error_message: 'ENOENT',
+      });
+      return [];
+    };
+
+    const result = await runPerception(
+      db,
+      { events, project: 'p', source: 's' },
+      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, llm_min_transcript_bytes: 0 },
+      stub,
+    );
+
+    expect(result.llm_status).toBe('failed:spawn_error');
+  });
+
+  it('runPerception: non_zero_exit from extractor lands as failed:non_zero_exit (TD-079)', async () => {
+    const events: TranscriptEvent[] = [{ role: 'user', content: 'X'.repeat(2000), timestamp: '' }];
+    const stub: LlmExtractor = async (_evts, _ctx, log) => {
+      log?.onEvent?.('perception.run_failed', {
+        reason: 'non_zero_exit',
+        exit_code: 137,
+        error_message: 'OOM',
+      });
+      return [];
+    };
+
+    const result = await runPerception(
+      db,
+      { events, project: 'p', source: 's' },
+      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, llm_min_transcript_bytes: 0 },
+      stub,
+    );
+
+    expect(result.llm_status).toBe('failed:non_zero_exit');
+  });
+
+  it('runPerception: unrecognised reason collapses to failed:unknown (TD-079)', async () => {
+    const events: TranscriptEvent[] = [{ role: 'user', content: 'X'.repeat(2000), timestamp: '' }];
+    const stub: LlmExtractor = async (_evts, _ctx, log) => {
+      log?.onEvent?.('perception.run_failed', {
+        reason: 'something_we_did_not_anticipate',
+      });
+      return [];
+    };
+
+    const result = await runPerception(
+      db,
+      { events, project: 'p', source: 's' },
+      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, llm_min_transcript_bytes: 0 },
+      stub,
+    );
+
+    expect(result.llm_status).toBe('failed:unknown');
   });
 
   // -------------------------------------------------------------------------
