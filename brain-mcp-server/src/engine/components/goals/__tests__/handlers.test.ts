@@ -332,9 +332,24 @@ describe('goals handlers', () => {
     });
 
     it('upcoming_days filters to active goals within window', () => {
-      // Goal with deadline 2026-05-01 is far in the future; goal with
-      // 2026-12-31 is even further. With upcoming_days=99999, both
-      // should appear; with =0, none.
+      // The outer beforeEach seeded literal '2026-05-01' / '2026-12-31'
+      // deadlines, which date-flake against `date('now')` once wall
+      // clock crosses 2026-05-01. SQLite's `date('now')` reads OS time
+      // directly and bypasses vi.setSystemTime, so we cannot pin the
+      // clock — instead, replace the seeded deadlines with future-
+      // relative offsets scoped to this single test. (See BR-061.)
+      const oneYearOut = new Date(Date.now() + 365 * 86400 * 1000)
+        .toISOString()
+        .slice(0, 10);
+      const twoYearsOut = new Date(Date.now() + 730 * 86400 * 1000)
+        .toISOString()
+        .slice(0, 10);
+      db.prepare("UPDATE goals SET deadline = ? WHERE goal_id = 'GL-001'").run(oneYearOut);
+      db.prepare("UPDATE goals SET deadline = ? WHERE goal_id = 'GL-002'").run(twoYearsOut);
+
+      // With upcoming_days=99999, both deadlined active goals appear;
+      // with =0, none (today is well before the relative-future
+      // deadlines just written above).
       const wide = parseResult<ListResult>(handleGoalList({ upcoming_days: 99999 }));
       // Should include both deadlined active goals (excludes the
       // achieved one because that is filtered by the upcoming clause).
@@ -342,7 +357,7 @@ describe('goals handlers', () => {
       expect(wide.total).toBeGreaterThanOrEqual(2);
 
       const tight = parseResult<ListResult>(handleGoalList({ upcoming_days: 0 }));
-      // Today's date is well before 2026-05-01 — expect 0.
+      // Today's date is well before the future-offset deadlines — expect 0.
       expect(tight.total).toBe(0);
     });
 
