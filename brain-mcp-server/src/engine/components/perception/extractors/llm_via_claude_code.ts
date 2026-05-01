@@ -17,7 +17,7 @@
  * confident model cannot outrank a human-reviewed approval.
  *
  * Prompt-injection mitigations (4 layers):
- *   1. `--system` flag delivers the extractor instructions on a separate
+ *   1. `--system-prompt` flag delivers the extractor instructions on a separate
  *      channel from user content.
  *   2. Transcript wrapped in `<transcript>...</transcript>` delimiters.
  *   3. Control characters stripped via `sanitizeTranscript`.
@@ -170,7 +170,7 @@ export function sanitizeTranscript(text: string): string {
 
 /**
  * Build the system prompt. Static — does not include user content. Delivered
- * via `--system` flag to `claude -p` so it never mixes with the transcript.
+ * via `--system-prompt` flag to `claude -p` so it never mixes with the transcript.
  */
 export function buildSystemPrompt(): string {
   return [
@@ -200,7 +200,7 @@ export function buildSystemPrompt(): string {
 /**
  * Build the user prompt: project context + sanitized transcript wrapped in
  * delimiters. The delimiter wrap is load-bearing — combined with the
- * `--system` channel separation and control-char sanitization, it mitigates
+ * `--system-prompt` channel separation and control-char sanitization, it mitigates
  * transcript-borne prompt injection attempts.
  */
 export function buildUserPrompt(events: TranscriptEvent[], ctx: LlmExtractorContext): string {
@@ -339,7 +339,7 @@ export interface ClaudeExtractorOptions {
   maxPromptBytes?: number;
   /** Override subprocess command. @internal — tests inject `node` stub. */
   command?: string;
-  /** Override subprocess argv (BEFORE the `--system` flag the factory appends). @internal — tests inject. */
+  /** Override subprocess argv (BEFORE the `--system-prompt` flag the factory appends). @internal — tests inject. */
   args?: string[];
   /** Logger for diagnostic warnings (timeout, parse-fail). */
   log?: ExtractorLogger;
@@ -355,7 +355,7 @@ export interface ClaudeExtractorOptions {
  *   - Empty / malformed stdout → empty array, warn logged.
  *   - Bad-shape candidates dropped silently.
  *
- * The factory uses `--system` flag for instructions and wraps user content
+ * The factory uses `--system-prompt` flag for instructions and wraps user content
  * inside `<transcript>...</transcript>` delimiters so a malicious
  * transcript cannot break out and rewrite the system prompt.
  */
@@ -385,8 +385,8 @@ export function makeClaudeLlmExtractor(opts: ClaudeExtractorOptions = {}): LlmEx
         resolve(r);
       };
 
-      // `--system` keeps instructions out of the user-content channel.
-      const fullArgs = [...baseArgs, '--system', systemPrompt];
+      // `--system-prompt` keeps instructions out of the user-content channel.
+      const fullArgs = [...baseArgs, '--system-prompt', systemPrompt];
 
       let child;
       try {

@@ -368,8 +368,8 @@ describe('selectLlmExtractor', () => {
 
 describe('makeClaudeLlmExtractor (mocked spawn)', () => {
   // Helper: build an extractor that uses `node -e <script>` to emit fixed stdout.
-  // Trailing `--` makes node ignore the `--system <prompt>` args the factory
-  // appends, so the stub doesn't need to understand them.
+  // Trailing `--` makes node ignore the `--system-prompt <prompt>` args the
+  // factory appends, so the stub doesn't need to understand them.
   function stubExtractor(canned: string) {
     return makeClaudeLlmExtractor({
       command: 'node',
@@ -520,8 +520,8 @@ describeIntegration('makeClaudeLlmExtractor (real claude CLI, opt-in)', () => {
 // silencing the channel for 7+ hours (0 learnings produced).
 //
 // Stub convention: trailing `'--'` in `args` terminates node's option
-// parsing so the factory's appended `--system <prompt>` flag does not
-// trip node's own argument validator.
+// parsing so the factory's appended `--system-prompt <prompt>` flag does
+// not trip node's own argument validator.
 
 interface CapturedLogger extends ExtractorLogger {
   warns: string[];
@@ -699,10 +699,10 @@ describe('TD-073 — selectLlmExtractor: IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES o
     // public production entry is exercised. Result depends on whether
     // `claude` is on PATH on this host: either noopLlmExtractor ([]) or a
     // real factory. Either way the call must not throw and must resolve to
-    // an array. Use a dedicated logger so smoke warns (e.g. "claude:
-    // unknown option '--system'" on a divergent CLI version) do not
-    // contaminate the cap-validation logger below. Tight timeout keeps the
-    // test fast even when the real CLI is slow.
+    // an array. Use a dedicated logger so transient real-CLI errors during
+    // the smoke (timeouts, version drift, etc.) do not contaminate the
+    // cap-validation logger below. Tight timeout keeps the test fast even
+    // when the real CLI is slow.
     const smokeLog = makeCapturedLogger();
     const config: PerceptionExtractorConfig = {
       ...DEFAULT_PERCEPTION_CONFIG,
@@ -746,4 +746,68 @@ describe('TD-073 — selectLlmExtractor: IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES o
     }
     expect(result).toEqual([]);
   }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// TD-076 — system-prompt flag
+// ---------------------------------------------------------------------------
+//
+// Regression: claude 2.1.126 renamed `--system` to `--system-prompt`. The
+// perception extractor was passing the obsolete flag name, so the real CLI
+// rejected the invocation and the defensive error path silently returned
+// []. This test pins the spawn argv so a future flag rename cannot regress
+// the channel without a loud failure here.
+
+describe('TD-076 — system-prompt flag', () => {
+  it('passes --system-prompt (NOT --system) to the spawned CLI', async () => {
+    // Stub strategy: emit a single valid candidate whose `content` field is
+    // the JSON-encoded argv received by the stub. This piggybacks on the
+    // extractor's own parser to surface the captured argv back to the test.
+    //
+    // The trailing `'--'` in `args` terminates node's own option parsing,
+    // so the factory-appended flag (`--system-prompt <body>`) lands in
+    // process.argv as plain tokens rather than being consumed by node.
+    const extractor = makeClaudeLlmExtractor({
+      command: 'node',
+      args: [
+        '-e',
+        'const argv = process.argv.slice(1); ' +
+          'process.stdin.on("data", () => {}); ' +
+          'process.stdin.on("end", () => { ' +
+          'process.stdout.write(JSON.stringify([{' +
+          'category:"discovery",' +
+          'title:"argv",' +
+          'content: JSON.stringify(argv),' +
+          'tags:[],' +
+          'confidence:0.5,' +
+          'evidence:{transcript_excerpt:""}' +
+          '}])); ' +
+          '});',
+        '--',
+      ],
+      timeoutMs: 5_000,
+    });
+
+    const events: TranscriptEvent[] = [
+      { timestamp: 't', role: 'user', content: 'hello' },
+    ];
+    const out = await extractor(events, { project: 'p' });
+    expect(out).toHaveLength(1);
+    const argv = JSON.parse(out[0]!.content) as string[];
+
+    // Must contain the renamed flag.
+    expect(argv).toContain('--system-prompt');
+    // Must NOT contain the obsolete bare flag. Tokenized argv comparison —
+    // the system-prompt VALUE that follows may legitimately mention the
+    // word "system", but the bare flag literal `--system` must not appear
+    // as its own token.
+    expect(argv).not.toContain('--system');
+
+    // Sanity: the token immediately after `--system-prompt` is a non-empty
+    // string (the system prompt body).
+    const idx = argv.indexOf('--system-prompt');
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(typeof argv[idx + 1]).toBe('string');
+    expect(argv[idx + 1]!.length).toBeGreaterThan(0);
+  }, 10_000);
 });
