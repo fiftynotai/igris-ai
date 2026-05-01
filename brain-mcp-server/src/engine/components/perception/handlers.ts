@@ -177,6 +177,13 @@ interface SubmitInput {
   window_end_ts?: string;
   force_llm?: boolean;
   advance_watermark?: boolean;
+  /**
+   * Lifecycle event trigger label (TD-074). Set by each MCP handler:
+   * 'mcp_submit' for `igris_perception_submit`, 'mcp_extract_now' for
+   * the manual trigger. Threaded into `runPerception` so events written
+   * to `event_log` carry the calling context.
+   */
+  trigger?: string;
 }
 
 interface SubmitOutput {
@@ -209,18 +216,75 @@ async function submitInternal(input: SubmitInput): Promise<SubmitOutput | { erro
     };
   }
 
-  const result = await runPerception(
-    getDb(),
-    {
-      events,
+  const trigger = input.trigger ?? 'mcp_submit';
+
+  // TD-074: in MCP context, mirror the runner's event_log writes via the
+  // bus so `monitoring.onEventReceived` produces a row too. The runner
+  // also writes directly (single source of truth for the detached CLI),
+  // so the in-process bus emission here is a defense-in-depth signal —
+  // it is also what the event-bus integrity test scans for, since the
+  // runner has no `bus.emit()` call by design.
+  const bus = getBus();
+  if (bus) {
+    bus.emit('perception.run_started', {
       project: input.project,
-      brief_id: input.brief_id,
       source: input.source,
-      force_llm: input.force_llm ?? false,
-    },
-    getActiveConfig(),
-    getActiveLlmExtractor(),
-  );
+      trigger,
+    });
+  }
+
+  const runOptions: import('./runner.js').RunPerceptionOptions = {
+    events,
+    project: input.project,
+    source: input.source,
+    force_llm: input.force_llm ?? false,
+    trigger,
+  };
+  if (input.brief_id) runOptions.brief_id = input.brief_id;
+
+  let result;
+  try {
+    result = await runPerception(
+      getDb(),
+      runOptions,
+      getActiveConfig(),
+      getActiveLlmExtractor(),
+    );
+  } catch (err) {
+    // The runner already wrote `perception.run_failed` to event_log
+    // before re-throwing. Mirror it on the bus for in-process listeners
+    // / the event-bus integrity test scanner. Then re-throw so the MCP
+    // handler returns an errorResult to the caller.
+    if (bus) {
+      bus.emit('perception.run_failed', {
+        project: input.project,
+        reason: 'unknown',
+        error_message: err instanceof Error ? err.message.slice(0, 500) : String(err),
+        trigger,
+      });
+    }
+    throw err;
+  }
+
+  // The submit pipeline does not call `runPerception` for the empty-events
+  // path, but if the LLM gate skipped the run (e.g. transcript below the
+  // bytes floor), surface that as a `run_skipped` so /scan can show it.
+  // Status enum from runner.ts: 'skipped:disabled' | 'skipped:bytes' |
+  // 'skipped:cost' | 'skipped:cli_missing'.
+  if (bus && typeof result.llm_status === 'string' && result.llm_status.startsWith('skipped:')) {
+    const skipReason =
+      result.llm_status === 'skipped:disabled'
+        ? 'gate_disabled'
+        : result.llm_status === 'skipped:bytes'
+          ? 'gate_bytes'
+          : 'gate_disabled';
+    bus.emit('perception.run_skipped', {
+      project: input.project,
+      reason: skipReason,
+      llm_status: result.llm_status,
+      trigger,
+    });
+  }
 
   const advance = input.advance_watermark ?? false;
   if (advance) {
@@ -228,8 +292,11 @@ async function submitInternal(input: SubmitInput): Promise<SubmitOutput | { erro
     setWatermark(input.project, ts);
   }
 
-  // Bus events for observability.
-  const bus = getBus();
+  // Bus events for observability. `perception.run_complete` is preserved
+  // for back-compat with any external listeners. The 4 lifecycle events
+  // (TD-074) are emitted alongside it; the runner's direct event_log
+  // writes are still the canonical record — bus emission here is what
+  // keeps the event-bus integrity test honest about declared emits.
   if (bus) {
     bus.emit('perception.run_complete', {
       project: input.project,
@@ -238,6 +305,14 @@ async function submitInternal(input: SubmitInput): Promise<SubmitOutput | { erro
       inserted: result.inserted,
       llm_status: result.llm_status,
       source: input.source,
+    });
+    bus.emit('perception.run_succeeded', {
+      project: input.project,
+      candidates_count: result.inserted,
+      llm_extracted: result.llm_extracted,
+      suppressed: result.suppressed,
+      llm_status: result.llm_status,
+      trigger,
     });
   }
 
@@ -515,6 +590,7 @@ export async function handlePerceptionExtractNow(
     source: 'extract_now',
     force_llm: forceLlm,
     advance_watermark: advanceWatermark,
+    trigger: 'mcp_extract_now',
   };
   if (briefId) submitInput.brief_id = briefId;
 

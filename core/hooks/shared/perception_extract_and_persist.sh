@@ -79,6 +79,23 @@ if [ -f "$WATERMARK_FILE" ]; then
   fi
   elapsed=$((now_epoch - last_epoch))
   if [ "$elapsed" -lt 60 ]; then
+    # TD-074: emit a `perception.run_skipped` row so /scan can see the
+    # guard fire. Defensive — every step is `|| true` so no failure mode
+    # blocks the hook (`sqlite3` may be absent on minimal VPS, brain DB
+    # may be missing pre-bootstrap, project slug is basename-derived but
+    # we still escape single quotes to harden the SQL surface).
+    if command -v sqlite3 >/dev/null 2>&1; then
+      DB_PATH="$HOME/.igris/memory/knowledge.db"
+      if [ -f "$DB_PATH" ]; then
+        slug_escaped=$(printf '%s' "$PROJECT_SLUG" | sed "s/'/''/g")
+        host=$(hostname 2>/dev/null || echo "unknown")
+        host_escaped=$(printf '%s' "$host" | sed "s/'/''/g")
+        payload=$(printf '{"project":"%s","reason":"min_window_guard","window_seconds":60,"elapsed_seconds":%d,"trigger":"detached"}' "$slug_escaped" "$elapsed")
+        sqlite3 "$DB_PATH" \
+          "INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at) VALUES ('perception.run_skipped', 'perception', '$payload', '$host_escaped', '$slug_escaped', NULL, datetime('now'));" \
+          2>/dev/null || true
+      fi
+    fi
     # Too soon — exit silently.
     exit 0
   fi

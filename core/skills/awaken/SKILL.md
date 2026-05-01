@@ -21,6 +21,8 @@ allowed-tools:
   - mcp__igris-brain__igris_brief_create
   - mcp__igris-brain__igris_goal_list
   - mcp__igris-brain__igris_suggestion_list
+  - mcp__igris-brain__igris_event_log
+  - mcp__igris-brain__igris_perception_review_pending
 triggers:
   - "AWAKEN"
   - "ARISE"
@@ -288,6 +290,43 @@ Extraction happens in a detached background process at session-end (spawned
 by `session_end.sh` / `pre_compact.sh` via `perception_extract_and_persist.sh`).
 This section is purely a SELECT — it surfaces whatever the background process
 has committed since the last awaken. /awaken does NOT drain any inbox.
+
+#### Pre-step (TD-074): perception failure WARNING
+
+Before rendering pending candidates, query the latest perception lifecycle
+event so a recent failure surfaces prominently. Call `igris_event_log` with:
+- `component` = `'perception'`
+- `project_slug` = current project slug
+- `limit` = `1`
+
+If the latest row's `event_name` is `'perception.run_failed'` AND no later
+`'perception.run_succeeded'` row exists for the same project (defensive: a
+follow-up call with `event_name='perception.run_succeeded'` and `since=<the
+failed row's created_at>` returning zero rows confirms the failure has not
+self-recovered), prepend a single WARNING block before the pending list.
+Otherwise, render no warning and proceed to the pending list as normal.
+
+```
+## Perception WARNING
+Latest extraction FAILED at 2026-05-01 04:22 (reason: epipe_on_llm_stdin).
+Recent session transcripts may not have produced learnings.
+Investigate: tail ~/.igris/projects/{project}/session/perception_extract.log
+```
+
+Suppression rules (do NOT render the WARNING when):
+- Latest event is `'perception.run_skipped'` — skipping is normal (60s
+  min-window, bytes gate, disabled gate).
+- Latest event is `'perception.run_started'` with no terminal event yet
+  (in-flight run; /scan handles the "stuck RUNNING" surface).
+- A `'perception.run_succeeded'` row exists with `created_at` newer than
+  the failed row.
+
+Token budget for the WARNING block: ~80 tokens. The pending list below
+remains unchanged in budget (~150 tokens). Total §4.9 upper bound: ~230 tokens.
+
+If `igris_event_log` is unavailable (older brain), skip the WARNING silently.
+
+#### Pending list
 
 If `igris-brain` MCP is available, call `igris_perception_review_pending` with:
 - `project` = current project slug

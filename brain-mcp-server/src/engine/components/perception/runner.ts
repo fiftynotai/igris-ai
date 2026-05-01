@@ -27,8 +27,14 @@ import type {
   TranscriptEvent,
   SourceExtractor,
 } from './types.js';
-import type { LlmExtractor, LlmExtractorContext } from './extractors/llm_via_claude_code.js';
+import type {
+  ExtractorLogger,
+  LlmExtractor,
+  LlmExtractorContext,
+} from './extractors/llm_via_claude_code.js';
 import { noopLlmExtractor } from './extractors/llm_via_claude_code.js';
+import type { PerceptionEventName } from './events.js';
+import { writePerceptionEvent } from './events.js';
 import { generateEmbedding, embeddingToBuffer, EMBEDDING_MODEL } from '../../../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbedding } from '../../../utils/vector-search.js';
 
@@ -57,6 +63,13 @@ export interface RunPerceptionOptions {
   source: string;
   /** When true, bypass the bytes cost gate (correctness gate is never bypassed). */
   force_llm?: boolean;
+  /**
+   * Trigger label written into perception lifecycle events (TD-074).
+   * Conventional values: 'detached' (CLI), 'mcp_submit', 'mcp_extract_now'.
+   * Defaults to 'unknown' when callers do not pass one — older call sites
+   * still produce structured events, just without the trigger dimension.
+   */
+  trigger?: string;
 }
 
 export interface RunPerceptionResult {
@@ -248,14 +261,29 @@ async function persistCandidate(
  * The runner is the single point that mutates `learnings`. The LLM extractor
  * is pure; persistence is sequenced so an embedding failure on one row does
  * not block the next.
+ *
+ * Lifecycle events (TD-074): the runner emits exactly one terminal event
+ * (`perception.run_succeeded` | `perception.run_failed`) per `run_started`.
+ * The extractor may pre-emit `run_failed` via the `onEvent` callback (e.g.
+ * EPIPE) — when that happens the runner's `terminalEmitted` flag suppresses
+ * the trailing `run_succeeded` so the invariant holds. Emission failures
+ * are absorbed inside `writePerceptionEvent` — they never abort the run.
  */
 export async function runPerception(
   db: Database.Database,
   options: RunPerceptionOptions,
   config: PerceptionExtractorConfig,
   llmExtractor: LlmExtractor = noopLlmExtractor,
+  extractorLog?: ExtractorLogger,
 ): Promise<RunPerceptionResult> {
-  const { events, project, brief_id: briefId, source, force_llm: forceLlm = false } = options;
+  const {
+    events,
+    project,
+    brief_id: briefId,
+    source,
+    force_llm: forceLlm = false,
+    trigger = 'unknown',
+  } = options;
 
   const result: RunPerceptionResult = {
     llm_extracted: 0,
@@ -270,47 +298,129 @@ export async function runPerception(
     },
   };
 
+  // Empty-events early return is intentionally pre-instrumentation. No
+  // `run_started` is emitted because there is nothing observable to do —
+  // emitting one would surface as a "stuck RUNNING" false positive in
+  // /scan if a terminal event never arrived.
   if (events.length === 0) return result;
 
-  // 1. Cost gate + LLM extractor.
+  const startedAt = Date.now();
   const transcriptBytes = events.reduce((n, e) => n + (e.content?.length ?? 0), 0);
-  const gate = evaluateLlmGate(0, transcriptBytes, config, forceLlm);
-  result.llm_status = gate.status;
-  let llmCandidates: PerceptionCandidate[] = [];
-  if (gate.shouldRun) {
-    const ctx: LlmExtractorContext = { project };
-    if (briefId) ctx.brief_id = briefId;
-    try {
-      llmCandidates = await llmExtractor(events, ctx);
-    } catch (err) {
-      // Defensive: failed LLM call does not block the pipeline.
-      console.error(
-        '[perception] LLM extractor threw — continuing without LLM candidates:',
-        err instanceof Error ? err.message : String(err),
-      );
-      llmCandidates = [];
+
+  writePerceptionEvent(db, 'perception.run_started', {
+    project,
+    transcript_bytes: transcriptBytes,
+    source,
+    trigger,
+    ...(briefId ? { brief_id: briefId } : {}),
+  });
+
+  // `terminalEmitted` enforces the lifecycle invariant: exactly one of
+  // `run_succeeded` / `run_failed` per `run_started`. The extractor may
+  // pre-emit a failure (EPIPE / timeout / non-zero-exit) via `onEvent`;
+  // we observe that here and skip the trailing success.
+  let terminalEmitted = false;
+  const emit = (name: PerceptionEventName, payload: Record<string, unknown>): void => {
+    if (terminalEmitted && name !== 'perception.run_started') return;
+    if (name === 'perception.run_succeeded' || name === 'perception.run_failed') {
+      terminalEmitted = true;
     }
-  }
-  result.llm_extracted = llmCandidates.length;
+    writePerceptionEvent(db, name, {
+      project,
+      trigger,
+      duration_ms: Date.now() - startedAt,
+      ...payload,
+    });
+  };
 
-  // 2. Dedupe by title.
-  const { kept, suppressed } = dedupeByTitle(llmCandidates);
-  result.suppressed = suppressed;
+  // Wrap the extractor's onEvent so the runner observes its emissions and
+  // updates `terminalEmitted`. The closure-bound `emit` writes via the
+  // shared helper and tags every event with project / trigger / duration.
+  const wrappedLog: ExtractorLogger = {
+    info: (msg) => extractorLog?.info(msg),
+    warn: (msg) => extractorLog?.warn(msg),
+    onEvent: (name, payload) => {
+      // Forward to the caller's onEvent if any (so tests can spy on raw
+      // calls), then re-emit through the runner's `emit` so the row lands
+      // in event_log with the standard envelope.
+      extractorLog?.onEvent?.(name, payload);
+      emit(name, payload);
+    },
+  };
 
-  // 3. Persist (review_status = 'approved' iff config.auto_approve_enabled).
-  for (const c of kept) {
-    try {
-      const id = await persistCandidate(db, c, project, briefId, source, config);
-      result.inserted_ids.push(id);
-      result.inserted += 1;
-      result.by_source[c.source_extractor] += 1;
-    } catch (err) {
-      console.error(
-        '[perception] persist failed for candidate, skipping:',
-        err instanceof Error ? err.message : String(err),
-      );
+  try {
+    // 1. Cost gate + LLM extractor.
+    const gate = evaluateLlmGate(0, transcriptBytes, config, forceLlm);
+    result.llm_status = gate.status;
+    let llmCandidates: PerceptionCandidate[] = [];
+    if (gate.shouldRun) {
+      const ctx: LlmExtractorContext = { project };
+      if (briefId) ctx.brief_id = briefId;
+      try {
+        llmCandidates = await llmExtractor(events, ctx, wrappedLog);
+      } catch (err) {
+        // Defensive: failed LLM call does not block the pipeline. The
+        // extractor signature normally settles with `[]`, so reaching
+        // this catch implies an unexpected throw — surface it as a
+        // structured event with reason='unknown' to disambiguate from
+        // the explicit failure modes the extractor itself reports.
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(
+          '[perception] LLM extractor threw — continuing without LLM candidates:',
+          msg,
+        );
+        emit('perception.run_failed', {
+          reason: 'unknown',
+          error_message: msg.slice(0, 500),
+          transcript_bytes: transcriptBytes,
+        });
+        llmCandidates = [];
+      }
     }
-  }
+    result.llm_extracted = llmCandidates.length;
 
-  return result;
+    // 2. Dedupe by title.
+    const { kept, suppressed } = dedupeByTitle(llmCandidates);
+    result.suppressed = suppressed;
+
+    // 3. Persist (review_status = 'approved' iff config.auto_approve_enabled).
+    for (const c of kept) {
+      try {
+        const id = await persistCandidate(db, c, project, briefId, source, config);
+        result.inserted_ids.push(id);
+        result.inserted += 1;
+        result.by_source[c.source_extractor] += 1;
+      } catch (err) {
+        console.error(
+          '[perception] persist failed for candidate, skipping:',
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+
+    // Successful return path. If the extractor pre-emitted a `run_failed`,
+    // `terminalEmitted` is already true and the success event is skipped.
+    emit('perception.run_succeeded', {
+      candidates_count: result.inserted,
+      llm_extracted: result.llm_extracted,
+      suppressed: result.suppressed,
+      llm_status: result.llm_status,
+      transcript_bytes: transcriptBytes,
+    });
+
+    return result;
+  } catch (err) {
+    // Catch-all: a non-extractor throw (DB / embedding infra). Only emit
+    // an additional `run_failed` if no terminal event has been written
+    // yet — otherwise we would violate the lifecycle invariant.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!terminalEmitted) {
+      emit('perception.run_failed', {
+        reason: 'unknown',
+        error_message: msg.slice(0, 500),
+        transcript_bytes: transcriptBytes,
+      });
+    }
+    throw err;
+  }
 }

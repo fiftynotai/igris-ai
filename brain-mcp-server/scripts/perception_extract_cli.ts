@@ -45,6 +45,7 @@ import { resolvePerceptionConfig } from '../src/engine/components/perception/ind
 import { selectLlmExtractor } from '../src/engine/components/perception/extractors/llm_via_claude_code.js';
 import { runPerception } from '../src/engine/components/perception/runner.js';
 import { parseTranscript } from '../src/engine/components/perception/handlers.js';
+import { writePerceptionEvent } from '../src/engine/components/perception/events.js';
 import type { LlmExtractor } from '../src/engine/components/perception/extractors/llm_via_claude_code.js';
 import type { PerceptionExtractorConfig } from '../src/engine/components/perception/types.js';
 
@@ -252,20 +253,29 @@ export async function runPerceptionFromTranscript(
     source: string;
     config: PerceptionExtractorConfig;
     llmExtractor: LlmExtractor;
+    /**
+     * Trigger label threaded into perception lifecycle events (TD-074).
+     * Defaults to 'detached' (the CLI is the primary caller) so detached
+     * runs always carry the right dimension.
+     */
+    trigger?: string;
   },
 ): Promise<{ inserted: number; llmExtracted: number; suppressed: number; llmStatus: string }> {
   const events = parseTranscript(options.transcriptText);
   if (events.length === 0) {
     return { inserted: 0, llmExtracted: 0, suppressed: 0, llmStatus: 'skipped:empty' };
   }
+  const trigger = options.trigger ?? 'detached';
+  const runOptions: import('../src/engine/components/perception/runner.js').RunPerceptionOptions = {
+    events,
+    project: options.project,
+    source: options.source,
+    trigger,
+  };
+  if (options.briefId) runOptions.brief_id = options.briefId;
   const result = await runPerception(
     db,
-    {
-      events,
-      project: options.project,
-      brief_id: options.briefId,
-      source: options.source,
-    },
+    runOptions,
     options.config,
     options.llmExtractor,
   );
@@ -330,6 +340,21 @@ export async function main(argv: string[] = process.argv): Promise<number> {
     .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = 'learnings'")
     .get() as { name: string } | undefined;
   if (!tableRow) {
+    // TD-074: emit a structured `run_failed` for the db_error pre-flight.
+    // Wrapped in try/catch since the event_log table itself may be missing
+    // on a brain that has never booted — in that case writePerceptionEvent
+    // surfaces a stderr line and returns. We still exit 1 so callers see
+    // the hard infrastructure failure.
+    try {
+      writePerceptionEvent(db, 'perception.run_failed', {
+        project: args.project,
+        reason: 'db_error',
+        error_message: 'learnings table missing — brain not booted on this machine',
+        trigger: 'detached',
+      });
+    } catch {
+      // Helper already absorbs failures; this catch is belt-and-braces.
+    }
     console.error(
       'Error: learnings table missing — brain not booted on this machine. ' +
         'Start the MCP server once to apply migrations.',
@@ -340,6 +365,8 @@ export async function main(argv: string[] = process.argv): Promise<number> {
   const transcriptText = readTranscriptFile(args.transcriptPath);
   if (transcriptText.length === 0) {
     // Empty / missing transcript is the common no-op case — succeed silently.
+    // Intentionally NO `run_started` emission here: emitting one without
+    // a terminal event would surface as "stuck RUNNING" in /scan.
     return 0;
   }
 
@@ -355,14 +382,23 @@ export async function main(argv: string[] = process.argv): Promise<number> {
       source: args.source,
       config,
       llmExtractor,
+      trigger: 'detached',
     });
   } catch (err) {
     // Defensive — runPerception swallows extractor errors internally, so a
-    // throw here means infrastructure (DB, embeddings) failed.
+    // throw here means infrastructure (DB, embeddings) failed. The runner
+    // already wrote `perception.run_failed` to event_log before re-throwing
+    // (TD-074 lifecycle invariant), so we do NOT double-emit here.
+    //
+    // Exit 0 to preserve the TD-073 detached-process contract: hooks must
+    // never block, and the wrapper script invokes us with `|| true` so the
+    // exit code is mostly informational. The structured failure is already
+    // visible via /scan and /awaken. db_error pre-flight above remains the
+    // sole exit-1 path (alongside malformed-args).
     console.error(
       `[perception_extract_cli] runPerception failed: ${err instanceof Error ? err.message : String(err)}`,
     );
-    return 1;
+    return 0;
   }
 
   // Truncate the inbox on success regardless of inserted count — the inbox

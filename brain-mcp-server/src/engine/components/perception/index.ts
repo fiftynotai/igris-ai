@@ -269,6 +269,28 @@ export function createPerceptionComponent(): BrainComponent {
             name: 'perception.candidate_rejected',
             description: 'A pending learning was rejected (DELETEd).',
           },
+          // TD-074 lifecycle events. Emitted via bus.emit() in handlers.ts
+          // so the event-bus integrity test sees a literal call site, AND
+          // written directly to event_log via writePerceptionEvent so the
+          // detached CLI (no bus) produces the same observable rows.
+          {
+            name: 'perception.run_started',
+            description: 'A perception extraction run began (transcript parsed, gate evaluated).',
+          },
+          {
+            name: 'perception.run_succeeded',
+            description: 'A perception extraction run completed without error (candidates persisted).',
+          },
+          {
+            name: 'perception.run_failed',
+            description:
+              'A perception extraction run failed (EPIPE, timeout, non-zero exit, db_error, etc.).',
+          },
+          {
+            name: 'perception.run_skipped',
+            description:
+              'A perception extraction run was skipped without invoking the LLM (gate fired, min-window, no transcript).',
+          },
         ],
         listens: [],
       };

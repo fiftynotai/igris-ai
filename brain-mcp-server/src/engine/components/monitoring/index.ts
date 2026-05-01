@@ -23,7 +23,9 @@
  *          subconscious.suggestion_suppressed,
  *          subconscious.suggestion_verified,
  *          subconscious.suggestion_rejected_by_verifier,
- *          subconscious.bootstrap_failed
+ *          subconscious.bootstrap_failed,
+ *          perception.run_started, perception.run_succeeded,
+ *          perception.run_failed, perception.run_skipped
  *
  * @module engine/components/monitoring
  * @author Fifty.ai
@@ -83,6 +85,10 @@ const EVENT_COMPONENT_MAP: Record<string, string> = {
   'subconscious.suggestion_verified': 'subconscious',
   'subconscious.suggestion_rejected_by_verifier': 'subconscious',
   'subconscious.bootstrap_failed': 'subconscious',
+  'perception.run_started': 'perception',
+  'perception.run_succeeded': 'perception',
+  'perception.run_failed': 'perception',
+  'perception.run_skipped': 'perception',
 };
 
 // ---------------------------------------------------------------------------
@@ -241,6 +247,10 @@ export function createMonitoringComponent(): BrainComponent {
           { name: 'subconscious.suggestion_verified', description: 'Log subconscious LLM-verified conflict suggestion events (FR-108)' },
           { name: 'subconscious.suggestion_rejected_by_verifier', description: 'Log subconscious LLM-rejected heuristic conflict events (FR-108)' },
           { name: 'subconscious.bootstrap_failed', description: 'Log subconscious schedule bootstrap failures (TD-053)' },
+          { name: 'perception.run_started', description: 'Log perception extraction run start events (TD-074)' },
+          { name: 'perception.run_succeeded', description: 'Log perception extraction run success events (TD-074)' },
+          { name: 'perception.run_failed', description: 'Log perception extraction run failure events (TD-074)' },
+          { name: 'perception.run_skipped', description: 'Log perception extraction run skipped events (TD-074)' },
         ],
       };
     },
@@ -286,6 +296,10 @@ export function createMonitoringComponent(): BrainComponent {
       ctx.bus.on('subconscious.suggestion_verified', onEventReceived);
       ctx.bus.on('subconscious.suggestion_rejected_by_verifier', onEventReceived);
       ctx.bus.on('subconscious.bootstrap_failed', onEventReceived);
+      ctx.bus.on('perception.run_started', onEventReceived);
+      ctx.bus.on('perception.run_succeeded', onEventReceived);
+      ctx.bus.on('perception.run_failed', onEventReceived);
+      ctx.bus.on('perception.run_skipped', onEventReceived);
 
       // Run retention cleanup on init (purge events older than 30 days)
       try {
@@ -339,6 +353,10 @@ export function createMonitoringComponent(): BrainComponent {
         _ctx.bus.off('subconscious.suggestion_verified', onEventReceived);
         _ctx.bus.off('subconscious.suggestion_rejected_by_verifier', onEventReceived);
         _ctx.bus.off('subconscious.bootstrap_failed', onEventReceived);
+        _ctx.bus.off('perception.run_started', onEventReceived);
+        _ctx.bus.off('perception.run_succeeded', onEventReceived);
+        _ctx.bus.off('perception.run_failed', onEventReceived);
+        _ctx.bus.off('perception.run_skipped', onEventReceived);
       }
       _ctx = null;
     },

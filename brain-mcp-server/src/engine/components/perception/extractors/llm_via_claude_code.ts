@@ -36,6 +36,7 @@ import type {
   PerceptionExtractorConfig,
   TranscriptEvent,
 } from '../types.js';
+import type { PerceptionEventName } from '../events.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -48,16 +49,41 @@ export interface LlmExtractorContext {
   brief_id?: string;
 }
 
-/** Async signature — the real one shells out to `claude -p`. */
+/**
+ * Async signature — the real one shells out to `claude -p`.
+ *
+ * The optional `log` parameter (TD-074) lets the runner inject a
+ * per-call logger that knows how to translate extractor failures into
+ * `perception.run_failed` events. The factory's bound logger is used
+ * when the runner does not pass one (back-compat for direct callers
+ * and the noop extractor).
+ */
 export type LlmExtractor = (
   events: TranscriptEvent[],
   ctx: LlmExtractorContext,
+  log?: ExtractorLogger,
 ) => Promise<PerceptionCandidate[]>;
 
-/** Logger surface shared with the runner. Tests inject a captured-message logger. */
+/**
+ * Logger surface shared with the runner. Tests inject a captured-message
+ * logger.
+ *
+ * The optional `onEvent` callback (TD-074) lets the extractor surface a
+ * structured lifecycle event (typically `perception.run_failed`) without
+ * holding a DB handle directly. The runner injects a closure that calls
+ * `writePerceptionEvent(db, name, payload)`; absence of the callback is
+ * safe — the extractor still settles its promise normally.
+ */
 export interface ExtractorLogger {
   info: (msg: string) => void;
   warn: (msg: string) => void;
+  /**
+   * Optional structured event sink. The runner threads this in so the
+   * extractor can record EPIPE / spawn / timeout / non-zero-exit failures
+   * as `perception.run_failed` rows. Keeps the extractor free of DB
+   * dependencies for testability.
+   */
+  onEvent?: (name: PerceptionEventName, payload: Record<string, unknown>) => void;
 }
 
 const NULL_LOGGER: ExtractorLogger = { info: () => {}, warn: () => {} };
@@ -365,10 +391,16 @@ export function makeClaudeLlmExtractor(opts: ClaudeExtractorOptions = {}): LlmEx
   const maxPromptBytes = opts.maxPromptBytes ?? DEFAULT_MAX_PROMPT_BYTES;
   const command = opts.command ?? 'claude';
   const baseArgs = opts.args ?? ['-p', '--output-format', 'json'];
-  const log = opts.log ?? NULL_LOGGER;
+  const boundLog = opts.log ?? NULL_LOGGER;
 
-  return async (events, ctx) => {
+  return async (events, ctx, perCallLog) => {
     if (events.length === 0) return [];
+
+    // Per-call log overrides the factory-bound log (TD-074). The runner
+    // injects a wrapper that routes onEvent into `writePerceptionEvent`;
+    // direct factory callers without a per-call log still get the bound
+    // logger's `info`/`warn` channels.
+    const log: ExtractorLogger = perCallLog ?? boundLog;
 
     const systemPrompt = buildSystemPrompt();
     const userPrompt = buildUserPrompt(events, ctx);
@@ -394,9 +426,16 @@ export function makeClaudeLlmExtractor(opts: ClaudeExtractorOptions = {}): LlmEx
           stdio: ['pipe', 'pipe', 'pipe'],
         });
       } catch (err) {
-        log.warn(
-          `llm_extractor spawn failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn(`llm_extractor spawn failed: ${msg}`);
+        // TD-074: surface the spawn failure as a structured lifecycle event
+        // so /scan and /awaken can show it. The runner will skip its own
+        // `run_succeeded` once any terminal event has been written.
+        log.onEvent?.('perception.run_failed', {
+          reason: 'spawn_error',
+          error_message: msg.slice(0, 500),
+          prompt_bytes: promptBytes,
+        });
         settle([]);
         return;
       }
@@ -425,12 +464,27 @@ export function makeClaudeLlmExtractor(opts: ClaudeExtractorOptions = {}): LlmEx
         }, 5_000);
         child.once('close', () => clearTimeout(hardTimer));
         log.warn(`llm_extractor timeout after ${timeoutMs}ms`);
+        // TD-074: structured timeout event. timeout_ms in the payload so
+        // operators can see the configured budget that elapsed.
+        log.onEvent?.('perception.run_failed', {
+          reason: 'timeout',
+          timeout_ms: timeoutMs,
+          prompt_bytes: promptBytes,
+        });
         settle([]);
       }, timeoutMs);
 
       child.on('error', (err) => {
         clearTimeout(softTimer);
         log.warn(`llm_extractor spawn error: ${err.message}`);
+        // TD-074: emit structured event for async spawn failure (distinct
+        // from the synchronous spawn() throw above — both bucket under
+        // `spawn_error` since the operator can't act differently).
+        log.onEvent?.('perception.run_failed', {
+          reason: 'spawn_error',
+          error_message: err.message.slice(0, 500),
+          prompt_bytes: promptBytes,
+        });
         settle([]);
       });
 
@@ -441,22 +495,41 @@ export function makeClaudeLlmExtractor(opts: ClaudeExtractorOptions = {}): LlmEx
       // 7+ hours). The listener MUST be attached before the synchronous
       // `child.stdin?.end(cappedPrompt)` call below so a fast EPIPE in
       // the same tick is not missed.
-      // TODO(TD-074): replace log.warn with bus.emit('perception.run_failed').
+      //
+      // TD-074: the listener now also surfaces a structured
+      // `perception.run_failed` event via `log.onEvent` so /scan and
+      // /awaken can detect the failure. The `log.warn` line is kept —
+      // it remains useful for local debugging when the structured
+      // emission path is unavailable.
       child.stdin?.on('error', (err: NodeJS.ErrnoException) => {
         clearTimeout(softTimer);
         log.warn(
           `llm_extractor stdin ${err.code ?? 'error'}: child closed stdin during write ` +
             `(prompt_bytes=${promptBytes} msg=${err.message})`,
         );
+        log.onEvent?.('perception.run_failed', {
+          reason: 'epipe_on_llm_stdin',
+          error_message: err.message.slice(0, 500),
+          error_code: err.code ?? null,
+          prompt_bytes: promptBytes,
+        });
         settle([]);
       });
 
       child.on('close', (code) => {
         clearTimeout(softTimer);
         if (code !== 0) {
-          log.warn(
-            `llm_extractor non-zero exit (${String(code)}): ${stderr.trim().slice(0, 200)}`,
-          );
+          const stderrTail = stderr.trim().slice(0, 200);
+          log.warn(`llm_extractor non-zero exit (${String(code)}): ${stderrTail}`);
+          // TD-074: structured event for non-zero exit. Encode the exit
+          // code in the payload so operators can distinguish OOM (137),
+          // signalled (>128), and standard error exits.
+          log.onEvent?.('perception.run_failed', {
+            reason: 'non_zero_exit',
+            exit_code: typeof code === 'number' ? code : null,
+            error_message: stderrTail,
+            prompt_bytes: promptBytes,
+          });
           settle([]);
           return;
         }
@@ -480,9 +553,17 @@ export function makeClaudeLlmExtractor(opts: ClaudeExtractorOptions = {}): LlmEx
         child.stdin?.end(cappedPrompt);
       } catch (err) {
         clearTimeout(softTimer);
-        log.warn(
-          `llm_extractor stdin write failed (sync): ${err instanceof Error ? err.message : String(err)}`,
-        );
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn(`llm_extractor stdin write failed (sync): ${msg}`);
+        // TD-074: bucket sync write throws under the same EPIPE reason —
+        // operators don't need to distinguish "stdin destroyed in same
+        // tick" from "stdin closed during write" at the read surface.
+        log.onEvent?.('perception.run_failed', {
+          reason: 'epipe_on_llm_stdin',
+          error_message: msg.slice(0, 500),
+          prompt_bytes: promptBytes,
+          sync: true,
+        });
         settle([]);
       }
     });
