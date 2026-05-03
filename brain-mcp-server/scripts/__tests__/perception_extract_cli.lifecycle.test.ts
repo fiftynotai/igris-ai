@@ -27,6 +27,9 @@ import { randomBytes } from 'node:crypto';
 vi.mock('../../src/utils/embeddings.js', () => ({
   generateEmbedding: vi.fn(async () => new Float32Array(384)),
   embeddingToBuffer: vi.fn((e: Float32Array) => Buffer.from(e.buffer, e.byteOffset, e.byteLength)),
+  // BR-060: stub the pipeline disposer so the CLI's finally block can call it
+  // without surfacing "No export is defined" warnings at test time.
+  disposeEmbeddingPipeline: vi.fn(async () => {}),
   EMBEDDING_MODEL: 'Xenova/all-MiniLM-L6-v2',
   EMBEDDING_DIMENSIONS: 384,
 }));
@@ -38,11 +41,30 @@ vi.mock('../../src/db.js', () => ({
   getDb: vi.fn(),
   BRAIN_DIR: '/tmp/igris-test',
 }));
+// BR-060: mock bootEngine so the CLI's engine.shutdown() in finally is a no-op.
+// The test owns the DB lifecycle via afterEach db.close().
+vi.mock('../../src/engine/index.js', () => ({
+  bootEngine: vi.fn(),
+}));
 
 import { getDb } from '../../src/db.js';
+import { bootEngine } from '../../src/engine/index.js';
 import { main } from '../perception_extract_cli.js';
 
 const mockedGetDb = vi.mocked(getDb);
+const mockedBootEngine = vi.mocked(bootEngine);
+
+/**
+ * Build a no-op Engine shim for tests. shutdown() is a no-op because the test
+ * owns the DB lifecycle (afterEach calls db.close()).
+ */
+function makeEngineShim(): ReturnType<typeof bootEngine> {
+  return {
+    shutdown: () => {},
+    // The CLI never reads these fields — `as any` keeps the shim minimal.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+}
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -120,6 +142,9 @@ describe('perception_extract_cli lifecycle events (TD-074)', () => {
   beforeEach(() => {
     db = makeFullSchemaDb();
     mockedGetDb.mockReturnValue(db);
+    // BR-060: bootEngine returns a no-op shim. shutdown() does nothing — the
+    // test owns DB lifecycle via afterEach db.close().
+    mockedBootEngine.mockReturnValue(makeEngineShim());
     // Force the noop LLM extractor so the test does not depend on the
     // `claude` CLI being installed (CI hosts may lack it).
     prevLlmEnabled = process.env.IGRIS_PERCEPTION_LLM_ENABLED;

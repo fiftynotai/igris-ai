@@ -29,6 +29,9 @@ import { randomBytes } from 'node:crypto';
 vi.mock('../../src/utils/embeddings.js', () => ({
   generateEmbedding: vi.fn(async () => new Float32Array(384)),
   embeddingToBuffer: vi.fn((e: Float32Array) => Buffer.from(e.buffer, e.byteOffset, e.byteLength)),
+  // BR-060: stub the pipeline disposer so the CLI's finally block can call it
+  // without surfacing "No export is defined" warnings at test time.
+  disposeEmbeddingPipeline: vi.fn(async () => {}),
   EMBEDDING_MODEL: 'Xenova/all-MiniLM-L6-v2',
   EMBEDDING_DIMENSIONS: 384,
 }));
@@ -41,6 +44,15 @@ vi.mock('../../src/utils/vector-search.js', () => ({
 vi.mock('../../src/db.js', () => ({
   getDb: vi.fn(),
   BRAIN_DIR: '/tmp/igris-test',
+}));
+
+// Mock bootEngine (BR-060). The CLI now boots the engine before running so
+// sqlite-vec teardown is owned by `engine.shutdown()` in a finally block. We
+// stub bootEngine with a no-op shim that returns an Engine handle whose
+// shutdown() is a no-op — tests build the schema they need explicitly via
+// mockedGetDb, so we do not need the full 19-component boot.
+vi.mock('../../src/engine/index.js', () => ({
+  bootEngine: vi.fn(),
 }));
 
 // Mock the LLM extractor selection so individual tests can inject a stub
@@ -58,6 +70,7 @@ vi.mock('../../src/engine/components/perception/extractors/llm_via_claude_code.j
 });
 
 import { getDb } from '../../src/db.js';
+import { bootEngine } from '../../src/engine/index.js';
 import { selectLlmExtractor } from '../../src/engine/components/perception/extractors/llm_via_claude_code.js';
 import type { LlmExtractor } from '../../src/engine/components/perception/extractors/llm_via_claude_code.js';
 import {
@@ -72,7 +85,21 @@ import {
 import { DEFAULT_PERCEPTION_CONFIG, type PerceptionCandidate } from '../../src/engine/components/perception/types.js';
 
 const mockedGetDb = vi.mocked(getDb);
+const mockedBootEngine = vi.mocked(bootEngine);
 const mockedSelectLlmExtractor = vi.mocked(selectLlmExtractor);
+
+/**
+ * Build a no-op Engine shim for tests. shutdown() is a no-op because the test
+ * owns the DB lifecycle (afterEach calls db.close()). The CLI's `finally`
+ * block will still call this shim's shutdown() on every code path.
+ */
+function makeEngineShim(): ReturnType<typeof bootEngine> {
+  return {
+    shutdown: () => {},
+    // The CLI never reads these fields — `as any` keeps the shim minimal.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+}
 
 // ---------------------------------------------------------------------------
 // Test DB setup — minimal schema needed by runPerception
@@ -344,6 +371,10 @@ describe('main', () => {
   beforeEach(async () => {
     db = makeTestDb();
     mockedGetDb.mockReturnValue(db);
+    // BR-060: bootEngine is mocked at the I/O boundary — return a no-op
+    // shim so the CLI's `engine.shutdown()` in the finally block is a no-op
+    // (test owns DB lifecycle via afterEach `db.close()`).
+    mockedBootEngine.mockReturnValue(makeEngineShim());
     originalIgrisDbPath = process.env.IGRIS_DB_PATH;
     // Reset the LLM-extractor mock to its default noop implementation so
     // a previous test's stub does not leak into this one.

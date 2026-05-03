@@ -208,6 +208,14 @@ echo "$now_epoch" > "$WATERMARK_FILE" 2>/dev/null || true
 # `errexit` for the duration of the call (set -e would otherwise abort the
 # script before we ever read $? on a non-zero exit). `set +e` / `set -e` is
 # the project-standard pattern for "I want to inspect rc but stay set -e".
+#
+# BR-060: cli_rc must be 0 for the brain_push_async spawn below to fire.
+# Pre-fix, the CLI aborted with SIGABRT (134) at process.exit() because the
+# synchronous exit path raced with the @huggingface/transformers ONNX
+# runtime worker pool teardown. Fixed by routing the CLI through
+# bootEngine + engine.shutdown() in a finally block AND switching from
+# process.exit(code) to process.exitCode = code (let the loop drain
+# naturally so worker threads join cleanly before V8 teardown).
 set +e
 "$NPX_BIN" tsx scripts/perception_extract_cli.ts \
   --project "$PROJECT_SLUG" \

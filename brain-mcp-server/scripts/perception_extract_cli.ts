@@ -9,14 +9,24 @@
  *
  * Pipeline:
  *   1. Parse CLI flags.
- *   2. Open the brain DB via `getDb()` (honors `IGRIS_DB_PATH` override).
+ *   2. Boot the brain engine (`bootEngine`, BR-060) so sqlite-vec, migrations,
+ *      and component lifecycle are fully owned by the engine. Honors the
+ *      `IGRIS_DB_PATH` override.
  *   3. Pre-flight: confirm `learnings` table exists.
  *   4. Read transcript file. If absent or empty, exit 0 silently.
  *   5. Resolve perception config + LLM extractor (3-layer chain).
  *   6. Call `runPerception` directly (no MCP roundtrip).
  *   7. On success, truncate the project's perception_inbox.jsonl atomically
  *      so legacy callers don't accumulate stale rows.
- *   8. Exit 0 on success or empty transcript; exit 1 only on hard error
+ *   8. Dispose the embedding pipeline + `engine.shutdown()` in a `finally`
+ *      block — releases the @huggingface/transformers ONNX worker pool and
+ *      sqlite native resources BEFORE V8 teardown. Caller routes through
+ *      `process.exitCode = code` (NOT `process.exit(code)`) so the event
+ *      loop drains naturally and worker threads join cleanly. Without this
+ *      ordering the synchronous exit path races with the worker pool's
+ *      mutex and aborts with `mutex lock failed: Invalid argument`
+ *      (libc++abi SIGABRT, exit 134). See BR-060.
+ *   9. Exit 0 on success or empty transcript; exit 1 only on hard error
  *      (DB unreachable, malformed CLI args). Hooks must never block.
  *
  * Usage:
@@ -41,11 +51,14 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { getDb } from '../src/db.js';
+import { bootEngine } from '../src/engine/index.js';
+import type { Engine } from '../src/engine/index.js';
 import { resolvePerceptionConfig } from '../src/engine/components/perception/index.js';
 import { selectLlmExtractor } from '../src/engine/components/perception/extractors/llm_via_claude_code.js';
 import { runPerception } from '../src/engine/components/perception/runner.js';
 import { parseTranscript } from '../src/engine/components/perception/handlers.js';
 import { writePerceptionEvent } from '../src/engine/components/perception/events.js';
+import { disposeEmbeddingPipeline } from '../src/utils/embeddings.js';
 import type { LlmExtractor } from '../src/engine/components/perception/extractors/llm_via_claude_code.js';
 import type { PerceptionExtractorConfig } from '../src/engine/components/perception/types.js';
 
@@ -292,14 +305,29 @@ export async function runPerceptionFromTranscript(
 // ---------------------------------------------------------------------------
 
 /**
- * CLI main. Reads args, opens DB, runs extraction, truncates inbox.
+ * CLI main. Reads args, boots engine, runs extraction, truncates inbox,
+ * shuts down engine.
  *
  * Exit codes:
  *   - 0: success, no transcript, or empty transcript
- *   - 1: malformed args, DB unreachable, or pre-flight failure
+ *   - 1: malformed args, DB unreachable, engine boot failure, or pre-flight
+ *     failure
  *
  * All other failure modes (LLM timeout, parse errors) are absorbed inside
  * `runPerception` and surfaced as no-ops. Hooks must never block on us.
+ *
+ * Lifecycle (BR-060):
+ *   The post-args workflow runs inside `try { ... } finally { ... }`. The
+ *   finally block disposes the @huggingface/transformers pipeline first
+ *   (so the ONNX worker pool is gone), then calls `engine.shutdown()`. The
+ *   shutdown is wrapped in a 5-second timer (Path B-lite from the plan):
+ *   if either step ever hangs (locked statement, stuck dispose), we
+ *   force-exit 0 since the work is already persisted and the success line
+ *   is already on stdout. This prevents the wrapper script from blocking
+ *   indefinitely. The CLI entry point uses `process.exitCode = code` (not
+ *   `process.exit(code)`) so the event loop drains naturally — the
+ *   synchronous exit path races with native worker pool teardown and
+ *   aborts with `mutex lock failed`.
  */
 export async function main(argv: string[] = process.argv): Promise<number> {
   let args: CliArgs;
@@ -323,101 +351,171 @@ export async function main(argv: string[] = process.argv): Promise<number> {
     process.env.IGRIS_DB_PATH = args.dbPathOverride;
   }
 
-  let db: import('better-sqlite3').Database;
+  // BR-060: boot the engine (not just getDb()) so sqlite-vec, migrations, and
+  // component lifecycle are fully owned by the engine. The shutdown() call in
+  // the `finally` below routes through registry.shutdown -> storage.close,
+  // releasing the engine's native resources in deterministic order. Mirrors
+  // BR-064 in brain_push_cli.ts. The actual SIGABRT root cause was the race
+  // between process.exit() and the @huggingface/transformers ONNX worker
+  // pool teardown — addressed by `process.exitCode = code` at the bottom of
+  // this file. The boot+shutdown lifecycle here is defense in depth: it
+  // ensures every native subsystem we own has a chance to release cleanly
+  // before V8 tears down.
+  //
+  // dbPath honors the --db override (already set on env above) so the
+  // existing test suite's IGRIS_DB_PATH sandboxing still works. Otherwise
+  // default to the canonical ~/.igris/memory/knowledge.db path
+  // (matches db.ts:resolveDbPath).
+  const dbPath = process.env.IGRIS_DB_PATH
+    ?? path.join(os.homedir(), '.igris', 'memory', 'knowledge.db');
+  let engine: Engine;
   try {
-    db = getDb();
+    engine = bootEngine({ dbPath, components: {} });
   } catch (err) {
     console.error(
-      `Error: failed to open brain DB: ${err instanceof Error ? err.message : String(err)}`,
+      `Error: engine boot failed: ${err instanceof Error ? err.message : String(err)}`,
     );
     return 1;
   }
 
-  // Pre-flight: required table must exist. If learnings is missing, the
-  // brain has not been booted on this machine — exit clean rather than
-  // attempting a SQL stack trace into the void.
-  const tableRow = db
-    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = 'learnings'")
-    .get() as { name: string } | undefined;
-  if (!tableRow) {
-    // TD-074: emit a structured `run_failed` for the db_error pre-flight.
-    // Wrapped in try/catch since the event_log table itself may be missing
-    // on a brain that has never booted — in that case writePerceptionEvent
-    // surfaces a stderr line and returns. We still exit 1 so callers see
-    // the hard infrastructure failure.
+  // bootEngine internally calls setAdapter(), so subsequent getDb() calls
+  // resolve to this booted connection automatically. We use getDb() (rather
+  // than reading engine.storage.rawConnection directly) so the existing test
+  // suite — which mocks getDb() — still drives the same code path.
+  const db = getDb();
+
+  try {
+    // Pre-flight: required table must exist. If learnings is missing, the
+    // brain has not been booted on this machine — exit clean rather than
+    // attempting a SQL stack trace into the void.
+    const tableRow = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = 'learnings'")
+      .get() as { name: string } | undefined;
+    if (!tableRow) {
+      // TD-074: emit a structured `run_failed` for the db_error pre-flight.
+      // Wrapped in try/catch since the event_log table itself may be missing
+      // on a brain that has never booted — in that case writePerceptionEvent
+      // surfaces a stderr line and returns. We still exit 1 so callers see
+      // the hard infrastructure failure.
+      try {
+        writePerceptionEvent(db, 'perception.run_failed', {
+          project: args.project,
+          reason: 'db_error',
+          error_message: 'learnings table missing — brain not booted on this machine',
+          trigger: 'detached',
+        });
+      } catch {
+        // Helper already absorbs failures; this catch is belt-and-braces.
+      }
+      console.error(
+        'Error: learnings table missing — brain not booted on this machine. ' +
+          'Start the MCP server once to apply migrations.',
+      );
+      return 1;
+    }
+
+    const transcriptText = readTranscriptFile(args.transcriptPath);
+    if (transcriptText.length === 0) {
+      // Empty / missing transcript is the common no-op case — succeed silently.
+      // Intentionally NO `run_started` emission here: emitting one without
+      // a terminal event would surface as "stuck RUNNING" in /scan.
+      return 0;
+    }
+
+    const config = resolvePerceptionConfig();
+    const llmExtractor = selectLlmExtractor(config);
+
+    let result;
     try {
-      writePerceptionEvent(db, 'perception.run_failed', {
+      result = await runPerceptionFromTranscript(db, {
         project: args.project,
-        reason: 'db_error',
-        error_message: 'learnings table missing — brain not booted on this machine',
+        transcriptText,
+        briefId: args.briefId,
+        source: args.source,
+        config,
+        llmExtractor,
         trigger: 'detached',
       });
-    } catch {
-      // Helper already absorbs failures; this catch is belt-and-braces.
+    } catch (err) {
+      // Defensive — runPerception swallows extractor errors internally, so a
+      // throw here means infrastructure (DB, embeddings) failed. The runner
+      // already wrote `perception.run_failed` to event_log before re-throwing
+      // (TD-074 lifecycle invariant), so we do NOT double-emit here.
+      //
+      // Exit 0 to preserve the TD-073 detached-process contract: hooks must
+      // never block, and the wrapper script invokes us with `|| true` so the
+      // exit code is mostly informational. The structured failure is already
+      // visible via /scan and /awaken. db_error pre-flight above remains the
+      // sole exit-1 path (alongside malformed-args).
+      console.error(
+        `[perception_extract_cli] runPerception failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 0;
     }
-    console.error(
-      'Error: learnings table missing — brain not booted on this machine. ' +
-        'Start the MCP server once to apply migrations.',
+
+    // Truncate the inbox on success regardless of inserted count — the inbox
+    // is a queue for legacy callers, and this CLI replaces the drain step.
+    const inboxPath = args.inboxPath ?? defaultInboxPath(args.project);
+    try {
+      truncateFileAtomic(inboxPath);
+    } catch (err) {
+      // Truncation failure is non-fatal — the next run will overwrite again.
+      console.error(
+        `[perception_extract_cli] inbox truncate failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    console.log(
+      `[perception_extract_cli] inserted=${result.inserted} llm=${result.llmExtracted} ` +
+        `suppressed=${result.suppressed} llm_status=${result.llmStatus} project=${args.project}`,
     );
-    return 1;
-  }
-
-  const transcriptText = readTranscriptFile(args.transcriptPath);
-  if (transcriptText.length === 0) {
-    // Empty / missing transcript is the common no-op case — succeed silently.
-    // Intentionally NO `run_started` emission here: emitting one without
-    // a terminal event would surface as "stuck RUNNING" in /scan.
     return 0;
-  }
-
-  const config = resolvePerceptionConfig();
-  const llmExtractor = selectLlmExtractor(config);
-
-  let result;
-  try {
-    result = await runPerceptionFromTranscript(db, {
-      project: args.project,
-      transcriptText,
-      briefId: args.briefId,
-      source: args.source,
-      config,
-      llmExtractor,
-      trigger: 'detached',
-    });
-  } catch (err) {
-    // Defensive — runPerception swallows extractor errors internally, so a
-    // throw here means infrastructure (DB, embeddings) failed. The runner
-    // already wrote `perception.run_failed` to event_log before re-throwing
-    // (TD-074 lifecycle invariant), so we do NOT double-emit here.
+  } finally {
+    // BR-060: dispose the @huggingface/transformers pipeline first, then
+    // the engine. The dispose() call releases the ONNX runtime's native
+    // worker pool synchronously so its threads are joined before V8
+    // teardown runs. Without this, the worker pool's mutex would still be
+    // owned by a live thread when the runtime exits, and atexit handlers
+    // race -> `mutex lock failed: Invalid argument` (libc++abi SIGABRT).
     //
-    // Exit 0 to preserve the TD-073 detached-process contract: hooks must
-    // never block, and the wrapper script invokes us with `|| true` so the
-    // exit code is mostly informational. The structured failure is already
-    // visible via /scan and /awaken. db_error pre-flight above remains the
-    // sole exit-1 path (alongside malformed-args).
-    console.error(
-      `[perception_extract_cli] runPerception failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return 0;
-  }
+    // Defensive 5-second timeout (Path B-lite from the plan): if either
+    // step ever hangs (locked statement, stuck dispose), force-exit 0. The
+    // success line and lifecycle events are already persisted at this
+    // point, so a forced exit is safe — better than blocking the wrapper
+    // script indefinitely. The timer is `unref()`-ed so it does not keep
+    // the event loop alive purely for itself.
+    const shutdownTimer = setTimeout(() => {
+      console.error(
+        '[perception_extract_cli] shutdown timed out after 5s, forcing exit',
+      );
+      process.exit(0);
+    }, 5000);
+    shutdownTimer.unref();
+    try {
+      // Step 1: dispose the embedding pipeline (transformers + ONNX
+      // runtime). Best-effort and idempotent — no-op when the pipeline
+      // was never loaded (cold-path runs that hit the LLM gate but never
+      // produced candidates).
+      await disposeEmbeddingPipeline();
 
-  // Truncate the inbox on success regardless of inserted count — the inbox
-  // is a queue for legacy callers, and this CLI replaces the drain step.
-  const inboxPath = args.inboxPath ?? defaultInboxPath(args.project);
-  try {
-    truncateFileAtomic(inboxPath);
-  } catch (err) {
-    // Truncation failure is non-fatal — the next run will overwrite again.
-    console.error(
-      `[perception_extract_cli] inbox truncate failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
+      // Step 2: tear down the engine (storage.close, registry.shutdown).
+      // Closes the sqlite-vec extension cleanly. Even though the abort
+      // root cause was the transformers worker pool (not sqlite-vec),
+      // routing through engine.shutdown() ensures every native subsystem
+      // we own gets a chance to release resources in deterministic order
+      // — defense in depth against future component additions that load
+      // their own native code.
+      engine.shutdown();
+    } catch (shutdownErr) {
+      console.error(
+        `[perception_extract_cli] shutdown failed (non-fatal): ${
+          shutdownErr instanceof Error ? shutdownErr.message : String(shutdownErr)
+        }`,
+      );
+    } finally {
+      clearTimeout(shutdownTimer);
+    }
   }
-
-  console.log(
-    `[perception_extract_cli] inserted=${result.inserted} llm=${result.llmExtracted} ` +
-      `suppressed=${result.suppressed} llm_status=${result.llmStatus} project=${args.project}`,
-  );
-  return 0;
 }
 
 // Run main only when invoked as the CLI entry point, not when imported
@@ -427,10 +525,18 @@ const entryPoint = process.argv[1] ?? '';
 const isDirectRun = /perception_extract_cli(\.ts|\.js)?$/.test(entryPoint);
 
 if (isDirectRun) {
+  // BR-060: set process.exitCode and let the event loop drain naturally
+  // INSTEAD of calling process.exit() synchronously. The synchronous exit
+  // path triggers libuv/V8 atexit handlers that race with the
+  // @huggingface/transformers ONNX runtime's worker pool teardown — the
+  // race aborts the process with `mutex lock failed: Invalid argument`
+  // (libc++abi SIGABRT, exit ~134). Letting the loop drain naturally lets
+  // the worker pool finish its own cleanup before V8 tears down. Same
+  // exit-code semantics; safer teardown.
   main().then((code) => {
-    process.exit(code);
+    process.exitCode = code;
   }).catch((err) => {
     console.error(err);
-    process.exit(1);
+    process.exitCode = 1;
   });
 }

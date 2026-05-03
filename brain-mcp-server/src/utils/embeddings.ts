@@ -114,6 +114,43 @@ function isEmbeddingAvailable(): boolean | null {
   return _available;
 }
 
+/**
+ * Dispose the singleton pipeline so its underlying ONNX runtime sessions
+ * release native resources (worker threads, GPU contexts) cleanly.
+ *
+ * BR-060 — short-lived CLIs (perception_extract_cli) MUST call this before
+ * `engine.shutdown()` so the transformers worker is torn down BEFORE the
+ * sqlite-vec native extension's `db.close()` path runs. Without this,
+ * the two native cleanup chains race and the sqlite-vec mutex teardown
+ * aborts with `mutex lock failed: Invalid argument` on macOS / libc++.
+ *
+ * The MCP server (long-running) does not need this — its DB connection lives
+ * for the process lifetime and the abort symptom requires both subsystems
+ * to be torn down in close temporal proximity.
+ *
+ * Idempotent: returns immediately if the pipeline was never loaded. Errors
+ * during dispose are swallowed (best-effort) so a hung dispose cannot block
+ * the caller's own shutdown sequence.
+ */
+async function disposeEmbeddingPipeline(): Promise<void> {
+  if (!_pipeline) return;
+  try {
+    const pipe = _pipeline as { dispose?: () => Promise<void> };
+    if (typeof pipe.dispose === 'function') {
+      await pipe.dispose();
+    }
+  } catch (err) {
+    console.error(
+      '[embeddings] dispose failed (non-fatal):',
+      err instanceof Error ? err.message : String(err),
+    );
+  } finally {
+    _pipeline = null;
+    _loadPromise = null;
+    // Leave _available as-is so a re-init reflects the prior load result.
+  }
+}
+
 const EMBEDDING_MODEL = MODEL_NAME;
 const EMBEDDING_DIMENSIONS = EMBEDDING_DIMS;
 
@@ -151,6 +188,7 @@ export {
   embeddingToBuffer,
   bufferToEmbedding,
   isEmbeddingAvailable,
+  disposeEmbeddingPipeline,
   processInBatches,
   EMBEDDING_MODEL,
   EMBEDDING_DIMENSIONS,
