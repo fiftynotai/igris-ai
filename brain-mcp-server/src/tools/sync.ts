@@ -577,10 +577,30 @@ async function handleBrainPush(
   const remoteUrl = args.remote_url.replace(/\/+$/, '');
   const pushedAt = new Date().toISOString().replace('T', ' ').substring(0, 19);
 
+  // BR-064 Fix B (defense-in-depth): filter SYNC_TABLES to those that
+  // physically exist on the local connection. A missing table on a
+  // partially-migrated DB (e.g. a CLI invocation that bypassed bootEngine,
+  // or a future component gated off via env flag) MUST NOT abort the push
+  // of sibling tables. Logs once per skipped table for /scan visibility.
+  //
+  // We use a per-call filtered local copy and intentionally do NOT mutate
+  // the exported SYNC_TABLES array — index.ts also iterates SYNC_TABLES for
+  // the HTTP /sync/push endpoint and must keep the full set for schema
+  // documentation/handshake purposes.
+  const localTableRows = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+    .all() as { name: string }[];
+  const localTables = new Set(localTableRows.map((r) => r.name));
+  const activeSyncTables = SYNC_TABLES.filter((cfg) => {
+    if (localTables.has(cfg.table)) return true;
+    console.error(`[brain] sync skip: table '${cfg.table}' not present locally`);
+    return false;
+  });
+
   const tables: Record<string, Record<string, unknown>[]> = {};
   let totalRows = 0;
 
-  for (const config of SYNC_TABLES) {
+  for (const config of activeSyncTables) {
     // Get last push timestamp for this table
     const stateRow = db.prepare(
       'SELECT last_push_at FROM sync_state WHERE remote_url = ? AND table_name = ?'

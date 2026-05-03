@@ -209,6 +209,43 @@ EOF
   grep -q "STUB_NPX_FAILED" "$STUB_LOG"
 }
 
+# =============================================================================
+# BR-064: explicit CLI exit-code logging in brain_push.log
+# -----------------------------------------------------------------------------
+# Pre-fix: the helper used `|| true` to swallow CLI failures. That kept the
+# never-block-hooks contract but produced silent-looking logs (a failed CLI
+# left no trace beyond whatever the CLI itself printed). Post-fix: the helper
+# captures the exit code and writes a definitive `CLI exit N (success|failure)`
+# line on every run.
+# =============================================================================
+
+@test "BR-064: brain_push.log captures 'CLI exit 0 (success)' line on success" {
+  write_config "http://example.com:3001" "test-api-key"
+  HOME="$TEST_HOME" run bash "$HELPER" "$PROJECT_SLUG"
+  [ "$status" -eq 0 ]
+  local log_file="$TEST_HOME/.igris/projects/$PROJECT_SLUG/session/brain_push.log"
+  [ -f "$log_file" ]
+  grep -q "CLI exit 0 (success)" "$log_file"
+}
+
+@test "BR-064: brain_push.log captures 'CLI exit N (failure)' line on CLI failure" {
+  # Replace npx stub with one that fails hard with a non-zero rc.
+  cat > "$TEST_BIN_DIR/npx" <<'EOF'
+#!/bin/bash
+echo "STUB_NPX_FAILED args=$*" >> "$STUB_LOG"
+exit 17
+EOF
+  chmod +x "$TEST_BIN_DIR/npx"
+  write_config "http://example.com:3001" "test-api-key"
+  HOME="$TEST_HOME" run bash "$HELPER" "$PROJECT_SLUG"
+  # Helper still exits 0 (never block hooks).
+  [ "$status" -eq 0 ]
+  local log_file="$TEST_HOME/.igris/projects/$PROJECT_SLUG/session/brain_push.log"
+  [ -f "$log_file" ]
+  # The new exit-code line is present and reflects the failure rc.
+  grep -q "CLI exit 17 (failure" "$log_file"
+}
+
 @test "helper exits 0 when brain MCP dir is missing" {
   write_config "http://example.com:3001" "test-api-key"
   rm -rf "$TEST_BRAIN_DIR"

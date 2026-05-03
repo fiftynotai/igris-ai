@@ -88,12 +88,18 @@ make_stdin() {
   grep -q "slug=$PROJECT_SLUG" "$TEST_TEMP_DIR/push_sentinel"
 }
 
-@test "extractor logs 'queued async push' on success path" {
+@test "extractor logs 'spawned brain_push_async' on success path" {
+  # BR-064: log line was rephrased from misleading "queued async push" to
+  # honest "spawned brain_push_async (detached, pid=...)" — and moved AFTER
+  # the nohup spawn so the line truly reflects what happened. The actual
+  # push outcome lives in brain_push.log via brain_push_async.sh.
   FAKE_CLI_RC=0 HOME="$TEST_HOME" run bash -c "echo '$(make_stdin)' | bash '$EXTRACTOR' '$PROJECT_SLUG' 'session_end'"
   [ "$status" -eq 0 ]
   local log_file="$TEST_HOME/.igris/projects/$PROJECT_SLUG/session/perception_extract.log"
   [ -f "$log_file" ]
-  grep -q "queued async push" "$log_file"
+  grep -q "spawned brain_push_async (detached, pid=" "$log_file"
+  # The misleading old line MUST NOT appear.
+  ! grep -q "queued async push" "$log_file"
 }
 
 # =============================================================================
@@ -111,10 +117,13 @@ make_stdin() {
   [ ! -f "$TEST_TEMP_DIR/push_sentinel" ]
 }
 
-@test "extractor does NOT log 'queued async push' on failure path" {
+@test "extractor does NOT log 'spawned brain_push_async' on failure path" {
+  # BR-064: post-fix the success-only log line is "spawned brain_push_async";
+  # the legacy "queued async push" wording must not regress on either path.
   FAKE_CLI_RC=1 HOME="$TEST_HOME" run bash -c "echo '$(make_stdin)' | bash '$EXTRACTOR' '$PROJECT_SLUG' 'session_end'"
   [ "$status" -eq 0 ]
   local log_file="$TEST_HOME/.igris/projects/$PROJECT_SLUG/session/perception_extract.log"
   [ -f "$log_file" ]
+  ! grep -q "spawned brain_push_async" "$log_file"
   ! grep -q "queued async push" "$log_file"
 }

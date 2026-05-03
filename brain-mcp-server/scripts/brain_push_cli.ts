@@ -41,6 +41,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { handleBrainPush } from '../src/tools/sync.js';
+import { bootEngine } from '../src/engine/index.js';
+import type { Engine } from '../src/engine/index.js';
 
 // ---------------------------------------------------------------------------
 // Usage block — printed on --help / -h. Kept in sync with the file header.
@@ -271,6 +273,31 @@ export async function main(argv: string[] = process.argv): Promise<number> {
     return 0;
   }
 
+  // BR-064 Fix A: boot the engine BEFORE invoking handleBrainPush so that
+  // per-component migrations run on this connection. Without this step the
+  // legacy `migrateSchema` fallback in db.ts:getDb() only creates v1-v15
+  // tables — leaving component-owned tables (goals, entity_edges, tasks,
+  // suggestions, dismissed_patterns, ...) absent. handleBrainPush iterates
+  // SYNC_TABLES and would then throw `no such table: goals` (or whichever
+  // component table landed first). bootEngine internally calls setAdapter()
+  // so subsequent getDb() calls inside handleBrainPush resolve to this
+  // booted connection automatically.
+  //
+  // dbPath: honor the --db override (already set on env above) so tests can
+  // point at an in-memory or sandbox DB. Otherwise default to the canonical
+  // ~/.igris/memory/knowledge.db path (matches db.ts:resolveDbPath).
+  const dbPath = process.env.IGRIS_DB_PATH
+    ?? path.join(os.homedir(), '.igris', 'memory', 'knowledge.db');
+  let engine: Engine;
+  try {
+    engine = bootEngine({ dbPath, components: {} });
+  } catch (err) {
+    console.error(
+      `[brain_push_cli] engine boot failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return 1;
+  }
+
   let result;
   try {
     result = await handleBrainPush({
@@ -282,6 +309,20 @@ export async function main(argv: string[] = process.argv): Promise<number> {
       `[brain_push_cli] handleBrainPush threw: ${err instanceof Error ? err.message : String(err)}`,
     );
     return 1;
+  } finally {
+    // Tear down the engine (closes DB, stops component listeners). Runs after
+    // the awaited push completes so the connection stays open through fetch
+    // chunking. Wrapped in try/catch so a shutdown failure does not mask the
+    // success/failure path above.
+    try {
+      engine.shutdown();
+    } catch (shutdownErr) {
+      console.error(
+        `[brain_push_cli] engine shutdown failed (non-fatal): ${
+          shutdownErr instanceof Error ? shutdownErr.message : String(shutdownErr)
+        }`,
+      );
+    }
   }
 
   // handleBrainPush returns MCP-shaped { content: [{ type, text }], isError? }.

@@ -175,8 +175,25 @@ cd "$BRAIN_DIR" 2>/dev/null || exit 0
   echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] brain_push_async: starting (project=$PROJECT_SLUG)"
 } >> "$LOG_FILE" 2>/dev/null || true
 
+# BR-064: capture the CLI exit code explicitly so the log records a
+# definitive success/failure marker. Previously we used `|| true` to swallow
+# any non-zero rc — which kept the contract ("never block hooks", exit 0
+# always) but produced silent-looking logs. Now we log the rc on every run
+# while still preserving the always-exit-0 contract below.
+#
+# `set +e` / `set -e` is the project-standard pattern for "I want to inspect
+# rc but stay set -e" (mirrors perception_extract_and_persist.sh:211-218).
+set +e
 "$NPX_BIN" tsx scripts/brain_push_cli.ts \
   --project "$PROJECT_SLUG" \
-  >> "$LOG_FILE" 2>&1 || true
+  >> "$LOG_FILE" 2>&1
+cli_rc=$?
+set -e
+
+if [ "$cli_rc" -eq 0 ]; then
+  echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] brain_push_async: CLI exit 0 (success)" >> "$LOG_FILE" 2>/dev/null || true
+else
+  echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] brain_push_async: CLI exit $cli_rc (failure — see preceding lines)" >> "$LOG_FILE" 2>/dev/null || true
+fi
 
 exit 0

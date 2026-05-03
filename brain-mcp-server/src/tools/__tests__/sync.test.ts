@@ -238,6 +238,99 @@ describe('Sync — FR-109 review_status / source_extractor regression', () => {
       expect(learningsRows[0]).toHaveProperty('source_extractor', 'manual');
     });
 
+    // -----------------------------------------------------------------------
+    // BR-064 Fix B: missing tables are skipped, not thrown
+    // -----------------------------------------------------------------------
+    // The plan calls for graceful degradation when a SYNC_TABLES entry's
+    // table is absent on the local DB (e.g. a partially-migrated install).
+    // The pre-fix behaviour was to abort the iteration on the first missing
+    // table — including aborting the push of sibling tables. The fix filters
+    // SYNC_TABLES against `sqlite_master` once at the top of handleBrainPush
+    // and emits a `[brain] sync skip:` line for each absent table.
+    // -----------------------------------------------------------------------
+
+    it('BR-064 Fix B: handleBrainPush skips tables that do not exist locally', async () => {
+      // Force a partial schema: drop goals after the fixture builds it.
+      db.exec('DROP TABLE IF EXISTS goals');
+
+      // Seed an approved learning so the push has SOMETHING to send — proves
+      // sibling tables still propagate after the missing-goals skip.
+      db.prepare(
+        `INSERT INTO learnings (project, category, title, content,
+         review_status, provenance, source_extractor, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        'p',
+        'pattern',
+        'fix-b sibling',
+        'body',
+        'approved',
+        'observed',
+        'manual',
+        '2026-04-29 12:00:00',
+      );
+
+      const fetchMock = vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ ok: true, results: { learnings: { inserted: 1 } } }),
+        text: async () => '',
+        status: 200,
+      })) as unknown as typeof globalThis.fetch;
+      globalThis.fetch = fetchMock;
+
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      try {
+        const result = await handleBrainPush({
+          remote_url: 'http://test-remote.local',
+          api_key: 'test-key',
+        });
+        // Push completed (no isError flag) despite missing goals table.
+        expect((result as { isError?: boolean }).isError).toBeFalsy();
+
+        // The learnings sibling went through.
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+
+        // Stderr carries a "sync skip" line for the missing goals table.
+        const stderr = errSpy.mock.calls
+          .map((c) => c.map(String).join(' '))
+          .join('\n');
+        expect(stderr).toMatch(/sync skip: table 'goals' not present locally/);
+      } finally {
+        errSpy.mockRestore();
+      }
+    });
+
+    it('BR-064 Fix B: handleBrainPush returns "No changes" when ALL sync tables are missing', async () => {
+      // Drop EVERY sync table so the filter eliminates them all. We expect
+      // handleBrainPush to return the "No changes to push" payload rather
+      // than crash, and to NOT issue a fetch call.
+      const tableNames = SYNC_TABLES.map((t) => t.table);
+      for (const name of tableNames) {
+        try {
+          db.exec(`DROP TABLE IF EXISTS ${name}`);
+        } catch {
+          // ignore
+        }
+      }
+
+      const fetchMock = vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ ok: true, results: {} }),
+        text: async () => '',
+        status: 200,
+      })) as unknown as typeof globalThis.fetch;
+      globalThis.fetch = fetchMock;
+
+      const result = await handleBrainPush({
+        remote_url: 'http://test-remote.local',
+        api_key: 'test-key',
+      });
+      const text = (result.content?.[0]?.text as string) ?? '';
+      expect(text).toMatch(/No changes to push/);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
     it('payload column list contains review_status, provenance, source_extractor', async () => {
       // Seed a single approved row to force the learnings table into the payload.
       db.prepare(

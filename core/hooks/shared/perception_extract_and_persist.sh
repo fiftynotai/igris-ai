@@ -228,9 +228,14 @@ set -e
 # `perception.run_failed` event — pushing then would propagate noise without
 # value.
 if [ "$cli_rc" -eq 0 ]; then
-  echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] perception_extract_and_persist: queued async push" >> "$LOG_FILE" 2>/dev/null || true
+  # BR-064: spawn FIRST, log AFTER. The previous order ("queued async push"
+  # before nohup) was misleading — the line appeared even when the spawned
+  # CLI immediately crashed (e.g. "no such table: goals" from BR-064). The
+  # actual push outcome is recorded in brain_push.log by brain_push_async.sh.
   nohup bash "$HOME/.igris/core/hooks/shared/brain_push_async.sh" "$PROJECT_SLUG" >/dev/null 2>&1 &
+  push_pid=$!
   disown 2>/dev/null || true
+  echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] perception_extract_and_persist: spawned brain_push_async (detached, pid=$push_pid)" >> "$LOG_FILE" 2>/dev/null || true
 fi
 
 exit 0
