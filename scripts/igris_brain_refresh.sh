@@ -243,6 +243,36 @@ else
 fi
 
 # ============================================================
+# Refresh: Scripts (actor-callable bash primitives)
+# ------------------------------------------------------------
+# Files under core/scripts/ are bash primitives that any actor (sentinel,
+# orchestrator, future hunts) may shell out to. They live in core/ rather
+# than scripts/ because they ship with the brain and are versioned with the
+# agent definitions that reference them. Executable bits are restored after
+# copy (cp may not carry them across filesystems).
+#
+# Added in BR-062 — sentinel needs verify_mirror.sh deployed at
+# ~/.igris/core/scripts/verify_mirror.sh per its agent-definition contract.
+# ============================================================
+if [ -d "$IGRIS_DIR/core/scripts" ]; then
+  COUNT=0
+  while IFS= read -r -d '' f; do
+    [ -e "$f" ] && COUNT=$((COUNT + 1))
+  done < <(find "$IGRIS_DIR/core/scripts" -type f -print0 2>/dev/null)
+  if [ "$DRY_RUN" = true ]; then
+    echo "   Would copy $COUNT script files -> $BRAIN_DIR/core/scripts/"
+  else
+    mkdir -p "$BRAIN_DIR/core/scripts"
+    cp -r "$IGRIS_DIR/core/scripts/"* "$BRAIN_DIR/core/scripts/" 2>/dev/null || true
+    chmod +x "$BRAIN_DIR/core/scripts/"*.sh 2>/dev/null || true
+    echo "   Scripts refreshed ($COUNT files)"
+  fi
+  TOTAL_COPIED=$((TOTAL_COPIED + COUNT))
+else
+  echo "   No scripts directory found in source repo"
+fi
+
+# ============================================================
 # Refresh: Hooks (shared scripts + per-CLI bridges)
 # ------------------------------------------------------------
 # The hook tree is the source of truth for ~/.igris/core/hooks/. Mirror the
