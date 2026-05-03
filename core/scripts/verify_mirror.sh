@@ -22,7 +22,7 @@ set -euo pipefail
 #
 # Exit codes:
 #   0 - All pairs MATCH (byte-equal, distinct inodes, both readable)
-#   1 - Any pair MISMATCH | MISSING | SAME_INODE | ERROR
+#   1 - Any pair MISMATCH | MISSING | SAME_INODE | TYPE_ERROR | ERROR
 #   2 - Usage error (no args, odd arg count, missing dependency)
 #
 # Pair verdicts:
@@ -35,11 +35,14 @@ set -euo pipefail
 #   SAME_INODE  Both paths resolved to the same inode. A "byte-equality"
 #               claim against a path resolving to itself is a tautology, not
 #               a verification — flagged as a critical FAIL per BR-062.
+#   TYPE_ERROR  At least one path resolved to a non-regular file
+#               (directory, FIFO, socket, device). Comparing such inputs
+#               with diff is undefined or recursive; rejected upfront (TD-085).
 #   ERROR       diff itself returned RC>=2 (e.g. binary file with no text
 #               representation, system-level error).
 #
 # Dependencies:
-#   bash 4+, coreutils (realpath, diff, head, wc). All standard on macOS,
+#   bash 4+, coreutils (realpath, diff, head, wc, stat). All standard on macOS,
 #   Linux, and WSL — the platforms the Igris coding guidelines target.
 #
 # Self-evidencing guarantee (BR-062 contract):
@@ -57,7 +60,7 @@ set -euo pipefail
 # ============================================================
 check_deps() {
   local missing=()
-  for cmd in realpath diff head wc; do
+  for cmd in realpath diff head wc stat; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       missing+=("$cmd")
     fi
@@ -66,7 +69,7 @@ check_deps() {
   if [ ${#missing[@]} -gt 0 ]; then
     echo "Error: required command(s) not found: ${missing[*]}" >&2
     echo "" >&2
-    echo "Install GNU coreutils (provides realpath, diff, head, wc):" >&2
+    echo "Install GNU coreutils (provides realpath, diff, head, wc, stat):" >&2
     echo "  macOS:  brew install coreutils" >&2
     echo "  Ubuntu: sudo apt install coreutils" >&2
     echo "  WSL:    sudo apt install coreutils" >&2
@@ -88,17 +91,33 @@ Arg count must be even and >= 2.
 
 Exit codes:
   0 - All pairs MATCH
-  1 - Any pair MISMATCH | MISSING | SAME_INODE | ERROR
+  1 - Any pair MISMATCH | MISSING | SAME_INODE | TYPE_ERROR | ERROR
   2 - Usage error
 USAGE
+}
+
+# ============================================================
+# File-type description (cross-platform stat)
+# ----------------------------------------------------------------
+# macOS BSD stat uses `-f '%HT'` (e.g. "Regular File", "Directory").
+# GNU stat uses `-c '%F'` (e.g. "regular file", "directory"). Try BSD
+# first (cheaper failure path on macOS), fall back to GNU, then "unknown".
+# Used only for the TYPE_ERROR diagnostic message — NOT for verdict logic.
+# Casing differs across platforms (cosmetic — verdict is what assertions match).
+# ============================================================
+describe_file_type() {
+  local p="$1"
+  stat -f '%HT' "$p" 2>/dev/null \
+    || stat -c '%F' "$p" 2>/dev/null \
+    || echo "unknown"
 }
 
 # ============================================================
 # Per-pair check
 # ----------------------------------------------------------------
 # Prints a self-evidencing block to stdout. Sets the global counters
-# c_match / c_mismatch / c_missing / c_same_inode / c_error. Returns
-# 0 on MATCH, 1 otherwise so the caller can aggregate an overall RC.
+# c_match / c_mismatch / c_missing / c_same_inode / c_type_error / c_error.
+# Returns 0 on MATCH, 1 otherwise so the caller can aggregate an overall RC.
 # ============================================================
 check_pair() {
   local idx="$1"
@@ -141,16 +160,32 @@ check_pair() {
     return 1
   fi
 
-  # Run diff -q. Capture stdout+stderr together; capture RC separately.
-  # `|| true` so we can inspect $? without set -e firing on RC=1.
+  # TYPE_ERROR: both paths resolved, distinct inodes, but at least one is
+  # not a regular file (directory, FIFO, socket, device). diff against a
+  # directory either silently recurses (GNU) or produces non-comparable
+  # output (BSD); against a FIFO it blocks. Reject upfront with a verdict
+  # that names the actual types so the failure is self-explanatory (TD-085).
+  if [ ! -f "$a" ] || [ ! -f "$b" ]; then
+    local type_a type_b
+    type_a=$(describe_file_type "$a")
+    type_b=$(describe_file_type "$b")
+    echo "  command:    (skipped — expected regular files)"
+    echo "  exit code:  n/a"
+    echo "  stdout:     A type=$type_a, B type=$type_b"
+    echo "  verdict:    TYPE_ERROR"
+    echo ""
+    c_type_error=$((c_type_error + 1))
+    return 1
+  fi
+
+  # Run diff -q. Capture stdout+stderr together AND the exit code in a single
+  # invocation — `set +e` lets `$?` survive without aborting under `set -e`.
+  # Single invocation eliminates a class of TOCTOU bugs where the file changed
+  # between the two diffs (TD-084).
   echo "  command:    diff -q \"$a\" \"$b\""
   local diff_out diff_rc
-  diff_out=$(diff -q "$a" "$b" 2>&1 || true)
-  # Re-run to capture the exit code precisely; the previous invocation lost it
-  # via `|| true`. We accept the cost of running diff twice — it stops at the
-  # first byte difference so this is fast.
   set +e
-  diff -q "$a" "$b" >/dev/null 2>&1
+  diff_out=$(diff -q "$a" "$b" 2>&1)
   diff_rc=$?
   set -e
 
@@ -161,14 +196,28 @@ check_pair() {
     echo "  stdout:     $diff_out"
   fi
 
-  # Classify based on RC and output.
-  if [ "$diff_rc" -eq 0 ] && [ -z "$diff_out" ]; then
+  # Classify based on RC first, then output. RC ordering matters: diff's
+  # convention is RC=0 (identical), RC=1 (different), RC>=2 (error). We
+  # check ERROR before MISMATCH because diff emits a non-empty stderr
+  # message on permission-denied / binary-no-text errors, which would
+  # otherwise be misclassified as MISMATCH if we only looked at output.
+  if [ "$diff_rc" -ge 2 ]; then
+    # RC >= 2 — diff itself failed (binary file, permission denied,
+    # system-level error). Stderr is captured in diff_out and was already
+    # printed above as `stdout:` evidence.
+    echo "  verdict:    ERROR"
+    echo ""
+    c_error=$((c_error + 1))
+    return 1
+  elif [ "$diff_rc" -eq 0 ] && [ -z "$diff_out" ]; then
     echo "  verdict:    MATCH"
     echo ""
     c_match=$((c_match + 1))
     return 0
-  elif [ "$diff_rc" -eq 1 ] || [ -n "$diff_out" ]; then
-    # MISMATCH — capture a sample of the unified diff for context.
+  else
+    # RC=1 (files differ) OR RC=0 with non-empty output (anomalous but
+    # treated as MISMATCH for safety). Capture a sample of the unified
+    # diff for context.
     local sample
     sample=$(diff "$a" "$b" 2>&1 | head -40 || true)
     echo "  verdict:    MISMATCH"
@@ -184,12 +233,6 @@ check_pair() {
     fi
     echo ""
     c_mismatch=$((c_mismatch + 1))
-    return 1
-  else
-    # RC >= 2 — diff itself failed (binary file, permission, etc.)
-    echo "  verdict:    ERROR"
-    echo ""
-    c_error=$((c_error + 1))
     return 1
   fi
 }
@@ -220,6 +263,7 @@ main() {
   c_mismatch=0
   c_missing=0
   c_same_inode=0
+  c_type_error=0
   c_error=0
 
   local pair_idx=1
@@ -236,8 +280,8 @@ main() {
     pair_idx=$((pair_idx + 1))
   done
 
-  local total=$((c_match + c_mismatch + c_missing + c_same_inode + c_error))
-  echo "SUMMARY: $total pairs — $c_match MATCH, $c_mismatch MISMATCH, $c_missing MISSING, $c_same_inode SAME_INODE, $c_error ERROR"
+  local total=$((c_match + c_mismatch + c_missing + c_same_inode + c_type_error + c_error))
+  echo "SUMMARY: $total pairs — $c_match MATCH, $c_mismatch MISMATCH, $c_missing MISSING, $c_same_inode SAME_INODE, $c_type_error TYPE_ERROR, $c_error ERROR"
 
   exit "$overall_rc"
 }

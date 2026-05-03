@@ -65,7 +65,7 @@ at `core/scripts/verify_mirror.sh` (deployed: `~/.igris/core/scripts/verify_mirr
 - Capture the primitive's stdout AND exit code.
 - Quote the entire primitive output verbatim in your report under a `### Mirror check` heading.
 - Set the overall verdict to PASS only if the primitive's exit code is 0.
-- If the primitive reports any MISMATCH, MISSING, SAME_INODE, or ERROR pair, the overall verdict is FAIL and the report MUST list each failing pair by name.
+- If the primitive reports any MISMATCH, MISSING, SAME_INODE, TYPE_ERROR, or ERROR pair, the overall verdict is FAIL and the report MUST list each failing pair by name. The primitive emits one of six verdicts per pair: MATCH, MISMATCH, MISSING, SAME_INODE, TYPE_ERROR, ERROR.
 
 **Why this is mandated:** Free-form `diff` invocation in past validations
 produced false-PASS verdicts (BR-062). The primitive enforces realpath

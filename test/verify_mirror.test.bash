@@ -44,7 +44,7 @@ teardown() {
   # Both pairs reported MATCH.
   [[ "$output" == *"verdict:    MATCH"* ]]
   # Summary shows 2 MATCH, 0 of everything else.
-  [[ "$output" == *"SUMMARY: 2 pairs — 2 MATCH, 0 MISMATCH, 0 MISSING, 0 SAME_INODE, 0 ERROR"* ]]
+  [[ "$output" == *"SUMMARY: 2 pairs — 2 MATCH, 0 MISMATCH, 0 MISSING, 0 SAME_INODE, 0 TYPE_ERROR, 0 ERROR"* ]]
 }
 
 @test "test_single_mismatch_fails_overall: one MATCH + one MISMATCH yields exit 1" {
@@ -57,7 +57,7 @@ teardown() {
   [[ "$output" == *"verdict:    MATCH"* ]]
   [[ "$output" == *"verdict:    MISMATCH"* ]]
   # Summary shows the split.
-  [[ "$output" == *"SUMMARY: 2 pairs — 1 MATCH, 1 MISMATCH, 0 MISSING, 0 SAME_INODE, 0 ERROR"* ]]
+  [[ "$output" == *"SUMMARY: 2 pairs — 1 MATCH, 1 MISMATCH, 0 MISSING, 0 SAME_INODE, 0 TYPE_ERROR, 0 ERROR"* ]]
   # Mismatched pair shows a diff sample.
   [[ "$output" == *"sample:"* ]]
 }
@@ -69,7 +69,7 @@ teardown() {
 
   [ "$status" -eq 1 ]
   [[ "$output" == *"verdict:    MISSING"* ]]
-  [[ "$output" == *"SUMMARY: 1 pairs — 0 MATCH, 0 MISMATCH, 1 MISSING, 0 SAME_INODE, 0 ERROR"* ]]
+  [[ "$output" == *"SUMMARY: 1 pairs — 0 MATCH, 0 MISMATCH, 1 MISSING, 0 SAME_INODE, 0 TYPE_ERROR, 0 ERROR"* ]]
 }
 
 @test "test_same_inode_caught: comparing a path to itself is a hard FAIL" {
@@ -81,7 +81,7 @@ teardown() {
 
   [ "$status" -eq 1 ]
   [[ "$output" == *"verdict:    SAME_INODE"* ]]
-  [[ "$output" == *"SUMMARY: 1 pairs — 0 MATCH, 0 MISMATCH, 0 MISSING, 1 SAME_INODE, 0 ERROR"* ]]
+  [[ "$output" == *"SUMMARY: 1 pairs — 0 MATCH, 0 MISMATCH, 0 MISSING, 1 SAME_INODE, 0 TYPE_ERROR, 0 ERROR"* ]]
 }
 
 @test "test_odd_arg_count_usage_error: 3 args yields exit 2" {
@@ -116,4 +116,64 @@ teardown() {
   last_line=$(echo "$output" | grep -E "^SUMMARY:" | tail -1)
   [ -n "$last_line" ]
   [[ "$last_line" == "SUMMARY: 1 pairs"* ]]
+}
+
+@test "test_error_verdict_for_unreadable_file: permission-denied diff yields ERROR + exit 1" {
+  # TD-083 — exercise the ERROR verdict path. A chmod-000 regular file is
+  # still classified as a regular file by `-f`, so TD-085's TYPE_ERROR
+  # precondition does NOT short-circuit; diff runs and returns RC=2 on
+  # permission denied, which classifies as ERROR.
+  local p_a="$SCRATCH/unreadable.txt"
+  local p_b="$SCRATCH/normal.txt"
+  echo "content" > "$p_a"
+  echo "content" > "$p_b"
+  chmod 000 "$p_a"
+
+  run "$VERIFY_MIRROR" "$p_a" "$p_b"
+  # Restore permissions BEFORE asserting so teardown's rm -rf succeeds even
+  # if assertions fail and the test exits non-zero.
+  chmod 644 "$p_a"
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"verdict:    ERROR"* ]]
+  [[ "$output" == *"SUMMARY: 1 pairs — 0 MATCH, 0 MISMATCH, 0 MISSING, 0 SAME_INODE, 0 TYPE_ERROR, 1 ERROR"* ]]
+}
+
+@test "test_zero_args_usage_error: no args yields exit 2 + usage message" {
+  # TD-083 — confirm zero-arg invocation prints usage and exits 2.
+  run "$VERIFY_MIRROR"
+
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"no arguments provided"* ]]
+  [[ "$output" == *"Usage: verify_mirror.sh"* ]]
+}
+
+@test "test_directory_pair_classified_type_error: dir vs dir yields TYPE_ERROR + exit 1" {
+  # TD-085 — comparing two directories must be rejected upfront with
+  # TYPE_ERROR rather than allowed to fall into diff's recursive (GNU) or
+  # undefined (BSD) directory-compare behavior.
+  local d_a="$SCRATCH/dir_a"
+  local d_b="$SCRATCH/dir_b"
+  mkdir -p "$d_a" "$d_b"
+
+  run "$VERIFY_MIRROR" "$d_a" "$d_b"
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"verdict:    TYPE_ERROR"* ]]
+  [[ "$output" == *"SUMMARY: 1 pairs — 0 MATCH, 0 MISMATCH, 0 MISSING, 0 SAME_INODE, 1 TYPE_ERROR, 0 ERROR"* ]]
+}
+
+@test "test_fifo_pair_classified_type_error: fifo vs fifo yields TYPE_ERROR + exit 1" {
+  # TD-085 — FIFOs would block diff if it attempted to read them. The `-f`
+  # precondition fires first and rejects the pair without ever invoking diff.
+  local f_a="$SCRATCH/fifo_a"
+  local f_b="$SCRATCH/fifo_b"
+  mkfifo "$f_a"
+  mkfifo "$f_b"
+
+  run "$VERIFY_MIRROR" "$f_a" "$f_b"
+
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"verdict:    TYPE_ERROR"* ]]
+  [[ "$output" == *"SUMMARY: 1 pairs — 0 MATCH, 0 MISMATCH, 0 MISSING, 0 SAME_INODE, 1 TYPE_ERROR, 0 ERROR"* ]]
 }
