@@ -204,10 +204,33 @@ echo "$now_epoch" > "$WATERMARK_FILE" 2>/dev/null || true
   echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] perception_extract_and_persist: starting (project=$PROJECT_SLUG transcript=$TRANSCRIPT_PATH source=$TRIGGER_LABEL)"
 } >> "$LOG_FILE" 2>/dev/null || true
 
+# Capture the CLI's exit code so we can branch on success below. We disable
+# `errexit` for the duration of the call (set -e would otherwise abort the
+# script before we ever read $? on a non-zero exit). `set +e` / `set -e` is
+# the project-standard pattern for "I want to inspect rc but stay set -e".
+set +e
 "$NPX_BIN" tsx scripts/perception_extract_cli.ts \
   --project "$PROJECT_SLUG" \
   --transcript-path "$TRANSCRIPT_PATH" \
   --source "$TRIGGER_LABEL" \
-  >> "$LOG_FILE" 2>&1 || true
+  >> "$LOG_FILE" 2>&1
+cli_rc=$?
+set -e
+
+# TD-080: on success, fire async push so other machines see this run before
+# /rest. The push is detached via nohup so it does not extend the hook tail
+# latency. Exit code is intentionally ignored — `brain_push_async.sh` is
+# defensive (always exits 0) and any push failure already enqueues the rows
+# in `sync_queue` for the next /awaken §3.6.1 drain to retry.
+#
+# `cli_rc` is captured (we dropped the `|| true` above) so we only push on a
+# clean run. A failed/timed-out extraction has already emitted a structured
+# `perception.run_failed` event — pushing then would propagate noise without
+# value.
+if [ "$cli_rc" -eq 0 ]; then
+  echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] perception_extract_and_persist: queued async push" >> "$LOG_FILE" 2>/dev/null || true
+  nohup bash "$HOME/.igris/core/hooks/shared/brain_push_async.sh" "$PROJECT_SLUG" >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+fi
 
 exit 0

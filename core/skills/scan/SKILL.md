@@ -201,7 +201,7 @@ End the section with the action hint:
 If `igris-brain` MCP is unavailable, render this single line instead:
 `Subconscious suggestions unavailable (brain MCP offline).`
 
-### 6.6. Perception Engine (TD-074)
+### 6.6. Perception Engine (TD-074, TD-080)
 
 Surface the latest detached perception extraction run so operators can see
 when the LLM extractor last fired, succeeded, failed, or got skipped by the
@@ -209,21 +209,39 @@ when the LLM extractor last fired, succeeded, failed, or got skipped by the
 
 #### Query
 
-Call `igris_event_log` with:
-- `component` = `'perception'`
-- `project_slug` = current project slug
-- `limit` = `1`
+**TD-080 fix (Gap A):** read directly from the local DB via `sqlite3`. The
+local DB is the merged superset (post any prior pull) and includes
+local-only perception runs that have not yet propagated to the remote.
+`igris_event_log` MCP routes to the remote brain — using it here would miss
+this machine's unpushed runs even when the call "succeeds".
 
-The handler returns rows ordered `created_at DESC`, so the first row is the
-latest event of any of the four lifecycle types.
-
-If the MCP tool is unavailable, fall back to a `sqlite3` one-liner:
+Primary query (substitute `$PROJECT_SLUG`):
 ```bash
+# Defense-in-depth (TD-080 Q-3): refuse to interpolate if slug doesn't match
+# the registered slug shape. Belt-and-suspenders against any future code path
+# that broadens slug sourcing (e.g., env var override). Same posture as the
+# other defensive guards in this section — skip silently if the slug came
+# from an unexpected source.
+if [[ ! "$PROJECT_SLUG" =~ ^[a-z0-9_-]+$ ]]; then
+  return 0  # do not surface this section this run
+fi
+
 sqlite3 "$HOME/.igris/memory/knowledge.db" \
   "SELECT event_name, payload, created_at FROM event_log
    WHERE component = 'perception' AND project_slug = '$PROJECT_SLUG'
    ORDER BY created_at DESC LIMIT 1;"
 ```
+
+Fallback (only when `sqlite3` is absent on this machine — older / minimal
+installs): call `igris_event_log` with:
+- `component` = `'perception'`
+- `project_slug` = current project slug
+- `limit` = `1`
+
+The MCP handler returns rows ordered `created_at DESC`, matching the sqlite3
+query shape. Note the fallback inherits the original blind spot: it shows
+remote-only state. That's an acceptable degradation when the local read is
+unavailable.
 
 Also stat the inbox for staleness:
 ```bash
@@ -274,5 +292,5 @@ When no event_log rows exist for the project (older brain or never run):
 No perception runs yet for this project.
 ```
 
-If the `igris-brain` MCP is unavailable AND the sqlite3 fallback also fails,
+If `sqlite3` is absent AND the `igris_event_log` MCP fallback also fails,
 omit the section entirely. Do NOT block /scan.

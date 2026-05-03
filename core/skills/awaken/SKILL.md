@@ -291,20 +291,62 @@ by `session_end.sh` / `pre_compact.sh` via `perception_extract_and_persist.sh`).
 This section is purely a SELECT — it surfaces whatever the background process
 has committed since the last awaken. /awaken does NOT drain any inbox.
 
-#### Pre-step (TD-074): perception failure WARNING
+#### Pre-step (TD-074, TD-080): perception failure WARNING
 
 Before rendering pending candidates, query the latest perception lifecycle
-event so a recent failure surfaces prominently. Call `igris_event_log` with:
-- `component` = `'perception'`
-- `project_slug` = current project slug
-- `limit` = `1`
+event so a recent failure surfaces prominently. **TD-080 fix (Gap A):** read
+directly from the local DB via `sqlite3` (NOT via `igris_event_log` MCP) so
+this machine's local-only events surface here. The MCP tool routes to the
+remote brain, which misses any perception runs that happened on this machine
+since the last `/rest`. Post-§3.6 pull, the local DB is the merged superset.
+
+Run (substitute `$PROJECT_SLUG` for the current project slug):
+```bash
+# Defense-in-depth (TD-080 Q-3): refuse to interpolate if slug doesn't match
+# the registered slug shape. Belt-and-suspenders against any future code path
+# that broadens slug sourcing (e.g., env var override). Same posture as the
+# other defensive guards in this section — skip silently if the slug came
+# from an unexpected source.
+if [[ ! "$PROJECT_SLUG" =~ ^[a-z0-9_-]+$ ]]; then
+  return 0  # do not surface this section this run
+fi
+
+sqlite3 "$HOME/.igris/memory/knowledge.db" \
+  "SELECT created_at, event_name, json_extract(payload, '\$.reason') AS reason
+   FROM event_log
+   WHERE component = 'perception' AND project_slug = '$PROJECT_SLUG'
+   ORDER BY created_at DESC LIMIT 1;"
+```
 
 If the latest row's `event_name` is `'perception.run_failed'` AND no later
-`'perception.run_succeeded'` row exists for the same project (defensive: a
-follow-up call with `event_name='perception.run_succeeded'` and `since=<the
-failed row's created_at>` returning zero rows confirms the failure has not
-self-recovered), prepend a single WARNING block before the pending list.
-Otherwise, render no warning and proceed to the pending list as normal.
+`'perception.run_succeeded'` row exists for the same project (defensive
+follow-up to confirm the failure has not self-recovered), prepend a single
+WARNING block before the pending list. Otherwise, render no warning and
+proceed to the pending list as normal.
+
+The defensive "no later success" check (substitute the failed row's
+`created_at`):
+```bash
+# Defense-in-depth (TD-080 Q-3): refuse to interpolate if slug doesn't match
+# the registered slug shape.
+if [[ ! "$PROJECT_SLUG" =~ ^[a-z0-9_-]+$ ]]; then
+  return 0
+fi
+
+sqlite3 "$HOME/.igris/memory/knowledge.db" \
+  "SELECT COUNT(*) FROM event_log
+   WHERE component = 'perception' AND project_slug = '$PROJECT_SLUG'
+     AND event_name = 'perception.run_succeeded'
+     AND created_at > '<failed_row_created_at>';"
+```
+
+A return of `0` confirms the failure is the latest terminal state.
+
+**Defensive guards (TD-080):**
+- Wrap each `sqlite3` invocation with a `command -v sqlite3 >/dev/null 2>&1`
+  pre-check. If sqlite3 is absent on this machine, skip the WARNING silently.
+- If the DB file is missing or the query errors, skip the WARNING silently.
+  The `2>/dev/null || true` shell pattern absorbs both cases.
 
 ```
 ## Perception WARNING
@@ -324,15 +366,38 @@ Suppression rules (do NOT render the WARNING when):
 Token budget for the WARNING block: ~80 tokens. The pending list below
 remains unchanged in budget (~150 tokens). Total §4.9 upper bound: ~230 tokens.
 
-If `igris_event_log` is unavailable (older brain), skip the WARNING silently.
+If `sqlite3` is unavailable or the DB file is missing, skip the WARNING silently.
 
 #### Pending list
 
-If `igris-brain` MCP is available, call `igris_perception_review_pending` with:
-- `project` = current project slug
-- `limit` = `5`
+**TD-080 fix (Gap A):** read directly from the local DB via `sqlite3` (NOT
+via `igris_perception_review_pending` MCP). Same rationale as the WARNING
+above — local-only pending rows from this machine's recent extractions are
+invisible to the remote-routed MCP tool. Post-§3.6 pull, the local DB is the
+merged superset.
 
-Token budget: bounded to <=5 rows by `limit`. Render at most ~150 tokens.
+Run (substitute `$PROJECT_SLUG`):
+```bash
+# Defense-in-depth (TD-080 Q-3): refuse to interpolate if slug doesn't match
+# the registered slug shape.
+if [[ ! "$PROJECT_SLUG" =~ ^[a-z0-9_-]+$ ]]; then
+  return 0
+fi
+
+sqlite3 "$HOME/.igris/memory/knowledge.db" \
+  "SELECT title, source_extractor, confidence
+   FROM learnings
+   WHERE project = '$PROJECT_SLUG' AND review_status = 'pending_review'
+   ORDER BY created_at DESC LIMIT 5;"
+
+sqlite3 "$HOME/.igris/memory/knowledge.db" \
+  "SELECT COUNT(*) FROM learnings
+   WHERE project = '$PROJECT_SLUG' AND review_status = 'pending_review';"
+```
+
+The first query returns the top 5 pending rows for the rendered list. The
+second returns the total count (matches the `total` field the MCP tool used
+to provide). Token budget: bounded to <=5 rows. Render at most ~150 tokens.
 
 If results are returned, render:
 
@@ -351,8 +416,9 @@ calls). Legacy rows from pre-TD-066 extractions may render as
 verbatim. Show `approve` and `reject` MCP tools as next-step hints once per
 session, not per row.
 
-If zero results, render nothing — no "No pending" line. If the tool is
-unavailable (older brain), skip silently.
+If zero results, render nothing — no "No pending" line. If `sqlite3` is
+unavailable or the DB file is missing, skip silently (same defensive guards
+as the WARNING block above).
 
 If `auto_approve_enabled=true` is set in `~/.igris/config.json`'s `perception`
 section, the background extractor inserts new rows as `approved` directly
