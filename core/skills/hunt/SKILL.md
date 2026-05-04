@@ -133,6 +133,12 @@ Proceed to PLANNING phase.
    - brief_id: {current brief ID}
    - phase: "PLANNING"
    Skip silently if MCP unavailable. Never block the hunt workflow.
+3.5. **Pre-architect brain pull** (fire-and-forget, never blocks):
+   - Call `igris_memory_recall` with `project={current_project}`, `context="{brief title} {brief problem statement}"`, `limit=5`
+   - Call `igris_brief_similar` with `query="{brief title} {brief problem statement}"`, `project={current_project}`, `threshold=0.85`, `limit=5`
+   - Aggregate both results into a single `Prior context:` markdown block (one heading per source: `## Prior learnings`, `## Similar briefs`)
+   - Pass that block into the architect prompt as an additional input section (append to the prompt template in step 4 under a `Prior context:` header)
+   - If either call fails or returns empty, log warning and continue without the block — do NOT block the hunt
 4. **Delegate to architect agent** using Agent tool:
 
 ```
@@ -184,6 +190,12 @@ Agent tool parameters:
    - brief_id: {current brief ID}
    - phase: "BUILDING"
    Skip silently if MCP unavailable.
+3.5. **Pre-forger mistake recall** (fire-and-forget, never blocks):
+   - Call `igris_memory_recall` with `project={current_project}`, `context="{brief title} mistake regression bug"`, `limit=5`
+   - Note: `igris_memory_recall` does NOT currently accept a `category=mistake` filter — the FTS5 keyword bias (`"mistake regression bug"`) approximates it. If a `category` arg ships in a future brief, switch to that.
+   - Aggregate results into a `Past mistakes to avoid:` markdown block (one bullet per recalled lesson with title + 1-line summary)
+   - Pass into forger prompt under a `Past mistakes to avoid:` header (append to the template in step 4)
+   - If the call fails or returns empty, log warning and continue without the block
 4. **Delegate to forger agent** using Agent tool:
 
 ```

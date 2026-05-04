@@ -353,6 +353,56 @@ describe('Memory Tools (FR-092)', () => {
   });
 
   // -------------------------------------------------------------------------
+  // TD-092: access_count telemetry contract — recall must increment
+  // access_count and stamp last_accessed_at for every returned row.
+  // The TD-092 production bug was environmental (two-DB drift), but these
+  // tests freeze the SQL contract so a future refactor cannot silently
+  // break the increment path.
+  // -------------------------------------------------------------------------
+
+  describe('handleMemoryRecall — access_count telemetry', () => {
+    it('TD-092: increments access_count and updates last_accessed_at for every returned row', async () => {
+      const id = insertLearning(db, { title: 'TD-092 fixture row', access_count: 7 });
+      const before = db
+        .prepare('SELECT access_count, last_accessed_at FROM learnings WHERE id = ?')
+        .get(id) as { access_count: number; last_accessed_at: string | null };
+      expect(before.access_count).toBe(7);
+      expect(before.last_accessed_at).toBeNull();
+
+      await handleMemoryRecall({ project: 'test-project', context: 'TD-092 fixture row' });
+
+      const after = db
+        .prepare('SELECT access_count, last_accessed_at FROM learnings WHERE id = ?')
+        .get(id) as { access_count: number; last_accessed_at: string | null };
+      expect(after.access_count).toBe(8);
+      expect(after.last_accessed_at).not.toBeNull();
+    });
+
+    it('TD-092: increments access_count exactly once per recall call (no double-counting)', async () => {
+      const id = insertLearning(db, { title: 'TD-092 unique-once telemetry', access_count: 0 });
+
+      await handleMemoryRecall({ project: 'test-project', context: 'TD-092 unique-once telemetry' });
+
+      const row = db
+        .prepare('SELECT access_count FROM learnings WHERE id = ?')
+        .get(id) as { access_count: number };
+      expect(row.access_count).toBe(1);
+    });
+
+    it('TD-092: skipped rows (filtered out by review_status) do NOT increment', async () => {
+      const id = insertLearning(db, { title: 'TD-092 pending suppressed', access_count: 0 });
+      db.prepare("UPDATE learnings SET review_status = 'pending_review' WHERE id = ?").run(id);
+
+      await handleMemoryRecall({ project: 'test-project', context: 'TD-092 pending suppressed' });
+
+      const row = db
+        .prepare('SELECT access_count FROM learnings WHERE id = ?')
+        .get(id) as { access_count: number };
+      expect(row.access_count).toBe(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // 3. Title-collision promotion with content similarity
   // -------------------------------------------------------------------------
 

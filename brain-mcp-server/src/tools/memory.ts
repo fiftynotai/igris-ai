@@ -561,6 +561,13 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
   }
 
   // --- 5. Update access counts ---
+  // TD-092: this UPDATE is correct and load-bearing — it is what powers the
+  // composite-ranking access_count boost (see line 414's `MIN(l.access_count, 100) / 100.0`)
+  // and the recall telemetry. The bug observed in TD-092 ("access_count not
+  // incrementing") was environmental: `igris-brain` MCP transport was registered
+  // as `http` to the VPS, so the increment landed on the VPS DB while the
+  // observer queried the local file. The SQL contract is enforced by the
+  // regression tests in `__tests__/memory.test.ts` ("handleMemoryRecall — access_count telemetry").
   const updateStmt = db.prepare(`
     UPDATE learnings
     SET access_count = access_count + 1,

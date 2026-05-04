@@ -3,19 +3,19 @@ set -e
 
 # Description: Validates that every enum value declared in
 #   brain-mcp-server/src/engine/components/memory/index.ts
-#   appears verbatim (in backticks) in the memory_agency section
-#   of igris_os.md. Catches drift between the schema and the
-#   actor-facing docs (DRIFT-1, TD-070).
+#   appears verbatim (in backticks) in the brain_stewardship section
+#   (formerly memory_agency, broadened in TD-092). Catches drift between
+#   the schema and the actor-facing docs (DRIFT-1, TD-070, TD-092).
 #
 # Usage: scripts/validate_memory_agency_enums.sh
 # Exit codes:
-#   0 - All enums present in memory_agency section
+#   0 - All enums present in brain_stewardship section
 #   1 - One or more enum values missing (drift detected)
 #   2 - Source files missing or unparseable
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCHEMA_FILE="$REPO_ROOT/brain-mcp-server/src/engine/components/memory/index.ts"
-PROMPT_FILE="$REPO_ROOT/core/prompts/igris_os.md"
+PROMPT_FILE="$REPO_ROOT/core/prompts/brain_stewardship.md"
 
 if [ ! -f "$SCHEMA_FILE" ]; then
   echo "Error: schema file not found: $SCHEMA_FILE"
@@ -33,12 +33,13 @@ schema_path, prompt_path = sys.argv[1], sys.argv[2]
 schema = pathlib.Path(schema_path).read_text()
 prompt = pathlib.Path(prompt_path).read_text()
 
-# Extract memory_agency section by markers (scope-limit the search).
+# Extract brain_stewardship section by markers (scope-limit the search).
+# TD-092 renamed memory_agency -> brain_stewardship and moved it to its own file.
 m = re.search(
-    r"<!-- SECTION: memory_agency -->(.*?)<!-- /SECTION: memory_agency -->",
+    r"<!-- SECTION: brain_stewardship -->(.*?)<!-- /SECTION: brain_stewardship -->",
     prompt, re.DOTALL)
 if not m:
-    print("Error: memory_agency section markers not found in igris_os.md")
+    print("Error: brain_stewardship section markers not found in brain_stewardship.md")
     sys.exit(2)
 section = m.group(1)
 
@@ -63,15 +64,15 @@ errors = []
 for field, values in expected.items():
     for v in values:
         if f"`{v}`" not in section:
-            errors.append(f"  - {field}.{v!r} not found as `{v}` in memory_agency")
+            errors.append(f"  - {field}.{v!r} not found as `{v}` in brain_stewardship")
 
 if errors:
-    print("Schema/prompt drift detected (DRIFT-1, TD-070):")
+    print("Schema/prompt drift detected (DRIFT-1, TD-070, TD-092):")
     print("\n".join(errors))
-    print("\nFix: update memory_agency section in core/prompts/igris_os.md")
-    print("     (remember to mirror to ~/.igris/core/prompts/igris_os.md)")
+    print("\nFix: update brain_stewardship section in core/prompts/brain_stewardship.md")
+    print("     (remember to mirror to ~/.igris/core/prompts/brain_stewardship.md)")
     sys.exit(1)
 
 total = sum(len(v) for v in expected.values())
-print(f"OK: all {total} enum values from memory schema present in memory_agency section")
+print(f"OK: all {total} enum values from memory schema present in brain_stewardship section")
 PY
