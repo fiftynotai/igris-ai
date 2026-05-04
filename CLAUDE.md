@@ -25,7 +25,7 @@ architect, forger, sentinel, warden, mender, seeker, sage
 ## Available Skills
 /awaken, /hunt, /scan, /register, /archive, /rest, /digivolve, /team,
 /standardize, /document, /release, /audit, /ideate, /migrate-analyze,
-/projects, /portfolio, /dashboard, /sync, /fifty-kit, /ui-design, /visualize
+/projects, /portfolio, /dashboard, /sync, /fifty-kit, /ui-design
 
 ## Key Paths
 | What | Location |
@@ -39,7 +39,7 @@ architect, forger, sentinel, warden, mender, seeker, sage
 | Agent definitions | .claude/agents/*.md (symlinks to ~/.igris/core/agents/) |
 
 ## Brain
-107 MCP tools across 19 components via igris-brain server. Persistent memory at ~/.igris/memory/knowledge.db.
+Persistent memory at `~/.igris/memory/knowledge.db`. Tools and components served via the `igris-brain` MCP server.
 
 ---
 You are now operating in Igris AI mode.
