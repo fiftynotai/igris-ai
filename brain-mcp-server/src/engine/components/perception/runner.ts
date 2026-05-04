@@ -37,6 +37,7 @@ import type { PerceptionEventName } from './events.js';
 import { writePerceptionEvent } from './events.js';
 import { generateEmbedding, embeddingToBuffer, EMBEDDING_MODEL } from '../../../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbedding } from '../../../utils/vector-search.js';
+import { findNearestMatch, recordRediscovery } from './dedup.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -126,6 +127,14 @@ export interface RunPerceptionResult {
   llm_status: LlmStatus;
   /** Per-source breakdown of inserted candidates. */
   by_source: Record<SourceExtractor, number>;
+  /**
+   * Candidates skipped by the cheap-dedup pre-filter (TD-086) — matched an
+   * existing learning above `dedup_cosine_threshold`. The matched row's
+   * `seen_again_count` was incremented in lieu of inserting a duplicate.
+   */
+  deduped: number;
+  /** `learnings.id` of every existing row whose seen_again_count was bumped. */
+  deduped_ids: number[];
 }
 
 // ---------------------------------------------------------------------------
@@ -337,6 +346,8 @@ export async function runPerception(
       manual: 0,
       distill: 0,
     },
+    deduped: 0,
+    deduped_ids: [],
   };
 
   // Empty-events early return is intentionally pre-instrumentation. No
@@ -437,15 +448,48 @@ export async function runPerception(
     result.suppressed = suppressed;
 
     // 3. Persist (review_status = 'approved' iff config.auto_approve_enabled).
+    // TD-086: a cheap embeddings-cosine pre-filter runs BEFORE persistCandidate
+    // when `config.dedup_enabled`. On a near-duplicate (cosine ≥ threshold
+    // against any existing learning, status-aware), we skip the INSERT,
+    // bump `seen_again_count` on the matched row, and emit a single
+    // `perception.rediscovery` event whose payload carries the matched
+    // status. The flag exists as an instant operator kill switch — flip
+    // off via env or config.json if the threshold misbehaves in production.
     for (const c of kept) {
       try {
+        if (config.dedup_enabled) {
+          const match = await findNearestMatch(db, c, config.dedup_cosine_threshold);
+          if (match) {
+            recordRediscovery(db, match.matched_id);
+            result.deduped += 1;
+            result.deduped_ids.push(match.matched_id);
+            // Single event per Q2 — cleaner API than two distinct event
+            // names. The `existing_status` field lets downstream readers
+            // distinguish pending-vs-approved rediscoveries.
+            // TODO(FR-116): when reject becomes soft-delete (review_status='rejected'),
+            // this branch will start surfacing `match.status === 'rejected'`,
+            // and handlers.ts will activate the `perception.rejected_pattern_recurring`
+            // emit. Until then, only pending_review and approved matches are
+            // reachable here — the helper has no rejected rows to find because
+            // reject is a hard DELETE today.
+            writePerceptionEvent(db, 'perception.rediscovery', {
+              project,
+              existing_learning_id: match.matched_id,
+              existing_status: match.status,
+              similarity_score: match.similarity,
+              transcript_window_ts: new Date().toISOString(),
+              trigger,
+            });
+            continue;
+          }
+        }
         const id = await persistCandidate(db, c, project, briefId, source, config);
         result.inserted_ids.push(id);
         result.inserted += 1;
         result.by_source[c.source_extractor] += 1;
       } catch (err) {
         console.error(
-          '[perception] persist failed for candidate, skipping:',
+          '[perception] persist or dedup failed for candidate, skipping:',
           err instanceof Error ? err.message : String(err),
         );
       }
@@ -453,10 +497,13 @@ export async function runPerception(
 
     // Successful return path. If the extractor pre-emitted a `run_failed`,
     // `terminalEmitted` is already true and the success event is skipped.
+    // TD-086: include `deduped` so /scan and downstream dashboards can
+    // surface the cheap-dedup hit rate without a separate query.
     emit('perception.run_succeeded', {
       candidates_count: result.inserted,
       llm_extracted: result.llm_extracted,
       suppressed: result.suppressed,
+      deduped: result.deduped,
       llm_status: result.llm_status,
       transcript_bytes: transcriptBytes,
     });

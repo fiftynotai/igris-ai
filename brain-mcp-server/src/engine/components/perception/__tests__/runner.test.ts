@@ -58,7 +58,11 @@ function makeTestDb(): Database.Database {
       embedding_model TEXT DEFAULT '',
       provenance TEXT NOT NULL DEFAULT 'observed',
       review_status TEXT NOT NULL DEFAULT 'approved',
-      source_extractor TEXT NOT NULL DEFAULT 'manual'
+      source_extractor TEXT NOT NULL DEFAULT 'manual',
+      -- TD-086: cheap-dedup tracking columns mirror the perception schema v2
+      -- migration. The runner UPDATEs both on every dedup hit.
+      seen_again_count INTEGER NOT NULL DEFAULT 0,
+      last_seen_at TEXT
     );
     CREATE TABLE event_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -495,6 +499,301 @@ describe('runPerception', () => {
     );
 
     expect(result.llm_status).toBe('failed:unknown');
+  });
+
+  // -------------------------------------------------------------------------
+  // TD-086: cheap-dedup pre-filter integration with runner
+  // -------------------------------------------------------------------------
+
+  describe('dedup pre-filter (TD-086)', () => {
+    // The runner-level dedup tests stub `findNearestMatch` so we can drive
+    // the skip path deterministically without standing up the embedding
+    // pipeline + vec0 extension. The dedup helper itself is tested in
+    // isolation in dedup.test.ts.
+
+    it('R1: match -> skip insert + bump seen_again_count + emit rediscovery', async () => {
+      // Pre-seed an existing learning that the stub will pretend to match.
+      const insertResult = db
+        .prepare(
+          `INSERT INTO learnings (project, category, title, content,
+            provenance, review_status, source_extractor, seen_again_count)
+           VALUES ('p', 'pattern', 'existing finding', 'body',
+            'inferred', 'approved', 'llm', 0)`,
+        )
+        .run();
+      const existingId = Number(insertResult.lastInsertRowid);
+
+      // Stub the dedup helper module via dynamic mock — vi.doMock keeps the
+      // stub local to this test (vi.mock would be hoisted globally).
+      vi.doMock('../dedup.js', async () => {
+        const actual = await vi.importActual<typeof import('../dedup.js')>('../dedup.js');
+        return {
+          ...actual,
+          findNearestMatch: vi.fn(async () => ({
+            matched_id: existingId,
+            status: 'approved',
+            similarity: 0.92,
+          })),
+        };
+      });
+      // Re-import so the runner picks up the stubbed module.
+      const { runPerception: runPerceptionStubbed } = await import('../runner.js?t=r1');
+
+      const events: TranscriptEvent[] = [
+        { role: 'user', content: 'X'.repeat(2000), timestamp: '' },
+      ];
+      const stubLlm = vi.fn(async () => [
+        makeCandidate({ title: 'duplicate of existing finding' }),
+      ]);
+
+      const result = await runPerceptionStubbed(
+        db,
+        { events, project: 'p', source: 's', trigger: 'unit_test' },
+        { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true },
+        stubLlm,
+      );
+
+      expect(result.inserted).toBe(0);
+      expect(result.deduped).toBe(1);
+      expect(result.deduped_ids).toEqual([existingId]);
+
+      // seen_again_count incremented + last_seen_at populated.
+      const row = db
+        .prepare('SELECT seen_again_count, last_seen_at FROM learnings WHERE id = ?')
+        .get(existingId) as { seen_again_count: number; last_seen_at: string | null };
+      expect(row.seen_again_count).toBe(1);
+      expect(row.last_seen_at).not.toBeNull();
+
+      // event_log row with correct shape.
+      const ev = db
+        .prepare(
+          "SELECT event_name, payload FROM event_log WHERE event_name='perception.rediscovery'",
+        )
+        .all() as { event_name: string; payload: string }[];
+      expect(ev).toHaveLength(1);
+      const payload = JSON.parse(ev[0].payload);
+      expect(payload.existing_learning_id).toBe(existingId);
+      expect(payload.existing_status).toBe('approved');
+      expect(payload.similarity_score).toBeCloseTo(0.92, 2);
+      expect(payload.trigger).toBe('unit_test');
+
+      vi.doUnmock('../dedup.js');
+    });
+
+    it('R2: no match -> insert proceeds, no rediscovery event', async () => {
+      vi.doMock('../dedup.js', async () => {
+        const actual = await vi.importActual<typeof import('../dedup.js')>('../dedup.js');
+        return {
+          ...actual,
+          findNearestMatch: vi.fn(async () => null),
+        };
+      });
+      const { runPerception: runPerceptionStubbed } = await import('../runner.js?t=r2');
+
+      const events: TranscriptEvent[] = [
+        { role: 'user', content: 'X'.repeat(2000), timestamp: '' },
+      ];
+      const stubLlm = vi.fn(async () => [makeCandidate({ title: 'fresh finding' })]);
+
+      const result = await runPerceptionStubbed(
+        db,
+        { events, project: 'p', source: 's' },
+        { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true },
+        stubLlm,
+      );
+
+      expect(result.inserted).toBe(1);
+      expect(result.deduped).toBe(0);
+      expect(result.deduped_ids).toEqual([]);
+
+      const ev = db
+        .prepare(
+          "SELECT event_name FROM event_log WHERE event_name='perception.rediscovery'",
+        )
+        .all();
+      expect(ev).toHaveLength(0);
+
+      vi.doUnmock('../dedup.js');
+    });
+
+    it('R3: dedup_enabled=false -> dedup helper never called, all candidates insert', async () => {
+      const findNearestMatchStub = vi.fn(async () => null);
+      vi.doMock('../dedup.js', async () => {
+        const actual = await vi.importActual<typeof import('../dedup.js')>('../dedup.js');
+        return {
+          ...actual,
+          findNearestMatch: findNearestMatchStub,
+        };
+      });
+      const { runPerception: runPerceptionStubbed } = await import('../runner.js?t=r3');
+
+      const events: TranscriptEvent[] = [
+        { role: 'user', content: 'X'.repeat(2000), timestamp: '' },
+      ];
+      const stubLlm = vi.fn(async () => [
+        makeCandidate({ title: 'finding one' }),
+        makeCandidate({ title: 'finding two' }),
+      ]);
+
+      const result = await runPerceptionStubbed(
+        db,
+        { events, project: 'p', source: 's' },
+        {
+          ...DEFAULT_PERCEPTION_CONFIG,
+          extractor_llm_enabled: true,
+          dedup_enabled: false,
+        },
+        stubLlm,
+      );
+
+      expect(result.inserted).toBe(2);
+      expect(result.deduped).toBe(0);
+      expect(findNearestMatchStub).not.toHaveBeenCalled();
+
+      vi.doUnmock('../dedup.js');
+    });
+
+    it('R4: pending_review match -> event payload carries existing_status=pending_review', async () => {
+      const insertResult = db
+        .prepare(
+          `INSERT INTO learnings (project, category, title, content,
+            provenance, review_status, source_extractor)
+           VALUES ('p', 'pattern', 'pending finding', 'body',
+            'inferred', 'pending_review', 'llm')`,
+        )
+        .run();
+      const existingId = Number(insertResult.lastInsertRowid);
+
+      vi.doMock('../dedup.js', async () => {
+        const actual = await vi.importActual<typeof import('../dedup.js')>('../dedup.js');
+        return {
+          ...actual,
+          findNearestMatch: vi.fn(async () => ({
+            matched_id: existingId,
+            status: 'pending_review',
+            similarity: 0.88,
+          })),
+        };
+      });
+      const { runPerception: runPerceptionStubbed } = await import('../runner.js?t=r4');
+
+      const events: TranscriptEvent[] = [
+        { role: 'user', content: 'X'.repeat(2000), timestamp: '' },
+      ];
+      const stubLlm = vi.fn(async () => [makeCandidate({ title: 'paraphrased pending' })]);
+
+      const result = await runPerceptionStubbed(
+        db,
+        { events, project: 'p', source: 's' },
+        { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true },
+        stubLlm,
+      );
+
+      expect(result.deduped).toBe(1);
+      const ev = db
+        .prepare(
+          "SELECT payload FROM event_log WHERE event_name='perception.rediscovery'",
+        )
+        .get() as { payload: string } | undefined;
+      expect(ev).toBeDefined();
+      const payload = JSON.parse(ev!.payload);
+      expect(payload.existing_status).toBe('pending_review');
+      expect(payload.existing_learning_id).toBe(existingId);
+
+      vi.doUnmock('../dedup.js');
+    });
+
+    it('R5: mixed run -> some dedupe, some insert, counts add up', async () => {
+      const matchedId = Number(
+        db
+          .prepare(
+            `INSERT INTO learnings (project, category, title, content,
+              provenance, review_status, source_extractor)
+             VALUES ('p', 'pattern', 'matched row', 'body',
+              'inferred', 'approved', 'llm')`,
+          )
+          .run().lastInsertRowid,
+      );
+
+      // Helper returns a match for any candidate whose title contains 'dup'
+      // and null otherwise — simulates real-world mixed extraction.
+      vi.doMock('../dedup.js', async () => {
+        const actual = await vi.importActual<typeof import('../dedup.js')>('../dedup.js');
+        return {
+          ...actual,
+          findNearestMatch: vi.fn(async (_db, c) =>
+            c.title.includes('dup')
+              ? { matched_id: matchedId, status: 'approved', similarity: 0.91 }
+              : null,
+          ),
+        };
+      });
+      const { runPerception: runPerceptionStubbed } = await import('../runner.js?t=r5');
+
+      const events: TranscriptEvent[] = [
+        { role: 'user', content: 'X'.repeat(2000), timestamp: '' },
+      ];
+      const stubLlm = vi.fn(async () => [
+        makeCandidate({ title: 'dup one' }),
+        makeCandidate({ title: 'fresh one' }),
+        makeCandidate({ title: 'dup two' }),
+      ]);
+
+      const result = await runPerceptionStubbed(
+        db,
+        { events, project: 'p', source: 's' },
+        { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true },
+        stubLlm,
+      );
+
+      expect(result.inserted).toBe(1);
+      expect(result.deduped).toBe(2);
+      // Same matched_id surfaced twice — that is intentional; the counter
+      // reflects re-extraction frequency, so two hits against the same
+      // existing row count as two rediscoveries.
+      expect(result.deduped_ids).toEqual([matchedId, matchedId]);
+
+      const row = db
+        .prepare('SELECT seen_again_count FROM learnings WHERE id = ?')
+        .get(matchedId) as { seen_again_count: number };
+      expect(row.seen_again_count).toBe(2);
+
+      vi.doUnmock('../dedup.js');
+    });
+
+    it('R6: run_succeeded payload includes deduped count', async () => {
+      vi.doMock('../dedup.js', async () => {
+        const actual = await vi.importActual<typeof import('../dedup.js')>('../dedup.js');
+        return {
+          ...actual,
+          findNearestMatch: vi.fn(async () => null),
+        };
+      });
+      const { runPerception: runPerceptionStubbed } = await import('../runner.js?t=r6');
+
+      const events: TranscriptEvent[] = [
+        { role: 'user', content: 'X'.repeat(2000), timestamp: '' },
+      ];
+      const stubLlm = vi.fn(async () => [makeCandidate({ title: 'one' })]);
+
+      await runPerceptionStubbed(
+        db,
+        { events, project: 'p', source: 's' },
+        { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true },
+        stubLlm,
+      );
+
+      const ev = db
+        .prepare(
+          "SELECT payload FROM event_log WHERE event_name='perception.run_succeeded'",
+        )
+        .get() as { payload: string };
+      const payload = JSON.parse(ev.payload);
+      expect(payload).toHaveProperty('deduped');
+      expect(payload.deduped).toBe(0);
+
+      vi.doUnmock('../dedup.js');
+    });
   });
 
   // -------------------------------------------------------------------------

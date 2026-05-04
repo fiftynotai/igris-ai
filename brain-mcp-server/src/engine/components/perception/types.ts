@@ -121,6 +121,26 @@ export interface PerceptionExtractorConfig {
    * TD-066.
    */
   auto_approve_enabled: boolean;
+
+  // Dedup knobs (TD-086)
+  /**
+   * Master switch for the cheap embeddings-cosine pre-filter that runs
+   * between intra-run dedupe and persist. When true, the runner queries
+   * `learnings_vec` for the K nearest neighbours of each candidate and
+   * skips persistence (incrementing `seen_again_count` instead) on any
+   * match with cosine ≥ `dedup_cosine_threshold`. Default true.
+   *
+   * Operator kill switch when behaviour misfires:
+   *   ~/.igris/config.json `perception.dedup_enabled: false`
+   *   IGRIS_PERCEPTION_DEDUP_ENABLED=0
+   */
+  dedup_enabled: boolean;
+  /**
+   * Cosine-similarity threshold above which a candidate is treated as a
+   * rediscovery of an existing learning. Range [0, 1]. Default 0.85
+   * (per TD-086 brief). Tunable via env or config.json.
+   */
+  dedup_cosine_threshold: number;
 }
 
 /** Defaults — all kept here so tests can shrink/widen individual gates. */
@@ -133,6 +153,9 @@ export const DEFAULT_PERCEPTION_CONFIG: PerceptionExtractorConfig = {
   max_title_length: 500,
   max_content_length: 4000,
   auto_approve_enabled: false,
+  // TD-086 dedup defaults — enabled at threshold 0.85 per brief.
+  dedup_enabled: true,
+  dedup_cosine_threshold: 0.85,
 };
 
 // ---------------------------------------------------------------------------

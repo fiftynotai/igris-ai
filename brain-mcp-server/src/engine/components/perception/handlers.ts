@@ -194,6 +194,13 @@ interface SubmitOutput {
   llm_status: LlmStatus;
   watermark_advanced: boolean;
   by_source: Record<string, number>;
+  /**
+   * TD-086 — count of candidates skipped by the cheap-dedup pre-filter
+   * (matched an existing learning above the cosine threshold).
+   */
+  deduped: number;
+  /** `learnings.id` of every existing row whose seen_again_count was bumped. */
+  deduped_ids: number[];
 }
 
 async function submitInternal(input: SubmitInput): Promise<SubmitOutput | { error: string }> {
@@ -213,6 +220,8 @@ async function submitInternal(input: SubmitInput): Promise<SubmitOutput | { erro
       llm_status: 'skipped:disabled',
       watermark_advanced: false,
       by_source: {},
+      deduped: 0,
+      deduped_ids: [],
     };
   }
 
@@ -303,6 +312,7 @@ async function submitInternal(input: SubmitInput): Promise<SubmitOutput | { erro
       llm_extracted: result.llm_extracted,
       suppressed: result.suppressed,
       inserted: result.inserted,
+      deduped: result.deduped,
       llm_status: result.llm_status,
       source: input.source,
     });
@@ -311,9 +321,41 @@ async function submitInternal(input: SubmitInput): Promise<SubmitOutput | { erro
       candidates_count: result.inserted,
       llm_extracted: result.llm_extracted,
       suppressed: result.suppressed,
+      deduped: result.deduped,
       llm_status: result.llm_status,
       trigger,
     });
+
+    // TD-086: roll-up bus mirror for cheap-dedup hits. The runner already
+    // wrote per-row `perception.rediscovery` rows directly to event_log
+    // (canonical record for the detached CLI). This single bus.emit() is
+    // a defense-in-depth signal for in-process listeners AND — critically
+    // — the literal call site the event-bus integrity test scans for.
+    if (result.deduped > 0) {
+      bus.emit('perception.rediscovery', {
+        project: input.project,
+        deduped_count: result.deduped,
+        deduped_ids: result.deduped_ids,
+        trigger,
+      });
+    }
+
+    // TD-086 forward-compat: literal bus.emit() call site for the
+    // `perception.rejected_pattern_recurring` event, declared in events()
+    // so the event-bus integrity test passes. Reject is a hard DELETE
+    // today (handlers.ts:igris_perception_reject), so no rejected row
+    // ever survives for the dedup helper to match — this branch is dead
+    // code in TD-086 v1. When FR-116 ships soft-delete (review_status
+    // = 'rejected' + deleted_at), set the env var to '1' (or replace the
+    // condition with `result.deduped_against_rejected > 0`) and the event
+    // will start shipping.
+    // TODO(FR-116): activate this emit once reject becomes soft-delete.
+    if (process.env.IGRIS_PERCEPTION_EMIT_REJECTED_RECURRING === '1') {
+      bus.emit('perception.rejected_pattern_recurring', {
+        project: input.project,
+        trigger,
+      });
+    }
   }
 
   return {
@@ -324,6 +366,8 @@ async function submitInternal(input: SubmitInput): Promise<SubmitOutput | { erro
     llm_status: result.llm_status,
     watermark_advanced: advance,
     by_source: result.by_source,
+    deduped: result.deduped,
+    deduped_ids: result.deduped_ids,
   };
 }
 

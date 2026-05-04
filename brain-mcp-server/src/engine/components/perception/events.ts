@@ -30,16 +30,24 @@ import * as os from 'node:os';
 // ---------------------------------------------------------------------------
 
 /**
- * The four lifecycle event names. Stored verbatim in `event_log.event_name`.
+ * The lifecycle + dedup event names. Stored verbatim in `event_log.event_name`.
  * Adding a new lifecycle stage requires updating both this union and the
  * `EVENT_COMPONENT_MAP` / listens declarations in `monitoring/index.ts` so
  * MCP-context emissions (via `bus.emit`) are also persisted.
+ *
+ * TD-086 added `perception.rediscovery` (live) and
+ * `perception.rejected_pattern_recurring` (forward-compat declaration —
+ * declared in events() and emitted under a perpetually-false branch in
+ * handlers.ts so the event-bus integrity test passes; activates when FR-116
+ * ships soft-delete).
  */
 export type PerceptionEventName =
   | 'perception.run_started'
   | 'perception.run_succeeded'
   | 'perception.run_failed'
-  | 'perception.run_skipped';
+  | 'perception.run_skipped'
+  | 'perception.rediscovery'
+  | 'perception.rejected_pattern_recurring';
 
 /**
  * Closed enum of failure reasons embedded in a `perception.run_failed`

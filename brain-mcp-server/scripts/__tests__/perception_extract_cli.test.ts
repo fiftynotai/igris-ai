@@ -129,7 +129,10 @@ function makeTestDb(): Database.Database {
       embedding_model TEXT DEFAULT '',
       provenance TEXT NOT NULL DEFAULT 'observed',
       review_status TEXT NOT NULL DEFAULT 'approved',
-      source_extractor TEXT NOT NULL DEFAULT 'manual'
+      source_extractor TEXT NOT NULL DEFAULT 'manual',
+      -- TD-086: cheap-dedup tracking columns. Mirror perception schema v2.
+      seen_again_count INTEGER NOT NULL DEFAULT 0,
+      last_seen_at TEXT
     );
     CREATE TABLE event_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -523,6 +526,49 @@ describe('main', () => {
       expect(combinedOutput).not.toContain('llm_status=ran');
     } finally {
       logSpy.mockRestore();
+    }
+  });
+
+  it('TD-086: CLI summary line includes deduped=N count', async () => {
+    // The runner short-circuits dedup when isVectorSearchAvailable=false
+    // (mocked above), so dedup never matches and the summary should show
+    // deduped=0 alongside the other counts. The presence of `deduped=` is
+    // what TD-086's AC requires — operators read this line to triage.
+    const tp = tempPath('dedup-summary');
+    fs.writeFileSync(tp, 'X'.repeat(2000));
+    cleanupFiles.push(tp);
+
+    const inbox = tempPath('inbox-dedup');
+    fs.writeFileSync(inbox, 'old\n');
+    cleanupFiles.push(inbox);
+
+    // Force the LLM extractor noop so we never spawn `claude -p` in CI.
+    const prevEnv = process.env.IGRIS_PERCEPTION_LLM_ENABLED;
+    process.env.IGRIS_PERCEPTION_LLM_ENABLED = '0';
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const exitCode = await main([
+        'node',
+        'script.ts',
+        '--project',
+        'p',
+        '--transcript-path',
+        tp,
+        '--inbox-path',
+        inbox,
+      ]);
+      expect(exitCode).toBe(0);
+      const combinedOutput = logSpy.mock.calls
+        .map((call) => call.map((arg) => String(arg)).join(' '))
+        .join('\n');
+      expect(combinedOutput).toMatch(/deduped=\d+/);
+    } finally {
+      logSpy.mockRestore();
+      if (prevEnv === undefined) {
+        delete process.env.IGRIS_PERCEPTION_LLM_ENABLED;
+      } else {
+        process.env.IGRIS_PERCEPTION_LLM_ENABLED = prevEnv;
+      }
     }
   });
 

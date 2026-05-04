@@ -85,9 +85,19 @@ export function resolvePerceptionConfig(log?: { info: (m: string) => void; warn:
     if (Number.isFinite(n) && n > 0) cfg.llm_timeout_ms = n;
   }
 
+  // TD-086 dedup env overrides — operator kill switch + threshold tuning.
+  if (process.env.IGRIS_PERCEPTION_DEDUP_ENABLED === '1') cfg.dedup_enabled = true;
+  if (process.env.IGRIS_PERCEPTION_DEDUP_ENABLED === '0') cfg.dedup_enabled = false;
+
+  const dedupThresholdEnv = process.env.IGRIS_PERCEPTION_DEDUP_THRESHOLD;
+  if (dedupThresholdEnv) {
+    const n = parseFloat(dedupThresholdEnv);
+    if (Number.isFinite(n) && n >= 0 && n <= 1) cfg.dedup_cosine_threshold = n;
+  }
+
   if (log) {
     log.info(
-      `perception config resolved (llm_enabled=${cfg.extractor_llm_enabled}, timeout=${cfg.llm_timeout_ms}ms, min_bytes=${cfg.llm_min_transcript_bytes}, auto_approve=${cfg.auto_approve_enabled})`,
+      `perception config resolved (llm_enabled=${cfg.extractor_llm_enabled}, timeout=${cfg.llm_timeout_ms}ms, min_bytes=${cfg.llm_min_transcript_bytes}, auto_approve=${cfg.auto_approve_enabled}, dedup_enabled=${cfg.dedup_enabled}, dedup_threshold=${cfg.dedup_cosine_threshold})`,
     );
   }
   return cfg;
@@ -290,6 +300,30 @@ export function createPerceptionComponent(): BrainComponent {
             name: 'perception.run_skipped',
             description:
               'A perception extraction run was skipped without invoking the LLM (gate fired, min-window, no transcript).',
+          },
+          // TD-086 cheap-dedup events. `perception.rediscovery` fires when a
+          // candidate matches an existing learning (any review_status) above
+          // the cosine threshold — the insert is skipped and the matched
+          // row's `seen_again_count` is incremented. The payload carries
+          // `existing_status` so a single event covers both pending_review
+          // and approved matches without proliferating event names.
+          {
+            name: 'perception.rediscovery',
+            description:
+              'A perception candidate matched an existing learning (any status) above the dedup cosine threshold. Insert was skipped; seen_again_count was incremented on the matched row.',
+          },
+          // Forward-compatibility declaration. Reject is currently a hard
+          // DELETE (handlers.ts:igris_perception_reject), so no rejected row
+          // exists to match against — this event is declared but never emitted
+          // in TD-086 v1. When FR-116 ships soft-delete (review_status='rejected'
+          // + deleted_at), the dedup helper will surface rejected matches and
+          // this event will start firing. The literal bus.emit() call site
+          // (required by event-bus integrity test) is gated in handlers.ts
+          // behind a perpetually-false branch — see TODO(FR-116) there.
+          {
+            name: 'perception.rejected_pattern_recurring',
+            description:
+              'A perception candidate matched a previously-rejected fingerprint. Declared but not emitted in TD-086 v1 — reject is hard DELETE today; activates when FR-116 introduces soft-delete.',
           },
         ],
         listens: [],

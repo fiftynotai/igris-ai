@@ -273,10 +273,23 @@ export async function runPerceptionFromTranscript(
      */
     trigger?: string;
   },
-): Promise<{ inserted: number; llmExtracted: number; suppressed: number; llmStatus: string }> {
+): Promise<{
+  inserted: number;
+  llmExtracted: number;
+  suppressed: number;
+  llmStatus: string;
+  /** TD-086 — number of candidates skipped by the cheap-dedup pre-filter. */
+  deduped: number;
+}> {
   const events = parseTranscript(options.transcriptText);
   if (events.length === 0) {
-    return { inserted: 0, llmExtracted: 0, suppressed: 0, llmStatus: 'skipped:empty' };
+    return {
+      inserted: 0,
+      llmExtracted: 0,
+      suppressed: 0,
+      llmStatus: 'skipped:empty',
+      deduped: 0,
+    };
   }
   const trigger = options.trigger ?? 'detached';
   const runOptions: import('../src/engine/components/perception/runner.js').RunPerceptionOptions = {
@@ -297,6 +310,7 @@ export async function runPerceptionFromTranscript(
     llmExtracted: result.llm_extracted,
     suppressed: result.suppressed,
     llmStatus: result.llm_status,
+    deduped: result.deduped,
   };
 }
 
@@ -467,7 +481,8 @@ export async function main(argv: string[] = process.argv): Promise<number> {
 
     console.log(
       `[perception_extract_cli] inserted=${result.inserted} llm=${result.llmExtracted} ` +
-        `suppressed=${result.suppressed} llm_status=${result.llmStatus} project=${args.project}`,
+        `suppressed=${result.suppressed} deduped=${result.deduped} ` +
+        `llm_status=${result.llmStatus} project=${args.project}`,
     );
     return 0;
   } finally {
