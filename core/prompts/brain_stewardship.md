@@ -70,6 +70,8 @@ When in doubt, ask: *"Will a future actor reading the code learn this on their o
 
 Avoid redundant recalls within the same session over the same topic — once you have the relevant memories in context, work from them.
 
+**Category filter limitation (TD-093 follow-up):** `igris_memory_recall` does NOT currently accept a `category` parameter. To bias recall toward a specific category (e.g., `mistake`), include category-evocative keywords in the `context` query (e.g., `"... mistake regression bug"`). FTS5 ranking biases the match but does not strictly filter. If you need a hard filter, see TD-093.
+
 ### How to Tag a Stored Memory
 
 `igris_memory_store` requires `project`, `category`, `title`, and `content`. The enums are strict — use them exactly:

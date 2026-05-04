@@ -1,12 +1,13 @@
 /**
- * Memory Tool Handler Tests (FR-092)
+ * Memory Tool Handler Tests (FR-092 + TD-092)
  *
- * Tests the 4 quick-fix improvements to memory tools:
- * 1. Truncated content in recall output
- * 2. Composite ranking with confidence + access_count
- * 3. Title-collision promotion with content similarity check
- * 4. Search pagination via offset parameter
- * 5. New igris_memory_get tool for full content fetch
+ * Tests the memory tool surface:
+ * 1. FR-092: Truncated content in recall output
+ * 2. FR-092: Composite ranking with confidence + access_count
+ * 3. FR-092: Title-collision promotion with content similarity check
+ * 4. FR-092: Search pagination via offset parameter
+ * 5. FR-092: New igris_memory_get tool for full content fetch
+ * 6. TD-092: access_count telemetry regression contract
  *
  * @module tools/__tests__/memory.test
  */

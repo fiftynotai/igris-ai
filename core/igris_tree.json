@@ -20,7 +20,7 @@
     "brain_stewardship": {
       "path": "~/.igris/core/prompts/brain_stewardship.md",
       "brain_key": "brain_stewardship",
-      "size_kb": 9.0,
+      "size_kb": 13.3,
       "scope": "core",
       "tier": "boot"
     },
