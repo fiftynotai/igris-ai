@@ -9,17 +9,50 @@ correctly-stored memory that is never recalled does not change behavior.
 
 <!-- SECTION: brain_stewardship -->
 
-## How recall routes (read this first)
+## How sync routes (read this first)
 
-`igris_memory_*`, `igris_brief_*`, and every other `igris_*` MCP tool routes
-through whichever `igris-brain` MCP server is registered for the current CLI
-session — see `~/.claude.json` for Claude Code. When the registered transport
-is `http://76.13.180.77:3001/mcp` (the VPS), every recall and every
-`access_count` increment writes to the **VPS DB at `/root/.igris/memory/knowledge.db`**,
-NOT the local file at `~/.igris/memory/knowledge.db`. If you query the local
-file after a recall and see no change, you are looking at the wrong DB. The
-local DB is a stale dev artifact unless the MCP server is explicitly pointed
-at a local stdio binary.
+`igris_memory_*`, `igris_brief_*`, and every other `igris_*` MCP tool runs
+LOCALLY against `~/.igris/memory/knowledge.db`. The `igris-brain` MCP server
+is registered as a stdio binary in `~/.claude.json` — it spawns per Claude
+Code session, owns the local DB, and dies with the session. There is no
+HTTP roundtrip on the read path; recalls and `access_count` increments hit
+the local file directly.
+
+Cross-instance sync to the VPS at `http://76.13.180.77:3001` is **explicit**
+and happens via two paths:
+
+1. **Operator-initiated.** Call `igris_brain_push` to push the local delta
+   or `igris_brain_pull` to pull remote rows. `/sync data` wraps both.
+   Use when you want this Mac's recent work to show up on another instance
+   immediately, or when you suspect the local DB is missing rows another
+   machine wrote.
+2. **Auto on session_end / pre_compact.** `perception_extract_cli` runs
+   `handleBrainPush` inline as the final phase of the detached extraction
+   process — same handler the MCP tool exposes. No separate hook fan-out.
+   Push outcome is tagged on the summary line in
+   `~/.igris/projects/{slug}/session/perception_extract.log`
+   (`push=pushed|queued|failed|remote_not_configured|skipped`).
+
+The VPS is a pure HTTP sync hub — no MCP roundtrip. Other instances pulling
+from the VPS see this Mac's perception output once the session_end push
+lands. If the local DB is missing or empty, the MCP boot creates it and
+applies migrations on first use.
+
+### Decision triggers — when to reach for which tool
+
+- **Stale recall result?** The local DB does not yet have the row. Either
+  pull from the VPS now (`igris_brain_pull` / `/sync data`) or wait for the
+  next session_end push from the machine that wrote it.
+- **About to /rest after work another machine needs?** `/sync data` (push)
+  before `/rest` if you can't wait the ~1-3s for the inline auto-push to
+  land.
+- **`access_count` not incrementing?** That used to mean "two-DB drift"
+  (FR-120 fixed it). Post-FR-120 the local DB IS the operating store —
+  `sqlite3 ~/.igris/memory/knowledge.db "SELECT access_count..."` is the
+  authoritative answer.
+- **Multi-Mac setup?** Each Mac's `sync_state` table tracks "last pushed
+  to VPS at T" independently. No conflict — each instance has its own
+  push horizon.
 
 ## 1. Learnings (`igris_memory_*`)
 
@@ -124,8 +157,8 @@ igris_memory_recall({
 igris_memory_store({
   project: "igris-ai",
   category: "mistake",
-  title: "Two-DB drift makes access_count appear broken",
-  content: "When MCP server is registered as http to VPS, recall writes to VPS DB — querying local file shows 0. Always check ~/.claude.json transport before diagnosing as a SQL bug.",
+  title: "Two-DB drift (fixed in FR-120) — historical note",
+  content: "Pre-FR-120, MCP was registered as http→VPS so every recall and access_count increment hit the VPS DB; the local file at ~/.igris/memory/knowledge.db looked frozen. FR-120 switched the transport to a locally-spawned stdio binary so the local file IS now the operating store. Kept as a historical example of the right `igris_memory_store` shape (fix-the-bug-itself memory, not the symptom).",
   scope: "global",
   provenance: "observed"
 })

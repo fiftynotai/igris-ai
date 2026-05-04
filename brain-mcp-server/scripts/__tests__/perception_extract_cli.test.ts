@@ -55,6 +55,16 @@ vi.mock('../../src/engine/index.js', () => ({
   bootEngine: vi.fn(),
 }));
 
+// FR-120: mock handleBrainPush at the I/O boundary so the CLI's inline push
+// phase doesn't actually fetch the VPS during the test suite. Default
+// implementation returns a benign success — individual tests override via
+// `mockedHandleBrainPush.mockResolvedValueOnce(...)` / `.mockRejectedValueOnce(...)`.
+vi.mock('../../src/tools/sync.js', () => ({
+  handleBrainPush: vi.fn(async () => ({
+    content: [{ type: 'text', text: 'Brain push: 0 changes (test stub)' }],
+  })),
+}));
+
 // Mock the LLM extractor selection so individual tests can inject a stub
 // without spawning `claude -p` (TD-079 timeout-summary test). The default
 // implementation is `noopLlmExtractor` which returns []; tests override it
@@ -72,6 +82,7 @@ vi.mock('../../src/engine/components/perception/extractors/llm_via_claude_code.j
 import { getDb } from '../../src/db.js';
 import { bootEngine } from '../../src/engine/index.js';
 import { selectLlmExtractor } from '../../src/engine/components/perception/extractors/llm_via_claude_code.js';
+import { handleBrainPush } from '../../src/tools/sync.js';
 import type { LlmExtractor } from '../../src/engine/components/perception/extractors/llm_via_claude_code.js';
 import {
   parseCliArgs,
@@ -79,6 +90,8 @@ import {
   truncateFileAtomic,
   defaultInboxPath,
   defaultLogPath,
+  resolveRemoteBrainConfig,
+  defaultBrainConfigPath,
   runPerceptionFromTranscript,
   main,
   type CliArgs,
@@ -88,6 +101,7 @@ import { DEFAULT_PERCEPTION_CONFIG, type PerceptionCandidate } from '../../src/e
 const mockedGetDb = vi.mocked(getDb);
 const mockedBootEngine = vi.mocked(bootEngine);
 const mockedSelectLlmExtractor = vi.mocked(selectLlmExtractor);
+const mockedHandleBrainPush = vi.mocked(handleBrainPush);
 
 /**
  * Build a no-op Engine shim for tests. shutdown() is a no-op because the test
@@ -860,6 +874,285 @@ describe('main', () => {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-120: resolveRemoteBrainConfig + defaultBrainConfigPath unit tests
+// ---------------------------------------------------------------------------
+
+describe('resolveRemoteBrainConfig (FR-120)', () => {
+  it('returns null when config file is absent', () => {
+    expect(resolveRemoteBrainConfig(tempPath('absent-config'))).toBeNull();
+  });
+
+  it('returns null when config file is malformed JSON', () => {
+    const p = tempPath('malformed-config');
+    fs.writeFileSync(p, '{not json');
+    try {
+      expect(resolveRemoteBrainConfig(p)).toBeNull();
+    } finally {
+      fs.unlinkSync(p);
+    }
+  });
+
+  it('returns null when remote_brain block is missing', () => {
+    const p = tempPath('no-remote-brain');
+    fs.writeFileSync(p, JSON.stringify({ source_repo: '/x' }));
+    try {
+      expect(resolveRemoteBrainConfig(p)).toBeNull();
+    } finally {
+      fs.unlinkSync(p);
+    }
+  });
+
+  it('returns null when only url is present (api_key missing)', () => {
+    const p = tempPath('partial-remote-brain');
+    fs.writeFileSync(
+      p,
+      JSON.stringify({ remote_brain: { url: 'http://x:3001' } }),
+    );
+    try {
+      expect(resolveRemoteBrainConfig(p)).toBeNull();
+    } finally {
+      fs.unlinkSync(p);
+    }
+  });
+
+  it('returns the resolved config when url + api_key are both present', () => {
+    const p = tempPath('valid-remote-brain');
+    fs.writeFileSync(
+      p,
+      JSON.stringify({ remote_brain: { url: 'http://x:3001', api_key: 'k' } }),
+    );
+    try {
+      expect(resolveRemoteBrainConfig(p)).toEqual({
+        remoteUrl: 'http://x:3001',
+        apiKey: 'k',
+      });
+    } finally {
+      fs.unlinkSync(p);
+    }
+  });
+});
+
+describe('defaultBrainConfigPath (FR-120)', () => {
+  it('points at ~/.igris/config.json', () => {
+    const p = defaultBrainConfigPath();
+    expect(p).toContain('.igris');
+    expect(p.endsWith('config.json')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-120: inline push phase — main() exercises handleBrainPush as the final
+// lifecycle step. Mocks at the I/O boundary (sync.js module + config.json
+// fixture) per L-159; the function under test is main() / the inline push
+// block, which is NOT mocked.
+// ---------------------------------------------------------------------------
+
+describe('main — FR-120 inline push phase', () => {
+  let db: Database.Database;
+  let originalIgrisDbPath: string | undefined;
+  let originalLlmEnabled: string | undefined;
+  let originalHome: string | undefined;
+  let tmpHome: string;
+  const cleanupFiles: string[] = [];
+
+  /**
+   * Build a tmpHome with a writable session dir + a config.json fixture
+   * pointing at a fake remote. Returns nothing — sets process.env.HOME and
+   * adds the temp dir to the cleanup list. Each test then writes its own
+   * transcript / inbox under tmpHome.
+   *
+   * Tests that want "remote not configured" pass `writeConfig=false` so
+   * the config.json is absent and resolveRemoteBrainConfig returns null.
+   */
+  function setupTmpHome(writeConfig = true): void {
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'fr120-push-'));
+    process.env.HOME = tmpHome;
+    if (writeConfig) {
+      const cfgPath = path.join(tmpHome, '.igris', 'config.json');
+      fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
+      fs.writeFileSync(
+        cfgPath,
+        JSON.stringify({
+          remote_brain: {
+            url: 'http://test-remote:3001',
+            api_key: 'test-api-key',
+          },
+        }),
+      );
+    }
+  }
+
+  beforeEach(async () => {
+    db = makeTestDb();
+    mockedGetDb.mockReturnValue(db);
+    mockedBootEngine.mockReturnValue(makeEngineShim());
+    originalIgrisDbPath = process.env.IGRIS_DB_PATH;
+    originalLlmEnabled = process.env.IGRIS_PERCEPTION_LLM_ENABLED;
+    originalHome = process.env.HOME;
+    // Force the noop LLM extractor so the inline-push tests do not depend
+    // on the `claude` CLI being installed. The push assertions are
+    // independent of how many learnings were extracted.
+    process.env.IGRIS_PERCEPTION_LLM_ENABLED = '0';
+    const llmModule = await vi.importActual<
+      typeof import('../../src/engine/components/perception/extractors/llm_via_claude_code.js')
+    >('../../src/engine/components/perception/extractors/llm_via_claude_code.js');
+    mockedSelectLlmExtractor.mockReturnValue(llmModule.noopLlmExtractor);
+    // Reset the handleBrainPush mock so each test starts from the default
+    // benign-success implementation declared at the top of this file.
+    mockedHandleBrainPush.mockClear();
+    mockedHandleBrainPush.mockImplementation(async () => ({
+      content: [{ type: 'text', text: 'Brain push: 0 changes (test stub)' }],
+    }));
+  });
+
+  afterEach(() => {
+    db.close();
+    vi.restoreAllMocks();
+    if (originalIgrisDbPath === undefined) {
+      delete process.env.IGRIS_DB_PATH;
+    } else {
+      process.env.IGRIS_DB_PATH = originalIgrisDbPath;
+    }
+    if (originalLlmEnabled === undefined) {
+      delete process.env.IGRIS_PERCEPTION_LLM_ENABLED;
+    } else {
+      process.env.IGRIS_PERCEPTION_LLM_ENABLED = originalLlmEnabled;
+    }
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+    if (tmpHome) {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+    for (const f of cleanupFiles) {
+      try {
+        if (fs.existsSync(f)) fs.unlinkSync(f);
+      } catch {
+        // ignore
+      }
+    }
+    cleanupFiles.length = 0;
+  });
+
+  /**
+   * Helper: run main() against a fixture transcript + inbox under tmpHome
+   * and return the combined console.log output. Spies on console.log are
+   * scoped to the helper so the caller does not have to manage them.
+   */
+  async function runMainAndCaptureLog(): Promise<{ exitCode: number; output: string }> {
+    const tp = tempPath('fr120-transcript');
+    fs.writeFileSync(tp, 'just a plain blob — no LEARNED markers');
+    cleanupFiles.push(tp);
+    const inbox = tempPath('fr120-inbox');
+    fs.writeFileSync(inbox, 'old\n');
+    cleanupFiles.push(inbox);
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const exitCode = await main([
+        'node',
+        'script.ts',
+        '--project',
+        'fr120-test',
+        '--transcript-path',
+        tp,
+        '--inbox-path',
+        inbox,
+        '--no-log',
+      ]);
+      const output = logSpy.mock.calls
+        .map((call) => call.map((arg) => String(arg)).join(' '))
+        .join('\n');
+      return { exitCode, output };
+    } finally {
+      logSpy.mockRestore();
+    }
+  }
+
+  it('inlines push and logs push=pushed when handleBrainPush returns success', async () => {
+    setupTmpHome();
+    mockedHandleBrainPush.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'Brain push: 3 learnings pushed in 1 chunk' }],
+    });
+    const { exitCode, output } = await runMainAndCaptureLog();
+
+    expect(exitCode).toBe(0);
+    expect(mockedHandleBrainPush).toHaveBeenCalledTimes(1);
+    expect(mockedHandleBrainPush).toHaveBeenCalledWith({
+      remote_url: 'http://test-remote:3001',
+      api_key: 'test-api-key',
+    });
+    expect(output).toContain('push=pushed');
+    expect(output).toContain('Brain push: 3 learnings pushed in 1 chunk');
+  });
+
+  it('logs push=queued when handleBrainPush returns isError=true', async () => {
+    setupTmpHome();
+    mockedHandleBrainPush.mockResolvedValueOnce({
+      content: [{ type: 'text', text: 'Brain push partially failed: 2 rows queued' }],
+      isError: true,
+    });
+    const { exitCode, output } = await runMainAndCaptureLog();
+
+    expect(exitCode).toBe(0);
+    expect(output).toContain('push=queued');
+  });
+
+  it('logs push=failed and returns 0 when handleBrainPush throws', async () => {
+    setupTmpHome();
+    mockedHandleBrainPush.mockRejectedValueOnce(new Error('boom'));
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { exitCode, output } = await runMainAndCaptureLog();
+      expect(exitCode).toBe(0);
+      expect(output).toContain('push=failed');
+      // Push errors must NOT abort the CLI — extract success is already
+      // persisted at this point.
+      const errOutput = errSpy.mock.calls
+        .map((call) => call.map((arg) => String(arg)).join(' '))
+        .join('\n');
+      expect(errOutput).toContain('push failed');
+      expect(errOutput).toContain('boom');
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it('skips push and logs push=remote_not_configured when config has no remote_brain', async () => {
+    setupTmpHome(false);
+    const { exitCode, output } = await runMainAndCaptureLog();
+
+    expect(exitCode).toBe(0);
+    expect(mockedHandleBrainPush).not.toHaveBeenCalled();
+    expect(output).toContain('push=remote_not_configured');
+  });
+
+  it('runs the inline push BEFORE engine.shutdown so the booted DB is still open', async () => {
+    setupTmpHome();
+    // Capture invocation order via mock.invocationCallOrder (vitest exposes
+    // a global counter). The shim returned by makeEngineShim has shutdown
+    // as a plain () => {} — replace it with a vi.fn so we can read the order.
+    const shutdownSpy = vi.fn();
+    mockedBootEngine.mockReturnValue({
+      shutdown: shutdownSpy,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
+
+    const { exitCode } = await runMainAndCaptureLog();
+    expect(exitCode).toBe(0);
+    expect(mockedHandleBrainPush).toHaveBeenCalledTimes(1);
+    expect(shutdownSpy).toHaveBeenCalledTimes(1);
+    // BR-060 + FR-120: inline push must complete BEFORE engine.shutdown so
+    // handleBrainPush's getDb() resolves to a live connection.
+    const pushOrder = mockedHandleBrainPush.mock.invocationCallOrder[0];
+    const shutdownOrder = shutdownSpy.mock.invocationCallOrder[0];
+    expect(pushOrder).toBeLessThan(shutdownOrder);
   });
 });
 

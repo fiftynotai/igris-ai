@@ -86,14 +86,26 @@ vi.mock('../../src/utils/vector-search.js', () => ({
   insertEmbedding: vi.fn(),
 }));
 
+// FR-120: mock handleBrainPush at the I/O boundary so the inline push phase
+// does not actually fetch the VPS. Default is benign success — the BR-060
+// regression tests only need the push call to land on the right side of the
+// shutdown ordering, not to do real work.
+vi.mock('../../src/tools/sync.js', () => ({
+  handleBrainPush: vi.fn(async () => ({
+    content: [{ type: 'text', text: 'Brain push: 0 changes (test stub)' }],
+  })),
+}));
+
 import { getDb } from '../../src/db.js';
 import { bootEngine } from '../../src/engine/index.js';
 import { disposeEmbeddingPipeline } from '../../src/utils/embeddings.js';
+import { handleBrainPush } from '../../src/tools/sync.js';
 import { main } from '../perception_extract_cli.js';
 
 const mockedGetDb = vi.mocked(getDb);
 const mockedBootEngine = vi.mocked(bootEngine);
 const mockedDisposePipeline = vi.mocked(disposeEmbeddingPipeline);
+const mockedHandleBrainPush = vi.mocked(handleBrainPush);
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -185,6 +197,10 @@ describe('perception_extract_cli — BR-060 lifecycle wiring', () => {
     mockedBootEngine.mockReset();
     mockedDisposePipeline.mockReset();
     mockedDisposePipeline.mockResolvedValue();
+    mockedHandleBrainPush.mockClear();
+    mockedHandleBrainPush.mockImplementation(async () => ({
+      content: [{ type: 'text', text: 'Brain push: 0 changes (test stub)' }],
+    }));
     originalIgrisDbPath = process.env.IGRIS_DB_PATH;
     // Force the noop LLM extractor path so the test does not depend on the
     // `claude` CLI being installed — same posture as the lifecycle test.
@@ -458,5 +474,70 @@ describe('perception_extract_cli — BR-060 lifecycle wiring', () => {
     expect(errSpy).toHaveBeenCalledWith(
       expect.stringMatching(/shutdown failed.*simulated shutdown failure/),
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // FR-120: inline push must run BEFORE disposeEmbeddingPipeline AND
+  // engine.shutdown so handleBrainPush's getDb() resolves to a live
+  // connection. Pushing AFTER shutdown would fail (no DB connection).
+  // -------------------------------------------------------------------------
+
+  it('FR-120: invokes handleBrainPush BEFORE disposeEmbeddingPipeline and engine.shutdown', async () => {
+    // Setup: tmpHome with a config.json fixture so the inline push phase
+    // resolves a remote and actually calls handleBrainPush. Without this
+    // the test would short-circuit to push=remote_not_configured and the
+    // ordering assertion would never fire.
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'fr120-br060-'));
+    const origHome = process.env.HOME;
+    process.env.HOME = tmpHome;
+    const cfgPath = path.join(tmpHome, '.igris', 'config.json');
+    fs.mkdirSync(path.dirname(cfgPath), { recursive: true });
+    fs.writeFileSync(
+      cfgPath,
+      JSON.stringify({
+        remote_brain: { url: 'http://test:3001', api_key: 'k' },
+      }),
+    );
+
+    const { engine, shutdownMock } = makeEngineShim();
+    mockedBootEngine.mockReturnValue(engine);
+
+    const tp = tempPath('br060-fr120-order');
+    fs.writeFileSync(tp, 'plain transcript');
+    cleanupFiles.push(tp);
+
+    try {
+      const exitCode = await main([
+        'node',
+        'perception_extract_cli.ts',
+        '--project',
+        'p',
+        '--transcript-path',
+        tp,
+        '--no-log',
+      ]);
+
+      expect(exitCode).toBe(0);
+      expect(mockedHandleBrainPush).toHaveBeenCalledTimes(1);
+      expect(mockedDisposePipeline).toHaveBeenCalledTimes(1);
+      expect(shutdownMock).toHaveBeenCalledTimes(1);
+
+      const pushOrder = mockedHandleBrainPush.mock.invocationCallOrder[0];
+      const disposeOrder = mockedDisposePipeline.mock.invocationCallOrder[0];
+      const shutdownOrder = shutdownMock.mock.invocationCallOrder[0];
+
+      // Push must complete first; dispose next; shutdown last. The DB
+      // connection must still be open during the push, and the
+      // transformers worker must still be alive (no race).
+      expect(pushOrder).toBeLessThan(disposeOrder);
+      expect(disposeOrder).toBeLessThan(shutdownOrder);
+    } finally {
+      if (origHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = origHome;
+      }
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
   });
 });

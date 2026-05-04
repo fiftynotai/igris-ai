@@ -57,18 +57,25 @@ if (isDirectRun) {
 
 ### BR-064 — partially-migrated DB
 
-`brain_push_cli.ts` originally opened the DB via `getDb()` directly.
+The pre-FR-120 standalone push CLI opened the DB via `getDb()` directly.
 `getDb()` only runs the legacy `migrateSchema` ladder (v1-v15) — it does
 NOT run per-component migrations (goals, entity_edges, tasks, …). On a
 fresh install where the MCP server had never booted, the CLI threw
-`no such table: goals` and exited non-zero. The wrapper script
-`perception_extract_and_persist.sh` checks `cli_rc -eq 0` before spawning
-`brain_push_async.sh`, so the failure silently broke the auto-push path.
+`no such table: goals` and exited non-zero. The wrapper script's
+sentinel-and-spawn check skipped the auto-push, so the failure silently
+broke the chain.
 
 **Fix:** boot the engine (which runs all component migrations + initializes
 the registry) before invoking the work handler. `bootEngine` internally
 calls `setAdapter(storage)`, so subsequent `getDb()` calls inside any
 component code resolve to the same booted connection automatically.
+
+> **FR-120 update:** the standalone `brain_push_cli.ts` and its
+> `brain_push_async.sh` wrapper were deleted. The push is now inlined
+> into `perception_extract_cli.ts` as its final lifecycle phase
+> (calling the same `handleBrainPush` handler the MCP exposes). The
+> BR-064 lesson still applies: `bootEngine` must run before any handler
+> that touches component-owned tables.
 
 ### BR-060 — process.exit race with native worker pools
 
@@ -80,9 +87,13 @@ atexit handlers. The two cleanup chains raced and the worker pool's
 mutex teardown aborted with `mutex lock failed: Invalid argument`
 (libc++abi SIGABRT, exit ~134).
 
-The wrapper saw `cli_rc=134` and silently skipped the brain_push spawn
-— breaking TD-080's session_end auto-push end-to-end despite the actual
-work (8 inserted, 8 LLM, 8 embeddings) succeeding.
+The wrapper saw `cli_rc=134` and (under the pre-FR-120 chain) silently
+skipped the standalone brain_push spawn — breaking session_end auto-push
+end-to-end despite the actual work (8 inserted, 8 LLM, 8 embeddings)
+succeeding. Post-FR-120 the push is inlined inside the same CLI's
+finally-bounded body, so a SIGABRT race would now skip both the success
+line AND the inline push — even more reason to keep the BR-060 fix in
+place.
 
 **Fix:** two-part:
 
@@ -101,7 +112,7 @@ work (8 inserted, 8 LLM, 8 embeddings) succeeding.
 |---|---|
 | `no such table: <component>` on a fresh DB | Skipped `bootEngine`, `getDb()` only ran the legacy migration ladder. |
 | `libc++abi: terminating ... mutex lock failed` after the success line | Used `process.exit(code)` while a native worker pool was still cleaning up. |
-| Wrapper script logs "starting" but never logs "spawned brain_push_async" | `cli_rc` was non-zero — almost always one of the two cases above. |
+| `perception_extract.log` shows extract success but no `push=...` summary line | The CLI crashed/aborted between inbox truncate and the inline push — one of the two cases above. Pre-FR-120 this manifested as a missing "spawned brain_push_async" line. |
 
 ## Defensive shutdown timeout (optional but recommended)
 
@@ -131,8 +142,8 @@ wrapper script indefinitely.
 
 | CLI | Adopted in | Notes |
 |---|---|---|
-| `scripts/brain_push_cli.ts` | BR-064 | Engine boot + shutdown in finally. Does NOT load transformers, so it never needed the `process.exitCode` fix — but it follows the same template. |
-| `scripts/perception_extract_cli.ts` | BR-060 | Engine boot + dispose pipeline + shutdown in finally + `process.exitCode` at entry point. Full template. |
+| `scripts/perception_extract_cli.ts` | BR-060, FR-120 | Engine boot + dispose pipeline + shutdown in finally + `process.exitCode` at entry point. Full template. Post-FR-120 also performs the inline brain-push as its final lifecycle phase. |
+| ~~`scripts/brain_push_cli.ts`~~ | BR-064 (deleted in FR-120) | Engine boot + shutdown in finally. Was the canonical reference for the pattern; deleted when push moved inline into `perception_extract_cli.ts`. The pattern lives on in the perception CLI. |
 
 If FR-118 (subconscious runner) ever spawns its own CLI, it MUST follow
 the same template — anything that boots the engine inherits the same
@@ -149,8 +160,8 @@ the codebase grows.
 
 ## References
 
-- `scripts/brain_push_cli.ts` — canonical reference
-- `scripts/perception_extract_cli.ts` — full template with native dispose
+- `scripts/perception_extract_cli.ts` — full template with native dispose + inline brain-push
 - `src/engine/index.ts` — `bootEngine` + `engine.shutdown` semantics
 - `src/utils/embeddings.ts` — `disposeEmbeddingPipeline` helper
-- BR-064, BR-060 — origin briefs
+- `src/tools/sync.ts` — `handleBrainPush` (called inline post-FR-120)
+- BR-064, BR-060, FR-120 — origin briefs

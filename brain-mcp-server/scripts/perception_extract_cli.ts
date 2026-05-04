@@ -18,7 +18,15 @@
  *   6. Call `runPerception` directly (no MCP roundtrip).
  *   7. On success, truncate the project's perception_inbox.jsonl atomically
  *      so legacy callers don't accumulate stale rows.
- *   8. Dispose the embedding pipeline + `engine.shutdown()` in a `finally`
+ *   8. FR-120: Inline brain-push phase. Resolves `~/.igris/config.json`
+ *      remote_brain and invokes `handleBrainPush` against the same booted
+ *      engine connection so this machine's delta reaches the VPS sync hub
+ *      before /rest. Replaces the deleted `brain_push_cli.ts` +
+ *      `brain_push_async.sh` fan-out (L-72 producer-consumer split — both
+ *      halves of the async chain now share one detached process). Push
+ *      failures are non-fatal: the rows are auto-queued in `sync_queue` by
+ *      handleBrainPush and the CLI still exits 0.
+ *   9. Dispose the embedding pipeline + `engine.shutdown()` in a `finally`
  *      block — releases the @huggingface/transformers ONNX worker pool and
  *      sqlite native resources BEFORE V8 teardown. Caller routes through
  *      `process.exitCode = code` (NOT `process.exit(code)`) so the event
@@ -26,7 +34,7 @@
  *      ordering the synchronous exit path races with the worker pool's
  *      mutex and aborts with `mutex lock failed: Invalid argument`
  *      (libc++abi SIGABRT, exit 134). See BR-060.
- *   9. Exit 0 on success or empty transcript; exit 1 only on hard error
+ *  10. Exit 0 on success or empty transcript; exit 1 only on hard error
  *      (DB unreachable, malformed CLI args). Hooks must never block.
  *
  * Usage:
@@ -59,6 +67,7 @@ import { runPerception } from '../src/engine/components/perception/runner.js';
 import { parseTranscript } from '../src/engine/components/perception/handlers.js';
 import { writePerceptionEvent } from '../src/engine/components/perception/events.js';
 import { disposeEmbeddingPipeline } from '../src/utils/embeddings.js';
+import { handleBrainPush } from '../src/tools/sync.js';
 import type { LlmExtractor } from '../src/engine/components/perception/extractors/llm_via_claude_code.js';
 import type { PerceptionExtractorConfig } from '../src/engine/components/perception/types.js';
 
@@ -279,6 +288,54 @@ export function defaultLogPath(projectSlug: string): string {
     'session',
     'perception_extract.log',
   );
+}
+
+/**
+ * FR-120: resolved remote-brain config for the inline push phase. `null`
+ * means "remote is not configured" — a normal state for fresh installs and
+ * local-only setups; the inline push silently skips in that case.
+ */
+export interface RemoteBrainConfig {
+  remoteUrl: string;
+  apiKey: string;
+}
+
+/**
+ * FR-120: Default path to the Igris config file. Exported so tests can
+ * fixture alongside it.
+ */
+export function defaultBrainConfigPath(): string {
+  return path.join(os.homedir(), '.igris', 'config.json');
+}
+
+/**
+ * FR-120: Resolve the remote-brain config from `~/.igris/config.json`.
+ *
+ * Trimmed shape vs. the deleted `brain_push_cli.ts:resolveRemoteConfig`:
+ * the CLI is now invoked exclusively by the perception_extract_and_persist
+ * hook (no operator-supplied --remote-url / --api-key flags), so we read
+ * straight from `config.json`. Tests pass a fixture path via
+ * `configPathOverride`. Malformed or missing config → returns null.
+ *
+ * Exported so tests can drive resolution without spawning the CLI.
+ */
+export function resolveRemoteBrainConfig(
+  configPathOverride?: string,
+): RemoteBrainConfig | null {
+  const configPath = configPathOverride ?? defaultBrainConfigPath();
+  if (!fs.existsSync(configPath)) return null;
+  try {
+    const raw = fs.readFileSync(configPath, 'utf-8');
+    const cfg = JSON.parse(raw) as { remote_brain?: { url?: string; api_key?: string } };
+    const remoteUrl = cfg.remote_brain?.url ?? '';
+    const apiKey = cfg.remote_brain?.api_key ?? '';
+    if (!remoteUrl || !apiKey) return null;
+    return { remoteUrl, apiKey };
+  } catch {
+    // Malformed config.json → treated as "remote not configured" (silent skip).
+    // Same posture as the deleted brain_push_cli.ts:resolveRemoteConfig.
+    return null;
+  }
 }
 
 /**
@@ -626,10 +683,50 @@ export async function main(argv: string[] = process.argv): Promise<number> {
       );
     }
 
+    // FR-120: Push the local delta inline as the final lifecycle phase. The
+    // producer (extract) and consumer (push) live in the same detached
+    // process per L-72 ("background async features must have BOTH halves
+    // background"). The handler is the same one the MCP exposes — single
+    // canonical sync path. Wrapped in its own try/catch so a push failure
+    // does NOT reverse the extract success: the extracted rows are already
+    // persisted and the failed-push rows are queued in `sync_queue` by
+    // handleBrainPush itself for the next /awaken §3.6.1 drain.
+    //
+    // Position: AFTER inbox truncation (synchronous, fast) and BEFORE the
+    // BR-060 finally block that disposes the transformers pipeline and
+    // shuts down the engine — `handleBrainPush` calls `getDb()` which
+    // requires the engine connection to still be open.
+    let pushSummary = 'skipped';
+    try {
+      const remote = resolveRemoteBrainConfig();
+      if (remote) {
+        const pushResult = await handleBrainPush({
+          remote_url: remote.remoteUrl,
+          api_key: remote.apiKey,
+        });
+        const pushText = pushResult.content?.[0]?.text ?? '(no push response)';
+        pushSummary = pushResult.isError ? 'queued' : 'pushed';
+        // Log the first line of the push text so operators tailing
+        // perception_extract.log see the row counts and chunk count from
+        // handleBrainPush. The full text contains \n-separated table
+        // counts; we only want the headline on the summary log.
+        console.log(`[perception_extract_cli] push: ${pushText.split('\n')[0]}`);
+      } else {
+        pushSummary = 'remote_not_configured';
+      }
+    } catch (pushErr) {
+      pushSummary = 'failed';
+      console.error(
+        `[perception_extract_cli] push failed (non-fatal — rows queued via handleBrainPush): ${
+          pushErr instanceof Error ? pushErr.message : String(pushErr)
+        }`,
+      );
+    }
+
     console.log(
       `[perception_extract_cli] inserted=${result.inserted} llm=${result.llmExtracted} ` +
         `suppressed=${result.suppressed} deduped=${result.deduped} ` +
-        `llm_status=${result.llmStatus} project=${args.project}`,
+        `llm_status=${result.llmStatus} push=${pushSummary} project=${args.project}`,
     );
     return 0;
   } finally {

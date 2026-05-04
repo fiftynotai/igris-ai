@@ -46,6 +46,13 @@ vi.mock('../../src/db.js', () => ({
 vi.mock('../../src/engine/index.js', () => ({
   bootEngine: vi.fn(),
 }));
+// FR-120: mock handleBrainPush at the I/O boundary so the inline push phase
+// in main() does not actually fetch the VPS during lifecycle event tests.
+vi.mock('../../src/tools/sync.js', () => ({
+  handleBrainPush: vi.fn(async () => ({
+    content: [{ type: 'text', text: 'Brain push: 0 changes (test stub)' }],
+  })),
+}));
 
 import { getDb } from '../../src/db.js';
 import { bootEngine } from '../../src/engine/index.js';

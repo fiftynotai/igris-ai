@@ -204,19 +204,24 @@ echo "$now_epoch" > "$WATERMARK_FILE" 2>/dev/null || true
   echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] perception_extract_and_persist: starting (project=$PROJECT_SLUG transcript=$TRANSCRIPT_PATH source=$TRIGGER_LABEL)"
 } >> "$LOG_FILE" 2>/dev/null || true
 
-# Capture the CLI's exit code so we can branch on success below. We disable
-# `errexit` for the duration of the call (set -e would otherwise abort the
-# script before we ever read $? on a non-zero exit). `set +e` / `set -e` is
-# the project-standard pattern for "I want to inspect rc but stay set -e".
-#
-# BR-060: cli_rc must be 0 for the brain_push_async spawn below to fire.
-# Pre-fix, the CLI aborted with SIGABRT (134) at process.exit() because the
-# synchronous exit path raced with the @huggingface/transformers ONNX
-# runtime worker pool teardown. Fixed by routing the CLI through
+# BR-060: post-fix the CLI no longer aborts at process.exit() (was SIGABRT
+# 134 from a race between the @huggingface/transformers ONNX worker pool
+# teardown and V8 teardown). Fixed by routing the CLI through
 # bootEngine + engine.shutdown() in a finally block AND switching from
 # process.exit(code) to process.exitCode = code (let the loop drain
 # naturally so worker threads join cleanly before V8 teardown).
-set +e
+#
+# FR-120: the CLI now performs the brain-push inline as its final
+# lifecycle phase (between inbox truncate and engine.shutdown). The push
+# uses `handleBrainPush` from src/tools/sync.ts — same handler as the MCP
+# tool — and reads remote_brain from ~/.igris/config.json. There is no
+# separate `brain_push_async.sh` fan-out anymore; the producer (extract)
+# and consumer (push) live in one detached process per L-72.
+#
+# We invoke with `|| true` so a non-zero CLI exit (rare — see BR-060) does
+# not trip `set -e`. Push outcome is tagged onto the same summary line
+# ("push=pushed|queued|failed|remote_not_configured|skipped") that
+# operators tail in perception_extract.log.
 # TD-077: pass --no-log so the CLI's internal tee does NOT duplicate every
 # stdout/stderr line into the log file. The wrapper's `>> "$LOG_FILE" 2>&1`
 # redirection already captures the same stream; without --no-log the file
@@ -226,29 +231,6 @@ set +e
   --transcript-path "$TRANSCRIPT_PATH" \
   --source "$TRIGGER_LABEL" \
   --no-log \
-  >> "$LOG_FILE" 2>&1
-cli_rc=$?
-set -e
-
-# TD-080: on success, fire async push so other machines see this run before
-# /rest. The push is detached via nohup so it does not extend the hook tail
-# latency. Exit code is intentionally ignored — `brain_push_async.sh` is
-# defensive (always exits 0) and any push failure already enqueues the rows
-# in `sync_queue` for the next /awaken §3.6.1 drain to retry.
-#
-# `cli_rc` is captured (we dropped the `|| true` above) so we only push on a
-# clean run. A failed/timed-out extraction has already emitted a structured
-# `perception.run_failed` event — pushing then would propagate noise without
-# value.
-if [ "$cli_rc" -eq 0 ]; then
-  # BR-064: spawn FIRST, log AFTER. The previous order ("queued async push"
-  # before nohup) was misleading — the line appeared even when the spawned
-  # CLI immediately crashed (e.g. "no such table: goals" from BR-064). The
-  # actual push outcome is recorded in brain_push.log by brain_push_async.sh.
-  nohup bash "$HOME/.igris/core/hooks/shared/brain_push_async.sh" "$PROJECT_SLUG" >/dev/null 2>&1 &
-  push_pid=$!
-  disown 2>/dev/null || true
-  echo "[$(date '+%Y-%m-%dT%H:%M:%S%z')] perception_extract_and_persist: spawned brain_push_async (detached, pid=$push_pid)" >> "$LOG_FILE" 2>/dev/null || true
-fi
+  >> "$LOG_FILE" 2>&1 || true
 
 exit 0
