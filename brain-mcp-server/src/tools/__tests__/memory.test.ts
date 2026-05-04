@@ -423,6 +423,78 @@ describe('Memory Tools (FR-092)', () => {
       const promoted = promoteToGlobal();
       expect(promoted).toBe(0);
     });
+
+    // -----------------------------------------------------------------------
+    // TD-060: pending_review rows must not be promoted to global scope.
+    // -----------------------------------------------------------------------
+
+    it('TD-060: pending_review rows are NOT promoted to global scope', () => {
+      // Seed: same title in two projects, both local. One row has
+      // review_status='approved' (default), the other 'pending_review'
+      // (e.g. inserted via the perception channel).
+      const approvedId = insertLearning(db, {
+        project: 'project-a',
+        title: 'shared-title',
+        content: 'identical body content for similarity comparison',
+      });
+      const pendingId = insertLearning(db, {
+        project: 'project-b',
+        title: 'shared-title',
+        content: 'identical body content for similarity comparison',
+      });
+      db.prepare(
+        "UPDATE learnings SET review_status = 'pending_review' WHERE id = ?",
+      ).run(pendingId);
+
+      const promoted = promoteToGlobal();
+      // Only one project has an approved row — the >=2 distinct-projects
+      // check fails, so no promotion happens.
+      expect(promoted).toBe(0);
+
+      const approvedRow = db
+        .prepare('SELECT scope, review_status FROM learnings WHERE id = ?')
+        .get(approvedId) as { scope: string; review_status: string };
+      const pendingRow = db
+        .prepare('SELECT scope, review_status FROM learnings WHERE id = ?')
+        .get(pendingId) as { scope: string; review_status: string };
+
+      expect(approvedRow.scope).toBe('local');
+      expect(approvedRow.review_status).toBe('approved');
+      // Pending row must remain local AND pending — never gets scope flipped.
+      expect(pendingRow.scope).toBe('local');
+      expect(pendingRow.review_status).toBe('pending_review');
+    });
+
+    it('TD-060: after approval, previously-pending rows resume promotion eligibility', () => {
+      // Two projects with identical titles + bodies, but one is pending_review.
+      // First pass should not promote (the pending one is excluded).
+      const id1 = insertLearning(db, {
+        project: 'project-a',
+        title: 'eligible-after-approval',
+        content: 'identical body content used for jaccard similarity threshold',
+      });
+      const id2 = insertLearning(db, {
+        project: 'project-b',
+        title: 'eligible-after-approval',
+        content: 'identical body content used for jaccard similarity threshold',
+      });
+      db.prepare(
+        "UPDATE learnings SET review_status = 'pending_review' WHERE id = ?",
+      ).run(id2);
+
+      expect(promoteToGlobal()).toBe(0);
+
+      // Approve the pending row and re-run promotion.
+      db.prepare(
+        "UPDATE learnings SET review_status = 'approved' WHERE id = ?",
+      ).run(id2);
+
+      expect(promoteToGlobal()).toBe(2);
+      const rows = db
+        .prepare('SELECT scope FROM learnings WHERE id IN (?, ?)')
+        .all(id1, id2) as Array<{ scope: string }>;
+      expect(rows.every((r) => r.scope === 'global')).toBe(true);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -981,6 +1053,76 @@ describe('Memory Tools (FR-092)', () => {
         review_status: 'bogus',
       });
       expect(result.content[0].text).toContain('Invalid review_status');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // TD-061: source_extractor enum validation
+  // -------------------------------------------------------------------------
+
+  describe('source_extractor enum validation (TD-061)', () => {
+    it('handleMemoryStore rejects an invalid source_extractor', async () => {
+      const result = await handleMemoryStore({
+        project: 'review-test-project',
+        category: 'pattern',
+        title: 'Invalid source_extractor test',
+        content: 'Content for invalid source_extractor',
+        // @ts-expect-error — testing runtime validation against typo
+        source_extractor: 'lmm',
+      });
+      expect(result.content[0].text).toContain('Invalid source_extractor');
+    });
+
+    it('handleMemoryStore accepts source_extractor=llm', async () => {
+      const result = await handleMemoryStore({
+        project: 'review-test-project',
+        category: 'pattern',
+        title: 'Valid llm source_extractor',
+        content: 'Content for valid llm source_extractor',
+        source_extractor: 'llm',
+      });
+      expect(result.content[0].text).not.toContain('Invalid source_extractor');
+      const idMatch = result.content[0].text.match(/ID: (\d+)/);
+      expect(idMatch).not.toBeNull();
+      const id = parseInt(idMatch![1], 10);
+      const row = db.prepare('SELECT source_extractor FROM learnings WHERE id = ?').get(id) as { source_extractor: string };
+      expect(row.source_extractor).toBe('llm');
+    });
+
+    it('handleMemoryStore accepts source_extractor=manual', async () => {
+      const result = await handleMemoryStore({
+        project: 'review-test-project',
+        category: 'pattern',
+        title: 'Valid manual source_extractor',
+        content: 'Content for valid manual source_extractor',
+        source_extractor: 'manual',
+      });
+      expect(result.content[0].text).not.toContain('Invalid source_extractor');
+    });
+
+    it('handleMemoryStore accepts source_extractor=distill', async () => {
+      const result = await handleMemoryStore({
+        project: 'review-test-project',
+        category: 'pattern',
+        title: 'Valid distill source_extractor',
+        content: 'Content for valid distill source_extractor',
+        source_extractor: 'distill',
+      });
+      expect(result.content[0].text).not.toContain('Invalid source_extractor');
+    });
+
+    it('handleMemoryStore defaults source_extractor to manual', async () => {
+      const result = await handleMemoryStore({
+        project: 'review-test-project',
+        category: 'pattern',
+        title: 'Default source_extractor test',
+        content: 'Content with no explicit source_extractor',
+      });
+      const idMatch = result.content[0].text.match(/ID: (\d+)/);
+      expect(idMatch).not.toBeNull();
+      const id = parseInt(idMatch![1], 10);
+      const row = db.prepare('SELECT source_extractor FROM learnings WHERE id = ?').get(id) as { source_extractor: string };
+      expect(row.source_extractor).toBe('manual');
     });
   });
 });

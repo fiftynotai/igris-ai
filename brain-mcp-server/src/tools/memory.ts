@@ -27,6 +27,7 @@ import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL
 import { isVectorSearchAvailable, insertEmbedding, vectorSearch } from '../utils/vector-search.js';
 import type { VectorSearchResult } from '../utils/vector-search.js';
 import { computeRRF } from '../utils/hybrid-search.js';
+import type { SourceExtractor } from '../engine/components/perception/types.js';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -73,14 +74,22 @@ interface MemoryStoreInput {
    */
   review_status?: 'pending_review' | 'approved';
   /**
-   * Which extractor produced this row (FR-109). Default `'manual'` covers the
-   * conscious-channel use case where a human or agent calls the tool directly.
-   * Perception extractors pass their identifier (`rule:learned_marker`,
-   * `rule:retry_chain`, `rule:blocker_resolution`, `rule:error_fingerprint`,
-   * or `llm`) so /awaken can render terse `[rule:X, conf 0.85]` labels on the
-   * pending-review surface without a JSON parse on every row.
+   * Which extractor produced this row (FR-109 + TD-066). Default `'manual'`
+   * covers the conscious-channel use case where a human or agent calls the
+   * tool directly. Perception extractors pass `'llm'`; the /distill skill
+   * passes `'distill'`.
+   *
+   * The TD-061 brief originally proposed a wider vocabulary including
+   * `rule:learned_marker`, `rule:retry_chain`, `rule:blocker_resolution`,
+   * `rule:error_fingerprint`, and `'subconscious'`. TD-066 deleted the rule
+   * extractors (existing `rule:*` rows in production DBs remain readable —
+   * read-only legacy), and `'subconscious'` is reserved for FR-118 which has
+   * not landed. Validated against `VALID_SOURCE_EXTRACTOR` below; when FR-118
+   * lands it MUST extend both `SourceExtractor` in
+   * `engine/components/perception/types.ts` AND `VALID_SOURCE_EXTRACTOR` here
+   * in the same change.
    */
-  source_extractor?: string;
+  source_extractor?: SourceExtractor;
 }
 
 /** Input shape for igris_memory_search */
@@ -166,6 +175,23 @@ const VALID_LEARNING_PROVENANCE = [
  */
 const VALID_REVIEW_STATUS = ['pending_review', 'approved'] as const;
 
+/**
+ * Source-extractor vocabulary for learnings (FR-109 + TD-061 + TD-066).
+ *
+ * Mirrors `SourceExtractor` from `engine/components/perception/types.ts`
+ * (post-TD-066: rule extractors removed). Legacy `rule:*` rows in production
+ * DBs remain read-compatible — the validation here only gates the WRITE path
+ * so a future typo (`'lmm'`, `'manaul'`) cannot land silently.
+ *
+ * The TD-061 brief proposed a broader vocabulary that included the
+ * (since-deleted) `rule:*` extractors and a forward-looking `'subconscious'`
+ * value for FR-118. We intentionally narrow to the current canonical 3 here.
+ * If FR-118 lands and adds `'subconscious'`, extend BOTH this tuple AND
+ * `SourceExtractor` in perception/types.ts in the same change so the contract
+ * stays in sync.
+ */
+const VALID_SOURCE_EXTRACTOR = ['manual', 'llm', 'distill'] as const;
+
 function validateMemoryInput(args: MemoryStoreInput): string | null {
   if (!args.project || args.project.length > MAX_PROJECT_LENGTH) {
     return `Invalid project: must be 1-${MAX_PROJECT_LENGTH} characters.`;
@@ -190,6 +216,12 @@ function validateMemoryInput(args: MemoryStoreInput): string | null {
     !(VALID_REVIEW_STATUS as readonly string[]).includes(args.review_status)
   ) {
     return `Invalid review_status: must be one of ${VALID_REVIEW_STATUS.join(', ')}.`;
+  }
+  if (
+    args.source_extractor !== undefined &&
+    !(VALID_SOURCE_EXTRACTOR as readonly string[]).includes(args.source_extractor)
+  ) {
+    return `Invalid source_extractor: must be one of ${VALID_SOURCE_EXTRACTOR.join(', ')}.`;
   }
   return null;
 }
@@ -458,10 +490,18 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
     // Fetch full records for RRF results
     const topIds = rrfEntries.map(e => e.id);
     const placeholders = topIds.map(() => '?').join(',');
+    // TD-059 sibling: defense-in-depth `review_status='approved'` filter on the
+    // recall hydration path. The upstream `bm25Rows`/`vecResults` already
+    // exclude pending_review rows via their query predicates, but a future
+    // caller bypassing those upstream filters must not leak unapproved rows
+    // through the hydration step. Kept symmetric with the same filter on the
+    // hybrid_search hydration query below.
     const fullRows = db.prepare(
       `SELECT id, project, category, title, content, tags, tech_stack, scope,
               source_brief, confidence, created_at, access_count, provenance
-       FROM learnings WHERE id IN (${placeholders})`,
+       FROM learnings
+       WHERE id IN (${placeholders})
+         AND review_status = 'approved'`,
     ).all(...topIds) as Bm25Row[];
 
     const rowMap = new Map<number, Bm25Row>();
@@ -918,10 +958,17 @@ async function handleMemoryHybridSearch(args: HybridSearchInput): Promise<{ cont
   }
 
   const placeholders = topIds.map(() => '?').join(',');
+  // TD-059: defense-in-depth `review_status='approved'` filter on the hybrid
+  // search hydration path. `bm25Rows` and `vecResults` already exclude
+  // pending_review rows upstream, but a future caller bypassing those filters
+  // must not leak unapproved rows through this hydration step. Kept symmetric
+  // with the same filter on the recall hydration query above.
   const fullRows = db.prepare(
     `SELECT id, project, category, title, content, tags, tech_stack, scope,
             source_brief, confidence, created_at, access_count, provenance
-     FROM learnings WHERE id IN (${placeholders})`,
+     FROM learnings
+     WHERE id IN (${placeholders})
+       AND review_status = 'approved'`,
   ).all(...topIds) as Bm25Row[];
 
   // Build lookup by ID
@@ -1121,11 +1168,23 @@ function wordJaccardSimilarity(a: string, b: string): number {
 function promoteToGlobal(): number {
   const db = getDb();
 
-  // Find titles (case-insensitive) that exist in 2+ distinct projects with local scope
+  // Find titles (case-insensitive) that exist in 2+ distinct projects with
+  // local scope.
+  //
+  // TD-060: also restrict to `review_status='approved'`. Without this filter,
+  // a perception-channel `pending_review` row inserted directly via
+  // `persistCandidate` (which bypasses `handleMemoryStore`'s approval guard at
+  // the call site) could surface as a promotion candidate the next time any
+  // OTHER `handleMemoryStore` call triggered `promoteToGlobal`. The filter
+  // mirrors the symmetric one on `fetchByTitle` below — that one is what
+  // actually drives the UPDATE so missing it is the live bug; this one is
+  // symmetry so the candidate set never includes pending rows in the first
+  // place.
   const titlesToPromote = db.prepare(`
     SELECT LOWER(title) AS lower_title
     FROM learnings
     WHERE scope = 'local'
+      AND review_status = 'approved'
     GROUP BY LOWER(title)
     HAVING COUNT(DISTINCT project) >= 2
   `).all() as Record<string, unknown>[];
@@ -1134,11 +1193,15 @@ function promoteToGlobal(): number {
     return 0;
   }
 
-  // For each candidate title, verify content similarity before promoting
+  // For each candidate title, verify content similarity before promoting.
+  // TD-060: `review_status='approved'` filter prevents pending rows from
+  // being scope-flipped during promotion.
   const fetchByTitle = db.prepare(`
     SELECT id, content
     FROM learnings
-    WHERE LOWER(title) = ? AND scope = 'local'
+    WHERE LOWER(title) = ?
+      AND scope = 'local'
+      AND review_status = 'approved'
   `);
 
   const updateStmt = db.prepare(`

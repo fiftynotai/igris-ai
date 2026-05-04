@@ -78,6 +78,7 @@ import {
   readTranscriptFile,
   truncateFileAtomic,
   defaultInboxPath,
+  defaultLogPath,
   runPerceptionFromTranscript,
   main,
   type CliArgs,
@@ -223,6 +224,50 @@ describe('parseCliArgs', () => {
     expect(args.project).toBe('');
     expect(args.transcriptPath).toBe('');
   });
+
+  // TD-077: --log-path / --no-log flags.
+
+  it('TD-077: parses --log-path override', () => {
+    const args = parseCliArgs([
+      'node',
+      'script.ts',
+      '--project',
+      'p',
+      '--transcript-path',
+      '/x',
+      '--log-path',
+      '/tmp/custom.log',
+    ]);
+    expect(args.logPath).toBe('/tmp/custom.log');
+    expect(args.noLog).toBe(false);
+  });
+
+  it('TD-077: --no-log flag toggles noLog true', () => {
+    const args = parseCliArgs([
+      'node',
+      'script.ts',
+      '--project',
+      'p',
+      '--transcript-path',
+      '/x',
+      '--no-log',
+    ]);
+    expect(args.noLog).toBe(true);
+    expect(args.logPath).toBeUndefined();
+  });
+
+  it('TD-077: defaults logPath=undefined and noLog=false when neither flag is set', () => {
+    const args = parseCliArgs([
+      'node',
+      'script.ts',
+      '--project',
+      'p',
+      '--transcript-path',
+      '/x',
+    ]);
+    expect(args.logPath).toBeUndefined();
+    expect(args.noLog).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -286,6 +331,18 @@ describe('defaultInboxPath', () => {
     const p = defaultInboxPath('igris-ai');
     expect(p).toContain('.igris');
     expect(p).toContain('projects/igris-ai/session/perception_inbox.jsonl');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// defaultLogPath (TD-077)
+// ---------------------------------------------------------------------------
+
+describe('defaultLogPath (TD-077)', () => {
+  it('builds the canonical perception extract log path', () => {
+    const p = defaultLogPath('igris-ai');
+    expect(p).toContain('.igris');
+    expect(p).toContain('projects/igris-ai/session/perception_extract.log');
   });
 });
 
@@ -593,6 +650,217 @@ describe('main', () => {
       emptyDb.close();
     }
   });
+
+  // -------------------------------------------------------------------------
+  // TD-077: tee stdout/stderr to a log file for direct CLI invocations.
+  //
+  // Note on test scope: vitest replaces `console.log` itself (not just
+  // `process.stdout.write`) to capture test output, so a happy-path test that
+  // relies on `console.log` content reaching the tee'd file produces an empty
+  // log under vitest even though the implementation works correctly in
+  // production (verified via the standalone tsx live-run during this brief).
+  // The tests below therefore focus on the file-creation side-effect (was the
+  // log file created? did `--no-log` suppress it? did `--log-path` honor the
+  // override?) and the unit test for `setupTeeLog` proves the tee mechanism
+  // itself works against `process.stdout.write`. End-to-end content capture
+  // is exercised by the production live-verification step in the brief AC.
+  // -------------------------------------------------------------------------
+
+  it('TD-077: creates default log file on a successful run', async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'td077-default-'));
+    const origHome = process.env.HOME;
+    process.env.HOME = tmpHome;
+
+    const tp = tempPath('td077-transcript');
+    fs.writeFileSync(tp, 'just a plain blob — no LEARNED markers');
+    cleanupFiles.push(tp);
+
+    const inbox = tempPath('td077-inbox');
+    fs.writeFileSync(inbox, 'old\n');
+    cleanupFiles.push(inbox);
+
+    // Force the LLM extractor noop so we never spawn `claude -p` in CI.
+    const prevLlmEnv = process.env.IGRIS_PERCEPTION_LLM_ENABLED;
+    process.env.IGRIS_PERCEPTION_LLM_ENABLED = '0';
+
+    try {
+      const exitCode = await main([
+        'node',
+        'script.ts',
+        '--project',
+        'td077-test-proj',
+        '--transcript-path',
+        tp,
+        '--inbox-path',
+        inbox,
+      ]);
+      expect(exitCode).toBe(0);
+
+      const expectedLog = path.join(
+        tmpHome,
+        '.igris',
+        'projects',
+        'td077-test-proj',
+        'session',
+        'perception_extract.log',
+      );
+      // The tee mechanism creates the log file at startup (via the
+      // createWriteStream call inside setupTeeLog). Empty content under
+      // vitest is acceptable — vitest replaces console.log so the success
+      // line never reaches process.stdout.write. See the test-block comment
+      // above for context.
+      expect(fs.existsSync(expectedLog)).toBe(true);
+    } finally {
+      if (origHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = origHome;
+      }
+      if (prevLlmEnv === undefined) {
+        delete process.env.IGRIS_PERCEPTION_LLM_ENABLED;
+      } else {
+        process.env.IGRIS_PERCEPTION_LLM_ENABLED = prevLlmEnv;
+      }
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it('TD-077: --no-log suppresses log file creation', async () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'td077-nolog-'));
+    const origHome = process.env.HOME;
+    process.env.HOME = tmpHome;
+
+    const tp = tempPath('td077-nolog-transcript');
+    fs.writeFileSync(tp, 'just a plain blob — no LEARNED markers');
+    cleanupFiles.push(tp);
+
+    const inbox = tempPath('td077-nolog-inbox');
+    fs.writeFileSync(inbox, 'old\n');
+    cleanupFiles.push(inbox);
+
+    const prevLlmEnv = process.env.IGRIS_PERCEPTION_LLM_ENABLED;
+    process.env.IGRIS_PERCEPTION_LLM_ENABLED = '0';
+
+    try {
+      const exitCode = await main([
+        'node',
+        'script.ts',
+        '--project',
+        'td077-nolog-proj',
+        '--transcript-path',
+        tp,
+        '--inbox-path',
+        inbox,
+        '--no-log',
+      ]);
+      expect(exitCode).toBe(0);
+
+      const expectedLog = path.join(
+        tmpHome,
+        '.igris',
+        'projects',
+        'td077-nolog-proj',
+        'session',
+        'perception_extract.log',
+      );
+      expect(fs.existsSync(expectedLog)).toBe(false);
+    } finally {
+      if (origHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = origHome;
+      }
+      if (prevLlmEnv === undefined) {
+        delete process.env.IGRIS_PERCEPTION_LLM_ENABLED;
+      } else {
+        process.env.IGRIS_PERCEPTION_LLM_ENABLED = prevLlmEnv;
+      }
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it('TD-077: --log-path override creates the specified file', async () => {
+    const customLog = tempPath('td077-custom.log');
+    cleanupFiles.push(customLog);
+
+    const tp = tempPath('td077-custom-transcript');
+    fs.writeFileSync(tp, 'just a plain blob — no LEARNED markers');
+    cleanupFiles.push(tp);
+
+    const inbox = tempPath('td077-custom-inbox');
+    fs.writeFileSync(inbox, 'old\n');
+    cleanupFiles.push(inbox);
+
+    const prevLlmEnv = process.env.IGRIS_PERCEPTION_LLM_ENABLED;
+    process.env.IGRIS_PERCEPTION_LLM_ENABLED = '0';
+
+    try {
+      const exitCode = await main([
+        'node',
+        'script.ts',
+        '--project',
+        'td077-custom-proj',
+        '--transcript-path',
+        tp,
+        '--inbox-path',
+        inbox,
+        '--log-path',
+        customLog,
+      ]);
+      expect(exitCode).toBe(0);
+      // File is created at the override path. Content capture via vitest's
+      // intercepted console.log is brittle — see comment above.
+      expect(fs.existsSync(customLog)).toBe(true);
+    } finally {
+      if (prevLlmEnv === undefined) {
+        delete process.env.IGRIS_PERCEPTION_LLM_ENABLED;
+      } else {
+        process.env.IGRIS_PERCEPTION_LLM_ENABLED = prevLlmEnv;
+      }
+    }
+  });
+
+  it('TD-077: setupTeeLog tees process.stdout.write content to the file', async () => {
+    // This test exercises the tee mechanism directly, bypassing the
+    // console.log issue under vitest. We import setupTeeLog and write via
+    // process.stdout.write (which IS what console.log calls in production).
+    const { setupTeeLog } = await import('../perception_extract_cli.js');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'td077-unit-'));
+    const logPath = path.join(tmp, 'tee.log');
+    try {
+      const tee = setupTeeLog(logPath);
+      process.stdout.write('hello via process.stdout.write\n');
+      process.stderr.write('hello via process.stderr.write\n');
+      await tee.restore();
+
+      const contents = fs.readFileSync(logPath, 'utf-8');
+      expect(contents).toContain('hello via process.stdout.write');
+      expect(contents).toContain('hello via process.stderr.write');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('TD-077: setupTeeLog appends across multiple invocations', async () => {
+    const { setupTeeLog } = await import('../perception_extract_cli.js');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'td077-append-'));
+    const logPath = path.join(tmp, 'append.log');
+    try {
+      const tee1 = setupTeeLog(logPath);
+      process.stdout.write('first run\n');
+      await tee1.restore();
+
+      const tee2 = setupTeeLog(logPath);
+      process.stdout.write('second run\n');
+      await tee2.restore();
+
+      const contents = fs.readFileSync(logPath, 'utf-8');
+      expect(contents).toContain('first run');
+      expect(contents).toContain('second run');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 // Suppress unused warning for the imported type CliArgs (used implicitly by parseCliArgs return value)
@@ -603,6 +871,8 @@ const _typeCheck: CliArgs = {
   inboxPath: undefined,
   dbPathOverride: undefined,
   source: 'detached',
+  logPath: undefined,
+  noLog: false,
   help: false,
 };
 void _typeCheck;

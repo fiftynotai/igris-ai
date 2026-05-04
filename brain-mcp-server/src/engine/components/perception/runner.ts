@@ -251,9 +251,13 @@ async function persistCandidate(
   const safeContent = candidate.content.slice(0, 1_000_000);
   const tags = candidate.tags.join(',');
 
-  // Persist the evidence in source_brief as JSON tagged with the brief id —
-  // the existing recall path reads `source_brief` so the link surfaces in
-  // the UI without a schema change.
+  // Store the brief id (or empty string when none) in `source_brief` — the
+  // existing recall path reads this column so the link surfaces in the UI
+  // without a schema change. Evidence proper lives in the candidate's
+  // `evidence` field at extraction time but is NOT persisted today; if we
+  // later want it on the row, add an `evidence` JSON column rather than
+  // overloading source_brief. (TD-063 — corrects an earlier comment that
+  // claimed evidence was JSON-tagged into this field.)
   const sourceBrief = briefId ? briefId : '';
 
   const reviewStatus = config.auto_approve_enabled ? 'approved' : 'pending_review';

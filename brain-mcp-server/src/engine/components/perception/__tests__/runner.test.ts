@@ -816,4 +816,66 @@ describe('runPerception', () => {
     expect(row.source_extractor).toBe('rule:learned_marker');
     expect(row.review_status).toBe('pending_review');
   });
+
+  // -------------------------------------------------------------------------
+  // TD-062: persisted source_extractor column reflects candidate value across
+  // both LLM (perception path) and manual (conscious path) inserts, and
+  // survives a review_status flip during approval.
+  // -------------------------------------------------------------------------
+  //
+  // Brief vocabulary drift: TD-062 originally asked for an assertion of
+  // `source_extractor='rule:learned_marker'`, but TD-066 deleted the rule
+  // extractors. Adapted to the current canonical 3-value enum
+  // (`'llm' | 'manual' | 'distill'` — see VALID_SOURCE_EXTRACTOR in
+  // tools/memory.ts and SourceExtractor in perception/types.ts).
+
+  it('TD-062: persists source_extractor verbatim and is unchanged after approval', async () => {
+    const events: TranscriptEvent[] = [
+      { role: 'user', content: 'X'.repeat(2000), timestamp: '' },
+    ];
+    const stubLlm = vi.fn(async () => [
+      makeCandidate({ title: 'finding-llm-1', source_extractor: 'llm' }),
+      makeCandidate({ title: 'finding-llm-2', source_extractor: 'llm' }),
+    ]);
+    await runPerception(
+      db,
+      { events, project: 'p', source: 'session_end' },
+      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true },
+      stubLlm,
+    );
+
+    // Insert a manual row directly (simulates igris_memory_store conscious path).
+    db.prepare(
+      `INSERT INTO learnings (project, category, title, content, scope,
+        provenance, review_status, source_extractor)
+       VALUES ('p', 'pattern', 'manual-row', 'body', 'local',
+        'human_asserted', 'approved', 'manual')`,
+    ).run();
+
+    const rows = db
+      .prepare(
+        `SELECT title, source_extractor, review_status FROM learnings ORDER BY id`,
+      )
+      .all() as Array<{ title: string; source_extractor: string; review_status: string }>;
+
+    expect(rows).toHaveLength(3);
+    expect(rows[0].source_extractor).toBe('llm');
+    expect(rows[0].review_status).toBe('pending_review');
+    expect(rows[1].source_extractor).toBe('llm');
+    expect(rows[1].review_status).toBe('pending_review');
+    expect(rows[2].source_extractor).toBe('manual');
+    expect(rows[2].review_status).toBe('approved');
+
+    // Simulate approval: flip review_status. source_extractor must NOT change.
+    db.prepare(
+      `UPDATE learnings SET review_status='approved' WHERE source_extractor='llm'`,
+    ).run();
+    const after = db
+      .prepare(
+        `SELECT source_extractor, review_status FROM learnings WHERE title='finding-llm-1'`,
+      )
+      .get() as { source_extractor: string; review_status: string };
+    expect(after.source_extractor).toBe('llm');
+    expect(after.review_status).toBe('approved');
+  });
 });

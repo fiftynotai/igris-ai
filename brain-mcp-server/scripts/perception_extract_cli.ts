@@ -78,7 +78,8 @@ Usage:
   npx tsx scripts/perception_extract_cli.ts \\
     --project <slug> \\
     --transcript-path <path> \\
-    [--brief-id <id>] [--inbox-path <path>] [--db <path>] [--source <label>]
+    [--brief-id <id>] [--inbox-path <path>] [--db <path>] [--source <label>] \\
+    [--log-path <path>] [--no-log]
 
 Required flags:
   --project <slug>            Project slug (e.g. igris-ai)
@@ -89,6 +90,8 @@ Optional flags:
   --inbox-path <path>         Override inbox path (default: ~/.igris/projects/{slug}/session/perception_inbox.jsonl)
   --db <path>                 Override IGRIS_DB_PATH (test override)
   --source <label>            Trigger source label (default: detached)
+  --log-path <path>           Override tee log path (default: ~/.igris/projects/{slug}/session/perception_extract.log)
+  --no-log                    Disable tee-to-log entirely (TD-077)
   --help, -h                  Print this help and exit 0
 
 Examples:
@@ -119,6 +122,17 @@ export interface CliArgs {
   dbPathOverride: string | undefined;
   /** Trigger source label (default 'detached'). */
   source: string;
+  /**
+   * TD-077: Override the tee log path. When undefined and `noLog=false`,
+   * defaults to `~/.igris/projects/{slug}/session/perception_extract.log`.
+   */
+  logPath: string | undefined;
+  /**
+   * TD-077: When true, suppress the tee-to-log behaviour entirely. The CLI
+   * still writes to stdout/stderr as usual; only the log artifact is omitted.
+   * Used by the test suite to avoid writing junk to `~/.igris/`.
+   */
+  noLog: boolean;
   /** Set when `--help` / `-h` is in argv. Caller should print USAGE and exit 0. */
   help: boolean;
 }
@@ -144,6 +158,8 @@ export function parseCliArgs(argv: string[]): CliArgs {
       inboxPath: undefined,
       dbPathOverride: undefined,
       source: 'detached',
+      logPath: undefined,
+      noLog: false,
       help: true,
     };
   }
@@ -172,6 +188,9 @@ export function parseCliArgs(argv: string[]): CliArgs {
   const inboxPath = requireValue('--inbox-path') || undefined;
   const dbPathOverride = requireValue('--db') || undefined;
   const source = requireValue('--source') || 'detached';
+  // TD-077: optional --log-path override; --no-log is a boolean toggle.
+  const logPath = requireValue('--log-path') || undefined;
+  const noLog = argv.includes('--no-log');
 
   return {
     project,
@@ -180,6 +199,8 @@ export function parseCliArgs(argv: string[]): CliArgs {
     inboxPath,
     dbPathOverride,
     source,
+    logPath,
+    noLog,
     help: false,
   };
 }
@@ -242,6 +263,113 @@ export function defaultInboxPath(projectSlug: string): string {
     'session',
     'perception_inbox.jsonl',
   );
+}
+
+/**
+ * TD-077: Resolve the default tee-log path for a project slug. Mirrors
+ * `defaultInboxPath` (same `~/.igris/projects/{slug}/session/` directory) so
+ * operators can grep both alongside each other.
+ */
+export function defaultLogPath(projectSlug: string): string {
+  return path.join(
+    os.homedir(),
+    '.igris',
+    'projects',
+    projectSlug,
+    'session',
+    'perception_extract.log',
+  );
+}
+
+/**
+ * TD-077: Tee `process.stdout` and `process.stderr` to the given log file IN
+ * ADDITION to the original streams. Returns a `restore()` callback that
+ * reverts the stream patches and waits for the underlying file write stream
+ * to drain.
+ *
+ * Implementation: open a write stream in append mode (`flags: 'a'`), then
+ * monkey-patch `stdout.write` / `stderr.write` to also push the chunk to the
+ * stream. The restore() is await-safe: it reverts the originals first, then
+ * ends the write stream and resolves on the 'finish' event so no log lines
+ * are lost when `main()` resolves.
+ *
+ * Failure to create the parent directory or open the log file is non-fatal —
+ * we surface a stderr line and return a no-op `restore()` so direct CLI runs
+ * without a writable `~/.igris/...` path still produce stdout/stderr (matches
+ * the wrapper script's `|| true` pattern).
+ *
+ * Composes with BR-060: must be installed BEFORE `bootEngine` so any
+ * boot-error stderr is captured, and `restore()` must run AFTER
+ * `engine.shutdown()` and `disposeEmbeddingPipeline` so the success line
+ * (printed before the existing try/finally exits) lands in the log. The
+ * BR-060 5s shutdown safety-valve calls `process.exit(0)` directly which
+ * skips the outer finally — the success line is already tee'd by then,
+ * so the most we lose is shutdown stderr after the timeout fires.
+ */
+export function setupTeeLog(logPath: string): { restore: () => Promise<void> } {
+  try {
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  } catch (err) {
+    process.stderr.write(
+      `[perception_extract_cli] log dir create failed (non-fatal): ${
+        err instanceof Error ? err.message : String(err)
+      }\n`,
+    );
+    return { restore: async () => {} };
+  }
+
+  let stream: fs.WriteStream;
+  try {
+    stream = fs.createWriteStream(logPath, { flags: 'a' });
+  } catch (err) {
+    process.stderr.write(
+      `[perception_extract_cli] log open failed (non-fatal): ${
+        err instanceof Error ? err.message : String(err)
+      }\n`,
+    );
+    return { restore: async () => {} };
+  }
+
+  const origStdout = process.stdout.write.bind(process.stdout);
+  const origStderr = process.stderr.write.bind(process.stderr);
+
+  // The signature of stream.Writable.write is overloaded; we wrap it loosely
+  // and forward all original arguments. Errors writing to the log stream are
+  // swallowed so a tee failure can never abort the run.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (process.stdout as any).write = (chunk: any, ...rest: any[]) => {
+    try {
+      stream.write(chunk);
+    } catch {
+      // ignore tee write failure
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (origStdout as any)(chunk, ...rest);
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (process.stderr as any).write = (chunk: any, ...rest: any[]) => {
+    try {
+      stream.write(chunk);
+    } catch {
+      // ignore tee write failure
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (origStderr as any)(chunk, ...rest);
+  };
+
+  return {
+    restore: async () => {
+      // Revert the patches BEFORE ending the stream so any stderr emitted
+      // during teardown still goes to the real stderr.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (process.stdout as any).write = origStdout;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (process.stderr as any).write = origStderr;
+      await new Promise<void>((resolve) => {
+        stream.end(() => resolve());
+      });
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -353,11 +481,30 @@ export async function main(argv: string[] = process.argv): Promise<number> {
   }
 
   // --help / -h: print usage to stdout (success channel) and exit 0.
+  // Help is intentionally handled BEFORE tee setup — there is nothing
+  // worth logging for a help invocation, and we'd rather not create a
+  // log file just because someone asked for usage.
   if (args.help) {
     console.log(USAGE);
     return 0;
   }
 
+  // TD-077: install the tee BEFORE `bootEngine` so any boot-error stderr is
+  // captured in the log artifact. The wrapper script
+  // `perception_extract_and_persist.sh` already redirects via shell; this
+  // duplicates capture for direct CLI invocations (smoke tests, ad-hoc
+  // operator runs, manual /scan triage). `--no-log` opts out (used by the
+  // test suite to avoid writing junk to `~/.igris/`). The restore is run in
+  // an outer finally below, AFTER `engine.shutdown()` has flushed the
+  // success line.
+  let teeRestore: () => Promise<void> = async () => {};
+  if (!args.noLog) {
+    const logPath = args.logPath ?? defaultLogPath(args.project);
+    const tee = setupTeeLog(logPath);
+    teeRestore = tee.restore;
+  }
+
+  try {
   // --db override is honored by setting the env var that getDb() reads
   // BEFORE the first call. better-sqlite3 has no global rebind hook, so
   // any later --db flag would be ignored — handled at parse time.
@@ -530,6 +677,16 @@ export async function main(argv: string[] = process.argv): Promise<number> {
     } finally {
       clearTimeout(shutdownTimer);
     }
+  }
+  } finally {
+    // TD-077: tee teardown happens AFTER the BR-060 lifecycle block above
+    // (engine.shutdown + disposeEmbeddingPipeline) so the success line and
+    // any shutdown stderr have already been captured. Note: the BR-060 5s
+    // shutdown safety-valve calls `process.exit(0)` directly which skips
+    // this outer finally — accepted residual since the success line was
+    // tee'd before that timer fired. Restoration is await-safe and revert
+    // the stream patches before ending the underlying file stream.
+    await teeRestore();
   }
 }
 

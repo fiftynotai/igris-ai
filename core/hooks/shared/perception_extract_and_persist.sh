@@ -217,10 +217,15 @@ echo "$now_epoch" > "$WATERMARK_FILE" 2>/dev/null || true
 # process.exit(code) to process.exitCode = code (let the loop drain
 # naturally so worker threads join cleanly before V8 teardown).
 set +e
+# TD-077: pass --no-log so the CLI's internal tee does NOT duplicate every
+# stdout/stderr line into the log file. The wrapper's `>> "$LOG_FILE" 2>&1`
+# redirection already captures the same stream; without --no-log the file
+# would contain each line twice.
 "$NPX_BIN" tsx scripts/perception_extract_cli.ts \
   --project "$PROJECT_SLUG" \
   --transcript-path "$TRANSCRIPT_PATH" \
   --source "$TRIGGER_LABEL" \
+  --no-log \
   >> "$LOG_FILE" 2>&1
 cli_rc=$?
 set -e
