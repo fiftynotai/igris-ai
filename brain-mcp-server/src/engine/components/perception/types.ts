@@ -137,8 +137,13 @@ export interface PerceptionExtractorConfig {
   dedup_enabled: boolean;
   /**
    * Cosine-similarity threshold above which a candidate is treated as a
-   * rediscovery of an existing learning. Range [0, 1]. Default 0.85
-   * (per TD-086 brief). Tunable via env or config.json.
+   * rediscovery of an existing learning. Range [0, 1]. Default 0.80
+   * (TD-087-tuned; was 0.85 under TD-086). The lower default is paired
+   * with embedding-input normalisation in `dedup.ts::normalizeForDedup`
+   * — together they form the "A+C" combination from the TD-087 brief.
+   * Tunable via env or config.json:
+   *   ~/.igris/config.json `perception.dedup_cosine_threshold`
+   *   IGRIS_PERCEPTION_DEDUP_THRESHOLD
    */
   dedup_cosine_threshold: number;
 }
@@ -153,9 +158,11 @@ export const DEFAULT_PERCEPTION_CONFIG: PerceptionExtractorConfig = {
   max_title_length: 500,
   max_content_length: 4000,
   auto_approve_enabled: false,
-  // TD-086 dedup defaults — enabled at threshold 0.85 per brief.
+  // TD-086 + TD-087 dedup defaults — enabled at threshold 0.80
+  // (was 0.85 in TD-086; lowered to 0.80 in TD-087 alongside embedding-input
+  // normalisation per the labelled-corpus F1 analysis).
   dedup_enabled: true,
-  dedup_cosine_threshold: 0.85,
+  dedup_cosine_threshold: 0.80,
 };
 
 // ---------------------------------------------------------------------------

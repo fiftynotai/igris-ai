@@ -37,7 +37,7 @@ import type { PerceptionEventName } from './events.js';
 import { writePerceptionEvent } from './events.js';
 import { generateEmbedding, embeddingToBuffer, EMBEDDING_MODEL } from '../../../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbedding } from '../../../utils/vector-search.js';
-import { findNearestMatch, recordRediscovery } from './dedup.js';
+import { findNearestMatch, normalizeForDedup, recordRediscovery } from './dedup.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -287,7 +287,18 @@ async function persistCandidate(
   // Best-effort embedding — same shape as memory.handleMemoryStore.
   try {
     if (isVectorSearchAvailable(db)) {
-      const embedding = await generateEmbedding(`${safeTitle} ${safeContent}`);
+      // TD-087: keep dedup geometry consistent with stored geometry. The
+      // dedup query in `findNearestMatch` embeds
+      //   `${normalizeForDedup(title)} ${normalizeForDedup(content)}`
+      // so the persist path normalises identically — otherwise the dedup
+      // pre-filter would compare a normalised query vector against a raw
+      // stored vector for fresh inserts, and cosine would drop. Pre-TD-087
+      // rows still carry raw embeddings; the read path tolerates both
+      // (insert-narrow / read-widen) — stale rows phase out via the
+      // pending_review TTL, and there is no forced backfill (per Phase 1
+      // backfill decision documented in operations doc).
+      const fingerprint = `${normalizeForDedup(safeTitle)} ${normalizeForDedup(safeContent)}`.trim();
+      const embedding = await generateEmbedding(fingerprint);
       db.prepare('UPDATE learnings SET embedding = ?, embedding_model = ? WHERE id = ?').run(
         embeddingToBuffer(embedding),
         EMBEDDING_MODEL,

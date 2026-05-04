@@ -1,5 +1,5 @@
 /**
- * Brain Engine — Perception cheap-dedup helper (TD-086).
+ * Brain Engine — Perception cheap-dedup helper (TD-086 + TD-087).
  *
  * Single responsibility: given a candidate (title + content), look up the
  * nearest existing learning by cosine similarity over the local embeddings
@@ -23,6 +23,25 @@
  * apply the threshold against cosine — the user-facing knob is cosine, so
  * preserving that vocabulary at the API surface keeps the operator config
  * (`dedup_cosine_threshold`) intuitive.
+ *
+ * TD-087 tuning (2026-05-04):
+ *   - Embedding input is pre-normalised via `normalizeForDedup` to collapse
+ *     bullet markers, dash variants, structural punctuation, and whitespace
+ *     runs before the model sees the text. This addresses the dominant
+ *     miss mode observed in TD-086: LLM body-text rephrasings drove
+ *     `cosine_full` below 0.85 even when the underlying insight was
+ *     identical (e.g. L-143 "Three-engine brain architecture: …" vs
+ *     L-152 "Three-engine brain framing: … — one shared …" — raw cosine
+ *     0.81; post-normalisation 0.89). The runner mirrors this normalisation
+ *     when persisting embeddings so the stored geometry matches the dedup
+ *     query geometry — see `runner.ts::persistCandidate`.
+ *   - Default threshold dropped from 0.85 → 0.80. Empirical F1 across a
+ *     201-pair labelled subset of the live corpus rises from 0.990 (raw
+ *     @ 0.85) to 0.995 (normalised @ 0.80), with zero observed false
+ *     positives in either configuration. The combined change (A+C in the
+ *     brief's terminology) is the recommended ship per the plan's decision
+ *     rule. See `docs/operations/perception-dedup-tuning.md` for the full
+ *     comparison table.
  *
  * TODO(FR-116): when soft-delete (`deleted_at`) lands on `learnings`, add
  * `WHERE deleted_at IS NULL` to the lookup so deleted rows do not pollute
@@ -65,6 +84,56 @@ export interface DedupMatch {
 const KNN_LIMIT = 10;
 
 /**
+ * TD-087 — collapse phrasing entropy before the embedding model sees the
+ * text so paraphrased rewordings of the same insight produce vectors close
+ * enough to clear the dedup threshold.
+ *
+ * Rules (in order):
+ *   1. lowercase
+ *   2. strip leading bullet markers per line (`-`, `*`, `•` followed by space)
+ *   3. replace ALL dash variants (`-`, `–`, `—`, `−`, hyphen, non-breaking
+ *      hyphens) with a single space — em-dash sentence breaks and hyphenated
+ *      compound words alike collapse into the surrounding token soup
+ *   4. drop structural punctuation that does NOT carry semantic load
+ *      (`.`, `!`, `?`, `:`, `;`, `,`, quotes, parens, brackets, slashes,
+ *      `|`, `<`, `>`, `+`, `=`, `*`, `~`, `^`, `@`, `#`, `$`, `%`, `&`)
+ *   5. collapse all whitespace (including tabs and newlines) to single space
+ *   6. trim
+ *
+ * Idempotence: `normalizeForDedup(normalizeForDedup(x))` ===
+ * `normalizeForDedup(x)` for all inputs.
+ *
+ * NOT covered (intentionally):
+ *   - Stemming / lemmatisation (delegated to the transformer model).
+ *   - Stop-word removal (the model handles distributional weighting).
+ *   - Numeric/date canonicalisation (rare in titles; risky for content).
+ *   - Unicode normalisation beyond ASCII fold (NFC/NFD) — the model
+ *     pipeline already handles BPE-aware codepoint folding.
+ *
+ * Empirical justification: on the TD-087 labelled corpus (201 pairs),
+ * normalising before embedding raised the L-143/L-152 cosine from 0.8134
+ * to 0.8878 (clears the 0.85 historical threshold AND the 0.80 new
+ * default with margin) and improved overall F1 from 0.990 → 0.995 at the
+ * shipped 0.80 threshold.
+ */
+export function normalizeForDedup(text: string): string {
+  if (!text) return '';
+  let t = text.toLowerCase();
+  // (2) leading bullet markers per line
+  t = t.replace(/^[ \t]*[-*•][ \t]+/gm, '');
+  // (3) dash variants → space
+  // Includes ASCII hyphen-minus (-), figure dash (‒), en-dash (–), em-dash (—),
+  // horizontal bar (―), minus-sign (−), non-breaking hyphen (‑), hyphen (‐).
+  t = t.replace(/[‐‑‒–—―−-]/g, ' ');
+  // (4) structural punctuation → space
+  t = t.replace(/[.!?:;,"'`()\[\]{}<>|/\\+=*~^@#$%&]/g, ' ');
+  // (5) collapse whitespace (incl. \n \t \r) → single space
+  t = t.replace(/\s+/g, ' ');
+  // (6) trim
+  return t.trim();
+}
+
+/**
  * Convert sqlite-vec's L2 distance (between two unit vectors) to cosine
  * similarity. Embeddings are L2-normalised (`normalize: true`) so the
  * identity holds without a re-normalisation step:
@@ -103,15 +172,17 @@ function l2DistanceToCosine(l2Distance: number): number {
  * @param db        Open better-sqlite3 handle (must have `learnings_vec`
  *                  available for a non-null return).
  * @param candidate The pre-persistence candidate emitted by an extractor.
- *                  We embed `${title} ${content}` — matches the input shape
- *                  used by `persistCandidate` so the cosine geometry is
- *                  identical.
- * @param threshold Cosine threshold in [0, 1]. Default 0.85.
+ *                  We embed `${normalizeForDedup(title)} ${normalizeForDedup(content)}` —
+ *                  matches the input shape used by `persistCandidate` so the
+ *                  cosine geometry is identical (TD-087: both sides
+ *                  normalise before the model call).
+ * @param threshold Cosine threshold in [0, 1]. Default 0.80 (TD-087-tuned;
+ *                  was 0.85 in TD-086).
  */
 export async function findNearestMatch(
   db: Database.Database,
   candidate: PerceptionCandidate,
-  threshold: number = 0.85,
+  threshold: number = 0.80,
 ): Promise<DedupMatch | null> {
   if (!isVectorSearchAvailable(db)) {
     return null;
@@ -119,7 +190,12 @@ export async function findNearestMatch(
 
   let embedding: Float32Array;
   try {
-    embedding = await generateEmbedding(`${candidate.title} ${candidate.content}`);
+    // TD-087: normalise both fields before concatenating so phrasing entropy
+    // (em-dashes, bullet variants, punctuation) does not move the embedding
+    // out of the dedup neighbourhood. Mirrored in runner.ts::persistCandidate
+    // so stored embeddings live in the same normalised space.
+    const fingerprint = `${normalizeForDedup(candidate.title)} ${normalizeForDedup(candidate.content)}`.trim();
+    embedding = await generateEmbedding(fingerprint);
   } catch (err) {
     console.error(
       '[perception.dedup] embedding generation failed — skipping dedup for this candidate:',
