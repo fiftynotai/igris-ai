@@ -30,9 +30,9 @@ the same `entity_edges` typed-graph layer used by `igris_graph_neighbors`,
 /visualize
 ```
 
-Renders the current project's graph to
-`~/.igris/projects/{project}/visualizations/briefs-graph-{timestamp}.html`
-and auto-opens it in the default browser.
+Optional: pass a project slug to render a different project — `/visualize my-app`. With no argument, the skill derives the project from `$CLAUDE_PROJECT_DIR` (the active working directory).
+
+The skill calls `igris_brief_graph_render`, writes to `~/.igris/projects/{project}/visualizations/briefs-graph-{timestamp}.html`, and opens the file in the OS default browser (macOS `open`, Linux `xdg-open`, WSL `wslview` or `cmd.exe`). On a headless host with no `$DISPLAY`/`$WAYLAND_DISPLAY` it prints the path instead.
 
 ### Via the MCP tool
 
