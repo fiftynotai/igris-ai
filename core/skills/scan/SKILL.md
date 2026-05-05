@@ -149,10 +149,19 @@ X agents registered (Y skills available)
 
 ### 6.5. Subconscious Suggestions (FR-106)
 
-This section is rendered ONLY when `$ARGUMENTS` contains the literal token `--suggestions`.
-Standard `/scan` (without the flag) skips this section entirely.
+> **TD-102 (V7):** This entire section is gated behind the `subconscious.enabled`
+> config flag (default `false` for V7). FR-118 will replace the rule-based
+> engine in V7.1 with an LLM-driven design; until then the section is silent
+> regardless of the `--suggestions` flag.
 
-If `--suggestions` is present and the `igris-brain` MCP is available:
+This section is rendered ONLY when ALL of the following are true:
+1. `subconscious.enabled` is `true` in `~/.igris/config.json` (key absent = `false`).
+2. `$ARGUMENTS` contains the literal token `--suggestions`.
+
+If either gate fails, skip this section silently — render nothing, do not
+call any suggestion MCP tools.
+
+If both gates pass and the `igris-brain` MCP is available:
 
 1. Call `igris_suggestion_list` with:
    - `status` = `'pending'`

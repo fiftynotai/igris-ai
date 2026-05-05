@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [7.0.0] - TBD
+
+### Changed
+
+- **Subconscious engine disabled by default** -- the rule-based gap/pattern/stalled detectors had a 2% true-positive rate, training users to ignore diagnostics. New `subconscious.enabled` config flag in `~/.igris/config.json` defaults to `false`. Both `subconscious_engine` schedule rows disabled. `/awaken` §4.8 and `/scan` §6.5 silently skip when the flag is false. Existing pending suggestions bulk-dismissed with reason `"subconscious paused pending FR-118 redesign (TD-102)"`. Schedule rows preserved — re-enable in V7.1 is a flag flip after FR-118 ships the LLM-driven replacement (TD-102).
+
+---
+
 ## [5.0.0] - 2026-03-10
 
 ### Added

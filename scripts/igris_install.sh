@@ -159,6 +159,34 @@ with open(sys.argv[1], 'w') as f:
   echo "   ✅ Created $SETTINGS_FILE (includeGitInstructions: false)"
 fi
 
+# ============================================================
+# Default subconscious engine to OFF for V7 (TD-102)
+# Rule-based engine had 2% true-positive rate; redesign tracked under FR-118
+# (V7.1 headline). Re-enable is just a flag flip — schedule rows preserved.
+# ============================================================
+echo ""
+echo "🧠 Configuring subconscious engine default..."
+
+CONFIG_FILE="$BRAIN_DIR/config.json"
+if [ -f "$CONFIG_FILE" ]; then
+  python3 - "$CONFIG_FILE" <<'PY'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1])
+cfg = json.loads(p.read_text())
+section = cfg.setdefault("subconscious", {})
+# Only set the default if the key is absent — never clobber an operator
+# who has explicitly re-enabled the engine after FR-118 ships.
+if "enabled" not in section:
+    section["enabled"] = False
+    p.write_text(json.dumps(cfg, indent=2) + "\n")
+    print("   ✅ subconscious.enabled: false (TD-102)")
+else:
+    print(f"   ✅ subconscious.enabled already set to {section['enabled']} (preserved)")
+PY
+else
+  echo "   ⚠️  $CONFIG_FILE not found — skipping subconscious flag write"
+fi
+
 # Create per-project directories in brain
 PROJECT_DIR="$HOME/.igris/projects/$(basename "$TARGET_DIR")"
 mkdir -p "$PROJECT_DIR/session"

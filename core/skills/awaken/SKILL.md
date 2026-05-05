@@ -260,6 +260,16 @@ If the goal tools are unavailable (older brain), skip silently.
 
 ### 4.8. Subconscious Suggestions (FR-106)
 
+> **TD-102 (V7):** This entire section is gated behind the `subconscious.enabled`
+> config flag, which defaults to `false` for V7. The rule-based engine had a
+> 2% true-positive rate; the redesign is tracked under FR-118 (V7.1 headline).
+> Re-enable is just a flag flip — no schedule re-bootstrap needed.
+
+Read `~/.igris/config.json` and check `subconscious.enabled`. If the key is
+absent, treat as `false`. If `false`, skip this section silently — render
+nothing, do not call any suggestion MCP tools, do not surface a "disabled"
+notice. Resume reading at §4.9.
+
 If `igris-brain` MCP is available, call `igris_suggestion_list` with:
 - `status` = `'pending'`
 - `project_slug` = current project slug
