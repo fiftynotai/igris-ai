@@ -66,6 +66,7 @@ at `core/scripts/verify_mirror.sh` (deployed: `~/.igris/core/scripts/verify_mirr
 - Quote the entire primitive output verbatim in your report under a `### Mirror check` heading.
 - Set the overall verdict to PASS only if the primitive's exit code is 0.
 - If the primitive reports any MISMATCH, MISSING, SAME_INODE, TYPE_ERROR, or ERROR pair, the overall verdict is FAIL and the report MUST list each failing pair by name. The primitive emits one of six verdicts per pair: MATCH, MISMATCH, MISSING, SAME_INODE, TYPE_ERROR, ERROR.
+- Independently re-run `verify_mirror.sh` even if forger's completion summary already reports "bytes-identical" or quotes a prior primitive run. Sentinel's role is to verify, not to confirm — re-execute the primitive against the same pairs forger claimed to sync, capture the fresh stdout+exit code, and quote it verbatim. Never trust forger's narrative or stale primitive output (L-249).
 
 **Why this is mandated:** Free-form `diff` invocation in past validations
 produced false-PASS verdicts (BR-062). The primitive enforces realpath

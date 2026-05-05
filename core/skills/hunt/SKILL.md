@@ -145,6 +145,16 @@ Proceed to PLANNING phase.
    nevertheless emits a Commit phase (e.g., habitually numbering 0-N
    ending in commit), the orchestrator excises it before passing the
    plan to the forger in Phase 3 step 3.6.
+3.7. **Architect plan template constraint (TD-096):**
+   When the brief implementation will modify any file under repo `core/`
+   that has a runtime mirror at `~/.igris/core/`, the architect's plan
+   MUST include explicit `cp` steps from repo to runtime AND immediate
+   `bash ~/.igris/core/scripts/verify_mirror.sh <repo> <runtime>` sub-steps
+   after each `cp`. Forger is contractually required to run the primitive
+   and quote verbatim output (see forger.md MIRROR_SYNC). The plan must
+   surface this so forger does not skip it. If the architect omits these
+   sub-steps and the implementation touches core/ files, the orchestrator
+   annotates the prompt with a reminder before passing to forger in step 4.
 4. **Delegate to architect agent** using Agent tool:
 
 ```
