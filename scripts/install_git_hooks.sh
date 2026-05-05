@@ -29,6 +29,16 @@ for hook in "$SOURCE_DIR"/*; do
   chmod +x "$hook"
 
   # Replace any existing hook (file or symlink) with a symlink to ours.
+  # TD-072 F3: if the target is a real file (not a symlink), it predates
+  # this installer — most likely a hand-rolled hook a developer wrote
+  # before adopting Igris. Back it up before clobbering so their work is
+  # not silently lost. Existing symlinks (the steady state for an Igris
+  # install) are replaced silently.
+  if [ -e "$target" ] && [ ! -L "$target" ]; then
+    backup="$target.pre-igris.bak.$(date +%s)"
+    echo "WARNING: backing up existing non-symlink hook at $target -> $backup" >&2
+    cp -p "$target" "$backup"
+  fi
   if [ -e "$target" ] || [ -L "$target" ]; then
     rm -f "$target"
   fi

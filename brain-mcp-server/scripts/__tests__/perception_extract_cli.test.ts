@@ -481,6 +481,24 @@ describe('main', () => {
     expect(exitCode).toBe(1);
   });
 
+  it('prints USAGE to stdout and returns 0 on --help', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const exitCode = await main(['node', 'script.ts', '--help']);
+      expect(exitCode).toBe(0);
+
+      const combinedOutput = logSpy.mock.calls.map((c) => c.join(' ')).join('\n');
+      expect(combinedOutput).toContain('perception_extract_cli');
+      expect(combinedOutput).toContain('--project');
+
+      // --help short-circuits before any I/O boundary
+      expect(mockedHandleBrainPush).not.toHaveBeenCalled();
+      expect(mockedBootEngine).not.toHaveBeenCalled();
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it('returns 0 when transcript file is absent', async () => {
     const exitCode = await main([
       'node',

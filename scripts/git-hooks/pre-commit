@@ -94,6 +94,9 @@ failed=0
 
 if [ "$needs_enum_check" = "1" ]; then
   echo "[pre-commit] Validating brain_stewardship enums..."
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed and reported
+  # together at the end, rather than aborting on the first failure.
   if ! bash "$REPO_ROOT/scripts/validate_memory_agency_enums.sh"; then
     failed=1
   fi
@@ -101,6 +104,9 @@ fi
 
 if [ "$needs_lineranges_check" = "1" ]; then
   echo "[pre-commit] Validating igris_tree.json line ranges..."
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed and reported
+  # together at the end, rather than aborting on the first failure.
   if ! python3 "$REPO_ROOT/scripts/validate_igris_tree_lineranges.py"; then
     failed=1
   fi

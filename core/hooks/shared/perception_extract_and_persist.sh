@@ -45,6 +45,13 @@ fi
 # Trigger label threaded from the parent hook ($2). Default 'detached' so a
 # direct invocation (or older caller without the 2nd arg) still labels its
 # events. Safe under set -u via ${2:-default}.
+#
+# Note on TRIGGER_LABEL ($2):
+# Default 'detached' matches the CLI's internal default for direct invocations
+# (e.g., manual perception_extract_cli runs). Parent hooks pass explicit labels:
+# 'session_end' from session_end.sh, 'pre_compact' from pre_compact.sh. If a
+# future hook regression drops the arg, label will fall back to 'detached' and
+# remain diagnostically clear in event_log queries.
 TRIGGER_LABEL="${2:-detached}"
 
 # ---------------------------------------------------------------------------
@@ -220,7 +227,7 @@ echo "$now_epoch" > "$WATERMARK_FILE" 2>/dev/null || true
 #
 # We invoke with `|| true` so a non-zero CLI exit (rare — see BR-060) does
 # not trip `set -e`. Push outcome is tagged onto the same summary line
-# ("push=pushed|queued|failed|remote_not_configured|skipped") that
+# ("push=pushed|queued|failed|remote_not_configured") that
 # operators tail in perception_extract.log.
 # TD-077: pass --no-log so the CLI's internal tee does NOT duplicate every
 # stdout/stderr line into the log file. The wrapper's `>> "$LOG_FILE" 2>&1`

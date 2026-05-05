@@ -8,7 +8,7 @@ A single `pre-commit` dispatcher (`scripts/git-hooks/pre-commit`) that condition
 
 | Validator | What it asserts | Brief |
 |---|---|---|
-| `scripts/validate_memory_agency_enums.sh` | Every enum value declared on `memory_store` (`category`, `scope`, `provenance`) appears in backticks somewhere inside the `memory_agency` section of `igris_os.md`. | TD-070 / DRIFT-1 |
+| `scripts/validate_memory_agency_enums.sh` | Every enum value declared on `memory_store` (`category`, `scope`, `provenance`) appears in backticks somewhere inside the `<!-- SECTION: brain_stewardship -->` region of `core/prompts/brain_stewardship.md`. Also asserts schema-shrinkage: enum-shaped backticked tokens in the docs must still exist in the schema. Overridable via `SCHEMA_FILE` / `PROMPT_FILE` env vars. | TD-070 / DRIFT-1, TD-072 |
 | `scripts/validate_igris_tree_lineranges.py` | Every section declared in `igris_tree.json` has a matching `<!-- SECTION: <name> -->` marker at the declared start line and a `<!-- /SECTION: <name> -->` marker at the declared end line in `igris_os.md`. | TD-070 / DRIFT-3 |
 
 Both validators are also runnable standalone:
@@ -40,6 +40,8 @@ bash scripts/install_git_hooks.sh
 ```
 
 The installer symlinks `scripts/git-hooks/pre-commit` into `.git/hooks/pre-commit`. Symlink (not copy) means future updates to the committed hook script propagate to every developer on the next `git pull` — no re-install needed unless a brand-new hook type is added.
+
+Note: Git tracks the executable bit on `scripts/git-hooks/pre-commit`, so `git pull` preserves it across machines. The `chmod +x "$hook"` call in `install_git_hooks.sh` (line 29) acts as belt-and-suspenders for fresh checkouts on environments that drop the executable bit (Windows, untarred archives, `cp -r` from non-Git source).
 
 The installer is idempotent: re-running it replaces existing symlinks/files in `.git/hooks/` with the current committed version.
 

@@ -94,8 +94,9 @@ const NULL_LOGGER: ExtractorLogger = { info: () => {}, warn: () => {} };
 
 /**
  * Default LLM extractor used when the `claude` CLI is absent or
- * `extractor_llm_enabled=false`. Returns an empty array so the runner
- * proceeds with rule candidates only.
+ * `extractor_llm_enabled=false`. Returns an empty array — the runner
+ * records `llm_status='skipped:disabled'` or `'skipped:cli_missing'`
+ * and persists nothing.
  */
 export const noopLlmExtractor: LlmExtractor = async () => [];
 
@@ -112,10 +113,16 @@ const VALID_CATEGORIES = new Set<PerceptionCategory>([
 ]);
 
 /**
- * Confidence ceiling for LLM output. A LEARNED-marker rule already sits
- * at 0.85 — the LLM is non-deterministic, so we forbid it from outranking
- * the deterministic top of the rule pipeline. Tie-break in dedupe favours
- * `rule:*` over `llm` when confidences are equal.
+ * Confidence ceiling for LLM-extracted candidates.
+ *
+ * Capped at 0.85 so an over-confident LLM cannot outrank human-asserted or
+ * observed entries inserted via `igris_memory_store` or `/distill`, which
+ * carry `provenance='human_asserted'` or `'observed'`. Tie-break in dedupe
+ * favours `human_asserted` / `observed` provenance over `inferred`
+ * provenance (the value perception writes for LLM-sourced rows).
+ *
+ * The model is asked to self-rate confidence; we trust the relative ordering
+ * but compress the absolute scale into [0.0, 0.85].
  */
 export const LLM_CONFIDENCE_CAP = 0.85;
 
@@ -152,7 +159,8 @@ export function validateAndCoerce(raw: unknown): PerceptionCandidate | null {
     ? r.tags.filter((t): t is string => typeof t === 'string').slice(0, 5)
     : [];
 
-  // Cap confidence so LLM cannot outrank a deterministic rule.
+  // Cap confidence so LLM-inferred candidates cannot outrank manually-asserted
+  // or observed entries (see LLM_CONFIDENCE_CAP docstring above).
   const rawConfidence = typeof r.confidence === 'number' ? r.confidence : 0.7;
   const confidence = Math.max(0, Math.min(LLM_CONFIDENCE_CAP, rawConfidence));
 
