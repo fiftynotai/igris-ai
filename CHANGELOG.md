@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Subconscious engine disabled by default** -- the rule-based gap/pattern/stalled detectors had a 2% true-positive rate, training users to ignore diagnostics. New `subconscious.enabled` config flag in `~/.igris/config.json` defaults to `false`. Both `subconscious_engine` schedule rows disabled. `/awaken` §4.8 and `/scan` §6.5 silently skip when the flag is false. Existing pending suggestions bulk-dismissed with reason `"subconscious paused pending FR-118 redesign (TD-102)"`. Schedule rows preserved — re-enable in V7.1 is a flag flip after FR-118 ships the LLM-driven replacement (TD-102).
+- **Removed vestigial `features.mcp_server` config flag** -- the flag was documented as gating "all 27 MCP tools" but had zero runtime consumers. Its only effect was prose-driven self-skipping of MCP-mandatory steps in `/awaken`, `/scan`, `/rest`, which masked a 4,781-row `sync_queue` accumulation during a 20-hour VPS outage on 2026-05-04. Real gates remain unchanged: `~/.claude.json` registration (Claude Code's actual MCP gate) and tool-availability detection at call time. Existing `~/.igris/config.json` files in the wild get auto-migrated via a soft `pop()` cleanup in `scripts/igris_install.sh` on next install. Skills required no changes — they already used tool-availability detection (BR-065).
 
 ---
 

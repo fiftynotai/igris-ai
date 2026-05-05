@@ -628,7 +628,6 @@ config = {
         'memory': brain_mode in ('local', 'dual'),
         'project_registry': True,
         'symlinks': True,
-        'mcp_server': True,
         'staging_pipeline': brain_mode in ('local', 'dual'),
         'analytics': True
     },

@@ -53,7 +53,6 @@ config = {
         'memory': brain_mode in ('local', 'dual'),
         'project_registry': True,
         'symlinks': True,
-        'mcp_server': True,
         'staging_pipeline': brain_mode in ('local', 'dual'),
         'analytics': True
     },
@@ -152,7 +151,7 @@ config = {
     'version': '4.0.0',
     'installed_at': '2026-02-26T00:00:00Z',
     'source_repo': '/tmp/test',
-    'features': {'memory': True, 'project_registry': True, 'symlinks': True, 'mcp_server': True, 'staging_pipeline': True, 'analytics': True},
+    'features': {'memory': True, 'project_registry': True, 'symlinks': True, 'staging_pipeline': True, 'analytics': True},
     'paths': {'brain': '~/.igris', 'core': '~/.igris/core', 'memory': '~/.igris/memory', 'staging': '~/.igris/staging'},
     'database': {'path': '~/.igris/memory/knowledge.db', 'wal_mode': True, 'busy_timeout_ms': 5000},
     'worker': {

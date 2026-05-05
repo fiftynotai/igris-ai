@@ -262,13 +262,13 @@ IGRIS v5.0 introduces a centralized brain at `~/.igris/` that provides persisten
 
 ### Brain Components
 - **knowledge.db** — SQLite database with WAL mode (concurrent reads, serialized writes)
-- **MCP Server** — `igris-brain` registered globally in `~/.claude.json` (optional, requires `features.mcp_server: true` in `~/.igris/config.json`)
+- **MCP Server** — `igris-brain` registered globally in `~/.claude.json` (optional; presence/absence in `~/.claude.json` is the actual gate, and skills additionally fall back to tool-availability detection at call time)
 - **Staging Pipeline** — Hooks write to `~/.igris/staging/`, processed on server startup (guarded by `features.staging_pipeline: true` in config; hooks exit early when disabled)
 - **Core Files** — Agents, skills, rules, prompts symlinked from `~/.igris/core/`
 
 ### Brain MCP Tools (27 tools)
 
-**Note:** The following MCP tools require `features.mcp_server: true` in `~/.igris/config.json`. When the MCP server is disabled, brain features using these tools are unavailable. Core Igris features (briefs, sessions, agents, quality gates) work fully in local-only mode.
+**Note:** The following MCP tools require `igris-brain` to be registered in `~/.claude.json`; skills detect availability at call time and skip gracefully when the server is unreachable. Core Igris features (briefs, sessions, agents, quality gates) work fully in local-only mode.
 
 **Memory domain:**
 | Tool | Purpose |
@@ -344,7 +344,6 @@ Brain integration is optional. If `~/.igris/` does not exist or MCP server is no
 
 | Flag | Default | When `false` |
 |------|---------|--------------|
-| `features.mcp_server` | `false` | All 27 MCP tools unavailable; brain queries skipped silently during init |
 | `features.staging_pipeline` | `false` | Post-edit hooks skip staging file writes; no `~/.igris/staging/` accumulation |
 | `features.memory` | `true` | Knowledge DB not used for learning storage/recall |
 | `features.project_registry` | `true` | Project registration disabled |

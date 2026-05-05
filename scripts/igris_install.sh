@@ -612,6 +612,24 @@ except:
   fi
 fi
 
+# Soft-migrate: drop vestigial features.mcp_server flag from existing configs (BR-065)
+if [ -f "$BRAIN_DIR/config.json" ]; then
+  python3 -c "
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path, 'r') as f:
+        config = json.load(f)
+    if 'features' in config and isinstance(config['features'], dict):
+        if config['features'].pop('mcp_server', None) is not None:
+            with open(path, 'w') as f:
+                json.dump(config, f, indent=2)
+                f.write('\n')
+except Exception:
+    pass
+" "$BRAIN_DIR/config.json" 2>/dev/null || true
+fi
+
 # ============================================================
 # Done
 # ============================================================
