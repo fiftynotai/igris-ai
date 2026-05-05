@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createRequire } from 'node:module';
 import Database from 'better-sqlite3';
 
 vi.mock('../../../../db.js', () => ({
@@ -619,5 +620,283 @@ describe('handlePerceptionExpireStale', () => {
   it('rejects negative ttl', () => {
     const r = handlePerceptionExpireStale({ ttl_days: -1 });
     expect(r.isError).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-098: vec0 + FTS5 cleanup verification
+// ---------------------------------------------------------------------------
+//
+// Production schema includes the `learnings_vec` virtual table (vec0) and
+// the FTS5 `learnings_fts` contentless table. Pre-TD-098, the
+// `learnings_vec_ad` AFTER DELETE trigger ran inside trigger context and
+// raised `unsafe use of virtual table "learnings_vec"` whenever the
+// connection had `PRAGMA trusted_schema = OFF` (db.ts:868). Migration v3
+// drops that trigger; the handler now owns explicit transactional
+// cleanup via `cleanupLearningArtifacts`. The FTS5 `learnings_ad`
+// trigger is empirically safe under the same guard and is KEPT.
+//
+// These tests skip when the sqlite-vec native binary isn't available.
+
+function vecBinaryAvailable(): boolean {
+  try {
+    const requireCjs = createRequire(import.meta.url);
+    const sqliteVec = requireCjs('sqlite-vec') as {
+      getLoadablePath?: () => string;
+    };
+    if (typeof sqliteVec.getLoadablePath === 'function') {
+      const p = sqliteVec.getLoadablePath();
+      return typeof p === 'string' && p.length > 0;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const HAS_VEC_BINARY = vecBinaryAvailable();
+
+function loadVec(db: Database.Database): void {
+  const requireCjs = createRequire(import.meta.url);
+  const sqliteVec = requireCjs('sqlite-vec') as {
+    load: (db: Database.Database) => void;
+  };
+  sqliteVec.load(db);
+}
+
+/**
+ * Build a fixture mirroring production schema after TD-098 migration v3:
+ *   - vec0 `learnings_vec` virtual table
+ *   - FTS5 `learnings_fts` virtual table
+ *   - AI/AU/AD FTS5 triggers (the `learnings_ad` trigger STAYS — it
+ *     handles FTS5 cleanup automatically)
+ *   - NO `learnings_vec_ad` trigger (dropped by perception migration v3)
+ *   - PRAGMA trusted_schema = OFF (production-grade hygiene; this is
+ *     the pragma that makes vec0 reject trigger-context writes, and
+ *     it's the production setting per db.ts:868)
+ */
+function makeTestDbWithVec(): Database.Database {
+  const db = new Database(':memory:');
+  db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
+  db.pragma('trusted_schema = OFF');
+  loadVec(db);
+
+  db.exec(`
+    CREATE TABLE learnings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project TEXT NOT NULL,
+      category TEXT NOT NULL,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      tags TEXT DEFAULT '',
+      tech_stack TEXT DEFAULT '',
+      scope TEXT DEFAULT 'local',
+      source_brief TEXT DEFAULT '',
+      confidence REAL DEFAULT 0.8,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      access_count INTEGER DEFAULT 0,
+      last_accessed_at TEXT,
+      embedding BLOB,
+      embedding_model TEXT DEFAULT '',
+      provenance TEXT NOT NULL DEFAULT 'observed',
+      review_status TEXT NOT NULL DEFAULT 'approved',
+      source_extractor TEXT NOT NULL DEFAULT 'manual'
+    );
+
+    CREATE VIRTUAL TABLE learnings_fts USING fts5(
+      title, content, tags, tech_stack,
+      content=learnings,
+      content_rowid=id
+    );
+
+    -- TD-098: production schema after migration v3 — learnings_ad is
+    -- KEPT (FTS5 contentless 'delete' is safe under trusted_schema=OFF),
+    -- learnings_vec_ad is DROPPED (vec0 rejects trigger-context writes
+    -- under that pragma; handlers own explicit cleanup).
+    CREATE TRIGGER learnings_ai AFTER INSERT ON learnings BEGIN
+      INSERT INTO learnings_fts(rowid, title, content, tags, tech_stack)
+      VALUES (new.id, new.title, new.content, new.tags, new.tech_stack);
+    END;
+    CREATE TRIGGER learnings_au AFTER UPDATE ON learnings BEGIN
+      INSERT INTO learnings_fts(learnings_fts, rowid, title, content, tags, tech_stack)
+      VALUES ('delete', old.id, old.title, old.content, old.tags, old.tech_stack);
+      INSERT INTO learnings_fts(rowid, title, content, tags, tech_stack)
+      VALUES (new.id, new.title, new.content, new.tags, new.tech_stack);
+    END;
+    CREATE TRIGGER learnings_ad AFTER DELETE ON learnings BEGIN
+      INSERT INTO learnings_fts(learnings_fts, rowid, title, content, tags, tech_stack)
+      VALUES ('delete', old.id, old.title, old.content, old.tags, old.tech_stack);
+    END;
+
+    CREATE VIRTUAL TABLE learnings_vec USING vec0(
+      embedding float[384]
+    );
+
+    CREATE TABLE perception_watermarks (
+      project TEXT PRIMARY KEY,
+      last_extracted_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+  return db;
+}
+
+/** Insert a pending_review learning + matching learnings_vec row. */
+function seedPendingWithVec(
+  db: Database.Database,
+  title: string,
+  project = 'p',
+): number {
+  const result = db.prepare(
+    `INSERT INTO learnings (project, category, title, content, provenance, review_status)
+     VALUES (?, 'pattern', ?, 'td098 content', 'inferred', 'pending_review')`,
+  ).run(project, title);
+  const id = Number(result.lastInsertRowid);
+  const emb = new Float32Array(384);
+  for (let i = 0; i < 384; i++) emb[i] = Math.random();
+  const buf = Buffer.from(emb.buffer, emb.byteOffset, emb.byteLength);
+  db.prepare('INSERT INTO learnings_vec(rowid, embedding) VALUES (?, ?)').run(BigInt(id), buf);
+  return id;
+}
+
+describe.skipIf(!HAS_VEC_BINARY)('TD-098: handlePerceptionReject with vec0 + FTS5 present', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeTestDbWithVec();
+    mockedGetDb.mockReturnValue(db);
+  });
+  afterEach(() => db.close());
+
+  it('cleans learnings + learnings_vec atomically and FTS5 trigger scrubs learnings_fts', () => {
+    const sentinel = `td098reject${Date.now()}`;
+    const id = seedPendingWithVec(db, sentinel);
+
+    // Sanity: row exists in all three tables before reject.
+    expect(
+      (db.prepare('SELECT COUNT(*) AS c FROM learnings WHERE id = ?').get(id) as { c: number }).c,
+    ).toBe(1);
+    expect(
+      (db.prepare('SELECT COUNT(*) AS c FROM learnings_vec WHERE rowid = ?').get(BigInt(id)) as { c: number }).c,
+    ).toBe(1);
+    expect(
+      (db.prepare(`SELECT COUNT(*) AS c FROM learnings_fts WHERE learnings_fts MATCH ?`).get(sentinel) as { c: number }).c,
+    ).toBe(1);
+
+    const r = handlePerceptionReject({ learning_id: id, reason: 'td098' });
+    expect(r.isError).toBeFalsy();
+
+    // After reject: all three should be cleaned.
+    expect(
+      (db.prepare('SELECT COUNT(*) AS c FROM learnings WHERE id = ?').get(id) as { c: number }).c,
+    ).toBe(0);
+    expect(
+      (db.prepare('SELECT COUNT(*) AS c FROM learnings_vec WHERE rowid = ?').get(BigInt(id)) as { c: number }).c,
+    ).toBe(0);
+    expect(
+      (db.prepare(`SELECT COUNT(*) AS c FROM learnings_fts WHERE learnings_fts MATCH ?`).get(sentinel) as { c: number }).c,
+    ).toBe(0);
+  });
+
+  it('does NOT raise unsafe-use-of-virtual-table when reject runs (regression for the original bug)', () => {
+    const id = seedPendingWithVec(db, `td098noerror${Date.now()}`);
+    const r = handlePerceptionReject({ learning_id: id });
+    // The whole point of TD-098: this previously errored 100% with
+    // `unsafe use of virtual table "learnings_vec"`. Must succeed now.
+    expect(r.isError).toBeFalsy();
+    const out = JSON.parse(r.content[0].text) as { deleted: boolean };
+    expect(out.deleted).toBe(true);
+  });
+
+  it('rolls back atomically if the learnings delete fails (transactional invariant)', () => {
+    // Prove the transaction shape: if the helper's learnings DELETE
+    // throws, the vec DELETE should also be rolled back. We force this
+    // by setting an FK guard from a brand-new table referencing learnings.
+    const id = seedPendingWithVec(db, `td098txn${Date.now()}`);
+    db.exec(`
+      CREATE TABLE _td098_fk (
+        id INTEGER PRIMARY KEY,
+        learning_id INTEGER NOT NULL REFERENCES learnings(id) ON DELETE RESTRICT
+      );
+    `);
+    db.prepare('INSERT INTO _td098_fk (id, learning_id) VALUES (1, ?)').run(id);
+
+    const r = handlePerceptionReject({ learning_id: id });
+    expect(r.isError).toBe(true);
+    // Both rows should still be present — transaction rolled back.
+    expect(
+      (db.prepare('SELECT COUNT(*) AS c FROM learnings WHERE id = ?').get(id) as { c: number }).c,
+    ).toBe(1);
+    expect(
+      (db.prepare('SELECT COUNT(*) AS c FROM learnings_vec WHERE rowid = ?').get(BigInt(id)) as { c: number }).c,
+    ).toBe(1);
+  });
+});
+
+describe.skipIf(!HAS_VEC_BINARY)('TD-098: handlePerceptionExpireStale with vec0 present', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeTestDbWithVec();
+    mockedGetDb.mockReturnValue(db);
+  });
+  afterEach(() => db.close());
+
+  it('bulk-cleans learnings + learnings_vec for all stale rows in one transaction', () => {
+    // Seed 5 stale pending rows with vec embeddings.
+    const staleIds: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const r = db.prepare(
+        `INSERT INTO learnings (project, category, title, content, created_at, provenance, review_status)
+         VALUES ('p', 'pattern', ?, 'c', datetime('now', '-30 days'), 'inferred', 'pending_review')`,
+      ).run(`td098-stale-${i}-${Date.now()}`);
+      const id = Number(r.lastInsertRowid);
+      const emb = new Float32Array(384);
+      const buf = Buffer.from(emb.buffer, emb.byteOffset, emb.byteLength);
+      db.prepare('INSERT INTO learnings_vec(rowid, embedding) VALUES (?, ?)').run(BigInt(id), buf);
+      staleIds.push(id);
+    }
+    // Seed 1 fresh pending row (NOT past TTL) — must survive.
+    const freshId = seedPendingWithVec(db, `td098-fresh-${Date.now()}`);
+
+    const r = handlePerceptionExpireStale({ ttl_days: 14 });
+    expect(r.isError).toBeFalsy();
+    const out = JSON.parse(r.content[0].text) as { expired: number };
+    expect(out.expired).toBe(5);
+
+    // All 5 stale rows cleaned in BOTH tables.
+    for (const id of staleIds) {
+      expect(
+        (db.prepare('SELECT COUNT(*) AS c FROM learnings WHERE id = ?').get(id) as { c: number }).c,
+      ).toBe(0);
+      expect(
+        (db.prepare('SELECT COUNT(*) AS c FROM learnings_vec WHERE rowid = ?').get(BigInt(id)) as { c: number }).c,
+      ).toBe(0);
+    }
+    // Fresh row untouched.
+    expect(
+      (db.prepare('SELECT COUNT(*) AS c FROM learnings WHERE id = ?').get(freshId) as { c: number }).c,
+    ).toBe(1);
+    expect(
+      (db.prepare('SELECT COUNT(*) AS c FROM learnings_vec WHERE rowid = ?').get(BigInt(freshId)) as { c: number }).c,
+    ).toBe(1);
+  });
+
+  it('returns expired=0 with no error when no rows match', () => {
+    // Fresh pending only — no stale rows.
+    seedPendingWithVec(db, `td098-fresh-only-${Date.now()}`);
+    const r = handlePerceptionExpireStale({ ttl_days: 14 });
+    expect(r.isError).toBeFalsy();
+    const out = JSON.parse(r.content[0].text) as { expired: number };
+    expect(out.expired).toBe(0);
+  });
+
+  it('does NOT raise unsafe-use-of-virtual-table on bulk delete (regression)', () => {
+    db.prepare(
+      `INSERT INTO learnings (project, category, title, content, created_at, provenance, review_status)
+       VALUES ('p', 'pattern', ?, 'c', datetime('now', '-30 days'), 'inferred', 'pending_review')`,
+    ).run(`td098-bulk-${Date.now()}`);
+    const r = handlePerceptionExpireStale({ ttl_days: 14 });
+    expect(r.isError).toBeFalsy();
   });
 });

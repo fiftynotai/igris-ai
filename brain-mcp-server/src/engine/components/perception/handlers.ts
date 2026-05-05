@@ -16,6 +16,8 @@
  * @author Fifty.ai
  */
 
+import type Database from 'better-sqlite3';
+
 import { getDb } from '../../../db.js';
 import type { EventBus, ToolResult } from '../../types.js';
 import { errorResult, successResult, errMsg } from '../../helpers.js';
@@ -73,6 +75,78 @@ const EDITABLE_FIELDS = new Set([
 ]);
 
 const VALID_CATEGORIES = ['pattern', 'decision', 'discovery', 'mistake', 'optimization'];
+
+// ---------------------------------------------------------------------------
+// TD-098 cleanup helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Atomically drop a learning row and its `learnings_vec` companion.
+ *
+ * Used by `handlePerceptionReject` (single id) and
+ * `handlePerceptionExpireStale` (bulk). Both code sites previously did a
+ * plain `DELETE FROM learnings`, which fired the `learnings_vec_ad`
+ * AFTER DELETE trigger; on a connection with `PRAGMA trusted_schema =
+ * OFF` (which production sets, db.ts:868) sqlite-vec rejects writes to
+ * the `learnings_vec` virtual table from inside trigger context with
+ * `unsafe use of virtual table "learnings_vec"`. TD-098 migration v3
+ * drops that trigger; this helper now owns the cleanup explicitly so
+ * the embedding table doesn't accumulate orphans.
+ *
+ * Phase 0 Path A1: only `learnings_vec_ad` is dropped — the FTS5
+ * `learnings_ad` trigger is empirically safe (FTS5's contentless 'delete'
+ * does not trip the same guard) and continues to scrub `learnings_fts`
+ * automatically. So this helper does NOT touch `learnings_fts`.
+ *
+ * Wrapped in `db.transaction(() => {...})()` (better-sqlite3): the vec
+ * delete and the learnings delete commit together, and any error rolls
+ * both back. The vec delete is also wrapped in try/catch so test
+ * fixtures lacking the `learnings_vec` virtual table (no sqlite-vec
+ * loaded — current handlers.test.ts setup) still exercise the deletion
+ * path without false-failing.
+ *
+ * Caller is expected to validate `id` and re-fetch any row data needed
+ * for downstream events BEFORE calling this — once the helper returns,
+ * the row is gone.
+ *
+ * @param db The active better-sqlite3 connection (test or production).
+ * @param ids The `learnings.id` values to drop. Empty array is a no-op.
+ */
+function cleanupLearningArtifacts(db: Database.Database, ids: number[]): void {
+  if (ids.length === 0) return;
+
+  // Prepare the vec delete lazily inside try/catch — better-sqlite3
+  // rejects `prepare()` at parse time if the virtual table is absent
+  // (e.g. test fixtures without sqlite-vec loaded). Caching `null`
+  // here means the per-id loop skips the vec branch entirely on those
+  // fixtures, while production keeps the prepared-statement reuse.
+  let deleteVec: Database.Statement | null = null;
+  try {
+    deleteVec = db.prepare('DELETE FROM learnings_vec WHERE rowid = ?');
+  } catch {
+    deleteVec = null;
+  }
+  const deleteLearning = db.prepare('DELETE FROM learnings WHERE id = ?');
+
+  const txn = db.transaction((targets: number[]) => {
+    for (const id of targets) {
+      if (deleteVec) {
+        // Per-row try/catch in case the row simply doesn't exist in
+        // learnings_vec (back-compat: pre-embedding rows). The
+        // better-sqlite3 transaction wrapper auto-rolls back on
+        // uncaught throws, so swallow harmless misses here.
+        try {
+          deleteVec.run(BigInt(id));
+        } catch {
+          // ignore — row absent or sqlite-vec unavailable
+        }
+      }
+      deleteLearning.run(id);
+    }
+  });
+
+  txn(ids);
+}
 
 // ---------------------------------------------------------------------------
 // Transcript parsing
@@ -579,16 +653,15 @@ export function handlePerceptionReject(args: Record<string, unknown>): ToolResul
     return errorResult(`Learning ${id} is already approved; cannot reject.`);
   }
 
-  // Best-effort: also drop the vec row so the embedding table doesn't
-  // accumulate orphans. The drop is wrapped in try/catch because the
-  // virtual table may not exist in :memory: schemas used by tests.
+  // TD-098: explicit transactional cleanup of learnings + learnings_vec.
+  // The dropped trigger `learnings_vec_ad` previously fired here and
+  // raised `unsafe use of virtual table "learnings_vec"` against
+  // sqlite-vec under `PRAGMA trusted_schema = OFF`. The helper wraps
+  // both deletes in `db.transaction(...)` so they commit atomically;
+  // FTS5 cleanup continues automatically via the kept `learnings_ad`
+  // trigger, which is empirically safe under the same guard.
   try {
-    db.prepare('DELETE FROM learnings_vec WHERE rowid = ?').run(BigInt(id));
-  } catch {
-    // ignore — table absent or row not present
-  }
-  try {
-    db.prepare('DELETE FROM learnings WHERE id = ?').run(id);
+    cleanupLearningArtifacts(db, [id]);
   } catch (err) {
     return errorResult(`Reject failed: ${errMsg(err)}`);
   }
@@ -656,21 +729,39 @@ export function handlePerceptionExpireStale(args: Record<string, unknown>): Tool
   const project = typeof args.project === 'string' ? args.project : null;
 
   const db = getDb();
-  let sql = `
-    DELETE FROM learnings
+
+  // TD-098: same vulnerability as handlePerceptionReject — a single
+  // bulk DELETE here would fire the dropped `learnings_vec_ad` trigger
+  // (pre-migration) and now leaves vec orphans (post-migration). Switch
+  // to a SELECT-then-delete-per-id pattern via cleanupLearningArtifacts
+  // so the embedding table is scrubbed atomically alongside the
+  // learnings rows. N+1 statements per stale row is acceptable here:
+  // pending_review TTL expirations are small in practice (single-digit
+  // to tens), and the helper wraps the whole batch in one transaction.
+  let selectSql = `
+    SELECT id FROM learnings
     WHERE review_status = 'pending_review'
       AND julianday('now') - julianday(created_at) > ?
   `;
-  const params: unknown[] = [ttlRaw];
+  const selectParams: unknown[] = [ttlRaw];
   if (project) {
-    sql += ' AND project = ?';
-    params.push(project);
+    selectSql += ' AND project = ?';
+    selectParams.push(project);
   }
-  const result = db.prepare(sql).run(...params);
+
+  const rows = db.prepare(selectSql).all(...selectParams) as Array<{ id: number }>;
+  const ids = rows.map((r) => r.id);
+
+  try {
+    cleanupLearningArtifacts(db, ids);
+  } catch (err) {
+    return errorResult(`Expire stale failed: ${errMsg(err)}`);
+  }
+
   return successResult(
     JSON.stringify(
       {
-        expired: result.changes,
+        expired: ids.length,
         ttl_days: ttlRaw,
         project: project ?? '(all)',
       },

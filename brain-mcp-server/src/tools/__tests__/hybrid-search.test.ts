@@ -171,6 +171,10 @@ function makeTestDb(): Database.Database {
       INSERT INTO learnings_fts(learnings_fts, rowid, title, content, tags, tech_stack)
       VALUES ('delete', old.id, old.title, old.content, old.tags, old.tech_stack);
     END;
+    -- TD-098: production schema after migration v3 has NO learnings_vec_ad
+    -- trigger; handlers own explicit cleanup. This fixture doesn't create
+    -- learnings_vec at all, so there's nothing to mirror — but if you ever
+    -- add vec to this suite, do NOT recreate the trigger.
   `);
 
   return db;

@@ -114,6 +114,13 @@ function makeFullSchemaDb(): Database.Database {
       VALUES ('delete', old.id, old.title, old.content, old.tags, old.tech_stack);
     END;
 
+    -- TD-098: production schema after migration v3 has NO learnings_vec_ad
+    -- trigger (vec0 rejects writes from trigger context under
+    -- trusted_schema=OFF). The handlers own explicit cleanup. This fixture
+    -- doesn't create the learnings_vec table at all (no sqlite-vec loaded
+    -- in this suite) so there's nothing to mirror — but DO NOT add the
+    -- trigger here.
+
     CREATE TABLE perception_watermarks (
       project TEXT PRIMARY KEY,
       last_extracted_at TEXT NOT NULL,
