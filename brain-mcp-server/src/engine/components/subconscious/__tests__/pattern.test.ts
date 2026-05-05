@@ -56,6 +56,13 @@ function makeDb(): Database.Database {
  * regardless of when the test runs, the resulting timestamp lands on the
  * requested day.
  *
+ * UTC alignment (TD-064): the timestamp is written via `toISOString()`
+ * (UTC), and SQLite's `strftime('%w', updated_at)` interprets it as UTC.
+ * We must compute the reference DOW in UTC too — `getUTCDay()` not
+ * `getDay()` — otherwise tests run east of UTC near midnight produce a
+ * local-Monday timestamp that lands on UTC-Sunday, and the seeded brief
+ * registers under DOW=0 instead of DOW=1.
+ *
  * Side effect: every brief is given a unique brief_id (passed in) so the
  * UNIQUE(project, brief_id) constraint doesn't fire.
  */
@@ -67,7 +74,7 @@ function seedBriefOnDow(
   baseDaysAgo: number,
 ): void {
   const today = new Date();
-  const todayDow = today.getDay(); // 0..6
+  const todayDow = today.getUTCDay(); // 0..6 (UTC — matches SQLite strftime('%w'))
   // Move BACK to the requested day-of-week (subtract a few days), then
   // bias by `baseDaysAgo` so multiple briefs on the same target_dow
   // don't collide.
