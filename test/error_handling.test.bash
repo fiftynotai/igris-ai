@@ -94,9 +94,10 @@ load test_helper
 @test "igris_init recovers from partial initialization" {
   setup_test_project
 
-  # Create partial Igris AI structure
-  mkdir -p "$TEST_PROJECT_DIR/ai/briefs"
-  # But don't create CLAUDE.md or other files
+  # Simulate a partial v6 install: .claude/ exists but CLAUDE.md and
+  # .igris_version are missing. Re-running init should fill in the rest
+  # idempotently.
+  mkdir -p "$TEST_PROJECT_DIR/.claude"
 
   # Try to re-init
   run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"

@@ -24,12 +24,14 @@ setup_mock_remote() {
   # Create version file (newer version)
   echo "3.3.0" > "$remote_dir/version.txt"
 
-  # Create ai/prompts
+  # Legacy v3 ai/ structure — simulates a remote source predating the v6
+  # ai/ deletion (commit ea083d3). The update script reads from any version's
+  # remote layout; this fixture exercises the v3 → newer-version path.
   mkdir -p "$remote_dir/ai/prompts"
   echo "# Updated igris_os.md" > "$remote_dir/ai/prompts/igris_os.md"
   echo "# Updated session_protocol.md" > "$remote_dir/ai/prompts/session_protocol.md"
 
-  # Create ai/templates
+  # Legacy v3 templates dir — same rationale as ai/prompts above.
   mkdir -p "$remote_dir/ai/templates"
   echo "# Updated BR-TEMPLATE" > "$remote_dir/ai/templates/BR-TEMPLATE.md"
 
@@ -80,8 +82,9 @@ EOF
 @test "igris_update validates .igris_version exists" {
   setup_test_project
 
-  # Create ai/ but not .igris_version
-  mkdir -p ai/briefs
+  # No .igris_version file present (CWD is empty post-setup_test_project).
+  # The script must refuse with "not initialized" regardless of any other
+  # state — version file is the canonical init marker.
 
   run "$SCRIPTS_DIR/igris_update.sh" --dry-run
 
@@ -219,7 +222,9 @@ EOF
 @test "igris_update migrates from .blueprint_version" {
   setup_test_project
 
-  # Create old Blueprint AI structure
+  # Legacy Blueprint AI v2 structure (predates Igris). Blueprint AI used
+  # ai/briefs/ as its canonical brief storage. The update script must
+  # detect this layout and offer migration to the current Igris layout.
   mkdir -p ai/briefs
   cat > .blueprint_version <<'EOF'
 {
@@ -238,7 +243,8 @@ EOF
 @test "igris_update handles both version files existing" {
   setup_test_project
 
-  # Create both old and new version files (unusual state)
+  # Legacy Blueprint AI v2 ai/ scaffolding alongside both version files —
+  # simulates a partially-completed migration from Blueprint AI to Igris.
   mkdir -p ai/briefs
   cat > .blueprint_version <<'EOF'
 {
@@ -264,9 +270,8 @@ EOF
 
 @test "igris_update handles corrupted .igris_version" {
   setup_test_project
-  mkdir -p ai/briefs
 
-  # Create invalid JSON
+  # Create invalid JSON — the only fixture this test needs.
   echo "not valid json" > .igris_version
 
   run "$SCRIPTS_DIR/igris_update.sh" --dry-run 2>&1 || true
