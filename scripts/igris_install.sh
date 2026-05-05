@@ -671,3 +671,12 @@ echo "   /standardize     - Generate coding guidelines"
 echo ""
 echo "🔗 Docs: https://github.com/fiftynotai/igris-ai"
 echo ""
+# ============================================================
+# v7 CLI hint (MG-013)
+# If the user has the unified `igris` CLI on PATH, suggest using it. The shell
+# script remains as fallback for one release; Phase 2 (MG-014) deprecates it.
+# ============================================================
+if command -v igris &>/dev/null; then
+  echo "💡 Tip: 'igris install <path>' is the v7-recommended invocation. This shell script remains as fallback."
+  echo ""
+fi

@@ -1,0 +1,31 @@
+{
+  "name": "@igris-ai/cli",
+  "version": "7.0.0",
+  "description": "Igris AI unified CLI — install, update, doctor for Igris projects.",
+  "type": "module",
+  "bin": {
+    "igris": "./dist/index.js"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:bats": "bats tests/integration"
+  },
+  "author": "Fifty.ai",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

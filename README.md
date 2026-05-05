@@ -272,12 +272,30 @@ git clone https://github.com/fiftynotai/igris-ai
 # Bootstrap the brain (one-time)
 ./igris-ai/scripts/igris_brain_init.sh
 
-# Install in your project
-cd your-project
-path/to/igris-ai/scripts/igris_install.sh
+# Install the unified CLI (Phase 1 — npm link from cli/, npm publish lands in MG-014)
+cd igris-ai
+npm install
+cd cli && npm run build && npm link
+
+# Install Igris in your project
+cd /path/to/your-project
+igris install .
 ```
 
 This creates `~/.igris/` with the brain database, copies core files (agents, skills, rules, prompts, context tree), and sets up `.claude/` symlinks. Registers the brain MCP server globally in `~/.claude.json`. Your project gets the full system with zero file duplication.
+
+The CLI ships hooks by default. Pass `--no-hooks` to opt out (rare). For diagnostics across every registered project, use `igris doctor`. For a specific slug different from the directory basename, use `igris install --slug <slug> .`.
+
+#### Legacy install (still supported)
+
+The original shell-script install remains supported for one release as a fallback:
+
+```bash
+cd /path/to/your-project
+path/to/igris-ai/scripts/igris_install.sh
+```
+
+The shell installer continues to handle the symlink layer. Phase 2 (MG-014) deprecates it in favor of the CLI.
 
 ### Git hooks (one-time setup)
 
