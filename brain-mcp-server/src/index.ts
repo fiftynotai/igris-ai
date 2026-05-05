@@ -44,7 +44,7 @@ import { handleMetricsRecord } from './tools/metrics.js';
 import type { MetricsRecordInput } from './tools/metrics.js';
 
 // Sync tables config (used by HTTP /sync/push and /sync/pull endpoints)
-import { SYNC_TABLES, mergeRows } from './tools/sync.js';
+import { SYNC_TABLES, processSyncPush } from './tools/sync.js';
 
 // Staging processor
 import { processStagingFiles } from './staging.js';
@@ -1616,7 +1616,22 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // brain instances. Protected by the same auth middleware as /mcp.
   // -----------------------------------------------------------------------
 
-  // POST /sync/push — receive pushed data from a remote brain, merge locally
+  // POST /sync/push — receive pushed data from a remote brain, merge locally.
+  //
+  // BR-066: per-table isolation. Each table's mergeRows runs in its OWN
+  // transaction with its OWN try/catch. A row-level crash (e.g. an
+  // unbindable Buffer-wrapped column value) aborts only the offending
+  // table's transaction — sibling tables in the same chunk still merge.
+  // The response carries `results` for successful tables and `errors` for
+  // failed ones, plus a per-table `failures` array of row-level errors
+  // bubbled up from mergeRows. Status code is 207 Multi-Status when any
+  // table errored, 200 OK otherwise — both are 2xx so existing callers
+  // that check `response.ok` continue to work.
+  //
+  // BR-064 (defense-in-depth): if a SYNC_TABLES entry's table is missing
+  // from the local schema (partial migration), skip it with a stderr log
+  // rather than throwing. Mirrors the activeSyncTables filter in
+  // handleBrainPush.
   app.post('/sync/push', express.json({ limit: '50mb' }), (req: Request, res: Response) => {
     try {
       const db = getDb();
@@ -1629,17 +1644,12 @@ async function runHttp(config: ServerConfig): Promise<void> {
         return;
       }
 
-      const results: Record<string, { inserted: number; updated: number; skipped: number }> = {};
-
-      db.transaction(() => {
-        for (const config of SYNC_TABLES) {
-          const rows = tables[config.table];
-          if (!rows || rows.length === 0) continue;
-          results[config.table] = mergeRows(db, config, rows);
-        }
-      })();
-
-      res.json({ ok: true, results });
+      const { results, errors, ok } = processSyncPush(db, tables);
+      // 207 Multi-Status when any table errored; still in 2xx range so
+      // `response.ok` is true — internal callers (handleBrainPush,
+      // handleSyncQueueDrain, pushTables auto-push) inspect the body.
+      const status = ok ? 200 : 207;
+      res.status(status).json({ ok, results, errors });
     } catch (err) {
       const message = errMsg(err);
       console.error('[brain] Sync push error:', message);
