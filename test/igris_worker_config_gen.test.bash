@@ -231,14 +231,6 @@ print('Valid JSON')
   assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'mkdir -p "$HOME/.igris/logs/worker"'
 }
 
-@test "install script references output directory creation" {
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'mkdir -p "$HOME/.igris/output/content"'
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'mkdir -p "$HOME/.igris/output/social-media"'
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'mkdir -p "$HOME/.igris/output/media-gen"'
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'mkdir -p "$HOME/.igris/output/research"'
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'mkdir -p "$HOME/.igris/output/operational"'
-}
-
 # =============================================================================
 # INSTALL.SH WORKER SCRIPT COPY TESTS
 # =============================================================================

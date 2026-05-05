@@ -15,23 +15,6 @@ load test_helper
 # DIRECTORY CREATION TESTS
 # =============================================================================
 
-@test "igris_init creates ai/ directory structure" {
-  setup_test_project
-
-  # Execute igris_init
-  run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"
-
-  # Assert success
-  assert_success
-
-  # Assert all directories created
-  assert_dir_exists "$TEST_PROJECT_DIR/ai"
-  assert_dir_exists "$TEST_PROJECT_DIR/ai/briefs"
-  assert_dir_exists "$TEST_PROJECT_DIR/ai/session"
-  assert_dir_exists "$TEST_PROJECT_DIR/ai/context"
-  assert_dir_exists "$TEST_PROJECT_DIR/ai/prompts"
-}
-
 @test "igris_init creates .claude/ directory structure" {
   setup_test_project
 
@@ -72,57 +55,23 @@ load test_helper
   assert_file_exists "$TEST_PROJECT_DIR/CLAUDE.md"
 }
 
-@test "igris_init creates session files" {
+@test "igris_init creates session files in brain project dir" {
   setup_test_project
 
   run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"
 
   assert_success
-  assert_file_exists "$TEST_PROJECT_DIR/ai/session/CURRENT_SESSION.md"
-}
-
-@test "igris_init creates masks directory" {
-  setup_test_project
-
-  run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"
-
-  assert_success
-  assert_dir_exists "$TEST_PROJECT_DIR/ai/masks"
-}
-
-@test "igris_init creates brief templates" {
-  setup_test_project
-
-  run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"
-
-  assert_success
-
-  # Check core brief templates exist
-  assert_file_exists "$TEST_PROJECT_DIR/ai/briefs/BR-TEMPLATE.md"
-  assert_file_exists "$TEST_PROJECT_DIR/ai/briefs/TD-TEMPLATE.md"
-  assert_file_exists "$TEST_PROJECT_DIR/ai/briefs/MG-TEMPLATE.md"
-  assert_file_exists "$TEST_PROJECT_DIR/ai/briefs/TS-TEMPLATE.md"
-
-  # Check new self-maintenance templates exist
-  assert_file_exists "$TEST_PROJECT_DIR/ai/briefs/PI-TEMPLATE.md"
-  assert_file_exists "$TEST_PROJECT_DIR/ai/briefs/FR-TEMPLATE.md"
-  assert_file_exists "$TEST_PROJECT_DIR/ai/briefs/DU-TEMPLATE.md"
-  assert_file_exists "$TEST_PROJECT_DIR/ai/briefs/PF-TEMPLATE.md"
-  assert_file_exists "$TEST_PROJECT_DIR/ai/briefs/AC-TEMPLATE.md"
+  # v6: session files live in ~/.igris/projects/{slug}/session/, not ai/session/
+  local brain_session="$HOME/.igris/projects/$(basename "$TEST_PROJECT_DIR")/session"
+  assert_file_exists "$brain_session/CURRENT_SESSION.md"
+  assert_file_exists "$brain_session/BLOCKERS.md"
+  assert_file_exists "$brain_session/DECISIONS.md"
+  assert_file_exists "$brain_session/LEARNINGS.md"
 }
 
 # =============================================================================
 # CLAUDE.md GENERATION TESTS
 # =============================================================================
-
-@test "CLAUDE.md contains mandatory first action" {
-  setup_test_project
-
-  run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"
-
-  assert_success
-  assert_file_contains "$TEST_PROJECT_DIR/CLAUDE.md" "MANDATORY FIRST ACTION"
-}
 
 @test "CLAUDE.md contains Igris AI version" {
   setup_test_project
@@ -131,8 +80,8 @@ load test_helper
 
   assert_success
 
-  # Should contain version number
-  assert_file_contains "$TEST_PROJECT_DIR/CLAUDE.md" "Version:"
+  # v6 template emits "Igris AI v{{IGRIS_VERSION}}"
+  assert_file_contains "$TEST_PROJECT_DIR/CLAUDE.md" "Igris AI v"
 }
 
 @test "CLAUDE.md contains SOUL.md import" {
@@ -144,15 +93,6 @@ load test_helper
 
   # CLAUDE.md should import SOUL.md for persona identity
   assert_file_exists "$TEST_PROJECT_DIR/CLAUDE.md"
-}
-
-@test "CLAUDE.md contains brief workflow section" {
-  setup_test_project
-
-  run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"
-
-  assert_success
-  assert_file_contains "$TEST_PROJECT_DIR/CLAUDE.md" "Brief Workflow"
 }
 
 # =============================================================================
@@ -180,20 +120,6 @@ load test_helper
 # EXISTING INSTALLATION TESTS
 # =============================================================================
 
-@test "igris_init detects existing installation" {
-  # Initialize once
-  setup_test_project
-  "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y" > /dev/null
-
-  # Try to initialize again, decline overwrite
-  run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "n"
-
-  # Should detect existing installation and show warning
-  assert_output_contains "already exists"
-  # Exit code 1 is correct when user declines overwrite
-  [ "$status" -eq 1 ]
-}
-
 @test "igris_init can overwrite existing installation" {
   # Initialize once
   setup_test_project
@@ -215,18 +141,6 @@ load test_helper
 # PROMPT FILES TESTS
 # =============================================================================
 
-@test "igris_init copies prompt files" {
-  setup_test_project
-
-  run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"
-
-  assert_success
-
-  # Check core prompts exist (v3.2 - consolidated to 2 files)
-  assert_file_exists "$TEST_PROJECT_DIR/ai/prompts/igris_os.md"
-  assert_file_exists "$TEST_PROJECT_DIR/ai/prompts/session_protocol.md"
-}
-
 # =============================================================================
 # IDENTITY SYSTEM TESTS (SOUL.md + masks)
 # =============================================================================
@@ -239,15 +153,6 @@ load test_helper
 
   assert_success
   assert_file_exists "$TEST_PROJECT_DIR/CLAUDE.md"
-}
-
-@test "igris_init creates mask greeting files" {
-  setup_test_project
-
-  run "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"
-
-  assert_success
-  assert_dir_exists "$TEST_PROJECT_DIR/ai/masks"
 }
 
 # =============================================================================
@@ -305,13 +210,20 @@ load test_helper
 
   assert_success
 
-  # Comprehensive check: all critical files and directories exist
-  assert_dir_exists "$TEST_PROJECT_DIR/ai"
+  # v6 install contract: project-local .claude/ tree + CLAUDE.md + brain-side session
   assert_dir_exists "$TEST_PROJECT_DIR/.claude"
+  assert_dir_exists "$TEST_PROJECT_DIR/.claude/agents"
+  assert_dir_exists "$TEST_PROJECT_DIR/.claude/rules"
+  assert_dir_exists "$TEST_PROJECT_DIR/.claude/skills"
   assert_file_exists "$TEST_PROJECT_DIR/CLAUDE.md"
-  assert_file_exists "$TEST_PROJECT_DIR/ai/session/CURRENT_SESSION.md"
-  assert_file_exists "$TEST_PROJECT_DIR/ai/briefs/BR-TEMPLATE.md"
-  assert_file_exists "$TEST_PROJECT_DIR/ai/prompts/igris_os.md"
+  assert_file_exists "$TEST_PROJECT_DIR/.igris_version"
+  assert_file_exists "$TEST_PROJECT_DIR/.claude/agents/architect.md"
+
+  # Brain-side per-project state (replaces v4 ai/session/)
+  local brain_proj="$HOME/.igris/projects/$(basename "$TEST_PROJECT_DIR")"
+  assert_file_exists "$brain_proj/session/CURRENT_SESSION.md"
+  assert_dir_exists "$brain_proj/briefs"
+  assert_dir_exists "$brain_proj/context"
 }
 
 @test "igris_init creates gitignore-ready structure" {

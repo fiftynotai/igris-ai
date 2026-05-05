@@ -328,18 +328,3 @@ EOF
   assert_dir_exists ".claude/agents"
 }
 
-@test "igris_update preserves user briefs and session" {
-  init_igris_in_test_project
-
-  # Create user content
-  echo "# My Bug Brief" > ai/briefs/BR-001-my-bug.md
-  echo "# My Session" > ai/session/CURRENT_SESSION.md
-
-  # Run dry-run
-  "$SCRIPTS_DIR/igris_update.sh" --dry-run 2>&1 || true
-
-  # Verify user content preserved
-  assert_file_exists "ai/briefs/BR-001-my-bug.md"
-  assert_file_contains "ai/briefs/BR-001-my-bug.md" "My Bug Brief"
-  assert_file_exists "ai/session/CURRENT_SESSION.md"
-}

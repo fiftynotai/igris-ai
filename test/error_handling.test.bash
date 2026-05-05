@@ -50,10 +50,16 @@ load test_helper
 }
 
 @test "igris_init handles empty target directory path" {
+  # v6 install treats empty $1 as current directory (igris_install.sh:90 uses
+  # TARGET_DIR="${1:-.}"). Verify the documented fallback behavior holds.
+  cd "$TEST_TEMP_DIR"
+  mkdir -p empty-arg-fallback && cd empty-arg-fallback
+
   run "$SCRIPTS_DIR/igris_init.sh" "" <<< "y"
 
-  # Should fail with clear error
-  assert_failure
+  assert_success
+  assert_dir_exists ".claude"
+  assert_file_exists "CLAUDE.md"
 }
 
 # =============================================================================

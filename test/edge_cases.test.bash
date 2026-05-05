@@ -20,7 +20,7 @@ load test_helper
   run "$SCRIPTS_DIR/igris_init.sh" "$TEST_TEMP_DIR/project with spaces" <<< "y"
 
   assert_success
-  assert_dir_exists "$TEST_TEMP_DIR/project with spaces/ai"
+  assert_dir_exists "$TEST_TEMP_DIR/project with spaces/.claude"
   assert_file_exists "$TEST_TEMP_DIR/project with spaces/CLAUDE.md"
 }
 
@@ -30,7 +30,7 @@ load test_helper
   run "$SCRIPTS_DIR/igris_init.sh" "$TEST_TEMP_DIR/my-test-project" <<< "y"
 
   assert_success
-  assert_dir_exists "$TEST_TEMP_DIR/my-test-project/ai"
+  assert_dir_exists "$TEST_TEMP_DIR/my-test-project/.claude"
 }
 
 @test "igris_init handles directory path with underscores" {
@@ -39,5 +39,5 @@ load test_helper
   run "$SCRIPTS_DIR/igris_init.sh" "$TEST_TEMP_DIR/my_test_project" <<< "y"
 
   assert_success
-  assert_dir_exists "$TEST_TEMP_DIR/my_test_project/ai"
+  assert_dir_exists "$TEST_TEMP_DIR/my_test_project/.claude"
 }
