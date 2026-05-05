@@ -15,9 +15,66 @@ set -e
 #                    is staged.
 #
 # Bypass: `git commit --no-verify` (use sparingly; CI will catch it)
+# Bypass phase guard only: `IGRIS_BYPASS_PHASE_GUARD=1 git commit ...`
+#   (orchestrator-only — used by /hunt Phase 7 COMMITTING)
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
+
+# Phase guard (PI-004 / L-248): refuse commits during BUILDING or TESTING phases.
+# The /hunt state machine routes BUILDING -> TESTING -> REVIEWING -> COMMITTING;
+# the orchestrator owns COMMITTING after sentinel + warden. If a commit fires
+# while the active brief is in BUILDING or TESTING, something has bypassed
+# protocol — most likely forger or sentinel attempting a commit directly.
+#
+# Bypass: IGRIS_BYPASS_PHASE_GUARD=1 git commit ...
+#   The orchestrator's COMMITTING phase MUST set this flag.
+#
+# Phase source: brain DB (brief_status.phase) — the canonical live phase
+# tracker. CURRENT_SESSION.md and brief cache files lag.
+#
+# Failure mode: if any input is missing (no session file, no Active Brief,
+# no brain DB, sqlite3 absent), the guard skips silently — fail-open so we
+# don't break commits in projects that don't use the hunt workflow.
+
+if [ "${IGRIS_BYPASS_PHASE_GUARD:-0}" != "1" ]; then
+  PROJECT="$(basename "$REPO_ROOT")"
+  SESSION_FILE="$HOME/.igris/projects/$PROJECT/session/CURRENT_SESSION.md"
+  BRAIN_DB="$HOME/.igris/memory/knowledge.db"
+
+  if [ -f "$SESSION_FILE" ] && [ -f "$BRAIN_DB" ] && command -v sqlite3 >/dev/null 2>&1; then
+    # Extract the brief ID from the **Active Brief:** line in CURRENT_SESSION.md.
+    # Format: **Active Brief:** PI-004 (some annotations)
+    ACTIVE_BRIEF="$(grep -m1 -E '^\*\*Active Brief:\*\*' "$SESSION_FILE" \
+      | sed -E 's/^\*\*Active Brief:\*\*[[:space:]]+([A-Z]+-[0-9]+).*/\1/' \
+      | tr -d '[:space:]')"
+
+    if [ -n "$ACTIVE_BRIEF" ]; then
+      # Live phase comes from brain DB (canonical source per /hunt sync flow).
+      # The igris_brief_sync MCP tool writes brief_status.phase on every
+      # phase transition; brief cache files are NOT updated.
+      ACTIVE_PHASE="$(sqlite3 "$BRAIN_DB" \
+        "SELECT phase FROM brief_status WHERE project='$PROJECT' AND brief_id='$ACTIVE_BRIEF' AND status='In Progress' LIMIT 1;" \
+        2>/dev/null)"
+
+      case "$ACTIVE_PHASE" in
+        BUILDING|TESTING)
+          echo ""
+          echo "[pre-commit] PI-004 phase guard: refusing commit"
+          echo "  active brief: $ACTIVE_BRIEF"
+          echo "  active phase: $ACTIVE_PHASE"
+          echo "  the orchestrator owns COMMITTING — sentinel + warden must run first"
+          echo ""
+          echo "  if you ARE the orchestrator running the post-warden commit:"
+          echo "    IGRIS_BYPASS_PHASE_GUARD=1 git commit ..."
+          echo ""
+          echo "  this guard exists per PI-004 / L-248. see brief for context."
+          exit 1
+          ;;
+      esac
+    fi
+  fi
+fi
 
 # Get list of staged files (added/copied/modified, not deleted).
 staged="$(git diff --cached --name-only --diff-filter=ACM)"

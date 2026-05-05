@@ -139,6 +139,12 @@ Proceed to PLANNING phase.
    - Aggregate both results into a single `Prior context:` markdown block (one heading per source: `## Prior learnings`, `## Similar briefs`)
    - Pass that block into the architect prompt as an additional input section (append to the prompt template in step 4 under a `Prior context:` header)
    - If either call fails or returns empty, log warning and continue without the block — do NOT block the hunt
+3.6. **Architect plan template constraint (PI-004):**
+   Plans must end at the last code-touching step. Do NOT instruct the
+   architect to include a final 'Commit' phase. If the architect
+   nevertheless emits a Commit phase (e.g., habitually numbering 0-N
+   ending in commit), the orchestrator excises it before passing the
+   plan to the forger in Phase 3 step 3.6.
 4. **Delegate to architect agent** using Agent tool:
 
 ```
@@ -196,6 +202,15 @@ Agent tool parameters:
    - Aggregate results into a `Past mistakes to avoid:` markdown block (one bullet per recalled lesson with title + 1-line summary)
    - Pass into forger prompt under a `Past mistakes to avoid:` header (append to the template in step 4)
    - If the call fails or returns empty, log warning and continue without the block
+3.6. **Excise commit phase from forger prompt (PI-004 / L-248):**
+   The architect's plan may number phases 0-N with the final phase
+   being a 'Commit' / 'COMMITTING' / 'git commit' step. The orchestrator
+   MUST NOT pass that phase into the forger prompt. The forger's job
+   ends at the last code-touching step. The orchestrator owns
+   COMMITTING per the state machine (Phase 7 below). When constructing
+   the prompt in step 4, omit any commit-related phase from the [plan
+   content] inclusion or annotate it with "(orchestrator-owned, not
+   forger's responsibility)".
 4. **Delegate to forger agent** using Agent tool:
 
 ```
@@ -210,7 +225,15 @@ Agent tool parameters:
 
   Follow the plan and implement all required changes.
   Ensure code follows architecture standards.
-  Add documentation comments to public APIs."
+  Add documentation comments to public APIs.
+
+  CRITICAL — DO NOT COMMIT. The /hunt state machine routes
+  BUILDING -> TESTING -> REVIEWING -> COMMITTING; the orchestrator
+  owns COMMITTING after sentinel + warden. If the architect's plan
+  contains a final 'Commit' phase, treat it as instruction for the
+  orchestrator and STOP at the last code-touching step. Do not run
+  git commit, git add for the purpose of committing, git tag, or
+  git push. Report 'IMPLEMENTATION COMPLETE — UNCOMMITTED'."
 ```
 
 5. After forger returns:

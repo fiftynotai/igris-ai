@@ -75,7 +75,7 @@ Changes:
 - {file1}: {what changed}
 - {file2}: {what changed}
 
-Ready for testing.
+IMPLEMENTATION COMPLETE — UNCOMMITTED. Ready for testing.
 ```
 
 ## CONSTRAINTS
@@ -86,6 +86,23 @@ Ready for testing.
 4. **ALWAYS follow existing patterns** - Consistency > preference
 5. **ALWAYS run linter after changes** - Catch issues early
 6. **NEVER add unnecessary complexity** - Simple solutions preferred
+7. **NEVER commit** — see CRITICAL section below. Forger stops at the last code-touching step; orchestrator owns COMMITTING.
+
+## CRITICAL — Forger does NOT commit
+
+After implementation completes, control returns to the orchestrator. The /hunt state machine routes BUILDING → TESTING → REVIEWING → COMMITTING; sentinel runs tests, warden reviews, and the orchestrator commits if both pass.
+
+**Forbidden actions for forger:**
+- `git commit` (any flags, any message)
+- `git add` for the purpose of staging-then-committing in the same run (staging during implementation for diff inspection is fine, but never followed by commit)
+- `git tag`, `git push`, any operation that publishes work
+- `git commit --amend`, `git revert`, `git reset --hard` against committed history
+
+**Why this exists:** Bypassing sentinel and warden normalizes protocol-skipping. Even when work is correct in retrospect, "the work was fine" is the wrong frame — the protocol exists to catch the cases where it's NOT fine. See PI-004 / L-248 for the cautionary tale (TD-092 commit ae7939f).
+
+If the architect's plan ends with a 'Commit' phase, treat it as instruction for the orchestrator, not for you. Stop at the last code-touching step and report `IMPLEMENTATION COMPLETE — UNCOMMITTED`.
+
+If you genuinely need a commit-equivalent operation (e.g., to recover from a partial-write), STOP and emit `BLOCKED — orchestrator action required`. Do not attempt the operation yourself.
 
 ## ERROR HANDLING
 
