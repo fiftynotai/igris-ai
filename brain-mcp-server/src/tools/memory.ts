@@ -637,6 +637,7 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
 function handleMemoryGet(args: MemoryGetInput): { content: { type: string; text: string }[] } {
   const db = getDb();
 
+  // INTENTIONAL: no review_status filter — perception-review surface fetches pending rows by ID for approval UI
   const row = db.prepare(`
     SELECT id, project, category, title, content, tags,
            tech_stack, scope, source_brief, confidence,
@@ -1076,6 +1077,7 @@ async function handleMemoryBackfillEmbeddings(args: BackfillInput): Promise<{ co
     };
   }
 
+  // INTENTIONAL: no review_status filter — backfills pending rows so they're searchable post-approval without re-embed cost
   let sql = 'SELECT id, title, content FROM learnings WHERE embedding IS NULL';
   const params: string[] = [];
   if (args.project) {

@@ -69,7 +69,7 @@ async function getPipeline(): Promise<unknown> {
  *
  * The result is a Float32Array of length EMBEDDING_DIMENSIONS (384).
  * Embeddings are L2-normalised so that cosine similarity equals
- * 1 - (L2 distance / 2).
+ * 1 - L2² / 2  (L2 distance squared, divided by 2).
  *
  * @param text - The text to embed
  * @returns A 384-dimension Float32Array embedding

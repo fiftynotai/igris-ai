@@ -266,7 +266,7 @@ IGRIS v5.0 introduces a centralized brain at `~/.igris/` that provides persisten
 - **Staging Pipeline** — Hooks write to `~/.igris/staging/`, processed on server startup (guarded by `features.staging_pipeline: true` in config; hooks exit early when disabled)
 - **Core Files** — Agents, skills, rules, prompts symlinked from `~/.igris/core/`
 
-### Brain MCP Tools (27 tools)
+### Brain MCP Tools
 
 **Note:** The following MCP tools require `igris-brain` to be registered in `~/.claude.json`; skills detect availability at call time and skip gracefully when the server is unreachable. Core Igris features (briefs, sessions, agents, quality gates) work fully in local-only mode.
 

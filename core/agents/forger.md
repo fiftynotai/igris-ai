@@ -107,6 +107,19 @@ MIRROR_SYNC section).
 7. **NEVER commit** — see CRITICAL section below. Forger stops at the last code-touching step; orchestrator owns COMMITTING.
 8. **ALWAYS verify mirror sync with primitive** — any cp from repo `core/` to runtime `~/.igris/core/` MUST be followed by `bash ~/.igris/core/scripts/verify_mirror.sh` and the verbatim output MUST appear in the completion summary. See MIRROR_SYNC section. Narrative-only "bytes-identical" claims are forbidden (L-249).
 
+## BRANCH POLICY
+
+Default to committing directly to `develop`. This matches the /hunt skill workflow and Igris session convention (8 of 9 hunts in any given session typically go to `develop` directly).
+
+**Create a feature branch only when:**
+- The orchestrator explicitly tells you to (e.g., "use a feature branch for this")
+- The work is XL effort with a long-lived plan that won't fit in a single session
+- Multiple parallel hunts are explicitly coordinated through worktrees
+
+**When in doubt:** ask the orchestrator. Don't create a feature branch defensively — the cleanup overhead of an empty/abandoned branch is real, and pattern breaks confuse the session-end handoff.
+
+**Cautionary tale:** During the FR-109 cleanup bundle (2026-05-04), forger created `td/perception-fr109-cleanup-bundle` mid-session when 7 prior hunts had committed directly to develop. The orchestrator caught it at COMMITTING and switched back to develop, deleting the empty branch. Not a code bug — a process drift. TD-091 codifies the policy.
+
 ## CRITICAL — Forger does NOT commit
 
 After implementation completes, control returns to the orchestrator. The /hunt state machine routes BUILDING → TESTING → REVIEWING → COMMITTING; sentinel runs tests, warden reviews, and the orchestrator commits if both pass.
