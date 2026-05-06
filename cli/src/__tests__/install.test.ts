@@ -7,7 +7,7 @@
  * (the supported boundary; integration tests in bats exercise the wrapper).
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   existsSync,
   mkdirSync,
@@ -348,6 +348,120 @@ describe("install verb", () => {
         skipSymlinkLayer: true,
       }),
     ).rejects.toThrow(/Invalid slug/);
+  });
+
+  // ---------------------------------------------------------------------
+  // TD-112: --slug ≠ basename(path) hint.
+  //
+  // When the explicit --slug differs from basename(absPath), the wrapped
+  // shell layer (scripts/igris_install.sh) writes a SECOND row keyed by
+  // basename. The CLI's row uses the explicit slug. Both persist. We emit
+  // a one-line note on stderr (via warn() → "warn: ..." prefix) so the
+  // user can run `igris doctor` to reconcile.
+  //
+  // Stderr capture: vi.spyOn(process.stderr, 'write') buffers calls; we
+  // assert against the joined buffer. No vi.mock of the verb under test —
+  // L-159 compliance preserved.
+  // ---------------------------------------------------------------------
+
+  function captureStderr(): { read: () => string; restore: () => void } {
+    const buf: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .mockImplementation((chunk: any) => {
+        buf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+    return {
+      read: () => buf.join(""),
+      restore: () => spy.mockRestore(),
+    };
+  }
+
+  it("TD-112: --slug differs from basename → stderr contains shell-layer-row note", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const cap = captureStderr();
+    try {
+      const code = await runInstall({
+        path: projectDir,
+        slug: "explicit-slug-foo",
+        installHooks: true,
+        skipSymlinkLayer: true,
+      });
+      expect(code).toBe(0);
+      const stderr = cap.read();
+      const expectedBasename = require("node:path").basename(projectDir);
+      expect(stderr).toContain(
+        `shell layer also wrote a row for slug '${expectedBasename}'`,
+      );
+      expect(stderr).toContain("igris doctor");
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it("TD-112: --slug equals basename → stderr does NOT contain the note", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const cap = captureStderr();
+    try {
+      const matchingSlug = require("node:path").basename(projectDir);
+      const code = await runInstall({
+        path: projectDir,
+        slug: matchingSlug,
+        installHooks: true,
+        skipSymlinkLayer: true,
+      });
+      expect(code).toBe(0);
+      const stderr = cap.read();
+      expect(stderr).not.toContain("shell layer also wrote a row");
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it("TD-112: no --slug (basename-defaulted) → stderr does NOT contain the note", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const cap = captureStderr();
+    try {
+      const code = await runInstall({
+        path: projectDir,
+        // Intentionally omit slug — defaults to basename(absPath); the
+        // explicit-flag guard means the note must NOT fire even though
+        // slug == basename in this branch by construction.
+        installHooks: true,
+        skipSymlinkLayer: true,
+      });
+      expect(code).toBe(0);
+      const stderr = cap.read();
+      expect(stderr).not.toContain("shell layer also wrote a row");
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it("TD-112: --slug differs from basename under --quiet → note is suppressed", async () => {
+    const log = await import("../lib/log.js");
+    const original = log.getVerbosity();
+    log.setVerbosity("quiet");
+    const cap = captureStderr();
+    try {
+      const { runInstall } = await import("../verbs/install.js");
+      const code = await runInstall({
+        path: projectDir,
+        slug: "quiet-explicit-slug",
+        installHooks: true,
+        skipSymlinkLayer: true,
+      });
+      expect(code).toBe(0);
+      // warn() honors verbosity (lib/log.ts:30-34) — quiet suppresses it.
+      // error() still writes; here we expect no shell-layer note.
+      const stderr = cap.read();
+      expect(stderr).not.toContain("shell layer also wrote a row");
+    } finally {
+      cap.restore();
+      log.setVerbosity(original);
+    }
   });
 
   it("install with includeGitInstructions:false in pre-existing settings.json preserves that key", async () => {

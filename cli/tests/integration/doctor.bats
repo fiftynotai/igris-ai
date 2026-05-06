@@ -95,6 +95,25 @@ EOF
   [[ "$output" =~ "duplicate-path" ]]
 }
 
+@test "doctor --remove-orphans prompt advertises the new [y/N/a/all] label (TD-111)" {
+  # Seed one orphan row, pipe 'y\n' on stdin so the prompt fires exactly
+  # once and we capture the label literal in the same combined stdout/stderr.
+  sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "
+    CREATE TABLE IF NOT EXISTS projects (
+      slug TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL,
+      tech_stack TEXT, igris_version TEXT, status TEXT DEFAULT 'active',
+      registered_at TEXT, last_session_at TEXT, metadata TEXT
+    );
+    INSERT INTO projects (slug, name, path, igris_version) VALUES ('label-orphan','label-orphan','/no/such/dir/label-orphan','7.0.0');
+  "
+  # readline writes the prompt to stdout; we send 'y' on stdin to consume it.
+  run bash -c "printf 'y\n' | $CLI_BIN doctor --remove-orphans 2>&1"
+  [ "$status" -eq 0 ]
+  # The literal new label must appear; the legacy `[y/N/a/Y/A]` must not.
+  [[ "$output" == *"[y/N/a/all]"* ]]
+  [[ "$output" != *"[y/N/a/Y/A]"* ]]
+}
+
 @test "doctor handles paths with spaces (TD-100 ghost path)" {
   sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "
     CREATE TABLE IF NOT EXISTS projects (

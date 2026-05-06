@@ -346,9 +346,28 @@ function printDriftTable(drift: DriftRow[]): void {
   }
 }
 
-async function confirmAndRemoveOrphans(
+/**
+ * Async prompt function — accepts the question string, resolves with the
+ * user's answer (NOT trimmed/lowercased — caller normalizes). Used as the
+ * test seam in confirmAndRemoveOrphans so vitest can inject a queue-backed
+ * fake without battling Node's readline event timing (TD-111).
+ */
+export type PromptFn = (question: string) => Promise<string>;
+
+/**
+ * Interactive orphan confirmation flow. Exported for vitest stdin-fixture
+ * tests (TD-111): tests inject a synthetic `prompt` function so they can
+ * exercise the `[y/N/a/all]` decision tree without monkey-patching
+ * `process.stdin` or fighting readline's per-question listener race.
+ *
+ * @param prompt  Optional async function that returns the user's answer for
+ *                a given prompt string. Defaults to a `readline`-backed
+ *                prompt reading `process.stdin` for the production path.
+ */
+export async function confirmAndRemoveOrphans(
   orphans: DriftRow[],
   skipPrompt: boolean,
+  prompt?: PromptFn,
 ): Promise<number> {
   if (skipPrompt) {
     let n = 0;
@@ -360,13 +379,20 @@ async function confirmAndRemoveOrphans(
     return n;
   }
 
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  const ask = (q: string): Promise<string> =>
-    new Promise((res) => rl.question(q, (a) => res(a)));
+  // Production prompt: spin up a readline interface against process.stdin.
+  // Tests bypass this entirely by passing their own prompt function.
+  let rl: ReturnType<typeof createInterface> | null = null;
+  const ask: PromptFn =
+    prompt ??
+    ((q: string): Promise<string> => {
+      if (rl === null) {
+        rl = createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+      }
+      return new Promise((res) => rl!.question(q, (a) => res(a)));
+    });
 
   let yesAll = false;
   let removed = 0;
@@ -378,7 +404,12 @@ async function confirmAndRemoveOrphans(
       removed++;
       continue;
     }
-    const ans = (await ask(`${o.slug} -> ${o.path}: orphan; delete? [y/N/a/Y/A]: `))
+    // TD-111: prompt label was `[y/N/a/Y/A]` but the handler always lowercases
+    // the input, so `Y`/`A` were never reachable as distinct shortcuts (they
+    // collapsed to `y`/`a` and re-prompted on the next orphan). Relabel to
+    // `[y/N/a/all]` to match the actual accepted tokens. Behavior unchanged:
+    // the handler still accepts `y`, `n`, `a`, `all`, and `yes-all`.
+    const ans = (await ask(`${o.slug} -> ${o.path}: orphan; delete? [y/N/a/all]: `))
       .trim()
       .toLowerCase();
     if (ans === "a") {
@@ -399,6 +430,11 @@ async function confirmAndRemoveOrphans(
     }
   }
 
-  rl.close();
+  // Close the readline interface only if we created it (i.e. production
+  // path with no injected prompt). Tests pass their own prompt and have
+  // nothing for us to clean up.
+  if (rl !== null) {
+    (rl as ReturnType<typeof createInterface>).close();
+  }
   return removed;
 }

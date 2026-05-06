@@ -80,6 +80,19 @@ EOF
   [ -z "$output" ]
 }
 
+@test "TD-112: --slug fifty-dev with basename fifty_dev emits shell-layer-row note on stderr" {
+  PROJ="$(stage_project fifty_dev)"
+  # Capture stdout + stderr in one buffer (bats `run` doesn't natively split
+  # stderr on the bats version pinned in this repo). The shim shell prefixes
+  # its own line with "stub: igris_install.sh ..." on stderr — the note we
+  # expect is "warn: shell layer also wrote a row for slug 'fifty_dev' ..."
+  # and must coexist with the stub line.
+  run bash -c "$CLI_BIN install --slug fifty-dev '$PROJ' 2>&1"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"shell layer also wrote a row for slug 'fifty_dev'"* ]]
+  [[ "$output" == *"igris doctor"* ]]
+}
+
 @test "--slug fifty-content-pipeline with basename content (TD-100 fixture)" {
   PROJ="$(stage_project content)"
   run $CLI_BIN install --slug fifty-content-pipeline "$PROJ"

@@ -32,6 +32,7 @@ import {
   projectSettingsPath,
 } from "../lib/paths.js";
 import { info, warn, error as logError, debug } from "../lib/log.js";
+// `warn` is used live by the TD-112 slug-mismatch hint at the end of runInstall.
 
 export interface InstallOptions {
   path: string;
@@ -214,6 +215,23 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
   info(`  path:           ${absPath}`);
   info(`  hooks:          ${opts.installHooks ? "yes" : "no"}`);
   info(`  features:       ${brainDir()}/projects/${slug}/installed_features.json`);
+
+  // TD-112: when --slug differs from basename(path), the wrapped shell layer
+  // (scripts/igris_install.sh) writes a SECOND registry row keyed by basename.
+  // The CLI's row uses the explicit --slug; the shell's uses basename. Both
+  // persist. Surface a one-line stderr note pointing at `igris doctor` so the
+  // user can reconcile (delete the duplicate or merge).
+  //
+  // Guarded by `opts.slug !== undefined` so basename-defaulted invocations
+  // (where slug == basename by construction) never trip. Routes via warn() →
+  // process.stderr; auto-suppressed under --quiet (lib/log.ts:30-34) so
+  // pipe consumers and quiet runs are unaffected.
+  if (opts.slug !== undefined && slug !== basename(absPath)) {
+    warn(
+      `shell layer also wrote a row for slug '${basename(absPath)}' — run 'igris doctor' to reconcile.`,
+    );
+  }
+
   return 0;
 }
 
@@ -257,5 +275,3 @@ function detectTechStack(projectPath: string): string {
   return stacks.join(",");
 }
 
-// Suppress unused-import warning when functions used in tests differ.
-void warn;
