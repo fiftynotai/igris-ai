@@ -48,6 +48,7 @@ import {
 import {
   brainDir,
   projectSettingsPath,
+  installedFeaturesPath,
 } from "../lib/paths.js";
 import { linkDir, linkFile, SymlinkConflictError } from "../lib/symlinks.js";
 import { regenerateClaudeMd, ClaudeMdTemplateError } from "../lib/claude-md.js";
@@ -55,6 +56,7 @@ import { writeIgrisVersion } from "../lib/igris-version.js";
 import { applySubconsciousDefault } from "../lib/init-config.js";
 import { pushProjectToRemote } from "../lib/remote-push.js";
 import { readInstallSource } from "../lib/install-source.js";
+import { DryRunCollector } from "../lib/dry-run.js";
 import { info, warn, error as logError, debug } from "../lib/log.js";
 
 export interface InstallOptions {
@@ -70,6 +72,13 @@ export interface InstallOptions {
    * tests asserting deterministic content; production calls always use today.
    */
   installDate?: string;
+  /**
+   * When true, preview the would-be writes (symlinks, CLAUDE.md, hooks merge,
+   * registry upsert, installed_features.json) without performing any. The
+   * verb returns 0 after printing the plan; `runUpdate --dry-run` does NOT
+   * delegate here — it has its own enumeration path.
+   */
+  dryRun?: boolean;
 }
 
 // Slug grammar tolerates uppercase (`lifeOS` exists in the real registry today).
@@ -127,6 +136,18 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
 
   const cliVersion = opts.cliVersion ?? "7.0.0";
   const root = brainDir();
+
+  // M3 — dry-run short-circuit. Enumerate would-be writes via DryRunCollector
+  // and exit 0 without touching disk or the registry. We intentionally do NOT
+  // run the symlink/CLAUDE.md/hooks-merge code paths in preview mode — the
+  // collector enumerates the planned operations from the same input as the
+  // real run (project path + slug + install-source).
+  if (opts.dryRun === true) {
+    const dry = new DryRunCollector();
+    enumerateInstallPlan(absPath, root, slug, opts.installHooks, dry);
+    dry.print();
+    return 0;
+  }
 
   // 3. Symlink layer — native TS replacement for igris_install.sh:212-237.
   if (opts.skipSymlinkLayer !== true) {
@@ -372,6 +393,120 @@ function applySymlinkLayer(projectPath: string, brainRoot: string): void {
       }
     }
   }
+}
+
+/**
+ * Enumerate the planned install operations into the DryRunCollector without
+ * performing any of them. Mirrors the order of side-effects in runInstall:
+ * symlinks → CLAUDE.md → .igris_version → settings.json hooks merge →
+ * registry upsert → installed_features.json.
+ *
+ * Discovery is read-only: we walk the brain core directory to enumerate the
+ * symlinks that WOULD be created and report them as `would_create_dir` /
+ * `would_write_file` records. The collector's printer renders them as a plan.
+ */
+function enumerateInstallPlan(
+  projectPath: string,
+  brainRoot: string,
+  slug: string,
+  installHooks: boolean,
+  dry: DryRunCollector,
+): void {
+  const claudeDir = join(projectPath, ".claude");
+
+  // Symlinks: agents
+  const agentsSrc = join(brainRoot, "core", "agents");
+  if (existsSync(agentsSrc) && statSync(agentsSrc).isDirectory()) {
+    const agentsDest = join(claudeDir, "agents");
+    dry.wouldCreateDir(agentsDest);
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(agentsSrc);
+    } catch {
+      // ignore — surfaces in real run
+    }
+    for (const entry of entries) {
+      const full = join(agentsSrc, entry);
+      if (
+        (entry.endsWith(".md") || entry === "manifest.yaml") &&
+        existsSync(full) &&
+        statSync(full).isFile()
+      ) {
+        dry.wouldWriteFile(
+          join(agentsDest, entry),
+          `symlink to ${full}`,
+        );
+      }
+    }
+  }
+
+  // Symlinks: rules
+  const rulesSrc = join(brainRoot, "core", "rules", "00-igris-universal.md");
+  if (existsSync(rulesSrc) && statSync(rulesSrc).isFile()) {
+    dry.wouldCreateDir(join(claudeDir, "rules"));
+    dry.wouldWriteFile(
+      join(claudeDir, "rules", "00-igris-universal.md"),
+      `symlink to ${rulesSrc}`,
+    );
+  }
+
+  // Symlinks: skills
+  const skillsSrc = join(brainRoot, "core", "skills");
+  if (existsSync(skillsSrc) && statSync(skillsSrc).isDirectory()) {
+    const skillsDest = join(claudeDir, "skills");
+    dry.wouldCreateDir(skillsDest);
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(skillsSrc);
+    } catch {
+      // ignore
+    }
+    for (const entry of entries) {
+      const full = join(skillsSrc, entry);
+      if (existsSync(full) && statSync(full).isDirectory()) {
+        dry.wouldWriteFile(
+          join(skillsDest, entry),
+          `symlink to ${full}`,
+        );
+      }
+    }
+  }
+
+  // CLAUDE.md (if template exists)
+  const tmplPath = join(brainRoot, "core", "templates", "CLAUDE.md.tmpl");
+  if (existsSync(tmplPath)) {
+    dry.wouldWriteFile(
+      join(projectPath, "CLAUDE.md"),
+      `regenerated from ${tmplPath}`,
+    );
+  }
+
+  // .igris_version
+  dry.wouldWriteFile(
+    join(projectPath, ".igris_version"),
+    "version marker",
+  );
+
+  // Hooks merge
+  if (installHooks) {
+    dry.wouldWriteFile(
+      projectSettingsPath(projectPath),
+      "merge canonical hooks block",
+    );
+  }
+
+  // Registry upsert (no file path, but we record it as an invoked command).
+  dry.wouldInvokeCommand(
+    "sqlite",
+    ["upsert projects WHERE slug=?", slug],
+    `register project '${slug}' -> ${projectPath}`,
+  );
+
+  // installed_features.json
+  dry.wouldWriteFile(
+    installedFeaturesPath(slug),
+    "content hashes for upgrade detection",
+  );
 }
 
 /**

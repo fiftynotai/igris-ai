@@ -13,7 +13,6 @@ test/
 ├── fixtures/                   # Test data (mock projects, etc.)
 │   └── mock_project/          # Sample project for testing
 ├── igris_init.test.bash       # Tests for igris_init.sh
-├── igris_update.test.bash     # Tests for igris_update.sh
 └── error_handling.test.bash   # Error handling tests
 ```
 

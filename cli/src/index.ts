@@ -2,11 +2,12 @@
 /**
  * Igris CLI — entry point.
  *
- * Verbs (Phase 2 — M1+M2):
+ * Verbs (Phase 2 — M1+M2+M3):
  *   - init [--from-source <path>] [--channel <ref>] [--upgrade] [--dry-run]
  *   - refresh [--from-source <path>] [--channel <ref>] [--no-propagate] [--dry-run]
- *   - install <path> [--slug <slug>] [--no-hooks]
- *   - update --all
+ *   - install <path> [--slug <slug>] [--no-hooks] [--dry-run]
+ *   - update [--all] [--slug <slug>] [--self] [--dry-run]
+ *   - register-project [path] [--slug <slug>] [--allow-missing-path]
  *   - doctor [--fix] [--remove-orphans] [--yes]
  *
  * The CLI now owns the entire install pipeline natively in TS — both the
@@ -29,6 +30,7 @@ import { runUpdate } from "./verbs/update.js";
 import { runDoctor } from "./verbs/doctor.js";
 import { runInit } from "./verbs/init.js";
 import { runRefresh } from "./verbs/refresh.js";
+import { runRegisterProject } from "./verbs/register-project.js";
 import { setVerbosity, error as logError } from "./lib/log.js";
 
 function readPackageVersion(): string {
@@ -165,16 +167,22 @@ async function main(argv: string[]): Promise<void> {
       "registry slug (default: basename of path)",
     )
     .option("--no-hooks", "skip materializing hooks into .claude/settings.json")
+    .option(
+      "--dry-run",
+      "preview symlinks, CLAUDE.md, and hooks-merge without performing any writes",
+      false,
+    )
     .action(
       async (
         path: string,
-        opts: { slug?: string; hooks?: boolean },
+        opts: { slug?: string; hooks?: boolean; dryRun?: boolean },
       ): Promise<void> => {
         const code = await runInstall({
           path,
           slug: opts.slug,
           // commander turns --no-hooks into opts.hooks=false. Default is true.
           installHooks: opts.hooks !== false,
+          dryRun: opts.dryRun === true,
         });
         process.exitCode = code;
       },
@@ -182,14 +190,59 @@ async function main(argv: string[]): Promise<void> {
 
   program
     .command("update")
-    .description("Update materialized layer for one or more projects")
+    .description("Update materialized layer for one or more projects (or self-upgrade the CLI)")
     .option("--all", "update every registered project", false)
     .option("--slug <slug>", "update only the given slug")
+    .option(
+      "--self",
+      "self-upgrade the CLI via 'npm install -g igris-ai@latest'",
+      false,
+    )
+    .option(
+      "--dry-run",
+      "enumerate would-update projects without invoking install",
+      false,
+    )
     .action(
-      async (opts: { all?: boolean; slug?: string }): Promise<void> => {
+      async (opts: {
+        all?: boolean;
+        slug?: string;
+        self?: boolean;
+        dryRun?: boolean;
+      }): Promise<void> => {
         const code = await runUpdate({
           all: opts.all === true,
           slug: opts.slug,
+          self: opts.self === true,
+          dryRun: opts.dryRun === true,
+        });
+        process.exitCode = code;
+      },
+    );
+
+  program
+    .command("register-project [path]")
+    .description(
+      "Write the brain registry row for <path> only (no .claude/, no hooks, no CLAUDE.md)",
+    )
+    .option(
+      "--slug <slug>",
+      "registry slug (default: basename of path)",
+    )
+    .option(
+      "--allow-missing-path",
+      "register even if <path> does not exist on disk",
+      false,
+    )
+    .action(
+      async (
+        path: string | undefined,
+        opts: { slug?: string; allowMissingPath?: boolean },
+      ): Promise<void> => {
+        const code = await runRegisterProject({
+          path,
+          slug: opts.slug,
+          allowMissingPath: opts.allowMissingPath === true,
         });
         process.exitCode = code;
       },

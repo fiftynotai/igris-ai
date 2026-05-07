@@ -1,10 +1,21 @@
 /**
- * `igris update [--all|--slug]` — Phase 1.
+ * `igris update [--all|--slug] [--self] [--dry-run]` — Phase 1 + M3.
  *
- * Loops over registered projects (or one slug), compares each project's
- * `installed_features.json` hashes against current canonical hashes, and
- * re-runs the install primitive when stale. Skips projects whose hashes
- * already match, errors are reported per-project but don't abort the loop.
+ * Default behavior (no --self):
+ *   Loops over registered projects (or one slug), compares each project's
+ *   `installed_features.json` hashes against current canonical hashes, and
+ *   re-runs the install primitive when stale. Skips projects whose hashes
+ *   already match, errors are reported per-project but don't abort the loop.
+ *
+ * --self (M3):
+ *   Short-circuits the per-project loop and instead runs the global
+ *   self-upgrade via `runSelfUpdate()` (npm install -g igris-ai@latest).
+ *   --self is mutually exclusive with --all and --slug; if any of those
+ *   are also passed, --self wins.
+ *
+ * --dry-run (M3):
+ *   Enumerates would-update projects without invoking install. Same diff
+ *   logic as a real run; just prints a summary and exits 0.
  */
 
 import { existsSync } from "node:fs";
@@ -14,25 +25,38 @@ import {
   readInstalledFeatures,
 } from "../lib/installed-features.js";
 import { runInstall } from "./install.js";
+import { runSelfUpdate } from "../lib/self-update.js";
 import { info, warn, error as logError } from "../lib/log.js";
 
 export interface UpdateOptions {
   all: boolean;
   slug?: string;
+  /** When true, run `npm install -g igris-ai@latest` instead of the per-project loop. */
+  self?: boolean;
+  /** When true, enumerate would-update projects without performing writes. */
+  dryRun?: boolean;
 }
 
 interface UpdateRowResult {
   slug: string;
-  outcome: "updated" | "skipped" | "errored" | "missing-path";
+  outcome: "updated" | "skipped" | "errored" | "missing-path" | "would-update";
   reason?: string;
 }
 
 export async function runUpdate(opts: UpdateOptions): Promise<number> {
+  // M3 — `--self` short-circuit. Runs before the --all/--slug gate because
+  // self-upgrade has no per-project semantics; the user is upgrading the
+  // global CLI binary, not anything in any registered project.
+  if (opts.self === true) {
+    return await runSelfUpdate();
+  }
+
   if (!opts.all && opts.slug === undefined) {
     logError("update: pass --all or --slug <slug>");
     return 2;
   }
 
+  const dryRun = opts.dryRun === true;
   const allRows = listProjects();
   const targets = opts.slug
     ? allRows.filter((r) => r.slug === opts.slug)
@@ -80,6 +104,17 @@ export async function runUpdate(opts: UpdateOptions): Promise<number> {
       continue;
     }
 
+    if (dryRun) {
+      // Plan-only: enumerate would-update without invoking install.
+      results.push({
+        slug: row.slug,
+        outcome: "would-update",
+        reason: "stale or no features file",
+      });
+      info(`${row.slug}: would update (stale or no features file) [dry-run]`);
+      continue;
+    }
+
     info(`${row.slug}: re-running install (stale or no features file)`);
     try {
       // skipSymlinkLayer=true: we trust the existing project install was correct;
@@ -107,21 +142,31 @@ export async function runUpdate(opts: UpdateOptions): Promise<number> {
   }
 
   info("");
-  info("Update summary:");
+  info(dryRun ? "Update plan (dry-run):" : "Update summary:");
   let updated = 0;
   let skipped = 0;
   let errored = 0;
   let missing = 0;
+  let wouldUpdate = 0;
   for (const r of results) {
     if (r.outcome === "updated") updated++;
     else if (r.outcome === "skipped") skipped++;
     else if (r.outcome === "errored") errored++;
     else if (r.outcome === "missing-path") missing++;
+    else if (r.outcome === "would-update") wouldUpdate++;
   }
-  info(`  updated: ${updated}`);
-  info(`  skipped: ${skipped}`);
-  info(`  errored: ${errored}`);
-  info(`  missing: ${missing}`);
+  if (dryRun) {
+    info(`  would-update: ${wouldUpdate}`);
+    info(`  skipped:      ${skipped}`);
+    info(`  missing:      ${missing}`);
+    info("");
+    info("No filesystem writes were performed.");
+  } else {
+    info(`  updated: ${updated}`);
+    info(`  skipped: ${skipped}`);
+    info(`  errored: ${errored}`);
+    info(`  missing: ${missing}`);
+  }
 
   return errored > 0 ? 1 : 0;
 }

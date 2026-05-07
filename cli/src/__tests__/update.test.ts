@@ -1,11 +1,14 @@
 /**
- * update verb tests — Phase 5.
+ * update verb tests — Phase 5 + M3.
  *
  * Diff logic: stale projects re-install (skipSymlinkLayer=true), up-to-date
  * skip, missing-path projects warn but don't abort the loop.
+ *
+ * M3 additions: --self short-circuit (mocked at child_process), --dry-run
+ * enumeration without writes.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   mkdirSync,
   mkdtempSync,
@@ -18,6 +21,41 @@ import { join } from "node:path";
 
 let tmpRoot: string;
 const projectDirs: string[] = [];
+
+// --self tests mock child_process at the boundary. Other tests in this
+// file don't invoke npm; the mock is harmless to them because runUpdate's
+// non-self path never reaches execFile.
+type SelfUpdateBehavior =
+  | { kind: "idle" }
+  | { kind: "success" }
+  | { kind: "exit"; code: number };
+let selfUpdateBehavior: SelfUpdateBehavior = { kind: "idle" };
+const selfUpdateCalls: Array<{ bin: string; args: string[] }> = [];
+
+vi.mock("node:child_process", () => ({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  execFile: (bin: string, args: string[], _opts: any, cb: any) => {
+    selfUpdateCalls.push({ bin, args });
+    setImmediate(() => {
+      const b = selfUpdateBehavior;
+      if (b.kind === "success") {
+        cb(null);
+        return;
+      }
+      if (b.kind === "exit") {
+        const err = new Error("npm exit") as Error & {
+          code?: number | string;
+        };
+        err.code = b.code;
+        cb(err);
+        return;
+      }
+      // idle — should not happen if --self path is exercised.
+      cb(new Error("unexpected execFile call"));
+    });
+    return { mocked: true };
+  },
+}));
 
 const CANONICAL_HOOKS = {
   hooks: {
@@ -75,6 +113,8 @@ beforeEach(async () => {
   ch.clearCache();
   const reg = await import("../lib/registry.js");
   reg.closeDb();
+  selfUpdateCalls.length = 0;
+  selfUpdateBehavior = { kind: "idle" };
 });
 
 afterEach(async () => {
@@ -179,5 +219,76 @@ describe("update verb", () => {
     const { runUpdate } = await import("../verbs/update.js");
     const code = await runUpdate({ all: true });
     expect(code).toBe(0);
+  });
+
+  // ---- M3 additions ---------------------------------------------------
+
+  it("update --self: invokes 'npm install -g igris-ai@latest' and returns 0 on success", async () => {
+    const { runUpdate } = await import("../verbs/update.js");
+    selfUpdateBehavior = { kind: "success" };
+    const code = await runUpdate({ all: false, self: true });
+    expect(code).toBe(0);
+    expect(selfUpdateCalls.length).toBe(1);
+    expect(selfUpdateCalls[0].bin).toBe("npm");
+    expect(selfUpdateCalls[0].args).toEqual([
+      "install",
+      "-g",
+      "igris-ai@latest",
+    ]);
+  });
+
+  it("update --self: surfaces npm's non-zero exit code", async () => {
+    const { runUpdate } = await import("../verbs/update.js");
+    selfUpdateBehavior = { kind: "exit", code: 1 };
+    const code = await runUpdate({ all: false, self: true });
+    expect(code).toBe(1);
+    expect(selfUpdateCalls.length).toBe(1);
+  });
+
+  it("update --all --dry-run: enumerates would-update without invoking install", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const { runUpdate } = await import("../verbs/update.js");
+    const reg = await import("../lib/registry.js");
+
+    // First, stage one project that needs update (no features file) and
+    // another that's up-to-date (full install completed).
+    const stale = stageProject();
+    reg.upsertProject({
+      slug: "stale-proj",
+      name: "stale-proj",
+      path: stale,
+      tech_stack: "",
+      igris_version: "7.0.0",
+    });
+    const fresh = stageProject();
+    await runInstall({
+      path: fresh,
+      slug: "fresh-proj",
+      installHooks: true,
+      skipSymlinkLayer: true,
+    });
+    // Capture fresh project's settings.json before dry-run to verify no
+    // mutation occurs.
+    const freshSettingsBefore = readFileSync(
+      join(fresh, ".claude", "settings.json"),
+      "utf-8",
+    );
+
+    const code = await runUpdate({ all: true, dryRun: true });
+    expect(code).toBe(0);
+
+    // The stale project should NOT have a features file written by dry-run.
+    const ifs = await import("../lib/installed-features.js");
+    expect(ifs.readInstalledFeatures("stale-proj")).toBeNull();
+
+    // The fresh project's settings.json must be byte-identical (no rewrite).
+    const freshSettingsAfter = readFileSync(
+      join(fresh, ".claude", "settings.json"),
+      "utf-8",
+    );
+    expect(freshSettingsAfter).toBe(freshSettingsBefore);
+
+    // No npm/execFile calls — --self was not requested.
+    expect(selfUpdateCalls.length).toBe(0);
   });
 });
