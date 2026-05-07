@@ -14,6 +14,19 @@
 export interface InstalledFeatures {
   schema_version: number;
   cli_version: string;
+  /**
+   * Channel kind that fed the brain at install time (M2 — schema v2).
+   * Mirrors `~/.igris/.install-source.json#channel`. `null` means the
+   * install ran before init/refresh deposited the install-source file
+   * (legacy v1 row migrated forward).
+   */
+  brain_channel: "release" | "main" | "tag" | null;
+  /**
+   * Resolved channel ref ("v7.0.0", "main", or any tag) at install time
+   * (M2 — schema v2). Mirrors `~/.igris/.install-source.json#ref`. `null`
+   * for legacy v1 rows.
+   */
+  brain_ref: string | null;
   /** sha256 of `~/.igris/core/hooks/canonical-settings.json`, or null when --no-hooks. */
   hooks_version: string | null;
   /** sha256 of `~/.igris/core/agents/manifest.yaml`, or null when not present. */

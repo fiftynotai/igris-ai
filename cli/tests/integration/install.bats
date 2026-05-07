@@ -1,32 +1,15 @@
 #!/usr/bin/env bats
 
 # install.bats — integration tests for `igris install`, sandboxed via
-# IGRIS_BRAIN_DIR. The shell-script symlink layer is bypassed by relying on
-# the CLI's `--no-hooks` mode + manual settings.json staging, OR by calling
-# `node` with skipSymlinkLayer flag baked into the test environment.
-#
-# Phase 1 contract: install owns the materialized layer, delegates symlink
-# layer to scripts/igris_install.sh. The bats harness here uses an env var
-# IGRIS_TEST_SKIP_SYMLINK=1 hack: we instead set IGRIS_BRAIN_DIR + run the
-# CLI directly, which DOES try to invoke the shell. To keep tests hermetic,
-# we stub the shell script via a shim on PATH.
+# IGRIS_BRAIN_DIR. Phase 2 (M2): the CLI owns the entire install pipeline
+# natively in TS — no shell-script symlink layer to stub. Tests stage a
+# minimal brain core in tmp and assert the verb's outputs (settings.json,
+# CLAUDE.md, .igris_version, registry rows, installed_features.json).
 
 load _helpers.bash
 
 setup() {
   stage_brain
-  # Shim: when CLI looks up scripts/igris_install.sh, give it a no-op script.
-  # We do this by manufacturing a `repoRoot` containing a stub script.
-  STUB_REPO="$BATS_TEST_TMPDIR/stub-repo"
-  mkdir -p "$STUB_REPO/scripts"
-  cat > "$STUB_REPO/scripts/igris_install.sh" <<'EOF'
-#!/bin/bash
-# Stub: the CLI invokes this for the symlink layer; for bats we no-op.
-echo "stub: igris_install.sh $*" >&2
-exit 0
-EOF
-  chmod +x "$STUB_REPO/scripts/igris_install.sh"
-  cd "$STUB_REPO"
   export IGRIS_KEEP_BAK=0
 }
 
@@ -41,6 +24,10 @@ EOF
   [ "$output" = "\$HOME/.igris/core/hooks/shared/session_end.sh" ]
   # Registry row written
   [ -f "$IGRIS_BRAIN_DIR/projects/myproj/installed_features.json" ]
+  # Schema v2
+  run python3 -c "import json,sys; d=json.load(open('$IGRIS_BRAIN_DIR/projects/myproj/installed_features.json')); print(d['schema_version'])"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
 }
 
 @test "default install installs hooks (regression test for v6 silent-failure / TD-100)" {
@@ -80,17 +67,14 @@ EOF
   [ -z "$output" ]
 }
 
-@test "TD-112: --slug fifty-dev with basename fifty_dev emits shell-layer-row note on stderr" {
+@test "TD-112 (M2 reword): --slug fifty-dev with basename fifty_dev emits 'differs from directory name' note on stderr" {
   PROJ="$(stage_project fifty_dev)"
-  # Capture stdout + stderr in one buffer (bats `run` doesn't natively split
-  # stderr on the bats version pinned in this repo). The shim shell prefixes
-  # its own line with "stub: igris_install.sh ..." on stderr — the note we
-  # expect is "warn: shell layer also wrote a row for slug 'fifty_dev' ..."
-  # and must coexist with the stub line.
+  # Capture stdout + stderr in one buffer.
   run bash -c "$CLI_BIN install --slug fifty-dev '$PROJ' 2>&1"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"shell layer also wrote a row for slug 'fifty_dev'"* ]]
-  [[ "$output" == *"igris doctor"* ]]
+  [[ "$output" == *"differs from directory name"* ]]
+  [[ "$output" == *"no action required"* ]]
+  [[ "$output" == *"authoritative"* ]]
 }
 
 @test "--slug fifty-content-pipeline with basename content (TD-100 fixture)" {

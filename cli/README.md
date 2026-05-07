@@ -5,18 +5,21 @@ The Igris AI unified command-line interface — `igris install`, `igris update`,
 
 ## What this owns
 
-The CLI owns the *materialized* layer of an Igris install:
+The CLI owns the entire install pipeline natively in TS (Phase 2, M2):
 
 - `<project>/.claude/settings.json` hooks block (merged, not overwritten)
+- `<project>/.claude/{agents,rules,skills}` symlinks (cli/src/lib/symlinks.ts)
+- `<project>/CLAUDE.md` regenerated from template (cli/src/lib/claude-md.ts)
+- `<project>/.igris_version` JSON marker (cli/src/lib/igris-version.ts)
 - Brain `projects` registry rows (via direct `better-sqlite3` access)
 - `~/.igris/projects/<slug>/installed_features.json` (content hashes for
-  upgrade detection)
+  upgrade detection; schema v2 includes brain_channel + brain_ref)
+- `~/.igris/config.json` subconscious.enabled default (TD-102 preservation)
+- Optional remote-brain push (best-effort, mirrors legacy shell behavior)
 
-The *symlink* layer (`.claude/agents`, `.claude/rules`, `.claude/skills`,
-CLAUDE.md regen, `.igris_version` writeback) continues to be owned by the
-existing shell flow at `scripts/igris_install.sh`. Phase 1 wraps that script
-via `child_process.execFileSync`. Phase 2 (separate brief, MG-014) will
-deprecate the shell layer entirely.
+Phase 1 wrapped `scripts/igris_install.sh` via `child_process.execFileSync`;
+Phase 2 (M2 of MG-014) absorbed that symlink layer entirely and deleted the
+shell script.
 
 ## Verbs
 
@@ -102,9 +105,9 @@ igris doctor
 
 ## Decision points (architect defaults — D-1 through D-4)
 
-- **D-1**: Igris-hooks-first inside event arrays, matching `install_claude_hooks.sh:217`.
+- **D-1**: Igris-hooks-first inside event arrays.
 - **D-2**: `.bak.<timestamp>` lifecycle for first 3 releases, gated on `IGRIS_KEEP_BAK != 0`.
-- **D-3**: Phase 1 wraps `scripts/igris_install.sh` for the symlink layer (no TS reimplementation).
+- **D-3**: ~~Phase 1 wraps `scripts/igris_install.sh` for the symlink layer~~ — superseded in M2: native TS owns the full install pipeline.
 - **D-4**: Direct `better-sqlite3` registry access (not via MCP).
 
 ## Out of scope (Phase 1)

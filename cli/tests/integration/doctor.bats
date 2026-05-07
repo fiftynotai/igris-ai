@@ -7,14 +7,6 @@ load _helpers.bash
 
 setup() {
   stage_brain
-  STUB_REPO="$BATS_TEST_TMPDIR/stub-repo"
-  mkdir -p "$STUB_REPO/scripts"
-  cat > "$STUB_REPO/scripts/igris_install.sh" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-  chmod +x "$STUB_REPO/scripts/igris_install.sh"
-  cd "$STUB_REPO"
   export IGRIS_KEEP_BAK=0
 }
 

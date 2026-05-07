@@ -22,8 +22,13 @@ load test_helper
 
   assert_success
   assert_dir_exists "$TEST_PROJECT_DIR/.claude"
-  assert_dir_exists "$TEST_PROJECT_DIR/.claude/hooks"
+  # M2 (V7): .claude/hooks/ no longer created — canonical hooks live at
+  # $HOME/.igris/core/hooks/shared/. Pipeline verified via canary
+  # default-install-installs-hooks.bats (the hooks block is merged into
+  # .claude/settings.json, pointing at the shared scripts).
   assert_dir_exists "$TEST_PROJECT_DIR/.claude/agents"
+  assert_dir_exists "$TEST_PROJECT_DIR/.claude/rules"
+  assert_dir_exists "$TEST_PROJECT_DIR/.claude/skills"
 }
 
 @test "igris_init installs native subagents" {
@@ -183,8 +188,10 @@ load test_helper
 
   assert_success
 
-  # Should contain success indicator (adjust based on actual output)
-  assert_output_contains "Igris AI"
+  # M2 (V7): the new CLI emits structured progress lines instead of the
+  # legacy "Igris AI" brand banner. "Install summary:" confirms the verb
+  # actually completed the install workflow (not just exited 0 from a no-op).
+  assert_output_contains "Install summary:"
 }
 
 @test "igris_init shows initialization steps" {

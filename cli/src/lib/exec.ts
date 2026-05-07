@@ -1,7 +1,8 @@
 /**
  * Thin wrapper around `child_process.execFileSync` for invoking external
- * shell scripts. Phase 1 uses this to delegate the symlink layer to
- * `scripts/igris_install.sh`; Phase 2 will reimplement those primitives in TS.
+ * shell scripts. M3+ verbs (sync code, etc.) delegate ssh/rsync via this
+ * helper. The install verb no longer shells out (M2 absorbed the symlink
+ * layer into TS via cli/src/lib/symlinks.ts).
  */
 
 import { execFileSync } from "node:child_process";

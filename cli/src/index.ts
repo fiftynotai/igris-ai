@@ -2,17 +2,18 @@
 /**
  * Igris CLI — entry point.
  *
- * Verbs (Phase 1):
+ * Verbs (Phase 2 — M1+M2):
+ *   - init [--from-source <path>] [--channel <ref>] [--upgrade] [--dry-run]
+ *   - refresh [--from-source <path>] [--channel <ref>] [--no-propagate] [--dry-run]
  *   - install <path> [--slug <slug>] [--no-hooks]
  *   - update --all
  *   - doctor [--fix] [--remove-orphans] [--yes]
  *
- * The CLI owns the *materialized* layer of an Igris install (settings.json
- * hooks block, brain `projects` registry rows, `installed_features.json`).
- * The symlink layer (`.claude/agents`, `.claude/rules`, `.claude/skills`,
- * CLAUDE.md regen, `.igris_version`) is delegated to `scripts/igris_install.sh`
- * via `child_process.execFileSync` for Phase 1; Phase 2 will reimplement
- * those primitives in TS.
+ * The CLI now owns the entire install pipeline natively in TS — both the
+ * materialized layer (settings.json hooks block, brain `projects` registry
+ * rows, `installed_features.json`) AND the symlink layer (`.claude/agents`,
+ * `.claude/rules`, `.claude/skills`, CLAUDE.md regen, `.igris_version`)
+ * via `cli/src/lib/{symlinks,claude-md,igris-version}.ts`.
  *
  * Lifecycle pattern: top-level `main()` sets `process.exitCode` rather than
  * calling `process.exit(code)` so any pending async cleanup can flush.

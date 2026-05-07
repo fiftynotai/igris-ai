@@ -1,10 +1,12 @@
 /**
  * Read/write/migrate `~/.igris/projects/<slug>/installed_features.json`.
  *
- * Schema (v1):
+ * Schema (v2 — current; M2 added brain_channel + brain_ref):
  *   {
- *     "schema_version": 1,
+ *     "schema_version": 2,
  *     "cli_version":    "<x.y.z>",
+ *     "brain_channel":  "release" | "main" | "tag" | null,
+ *     "brain_ref":      "<tag>" | "main" | null,
  *     "hooks_version":  "<sha256 of canonical-settings.json>" | null,
  *     "agents_version": "<sha256 of brain agents/manifest.yaml>" | null,
  *     "skills_version": "<sha256 of recursive sort+hash of brain skills/>" | null,
@@ -15,7 +17,7 @@
  *
  * Migration is forward-only: readers MUST migrate older versions on load,
  * writers MUST emit the current schema_version. v0 (no schema_version field)
- * is handled by `migrateForwardOnly`.
+ * and v1 (no brain_channel/brain_ref fields) are handled by `migrateForwardOnly`.
  *
  * Hash determinism note: `skills_version` walks the runtime skills/ dir
  * recursively, sorts paths lexicographically, and hashes
@@ -44,7 +46,7 @@ import {
 import { readCanonicalHooksRaw } from "./canonical-hooks.js";
 import type { InstalledFeatures } from "../types.js";
 
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 
 /**
  * Read installed_features.json for the given slug, migrating if needed.
@@ -74,9 +76,12 @@ export function writeInstalledFeatures(
 }
 
 /**
- * Forward-only migration. v0 (no schema_version field) → v1 (current).
+ * Forward-only migration. v0 (no schema_version field) → v1 → v2 (current).
  * Subsequent migrations append new branches here; existing branches MUST
  * NOT mutate fields they don't own (the §13 rule applied to schema fields).
+ *
+ * v1 → v2 (M2): adds brain_channel + brain_ref. Existing v1 rows default
+ * both to null; doctor's `channel-mismatch` drift class (M5) backfills.
  */
 export function migrateForwardOnly(
   raw: Partial<InstalledFeatures>,
@@ -97,8 +102,19 @@ export function migrateForwardOnly(
     };
   }
 
+  if (v < 2) {
+    // v1 row → v2 row. Add brain_channel + brain_ref, default to null.
+    // Existing fields preserved verbatim.
+    cur = {
+      ...cur,
+      schema_version: 2,
+      brain_channel: cur.brain_channel ?? null,
+      brain_ref: cur.brain_ref ?? null,
+    };
+  }
+
   // Future migrations:
-  // if (v < 2) { ... }
+  // if (v < 3) { ... }
 
   return cur as InstalledFeatures;
 }

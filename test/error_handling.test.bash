@@ -50,8 +50,9 @@ load test_helper
 }
 
 @test "igris_init handles empty target directory path" {
-  # v6 install treats empty $1 as current directory (igris_install.sh:90 uses
-  # TARGET_DIR="${1:-.}"). Verify the documented fallback behavior holds.
+  # v6 install treated empty $1 as current directory; the legacy
+  # igris_install.sh was deleted in M2 of MG-014, but the v3-era
+  # igris_init.sh shim preserves the same fallback for back-compat.
   cd "$TEST_TEMP_DIR"
   mkdir -p empty-arg-fallback && cd empty-arg-fallback
 

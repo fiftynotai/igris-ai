@@ -224,30 +224,12 @@ print('Valid JSON')
 }
 
 # =============================================================================
-# INSTALL.SH DIRECTORY CREATION TESTS
+# WORKER DIRECTORY / SCRIPT INSTALLATION TESTS
 # =============================================================================
-
-@test "install script references worker log directory creation" {
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'mkdir -p "$HOME/.igris/logs/worker"'
-}
-
-# =============================================================================
-# INSTALL.SH WORKER SCRIPT COPY TESTS
-# =============================================================================
-
-@test "install script references worker script copy" {
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'igris_worker.sh'
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'igris_worker_config.sh'
-}
-
-@test "install script makes worker scripts executable" {
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'chmod +x "$HOME/.igris/scripts/igris_worker.sh"'
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'chmod +x "$HOME/.igris/scripts/igris_worker_config.sh"'
-}
-
-@test "install script creates scripts directory" {
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'mkdir -p "$HOME/.igris/scripts"'
-}
+# (M2: scripts/igris_install.sh deleted — its worker-script copy logic moved
+# to a future cli/src/lib/worker-install.ts module that ships in MG-014 Phase 3.
+# The previous source-content assertions are obsolete; per-functionality
+# coverage will be re-added when the TS port lands.)
 
 # =============================================================================
 # COORDINATION SCHEMA TESTS

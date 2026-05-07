@@ -1,19 +1,24 @@
 /**
- * install verb tests — Phase 4.
+ * install verb tests — Phase 2 (M2).
  *
  * Per architect's prior-mistake guidance: do NOT vi.mock the module under test.
  * We test against a real tmp filesystem + real :memory:-style sandboxed DB
- * (IGRIS_BRAIN_DIR) + skipSymlinkLayer flag to bypass the shell-script invoke
- * (the supported boundary; integration tests in bats exercise the wrapper).
+ * (IGRIS_BRAIN_DIR) + skipSymlinkLayer flag for hermetic tests that don't need
+ * to exercise the symlink/CLAUDE.md/.igris_version pipeline. A separate set of
+ * "with symlink layer" tests stages a brain core in tmp and asserts that the
+ * native TS calls (symlinks.ts, claude-md.ts, igris-version.ts) produce the
+ * correct artifacts.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  readlinkSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -91,6 +96,12 @@ const CANONICAL_HOOKS = {
   },
 };
 
+const TEMPLATE = `# Igris AI - Project Instructions
+
+Igris v{{IGRIS_VERSION}}
+Installed: {{INSTALL_DATE}}
+`;
+
 function stageBrain(): void {
   const hooksDir = join(tmpRoot, "core", "hooks");
   mkdirSync(hooksDir, { recursive: true });
@@ -99,6 +110,34 @@ function stageBrain(): void {
     JSON.stringify(CANONICAL_HOOKS, null, 2) + "\n",
   );
   mkdirSync(join(tmpRoot, "memory"), { recursive: true });
+}
+
+function stageBrainWithCore(): void {
+  stageBrain();
+  // Agents
+  const agentsDir = join(tmpRoot, "core", "agents");
+  mkdirSync(agentsDir, { recursive: true });
+  writeFileSync(join(agentsDir, "architect.md"), "# architect\n");
+  writeFileSync(join(agentsDir, "forger.md"), "# forger\n");
+  writeFileSync(join(agentsDir, "manifest.yaml"), "agents: []\n");
+
+  // Rules
+  const rulesDir = join(tmpRoot, "core", "rules");
+  mkdirSync(rulesDir, { recursive: true });
+  writeFileSync(join(rulesDir, "00-igris-universal.md"), "# universal\n");
+
+  // Skills (each is a directory)
+  const huntDir = join(tmpRoot, "core", "skills", "hunt");
+  mkdirSync(huntDir, { recursive: true });
+  writeFileSync(join(huntDir, "SKILL.md"), "# hunt\n");
+  const scanDir = join(tmpRoot, "core", "skills", "scan");
+  mkdirSync(scanDir, { recursive: true });
+  writeFileSync(join(scanDir, "SKILL.md"), "# scan\n");
+
+  // CLAUDE.md template
+  const tmplDir = join(tmpRoot, "core", "templates");
+  mkdirSync(tmplDir, { recursive: true });
+  writeFileSync(join(tmplDir, "CLAUDE.md.tmpl"), TEMPLATE);
 }
 
 function stageProject(): string {
@@ -129,7 +168,7 @@ afterEach(async () => {
   delete process.env.IGRIS_KEEP_BAK;
 });
 
-describe("install verb", () => {
+describe("install verb — materialized layer (skipSymlinkLayer)", () => {
   it("vanilla install installs hooks (regression for v6 silent-failure)", async () => {
     const { runInstall } = await import("../verbs/install.js");
     const code = await runInstall({
@@ -164,8 +203,6 @@ describe("install verb", () => {
     expect(code).toBe(0);
 
     const settingsPath = join(projectDir, ".claude", "settings.json");
-    // No settings.json means we did NOT touch hooks. (Some flows pre-create it
-    // via the symlink layer; here we skipped that, so the file should not exist.)
     expect(existsSync(settingsPath)).toBe(false);
 
     const rows = reg.listProjects();
@@ -188,7 +225,8 @@ describe("install verb", () => {
     expect(code).toBe(0);
     const rows = reg.listProjects();
     expect(rows.length).toBe(1);
-    expect(rows[0].slug).toBe(require("node:path").basename(projectDir));
+    const path = await import("node:path");
+    expect(rows[0].slug).toBe(path.basename(projectDir));
   });
 
   it("explicit --slug differs from basename — registry row keyed by slug, path is absolute", async () => {
@@ -210,7 +248,7 @@ describe("install verb", () => {
   it("re-install is idempotent (no duplicate rows; settings.json stable)", async () => {
     const { runInstall } = await import("../verbs/install.js");
     const reg = await import("../lib/registry.js");
-    process.env.IGRIS_KEEP_BAK = "0"; // disable .bak files for clean comparison
+    process.env.IGRIS_KEEP_BAK = "0";
     const code1 = await runInstall({
       path: projectDir,
       slug: "alpha",
@@ -259,7 +297,6 @@ describe("install verb", () => {
   });
 
   it("install fails fast on missing canonical-settings.json with actionable error", async () => {
-    // Remove canonical to trigger the missing-file error.
     rmSync(join(tmpRoot, "core", "hooks", "canonical-settings.json"));
     const ch = await import("../lib/canonical-hooks.js");
     ch.clearCache();
@@ -274,7 +311,6 @@ describe("install verb", () => {
   });
 
   it("install backs up settings.json to .bak.<timestamp> before merging", async () => {
-    // Pre-stage a settings.json with non-hooks keys.
     const settingsPath = join(projectDir, ".claude", "settings.json");
     writeFileSync(
       settingsPath,
@@ -293,14 +329,12 @@ describe("install verb", () => {
     const entries = readdirSync(claudeDir);
     const baks = entries.filter((e) => e.startsWith("settings.json.bak."));
     expect(baks.length).toBe(1);
-    // .bak is the original (with permissions key, no hooks).
     const bakContent = JSON.parse(
       readFileSync(join(claudeDir, baks[0]), "utf-8"),
     ) as Record<string, unknown>;
     expect(bakContent.permissions).toBeDefined();
     expect(bakContent.hooks).toBeUndefined();
 
-    // The merged settings.json has both.
     const merged = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<
       string,
       unknown
@@ -350,120 +384,6 @@ describe("install verb", () => {
     ).rejects.toThrow(/Invalid slug/);
   });
 
-  // ---------------------------------------------------------------------
-  // TD-112: --slug ≠ basename(path) hint.
-  //
-  // When the explicit --slug differs from basename(absPath), the wrapped
-  // shell layer (scripts/igris_install.sh) writes a SECOND row keyed by
-  // basename. The CLI's row uses the explicit slug. Both persist. We emit
-  // a one-line note on stderr (via warn() → "warn: ..." prefix) so the
-  // user can run `igris doctor` to reconcile.
-  //
-  // Stderr capture: vi.spyOn(process.stderr, 'write') buffers calls; we
-  // assert against the joined buffer. No vi.mock of the verb under test —
-  // L-159 compliance preserved.
-  // ---------------------------------------------------------------------
-
-  function captureStderr(): { read: () => string; restore: () => void } {
-    const buf: string[] = [];
-    const spy = vi
-      .spyOn(process.stderr, "write")
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .mockImplementation((chunk: any) => {
-        buf.push(typeof chunk === "string" ? chunk : String(chunk));
-        return true;
-      });
-    return {
-      read: () => buf.join(""),
-      restore: () => spy.mockRestore(),
-    };
-  }
-
-  it("TD-112: --slug differs from basename → stderr contains shell-layer-row note", async () => {
-    const { runInstall } = await import("../verbs/install.js");
-    const cap = captureStderr();
-    try {
-      const code = await runInstall({
-        path: projectDir,
-        slug: "explicit-slug-foo",
-        installHooks: true,
-        skipSymlinkLayer: true,
-      });
-      expect(code).toBe(0);
-      const stderr = cap.read();
-      const expectedBasename = require("node:path").basename(projectDir);
-      expect(stderr).toContain(
-        `shell layer also wrote a row for slug '${expectedBasename}'`,
-      );
-      expect(stderr).toContain("igris doctor");
-    } finally {
-      cap.restore();
-    }
-  });
-
-  it("TD-112: --slug equals basename → stderr does NOT contain the note", async () => {
-    const { runInstall } = await import("../verbs/install.js");
-    const cap = captureStderr();
-    try {
-      const matchingSlug = require("node:path").basename(projectDir);
-      const code = await runInstall({
-        path: projectDir,
-        slug: matchingSlug,
-        installHooks: true,
-        skipSymlinkLayer: true,
-      });
-      expect(code).toBe(0);
-      const stderr = cap.read();
-      expect(stderr).not.toContain("shell layer also wrote a row");
-    } finally {
-      cap.restore();
-    }
-  });
-
-  it("TD-112: no --slug (basename-defaulted) → stderr does NOT contain the note", async () => {
-    const { runInstall } = await import("../verbs/install.js");
-    const cap = captureStderr();
-    try {
-      const code = await runInstall({
-        path: projectDir,
-        // Intentionally omit slug — defaults to basename(absPath); the
-        // explicit-flag guard means the note must NOT fire even though
-        // slug == basename in this branch by construction.
-        installHooks: true,
-        skipSymlinkLayer: true,
-      });
-      expect(code).toBe(0);
-      const stderr = cap.read();
-      expect(stderr).not.toContain("shell layer also wrote a row");
-    } finally {
-      cap.restore();
-    }
-  });
-
-  it("TD-112: --slug differs from basename under --quiet → note is suppressed", async () => {
-    const log = await import("../lib/log.js");
-    const original = log.getVerbosity();
-    log.setVerbosity("quiet");
-    const cap = captureStderr();
-    try {
-      const { runInstall } = await import("../verbs/install.js");
-      const code = await runInstall({
-        path: projectDir,
-        slug: "quiet-explicit-slug",
-        installHooks: true,
-        skipSymlinkLayer: true,
-      });
-      expect(code).toBe(0);
-      // warn() honors verbosity (lib/log.ts:30-34) — quiet suppresses it.
-      // error() still writes; here we expect no shell-layer note.
-      const stderr = cap.read();
-      expect(stderr).not.toContain("shell layer also wrote a row");
-    } finally {
-      cap.restore();
-      log.setVerbosity(original);
-    }
-  });
-
   it("install with includeGitInstructions:false in pre-existing settings.json preserves that key", async () => {
     const settingsPath = join(projectDir, ".claude", "settings.json");
     writeFileSync(
@@ -483,5 +403,306 @@ describe("install verb", () => {
     >;
     expect(merged.includeGitInstructions).toBe(false);
     expect(merged.hooks).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------
+// TD-112: --slug ≠ basename(path) hint (M2 reworded — "no action required").
+// ---------------------------------------------------------------------
+
+describe("install verb — TD-112 slug-mismatch hint (M2 reworded)", () => {
+  function captureStderr(): { read: () => string; restore: () => void } {
+    const buf: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .mockImplementation((chunk: any) => {
+        buf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+    return {
+      read: () => buf.join(""),
+      restore: () => spy.mockRestore(),
+    };
+  }
+
+  it("--slug differs from basename → stderr contains 'differs from directory name' note", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const cap = captureStderr();
+    try {
+      const code = await runInstall({
+        path: projectDir,
+        slug: "explicit-slug-foo",
+        installHooks: true,
+        skipSymlinkLayer: true,
+      });
+      expect(code).toBe(0);
+      const stderr = cap.read();
+      const path = await import("node:path");
+      const expectedBasename = path.basename(projectDir);
+      expect(stderr).toContain(
+        `slug 'explicit-slug-foo' differs from directory name '${expectedBasename}'`,
+      );
+      expect(stderr).toContain("no action required");
+      expect(stderr).toContain("authoritative");
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it("--slug equals basename → stderr does NOT contain the note", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const cap = captureStderr();
+    try {
+      const path = await import("node:path");
+      const matchingSlug = path.basename(projectDir);
+      const code = await runInstall({
+        path: projectDir,
+        slug: matchingSlug,
+        installHooks: true,
+        skipSymlinkLayer: true,
+      });
+      expect(code).toBe(0);
+      const stderr = cap.read();
+      expect(stderr).not.toContain("differs from directory name");
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it("no --slug (basename-defaulted) → stderr does NOT contain the note", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const cap = captureStderr();
+    try {
+      const code = await runInstall({
+        path: projectDir,
+        installHooks: true,
+        skipSymlinkLayer: true,
+      });
+      expect(code).toBe(0);
+      const stderr = cap.read();
+      expect(stderr).not.toContain("differs from directory name");
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it("--slug differs from basename under --quiet → note is suppressed", async () => {
+    const log = await import("../lib/log.js");
+    const original = log.getVerbosity();
+    log.setVerbosity("quiet");
+    const cap = captureStderr();
+    try {
+      const { runInstall } = await import("../verbs/install.js");
+      const code = await runInstall({
+        path: projectDir,
+        slug: "quiet-explicit-slug",
+        installHooks: true,
+        skipSymlinkLayer: true,
+      });
+      expect(code).toBe(0);
+      const stderr = cap.read();
+      expect(stderr).not.toContain("differs from directory name");
+    } finally {
+      cap.restore();
+      log.setVerbosity(original);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------
+// M2.6 / M2.10: native symlink layer + CLAUDE.md regen + .igris_version.
+// These tests stage a full brain core in tmp and assert the install verb
+// produces the correct artifacts WITHOUT shelling out.
+// ---------------------------------------------------------------------
+
+describe("install verb — native symlink layer (M2.6)", () => {
+  beforeEach(() => {
+    stageBrainWithCore();
+  });
+
+  it("creates .claude/agents/<file>.md symlinks pointing at brain agents", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const code = await runInstall({
+      path: projectDir,
+      installHooks: true,
+      // skipSymlinkLayer NOT set — exercise the native symlink layer.
+    });
+    expect(code).toBe(0);
+
+    const architectLink = join(projectDir, ".claude", "agents", "architect.md");
+    expect(lstatSync(architectLink).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(architectLink)).toBe(
+      join(tmpRoot, "core", "agents", "architect.md"),
+    );
+
+    const forgerLink = join(projectDir, ".claude", "agents", "forger.md");
+    expect(lstatSync(forgerLink).isSymbolicLink()).toBe(true);
+
+    const manifestLink = join(projectDir, ".claude", "agents", "manifest.yaml");
+    expect(lstatSync(manifestLink).isSymbolicLink()).toBe(true);
+  });
+
+  it("creates .claude/rules/00-igris-universal.md symlink", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const code = await runInstall({
+      path: projectDir,
+      installHooks: true,
+    });
+    expect(code).toBe(0);
+
+    const rulesLink = join(
+      projectDir,
+      ".claude",
+      "rules",
+      "00-igris-universal.md",
+    );
+    expect(lstatSync(rulesLink).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(rulesLink)).toBe(
+      join(tmpRoot, "core", "rules", "00-igris-universal.md"),
+    );
+  });
+
+  it("creates .claude/skills/<skill>/ symlinks for each skill dir", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const code = await runInstall({
+      path: projectDir,
+      installHooks: true,
+    });
+    expect(code).toBe(0);
+
+    for (const slug of ["hunt", "scan"]) {
+      const link = join(projectDir, ".claude", "skills", slug);
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(link)).toBe(
+        join(tmpRoot, "core", "skills", slug),
+      );
+      // Through the symlink, can read SKILL.md.
+      expect(existsSync(join(link, "SKILL.md"))).toBe(true);
+    }
+  });
+
+  it("regenerates CLAUDE.md with version + date substituted", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const code = await runInstall({
+      path: projectDir,
+      installHooks: true,
+      cliVersion: "7.0.0",
+      installDate: "2026-05-07",
+    });
+    expect(code).toBe(0);
+
+    const claudeMd = readFileSync(join(projectDir, "CLAUDE.md"), "utf-8");
+    expect(claudeMd).toContain("Igris v7.0.0");
+    expect(claudeMd).toContain("Installed: 2026-05-07");
+    expect(claudeMd).not.toContain("{{IGRIS_VERSION}}");
+  });
+
+  it("writes .igris_version with brain_path = IGRIS_BRAIN_DIR", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const code = await runInstall({
+      path: projectDir,
+      installHooks: true,
+      cliVersion: "7.0.0",
+    });
+    expect(code).toBe(0);
+
+    const versionFile = JSON.parse(
+      readFileSync(join(projectDir, ".igris_version"), "utf-8"),
+    ) as { brain_path: string; igris_ai_version: string };
+    expect(versionFile.brain_path).toBe(tmpRoot);
+    expect(versionFile.igris_ai_version).toBe("7.0.0");
+  });
+
+  it("re-install is idempotent: symlinks unchanged, CLAUDE.md regenerated stably", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const code1 = await runInstall({
+      path: projectDir,
+      installHooks: true,
+      cliVersion: "7.0.0",
+      installDate: "2026-05-07",
+    });
+    expect(code1).toBe(0);
+
+    const claudeMd1 = readFileSync(join(projectDir, "CLAUDE.md"), "utf-8");
+    const ino1 = lstatSync(join(projectDir, ".claude", "agents", "architect.md")).ino;
+
+    process.env.IGRIS_KEEP_BAK = "0";
+    const code2 = await runInstall({
+      path: projectDir,
+      installHooks: true,
+      cliVersion: "7.0.0",
+      installDate: "2026-05-07",
+    });
+    expect(code2).toBe(0);
+
+    const claudeMd2 = readFileSync(join(projectDir, "CLAUDE.md"), "utf-8");
+    expect(claudeMd2).toBe(claudeMd1);
+
+    // Symlink inode must match — no replacement occurred.
+    const ino2 = lstatSync(join(projectDir, ".claude", "agents", "architect.md")).ino;
+    expect(ino2).toBe(ino1);
+  });
+});
+
+// ---------------------------------------------------------------------
+// M2 — installed_features.json schema v2.
+// ---------------------------------------------------------------------
+
+describe("install verb — schema v2 (brain_channel + brain_ref)", () => {
+  it("writes schema_version=2 with brain_channel/brain_ref defaulting to null when no install-source", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const ifs = await import("../lib/installed-features.js");
+
+    const code = await runInstall({
+      path: projectDir,
+      installHooks: true,
+      skipSymlinkLayer: true,
+      cliVersion: "7.0.0",
+    });
+    expect(code).toBe(0);
+
+    const path = await import("node:path");
+    const slug = path.basename(projectDir);
+    const feats = ifs.readInstalledFeatures(slug);
+    expect(feats).not.toBeNull();
+    expect(feats!.schema_version).toBe(2);
+    // No .install-source.json staged → both null.
+    expect(feats!.brain_channel).toBe(null);
+    expect(feats!.brain_ref).toBe(null);
+  });
+
+  it("propagates brain_channel/brain_ref from .install-source.json when present", async () => {
+    // Stage .install-source.json
+    const installSource = {
+      schema_version: 1,
+      channel: "release",
+      ref: "v7.0.0",
+      fetched_at: "2026-05-06T00:00:00Z",
+      content_sha256: "abc123",
+      source: "github",
+      source_path: null,
+    };
+    writeFileSync(
+      join(tmpRoot, ".install-source.json"),
+      JSON.stringify(installSource, null, 2) + "\n",
+    );
+
+    const { runInstall } = await import("../verbs/install.js");
+    const ifs = await import("../lib/installed-features.js");
+
+    const code = await runInstall({
+      path: projectDir,
+      installHooks: true,
+      skipSymlinkLayer: true,
+      cliVersion: "7.0.0",
+    });
+    expect(code).toBe(0);
+
+    const path = await import("node:path");
+    const slug = path.basename(projectDir);
+    const feats = ifs.readInstalledFeatures(slug);
+    expect(feats!.brain_channel).toBe("release");
+    expect(feats!.brain_ref).toBe("v7.0.0");
   });
 });

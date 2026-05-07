@@ -34,11 +34,13 @@ describe("installed-features — read/write/migrate", () => {
     expect(m.readInstalledFeatures("not-a-real-slug")).toBe(null);
   });
 
-  it("write+read round-trip preserves all fields", async () => {
+  it("write+read round-trip preserves all fields (v2 schema)", async () => {
     const m = await import("../lib/installed-features.js");
     const features = {
-      schema_version: 1,
+      schema_version: 2,
       cli_version: "7.0.0",
+      brain_channel: "release" as const,
+      brain_ref: "v7.0.0",
       hooks_version: "abc",
       agents_version: "def",
       skills_version: "ghi",
@@ -51,7 +53,7 @@ describe("installed-features — read/write/migrate", () => {
     expect(read).toEqual(features);
   });
 
-  it("migrate from schema_version 0 (no field) to 1 — adds default cli_version + null hashes", async () => {
+  it("migrate from schema_version 0 (no field) to 2 — adds defaults + null fields", async () => {
     const m = await import("../lib/installed-features.js");
     const slug = "legacy-demo";
     const target = join(tmpRoot, "projects", slug, "installed_features.json");
@@ -65,14 +67,52 @@ describe("installed-features — read/write/migrate", () => {
     );
     const out = m.readInstalledFeatures(slug);
     expect(out).not.toBeNull();
-    expect(out!.schema_version).toBe(1);
+    expect(out!.schema_version).toBe(2);
     expect(out!.cli_version).toBe("7.0.0");
+    expect(out!.brain_channel).toBe(null);
+    expect(out!.brain_ref).toBe(null);
     expect(out!.hooks_version).toBe(null);
     expect(out!.agents_version).toBe(null);
     expect(out!.skills_version).toBe(null);
     expect(out!.rules_version).toBe(null);
     expect(out!.installed_at).toBe("2026-04-01T00:00:00Z");
     expect(typeof out!.updated_at).toBe("string");
+  });
+
+  it("migrate from schema_version 1 to 2 — adds brain_channel/brain_ref as null, preserves other fields", async () => {
+    const m = await import("../lib/installed-features.js");
+    const slug = "v1-demo";
+    const target = join(tmpRoot, "projects", slug, "installed_features.json");
+    mkdirSync(join(tmpRoot, "projects", slug), { recursive: true });
+    // Write a v1-shape file (no brain_channel/brain_ref).
+    writeFileSync(
+      target,
+      JSON.stringify({
+        schema_version: 1,
+        cli_version: "7.0.0-alpha",
+        hooks_version: "deadbeef",
+        agents_version: "feedface",
+        skills_version: null,
+        rules_version: "cafebabe",
+        installed_at: "2026-04-01T00:00:00Z",
+        updated_at: "2026-04-15T00:00:00Z",
+      }) + "\n",
+    );
+    const out = m.readInstalledFeatures(slug);
+    expect(out).not.toBeNull();
+    // Schema bumped.
+    expect(out!.schema_version).toBe(2);
+    // New fields default to null.
+    expect(out!.brain_channel).toBe(null);
+    expect(out!.brain_ref).toBe(null);
+    // Existing fields preserved verbatim.
+    expect(out!.cli_version).toBe("7.0.0-alpha");
+    expect(out!.hooks_version).toBe("deadbeef");
+    expect(out!.agents_version).toBe("feedface");
+    expect(out!.skills_version).toBe(null);
+    expect(out!.rules_version).toBe("cafebabe");
+    expect(out!.installed_at).toBe("2026-04-01T00:00:00Z");
+    expect(out!.updated_at).toBe("2026-04-15T00:00:00Z");
   });
 
   it("hash is stable across same canonical input (deterministic)", async () => {
@@ -123,8 +163,10 @@ describe("installed-features — read/write/migrate", () => {
     const target = join(tmpRoot, "projects", slug, "installed_features.json");
     expect(existsSync(target)).toBe(false);
     m.writeInstalledFeatures(slug, {
-      schema_version: 1,
+      schema_version: 2,
       cli_version: "7.0.0",
+      brain_channel: null,
+      brain_ref: null,
       hooks_version: null,
       agents_version: null,
       skills_version: null,
