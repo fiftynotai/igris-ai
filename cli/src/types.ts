@@ -70,3 +70,74 @@ export interface CanonicalHooks {
   _doc?: string;
   hooks: Record<string, unknown>;
 }
+
+/**
+ * Channel kind: where to fetch brain core content from.
+ *
+ * - "release": latest published GitHub release tag (default).
+ * - "main":    bleeding-edge main branch.
+ * - "tag":     a specific git tag, captured in InstallSource.ref.
+ */
+export type Channel = "release" | "main" | "tag";
+
+/**
+ * Per-CLI bridge target. Phase 2 supports four CLIs natively; bridges
+ * are emitted for any subset. Auto-detection (cli-detect.ts) returns
+ * a Set of these values.
+ */
+export type CLITarget = "claude" | "codex" | "gemini" | "opencode";
+
+/**
+ * Persisted shape of `~/.igris/.install-source.json`.
+ *
+ * Records HOW the runtime brain core was assembled so that `igris
+ * refresh` can re-fetch from the same source AND `igris doctor` can
+ * detect drift between the runtime and the recorded channel head.
+ */
+export interface InstallSource {
+  schema_version: number;
+  /** Logical channel selector. */
+  channel: Channel;
+  /** Resolved reference: tag name like "v7.0.0", or "main", or "<custom>". */
+  ref: string;
+  /** ISO-8601 timestamp of last successful fetch. */
+  fetched_at: string;
+  /** SHA-256 of the fetched gzipped tarball, used as cache key. */
+  content_sha256: string;
+  /** Source kind for reproducibility / diagnostics. */
+  source: "github" | "from-source" | "cache";
+  /** Absolute path when source != "github" (the contributor repo or cached tarball). */
+  source_path: string | null;
+}
+
+/**
+ * Lightweight manifest describing what a brain-core tarball delivers.
+ * Currently a stub used by dry-run reporting and doctor's stale check;
+ * may grow in M5 for delta-fetch optimization (currently out of scope).
+ */
+export interface BrainCoreManifest {
+  channel: Channel;
+  ref: string;
+  content_sha256: string;
+  fetched_at: string;
+}
+
+/**
+ * Dry-run plan: an enumeration of would-be side effects collected by
+ * the verb layer when `--dry-run` is set. The shared reporter
+ * (`dry-run.ts`) prints these in a stable, grep-friendly format.
+ */
+export interface DryRunPlan {
+  /** Directories that would be created (mkdir -p). */
+  would_create_dir: string[];
+  /** Files that would be written (overwrite or fresh). */
+  would_write_file: Array<{ path: string; reason: string }>;
+  /** External URLs that would be fetched. */
+  would_fetch_url: string[];
+  /** External commands that would be invoked (with arg array). */
+  would_invoke_command: Array<{ command: string; args: string[]; reason: string }>;
+  /** Directories that would be removed (rm -rf). */
+  would_remove_dir: string[];
+  /** Filesystem moves (e.g. core.new → core, core → core.bak). */
+  would_rename: Array<{ from: string; to: string; reason: string }>;
+}

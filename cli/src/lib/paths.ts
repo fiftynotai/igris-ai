@@ -52,3 +52,23 @@ export function rulesFilePath(): string {
 export function projectSettingsPath(projectPath: string): string {
   return join(projectPath, ".claude", "settings.json");
 }
+
+/** Absolute path to `~/.igris/.install-source.json`. */
+export function installSourcePath(): string {
+  return join(brainDir(), ".install-source.json");
+}
+
+/** Absolute path to the tarball cache root: `~/.igris/.cache/`. */
+export function cacheDir(): string {
+  return join(brainDir(), ".cache");
+}
+
+/** Absolute path to `~/.igris/USER.md`. */
+export function userMdPath(): string {
+  return join(brainDir(), "USER.md");
+}
+
+/** Absolute path to `~/.igris/config.json`. */
+export function configJsonPath(): string {
+  return join(brainDir(), "config.json");
+}

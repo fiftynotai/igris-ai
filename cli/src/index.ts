@@ -26,6 +26,8 @@ import { fileURLToPath } from "node:url";
 import { runInstall } from "./verbs/install.js";
 import { runUpdate } from "./verbs/update.js";
 import { runDoctor } from "./verbs/doctor.js";
+import { runInit } from "./verbs/init.js";
+import { runRefresh } from "./verbs/refresh.js";
 import { setVerbosity, error as logError } from "./lib/log.js";
 
 function readPackageVersion(): string {
@@ -58,6 +60,101 @@ async function main(argv: string[]): Promise<void> {
         setVerbosity("verbose");
       }
     });
+
+  program
+    .command("init")
+    .description(
+      "Bootstrap ~/.igris/ from scratch (or upgrade an existing v6/v7 install)",
+    )
+    .option(
+      "--from-source <path>",
+      "use a local Igris source repo instead of GitHub (contributor mode)",
+    )
+    .option(
+      "--channel <ref>",
+      "channel to fetch from: 'main', 'v7.0.0', or any tag",
+    )
+    .option("--upgrade", "upgrade an existing install (preserves user state)", false)
+    .option(
+      "--skip-remote",
+      "skip remote_brain prompts (config.json will have remote_brain: null)",
+      false,
+    )
+    .option(
+      "--cli-bridge <list>",
+      "override auto-detected bridges: 'none' or 'claude,codex,gemini,opencode'",
+    )
+    .option(
+      "--dry-run",
+      "print the plan without performing any writes or network calls",
+      false,
+    )
+    .option("-y, --yes", "skip confirmation prompts", false)
+    .action(
+      async (opts: {
+        fromSource?: string;
+        channel?: string;
+        upgrade?: boolean;
+        skipRemote?: boolean;
+        cliBridge?: string;
+        dryRun?: boolean;
+        yes?: boolean;
+      }): Promise<void> => {
+        const code = await runInit({
+          fromSource: opts.fromSource,
+          channel: opts.channel,
+          upgrade: opts.upgrade === true,
+          skipRemote: opts.skipRemote === true,
+          cliBridge: opts.cliBridge,
+          dryRun: opts.dryRun === true,
+          yes: opts.yes === true,
+        });
+        process.exitCode = code;
+      },
+    );
+
+  program
+    .command("refresh")
+    .description(
+      "Re-fetch ~/.igris/core/ from the configured channel (or switch channels)",
+    )
+    .option(
+      "--from-source <path>",
+      "refresh from a local Igris source repo (contributor mode)",
+    )
+    .option(
+      "--channel <ref>",
+      "switch to a different channel: 'main', 'v7.0.0', or any tag",
+    )
+    .option(
+      "--no-propagate",
+      "skip the post-refresh 'igris update --all' propagation",
+    )
+    .option(
+      "--dry-run",
+      "print the plan without performing any writes or network calls",
+      false,
+    )
+    .option("-y, --yes", "skip channel-switch confirmation prompts", false)
+    .action(
+      async (opts: {
+        fromSource?: string;
+        channel?: string;
+        propagate?: boolean;
+        dryRun?: boolean;
+        yes?: boolean;
+      }): Promise<void> => {
+        const code = await runRefresh({
+          fromSource: opts.fromSource,
+          channel: opts.channel,
+          // commander turns --no-propagate into opts.propagate=false. Default is true.
+          noPropagate: opts.propagate === false,
+          dryRun: opts.dryRun === true,
+          yes: opts.yes === true,
+        });
+        process.exitCode = code;
+      },
+    );
 
   program
     .command("install <path>")
