@@ -14,14 +14,13 @@
  *     workstation whose installed CLI will be configured later)
  *   - re-keying an existing registry row by slug (idempotent re-run)
  *
- * Slug grammar mirrors `igris install`'s validateSlug — duplicated as a
- * private SLUG_RE here to avoid coupling the two verbs at the import level
- * and to keep this verb's scope crisp (registry writer only).
+ * Slug grammar lives in lib/slug.ts (TD-118 — shared with `igris install`).
  */
 
 import { existsSync } from "node:fs";
 import { basename, resolve as pathResolve } from "node:path";
 import { upsertProject } from "../lib/registry.js";
+import { validateSlug } from "../lib/slug.js";
 import { info, error as logError } from "../lib/log.js";
 
 export interface RegisterProjectOptions {
@@ -36,19 +35,6 @@ export interface RegisterProjectOptions {
   allowMissingPath?: boolean;
   /** Internal: CLI version stamp; defaults to 7.0.0. */
   cliVersion?: string;
-}
-
-// Slug grammar — matches verbs/install.ts SLUG_RE exactly.
-// First char alphanumeric; subsequent chars alphanumeric/underscore/hyphen/dot.
-// Length cap at 64 chars.
-const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
-
-function validateSlug(slug: string): void {
-  if (!SLUG_RE.test(slug)) {
-    throw new Error(
-      `Invalid slug '${slug}': must match /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/ (alphanumeric start, then alphanumeric/underscore/hyphen/dot, max 64 chars).`,
-    );
-  }
 }
 
 /**

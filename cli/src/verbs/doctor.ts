@@ -68,6 +68,13 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
   printDriftTable(drift);
 
   let errored = 0;
+  // TD-122: bridge-missing fix is invocation-bounded — a single partial
+  // init resolves all bridge-missing rows in one pass. We track this
+  // flag so subsequent bridge-missing rows skip re-invocation, but DO
+  // NOT `break` the loop: that would skip per-project drift classes
+  // (not-installed / hooks-* / brain-core-missing) that come after
+  // bridge-missing in `drift`.
+  let bridgeFixApplied = false;
 
   if (opts.fix) {
     for (const row of drift) {
@@ -107,27 +114,34 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
           logError(`brain-core-missing fix: ${msg}`);
         }
       } else if (row.driftClass === "bridge-missing") {
+        // TD-122: a single partial-init resolves all bridge-missing rows
+        // in one pass. Subsequent rows are skipped via the flag — but
+        // we MUST NOT `break` the outer loop, because per-project drift
+        // classes (not-installed / hooks-* / brain-core-missing) may
+        // still be waiting after the bridge-missing block.
+        if (bridgeFixApplied) {
+          continue;
+        }
         info(`fix: bridge-missing for ${row.path} — invoking partial init (--upgrade)`);
         try {
           // Partial init in upgrade mode re-runs the bridge materialization
           // pass against the current detected set, leaving core/ untouched
           // (atomic-extract is a no-op on identical content). User state
           // (knowledge.db, USER.md, config.json) is preserved by --upgrade.
-          // Note: we run this once even if multiple bridges are missing —
-          // partial init detects all of them in one pass.
           const code = await runInit({ upgrade: true, yes: true });
           if (code !== 0) {
             errored++;
             logError(`bridge-missing fix: init returned exit ${code}`);
           }
-          // Once we've done the partial init, all bridge-missing rows are
-          // resolved; skip the rest of this iteration class to avoid
-          // multiple init invocations.
-          break;
+          bridgeFixApplied = true;
         } catch (err) {
           errored++;
           const msg = err instanceof Error ? err.message : String(err);
           logError(`bridge-missing fix: ${msg}`);
+          // Even on error, mark applied so subsequent bridge-missing rows
+          // don't re-attempt (init already errored once; re-running won't
+          // help and may compound state damage).
+          bridgeFixApplied = true;
         }
       } else if (
         row.driftClass === "slug-basename-mismatch" ||

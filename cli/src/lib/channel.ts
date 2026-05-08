@@ -181,6 +181,25 @@ function httpsGetJson(url: string): Promise<string> {
         }
         if (status < 200 || status >= 300) {
           res.resume();
+          // TD-124: distinguish three failure modes so the user sees an
+          // actionable message rather than a raw status line.
+          if (status === 404) {
+            rejectP(
+              new ChannelResolveError(
+                `No release published yet for ${repoOwner()}/${repoName()}. ` +
+                  `Try --channel main for the leading edge, or wait for a tagged release.`,
+              ),
+            );
+            return;
+          }
+          if (status >= 500 && status < 600) {
+            rejectP(
+              new ChannelResolveError(
+                `GitHub API returned HTTP ${status} ${res.statusMessage ?? ""} (transient — retry in a moment).`,
+              ),
+            );
+            return;
+          }
           rejectP(
             new ChannelResolveError(
               `GET ${url} -> HTTP ${status} ${res.statusMessage ?? ""}`,
@@ -199,7 +218,13 @@ function httpsGetJson(url: string): Promise<string> {
       },
     );
     req.on("error", (err) => {
-      rejectP(new ChannelResolveError(`request error: ${err.message}`));
+      // TD-124: surface the network-level failure as "unreachable" so the
+      // user knows it's a connectivity issue, not a remote-side rejection.
+      rejectP(
+        new ChannelResolveError(
+          `GitHub API unreachable (${err.message}). Check network connectivity or use --channel main with a local --from-source if offline.`,
+        ),
+      );
     });
     req.setTimeout(15_000, () => {
       req.destroy(

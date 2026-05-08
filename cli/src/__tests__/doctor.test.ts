@@ -6,7 +6,7 @@
  * exercised via runDoctor returning the right exit code.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   mkdirSync,
   mkdtempSync,
@@ -363,6 +363,92 @@ describe("doctor — runDoctor exit codes", () => {
     const code = await runDoctor({ fix: false, removeOrphans: true, yes: true });
     expect(code).toBe(0);
     expect(reg.listProjects().length).toBe(0);
+  });
+
+  // -------------------------------------------------------------------
+  // TD-122: --fix loop must visit per-project drift rows that come AFTER
+  // a bridge-missing row. Pre-TD-122, the bridge-missing arm called
+  // `break`, which (a) skipped multiple bridge-missing rows that should
+  // have been deduped via a flag, and (b) skipped per-project rows
+  // (not-installed / hooks-* / brain-core-missing) entirely. Post-TD-122
+  // the arm sets `bridgeFixApplied = true` and continues, so a single
+  // `--fix` invocation handles BOTH classes.
+  //
+  // Architect-approved test approach (plan §4 + §8 Risk #6): spy on the
+  // dependency modules `init.js` and `install.js` (NOT the SUT
+  // `doctor.js` per L-159). We inject a synthetic bridge-missing row
+  // ahead of the not-installed row by spying on `detectBridgeMissing`
+  // (a doctor.ts dependency, not the SUT). After --fix:
+  //   - runInit was invoked exactly once (bridge fix)
+  //   - runInstall was invoked at least once (not-installed fix)
+  // Both calls in one runDoctor invocation = `break` was replaced with
+  // continue.
+  // -------------------------------------------------------------------
+  it("--fix: bridge-missing AND not-installed in one invocation (TD-122)", async () => {
+    const initMod = await import("../verbs/init.js");
+    const installMod = await import("../verbs/install.js");
+    const bridgeMod = await import("../lib/drift/bridge-missing.js");
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+
+    // Stage a not-installed project (path exists, .claude/ missing).
+    const proj = mkdtempSync(join(tmpdir(), "igris-cli-doctor-td122-"));
+    projectDirs.push(proj);
+    reg.upsertProject({
+      slug: "td122-not-installed",
+      name: "td122-not-installed",
+      path: proj,
+      tech_stack: "",
+      igris_version: "7.0.0",
+    });
+
+    // Inject a synthetic bridge-missing drift row. The detector itself
+    // is a pure function; spying on it cleanly isolates the doctor
+    // loop's behavior from the brittle PATH/configDir detection logic.
+    const bridgeSpy = vi
+      .spyOn(bridgeMod, "detectBridgeMissing")
+      .mockReturnValue([
+        {
+          slug: "(brain)",
+          path: "claude",
+          driftClass: "bridge-missing",
+          recommendedFix: "synthetic — TD-122 test",
+        },
+      ]);
+
+    // Stub runInit so we don't actually re-init the test brain. We DO
+    // want runInstall to fire its full path (it's not the SUT, but we
+    // need it to do its job for the not-installed fix to mutate state).
+    // Returning 0 from runInit signals "fix succeeded".
+    const initSpy = vi.spyOn(initMod, "runInit").mockResolvedValue(0);
+    const installSpy = vi.spyOn(installMod, "runInstall");
+
+    try {
+      // --fix should visit BOTH classes. We don't care about the exit
+      // code per se — partial success is acceptable; the assertion is
+      // that both fix paths fired in one invocation.
+      await runDoctor({ fix: true, removeOrphans: false, yes: false });
+
+      // Bridge fix invoked exactly once.
+      expect(initSpy).toHaveBeenCalledTimes(1);
+      expect(initSpy).toHaveBeenCalledWith({ upgrade: true, yes: true });
+
+      // not-installed fix invoked at least once. (runInstall is also
+      // called from the install verb chain; we only need ONE call here
+      // to evidence the loop did NOT break after bridge-missing.)
+      expect(installSpy).toHaveBeenCalled();
+      const installCalls = installSpy.mock.calls;
+      // Look for the call matching our staged not-installed slug.
+      const matched = installCalls.some(
+        (call) =>
+          (call[0] as { slug?: string }).slug === "td122-not-installed",
+      );
+      expect(matched).toBe(true);
+    } finally {
+      bridgeSpy.mockRestore();
+      initSpy.mockRestore();
+      installSpy.mockRestore();
+    }
   });
 });
 

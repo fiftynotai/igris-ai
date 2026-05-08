@@ -119,3 +119,61 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" =~ "path-missing" ]]
 }
+
+@test "doctor --fix: bridge-missing + not-installed both fixed in one pass (TD-122)" {
+  # TD-122: pre-fix the bridge-missing arm `break`'d, skipping all per-
+  # project drift rows after it. Post-fix, the loop continues. We stage:
+  #   1. a fake `claude` binary on PATH + ~/.claude/ config dir, so that
+  #      `detectInstalledCLIs` returns claude in its detected set
+  #   2. an `~/.igris/config.json` with non-empty cli_targets that LACKS
+  #      claude — this is the bridge-missing condition
+  #   3. a registry row pointing at a path with no .claude/ — the
+  #      not-installed condition
+  # After `doctor --fix`, BOTH should be repaired in a single invocation.
+  PROJ="$(stage_project td122)"
+  # Strip the .claude/ that stage_project created — we want not-installed.
+  rm -rf "$PROJ/.claude"
+
+  sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "
+    CREATE TABLE IF NOT EXISTS projects (
+      slug TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL,
+      tech_stack TEXT, igris_version TEXT, status TEXT DEFAULT 'active',
+      registered_at TEXT, last_session_at TEXT, metadata TEXT
+    );
+    INSERT INTO projects (slug, name, path, igris_version) VALUES ('td122','td122','$PROJ','7.0.0');
+  "
+
+  # Stage a non-empty cli_targets that LACKS claude (a CLI in our catalog).
+  # The detector treats this as bridge-missing iff claude is detected.
+  cat > "$IGRIS_BRAIN_DIR/config.json" <<EOF
+{ "version": "7.0.0", "cli_targets": { "codex": "ignored" } }
+EOF
+
+  # Fake claude on PATH: a stub executable in a temp dir we prepend.
+  FAKEPATH="$BATS_TEST_TMPDIR/fakebin"
+  mkdir -p "$FAKEPATH"
+  cat > "$FAKEPATH/claude" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+  chmod +x "$FAKEPATH/claude"
+
+  # Fake ~/.claude/ config dir under a HOME we control. detect-cli walks
+  # `homedir() + spec.configDirRel` (".claude"). Override HOME so the
+  # detection sees our staged dir without polluting the real home.
+  FAKEHOME="$BATS_TEST_TMPDIR/fakehome"
+  mkdir -p "$FAKEHOME/.claude"
+
+  # Run --fix with the staged env. We tolerate non-zero exit (the
+  # bridge-fix arm calls runInit which talks to GitHub releases, and
+  # runInstall expects CLAUDE.md.tmpl in the staged brain — neither is
+  # in scope for this minimal fixture). The TD-122 contract is that
+  # BOTH fix arms fire in one invocation — pre-fix the bridge-missing
+  # arm `break`'d, so the not-installed arm was unreachable.
+  HOME="$FAKEHOME" PATH="$FAKEPATH:$PATH" run $CLI_BIN doctor --fix 2>&1
+  # The smoking gun: both arms emitted their fix-attempt log lines.
+  # If `break` ever returns to this arm (TD-122 regression), the
+  # not-installed message will not appear.
+  [[ "$output" =~ "bridge-missing for claude" ]]
+  [[ "$output" =~ "re-running install for td122" ]]
+}

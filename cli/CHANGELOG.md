@@ -84,6 +84,11 @@ First public npm release. Renamed from `@igris-ai/cli` to `igris-ai`.
 - **`scripts/igris_brain_init.sh`** — replaced by `igris init`.
 - **`scripts/igris_brain_refresh.sh`** — replaced by `igris refresh`.
 - **`scripts/igris_install.sh`** — replaced by `igris install` (M2).
+- **`scripts/igris_migrate_to_v4.sh`** — v3→v4 migration retired. The
+  script invoked `scripts/igris_brain_init.sh` (deleted in M5) and
+  `scripts/igris_brain_refresh.sh` (deleted in M5); it had been
+  functionally broken at runtime since the M5 native-CLI cutover.
+  Users on v3 should reinstall via `igris init` + `igris install`.
 - **`scripts/igris_update.sh`** — replaced by `igris update` (M3).
 - **`scripts/igris_vps_update.sh`** — replaced by `igris sync code` (M4).
 - **`scripts/igris_cli_sync.sh`** — absorbed into `igris install` (M2).

@@ -1008,6 +1008,10 @@ async function handleBrainPull(
 
 // ---------------------------------------------------------------------------
 // Sync Queue — FR-036
+//
+// Strict-input contract: igris_sync_queue_drain enforces an allow-list
+// of arg keys at handler entry (TD-120). Canonical contract test:
+// src/tools/__tests__/sync-queue-drain-contract.test.ts
 // ---------------------------------------------------------------------------
 
 /** Input shape for igris_sync_queue_drain */
@@ -1015,6 +1019,22 @@ export interface SyncQueueDrainInput {
   remote_url: string;
   api_key: string;
 }
+
+/**
+ * Allow-list of argument keys accepted by `igris_sync_queue_drain`.
+ *
+ * TD-120: silently dropping unknown fields is the exact silent-data-loss
+ * class M4 self-heal exposed (callers passed `local_entries` expecting it
+ * to drive drain selection; the brain ignored it and read from sync_queue
+ * regardless, returning a misleading "drained N" body). The allow-list
+ * guard at handler entry rejects any caller-supplied key outside this
+ * set, surfacing the bug at red-test time instead of silent runtime.
+ *
+ * Zero-dep design: the brain has no Zod dependency. Adding one for a
+ * single tool's strict-input contract is scope creep; the explicit
+ * Object.keys() walk is the same guarantee with no new deps.
+ */
+const ALLOWED_DRAIN_KEYS = new Set(['remote_url', 'api_key']);
 
 /**
  * Queue failed push rows into the sync_queue table for later retry.
@@ -1100,6 +1120,20 @@ function handleSyncQueueStatus(): { content: { type: string; text: string }[] } 
 async function handleSyncQueueDrain(
   args: SyncQueueDrainInput
 ): Promise<{ content: { type: string; text: string }[] }> {
+  // Strict-input contract (TD-120): reject unknown arg keys upfront so
+  // any caller passing extras gets a JSON-RPC error envelope, not a 200
+  // with a misleading "drained N" body. See ALLOWED_DRAIN_KEYS docstring.
+  const argsRecord = args as unknown as Record<string, unknown>;
+  for (const key of Object.keys(argsRecord)) {
+    if (!ALLOWED_DRAIN_KEYS.has(key)) {
+      throw new Error(
+        `igris_sync_queue_drain: unknown argument '${key}'. ` +
+        `Accepted keys: ${[...ALLOWED_DRAIN_KEYS].join(', ')}. ` +
+        `(strict-input contract; TD-120)`,
+      );
+    }
+  }
+
   const db = getDb();
   const remoteUrl = args.remote_url.replace(/\/+$/, '');
 

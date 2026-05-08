@@ -33,6 +33,7 @@ import { join } from "node:path";
 import { mcpCall, readRemoteBrainConfig, type RemoteBrainConfig } from "../mcp-client.js";
 import { DryRunCollector } from "../dry-run.js";
 import { brainDir } from "../paths.js";
+import { basenameOfCwd } from "./util.js";
 import { info, warn, error as logError } from "../log.js";
 
 export interface SyncDataOptions {
@@ -302,12 +303,6 @@ async function callRemoteDrain(
     `sync data: remote drain failed (HTTP ${result.statusCode}): ${truncate(result.body, 500)}`,
   );
   return 1;
-}
-
-function basenameOfCwd(): string {
-  const cwd = process.cwd();
-  const idx = cwd.lastIndexOf("/");
-  return idx === -1 ? cwd : cwd.slice(idx + 1);
 }
 
 function truncate(s: string, max: number): string {

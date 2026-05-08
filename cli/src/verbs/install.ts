@@ -31,9 +31,7 @@
 import {
   existsSync,
   readFileSync,
-  readdirSync,
   renameSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, join, resolve as pathResolve } from "node:path";
@@ -51,6 +49,12 @@ import {
   installedFeaturesPath,
 } from "../lib/paths.js";
 import { linkDir, linkFile, SymlinkConflictError } from "../lib/symlinks.js";
+import {
+  discoverAgentEntries,
+  discoverRuleEntries,
+  discoverSkillEntries,
+} from "../lib/install-discovery.js";
+import { validateSlug } from "../lib/slug.js";
 import { regenerateClaudeMd, ClaudeMdTemplateError } from "../lib/claude-md.js";
 import { writeIgrisVersion } from "../lib/igris-version.js";
 import { applySubconsciousDefault } from "../lib/init-config.js";
@@ -81,19 +85,7 @@ export interface InstallOptions {
   dryRun?: boolean;
 }
 
-// Slug grammar tolerates uppercase (`lifeOS` exists in the real registry today).
-// First char is alphanumeric; subsequent chars allow underscore, hyphen, dot.
-// Length cap at 64 chars (more than the conservative 50 — matches real-world slugs
-// like `igris-v6-test-project` and `fifty-content-pipeline`).
-const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
-
-function validateSlug(slug: string): void {
-  if (!SLUG_RE.test(slug)) {
-    throw new Error(
-      `Invalid slug '${slug}': must match /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/ (alphanumeric start, then alphanumeric/underscore/hyphen/dot, max 64 chars).`,
-    );
-  }
-}
+// Slug grammar lives in lib/slug.ts (TD-118 — single source of truth).
 
 function backupSettings(filePath: string): string | null {
   if (process.env.IGRIS_KEEP_BAK === "0") {
@@ -345,52 +337,31 @@ function applySymlinkLayer(projectPath: string, brainRoot: string): void {
   const claudeDir = join(projectPath, ".claude");
 
   // ---- Agents ---------------------------------------------------------
-  const agentsSrc = join(brainRoot, "core", "agents");
-  if (existsSync(agentsSrc) && statSync(agentsSrc).isDirectory()) {
+  // TD-117: discovery is centralized in lib/install-discovery.ts so this
+  // verb and the dry-run enumerator share one source of truth.
+  const agentEntries = discoverAgentEntries(brainRoot);
+  if (agentEntries.length > 0) {
     const agentsDest = join(claudeDir, "agents");
-    let entries: string[];
-    try {
-      entries = readdirSync(agentsSrc);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new SymlinkConflictError(
-        `failed to enumerate ${agentsSrc}: ${msg}`,
-      );
-    }
-    for (const entry of entries) {
-      const full = join(agentsSrc, entry);
-      if (entry.endsWith(".md") && statSync(full).isFile()) {
-        linkFile(full, join(agentsDest, entry));
-      } else if (entry === "manifest.yaml" && statSync(full).isFile()) {
-        linkFile(full, join(agentsDest, entry));
-      }
+    for (const entry of agentEntries) {
+      linkFile(entry.src, join(agentsDest, entry.basename));
     }
   }
 
   // ---- Rules ----------------------------------------------------------
-  const rulesSrc = join(brainRoot, "core", "rules", "00-igris-universal.md");
-  if (existsSync(rulesSrc) && statSync(rulesSrc).isFile()) {
-    linkFile(rulesSrc, join(claudeDir, "rules", "00-igris-universal.md"));
+  const ruleEntries = discoverRuleEntries(brainRoot);
+  if (ruleEntries.length > 0) {
+    const rulesDest = join(claudeDir, "rules");
+    for (const entry of ruleEntries) {
+      linkFile(entry.src, join(rulesDest, entry.basename));
+    }
   }
 
   // ---- Skills ---------------------------------------------------------
-  const skillsSrc = join(brainRoot, "core", "skills");
-  if (existsSync(skillsSrc) && statSync(skillsSrc).isDirectory()) {
+  const skillEntries = discoverSkillEntries(brainRoot);
+  if (skillEntries.length > 0) {
     const skillsDest = join(claudeDir, "skills");
-    let entries: string[];
-    try {
-      entries = readdirSync(skillsSrc);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new SymlinkConflictError(
-        `failed to enumerate ${skillsSrc}: ${msg}`,
-      );
-    }
-    for (const entry of entries) {
-      const full = join(skillsSrc, entry);
-      if (statSync(full).isDirectory()) {
-        linkDir(full, join(skillsDest, entry));
-      }
+    for (const entry of skillEntries) {
+      linkDir(entry.src, join(skillsDest, entry.basename));
     }
   }
 }
@@ -414,61 +385,42 @@ function enumerateInstallPlan(
 ): void {
   const claudeDir = join(projectPath, ".claude");
 
-  // Symlinks: agents
-  const agentsSrc = join(brainRoot, "core", "agents");
-  if (existsSync(agentsSrc) && statSync(agentsSrc).isDirectory()) {
+  // Symlinks: agents (TD-117 — same discovery source as applySymlinkLayer)
+  const agentEntries = discoverAgentEntries(brainRoot);
+  if (agentEntries.length > 0) {
     const agentsDest = join(claudeDir, "agents");
     dry.wouldCreateDir(agentsDest);
-    let entries: string[] = [];
-    try {
-      entries = readdirSync(agentsSrc);
-    } catch {
-      // ignore — surfaces in real run
-    }
-    for (const entry of entries) {
-      const full = join(agentsSrc, entry);
-      if (
-        (entry.endsWith(".md") || entry === "manifest.yaml") &&
-        existsSync(full) &&
-        statSync(full).isFile()
-      ) {
-        dry.wouldWriteFile(
-          join(agentsDest, entry),
-          `symlink to ${full}`,
-        );
-      }
+    for (const entry of agentEntries) {
+      dry.wouldWriteFile(
+        join(agentsDest, entry.basename),
+        `symlink to ${entry.src}`,
+      );
     }
   }
 
   // Symlinks: rules
-  const rulesSrc = join(brainRoot, "core", "rules", "00-igris-universal.md");
-  if (existsSync(rulesSrc) && statSync(rulesSrc).isFile()) {
-    dry.wouldCreateDir(join(claudeDir, "rules"));
-    dry.wouldWriteFile(
-      join(claudeDir, "rules", "00-igris-universal.md"),
-      `symlink to ${rulesSrc}`,
-    );
+  const ruleEntries = discoverRuleEntries(brainRoot);
+  if (ruleEntries.length > 0) {
+    const rulesDest = join(claudeDir, "rules");
+    dry.wouldCreateDir(rulesDest);
+    for (const entry of ruleEntries) {
+      dry.wouldWriteFile(
+        join(rulesDest, entry.basename),
+        `symlink to ${entry.src}`,
+      );
+    }
   }
 
   // Symlinks: skills
-  const skillsSrc = join(brainRoot, "core", "skills");
-  if (existsSync(skillsSrc) && statSync(skillsSrc).isDirectory()) {
+  const skillEntries = discoverSkillEntries(brainRoot);
+  if (skillEntries.length > 0) {
     const skillsDest = join(claudeDir, "skills");
     dry.wouldCreateDir(skillsDest);
-    let entries: string[] = [];
-    try {
-      entries = readdirSync(skillsSrc);
-    } catch {
-      // ignore
-    }
-    for (const entry of entries) {
-      const full = join(skillsSrc, entry);
-      if (existsSync(full) && statSync(full).isDirectory()) {
-        dry.wouldWriteFile(
-          join(skillsDest, entry),
-          `symlink to ${full}`,
-        );
-      }
+    for (const entry of skillEntries) {
+      dry.wouldWriteFile(
+        join(skillsDest, entry.basename),
+        `symlink to ${entry.src}`,
+      );
     }
   }
 

@@ -118,3 +118,52 @@ describe("channel — resolveChannel", () => {
     expect(r.ref).toBe("v6.5.0");
   });
 });
+
+// ---------------------------------------------------------------------------
+// TD-124: distinct error messages for 404 / 5xx / network failures.
+//
+// Trade-off (per plan §4 TD-124, architect-approved): we test the error
+// messages by injecting a fake `latestReleaseTagFn` that throws the same
+// `ChannelResolveError` instances `httpsGetJson` produces. This evidences
+// that the new error messages propagate cleanly through `resolveChannel`
+// to the verb layer (which is what the user actually sees). It does NOT
+// exercise the HTTPS code path itself — that would require either
+// exporting `httpsGetJson` + an injectable request factory, or spinning
+// up a self-signed-cert HTTPS loopback. Both add infrastructure for
+// marginal coverage gain over the propagation guarantee tested below.
+// ---------------------------------------------------------------------------
+describe("channel — distinct error messages on failure (TD-124)", () => {
+  it("404 from latest-release fetch surfaces 'No release published yet' message", async () => {
+    const err = new ChannelResolveError(
+      `No release published yet for ${DEFAULT_OWNER}/${DEFAULT_REPO}. ` +
+        `Try --channel main for the leading edge, or wait for a tagged release.`,
+    );
+    await expect(
+      resolveChannel({
+        latestReleaseTagFn: () => Promise.reject(err),
+      }),
+    ).rejects.toThrow(/No release published yet/);
+  });
+
+  it("5xx from latest-release fetch surfaces 'transient — retry' message", async () => {
+    const err = new ChannelResolveError(
+      `GitHub API returned HTTP 503 Service Unavailable (transient — retry in a moment).`,
+    );
+    await expect(
+      resolveChannel({
+        latestReleaseTagFn: () => Promise.reject(err),
+      }),
+    ).rejects.toThrow(/transient — retry/);
+  });
+
+  it("network error from latest-release fetch surfaces 'unreachable' message", async () => {
+    const err = new ChannelResolveError(
+      `GitHub API unreachable (ECONNREFUSED). Check network connectivity or use --channel main with a local --from-source if offline.`,
+    );
+    await expect(
+      resolveChannel({
+        latestReleaseTagFn: () => Promise.reject(err),
+      }),
+    ).rejects.toThrow(/unreachable/);
+  });
+});

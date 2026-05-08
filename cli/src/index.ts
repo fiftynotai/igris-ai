@@ -282,7 +282,7 @@ async function main(argv: string[]): Promise<void> {
   program
     .command("doctor")
     .description("Diagnose drift in the registry and project install state")
-    .option("--fix", "auto-fix hooks-missing / hooks-stale / not-installed", false)
+    .option("--fix", "auto-fix all fixable drift classes (see `igris doctor` output)", false)
     .option(
       "--remove-orphans",
       "interactively delete registry rows whose path is missing",

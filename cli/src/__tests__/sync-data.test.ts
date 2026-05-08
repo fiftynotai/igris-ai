@@ -384,4 +384,96 @@ describe("sync data — runSyncData", () => {
       spy.mockRestore();
     }
   });
+
+  // ---------------------------------------------------------------------
+  // TD-119: cache_path resolution branch coverage.
+  //
+  // dispatchEntry (data.ts:240-254) handles brief_create + cache_path by
+  // reading the file from disk and inlining its contents as `content`,
+  // then stripping `cache_path` before forwarding. The two cases below
+  // pin both the success and the missing-file branches.
+  // ---------------------------------------------------------------------
+  it("brief_create with cache_path: reads file and inlines as content; cache_path stripped (TD-119)", async () => {
+    const lb = makeLoopback(() => ({
+      status: 200,
+      body: JSON.stringify({ ok: true }),
+    }));
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+    writeConfig({
+      remote_brain: { url: `http://127.0.0.1:${lb.port()}`, api_key: "k" },
+    });
+
+    // Write a fixture cache file.
+    const cacheDir = join(tmpBrain, "cache");
+    mkdirSync(cacheDir, { recursive: true });
+    const cachePath = join(cacheDir, "TD-300.md");
+    const cacheContents = "# TD-300: cache-path-resolution test\n\nbody.";
+    writeFileSync(cachePath, cacheContents);
+
+    // Queue a brief_create entry pointing at the cache file.
+    writeQueue("demo", [
+      JSON.stringify({
+        operation: "brief_create",
+        project: "demo",
+        brief_id: "TD-300",
+        title: "cache-test",
+        cache_path: cachePath,
+      }),
+    ]);
+
+    try {
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "demo" });
+      expect(code).toBe(0);
+
+      // 1 per-entry replay + 1 drain.
+      expect(lb.calls.length).toBe(2);
+      const replay = lb.calls[0];
+      expect(replay.toolName).toBe("igris_brief_create");
+      // Content was inlined byte-for-byte from the file.
+      expect(replay.args?.content).toBe(cacheContents);
+      // cache_path was stripped before forwarding.
+      expect(replay.args?.cache_path).toBeUndefined();
+    } finally {
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+
+  it("brief_create with missing cache_path file: exit 1, queue preserved, drain NOT called (TD-119)", async () => {
+    const lb = makeLoopback(() => ({
+      status: 200,
+      body: JSON.stringify({ ok: true }),
+    }));
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+    writeConfig({
+      remote_brain: { url: `http://127.0.0.1:${lb.port()}`, api_key: "k" },
+    });
+
+    const queuePath = writeQueue("demo", [
+      JSON.stringify({
+        operation: "brief_create",
+        project: "demo",
+        brief_id: "TD-301",
+        title: "missing-cache",
+        cache_path: "/no/such/file/td-301.md",
+      }),
+    ]);
+
+    try {
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "demo" });
+      expect(code).toBe(1);
+      // No HTTP call should have been made — readFileSync threw before
+      // mcpCall was reached (data.ts:243-252 catch returns 1 directly).
+      expect(lb.calls.length).toBe(0);
+      // Queue file MUST remain (preserve-on-failure contract).
+      expect(existsSync(queuePath)).toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
 });
