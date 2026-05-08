@@ -15,7 +15,7 @@ export class CanonicalHooksMissingError extends Error {
   constructor(path: string) {
     super(
       `Canonical hooks file not found at ${path}. ` +
-        `Run 'bash scripts/igris_brain_refresh.sh' from the Igris source repo to populate it.`,
+        `Run 'igris refresh' to fetch ~/.igris/core/ from the configured channel.`,
     );
     this.name = "CanonicalHooksMissingError";
   }

@@ -1,20 +1,33 @@
 /**
- * `igris doctor [--fix] [--remove-orphans] [--yes]` — Phase 1.
+ * `igris doctor [--fix] [--remove-orphans] [--yes]` — Phase 1+M5.
  *
  * Read-only by default: walks the registry and classifies every row into a
- * `DriftRow` (see types.ts). Drift classes match TD-100 plan Phase 1 step 1.3:
+ * `DriftRow` (see types.ts). Drift classes:
  *
+ * Brain-level (synthetic slug "(brain)"):
+ *   brain-core-missing      → ~/.igris/core/ absent or empty
+ *   brain-core-stale        → ~/.igris/core/ content hash diverges from channel head
+ *   bridge-missing          → CLI on PATH lacks configured bridge
+ *
+ * Per-project:
  *   path-missing            → orphan (registry row points at deleted dir)
  *   not-installed           → path exists but .claude/ missing
  *   hooks-missing           → settings.json present but lacks SessionEnd Igris hook
  *                             (the TD-100 silent-failure class)
  *   hooks-stale             → settings.json has Igris hooks but their hash differs
+ *   channel-mismatch        → installed_features.json#cli_version newer than current CLI
  *   slug-basename-mismatch  → row.slug !== basename(row.path)  (informational)
  *   duplicate-path          → multiple slugs with the same realpath (fifty_eco_system)
  *   symlink-target          → row.path is itself a symlink
  *   clean                   → none of the above
  *
- * --fix repairs not-installed / hooks-missing / hooks-stale by re-running install.
+ * Precedence (high → low): path-missing → brain-core-missing → brain-core-stale →
+ * channel-mismatch → bridge-missing → duplicate-path → not-installed →
+ * hooks-missing → hooks-stale → symlink-target → slug-basename-mismatch → clean.
+ *
+ * --fix repairs not-installed / hooks-missing / hooks-stale by re-running install,
+ * brain-core-missing by invoking runRefresh(), bridge-missing by invoking
+ * partial-mode runInit({ upgrade: true }).
  * --remove-orphans deletes path-missing rows after per-row confirmation
  * (skip prompt with --yes).
  */
@@ -33,6 +46,12 @@ import {
   projectSettingsPath,
 } from "../lib/paths.js";
 import { runInstall } from "./install.js";
+import { runRefresh } from "./refresh.js";
+import { runInit } from "./init.js";
+import { detectBrainCoreMissing } from "../lib/drift/brain-core-missing.js";
+import { detectBrainCoreStale } from "../lib/drift/brain-core-stale.js";
+import { detectChannelMismatch } from "../lib/drift/channel-mismatch.js";
+import { detectBridgeMissing } from "../lib/drift/bridge-missing.js";
 import { info, warn, error as logError } from "../lib/log.js";
 import type { DriftRow, RegistryRow } from "../types.js";
 
@@ -44,7 +63,7 @@ export interface DoctorOptions {
 
 export async function runDoctor(opts: DoctorOptions): Promise<number> {
   const rows = listProjects();
-  const drift = classifyDrift(rows);
+  const drift = await classifyDriftAll(rows);
 
   printDriftTable(drift);
 
@@ -74,12 +93,50 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
           const msg = err instanceof Error ? err.message : String(err);
           logError(`${row.slug}: ${msg}`);
         }
+      } else if (row.driftClass === "brain-core-missing") {
+        info(`fix: brain-core-missing — invoking 'igris refresh'`);
+        try {
+          const code = await runRefresh({});
+          if (code !== 0) {
+            errored++;
+            logError(`brain-core-missing fix: refresh returned exit ${code}`);
+          }
+        } catch (err) {
+          errored++;
+          const msg = err instanceof Error ? err.message : String(err);
+          logError(`brain-core-missing fix: ${msg}`);
+        }
+      } else if (row.driftClass === "bridge-missing") {
+        info(`fix: bridge-missing for ${row.path} — invoking partial init (--upgrade)`);
+        try {
+          // Partial init in upgrade mode re-runs the bridge materialization
+          // pass against the current detected set, leaving core/ untouched
+          // (atomic-extract is a no-op on identical content). User state
+          // (knowledge.db, USER.md, config.json) is preserved by --upgrade.
+          // Note: we run this once even if multiple bridges are missing —
+          // partial init detects all of them in one pass.
+          const code = await runInit({ upgrade: true, yes: true });
+          if (code !== 0) {
+            errored++;
+            logError(`bridge-missing fix: init returned exit ${code}`);
+          }
+          // Once we've done the partial init, all bridge-missing rows are
+          // resolved; skip the rest of this iteration class to avoid
+          // multiple init invocations.
+          break;
+        } catch (err) {
+          errored++;
+          const msg = err instanceof Error ? err.message : String(err);
+          logError(`bridge-missing fix: ${msg}`);
+        }
       } else if (
         row.driftClass === "slug-basename-mismatch" ||
-        row.driftClass === "duplicate-path"
+        row.driftClass === "duplicate-path" ||
+        row.driftClass === "channel-mismatch" ||
+        row.driftClass === "brain-core-stale"
       ) {
         warn(
-          `${row.slug}: ${row.driftClass} — manual decision required (not auto-fixable in Phase 1)`,
+          `${row.slug}: ${row.driftClass} — ${row.recommendedFix}`,
         );
       }
     }
@@ -106,12 +163,64 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
         opts.fix &&
         (r.driftClass === "not-installed" ||
           r.driftClass === "hooks-missing" ||
-          r.driftClass === "hooks-stale")
+          r.driftClass === "hooks-stale" ||
+          r.driftClass === "brain-core-missing" ||
+          r.driftClass === "bridge-missing")
       ),
   );
 
   if (errored > 0) return 1;
   return nonCleanRemaining ? 1 : 0;
+}
+
+/**
+ * Classify all drift: brain-level synthetic rows + per-project rows.
+ * Brain-level rows come first (precedence). Per-project channel-mismatch
+ * is folded into the per-project pass.
+ */
+export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]> {
+  const out: DriftRow[] = [];
+
+  // Brain-level synthetic rows (highest precedence after path-missing,
+  // which only applies per-project).
+  const missing = detectBrainCoreMissing();
+  if (missing !== null) {
+    out.push(missing);
+    // When core is missing, brain-core-stale is vacuous (we have no
+    // baseline to compare against). Skip the network probe.
+  } else {
+    try {
+      const stale = await detectBrainCoreStale();
+      if (stale !== null) out.push(stale);
+    } catch {
+      // Network failures are non-fatal — staleness is best-effort.
+    }
+  }
+
+  // Bridge-missing is brain-level too (config-driven), and orthogonal to
+  // core-missing — even with a missing core, the user might benefit from
+  // knowing a CLI on PATH lacks a bridge entry.
+  const bridges = detectBridgeMissing();
+  for (const b of bridges) out.push(b);
+
+  // Per-project: channel-mismatch + the existing classifyDrift output.
+  // channel-mismatch sits BEFORE the existing per-project chain in
+  // precedence, so we add its rows first and skip those slugs in the
+  // existing chain.
+  const channelMismatched = detectChannelMismatch();
+  const channelMismatchSlugs = new Set(channelMismatched.map((r) => r.slug));
+  for (const c of channelMismatched) out.push(c);
+
+  const perProject = classifyDrift(rows);
+  for (const r of perProject) {
+    // If a row already got flagged as channel-mismatch, skip its lower-
+    // precedence per-project classification. The mismatched row is the
+    // one that surfaces.
+    if (channelMismatchSlugs.has(r.slug)) continue;
+    out.push(r);
+  }
+
+  return out;
 }
 
 /**

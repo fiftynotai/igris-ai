@@ -18,7 +18,7 @@ CONFIG_FILE="$BRAIN_DIR/config.json"
 # ============================================================
 if [ ! -d "$BRAIN_DIR" ]; then
   echo "❌ Error: Igris Brain not found at $BRAIN_DIR"
-  echo "   Run igris_brain_init.sh first."
+  echo "   Run \"igris init\" first."
   exit 1
 fi
 
@@ -229,8 +229,8 @@ with open(config_file, 'w') as f:
     else
       echo "❌ Error: No remote_brain configured in $CONFIG_FILE"
       echo ""
-      echo "   Add remote brain first:"
-      echo "   ./scripts/igris_brain_init.sh --add-remote <URL> <API_KEY>"
+      echo "   Add remote brain first by editing $CONFIG_FILE:"
+      echo "   set 'remote_brain.url' and 'remote_brain.api_key'."
       echo ""
       echo "   Or set environment variables:"
       echo "   export IGRIS_REMOTE_BRAIN_URL=http://your-vps:3001"

@@ -41,9 +41,8 @@ Igris AI v4.0 tracks versions in the `.igris_version` file in each installed pro
 - `last_updated` - When the installation was last updated
 
 This file is automatically created during initialization and updated by:
-- `igris_init.sh` (copy-based install)
-- `igris_install.sh` (symlink-based install)
-- `igris_update.sh` (update script)
+- `igris install` (the v7 unified CLI; supersedes the retired `igris_install.sh`)
+- `igris update` (replaces the retired `igris_update.sh`)
 
 ---
 
@@ -82,7 +81,7 @@ Igris AI v4.0 has two update models depending on your install mode.
 
 ### Symlink-Based Projects (Auto-Update)
 
-Projects installed with `igris_install.sh` use symlinks to the brain at `~/.igris/`. These projects **automatically receive updates** when you update the source repository:
+Projects installed with `igris install` (v7) — or the retired `igris_install.sh` (v6) — use symlinks to the brain at `~/.igris/`. These projects **automatically receive updates** when you update the source repository:
 
 ```bash
 # Update the source repository
@@ -90,7 +89,7 @@ cd /path/to/igris-ai
 git pull origin main
 
 # Re-initialize the brain (picks up new agents, rules, skills)
-./scripts/igris_brain_init.sh
+igris init
 ```
 
 Since `.claude/agents/`, `.claude/rules/`, and `.claude/skills/` are symlinked, all linked projects immediately see the updated files.
@@ -106,7 +105,7 @@ git pull origin main
 
 # Re-run the update script for each project
 cd /path/to/your-project
-/path/to/igris-ai/scripts/igris_update.sh
+igris update --all
 ```
 
 ---
@@ -116,7 +115,7 @@ cd /path/to/your-project
 ### Standard Update
 
 ```bash
-./scripts/igris_update.sh
+igris update --all
 ```
 
 **What happens:**
@@ -153,7 +152,7 @@ cd /path/to/your-project
 Preview what would be updated without making changes:
 
 ```bash
-./scripts/igris_update.sh --dry-run
+igris update --all --dry-run
 ```
 
 ### Force Update
@@ -161,7 +160,7 @@ Preview what would be updated without making changes:
 Force update even if versions are the same:
 
 ```bash
-./scripts/igris_update.sh --force
+igris update --all --force
 ```
 
 ---
@@ -239,7 +238,7 @@ git log --oneline -5  # Find the commit to revert to
 git checkout <commit-hash>
 
 # Re-initialize brain from the reverted state
-./scripts/igris_brain_init.sh
+igris init
 ```
 
 ---
@@ -280,7 +279,7 @@ ping github.com
 curl -I https://github.com/fiftynotai/igris-ai
 
 # Wait and retry
-./scripts/igris_update.sh
+igris update --all
 ```
 
 ### Update Script Fails Mid-Update
@@ -303,7 +302,7 @@ curl -I https://github.com/fiftynotai/igris-ai
 ls -la .claude/agents
 
 # Re-run the install script to recreate symlinks
-/path/to/igris-ai/scripts/igris_install.sh .
+igris install .
 ```
 
 ### Brain Database Corrupted
@@ -317,7 +316,7 @@ sqlite3 ~/.igris/memory/knowledge.db "PRAGMA integrity_check;"
 
 # If corrupted, re-initialize the brain
 # WARNING: This resets brain data (learnings, cross-project data)
-/path/to/igris-ai/scripts/igris_brain_init.sh
+/path/to/igris-aigris init
 ```
 
 ### Files Look Corrupted After Update
@@ -325,7 +324,7 @@ sqlite3 ~/.igris/memory/knowledge.db "PRAGMA integrity_check;"
 **Solution:**
 ```bash
 # Use --force to re-copy all files
-./scripts/igris_update.sh --force
+igris update --all --force
 ```
 
 If still having issues, rollback and report the issue on GitHub.
@@ -344,7 +343,7 @@ If still having issues, rollback and report the issue on GitHub.
 
 2. **Check what will change:**
    ```bash
-   ./scripts/igris_update.sh --dry-run
+   igris update --all --dry-run
    ```
 
 3. **Read the changelog:**
@@ -362,13 +361,13 @@ If still having issues, rollback and report the issue on GitHub.
 
 2. **Re-initialize brain (symlink mode):**
    ```bash
-   ./scripts/igris_brain_init.sh
+   igris init
    ```
 
 3. **Run update for copy-based projects:**
    ```bash
    cd /path/to/your-project
-   /path/to/igris-ai/scripts/igris_update.sh
+   igris update --all
    ```
 
 4. **Test after updating:**

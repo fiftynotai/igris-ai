@@ -1,12 +1,17 @@
 {
-  "name": "@igris-ai/cli",
+  "name": "igris-ai",
   "version": "7.0.0",
-  "description": "Igris AI unified CLI — install, update, doctor for Igris projects.",
+  "description": "Igris AI unified CLI — init, refresh, install, update, sync, doctor, register-project for Igris projects.",
   "type": "module",
   "bin": {
     "igris": "./dist/index.js"
   },
   "main": "dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "build": "tsc && bash scripts/copy-templates.sh",
     "dev": "tsc --watch",
@@ -15,6 +20,22 @@
   },
   "author": "Fifty.ai",
   "license": "MIT",
+  "homepage": "https://github.com/fifty-ai/igris-ai#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fifty-ai/igris-ai.git",
+    "directory": "cli"
+  },
+  "bugs": {
+    "url": "https://github.com/fifty-ai/igris-ai/issues"
+  },
+  "keywords": [
+    "igris",
+    "cli",
+    "ai",
+    "claude",
+    "engineering"
+  ],
   "dependencies": {
     "better-sqlite3": "^11.0.0",
     "commander": "^12.1.0",

@@ -6,9 +6,8 @@
 # Tests:
 # - config.json includes worker section with correct defaults
 # - CLAUDE.global.md.template contains Worker Mode section
-# - igris_brain_init.sh fallback heredoc contains Worker Mode section
-# - igris_install.sh creates worker and output directories
-# - igris_install.sh copies worker scripts to ~/.igris/scripts/
+# (igris_brain_init.sh / igris_install.sh assertions retired in MG-014 M5;
+#  see notes inline below for the TS-port follow-up.)
 
 load test_helper
 
@@ -33,7 +32,8 @@ teardown() {
 @test "brain_init config generation includes worker section" {
   require_python3
 
-  # Simulate the python3 config generation from igris_brain_init.sh
+  # Simulate the python3 config generation from `igris init` (formerly
+  # in the retired igris_brain_init.sh shell heredoc).
   local output_file="$TEST_TEMP_DIR/config.json"
   local install_date="2026-02-26T00:00:00Z"
   local source_repo="/tmp/test-repo"
@@ -215,13 +215,12 @@ print('Valid JSON')
   [ "$worker_line" -lt "$note_line" ]
 }
 
-@test "brain_init fallback heredoc contains Worker Mode section" {
-  assert_file_contains "$SCRIPTS_DIR/igris_brain_init.sh" "## Worker Mode"
-}
-
-@test "brain_init fallback heredoc contains autonomous work instruction" {
-  assert_file_contains "$SCRIPTS_DIR/igris_brain_init.sh" "Do NOT ask for user input -- work autonomously"
-}
+# NOTE: The two `brain_init fallback heredoc` tests were removed in MG-014
+# M5 because `scripts/igris_brain_init.sh` was deleted. Worker Mode content
+# now ships from `scripts/templates/CLAUDE.global.md.template` (asserted
+# above) and the `igris init` verb consumes the template directly.
+# When the worker-install TS port lands per the comment above, re-add
+# coverage there.
 
 # =============================================================================
 # WORKER DIRECTORY / SCRIPT INSTALLATION TESTS

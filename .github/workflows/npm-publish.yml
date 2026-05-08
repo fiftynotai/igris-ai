@@ -1,0 +1,91 @@
+name: Publish CLI to npm
+
+# Trigger on git tags matching v*.*.* (e.g. v7.0.0). The workflow can also
+# be invoked manually via `workflow_dispatch` for staging dry-runs.
+#
+# GATING (MG-014 Risk #3): the publish step is conditional on the
+# `NPM_TOKEN` repository secret being set. When the npm org `fifty-ai` is
+# not yet registered (or the token has not been deposited), the workflow
+# still runs the test gate but skips publish — the workflow lands at the
+# v7.0.0 tag but is dormant until secret config completes. To enable:
+#
+#   1. Register the npm org `fifty-ai` (npmjs.com).
+#   2. Generate a publish-scoped automation token.
+#   3. Add it to repo secrets as `NPM_TOKEN`.
+#   4. Re-run via workflow_dispatch (or push a new tag).
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason for manual run (e.g. staging dry-run)"
+        required: false
+        type: string
+
+jobs:
+  publish:
+    name: Build, test, publish
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write   # Required for npm provenance (npm publish --provenance).
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install root dependencies (workspaces)
+        run: npm ci
+
+      - name: Install CLI dependencies
+        working-directory: cli
+        run: npm install
+
+      - name: Build CLI
+        working-directory: cli
+        run: npm run build
+
+      - name: Run vitest
+        working-directory: cli
+        run: npm test
+
+      # bats integration is run in the existing test.yml workflow; we
+      # avoid double-booking the macos runner here. The publish gate is
+      # vitest-only — bats failure surfaces in the test workflow upstream.
+
+      - name: Inspect tarball contents (sanity)
+        working-directory: cli
+        run: npm pack --dry-run
+
+      - name: Verify NPM_TOKEN is set
+        id: token_check
+        run: |
+          if [ -z "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::NPM_TOKEN secret is not set — skipping publish step. Configure the secret to enable publishing (see workflow comments)."
+          else
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm
+        if: steps.token_check.outputs.has_token == 'true'
+        working-directory: cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public
+
+      - name: Skipped — publish gated on NPM_TOKEN
+        if: steps.token_check.outputs.has_token != 'true'
+        run: |
+          echo "::notice::Tag built and tested; publish skipped because NPM_TOKEN is unset."
+          echo "Set the NPM_TOKEN repo secret and re-run via workflow_dispatch."

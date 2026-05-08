@@ -18,7 +18,7 @@ Guide for migrating between Igris AI versions and bringing existing projects up 
 | Agents | Copy-based, load full context | Symlink-based, self-routing via tree |
 | Skills | Copy-based | Symlink-based |
 | Igris files in repo | `ai/` folder (legacy v4) | None — `~/.igris/` is sole source |
-| Install | `igris_init.sh` (copy-based) | `igris_install.sh` (symlink-based) |
+| Install | `igris_init.sh` (copy-based, v3) | `igris_install.sh` (symlink-based, v6, retired in MG-014) → `igris install` (npm CLI, v7) |
 | MCP tools | 67 tools, 13 components | 70 tools, 14 components (+context) |
 | Context overhead | ~93KB per subagent | ~5-8KB per subagent |
 
@@ -57,7 +57,7 @@ The script automatically:
 
 - `ai/` folder no longer used — all content lives in `~/.igris/`
 - Mask system removed — persona uses SOUL.md only, no mask levels
-- `igris_init.sh` deprecated — use `igris_install.sh` for project registration
+- v3-era shell `igris_init.sh` deprecated — use `igris install` (v7 CLI) for project registration
 - `~/.igris/cache/` renamed to `~/.igris/projects/` (symlink preserves backward compat)
 - `~/.igris/staging/` and `~/.igris/personas/` removed
 - CLAUDE.md no longer uses `@import` directives
@@ -105,7 +105,7 @@ ls -la .claude/rules/    # Should show symlink → ~/.igris/core/rules/
 1. **Install the brain:**
    ```bash
    cd /path/to/igris-ai
-   ./scripts/igris_brain_init.sh
+   igris init
    ```
 
 2. **Migrate existing projects:**
@@ -115,7 +115,7 @@ ls -la .claude/rules/    # Should show symlink → ~/.igris/core/rules/
    ```
    Or use the symlink installer for a fresh install:
    ```bash
-   /path/to/igris-ai/scripts/igris_install.sh .
+   igris install .
    ```
 
 3. **Remove deprecated files:**
@@ -182,8 +182,8 @@ When you have an existing codebase that doesn't follow your architecture standar
 ```bash
 # Initialize Igris AI (see SETUP_GUIDE.md for full instructions)
 # Brain-first (recommended):
-/path/to/igris-ai/scripts/igris_brain_init.sh
-/path/to/igris-ai/scripts/igris_install.sh .
+/path/to/igris-aigris init
+igris install .
 
 # Or standalone:
 /path/to/igris-ai/scripts/igris_init.sh .
@@ -464,7 +464,7 @@ How many P0/P1 briefs remain?
 
 ```bash
 # Initialize Igris AI (see SETUP_GUIDE.md)
-/path/to/igris-ai/scripts/igris_install.sh .
+igris install .
 
 # Generate docs (30 min) - in Claude Code:
 # /document architecture

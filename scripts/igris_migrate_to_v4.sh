@@ -27,7 +27,7 @@ if [ "${1:-}" = "--add-remote" ]; then
 
   if [ ! -d "$BRAIN_DIR" ]; then
     echo "Error: Brain not found at $BRAIN_DIR"
-    echo "Run igris_brain_init.sh first."
+    echo "Run \"igris init\" first."
     exit 1
   fi
 
@@ -48,7 +48,7 @@ BRAIN_DIR="$HOME/.igris"
 # Check brain exists
 if [ ! -d "$BRAIN_DIR" ]; then
   echo "Error: Brain not found at $BRAIN_DIR"
-  echo "Run igris_brain_init.sh first."
+  echo "Run \"igris init\" first."
   exit 1
 fi
 

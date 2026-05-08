@@ -32,11 +32,11 @@ git clone https://github.com/fiftynotai/igris-ai
 
 # Step 2: Initialize the brain
 cd igris-ai
-./scripts/igris_brain_init.sh
+igris init
 
 # Step 3: Install into your project (symlinks)
 cd /path/to/your-project/
-/path/to/igris-ai/scripts/igris_install.sh .
+igris install .
 ```
 
 **What this does:**
@@ -253,7 +253,7 @@ This archives the current session to `~/.igris/projects/{project}/session/archiv
 ```bash
 # Run the appropriate initialization script
 # Brain-first:
-/path/to/igris-ai/scripts/igris_install.sh .
+igris install .
 # Or standalone:
 /path/to/igris-ai/scripts/igris_init.sh .
 ```
@@ -293,7 +293,7 @@ sudo apt-get install sqlite3
 sqlite3 ~/.igris/memory/knowledge.db "PRAGMA integrity_check;"
 
 # If corrupted, re-initialize
-/path/to/igris-ai/scripts/igris_brain_init.sh
+/path/to/igris-aigris init
 ```
 
 ### Issue: Symlinks broken after moving Igris AI repo
@@ -301,7 +301,7 @@ sqlite3 ~/.igris/memory/knowledge.db "PRAGMA integrity_check;"
 **Solution:**
 ```bash
 # Re-run the install script to recreate symlinks
-/path/to/igris-ai/scripts/igris_install.sh .
+igris install .
 ```
 
 ---

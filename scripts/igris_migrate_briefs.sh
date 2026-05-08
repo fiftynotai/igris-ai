@@ -43,13 +43,13 @@ DB_PATH="$BRAIN_DIR/memory/knowledge.db"
 
 if [ ! -d "$BRAIN_DIR" ]; then
   echo "Error: Brain not found at $BRAIN_DIR"
-  echo "Run igris_brain_init.sh first."
+  echo "Run \"igris init\" first."
   exit 1
 fi
 
 if [ ! -f "$DB_PATH" ]; then
   echo "Error: Brain database not found at $DB_PATH"
-  echo "Run igris_brain_init.sh first."
+  echo "Run \"igris init\" first."
   exit 1
 fi
 
@@ -152,7 +152,7 @@ else
 
   if [ -z "$PROJECT_LIST" ]; then
     echo "No active projects found in brain."
-    echo "Register projects first with igris_migrate_to_v4.sh or igris_brain_init.sh."
+    echo "Register projects first with 'igris init' (bootstrap) or 'igris register-project'."
     exit 0
   fi
 fi

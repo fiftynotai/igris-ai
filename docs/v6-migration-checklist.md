@@ -44,7 +44,7 @@ Complete every item before starting the migration.
   ls -la ~/.igris/
   ```
   If the directory does not exist, you need a fresh v6 install, not a migration.
-  Run `scripts/igris_brain_init.sh` followed by `scripts/igris_install.sh .` instead.
+  Run `igris init` followed by `igris install .` instead.
 
 - [ ] **Verify brain database health:**
   ```bash
@@ -176,7 +176,7 @@ If the migration script did not update symlinks for a specific project, or if yo
 - [ ] **Run the install script from the project directory:**
   ```bash
   cd /path/to/your-project
-  bash /path/to/igris-ai/scripts/igris_install.sh .
+  bash igris install .
   ```
 
 - [ ] **Verify brain database registration:**
@@ -338,7 +338,7 @@ Re-register the project to convert them:
 
 ```bash
 cd /path/to/your-project
-bash /path/to/igris-ai/scripts/igris_install.sh .
+bash igris install .
 ```
 
 This will recreate the symlinks without affecting other project data.
@@ -373,9 +373,9 @@ Address each failure type:
 | Failure | Fix |
 |---------|-----|
 | `igris_tree.json does not exist` | Re-run the migration script with `--force`, or copy manually: `cp /path/to/igris-ai/core/igris_tree.json ~/.igris/core/` |
-| `CLAUDE.md is >= 5KB` | Regenerate it by running `bash /path/to/igris-ai/scripts/igris_install.sh .` from the project directory |
-| `Agent not a symlink` | Re-register the project: `bash /path/to/igris-ai/scripts/igris_install.sh .` |
-| `00-igris-universal.md not a symlink` | Re-register the project: `bash /path/to/igris-ai/scripts/igris_install.sh .` |
+| `CLAUDE.md is >= 5KB` | Regenerate it by running `bash igris install .` from the project directory |
+| `Agent not a symlink` | Re-register the project: `bash igris install .` |
+| `00-igris-universal.md not a symlink` | Re-register the project: `bash igris install .` |
 | `Fewer than 15 skill directories` | Ensure `~/.igris/core/skills/` has all skills, then re-register |
 
 ### Q: I have multiple projects. Do I need to migrate each one separately?
@@ -396,14 +396,14 @@ It was renamed to `~/.igris/projects/`. A backward-compatibility symlink (`~/.ig
 
 The migration script operates on the local `~/.igris/` directory. For a VPS brain, SSH into the server and run the script there. Then use `/sync` from Claude Code to push the updated state.
 
-### Q: What if `igris_brain_init.sh` was never run?
+### Q: What if the v5 brain bootstrap was never run?
 
-You do not have a v5 brain to migrate. Instead, do a fresh v6 install:
+You do not have a v5 brain to migrate. Instead, do a fresh v7 install:
 
 ```bash
 cd /path/to/igris-ai
-bash scripts/igris_brain_init.sh
-bash scripts/igris_install.sh /path/to/your-project
+igris init
+igris install /path/to/your-project
 ```
 
 ---
@@ -439,7 +439,7 @@ bash scripts/igris_migrate_v5_to_v6.sh
 bash /path/to/igris-ai/scripts/v6_verify.sh .
 
 # Re-register a project
-bash /path/to/igris-ai/scripts/igris_install.sh .
+bash igris install .
 
 # Check brain DB
 sqlite3 ~/.igris/memory/knowledge.db "SELECT slug, igris_version FROM projects;"

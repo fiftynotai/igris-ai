@@ -13,12 +13,11 @@ set -e
 #   - validate_igris_tree_lineranges.py  (DRIFT-3, TD-070)
 #       Triggers if: core/prompts/igris_os.md OR core/igris_tree.json
 #                    is staged.
-#   - validate_canonical_hooks.sh  (TD-110, §13 paired surface)
-#       Triggers if: core/hooks/canonical-settings.json OR
-#                    scripts/hook-adapters/install_claude_hooks.sh
-#                    is staged. Catches drift between the canonical hooks
-#                    block and the legacy shell installer (will be retired
-#                    when MG-014 collapses the shell layer).
+#
+# (TD-110 canonical-hooks lockstep validator was retired in MG-014 M5;
+#  the legacy `install_claude_hooks.sh` shell emitter is gone, so the
+#  source-of-truth is `core/hooks/canonical-settings.json` consumed
+#  directly by the native TS layer in `cli/src/lib/canonical-hooks.ts`.)
 #
 # Bypass: `git commit --no-verify` (use sparingly; CI will catch it)
 # Bypass phase guard only: `IGRIS_BYPASS_PHASE_GUARD=1 git commit ...`
@@ -87,7 +86,6 @@ staged="$(git diff --cached --name-only --diff-filter=ACM)"
 
 needs_enum_check=0
 needs_lineranges_check=0
-needs_canonical_hooks_check=0
 
 if echo "$staged" | grep -qE '^(core/prompts/igris_os\.md|core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
   needs_enum_check=1
@@ -95,10 +93,6 @@ fi
 
 if echo "$staged" | grep -qE '^(core/prompts/igris_os\.md|core/igris_tree\.json)$'; then
   needs_lineranges_check=1
-fi
-
-if echo "$staged" | grep -qE '^(core/hooks/canonical-settings\.json|scripts/hook-adapters/install_claude_hooks\.sh)$'; then
-  needs_canonical_hooks_check=1
 fi
 
 failed=0
@@ -119,18 +113,6 @@ if [ "$needs_lineranges_check" = "1" ]; then
   # so multiple validator failures are aggregated into $failed and reported
   # together at the end, rather than aborting on the first failure.
   if ! python3 "$REPO_ROOT/scripts/validate_igris_tree_lineranges.py"; then
-    failed=1
-  fi
-fi
-
-if [ "$needs_canonical_hooks_check" = "1" ]; then
-  echo "[pre-commit] Validating canonical-hooks lockstep (TD-110)..."
-  # Same aggregation pattern as the validators above. The canonical-hooks
-  # validator runs install_claude_hooks.sh against a sandboxed .claude/
-  # tree and diffs the emitted .hooks block against
-  # core/hooks/canonical-settings.json (jq -S canonicalized). Drift exits
-  # 1; missing source files / installer crash exit 2.
-  if ! bash "$REPO_ROOT/scripts/validate_canonical_hooks.sh"; then
     failed=1
   fi
 fi

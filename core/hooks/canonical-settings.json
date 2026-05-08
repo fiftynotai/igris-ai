@@ -1,5 +1,5 @@
 {
-  "_doc": "Single source of truth for the Igris-managed hooks block in .claude/settings.json. Regenerate by editing scripts/hook-adapters/install_claude_hooks.sh:178-211 AND this file in lockstep until Phase 2 collapses both into the CLI as sole writer. Commands use the literal $HOME prefix; Claude Code expands $HOME at runtime. Mirrored to ~/.igris/core/hooks/canonical-settings.json by scripts/igris_brain_refresh.sh.",
+  "_doc": "Single source of truth for the Igris-managed hooks block in .claude/settings.json. Consumed by cli/src/lib/canonical-hooks.ts (the sole writer in v7). Commands use the literal $HOME prefix; Claude Code expands $HOME at runtime. Shipped to ~/.igris/core/hooks/canonical-settings.json via the brain-core tarball ('igris init' / 'igris refresh').",
   "hooks": {
     "SessionStart": [
       {
