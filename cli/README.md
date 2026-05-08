@@ -24,9 +24,12 @@ shell script.
 ## Verbs
 
 ```
-igris install <path> [--slug <slug>] [--no-hooks]
-igris update --all
-igris update --slug <slug>
+igris init [--from-source <path>] [--channel <ref>] [--upgrade] [--dry-run]
+igris refresh [--from-source <path>] [--channel <ref>] [--no-propagate] [--dry-run]
+igris install <path> [--slug <slug>] [--no-hooks] [--dry-run]
+igris update [--all] [--slug <slug>] [--self] [--dry-run]
+igris register-project [path] [--slug <slug>] [--allow-missing-path]
+igris sync <code|data|all|status> [--dry-run] [--if-changed]
 igris doctor [--fix] [--remove-orphans] [--yes]
 ```
 
@@ -66,6 +69,51 @@ the install primitive. Other classes require manual decisions.
 `--remove-orphans` interactively deletes `path-missing` rows. Skip prompts
 with `--yes`. Per-row prompts accept `y`/`n`/`Y` (yes-all)/`a` (abort).
 
+### `igris sync`
+
+Replaces the retired `scripts/igris_vps_update.sh` (deleted in M4 of MG-014).
+
+| Sub-verb | Action |
+|---|---|
+| `status` | HTTP GET `<remote_brain.url>/health`, prints reachability + brain version + local queue depth + last-push timestamp |
+| `data`   | Drains local `~/.igris/projects/<slug>/sync_queue.jsonl` via remote `igris_sync_queue_drain` MCP call |
+| `code`   | rsync local repo to `<vps.user>@<vps.host>:<vps.repo_path>`, ssh-restart `igris-brain` via PM2, verify `/health` |
+| `all`    | `code` then `data` sequentially; aborts on `code` failure |
+
+`--dry-run` previews the rsync/ssh/MCP calls without performing them.
+
+`--if-changed` (cron parity with the retired shell): skip the entire push
+when local HEAD matches `origin/<branch>`. Useful for cron jobs:
+
+```cron
+*/5 * * * * /path/to/cli/dist/index.js sync code --if-changed >> sync.log 2>&1
+```
+
+#### Manual code-sync verification (NOT covered by CI)
+
+Code-sync is intentionally NOT exercised in the `tests/integration/sync.bats`
+suite — the `code` sub-verb invokes real rsync + ssh against a configured
+VPS, which can't be hermetically reproduced in CI. The unit tests at
+`cli/src/__tests__/sync-code.test.ts` cover command-shape and exit-code
+contracts via mocked `child_process`; the manual runbook below verifies
+the wire-level integration before each npm publish:
+
+1. **Pre-flight:** verify `~/.igris/config.json` has both `vps` (host,
+   user, repo_path) and `remote_brain` (url, api_key) blocks populated,
+   and that `ssh <vps.user>@<vps.host> -- echo ok` succeeds without
+   prompting (key-based auth required; the verb passes `BatchMode=yes`).
+2. **Dry-run:** `igris sync code --dry-run` and confirm the printed plan
+   names the expected `<src>` and `<dst>` paths.
+3. **Live:** `igris sync code` and watch the output:
+   - `sync code: rsync <src> -> <dst>` then any rsync transfer summary
+   - `sync code: pm2 restart issued`
+   - `sync code: health OK — {"status":"ok",...}` (or a WARN if the
+     service is still starting; re-run `igris sync status` to confirm)
+4. **Cron parity:** `igris sync code --if-changed` from a clean tree should
+   print "local HEAD matches origin; nothing to push" and exit 0 in <1s.
+5. **Failure modes:** drop the `vps` block from config.json and confirm
+   `igris sync code` exits 1 with an actionable error (config gate).
+
 ## Develop
 
 Phase 1 distribution is via `npm link`. Future Phase 2 ships via `npm publish`
@@ -98,9 +146,13 @@ igris doctor
 - `src/__tests__/registry.test.ts` — better-sqlite3 + projects table (6 tests)
 - `src/__tests__/installed-features.test.ts` — schema migration + hashing (6 tests)
 - `src/__tests__/smoke.test.ts` — vitest harness check
+- `src/__tests__/sync-status.test.ts` — sync status (6 tests)
+- `src/__tests__/sync-data.test.ts` — sync data + queue replay (5 tests)
+- `src/__tests__/sync-code.test.ts` — sync code + --if-changed (7 tests)
 - `tests/integration/version.bats` — CLI invocation smoke
 - `tests/integration/install.bats` — install end-to-end (9 tests)
 - `tests/integration/doctor.bats` — doctor end-to-end (6 tests)
+- `tests/integration/sync.bats` — sync verb end-to-end via $CLI_BIN (6 tests)
 - `tests/integration/default-install-installs-hooks.bats` — TD-100 canary (1 test)
 
 ## Decision points (architect defaults — D-1 through D-4)

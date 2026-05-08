@@ -2,12 +2,13 @@
 /**
  * Igris CLI — entry point.
  *
- * Verbs (Phase 2 — M1+M2+M3):
+ * Verbs (Phase 2 — M1+M2+M3+M4):
  *   - init [--from-source <path>] [--channel <ref>] [--upgrade] [--dry-run]
  *   - refresh [--from-source <path>] [--channel <ref>] [--no-propagate] [--dry-run]
  *   - install <path> [--slug <slug>] [--no-hooks] [--dry-run]
  *   - update [--all] [--slug <slug>] [--self] [--dry-run]
  *   - register-project [path] [--slug <slug>] [--allow-missing-path]
+ *   - sync <code|data|all|status> [--dry-run] [--if-changed]
  *   - doctor [--fix] [--remove-orphans] [--yes]
  *
  * The CLI now owns the entire install pipeline natively in TS — both the
@@ -31,6 +32,7 @@ import { runDoctor } from "./verbs/doctor.js";
 import { runInit } from "./verbs/init.js";
 import { runRefresh } from "./verbs/refresh.js";
 import { runRegisterProject } from "./verbs/register-project.js";
+import { runSync, type SyncSubVerb } from "./verbs/sync.js";
 import { setVerbosity, error as logError } from "./lib/log.js";
 
 function readPackageVersion(): string {
@@ -243,6 +245,35 @@ async function main(argv: string[]): Promise<void> {
           path,
           slug: opts.slug,
           allowMissingPath: opts.allowMissingPath === true,
+        });
+        process.exitCode = code;
+      },
+    );
+
+  program
+    .command("sync <sub-verb>")
+    .description(
+      "Push code/data to the VPS brain. Sub-verbs: code, data, all, status.",
+    )
+    .option(
+      "--dry-run",
+      "preview the would-be rsync/ssh/MCP calls without performing them",
+      false,
+    )
+    .option(
+      "--if-changed",
+      "skip the entire push when local HEAD matches origin/<branch> (cron-parity with retired igris_vps_update.sh --if-changed; only meaningful for 'code' and 'all')",
+      false,
+    )
+    .action(
+      async (
+        subVerb: string,
+        opts: { dryRun?: boolean; ifChanged?: boolean },
+      ): Promise<void> => {
+        const code = await runSync({
+          subVerb: subVerb as SyncSubVerb,
+          dryRun: opts.dryRun === true,
+          ifChanged: opts.ifChanged === true,
         });
         process.exitCode = code;
       },

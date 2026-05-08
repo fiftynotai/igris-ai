@@ -147,7 +147,7 @@ A pre-flight dry run on 2026-04-28 against the live brain DB produced:
 | `igris-ai` only | 9 | 9 | 0 | 0 | 0 | 18 |
 | All projects | 14 | 15 | 1 | 4 | 2 | 36 |
 
-The brief acceptance criterion of "≥ 50 edges" was written assuming an older brief style (`Parent: FR-XXX` rather than the modern markdown-bold `**Parent Brief:** FR-XXX` header). The implementation plan flagged this and recommended scoping the gate to "≥ 30 edges or all detectable markers covered" — 36 > 30 and the script extracts every detectable structural marker, so the criterion is satisfied in spirit. The `--min-edges` flag is parameterized rather than hard-coded so callers (CI / `igris_vps_update.sh`) can tune the gate.
+The brief acceptance criterion of "≥ 50 edges" was written assuming an older brief style (`Parent: FR-XXX` rather than the modern markdown-bold `**Parent Brief:** FR-XXX` header). The implementation plan flagged this and recommended scoping the gate to "≥ 30 edges or all detectable markers covered" — 36 > 30 and the script extracts every detectable structural marker, so the criterion is satisfied in spirit. The `--min-edges` flag is parameterized rather than hard-coded so callers (CI / `igris sync code`) can tune the gate.
 
 ## Query recipes
 
@@ -201,7 +201,7 @@ FR-113 will package these recipes as MCP tools (`igris_graph_ancestors`, `igris_
 The `edges:1` migration runs automatically on the next `bootEngine()` / `pm2 restart brain` cycle:
 
 - Local: applied by `getDb()` boot when the brain MCP server starts.
-- VPS: applied by `scripts/igris_vps_update.sh -> npm install && pm2 restart`. Verify post-deploy with `SELECT * FROM engine_migrations WHERE component='edges'`.
+- VPS: applied by `igris sync code` (which rsyncs the repo and ssh-restarts `igris-brain` via PM2; previously `scripts/igris_vps_update.sh`, retired in MG-014 M4). Verify post-deploy with `SELECT * FROM engine_migrations WHERE component='edges'`.
 
 The migration is fully `IF NOT EXISTS`-guarded, transaction-wrapped, and re-run safe.
 
