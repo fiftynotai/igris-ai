@@ -56,6 +56,7 @@ export function createMemoryComponent(): BrainComponent {
           description: 'Store a learning in the Igris knowledge database. Use this to persist patterns, decisions, discoveries, mistakes, and optimizations for future recall.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -96,6 +97,15 @@ export function createMemoryComponent(): BrainComponent {
                 enum: ['observed', 'inferred', 'synthesized', 'ambiguous', 'human_asserted'],
                 description: 'Origin and trust level of this learning. Defaults to "observed". See docs/architecture/provenance.md.',
               },
+              review_status: {
+                type: 'string',
+                enum: ['pending_review', 'approved'],
+                description: 'Lifecycle gate for the perception channel (FR-109). Default "approved". Perception extractors pass "pending_review" so candidates are hidden from default recall/search until approved.',
+              },
+              source_extractor: {
+                type: 'string',
+                description: 'Which extractor produced this row (FR-109 + TD-066). Default "manual" for direct tool calls; perception passes "llm"; /distill passes "distill". Validated against VALID_SOURCE_EXTRACTOR.',
+              },
             },
             required: ['project', 'category', 'title', 'content'],
           },
@@ -110,6 +120,7 @@ export function createMemoryComponent(): BrainComponent {
           description: 'Full-text search across all learnings in the Igris knowledge database. Supports filtering by project and scope. Returns results ranked by relevance.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               query: {
                 type: 'string',
@@ -142,6 +153,7 @@ export function createMemoryComponent(): BrainComponent {
           description: 'Contextual recall of relevant learnings for the current project. Combines project-local and global learnings matching the given context. Updates access counts for returned results.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -165,6 +177,7 @@ export function createMemoryComponent(): BrainComponent {
           description: 'Fetch the full content of a single learning by ID. Use after igris_memory_recall returns truncated previews to get the complete content of a specific learning.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               id: {
                 type: 'number',
@@ -180,6 +193,7 @@ export function createMemoryComponent(): BrainComponent {
           description: 'Hybrid search combining BM25 (keyword) and vector (semantic) results via Reciprocal Rank Fusion. Falls back to BM25-only if vector search is unavailable. Use this for the best search quality — it finds results that match both keywords and meaning.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               query: {
                 type: 'string',
@@ -215,6 +229,7 @@ export function createMemoryComponent(): BrainComponent {
           description: 'Batch-generate embeddings for existing learnings that lack them. Processes learnings in batches — run multiple times to process all. Resumable: only processes learnings without embeddings.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               batch_size: {
                 type: 'number',
@@ -234,6 +249,7 @@ export function createMemoryComponent(): BrainComponent {
           description: 'Suggest relevant patterns for the current context. Searches learnings via FTS5, includes global-scope patterns, and loads matching patterns from the starter-patterns library. Optionally filters by tech stack.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',

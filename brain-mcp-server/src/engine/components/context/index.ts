@@ -148,6 +148,7 @@ export function createContextComponent(): BrainComponent {
           description: 'Register or update a project context file in the brain. Use this to store coding guidelines, architecture maps, API patterns, and other context documents.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -205,6 +206,7 @@ export function createContextComponent(): BrainComponent {
           description: 'Retrieve one or more context files by key for a project. Returns content, file path, and update timestamp for each found key, plus a list of any missing keys.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -263,6 +265,7 @@ export function createContextComponent(): BrainComponent {
           description: 'Get the global Igris context routing tree from ~/.igris/core/igris_tree.json. Returns the full tree structure that defines how context files are resolved and routed.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {},
           },
           handler: () => {
@@ -290,6 +293,7 @@ export function createContextComponent(): BrainComponent {
             'Use this instead of manually reading the tree + resolving paths + reading files.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               actor: {
                 type: 'string',

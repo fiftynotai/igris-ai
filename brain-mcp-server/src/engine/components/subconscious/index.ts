@@ -151,6 +151,7 @@ export function createSubconsciousComponent(): BrainComponent {
             'List subconscious-engine suggestions with optional filters. Default sort: priority (high>medium>low) then created_at DESC. Use status="pending" + limit=3 in /awaken to render the top actionable items.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               status: {
                 type: 'string',
@@ -193,6 +194,7 @@ export function createSubconsciousComponent(): BrainComponent {
             'Mark a suggestion as dismissed. The optional reason feeds the dismiss-reason learning loop: future suggestions with the same evidence signature will be suppressed once the dismiss count crosses the configured threshold (default 2 dismisses).',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               id: {
                 type: 'integer',
@@ -217,6 +219,7 @@ export function createSubconsciousComponent(): BrainComponent {
             "Mark a suggestion as acted on. Optional brief_id records which brief the user opened in response. Acted does NOT feed the suppression loop — it is a positive signal. For conflict-class suggestions, optionally pass action='superseded' (with winner_id + loser_id) to materialise a typed `supersedes` edge between the two learnings, or action='kept_both' to materialise a `related_to` edge marking the pair as reviewed-and-non-conflicting.",
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               id: {
                 type: 'integer',
@@ -257,6 +260,7 @@ export function createSubconsciousComponent(): BrainComponent {
             'Run the subconscious detector pipeline once. Invoked by the cron schedule "subconscious_engine" every 6 hours; also fireable manually for debugging or immediate sweep. Returns counts of emitted/suppressed suggestions broken down by module.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {},
           },
           handler: async (args) => handleSubconsciousRun(args),

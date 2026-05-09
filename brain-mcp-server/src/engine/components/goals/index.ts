@@ -71,6 +71,7 @@ export function createGoalsComponent(): BrainComponent {
             'Create a new goal (outcome-level entity). Auto-allocates the next sequential GL-XXX id server-side. Use this when the user describes an outcome with a deadline, not a unit of work — register a brief instead for tasks. The project field is optional — omit or pass null for cross-project goals.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -141,6 +142,7 @@ export function createGoalsComponent(): BrainComponent {
             'List goals with optional filters. Supports project, status, upcoming_days (active goals with deadlines within N days), limit (default 25), and offset. Each row includes serving_briefs_count via subquery on entity_edges. Sort: deadline ASC NULLS LAST, then created_at DESC.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -178,6 +180,7 @@ export function createGoalsComponent(): BrainComponent {
             'Get a single goal by goal_id along with the briefs that serve it (via serves_goal edges) and a count of serving learnings. Returns isError if the goal does not exist.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               goal_id: {
                 type: 'string',
@@ -198,6 +201,7 @@ export function createGoalsComponent(): BrainComponent {
             "Patch any subset of a goal's fields. Status transitions to 'achieved' auto-set achieved_at; reverting from 'achieved' clears it. Emits goal.updated on any change, plus goal.achieved on the achieved transition.",
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               goal_id: { type: 'string', description: 'Goal id (e.g. "GL-001")' },
               title: { type: 'string' },
@@ -248,6 +252,7 @@ export function createGoalsComponent(): BrainComponent {
             "Compute completion progress for a goal based on briefs that serve it (via serves_goal edges). Returns counts by bucket (total/done/in_progress/pending) and completion_pct (done/total, or null when total=0). \"Done\" = brief.status IN ('Done', 'Archived'). Soft-deleted edges are excluded. Learnings surface as a count only; they have no terminal status.",
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               goal_id: {
                 type: 'string',

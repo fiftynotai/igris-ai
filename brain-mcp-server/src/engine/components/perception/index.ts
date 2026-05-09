@@ -128,6 +128,7 @@ export function createPerceptionComponent(): BrainComponent {
             'Ingest a transcript window and queue candidate learnings for review. Called by the detached background extractor (`scripts/perception_extract_cli.ts`), itself spawned by the session_end / pre_compact hooks. Runs the LLM-only extractor pipeline, inserts pending_review learnings tagged provenance=inferred, and returns counts plus the LLM gate status.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: { type: 'string', description: 'Project slug.' },
               transcript_text: {
@@ -159,6 +160,7 @@ export function createPerceptionComponent(): BrainComponent {
             "List pending_review learnings (perception candidates) sorted by confidence DESC, created_at DESC. Lazy-on-read TTL filter excludes rows older than the configured window. Used by /awaken section 4.9 with limit=5.",
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: { type: 'string', description: 'Optional project filter.' },
               limit: {
@@ -179,6 +181,7 @@ export function createPerceptionComponent(): BrainComponent {
             "Promote a pending_review learning to approved. Optional `edit` allows fixing title/content/tags/category/confidence/tech_stack before approval. Provenance ('inferred') is permanent — approval is a status flip only.",
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               learning_id: { type: 'integer', description: 'Learning id to approve.' },
               edit: {
@@ -208,6 +211,7 @@ export function createPerceptionComponent(): BrainComponent {
             'Reject a pending_review learning. Hard DELETE — perception channel does not soft-delete. Optional reason recorded as a bus event for analytics.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               learning_id: { type: 'integer', description: 'Learning id to reject.' },
               reason: { type: 'string', description: 'Free-form rejection reason.' },
@@ -226,6 +230,7 @@ export function createPerceptionComponent(): BrainComponent {
             'Manual perception extraction with optional force_llm bypass of the bytes-floor cost gate. Useful for /distill integration and operator triage. Watermark advance is opt-in (defaults false) so manual runs do not shadow the next session_end.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: { type: 'string', description: 'Project slug.' },
               transcript_text: { type: 'string', description: 'Transcript blob.' },
@@ -254,6 +259,7 @@ export function createPerceptionComponent(): BrainComponent {
             'Manually delete pending_review learnings older than ttl_days (default = config.pending_review_ttl_days). Lazy-on-read filter normally hides them; this tool reclaims storage.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               ttl_days: {
                 type: 'number',

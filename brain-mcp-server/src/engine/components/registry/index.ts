@@ -53,6 +53,7 @@ export function createRegistryComponent(): BrainComponent {
           description: 'Register a reusable template or module in the Igris registry. Templates are full project scaffolds; modules are standalone cherry-pickable components. Uses GitHub URLs as primary paths.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               id: {
                 type: 'string',
@@ -137,6 +138,7 @@ export function createRegistryComponent(): BrainComponent {
           description: 'Search the Igris registry for templates and modules by keyword. Supports filtering by type, framework, and archetype. Uses FTS5 for relevance-ranked results.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               query: {
                 type: 'string',
@@ -169,6 +171,7 @@ export function createRegistryComponent(): BrainComponent {
           description: 'Get full details of a single registry entry by ID. Returns all fields including rebrand_checklist.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               id: {
                 type: 'string',
@@ -184,6 +187,7 @@ export function createRegistryComponent(): BrainComponent {
           description: 'List registry entries with optional filters. Defaults to showing only "available" entries.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               type: {
                 type: 'string',
@@ -216,6 +220,7 @@ export function createRegistryComponent(): BrainComponent {
           description: 'Remove a registry entry. Default is soft-delete (sets status to "deprecated"). Pass hard_delete=true to permanently remove.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               id: {
                 type: 'string',
@@ -239,6 +244,7 @@ export function createRegistryComponent(): BrainComponent {
           description: 'Update an existing registry entry. Only provided fields are modified; others are preserved. Use this to update descriptions, tags, install commands, rebrand checklists, etc.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               id: {
                 type: 'string',

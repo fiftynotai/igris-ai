@@ -155,6 +155,7 @@ export function createMonitoringComponent(): BrainComponent {
           description: 'Query the engine event log. Supports filtering by event name, component, project, and time range. Returns paginated results.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               event_name: {
                 type: 'string',
@@ -197,6 +198,7 @@ export function createMonitoringComponent(): BrainComponent {
           description: 'Delete old event log entries. Removes events older than the specified retention period.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               retention_days: {
                 type: 'number',

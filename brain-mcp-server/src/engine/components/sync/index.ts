@@ -447,6 +447,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Push local brain changes to a remote brain server. Syncs learnings, errors, projects, sessions, brief_status, agent_metrics changed since last push. Uses last-write-wins for conflict resolution.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               remote_url: {
                 type: 'string',
@@ -466,6 +467,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Pull remote brain changes to local brain. Syncs all tables changed since last pull. Uses last-write-wins for conflict resolution.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               remote_url: {
                 type: 'string',
@@ -485,6 +487,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Show the current sync queue status. Displays pending, retrying, sent, and failed counts plus per-table breakdown of actionable items.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {},
           },
           handler: () => handleSyncQueueStatus(),
@@ -494,6 +497,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Process pending sync queue items by pushing them to the remote brain. Retries failed push operations with exponential backoff tracking.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               remote_url: {
                 type: 'string',
@@ -513,6 +517,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Sync a brief file content to the brain. Computes content hash and upserts into brief_files table. Use this to store the full markdown content of brief files for cross-device access.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -540,6 +545,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Sync a session file content to the brain. Stores session files (CURRENT_SESSION.md, BLOCKERS.md, etc.) for cross-device access.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -563,6 +569,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Pull all session files for a project from the brain. Returns all stored session files with their content.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -578,6 +585,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Sync a definition file (agent, skill, rule, or prompt) to the brain. Stores the full content for cross-device and cross-project sharing.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               type: {
                 type: 'string',
@@ -610,6 +618,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Pull definitions from the brain. Optionally filter by timestamp to get only recently updated definitions.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               since: {
                 type: 'string',
@@ -624,6 +633,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Push a flat file (events.jsonl, agent-metrics.json, budget.json) to the remote brain server via HTTP. Updates sync_state for dashboard tracking.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               file_type: {
                 type: 'string',
@@ -652,6 +662,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Pull a flat file from the remote brain server.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               file_type: {
                 type: 'string',

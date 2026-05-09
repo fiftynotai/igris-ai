@@ -118,6 +118,7 @@ export function createTasksComponent(): BrainComponent {
           description: 'Create a new task in the brain. Tasks can be linked to briefs, assigned to agents, and organized with dependencies. Priority 1 (highest) to 5 (lowest).',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               task_type: {
                 type: 'string',
@@ -213,6 +214,7 @@ export function createTasksComponent(): BrainComponent {
           description: 'List tasks with optional filters. Returns tasks ordered by priority (ascending) then creation date.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               status: {
                 type: 'string',
@@ -262,6 +264,7 @@ export function createTasksComponent(): BrainComponent {
           description: 'Get a single task with its dependencies and assignment history.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               task_id: {
                 type: 'string',
@@ -281,6 +284,7 @@ export function createTasksComponent(): BrainComponent {
           description: 'Assign an agent to a task. Updates task status to active and records the assignment.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               task_id: {
                 type: 'string',
@@ -313,6 +317,7 @@ export function createTasksComponent(): BrainComponent {
           description: 'Atomically claim a specific task by ID for an agent. Fails if task is not in pending status. Creates an assignment record and sets status to active in a single transaction.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               task_id: {
                 type: 'string',
@@ -345,6 +350,7 @@ export function createTasksComponent(): BrainComponent {
           description: 'Mark a task as done. Checks for newly unblocked dependent tasks. Returns the completed task and any unblocked task IDs.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               task_id: {
                 type: 'string',
@@ -393,6 +399,7 @@ export function createTasksComponent(): BrainComponent {
           description: 'Add or remove a dependency between tasks. Performs cycle detection to prevent circular dependencies. Adding a dependency to an undone task marks the dependent as blocked.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               task_id: {
                 type: 'string',
@@ -443,6 +450,7 @@ export function createTasksComponent(): BrainComponent {
           description: 'Find the highest-priority unblocked, non-deferred, pending task. Optionally auto-assigns to an agent. Supports capability-based matching. Ideal for agents picking up work.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               agent: {
                 type: 'string',
@@ -497,6 +505,7 @@ export function createTasksComponent(): BrainComponent {
           description: 'Update one or more fields on a task. Always updates the updated_at timestamp.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               task_id: {
                 type: 'string',
@@ -554,6 +563,7 @@ export function createTasksComponent(): BrainComponent {
           description: 'Mark a task as failed with a reason. Increments retry_count and records fail_reason. The coordination component can listen for task.failed events to trigger self-healing.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               task_id: {
                 type: 'string',
@@ -599,6 +609,7 @@ export function createTasksComponent(): BrainComponent {
           description: 'Retry a failed task by resetting its status to pending. Only works on tasks in failed status. Optionally merge fix_context into metadata.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               task_id: {
                 type: 'string',
@@ -622,6 +633,7 @@ export function createTasksComponent(): BrainComponent {
           description: 'Add a structured result to a task (task_id, result_type, content, file_path?, metadata?)',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               task_id: {
                 type: 'string',
@@ -658,6 +670,7 @@ export function createTasksComponent(): BrainComponent {
           description: 'Get all results for a task, optionally filtered by result_type',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               task_id: {
                 type: 'string',

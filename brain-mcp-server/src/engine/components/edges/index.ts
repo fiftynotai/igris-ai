@@ -141,6 +141,7 @@ export function createEdgesComponent(): BrainComponent {
             'Create a typed edge between two Igris entities. Idempotent: re-creating an identical (from_type, from_id, to_type, to_id, edge_type) tuple returns the existing edge instead of failing. Self-loops are rejected unless edge_type is "recurs_with".',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               from_type: {
                 type: 'string',
@@ -206,6 +207,7 @@ export function createEdgesComponent(): BrainComponent {
             'List edges with optional filters (all ANDed). Soft-deleted edges (metadata.deleted=true) are excluded by default. Default LIMIT 200, max 1000.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               from_type: { type: 'string', enum: [...VALID_ENTITY_TYPES] },
               from_id: { type: 'string' },
@@ -237,6 +239,7 @@ export function createEdgesComponent(): BrainComponent {
             'Remove an edge by id. Soft-deletes by default (sets metadata.deleted=true so the row remains for audit). Pass hard=true for a permanent DELETE.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               id: { type: 'integer', description: 'Edge id (entity_edges.id)' },
               hard: {
@@ -270,6 +273,7 @@ export function createEdgesComponent(): BrainComponent {
             "Return all entity nodes within N hops of a seed node. Direction-aware: 'out' follows from→to, 'in' follows to→from, 'both' is undirected. Excludes soft-deleted edges by default. Caps depth at 10 and result count at 100.",
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               node_type: {
                 type: 'string',
@@ -321,6 +325,7 @@ export function createEdgesComponent(): BrainComponent {
             'Find the shortest directed path from one entity to another following outgoing edges. Returns found=false when no path exists within max_depth. Cycle-safe via visited-set tracking. Excludes soft-deleted edges by default.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               from_type: { type: 'string', enum: [...VALID_ENTITY_TYPES] },
               from_id: { type: 'string' },
@@ -356,6 +361,7 @@ export function createEdgesComponent(): BrainComponent {
             'Return the connected subgraph (nodes + edges) reachable from a seed node, bounded by max_nodes. Useful for visualization. Results cached for 5 minutes; cache invalidated by edge mutations.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               seed_node_type: { type: 'string', enum: [...VALID_ENTITY_TYPES] },
               seed_node_id: { type: 'string' },
@@ -389,6 +395,7 @@ export function createEdgesComponent(): BrainComponent {
             "Render an interactive HTML force-directed graph of a project's briefs and typed edges. Briefs are nodes, typed edges are connections, goals appear as anchor nodes when at least one brief in the project links to them via serves_goal. Output is a single self-contained HTML file (vis-network via CDN, vanilla JS, no build step). Soft-deleted edges are excluded. Brief content is capped at 8 KB per brief to bound output size. Returns the output path, node/edge/goal counts, top god nodes by degree, and render time.",
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',

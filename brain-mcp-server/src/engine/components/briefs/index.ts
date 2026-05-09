@@ -77,6 +77,7 @@ export function createBriefsComponent(): BrainComponent {
           description: 'Sync a brief status change to the Igris brain. Called when brief status changes during /hunt, /rest, or /archive. Uses upsert to maintain one record per project+brief_id.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -170,6 +171,7 @@ export function createBriefsComponent(): BrainComponent {
           description: 'Display a cross-project brief dashboard showing all tracked briefs with status counts. Supports filtering by status and project. Use summary_only=true to get only aggregate counts (by status and priority) without the full briefs table — ideal for /scan and /awaken where only counts are needed.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               status: {
                 type: 'string',
@@ -192,6 +194,7 @@ export function createBriefsComponent(): BrainComponent {
           description: 'Get a single brief by project and brief_id. Returns content (from brief_files) and metadata (from brief_status). Falls back to metadata-only if no content is stored.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -211,6 +214,7 @@ export function createBriefsComponent(): BrainComponent {
           description: 'List briefs with optional filters and pagination. Supports filtering by project, status, brief_type, and priority. Returns paginated results (default 25 per page) with total count. Set limit=0 to return all.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -249,6 +253,7 @@ export function createBriefsComponent(): BrainComponent {
           description: 'Create a new brief with content and metadata. Atomically inserts into both brief_files and brief_status. Use this to store a complete brief in the brain.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -338,6 +343,7 @@ export function createBriefsComponent(): BrainComponent {
           description: 'Update an existing brief\'s content and/or metadata. Only updates fields that are provided. Supports partial updates to both brief_files and brief_status.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -433,6 +439,7 @@ export function createBriefsComponent(): BrainComponent {
           description: 'Compute brief completion velocity metrics. Returns weekly completion counts, overall completion rate, and a week-over-week trend indicator.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -454,6 +461,7 @@ export function createBriefsComponent(): BrainComponent {
           description: 'Find briefs that are semantically similar to a query. Uses vector embeddings to detect near-duplicate briefs. Returns matches above the cosine similarity threshold (default: 0.85).',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               query: {
                 type: 'string',
@@ -481,6 +489,7 @@ export function createBriefsComponent(): BrainComponent {
           description: 'Batch-generate embeddings for existing briefs that lack them. Processes briefs in batches -- run multiple times to process all. Resumable: only processes briefs without embeddings.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               batch_size: {
                 type: 'number',

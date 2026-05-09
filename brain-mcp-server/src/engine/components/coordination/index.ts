@@ -204,6 +204,7 @@ export function createCoordinationComponent(): BrainComponent {
           description: 'Set capabilities for an agent (replaces all existing). Used for capability-based task matching in igris_task_next.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               agent: {
                 type: 'string',
@@ -228,6 +229,7 @@ export function createCoordinationComponent(): BrainComponent {
           description: 'List agent capabilities, optionally filtered by agent. Returns capabilities grouped by agent name.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               agent: {
                 type: 'string',
@@ -246,6 +248,7 @@ export function createCoordinationComponent(): BrainComponent {
           description: 'Run the autonomous priority adjustment algorithm. Boosts overdue tasks, unblocks stale blocked tasks, and adjusts priorities. Logs all changes in the audit trail.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               dry_run: {
                 type: 'boolean',
@@ -287,6 +290,7 @@ export function createCoordinationComponent(): BrainComponent {
           description: 'Auto-assign pending tasks to online agents by capability match. Respects auto_route_enabled config. Matches tasks by required_capabilities against agent capabilities of active instances.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               dry_run: {
                 type: 'boolean',
@@ -329,6 +333,7 @@ export function createCoordinationComponent(): BrainComponent {
           description: 'Set a coordination configuration value. Keys: autonomous_enabled, max_retries_default, priority_ceiling, priority_floor, self_healing_enabled.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               key: {
                 type: 'string',
@@ -352,6 +357,7 @@ export function createCoordinationComponent(): BrainComponent {
           description: 'Get coordination configuration. Provide a key to get a single value, or omit to get all configuration.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               key: {
                 type: 'string',
@@ -370,6 +376,7 @@ export function createCoordinationComponent(): BrainComponent {
           description: 'Query the autonomous decisions audit trail. Filter by decision_type, task_id, agent, or time range.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               decision_type: {
                 type: 'string',

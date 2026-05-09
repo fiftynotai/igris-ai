@@ -37,6 +37,7 @@ export function createErrorsComponent(): BrainComponent {
           description: 'Look up known solutions for an error, or store a new error/solution pair. Uses fingerprinting to match errors regardless of file paths or line numbers. When called without a solution, searches for matching errors. When called with a solution, stores or updates the error record.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               message: {
                 type: 'string',
@@ -66,6 +67,7 @@ export function createErrorsComponent(): BrainComponent {
           description: 'Find semantically similar errors using hybrid BM25 + vector search. Uses both keyword matching and meaning-based similarity to find related errors across projects. Falls back to BM25-only if vector search is unavailable.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               message: {
                 type: 'string',
@@ -93,6 +95,7 @@ export function createErrorsComponent(): BrainComponent {
           description: 'Batch-generate embeddings for existing errors that lack them. Only processes errors with solutions. Resumable: only processes errors without embeddings.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               batch_size: {
                 type: 'number',

@@ -45,6 +45,7 @@ export function createMetricsComponent(): BrainComponent {
           description: 'Record an agent performance metric. Call this after each agent action to track success rates, durations, and retry counts.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -89,6 +90,7 @@ export function createMetricsComponent(): BrainComponent {
           description: 'Query agent performance metrics with summary statistics. Shows success rate by agent, average duration, and recent entries.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -111,6 +113,7 @@ export function createMetricsComponent(): BrainComponent {
           description: 'Generate a velocity dashboard showing brief completion rates per week, average completion time, agent utilization, and week-over-week trends.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',

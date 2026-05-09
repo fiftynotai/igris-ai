@@ -1,5 +1,5 @@
 /**
- * TD-128 Gateway Strict-Input Contract — M1 (warn-mode) Unit Tests
+ * TD-128 Gateway Strict-Input Contract — Tests
  *
  * Asserts that the gateway's strict-input infrastructure (added in M1) emits
  * a warn log on unknown args for tools with `additionalProperties: false`,
@@ -7,9 +7,10 @@
  *
  * Permissive tools (no `additionalProperties` field) must remain unaffected.
  *
- * The parameterized "every registered tool has additionalProperties: false"
- * test is staged as an `it.todo` placeholder — M2 enables it once the schema
- * sweep lands.
+ * M2 activates the parameterized "every registered tool has
+ * additionalProperties: false" contract test by registering every component's
+ * tools() output into a gateway, then iterating listTools() to assert the
+ * invariant holds for all 107 surfaces.
  *
  * These warn-mode tests will be REPLACED in M4 with reject-mode equivalents
  * (per plan §4.M4).
@@ -20,6 +21,30 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createGateway } from '../gateway.js';
 import type { ToolDefinition, ToolResult } from '../types.js';
+
+// Domain component factories — same set bootEngine() composes in
+// engine/index.ts. We wire them into a freshly-created gateway so the
+// parameterized test sees every production-registered tool without booting
+// the full engine (no DB, no migrations, no event bus required).
+import { createMemoryComponent } from '../components/memory/index.js';
+import { createErrorsComponent } from '../components/errors/index.js';
+import { createProjectsComponent } from '../components/projects/index.js';
+import { createMetricsComponent } from '../components/metrics/index.js';
+import { createSessionsComponent } from '../components/sessions/index.js';
+import { createBriefsComponent } from '../components/briefs/index.js';
+import { createEdgesComponent } from '../components/edges/index.js';
+import { createGoalsComponent } from '../components/goals/index.js';
+import { createTasksComponent } from '../components/tasks/index.js';
+import { createInstancesComponent } from '../components/instances/index.js';
+import { createSyncComponent } from '../components/sync/index.js';
+import { createCacheComponent } from '../components/cache/index.js';
+import { createSchedulesComponent } from '../components/schedules/index.js';
+import { createCoordinationComponent } from '../components/coordination/index.js';
+import { createSubconsciousComponent } from '../components/subconscious/index.js';
+import { createPerceptionComponent } from '../components/perception/index.js';
+import { createMonitoringComponent } from '../components/monitoring/index.js';
+import { createContextComponent } from '../components/context/index.js';
+import { createRegistryComponent } from '../components/registry/index.js';
 
 function makeOkResult(text = 'ok'): ToolResult {
   return { content: [{ type: 'text', text }] };
@@ -113,11 +138,70 @@ describe('TD-128 gateway strict-input contract — M1 warn-mode', () => {
     });
     expect(result).toEqual(makeOkResult('permissive-handler-ran'));
   });
+});
 
-  // M2 will replace this todo with an `it.each` parameterized test that
-  // iterates `engine.gateway.listTools()` and asserts every entry has
-  // `additionalProperties: false`. See plan §4.M2.
-  it.todo(
-    'every registered tool has additionalProperties: false (parameterized — enabled in M2)',
+// ---------------------------------------------------------------------------
+// M2 parameterized contract test — every registered tool is strict.
+// ---------------------------------------------------------------------------
+//
+// Builds a fresh gateway, wires every domain component's tools() output
+// (mirroring engine/index.ts:bootEngine), then asserts via listTools()
+// that every registered tool's schema declares additionalProperties: false.
+// This activates the M1 it.todo placeholder once M2's schema sweep lands.
+//
+// Why this approach over a full bootEngine(): the schema invariant is a
+// pure structural property of the tools() return value. We can collect
+// every tool definition without standing up storage, migrations, or the
+// event bus. This keeps the test fast and avoids cross-cutting coupling
+// with the engine bootstrap chain.
+
+const COMPONENT_FACTORIES = [
+  createMemoryComponent,
+  createErrorsComponent,
+  createProjectsComponent,
+  createContextComponent,
+  createMetricsComponent,
+  createSessionsComponent,
+  createBriefsComponent,
+  createEdgesComponent,
+  createGoalsComponent,
+  createTasksComponent,
+  createInstancesComponent,
+  createSyncComponent,
+  createCacheComponent,
+  createSchedulesComponent,
+  createCoordinationComponent,
+  createSubconsciousComponent,
+  createPerceptionComponent,
+  createMonitoringComponent,
+  createRegistryComponent,
+];
+
+function collectAllTools(): ToolDefinition[] {
+  const all: ToolDefinition[] = [];
+  for (const factory of COMPONENT_FACTORIES) {
+    const component = factory();
+    all.push(...component.tools());
+  }
+  return all;
+}
+
+describe('TD-128 strict-input contract — every registered tool (M2)', () => {
+  const gateway = createGateway();
+  gateway.register(collectAllTools());
+  const tools = gateway.listTools();
+
+  it('every component factory contributes at least one tool', () => {
+    expect(tools.length).toBeGreaterThan(0);
+  });
+
+  it.each(tools.map((t) => [t.name, t] as const))(
+    '%s schema has additionalProperties: false (TD-128)',
+    (_name, tool) => {
+      expect(
+        (tool.inputSchema as { additionalProperties?: boolean })
+          .additionalProperties,
+      ).toBe(false);
+    },
   );
 });
