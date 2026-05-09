@@ -208,6 +208,70 @@ function mcpToolForOperation(op: string): string | null {
 }
 
 /**
+ * TD-128 M3 — caller-side strict allow-list for queue replay.
+ *
+ * Each set MUST mirror the corresponding tool's `inputSchema.properties`
+ * keys in `brain-mcp-server/src/engine/components/briefs/index.ts`. The
+ * brain gateway runs in warn-mode today (TD-128 M1) and will reject
+ * extras at M4 — keeping these allow-lists in sync with the brain-side
+ * schemas forecloses the silent-data-forwarding failure that the
+ * previous `Object.entries(entry)` spread enabled.
+ *
+ * NOTE on `cache_path`: NOT in this allow-list because callers of
+ * `buildToolArgs` resolve `cache_path → content` BEFORE forwarding
+ * (see `dispatchEntry`). The resolved `content` IS in the allow-list.
+ */
+const ALLOWED_KEYS_PER_OP: Record<string, ReadonlySet<string>> = {
+  // Mirrors igris_brief_sync inputSchema.properties (briefs/index.ts:81-114).
+  brief_sync: new Set([
+    "project",
+    "brief_id",
+    "brief_type",
+    "title",
+    "status",
+    "priority",
+    "effort",
+    "phase",
+  ]),
+  // Mirrors igris_brief_create inputSchema.properties (briefs/index.ts:257-302).
+  brief_create: new Set([
+    "project",
+    "brief_id",
+    "title",
+    "content",
+    "filename",
+    "brief_type",
+    "status",
+    "priority",
+    "effort",
+    "phase",
+    "parent_brief",
+  ]),
+};
+
+/**
+ * Build the MCP tool args object for a queue entry, restricting forwarded
+ * keys to the allow-list for the entry's operation. Drops `operation`
+ * (the dispatcher's discriminator) and any historical/legacy fields not
+ * declared in the brain's strict schema.
+ *
+ * Throws on unknown op — `dispatchEntry` already gates on a known op via
+ * `mcpToolForOperation`, so this is a defensive invariant.
+ */
+function buildToolArgs(op: string, entry: QueueEntry): Record<string, unknown> {
+  const allowed = ALLOWED_KEYS_PER_OP[op];
+  if (!allowed) {
+    throw new Error(`buildToolArgs: no allow-list for op '${op}'`);
+  }
+  const result: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(entry)) {
+    if (k === "operation") continue;
+    if (allowed.has(k)) result[k] = v;
+  }
+  return result;
+}
+
+/**
  * Replay a single queue entry as an MCP call. Returns process exit code
  * (0 on success, 1 on failure).
  *
@@ -230,20 +294,14 @@ async function dispatchEntry(
     return 1;
   }
 
-  // Build the tool args. Strip `operation` (it's the dispatcher's discriminator,
-  // not a tool arg) and pass everything else through.
-  const toolArgs: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(entry)) {
-    if (k === "operation") continue;
-    toolArgs[k] = v;
-  }
-
-  // brief_create + cache_path: read content from disk and inline it.
-  if (op === "brief_create" && typeof toolArgs.cache_path === "string") {
-    const cachePath = toolArgs.cache_path as string;
+  // TD-128 M3 — resolve cache_path → content BEFORE allow-list filtering.
+  // We mutate a shallow copy so the original entry stays untouched (test
+  // assertions and downstream callers may inspect it).
+  const resolved: QueueEntry = { ...entry };
+  if (op === "brief_create" && typeof resolved.cache_path === "string") {
+    const cachePath = resolved.cache_path;
     try {
-      const content = readFileSync(cachePath, "utf-8");
-      toolArgs.content = content;
+      resolved.content = readFileSync(cachePath, "utf-8");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logError(
@@ -251,8 +309,13 @@ async function dispatchEntry(
       );
       return 1;
     }
-    delete toolArgs.cache_path;
+    delete resolved.cache_path;
   }
+
+  // Build tool args via strict per-op allow-list (TD-128 M3). Any field
+  // not declared in the brain's inputSchema.properties is dropped here,
+  // matching warn-mode (M1) and the upcoming reject-mode (M4) contract.
+  const toolArgs = buildToolArgs(op, resolved);
 
   const result = await mcpCall(remote, tool, toolArgs);
   if (result.statusCode === 200) {

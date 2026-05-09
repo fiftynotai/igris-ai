@@ -384,6 +384,134 @@ describe("sync data — runSyncData", () => {
     }
   });
 
+  // ---------------------------------------------------------------------
+  // TD-128 M3: caller-side strict allow-list for queue replay.
+  //
+  // The previous `Object.entries(entry)` spread forwarded EVERY queue-entry
+  // field — including legacy/unknown keys — to the MCP tool. The brain
+  // gateway's strict-input contract (TD-128) now warns (M1) and will
+  // reject (M4) on extras. The two cases below pin the new behavior:
+  // unknown keys are stripped before mcpCall, while cache_path → content
+  // substitution still works under the allow-list discipline.
+  // ---------------------------------------------------------------------
+  it("dispatchEntry strips queue-entry fields not in the tool's allow-list before mcpCall (TD-128 M3)", async () => {
+    const lb = makeLoopback(() => ({
+      status: 200,
+      body: JSON.stringify({ ok: true }),
+    }));
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+    writeConfig({
+      remote_brain: { url: `http://127.0.0.1:${lb.port()}`, api_key: "k" },
+    });
+
+    // Queue a brief_sync entry that ALSO carries legacy/unknown fields.
+    // Under the strict allow-list these MUST NOT be forwarded.
+    writeQueue("demo", [
+      JSON.stringify({
+        operation: "brief_sync",
+        project: "demo",
+        brief_id: "TD-400",
+        title: "strict-test",
+        status: "ACTIVE",
+        // Legacy/unknown fields — must be stripped before forwarding.
+        __legacy_extra: "legacy-value",
+        deprecated_field: 42,
+        random_garbage: { nested: true },
+      }),
+    ]);
+
+    try {
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "demo" });
+      expect(code).toBe(0);
+
+      // 1 per-entry replay + 1 drain.
+      expect(lb.calls.length).toBe(2);
+      const replay = lb.calls[0];
+      expect(replay.toolName).toBe("igris_brief_sync");
+
+      // Allow-list keys ARE forwarded.
+      expect(replay.args?.project).toBe("demo");
+      expect(replay.args?.brief_id).toBe("TD-400");
+      expect(replay.args?.title).toBe("strict-test");
+      expect(replay.args?.status).toBe("ACTIVE");
+
+      // Unknown keys MUST NOT appear — caller-side allow-list strips them
+      // before the MCP boundary.
+      expect(replay.args?.__legacy_extra).toBeUndefined();
+      expect(replay.args?.deprecated_field).toBeUndefined();
+      expect(replay.args?.random_garbage).toBeUndefined();
+
+      // `operation` discriminator is also stripped (existing contract).
+      expect(replay.args?.operation).toBeUndefined();
+    } finally {
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+
+  it("dispatchEntry preserves cache_path→content substitution under strict allow-list (TD-128 M3)", async () => {
+    const lb = makeLoopback(() => ({
+      status: 200,
+      body: JSON.stringify({ ok: true }),
+    }));
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+    writeConfig({
+      remote_brain: { url: `http://127.0.0.1:${lb.port()}`, api_key: "k" },
+    });
+
+    // Fixture cache file.
+    const cacheDir = join(tmpBrain, "cache");
+    mkdirSync(cacheDir, { recursive: true });
+    const cachePath = join(cacheDir, "TD-401.md");
+    const cacheContents = "# TD-401: strict-allow-list cache-path test\n\nbody.";
+    writeFileSync(cachePath, cacheContents);
+
+    // brief_create entry with cache_path AND a stray unknown field.
+    writeQueue("demo", [
+      JSON.stringify({
+        operation: "brief_create",
+        project: "demo",
+        brief_id: "TD-401",
+        title: "cache-strict-test",
+        cache_path: cachePath,
+        // Allow-list: forwarded.
+        priority: "P3-Low",
+        // Not in allow-list: must be stripped.
+        __legacy_extra: "should-be-dropped",
+      }),
+    ]);
+
+    try {
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "demo" });
+      expect(code).toBe(0);
+
+      expect(lb.calls.length).toBe(2);
+      const replay = lb.calls[0];
+      expect(replay.toolName).toBe("igris_brief_create");
+
+      // cache_path → content substitution still works.
+      expect(replay.args?.content).toBe(cacheContents);
+      // cache_path NOT in allow-list — must be absent post-resolution.
+      expect(replay.args?.cache_path).toBeUndefined();
+
+      // Other allow-list keys forwarded.
+      expect(replay.args?.project).toBe("demo");
+      expect(replay.args?.brief_id).toBe("TD-401");
+      expect(replay.args?.title).toBe("cache-strict-test");
+      expect(replay.args?.priority).toBe("P3-Low");
+
+      // Unknown key stripped.
+      expect(replay.args?.__legacy_extra).toBeUndefined();
+    } finally {
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+
   it("brief_create with missing cache_path file: exit 1, queue preserved, drain NOT called (TD-119)", async () => {
     const lb = makeLoopback(() => ({
       status: 200,
