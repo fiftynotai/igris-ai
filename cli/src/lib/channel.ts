@@ -25,6 +25,10 @@
 import { request as httpsRequest } from "node:https";
 import type { Channel } from "../types.js";
 
+/** Test seam: same shape as `node:https`'s `request`. Tests can pass a
+ *  `node:http`-flavored function pointing at a loopback server. */
+export type HttpsRequestFn = typeof httpsRequest;
+
 export const DEFAULT_OWNER = "fifty-ai";
 export const DEFAULT_REPO = "igris-ai";
 
@@ -146,12 +150,25 @@ export async function resolveChannel(
 }
 
 /**
- * Internal: simple HTTPS GET that buffers the response as a UTF-8
- * string. Honors GITHUB_TOKEN for rate-limit headroom (Risk #1).
- * Used by `fetchLatestReleaseTag`. NOT used by the tarball fetcher
- * (which streams bytes directly).
+ * Internal: simple HTTPS GET that buffers the response as a UTF-8 string.
+ * Production caller. Honors GITHUB_TOKEN for rate-limit headroom (Risk #1).
+ * Used by `fetchLatestReleaseTag`. NOT used by the tarball fetcher (which
+ * streams bytes directly).
  */
 function httpsGetJson(url: string): Promise<string> {
+  return _httpsGetJsonForTest(url, httpsRequest);
+}
+
+/**
+ * Test seam — same as `httpsGetJson` but with the request factory injected,
+ * letting tests substitute `node:http` against a loopback server (no TLS
+ * plumbing). The `_` prefix marks this as not-public-API; callers outside
+ * tests should always use `httpsGetJson`. (TD-127.)
+ */
+export function _httpsGetJsonForTest(
+  url: string,
+  requestFn: HttpsRequestFn,
+): Promise<string> {
   return new Promise<string>((resolveP, rejectP) => {
     const headers: Record<string, string> = {
       "User-Agent": "igris-ai-cli",
@@ -161,7 +178,7 @@ function httpsGetJson(url: string): Promise<string> {
     if (token !== undefined && token.length > 0) {
       headers.Authorization = `Bearer ${token}`;
     }
-    const req = httpsRequest(
+    const req = requestFn(
       url,
       { method: "GET", headers },
       (res) => {
@@ -173,10 +190,10 @@ function httpsGetJson(url: string): Promise<string> {
           res.headers.location !== undefined
         ) {
           res.resume();
-          httpsGetJson(new URL(res.headers.location, url).toString()).then(
-            resolveP,
-            rejectP,
-          );
+          _httpsGetJsonForTest(
+            new URL(res.headers.location, url).toString(),
+            requestFn,
+          ).then(resolveP, rejectP);
           return;
         }
         if (status < 200 || status >= 300) {

@@ -34,19 +34,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
+import { makeLoopback } from "./loopback.js";
 
 let tmpBrain: string;
 const envBackup: Record<string, string | undefined> = {};
-
-interface CapturedCall {
-  jsonrpc?: string;
-  method?: string;
-  toolName?: string;
-  args?: Record<string, unknown>;
-  rawBody: string;
-}
 
 function writeConfig(content: Record<string, unknown>): void {
   writeFileSync(
@@ -61,54 +52,6 @@ function writeQueue(slug: string, lines: string[]): string {
   const queuePath = join(dir, "sync_queue.jsonl");
   writeFileSync(queuePath, lines.join("\n") + (lines.length > 0 ? "\n" : ""));
   return queuePath;
-}
-
-/**
- * Helper: build a loopback server that captures every MCP call's parsed
- * JSON-RPC body and lets the test choose how to respond.
- *
- * `respond(call, callIndex)` returns `{ status, body }` where body is
- * stringified before being sent.
- */
-function makeLoopback(
-  respond: (call: CapturedCall, callIndex: number) =>
-    | { status: number; body: string }
-    | Promise<{ status: number; body: string }>,
-): { server: ReturnType<typeof createServer>; calls: CapturedCall[]; port: () => number } {
-  const calls: CapturedCall[] = [];
-  const server = createServer(
-    (req: IncomingMessage, res: ServerResponse) => {
-      let buf = "";
-      req.on("data", (chunk: Buffer) => {
-        buf += chunk.toString("utf-8");
-      });
-      req.on("end", async () => {
-        const call: CapturedCall = { rawBody: buf };
-        try {
-          const parsed = JSON.parse(buf) as {
-            jsonrpc?: string;
-            method?: string;
-            params?: { name?: string; arguments?: Record<string, unknown> };
-          };
-          call.jsonrpc = parsed.jsonrpc;
-          call.method = parsed.method;
-          call.toolName = parsed.params?.name;
-          call.args = parsed.params?.arguments;
-        } catch {
-          // leave fields undefined
-        }
-        calls.push(call);
-        const { status, body } = await respond(call, calls.length - 1);
-        res.writeHead(status, { "Content-Type": "application/json" });
-        res.end(body);
-      });
-    },
-  );
-  return {
-    server,
-    calls,
-    port: () => (server.address() as AddressInfo).port,
-  };
 }
 
 beforeEach(() => {
