@@ -7,9 +7,7 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
-import { request as httpRequest } from "node:http";
 import {
-  _httpsGetJsonForTest,
   ChannelResolveError,
   DEFAULT_OWNER,
   DEFAULT_REPO,
@@ -19,7 +17,6 @@ import {
   resolveChannel,
   tagTarballUrl,
 } from "../lib/channel.js";
-import { makeLoopback } from "./loopback.js";
 
 afterEach(() => {
   delete process.env.IGRIS_GITHUB_OWNER;
@@ -171,60 +168,7 @@ describe("channel — distinct error messages on failure (TD-124)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// TD-127: direct HTTP-branch coverage via injectable requestFn seam.
-//
-// Companion to TD-124's propagation tests above. Those evidence that
-// distinct error messages reach the verb layer; these evidence that the
-// 404 / 5xx / network-closed code paths inside _httpsGetJsonForTest itself
-// produce the right ChannelResolveError. Together: full coverage of the
-// failure-message contract.
-//
-// The `httpRequest as never` cast is used because node:http and node:https
-// `request` signatures differ subtly at the type level; runtime call shape
-// is identical (URL string + options + callback).
-// ---------------------------------------------------------------------------
-describe("_httpsGetJsonForTest — direct HTTP error branches (TD-127)", () => {
-  it("404 response → 'No release published yet' ChannelResolveError", async () => {
-    const lb = makeLoopback(() => ({ status: 404, body: "Not Found" }));
-    lb.server.listen(0);
-    try {
-      await new Promise<void>((r) => lb.server.once("listening", () => r()));
-      const url = `http://127.0.0.1:${lb.port()}/repos/x/y/releases/latest`;
-      await expect(
-        _httpsGetJsonForTest(url, httpRequest as never),
-      ).rejects.toThrow(/No release published yet/);
-      expect(lb.calls).toHaveLength(1);
-    } finally {
-      lb.server.close();
-    }
-  });
-
-  it("503 response → 'transient — retry' ChannelResolveError", async () => {
-    const lb = makeLoopback(() => ({ status: 503, body: "Service Unavailable" }));
-    lb.server.listen(0);
-    try {
-      await new Promise<void>((r) => lb.server.once("listening", () => r()));
-      const url = `http://127.0.0.1:${lb.port()}/repos/x/y/releases/latest`;
-      await expect(
-        _httpsGetJsonForTest(url, httpRequest as never),
-      ).rejects.toThrow(/transient — retry/);
-    } finally {
-      lb.server.close();
-    }
-  });
-
-  it("connection refused (server not listening) → 'unreachable' ChannelResolveError", async () => {
-    // Pick a port, immediately close the server so connect() is refused.
-    const lb = makeLoopback(() => ({ status: 200, body: "{}" }));
-    lb.server.listen(0);
-    await new Promise<void>((r) => lb.server.once("listening", () => r()));
-    const port = lb.port();
-    lb.server.close();
-    await new Promise<void>((r) => lb.server.once("close", () => r()));
-    const url = `http://127.0.0.1:${port}/repos/x/y/releases/latest`;
-    await expect(
-      _httpsGetJsonForTest(url, httpRequest as never),
-    ).rejects.toThrow(/unreachable/);
-  });
-});
+// TD-127's direct-HTTP-branch tests for the _httpsGetJsonForTest seam were
+// migrated to `cli/src/__tests__/http.test.ts` in TD-132 when the seam itself
+// was lifted to `cli/src/lib/http.ts`. The propagation tests above (TD-124)
+// remain here since they exercise resolveChannel's contract.

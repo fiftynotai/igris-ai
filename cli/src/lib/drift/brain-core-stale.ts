@@ -16,10 +16,10 @@
  * GitHub via `node:https`.
  */
 
-import { request as httpsRequest } from "node:https";
 import { readInstallSource } from "../install-source.js";
 import type { DriftRow } from "../../types.js";
 import { repoOwner, repoName } from "../channel.js";
+import { httpsGetJson } from "../http.js";
 
 export interface BrainCoreStaleOptions {
   /** Test seam — swap the GitHub head-SHA fetcher. */
@@ -57,7 +57,11 @@ export async function detectBrainCoreStale(
     headSha = await fn(installSrc.channel, installSrc.ref);
   } catch {
     // Network failure — we cannot positively assert staleness. Return null
-    // (don't flag drift on a flaky network).
+    // (don't flag drift on a flaky network). TD-132: this catch now also
+    // swallows ChannelResolveError from the shared http.ts helper, which
+    // is intentional — the user-facing contract is "silent on network
+    // trouble", and the richer TD-124 error messages are kept for future
+    // observability surfaces.
     return null;
   }
 
@@ -118,56 +122,9 @@ async function fetchChannelHeadSha(
   return sha;
 }
 
-function httpsGetJson(url: string): Promise<string> {
-  return new Promise<string>((resolveP, rejectP) => {
-    const headers: Record<string, string> = {
-      "User-Agent": "igris-ai-cli",
-      Accept: "application/vnd.github+json",
-    };
-    const token = process.env.GITHUB_TOKEN;
-    if (token !== undefined && token.length > 0) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-    const req = httpsRequest(
-      url,
-      { method: "GET", headers },
-      (res) => {
-        const status = res.statusCode ?? 0;
-        if (
-          status >= 300 &&
-          status < 400 &&
-          res.headers.location !== undefined
-        ) {
-          res.resume();
-          httpsGetJson(new URL(res.headers.location, url).toString()).then(
-            resolveP,
-            rejectP,
-          );
-          return;
-        }
-        if (status < 200 || status >= 300) {
-          res.resume();
-          rejectP(
-            new Error(`GET ${url} -> HTTP ${status} ${res.statusMessage ?? ""}`),
-          );
-          return;
-        }
-        const chunks: Buffer[] = [];
-        res.on("data", (c: Buffer) => chunks.push(c));
-        res.on("end", () => {
-          resolveP(Buffer.concat(chunks).toString("utf-8"));
-        });
-        res.on("error", (err) => {
-          rejectP(new Error(`response error: ${err.message}`));
-        });
-      },
-    );
-    req.on("error", (err) => {
-      rejectP(new Error(`request error: ${err.message}`));
-    });
-    req.setTimeout(10_000, () => {
-      req.destroy(new Error(`GET ${url}: timeout after 10000ms`));
-    });
-    req.end();
-  });
-}
+// httpsGetJson was lifted to `cli/src/lib/http.ts` in TD-132 so this
+// helper and channel.ts share TD-124-hardened error classification
+// (404 / 5xx / network distinct ChannelResolveError messages). Behavior
+// change: timeout extends 10s → 15s (channel.ts's value); error type
+// becomes ChannelResolveError (subclass of Error) — caller's
+// `catch { return null }` swallows both as before.

@@ -237,6 +237,15 @@ describe('FR-113 graph traversal — MCP roundtrip', () => {
 describe('FR-113 graph traversal — performance', () => {
   let db: Database.Database;
 
+  // TD-131: histogram constants for warm-cache P95 stability.
+  // Sentinel observed 7.93ms P95 on pre-TD-126 baseline (5+ runs, dev laptop).
+  // 100 samples + 5 warm-up iters drops scheduler-noise impact below the
+  // architecturally-recorded threshold. If this still flakes after the
+  // forger's 5-consecutive-runs validation, bump WARM_CACHE_P95_MS to 10.
+  const WARM_CACHE_P95_MS = 5;
+  const WARM_CACHE_SAMPLES = 100;
+  const WARM_CACHE_WARMUP_ITERS = 5;
+
   beforeEach(() => {
     vi.clearAllMocks();
     db = createTestDb();
@@ -333,17 +342,27 @@ describe('FR-113 graph traversal — performance', () => {
     expect(p95).toBeLessThan(100);
   });
 
-  it('subgraph(max_nodes=20) warm cache P95 < 5ms', async () => {
+  it(`subgraph(max_nodes=20) warm cache P95 < ${WARM_CACHE_P95_MS}ms`, async () => {
     const { handleGraphSubgraph } = await import('../components/edges/traversal.js');
-    // Prime cache with a single seed
+    // Prime cache with the seed we'll measure.
     handleGraphSubgraph({
       seed_node_type: 'brief',
       seed_node_id: 'N-0',
       max_nodes: 20,
     });
 
+    // Warm-up: discard the first WARM_CACHE_WARMUP_ITERS to settle V8
+    // inline caches and SQLite statement caches before the measured loop.
+    for (let i = 0; i < WARM_CACHE_WARMUP_ITERS; i++) {
+      handleGraphSubgraph({
+        seed_node_type: 'brief',
+        seed_node_id: 'N-0',
+        max_nodes: 20,
+      });
+    }
+
     const samples: number[] = [];
-    for (let i = 0; i < 50; i++) {
+    for (let i = 0; i < WARM_CACHE_SAMPLES; i++) {
       const start = performance.now();
       handleGraphSubgraph({
         seed_node_type: 'brief',
@@ -354,9 +373,12 @@ describe('FR-113 graph traversal — performance', () => {
     }
     samples.sort((a, b) => a - b);
     const p95 = samples[Math.floor(samples.length * 0.95)];
+    const median = samples[Math.floor(samples.length * 0.5)];
     // eslint-disable-next-line no-console
-    console.log(`[bench] subgraph warm-cache P95: ${p95.toFixed(2)}ms (median ${samples[25].toFixed(2)}ms)`);
-    expect(p95).toBeLessThan(5);
+    console.log(
+      `[bench] subgraph warm-cache P95: ${p95.toFixed(2)}ms (median ${median.toFixed(2)}ms, n=${WARM_CACHE_SAMPLES})`,
+    );
+    expect(p95).toBeLessThan(WARM_CACHE_P95_MS);
   });
 });
 
