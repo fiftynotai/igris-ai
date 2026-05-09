@@ -5,6 +5,8 @@
  * in the monolithic index.ts. Tools are registered by domain components
  * and dispatched by name via a Map lookup.
  *
+ * See ../../CLAUDE.md for the strict-input contract this gateway enforces (TD-128).
+ *
  * @module engine/gateway
  * @author Fifty.ai
  */
