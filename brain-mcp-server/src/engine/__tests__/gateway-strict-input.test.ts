@@ -1,24 +1,22 @@
 /**
  * TD-128 Gateway Strict-Input Contract — Tests
  *
- * Asserts that the gateway's strict-input infrastructure (added in M1) emits
- * a warn log on unknown args for tools with `additionalProperties: false`,
- * and that the warn does NOT block the dispatch (handler still receives args).
+ * Asserts that the gateway's strict-input contract (M4 reject-mode) THROWS
+ * on unknown args for tools with `additionalProperties: false`. The handler
+ * is NOT invoked when an extra arg is detected.
  *
- * Permissive tools (no `additionalProperties` field) must remain unaffected.
+ * Permissive tools (no `additionalProperties` field) must remain unaffected
+ * — they accept any args and pass them through to their handler.
  *
- * M2 activates the parameterized "every registered tool has
- * additionalProperties: false" contract test by registering every component's
- * tools() output into a gateway, then iterating listTools() to assert the
- * invariant holds for all 107 surfaces.
- *
- * These warn-mode tests will be REPLACED in M4 with reject-mode equivalents
- * (per plan §4.M4).
+ * The parameterized "every registered tool has additionalProperties: false"
+ * contract test registers every component's tools() output into a gateway,
+ * then iterates listTools() to assert the invariant holds for all
+ * production-registered surfaces.
  *
  * @module engine/__tests__/gateway-strict-input.test
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createGateway } from '../gateway.js';
 import type { ToolDefinition, ToolResult } from '../types.js';
 
@@ -50,18 +48,8 @@ function makeOkResult(text = 'ok'): ToolResult {
   return { content: [{ type: 'text', text }] };
 }
 
-describe('TD-128 gateway strict-input contract — M1 warn-mode', () => {
-  let warnSpy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-  });
-
-  afterEach(() => {
-    warnSpy.mockRestore();
-  });
-
-  it('strict tool emits warn on unknown arg but still dispatches to handler', async () => {
+describe('TD-128 gateway strict-input contract — M4 reject-mode', () => {
+  it('strict tool throws on unknown arg with tool name + key + accepted keys list', async () => {
     const gateway = createGateway();
     const handler = vi.fn(async (_args: Record<string, unknown>) =>
       makeOkResult('strict-handler-ran'),
@@ -78,31 +66,51 @@ describe('TD-128 gateway strict-input contract — M1 warn-mode', () => {
     };
     gateway.register([tool]);
 
-    const result = await gateway.dispatch('igris_test_strict', {
+    await expect(
+      gateway.dispatch('igris_test_strict', {
+        project: 'igris-ai',
+        brief_id: 'TD-128',
+        bogus_extra: 'should-throw',
+      }),
+    ).rejects.toThrowError(
+      /igris_test_strict: unknown argument 'bogus_extra'\. Accepted keys: project, brief_id\. \(strict-input contract; TD-128\)/,
+    );
+
+    // Handler MUST NOT have been invoked when reject-mode triggers.
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('strict tool dispatches cleanly when only allowed args are passed', async () => {
+    const gateway = createGateway();
+    const handler = vi.fn(async (_args: Record<string, unknown>) =>
+      makeOkResult('strict-handler-ran'),
+    );
+    const tool: ToolDefinition = {
+      name: 'igris_test_strict_clean',
+      description: 'TD-128 test fixture (strict, clean call)',
+      inputSchema: {
+        type: 'object',
+        properties: { project: {}, brief_id: {} },
+        additionalProperties: false,
+      },
+      handler,
+    };
+    gateway.register([tool]);
+
+    const result = await gateway.dispatch('igris_test_strict_clean', {
       project: 'igris-ai',
       brief_id: 'TD-128',
-      bogus_extra: 'should-warn',
     });
 
-    // Warn was emitted with TD-128 marker, tool name, and offending key.
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    const warnMsg = warnSpy.mock.calls[0]?.[0] as string;
-    expect(warnMsg).toContain('[TD-128]');
-    expect(warnMsg).toContain('igris_test_strict');
-    expect(warnMsg).toContain("unknown argument 'bogus_extra'");
-    expect(warnMsg).toContain('warn-only');
-
-    // Handler still received the args unchanged (warn does NOT block).
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler).toHaveBeenCalledWith({
       project: 'igris-ai',
       brief_id: 'TD-128',
-      bogus_extra: 'should-warn',
     });
     expect(result).toEqual(makeOkResult('strict-handler-ran'));
   });
 
-  it('permissive tool (no additionalProperties) emits no warn even with extras', async () => {
+  it('permissive tool (no additionalProperties) accepts extras and dispatches', async () => {
     const gateway = createGateway();
     const handler = vi.fn(async (_args: Record<string, unknown>) =>
       makeOkResult('permissive-handler-ran'),
@@ -113,8 +121,9 @@ describe('TD-128 gateway strict-input contract — M1 warn-mode', () => {
       inputSchema: {
         type: 'object',
         properties: { project: {} },
-        // additionalProperties intentionally omitted — preserves M1+M2 transition
-        // window where un-swept schemas continue to accept extras silently.
+        // additionalProperties intentionally omitted — permissive-path
+        // tools (none currently exist post-M2 sweep, but the gateway must
+        // continue to support them for forward-compat).
       },
       handler,
     };
@@ -126,10 +135,8 @@ describe('TD-128 gateway strict-input contract — M1 warn-mode', () => {
       another_extra: true,
     });
 
-    // No warn emitted on permissive-path tools.
-    expect(warnSpy).not.toHaveBeenCalled();
-
-    // Handler received all args unchanged.
+    // Handler received all args unchanged — permissive path bypasses the
+    // strict guard entirely.
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler).toHaveBeenCalledWith({
       project: 'igris-ai',

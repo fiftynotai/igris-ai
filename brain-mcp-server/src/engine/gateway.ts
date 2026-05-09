@@ -36,12 +36,15 @@ interface RegisteredTool extends ToolDefinition {
 }
 
 /**
- * TD-128: M1 ships warn-mode; M4 flips to reject-mode after schema sweep + caller fix.
+ * TD-128 reject-mode active. Throws on extras for any tool with
+ * `additionalProperties: false`.
  *
- * When `false`, unknown args on strict tools emit a console.warn but the call proceeds.
- * When `true`, unknown args on strict tools throw a JSON-RPC-friendly error.
+ * Flag is retained (vs. inlining the throw) so a single-line revert is
+ * available if a production incident emerges. When `false`, unknown args
+ * on strict tools emit a console.warn but the call proceeds. When `true`,
+ * unknown args on strict tools throw a JSON-RPC-friendly error.
  */
-const REJECT_EXTRAS = false;
+const REJECT_EXTRAS = true;
 
 /**
  * Create an API gateway for routing tool calls to component handlers.
@@ -111,7 +114,8 @@ export function createGateway() {
     if (!tool) {
       throw new Error(`Unknown tool: ${name}`);
     }
-    // TD-128: strict-input contract. M1 warn-mode; M4 flips to reject-mode.
+    // TD-128: strict-input contract. Reject-mode active (M4) — any extra arg
+    // on a tool whose schema declares `additionalProperties: false` throws.
     if (tool._strict) {
       for (const key of Object.keys(args)) {
         if (!tool._allowedKeys.has(key)) {
@@ -120,11 +124,12 @@ export function createGateway() {
               `${name}: unknown argument '${key}'. Accepted keys: ${[...tool._allowedKeys].join(', ')}. (strict-input contract; TD-128)`,
             );
           }
-          // M1 warn path — gateway has no logger handle (createGateway takes no
-          // ComponentContext), so console.warn is the available channel.
+          // Warn-mode fallback (REJECT_EXTRAS=false) — gateway has no logger
+          // handle (createGateway takes no ComponentContext), so console.warn
+          // is the available channel.
           // eslint-disable-next-line no-console
           console.warn(
-            `[TD-128] ${name}: unknown argument '${key}' (warn-only; reject-mode lands in M4)`,
+            `[TD-128] ${name}: unknown argument '${key}' (warn-only; reject-mode disabled)`,
           );
         }
       }
