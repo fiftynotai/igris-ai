@@ -10,12 +10,14 @@ A single `pre-commit` dispatcher (`scripts/git-hooks/pre-commit`) that condition
 |---|---|---|
 | `scripts/validate_memory_agency_enums.sh` | Every enum value declared on `memory_store` (`category`, `scope`, `provenance`) appears in backticks somewhere inside the `<!-- SECTION: brain_stewardship -->` region of `core/prompts/brain_stewardship.md`. Also asserts schema-shrinkage: enum-shaped backticked tokens in the docs must still exist in the schema. Overridable via `SCHEMA_FILE` / `PROMPT_FILE` env vars. | TD-070 / DRIFT-1, TD-072 |
 | `scripts/validate_igris_tree_lineranges.py` | Every section declared in `igris_tree.json` has a matching `<!-- SECTION: <name> -->` marker at the declared start line and a `<!-- /SECTION: <name> -->` marker at the declared end line in `igris_os.md`. | TD-070 / DRIFT-3 |
+| `scripts/validate_lockfile_in_sync.sh` | `npm ci --dry-run --ignore-scripts` from repo root succeeds (workspace-aware lockfile is in sync with all `package.json` files). Catches the drift class where a workspace package was renamed or version-bumped without regenerating `package-lock.json`. | TD-134 |
 
-Both validators are also runnable standalone:
+All three validators are also runnable standalone:
 
 ```bash
 bash scripts/validate_memory_agency_enums.sh
 python3 scripts/validate_igris_tree_lineranges.py
+bash scripts/validate_lockfile_in_sync.sh
 ```
 
 Each prints `OK: ...` on success or a precise drift report on failure.
@@ -24,12 +26,16 @@ Each prints `OK: ...` on success or a precise drift report on failure.
 
 The pre-commit dispatcher only runs validators whose tracked files are staged. Validators not listed for a staged file do not run.
 
-| Staged file | Enum validator | Line-range validator |
-|---|---|---|
-| `core/prompts/igris_os.md` | yes | yes |
-| `core/igris_tree.json` | no | yes |
-| `brain-mcp-server/src/engine/components/memory/index.ts` | yes | no |
-| anything else | no | no |
+| Staged file | Enum validator | Line-range validator | Lockfile validator |
+|---|---|---|---|
+| `core/prompts/igris_os.md` | yes | yes | no |
+| `core/igris_tree.json` | no | yes | no |
+| `brain-mcp-server/src/engine/components/memory/index.ts` | yes | no | no |
+| `package.json` (root) | no | no | yes |
+| `package-lock.json` | no | no | yes |
+| `cli/package.json` | no | no | yes |
+| `brain-mcp-server/package.json` | no | no | yes |
+| anything else | no | no | no |
 
 If no validator triggers, the hook exits 0 silently — there is no per-commit overhead for unrelated work.
 
