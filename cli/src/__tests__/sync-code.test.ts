@@ -181,8 +181,11 @@ describe("sync code — runSyncCode", () => {
       const dst = rsyncCall?.args[rsyncCall.args.length - 1] ?? "";
       expect(dst).toBe("deploy@vps.example.com:/srv/igris/");
 
-      // TD-135: SSH sequence is ordered [npm ci, npm run build,
-      // pm2 restart, smoke check]. Length AND order both verified.
+      // TD-141: SSH sequence is ordered [npm ci, npm run build,
+      // smoke check, pm2 restart]. Smoke runs BEFORE pm2 restart so the
+      // previously-running brain stays serving on smoke failure (vs
+      // TD-135's post-restart placement, which guaranteed crash-on-next-
+      // DB-access). Length AND order both verified.
       const sshCalls = execFileCalls.filter((c) => c.bin === "ssh");
       expect(sshCalls.length).toBe(4);
       const remoteCmd = (call: { args: string[] } | undefined): string =>
@@ -191,8 +194,8 @@ describe("sync code — runSyncCode", () => {
       expect(remoteCmd(sshCalls[0])).toContain("/srv/igris");
       expect(remoteCmd(sshCalls[1])).toContain("npm run build");
       expect(remoteCmd(sshCalls[1])).toContain("brain-mcp-server");
-      expect(remoteCmd(sshCalls[2])).toContain("pm2 restart igris-brain");
-      expect(remoteCmd(sshCalls[3])).toContain('require("better-sqlite3")');
+      expect(remoteCmd(sshCalls[2])).toContain('require("better-sqlite3")');
+      expect(remoteCmd(sshCalls[3])).toContain("pm2 restart igris-brain");
 
       // First SSH call should also have the standard transport flags.
       expect(sshCalls[0]?.args).toContain("deploy@vps.example.com");
@@ -314,10 +317,12 @@ describe("sync code — runSyncCode", () => {
     const npmCiCmd = sshCalls[0]?.args[sshCalls[0].args.length - 1] ?? "";
     expect(npmCiCmd).toContain("'/srv/my app'");
     expect(npmCiCmd).toContain("npm ci");
-    // Build + smoke check both navigate into brain-mcp-server under the quoted path.
+    // Build + smoke check both navigate into brain-mcp-server under the
+    // quoted path. TD-141: smoke is now sshCalls[2] (pre-restart),
+    // pm2 restart is sshCalls[3].
     const buildCmd = sshCalls[1]?.args[sshCalls[1].args.length - 1] ?? "";
     expect(buildCmd).toContain("'/srv/my app'/brain-mcp-server");
-    const smokeCmd = sshCalls[3]?.args[sshCalls[3].args.length - 1] ?? "";
+    const smokeCmd = sshCalls[2]?.args[sshCalls[2].args.length - 1] ?? "";
     expect(smokeCmd).toContain("'/srv/my app'/brain-mcp-server");
   });
 
@@ -367,7 +372,11 @@ describe("sync code — runSyncCode", () => {
     ).toBe(false);
   });
 
-  it("TD-135: native-module smoke check failure → exit 1, error mentions better-sqlite3", async () => {
+  it("TD-141: native-module smoke check failure → exit 1, pm2 restart NOT invoked (old brain stays serving)", async () => {
+    // TD-141 supersedes TD-135's post-restart smoke placement. Smoke now
+    // runs BEFORE pm2 restart so a smoke failure does NOT tear down the
+    // previously-running brain process. Failure path: 3 ssh calls
+    // (npm ci, build, smoke). pm2 restart is NOT called.
     writeConfig({
       vps: { host: "h", user: "u", repo_path: "/r" },
       remote_brain: { url: "http://127.0.0.1:1", api_key: "k" },
@@ -376,7 +385,6 @@ describe("sync code — runSyncCode", () => {
     queueExec("ssh", [
       { exitCode: 0, stdout: "", stderr: "" }, // npm ci OK
       { exitCode: 0, stdout: "", stderr: "" }, // build OK
-      { exitCode: 0, stdout: "[PM2] OK", stderr: "" }, // pm2 restart OK
       {
         exitCode: 1,
         stdout: "",
@@ -400,9 +408,15 @@ describe("sync code — runSyncCode", () => {
         postRestartDelayMs: 0,
       });
       expect(code).toBe(1);
-      // All 4 ssh calls happened (including the failing smoke check).
+      // Only 3 ssh calls — npm ci, build, smoke. pm2 restart was NOT
+      // reached because smoke failed.
       const sshCalls = execFileCalls.filter((c) => c.bin === "ssh");
-      expect(sshCalls.length).toBe(4);
+      expect(sshCalls.length).toBe(3);
+      expect(
+        sshCalls.some((c) =>
+          c.args[c.args.length - 1].includes("pm2 restart"),
+        ),
+      ).toBe(false);
       // Error output names the failing module — load-bearing for diagnosis.
       const stderr = stderrBuf.join("");
       expect(stderr).toContain("native-module smoke check failed");

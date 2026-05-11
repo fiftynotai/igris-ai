@@ -17,15 +17,26 @@
  *   4. SSH `cd <repo> && npm ci` — install Linux-native dep tree on VPS.
  *   5. SSH `cd <repo>/brain-mcp-server && npm run build` — compile dist/
  *      that was excluded from rsync.
- *   6. SSH-restart `brain-mcp-server` via PM2: `ssh user@host -- pm2 restart igris-brain`.
- *   7. SSH `node -e 'require("better-sqlite3")'` — fail-loud smoke check
- *      against the native binding (TD-135 load-bearing gate). Non-zero
- *      exit means the brain will crash on first DB access; abort with
- *      exit 1 before declaring success.
+ *   6. SSH `node -e 'require("better-sqlite3")'` — fail-loud smoke check
+ *      against the native binding (TD-141 load-bearing gate, PRE-restart).
+ *      Non-zero exit means the just-installed Linux binding can't load;
+ *      abort with exit 1 BEFORE tearing down the running brain. The
+ *      previously-running brain process keeps serving on smoke failure.
+ *   7. SSH-restart `brain-mcp-server` via PM2: `ssh user@host -- pm2 restart igris-brain`.
+ *      Only reached after smoke confirms the binding loads.
  *   8. Verify health endpoint (`<remote_brain.url>/health`); WARN on failure
  *      but exit 0 (matches retired shell behavior — health failure may be
  *      a service-restart race; the smoke check above is the load-bearing
  *      native-module guard).
+ *
+ * Order rationale (TD-141): the smoke check is a standalone `node -e`
+ * subprocess that reads only filesystem state (the built native binding
+ * under brain-mcp-server/node_modules/). It does NOT consume PM2 state.
+ * Running it BEFORE pm2 restart means a smoke failure leaves the
+ * previously-running brain instance unaffected — vs the prior post-
+ * restart placement (TD-135) which guaranteed crash-on-next-DB-access
+ * if smoke ever failed. Trade-off documented in TD-141; supersedes
+ * the post-restart choice from TD-135.
  *
  * `--dry-run`: enumerates the would-be rsync invocation + ssh restart
  * via the shared DryRunCollector instead of executing them.
@@ -258,9 +269,9 @@ export async function runSyncCode(opts: SyncCodeOptions = {}): Promise<number> {
         "BatchMode=yes",
         `${vps.user}@${vps.host}`,
         "--",
-        `pm2 restart ${pm2AppName}`,
+        `cd ${vps.repoPath}/brain-mcp-server && node -e 'require("better-sqlite3")'`,
       ],
-      "restart brain-mcp-server",
+      "native-module smoke check (TD-141 PRE-restart gate)",
     );
     dry.wouldInvokeCommand(
       "ssh",
@@ -271,9 +282,9 @@ export async function runSyncCode(opts: SyncCodeOptions = {}): Promise<number> {
         "BatchMode=yes",
         `${vps.user}@${vps.host}`,
         "--",
-        `cd ${vps.repoPath}/brain-mcp-server && node -e 'require("better-sqlite3")'`,
+        `pm2 restart ${pm2AppName}`,
       ],
-      "native-module smoke check (TD-135 load-bearing gate)",
+      "restart brain-mcp-server",
     );
     dry.wouldFetchUrl(`${remote.url.replace(/\/$/, "")}/health`);
     dry.print();
@@ -333,7 +344,32 @@ export async function runSyncCode(opts: SyncCodeOptions = {}): Promise<number> {
   }
   info("sync code: brain-mcp-server build complete on VPS");
 
-  // 6. SSH restart brain-mcp-server via PM2.
+  // 6. Native-module smoke check — load-bearing gate (PRE-restart per TD-141).
+  // If better-sqlite3 can't load on the VPS, fail loud BEFORE we tear down
+  // the running brain process. Old brain stays serving; operator can
+  // diagnose without an outage. The smoke check is a standalone node -e
+  // subprocess that reads only filesystem state (the built native binding),
+  // so its success-path behavior is identical to the prior post-restart
+  // placement (TD-135). Only the failure mode improves.
+  info(`sync code: ssh ${vps.user}@${vps.host} -- native-module smoke check`);
+  const smokeResult = await sshExec(
+    vps.user,
+    vps.host,
+    `cd ${shellQuote(vps.repoPath)}/brain-mcp-server && node -e 'require("better-sqlite3")'`,
+    { timeoutMs: 30_000 },
+  );
+  if (smokeResult.exitCode !== 0) {
+    logError(
+      `native-module smoke check failed on VPS (exit ${smokeResult.exitCode}): ${truncate(smokeResult.stderr, 500)}`,
+    );
+    logError(
+      "  → better-sqlite3 binding did not load. Aborting before pm2 restart — old brain still running.",
+    );
+    return 1;
+  }
+  info("sync code: native-module smoke check passed");
+
+  // 7. SSH restart brain-mcp-server via PM2 — only after smoke confirms binding loads.
   info(`sync code: ssh ${vps.user}@${vps.host} -- pm2 restart ${pm2AppName}`);
   const sshResult = await sshExec(
     vps.user,
@@ -347,28 +383,6 @@ export async function runSyncCode(opts: SyncCodeOptions = {}): Promise<number> {
     return 1;
   }
   info("sync code: pm2 restart issued");
-
-  // 7. Native-module smoke check — load-bearing gate for TD-135.
-  // If better-sqlite3 can't load on the VPS, fail loud here instead of
-  // waiting for the brain to crash mid-request later. This is the exact
-  // failure class the brief forecloses.
-  info(`sync code: ssh ${vps.user}@${vps.host} -- native-module smoke check`);
-  const smokeResult = await sshExec(
-    vps.user,
-    vps.host,
-    `cd ${shellQuote(vps.repoPath)}/brain-mcp-server && node -e 'require("better-sqlite3")'`,
-    { timeoutMs: 30_000 },
-  );
-  if (smokeResult.exitCode !== 0) {
-    logError(
-      `native-module smoke check failed on VPS (exit ${smokeResult.exitCode}): ${truncate(smokeResult.stderr, 500)}`,
-    );
-    logError(
-      "  → better-sqlite3 binding did not load. The brain will fail on next DB access.",
-    );
-    return 1;
-  }
-  info("sync code: native-module smoke check passed");
 
   // 8. Health check (best-effort — service may still be restarting).
   // Wait briefly so the restart has a chance to settle.
