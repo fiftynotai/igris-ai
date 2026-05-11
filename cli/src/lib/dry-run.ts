@@ -32,8 +32,14 @@
  *       /path/to/old
  *     rename:
  *       /from/path -> /to/path (reason)
+ *     copy:
+ *       /from/path -> /to/path (reason)
  *
  *   No filesystem writes were performed.
+ *
+ * `copy:` is distinct from `rename:` (TD-142): the non-dry path uses
+ * recursive copy semantics (source tree preserved), whereas `rename:`
+ * is a single fs.renameSync (atomic move on the same filesystem).
  */
 
 import { info } from "./log.js";
@@ -47,6 +53,7 @@ export class DryRunCollector {
     would_invoke_command: [],
     would_remove_dir: [],
     would_rename: [],
+    would_copy: [],
   };
 
   wouldCreateDir(path: string): void {
@@ -72,6 +79,14 @@ export class DryRunCollector {
   }
   wouldRename(from: string, to: string, reason: string): void {
     this.plan.would_rename.push({ from, to, reason });
+  }
+  /**
+   * Recursive directory copy (TD-142). Distinct from wouldRename — the
+   * actual non-dry path uses copyFromSource(...) (preserves source) vs
+   * fs.renameSync (atomic move that removes source).
+   */
+  wouldCopy(from: string, to: string, reason: string): void {
+    this.plan.would_copy.push({ from, to, reason });
   }
 
   /** Snapshot the current plan (used by tests). */
@@ -114,6 +129,12 @@ export class DryRunCollector {
         info(`    ${r.from} -> ${r.to} (${r.reason})`);
       }
     }
+    if (this.plan.would_copy.length > 0) {
+      info("  copy:");
+      for (const c of this.plan.would_copy) {
+        info(`    ${c.from} -> ${c.to} (${c.reason})`);
+      }
+    }
     if (this.isEmpty()) {
       info("  (no changes)");
     }
@@ -129,7 +150,8 @@ export class DryRunCollector {
       this.plan.would_fetch_url.length === 0 &&
       this.plan.would_invoke_command.length === 0 &&
       this.plan.would_remove_dir.length === 0 &&
-      this.plan.would_rename.length === 0
+      this.plan.would_rename.length === 0 &&
+      this.plan.would_copy.length === 0
     );
   }
 }

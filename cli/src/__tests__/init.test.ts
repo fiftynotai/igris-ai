@@ -11,7 +11,7 @@
  * the bytes are identical post-swap.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,
   existsSync,
@@ -273,5 +273,45 @@ describe("init — --dry-run", () => {
     expect(existsSync(join(brainRoot, "USER.md"))).toBe(false);
     expect(existsSync(join(brainRoot, "config.json"))).toBe(false);
     expect(existsSync(join(brainRoot, ".install-source.json"))).toBe(false);
+  });
+
+  it("TD-142: --dry-run with --from-source shows 'copy:' not 'rename:' for core/ deposit", async () => {
+    // The non-dry path uses copyFromSource(...) — a recursive copy that
+    // preserves the source tree. The dry-run plan must render this as
+    // `copy:` (TD-142 primitive), not the misleading `rename:` header
+    // that was previously emitted by wouldRename.
+    const stdoutBuf: string[] = [];
+    const spy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: unknown) => {
+        stdoutBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+
+    try {
+      const { runInit } = await import("../verbs/init.js");
+      const code = await runInit({
+        fromSource: sourceRepo,
+        dryRun: true,
+      });
+      expect(code).toBe(0);
+      const stdout = stdoutBuf.join("");
+      // `copy:` block emitted with the from-source reason.
+      expect(stdout).toContain("copy:");
+      expect(stdout).toContain("from-source copy");
+      // The core/ -> core/ line itself must appear under `copy:` (i.e.
+      // the source path is the from-source repo's core/).
+      expect(stdout).toContain(join(sourceRepo, "core"));
+      // Misleading "rename:" header for the core deposit should NOT
+      // appear with the from-source reason. (rename: as a header may
+      // still appear elsewhere for upgrade promotions — we don't ban
+      // the header globally, only the misleading core-from-source line.)
+      const renameWithFromSource = stdout.match(
+        /rename:[\s\S]*from-source copy/,
+      );
+      expect(renameWithFromSource).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

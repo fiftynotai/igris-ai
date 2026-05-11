@@ -157,4 +157,10 @@ export interface DryRunPlan {
   would_remove_dir: string[];
   /** Filesystem moves (e.g. core.new → core, core → core.bak). */
   would_rename: Array<{ from: string; to: string; reason: string }>;
+  /**
+   * Recursive directory copies (e.g. from-source core/ → install root core/).
+   * Distinct from `would_rename` — the actual non-dry path uses recursive
+   * copy semantics (the source tree is preserved). TD-142.
+   */
+  would_copy: Array<{ from: string; to: string; reason: string }>;
 }

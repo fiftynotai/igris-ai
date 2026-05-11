@@ -204,10 +204,13 @@ export async function runInit(opts: InitOptions): Promise<number> {
     stagingPath = stagingDir;
     if (dry !== null) {
       dry.wouldCreateDir(stagingPath);
-      dry.wouldRename(
+      // TD-142: the non-dry path uses copyFromSource(...) — a recursive
+      // copy that preserves the source tree. Render as "copy:" not
+      // "rename:" so the dry-run plan matches the executed verb.
+      dry.wouldCopy(
         join(sourcePath, "core"),
         join(root, "core"),
-        "from-source copy",
+        "from-source copy (recursive)",
       );
     } else {
       // Wipe stale staging (could exist from a prior interrupted run).

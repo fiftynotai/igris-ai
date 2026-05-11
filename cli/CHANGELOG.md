@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [7.0.2] - TBD
+
+### Changed
+
+- **`igris sync code` pre-restart smoke check** — the `better-sqlite3`
+  `node -e 'require(...)'` smoke gate now runs BEFORE `pm2 restart`
+  instead of after. If the native binding fails to load, the deploy
+  aborts and the previously-running brain process is left untouched,
+  vs the prior behavior where pm2 restart was issued first and the
+  new process crashed on next DB access. Smoke is a standalone node
+  subprocess that reads only filesystem state, so success-path
+  behavior is unchanged. Closes #TD-141 (supersedes the post-restart
+  trade-off taken in TD-135).
+
+### Added
+
+- **`igris sync code` advisory for `.claude/*` real dirs** — warns
+  (does not abort) when any of `.claude/{agents,rules,skills}/` is a
+  real directory rather than a symlink. RSYNC_EXCLUDES treats these
+  as symlinks per the v6 install model; a real directory would have
+  its contents silently stripped at deploy time. The advisory surfaces
+  the partial-install footgun before it bites. Closes #TD-139.
+
+### Fixed
+
+- **`igris sync code` Python cache coverage** — `*.pyo` and `*.pyd`
+  were missing from `RSYNC_EXCLUDES` despite being covered by
+  `.gitignore`'s `*.py[cod]` glob. Added both, plus a new vitest
+  audit (`gitignore-sync.test.ts`) that parses `.gitignore` and
+  asserts every (non-skip-listed, glob-expanded) pattern is mirrored
+  in `RSYNC_EXCLUDES`. Catches future drift programmatically. Closes
+  #TD-140.
+
+- **`igris init`/`refresh` dry-run output** — `--from-source --dry-run`
+  previously printed `rename: <core> -> <core>` for the core/ deposit,
+  but the actual non-dry path uses recursive `copyFromSource(...)`.
+  Added a `wouldCopy()` primitive to `DryRunCollector` with a
+  dedicated `copy:` printer block, and switched both verbs to use it.
+  Closes #TD-142.
+
+---
+
 ## [7.0.1] - 2026-05-11
 
 ### Fixed
