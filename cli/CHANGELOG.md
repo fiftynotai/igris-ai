@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [7.0.1] - 2026-05-11
+
+### Fixed
+
+- **`igris sync code`** — workstation `node_modules/` is no longer rsynced
+  to the VPS. Native modules built on the dev workstation (e.g. macOS-
+  arm64 `better-sqlite3`) crashed when loaded on the Linux x86_64 VPS.
+  The new pipeline runs `npm ci` on the VPS post-rsync so native bindings
+  are Linux-native, then runs `npm run build` for `brain-mcp-server/`,
+  then `pm2 restart igris-brain`, then a `require("better-sqlite3")`
+  smoke check that fails loud if the native binding can't load. Closes
+  #TD-135.
+
+### Changed
+
+- `igris sync code` rsync now applies an exclusion list mirroring
+  `.gitignore` (`node_modules/`, `.git/`, `dist/`, `build/`, IDE files,
+  logs, temp files, `*.tar.gz`, etc.). `--dry-run` enumerates the full
+  exclusion list for audit.
+
+---
+
 ## [7.0.0] - 2026-05-08
 
 First public npm release. Renamed from `@igris-ai/cli` to `igris-ai`.

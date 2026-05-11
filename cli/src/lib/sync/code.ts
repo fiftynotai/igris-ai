@@ -10,11 +10,22 @@
  *      the configured repo. If no diff, exit 0 silently — cron-parity with
  *      the retired shell.
  *   3. rsync the local repo to `<vps.user>@<vps.host>:<vps.repo_path>` with
- *      `-az --delete` (mirror semantics).
- *   4. SSH-restart `brain-mcp-server` via PM2: `ssh user@host -- pm2 restart igris-brain`.
- *   5. Verify health endpoint (`<remote_brain.url>/health`); WARN on failure
+ *      `-az --delete` AND an exclusion list (TD-135). Excludes
+ *      `node_modules/`, `.git/`, `dist/`, secrets, IDE files, logs, temp
+ *      files, etc. Workstation-built native modules (better-sqlite3) do
+ *      NOT ship.
+ *   4. SSH `cd <repo> && npm ci` — install Linux-native dep tree on VPS.
+ *   5. SSH `cd <repo>/brain-mcp-server && npm run build` — compile dist/
+ *      that was excluded from rsync.
+ *   6. SSH-restart `brain-mcp-server` via PM2: `ssh user@host -- pm2 restart igris-brain`.
+ *   7. SSH `node -e 'require("better-sqlite3")'` — fail-loud smoke check
+ *      against the native binding (TD-135 load-bearing gate). Non-zero
+ *      exit means the brain will crash on first DB access; abort with
+ *      exit 1 before declaring success.
+ *   8. Verify health endpoint (`<remote_brain.url>/health`); WARN on failure
  *      but exit 0 (matches retired shell behavior — health failure may be
- *      a service-restart race).
+ *      a service-restart race; the smoke check above is the load-bearing
+ *      native-module guard).
  *
  * `--dry-run`: enumerates the would-be rsync invocation + ssh restart
  * via the shared DryRunCollector instead of executing them.
@@ -49,6 +60,80 @@ import {
 } from "../mcp-client.js";
 import { DryRunCollector } from "../dry-run.js";
 import { info, warn, error as logError } from "../log.js";
+
+/**
+ * Paths that MUST NOT ship from the workstation to the VPS.
+ *
+ * The load-bearing exclusion is `node_modules/` (TD-135): workstation-built
+ * native bindings (e.g. macOS-arm64 `better-sqlite3`) crash on Linux x86_64
+ * the moment `require()` tries to load the binary. The VPS runs `npm ci`
+ * post-rsync to materialize a Linux-native dep tree.
+ *
+ * The rest mirrors `.gitignore` essentials — secrets, IDE config, OS
+ * detritus, build outputs, log/temp files. rsync's `--exclude` is glob-
+ * pattern (not gitignore-pattern), so we mirror the spirit, not the literal
+ * syntax. Any future expansion of `.gitignore` should consider whether the
+ * new pattern also belongs here.
+ */
+const RSYNC_EXCLUDES: readonly string[] = [
+  // Core fix — load-bearing
+  "node_modules/",
+  // Workstation history + build outputs (rebuilt on VPS via `npm run build`)
+  ".git/",
+  "dist/",
+  "build/",
+  // Igris symlinks + local agent memory (each project's VPS has its own ~/.igris)
+  ".claude/agent-memory/",
+  ".claude/agents/",
+  ".claude/rules/",
+  ".claude/skills/",
+  // Local dev overrides + secrets
+  "CLAUDE.local.md",
+  ".env",
+  ".env.local",
+  // Logs
+  "*.log",
+  "logs/",
+  // OS detritus
+  ".DS_Store",
+  "Thumbs.db",
+  // IDE config
+  ".idea/",
+  ".vscode/",
+  // Editor swap/backup files
+  "*.swp",
+  "*.swo",
+  "*~",
+  // Temp/scratch
+  "*.tmp",
+  "*.temp",
+  ".temp/",
+  "temp/",
+  // Python caches (any tooling)
+  "__pycache__/",
+  "*.pyc",
+  // Test scratch dirs
+  ".test/",
+  "test-output/",
+  // Tarballs / archives (fixture tarballs are workstation-only)
+  "*.zip",
+  "*.tar.gz",
+] as const;
+
+function rsyncExcludeFlags(): string[] {
+  return RSYNC_EXCLUDES.map((p) => `--exclude=${p}`);
+}
+
+/**
+ * Minimal shell single-quoting for a single arg embedded in a remote
+ * command string. Wraps in single quotes and escapes embedded single
+ * quotes via the `'\''` idiom. Safe for paths from config (operator-
+ * controlled, not user-input); still defensive against weird repo_path
+ * values.
+ */
+function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
 
 export interface SyncCodeOptions {
   /** When true, enumerate plan without executing rsync/ssh. */
@@ -130,13 +215,39 @@ export async function runSyncCode(opts: SyncCodeOptions = {}): Promise<number> {
   const dst = `${vps.user}@${vps.host}:${vps.repoPath}/`;
 
   if (dry !== null) {
-    // Plan output: enumerate the rsync invocation.
-    const rsyncArgs = ["-a", "-z", "--delete"];
+    // Plan output: enumerate the full pipeline.
+    const rsyncArgs = ["-a", "-z", "--delete", ...rsyncExcludeFlags()];
     if (dryRun) rsyncArgs.push("--dry-run", "-v", "-i");
     dry.wouldInvokeCommand(
       "rsync",
       [...rsyncArgs, src, dst],
-      "mirror local repo to VPS",
+      "mirror local repo to VPS (excludes node_modules + dev artifacts)",
+    );
+    dry.wouldInvokeCommand(
+      "ssh",
+      [
+        "-o",
+        "ConnectTimeout=30",
+        "-o",
+        "BatchMode=yes",
+        `${vps.user}@${vps.host}`,
+        "--",
+        `cd ${vps.repoPath} && npm ci`,
+      ],
+      "install Linux-native deps on VPS (better-sqlite3 native rebuild)",
+    );
+    dry.wouldInvokeCommand(
+      "ssh",
+      [
+        "-o",
+        "ConnectTimeout=30",
+        "-o",
+        "BatchMode=yes",
+        `${vps.user}@${vps.host}`,
+        "--",
+        `cd ${vps.repoPath}/brain-mcp-server && npm run build`,
+      ],
+      "rebuild brain-mcp-server dist on VPS",
     );
     dry.wouldInvokeCommand(
       "ssh",
@@ -151,13 +262,29 @@ export async function runSyncCode(opts: SyncCodeOptions = {}): Promise<number> {
       ],
       "restart brain-mcp-server",
     );
+    dry.wouldInvokeCommand(
+      "ssh",
+      [
+        "-o",
+        "ConnectTimeout=30",
+        "-o",
+        "BatchMode=yes",
+        `${vps.user}@${vps.host}`,
+        "--",
+        `cd ${vps.repoPath}/brain-mcp-server && node -e 'require("better-sqlite3")'`,
+      ],
+      "native-module smoke check (TD-135 load-bearing gate)",
+    );
     dry.wouldFetchUrl(`${remote.url.replace(/\/$/, "")}/health`);
     dry.print();
     return 0;
   }
 
   info(`sync code: rsync ${src} -> ${dst}`);
-  const rsyncResult = await rsyncExec(src, dst, { dryRun: false });
+  const rsyncResult = await rsyncExec(src, dst, {
+    dryRun: false,
+    extraFlags: rsyncExcludeFlags(),
+  });
   if (rsyncResult.exitCode !== 0) {
     logError(
       `rsync failed (exit ${rsyncResult.exitCode}): ${truncate(rsyncResult.stderr, 500)}`,
@@ -168,7 +295,45 @@ export async function runSyncCode(opts: SyncCodeOptions = {}): Promise<number> {
     info(rsyncResult.stdout.trimEnd());
   }
 
-  // 4. SSH restart brain-mcp-server via PM2.
+  // 4. npm ci on VPS — materialize a Linux-native dep tree (TD-135).
+  // Workstation node_modules/ was excluded from rsync, so the VPS needs
+  // a fresh install. better-sqlite3 (and any other native modules)
+  // rebuild from source against the Linux toolchain. ~30s on typical VPS.
+  info(`sync code: ssh ${vps.user}@${vps.host} -- npm ci (in ${vps.repoPath})`);
+  const npmCiResult = await sshExec(
+    vps.user,
+    vps.host,
+    `cd ${shellQuote(vps.repoPath)} && npm ci`,
+    { timeoutMs: 5 * 60_000 },
+  );
+  if (npmCiResult.exitCode !== 0) {
+    logError(
+      `npm ci on VPS failed (exit ${npmCiResult.exitCode}): ${truncate(npmCiResult.stderr, 500)}`,
+    );
+    return 1;
+  }
+  info("sync code: npm ci complete on VPS");
+
+  // 5. Rebuild brain-mcp-server dist — workstation dist/ was excluded.
+  // PM2 executes from brain-mcp-server/dist/, so this step is mandatory.
+  info(
+    `sync code: ssh ${vps.user}@${vps.host} -- npm run build (brain-mcp-server)`,
+  );
+  const buildResult = await sshExec(
+    vps.user,
+    vps.host,
+    `cd ${shellQuote(vps.repoPath)}/brain-mcp-server && npm run build`,
+    { timeoutMs: 2 * 60_000 },
+  );
+  if (buildResult.exitCode !== 0) {
+    logError(
+      `brain-mcp-server build on VPS failed (exit ${buildResult.exitCode}): ${truncate(buildResult.stderr, 500)}`,
+    );
+    return 1;
+  }
+  info("sync code: brain-mcp-server build complete on VPS");
+
+  // 6. SSH restart brain-mcp-server via PM2.
   info(`sync code: ssh ${vps.user}@${vps.host} -- pm2 restart ${pm2AppName}`);
   const sshResult = await sshExec(
     vps.user,
@@ -183,7 +348,29 @@ export async function runSyncCode(opts: SyncCodeOptions = {}): Promise<number> {
   }
   info("sync code: pm2 restart issued");
 
-  // 5. Health check (best-effort — service may still be restarting).
+  // 7. Native-module smoke check — load-bearing gate for TD-135.
+  // If better-sqlite3 can't load on the VPS, fail loud here instead of
+  // waiting for the brain to crash mid-request later. This is the exact
+  // failure class the brief forecloses.
+  info(`sync code: ssh ${vps.user}@${vps.host} -- native-module smoke check`);
+  const smokeResult = await sshExec(
+    vps.user,
+    vps.host,
+    `cd ${shellQuote(vps.repoPath)}/brain-mcp-server && node -e 'require("better-sqlite3")'`,
+    { timeoutMs: 30_000 },
+  );
+  if (smokeResult.exitCode !== 0) {
+    logError(
+      `native-module smoke check failed on VPS (exit ${smokeResult.exitCode}): ${truncate(smokeResult.stderr, 500)}`,
+    );
+    logError(
+      "  → better-sqlite3 binding did not load. The brain will fail on next DB access.",
+    );
+    return 1;
+  }
+  info("sync code: native-module smoke check passed");
+
+  // 8. Health check (best-effort — service may still be restarting).
   // Wait briefly so the restart has a chance to settle.
   await sleep(opts.postRestartDelayMs ?? 2_000);
   const health = await healthCheck(remote.url);
