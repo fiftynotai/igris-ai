@@ -76,6 +76,7 @@ export function createInstancesComponent(): BrainComponent {
           description: 'Register or update a live Igris instance in the brain. Called on /awaken to register, and during /hunt to update current brief/phase. Returns the instance ID for subsequent heartbeats.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               machine_hostname: {
                 type: 'string',
@@ -132,6 +133,7 @@ export function createInstancesComponent(): BrainComponent {
           description: 'List all active Igris instances across machines. Auto-marks instances with no heartbeat for 45+ minutes as stale. Purges instances stale for >4 hours.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               status: {
                 type: 'string',
@@ -155,6 +157,7 @@ export function createInstancesComponent(): BrainComponent {
           description: 'Remove an Igris instance from the registry. Called on /rest to deregister cleanly.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               instance_id: {
                 type: 'string',
@@ -170,6 +173,7 @@ export function createInstancesComponent(): BrainComponent {
           description: 'Record an agent lifecycle event for live dashboard tracking. Called during /hunt workflow at each agent phase transition.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               instance_id: {
                 type: 'string',
@@ -204,6 +208,14 @@ export function createInstancesComponent(): BrainComponent {
                 type: 'number',
                 description: 'Output tokens consumed',
               },
+              cache_read: {
+                type: 'number',
+                description: 'Cache read tokens consumed',
+              },
+              cache_create: {
+                type: 'number',
+                description: 'Cache create tokens consumed',
+              },
               result: {
                 type: 'string',
                 description: 'Result summary (for stop events)',
@@ -211,6 +223,10 @@ export function createInstancesComponent(): BrainComponent {
               error_message: {
                 type: 'string',
                 description: 'Error details (for error events)',
+              },
+              metadata: {
+                type: 'string',
+                description: 'Additional metadata as JSON string (default: "{}")',
               },
             },
             required: ['instance_id', 'agent', 'event_type'],

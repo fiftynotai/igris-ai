@@ -15,8 +15,8 @@ import type {
   ToolDefinition,
   EventDef,
 } from '../../types.js';
-import { handleErrorLookup } from '../../../tools/errors.js';
-import type { ErrorLookupInput } from '../../../tools/errors.js';
+import { handleErrorLookup, handleErrorSimilar, handleErrorBackfillEmbeddings } from '../../../tools/errors.js';
+import type { ErrorLookupInput, ErrorSimilarInput, ErrorBackfillInput } from '../../../tools/errors.js';
 
 export function createErrorsComponent(): BrainComponent {
   let _ctx: ComponentContext | null = null;
@@ -37,6 +37,7 @@ export function createErrorsComponent(): BrainComponent {
           description: 'Look up known solutions for an error, or store a new error/solution pair. Uses fingerprinting to match errors regardless of file paths or line numbers. When called without a solution, searches for matching errors. When called with a solution, stores or updates the error record.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               message: {
                 type: 'string',
@@ -53,13 +54,61 @@ export function createErrorsComponent(): BrainComponent {
             },
             required: ['message', 'project'],
           },
-          handler: (args) => {
-            const result = handleErrorLookup(args as unknown as ErrorLookupInput);
+          handler: async (args) => {
+            const result = await handleErrorLookup(args as unknown as ErrorLookupInput);
             if ((args as Record<string, unknown>).solution) {
               _ctx?.bus.emit('error.stored', { project: (args as Record<string, unknown>).project });
             }
             return result;
           },
+        },
+        {
+          name: 'igris_error_similar',
+          description: 'Find semantically similar errors using hybrid BM25 + vector search. Uses both keyword matching and meaning-based similarity to find related errors across projects. Falls back to BM25-only if vector search is unavailable.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              message: {
+                type: 'string',
+                description: 'Error message to find semantically similar errors',
+              },
+              project: {
+                type: 'string',
+                description: 'Filter by project slug (optional)',
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum results (default: 10)',
+              },
+              include_cross_project: {
+                type: 'boolean',
+                description: 'Include results from other projects (default: true)',
+              },
+            },
+            required: ['message'],
+          },
+          handler: async (args) => handleErrorSimilar(args as unknown as ErrorSimilarInput),
+        },
+        {
+          name: 'igris_error_backfill_embeddings',
+          description: 'Batch-generate embeddings for existing errors that lack them. Only processes errors with solutions. Resumable: only processes errors without embeddings.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              batch_size: {
+                type: 'number',
+                description: 'Number of errors to process per batch (default: 50)',
+              },
+              project: {
+                type: 'string',
+                description: 'Filter by project slug (optional -- omit to backfill all projects)',
+              },
+            },
+            required: [],
+          },
+          handler: async (args) => handleErrorBackfillEmbeddings(args as unknown as ErrorBackfillInput),
         },
       ];
     },

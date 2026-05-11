@@ -22,6 +22,13 @@ export interface ToolInputSchema {
   type: 'object';
   properties: Record<string, unknown>;
   required?: string[];
+  /**
+   * When `false`, the gateway enforces strict-input contract: any arg key not
+   * present in `properties` is rejected at dispatch time. Optional for
+   * backwards compatibility — schemas without this field remain permissive.
+   * (TD-128)
+   */
+  additionalProperties?: boolean;
 }
 
 /** A single MCP tool exposed by a component */

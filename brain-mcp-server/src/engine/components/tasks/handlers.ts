@@ -135,7 +135,7 @@ export function handleTaskCreate(args: Record<string, unknown>): ToolResult {
 /**
  * List tasks with optional filters.
  *
- * All optional: status, task_type, scope, project_slug, assignee, limit, offset
+ * All optional: status, task_type, scope, project_slug, assignee, brief_id, limit, offset
  * ORDER BY priority ASC, created_at ASC
  */
 export function handleTaskList(args: Record<string, unknown>): ToolResult {
@@ -146,7 +146,8 @@ export function handleTaskList(args: Record<string, unknown>): ToolResult {
     .add('task_type = ?', args.task_type)
     .add('scope = ?', args.scope)
     .add('project_slug = ?', args.project_slug)
-    .add('assignee = ?', args.assignee);
+    .add('assignee = ?', args.assignee)
+    .add('brief_id = ?', args.brief_id);
 
   const limit = args.limit !== undefined ? Number(args.limit) : 25;
   const offset = args.offset !== undefined ? Number(args.offset) : 0;

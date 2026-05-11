@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Igris Brief Graph — __PROJECT__</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d1117;
+        --panel: #161b22;
+        --panel-hover: #1f262e;
+        --border: #30363d;
+        --text: #c9d1d9;
+        --text-dim: #8b949e;
+        --accent: #58a6ff;
+        --warn: #f0883e;
+        --danger: #f85149;
+        --success: #3fb950;
+        --gold: #d4a72c;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-size: 13px;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 240px 1fr 320px;
+        grid-template-rows: 44px 1fr;
+        height: 100vh;
+        gap: 0;
+      }
+      .topbar {
+        grid-column: 1 / 4;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        padding: 0 16px;
+        gap: 16px;
+      }
+      .topbar h1 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .topbar .meta {
+        color: var(--text-dim);
+        font-size: 12px;
+      }
+      .topbar .spacer { flex: 1; }
+      .topbar input[type="search"] {
+        width: 280px;
+        padding: 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--bg);
+        color: var(--text);
+        font-size: 13px;
+      }
+      .topbar button {
+        padding: 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--bg);
+        color: var(--text);
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .topbar button:hover { background: var(--panel-hover); }
+      .sidebar {
+        background: var(--panel);
+        border-right: 1px solid var(--border);
+        overflow-y: auto;
+        padding: 12px;
+      }
+      .sidebar.right {
+        border-right: none;
+        border-left: 1px solid var(--border);
+        padding: 16px;
+      }
+      .sidebar h2 {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-dim);
+        margin: 16px 0 6px;
+      }
+      .sidebar h2:first-child { margin-top: 0; }
+      .filter-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .filter-group label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        padding: 3px 4px;
+        border-radius: 4px;
+        font-size: 12px;
+      }
+      .filter-group label:hover { background: var(--panel-hover); }
+      .filter-group .swatch {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .filter-group .count {
+        margin-left: auto;
+        color: var(--text-dim);
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+      }
+      .canvas {
+        background: #010409;
+        position: relative;
+        overflow: hidden;
+      }
+      #network {
+        width: 100%;
+        height: 100%;
+      }
+      .empty-state {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-dim);
+        text-align: center;
+        padding: 24px;
+        font-size: 14px;
+      }
+      .detail-card {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .detail-card .pill {
+        display: inline-block;
+        padding: 2px 8px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        font-size: 11px;
+        margin-right: 4px;
+      }
+      .detail-card h3 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 600;
+        word-break: break-word;
+      }
+      .detail-card .id {
+        color: var(--text-dim);
+        font-size: 11px;
+        font-family: ui-monospace, SFMono-Regular, monospace;
+      }
+      .detail-card .field {
+        display: flex;
+        gap: 8px;
+        font-size: 12px;
+      }
+      .detail-card .field-label {
+        color: var(--text-dim);
+        min-width: 70px;
+      }
+      .detail-card pre {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px;
+        overflow: auto;
+        max-height: 360px;
+        font-size: 11px;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .god-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .god-list li button {
+        width: 100%;
+        text-align: left;
+        padding: 6px 8px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        color: var(--text);
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .god-list li button:hover { background: var(--panel-hover); }
+      .god-list .deg { color: var(--text-dim); font-size: 11px; }
+      .stats {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 12px;
+        color: var(--text-dim);
+      }
+      .stats span { color: var(--text); font-weight: 600; }
+      .empty-detail { color: var(--text-dim); font-style: italic; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <div class="topbar">
+        <h1>Brief Graph: <span id="proj-label"></span></h1>
+        <span class="meta" id="meta-line"></span>
+        <span class="spacer"></span>
+        <input type="search" id="search" placeholder="Search briefs by id or title..." autocomplete="off" />
+        <button id="layout-toggle" type="button">Layout: Force</button>
+      </div>
+
+      <div class="sidebar left">
+        <div class="stats">
+          <div><span id="stat-briefs">0</span> briefs</div>
+          <div><span id="stat-edges">0</span> edges</div>
+          <div><span id="stat-goals">0</span> goals</div>
+        </div>
+
+        <h2>Node Types</h2>
+        <div class="filter-group" id="filter-groups"></div>
+
+        <h2>Edge Types</h2>
+        <div class="filter-group" id="filter-edges"></div>
+
+        <h2>God Nodes</h2>
+        <ul class="god-list" id="god-list"></ul>
+      </div>
+
+      <div class="canvas">
+        <div id="network"></div>
+        <div class="empty-state" id="empty-state" style="display:none;">
+          No briefs in this project yet.<br />
+          Register a brief with <code>/register</code> and re-run <code>/visualize</code>.
+        </div>
+      </div>
+
+      <div class="sidebar right">
+        <h2>Brief Details</h2>
+        <div id="detail-pane">
+          <p class="empty-detail">Click a node to see brief details here.</p>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://unpkg.com/vis-network@9.1.9/standalone/umd/vis-network.min.js"></script>
+    <script>
+      // FR-111: data is injected at render time via marker swap (not regex).
+      const PAYLOAD = __PAYLOAD__;
+      const GENERATED_AT = "__GENERATED_AT__";
+
+      // ---------------------------------------------------------------------
+      // Color & sizing maps
+      // ---------------------------------------------------------------------
+      const GROUP_COLORS = {
+        FR: "#4A90E2",
+        TD: "#F5A623",
+        BR: "#D0021B",
+        PI: "#9013FE",
+        MG: "#7ED321",
+        AC: "#50E3C2",
+        TS: "#B8E986",
+        DU: "#9B9B9B",
+        PF: "#F8E71C",
+        goal: "#FFD700",
+      };
+      const EDGE_COLORS = {
+        parent_of: "#4A90E2",
+        depends_on: "#F5A623",
+        blocks: "#D0021B",
+        supersedes: "#BD10E0",
+        related_to: "#9B9B9B",
+        serves_goal: "#FFD700",
+        duplicates: "#7ED321",
+        derived_from: "#50E3C2",
+        recurs_with: "#F5A623",
+      };
+
+      function nodeColor(group) {
+        return GROUP_COLORS[group] || "#888";
+      }
+      function edgeColor(type) {
+        return EDGE_COLORS[type] || "#666";
+      }
+      function nodeSize(degree, type) {
+        if (type === "goal") return 22 + Math.sqrt(degree) * 4;
+        return 10 + Math.sqrt(degree) * 4;
+      }
+
+      // ---------------------------------------------------------------------
+      // Setup
+      // ---------------------------------------------------------------------
+      document.getElementById("proj-label").textContent = PAYLOAD.project;
+      document.getElementById("stat-briefs").textContent = PAYLOAD.stats.brief_count;
+      document.getElementById("stat-edges").textContent = PAYLOAD.stats.edge_count;
+      document.getElementById("stat-goals").textContent = PAYLOAD.stats.goal_count;
+      document.getElementById("meta-line").textContent =
+        "Generated " + GENERATED_AT;
+
+      // Empty graph fallback.
+      if (PAYLOAD.nodes.length === 0) {
+        document.getElementById("empty-state").style.display = "flex";
+      }
+
+      // Build vis DataSets.
+      const nodes = new vis.DataSet(
+        PAYLOAD.nodes.map((n) => ({
+          id: n.id,
+          label: n.brief_id,
+          title: undefined, // we drive tooltips via custom hover (not used to keep DOM minimal)
+          color: {
+            background: nodeColor(n.group),
+            border: nodeColor(n.group),
+            highlight: { background: "#fff", border: nodeColor(n.group) },
+          },
+          shape: n.type === "goal" ? "diamond" : "dot",
+          size: nodeSize(n.degree, n.type),
+          font: { color: "#c9d1d9", size: 11 },
+          group: n.group,
+          _meta: n,
+        }))
+      );
+
+      const edges = new vis.DataSet(
+        PAYLOAD.edges.map((e, i) => {
+          const isSelf = e.from === e.to;
+          return {
+            id: "e" + i,
+            from: e.from,
+            to: e.to,
+            color: { color: edgeColor(e.type), highlight: "#fff" },
+            arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+            width: Math.max(1, e.confidence * 2),
+            smooth: isSelf ? { type: "curvedCW", roundness: 0.2 } : { type: "dynamic" },
+            _type: e.type,
+          };
+        })
+      );
+
+      // ---------------------------------------------------------------------
+      // Network init
+      // ---------------------------------------------------------------------
+      const container = document.getElementById("network");
+      let useHierarchical = false;
+      function buildOptions() {
+        if (useHierarchical) {
+          return {
+            layout: {
+              hierarchical: {
+                direction: "UD",
+                sortMethod: "directed",
+                nodeSpacing: 120,
+                levelSeparation: 140,
+              },
+            },
+            physics: false,
+            interaction: { hover: true, tooltipDelay: 200 },
+          };
+        }
+        return {
+          layout: { hierarchical: false },
+          physics: {
+            enabled: true,
+            solver: "forceAtlas2Based",
+            stabilization: { iterations: 1500 },
+            forceAtlas2Based: {
+              gravitationalConstant: -50,
+              centralGravity: 0.01,
+              springLength: 100,
+              springConstant: 0.08,
+            },
+          },
+          interaction: { hover: true, tooltipDelay: 200 },
+        };
+      }
+      const network = new vis.Network(container, { nodes, edges }, buildOptions());
+
+      // ---------------------------------------------------------------------
+      // Filter UI
+      // ---------------------------------------------------------------------
+      const groupCounts = {};
+      const edgeTypeCounts = {};
+      PAYLOAD.nodes.forEach((n) => {
+        groupCounts[n.group] = (groupCounts[n.group] || 0) + 1;
+      });
+      PAYLOAD.edges.forEach((e) => {
+        edgeTypeCounts[e.type] = (edgeTypeCounts[e.type] || 0) + 1;
+      });
+
+      function makeFilter(containerEl, items, colorFn, onChange) {
+        items.forEach(([key, count]) => {
+          const lbl = document.createElement("label");
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.checked = true;
+          cb.dataset.key = key;
+          cb.addEventListener("change", onChange);
+          const sw = document.createElement("span");
+          sw.className = "swatch";
+          sw.style.background = colorFn(key);
+          const txt = document.createElement("span");
+          txt.textContent = key;
+          const cnt = document.createElement("span");
+          cnt.className = "count";
+          cnt.textContent = count;
+          lbl.appendChild(cb);
+          lbl.appendChild(sw);
+          lbl.appendChild(txt);
+          lbl.appendChild(cnt);
+          containerEl.appendChild(lbl);
+        });
+      }
+
+      function visibleGroups() {
+        return new Set(
+          [...document.querySelectorAll("#filter-groups input:checked")].map(
+            (cb) => cb.dataset.key
+          )
+        );
+      }
+      function visibleEdgeTypes() {
+        return new Set(
+          [...document.querySelectorAll("#filter-edges input:checked")].map(
+            (cb) => cb.dataset.key
+          )
+        );
+      }
+      function applyFilters() {
+        const groups = visibleGroups();
+        const edgeTypes = visibleEdgeTypes();
+        const updates = PAYLOAD.nodes.map((n) => ({
+          id: n.id,
+          hidden: !groups.has(n.group),
+        }));
+        nodes.update(updates);
+        const visibleNodeIds = new Set(
+          PAYLOAD.nodes.filter((n) => groups.has(n.group)).map((n) => n.id)
+        );
+        const edgeUpdates = PAYLOAD.edges.map((e, i) => ({
+          id: "e" + i,
+          hidden:
+            !edgeTypes.has(e.type) ||
+            !visibleNodeIds.has(e.from) ||
+            !visibleNodeIds.has(e.to),
+        }));
+        edges.update(edgeUpdates);
+      }
+
+      makeFilter(
+        document.getElementById("filter-groups"),
+        Object.entries(groupCounts).sort(),
+        nodeColor,
+        applyFilters
+      );
+      makeFilter(
+        document.getElementById("filter-edges"),
+        Object.entries(edgeTypeCounts).sort(),
+        edgeColor,
+        applyFilters
+      );
+
+      // ---------------------------------------------------------------------
+      // Search
+      // ---------------------------------------------------------------------
+      const searchEl = document.getElementById("search");
+      searchEl.addEventListener("input", () => {
+        const q = searchEl.value.trim().toLowerCase();
+        if (!q) {
+          // Reset highlighting.
+          const reset = PAYLOAD.nodes.map((n) => ({
+            id: n.id,
+            opacity: 1.0,
+            borderWidth: 1,
+          }));
+          nodes.update(reset);
+          return;
+        }
+        const updates = PAYLOAD.nodes.map((n) => {
+          const matches =
+            n.brief_id.toLowerCase().includes(q) ||
+            (n.label || "").toLowerCase().includes(q);
+          return {
+            id: n.id,
+            opacity: matches ? 1.0 : 0.2,
+            borderWidth: matches ? 4 : 1,
+          };
+        });
+        nodes.update(updates);
+      });
+
+      // ---------------------------------------------------------------------
+      // Click handler -> right sidebar
+      // ---------------------------------------------------------------------
+      const detailPane = document.getElementById("detail-pane");
+      function renderDetail(meta) {
+        // CRITICAL: use textContent (not innerHTML) to keep brief content inert.
+        detailPane.replaceChildren();
+
+        const h = document.createElement("h3");
+        h.textContent = meta.label || meta.brief_id;
+        detailPane.appendChild(h);
+
+        const idLine = document.createElement("div");
+        idLine.className = "id";
+        idLine.textContent = meta.brief_id + (meta.type === "goal" ? " (goal)" : "");
+        detailPane.appendChild(idLine);
+
+        const pills = document.createElement("div");
+        if (meta.status) {
+          const p = document.createElement("span");
+          p.className = "pill";
+          p.textContent = meta.status;
+          pills.appendChild(p);
+        }
+        if (meta.priority) {
+          const p = document.createElement("span");
+          p.className = "pill";
+          p.textContent = meta.priority;
+          pills.appendChild(p);
+        }
+        if (meta.brief_type) {
+          const p = document.createElement("span");
+          p.className = "pill";
+          p.textContent = meta.brief_type;
+          pills.appendChild(p);
+        }
+        detailPane.appendChild(pills);
+
+        const fields = [
+          ["Effort", meta.effort],
+          ["Phase", meta.phase],
+          ["Updated", meta.updated_at],
+          ["Degree", String(meta.degree)],
+        ];
+        for (const [k, v] of fields) {
+          if (!v) continue;
+          const row = document.createElement("div");
+          row.className = "field";
+          const lbl = document.createElement("span");
+          lbl.className = "field-label";
+          lbl.textContent = k;
+          const val = document.createElement("span");
+          val.textContent = v;
+          row.appendChild(lbl);
+          row.appendChild(val);
+          detailPane.appendChild(row);
+        }
+
+        if (meta.content) {
+          const pre = document.createElement("pre");
+          pre.textContent = meta.content;
+          detailPane.appendChild(pre);
+        }
+      }
+
+      network.on("click", (params) => {
+        if (params.nodes.length === 0) {
+          detailPane.replaceChildren();
+          const empty = document.createElement("p");
+          empty.className = "empty-detail";
+          empty.textContent = "Click a node to see brief details here.";
+          detailPane.appendChild(empty);
+          return;
+        }
+        const id = params.nodes[0];
+        const node = nodes.get(id);
+        if (node && node._meta) renderDetail(node._meta);
+      });
+
+      // ---------------------------------------------------------------------
+      // God-nodes panel
+      // ---------------------------------------------------------------------
+      const godList = document.getElementById("god-list");
+      const nodesById = Object.fromEntries(PAYLOAD.nodes.map((n) => [n.id, n]));
+      PAYLOAD.god_nodes.forEach((id) => {
+        const meta = nodesById[id];
+        if (!meta) return;
+        const li = document.createElement("li");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        const title = document.createElement("div");
+        title.textContent = meta.brief_id + " — " + (meta.label || "");
+        const deg = document.createElement("div");
+        deg.className = "deg";
+        deg.textContent = "degree " + meta.degree;
+        btn.appendChild(title);
+        btn.appendChild(deg);
+        btn.addEventListener("click", () => {
+          network.focus(id, { scale: 1.4, animation: { duration: 600 } });
+          renderDetail(meta);
+        });
+        li.appendChild(btn);
+        godList.appendChild(li);
+      });
+
+      // ---------------------------------------------------------------------
+      // Layout toggle
+      // ---------------------------------------------------------------------
+      const toggleBtn = document.getElementById("layout-toggle");
+      toggleBtn.addEventListener("click", () => {
+        useHierarchical = !useHierarchical;
+        toggleBtn.textContent = useHierarchical ? "Layout: Tree" : "Layout: Force";
+        network.setOptions(buildOptions());
+      });
+    </script>
+  </body>
+</html>

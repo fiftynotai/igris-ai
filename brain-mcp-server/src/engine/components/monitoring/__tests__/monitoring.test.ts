@@ -400,10 +400,12 @@ describe('Monitoring Component', () => {
       expect(comp.version).toBe('1.0.0');
     });
 
-    it('events() declares 27 listened events', () => {
+    it('events() declares 38 listened events', () => {
+      // 34 base + 4 perception lifecycle events added in TD-074
+      // (perception.run_started/succeeded/failed/skipped).
       const comp = createMonitoringComponent();
       const { listens } = comp.events();
-      expect(listens).toHaveLength(27);
+      expect(listens).toHaveLength(38);
     });
 
     it('events() declares 0 emitted events', () => {

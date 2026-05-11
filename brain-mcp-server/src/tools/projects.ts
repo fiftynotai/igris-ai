@@ -22,6 +22,7 @@ interface ProjectRegisterInput {
   name: string;
   path: string;
   tech_stack?: string;
+  archetype?: string;
 }
 
 /** Input shape for igris_project_list */
@@ -48,14 +49,15 @@ function handleProjectRegister(args: ProjectRegisterInput): { content: { type: s
   const db = getDb();
 
   db.prepare(`
-    INSERT INTO projects (slug, name, path, tech_stack, last_session_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
+    INSERT INTO projects (slug, name, path, tech_stack, archetype, last_session_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(slug) DO UPDATE SET
       name = excluded.name,
       path = excluded.path,
       tech_stack = excluded.tech_stack,
+      archetype = COALESCE(excluded.archetype, projects.archetype),
       last_session_at = excluded.last_session_at
-  `).run(args.slug, args.name, args.path, args.tech_stack ?? '');
+  `).run(args.slug, args.name, args.path, args.tech_stack ?? '', args.archetype ?? null);
 
   const project = db.prepare(
     'SELECT * FROM projects WHERE slug = ?'
@@ -71,6 +73,7 @@ function handleProjectRegister(args: ProjectRegisterInput): { content: { type: s
         `Name: ${project.name}`,
         `Path: ${project.path}`,
         `Tech Stack: ${project.tech_stack || '(none)'}`,
+        `Archetype: ${project.archetype || 'unclassified'}`,
         `Status: ${project.status}`,
         `Registered: ${project.registered_at}`,
         `Last Session: ${project.last_session_at}`,

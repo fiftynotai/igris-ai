@@ -45,6 +45,7 @@ export function createProjectsComponent(): BrainComponent {
           description: 'Register a project in the Igris brain. Creates or updates the project record. Call this when Igris is installed in a new project.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               slug: {
                 type: 'string',
@@ -62,6 +63,10 @@ export function createProjectsComponent(): BrainComponent {
                 type: 'string',
                 description: 'Comma-separated technologies (e.g., "dart,flutter,firebase")',
               },
+              archetype: {
+                type: 'string',
+                description: 'Project archetype (e.g., "brand-website", "enterprise-mvvm-mobile", "ai-agent-system", "design-kit")',
+              },
             },
             required: ['slug', 'name', 'path'],
           },
@@ -76,6 +81,7 @@ export function createProjectsComponent(): BrainComponent {
           description: 'List all projects registered in the Igris brain, optionally filtered by status.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               status: {
                 type: 'string',
@@ -91,6 +97,7 @@ export function createProjectsComponent(): BrainComponent {
           description: 'Get a detailed status dashboard for a specific project, including learning count, error count, and recent agent metrics.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               slug: {
                 type: 'string',

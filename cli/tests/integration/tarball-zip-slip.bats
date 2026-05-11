@@ -1,0 +1,48 @@
+#!/usr/bin/env bats
+
+# tarball-zip-slip.bats — integration test for the malicious-tarball
+# rejection path. We can't easily wire the CLI to fetch a tarball
+# from a local file (the verb expects an HTTPS URL); the unit test in
+# src/__tests__/tarball.test.ts already verifies the rejection path
+# end-to-end against the committed fixture. This bats test is a
+# narrower belt-and-braces check at the CLI surface.
+#
+# What we verify:
+#   1. The malicious fixture exists at the expected path.
+#   2. The unit-test entry point passes (i.e. zip-slip rejection still
+#      green when run via npm test from the repo root). We invoke
+#      npx vitest with the specific file so a regression here surfaces
+#      at the CLI integration boundary, not just at unit-test layer.
+#   3. The malicious fixture's contents include both the `..` escape
+#      and the absolute path entry (defending against fixture drift).
+
+load _helpers.bash
+
+setup() {
+  # _helpers.bash defines CLI_DIST as <cli>/dist; from there ../src/__tests__/fixtures/...
+  ZIPSLIP_TARBALL="$(cd "$CLI_DIST/.." && pwd)/src/__tests__/fixtures/tarballs/zip-slip.tar.gz"
+}
+
+@test "malicious zip-slip fixture is present" {
+  [ -f "$ZIPSLIP_TARBALL" ]
+}
+
+@test "zip-slip fixture contains a ../ escape entry" {
+  run tar -tzf "$ZIPSLIP_TARBALL"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"../etc/passwd"* ]]
+}
+
+@test "zip-slip fixture contains an absolute-path entry" {
+  run tar -tzf "$ZIPSLIP_TARBALL"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"/tmp/igris-zip-slip-pwn"* ]]
+}
+
+@test "zip-slip rejection unit test passes (CRITICAL gate)" {
+  cd "$CLI_DIST/.."
+  run npx vitest run src/__tests__/tarball.test.ts
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"zip-slip rejection"* ]]
+  [[ "$output" == *"passed"* ]]
+}

@@ -143,6 +143,19 @@ async function pushTables(
   const chunks = chunkTablesForPush(tables);
 
   try {
+    // BR-066 (auto-push retry): the server now returns HTTP 207 Multi-Status
+    // when some tables errored at table-level. Both 200 and 207 are 2xx so
+    // `response.ok` is true and `fetchWithRetry` resolves rather than throws.
+    // We must inspect the body and treat per-table `errors` as a partial
+    // failure: advance sync_state ONLY for the OK tables, and enqueue the
+    // failed-table rows with the SPECIFIC table-level error message rather
+    // than silently dropping them at the next push horizon.
+    //
+    // Aggregate failures across all chunks because a single auto-push call
+    // can split into multiple HTTP requests, and we want sync_state to
+    // advance for a table iff every chunk that touched it succeeded.
+    const failedTables: Record<string, string> = {};
+
     for (const chunk of chunks) {
       const payload = {
         tables: chunk,
@@ -150,7 +163,7 @@ async function pushTables(
         schema_version: 9,
       };
 
-      await fetchWithRetry(`${config.remoteUrl}/sync/push`, {
+      const response = await fetchWithRetry(`${config.remoteUrl}/sync/push`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -158,9 +171,33 @@ async function pushTables(
         },
         body: JSON.stringify(payload),
       });
+
+      const body = await response.json() as {
+        ok?: boolean;
+        results?: Record<string, unknown>;
+        errors?: Record<string, string>;
+      };
+
+      // Truly broken response: no `results` field at all. Existing catch
+      // path handles it correctly (queue everything for retry).
+      if (!body || typeof body !== 'object' || !('results' in body)) {
+        throw new Error('malformed sync push response');
+      }
+
+      // HTTP 207 partial: collect per-table errors. The chunk may have
+      // touched only a subset of `tables`; only the keys present here
+      // are blocked from advancing sync_state.
+      if (body.ok === false && body.errors && typeof body.errors === 'object') {
+        for (const [tableName, errMessage] of Object.entries(body.errors)) {
+          // First failure wins; subsequent chunks for the same table do
+          // not overwrite — keeps the queue's error_message stable.
+          if (!(tableName in failedTables)) {
+            failedTables[tableName] = errMessage;
+          }
+        }
+      }
     }
 
-    // Update sync_state for each pushed table
     const db = getDb();
     const upsertState = db.prepare(`
       INSERT INTO sync_state (remote_url, table_name, last_push_at)
@@ -169,11 +206,37 @@ async function pushTables(
       DO UPDATE SET last_push_at = excluded.last_push_at
     `);
 
+    // Advance sync_state ONLY for tables that didn't error in any chunk.
     db.transaction(() => {
       for (const tableName of Object.keys(tables)) {
+        if (tableName in failedTables) continue;
         upsertState.run(config.remoteUrl, tableName, pushedAt);
       }
     })();
+
+    // Queue the failed-table rows with their SPECIFIC error message so
+    // the next drain has actionable diagnostics (not a generic "HTTP 500").
+    if (Object.keys(failedTables).length > 0) {
+      for (const [tableName, errMessage] of Object.entries(failedTables)) {
+        const rows = tables[tableName];
+        if (!rows || rows.length === 0) continue;
+        try {
+          queueFailedRows(
+            db,
+            { [tableName]: rows },
+            `HTTP 207 — table=${tableName}: ${errMessage}`,
+          );
+          log.warn(
+            `Auto-push partial failure on table=${tableName}: ${errMessage} ` +
+            `(${rows.length} row(s) queued for retry)`,
+          );
+        } catch (queueErr) {
+          log.error(
+            `Failed to queue ${tableName} rows for retry: ${errMsg(queueErr)}`,
+          );
+        }
+      }
+    }
   } catch (err) {
     const message = errMsg(err);
     log.warn(`Auto-push failed: ${message}`);
@@ -384,6 +447,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Push local brain changes to a remote brain server. Syncs learnings, errors, projects, sessions, brief_status, agent_metrics changed since last push. Uses last-write-wins for conflict resolution.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               remote_url: {
                 type: 'string',
@@ -403,6 +467,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Pull remote brain changes to local brain. Syncs all tables changed since last pull. Uses last-write-wins for conflict resolution.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               remote_url: {
                 type: 'string',
@@ -422,6 +487,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Show the current sync queue status. Displays pending, retrying, sent, and failed counts plus per-table breakdown of actionable items.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {},
           },
           handler: () => handleSyncQueueStatus(),
@@ -431,6 +497,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Process pending sync queue items by pushing them to the remote brain. Retries failed push operations with exponential backoff tracking.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               remote_url: {
                 type: 'string',
@@ -450,6 +517,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Sync a brief file content to the brain. Computes content hash and upserts into brief_files table. Use this to store the full markdown content of brief files for cross-device access.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -477,6 +545,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Sync a session file content to the brain. Stores session files (CURRENT_SESSION.md, BLOCKERS.md, etc.) for cross-device access.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -500,6 +569,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Pull all session files for a project from the brain. Returns all stored session files with their content.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -515,6 +585,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Sync a definition file (agent, skill, rule, or prompt) to the brain. Stores the full content for cross-device and cross-project sharing.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               type: {
                 type: 'string',
@@ -547,6 +618,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Pull definitions from the brain. Optionally filter by timestamp to get only recently updated definitions.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               since: {
                 type: 'string',
@@ -561,6 +633,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Push a flat file (events.jsonl, agent-metrics.json, budget.json) to the remote brain server via HTTP. Updates sync_state for dashboard tracking.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               file_type: {
                 type: 'string',
@@ -589,6 +662,7 @@ export function createSyncComponent(): BrainComponent {
           description: 'Pull a flat file from the remote brain server.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               file_type: {
                 type: 'string',

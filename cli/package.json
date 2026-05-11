@@ -1,0 +1,53 @@
+{
+  "name": "igris-ai",
+  "version": "7.0.0",
+  "description": "Igris AI unified CLI — init, refresh, install, update, sync, doctor, register-project for Igris projects.",
+  "type": "module",
+  "bin": {
+    "igris": "./dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc && bash scripts/copy-templates.sh",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:bats": "bats tests/integration"
+  },
+  "author": "Fifty.ai",
+  "license": "MIT",
+  "homepage": "https://github.com/fiftynotai/igris-ai#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fiftynotai/igris-ai.git",
+    "directory": "cli"
+  },
+  "bugs": {
+    "url": "https://github.com/fiftynotai/igris-ai/issues"
+  },
+  "keywords": [
+    "igris",
+    "cli",
+    "ai",
+    "claude",
+    "engineering"
+  ],
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "commander": "^12.1.0",
+    "tar": "^7.5.14"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

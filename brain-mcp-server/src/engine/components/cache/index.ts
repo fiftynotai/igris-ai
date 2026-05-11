@@ -108,6 +108,7 @@ export function createCacheComponent(): BrainComponent {
           description: 'Rebuild filesystem cache for a project. Regenerates markdown files from brain DB into ~/.igris/projects/{project}/.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -141,6 +142,7 @@ export function createCacheComponent(): BrainComponent {
           description: 'Remove filesystem cache for a project.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',

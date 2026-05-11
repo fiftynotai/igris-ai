@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [7.0.0] - TBD
+
+### Changed
+
+- **Subconscious engine disabled by default** -- the rule-based gap/pattern/stalled detectors had a 2% true-positive rate, training users to ignore diagnostics. New `subconscious.enabled` config flag in `~/.igris/config.json` defaults to `false`. Both `subconscious_engine` schedule rows disabled. `/awaken` §4.8 and `/scan` §6.5 silently skip when the flag is false. Existing pending suggestions bulk-dismissed with reason `"subconscious paused pending FR-118 redesign (TD-102)"`. Schedule rows preserved — re-enable in V7.1 is a flag flip after FR-118 ships the LLM-driven replacement (TD-102).
+- **Removed vestigial `features.mcp_server` config flag** -- the flag was documented as gating "all 27 MCP tools" but had zero runtime consumers. Its only effect was prose-driven self-skipping of MCP-mandatory steps in `/awaken`, `/scan`, `/rest`, which masked a 4,781-row `sync_queue` accumulation during a 20-hour VPS outage on 2026-05-04. Real gates remain unchanged: `~/.claude.json` registration (Claude Code's actual MCP gate) and tool-availability detection at call time. Existing `~/.igris/config.json` files in the wild get auto-migrated via a soft `pop()` cleanup in `scripts/igris_install.sh` on next install. Skills required no changes — they already used tool-availability detection (BR-065).
+- Cleaned up 18 stale bats tests asserting on v4 `ai/` directory layout, removed brief template files, removed mask greeting files, the deleted "MANDATORY FIRST ACTION" CLAUDE.md text, and legacy `~/.igris/output/...` paths. Tests reclassified: 10 deleted (no v6 equivalent by design), 7 updated to assert v6 paths (`.claude/`, `~/.igris/projects/{slug}/session/`), 1 skipped pending awaken §3.6.3.a integration. `bats test/*.test.bash` now returns 0 not-ok results. (TD-106)
+
+### Fixed
+
+- **Sync queue drain fails wholesale on multi-row chunks** -- the `/sync/push` HTTP handler wrapped all SYNC_TABLES `mergeRows` calls in one global `db.transaction()`. A single bad row in any table (e.g., a `brief_files` row with `content` shaped as a serialized Buffer object that better-sqlite3 can't bind) aborted the whole transaction, the generic catch returned HTTP 500, and all rows in the chunk were reported as failed — accumulating ~5,000 rows in `sync_queue` over a 20-hour incident. Fix is multi-pronged: server-side per-table transaction isolation with sqlite_master preflight (BR-064 carry-over) and a new HTTP 207 Multi-Status response shape (`{ok, results, errors}`) for partial-failure visibility; row-level try/catch in `mergeRows` that returns a `failures` array with per-row table+key+error diagnostics; new `CHUNK_SIZE_LIMIT_DRAIN` constant (256 KB, was 5 MB) on the drain path with bisect-on-failure that isolates a single bad row in log2(N) push attempts and surfaces it with a specific `"HTTP 207 — table=X key=Y"` error message instead of generic `"HTTP 500"`. Auto-push (`pushTables`), `handleBrainPush`, and `handleSyncQueueDrain` all updated for the new response shape — failed tables stay at their old `last_push_at` horizon and rows are queued with the table-specific error, instead of advancing past the failure as before. 18 new regression tests (15 in `sync-push-isolation.test.ts` covering the server handler, 3 in `auto-push-207.test.ts` covering the auto-push partial path). Auto-push hot path keeps the 5 MB chunk cap; only the drain path is bounded. (BR-066, addresses MG-014).
+
+---
+
 ## [5.0.0] - 2026-03-10
 
 ### Added

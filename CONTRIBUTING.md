@@ -134,8 +134,10 @@ bats test/
 # TypeScript (if modifying MCP server)
 cd brain-mcp-server && npm run build
 
-# Manual testing
-./scripts/igris_install.sh /tmp/test-project
+# Manual testing — bootstrap brain from this checkout, then install in test project
+node cli/dist/index.js init --from-source .
+mkdir -p /tmp/test-project
+node cli/dist/index.js install /tmp/test-project
 ```
 
 ### 4. Commit Your Changes

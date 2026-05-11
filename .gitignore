@@ -34,6 +34,10 @@ build/
 *.zip
 *.tar.gz
 
+# Test fixtures — explicitly committed tarball fixtures (zip-slip + clean-core)
+# for cli/src/__tests__/tarball.test.ts and cli/tests/integration/tarball-zip-slip.bats
+!cli/src/__tests__/fixtures/tarballs/*.tar.gz
+
 # Test files
 .test/
 test-output/

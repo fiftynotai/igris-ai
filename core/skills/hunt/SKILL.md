@@ -2,7 +2,6 @@
 name: hunt
 description: Implement a brief with full workflow - usage: /hunt BR-008
 disable-model-invocation: false
-context: fork
 allowed-tools:
   - Read
   - Write
@@ -10,7 +9,7 @@ allowed-tools:
   - Bash
   - Grep
   - Glob
-  - Task
+  - Agent
   - mcp__igris-brain__igris_brief_sync
   - mcp__igris-brain__igris_brief_get
   - mcp__igris-brain__igris_brief_update
@@ -134,10 +133,32 @@ Proceed to PLANNING phase.
    - brief_id: {current brief ID}
    - phase: "PLANNING"
    Skip silently if MCP unavailable. Never block the hunt workflow.
-4. **Delegate to architect agent** using Task tool:
+3.5. **Pre-architect brain pull** (fire-and-forget, never blocks):
+   - Call `igris_memory_recall` with `project={current_project}`, `context="{brief title} {brief problem statement}"`, `limit=5`
+   - Call `igris_brief_similar` with `query="{brief title} {brief problem statement}"`, `project={current_project}`, `threshold=0.85`, `limit=5`
+   - Aggregate both results into a single `Prior context:` markdown block (one heading per source: `## Prior learnings`, `## Similar briefs`)
+   - Pass that block into the architect prompt as an additional input section (append to the prompt template in step 4 under a `Prior context:` header)
+   - If either call fails or returns empty, log warning and continue without the block — do NOT block the hunt
+3.6. **Architect plan template constraint (PI-004):**
+   Plans must end at the last code-touching step. Do NOT instruct the
+   architect to include a final 'Commit' phase. If the architect
+   nevertheless emits a Commit phase (e.g., habitually numbering 0-N
+   ending in commit), the orchestrator excises it before passing the
+   plan to the forger in Phase 3 step 3.6.
+3.7. **Architect plan template constraint (TD-096):**
+   When the brief implementation will modify any file under repo `core/`
+   that has a runtime mirror at `~/.igris/core/`, the architect's plan
+   MUST include explicit `cp` steps from repo to runtime AND immediate
+   `bash ~/.igris/core/scripts/verify_mirror.sh <repo> <runtime>` sub-steps
+   after each `cp`. Forger is contractually required to run the primitive
+   and quote verbatim output (see forger.md MIRROR_SYNC). The plan must
+   surface this so forger does not skip it. If the architect omits these
+   sub-steps and the implementation touches core/ files, the orchestrator
+   annotates the prompt with a reminder before passing to forger in step 4.
+4. **Delegate to architect agent** using Agent tool:
 
 ```
-Task tool parameters:
+Agent tool parameters:
 - subagent_type: "architect"
 - description: "Plan implementation for {BRIEF_ID}"
 - prompt: "Create implementation plan for brief {BRIEF_ID}.
@@ -185,10 +206,25 @@ Task tool parameters:
    - brief_id: {current brief ID}
    - phase: "BUILDING"
    Skip silently if MCP unavailable.
-4. **Delegate to forger agent** using Task tool:
+3.5. **Pre-forger mistake recall** (fire-and-forget, never blocks):
+   - Call `igris_memory_recall` with `project={current_project}`, `context="{brief title} mistake regression bug"`, `limit=5`
+   - Note: `igris_memory_recall` does NOT currently accept a `category=mistake` filter — the FTS5 keyword bias (`"mistake regression bug"`) approximates it. If a `category` arg ships in a future brief, switch to that.
+   - Aggregate results into a `Past mistakes to avoid:` markdown block (one bullet per recalled lesson with title + 1-line summary)
+   - Pass into forger prompt under a `Past mistakes to avoid:` header (append to the template in step 4)
+   - If the call fails or returns empty, log warning and continue without the block
+3.6. **Excise commit phase from forger prompt (PI-004 / L-248):**
+   The architect's plan may number phases 0-N with the final phase
+   being a 'Commit' / 'COMMITTING' / 'git commit' step. The orchestrator
+   MUST NOT pass that phase into the forger prompt. The forger's job
+   ends at the last code-touching step. The orchestrator owns
+   COMMITTING per the state machine (Phase 7 below). When constructing
+   the prompt in step 4, omit any commit-related phase from the [plan
+   content] inclusion or annotate it with "(orchestrator-owned, not
+   forger's responsibility)".
+4. **Delegate to forger agent** using Agent tool:
 
 ```
-Task tool parameters:
+Agent tool parameters:
 - subagent_type: "forger"
 - description: "Implement {BRIEF_ID}"
 - prompt: "Implement the following brief according to the plan.
@@ -199,7 +235,15 @@ Task tool parameters:
 
   Follow the plan and implement all required changes.
   Ensure code follows architecture standards.
-  Add documentation comments to public APIs."
+  Add documentation comments to public APIs.
+
+  CRITICAL — DO NOT COMMIT. The /hunt state machine routes
+  BUILDING -> TESTING -> REVIEWING -> COMMITTING; the orchestrator
+  owns COMMITTING after sentinel + warden. If the architect's plan
+  contains a final 'Commit' phase, treat it as instruction for the
+  orchestrator and STOP at the last code-touching step. Do not run
+  git commit, git add for the purpose of committing, git tag, or
+  git push. Report 'IMPLEMENTATION COMPLETE — UNCOMMITTED'."
 ```
 
 5. After forger returns:
@@ -226,10 +270,10 @@ Task tool parameters:
    - brief_id: {current brief ID}
    - phase: "TESTING"
    Skip silently if MCP unavailable.
-4. **Delegate to sentinel agent** using Task tool:
+4. **Delegate to sentinel agent** using Agent tool:
 
 ```
-Task tool parameters:
+Agent tool parameters:
 - subagent_type: "sentinel"
 - description: "Test {BRIEF_ID} implementation"
 - prompt: "Run tests for the implementation.
@@ -288,10 +332,10 @@ Task tool parameters:
    - brief_id: {current brief ID}
    - phase: "REVIEWING"
    Skip silently if MCP unavailable.
-4. **Delegate to warden agent** using Task tool:
+4. **Delegate to warden agent** using Agent tool:
 
 ```
-Task tool parameters:
+Agent tool parameters:
 - subagent_type: "warden"
 - description: "Review {BRIEF_ID} implementation"
 - prompt: "Review the implementation for quality.

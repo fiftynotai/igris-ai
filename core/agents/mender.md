@@ -1,7 +1,7 @@
 ---
 name: mender
 description: Error diagnosis and recovery specialist for Igris AI. Diagnoses errors and suggests specific fixes. Powers the self-healing protocol.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, mcp__igris-brain__igris_error_lookup
 model: inherit
 memory: project
 ---
@@ -46,12 +46,13 @@ You do NOT need: igris_os.md, SOUL.md, session files, brief protocol.
 
 ## WORKFLOW
 
-1. **Receive** error report from orchestrator (test output, stack trace, logs)
-2. **Parse** the error — identify type, location, severity
-3. **Investigate** root cause using Read, Grep, Glob, Bash
-4. **Diagnose** — determine immediate cause and underlying issue
-5. **Recommend** specific fix with file:line and code snippets
-6. **Return** structured diagnosis to orchestrator
+1. **Brain lookup first.** Call `igris_error_lookup` with `message="{primary error message from input}"`, `project="{current project slug}"`. If a solution row is returned (fingerprint match), proceed directly to step 6 (Recommend) using that solution as the candidate fix and label it `Source: brain (igris_error_lookup match)` in the diagnosis output. If no match, continue to step 2.
+2. **Receive** error report from orchestrator (test output, stack trace, logs)
+3. **Parse** the error — identify type, location, severity
+4. **Investigate** root cause using Read, Grep, Glob, Bash
+5. **Diagnose** — determine immediate cause and underlying issue
+6. **Recommend** specific fix with file:line and code snippets
+7. **Return** structured diagnosis to orchestrator
 
 ## SELF-HEALING INTEGRATION
 

@@ -10,8 +10,91 @@
  * @author Fifty.ai
  */
 
+import { createRequire } from 'node:module';
 import Database from 'better-sqlite3';
 import type { StorageAdapter, Migration } from '../types.js';
+
+/**
+ * CommonJS require shim for ESM modules.
+ *
+ * `brain-mcp-server` is ESM (`"type": "module"`), but `sqlite-vec` ships
+ * both CJS (`./index.cjs`) and ESM (`./index.mjs`) entries. We use
+ * `createRequire` here instead of dynamic `import()` because
+ * `createSqliteAdapter` is a synchronous factory called at engine boot
+ * (engine/index.ts -> bootEngine), before `migrateSchema` and
+ * `setAdapter`. Switching to async would cascade into bootEngine and
+ * every caller (mcp/server.ts, tests, scripts). createRequire keeps
+ * this one line, zero callsite changes.
+ */
+const requireCjs = createRequire(import.meta.url);
+
+/**
+ * Decide whether sqlite-vec is required (load failure aborts startup).
+ *
+ * Production environments (`NODE_ENV=production`) MUST have the
+ * extension or hybrid search silently degrades to FTS-only. The
+ * `IGRIS_REQUIRE_VEC` env var is the explicit override:
+ *   - `1` forces required mode (loud-fail) anywhere
+ *   - `0` forces optional mode (soft-fail) anywhere
+ *   - unset: required iff NODE_ENV=production
+ */
+function isVecRequired(): boolean {
+  const flag = process.env.IGRIS_REQUIRE_VEC;
+  if (flag === '1') return true;
+  if (flag === '0') return false;
+  return process.env.NODE_ENV === 'production';
+}
+
+/** Minimal shape of the sqlite-vec module surface we use. */
+interface SqliteVecModule {
+  load(db: Database.Database): void;
+}
+
+/**
+ * Load the sqlite-vec extension into the given connection.
+ *
+ * Three modes (selected at runtime via env vars):
+ *   1. **Default soft-fail** (dev/test): logs and continues without
+ *      vector search if the extension is unavailable.
+ *   2. **Required loud-fail** (prod, or `IGRIS_REQUIRE_VEC=1`): throws
+ *      so startup aborts loudly rather than silently disabling search.
+ *   3. **Disabled** (`IGRIS_DISABLE_VEC=1`): skips the load entirely.
+ *      This is the kill-switch — set on the VPS to keep the brain
+ *      running on FTS-only without redeploying when the native binary
+ *      is broken or missing.
+ *
+ * After `sqliteVec.load(db)` succeeds, runs `SELECT vec_version()` as a
+ * smoke check. The JS shim can resolve fine while the platform-specific
+ * `.so`/`.dylib` is missing or ABI-mismatched — only an actual function
+ * call against the loaded extension proves it works.
+ */
+function loadVecExtension(db: Database.Database): void {
+  if (process.env.IGRIS_DISABLE_VEC === '1') {
+    console.error('[engine] sqlite-vec disabled via IGRIS_DISABLE_VEC=1');
+    return;
+  }
+
+  const required = isVecRequired();
+
+  try {
+    const sqliteVec = requireCjs('sqlite-vec') as SqliteVecModule;
+    sqliteVec.load(db);
+    // Smoke check — proves the native binary is actually loaded, not
+    // just the JS shim. Without this, a missing .so/.dylib slips
+    // through silently and only surfaces when a vec0 query runs.
+    const row = db.prepare('SELECT vec_version() AS v').get() as { v: string };
+    console.error(`[engine] sqlite-vec loaded successfully (vec_version=${row.v})`);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    const baseMsg = `[engine] sqlite-vec extension not available — vector search disabled: ${detail}`;
+    if (required) {
+      throw new Error(
+        `${baseMsg}\n\nStartup aborted. Set IGRIS_DISABLE_VEC=1 to bypass and run with FTS-only.`,
+      );
+    }
+    console.error(baseMsg);
+  }
+}
 
 /**
  * Create a SQLite storage adapter for the given database path.
@@ -31,6 +114,10 @@ export function createSqliteAdapter(dbPath: string): StorageAdapter {
   db.pragma('synchronous = NORMAL');
   db.pragma('foreign_keys = ON');
   db.pragma('trusted_schema = OFF');
+
+  // Load sqlite-vec extension. See loadVecExtension JSDoc for the
+  // three modes (soft-fail dev, loud-fail prod, kill-switch override).
+  loadVecExtension(db);
 
   // Create engine migration tracking table
   db.exec(`

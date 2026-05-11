@@ -64,6 +64,7 @@ export function createSessionsComponent(): BrainComponent {
           description: 'Sync a session snapshot to the Igris brain. Called by /rest to record what you were working on. Closes any existing open session for the project before creating a new one.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -99,6 +100,7 @@ export function createSessionsComponent(): BrainComponent {
           description: 'Recall recent sessions across all projects. Called by /awaken to show cross-project context. Returns sessions grouped by day.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               days: {
                 type: 'number',
@@ -113,6 +115,7 @@ export function createSessionsComponent(): BrainComponent {
           description: 'Get a single session file by project and filename. Returns the file content, content hash, and updated timestamp.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -132,6 +135,7 @@ export function createSessionsComponent(): BrainComponent {
           description: 'Create or update a session file in the brain. Upserts into session_files with SHA-256 content hash. Use this to persist session state across context resets.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',

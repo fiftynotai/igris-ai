@@ -37,7 +37,7 @@ check_config_exists() {
     echo "Error: Igris config not found at $IGRIS_CONFIG_FILE"
     echo ""
     echo "Run brain init first:"
-    echo "  ./scripts/igris_brain_init.sh"
+    echo "  igris init"
     echo ""
     exit 1
   fi

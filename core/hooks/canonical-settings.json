@@ -1,0 +1,68 @@
+{
+  "_doc": "Single source of truth for the Igris-managed hooks block in .claude/settings.json. Consumed by cli/src/lib/canonical-hooks.ts (the sole writer in v7). Commands use the literal $HOME prefix; Claude Code expands $HOME at runtime. Shipped to ~/.igris/core/hooks/canonical-settings.json via the brain-core tarball ('igris init' / 'igris refresh').",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.igris/core/hooks/shared/session_start.sh"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.igris/core/hooks/shared/session_end.sh"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.igris/core/hooks/shared/pre_compact.sh"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.igris/core/hooks/shared/post_compact.sh"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.igris/core/hooks/shared/pre_tool_use.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$HOME/.igris/core/hooks/shared/post_tool_use.sh",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

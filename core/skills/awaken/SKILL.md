@@ -19,6 +19,10 @@ allowed-tools:
   - mcp__igris-brain__igris_instance_list
   - mcp__igris-brain__igris_brief_sync
   - mcp__igris-brain__igris_brief_create
+  - mcp__igris-brain__igris_goal_list
+  - mcp__igris-brain__igris_suggestion_list
+  - mcp__igris-brain__igris_event_log
+  - mcp__igris-brain__igris_perception_review_pending
 triggers:
   - "AWAKEN"
   - "ARISE"
@@ -38,13 +42,23 @@ Silently emit a skill invocation event (never blocks execution):
 bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "awaken" 2>/dev/null || true
 ```
 
-### 1. Load System Context
+### 1. Load Context via Tree
 
-Read these files silently:
-- `~/.igris/core/prompts/igris_os.md` - Operating system
-- `~/.igris/core/SOUL.md` - Persona identity
-- `~/.igris/USER.md` - User config
-- `~/.igris/projects/{project}/context/coding_guidelines.md` - Architecture standards
+Read `~/.igris/core/igris_tree.json` first — this is the **sole router** for what context to load.
+
+1. Read `~/.igris/core/igris_tree.json`
+2. Look up `tasks["/awaken"].load` to get the context file keys (e.g., `["igris_os", "soul", "coding_guidelines"]`)
+3. For each key, resolve the file path from `context_files[key].path` (replace `{project}` with current project slug)
+4. If `tasks["/awaken"].sections.igris_os` is set, use it to determine which sections to load:
+   - `"ALL"` → read the entire file
+   - Array (e.g., `["identity", "brief_protocol"]`) → read only those section ranges from `context_files.igris_os.sections`
+5. Read all resolved files silently
+
+**Always-needed files** (not in tree, needed for awaken mechanics):
+- `~/.igris/USER.md` - User config (addressing mode, mask preference)
+- `~/.igris/config.json` - Remote brain URL and API key
+
+Do NOT hardcode context file paths — always derive them from the tree.
 
 ### 2. Load Session State
 
@@ -55,15 +69,15 @@ First try `igris_session_file_get` (MCP) for CURRENT_SESSION.md, then read `~/.i
 
 ### 3. Display Persona Greeting
 
-Read persona from `~/.igris/core/SOUL.md` and user config from `~/.igris/USER.md`:
+Use the persona (from `soul`) and user config (from `USER.md`) already loaded in Step 1:
 ```
-[PERSONA GREETING FROM ~/.igris/core/SOUL.md]
+[PERSONA GREETING FROM soul context]
 
 My capabilities:
 - Brief management, session recovery, architecture enforcement
 - Quality gates, protocol enforcement
 
-Current mode: [mask level description from ~/.igris/core/SOUL.md]
+Current mode: [mask level description from soul context]
 ```
 
 ### 3.5. Query Brain for Context (Optional)
@@ -217,6 +231,209 @@ Self-Healing: [Enabled/Disabled]
 ```
 
 If brain MCP is NOT available or calls fail, skip silently. Do NOT block session start.
+
+### 4.7. Goals Approaching Deadline (FR-110)
+
+If `igris-brain` MCP is available, call `igris_goal_list` with:
+- `project` = current project slug
+- `status` = `'active'`
+- `upcoming_days` = `14`
+- `limit` = `3`
+
+Token budget: this surface is bounded to ≤3 rows by the `limit` parameter. Render at most ~120 tokens.
+
+If results are returned, render:
+
+```
+## Goals approaching deadline
+- GL-003 "Ship v6.1" — due 2026-05-01 (3 days), 4/7 briefs done
+- GL-001 "Compliance audit" — due 2026-05-12 (14 days), 1/5 briefs done
+```
+
+The "X/Y briefs done" comes from each goal's `serving_briefs_count` field plus a per-goal call (only if the count is non-zero) — but for the awaken surface, prefer using just `serving_briefs_count` from the list response and rendering "N briefs serving" rather than calling `igris_goal_progress` per goal (token budget).
+
+If zero results, render nothing — no "No goals" line. Do NOT call any further goal tools when zero rows are returned.
+
+If `>3` active goals exist beyond the 14-day window, append a single trailing line: `(+N other active goals — run /scan for full list)`. Only display this trailing line if you happen to have called `igris_goal_list` without `upcoming_days` separately; if you only called the bounded version, omit the trailing line.
+
+If the goal tools are unavailable (older brain), skip silently.
+
+### 4.8. Subconscious Suggestions (FR-106)
+
+> **TD-102 (V7):** This entire section is gated behind the `subconscious.enabled`
+> config flag, which defaults to `false` for V7. The rule-based engine had a
+> 2% true-positive rate; the redesign is tracked under FR-118 (V7.1 headline).
+> Re-enable is just a flag flip — no schedule re-bootstrap needed.
+
+Read `~/.igris/config.json` and check `subconscious.enabled`. If the key is
+absent, treat as `false`. If `false`, skip this section silently — render
+nothing, do not call any suggestion MCP tools, do not surface a "disabled"
+notice. Resume reading at §4.9.
+
+If `igris-brain` MCP is available, call `igris_suggestion_list` with:
+- `status` = `'pending'`
+- `project_slug` = current project slug
+- `limit` = `3`
+
+Token budget: bounded to <=3 rows by `limit`. Render at most ~120 tokens.
+
+If results are returned, render:
+
+```
+## Suggestions ({total} pending)
+- [{priority}] {title} ({source_module})
+- [{priority}] {title} ({source_module})
+- [{priority}] {title} ({source_module})
+```
+
+Use the `total` count from the response (may exceed `limit`) so the user
+knows how many are queued in total. Format each row as:
+`- [{priority}] {title} ({source_module})` — keep it terse; the user can
+run `igris_suggestion_list` directly for full details.
+
+If zero results, render nothing — no "No suggestions" line. If the tool
+is unavailable (older brain), skip silently.
+
+### 4.9. Pending Perception Candidates (FR-109 / TD-066)
+
+Extraction happens in a detached background process at session-end (spawned
+by `session_end.sh` / `pre_compact.sh` via `perception_extract_and_persist.sh`).
+This section is purely a SELECT — it surfaces whatever the background process
+has committed since the last awaken. /awaken does NOT drain any inbox.
+
+#### Pre-step (TD-074, TD-080): perception failure WARNING
+
+Before rendering pending candidates, query the latest perception lifecycle
+event so a recent failure surfaces prominently. **TD-080 fix (Gap A):** read
+directly from the local DB via `sqlite3` (NOT via `igris_event_log` MCP) so
+this machine's local-only events surface here. The MCP tool routes to the
+remote brain, which misses any perception runs that happened on this machine
+since the last `/rest`. Post-§3.6 pull, the local DB is the merged superset.
+
+Run (substitute `$PROJECT_SLUG` for the current project slug):
+```bash
+# Defense-in-depth (TD-080 Q-3): refuse to interpolate if slug doesn't match
+# the registered slug shape. Belt-and-suspenders against any future code path
+# that broadens slug sourcing (e.g., env var override). Same posture as the
+# other defensive guards in this section — skip silently if the slug came
+# from an unexpected source.
+if [[ ! "$PROJECT_SLUG" =~ ^[a-z0-9_-]+$ ]]; then
+  return 0  # do not surface this section this run
+fi
+
+sqlite3 "$HOME/.igris/memory/knowledge.db" \
+  "SELECT created_at, event_name, json_extract(payload, '\$.reason') AS reason
+   FROM event_log
+   WHERE component = 'perception' AND project_slug = '$PROJECT_SLUG'
+   ORDER BY created_at DESC LIMIT 1;"
+```
+
+If the latest row's `event_name` is `'perception.run_failed'` AND no later
+`'perception.run_succeeded'` row exists for the same project (defensive
+follow-up to confirm the failure has not self-recovered), prepend a single
+WARNING block before the pending list. Otherwise, render no warning and
+proceed to the pending list as normal.
+
+The defensive "no later success" check (substitute the failed row's
+`created_at`):
+```bash
+# Defense-in-depth (TD-080 Q-3): refuse to interpolate if slug doesn't match
+# the registered slug shape.
+if [[ ! "$PROJECT_SLUG" =~ ^[a-z0-9_-]+$ ]]; then
+  return 0
+fi
+
+sqlite3 "$HOME/.igris/memory/knowledge.db" \
+  "SELECT COUNT(*) FROM event_log
+   WHERE component = 'perception' AND project_slug = '$PROJECT_SLUG'
+     AND event_name = 'perception.run_succeeded'
+     AND created_at > '<failed_row_created_at>';"
+```
+
+A return of `0` confirms the failure is the latest terminal state.
+
+**Defensive guards (TD-080):**
+- Wrap each `sqlite3` invocation with a `command -v sqlite3 >/dev/null 2>&1`
+  pre-check. If sqlite3 is absent on this machine, skip the WARNING silently.
+- If the DB file is missing or the query errors, skip the WARNING silently.
+  The `2>/dev/null || true` shell pattern absorbs both cases.
+
+```
+## Perception WARNING
+Latest extraction FAILED at 2026-05-01 04:22 (reason: epipe_on_llm_stdin).
+Recent session transcripts may not have produced learnings.
+Investigate: tail ~/.igris/projects/{project}/session/perception_extract.log
+```
+
+Suppression rules (do NOT render the WARNING when):
+- Latest event is `'perception.run_skipped'` — skipping is normal (60s
+  min-window, bytes gate, disabled gate).
+- Latest event is `'perception.run_started'` with no terminal event yet
+  (in-flight run; /scan handles the "stuck RUNNING" surface).
+- A `'perception.run_succeeded'` row exists with `created_at` newer than
+  the failed row.
+
+Token budget for the WARNING block: ~80 tokens. The pending list below
+remains unchanged in budget (~150 tokens). Total §4.9 upper bound: ~230 tokens.
+
+If `sqlite3` is unavailable or the DB file is missing, skip the WARNING silently.
+
+#### Pending list
+
+**TD-080 fix (Gap A):** read directly from the local DB via `sqlite3` (NOT
+via `igris_perception_review_pending` MCP). Same rationale as the WARNING
+above — local-only pending rows from this machine's recent extractions are
+invisible to the remote-routed MCP tool. Post-§3.6 pull, the local DB is the
+merged superset.
+
+Run (substitute `$PROJECT_SLUG`):
+```bash
+# Defense-in-depth (TD-080 Q-3): refuse to interpolate if slug doesn't match
+# the registered slug shape.
+if [[ ! "$PROJECT_SLUG" =~ ^[a-z0-9_-]+$ ]]; then
+  return 0
+fi
+
+sqlite3 "$HOME/.igris/memory/knowledge.db" \
+  "SELECT title, source_extractor, confidence
+   FROM learnings
+   WHERE project = '$PROJECT_SLUG' AND review_status = 'pending_review'
+   ORDER BY created_at DESC LIMIT 5;"
+
+sqlite3 "$HOME/.igris/memory/knowledge.db" \
+  "SELECT COUNT(*) FROM learnings
+   WHERE project = '$PROJECT_SLUG' AND review_status = 'pending_review';"
+```
+
+The first query returns the top 5 pending rows for the rendered list. The
+second returns the total count (matches the `total` field the MCP tool used
+to provide). Token budget: bounded to <=5 rows. Render at most ~150 tokens.
+
+If results are returned, render:
+
+```
+## Pending Learnings ({total} pending review)
+- [{source_extractor}, conf {confidence}] {title}
+- [{source_extractor}, conf {confidence}] {title}
+```
+
+Use the `total` count from the response (may exceed `limit`) so the user
+knows the queue depth. The `source_extractor` field values are typically
+`llm` (from background extraction) or `manual` (from direct memory_store
+calls). Legacy rows from pre-TD-066 extractions may render as
+`rule:learned_marker`, `rule:retry_chain`, `rule:blocker_resolution`, or
+`rule:error_fingerprint` — these are read-side compatible and surface
+verbatim. Show `approve` and `reject` MCP tools as next-step hints once per
+session, not per row.
+
+If zero results, render nothing — no "No pending" line. If `sqlite3` is
+unavailable or the DB file is missing, skip silently (same defensive guards
+as the WARNING block above).
+
+If `auto_approve_enabled=true` is set in `~/.igris/config.json`'s `perception`
+section, the background extractor inserts new rows as `approved` directly
+and they bypass this surface — they appear in `recall`/`search` immediately
+without operator review. Default is opt-in (off).
 
 ### 5. Display Resume Point (if resuming)
 

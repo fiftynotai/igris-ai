@@ -6,9 +6,8 @@
 # Tests:
 # - config.json includes worker section with correct defaults
 # - CLAUDE.global.md.template contains Worker Mode section
-# - igris_brain_init.sh fallback heredoc contains Worker Mode section
-# - igris_install.sh creates worker and output directories
-# - igris_install.sh copies worker scripts to ~/.igris/scripts/
+# (igris_brain_init.sh / igris_install.sh assertions retired in MG-014 M5;
+#  see notes inline below for the TS-port follow-up.)
 
 load test_helper
 
@@ -33,7 +32,8 @@ teardown() {
 @test "brain_init config generation includes worker section" {
   require_python3
 
-  # Simulate the python3 config generation from igris_brain_init.sh
+  # Simulate the python3 config generation from `igris init` (formerly
+  # in the retired igris_brain_init.sh shell heredoc).
   local output_file="$TEST_TEMP_DIR/config.json"
   local install_date="2026-02-26T00:00:00Z"
   local source_repo="/tmp/test-repo"
@@ -53,7 +53,6 @@ config = {
         'memory': brain_mode in ('local', 'dual'),
         'project_registry': True,
         'symlinks': True,
-        'mcp_server': True,
         'staging_pipeline': brain_mode in ('local', 'dual'),
         'analytics': True
     },
@@ -152,7 +151,7 @@ config = {
     'version': '4.0.0',
     'installed_at': '2026-02-26T00:00:00Z',
     'source_repo': '/tmp/test',
-    'features': {'memory': True, 'project_registry': True, 'symlinks': True, 'mcp_server': True, 'staging_pipeline': True, 'analytics': True},
+    'features': {'memory': True, 'project_registry': True, 'symlinks': True, 'staging_pipeline': True, 'analytics': True},
     'paths': {'brain': '~/.igris', 'core': '~/.igris/core', 'memory': '~/.igris/memory', 'staging': '~/.igris/staging'},
     'database': {'path': '~/.igris/memory/knowledge.db', 'wal_mode': True, 'busy_timeout_ms': 5000},
     'worker': {
@@ -216,47 +215,20 @@ print('Valid JSON')
   [ "$worker_line" -lt "$note_line" ]
 }
 
-@test "brain_init fallback heredoc contains Worker Mode section" {
-  assert_file_contains "$SCRIPTS_DIR/igris_brain_init.sh" "## Worker Mode"
-}
-
-@test "brain_init fallback heredoc contains autonomous work instruction" {
-  assert_file_contains "$SCRIPTS_DIR/igris_brain_init.sh" "Do NOT ask for user input -- work autonomously"
-}
-
-# =============================================================================
-# INSTALL.SH DIRECTORY CREATION TESTS
-# =============================================================================
-
-@test "install script references worker log directory creation" {
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'mkdir -p "$HOME/.igris/logs/worker"'
-}
-
-@test "install script references output directory creation" {
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'mkdir -p "$HOME/.igris/output/content"'
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'mkdir -p "$HOME/.igris/output/social-media"'
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'mkdir -p "$HOME/.igris/output/media-gen"'
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'mkdir -p "$HOME/.igris/output/research"'
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'mkdir -p "$HOME/.igris/output/operational"'
-}
+# NOTE: The two `brain_init fallback heredoc` tests were removed in MG-014
+# M5 because `scripts/igris_brain_init.sh` was deleted. Worker Mode content
+# now ships from `scripts/templates/CLAUDE.global.md.template` (asserted
+# above) and the `igris init` verb consumes the template directly.
+# When the worker-install TS port lands per the comment above, re-add
+# coverage there.
 
 # =============================================================================
-# INSTALL.SH WORKER SCRIPT COPY TESTS
+# WORKER DIRECTORY / SCRIPT INSTALLATION TESTS
 # =============================================================================
-
-@test "install script references worker script copy" {
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'igris_worker.sh'
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'igris_worker_config.sh'
-}
-
-@test "install script makes worker scripts executable" {
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'chmod +x "$HOME/.igris/scripts/igris_worker.sh"'
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'chmod +x "$HOME/.igris/scripts/igris_worker_config.sh"'
-}
-
-@test "install script creates scripts directory" {
-  assert_file_contains "$SCRIPTS_DIR/igris_install.sh" 'mkdir -p "$HOME/.igris/scripts"'
-}
+# (M2: scripts/igris_install.sh deleted — its worker-script copy logic moved
+# to a future cli/src/lib/worker-install.ts module that ships in MG-014 Phase 3.
+# The previous source-content assertions are obsolete; per-functionality
+# coverage will be re-added when the TS port lands.)
 
 # =============================================================================
 # COORDINATION SCHEMA TESTS

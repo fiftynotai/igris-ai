@@ -18,7 +18,7 @@ Guide for migrating between Igris AI versions and bringing existing projects up 
 | Agents | Copy-based, load full context | Symlink-based, self-routing via tree |
 | Skills | Copy-based | Symlink-based |
 | Igris files in repo | `ai/` folder (legacy v4) | None — `~/.igris/` is sole source |
-| Install | `igris_init.sh` (copy-based) | `igris_install.sh` (symlink-based) |
+| Install | `igris_init.sh` (copy-based, v3) | `igris_install.sh` (symlink-based, v6, retired in MG-014) → `igris install` (npm CLI, v7) |
 | MCP tools | 67 tools, 13 components | 70 tools, 14 components (+context) |
 | Context overhead | ~93KB per subagent | ~5-8KB per subagent |
 
@@ -57,7 +57,7 @@ The script automatically:
 
 - `ai/` folder no longer used — all content lives in `~/.igris/`
 - Mask system removed — persona uses SOUL.md only, no mask levels
-- `igris_init.sh` deprecated — use `igris_install.sh` for project registration
+- v3-era shell `igris_init.sh` deprecated — use `igris install` (v7 CLI) for project registration
 - `~/.igris/cache/` renamed to `~/.igris/projects/` (symlink preserves backward compat)
 - `~/.igris/staging/` and `~/.igris/personas/` removed
 - CLAUDE.md no longer uses `@import` directives
@@ -84,81 +84,27 @@ ls -la .claude/rules/    # Should show symlink → ~/.igris/core/rules/
 
 ---
 
-## Migrating from v3 to v4
+## Migrating from v3 (or earlier)
 
-### What Changed in v4.0
+v3-era projects predate the centralized brain (`~/.igris/`) and the
+native CLI. The v3→v4 migration script (`scripts/igris_migrate_to_v4.sh`)
+was retired in v7.x.0 — it referenced two scripts (`igris_brain_init.sh`,
+`igris_brain_refresh.sh`) that were themselves deleted in M5, so the
+migration path had been functionally broken at runtime for some time.
 
-| Feature | v3 | v4 |
-|---------|----|----|
-| Core Files | Copied per-project | Symlinked from ~/.igris/ brain |
-| Memory | Per-project only | Centralized SQLite + cross-project |
-| Agents | LangChain hooks | Native Claude Code subagents |
-| Persona | Plugin-based (persona.json + personas/) | SOUL.md + USER.md |
-| Plugins | 4 scripts + registry | Removed (native skills replace all) |
-| Dashboard | None | Extracted to separate project |
-| MCP | None | 27 brain tools |
-| Skills | None | 21 native Claude Code skills |
-| Brief Types | BR, MG, TD, TS | BR, FR, TD, MG, TS, PI, DU, PF, AC (9 types) |
-
-### Migration Steps
-
-1. **Install the brain:**
-   ```bash
-   cd /path/to/igris-ai
-   ./scripts/igris_brain_init.sh
-   ```
-
-2. **Migrate existing projects:**
-   ```bash
-   cd /path/to/your-project
-   /path/to/igris-ai/scripts/igris_migrate_to_v4.sh
-   ```
-   Or use the symlink installer for a fresh install:
-   ```bash
-   /path/to/igris-ai/scripts/igris_install.sh .
-   ```
-
-3. **Remove deprecated files:**
-   - Delete `ai/plugins/` directory
-   - Delete `ai/persona.json` (replaced by SOUL.md + USER.md)
-   - Delete `ai/personas/` directory
-   - Delete `ai/checks/` directory
-   - Delete `scripts/plugin_*.sh`
-   - Delete `scripts/persona_*.sh`
-
-4. **Optional: Set up MCP server:**
-   ```bash
-   cd /path/to/igris-ai/mcp-server
-   npm install && npm run build
-   ```
-
-### Breaking Changes
-
-- Plugin system completely removed (use native skills instead)
-- Persona system replaced with SOUL.md + USER.md
-- `.igris_version` format updated (now includes `install_mode` and `brain_path`)
-- Brain required for cross-project features (portfolio, dashboard, projects)
-- `ai/checks/` directory removed (QA handled by warden agent)
-- Agent definitions moved from LangChain hooks to `.claude/agents/*.md`
-- Rules moved to `.claude/rules/*.md` (modular, auto-loaded by Claude Code)
-- Skills defined in `.claude/skills/*/SKILL.md`
-
-### Post-Migration Verification
-
-After migrating, verify the installation:
+Reinstall instead:
 
 ```bash
-# Check v4 structure exists
-ls .claude/agents/    # Should show 7 agent files
-ls .claude/rules/     # Should show 5 rule files
-ls .claude/skills/    # Should show 21 skill directories
+# 1. Initialize a fresh brain
+igris init
 
-# Check brain connectivity
-sqlite3 ~/.igris/memory/knowledge.db "SELECT slug FROM projects;"
-
-# Run a scan to verify
-# In Claude Code: /scan
+# 2. Install Igris in your project
+igris install /path/to/project
 ```
+
+Existing per-project briefs and session files lived in `ai/` in v3-v4
+and are not auto-migrated. Recreate any unfinished work as fresh
+briefs (`/register` or `igris_brief_create`) post-install.
 
 ---
 
@@ -182,8 +128,8 @@ When you have an existing codebase that doesn't follow your architecture standar
 ```bash
 # Initialize Igris AI (see SETUP_GUIDE.md for full instructions)
 # Brain-first (recommended):
-/path/to/igris-ai/scripts/igris_brain_init.sh
-/path/to/igris-ai/scripts/igris_install.sh .
+/path/to/igris-aigris init
+igris install .
 
 # Or standalone:
 /path/to/igris-ai/scripts/igris_init.sh .
@@ -464,7 +410,7 @@ How many P0/P1 briefs remain?
 
 ```bash
 # Initialize Igris AI (see SETUP_GUIDE.md)
-/path/to/igris-ai/scripts/igris_install.sh .
+igris install .
 
 # Generate docs (30 min) - in Claude Code:
 # /document architecture

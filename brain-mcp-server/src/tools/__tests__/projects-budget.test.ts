@@ -45,6 +45,7 @@ function makeTestDb(): Database.Database {
       name TEXT NOT NULL,
       path TEXT NOT NULL,
       tech_stack TEXT DEFAULT '',
+      archetype TEXT DEFAULT 'unclassified',
       igris_version TEXT DEFAULT '4.0.0',
       status TEXT DEFAULT 'active',
       registered_at TEXT NOT NULL DEFAULT (datetime('now')),

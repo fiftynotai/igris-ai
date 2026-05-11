@@ -1,0 +1,146 @@
+#!/bin/bash
+set -e
+
+# Description: Igris pre-commit hook. Runs validators ONLY when their
+#   relevant files are staged, so unrelated commits stay fast.
+#
+# Validators:
+#   - validate_memory_agency_enums.sh  (DRIFT-1, TD-070, TD-092)
+#       Triggers if: core/prompts/igris_os.md OR
+#                    core/prompts/brain_stewardship.md OR
+#                    brain-mcp-server/src/engine/components/memory/index.ts
+#                    is staged.
+#   - validate_igris_tree_lineranges.py  (DRIFT-3, TD-070)
+#       Triggers if: core/prompts/igris_os.md OR core/igris_tree.json
+#                    is staged.
+#   - validate_lockfile_in_sync.sh  (TD-134)
+#       Triggers if: package.json (root) OR package-lock.json OR
+#                    cli/package.json OR brain-mcp-server/package.json
+#                    is staged.
+#
+# (TD-110 canonical-hooks lockstep validator was retired in MG-014 M5;
+#  the legacy `install_claude_hooks.sh` shell emitter is gone, so the
+#  source-of-truth is `core/hooks/canonical-settings.json` consumed
+#  directly by the native TS layer in `cli/src/lib/canonical-hooks.ts`.)
+#
+# Bypass: `git commit --no-verify` (use sparingly; CI will catch it)
+# Bypass phase guard only: `IGRIS_BYPASS_PHASE_GUARD=1 git commit ...`
+#   (orchestrator-only — used by /hunt Phase 7 COMMITTING)
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+# Phase guard (PI-004 / L-248): refuse commits during BUILDING or TESTING phases.
+# The /hunt state machine routes BUILDING -> TESTING -> REVIEWING -> COMMITTING;
+# the orchestrator owns COMMITTING after sentinel + warden. If a commit fires
+# while the active brief is in BUILDING or TESTING, something has bypassed
+# protocol — most likely forger or sentinel attempting a commit directly.
+#
+# Bypass: IGRIS_BYPASS_PHASE_GUARD=1 git commit ...
+#   The orchestrator's COMMITTING phase MUST set this flag.
+#
+# Phase source: brain DB (brief_status.phase) — the canonical live phase
+# tracker. CURRENT_SESSION.md and brief cache files lag.
+#
+# Failure mode: if any input is missing (no session file, no Active Brief,
+# no brain DB, sqlite3 absent), the guard skips silently — fail-open so we
+# don't break commits in projects that don't use the hunt workflow.
+
+if [ "${IGRIS_BYPASS_PHASE_GUARD:-0}" != "1" ]; then
+  PROJECT="$(basename "$REPO_ROOT")"
+  SESSION_FILE="$HOME/.igris/projects/$PROJECT/session/CURRENT_SESSION.md"
+  BRAIN_DB="$HOME/.igris/memory/knowledge.db"
+
+  if [ -f "$SESSION_FILE" ] && [ -f "$BRAIN_DB" ] && command -v sqlite3 >/dev/null 2>&1; then
+    # Extract the brief ID from the **Active Brief:** line in CURRENT_SESSION.md.
+    # Format: **Active Brief:** PI-004 (some annotations)
+    ACTIVE_BRIEF="$(grep -m1 -E '^\*\*Active Brief:\*\*' "$SESSION_FILE" \
+      | sed -E 's/^\*\*Active Brief:\*\*[[:space:]]+([A-Z]+-[0-9]+).*/\1/' \
+      | tr -d '[:space:]')"
+
+    if [ -n "$ACTIVE_BRIEF" ]; then
+      # Live phase comes from brain DB (canonical source per /hunt sync flow).
+      # The igris_brief_sync MCP tool writes brief_status.phase on every
+      # phase transition; brief cache files are NOT updated.
+      ACTIVE_PHASE="$(sqlite3 "$BRAIN_DB" \
+        "SELECT phase FROM brief_status WHERE project='$PROJECT' AND brief_id='$ACTIVE_BRIEF' AND status='In Progress' LIMIT 1;" \
+        2>/dev/null)"
+
+      case "$ACTIVE_PHASE" in
+        BUILDING|TESTING)
+          echo ""
+          echo "[pre-commit] PI-004 phase guard: refusing commit"
+          echo "  active brief: $ACTIVE_BRIEF"
+          echo "  active phase: $ACTIVE_PHASE"
+          echo "  the orchestrator owns COMMITTING — sentinel + warden must run first"
+          echo ""
+          echo "  if you ARE the orchestrator running the post-warden commit:"
+          echo "    IGRIS_BYPASS_PHASE_GUARD=1 git commit ..."
+          echo ""
+          echo "  this guard exists per PI-004 / L-248. see brief for context."
+          exit 1
+          ;;
+      esac
+    fi
+  fi
+fi
+
+# Get list of staged files (added/copied/modified, not deleted).
+staged="$(git diff --cached --name-only --diff-filter=ACM)"
+
+needs_enum_check=0
+needs_lineranges_check=0
+needs_lockfile_check=0
+
+if echo "$staged" | grep -qE '^(core/prompts/igris_os\.md|core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
+  needs_enum_check=1
+fi
+
+if echo "$staged" | grep -qE '^(core/prompts/igris_os\.md|core/igris_tree\.json)$'; then
+  needs_lineranges_check=1
+fi
+
+if echo "$staged" | grep -qE '^(package\.json|package-lock\.json|cli/package\.json|brain-mcp-server/package\.json)$'; then
+  needs_lockfile_check=1
+fi
+
+failed=0
+
+if [ "$needs_enum_check" = "1" ]; then
+  echo "[pre-commit] Validating brain_stewardship enums..."
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed and reported
+  # together at the end, rather than aborting on the first failure.
+  if ! bash "$REPO_ROOT/scripts/validate_memory_agency_enums.sh"; then
+    failed=1
+  fi
+fi
+
+if [ "$needs_lineranges_check" = "1" ]; then
+  echo "[pre-commit] Validating igris_tree.json line ranges..."
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed and reported
+  # together at the end, rather than aborting on the first failure.
+  if ! python3 "$REPO_ROOT/scripts/validate_igris_tree_lineranges.py"; then
+    failed=1
+  fi
+fi
+
+if [ "$needs_lockfile_check" = "1" ]; then
+  echo "[pre-commit] Validating package-lock.json is in sync..."
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed and reported
+  # together at the end, rather than aborting on the first failure.
+  if ! bash "$REPO_ROOT/scripts/validate_lockfile_in_sync.sh"; then
+    failed=1
+  fi
+fi
+
+if [ "$failed" = "1" ]; then
+  echo ""
+  echo "Pre-commit checks failed. Fix the drift, then re-stage and re-commit."
+  echo "To bypass (not recommended): git commit --no-verify"
+  exit 1
+fi
+
+exit 0

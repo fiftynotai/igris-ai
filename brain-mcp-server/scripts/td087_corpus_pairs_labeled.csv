@@ -1,0 +1,202 @@
+id_a,id_b,title_a,title_b,cosine_full,cosine_title_only,cosine_normalized,label_blank
+143,152,Three-engine brain architecture: perception + subconscious + janitor with shared LLM-extractor primitive,"Three-engine brain framing: perception, subconscious, janitor — one shared LLM-extractor primitive",0.8134,0.8978,0.8878,TRUE_DUP
+34,102,sqlite-vec v0.1.7 mutex teardown crash on short-lived Node CLIs with embeddings,sqlite-vec v0.1.7 mutex teardown crash on short-lived Node CLIs,0.9595,0.9679,0.9655,TRUE_DUP
+43,103,Bundle test-discipline refactor with the runtime fix that exposed it,Bundle test refactor with runtime fix when test gap caused the bug,0.9484,0.8669,0.9212,TRUE_DUP
+45,121,Mirror byte-equality is verifiable via ~/.igris/core/scripts/verify_mirror.sh,Use BR-062 verify_mirror.sh primitive for any claim about ~/.igris mirror byte-equality,0.9464,0.9330,0.9520,TRUE_DUP
+73,129,"Use BR-062 verify_mirror.sh primitive for mirror-integrity checks, quote verbatim",Use BR-062 verify_mirror.sh primitive for mirror-integrity checks instead of ad-hoc diff,0.9380,0.8286,0.9278,TRUE_DUP
+54,77,Apply bootEngine + try/finally engine.shutdown() to all short-lived brain CLIs,Apply bootEngine + try/finally engine.shutdown() to all short-lived brain CLI scripts,0.9378,0.9472,0.9031,TRUE_DUP
+32,124,Filter SYNC_TABLES against sqlite_master at runtime for resilience,Filter SYNC_TABLES against sqlite_master per-call as resilience layer for schema drift,0.9358,0.8505,0.9383,TRUE_DUP
+58,81,sqlite-vec v0.1.7 mutex teardown crash fires only when embeddings actually populate vec table,sqlite-vec v0.1.7 native mutex teardown race fires only when embeddings actually run,0.9348,0.9238,0.9416,TRUE_DUP
+42,102,Short-lived Node CLIs with sqlite-vec crash on teardown after embedding work,sqlite-vec v0.1.7 mutex teardown crash on short-lived Node CLIs,0.9340,0.8563,0.9357,TRUE_DUP
+33,109,"Capture exit codes through hooks with set +e/set -e, log truthfully",Capture rc with set +e/set -e bracket and write definitive exit-code log line,0.9311,0.7415,0.9195,TRUE_DUP
+30,38,"Mock at the I/O boundary, not at the function under test","Mock at I/O boundary, never mock the function under test",0.9307,0.9702,0.9172,TRUE_DUP
+105,121,Igris brain has BR-062 verify_mirror.sh primitive for byte-equal symlink checks,Use BR-062 verify_mirror.sh primitive for any claim about ~/.igris mirror byte-equality,0.9292,0.8323,0.9032,TRUE_DUP
+32,40,Filter SYNC_TABLES against sqlite_master at runtime for resilience,Defense-in-depth for sync handlers: filter SYNC_TABLES against sqlite_master,0.9279,0.8614,0.9031,TRUE_DUP
+58,67,sqlite-vec v0.1.7 mutex teardown crash fires only when embeddings actually populate vec table,sqlite-vec v0.1.7 mutex teardown crash fires only when embeddings actually run,0.9279,0.9670,0.9337,TRUE_DUP
+55,69,Mocking the function-under-test erases the bug surface in tests,"Mock at I/O boundary, not the function under test — preserve bug surface",0.9244,0.7747,0.8727,TRUE_DUP
+111,121,Use BR-062 verify_mirror.sh primitive for symlink/mirror byte-equality checks,Use BR-062 verify_mirror.sh primitive for any claim about ~/.igris mirror byte-equality,0.9232,0.7622,0.9215,TRUE_DUP
+30,69,"Mock at the I/O boundary, not at the function under test","Mock at I/O boundary, not the function under test — preserve bug surface",0.9225,0.8976,0.9163,TRUE_DUP
+39,70,Standalone CLIs must boot the engine to run per-component migrations,Standalone CLIs must boot the engine to run per-component migrations,0.9224,1.0000,0.9200,TRUE_DUP
+64,124,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iterating,Filter SYNC_TABLES against sqlite_master per-call as resilience layer for schema drift,0.9211,0.7673,0.9291,TRUE_DUP
+45,83,Mirror byte-equality is verifiable via ~/.igris/core/scripts/verify_mirror.sh,Sentinel MIRROR_CHECK contract: quote verbatim primitive output for byte-equal claims,0.9207,0.5711,0.8920,TRUE_DUP
+41,109,"Capture exit code with set +e/set -e bracket, not || true",Capture rc with set +e/set -e bracket and write definitive exit-code log line,0.9202,0.7631,0.9098,TRUE_DUP
+38,122,"Mock at I/O boundary, never mock the function under test","Mock at I/O boundary, not at logic boundary, to preserve bug surface in tests",0.9197,0.8067,0.9052,TRUE_DUP
+59,121,"Use BR-062 verify_mirror.sh primitive for symlink/byte-equality claims, not raw diff",Use BR-062 verify_mirror.sh primitive for any claim about ~/.igris mirror byte-equality,0.9197,0.7455,0.9275,TRUE_DUP
+70,136,Standalone CLIs must boot the engine to run per-component migrations,Standalone CLI scripts must run engine boot to get per-component migrations,0.9193,0.9114,0.8606,TRUE_DUP
+102,127,sqlite-vec v0.1.7 mutex teardown crash on short-lived Node CLIs,sqlite-vec v0.1.7 + transformers worker triggers libc++abi mutex crash on short-lived CLI exit,0.9193,0.8128,0.9131,TRUE_DUP
+67,74,sqlite-vec v0.1.7 mutex teardown crash fires only when embeddings actually run,sqlite-vec teardown crash only fires when embeddings pipeline actually runs,0.9192,0.8747,0.9169,TRUE_DUP
+91,114,Don't mock the function under test — mock at the I/O boundary instead,Don't mock the function under test — mock at the I/O boundary instead,0.9184,1.0000,0.9049,TRUE_DUP
+34,81,sqlite-vec v0.1.7 mutex teardown crash on short-lived Node CLIs with embeddings,sqlite-vec v0.1.7 native mutex teardown race fires only when embeddings actually run,0.9181,0.8578,0.8916,TRUE_DUP
+34,42,sqlite-vec v0.1.7 mutex teardown crash on short-lived Node CLIs with embeddings,Short-lived Node CLIs with sqlite-vec crash on teardown after embedding work,0.9179,0.9167,0.9175,TRUE_DUP
+90,121,Use BR-062 verify_mirror.sh primitive for symlink/mirror integrity checks,Use BR-062 verify_mirror.sh primitive for any claim about ~/.igris mirror byte-equality,0.9178,0.7140,0.9182,TRUE_DUP
+83,121,Sentinel MIRROR_CHECK contract: quote verbatim primitive output for byte-equal claims,Use BR-062 verify_mirror.sh primitive for any claim about ~/.igris mirror byte-equality,0.9175,0.5722,0.8970,TRUE_DUP
+45,105,Mirror byte-equality is verifiable via ~/.igris/core/scripts/verify_mirror.sh,Igris brain has BR-062 verify_mirror.sh primitive for byte-equal symlink checks,0.9170,0.7819,0.8956,TRUE_DUP
+58,74,sqlite-vec v0.1.7 mutex teardown crash fires only when embeddings actually populate vec table,sqlite-vec teardown crash only fires when embeddings pipeline actually runs,0.9157,0.8657,0.9345,TRUE_DUP
+33,93,"Capture exit codes through hooks with set +e/set -e, log truthfully",Capture exit codes from `nohup`/detached processes with set +e/set -e bracket,0.9152,0.6919,0.9053,TRUE_DUP
+64,79,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iterating,Defense-in-depth for sync table iteration: filter SYNC_TABLES against sqlite_master per-call,0.9148,0.9390,0.8814,TRUE_DUP
+100,124,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iteration,Filter SYNC_TABLES against sqlite_master per-call as resilience layer for schema drift,0.9145,0.7892,0.9161,TRUE_DUP
+58,89,sqlite-vec v0.1.7 mutex teardown crash fires only when embeddings actually populate vec table,sqlite-vec v0.1.7 mutex teardown crash conditional on embedding pipeline + vec ops,0.9145,0.9122,0.9208,TRUE_DUP
+67,89,sqlite-vec v0.1.7 mutex teardown crash fires only when embeddings actually run,sqlite-vec v0.1.7 mutex teardown crash conditional on embedding pipeline + vec ops,0.9145,0.9181,0.8896,TRUE_DUP
+34,127,sqlite-vec v0.1.7 mutex teardown crash on short-lived Node CLIs with embeddings,sqlite-vec v0.1.7 + transformers worker triggers libc++abi mutex crash on short-lived CLI exit,0.9142,0.7753,0.9060,TRUE_DUP
+96,121,Use BR-062 verify_mirror.sh primitive for repo↔~/.igris symlink-mirror integrity checks,Use BR-062 verify_mirror.sh primitive for any claim about ~/.igris mirror byte-equality,0.9137,0.8269,0.9297,TRUE_DUP
+58,95,sqlite-vec v0.1.7 mutex teardown crash fires only when embeddings actually populate vec table,sqlite-vec v0.1.7 mutex teardown crash only fires when embeddings actually run,0.9135,0.9667,0.9182,TRUE_DUP
+67,81,sqlite-vec v0.1.7 mutex teardown crash fires only when embeddings actually run,sqlite-vec v0.1.7 native mutex teardown race fires only when embeddings actually run,0.9135,0.9590,0.8921,TRUE_DUP
+91,122,Don't mock the function under test — mock at the I/O boundary instead,"Mock at I/O boundary, not at logic boundary, to preserve bug surface in tests",0.9133,0.7909,0.8847,TRUE_DUP
+69,78,"Mock at I/O boundary, not the function under test — preserve bug surface",Don't mock the function-under-test; mock at the I/O boundary instead,0.9128,0.8164,0.9046,TRUE_DUP
+83,111,Sentinel MIRROR_CHECK contract: quote verbatim primitive output for byte-equal claims,Use BR-062 verify_mirror.sh primitive for symlink/mirror byte-equality checks,0.9121,0.5576,0.9162,TRUE_DUP
+30,91,"Mock at the I/O boundary, not at the function under test",Don't mock the function under test — mock at the I/O boundary instead,0.9111,0.9666,0.8542,TRUE_DUP
+69,91,"Mock at I/O boundary, not the function under test — preserve bug surface",Don't mock the function under test — mock at the I/O boundary instead,0.9109,0.8891,0.8760,TRUE_DUP
+33,41,"Capture exit codes through hooks with set +e/set -e, log truthfully","Capture exit code with set +e/set -e bracket, not || true",0.9108,0.7868,0.8955,TRUE_DUP
+93,109,Capture exit codes from `nohup`/detached processes with set +e/set -e bracket,Capture rc with set +e/set -e bracket and write definitive exit-code log line,0.9108,0.5861,0.8943,TRUE_DUP
+71,115,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iterating,Filter SYNC_TABLES against sqlite_master before iteration to defend against schema drift,0.9097,0.8218,0.8918,TRUE_DUP
+55,91,Mocking the function-under-test erases the bug surface in tests,Don't mock the function under test — mock at the I/O boundary instead,0.9094,0.7200,0.8648,TRUE_DUP
+64,100,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iterating,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iteration,0.9088,0.9791,0.9155,TRUE_DUP
+30,55,"Mock at the I/O boundary, not at the function under test",Mocking the function-under-test erases the bug surface in tests,0.9081,0.6887,0.8453,TRUE_DUP
+73,111,"Use BR-062 verify_mirror.sh primitive for mirror-integrity checks, quote verbatim",Use BR-062 verify_mirror.sh primitive for symlink/mirror byte-equality checks,0.9075,0.8138,0.8938,TRUE_DUP
+41,116,"Capture exit code with set +e/set -e bracket, not || true","Capture exit codes with set +e/set -e bracketing in bash hook helpers, never `|| true`",0.9072,0.8963,0.9558,TRUE_DUP
+78,114,Don't mock the function-under-test; mock at the I/O boundary instead,Don't mock the function under test — mock at the I/O boundary instead,0.9071,0.9342,0.8913,TRUE_DUP
+55,78,Mocking the function-under-test erases the bug surface in tests,Don't mock the function-under-test; mock at the I/O boundary instead,0.9071,0.7847,0.8807,TRUE_DUP
+38,114,"Mock at I/O boundary, never mock the function under test",Don't mock the function under test — mock at the I/O boundary instead,0.9070,0.9734,0.8794,TRUE_DUP
+39,136,Standalone CLIs must boot the engine to run per-component migrations,Standalone CLI scripts must run engine boot to get per-component migrations,0.9066,0.9114,0.8698,TRUE_DUP
+72,134,"Capture rc with set +e/set -e bracket, not `|| true`, when log clarity matters",Bash helper rc-capture: set +e / cli_rc=$? / set -e + definitive log line,0.9062,0.7445,0.8642,TRUE_DUP
+56,133,Filter SYNC_TABLES against sqlite_master before iterating to defend against schema drift,sqlite_master preflight filter for SYNC_TABLES iteration (defense-in-depth against partial schemas),0.9058,0.8239,0.8783,TRUE_DUP
+74,89,sqlite-vec teardown crash only fires when embeddings pipeline actually runs,sqlite-vec v0.1.7 mutex teardown crash conditional on embedding pipeline + vec ops,0.9057,0.8939,0.9170,TRUE_DUP
+81,89,sqlite-vec v0.1.7 native mutex teardown race fires only when embeddings actually run,sqlite-vec v0.1.7 mutex teardown crash conditional on embedding pipeline + vec ops,0.9055,0.8837,0.9284,TRUE_DUP
+73,121,"Use BR-062 verify_mirror.sh primitive for mirror-integrity checks, quote verbatim",Use BR-062 verify_mirror.sh primitive for any claim about ~/.igris mirror byte-equality,0.9054,0.7282,0.8544,TRUE_DUP
+38,69,"Mock at I/O boundary, never mock the function under test","Mock at I/O boundary, not the function under test — preserve bug surface",0.9053,0.8953,0.8935,TRUE_DUP
+81,102,sqlite-vec v0.1.7 native mutex teardown race fires only when embeddings actually run,sqlite-vec v0.1.7 mutex teardown crash on short-lived Node CLIs,0.9052,0.7921,0.8836,TRUE_DUP
+40,124,Defense-in-depth for sync handlers: filter SYNC_TABLES against sqlite_master,Filter SYNC_TABLES against sqlite_master per-call as resilience layer for schema drift,0.9049,0.7684,0.8943,TRUE_DUP
+30,114,"Mock at the I/O boundary, not at the function under test",Don't mock the function under test — mock at the I/O boundary instead,0.9049,0.9666,0.8512,TRUE_DUP
+30,107,"Mock at the I/O boundary, not at the function under test",Mocking the entire handler under test erases the bug surface,0.9046,0.5543,0.8400,TRUE_DUP
+30,122,"Mock at the I/O boundary, not at the function under test","Mock at I/O boundary, not at logic boundary, to preserve bug surface in tests",0.9043,0.8073,0.9043,TRUE_DUP
+111,129,Use BR-062 verify_mirror.sh primitive for symlink/mirror byte-equality checks,Use BR-062 verify_mirror.sh primitive for mirror-integrity checks instead of ad-hoc diff,0.9038,0.7972,0.9177,TRUE_DUP
+67,95,sqlite-vec v0.1.7 mutex teardown crash fires only when embeddings actually run,sqlite-vec v0.1.7 mutex teardown crash only fires when embeddings actually run,0.9035,0.9993,0.8975,TRUE_DUP
+115,124,Filter SYNC_TABLES against sqlite_master before iteration to defend against schema drift,Filter SYNC_TABLES against sqlite_master per-call as resilience layer for schema drift,0.9034,0.9068,0.9224,TRUE_DUP
+90,111,Use BR-062 verify_mirror.sh primitive for symlink/mirror integrity checks,Use BR-062 verify_mirror.sh primitive for symlink/mirror byte-equality checks,0.9027,0.9523,0.9306,TRUE_DUP
+55,122,Mocking the function-under-test erases the bug surface in tests,"Mock at I/O boundary, not at logic boundary, to preserve bug surface in tests",0.9026,0.6876,0.8754,TRUE_DUP
+64,71,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iterating,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iterating,0.9017,1.0000,0.8516,TRUE_DUP
+38,55,"Mock at I/O boundary, never mock the function under test",Mocking the function-under-test erases the bug surface in tests,0.9017,0.6867,0.8657,TRUE_DUP
+79,124,Defense-in-depth for sync table iteration: filter SYNC_TABLES against sqlite_master per-call,Filter SYNC_TABLES against sqlite_master per-call as resilience layer for schema drift,0.9013,0.8037,0.8754,TRUE_DUP
+41,93,"Capture exit code with set +e/set -e bracket, not || true",Capture exit codes from `nohup`/detached processes with set +e/set -e bracket,0.9012,0.6735,0.8842,TRUE_DUP
+95,110,sqlite-vec v0.1.7 mutex teardown crash only fires when embeddings actually run,sqlite-vec v0.1.7 mutex teardown crash is conditional on actual vec operations,0.9007,0.8807,0.9430,TRUE_DUP
+74,81,sqlite-vec teardown crash only fires when embeddings pipeline actually runs,sqlite-vec v0.1.7 native mutex teardown race fires only when embeddings actually run,0.9002,0.8283,0.9195,TRUE_DUP
+57,109,Capture child process rc with set +e/set -e bracket; never use `|| true` for fire-and-forget hooks,Capture rc with set +e/set -e bracket and write definitive exit-code log line,0.9001,0.6523,0.8953,TRUE_DUP
+38,91,"Mock at I/O boundary, never mock the function under test",Don't mock the function under test — mock at the I/O boundary instead,0.8996,0.9734,0.8833,TRUE_DUP
+121,129,Use BR-062 verify_mirror.sh primitive for any claim about ~/.igris mirror byte-equality,Use BR-062 verify_mirror.sh primitive for mirror-integrity checks instead of ad-hoc diff,0.8987,0.6973,0.8701,TRUE_DUP
+78,91,Don't mock the function-under-test; mock at the I/O boundary instead,Don't mock the function under test — mock at the I/O boundary instead,0.8986,0.9342,0.8791,TRUE_DUP
+69,122,"Mock at I/O boundary, not the function under test — preserve bug surface","Mock at I/O boundary, not at logic boundary, to preserve bug surface in tests",0.8983,0.9084,0.9009,TRUE_DUP
+79,100,Defense-in-depth for sync table iteration: filter SYNC_TABLES against sqlite_master per-call,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iteration,0.8982,0.9607,0.8916,TRUE_DUP
+74,110,sqlite-vec teardown crash only fires when embeddings pipeline actually runs,sqlite-vec v0.1.7 mutex teardown crash is conditional on actual vec operations,0.8981,0.7607,0.8937,TRUE_DUP
+30,78,"Mock at the I/O boundary, not at the function under test",Don't mock the function-under-test; mock at the I/O boundary instead,0.8972,0.8976,0.8576,TRUE_DUP
+32,64,Filter SYNC_TABLES against sqlite_master at runtime for resilience,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iterating,0.8967,0.8723,0.8785,TRUE_DUP
+87,125,Don't log success before async detached work completes — record actual outcome,Avoid misleading async log lines that fire before spawned process succeeds,0.8966,0.6804,0.9023,TRUE_DUP
+32,86,Filter SYNC_TABLES against sqlite_master at runtime for resilience,Defense-in-depth for cross-table sync: filter SYNC_TABLES against sqlite_master per call,0.8962,0.8467,0.9139,TRUE_DUP
+71,79,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iterating,Defense-in-depth for sync table iteration: filter SYNC_TABLES against sqlite_master per-call,0.8962,0.9390,0.8975,TRUE_DUP
+45,111,Mirror byte-equality is verifiable via ~/.igris/core/scripts/verify_mirror.sh,Use BR-062 verify_mirror.sh primitive for symlink/mirror byte-equality checks,0.8959,0.7307,0.8964,TRUE_DUP
+59,73,"Use BR-062 verify_mirror.sh primitive for symlink/byte-equality claims, not raw diff","Use BR-062 verify_mirror.sh primitive for mirror-integrity checks, quote verbatim",0.8957,0.7411,0.8573,TRUE_DUP
+71,124,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iterating,Filter SYNC_TABLES against sqlite_master per-call as resilience layer for schema drift,0.8955,0.7673,0.8359,TRUE_DUP
+74,95,sqlite-vec teardown crash only fires when embeddings pipeline actually runs,sqlite-vec v0.1.7 mutex teardown crash only fires when embeddings actually run,0.8953,0.8745,0.9003,TRUE_DUP
+34,89,sqlite-vec v0.1.7 mutex teardown crash on short-lived Node CLIs with embeddings,sqlite-vec v0.1.7 mutex teardown crash conditional on embedding pipeline + vec ops,0.8951,0.8733,0.8942,TRUE_DUP
+71,100,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iterating,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iteration,0.8946,0.9791,0.8533,TRUE_DUP
+40,64,Defense-in-depth for sync handlers: filter SYNC_TABLES against sqlite_master,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iterating,0.8945,0.8988,0.8687,TRUE_DUP
+93,116,Capture exit codes from `nohup`/detached processes with set +e/set -e bracket,"Capture exit codes with set +e/set -e bracketing in bash hook helpers, never `|| true`",0.8934,0.6391,0.8841,TRUE_DUP
+106,131,Apply bootEngine + try/finally + engine.shutdown() pattern to all short-lived CLI entrypoints,Short-lived Node CLIs invoking native extensions: bootEngine + try/finally + process.exitCode template,0.7500,0.5957,0.7790,TRUE_DUP
+31,84,Boot engine before invoking sync handlers in standalone CLIs,Boot engine + try/finally shutdown for short-lived CLI scripts using better-sqlite3 + native extensions,0.6895,0.4397,0.6900,DISTINCT
+69,135,"Mock at I/O boundary, not the function under test — preserve bug surface","Live end-to-end testing as load-bearing verification, not just unit-test pass",0.6254,0.4319,0.6481,DISTINCT
+43,107,Bundle test-discipline refactor with the runtime fix that exposed it,Mocking the entire handler under test erases the bug surface,0.5964,0.4825,0.6122,DISTINCT
+26,94,Bundle related briefs touching the same file into one architect→forger→sentinel→warden cycle,Bundle test-discipline refactors with the runtime fix that exposed them,0.5759,0.3612,0.5612,DISTINCT
+22,93,Atomic capture of command stdout+stderr+RC in bash via set +e/set -e block,Capture exit codes from `nohup`/detached processes with set +e/set -e bracket,0.5594,0.5402,0.5915,DISTINCT
+66,78,Live end-to-end verification beats unit-test-only PASS for sync/CLI/lifecycle bugs,Don't mock the function-under-test; mock at the I/O boundary instead,0.5475,0.2368,0.5452,DISTINCT
+35,60,Verify brief claims about codebase before locking fix paths,Bundle test-discipline refactors with the runtime fix that exposed the gap,0.5360,0.4017,0.4563,DISTINCT
+39,132,Standalone CLIs must boot the engine to run per-component migrations,vi.mock at handler module erased BR-064 bug surface — mock at I/O boundary instead,0.5256,0.1637,0.3970,DISTINCT
+77,115,Apply bootEngine + try/finally engine.shutdown() to all short-lived brain CLI scripts,Filter SYNC_TABLES against sqlite_master before iteration to defend against schema drift,0.5164,0.1077,0.4519,DISTINCT
+77,87,Apply bootEngine + try/finally engine.shutdown() to all short-lived brain CLI scripts,Don't log success before async detached work completes — record actual outcome,0.5079,0.1883,0.4376,DISTINCT
+54,104,Apply bootEngine + try/finally engine.shutdown() to all short-lived brain CLIs,Live end-to-end verification beats unit-test-only PASS,0.4986,0.1476,0.4467,DISTINCT
+66,109,Live end-to-end verification beats unit-test-only PASS for sync/CLI/lifecycle bugs,Capture rc with set +e/set -e bracket and write definitive exit-code log line,0.4912,0.1900,0.5162,DISTINCT
+82,102,Live end-to-end verification is load-bearing — unit tests aren't enough for cross-process flows,sqlite-vec v0.1.7 mutex teardown crash on short-lived Node CLIs,0.4847,0.1595,0.5028,DISTINCT
+55,81,Mocking the function-under-test erases the bug surface in tests,sqlite-vec v0.1.7 native mutex teardown race fires only when embeddings actually run,0.4786,0.1644,0.4043,DISTINCT
+44,122,Live end-to-end verification beats unit-test-only PASS for sync/IPC fixes,"Mock at I/O boundary, not at logic boundary, to preserve bug surface in tests",0.4718,0.2935,0.4977,DISTINCT
+57,77,Capture child process rc with set +e/set -e bracket; never use `|| true` for fire-and-forget hooks,Apply bootEngine + try/finally engine.shutdown() to all short-lived brain CLI scripts,0.4662,0.1913,0.4522,DISTINCT
+103,132,Bundle test refactor with runtime fix when test gap caused the bug,vi.mock at handler module erased BR-064 bug surface — mock at I/O boundary instead,0.4605,0.4756,0.4784,DISTINCT
+55,79,Mocking the function-under-test erases the bug surface in tests,Defense-in-depth for sync table iteration: filter SYNC_TABLES against sqlite_master per-call,0.4550,0.1388,0.3948,DISTINCT
+104,115,Live end-to-end verification beats unit-test-only PASS,Filter SYNC_TABLES against sqlite_master before iteration to defend against schema drift,0.4490,0.2211,0.4136,DISTINCT
+31,80,Boot engine before invoking sync handlers in standalone CLIs,"Helper logs must reflect actual outcome, not intent — capture rc with set +e/set -e",0.4428,0.1952,0.4247,DISTINCT
+83,128,Sentinel MIRROR_CHECK contract: quote verbatim primitive output for byte-equal claims,"Live end-to-end verification is load-bearing, not just unit tests",0.4367,0.3113,0.4207,DISTINCT
+87,127,Don't log success before async detached work completes — record actual outcome,sqlite-vec v0.1.7 + transformers worker triggers libc++abi mutex crash on short-lived CLI exit,0.4307,0.1712,0.3859,DISTINCT
+74,157,sqlite-vec teardown crash only fires when embeddings pipeline actually runs,Live e2e re-run on the same transcript is the load-bearing proof for dedup,0.4261,0.2235,0.3846,DISTINCT
+95,108,sqlite-vec v0.1.7 mutex teardown crash only fires when embeddings actually run,Filter SYNC_TABLES against sqlite_master for resilient cross-schema sync,0.4209,0.4112,0.4000,DISTINCT
+76,110,Forger plan-deviation can be justified when fixing the structural cause,sqlite-vec v0.1.7 mutex teardown crash is conditional on actual vec operations,0.4149,0.1581,0.4065,DISTINCT
+95,141,sqlite-vec v0.1.7 mutex teardown crash only fires when embeddings actually run,Wire perception features in runner.ts to cover both MCP submit and detached CLI paths,0.4107,0.0662,0.3830,DISTINCT
+20,125,Defensive empty-array settles must log stderr at warn level,Avoid misleading async log lines that fire before spawned process succeeds,0.4056,0.3031,0.4762,DISTINCT
+58,167,sqlite-vec v0.1.7 mutex teardown crash fires only when embeddings actually populate vec table,Detached subprocesses cannot reach in-process event bus — INSERT directly to event_log,0.4009,0.1664,0.3496,DISTINCT
+126,135,Use set +e/set -e to capture exit code in bash hooks while preserving never-block-exit-0 contract,"Live end-to-end testing as load-bearing verification, not just unit-test pass",0.3957,0.2085,0.4491,DISTINCT
+44,95,Live end-to-end verification beats unit-test-only PASS for sync/IPC fixes,sqlite-vec v0.1.7 mutex teardown crash only fires when embeddings actually run,0.3905,0.1607,0.3936,DISTINCT
+24,38,Cascade-update test assertions when adding fields to structured output,"Mock at I/O boundary, never mock the function under test",0.3861,0.2462,0.3638,DISTINCT
+38,87,"Mock at I/O boundary, never mock the function under test",Don't log success before async detached work completes — record actual outcome,0.3810,0.1839,0.3611,DISTINCT
+20,82,Defensive empty-array settles must log stderr at warn level,Live end-to-end verification is load-bearing — unit tests aren't enough for cross-process flows,0.3768,0.1189,0.4118,DISTINCT
+101,145,Bash `cmd || true` loses the real exit code — use set +e/$?/set -e instead,Ship feature-flag kill switch for risky perception/brain changes,0.3725,0.1152,0.3856,DISTINCT
+21,151,"diff -q with 2>&1 puts stderr into stdout, breaking [-n out] classification","Status-aware dedup: skip + status-tagged event signal, not silent suppression",0.3685,0.2770,0.3288,DISTINCT
+25,87,chmod-000 test cleanup: restore permissions BEFORE assertions in bats,Don't log success before async detached work completes — record actual outcome,0.3649,0.1715,0.3288,DISTINCT
+35,100,Verify brief claims about codebase before locking fix paths,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iteration,0.3614,0.2616,0.3984,DISTINCT
+31,96,Boot engine before invoking sync handlers in standalone CLIs,Use BR-062 verify_mirror.sh primitive for repo↔~/.igris symlink-mirror integrity checks,0.3573,0.2408,0.2979,DISTINCT
+33,141,"Capture exit codes through hooks with set +e/set -e, log truthfully",Wire perception features in runner.ts to cover both MCP submit and detached CLI paths,0.3537,0.1308,0.3489,DISTINCT
+60,79,Bundle test-discipline refactors with the runtime fix that exposed the gap,Defense-in-depth for sync table iteration: filter SYNC_TABLES against sqlite_master per-call,0.3503,0.2724,0.3263,DISTINCT
+96,136,Use BR-062 verify_mirror.sh primitive for repo↔~/.igris symlink-mirror integrity checks,Standalone CLI scripts must run engine boot to get per-component migrations,0.3464,0.1476,0.2600,DISTINCT
+65,88,Bash `|| true` swallows exit codes — use set +e/set -e capture for honest logging,Live end-to-end verification is load-bearing — passing unit tests are not proof,0.3419,0.1810,0.3734,DISTINCT
+31,118,Boot engine before invoking sync handlers in standalone CLIs,Bundle structural test refactor with the runtime fix when the test gap IS the root cause,0.3381,0.2295,0.3308,DISTINCT
+80,96,"Helper logs must reflect actual outcome, not intent — capture rc with set +e/set -e",Use BR-062 verify_mirror.sh primitive for repo↔~/.igris symlink-mirror integrity checks,0.3349,0.0363,0.2757,DISTINCT
+136,147,Standalone CLI scripts must run engine boot to get per-component migrations,entity_edges only stores brief↔brief — learning corpus and graph layer are disconnected,0.3313,0.0804,0.3253,DISTINCT
+45,132,Mirror byte-equality is verifiable via ~/.igris/core/scripts/verify_mirror.sh,vi.mock at handler module erased BR-064 bug surface — mock at I/O boundary instead,0.3282,0.2338,0.3600,DISTINCT
+88,89,Live end-to-end verification is load-bearing — passing unit tests are not proof,sqlite-vec v0.1.7 mutex teardown crash conditional on embedding pipeline + vec ops,0.3248,0.1720,0.3516,DISTINCT
+130,166,sqlite-vec teardown crash on perception_extract_cli was actually transformers ONNX worker race,Sentinel/verifier agents must self-evidence claims with verbatim command output,0.3212,0.1993,0.3315,DISTINCT
+112,140,Live end-to-end verification beats unit-test-only PASS for system-integration bugs,"igris_perception_reject hard-deletes the row, making rejected-status dedup unreachable",0.3170,0.1150,0.3301,DISTINCT
+17,25,Attach stdin error listener before .end() when piping to child processes,chmod-000 test cleanup: restore permissions BEFORE assertions in bats,0.3139,0.0872,0.2345,DISTINCT
+87,159,Don't log success before async detached work completes — record actual outcome,Never vi.mock the module under test — it erases the bug surface,0.3099,0.0750,0.2737,DISTINCT
+105,137,Igris brain has BR-062 verify_mirror.sh primitive for byte-equal symlink checks,Igris brain has zero learning↔brief edges despite FR-105 typed edges shipping,0.3068,0.4330,0.3783,DISTINCT
+26,58,Bundle related briefs touching the same file into one architect→forger→sentinel→warden cycle,sqlite-vec v0.1.7 mutex teardown crash fires only when embeddings actually populate vec table,0.3026,0.0551,0.2564,DISTINCT
+89,103,sqlite-vec v0.1.7 mutex teardown crash conditional on embedding pipeline + vec ops,Bundle test refactor with runtime fix when test gap caused the bug,0.2995,0.2848,0.2389,DISTINCT
+100,105,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iteration,Igris brain has BR-062 verify_mirror.sh primitive for byte-equal symlink checks,0.2959,0.1487,0.2646,DISTINCT
+84,144,Boot engine + try/finally shutdown for short-lived CLI scripts using better-sqlite3 + native extensions,Reuse generateEmbedding singleton in perception runner — avoid double pipeline load,0.2927,0.0739,0.2962,DISTINCT
+88,143,Live end-to-end verification is load-bearing — passing unit tests are not proof,Three-engine brain architecture: perception + subconscious + janitor with shared LLM-extractor primitive,0.2900,0.0725,0.2801,DISTINCT
+94,131,Bundle test-discipline refactors with the runtime fix that exposed them,Short-lived Node CLIs invoking native extensions: bootEngine + try/finally + process.exitCode template,0.2864,0.1665,0.2202,DISTINCT
+33,164,"Capture exit codes through hooks with set +e/set -e, log truthfully",Live e2e is load-bearing for briefs touching native deps or DB schema — unit tests are insufficient,0.2836,0.1377,0.3784,DISTINCT
+25,140,chmod-000 test cleanup: restore permissions BEFORE assertions in bats,"igris_perception_reject hard-deletes the row, making rejected-status dedup unreachable",0.2803,0.1480,0.2444,DISTINCT
+43,156,Bundle test-discipline refactor with the runtime fix that exposed it,Add a kill-switch config flag (default true) for new write-path features,0.2776,0.1935,0.2558,DISTINCT
+25,106,chmod-000 test cleanup: restore permissions BEFORE assertions in bats,Apply bootEngine + try/finally + engine.shutdown() pattern to all short-lived CLI entrypoints,0.2743,0.1821,0.3112,DISTINCT
+28,162,Precondition ordering in classification: realpath/MISSING → SAME_INODE → TYPE_ERROR → diff,Add review_status='approved' filter to all hydration read paths — but exempt by-ID and backfill,0.2706,0.2275,0.2928,DISTINCT
+85,139,Avoid mocking the function under test — mock at the I/O boundary instead,sqlite-vec returns L2 distance not cosine; convert via normalised-embedding identity,0.2675,0.0230,0.1800,DISTINCT
+76,137,Forger plan-deviation can be justified when fixing the structural cause,Igris brain has zero learning↔brief edges despite FR-105 typed edges shipping,0.2646,0.1279,0.2493,DISTINCT
+41,89,"Capture exit code with set +e/set -e bracket, not || true",sqlite-vec v0.1.7 mutex teardown crash conditional on embedding pipeline + vec ops,0.2618,0.2371,0.2152,DISTINCT
+33,165,"Capture exit codes through hooks with set +e/set -e, log truthfully",Verifier order matters — classify ERROR (RC>=2) before MATCH/MISMATCH,0.2596,0.0597,0.2299,DISTINCT
+18,109,Tail-slice prompts to a 256KB byte cap using Buffer.byteLength (TD-073),Capture rc with set +e/set -e bracket and write definitive exit-code log line,0.2566,0.2564,0.3338,DISTINCT
+71,80,Defense-in-depth: filter SYNC_TABLES against sqlite_master before iterating,"Helper logs must reflect actual outcome, not intent — capture rc with set +e/set -e",0.2529,0.1431,0.1901,DISTINCT
+59,137,"Use BR-062 verify_mirror.sh primitive for symlink/byte-equality claims, not raw diff",Igris brain has zero learning↔brief edges despite FR-105 typed edges shipping,0.2493,0.1389,0.3039,DISTINCT
+59,127,"Use BR-062 verify_mirror.sh primitive for symlink/byte-equality claims, not raw diff",sqlite-vec v0.1.7 + transformers worker triggers libc++abi mutex crash on short-lived CLI exit,0.2460,0.0782,0.2512,DISTINCT
+63,90,Standalone Node CLIs against engine DBs must bootEngine() and shutdown() in try/finally,Use BR-062 verify_mirror.sh primitive for symlink/mirror integrity checks,0.2428,0.1997,0.2209,DISTINCT
+86,118,Defense-in-depth for cross-table sync: filter SYNC_TABLES against sqlite_master per call,Bundle structural test refactor with the runtime fix when the test gap IS the root cause,0.2396,0.2056,0.3264,DISTINCT
+17,165,Attach stdin error listener before .end() when piping to child processes,Verifier order matters — classify ERROR (RC>=2) before MATCH/MISMATCH,0.2363,0.0625,0.2557,DISTINCT
+33,153,"Capture exit codes through hooks with set +e/set -e, log truthfully","Cheap dedup pre-filter, smart LLM merge later — layer brain hygiene",0.2329,0.1107,0.2281,DISTINCT
+18,75,Tail-slice prompts to a 256KB byte cap using Buffer.byteLength (TD-073),Live end-to-end verification beats unit/integration tests for cross-process flows,0.2296,0.1365,0.2930,DISTINCT
+41,100,"Capture exit code with set +e/set -e bracket, not || true",Defense-in-depth: filter SYNC_TABLES against sqlite_master before iteration,0.2262,0.0897,0.1718,DISTINCT
+60,101,Bundle test-discipline refactors with the runtime fix that exposed the gap,Bash `cmd || true` loses the real exit code — use set +e/$?/set -e instead,0.2224,0.0538,0.2357,DISTINCT
+65,129,Bash `|| true` swallows exit codes — use set +e/set -e capture for honest logging,Use BR-062 verify_mirror.sh primitive for mirror-integrity checks instead of ad-hoc diff,0.2189,0.1916,0.1699,DISTINCT
+111,144,Use BR-062 verify_mirror.sh primitive for symlink/mirror byte-equality checks,Reuse generateEmbedding singleton in perception runner — avoid double pipeline load,0.2149,0.0851,0.2232,DISTINCT
+118,137,Bundle structural test refactor with the runtime fix when the test gap IS the root cause,Igris brain has zero learning↔brief edges despite FR-105 typed edges shipping,0.2112,0.1462,0.2197,DISTINCT
+57,140,Capture child process rc with set +e/set -e bracket; never use `|| true` for fire-and-forget hooks,"igris_perception_reject hard-deletes the row, making rejected-status dedup unreachable",0.2071,0.0952,0.2032,DISTINCT
+19,144,claude CLI 2.1.126 renamed --system to --system-prompt,Reuse generateEmbedding singleton in perception runner — avoid double pipeline load,0.2027,0.0473,0.1297,DISTINCT
+17,145,Attach stdin error listener before .end() when piping to child processes,Ship feature-flag kill switch for risky perception/brain changes,0.1982,-0.0169,0.1814,DISTINCT
+24,160,Cascade-update test assertions when adding fields to structured output,"Tee log lifecycle: setup before bootEngine, restore in OUTER try/finally after shutdown",0.1929,0.0399,0.2508,DISTINCT
+94,141,Bundle test-discipline refactors with the runtime fix that exposed them,Wire perception features in runner.ts to cover both MCP submit and detached CLI paths,0.1877,0.1775,0.1895,DISTINCT
+22,61,Atomic capture of command stdout+stderr+RC in bash via set +e/set -e block,Pre-existing DOW pattern test failures in subconscious — verify unrelated by stash before attributing,0.1825,0.1729,0.1898,DISTINCT
+145,163,Ship feature-flag kill switch for risky perception/brain changes,"Cosine 0.85 threshold misses LLM rephrasing — same insight, different wording",0.1783,0.0916,0.2228,DISTINCT
+28,128,Precondition ordering in classification: realpath/MISSING → SAME_INODE → TYPE_ERROR → diff,"Live end-to-end verification is load-bearing, not just unit tests",0.1726,0.2503,0.2027,DISTINCT
+73,97,"Use BR-062 verify_mirror.sh primitive for mirror-integrity checks, quote verbatim",Add a 5s shutdown timeout fallback to native-extension CLI teardown,0.1670,0.0988,0.2055,DISTINCT
+85,161,Avoid mocking the function under test — mock at the I/O boundary instead,"Cosine-from-L2 identity is 1 − L2²/2, not 1 − L2/2 (for unit vectors)",0.1612,-0.0003,0.0677,DISTINCT
+147,159,entity_edges only stores brief↔brief — learning corpus and graph layer are disconnected,Never vi.mock the module under test — it erases the bug surface,0.1544,0.0739,0.1728,DISTINCT
+25,153,chmod-000 test cleanup: restore permissions BEFORE assertions in bats,"Cheap dedup pre-filter, smart LLM merge later — layer brain hygiene",0.1476,0.0674,0.1068,DISTINCT
+27,103,Use curl direct path for files >=200KB instead of MCP file_push tool,Bundle test refactor with runtime fix when test gap caused the bug,0.1390,0.1019,0.1564,DISTINCT
+65,90,Bash `|| true` swallows exit codes — use set +e/set -e capture for honest logging,Use BR-062 verify_mirror.sh primitive for symlink/mirror integrity checks,0.1279,0.1370,0.1078,DISTINCT
+105,167,Igris brain has BR-062 verify_mirror.sh primitive for byte-equal symlink checks,Detached subprocesses cannot reach in-process event bus — INSERT directly to event_log,0.1181,0.1451,0.1524,DISTINCT
+86,148,Defense-in-depth for cross-table sync: filter SYNC_TABLES against sqlite_master per call,Use single event with status-discriminator field rather than N events per status variant,0.1062,0.0933,0.1081,DISTINCT
+138,160,Perception extractor produces massive duplicate learnings without pre-filter dedup,"Tee log lifecycle: setup before bootEngine, restore in OUTER try/finally after shutdown",0.0928,-0.0170,0.1426,DISTINCT
+108,126,Filter SYNC_TABLES against sqlite_master for resilient cross-schema sync,Use set +e/set -e to capture exit code in bash hooks while preserving never-block-exit-0 contract,0.0711,0.0892,0.1185,DISTINCT

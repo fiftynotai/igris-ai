@@ -134,7 +134,7 @@ preflight() {
   # Check brain exists
   if [ ! -d "$BRAIN_DIR" ]; then
     echo "  ERROR: No Igris brain found at $BRAIN_DIR" >&2
-    echo "  Run igris_brain_init.sh first to create a fresh v6 installation." >&2
+    echo "  Run \"igris init\" first to create a fresh v6 installation." >&2
     exit 1
   fi
 

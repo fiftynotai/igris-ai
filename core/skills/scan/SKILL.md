@@ -9,6 +9,10 @@ allowed-tools:
   - Bash
   - mcp__igris-brain__igris_project_status
   - mcp__igris-brain__igris_brief_dashboard
+  - mcp__igris-brain__igris_goal_list
+  - mcp__igris-brain__igris_goal_progress
+  - mcp__igris-brain__igris_suggestion_list
+  - mcp__igris-brain__igris_event_log
 triggers:
   - "SCAN"
   - "REPORT"
@@ -29,6 +33,7 @@ Display comprehensive status of the Igris AI system.
 - Empty: Full status report
 - `P0` or `P1`: Filter by priority
 - `bugs` or `features`: Filter by type
+- `--suggestions`: Append a "Subconscious Suggestions" section (FR-106) below the regular report
 
 ## Execution
 
@@ -50,6 +55,27 @@ Read `~/.igris/projects/{project}/session/CURRENT_SESSION.md` for:
 Call `igris_brief_dashboard` with `project` and `summary_only=true`, fallback to cache glob at `~/.igris/projects/{project}/briefs/` (exclude templates):
 - The dashboard returns aggregate counts by status and priority — no need to fetch individual briefs
 - Apply filter if `$ARGUMENTS` provided (e.g., pass `status` parameter for status filter)
+
+### 2.5. Scan Goals (FR-110)
+
+Call `igris_goal_list` with `project` and `status='active'` to list active goals for the current project. Then for each returned goal, call `igris_goal_progress` to compute completion. Render a compact table with text-progress bars:
+
+```
+### Goals (Active)
+| Goal | Outcome | Deadline | Progress |
+|------|---------|----------|----------|
+| GL-003 "Ship v6.1" | shipped | 2026-05-01 | [########--] 7/8 |
+| GL-001 "Compliance audit" | audited | 2026-05-12 | [##--------] 1/5 |
+```
+
+Progress bar conventions:
+- 10 cells; fill ratio = round(completion_pct * 10)
+- When `completion_pct` is `null` (no serving briefs), render `[----------] 0/0` with a faded/dimmed style
+- Cap rendered table at 10 active goals; if more exist, append `(+N more — use /portfolio for full view)`
+
+If no active goals exist, omit the section entirely.
+
+If the goal tools are unavailable (older brain), skip the section silently.
 
 ### 3. Check Blockers
 
@@ -120,3 +146,160 @@ X agents registered (Y skills available)
 1. [Primary recommendation]
 2. [Secondary recommendation]
 ```
+
+### 6.5. Subconscious Suggestions (FR-106)
+
+> **TD-102 (V7):** This entire section is gated behind the `subconscious.enabled`
+> config flag (default `false` for V7). FR-118 will replace the rule-based
+> engine in V7.1 with an LLM-driven design; until then the section is silent
+> regardless of the `--suggestions` flag.
+
+This section is rendered ONLY when ALL of the following are true:
+1. `subconscious.enabled` is `true` in `~/.igris/config.json` (key absent = `false`).
+2. `$ARGUMENTS` contains the literal token `--suggestions`.
+
+If either gate fails, skip this section silently — render nothing, do not
+call any suggestion MCP tools.
+
+If both gates pass and the `igris-brain` MCP is available:
+
+1. Call `igris_suggestion_list` with:
+   - `status` = `'pending'`
+   - `project_slug` = current project slug
+   - `limit` = `1000` (handler caps at this value; >1000 pending is a degenerate state)
+2. Group the returned suggestions by `source_module` in the order:
+   `stalled`, `gap`, `conflict`, `pattern`. Within each group, the
+   handler already returns rows ordered by `priority` (high > medium > low)
+   then `created_at` DESC, so client-side iteration preserves that order.
+3. Render each non-empty group as its own subsection. Empty groups are
+   omitted entirely. If the global `total` is `0`, render the single line
+   `No pending suggestions.` and skip every subsection.
+
+#### Render template
+
+```
+## Subconscious Suggestions ({total} pending)
+
+### Stalled (N)
+| ID | Priority | Title | Project |
+|----|----------|-------|---------|
+| 12 | high     | TD-005 stalled in In Progress for 35 days | igris-ai |
+
+### Gap (N)
+| ID | Priority | Title | Project |
+|----|----------|-------|---------|
+| 19 | medium   | Project "old-app" has been quiet for 95 days | old-app |
+
+### Conflict (N)
+| ID | Priority | Title |
+|----|----------|-------|
+| 47 | medium   | Possible contradiction: Learning #112 vs #389 |
+
+### Pattern (N)
+| ID | Priority | Title |
+|----|----------|-------|
+| 51 | medium   | Pattern: brief activity skews toward Monday in igris-ai (60% of last 50) |
+```
+
+If `total` exceeds 1000 (the handler ceiling), append the trailing line:
+`(+N more — use igris_suggestion_list for full pagination)`.
+
+End the section with the action hint:
+`Use igris_suggestion_dismiss <id> --reason "..." to silence noisy suggestions.`
+
+If `igris-brain` MCP is unavailable, render this single line instead:
+`Subconscious suggestions unavailable (brain MCP offline).`
+
+### 6.6. Perception Engine (TD-074, TD-080)
+
+Surface the latest detached perception extraction run so operators can see
+when the LLM extractor last fired, succeeded, failed, or got skipped by the
+60s min-window guard. Token budget: ~150 tokens.
+
+#### Query
+
+**TD-080 fix (Gap A):** read directly from the local DB via `sqlite3`. The
+local DB is the merged superset (post any prior pull) and includes
+local-only perception runs that have not yet propagated to the remote.
+`igris_event_log` MCP routes to the remote brain — using it here would miss
+this machine's unpushed runs even when the call "succeeds".
+
+Primary query (substitute `$PROJECT_SLUG`):
+```bash
+# Defense-in-depth (TD-080 Q-3): refuse to interpolate if slug doesn't match
+# the registered slug shape. Belt-and-suspenders against any future code path
+# that broadens slug sourcing (e.g., env var override). Same posture as the
+# other defensive guards in this section — skip silently if the slug came
+# from an unexpected source.
+if [[ ! "$PROJECT_SLUG" =~ ^[a-z0-9_-]+$ ]]; then
+  return 0  # do not surface this section this run
+fi
+
+sqlite3 "$HOME/.igris/memory/knowledge.db" \
+  "SELECT event_name, payload, created_at FROM event_log
+   WHERE component = 'perception' AND project_slug = '$PROJECT_SLUG'
+   ORDER BY created_at DESC LIMIT 1;"
+```
+
+Fallback (only when `sqlite3` is absent on this machine — older / minimal
+installs): call `igris_event_log` with:
+- `component` = `'perception'`
+- `project_slug` = current project slug
+- `limit` = `1`
+
+The MCP handler returns rows ordered `created_at DESC`, matching the sqlite3
+query shape. Note the fallback inherits the original blind spot: it shows
+remote-only state. That's an acceptable degradation when the local read is
+unavailable.
+
+Also stat the inbox for staleness:
+```bash
+INBOX="$HOME/.igris/projects/$PROJECT/session/perception_inbox.jsonl"
+[ -f "$INBOX" ] && wc -c < "$INBOX" || echo 0
+```
+
+#### Render
+
+When the latest event exists, render two lines under a `### Perception Engine`
+heading. Format the timestamp as `YYYY-MM-DD HH:MM` (local), parsed from the
+ISO `created_at` field. The status word is uppercase, mapped from the event
+suffix:
+- `perception.run_succeeded` → `SUCCEEDED`
+- `perception.run_failed` → `FAILED`
+- `perception.run_skipped` → `SKIPPED`
+- `perception.run_started` → `RUNNING` (no terminal event has followed)
+
+Detail clause depends on the status:
+- SUCCEEDED → `· N candidates` (from `payload.candidates_count`; default 0 if missing)
+- FAILED → `· (reason)` (parenthesized; from `payload.reason`; fallback `(unknown reason)` if blank)
+- SKIPPED → `· (reason, Ns elapsed)` when `reason='min_window_guard'`, else `· (reason)`
+- RUNNING → `· started Nm ago (may be stuck)` if `>5 min` elapsed since the
+  `run_started` row; otherwise omit the detail clause.
+
+Inbox clause: `· inbox NKB` always (round to nearest KB; show `0KB` for an
+empty file). Append ` stale` when the file is non-empty AND its mtime is
+more than 1 hour old.
+
+```
+### Perception Engine
+Last run: 2026-05-01 04:22 — SUCCEEDED · 3 candidates · inbox 0KB
+```
+
+```
+### Perception Engine
+Last run: 2026-05-01 04:22 — FAILED (epipe_on_llm_stdin) · inbox 3.4MB stale
+```
+
+```
+### Perception Engine
+Last run: 2026-05-01 04:22 — SKIPPED (min_window_guard, 12s elapsed) · inbox 0KB
+```
+
+When no event_log rows exist for the project (older brain or never run):
+```
+### Perception Engine
+No perception runs yet for this project.
+```
+
+If `sqlite3` is absent AND the `igris_event_log` MCP fallback also fails,
+omit the section entirely. Do NOT block /scan.

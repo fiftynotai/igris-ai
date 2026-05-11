@@ -1,0 +1,63 @@
+# Rich TOML fixture for TD-045 — exercises every value type the Codex
+# installer must preserve through a read/write round-trip.
+#
+# NOTE: Comments and blank lines are NOT preserved by the installer (no
+# Python TOML library supports that). The round-trip test asserts only
+# that user DATA survives; the layout is allowed to change.
+
+# --- Top-level scalars ---
+model = "claude-3-5-sonnet"
+other_flag = true
+max_tokens = 4096
+temperature = 0.7
+notify = ["osascript", "-e", "display notification \"hello\" with title \"codex\""]
+
+# --- Array of strings ---
+keywords = ["alpha", "beta", "gamma"]
+
+# --- Datetime values (RFC 3339) ---
+# tomllib parses these to datetime.datetime, datetime.date, datetime.time
+last_sync = 2026-04-21T14:30:00-07:00
+created_date = 2026-01-15
+cutoff_time = 10:30:00
+
+# --- Inline table ---
+# tomli_w is free to re-emit as a standard [cache] block — the data is
+# what matters for the round-trip assertion.
+cache = { enabled = true, ttl_seconds = 3600, path = "~/.codex/cache" }
+
+# --- Flat table (existing pristine coverage) ---
+[profiles]
+default = "main"
+backup = "fallback"
+
+# --- Nested table ---
+[profiles.main]
+model = "claude-3-5-sonnet"
+temperature = 0.5
+
+# --- Doubly-nested table (the TD-045 core regression: the old parser
+# silently flattened these into top-level keys) ---
+[profiles.main.limits]
+max_tokens = 8000
+timeout_seconds = 120
+
+# --- Array of tables ---
+# Using [[log.sinks]] (not [[notify.scripts]]) to avoid conflicting with
+# the top-level `notify` array we're overriding.
+[[log.sinks]]
+name = "primary"
+host = "api.example.com"
+port = 443
+
+[[log.sinks]]
+name = "backup"
+host = "api-backup.example.com"
+port = 443
+
+# --- Multi-line basic string ---
+[prompts]
+system = """
+You are a helpful assistant.
+Follow instructions carefully.
+"""

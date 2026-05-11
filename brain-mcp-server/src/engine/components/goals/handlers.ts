@@ -1,0 +1,696 @@
+/**
+ * Brain Engine v5.0 — Goals Component Handlers
+ *
+ * Pure handlers for the five goal MCP tools:
+ *   - igris_goal_create   — server-side GL-XXX allocation, atomic insert
+ *   - igris_goal_list     — filtered query with optional upcoming_days
+ *   - igris_goal_get      — goal + serving briefs/learnings (via entity_edges)
+ *   - igris_goal_update   — partial patch with status->achieved auto-stamp
+ *   - igris_goal_progress — count-based completion across serving briefs
+ *
+ * Handlers are pure functions: they take Record<string, unknown> args,
+ * validate at runtime, and return a ToolResult. They do NOT emit events;
+ * the component wrapper in `./index.ts` handles event emission so these
+ * stay reusable from contexts without a bus.
+ *
+ * @module engine/components/goals/handlers
+ * @author Fifty.ai
+ */
+
+import { getDb } from '../../../db.js';
+import type { ToolResult } from '../../types.js';
+import { errorResult, successResult, WhereBuilder } from '../../helpers.js';
+
+/**
+ * SQLite-compatible "now" formatter: `YYYY-MM-DD HH:MM:SS`.
+ *
+ * This matches the format produced by SQLite's `datetime('now')` so the
+ * column stores a single canonical shape across both creation (DEFAULT
+ * datetime('now')) and updates from JS. Mirrors the convention used in
+ * `tools/briefs.ts`.
+ */
+function sqlNow(): string {
+  return new Date().toISOString().replace('T', ' ').substring(0, 19);
+}
+
+// ---------------------------------------------------------------------------
+// Validation catalogs (runtime defense, complementary to JSON Schema enums)
+// ---------------------------------------------------------------------------
+
+/** Accepted goal lifecycle states. Mirrors the CHECK constraint in schema.ts. */
+export const VALID_GOAL_STATUSES = [
+  'active',
+  'achieved',
+  'abandoned',
+  'deferred',
+] as const;
+
+/**
+ * Brief statuses that count as "done" for progress computation.
+ *
+ * Matches `TERMINAL_STATUSES` in `briefs/index.ts` and the semantics of
+ * the `brief.completed` event. Treating Archived as "done" is correct
+ * because the goal is "served" regardless of whether the brief was
+ * completed cleanly or rolled into another effort.
+ */
+export const TERMINAL_BRIEF_STATUSES = ['Done', 'Archived'] as const;
+
+/** Goal ID prefix for auto-allocation. */
+const GOAL_ID_PREFIX = 'GL-';
+
+/**
+ * Length caps for free-text goal fields. Enforced pre-INSERT/UPDATE so
+ * pathological payloads don't bloat the goals table or the JSON envelopes
+ * `igris_goal_get` returns. Caps were chosen to match typical product
+ * limits: ~256 chars for headline-style fields, ~4KB for descriptions.
+ */
+export const MAX_TITLE_LEN = 256;
+export const MAX_DESCRIPTION_LEN = 4096;
+export const MAX_OUTCOME_LEN = 256;
+
+/** ISO-8601 date validator (YYYY-MM-DD or full ISO timestamp). */
+const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+
+// ---------------------------------------------------------------------------
+// Row shapes
+// ---------------------------------------------------------------------------
+
+/** Shape of a row in `goals` as returned to callers. */
+export interface GoalRow {
+  id: number;
+  goal_id: string;
+  project_slug: string | null;
+  title: string;
+  description: string | null;
+  outcome: string;
+  deadline: string | null;
+  status: string;
+  priority: string;
+  created_at: string;
+  updated_at: string;
+  achieved_at: string | null;
+  metadata: string;
+}
+
+/** Result shape for handleGoalProgress. */
+export interface GoalProgress {
+  goal_id: string;
+  serving_briefs_total: number;
+  serving_briefs_done: number;
+  serving_briefs_in_progress: number;
+  serving_briefs_pending: number;
+  /** done / total, or null when total === 0 (not "0%" — "no measurement") */
+  completion_pct: number | null;
+  /** Count-only — learnings have no terminal status, see plan section "Learnings". */
+  serving_learnings_count: number;
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/** Validate ISO-8601 date or short YYYY-MM-DD; returns true if usable. */
+function isValidIsoDate(value: string): boolean {
+  if (!ISO_DATE_REGEX.test(value)) return false;
+  // Defensive: catch "2026-13-45" style strings that pass the regex.
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed);
+}
+
+/**
+ * Allocate the next sequential GL-XXX id.
+ *
+ * Reads MAX(numeric suffix) from the goals table; the caller wraps the
+ * INSERT in the same transaction so the read+write is atomic. The UNIQUE
+ * constraint on `goal_id` is the safety net for the rare cross-connection
+ * race; the create handler retries once on collision.
+ */
+function nextGoalId(db: ReturnType<typeof getDb>): string {
+  const row = db
+    .prepare(
+      `SELECT MAX(CAST(SUBSTR(goal_id, ${GOAL_ID_PREFIX.length + 1}) AS INTEGER)) AS max_n
+       FROM goals
+       WHERE goal_id LIKE ?`,
+    )
+    .get(`${GOAL_ID_PREFIX}%`) as { max_n: number | null };
+
+  const next = (row?.max_n ?? 0) + 1;
+  return `${GOAL_ID_PREFIX}${String(next).padStart(3, '0')}`;
+}
+
+/**
+ * Insert a goal row using a freshly allocated id. Returns the id used.
+ *
+ * Wrapped in a transaction by the caller so the SELECT MAX + INSERT are
+ * atomic on the same connection. SQLite's UNIQUE constraint will raise
+ * if a concurrent writer slipped a row in between — the create handler
+ * retries once.
+ */
+function insertGoal(
+  db: ReturnType<typeof getDb>,
+  fields: {
+    goalId: string;
+    projectSlug: string | null;
+    title: string;
+    description: string | null;
+    outcome: string;
+    deadline: string | null;
+    status: string;
+    priority: string;
+    metadata: string;
+  },
+): void {
+  db.prepare(
+    `INSERT INTO goals
+       (goal_id, project_slug, title, description, outcome, deadline,
+        status, priority, metadata)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    fields.goalId,
+    fields.projectSlug,
+    fields.title,
+    fields.description,
+    fields.outcome,
+    fields.deadline,
+    fields.status,
+    fields.priority,
+    fields.metadata,
+  );
+}
+
+/** Serialize metadata to JSON; tolerate already-stringified input. */
+function normalizeMetadata(raw: unknown): string {
+  if (raw === undefined || raw === null) return '{}';
+  if (typeof raw === 'string') {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') return raw;
+    } catch {
+      // fall through
+    }
+    return JSON.stringify({ value: raw });
+  }
+  return JSON.stringify(raw);
+}
+
+/** Count serving briefs grouped by completion bucket for a single goal. */
+interface ServingBriefBuckets {
+  total: number;
+  done: number;
+  in_progress: number;
+  pending: number;
+}
+
+function queryServingBriefBuckets(
+  db: ReturnType<typeof getDb>,
+  goalId: string,
+): ServingBriefBuckets {
+  const row = db
+    .prepare(
+      `WITH serving AS (
+         SELECT bs.status AS s
+         FROM entity_edges e
+         JOIN brief_status bs ON bs.brief_id = e.from_id
+         WHERE e.to_type = 'goal'
+           AND e.to_id = ?
+           AND e.from_type = 'brief'
+           AND e.edge_type = 'serves_goal'
+           AND COALESCE(json_extract(e.metadata, '$.deleted'), 0) != 1
+       )
+       SELECT
+         COUNT(*) AS total,
+         SUM(CASE WHEN s IN ('Done', 'Archived') THEN 1 ELSE 0 END) AS done,
+         SUM(CASE WHEN s = 'In Progress' THEN 1 ELSE 0 END) AS in_progress,
+         SUM(CASE WHEN s NOT IN ('Done', 'Archived', 'In Progress') THEN 1 ELSE 0 END) AS pending
+       FROM serving`,
+    )
+    .get(goalId) as {
+      total: number;
+      done: number | null;
+      in_progress: number | null;
+      pending: number | null;
+    };
+
+  return {
+    total: row.total ?? 0,
+    done: row.done ?? 0,
+    in_progress: row.in_progress ?? 0,
+    pending: row.pending ?? 0,
+  };
+}
+
+/** Count serving learnings (count-only — see plan). */
+function queryServingLearningsCount(
+  db: ReturnType<typeof getDb>,
+  goalId: string,
+): number {
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) AS n
+       FROM entity_edges
+       WHERE to_type = 'goal'
+         AND to_id = ?
+         AND from_type = 'learning'
+         AND edge_type = 'serves_goal'
+         AND COALESCE(json_extract(metadata, '$.deleted'), 0) != 1`,
+    )
+    .get(goalId) as { n: number };
+  return row.n ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// handleGoalCreate
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a new goal.
+ *
+ * Required: project, title, outcome
+ * Optional: description, deadline (ISO date), priority, status, metadata
+ *
+ * Auto-allocates the next sequential `goal_id` (GL-XXX) server-side. The
+ * MAX+1 read and the INSERT run in the same transaction; on the rare
+ * UNIQUE collision (concurrent writers, different connection) the
+ * handler retries once with a refreshed MAX.
+ */
+export function handleGoalCreate(args: Record<string, unknown>): ToolResult {
+  const projectSlug = args.project as string | undefined;
+  const title = args.title as string | undefined;
+  const outcome = args.outcome as string | undefined;
+
+  if (!title || !outcome) {
+    return errorResult('Missing required fields: title, outcome');
+  }
+  if (title.length > MAX_TITLE_LEN) {
+    return errorResult(`title exceeds maximum length of ${MAX_TITLE_LEN} characters`);
+  }
+  if (outcome.length > MAX_OUTCOME_LEN) {
+    return errorResult(`outcome exceeds maximum length of ${MAX_OUTCOME_LEN} characters`);
+  }
+  // project is required by the brief but goals may also be cross-project
+  // (project_slug = NULL). Accept undefined/empty -> stored as NULL so the
+  // /portfolio surface can render "Cross-project" without a sentinel value.
+  const projectSlugCol: string | null =
+    projectSlug && projectSlug.length > 0 ? projectSlug : null;
+
+  const description = (args.description as string | undefined) ?? null;
+  if (description !== null && description.length > MAX_DESCRIPTION_LEN) {
+    return errorResult(`description exceeds maximum length of ${MAX_DESCRIPTION_LEN} characters`);
+  }
+  const deadline = (args.deadline as string | undefined) ?? null;
+  if (deadline !== null && !isValidIsoDate(deadline)) {
+    return errorResult(`Invalid deadline: ${deadline}. Expected ISO-8601 date (e.g. "2026-05-01").`);
+  }
+
+  const priority = (args.priority as string | undefined) ?? 'P2-Medium';
+
+  const status = (args.status as string | undefined) ?? 'active';
+  if (!(VALID_GOAL_STATUSES as readonly string[]).includes(status)) {
+    return errorResult(
+      `Invalid status: ${status}. Must be one of: ${VALID_GOAL_STATUSES.join(', ')}`,
+    );
+  }
+
+  const metadata = normalizeMetadata(args.metadata);
+
+  const db = getDb();
+
+  // Atomic allocate-and-insert. Wrap in a transaction so a concurrent
+  // writer on the same connection is serialized; cross-connection races
+  // are caught by the UNIQUE constraint and retried once below.
+  const allocateAndInsert = db.transaction((): string => {
+    const goalId = nextGoalId(db);
+    insertGoal(db, {
+      goalId,
+      projectSlug: projectSlugCol,
+      title,
+      description,
+      outcome,
+      deadline,
+      status,
+      priority,
+      metadata,
+    });
+    return goalId;
+  });
+
+  let goalId: string;
+  try {
+    goalId = allocateAndInsert();
+  } catch (err) {
+    // Likely a UNIQUE collision under cross-connection contention. Retry
+    // once with a fresh MAX read; if it still fails, surface the error.
+    const message = err instanceof Error ? err.message : String(err);
+    if (!message.includes('UNIQUE')) {
+      return errorResult(`Failed to create goal: ${message}`);
+    }
+    try {
+      goalId = allocateAndInsert();
+    } catch (err2) {
+      const m2 = err2 instanceof Error ? err2.message : String(err2);
+      return errorResult(`Failed to create goal after retry: ${m2}`);
+    }
+  }
+
+  const row = db
+    .prepare('SELECT * FROM goals WHERE goal_id = ?')
+    .get(goalId) as GoalRow | undefined;
+  if (!row) {
+    return errorResult('Goal insert succeeded but row could not be read back');
+  }
+
+  return successResult(JSON.stringify({ created: true, goal: row }, null, 2));
+}
+
+// ---------------------------------------------------------------------------
+// handleGoalList
+// ---------------------------------------------------------------------------
+
+/**
+ * List goals with optional filters.
+ *
+ * Filters (all ANDed): project, status, upcoming_days, limit, offset.
+ *
+ * `upcoming_days` is a convenience for /awaken: filters goals with
+ *   `deadline <= now() + N days AND status = 'active'`. Combine with
+ *   limit=3 to bound /awaken's token surface.
+ *
+ * Each row is enriched with `serving_briefs_count`: a COUNT subquery on
+ * entity_edges (excluding soft-deleted edges) so the caller can render a
+ * one-line "X briefs" summary without round-tripping per row.
+ */
+export function handleGoalList(args: Record<string, unknown>): ToolResult {
+  const db = getDb();
+
+  if (
+    args.status !== undefined &&
+    !(VALID_GOAL_STATUSES as readonly string[]).includes(args.status as string)
+  ) {
+    return errorResult(
+      `Invalid status filter: ${args.status as string}. Must be one of: ${VALID_GOAL_STATUSES.join(', ')}`,
+    );
+  }
+
+  const where = new WhereBuilder()
+    .add('project_slug = ?', args.project)
+    .add('status = ?', args.status);
+
+  // upcoming_days narrows to active goals with deadlines within N days.
+  if (args.upcoming_days !== undefined) {
+    const days = Number(args.upcoming_days);
+    if (!Number.isFinite(days) || days < 0) {
+      return errorResult('upcoming_days must be a non-negative number');
+    }
+    where.addAlways("deadline IS NOT NULL AND status = 'active'");
+    where.addAlways("date(deadline) <= date('now', ?)", `+${Math.floor(days)} days`);
+  }
+
+  const rawLimit = args.limit !== undefined ? Number(args.limit) : 25;
+  if (!Number.isFinite(rawLimit) || rawLimit < 1) {
+    return errorResult('limit must be a positive integer');
+  }
+  const limit = Math.min(rawLimit, 1000);
+  const rawOffset = args.offset !== undefined ? Number(args.offset) : 0;
+  if (!Number.isFinite(rawOffset) || rawOffset < 0) {
+    return errorResult('offset must be a non-negative integer');
+  }
+  const offset = rawOffset;
+
+  // Sort: deadline ASC NULLS LAST, then created_at DESC. This puts goals
+  // approaching their deadline at the top while keeping deadline-less
+  // goals visible at the bottom.
+  const rows = db
+    .prepare(
+      `SELECT
+         g.*,
+         (
+           SELECT COUNT(*)
+           FROM entity_edges e
+           WHERE e.to_type = 'goal'
+             AND e.to_id = g.goal_id
+             AND e.from_type = 'brief'
+             AND e.edge_type = 'serves_goal'
+             AND COALESCE(json_extract(e.metadata, '$.deleted'), 0) != 1
+         ) AS serving_briefs_count
+       FROM goals g
+       ${where.toSQL()}
+       ORDER BY (g.deadline IS NULL) ASC, g.deadline ASC, g.created_at DESC
+       LIMIT ? OFFSET ?`,
+    )
+    .all(...where.values(), limit, offset) as (GoalRow & { serving_briefs_count: number })[];
+
+  const countRow = db
+    .prepare(`SELECT COUNT(*) AS total FROM goals ${where.toSQL()}`)
+    .get(...where.values()) as { total: number };
+
+  return successResult(
+    JSON.stringify(
+      {
+        goals: rows,
+        count: rows.length,
+        total: countRow.total,
+        limit,
+        offset,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// handleGoalGet
+// ---------------------------------------------------------------------------
+
+/**
+ * Get a single goal by goal_id, plus serving briefs and learning count.
+ *
+ * Returns:
+ *   { goal, serving_briefs: [{ brief_id, title, status }], serving_learnings_count }
+ *
+ * Soft-deleted edges (metadata.deleted=1) are excluded.
+ */
+export function handleGoalGet(args: Record<string, unknown>): ToolResult {
+  const goalId = args.goal_id as string | undefined;
+  if (!goalId) {
+    return errorResult('Missing required field: goal_id');
+  }
+
+  const db = getDb();
+  const goal = db
+    .prepare('SELECT * FROM goals WHERE goal_id = ?')
+    .get(goalId) as GoalRow | undefined;
+
+  if (!goal) {
+    return errorResult(`Goal not found: ${goalId}`);
+  }
+
+  const servingBriefs = db
+    .prepare(
+      `SELECT bs.brief_id, bs.title, bs.status, bs.priority
+       FROM entity_edges e
+       JOIN brief_status bs ON bs.brief_id = e.from_id
+       WHERE e.to_type = 'goal'
+         AND e.to_id = ?
+         AND e.from_type = 'brief'
+         AND e.edge_type = 'serves_goal'
+         AND COALESCE(json_extract(e.metadata, '$.deleted'), 0) != 1
+       ORDER BY bs.brief_id ASC`,
+    )
+    .all(goalId) as { brief_id: string; title: string; status: string; priority: string }[];
+
+  const servingLearningsCount = queryServingLearningsCount(db, goalId);
+
+  return successResult(
+    JSON.stringify(
+      {
+        goal,
+        serving_briefs: servingBriefs,
+        serving_learnings_count: servingLearningsCount,
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// handleGoalUpdate
+// ---------------------------------------------------------------------------
+
+/**
+ * Patch any subset of goal fields. Returns the updated row plus a flag
+ * indicating whether the status transitioned to 'achieved' on this call
+ * (so the component wrapper can emit `goal.achieved` exactly once).
+ *
+ * Status transitions:
+ *   any -> 'achieved' : auto-set achieved_at = now()
+ *   'achieved' -> any : clear achieved_at (revert)
+ */
+export interface GoalUpdateResult {
+  updated: boolean;
+  achieved_now: boolean;
+  goal: GoalRow;
+}
+
+export function handleGoalUpdate(args: Record<string, unknown>): ToolResult {
+  const goalId = args.goal_id as string | undefined;
+  if (!goalId) {
+    return errorResult('Missing required field: goal_id');
+  }
+
+  const db = getDb();
+  const existing = db
+    .prepare('SELECT * FROM goals WHERE goal_id = ?')
+    .get(goalId) as GoalRow | undefined;
+
+  if (!existing) {
+    return errorResult(`Goal not found: ${goalId}`);
+  }
+
+  const updates: { col: string; value: unknown }[] = [];
+
+  if (args.title !== undefined) {
+    if (typeof args.title !== 'string' || args.title.length === 0) {
+      return errorResult('title must be a non-empty string');
+    }
+    if (args.title.length > MAX_TITLE_LEN) {
+      return errorResult(`title exceeds maximum length of ${MAX_TITLE_LEN} characters`);
+    }
+    updates.push({ col: 'title', value: args.title });
+  }
+  if (args.description !== undefined) {
+    const desc = args.description as string | null;
+    if (desc !== null && typeof desc === 'string' && desc.length > MAX_DESCRIPTION_LEN) {
+      return errorResult(`description exceeds maximum length of ${MAX_DESCRIPTION_LEN} characters`);
+    }
+    updates.push({ col: 'description', value: desc });
+  }
+  if (args.outcome !== undefined) {
+    if (typeof args.outcome !== 'string' || args.outcome.length === 0) {
+      return errorResult('outcome must be a non-empty string');
+    }
+    if (args.outcome.length > MAX_OUTCOME_LEN) {
+      return errorResult(`outcome exceeds maximum length of ${MAX_OUTCOME_LEN} characters`);
+    }
+    updates.push({ col: 'outcome', value: args.outcome });
+  }
+  if (args.deadline !== undefined) {
+    const d = args.deadline as string | null;
+    if (d !== null && !isValidIsoDate(d)) {
+      return errorResult(`Invalid deadline: ${d}. Expected ISO-8601 date.`);
+    }
+    updates.push({ col: 'deadline', value: d });
+  }
+  if (args.priority !== undefined) {
+    updates.push({ col: 'priority', value: args.priority as string });
+  }
+  if (args.project !== undefined) {
+    const p = args.project as string | null;
+    updates.push({ col: 'project_slug', value: p && p.length > 0 ? p : null });
+  }
+  if (args.metadata !== undefined) {
+    updates.push({ col: 'metadata', value: normalizeMetadata(args.metadata) });
+  }
+
+  let achievedNow = false;
+  if (args.status !== undefined) {
+    const newStatus = args.status as string;
+    if (!(VALID_GOAL_STATUSES as readonly string[]).includes(newStatus)) {
+      return errorResult(
+        `Invalid status: ${newStatus}. Must be one of: ${VALID_GOAL_STATUSES.join(', ')}`,
+      );
+    }
+    updates.push({ col: 'status', value: newStatus });
+
+    if (newStatus === 'achieved' && existing.status !== 'achieved') {
+      updates.push({ col: 'achieved_at', value: sqlNow() });
+      achievedNow = true;
+    } else if (newStatus !== 'achieved' && existing.status === 'achieved') {
+      // Revert from achieved: clear the timestamp.
+      updates.push({ col: 'achieved_at', value: null });
+    }
+  }
+
+  if (updates.length === 0) {
+    // No-op update; return existing row so callers don't have to special-case.
+    const result: GoalUpdateResult = {
+      updated: false,
+      achieved_now: false,
+      goal: existing,
+    };
+    return successResult(JSON.stringify(result, null, 2));
+  }
+
+  // Always bump updated_at on any patch.
+  updates.push({ col: 'updated_at', value: sqlNow() });
+
+  const setClauses = updates.map((u) => `${u.col} = ?`).join(', ');
+  const values = updates.map((u) => u.value);
+
+  db.prepare(`UPDATE goals SET ${setClauses} WHERE goal_id = ?`).run(...values, goalId);
+
+  const updated = db
+    .prepare('SELECT * FROM goals WHERE goal_id = ?')
+    .get(goalId) as GoalRow;
+
+  const result: GoalUpdateResult = {
+    updated: true,
+    achieved_now: achievedNow,
+    goal: updated,
+  };
+  return successResult(JSON.stringify(result, null, 2));
+}
+
+// ---------------------------------------------------------------------------
+// handleGoalProgress
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute completion progress for a goal based on serving briefs.
+ *
+ * Rules (per FR-110 plan):
+ *   - "Done" = brief.status IN ('Done', 'Archived'), matching the briefs
+ *     component's TERMINAL_STATUSES and the brief.completed event semantics.
+ *   - No effort weighting — count-based, transparent, self-correcting.
+ *   - completion_pct = done / total, or null when total === 0.
+ *   - Soft-deleted edges (metadata.deleted=1) are excluded.
+ *   - Learnings are surfaced as a count only; they have no terminal status
+ *     and so are not part of completion_pct.
+ */
+export function handleGoalProgress(args: Record<string, unknown>): ToolResult {
+  const goalId = args.goal_id as string | undefined;
+  if (!goalId) {
+    return errorResult('Missing required field: goal_id');
+  }
+
+  const db = getDb();
+
+  // Verify the goal exists so we don't silently return a "0/0" row for a
+  // typo'd id — that's a validation surface, not a data surface. Use
+  // EXISTS-style probe (SELECT 1 ... LIMIT 1) so SQLite doesn't bother
+  // materializing column data we'll never read.
+  const exists = db
+    .prepare('SELECT 1 FROM goals WHERE goal_id = ? LIMIT 1')
+    .get(goalId) as { 1: number } | undefined;
+  if (!exists) {
+    return errorResult(`Goal not found: ${goalId}`);
+  }
+
+  const buckets = queryServingBriefBuckets(db, goalId);
+  const learningsCount = queryServingLearningsCount(db, goalId);
+
+  const completionPct =
+    buckets.total === 0 ? null : Math.round((buckets.done / buckets.total) * 1000) / 1000;
+
+  const result: GoalProgress = {
+    goal_id: goalId,
+    serving_briefs_total: buckets.total,
+    serving_briefs_done: buckets.done,
+    serving_briefs_in_progress: buckets.in_progress,
+    serving_briefs_pending: buckets.pending,
+    completion_pct: completionPct,
+    serving_learnings_count: learningsCount,
+  };
+  return successResult(JSON.stringify(result, null, 2));
+}

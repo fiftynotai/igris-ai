@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": ["Bash(git diff:*)"]
+  },
+  "env": {
+    "EXAMPLE_VAR": "example-value"
+  },
+  "model": "claude-opus-4-5",
+  "includeGitInstructions": false,
+  "customKey": {
+    "nested": {
+      "deep": [1, 2, 3]
+    }
+  }
+}

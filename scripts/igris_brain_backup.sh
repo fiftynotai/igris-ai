@@ -44,7 +44,7 @@ check_prerequisites() {
 
   if [ ! -f "$DB_FILE" ]; then
     echo "ERROR: Knowledge database not found at $DB_FILE"
-    echo "  Run igris_brain_init.sh first to create the brain."
+    echo "  Run \"igris init\" first to create the brain."
     exit 1
   fi
 }

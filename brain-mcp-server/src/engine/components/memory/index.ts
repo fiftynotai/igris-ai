@@ -20,12 +20,18 @@ import {
   handleMemoryStore,
   handleMemorySearch,
   handleMemoryRecall,
+  handleMemoryGet,
+  handleMemoryHybridSearch,
+  handleMemoryBackfillEmbeddings,
   handlePatternSuggest,
 } from '../../../tools/memory.js';
 import type {
   MemoryStoreInput,
   MemorySearchInput,
   MemoryRecallInput,
+  MemoryGetInput,
+  HybridSearchInput,
+  BackfillInput,
   PatternSuggestInput,
 } from '../../../tools/memory.js';
 
@@ -50,6 +56,7 @@ export function createMemoryComponent(): BrainComponent {
           description: 'Store a learning in the Igris knowledge database. Use this to persist patterns, decisions, discoveries, mistakes, and optimizations for future recall.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -85,11 +92,25 @@ export function createMemoryComponent(): BrainComponent {
                 enum: ['local', 'global'],
                 description: 'Scope: "local" for project-specific, "global" for cross-project relevance. Default: "local"',
               },
+              provenance: {
+                type: 'string',
+                enum: ['observed', 'inferred', 'synthesized', 'ambiguous', 'human_asserted'],
+                description: 'Origin and trust level of this learning. Defaults to "observed". See docs/architecture/provenance.md.',
+              },
+              review_status: {
+                type: 'string',
+                enum: ['pending_review', 'approved'],
+                description: 'Lifecycle gate for the perception channel (FR-109). Default "approved". Perception extractors pass "pending_review" so candidates are hidden from default recall/search until approved.',
+              },
+              source_extractor: {
+                type: 'string',
+                description: 'Which extractor produced this row (FR-109 + TD-066). Default "manual" for direct tool calls; perception passes "llm"; /distill passes "distill". Validated against VALID_SOURCE_EXTRACTOR.',
+              },
             },
             required: ['project', 'category', 'title', 'content'],
           },
-          handler: (args) => {
-            const result = handleMemoryStore(args as unknown as MemoryStoreInput);
+          handler: async (args) => {
+            const result = await handleMemoryStore(args as unknown as MemoryStoreInput);
             _ctx?.bus.emit('memory.stored', { project: (args as Record<string, unknown>).project });
             return result;
           },
@@ -99,6 +120,7 @@ export function createMemoryComponent(): BrainComponent {
           description: 'Full-text search across all learnings in the Igris knowledge database. Supports filtering by project and scope. Returns results ranked by relevance.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               query: {
                 type: 'string',
@@ -117,6 +139,10 @@ export function createMemoryComponent(): BrainComponent {
                 type: 'number',
                 description: 'Maximum number of results (default: 10)',
               },
+              offset: {
+                type: 'number',
+                description: 'Number of results to skip for pagination (default: 0)',
+              },
             },
             required: ['query'],
           },
@@ -127,6 +153,7 @@ export function createMemoryComponent(): BrainComponent {
           description: 'Contextual recall of relevant learnings for the current project. Combines project-local and global learnings matching the given context. Updates access counts for returned results.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -143,13 +170,86 @@ export function createMemoryComponent(): BrainComponent {
             },
             required: ['project', 'context'],
           },
-          handler: (args) => handleMemoryRecall(args as unknown as MemoryRecallInput),
+          handler: async (args) => handleMemoryRecall(args as unknown as MemoryRecallInput),
+        },
+        {
+          name: 'igris_memory_get',
+          description: 'Fetch the full content of a single learning by ID. Use after igris_memory_recall returns truncated previews to get the complete content of a specific learning.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              id: {
+                type: 'number',
+                description: 'The learning ID to fetch (from recall or search results)',
+              },
+            },
+            required: ['id'],
+          },
+          handler: (args) => handleMemoryGet(args as unknown as MemoryGetInput),
+        },
+        {
+          name: 'igris_memory_hybrid_search',
+          description: 'Hybrid search combining BM25 (keyword) and vector (semantic) results via Reciprocal Rank Fusion. Falls back to BM25-only if vector search is unavailable. Use this for the best search quality — it finds results that match both keywords and meaning.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              query: {
+                type: 'string',
+                description: 'Search query — used for both FTS5 keyword matching and semantic vector search',
+              },
+              project: {
+                type: 'string',
+                description: 'Filter by project slug (optional — omit for cross-project search)',
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum number of results (default: 10)',
+              },
+              bm25_weight: {
+                type: 'number',
+                description: 'Weight for BM25 keyword results in RRF fusion (default: 0.5)',
+              },
+              vector_weight: {
+                type: 'number',
+                description: 'Weight for vector semantic results in RRF fusion (default: 0.5)',
+              },
+              rrf_k: {
+                type: 'number',
+                description: 'RRF constant — higher values reduce the influence of rank position (default: 60)',
+              },
+            },
+            required: ['query'],
+          },
+          handler: async (args) => handleMemoryHybridSearch(args as unknown as HybridSearchInput),
+        },
+        {
+          name: 'igris_memory_backfill_embeddings',
+          description: 'Batch-generate embeddings for existing learnings that lack them. Processes learnings in batches — run multiple times to process all. Resumable: only processes learnings without embeddings.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              batch_size: {
+                type: 'number',
+                description: 'Number of learnings to process per batch (default: 50)',
+              },
+              project: {
+                type: 'string',
+                description: 'Filter by project slug (optional — omit to backfill all projects)',
+              },
+            },
+            required: [],
+          },
+          handler: async (args) => handleMemoryBackfillEmbeddings(args as unknown as BackfillInput),
         },
         {
           name: 'igris_pattern_suggest',
           description: 'Suggest relevant patterns for the current context. Searches learnings via FTS5, includes global-scope patterns, and loads matching patterns from the starter-patterns library. Optionally filters by tech stack.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -176,7 +276,7 @@ export function createMemoryComponent(): BrainComponent {
         emits: [
           // Orphan: sync auto-push extension point — will be consumed when sync auto-push is implemented
           { name: 'memory.stored', description: 'A new learning was stored' },
-          // TODO: Add memory.promoted when scope promotion is implemented
+          // Note: promoteToGlobal() runs inline in handleMemoryStore and results are included in the response text. No separate event needed.
         ],
         listens: [],
       };

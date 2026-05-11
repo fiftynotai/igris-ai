@@ -75,6 +75,7 @@ export function createSchedulesComponent(): BrainComponent {
           description: 'Create a new scheduled job. Supports cron expressions (5-field), multiple handler types (mcp-tool, shell, noop), and optional project scoping.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               name: {
                 type: 'string',
@@ -147,6 +148,7 @@ export function createSchedulesComponent(): BrainComponent {
           description: 'List schedules with optional filters. Includes run stats (run_count, last_status) for each schedule.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               enabled: {
                 type: 'boolean',
@@ -181,6 +183,7 @@ export function createSchedulesComponent(): BrainComponent {
           description: 'Get a single schedule with its recent run history (last 10 runs).',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               schedule_id: {
                 type: 'string',
@@ -200,6 +203,7 @@ export function createSchedulesComponent(): BrainComponent {
           description: 'Enable a schedule. Recomputes next_run_at based on the cron expression.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               schedule_id: {
                 type: 'string',
@@ -228,6 +232,7 @@ export function createSchedulesComponent(): BrainComponent {
           description: 'Disable a schedule. Stops it from firing until re-enabled.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               schedule_id: {
                 type: 'string',
@@ -256,6 +261,7 @@ export function createSchedulesComponent(): BrainComponent {
           description: 'Immediately fire a schedule, creating a run record. Executes the handler synchronously and returns the result.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               schedule_id: {
                 type: 'string',
@@ -275,6 +281,7 @@ export function createSchedulesComponent(): BrainComponent {
           description: 'Delete a schedule and all its run history. This action is irreversible.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               schedule_id: {
                 type: 'string',

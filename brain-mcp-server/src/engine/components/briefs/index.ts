@@ -22,6 +22,10 @@ import {
   handleBriefList,
   handleBriefCreate,
   handleBriefUpdate,
+  handleBriefVelocity,
+  handleBriefSimilar,
+  handleBriefBackfillEmbeddings,
+  extractParentBriefId,
 } from '../../../tools/briefs.js';
 import type {
   BriefSyncInput,
@@ -30,6 +34,9 @@ import type {
   BriefListInput,
   BriefCreateInput,
   BriefUpdateInput,
+  BriefVelocityInput,
+  BriefSimilarInput,
+  BriefBackfillInput,
 } from '../../../tools/briefs.js';
 import { getDb } from '../../../db.js';
 
@@ -70,6 +77,7 @@ export function createBriefsComponent(): BrainComponent {
           description: 'Sync a brief status change to the Igris brain. Called when brief status changes during /hunt, /rest, or /archive. Uses upsert to maintain one record per project+brief_id.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -135,8 +143,18 @@ export function createBriefsComponent(): BrainComponent {
                 });
               }
 
-              // Emit brief.completed if status changed to Done
-              if (status === 'Done' && existing?.status !== 'Done') {
+              // Emit brief.completed if status transitioned to a terminal state
+              // (Done or Archived). The guard `!prevTerminal` prevents double-fire
+              // within the same terminal class, but Done -> Archived fires only
+              // once because Done is already terminal.
+              // Listener `onBriefCompleted` in tasks/index.ts is idempotent
+              // (skips already-done/cancelled tasks) so re-firing is safe.
+              const TERMINAL_STATUSES = ['Done', 'Archived'] as const;
+              const prevTerminal = existing?.status
+                ? (TERMINAL_STATUSES as readonly string[]).includes(existing.status)
+                : false;
+              const nowTerminal = (TERMINAL_STATUSES as readonly string[]).includes(status);
+              if (nowTerminal && !prevTerminal) {
                 _ctx.bus.emit('brief.completed', {
                   project,
                   brief_id: briefId,
@@ -153,6 +171,7 @@ export function createBriefsComponent(): BrainComponent {
           description: 'Display a cross-project brief dashboard showing all tracked briefs with status counts. Supports filtering by status and project. Use summary_only=true to get only aggregate counts (by status and priority) without the full briefs table — ideal for /scan and /awaken where only counts are needed.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               status: {
                 type: 'string',
@@ -175,6 +194,7 @@ export function createBriefsComponent(): BrainComponent {
           description: 'Get a single brief by project and brief_id. Returns content (from brief_files) and metadata (from brief_status). Falls back to metadata-only if no content is stored.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -194,6 +214,7 @@ export function createBriefsComponent(): BrainComponent {
           description: 'List briefs with optional filters and pagination. Supports filtering by project, status, brief_type, and priority. Returns paginated results (default 25 per page) with total count. Set limit=0 to return all.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -232,6 +253,7 @@ export function createBriefsComponent(): BrainComponent {
           description: 'Create a new brief with content and metadata. Atomically inserts into both brief_files and brief_status. Use this to store a complete brief in the brain.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -273,20 +295,44 @@ export function createBriefsComponent(): BrainComponent {
                 type: 'string',
                 description: 'Current workflow phase',
               },
+              parent_brief: {
+                type: 'string',
+                description: 'Parent brief id (e.g., "FR-051"). When omitted, the briefs component scans the markdown content for "**Parent Brief:** FR-XXX". Used to auto-create a parent_of edge (FR-105).',
+              },
             },
             required: ['project', 'brief_id', 'title', 'content'],
           },
-          handler: (args) => {
+          handler: async (args) => {
             const typedArgs = args as Record<string, unknown>;
-            const result = handleBriefCreate(args as unknown as BriefCreateInput);
+            const result = await handleBriefCreate(args as unknown as BriefCreateInput);
 
             if (_ctx) {
+              // FR-105: enrich payload with parent_brief_id so the edges
+              // component can auto-create a parent_of edge. Prefer the
+              // explicit field, fall back to scanning markdown content.
+              const explicitParent = typedArgs.parent_brief as string | undefined;
+              const content = (typedArgs.content as string | undefined) ?? '';
+              const parsedParent = explicitParent ?? extractParentBriefId(content) ?? undefined;
+              const briefId = typedArgs.brief_id as string;
+              // Defensive: never let a brief claim itself as its own parent.
+              const parentBriefId = parsedParent && parsedParent !== briefId ? parsedParent : undefined;
+
               _ctx.bus.emit('brief.created', {
                 project: typedArgs.project as string,
-                brief_id: typedArgs.brief_id as string,
+                brief_id: briefId,
                 title: typedArgs.title as string,
                 status: (typedArgs.status as string) ?? 'Ready',
+                ...(parentBriefId ? { parent_brief_id: parentBriefId } : {}),
               });
+
+              // Check if similarity warning was emitted in the response
+              const text = result.content[0]?.text ?? '';
+              if (text.includes('similar brief(s) detected')) {
+                _ctx.bus.emit('brief.similar_detected', {
+                  project: typedArgs.project as string,
+                  brief_id: briefId,
+                });
+              }
             }
 
             return result;
@@ -297,6 +343,7 @@ export function createBriefsComponent(): BrainComponent {
           description: 'Update an existing brief\'s content and/or metadata. Only updates fields that are provided. Supports partial updates to both brief_files and brief_status.',
           inputSchema: {
             type: 'object' as const,
+            additionalProperties: false,
             properties: {
               project: {
                 type: 'string',
@@ -362,18 +409,100 @@ export function createBriefsComponent(): BrainComponent {
             if (_ctx) {
               _ctx.bus.emit('brief.synced', { project, brief_id: briefId });
 
-              // Emit brief.completed if status changed to Done
-              if (newStatus === 'Done' && previousStatus !== 'Done') {
-                _ctx.bus.emit('brief.completed', {
-                  project,
-                  brief_id: briefId,
-                  title: (typedArgs.title as string) ?? '',
-                });
+              // Emit brief.completed if status transitioned to a terminal state
+              // (Done or Archived). The guard `!prevTerminal` prevents double-fire
+              // within the same terminal class, but Done -> Archived fires only
+              // once because Done is already terminal.
+              // Listener `onBriefCompleted` in tasks/index.ts is idempotent
+              // (skips already-done/cancelled tasks) so re-firing is safe.
+              if (newStatus !== undefined) {
+                const TERMINAL_STATUSES = ['Done', 'Archived'] as const;
+                const prevTerminal = previousStatus
+                  ? (TERMINAL_STATUSES as readonly string[]).includes(previousStatus)
+                  : false;
+                const nowTerminal = (TERMINAL_STATUSES as readonly string[]).includes(newStatus);
+                if (nowTerminal && !prevTerminal) {
+                  _ctx.bus.emit('brief.completed', {
+                    project,
+                    brief_id: briefId,
+                    title: (typedArgs.title as string) ?? '',
+                  });
+                }
               }
             }
 
             return result;
           },
+        },
+        {
+          name: 'igris_brief_velocity',
+          description: 'Compute brief completion velocity metrics. Returns weekly completion counts, overall completion rate, and a week-over-week trend indicator.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Filter by project slug (optional -- omit for cross-project velocity)',
+              },
+              weeks: {
+                type: 'number',
+                description: 'Number of weeks to include (default: 4, max: 52)',
+              },
+            },
+          },
+          handler: (args) => {
+            const result = handleBriefVelocity(args as unknown as BriefVelocityInput);
+            return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+          },
+        },
+        {
+          name: 'igris_brief_similar',
+          description: 'Find briefs that are semantically similar to a query. Uses vector embeddings to detect near-duplicate briefs. Returns matches above the cosine similarity threshold (default: 0.85).',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              query: {
+                type: 'string',
+                description: 'Brief title and/or problem description to search for similar briefs',
+              },
+              project: {
+                type: 'string',
+                description: 'Filter by project slug (optional)',
+              },
+              threshold: {
+                type: 'number',
+                description: 'Minimum cosine similarity threshold (default: 0.85)',
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum results (default: 5)',
+              },
+            },
+            required: ['query'],
+          },
+          handler: async (args) => handleBriefSimilar(args as unknown as BriefSimilarInput),
+        },
+        {
+          name: 'igris_brief_backfill_embeddings',
+          description: 'Batch-generate embeddings for existing briefs that lack them. Processes briefs in batches -- run multiple times to process all. Resumable: only processes briefs without embeddings.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              batch_size: {
+                type: 'number',
+                description: 'Number of briefs to process per batch (default: 50)',
+              },
+              project: {
+                type: 'string',
+                description: 'Filter by project slug (optional -- omit to backfill all projects)',
+              },
+            },
+            required: [],
+          },
+          handler: async (args) => handleBriefBackfillEmbeddings(args as unknown as BriefBackfillInput),
         },
       ];
     },
@@ -383,7 +512,8 @@ export function createBriefsComponent(): BrainComponent {
         emits: [
           { name: 'brief.synced', description: 'A brief status was synced' },
           { name: 'brief.created', description: 'A new brief was synced for the first time' },
-          { name: 'brief.completed', description: 'A brief status changed to Done' },
+          { name: 'brief.completed', description: 'A brief status transitioned to a terminal state (Done or Archived)' },
+          { name: 'brief.similar_detected', description: 'Similar briefs were detected during creation' },
         ],
         listens: [],
       };

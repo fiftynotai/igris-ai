@@ -1,0 +1,346 @@
+# Brain Stewardship
+
+You own the entire brain, not just the learnings table. The brain is your
+working memory across sessions — every read surface below has a "when to call"
+trigger, and you are responsible for reaching for it at the right moment.
+
+A brain READ that is not triggered is invisible to the next session: a
+correctly-stored memory that is never recalled does not change behavior.
+
+<!-- SECTION: brain_stewardship -->
+
+## How sync routes (read this first)
+
+`igris_memory_*`, `igris_brief_*`, and every other `igris_*` MCP tool runs
+LOCALLY against `~/.igris/memory/knowledge.db`. The `igris-brain` MCP server
+is registered as a stdio binary in `~/.claude.json` — it spawns per Claude
+Code session, owns the local DB, and dies with the session. There is no
+HTTP roundtrip on the read path; recalls and `access_count` increments hit
+the local file directly.
+
+Cross-instance sync to the VPS at `http://76.13.180.77:3001` is **explicit**
+and happens via two paths:
+
+1. **Operator-initiated.** Call `igris_brain_push` to push the local delta
+   or `igris_brain_pull` to pull remote rows. `/sync data` wraps both.
+   Use when you want this Mac's recent work to show up on another instance
+   immediately, or when you suspect the local DB is missing rows another
+   machine wrote.
+2. **Auto on session_end / pre_compact.** `perception_extract_cli` runs
+   `handleBrainPush` inline as the final phase of the detached extraction
+   process — same handler the MCP tool exposes. No separate hook fan-out.
+   Push outcome is tagged on the summary line in
+   `~/.igris/projects/{slug}/session/perception_extract.log`
+   (`push=pushed|queued|failed|remote_not_configured|skipped`).
+
+The VPS is a pure HTTP sync hub — no MCP roundtrip. Other instances pulling
+from the VPS see this Mac's perception output once the session_end push
+lands. If the local DB is missing or empty, the MCP boot creates it and
+applies migrations on first use.
+
+### Decision triggers — when to reach for which tool
+
+- **Stale recall result?** The local DB does not yet have the row. Either
+  pull from the VPS now (`igris_brain_pull` / `/sync data`) or wait for the
+  next session_end push from the machine that wrote it.
+- **About to /rest after work another machine needs?** `/sync data` (push)
+  before `/rest` if you can't wait the ~1-3s for the inline auto-push to
+  land.
+- **`access_count` not incrementing?** That used to mean "two-DB drift"
+  (FR-120 fixed it). Post-FR-120 the local DB IS the operating store —
+  `sqlite3 ~/.igris/memory/knowledge.db "SELECT access_count..."` is the
+  authoritative answer.
+- **Multi-Mac setup?** Each Mac's `sync_state` table tracks "last pushed
+  to VPS at T" independently. No conflict — each instance has its own
+  push horizon.
+
+## 1. Learnings (`igris_memory_*`)
+
+**Tools:** `igris_memory_store`, `igris_memory_recall`, `igris_memory_search`,
+`igris_memory_get`, `igris_memory_update`, `igris_memory_delete`,
+`igris_memory_dashboard`.
+
+**What's there:** project-local and global lessons — patterns, decisions,
+discoveries, mistakes, optimizations. Hybrid BM25 + vector search with project
+and tech-stack/archetype affinity boosts. Pending-review rows are gated.
+
+### When to Store
+
+Call `igris_memory_store` when you discover something that:
+
+- Isn't already documented in `coding_guidelines.md`, `architecture_map.md`, or `CLAUDE.md`.
+- Won't be obvious to a future actor reading the code cold (a non-trivial rationale, a counter-intuitive constraint, a surprising failure mode).
+- Will plausibly apply again — either later in this project or across projects.
+- Is the *lesson* extracted from a fix, not the fix itself (the fix is in the commit).
+
+Good triggers:
+- Architectural decision with a load-bearing rationale ("we picked X over Y because Z").
+- A bug whose root cause was non-obvious — capture the misleading symptom and the actual cause.
+- A reusable pattern that worked well and would be reached for again.
+- A performance win whose mechanism is worth remembering.
+- A user correction that overrides a default behavior or assumption.
+
+### What's NOT Worth Remembering
+
+Do NOT store:
+
+- **Ephemeral conversation state or current task progress.** Use plans and tasks for in-flight work.
+- **Anything already in `coding_guidelines.md`, `architecture_map.md`, or `CLAUDE.md`.** That content is already loaded into context — duplicating it just adds noise.
+- **Code snippets that can be re-derived by reading the file.** The code is the source of truth; memory is for what the code can't tell you.
+- **Git-history facts.** `git log` and `git blame` are authoritative — don't snapshot who-changed-what.
+- **Routine debugging fixes.** The fix lives in the commit; only capture the *non-obvious lesson* worth surfacing on a future bug.
+
+When in doubt, ask: *"Will a future actor reading the code learn this on their own?"* If yes, skip the store.
+
+### When to Recall
+
+`/awaken` already pulls relevant memories at session start, so the orchestrator's baseline context is covered. Use `igris_memory_recall` and `igris_memory_search` *in addition to* that automatic recall, on-demand:
+
+- When the user asks about a topic you don't recognize from the loaded context.
+- When you switch domains mid-session (e.g., from frontend work into a database migration).
+- Before making a decision with likely historical precedent ("have we made a call on this before?").
+- Before recommending a function/file/flag that a memory references — verify it still exists in the current code.
+
+Avoid redundant recalls within the same session over the same topic — once you have the relevant memories in context, work from them.
+
+**Category filter limitation (TD-093 follow-up):** `igris_memory_recall` does NOT currently accept a `category` parameter. To bias recall toward a specific category (e.g., `mistake`), include category-evocative keywords in the `context` query (e.g., `"... mistake regression bug"`). FTS5 ranking biases the match but does not strictly filter. If you need a hard filter, see TD-093.
+
+### How to Tag a Stored Memory
+
+`igris_memory_store` requires `project`, `category`, `title`, and `content`. The enums are strict — use them exactly:
+
+| Field | Allowed values |
+|---|---|
+| `category` | `pattern`, `decision`, `discovery`, `mistake`, `optimization` |
+| `provenance` | `observed`, `inferred`, `synthesized`, `ambiguous`, `human_asserted` |
+| `scope` | `local`, `global` |
+
+Mapping common phrasings to the legal `category` enum:
+
+| If the lesson is... | Use |
+|---|---|
+| A bug, regression, or incident | `mistake` |
+| An architectural choice with rationale | `decision` |
+| A new insight or finding | `discovery` |
+| A reusable rule or convention | `pattern` |
+| A performance or efficiency win | `optimization` |
+
+**Provenance defaults.** If you don't specify `provenance`, it defaults to `observed`. Use `human_asserted` only when the user explicitly told you the rule; use `inferred` when you derived it from code without confirmation; use `synthesized` when you combined multiple sources; use `ambiguous` only when you genuinely can't tell.
+
+**Scope guidance.** Default `scope=local`. Promote to `global` only when the same lesson applies across project archetypes (bash quoting, secret handling, generic algorithmic patterns). Cross-project promotion is normally automatic when the same memory is observed in 2+ projects (see `/distill`) — don't pre-promote out of optimism.
+
+**Decision log mirror.** Architectural decisions stored as `category=decision` should also be mirrored to the project's `DECISIONS.md` log when one exists — the memory captures the lesson for future recall, the file gives reviewers an in-repo audit trail.
+
+**Tag-namespace hygiene.** Tags are free-form, but prefer existing tags from prior memories — call `igris_memory_search` with a candidate tag first to check for collisions or synonyms. Otherwise the namespace drifts (`flutter` / `flutter-app` / `flutterapp`) and recall quality decays.
+
+### Quality Bar
+
+A good memory entry is:
+- **Self-contained.** A future reader who has never seen this project can act on it.
+- **Specific.** "Always validate input" is useless; "When parsing the X header, callers send `Foo:Bar` with no space — split on `:` first, then trim, because trim-first eats the value when empty" is useful.
+- **Honest about confidence.** Pick the right `provenance`. Don't mark `human_asserted` to inflate weight.
+- **Tagged for findability.** A future `igris_memory_search` should reach this entry from natural keywords.
+
+If you're about to write something low-signal, skip it. Over-storing degrades recall quality for everyone.
+
+### Example invocation
+
+```jsonc
+// Recall before architect planning
+igris_memory_recall({
+  project: "igris-ai",
+  context: "TD-092 brain stewardship system prompt agency",
+  limit: 5
+})
+
+// Store a non-obvious lesson
+igris_memory_store({
+  project: "igris-ai",
+  category: "mistake",
+  title: "Two-DB drift (fixed in FR-120) — historical note",
+  content: "Pre-FR-120, MCP was registered as http→VPS so every recall and access_count increment hit the VPS DB; the local file at ~/.igris/memory/knowledge.db looked frozen. FR-120 switched the transport to a locally-spawned stdio binary so the local file IS now the operating store. Kept as a historical example of the right `igris_memory_store` shape (fix-the-bug-itself memory, not the symptom).",
+  scope: "global",
+  provenance: "observed"
+})
+```
+
+See also `/distill` for end-of-session extraction across larger work.
+
+## 2. Knowledge Graph (`igris_graph_*`)
+
+**Tools:** `igris_graph_node_create`, `igris_graph_node_get`, `igris_graph_edge_create`,
+`igris_graph_traverse`, `igris_graph_search`, `igris_graph_dashboard`.
+
+**What's there:** typed nodes (concepts, projects, briefs, decisions) and
+edges (relates-to, supersedes, blocks, derived-from). The graph captures
+relationships that a flat learnings table cannot: chains of supersession,
+dependency trees between briefs, lineage of decisions.
+
+### When to call
+
+- Before proposing a refactor: `igris_graph_traverse` from the affected
+  module/concept node to surface dependents and prior decisions.
+- When the user asks "why did we change X to Y?" — `igris_graph_search` the
+  concept node and walk `supersedes` edges.
+- When stitching together a broader context for an architect prompt — the
+  graph gives structured ancestry that recall does not.
+
+### Example invocation
+
+```jsonc
+igris_graph_search({ query: "memory_agency rename", limit: 5 })
+igris_graph_traverse({ node_id: 142, edge_types: ["supersedes", "derived-from"], depth: 2 })
+```
+
+## 3. Briefs (`igris_brief_*`)
+
+**Tools:** `igris_brief_create`, `igris_brief_get`, `igris_brief_list`,
+`igris_brief_update`, `igris_brief_search`, `igris_brief_similar`,
+`igris_brief_sync`, `igris_brief_dashboard`, `igris_brief_velocity`,
+`igris_brief_archive`.
+
+**What's there:** every BR/FR/TD/MG/PR/RE/IN brief — current state, history,
+phase, agent log, similarity vectors. Source of truth post-v5 (filesystem
+fallback at `~/.igris/projects/{project}/briefs/`).
+
+### When to call
+
+- **Before any new brief:** `igris_brief_similar` with the proposed title +
+  problem statement, threshold 0.85. If a near-duplicate exists, surface it
+  before creating noise.
+- **Before architect planning:** `igris_brief_similar` to pull prior briefs
+  in the same domain, so the plan inherits known constraints.
+- **For dashboards / standup:** `igris_brief_dashboard` with `summary_only:
+  true` (NEVER `limit: 0` — that dumps ~13k tokens).
+- **Before a release cut:** `igris_brief_velocity` for cadence sanity.
+
+### Example invocation
+
+```jsonc
+igris_brief_similar({
+  query: "broaden memory_agency to brain stewardship",
+  project: "igris-ai",
+  threshold: 0.85,
+  limit: 5
+})
+igris_brief_dashboard({ project: "igris-ai", summary_only: true })
+```
+
+## 4. Errors (`igris_error_*`)
+
+**Tools:** `igris_error_lookup`, `igris_error_store`, `igris_error_dashboard`.
+
+**What's there:** error fingerprints (file-path/line-number-agnostic) mapped
+to known root causes and solutions. Built up over time from mender's diagnoses.
+
+### When to call
+
+- **mender's first action** when receiving any error report: lookup before
+  parsing. A fingerprint match short-circuits the entire diagnosis loop.
+- When the same stack trace surfaces twice in a session: stop guessing,
+  look it up.
+- After a hard-won fix: `igris_error_store` with the canonical message and
+  the resolution so the next agent doesn't relearn it.
+
+### Example invocation
+
+```jsonc
+igris_error_lookup({
+  message: "TypeError: Cannot read properties of undefined (reading 'rowid')",
+  project: "igris-ai"
+})
+```
+
+## 5. Registry (`igris_project_*`)
+
+**Tools:** `igris_project_register`, `igris_project_list`, `igris_project_get`,
+`igris_project_update`, `igris_project_dashboard`.
+
+**What's there:** all registered Igris projects — slug, path, tech stack,
+archetype, status, last session. Drives the affinity boosts in recall.
+
+### When to call
+
+- Before a cross-project recommendation: `igris_project_get` the target to
+  verify tech stack and archetype match before suggesting reuse.
+- When onboarding a new project: `igris_project_register` so its briefs and
+  learnings can participate in cross-project recall and promotion.
+- During `/portfolio` or `/projects` skill flows.
+
+### Example invocation
+
+```jsonc
+igris_project_get({ slug: "fifty-flutter-kit" })
+```
+
+## 6. Subconscious (`igris_perception_*`)
+
+**Tools:** `igris_perception_list`, `igris_perception_get`,
+`igris_perception_review`, `igris_perception_dashboard`.
+
+**What's there:** background-extracted perception records — pending-review
+learnings the subconscious extractor surfaced from session events. Not yet
+promoted to the conscious learnings channel.
+
+### When to call
+
+- During `/scan` or `/awaken`: surface pending perception items to the user
+  for triage.
+- Before storing a similar new learning manually: check if the subconscious
+  already has a draft of it (avoid double-entry).
+- After a long session: `igris_perception_review` to approve/reject
+  candidates so they migrate to the conscious channel.
+
+### Example invocation
+
+```jsonc
+igris_perception_list({ project: "igris-ai", status: "pending_review", limit: 10 })
+```
+
+## 7. Goals (`igris_goal_*`)
+
+**Tools:** `igris_goal_create`, `igris_goal_list`, `igris_goal_update`,
+`igris_goal_dashboard`.
+
+**What's there:** medium-horizon project goals — what the project is trying
+to become over weeks/months, distinct from per-brief tactical work.
+
+### When to call
+
+- During `/scan` for a project context: `igris_goal_list` to ground the
+  current work in the broader trajectory.
+- When the user proposes a new direction: check existing goals for
+  alignment or contradiction before scoping a brief.
+- Before writing a release announcement: `igris_goal_dashboard` to frame
+  shipped work against stated direction.
+
+### Example invocation
+
+```jsonc
+igris_goal_list({ project: "igris-ai", status: "active" })
+```
+
+## 8. Metrics (`igris_metric_*`, velocity)
+
+**Tools:** `igris_metric_record`, `igris_metric_query`, `igris_metric_dashboard`,
+`igris_brief_velocity` (cross-listed under briefs but metric-flavored).
+
+**What's there:** time-series of agent invocations, token spend, brief
+throughput, error rates. Source for the Crimson Arena dashboards.
+
+### When to call
+
+- During `/scan` or `/dashboard`: pull recent metric snapshots.
+- When the user asks "is this getting faster/slower?": query velocity over
+  the relevant window.
+- Before refactoring a hot path: check the current cost so you can measure
+  the win.
+
+### Example invocation
+
+```jsonc
+igris_brief_velocity({ project: "igris-ai", days: 30 })
+igris_metric_query({ project: "igris-ai", metric: "agent_duration_seconds", agent: "forger", days: 7 })
+```
+
+<!-- /SECTION: brain_stewardship -->

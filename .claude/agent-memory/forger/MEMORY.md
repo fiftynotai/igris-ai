@@ -13,3 +13,7 @@ Path migration from project-local `ai/briefs/` and `ai/session/` to MCP-first wi
 - **Hook scripts**: Derive slug via `basename "$PROJECT_DIR"` for cache path construction
 
 See `/Users/m.elamin/StudioProjects/igris-ai/.claude/agent-memory/forger/fr063-files.md` for full file list.
+
+## TD-074 Perception Events Architecture (2026-04-30)
+
+- [TD-074 Perception Events](td074-perception-events.md) — Detached CLI cannot use bus.emit (no engine boot in spawned process). Solution: `writePerceptionEvent(db, name, payload)` writes directly to event_log mirroring monitoring.onEventReceived shape. Lifecycle invariant: exactly one terminal event per run_started. Repo `core/` is NOT symlinked to `~/.igris/core/` — mirror manually.

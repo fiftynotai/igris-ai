@@ -42,7 +42,7 @@ bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "projects" 2>/dev/null ||
 
 Check if `~/.igris/memory/knowledge.db` exists. If not, display:
 ```
-Brain not installed. Run: ./scripts/igris_brain_init.sh
+Brain not installed. Run: igris init
 ```
 
 ### 2. Query Projects

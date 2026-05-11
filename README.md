@@ -4,7 +4,8 @@ The engineering operating system for Claude Code.
 
 Brief-first. Brain-backed. Self-healing.
 
-**7 Agents** | **20 Skills** | **70 MCP Tools** | **34 REST Endpoints**
+Tools served via the `igris-brain` MCP server. Skills, agents, and rules
+shipped through the `igris` CLI from `~/.igris/core/`.
 
 ---
 
@@ -62,7 +63,7 @@ This is the hero feature. Details in [The HUNT Workflow](#the-hunt-workflow).
 
 ### 3. The Brain
 
-Centralized at `~/.igris/`. SQLite WAL + FTS5. 67 MCP tools across 14 components. 34 REST API endpoints.
+Centralized at `~/.igris/`. SQLite WAL + FTS5. Tools served via the `igris-brain` MCP server, with a full HTTP API for cross-machine access.
 
 The brain remembers across projects, sessions, and context resets. Error catalogs, pattern suggestions, velocity metrics, cross-project learnings -- all stored in a single database, all searchable with full-text search, all accessible via MCP or HTTP.
 
@@ -104,44 +105,48 @@ No copy drift. No sync scripts. No version mismatch between projects. One source
 
 ![Brain Architecture](docs/images/brain-architecture.png)
 
-### 67 MCP Tools (13 Components)
+### MCP Tools
 
-Tools are available globally via the `igris-brain` MCP server.
+Tools are available globally via the `igris-brain` MCP server, organized
+by component.
 
-| Component | Tools | Purpose |
-|-----------|-------|---------|
-| Memory | 4 | Store, search, recall learnings; pattern suggestions |
-| Errors | 1 | Error lookup with solution catalog (FTS5) |
-| Projects | 3 | Register, list, status |
-| Metrics | 3 | Record, query, velocity dashboards |
-| Sessions | 4 | Sync, recall, file get/update |
-| Briefs | 6 | CRUD, sync, dashboard, file management |
-| Tasks | 13 | Create, claim, assign, block, complete, fail, retry, list, results |
-| Instances | 4 | Heartbeat, list, remove, agent events |
-| Sync | 11 | Push/pull brain data, queue management, file/session/brief/definition sync |
-| Cache | 2 | Rebuild/clean brain-to-filesystem cache |
-| Context | 3 | Register, get, tree routing (v6) |
-| Schedules | 7 | Create, list, get, enable/disable, fire, delete |
-| Coordination | 7 | Auto-route, priorities, config, audit, agent capabilities |
-| Monitoring | 2 | Event log, event log cleanup |
+| Component | Purpose |
+|-----------|---------|
+| Memory | Store, search, recall, hybrid search, embedding backfill |
+| Errors | Lookup, similar errors, embedding backfill |
+| Projects | Register, list, status |
+| Metrics | Record, query, velocity dashboards |
+| Sessions | Sync, recall, file get/update |
+| Briefs | CRUD, sync, dashboard, file management, similar, velocity |
+| Tasks | Create, claim, assign, block, complete, fail, retry, list, results |
+| Instances | Heartbeat, list, remove, agent events |
+| Sync | Push/pull brain data, queue management, file/session/brief/definition sync |
+| Cache | Rebuild/clean brain-to-filesystem cache |
+| Context | Register, get, load, tree routing (v6) |
+| Schedules | Create, list, get, enable/disable, fire, delete |
+| Coordination | Auto-route, priorities, config, audit, agent capabilities |
+| Monitoring | Event log, event log cleanup |
+| Registry | Module/template registry: add, search, get, list, remove, update |
+| Edges | Typed graph edges + traversal: create/list/remove + neighbors/path/subgraph |
+| Perception | Subconscious gap/pattern/stalled detectors and event ingestion |
 
-### 34 REST API Endpoints
+### REST API
 
 Full HTTP API with API key authentication, rate limiting, and SSE streaming.
 
-| Category | Endpoints | Highlights |
-|----------|-----------|------------|
-| Health & Status | 3 | Health check, brain stats, sync status |
-| Projects | 3 | List, budget get/set |
-| Briefs | 3 | List, velocity, brief content |
-| Sessions | 2 | List sessions, session files |
-| Tasks | 6 | List, next, claim, complete, fail, release |
-| Instances | 5 | List, heartbeat, delete, agent list, activity log |
-| Events | 2 | Query event log, SSE streaming |
-| Metrics | 3 | Agent summary, by-project, record |
-| Hooks | 2 | Hook event ingestion, agent event recording |
-| Sync | 4 | Push, pull, file push, file pull |
-| Definitions | 1 | Pull definitions |
+| Category | Highlights |
+|----------|------------|
+| Health & Status | Health check, brain stats, sync status |
+| Projects | List, budget get/set |
+| Briefs | List, velocity, brief content |
+| Sessions | List sessions, session files |
+| Tasks | List, next, claim, complete, fail, release |
+| Instances | List, heartbeat, delete, agent list, activity log |
+| Events | Query event log, SSE streaming |
+| Metrics | Agent summary, by-project, record |
+| Hooks | Hook event ingestion, agent event recording |
+| Sync | Push, pull, file push, file pull |
+| Definitions | Pull definitions |
 
 ### Brain Modes
 
@@ -151,12 +156,8 @@ Full HTTP API with API key authentication, rate limiting, and SSE streaming.
 | `remote` | `igris-brain` (HTTP) | VPS brain, no local DB |
 | `dual` | Both (stdio + HTTP) | Full redundancy |
 
-```bash
-./scripts/igris_brain_switch.sh status   # Show current mode
-./scripts/igris_brain_switch.sh local    # Local only
-./scripts/igris_brain_switch.sh remote   # Remote only
-./scripts/igris_brain_switch.sh dual     # Both active
-```
+Mode is selected by editing `~/.igris/config.json` `remote_brain` and
+`local_brain` blocks. The `igris-brain` MCP server reads them on startup.
 
 ### Concurrency
 
@@ -264,18 +265,74 @@ Single brief -- use `/hunt`. Multiple briefs -- use `/team hunt`.
 ### Install
 
 ```bash
-# Clone Igris
-git clone https://github.com/fiftynotai/igris-ai
+# Install the CLI globally from npm
+npm install -g igris-ai
 
-# Bootstrap the brain (one-time)
-./igris-ai/scripts/igris_brain_init.sh
+# Bootstrap the brain (one-time, fetches ~/.igris/core/ from a release tarball)
+igris init
 
-# Install in your project
-cd your-project
-path/to/igris-ai/scripts/igris_install.sh
+# Install Igris in your project
+cd /path/to/your-project
+igris install .
 ```
 
-This creates `~/.igris/` with the brain database, copies core files (agents, skills, rules, prompts, context tree), and sets up `.claude/` symlinks. Registers the brain MCP server globally in `~/.claude.json`. Your project gets the full system with zero file duplication.
+This creates `~/.igris/` with the brain database, the core/ directory
+(agents, skills, rules, prompts, context tree), and sets up
+`<project>/.claude/` symlinks. Registers the brain MCP server globally in
+`~/.claude.json`. Your project gets the full system with zero file
+duplication.
+
+The CLI ships hooks by default. Pass `--no-hooks` to opt out (rare). For
+diagnostics across every registered project, use `igris doctor`. For a
+specific slug different from the directory basename, use
+`igris install --slug <slug> .`.
+
+### Upgrade from v6
+
+If you have an existing v6 install (`~/.igris/` populated by the
+retired shell scripts), the v7 CLI auto-detects it and offers an
+in-place upgrade that preserves your `knowledge.db`, `USER.md`, and
+`config.json` byte-for-byte:
+
+```bash
+# 1. Diagnose current state
+igris doctor
+
+# 2. Preview the upgrade (no writes, no network unless --channel changes)
+igris init --upgrade --dry-run
+
+# 3. Apply the upgrade
+igris init --upgrade
+
+# 4. Preview project propagation
+igris update --all --dry-run
+
+# 5. Propagate to all registered projects
+igris update --all
+```
+
+`igris init --upgrade` swaps `~/.igris/core/` atomically (stages to
+`core.new.<pid>/`, renames the existing core to `core.bak.<ts>/`,
+promotes the staging dir, then deletes the bak after a successful
+swap). Failure at any step rolls back.
+
+### Channels
+
+| Channel | Flag | What you get |
+|---------|------|--------------|
+| Latest release (default) | `igris init` | Newest published `vX.Y.Z` tag |
+| Bleeding edge | `igris init --channel main` | The current `main` branch (unstable) |
+| Pinned tag | `igris init --channel v7.0.0` | A specific tag |
+| Local source (contributors) | `igris init --from-source /path/to/igris-ai` | A local repo's `core/` directory; no network |
+
+`igris refresh` re-fetches `~/.igris/core/` using the same channel
+recorded at install time (or switches with `--channel`).
+
+### Contributing
+
+Contributors clone the repo and use `--from-source` for offline
+iteration. See [`cli/README.md`](cli/README.md) for the contributor
+flow.
 
 ### First 5 Minutes
 
@@ -317,7 +374,7 @@ Honest comparison. No competitor has all five pillars.
 | Capability | Igris | Multi-Agent Frameworks | AI IDEs |
 |------------|-------|------------------------|---------|
 | Brief-first audit trail | Enforced -- 9 types, full lifecycle | No | No |
-| Cross-project brain | SQLite WAL + FTS5, 67 MCP tools | File-based or none | Session-only |
+| Cross-project brain | SQLite WAL + FTS5, 91 MCP tools | File-based or none | Session-only |
 | Self-healing pipeline | mender + sentinel, 3 retries | Manual intervention | Manual intervention |
 | Zero-drift install | Symlinks from single brain | Copy-based, drift-prone | N/A |
 | Tool-enforced roles | Agent definitions restrict tools | Prompt-based, bypassable | N/A |
@@ -330,7 +387,7 @@ Honest comparison. No competitor has all five pillars.
 
 - **vs. multi-agent frameworks** (Ruflo, Oh-My-ClaudeCode, metaswarm): They have agents. Igris has agents with enforced tool restrictions, a persistent brain, brief-first audit trail, and self-healing pipelines. More agents is not the differentiator -- discipline is.
 - **vs. AI IDEs** (Cursor, Copilot): They accelerate typing. Igris manages engineering workflow. Different problems, different tools.
-- **vs. memory-focused tools** (Claude CodePro): File-based memory banks per project. Igris has a database-backed brain that works across projects, survives context resets, and serves 67 tools via MCP.
+- **vs. memory-focused tools** (Claude CodePro): File-based memory banks per project. Igris has a database-backed brain that works across projects, survives context resets, and serves 91 tools via MCP.
 
 ---
 
@@ -386,6 +443,6 @@ When sentinel detects test failure, mender analyzes the error, forger applies th
 
 ---
 
-**Version 6.0.0** | [MIT License](LICENSE)
+**Version 7.0.0** | [MIT License](LICENSE)
 
 Built by [Fifty.ai](https://github.com/fiftynotai)
