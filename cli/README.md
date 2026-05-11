@@ -118,7 +118,7 @@ Replaces the retired `scripts/igris_vps_update.sh` (deleted in M4 of MG-014).
 |---|---|
 | `status` | HTTP GET `<remote_brain.url>/health`, prints reachability + brain version + local queue depth + last-push timestamp |
 | `data`   | Drains local `~/.igris/projects/<slug>/sync_queue.jsonl` via remote `igris_sync_queue_drain` MCP call |
-| `code`   | rsync local repo to `<vps.user>@<vps.host>:<vps.repo_path>` (excludes `node_modules/`, `.git/`, `dist/`, `.env`, IDE files, etc.), run `npm ci` + `npm run build` (brain-mcp-server) on VPS, ssh-restart `igris-brain` via PM2, smoke-check `require("better-sqlite3")`, then verify `/health` |
+| `code`   | rsync local repo to `<vps.user>@<vps.host>:<vps.repo_path>` (excludes `node_modules/`, `.git/`, `dist/`, `.env`, IDE files, etc.), run `npm ci` + `npm run build` (brain-mcp-server) on VPS, smoke-check `require("better-sqlite3")`, ssh-restart `igris-brain` via PM2, then verify `/health` |
 | `all`    | `code` then `data` sequentially; aborts on `code` failure |
 
 `--dry-run` previews the rsync/ssh/MCP calls without performing them.
@@ -150,9 +150,10 @@ each `npm publish`:
    - `sync code: rsync <src> -> <dst>` then any rsync transfer summary
    - `sync code: npm ci complete on VPS` (Linux-native dep rebuild, ~30s)
    - `sync code: brain-mcp-server build complete on VPS`
+   - `sync code: native-module smoke check passed` (TD-141 pre-restart
+     load-bearing gate; old brain stays serving on smoke fail —
+     `require("better-sqlite3")` on VPS)
    - `sync code: pm2 restart issued`
-   - `sync code: native-module smoke check passed` (TD-135 load-bearing
-     gate — `require("better-sqlite3")` on VPS)
    - `sync code: health OK — {"status":"ok",...}` (or a WARN if the
      service is still starting; re-run `igris sync status` to confirm)
 4. **Cron parity:** `igris sync code --if-changed` from a clean tree
