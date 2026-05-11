@@ -4,12 +4,12 @@ name: Publish CLI to npm
 # be invoked manually via `workflow_dispatch` for staging dry-runs.
 #
 # GATING (MG-014 Risk #3): the publish step is conditional on the
-# `NPM_TOKEN` repository secret being set. When the npm org `fifty-ai` is
+# `NPM_TOKEN` repository secret being set. When the npm org `fiftynotai` is
 # not yet registered (or the token has not been deposited), the workflow
 # still runs the test gate but skips publish — the workflow lands at the
 # v7.0.0 tag but is dormant until secret config completes. To enable:
 #
-#   1. Register the npm org `fifty-ai` (npmjs.com).
+#   1. Register the npm org `fiftynotai` (npmjs.com).
 #   2. Generate a publish-scoped automation token.
 #   3. Add it to repo secrets as `NPM_TOKEN`.
 #   4. Re-run via workflow_dispatch (or push a new tag).

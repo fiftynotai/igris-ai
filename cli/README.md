@@ -3,7 +3,7 @@
 The unified command-line tool for Igris AI. Published to npm as
 [`igris-ai`](https://www.npmjs.com/package/igris-ai); binary command is
 `igris`. Source lives at `cli/` in the
-[`fifty-ai/igris-ai`](https://github.com/fifty-ai/igris-ai) monorepo.
+[`fiftynotai/igris-ai`](https://github.com/fiftynotai/igris-ai) monorepo.
 
 End users do **not** clone this repo. They install with
 `npm install -g igris-ai`. This README is for **contributors** working
@@ -30,7 +30,7 @@ End-user docs (install, upgrade, channels) live in the repo-root
 
 ```bash
 # Clone the monorepo
-git clone https://github.com/fifty-ai/igris-ai
+git clone https://github.com/fiftynotai/igris-ai
 cd igris-ai
 
 # Install root + workspace deps

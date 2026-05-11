@@ -83,7 +83,7 @@ describe("brain-core-stale — error swallowing (TD-132)", () => {
       latestRefShaFn: () =>
         Promise.reject(
           new ChannelResolveError(
-            "No release published yet for fifty-ai/igris-ai. " +
+            "No release published yet for fiftynotai/igris-ai. " +
               "Try --channel main for the leading edge, or wait for a tagged release.",
           ),
         ),

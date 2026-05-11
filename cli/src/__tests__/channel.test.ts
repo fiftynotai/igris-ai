@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 describe("channel — owner/repo defaults + env override", () => {
-  it("defaults to fifty-ai/igris-ai", () => {
+  it("defaults to fiftynotai/igris-ai", () => {
     expect(repoOwner()).toBe(DEFAULT_OWNER);
     expect(repoName()).toBe(DEFAULT_REPO);
   });

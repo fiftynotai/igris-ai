@@ -18,14 +18,14 @@
  * the API call with a fixture-returning function. Real code reads from
  * GitHub via `node:https`.
  *
- * Repository defaults: owner=fifty-ai, repo=igris-ai. Both are env-
+ * Repository defaults: owner=fiftynotai, repo=igris-ai. Both are env-
  * overridable for fork-based testing (IGRIS_GITHUB_OWNER, IGRIS_GITHUB_REPO).
  */
 
 import type { Channel } from "../types.js";
 import { httpsGetJson } from "./http.js";
 
-export const DEFAULT_OWNER = "fifty-ai";
+export const DEFAULT_OWNER = "fiftynotai";
 export const DEFAULT_REPO = "igris-ai";
 
 export class ChannelResolveError extends Error {
