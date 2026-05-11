@@ -17,7 +17,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -525,5 +525,70 @@ describe("sync code — runSyncCode", () => {
     expect(execFileCalls.some((c) => c.bin === "git")).toBe(true);
     expect(execFileCalls.find((c) => c.bin === "rsync")).toBeUndefined();
     expect(execFileCalls.find((c) => c.bin === "ssh")).toBeUndefined();
+  });
+});
+
+describe("TD-139: .claude/* non-symlink advisory", () => {
+  it("warns when .claude/agents/ is a real dir (not symlink, not absent)", async () => {
+    writeConfig({
+      vps: { host: "h", user: "u", repo_path: "/r" },
+      remote_brain: { url: "http://127.0.0.1:1", api_key: "k" },
+    });
+    // Make .claude/agents a REAL directory inside tmpBrain (not a symlink).
+    mkdirSync(join(tmpBrain, ".claude", "agents"), { recursive: true });
+    setExec("rsync", { exitCode: 0, stdout: "", stderr: "" });
+    setExec("ssh", { exitCode: 0, stdout: "", stderr: "" });
+
+    const stderrBuf: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+
+    try {
+      const { runSyncCode } = await import("../lib/sync/code.js");
+      const code = await runSyncCode({
+        repoPath: tmpBrain,
+        postRestartDelayMs: 0,
+      });
+      // Advisory only — exit code unaffected (rsync+ssh succeed; health
+      // probe is best-effort warn-only).
+      expect(code).toBe(0);
+      const stderr = stderrBuf.join("");
+      expect(stderr).toContain(".claude/agents");
+      expect(stderr).toContain("real directory");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("does NOT warn when .claude/{agents,rules,skills}/ are absent", async () => {
+    writeConfig({
+      vps: { host: "h", user: "u", repo_path: "/r" },
+      remote_brain: { url: "http://127.0.0.1:1", api_key: "k" },
+    });
+    // tmpBrain has no .claude/ at all — absent is the expected case for
+    // projects that don't use the symlinks.
+    setExec("rsync", { exitCode: 0, stdout: "", stderr: "" });
+    setExec("ssh", { exitCode: 0, stdout: "", stderr: "" });
+
+    const stderrBuf: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+
+    try {
+      const { runSyncCode } = await import("../lib/sync/code.js");
+      await runSyncCode({ repoPath: tmpBrain, postRestartDelayMs: 0 });
+      const stderr = stderrBuf.join("");
+      expect(stderr).not.toContain("real directory");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

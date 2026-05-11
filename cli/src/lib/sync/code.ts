@@ -61,7 +61,7 @@
  */
 
 import { execFile, type ExecFileException } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
 import { rsyncExec, sshExec } from "../ssh.js";
 import {
@@ -136,6 +136,40 @@ function rsyncExcludeFlags(): string[] {
 }
 
 /**
+ * Paths that the v6 install model expects to be symlinks (created by
+ * `igris register` / `igris install`). If a project has them as real
+ * directories — e.g. partial install, manual override — RSYNC_EXCLUDES
+ * will silently strip their contents on the VPS. Warn the operator at
+ * deploy time so the footgun surfaces before it bites. Advisory only —
+ * does NOT abort.
+ */
+const CLAUDE_SYMLINK_PATHS = [
+  ".claude/agents",
+  ".claude/rules",
+  ".claude/skills",
+] as const;
+
+function warnIfClaudeDirsAreNotSymlinks(repoPath: string): void {
+  for (const relPath of CLAUDE_SYMLINK_PATHS) {
+    const fullPath = pathResolve(repoPath, relPath);
+    try {
+      const st = lstatSync(fullPath);
+      if (st.isDirectory() && !st.isSymbolicLink()) {
+        warn(
+          `sync code: ${relPath}/ is a real directory but RSYNC_EXCLUDES ` +
+            `treats it as a symlink. Its contents will NOT ship to the VPS. ` +
+            `If this is intentional (project-local override), ignore this ` +
+            `warning. Otherwise, restore the symlink via 'igris install'.`,
+        );
+      }
+    } catch {
+      // ENOENT or other — silent (the path being absent is the expected
+      // case for projects that don't use the .claude/ symlinks at all).
+    }
+  }
+}
+
+/**
  * Minimal shell single-quoting for a single arg embedded in a remote
  * command string. Wraps in single quotes and escapes embedded single
  * quotes via the `'\''` idiom. Safe for paths from config (operator-
@@ -202,6 +236,12 @@ export async function runSyncCode(opts: SyncCodeOptions = {}): Promise<number> {
     return 1;
   }
   const pm2AppName = opts.pm2AppName ?? "igris-brain";
+
+  // TD-139: advisory check — warn if .claude/{agents,rules,skills}/ are
+  // real dirs rather than symlinks. RSYNC_EXCLUDES treats them as symlinks
+  // per the v6 install model; a real directory would have its contents
+  // silently stripped at deploy time. Does NOT abort.
+  warnIfClaudeDirsAreNotSymlinks(repoPath);
 
   // 2. --if-changed: skip entire push when local HEAD == origin/<branch>.
   if (opts.ifChanged === true) {
