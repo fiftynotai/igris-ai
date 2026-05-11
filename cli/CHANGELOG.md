@@ -47,6 +47,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dedicated `copy:` printer block, and switched both verbs to use it.
   Closes #TD-142.
 
+- **`igris init` interactive prompts** — `igris init` now interactively
+  prompts for user identity (name, email) and optional remote_brain
+  config (URL + API key). Previously, USER.md shipped with literal
+  `{{USER_NAME}}` / `{{USER_EMAIL}}` placeholders that the user had to
+  hand-edit after install, and `--skip-remote` was effectively a no-op
+  (it gated a prompt that did not exist). `--yes`, `--upgrade`,
+  `--dry-run`, and non-TTY shells all auto-skip prompts using defaults
+  so CI and `curl | bash` installers never hang. Closes #TD-144.
+
 ---
 
 ## [7.0.1] - 2026-05-11

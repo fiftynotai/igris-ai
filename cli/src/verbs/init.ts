@@ -85,6 +85,11 @@ import {
 import { writeInstallSource } from "../lib/install-source.js";
 import { closeDb } from "../lib/registry.js";
 import { info, warn, error as logError, debug } from "../lib/log.js";
+import {
+  gatherInitInputs,
+  type InitInputs,
+  type PromptFn,
+} from "../lib/init/prompts.js";
 import type { CLITarget } from "../types.js";
 
 export interface InitOptions {
@@ -104,6 +109,17 @@ export interface InitOptions {
   yes?: boolean;
   /** Internal/test: override package version baked into config.json. */
   cliVersion?: string;
+  /**
+   * Test seam: inject a fake prompt function so vitest can drive the
+   * interactive prompts deterministically. Production callers omit this.
+   */
+  prompt?: PromptFn;
+  /**
+   * Test seam: override TTY detection. When undefined the prompt module
+   * falls back to `process.stdin.isTTY === true`. Production callers omit
+   * this; tests pass `false` to force the non-TTY auto-skip path.
+   */
+  isTTY?: boolean;
 }
 
 const DEFAULT_DIRS = ["memory", "projects", "logs", ".cache"];
@@ -152,6 +168,20 @@ export async function runInit(opts: InitOptions): Promise<number> {
     );
     return 1;
   }
+
+  // --- Interactive prompts (TD-144) ------------------------------------
+  // Collect identity + remote_brain inputs BEFORE the network check so the
+  // user isn't asked their name AFTER a 5-second GitHub hang. The prompt
+  // module short-circuits to defaults for --yes / --upgrade / --dry-run
+  // and for non-TTY shells (curl|bash installers, CI).
+  const inputs: InitInputs = await gatherInitInputs({
+    yes: opts.yes === true,
+    skipRemote: opts.skipRemote === true,
+    upgrade: opts.upgrade === true,
+    dryRun: dryRun,
+    prompt: opts.prompt,
+    isTTY: opts.isTTY,
+  });
 
   // --- Network check ---------------------------------------------------
   const skipNetwork =
@@ -434,7 +464,13 @@ export async function runInit(opts: InitOptions): Promise<number> {
     }
   } else {
     if (!existsSync(userMd)) {
-      writeFileSync(userMd, renderUserTemplate());
+      writeFileSync(
+        userMd,
+        renderUserTemplate({
+          userName: inputs.userName,
+          userEmail: inputs.userEmail,
+        }),
+      );
       info(`Wrote ${userMd}`);
     } else {
       debug(`USER.md exists at ${userMd}, preserved`);
@@ -446,7 +482,7 @@ export async function runInit(opts: InitOptions): Promise<number> {
           cliVersion,
           installDate,
           cliTargets: [...bridgeTargets],
-          skipRemote: opts.skipRemote === true,
+          remoteBrain: inputs.remoteBrain,
         }),
       );
       info(`Wrote ${configJson}`);
@@ -577,14 +613,17 @@ function templateRoot(): string {
   return join(here, "..", "lib", "templates");
 }
 
-function renderUserTemplate(): string {
+function renderUserTemplate(args: {
+  userName: string;
+  userEmail: string;
+}): string {
   const path = join(templateRoot(), "USER.md.tmpl");
   if (!existsSync(path)) {
     throw new Error(`USER.md template missing at ${path}`);
   }
   let raw = readFileSync(path, "utf-8");
-  raw = raw.replace(/{{USER_NAME}}/g, process.env.USER ?? "you");
-  raw = raw.replace(/{{USER_EMAIL}}/g, process.env.IGRIS_USER_EMAIL ?? "");
+  raw = raw.replace(/{{USER_NAME}}/g, args.userName);
+  raw = raw.replace(/{{USER_EMAIL}}/g, args.userEmail);
   return raw;
 }
 
@@ -592,7 +631,13 @@ function renderConfigTemplate(args: {
   cliVersion: string;
   installDate: string;
   cliTargets: CLITarget[];
-  skipRemote: boolean;
+  /**
+   * Structured remote_brain config. Null → `remote_brain: null` in
+   * config.json (matches `--skip-remote` legacy behavior). Non-null →
+   * `{url, api_key}` literal (api_key may be null if the user provided a
+   * URL but left the key blank, signaling "set it later via config.json").
+   */
+  remoteBrain: { url: string; apiKey: string | null } | null;
 }): string {
   const path = join(templateRoot(), "config.json.tmpl");
   if (!existsSync(path)) {
@@ -604,10 +649,21 @@ function renderConfigTemplate(args: {
   const cliTargetsObj: Record<string, true> = {};
   for (const t of args.cliTargets) cliTargetsObj[t] = true;
   raw = raw.replace(/{{CLI_TARGETS_JSON}}/g, JSON.stringify(cliTargetsObj));
-  raw = raw.replace(
-    /{{REMOTE_BRAIN_JSON}}/g,
-    args.skipRemote ? "null" : '{"url": null, "api_key": null}',
-  );
+
+  // remoteBrain === null reproduces the legacy `--skip-remote` shape;
+  // when non-null, JSON.stringify escapes any user-supplied characters
+  // (backslashes, quotes, unicode) so the template substitution can't
+  // accidentally produce invalid JSON. The post-render JSON.parse below
+  // is the final guard.
+  const rbJson =
+    args.remoteBrain === null
+      ? "null"
+      : JSON.stringify({
+          url: args.remoteBrain.url,
+          api_key: args.remoteBrain.apiKey,
+        });
+  raw = raw.replace(/{{REMOTE_BRAIN_JSON}}/g, rbJson);
+
   // Validate by parsing — fail fast if our template substitution broke JSON.
   try {
     JSON.parse(raw);

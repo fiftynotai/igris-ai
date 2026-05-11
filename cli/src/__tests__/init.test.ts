@@ -131,15 +131,23 @@ describe("init — fresh install via --from-source", () => {
     expect(isj.source).toBe("from-source");
   });
 
-  it("config.json substitutes IGRIS_VERSION + INSTALL_DATE; remote_brain set when --skip-remote not passed", async () => {
+  it("config.json substitutes IGRIS_VERSION + INSTALL_DATE; remote_brain is null when prompts are skipped (TD-144)", async () => {
     const { runInit } = await import("../verbs/init.js");
-    await runInit({ fromSource: sourceRepo, cliVersion: "9.9.9" });
+    // Post-TD-144: with no TTY and no flags, the prompt module auto-skips
+    // and remote_brain is null (the legacy placeholder shape is gone —
+    // a fresh install either has user-supplied values or null, never an
+    // unresolved placeholder).
+    await runInit({ fromSource: sourceRepo, cliVersion: "9.9.9", yes: true });
     const cfg = JSON.parse(
       readFileSync(join(brainRoot, "config.json"), "utf-8"),
-    ) as { version: string; subconscious: { enabled: boolean }; remote_brain: unknown };
+    ) as {
+      version: string;
+      subconscious: { enabled: boolean };
+      remote_brain: unknown;
+    };
     expect(cfg.version).toBe("9.9.9");
     expect(cfg.subconscious.enabled).toBe(false);
-    expect(cfg.remote_brain).not.toBe(null);
+    expect(cfg.remote_brain).toBe(null);
   });
 
   it("--skip-remote sets config.remote_brain to null", async () => {
@@ -257,6 +265,199 @@ describe("init — error paths", () => {
     mkdirSync(empty, { recursive: true });
     const code = await runInit({ fromSource: empty });
     expect(code).toBe(1);
+  });
+});
+
+describe("init — interactive prompts (TD-144)", () => {
+  // All cases use the injectable PromptFn seam plus the isTTY override
+  // (both exposed via InitOptions). No process.stdin monkey-patching.
+  //
+  // Helper to build a queue-backed fake prompt. Throws if the queue is
+  // exhausted — that's a test-side bug (prompts asked more questions
+  // than the test was prepared for) and we want it loud, not silent.
+  function queuedPrompt(
+    answers: string[],
+  ): { ask: (q: string) => Promise<string>; calls: string[] } {
+    const calls: string[] = [];
+    let i = 0;
+    return {
+      calls,
+      ask: async (q: string): Promise<string> => {
+        calls.push(q);
+        if (i >= answers.length) {
+          throw new Error(
+            `queuedPrompt exhausted at question ${i}: ${q}`,
+          );
+        }
+        return answers[i++]!;
+      },
+    };
+  }
+
+  it("captures name + email and writes them into USER.md (remote skipped)", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const { ask, calls } = queuedPrompt(["Alice", "alice@example.com", ""]);
+    const code = await runInit({
+      fromSource: sourceRepo,
+      isTTY: true,
+      prompt: ask,
+    });
+    expect(code).toBe(0);
+    // Three prompts fired: name, email, remote URL (which was empty).
+    expect(calls.length).toBe(3);
+    const userMd = readFileSync(join(brainRoot, "USER.md"), "utf-8");
+    expect(userMd).toContain("name: Alice");
+    expect(userMd).toContain("email: alice@example.com");
+    const cfg = JSON.parse(
+      readFileSync(join(brainRoot, "config.json"), "utf-8"),
+    ) as { remote_brain: unknown };
+    expect(cfg.remote_brain).toBe(null);
+  });
+
+  it("captures remote_brain URL + api_key into config.json", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const { ask, calls } = queuedPrompt([
+      "Alice",
+      "alice@example.com",
+      "https://brain.example/",
+      "secret-key",
+    ]);
+    const code = await runInit({
+      fromSource: sourceRepo,
+      isTTY: true,
+      prompt: ask,
+    });
+    expect(code).toBe(0);
+    expect(calls.length).toBe(4);
+    const cfg = JSON.parse(
+      readFileSync(join(brainRoot, "config.json"), "utf-8"),
+    ) as { remote_brain: { url: string; api_key: string } | null };
+    expect(cfg.remote_brain).toEqual({
+      url: "https://brain.example/",
+      api_key: "secret-key",
+    });
+  });
+
+  it("URL provided, empty api_key → api_key: null (warns but proceeds)", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const { ask } = queuedPrompt([
+      "Bob",
+      "bob@example.com",
+      "https://brain.example/",
+      "",
+    ]);
+    const code = await runInit({
+      fromSource: sourceRepo,
+      isTTY: true,
+      prompt: ask,
+    });
+    expect(code).toBe(0);
+    const cfg = JSON.parse(
+      readFileSync(join(brainRoot, "config.json"), "utf-8"),
+    ) as { remote_brain: { url: string; api_key: string | null } | null };
+    expect(cfg.remote_brain).toEqual({
+      url: "https://brain.example/",
+      api_key: null,
+    });
+  });
+
+  it("--yes skips ALL prompts even with TTY (no prompt fn ever called)", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    // Sentinel that throws if called — proves --yes short-circuits before
+    // the prompt loop.
+    const sentinel = async (_q: string): Promise<string> => {
+      throw new Error("prompt should not have been called under --yes");
+    };
+    const code = await runInit({
+      fromSource: sourceRepo,
+      isTTY: true,
+      yes: true,
+      prompt: sentinel,
+    });
+    expect(code).toBe(0);
+    const userMd = readFileSync(join(brainRoot, "USER.md"), "utf-8");
+    // Default identity baked in.
+    expect(userMd).toContain("name: you");
+    expect(userMd).toContain("email: ");
+    const cfg = JSON.parse(
+      readFileSync(join(brainRoot, "config.json"), "utf-8"),
+    ) as { remote_brain: unknown };
+    expect(cfg.remote_brain).toBe(null);
+  });
+
+  it("--skip-remote prompts identity only, never asks about remote", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const { ask, calls } = queuedPrompt(["Carol", "carol@example.com"]);
+    const code = await runInit({
+      fromSource: sourceRepo,
+      isTTY: true,
+      skipRemote: true,
+      prompt: ask,
+    });
+    expect(code).toBe(0);
+    // Exactly 2 prompts: name + email. The remote URL prompt never fires.
+    expect(calls.length).toBe(2);
+    expect(calls[0]).toContain("name");
+    expect(calls[1]).toContain("email");
+    const userMd = readFileSync(join(brainRoot, "USER.md"), "utf-8");
+    expect(userMd).toContain("name: Carol");
+    const cfg = JSON.parse(
+      readFileSync(join(brainRoot, "config.json"), "utf-8"),
+    ) as { remote_brain: unknown };
+    expect(cfg.remote_brain).toBe(null);
+  });
+
+  it("non-TTY auto-skips prompts (curl|bash installer flow)", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const sentinel = async (_q: string): Promise<string> => {
+      throw new Error("prompt should not have been called under non-TTY");
+    };
+    const code = await runInit({
+      fromSource: sourceRepo,
+      isTTY: false,
+      prompt: sentinel,
+    });
+    expect(code).toBe(0);
+    const cfg = JSON.parse(
+      readFileSync(join(brainRoot, "config.json"), "utf-8"),
+    ) as { remote_brain: unknown };
+    expect(cfg.remote_brain).toBe(null);
+  });
+
+  it("--upgrade skips prompts even with TTY (preservation contract)", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    // First, a fresh install with --yes to seed brain.
+    expect(
+      await runInit({ fromSource: sourceRepo, yes: true }),
+    ).toBe(0);
+    // Now upgrade with TTY=true and a throwing sentinel — must not prompt.
+    const sentinel = async (_q: string): Promise<string> => {
+      throw new Error("prompt should not have been called under --upgrade");
+    };
+    const code = await runInit({
+      fromSource: sourceRepo,
+      isTTY: true,
+      upgrade: true,
+      prompt: sentinel,
+    });
+    expect(code).toBe(0);
+  });
+
+  it("--dry-run skips prompts (side-effect-free contract)", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const sentinel = async (_q: string): Promise<string> => {
+      throw new Error("prompt should not have been called under --dry-run");
+    };
+    const code = await runInit({
+      fromSource: sourceRepo,
+      isTTY: true,
+      dryRun: true,
+      prompt: sentinel,
+    });
+    expect(code).toBe(0);
+    // No writes happened.
+    expect(existsSync(join(brainRoot, "USER.md"))).toBe(false);
+    expect(existsSync(join(brainRoot, "config.json"))).toBe(false);
   });
 });
 

@@ -82,7 +82,7 @@ async function main(argv: string[]): Promise<void> {
     .option("--upgrade", "upgrade an existing install (preserves user state)", false)
     .option(
       "--skip-remote",
-      "skip remote_brain prompts (config.json will have remote_brain: null)",
+      "skip remote_brain prompts; config.json will have remote_brain: null",
       false,
     )
     .option(
@@ -94,7 +94,11 @@ async function main(argv: string[]): Promise<void> {
       "print the plan without performing any writes or network calls",
       false,
     )
-    .option("-y, --yes", "skip confirmation prompts", false)
+    .option(
+      "-y, --yes",
+      "accept all defaults; skip prompts (identity + remote_brain + channel switch)",
+      false,
+    )
     .action(
       async (opts: {
         fromSource?: string;
