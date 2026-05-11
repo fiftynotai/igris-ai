@@ -86,7 +86,7 @@ import { info, warn, error as logError } from "../log.js";
  * syntax. Any future expansion of `.gitignore` should consider whether the
  * new pattern also belongs here.
  */
-const RSYNC_EXCLUDES: readonly string[] = [
+export const RSYNC_EXCLUDES: readonly string[] = [
   // Core fix — load-bearing
   "node_modules/",
   // Workstation history + build outputs (rebuilt on VPS via `npm run build`)
@@ -120,9 +120,11 @@ const RSYNC_EXCLUDES: readonly string[] = [
   "*.temp",
   ".temp/",
   "temp/",
-  // Python caches (any tooling)
+  // Python caches (any tooling) — mirror .gitignore's `*.py[cod]` glob.
   "__pycache__/",
   "*.pyc",
+  "*.pyo",
+  "*.pyd",
   // Test scratch dirs
   ".test/",
   "test-output/",

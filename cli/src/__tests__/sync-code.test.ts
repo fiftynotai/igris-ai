@@ -282,6 +282,8 @@ describe("sync code — runSyncCode", () => {
       "temp/",
       "__pycache__/",
       "*.pyc",
+      "*.pyo",
+      "*.pyd",
       ".test/",
       "test-output/",
       "*.zip",
