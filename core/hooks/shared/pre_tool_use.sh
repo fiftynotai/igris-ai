@@ -18,7 +18,23 @@
 #     IGRIS_HOOK_SOURCE, IGRIS_HOOK_EVENT, IGRIS_PROJECT_DIR,
 #     IGRIS_TOOL_NAME, IGRIS_FILE_PATH
 #
-# Dependencies: jq (preferred), python3 (fallback)
+# Dependencies: jq (preferred), python3 (fallback); sqlite3 (optional — brief-DB lookup)
+#
+# Brief-first resolution order (TD-146):
+#   1. Brain DB (sqlite3): SELECT brief_id FROM brief_status
+#      WHERE project = <slug> AND status = 'In Progress'  -- canonical (v5+)
+#   2. Filesystem fallback: grep for '**Status:** In Progress' in
+#      ~/.igris/projects/<slug>/briefs/  -- legacy v4 cache
+#   3. Neither -> deny via JSON output.
+# Slug is resolved by walking PROJECT_DIR up its ancestors and matching
+# `projects.path` in the brain DB; falls back to basename(PROJECT_DIR).
+# Slug is validated against ^[a-z0-9_-]+$ before any SQL interpolation;
+# a non-matching slug skips the brain-DB branch (degrades to step 2).
+# Cache: /tmp/igris_brief_gate_cache — single line, 60s mtime TTL.
+#   non-empty => active brief exists (content = brief ID, or v4 brief path);
+#   empty => no active brief.
+# sqlite3 absent or brain DB missing => silently degrade to step 2.
+#
 # Exit codes:
 #   0 - Always (hooks must never fail; denial is via JSON output, not exit code)
 
@@ -126,6 +142,61 @@ is_exempt() {
 }
 
 # ---------------------------------------------------------------------------
+# Resolve project slug by walking PROJECT_DIR's ancestors against the brain
+# DB's `projects.path`. Falls back to basename(PROJECT_DIR). TD-146.
+# Echoes the slug. Never fails (errors -> fallback).
+# ---------------------------------------------------------------------------
+find_project_slug() {
+  local db="$HOME/.igris/memory/knowledge.db"
+  local fallback
+  fallback=$(basename "$PROJECT_DIR")
+
+  if ! command -v sqlite3 >/dev/null 2>&1 || [ ! -f "$db" ]; then
+    echo "$fallback"
+    return
+  fi
+
+  local current="$PROJECT_DIR"
+  while [ -n "$current" ] && [ "$current" != "/" ]; do
+    local current_esc
+    current_esc=$(printf '%s' "$current" | sed "s/'/''/g")
+    local hit
+    hit=$(sqlite3 "$db" "SELECT slug FROM projects WHERE path = '$current_esc' LIMIT 1;" 2>/dev/null) || hit=""
+    if [ -n "$hit" ]; then
+      echo "$hit"
+      return
+    fi
+    current=$(dirname "$current")
+  done
+
+  echo "$fallback"
+}
+
+# ---------------------------------------------------------------------------
+# Query the brain DB for an active (In Progress) brief for <slug>. TD-146.
+# Echoes the brief_id (or empty). Validates slug against ^[a-z0-9_-]+$ before
+# interpolation; a non-matching slug or missing sqlite3/DB -> empty (caller
+# falls back to the v4 filesystem check).
+# ---------------------------------------------------------------------------
+find_active_brief_in_brain() {
+  local slug="$1"
+  local db="$HOME/.igris/memory/knowledge.db"
+
+  case "$slug" in
+    *[!a-z0-9_-]*|"") echo ""; return ;;
+  esac
+
+  if ! command -v sqlite3 >/dev/null 2>&1 || [ ! -f "$db" ]; then
+    echo ""
+    return
+  fi
+
+  sqlite3 "$db" \
+    "SELECT brief_id FROM brief_status WHERE project = '$slug' AND status = 'In Progress' ORDER BY updated_at DESC LIMIT 1;" \
+    2>/dev/null | head -1 || echo ""
+}
+
+# ---------------------------------------------------------------------------
 # Check for active brief with caching
 # ---------------------------------------------------------------------------
 check_active_brief() {
@@ -157,10 +228,17 @@ check_active_brief() {
 
   local active_brief=""
   local slug
-  slug=$(basename "$PROJECT_DIR")
-  local cache_briefs="$HOME/.igris/projects/$slug/briefs"
-  if [ -d "$cache_briefs" ]; then
-    active_brief=$(grep -rl '^\*\*Status:\*\* In Progress' "$cache_briefs/" 2>/dev/null | head -1) || true
+  slug=$(find_project_slug)
+
+  # 1. Canonical source: brain DB (v5+).
+  active_brief=$(find_active_brief_in_brain "$slug")
+
+  # 2. Legacy v4 fallback: filesystem brief cache.
+  if [ -z "$active_brief" ]; then
+    local cache_briefs="$HOME/.igris/projects/$slug/briefs"
+    if [ -d "$cache_briefs" ]; then
+      active_brief=$(grep -rl '^\*\*Status:\*\* In Progress' "$cache_briefs/" 2>/dev/null | head -1) || true
+    fi
   fi
 
   echo "$active_brief" > "$cache_file" 2>/dev/null || true

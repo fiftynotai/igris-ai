@@ -56,6 +56,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--dry-run`, and non-TTY shells all auto-skip prompts using defaults
   so CI and `curl | bash` installers never hang. Closes #TD-144.
 
+- **brief-gate hook reads the brain DB** — `pre_tool_use.sh` now queries
+  `brief_status` (sqlite3) for an `In Progress` brief instead of grepping
+  `~/.igris/projects/<slug>/briefs/` only — v5+ briefs (brain-only, no
+  filesystem cache) were invisible to the gate, so a legitimately-active
+  brief still produced "No active brief found". It also resolves the
+  project slug by walking `PROJECT_DIR`'s ancestors against `projects.path`
+  in the registry, so a subagent whose cwd is a subdirectory (e.g.
+  `<repo>/cli`) no longer resolves the wrong slug via `basename`. Both new
+  paths degrade to the legacy v4 filesystem-cache behavior when sqlite3 or
+  the brain DB is unavailable; the resolved slug is validated against
+  `^[a-z0-9_-]+$` before any SQL interpolation. New
+  `cli/tests/integration/pre-tool-use-hook.bats` (5 cases). Closes #TD-146.
+
 ---
 
 ## [7.0.1] - 2026-05-11
