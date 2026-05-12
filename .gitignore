@@ -24,6 +24,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 .Python
+.pytest_cache/
 
 # Node
 node_modules/
@@ -56,3 +57,6 @@ CLAUDE.local.md
 .claude/agents/
 .claude/rules/
 .claude/skills/
+
+# Machine-local version stamp written by the CLI installer
+.igris_version

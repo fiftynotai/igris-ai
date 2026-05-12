@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 
-# validate_memory_agency_enums.test.bash - Tests for
-#   scripts/validate_memory_agency_enums.sh (TD-072 F1+F2 regression).
+# validate_brain_stewardship_enums.test.bash - Tests for
+#   scripts/validate_brain_stewardship_enums.sh (TD-072 F1+F2 regression;
+#   script + test renamed from validate_memory_agency_enums in TD-148).
 #
 # Covers:
 #   1. scope_enum_divergence_detected — same field declared with diverging
@@ -19,7 +20,7 @@
 load test_helper
 
 setup() {
-  VALIDATOR="$IGRIS_ROOT/scripts/validate_memory_agency_enums.sh"
+  VALIDATOR="$IGRIS_ROOT/scripts/validate_brain_stewardship_enums.sh"
   [ -x "$VALIDATOR" ] || skip "validator missing or not executable at $VALIDATOR"
 
   SCRATCH="$TEST_TEMP_DIR/validate_enums_$BATS_TEST_NUMBER"

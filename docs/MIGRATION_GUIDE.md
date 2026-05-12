@@ -29,10 +29,10 @@ Run the migration script from the igris-ai repository:
 ```bash
 # Preview changes (no modifications)
 cd /path/to/igris-ai
-./scripts/igris_migrate_v5_to_v6.sh --dry-run
+./scripts/archive/igris_migrate_v5_to_v6.sh --dry-run
 
 # Run migration
-./scripts/igris_migrate_v5_to_v6.sh
+./scripts/archive/igris_migrate_v5_to_v6.sh
 ```
 
 The script automatically:
@@ -127,12 +127,7 @@ When you have an existing codebase that doesn't follow your architecture standar
 
 ```bash
 # Initialize Igris AI (see SETUP_GUIDE.md for full instructions)
-# Brain-first (recommended):
-/path/to/igris-aigris init
 igris install .
-
-# Or standalone:
-/path/to/igris-ai/scripts/igris_init.sh .
 
 # Generate architecture documentation
 # In Claude Code: /document architecture

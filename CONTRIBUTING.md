@@ -63,7 +63,7 @@ What actually happens
 
 **Environment:**
 - OS: (macOS 14.0, Ubuntu 22.04, etc.)
-- Igris AI Version: (run `cat version.txt`)
+- Igris AI Version: (run `node -p "require('./package.json').version"`)
 - Shell: (bash 5.2, zsh, etc.)
 
 **Error Messages:**
@@ -241,8 +241,8 @@ bats test/
 **Run specific test file:**
 
 ```bash
-bats test/igris_init.test.bash
-bats test/hooks.test.bash
+bats test/igris_worker.test.bash
+bats test/verify_mirror.test.bash
 ```
 
 **Run with verbose output:**
@@ -269,7 +269,6 @@ load test_helper
 @test "example test" {
   # Setup
   setup_test_project
-  init_igris_in_test_project
 
   # Execute
   run "$SCRIPTS_DIR/your_script.sh" "args"
@@ -288,13 +287,10 @@ See `test/README.md` for full testing documentation.
 Test your changes on a real project:
 
 ```bash
-# Create test project
-mkdir /tmp/test-igris-project
-cd /tmp/test-igris-project
-git init
-
-# Run igris_init.sh from your branch
-/path/to/your-fork/scripts/igris_init.sh .
+# Bootstrap the brain from your checkout, then install into a test project
+node cli/dist/index.js init --from-source .
+mkdir -p /tmp/test-project
+node cli/dist/index.js install /tmp/test-project
 
 # Test the feature/fix
 # ...
@@ -374,21 +370,52 @@ igris-ai/
 │   ├── skills/              # Symlinks → ~/.igris/core/skills/
 │   └── settings.json        # Claude Code config
 ├── core/                    # Distribution source for ~/.igris/core/
-│   ├── agents/              # 7 native subagents
+│   ├── agents/              # Native subagents
 │   ├── prompts/             # System prompts (igris_os.md)
 │   ├── rules/               # 1 universal rule (v6)
-│   ├── skills/              # 20 skills
+│   ├── skills/              # Skills
+│   ├── scripts/             # Mirrored helpers (verify_mirror.sh, cli-adapters/)
 │   ├── templates/           # PR/brief templates
 │   ├── task-handlers/       # Worker daemon handlers
 │   ├── SOUL.md              # Persona identity
 │   └── igris_tree.json      # Context routing tree (v6)
 ├── brain-mcp-server/        # Brain MCP server (TypeScript)
+├── cli/                     # The `igris` npm CLI (TypeScript)
 ├── docs/                    # Documentation
-├── scripts/                 # Install/update scripts
+├── scripts/                 # Repo-only scripts (validators, brain ops; see "scripts/ inventory")
+│   └── archive/             # Completed one-shots (see scripts/archive/README.md)
 ├── test/                    # Tests (bats framework)
-├── CLAUDE.md                # Slim context pointer (v6)
-└── version.txt              # Version (6.0.0)
+└── CLAUDE.md                # Slim context pointer (v6)
 ```
+
+Project version lives in `package.json` (`node -p "require('./package.json').version"`); the machine-local `.igris_version` stamp written by the CLI installer is gitignored.
+
+---
+
+## 🧰 scripts/ inventory
+
+Every script under `scripts/` (excluding `scripts/archive/`, covered by its own
+README) and `core/scripts/`, and how each is invoked. If you add or remove a
+script here, update this table in the same PR.
+
+| Script | Invoked by | Purpose |
+|--------|-----------|---------|
+| `scripts/git-hooks/pre-commit` | symlinked into `.git/hooks/pre-commit` (one-time, via `scripts/install_git_hooks.sh`) | Conditional pre-commit validators (enum drift, tree line-ranges, lockfile sync) — runs only when the relevant files are staged. Also enforces the PI-004 phase guard. |
+| `scripts/install_git_hooks.sh` | manual (one-time, per contributor / fresh checkout) | Symlinks every file in `scripts/git-hooks/` into `.git/hooks/`; backs up any pre-existing non-symlink hook before clobbering (TD-072 F3). Idempotent. |
+| `scripts/validate_brain_stewardship_enums.sh` | `scripts/git-hooks/pre-commit` (and standalone) | Asserts every `memory_store` enum value (`category`/`scope`/`provenance`) appears in the `brain_stewardship` section of `core/prompts/brain_stewardship.md`, plus schema-shrinkage reverse check. (Renamed from `validate_memory_agency_enums.sh` in TD-148.) |
+| `scripts/validate_igris_tree_lineranges.py` | `scripts/git-hooks/pre-commit` (and standalone) | Asserts every section declared in `igris_tree.json` has matching `<!-- SECTION: … -->` markers at the declared line ranges in `igris_os.md`. |
+| `scripts/validate_lockfile_in_sync.sh` | `scripts/git-hooks/pre-commit` (and standalone) | Asserts `npm ci --dry-run --ignore-scripts` from repo root succeeds — the workspace lockfile is in sync with all `package.json` files. |
+| `scripts/validate_agent.sh` | manual / docs (`docs/MIGRATION_GUIDE.md`) | Validates an agent-definition `.md`'s frontmatter and structure. Not yet CI-wired. |
+| `scripts/emit_skill_event.sh` | `core/skills/*/SKILL.md` (21 skills, on invoke) | Emits a `SkillInvoke` event to the brain REST API. |
+| `scripts/igris_worker.sh` + `scripts/igris_worker_config.sh` | manual (`igris_worker.sh start`) | Autonomous-worker daemon: polls the brain REST API for tasks and spawns Claude Code sessions. (Not orchestrated in v7; see arch-review §2.2.) |
+| `scripts/igris_brain_backup.sh` / `scripts/igris_brain_restore.sh` | manual | Backup / restore `~/.igris/memory/knowledge.db` (`sqlite3 .backup`; backup rotates the last 5; restore safety-backs-up before overwriting). |
+| `scripts/igris_brain_switch.sh` | manual | Switch `~/.claude.json` brain mode: local / remote / dual. (The `mcp-server/dist/index.js` path inside refers to the runtime `~/.igris/mcp-server/` deploy dir, internally consistent with `igris_brain_deploy.sh` — not the repo dir.) |
+| `scripts/igris_brain_deploy.sh` | manual (on a VPS) | Deploy the brain MCP server with PM2 + nginx reverse-proxy config + API-key generation; copies `brain-mcp-server/` source into `~/.igris/mcp-server/`. |
+| `core/scripts/verify_mirror.sh` | forger MIRROR_SYNC protocol, sentinel MIRROR_CHECK contract, `/hunt` skill, architect plan template | Byte-equality check between repo `core/*` files and their `~/.igris/core/*` runtime mirrors (realpath-resolved, exit-code-checked, verdict-per-pair output). |
+| `core/scripts/cli_smoke.sh` | manual diagnostic | CLI smoke test. |
+| `core/scripts/cli-adapters/{_common,md_to_agents_md,md_to_gemini_toml}.sh` | the cross-CLI adapter layer (Codex / Gemini targets) | Convert `.md` agent/skill definitions to other-CLI formats (`AGENTS.md`, Gemini TOML). |
+
+> Build-time helper (not under top-level `scripts/`): `cli/scripts/copy-templates.sh` is run from `cli/` by `npm run build` (`tsc && bash scripts/copy-templates.sh`) to copy template assets into `cli/dist/`.
 
 ---
 

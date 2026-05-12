@@ -231,7 +231,7 @@ print("")
 print("Tick [x] on candidates you want to promote to goals, fill in the")
 print("outcome and (optional) deadline, then re-run:")
 print("")
-print(f"    scripts/backfill_goals.sh --project {project} --apply")
+print(f"    scripts/archive/backfill_goals.sh --project {project} --apply")
 print("")
 print("Each ticked candidate will:")
 print("  1. Create a new goal via igris_goal_create")
@@ -267,7 +267,7 @@ PYEOF
   echo "Candidates found: $COUNT"
   echo ""
   echo "Edit the file and tick [x] on the candidates you want to promote."
-  echo "Then run: scripts/backfill_goals.sh --project $PROJECT --apply"
+  echo "Then run: scripts/archive/backfill_goals.sh --project $PROJECT --apply"
 }
 
 # ============================================================

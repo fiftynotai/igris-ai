@@ -8,12 +8,16 @@
 
 ```
 test/
-├── README.md                    # This file
-├── test_helper.bash            # Shared test utilities
-├── fixtures/                   # Test data (mock projects, etc.)
-│   └── mock_project/          # Sample project for testing
-├── igris_init.test.bash       # Tests for igris_init.sh
-└── error_handling.test.bash   # Error handling tests
+├── README.md                              # This file
+├── test_helper.bash                       # Shared test utilities
+├── fixtures/                              # Test data (mock projects, etc.)
+│   └── mock_project/                      # Sample project for testing
+├── igris_worker.test.bash                 # Tests for the worker daemon
+├── igris_worker_config_gen.test.bash      # Tests for worker config generation
+├── validate_brain_stewardship_enums.test.bash  # Tests for the enum-drift validator
+├── verify_mirror.test.bash                # Tests for core/scripts/verify_mirror.sh
+├── edge_cases.test.bash                   # Edge-case tests
+└── error_handling.test.bash               # Error handling tests
 ```
 
 ---
@@ -58,12 +62,12 @@ bats test/
 
 ### Run Specific Test File
 ```bash
-bats test/igris_init.test.bash
+bats test/igris_worker.test.bash
 ```
 
 ### Run with Verbose Output
 ```bash
-bats test/igris_init.test.bash --tap
+bats test/igris_worker.test.bash --tap
 ```
 
 ---
@@ -112,11 +116,11 @@ load test_helper
   setup_test_project
 
   # Act (execute)
-  run ./scripts/igris_init.sh "$TEST_DIR"
+  run "$SCRIPTS_DIR/your_script.sh" "$TEST_PROJECT_DIR"
 
   # Assert (verify)
   [ "$status" -eq 0 ]
-  [ -d "$TEST_DIR/ai" ]
+  assert_file_exists "$TEST_PROJECT_DIR/expected/file"
 }
 ```
 

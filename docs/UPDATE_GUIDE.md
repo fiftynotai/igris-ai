@@ -57,7 +57,7 @@ cat .igris_version
 Or check the source repository version:
 
 ```bash
-cat /path/to/igris-ai/version.txt
+node -p "require('/path/to/igris-ai/package.json').version"
 ```
 
 ### Check Brain Status
@@ -96,7 +96,7 @@ Since `.claude/agents/`, `.claude/rules/`, and `.claude/skills/` are symlinked, 
 
 ### Copy-Based Projects (Manual Update)
 
-Projects installed with `igris_init.sh` have copied files. These require manual updates:
+Projects set up with the old v3-era copy-based installer have copied (not symlinked) files. These require manual updates:
 
 ```bash
 # Update the source repository

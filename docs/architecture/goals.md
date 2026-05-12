@@ -168,7 +168,7 @@ with five children (`FR-092` through `FR-095`, plus a fifth). Its
 `status` field drifted: even though most children were `Done`, the master
 was still `In Progress` because no one marked the rolled-up state.
 
-After backfill (run via `scripts/backfill_goals.sh`):
+After backfill (run via `scripts/archive/backfill_goals.sh`):
 
 ```
 GL-001 "Ship Igris v6"            (active, deadline 2026-04-30)
@@ -254,4 +254,4 @@ project-focused output, but they are exactly what `/portfolio` is for.
 - Component: `brain-mcp-server/src/engine/components/goals/index.ts`
 - Tests: `brain-mcp-server/src/engine/components/goals/__tests__/`
 - Sync entry: `brain-mcp-server/src/tools/sync.ts` (`SYNC_TABLES` → `goals`)
-- Backfill: `scripts/backfill_goals.sh`
+- Backfill: `scripts/archive/backfill_goals.sh`

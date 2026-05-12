@@ -67,7 +67,7 @@ Edge types are stored as plain strings — extending the catalog is a code chang
 | Value | Meaning |
 |-------|---------|
 | `observed` | Captured live (auto-hooks, MCP tool calls in normal use) |
-| `backfill` | Reconstructed by the `scripts/backfill_entity_edges.py` script from existing brief markdown |
+| `backfill` | Reconstructed by the `scripts/archive/backfill_entity_edges.py` script from existing brief markdown |
 | `inferred` | Derived by a heuristic (similarity, co-occurrence) — confidence < 1.0 expected |
 | `user` | Manually authored by a human via tooling |
 
@@ -116,20 +116,20 @@ The hook is silently a no-op when:
 
 ## Backfill
 
-`scripts/backfill_entity_edges.py` scans `brief_files.content` and produces edges for the structural marker patterns in the table above. By default it is a dry run that prints a summary and the first 20 candidates; pass `--apply` to commit. The script uses `INSERT OR IGNORE` so re-runs never duplicate.
+`scripts/archive/backfill_entity_edges.py` scans `brief_files.content` and produces edges for the structural marker patterns in the table above. By default it is a dry run that prints a summary and the first 20 candidates; pass `--apply` to commit. The script uses `INSERT OR IGNORE` so re-runs never duplicate.
 
 ```bash
 # Dry run: list candidates, no DB writes
-python3 scripts/backfill_entity_edges.py
+python3 scripts/archive/backfill_entity_edges.py
 
 # Commit
-python3 scripts/backfill_entity_edges.py --apply
+python3 scripts/archive/backfill_entity_edges.py --apply
 
 # Restrict to a single project
-python3 scripts/backfill_entity_edges.py --project igris-ai --apply
+python3 scripts/archive/backfill_entity_edges.py --project igris-ai --apply
 
 # Acceptance gate (CI)
-python3 scripts/backfill_entity_edges.py --apply --min-edges 30
+python3 scripts/archive/backfill_entity_edges.py --apply --min-edges 30
 ```
 
 All script-derived edges are tagged `provenance='backfill'`, which makes a clean rollback trivial:

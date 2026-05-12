@@ -1,4 +1,4 @@
-"""Tests for `scripts/backfill_entity_edges.py` (FR-105).
+"""Tests for `scripts/archive/backfill_entity_edges.py` (FR-105 one-shot backfill).
 
 Covers:
   * Pattern extraction across the supported marker styles
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-# Ensure we import the script as a module — it lives in scripts/, sibling of __tests__/.
+# Ensure we import the script as a module — it lives in scripts/archive/, sibling of __tests__/.
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 

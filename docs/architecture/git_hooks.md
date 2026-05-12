@@ -8,14 +8,14 @@ A single `pre-commit` dispatcher (`scripts/git-hooks/pre-commit`) that condition
 
 | Validator | What it asserts | Brief |
 |---|---|---|
-| `scripts/validate_memory_agency_enums.sh` | Every enum value declared on `memory_store` (`category`, `scope`, `provenance`) appears in backticks somewhere inside the `<!-- SECTION: brain_stewardship -->` region of `core/prompts/brain_stewardship.md`. Also asserts schema-shrinkage: enum-shaped backticked tokens in the docs must still exist in the schema. Overridable via `SCHEMA_FILE` / `PROMPT_FILE` env vars. | TD-070 / DRIFT-1, TD-072 |
+| `scripts/validate_brain_stewardship_enums.sh` | Every enum value declared on `memory_store` (`category`, `scope`, `provenance`) appears in backticks somewhere inside the `<!-- SECTION: brain_stewardship -->` region of `core/prompts/brain_stewardship.md`. Also asserts schema-shrinkage: enum-shaped backticked tokens in the docs must still exist in the schema. Overridable via `SCHEMA_FILE` / `PROMPT_FILE` env vars. | TD-070 / DRIFT-1, TD-072, TD-092 (renamed in TD-148) |
 | `scripts/validate_igris_tree_lineranges.py` | Every section declared in `igris_tree.json` has a matching `<!-- SECTION: <name> -->` marker at the declared start line and a `<!-- /SECTION: <name> -->` marker at the declared end line in `igris_os.md`. | TD-070 / DRIFT-3 |
 | `scripts/validate_lockfile_in_sync.sh` | `npm ci --dry-run --ignore-scripts` from repo root succeeds (workspace-aware lockfile is in sync with all `package.json` files). Catches the drift class where a workspace package was renamed or version-bumped without regenerating `package-lock.json`. | TD-134 |
 
 All three validators are also runnable standalone:
 
 ```bash
-bash scripts/validate_memory_agency_enums.sh
+bash scripts/validate_brain_stewardship_enums.sh
 python3 scripts/validate_igris_tree_lineranges.py
 bash scripts/validate_lockfile_in_sync.sh
 ```

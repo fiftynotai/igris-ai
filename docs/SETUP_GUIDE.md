@@ -55,9 +55,9 @@ This copies all files directly into your project. Useful when you want a self-co
 cd /path/to/projects/
 git clone https://github.com/fiftynotai/igris-ai
 
-# Step 2: Initialize in your project (copies files)
+# Step 2: Initialize in your project
 cd /path/to/your-project/
-/path/to/igris-ai/scripts/igris_init.sh .
+igris install .
 ```
 
 **What this does:**
@@ -251,11 +251,8 @@ This archives the current session to `~/.igris/projects/{project}/session/archiv
 
 **Solution:**
 ```bash
-# Run the appropriate initialization script
-# Brain-first:
+# Run the initialization (v7 CLI):
 igris install .
-# Or standalone:
-/path/to/igris-ai/scripts/igris_init.sh .
 ```
 
 ### Issue: "Permission denied" when running scripts

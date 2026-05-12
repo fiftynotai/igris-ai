@@ -98,6 +98,8 @@ export const RSYNC_EXCLUDES: readonly string[] = [
   ".claude/agents/",
   ".claude/rules/",
   ".claude/skills/",
+  // Machine-local version stamp written by the CLI installer (per-host)
+  ".igris_version",
   // Local dev overrides + secrets
   "CLAUDE.local.md",
   ".env",
@@ -122,6 +124,7 @@ export const RSYNC_EXCLUDES: readonly string[] = [
   "temp/",
   // Python caches (any tooling) — mirror .gitignore's `*.py[cod]` glob.
   "__pycache__/",
+  ".pytest_cache/",
   "*.pyc",
   "*.pyo",
   "*.pyd",

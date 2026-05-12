@@ -18,7 +18,9 @@ set -e
 #     schema enum. Catches the inverse drift the forward pass misses
 #     (docs claim a value the schema removed).
 #
-# Usage: scripts/validate_memory_agency_enums.sh
+# Usage: scripts/validate_brain_stewardship_enums.sh
+#   (renamed from validate_memory_agency_enums.sh in TD-148 to match the
+#    TD-092 concept rename memory_agency -> brain_stewardship)
 # Env overrides (test injection):
 #   SCHEMA_FILE  override schema path (default: brain-mcp-server/src/engine/components/memory/index.ts)
 #   PROMPT_FILE  override prompt path (default: core/prompts/brain_stewardship.md)

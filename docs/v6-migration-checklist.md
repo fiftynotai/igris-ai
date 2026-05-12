@@ -90,7 +90,7 @@ Preview what the migration script will do without making any changes.
 - [ ] **Run the migration in dry-run mode:**
   ```bash
   cd /path/to/igris-ai
-  bash scripts/igris_migrate_v5_to_v6.sh --dry-run
+  bash scripts/archive/igris_migrate_v5_to_v6.sh --dry-run
   ```
 - [ ] **Review the output.** Every action is prefixed with `[dry-run] Would:`. Confirm nothing unexpected appears.
 
@@ -99,7 +99,7 @@ Preview what the migration script will do without making any changes.
 - [ ] **Execute the migration script:**
   ```bash
   cd /path/to/igris-ai
-  bash scripts/igris_migrate_v5_to_v6.sh
+  bash scripts/archive/igris_migrate_v5_to_v6.sh
   ```
   The script will prompt for confirmation before making changes. Use `--force` to skip prompts if running in an automated pipeline.
 
@@ -189,16 +189,17 @@ If the migration script did not update symlinks for a specific project, or if yo
 
 ## 3. Post-Migration Verification
 
-### 3.1 Run the Verification Script
+### 3.1 Run the Verification
 
-- [ ] **Execute the v6 verification script from each project directory:**
+- [ ] **Verify each project from its directory** (the standalone `v6_verify.sh` script was removed in v7 — use the CLI doctor instead):
   ```bash
   cd /path/to/your-project
-  bash /path/to/igris-ai/scripts/v6_verify.sh .
+  igris doctor
   ```
-  Expected output: `v6 OK`
+  Expected output: no drift reported.
 
-  The script checks:
+  Things to confirm post-migration (these are the invariants the old
+  `v6_verify.sh` checked; `igris doctor` covers the same ground):
   1. `~/.igris/core/igris_tree.json` exists and is valid JSON
   2. `CLAUDE.md` is under 5KB (no `@import` bloat)
   3. `.claude/agents/` files are symlinks to `~/.igris/core/agents/`
@@ -308,7 +309,7 @@ Once you have resolved the root cause:
 
 ```bash
 # Force re-run (skips the "already v6" check):
-bash scripts/igris_migrate_v5_to_v6.sh --force
+bash scripts/archive/igris_migrate_v5_to_v6.sh --force
 ```
 
 ### 4.5 Clean Up Backups
@@ -329,7 +330,7 @@ rm -f ~/.igris/memory/knowledge-v5-backup.db
 The brain has already been migrated. If you want to re-run anyway (for example, to pick up new core files from the source repo), use:
 
 ```bash
-bash scripts/igris_migrate_v5_to_v6.sh --force
+bash scripts/archive/igris_migrate_v5_to_v6.sh --force
 ```
 
 ### Q: My `.claude/agents/` files are regular files, not symlinks.
@@ -362,11 +363,11 @@ If they are missing, you can manually import from a backup:
 ```bash
 # Re-run just the brief import step by restoring ai/briefs/ temporarily:
 tar xzf ai-backup-YYYYMMDD.tar.gz ai/briefs/
-bash scripts/igris_migrate_v5_to_v6.sh --force
+bash scripts/archive/igris_migrate_v5_to_v6.sh --force
 rm -rf ai/
 ```
 
-### Q: The `v6_verify.sh` script reports failures.
+### Q: `igris doctor` reports failures (this section also covered the removed `v6_verify.sh` script).
 
 Address each failure type:
 
@@ -430,13 +431,13 @@ igris install /path/to/your-project
 cp -r ~/.igris ~/.igris-v5-backup
 
 # Dry run
-bash scripts/igris_migrate_v5_to_v6.sh --dry-run
+bash scripts/archive/igris_migrate_v5_to_v6.sh --dry-run
 
 # Run migration
-bash scripts/igris_migrate_v5_to_v6.sh
+bash scripts/archive/igris_migrate_v5_to_v6.sh
 
-# Verify (from project directory)
-bash /path/to/igris-ai/scripts/v6_verify.sh .
+# Verify (from project directory; v6_verify.sh removed in v7)
+igris doctor
 
 # Re-register a project
 bash igris install .

@@ -5,7 +5,7 @@ set -e
 #   relevant files are staged, so unrelated commits stay fast.
 #
 # Validators:
-#   - validate_memory_agency_enums.sh  (DRIFT-1, TD-070, TD-092)
+#   - validate_brain_stewardship_enums.sh  (DRIFT-1, TD-070, TD-092; renamed in TD-148)
 #       Triggers if: core/prompts/igris_os.md OR
 #                    core/prompts/brain_stewardship.md OR
 #                    brain-mcp-server/src/engine/components/memory/index.ts
@@ -111,7 +111,7 @@ if [ "$needs_enum_check" = "1" ]; then
   # set -e is intentionally bypassed here (if-condition exits set -e scope)
   # so multiple validator failures are aggregated into $failed and reported
   # together at the end, rather than aborting on the first failure.
-  if ! bash "$REPO_ROOT/scripts/validate_memory_agency_enums.sh"; then
+  if ! bash "$REPO_ROOT/scripts/validate_brain_stewardship_enums.sh"; then
     failed=1
   fi
 fi
