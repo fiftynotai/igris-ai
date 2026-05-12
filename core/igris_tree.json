@@ -9,12 +9,12 @@
       "scope": "core",
       "sections": {
         "identity": { "lines": "7-50", "kb": 1.2, "tier": "boot" },
-        "agent_delegation": { "lines": "54-524", "kb": 18.0, "tier": "task" },
-        "session_management": { "lines": "528-704", "kb": 7.0, "tier": "task" },
-        "operating_rules": { "lines": "708-744", "kb": 1.2, "tier": "boot" },
-        "quality_standards": { "lines": "748-787", "kb": 1.6, "tier": "task" },
-        "brief_protocol": { "lines": "795-1126", "kb": 13.0, "tier": "task" },
-        "examples_walkthroughs": { "lines": "1198-1346", "kb": 6.0, "tier": "reference" }
+        "agent_delegation": { "lines": "54-522", "kb": 18.0, "tier": "task" },
+        "session_management": { "lines": "526-702", "kb": 7.0, "tier": "task" },
+        "operating_rules": { "lines": "706-742", "kb": 1.2, "tier": "boot" },
+        "quality_standards": { "lines": "746-785", "kb": 1.6, "tier": "task" },
+        "brief_protocol": { "lines": "793-1124", "kb": 13.0, "tier": "task" },
+        "examples_walkthroughs": { "lines": "1196-1344", "kb": 6.0, "tier": "reference" }
       }
     },
     "brain_stewardship": {

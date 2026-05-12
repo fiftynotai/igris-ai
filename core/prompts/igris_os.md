@@ -263,7 +263,6 @@ IGRIS v5.0 introduces a centralized brain at `~/.igris/` that provides persisten
 ### Brain Components
 - **knowledge.db** — SQLite database with WAL mode (concurrent reads, serialized writes)
 - **MCP Server** — `igris-brain` registered globally in `~/.claude.json` (optional; presence/absence in `~/.claude.json` is the actual gate, and skills additionally fall back to tool-availability detection at call time)
-- **Staging Pipeline** — Hooks write to `~/.igris/staging/`, processed on server startup (guarded by `features.staging_pipeline: true` in config; hooks exit early when disabled)
 - **Core Files** — Agents, skills, rules, prompts symlinked from `~/.igris/core/`
 
 ### Brain MCP Tools
@@ -344,7 +343,6 @@ Brain integration is optional. If `~/.igris/` does not exist or MCP server is no
 
 | Flag | Default | When `false` |
 |------|---------|--------------|
-| `features.staging_pipeline` | `false` | Post-edit hooks skip staging file writes; no `~/.igris/staging/` accumulation |
 | `features.memory` | `true` | Knowledge DB not used for learning storage/recall |
 | `features.project_registry` | `true` | Project registration disabled |
 | `features.analytics` | `false` | No analytics collection |

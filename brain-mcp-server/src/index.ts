@@ -46,9 +46,6 @@ import type { MetricsRecordInput } from './tools/metrics.js';
 // Sync tables config (used by HTTP /sync/push and /sync/pull endpoints)
 import { SYNC_TABLES, processSyncPush } from './tools/sync.js';
 
-// Staging processor
-import { processStagingFiles } from './staging.js';
-
 // Database lifecycle
 import { getDb, closeDb, DB_PATH, BRAIN_DIR } from './db.js';
 import * as os from 'node:os';
@@ -239,13 +236,6 @@ async function runStdio(): Promise<void> {
   // Boot engine (also bridges db.ts)
   const engine = getEngine();
 
-  // Process any pending staging files before accepting connections
-  try {
-    processStagingFiles();
-  } catch (err) {
-    console.error(`[brain] Staging processing error: ${errMsg(err)}`);
-  }
-
   const server = createBrainServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -292,13 +282,6 @@ function safeCompare(a: string, b: string): boolean {
 async function runHttp(config: ServerConfig): Promise<void> {
   // Boot engine (also bridges db.ts)
   const engine = getEngine();
-
-  // Process any pending staging files before accepting connections
-  try {
-    processStagingFiles();
-  } catch (err) {
-    console.error(`[brain] Staging processing error: ${errMsg(err)}`);
-  }
 
   // Require API key for HTTP mode — refuse to start without auth
   if (!config.apiKey) {

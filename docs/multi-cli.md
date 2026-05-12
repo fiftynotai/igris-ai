@@ -191,7 +191,7 @@ across all three supported CLIs (Claude, OpenCode, Codex):
 | `pre_compact` | `~/.igris/core/hooks/shared/pre_compact.sh` | Emit recovery context before context compaction. |
 | `post_compact` | `~/.igris/core/hooks/shared/post_compact.sh` | Log compact completion; future hook point. |
 | `pre_tool_use` | `~/.igris/core/hooks/shared/pre_tool_use.sh` | Brief-first gate for Write/Edit tool calls. |
-| `post_tool_use` | `~/.igris/core/hooks/shared/post_tool_use.sh` | Dispatcher for `post_tool_use.d/*.sh` handlers (lint, brief sync, session sync). |
+| `post_tool_use` | `~/.igris/core/hooks/shared/post_tool_use.sh` | Dispatcher for `post_tool_use.d/*.sh` handlers (currently: lint). |
 
 ### Per-CLI Coverage
 
@@ -245,8 +245,6 @@ Default handlers:
 | File | Purpose |
 |------|---------|
 | `01-lint.sh` | Run shellcheck on modified `.sh` files. |
-| `02-brief-sync.sh` | Write brief changes to `~/.igris/staging/` for brain pickup. |
-| `03-session-sync.sh` | Write session file changes to `~/.igris/staging/`. |
 
 Add new handlers by dropping a `NN-name.sh` file into `~/.igris/core/hooks/shared/post_tool_use.d/`
 and `chmod +x`. Disable without deletion via `chmod -x`.
