@@ -714,6 +714,7 @@ Read these files in order:
 - ❌ **DON'T:** Put UI logic in business logic layers
 - ✅ **DO:** Use dependency injection for testability
 - ❌ **DON'T:** Create tight coupling between modules
+- **Escape hatches (emergency use only):** `IGRIS_BYPASS_BRIEF_GATE=1` allows a single Write/Edit through the brief-gate with a stderr WARNING + `brief_gate.bypassed` event_log row; `IGRIS_BYPASS_PHASE_GUARD=1` similarly bypasses the commit-time phase guard. Never `export` either — pass one-shot per command (else they leak into subagent processes).
 
 **Note:** Specific architecture patterns (MVVM, MVC, Clean Architecture, etc.) are defined in your project's `coding_guidelines.md`.
 

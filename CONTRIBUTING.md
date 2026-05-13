@@ -140,6 +140,32 @@ mkdir -p /tmp/test-project
 node cli/dist/index.js install /tmp/test-project
 ```
 
+### 3.1 Brief-gate escape hatch (emergency only)
+
+The `pre_tool_use.sh` hook enforces the brief-first protocol: no Write/Edit
+proceeds unless an `In Progress` brief exists in the brain DB (or, as a
+fallback, in the v6 filesystem brief-cache at
+`~/.igris/projects/<slug>/briefs/`). In an emergency where the brief gate
+is wrongly blocking work (e.g. a corrupt brain DB during recovery, or you
+need a one-off escape hatch while you fix the underlying problem), the
+hook honours the env var **`IGRIS_BYPASS_BRIEF_GATE=1`**:
+
+```bash
+# One-shot per command — DO NOT `export` this variable.
+IGRIS_BYPASS_BRIEF_GATE=1 <command>
+```
+
+When the bypass fires, the hook emits a loud WARNING on stderr and writes
+a `brief_gate.bypassed` row into the brain DB's `event_log` table, so the
+bypass leaves an audit trail. Symmetric with `IGRIS_BYPASS_PHASE_GUARD=1`
+in `scripts/git-hooks/pre-commit`.
+
+**Critical:** never `export IGRIS_BYPASS_BRIEF_GATE=1` in your shell or rc
+file. Exported env vars inherit into every subprocess — including subagent
+spawns (forger, sentinel) during a `/hunt` — and would silently disable
+the brief gate across the whole session. Always pass it one-shot, prefixed
+to the single command that needs it.
+
 ### 4. Commit Your Changes
 
 Follow conventional commits format:

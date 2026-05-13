@@ -24,7 +24,11 @@ setup() {
   HOOK="$REPO_ROOT/core/hooks/shared/pre_tool_use.sh"
   [ -f "$HOOK" ] || { echo "hook not found at $HOOK"; return 1; }
 
-  SANDBOX="$(mktemp -d "$BATS_TMPDIR/ptu.XXXXXX")"
+  # TD-150: realpath-resolve so the path string registered in projects.path
+  # matches what the hook's `pwd -P` returns. macOS /tmp -> /private/tmp would
+  # otherwise cause find_project_slug to miss the row and fall back to basename
+  # (test 1 passed by basename coincidence; test 2's subdir parent-walk did not).
+  SANDBOX="$(cd "$(mktemp -d "$BATS_TMPDIR/ptu.XXXXXX")" && pwd -P)"
   FAKEHOME="$SANDBOX/fakehome"
   mkdir -p "$FAKEHOME/.igris/memory"
   DB="$FAKEHOME/.igris/memory/knowledge.db"
