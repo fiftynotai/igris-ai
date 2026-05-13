@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Sessions Component
+ * Brain Engine v7.0 — Sessions Component
  *
  * Wraps the existing session tool handlers as a BrainComponent.
  * Provides: igris_session_sync, igris_session_recall

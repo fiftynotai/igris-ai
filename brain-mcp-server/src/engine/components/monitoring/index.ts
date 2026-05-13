@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 -- Monitoring Component
+ * Brain Engine v7.0 -- Monitoring Component
  *
  * Logs all orphan engine events (schedules, cache, coordination) into
  * an event_log table for observability and audit purposes.

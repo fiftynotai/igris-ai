@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Subconscious Component Schema
+ * Brain Engine v7.0 — Subconscious Component Schema
  *
  * Database migrations for FR-106. Phase 1 shipped two tables in a single v1
  * migration:

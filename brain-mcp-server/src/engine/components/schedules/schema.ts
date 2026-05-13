@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Schedules Component Schema
+ * Brain Engine v7.0 — Schedules Component Schema
  *
  * Database migrations for the scheduling system.
  * Creates schedules and schedule_runs tables with

@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Shared Handler Helpers
+ * Brain Engine v7.0 — Shared Handler Helpers
  *
  * Common utility functions used across engine component handlers.
  * Centralizes errorResult, successResult, and now() to eliminate

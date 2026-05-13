@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Registry Component
+ * Brain Engine v7.0 — Registry Component
  *
  * Wraps the registry tool handlers as a BrainComponent.
  * Provides: igris_registry_add, igris_registry_search, igris_registry_get,

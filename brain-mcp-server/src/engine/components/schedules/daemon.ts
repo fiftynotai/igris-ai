@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Schedule Daemon
+ * Brain Engine v7.0 — Schedule Daemon
  *
  * Smart-sleep daemon that runs in-process via setTimeout.
  * Queries the database for the next due schedule, sleeps until

@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Tasks Component Schema
+ * Brain Engine v7.0 — Tasks Component Schema
  *
  * Database migrations for the task management system.
  * Creates tasks, task_deps, and task_assignments tables with

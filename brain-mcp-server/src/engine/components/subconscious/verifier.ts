@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Conflict Verifier (FR-108)
+ * Brain Engine v7.0 — Conflict Verifier (FR-108)
  *
  * Optional LLM verification gate that ratifies (or vetoes) heuristic
  * conflict candidates produced by `detectors/conflict.ts`. The verifier

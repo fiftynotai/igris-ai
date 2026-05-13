@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Perception Component Handlers (FR-109)
+ * Brain Engine v7.0 — Perception Component Handlers (FR-109)
  *
  * Five MCP tools:
  *   - igris_perception_submit         — hook entry: ingest a transcript window

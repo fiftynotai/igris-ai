@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Schedules Component Handlers
+ * Brain Engine v7.0 — Schedules Component Handlers
  *
  * Handler functions for the 7 schedule management MCP tools.
  * Each handler takes Record<string, unknown> args, validates

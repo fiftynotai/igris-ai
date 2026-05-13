@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Perception Component Schema (FR-109)
+ * Brain Engine v7.0 — Perception Component Schema (FR-109)
  *
  * Database migrations specific to the perception channel. The
  * `learnings.review_status` column is added in `db.ts` v15 — global,

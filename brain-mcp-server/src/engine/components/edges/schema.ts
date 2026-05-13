@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Edges Component Schema
+ * Brain Engine v7.0 — Edges Component Schema
  *
  * Database migrations for the typed-edges graph layer.
  * Creates the entity_edges table with a UNIQUE constraint over the

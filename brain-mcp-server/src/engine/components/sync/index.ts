@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Sync Component
+ * Brain Engine v7.0 — Sync Component
  *
  * Wraps the existing sync tool handlers as a BrainComponent.
  * Provides: igris_brain_push, igris_brain_pull, igris_sync_queue_status,

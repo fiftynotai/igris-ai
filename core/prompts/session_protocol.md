@@ -139,5 +139,5 @@ When context resets:
 
 ---
 
-**Last Updated:** 2026-02-08
-**IGRIS Version:** 6.0.0
+**Last Updated:** 2026-05-13
+**IGRIS Version:** 7.0.0

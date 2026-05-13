@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — API Gateway
+ * Brain Engine v7.0 — API Gateway
  *
  * Dynamic tool registry that replaces the two 27-case switch statements
  * in the monolithic index.ts. Tools are registered by domain components

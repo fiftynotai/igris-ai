@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Component Registry
+ * Brain Engine v7.0 — Component Registry
  *
  * Loads components, resolves dependencies via topological sort,
  * and orchestrates the boot sequence: migrations -> init -> tools -> events.

@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 -- Monitoring Component Schema
+ * Brain Engine v7.0 -- Monitoring Component Schema
  *
  * Defines the event_log table for storing engine event history.
  * Events are logged by the monitoring component which listens to

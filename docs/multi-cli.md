@@ -363,8 +363,7 @@ session:
   mode / blockers summary on session start.
 - No `pre_tool_use` brief-first gate — Gemini can write files without requiring an
   active brief.
-- No `post_tool_use` lint / brief-sync / session-sync — file changes are not staged
-  to the brain automatically.
+- No `post_tool_use` lint — file edits are not auto-linted on Gemini.
 - No session_end REST MODE flip — CURRENT_SESSION.md remains at its last state until
   something else flips it.
 

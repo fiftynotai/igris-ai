@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Errors Component
+ * Brain Engine v7.0 — Errors Component
  *
  * Wraps the existing error tool handlers as a BrainComponent.
  * Provides: igris_error_lookup

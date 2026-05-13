@@ -1,6 +1,6 @@
 # Igris AI Setup Guide
 
-Complete guide to setting up Igris AI v5.0 in your project.
+Complete guide to setting up Igris AI v7.0 in your project.
 
 ---
 
@@ -19,7 +19,7 @@ Before you begin, ensure you have:
 
 ## Installation
 
-Igris AI v5.0 offers two installation paths.
+Igris AI v7.0 offers two installation paths.
 
 ### Path 1: Brain-First Install (Recommended)
 
@@ -114,7 +114,7 @@ The MCP (Model Context Protocol) server provides 27 brain tools for cross-projec
 
 ```bash
 # Navigate to MCP server directory
-cd /path/to/igris-ai/mcp-server
+cd /path/to/igris-ai/brain-mcp-server
 
 # Install dependencies
 npm install
@@ -323,4 +323,4 @@ After setup:
 
 ---
 
-**Setup complete! You're ready to use Igris AI v5.0.**
+**Setup complete! You're ready to use Igris AI v7.0.**

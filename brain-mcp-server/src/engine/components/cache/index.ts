@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 -- Cache Component
+ * Brain Engine v7.0 -- Cache Component
  *
  * Filesystem cache layer that regenerates markdown files from the brain
  * DB into ~/.igris/projects/{project}/. Listens to event bus events from

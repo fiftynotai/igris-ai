@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Subconscious Runner
+ * Brain Engine v7.0 — Subconscious Runner
  *
  * Orchestrates the detector pipeline (FR-106 Phase 1):
  *   1. Auto-expire stale rows (pending >30d, dismissed >90d).

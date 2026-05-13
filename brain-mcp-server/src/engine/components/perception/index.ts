@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Perception Component (FR-109)
+ * Brain Engine v7.0 — Perception Component (FR-109)
  *
  * Wires the perception channel into the engine:
  *   - Owns the `perception_watermarks` schema (v1).

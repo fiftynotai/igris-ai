@@ -53,9 +53,9 @@ I am Igris, at your command, Fifty.ai.
 
 <!-- SECTION: agent_delegation -->
 
-## Multi-Agent Architecture (v5.0)
+## Multi-Agent Architecture (v7.0)
 
-IGRIS v5.0 uses native Claude Code subagents for autonomous workflows, with an optional Agent Teams parallel execution layer and a centralized brain for persistent memory. The main agent (you) is the orchestrator that delegates work to 7 specialized subagents, and can spawn independent teammate sessions for parallel workloads via `/team`.
+IGRIS v7.0 uses native Claude Code subagents for autonomous workflows, with an optional Agent Teams parallel execution layer and a centralized brain for persistent memory. The main agent (you) is the orchestrator that delegates work to 7 specialized subagents, and can spawn independent teammate sessions for parallel workloads via `/team`.
 
 ### Core Principle: Separation of Concerns
 
@@ -166,7 +166,7 @@ If context resets mid-workflow:
 3. Update Phase based on result (advance or retry)
 4. Update Next Steps
 
-### Agent Registry (v5.0 - 7 Agents)
+### Agent Registry (v7.0 - 7 Agents)
 
 Agents are defined in `.claude/agents/`:
 
@@ -258,7 +258,7 @@ Team state is ephemeral -- not recoverable after context reset. Each teammate's 
 
 ## Centralized Brain (`~/.igris/`)
 
-IGRIS v5.0 introduces a centralized brain at `~/.igris/` that provides persistent memory and cross-project intelligence.
+IGRIS v7.0 introduces a centralized brain at `~/.igris/` that provides persistent memory and cross-project intelligence.
 
 ### Brain Components
 - **knowledge.db** — SQLite database with WAL mode (concurrent reads, serialized writes)
@@ -1142,21 +1142,6 @@ Before submitting PR:
 
 ---
 
-## Project-Specific Notes
-
-**Document your project's specific gotchas, patterns, and conventions here.**
-
-Examples of what to include:
-- Common mistakes or anti-patterns specific to your codebase
-- Special lifecycle considerations
-- Authentication/authorization patterns
-- Performance optimization notes
-- Module-specific conventions
-
-**Tip:** Reference sections in `coding_guidelines.md` and `architecture_map.md` for detailed patterns.
-
----
-
 ## Session Files Reference
 
 All session files are stored at `~/.igris/projects/{project}/session/`:
@@ -1169,28 +1154,6 @@ All session files are stored at `~/.igris/projects/{project}/session/`:
 | `LEARNINGS.md` | Discoveries and patterns | When learning something |
 | `PROTOCOL_VIOLATIONS.md` | Protocol violation tracking and pattern analysis | When violating protocols |
 | `TEST_RESULTS.md` | Test outcomes | After running tests |
-
----
-
-## Modular Rules Architecture
-
-Igris AI uses modular rules in `.claude/rules/` for protocol enforcement. These rules auto-load on every session.
-
-| File | Purpose |
-|------|---------|
-| `01-igris-init.md` | Boot sequence, context reset detection, initialization flow |
-| `02-igris-briefs.md` | Brief-first protocol, brief workflow operations |
-| `03-igris-commits.md` | Commit message format, quality standards checklist |
-| `04-igris-agents.md` | Agent delegation rules, Digivolve protocol |
-| `05-igris-persona.md` | Persona configuration, mask behavior, agent aliases |
-
-**Numeric prefixes** ensure consistent loading order.
-
-**Note:** CLAUDE.md uses `@import` to reference:
-- `~/.igris/core/prompts/igris_os.md` (this file - operating system)
-- `~/.igris/projects/{project}/context/coding_guidelines.md` (architecture standards)
-
-Persona identity is defined in `SOUL.md` (project root) and user config in `~/.igris/USER.md`.
 
 ---
 
@@ -1252,7 +1215,7 @@ Persona identity is defined in `SOUL.md` (project root) and user config in `~/.i
 
 Igris AI can perform 10 maintenance operations on ANY project (not just Igris AI itself). These operations analyze code, identify issues, and create appropriate briefs for tracking improvements.
 
-**In v5.0, these operations are distributed across agents and skills:**
+**In v7.0, these operations are distributed across agents and skills:**
 - **warden** (audit mode) or `/audit` skill - CODE_QUALITY_AUDIT, BUG_HUNT, STANDARDS_COMPLIANCE_CHECK, PROCESS_AUDIT, DEPENDENCY_AUDIT
 - **sentinel** - TEST_COVERAGE_ANALYSIS
 - `/ideate` skill - FEATURE_IDEATION
@@ -1336,11 +1299,9 @@ Each type has independent numbering (PI-001, FR-001, etc.)
 
 ---
 
-**Last Updated:** 2026-02-16
-**Igris AI Version:** 5.0.0
+**Last Updated:** 2026-05-13
+**Igris AI Version:** 7.0.0
 **Documentation:** https://github.com/fiftynotai/igris-ai
-
-**Tip:** Customize this prompt for your project by adding project-specific patterns to the "Project-Specific Notes" section.
 
 <!-- /SECTION: examples_walkthroughs -->
 

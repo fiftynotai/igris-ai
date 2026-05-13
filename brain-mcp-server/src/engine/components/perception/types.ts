@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Perception Component Types (FR-109)
+ * Brain Engine v7.0 — Perception Component Types (FR-109)
  *
  * Shared types for the perception channel: LLM extractor + runner + handlers.
  *

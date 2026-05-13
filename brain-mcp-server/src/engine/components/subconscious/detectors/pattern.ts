@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Pattern Detector (FR-106 Phase 2)
+ * Brain Engine v7.0 — Pattern Detector (FR-106 Phase 2)
  *
  * Two heuristic sub-detectors that surface "interesting deviations" from
  * a baseline. Patterns are observations, not actions, and always emit at

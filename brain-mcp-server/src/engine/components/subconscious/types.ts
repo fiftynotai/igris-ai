@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Subconscious Component Types
+ * Brain Engine v7.0 — Subconscious Component Types
  *
  * Type definitions for the passive observer (FR-106). Detectors are pure
  * functions `(roDb, config) => SuggestionCandidate[]` — they never write,

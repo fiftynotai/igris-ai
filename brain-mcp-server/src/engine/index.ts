@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Engine Bootstrap
+ * Brain Engine v7.0 — Engine Bootstrap
  *
  * Orchestrates the full engine lifecycle:
  * 1. Create storage adapter (SQLite)
@@ -69,7 +69,7 @@ const DEFAULT_COMPONENT_CONFIG: ComponentConfig = { enabled: true };
  * @returns The booted engine with gateway, registry, and shutdown handle
  */
 export function bootEngine(config: EngineConfig): Engine {
-  console.error('[engine] Booting Brain Engine v5.0...');
+  console.error('[engine] Booting Brain Engine v7.0...');
 
   // 1. Create storage adapter
   const storage = createSqliteAdapter(config.dbPath);
@@ -130,7 +130,7 @@ export function bootEngine(config: EngineConfig): Engine {
   bus.emit('engine.ready', { dispatch: gateway.dispatch.bind(gateway) });
 
   console.error(
-    `[engine] Brain Engine v5.0 ready — ${gateway.toolCount()} tools, ${registry.getBootOrder().length} components`
+    `[engine] Brain Engine v7.0 ready — ${gateway.toolCount()} tools, ${registry.getBootOrder().length} components`
   );
 
   // Shutdown function

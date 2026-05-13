@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Gap Detector
+ * Brain Engine v7.0 — Gap Detector
  *
  * Two-shaped detector:
  *   1. **Project quiet** — a registered project with no learning insert

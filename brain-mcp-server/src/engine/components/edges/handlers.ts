@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Edges Component Handlers
+ * Brain Engine v7.0 — Edges Component Handlers
  *
  * Handlers for the three typed-edge MCP tools:
  *   - igris_edge_create  — idempotent insert via UNIQUE constraint

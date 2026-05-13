@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Memory Component
+ * Brain Engine v7.0 — Memory Component
  *
  * Wraps the existing memory tool handlers as a BrainComponent.
  * Provides: igris_memory_store, igris_memory_search, igris_memory_recall,

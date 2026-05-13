@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Tasks Component
+ * Brain Engine v7.0 — Tasks Component
  *
  * Wraps the task management handlers as a BrainComponent.
  * Provides 13 MCP tools for task CRUD, dependency management,

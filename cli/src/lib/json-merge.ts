@@ -46,8 +46,8 @@ const LEGACY_PORTABLE_FILENAMES = new Set([
   "pre_compact.sh",
   "brief_gate.sh", // old name for pre_tool_use.sh
   "post_edit_lint.sh", // now post_tool_use.d/01-lint.sh
-  "post_brief_sync.sh", // now post_tool_use.d/02-brief-sync.sh
-  "post_session_sync.sh", // now post_tool_use.d/03-session-sync.sh
+  "post_brief_sync.sh",
+  "post_session_sync.sh",
 ]);
 
 /**

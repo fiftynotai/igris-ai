@@ -333,7 +333,7 @@ You should see:
 
 ## 📚 **Resources**
 
-- **Architecture:** `/Users/m.elamin/StudioProjects/igris-ai/docs/IGRIS_UI_ARCHITECTURE.md`
+- **Architecture:** `/Users/m.elamin/StudioProjects/igris-ai/docs/archive/IGRIS_UI_ARCHITECTURE.md`
 - **FDL Spec:** Fifty Design Language documentation
 - **Flutter Docs:** https://docs.flutter.dev/
 - **Material 3:** https://m3.material.io/

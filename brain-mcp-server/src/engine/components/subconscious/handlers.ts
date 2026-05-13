@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Subconscious Component Handlers
+ * Brain Engine v7.0 — Subconscious Component Handlers
  *
  * Pure handlers for the four FR-106 MCP tools:
  *   - igris_suggestion_list      — filtered query

@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Subconscious Component ReadOnlyDb Wrapper
+ * Brain Engine v7.0 — Subconscious Component ReadOnlyDb Wrapper
  *
  * Thin wrapper around `better-sqlite3` that rejects any non-SELECT/WITH
  * SQL at `prepare()` time. Detectors receive a `ReadOnlyDb`, not a raw

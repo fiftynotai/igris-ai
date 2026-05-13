@@ -1,6 +1,6 @@
 {
   "name": "igris-brain-mcp-server",
-  "version": "5.0.0",
+  "version": "7.0.0",
   "description": "Igris AI Centralized Brain MCP Server — persistent memory, project management, cross-project intelligence",
   "main": "dist/index.js",
   "type": "module",

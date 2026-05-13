@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Conflict Detector (FR-106 Phase 2)
+ * Brain Engine v7.0 — Conflict Detector (FR-106 Phase 2)
  *
  * Pair-wise scan over recent learnings flagging probable contradictions.
  * Heuristic: cosine similarity (semantic closeness) gated against Jaccard

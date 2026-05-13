@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Goals Component Handlers
+ * Brain Engine v7.0 — Goals Component Handlers
  *
  * Pure handlers for the five goal MCP tools:
  *   - igris_goal_create   — server-side GL-XXX allocation, atomic insert

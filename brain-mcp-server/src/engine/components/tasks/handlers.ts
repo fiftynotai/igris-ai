@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Tasks Component Handlers
+ * Brain Engine v7.0 — Tasks Component Handlers
  *
  * Handler functions for the 10 task management MCP tools.
  * Each handler takes Record<string, unknown> args, validates

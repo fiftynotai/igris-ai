@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Stalled Brief Detector
+ * Brain Engine v7.0 — Stalled Brief Detector
  *
  * Surfaces briefs in the "In Progress" or "Ready" states that have not
  * been updated within configurable thresholds. Pure function: takes a

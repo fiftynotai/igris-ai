@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Schedules Component
+ * Brain Engine v7.0 — Schedules Component
  *
  * Wraps the schedule management handlers as a BrainComponent.
  * Provides 7 MCP tools for schedule CRUD, enable/disable,

@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Briefs Component
+ * Brain Engine v7.0 — Briefs Component
  *
  * Wraps the existing brief tool handlers as a BrainComponent.
  * Provides: igris_brief_sync, igris_brief_dashboard

@@ -1,5 +1,5 @@
 {
-  "version": "6.0.0",
+  "version": "7.0.0",
 
   "context_files": {
     "igris_os": {
@@ -14,7 +14,7 @@
         "operating_rules": { "lines": "706-743", "kb": 1.2, "tier": "boot" },
         "quality_standards": { "lines": "747-786", "kb": 1.6, "tier": "task" },
         "brief_protocol": { "lines": "794-1125", "kb": 13.0, "tier": "task" },
-        "examples_walkthroughs": { "lines": "1197-1345", "kb": 6.0, "tier": "reference" }
+        "examples_walkthroughs": { "lines": "1160-1306", "kb": 6.0, "tier": "reference" }
       }
     },
     "brain_stewardship": {

@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Subconscious Component
+ * Brain Engine v7.0 — Subconscious Component
  *
  * Passive observer (FR-106). Phase 1 shipped two deterministic detectors
  * (`stalled`, `gap`), four MCP tools, and a self-bootstrapping cron

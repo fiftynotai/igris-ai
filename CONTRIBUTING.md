@@ -398,20 +398,20 @@ igris-ai/
 ├── core/                    # Distribution source for ~/.igris/core/
 │   ├── agents/              # Native subagents
 │   ├── prompts/             # System prompts (igris_os.md)
-│   ├── rules/               # 1 universal rule (v6)
+│   ├── rules/               # 1 universal rule (v7)
 │   ├── skills/              # Skills
 │   ├── scripts/             # Mirrored helpers (verify_mirror.sh, cli-adapters/)
 │   ├── templates/           # PR/brief templates
 │   ├── task-handlers/       # Worker daemon handlers
 │   ├── SOUL.md              # Persona identity
-│   └── igris_tree.json      # Context routing tree (v6)
+│   └── igris_tree.json      # Context routing tree (v7)
 ├── brain-mcp-server/        # Brain MCP server (TypeScript)
 ├── cli/                     # The `igris` npm CLI (TypeScript)
 ├── docs/                    # Documentation
 ├── scripts/                 # Repo-only scripts (validators, brain ops; see "scripts/ inventory")
 │   └── archive/             # Completed one-shots (see scripts/archive/README.md)
 ├── test/                    # Tests (bats framework)
-└── CLAUDE.md                # Slim context pointer (v6)
+└── CLAUDE.md                # Slim context pointer (v7)
 ```
 
 Project version lives in `package.json` (`node -p "require('./package.json').version"`); the machine-local `.igris_version` stamp written by the CLI installer is gitignored.
@@ -431,7 +431,7 @@ script here, update this table in the same PR.
 | `scripts/validate_brain_stewardship_enums.sh` | `scripts/git-hooks/pre-commit` (and standalone) | Asserts every `memory_store` enum value (`category`/`scope`/`provenance`) appears in the `brain_stewardship` section of `core/prompts/brain_stewardship.md`, plus schema-shrinkage reverse check. (Renamed from `validate_memory_agency_enums.sh` in TD-148.) |
 | `scripts/validate_igris_tree_lineranges.py` | `scripts/git-hooks/pre-commit` (and standalone) | Asserts every section declared in `igris_tree.json` has matching `<!-- SECTION: … -->` markers at the declared line ranges in `igris_os.md`. |
 | `scripts/validate_lockfile_in_sync.sh` | `scripts/git-hooks/pre-commit` (and standalone) | Asserts `npm ci --dry-run --ignore-scripts` from repo root succeeds — the workspace lockfile is in sync with all `package.json` files. |
-| `scripts/validate_agent.sh` | manual / docs (`docs/MIGRATION_GUIDE.md`) | Validates an agent-definition `.md`'s frontmatter and structure. Not yet CI-wired. |
+| `scripts/validate_agent.sh` | manual / docs (`docs/archive/MIGRATION_GUIDE-v5-to-v6.md`) | Validates an agent-definition `.md`'s frontmatter and structure. Not yet CI-wired. |
 | `scripts/emit_skill_event.sh` | `core/skills/*/SKILL.md` (21 skills, on invoke) | Emits a `SkillInvoke` event to the brain REST API. |
 | `scripts/igris_worker.sh` + `scripts/igris_worker_config.sh` | manual (`igris_worker.sh start`) | Autonomous-worker daemon: polls the brain REST API for tasks and spawns Claude Code sessions. (Not orchestrated in v7; see arch-review §2.2.) |
 | `scripts/igris_brain_backup.sh` / `scripts/igris_brain_restore.sh` | manual | Backup / restore `~/.igris/memory/knowledge.db` (`sqlite3 .backup`; backup rotates the last 5; restore safety-backs-up before overwriting). |
@@ -462,7 +462,7 @@ check_dependency() {
 }
 
 # Good variable naming
-IGRIS_VERSION="5.0.0"  # Constants: UPPERCASE
+IGRIS_VERSION="7.0.0"  # Constants: UPPERCASE
 target_dir="/path"      # Local vars: lowercase
 
 # Good error message

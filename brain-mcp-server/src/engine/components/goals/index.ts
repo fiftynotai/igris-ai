@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Goals Component
+ * Brain Engine v7.0 — Goals Component
  *
  * Outcome-level entities distinct from briefs (FR-110). A goal is a "what
  * we're trying to achieve" with a deadline, status lifecycle, and optional

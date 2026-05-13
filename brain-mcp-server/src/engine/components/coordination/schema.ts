@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Coordination Component Schema
+ * Brain Engine v7.0 — Coordination Component Schema
  *
  * Seeds default agent capabilities and coordination configuration
  * into the tables created by the tasks v2 migration. The coordination

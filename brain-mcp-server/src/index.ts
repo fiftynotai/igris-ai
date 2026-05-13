@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Igris AI Centralized Brain MCP Server v5.0
+ * Igris AI Centralized Brain MCP Server v7.0
  *
  * Modular engine architecture. Domain components are loaded via the
  * component registry, tools are dispatched through the API gateway,
@@ -10,7 +10,7 @@
  * - stdio  (default) — for local Claude Code integration
  * - http   (--http)  — for remote/VPS access via Streamable HTTP
  *
- * @version 5.0.0
+ * @version 7.0.0
  * @author Fifty.ai
  */
 
@@ -185,7 +185,7 @@ function createBrainServer(): Server {
   const server = new Server(
     {
       name: 'igris-brain',
-      version: '5.0.0',
+      version: '7.0.0',
     },
     {
       capabilities: {
@@ -240,7 +240,7 @@ async function runStdio(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error('Igris Brain MCP Server v5.0.0 started (stdio)');
+  console.error('Igris Brain MCP Server v7.0.0 started (stdio)');
 
   // Clean up on exit
   process.on('SIGINT', () => {
@@ -585,7 +585,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
       }
 
       res.json({
-        version: '5.0.0',
+        version: '7.0.0',
         db_size_bytes: dbSizeBytes,
         counts: {
           projects: countTable('projects'),
@@ -1842,7 +1842,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
   // Start listening
   app.listen(config.port, () => {
-    console.error(`Igris Brain MCP Server v5.0.0 started (http, port ${config.port})`);
+    console.error(`Igris Brain MCP Server v7.0.0 started (http, port ${config.port})`);
   });
 
   // Graceful shutdown

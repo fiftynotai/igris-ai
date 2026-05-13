@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 -- Monitoring Component Handlers
+ * Brain Engine v7.0 -- Monitoring Component Handlers
  *
  * Handler functions for the 2 monitoring MCP tools:
  * - igris_event_log: Query the event log with filters

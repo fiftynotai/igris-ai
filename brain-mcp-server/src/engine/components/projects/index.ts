@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Projects Component
+ * Brain Engine v7.0 — Projects Component
  *
  * Wraps the existing project tool handlers as a BrainComponent.
  * Provides: igris_project_register, igris_project_list, igris_project_status

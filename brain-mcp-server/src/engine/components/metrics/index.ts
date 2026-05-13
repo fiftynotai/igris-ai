@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Metrics Component
+ * Brain Engine v7.0 — Metrics Component
  *
  * Wraps the existing metrics tool handlers as a BrainComponent.
  * Provides: igris_metrics_record, igris_metrics_query, igris_metrics_velocity

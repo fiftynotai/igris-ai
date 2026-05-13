@@ -2,7 +2,7 @@
 
 Step-by-step checklist for migrating an Igris AI installation from v5 to v6.
 
-For a detailed explanation of what changed and why, see [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md).
+For a detailed explanation of what changed and why, see [MIGRATION_GUIDE-v5-to-v6.md](./MIGRATION_GUIDE-v5-to-v6.md).
 
 ---
 

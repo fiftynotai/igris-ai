@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Edges Component Graph Traversal (FR-113)
+ * Brain Engine v7.0 — Edges Component Graph Traversal (FR-113)
  *
  * Three read-only graph tools layered on top of entity_edges:
  *   - igris_graph_neighbors  — BFS within N hops (direction-aware)

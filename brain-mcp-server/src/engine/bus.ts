@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Event Bus
+ * Brain Engine v7.0 — Event Bus
  *
  * Simple synchronous event bus with typed events and wildcard support.
  * Handler errors are caught and logged — they never crash the server.

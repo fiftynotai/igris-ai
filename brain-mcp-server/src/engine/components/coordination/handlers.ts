@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Coordination Component Handlers
+ * Brain Engine v7.0 — Coordination Component Handlers
  *
  * Handler functions for the 6 coordination MCP tools:
  * agent capability management, priority adjustment,

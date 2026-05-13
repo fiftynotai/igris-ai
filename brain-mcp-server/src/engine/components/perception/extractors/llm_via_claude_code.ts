@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Perception LLM Extractor (FR-109 Phase 2)
+ * Brain Engine v7.0 — Perception LLM Extractor (FR-109 Phase 2)
  *
  * Headless Claude extractor for the perception channel — the sole extractor
  * in the LLM-only pipeline (TD-066). Mirrors FR-108's `verifier.ts` pattern:

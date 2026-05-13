@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 -- Context Component
+ * Brain Engine v7.0 -- Context Component
  *
  * Manages project context files (coding guidelines, architecture maps, etc.)
  * in the brain DB. Provides registration, retrieval by key, and access to

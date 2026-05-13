@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 -- Cache Component Handlers
+ * Brain Engine v7.0 -- Cache Component Handlers
  *
  * Handler functions for filesystem cache generation. Writes markdown
  * files from brain DB into ~/.igris/projects/{project}/ so that agents

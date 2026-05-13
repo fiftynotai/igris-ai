@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Instances Component
+ * Brain Engine v7.0 — Instances Component
  *
  * Wraps the existing instance tool handlers and agent event handler
  * as a BrainComponent.

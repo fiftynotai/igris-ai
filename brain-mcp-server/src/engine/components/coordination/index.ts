@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Coordination Component
+ * Brain Engine v7.0 — Coordination Component
  *
  * Wraps the autonomous coordination handlers as a BrainComponent.
  * Provides 7 MCP tools for agent capability management, priority

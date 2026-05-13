@@ -13,12 +13,9 @@
 # dir whose components avoid those tokens — NOT under $BATS_TEST_TMPDIR
 # (which contains `/test/N`). We clean it up in teardown().
 #
-# /tmp/igris_brief_gate_cache is wiped each test to defeat the 60s mtime TTL.
-
 load _helpers.bash
 
 setup() {
-  rm -f /tmp/igris_brief_gate_cache
   # Repo root = $CLI_DIST/../.. (CLI_DIST is .../<repo>/cli/dist, from _helpers.bash).
   REPO_ROOT="$(cd "$CLI_DIST/../.." && pwd)"
   HOOK="$REPO_ROOT/core/hooks/shared/pre_tool_use.sh"
@@ -49,7 +46,6 @@ setup() {
 }
 
 teardown() {
-  rm -f /tmp/igris_brief_gate_cache
   [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX"
 }
 

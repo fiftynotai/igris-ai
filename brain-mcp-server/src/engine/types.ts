@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Type Definitions
+ * Brain Engine v7.0 — Type Definitions
  *
  * Contracts for the modular engine architecture. Every domain component
  * implements BrainComponent. The engine wires components together via
