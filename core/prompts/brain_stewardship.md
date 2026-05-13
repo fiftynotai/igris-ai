@@ -18,7 +18,7 @@ Code session, owns the local DB, and dies with the session. There is no
 HTTP roundtrip on the read path; recalls and `access_count` increments hit
 the local file directly.
 
-Cross-instance sync to the VPS at `http://76.13.180.77:3001` is **explicit**
+Cross-instance sync to the VPS (URL from `~/.igris/config.json` → `remote_brain.url`) is **explicit**
 and happens via two paths:
 
 1. **Operator-initiated.** Call `igris_brain_push` to push the local delta
