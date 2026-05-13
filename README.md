@@ -167,9 +167,9 @@ Multiple Claude sessions safely share the brain:
 - `busy_timeout=5000ms` for automatic retry on contention
 - Staging pattern: hooks write unique files, processed on next startup
 
-### Worker Daemon
+### Worker Daemon (Experimental)
 
-`igris_worker.sh` runs as a background daemon, polling the brain for tasks and spawning Claude Code sessions to execute them autonomously. Six task handler types (dev, content, research, media-gen, operational, social-media) define how each task is processed. Concurrency control, heartbeat monitoring, and clean shutdown built in.
+`igris_worker.sh` runs as a background daemon, polling the brain for tasks and spawning Claude Code sessions. Six task handler types (dev, content, research, media-gen, operational, social-media) define how each task is processed. Concurrency control, heartbeat monitoring, and clean shutdown are built in. **End-to-end verification pending (FR-121)** — not orchestrated as part of `/hunt` in v7.
 
 ```bash
 ./scripts/igris_worker.sh start    # Start the daemon
@@ -201,7 +201,7 @@ Defined as native Claude Code agent files in `.claude/agents/`.
 - **Lightweight research.** Seeker uses `model: haiku` for fast, low-cost codebase exploration. Research does not need the full model.
 - **Persistent memory.** Every agent has `memory: project`, storing learned context in `.claude/agent-memory/<name>/` across sessions. The architect remembers past plans. The warden remembers past review patterns.
 
-### 20 Skills
+### 21 Skills
 
 Slash commands defined in `.claude/skills/*/SKILL.md`.
 
@@ -227,6 +227,7 @@ Slash commands defined in `.claude/skills/*/SKILL.md`.
 | `/dashboard` | Cross-project brief and session tracker |
 | `/sync` | VPS brain deployment and synchronization |
 | `/fifty-kit` | Fifty Flutter Kit expert |
+| `/visualize` | Brief graph visualization (mermaid renders, dependency graphs) |
 
 ### Agent Teams
 
@@ -374,20 +375,20 @@ Honest comparison. No competitor has all five pillars.
 | Capability | Igris | Multi-Agent Frameworks | AI IDEs |
 |------------|-------|------------------------|---------|
 | Brief-first audit trail | Enforced -- 9 types, full lifecycle | No | No |
-| Cross-project brain | SQLite WAL + FTS5, 91 MCP tools | File-based or none | Session-only |
+| Cross-project brain | SQLite WAL + FTS5, brain tools served via `igris-brain` MCP | File-based or none | Session-only |
 | Self-healing pipeline | mender + sentinel, 3 retries | Manual intervention | Manual intervention |
 | Zero-drift install | Symlinks from single brain | Copy-based, drift-prone | N/A |
 | Tool-enforced roles | Agent definitions restrict tools | Prompt-based, bypassable | N/A |
 | Parallel execution | Agent Teams with quality gates | Some support | No |
 | Persistent memory | Survives resets, syncs cross-project | Memory banks (file-based) | Session-only |
 | Worker daemon | Background task execution | No | No |
-| Identity system | SOUL.md + USER.md, 4 mask levels | No | No |
+| Identity system | SOUL.md + USER.md (single unified voice) | No | No |
 
 **What this means in practice:**
 
 - **vs. multi-agent frameworks** (Ruflo, Oh-My-ClaudeCode, metaswarm): They have agents. Igris has agents with enforced tool restrictions, a persistent brain, brief-first audit trail, and self-healing pipelines. More agents is not the differentiator -- discipline is.
 - **vs. AI IDEs** (Cursor, Copilot): They accelerate typing. Igris manages engineering workflow. Different problems, different tools.
-- **vs. memory-focused tools** (Claude CodePro): File-based memory banks per project. Igris has a database-backed brain that works across projects, survives context resets, and serves 91 tools via MCP.
+- **vs. memory-focused tools** (Claude CodePro): File-based memory banks per project. Igris has a database-backed brain that works across projects, survives context resets, and serves brain tools via the `igris-brain` MCP server.
 
 ---
 
@@ -415,7 +416,7 @@ The agent that plans should not be the agent that implements. Tool restrictions 
 When sentinel detects test failure, mender analyzes the error, forger applies the fix, sentinel re-tests. Up to 3 cycles. If all fail, the brief enters BLOCKED state and waits for you.
 
 **What is the worker daemon?**
-`igris_worker.sh` runs in the background, polling the brain for queued tasks and spawning Claude Code sessions to execute them. Autonomous background processing with concurrency control.
+`igris_worker.sh` runs in the background, polling the brain for queued tasks and spawning Claude Code sessions (experimental — end-to-end verification pending in FR-121).
 
 ---
 
@@ -423,6 +424,8 @@ When sentinel detects test failure, mender analyzes the error, forger applies th
 
 | Resource | Location |
 |----------|----------|
+| System Architecture (NEW) | `docs/architecture/SYSTEM.md` |
+| Per-feature architecture deep-dives | `docs/architecture/README.md` |
 | Operating System | `~/.igris/core/prompts/igris_os.md` |
 | Context Tree | `~/.igris/core/igris_tree.json` |
 | Setup Guide | `docs/SETUP_GUIDE.md` |

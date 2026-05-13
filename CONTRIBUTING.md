@@ -435,13 +435,108 @@ script here, update this table in the same PR.
 | `scripts/emit_skill_event.sh` | `core/skills/*/SKILL.md` (21 skills, on invoke) | Emits a `SkillInvoke` event to the brain REST API. |
 | `scripts/igris_worker.sh` + `scripts/igris_worker_config.sh` | manual (`igris_worker.sh start`) | Autonomous-worker daemon: polls the brain REST API for tasks and spawns Claude Code sessions. (Not orchestrated in v7; see arch-review §2.2.) |
 | `scripts/igris_brain_backup.sh` / `scripts/igris_brain_restore.sh` | manual | Backup / restore `~/.igris/memory/knowledge.db` (`sqlite3 .backup`; backup rotates the last 5; restore safety-backs-up before overwriting). |
-| `scripts/igris_brain_switch.sh` | manual | Switch `~/.claude.json` brain mode: local / remote / dual. (The `mcp-server/dist/index.js` path inside refers to the runtime `~/.igris/mcp-server/` deploy dir, internally consistent with `igris_brain_deploy.sh` — not the repo dir.) |
+| `scripts/igris_brain_switch.sh` | manual | Switch `~/.claude.json` brain mode: local / remote / dual. (Configures the MCP server deployed to `~/.igris/mcp-server/` runtime dir; `igris_brain_deploy.sh` populates that dir from `brain-mcp-server/`.) |
 | `scripts/igris_brain_deploy.sh` | manual (on a VPS) | Deploy the brain MCP server with PM2 + nginx reverse-proxy config + API-key generation; copies `brain-mcp-server/` source into `~/.igris/mcp-server/`. |
 | `core/scripts/verify_mirror.sh` | forger MIRROR_SYNC protocol, sentinel MIRROR_CHECK contract, `/hunt` skill, architect plan template | Byte-equality check between repo `core/*` files and their `~/.igris/core/*` runtime mirrors (realpath-resolved, exit-code-checked, verdict-per-pair output). |
 | `core/scripts/cli_smoke.sh` | manual diagnostic | CLI smoke test. |
 | `core/scripts/cli-adapters/{_common,md_to_agents_md,md_to_gemini_toml}.sh` | the cross-CLI adapter layer (Codex / Gemini targets) | Convert `.md` agent/skill definitions to other-CLI formats (`AGENTS.md`, Gemini TOML). |
 
 > Build-time helper (not under top-level `scripts/`): `cli/scripts/copy-templates.sh` is run from `cli/` by `npm run build` (`tsc && bash scripts/copy-templates.sh`) to copy template assets into `cli/dist/`.
+
+---
+
+## 📚 Documentation Invariants
+
+Docs rot when no rule says "when you change X, update Y". The list below is
+the contributor maintenance contract. Every item names what to update and
+the surface that holds it. Mirror this list during code review (warden
+enforces) and during pre-commit (the §13 "Enumeration surfaces" rule in
+`~/.igris/projects/igris-ai/context/coding_guidelines.md` is the wider
+form of this contract).
+
+1. **When you add a brain MCP tool** → list it in:
+   - `docs/architecture/SYSTEM.md`'s "Brain DB" section (or the relevant
+     per-feature doc — the tool count + the component bullet).
+   - The relevant `docs/architecture/<component>.md` per-feature doc (e.g.,
+     a new edges tool → `docs/architecture/typed_edges.md`).
+   - `core/prompts/brain_stewardship.md` decision trigger if the tool is a
+     READ surface (per L-95 / `coding_guidelines.md` §13).
+
+2. **When you add or remove a hook handler** → list it in:
+   - `docs/HOOK_EVENT_SCHEMA.md` (handler table + behavior).
+   - `docs/multi-cli.md` if the handler is cross-CLI-aware.
+   - The `events_covered` list in `~/.igris/config.json:cli_targets.*.hooks`.
+
+3. **When you add or remove an agent** → register it in:
+   - `core/agents/<name>.md` (the agent definition itself).
+   - `core/igris_tree.json:agents` (the LIVE routing — the canonical
+     source for which context files the agent loads).
+   - `core/agents/manifest.yaml` (DEPRECATED registry, but kept for
+     reference until removed).
+   - `CLAUDE.md` "Available Agents" line + `scripts/templates/CLAUDE.md.template`.
+   - `docs/architecture/SYSTEM.md`'s agent roster table.
+   - `README.md` if agent count or list appears.
+
+4. **When you add or remove a skill** → register it in:
+   - `core/skills/<name>/SKILL.md` (the skill itself).
+   - `CLAUDE.md` "Available Skills" list + `scripts/templates/CLAUDE.md.template`.
+   - `docs/architecture/SYSTEM.md`'s skill inventory table.
+   - `README.md` slash-command tables (both the Workflow section and the
+     Skills section).
+   - `docs/<feature>.md` if a feature doc references the skill.
+
+5. **When you change a `core/` file that has a runtime mirror** → follow
+   the **TD-096 mirror-sync protocol**:
+   ```bash
+   cp <repo-core-file> ~/.igris/core/<same-path>
+   bash core/scripts/verify_mirror.sh <file>
+   # Verdict must say MATCH.
+   ```
+   This applies to: `core/agents/*.md`, `core/skills/*/SKILL.md`,
+   `core/prompts/*.md`, `core/rules/*.md`, `core/SOUL.md`, `core/igris_tree.json`,
+   `core/hooks/**`, `core/scripts/**`. The sentinel runs MIRROR_CHECK on
+   every changed `core/` file during /hunt TESTING; uncommitted drift
+   blocks the commit.
+
+6. **When you change the `/hunt` state machine** → update:
+   - `docs/architecture/SYSTEM.md`'s state-machine diagram (the mermaid
+     block).
+   - `core/skills/hunt/SKILL.md` (the canonical state machine).
+   - `core/prompts/igris_os.md` "Workflow (Strict)" section — these
+     two MUST stay in sync; the §13 enumeration rule lists this.
+
+7. **When you bump a current-system version string** → sweep ALL of:
+   - `package.json:version` (canonical).
+   - `core/igris_tree.json:version`.
+   - `CLAUDE.md:4` (orchestrator identity line).
+   - `core/prompts/igris_os.md` (multiple lines — grep first).
+   - `CONTRIBUTING.md` "Project structure" version notes.
+   - Any README banner or footer that names a version.
+   - This is the **TD-147 lesson**: a v6→v7 sweep missed multiple
+     surfaces and shipped self-contradicting docs.
+
+8. **When you add a deprecated or disabled feature** → add a
+   prominent callout at the top of its docs immediately under the H1.
+   - Format: `> **Status (vN): DISABLED/EXPERIMENTAL/DEPRECATED.** <reason>.
+     See <brief-id>.` followed by the technical content.
+   - Example: `docs/architecture/subconscious_engine.md` carries the
+     TD-102 / FR-118 callout. (Without it, a contributor reading the
+     doc wastes time troubleshooting an engine that's switched off.)
+
+### Pre-commit reflex
+
+Before any PR that touches an enumeration surface (skill, agent, tool,
+component, hook, brief type, config key), run:
+
+```bash
+# Find every place the thing's name appears
+git grep -n "<thing-name>" -- ':!*.lock' ':!node_modules'
+```
+
+Cross-check the hits against the table above. If a surface that should
+list the thing doesn't, or one that shouldn't still does, fix it in this
+commit. Warden enforces this in /hunt REVIEWING; do not let a PR with
+drift across surfaces reach the gate.
 
 ---
 

@@ -1,5 +1,9 @@
 # Subconscious Engine
 
+> **Status (v7): DISABLED.** This engine is preserved in the codebase but not invoked by default. The rule-based detectors had a 2% true-positive rate in Phase 2 live runs; `~/.igris/config.json:subconscious.enabled` is `false`. An LLM-driven replacement is pending under **FR-118**; **TD-102** documents the disable. See `CLAUDE.md` for the project-wide note.
+>
+> What's below describes the architecture as it was implemented in Phase 1/2 (FR-106 + FR-108). Use it as reference material for FR-118; do not expect the engine to be running on a live install. The ~6.6 kLOC engine is preserved so the LLM-driven redesign can reuse the schema (`suggestions`, evidence shape) and detector contracts.
+
 **Briefs:** FR-106 — Subconscious Engine (Light) + FR-108 — Conflict Detector for Learnings (LLM verification layer)
 **Status:** Phase 1 (stalled + gap + lifecycle) shipped (`99b709d`). Phase 2 (conflict + pattern + smoothing + arch doc) shipped (`3a0e424`). FR-108 (LLM verification + acted-action edge materialization) shipped this PR.
 **Schema:** Per-component migrations v1 + v2 in `brain-mcp-server/src/engine/components/subconscious/schema.ts`. No v3 — FR-108 fits in existing `suggestions.evidence` JSON.

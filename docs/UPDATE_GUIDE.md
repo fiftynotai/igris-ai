@@ -2,7 +2,7 @@
 
 **Keep Igris AI up to date**
 
-This guide explains how to update Igris AI v4.0 to the latest version.
+This guide explains how to update Igris AI to the latest version (v7.0+).
 
 ---
 
@@ -21,7 +21,7 @@ This guide explains how to update Igris AI v4.0 to the latest version.
 
 ## Version Tracking
 
-Igris AI v4.0 tracks versions in the `.igris_version` file in each installed project:
+Igris AI (v7.0+) tracks versions in the `.igris_version` file in each installed project:
 
 ```json
 {
@@ -77,7 +77,7 @@ sqlite3 ~/.igris/memory/knowledge.db "SELECT slug, path, status FROM projects;"
 
 ## Update Models
 
-Igris AI v4.0 has two update models depending on your install mode.
+Igris AI (v7.0+) provides two update models depending on your install mode.
 
 ### Symlink-Based Projects (Auto-Update)
 

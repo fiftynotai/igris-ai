@@ -110,7 +110,7 @@ sqlite3 ~/.igris/memory/knowledge.db "SELECT slug, path, status FROM projects;"
 
 ## Optional: MCP Server Setup
 
-The MCP (Model Context Protocol) server provides 27 brain tools for cross-project intelligence. This is optional but recommended for multi-project workflows.
+The MCP (Model Context Protocol) server provides brain tools served via the `igris-brain` MCP server for cross-project intelligence. This is optional but recommended for multi-project workflows.
 
 ```bash
 # Navigate to MCP server directory
