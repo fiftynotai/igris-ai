@@ -1,4 +1,4 @@
-# igris
+# IGRIS
 
 the engineering workbench for claude code.
 
@@ -14,9 +14,9 @@ speed without structure is not engineering. it is chaos with better autocomplete
 
 ---
 
-## claude writes. igris decides what gets written.
+## claude writes. IGRIS decides what gets written.
 
-claude writes. igris decides what gets written, by whom, and whether it ships. it is hierarchical actor-critic with bounded iteration. metagpt split the roles. self-refine ran the loop. we did both, then made the brief a contract. it is not the model. it is the workbench around it — the brief-protocol that gates every write, the brain that survives your context reset, the seven agents with tool restrictions that mean a planner cannot implement and a reviewer cannot fix.
+claude writes. IGRIS decides what gets written, by whom, and whether it ships. it is hierarchical actor-critic with bounded iteration. metagpt split the roles. self-refine ran the loop. we did both, then made the brief a contract. it is not the model. it is the workbench around it — the brief-protocol that gates every write, the brain that survives your context reset, the seven agents with tool restrictions that mean a planner cannot implement and a reviewer cannot fix.
 
 every file modification routes through a brief. every brief routes through a plan. every plan routes through a role. nothing ships because the prompt sounded confident.
 
@@ -77,7 +77,7 @@ then open claude code and run `/hunt BR-001` against the first brief you registe
 
 - worker daemon runs as a background process. end-to-end verification is pending under FR-121. it ships when it ships.
 - agent teams (`/team hunt`) requires an experimental claude code flag. parallel works. quality gates work. the ergonomics are still rough.
-- cross-cli adapters are on the roadmap. today, igris is built for claude code.
+- cross-cli adapters are on the roadmap. today, IGRIS is built for claude code.
 - the comparison table got cut from this readme on purpose. a v2 pass is parked.
 - the brain has 17 mcp components. some are heavily used. some are waiting for their first real call.
 
