@@ -19,6 +19,11 @@ temp/
 *.log
 logs/
 
+# Image generation staging (Higgsfield GPT Image 2 outputs)
+# Committed PNGs live at docs/images/*.png; generated/ holds the raw outputs
+# and Asset 1 (GitHub Settings OG, uploaded manually, not committed)
+docs/images/generated/
+
 # Python
 __pycache__/
 *.py[cod]
