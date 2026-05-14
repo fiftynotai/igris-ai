@@ -430,7 +430,6 @@ When sentinel detects test failure, mender analyzes the error, forger applies th
 | Context Tree | `~/.igris/core/igris_tree.json` |
 | Setup Guide | `docs/SETUP_GUIDE.md` |
 | Update Guide | `docs/UPDATE_GUIDE.md` |
-| Brand Book | `docs/IGRIS_BRAND_BOOK.md` |
 | Contributing | `CONTRIBUTING.md` |
 
 ---

@@ -406,6 +406,6 @@ Migration: v4 → v5 was a one-time `ai/`-to-brain copy; v5 → v6 used `igris u
 - [`docs/visualization.md`](../visualization.md) — `/visualize` skill internals.
 - [`docs/operations/cli_lifecycle.md`](../operations/cli_lifecycle.md) — Install, refresh, upgrade.
 - [`docs/operations/perception-dedup-tuning.md`](../operations/perception-dedup-tuning.md) — Perception dedup parameters.
-- [`docs/SETUP_GUIDE.md`](../SETUP_GUIDE.md), [`docs/UPDATE_GUIDE.md`](../UPDATE_GUIDE.md), [`docs/IGRIS_BRAND_BOOK.md`](../IGRIS_BRAND_BOOK.md).
+- [`docs/SETUP_GUIDE.md`](../SETUP_GUIDE.md), [`docs/UPDATE_GUIDE.md`](../UPDATE_GUIDE.md).
 
 **Contributor maintenance contract:** see [`CONTRIBUTING.md`](../../CONTRIBUTING.md) "Documentation invariants" for the per-surface enumeration rule (e.g., "when you add a skill, update X / Y / Z").

@@ -37,7 +37,7 @@ For any specific subsystem, read its per-feature doc directly. These are the sou
 - [`docs/visualization.md`](../visualization.md) — `/visualize` skill internals (brief-graph mermaid renders).
 - [`docs/operations/cli_lifecycle.md`](../operations/cli_lifecycle.md) — `igris init` / `refresh` / `install` / `update` / `doctor` lifecycle.
 - [`docs/operations/perception-dedup-tuning.md`](../operations/perception-dedup-tuning.md) — Perception dedup parameters.
-- [`docs/SETUP_GUIDE.md`](../SETUP_GUIDE.md), [`docs/UPDATE_GUIDE.md`](../UPDATE_GUIDE.md), [`docs/IGRIS_BRAND_BOOK.md`](../IGRIS_BRAND_BOOK.md).
+- [`docs/SETUP_GUIDE.md`](../SETUP_GUIDE.md), [`docs/UPDATE_GUIDE.md`](../UPDATE_GUIDE.md).
 
 ---
 

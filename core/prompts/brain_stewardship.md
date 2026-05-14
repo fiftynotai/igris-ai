@@ -326,7 +326,7 @@ igris_goal_list({ project: "igris-ai", status: "active" })
 `igris_brief_velocity` (cross-listed under briefs but metric-flavored).
 
 **What's there:** time-series of agent invocations, token spend, brief
-throughput, error rates. Source for the Crimson Arena dashboards.
+throughput, error rates. Source for agent activity dashboards.
 
 ### When to call
 
