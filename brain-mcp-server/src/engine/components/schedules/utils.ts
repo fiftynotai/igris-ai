@@ -6,7 +6,7 @@
  * to avoid duplication.
  *
  * @module engine/components/schedules/utils
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { randomUUID } from 'node:crypto';

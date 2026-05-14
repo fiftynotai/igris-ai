@@ -6,7 +6,7 @@
  * all orphan engine events (schedules, cache, coordination).
  *
  * @module engine/components/monitoring/schema
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { Migration } from '../../types.js';

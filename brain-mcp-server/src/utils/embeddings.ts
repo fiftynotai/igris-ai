@@ -16,7 +16,7 @@
  * - EMBEDDING_DIMENSIONS: number — output vector dimensionality (384)
  *
  * @module utils/embeddings
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 /** Model identifier — hosted on Hugging Face Hub */

@@ -26,7 +26,7 @@
  *     and then allowed to re-emit.
  *
  * @module engine/components/subconscious/runner
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';

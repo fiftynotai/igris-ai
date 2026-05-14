@@ -26,7 +26,7 @@
  *     reaching outside the dist tree (scripts/ is not built).
  *
  * @module engine/components/edges/visualization
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';

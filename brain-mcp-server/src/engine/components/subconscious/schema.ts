@@ -13,7 +13,7 @@
  * Idempotent via IF NOT EXISTS; safe to re-run.
  *
  * @module engine/components/subconscious/schema
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { Migration } from '../../types.js';

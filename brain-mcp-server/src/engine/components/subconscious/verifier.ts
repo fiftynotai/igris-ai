@@ -30,7 +30,7 @@
  *   - Only an explicit, parsed `{is_conflict: false, ...}` rejects.
  *
  * @module engine/components/subconscious/verifier
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { spawn, spawnSync } from 'node:child_process';

@@ -12,7 +12,7 @@
  * `provenance` and `confidence` are deferred to FR-113 (graph traversal).
  *
  * @module engine/components/edges/schema
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { Migration } from '../../types.js';

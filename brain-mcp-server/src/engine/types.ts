@@ -8,7 +8,7 @@
  * No runtime code — just interfaces and type aliases.
  *
  * @module engine/types
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';

@@ -14,7 +14,7 @@
  * Listens: engine.ready (to capture dispatchTool reference)
  *
  * @module engine/components/schedules
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

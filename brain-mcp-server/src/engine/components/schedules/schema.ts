@@ -6,7 +6,7 @@
  * indexes for efficient querying.
  *
  * @module engine/components/schedules/schema
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { Migration } from '../../types.js';

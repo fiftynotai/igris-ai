@@ -18,7 +18,7 @@
  * - promoteToGlobal: Auto-promote local learnings to global when found in 2+ projects
  *
  * @module tools/memory
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb, BRAIN_DIR } from '../db.js';

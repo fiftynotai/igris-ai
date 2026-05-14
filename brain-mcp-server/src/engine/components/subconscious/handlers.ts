@@ -14,7 +14,7 @@
  * `errorResult`.
  *
  * @module engine/components/subconscious/handlers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../../../db.js';

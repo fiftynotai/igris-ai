@@ -9,7 +9,7 @@
  * they never throw on malformed input.
  *
  * @module engine/components/perception/types
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 // ---------------------------------------------------------------------------

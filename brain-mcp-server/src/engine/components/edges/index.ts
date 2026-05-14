@@ -18,7 +18,7 @@
  * (visualization), FR-112 (community detection).
  *
  * @module engine/components/edges
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

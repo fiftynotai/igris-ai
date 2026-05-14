@@ -5,7 +5,7 @@
  * Provides: igris_error_lookup
  *
  * @module engine/components/errors
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

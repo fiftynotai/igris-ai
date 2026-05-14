@@ -10,7 +10,7 @@
  * - igris_brief_dashboard: Cross-project brief dashboard
  *
  * @module tools/briefs
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { createHash, randomUUID } from 'node:crypto';

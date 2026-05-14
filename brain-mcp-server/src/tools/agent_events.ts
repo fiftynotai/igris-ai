@@ -15,7 +15,7 @@
  * - handleAgentMetricsByProject: Per-project metrics breakdown for a specific agent
  *
  * @module tools/agent_events
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../db.js';

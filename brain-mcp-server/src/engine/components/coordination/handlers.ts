@@ -6,7 +6,7 @@
  * configuration, and audit trail.
  *
  * @module engine/components/coordination/handlers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { randomUUID } from 'node:crypto';

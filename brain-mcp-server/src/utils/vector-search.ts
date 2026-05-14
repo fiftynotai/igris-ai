@@ -11,7 +11,7 @@
  * - vectorSearch(db, queryEmbedding, limit): { rowid, distance }[]
  *
  * @module utils/vector-search
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';

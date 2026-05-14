@@ -9,7 +9,7 @@
  * - igris_error_lookup: Look up or store error solutions
  *
  * @module tools/errors
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../db.js';

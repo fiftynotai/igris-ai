@@ -26,7 +26,7 @@
  *   normal schedule-creation events fire.
  *
  * @module engine/components/subconscious
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../../../db.js';

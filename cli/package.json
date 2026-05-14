@@ -18,7 +18,7 @@
     "test": "vitest run",
     "test:bats": "bats tests/integration"
   },
-  "author": "Fifty.ai",
+  "author": "fifty.dev",
   "license": "MIT",
   "homepage": "https://github.com/fiftynotai/igris-ai#readme",
   "repository": {

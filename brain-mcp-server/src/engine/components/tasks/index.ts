@@ -11,7 +11,7 @@
  * Listens: brief.created, brief.completed
  *
  * @module engine/components/tasks
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

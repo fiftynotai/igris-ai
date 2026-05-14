@@ -134,6 +134,8 @@ export const RSYNC_EXCLUDES: readonly string[] = [
   // Tarballs / archives (fixture tarballs are workstation-only)
   "*.zip",
   "*.tar.gz",
+  // Image-generation staging (Higgsfield raw outputs — committed PNGs live at docs/images/*.png)
+  "docs/images/generated/",
 ] as const;
 
 function rsyncExcludeFlags(): string[] {

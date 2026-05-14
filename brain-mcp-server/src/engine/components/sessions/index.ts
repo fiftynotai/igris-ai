@@ -5,7 +5,7 @@
  * Provides: igris_session_sync, igris_session_recall
  *
  * @module engine/components/sessions
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

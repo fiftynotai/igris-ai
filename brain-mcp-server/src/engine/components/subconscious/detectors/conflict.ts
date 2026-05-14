@@ -25,7 +25,7 @@
  * returns `[]` if `learnings` is absent (mirrors `gap.ts:103, 150`).
  *
  * @module engine/components/subconscious/detectors/conflict
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { bufferToEmbedding } from '../../../../utils/embeddings.js';

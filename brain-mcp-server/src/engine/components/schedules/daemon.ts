@@ -12,7 +12,7 @@
  * - Graceful stop: clears timeout on shutdown
  *
  * @module engine/components/schedules/daemon
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../../../db.js';

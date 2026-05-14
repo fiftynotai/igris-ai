@@ -52,7 +52,7 @@
  * safe. The inbox truncation uses atomic rename via tempfile.
  *
  * @module scripts/perception_extract_cli
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import * as fs from 'node:fs';

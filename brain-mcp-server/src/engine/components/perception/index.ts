@@ -13,7 +13,7 @@
  * persistence and the runner for orchestration.
  *
  * @module engine/components/perception
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import * as fs from 'node:fs';

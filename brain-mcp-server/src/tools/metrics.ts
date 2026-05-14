@@ -10,7 +10,7 @@
  * - igris_metrics_velocity: Velocity dashboard with weekly completion rates
  *
  * @module tools/metrics
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../db.js';

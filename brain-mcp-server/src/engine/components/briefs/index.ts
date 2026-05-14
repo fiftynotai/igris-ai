@@ -5,7 +5,7 @@
  * Provides: igris_brief_sync, igris_brief_dashboard
  *
  * @module engine/components/briefs
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

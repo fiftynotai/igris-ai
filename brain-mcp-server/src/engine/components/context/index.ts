@@ -8,7 +8,7 @@
  * Provides: igris_context_register, igris_context_get, igris_context_tree, igris_context_load
  *
  * @module engine/components/context
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

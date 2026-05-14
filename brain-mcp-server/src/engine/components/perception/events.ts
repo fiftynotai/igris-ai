@@ -19,7 +19,7 @@
  * into `perception_extract.log`.
  *
  * @module engine/components/perception/events
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';

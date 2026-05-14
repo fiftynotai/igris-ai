@@ -17,7 +17,7 @@
  * - igris_file_pull: Pull a flat file from the remote brain server
  *
  * @module tools/sync
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';

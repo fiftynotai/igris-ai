@@ -16,7 +16,7 @@
  * never emitted by this detector — short stalls are noise).
  *
  * @module engine/components/subconscious/detectors/stalled
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

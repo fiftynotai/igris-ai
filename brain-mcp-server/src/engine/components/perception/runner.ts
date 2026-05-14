@@ -17,7 +17,7 @@
  * MCP.
  *
  * @module engine/components/perception/runner
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';

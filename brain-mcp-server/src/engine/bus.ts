@@ -9,7 +9,7 @@
  *   "*"         matches everything
  *
  * @module engine/bus
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { EventBus, EventHandler, EventPayload } from './types.js';

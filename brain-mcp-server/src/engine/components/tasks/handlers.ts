@@ -8,7 +8,7 @@
  * Task IDs use the format: t-{first 8 chars of randomUUID()}
  *
  * @module engine/components/tasks/handlers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { randomUUID } from 'node:crypto';

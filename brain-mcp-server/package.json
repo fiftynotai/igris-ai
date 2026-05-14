@@ -17,7 +17,7 @@
     "sweep-tasks": "tsx scripts/sweep-stale-brief-tasks.ts",
     "backfill-edges": "tsx scripts/backfill_brief_edges.ts"
   },
-  "author": "Fifty.ai",
+  "author": "fifty.dev",
   "license": "MIT",
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",

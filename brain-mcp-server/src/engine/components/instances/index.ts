@@ -7,7 +7,7 @@
  *           igris_agent_event
  *
  * @module engine/components/instances
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

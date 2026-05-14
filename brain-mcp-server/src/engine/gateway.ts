@@ -8,7 +8,7 @@
  * See ../../CLAUDE.md for the strict-input contract this gateway enforces (TD-128).
  *
  * @module engine/gateway
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { ToolDefinition, ToolResult } from './types.js';

@@ -15,7 +15,7 @@
  * and keeps schema ownership encapsulated.
  *
  * @module engine/components/goals/schema
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { Migration } from '../../types.js';

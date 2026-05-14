@@ -28,7 +28,7 @@
  *          perception.run_failed, perception.run_skipped
  *
  * @module engine/components/monitoring
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import * as os from 'node:os';

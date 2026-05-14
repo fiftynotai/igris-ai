@@ -20,7 +20,7 @@
  *      naive `startsWith('with')` whitelist is insufficient.
  *
  * @module engine/components/subconscious/readonly-db
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';

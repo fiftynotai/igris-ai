@@ -9,7 +9,7 @@
  * NO external dependencies — fully inline implementation.
  *
  * @module engine/components/schedules/cron
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 // ---------------------------------------------------------------------------

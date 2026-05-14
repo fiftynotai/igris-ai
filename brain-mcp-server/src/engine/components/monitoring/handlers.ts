@@ -6,7 +6,7 @@
  * - igris_event_log_cleanup: Purge old event log entries
  *
  * @module engine/components/monitoring/handlers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../../../db.js';

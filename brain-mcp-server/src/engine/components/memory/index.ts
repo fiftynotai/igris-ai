@@ -6,7 +6,7 @@
  *           igris_pattern_suggest
  *
  * @module engine/components/memory
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

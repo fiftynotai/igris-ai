@@ -6,7 +6,7 @@
  * DRY violations.
  *
  * @module engine/helpers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { ToolResult } from './types.js';

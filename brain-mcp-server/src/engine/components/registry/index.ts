@@ -6,7 +6,7 @@
  *           igris_registry_list, igris_registry_remove, igris_registry_update
  *
  * @module engine/components/registry
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

@@ -7,7 +7,7 @@
  * in the engine_migrations table.
  *
  * @module engine/storage/sqlite
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { createRequire } from 'node:module';

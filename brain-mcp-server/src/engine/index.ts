@@ -11,7 +11,7 @@
  * 7. Bridge db.ts via setAdapter()
  *
  * @module engine/index
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { EngineConfig, ComponentConfig } from './types.js';

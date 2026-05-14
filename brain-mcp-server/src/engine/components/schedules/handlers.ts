@@ -9,7 +9,7 @@
  * Run IDs use the format: run-{first 8 chars of randomUUID()}
  *
  * @module engine/components/schedules/handlers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { execFile } from 'node:child_process';

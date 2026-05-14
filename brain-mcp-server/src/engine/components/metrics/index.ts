@@ -5,7 +5,7 @@
  * Provides: igris_metrics_record, igris_metrics_query, igris_metrics_velocity
  *
  * @module engine/components/metrics
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

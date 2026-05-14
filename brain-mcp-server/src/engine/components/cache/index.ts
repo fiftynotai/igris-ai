@@ -11,7 +11,7 @@
  * Listens: brief.created, brief.synced, session.file.updated
  *
  * @module engine/components/cache
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

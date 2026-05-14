@@ -13,7 +13,7 @@
  * storage (commit SHAs, file paths, text summaries, etc.).
  *
  * @module engine/components/tasks/schema
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { Migration } from '../../types.js';

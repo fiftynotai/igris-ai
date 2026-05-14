@@ -12,7 +12,7 @@
  * Listens: task.failed, engine.ready
  *
  * @module engine/components/coordination
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

@@ -12,7 +12,7 @@
  * `dist/engine/components/edges/`).
  *
  * @module engine/components/edges/visualization-tool
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import path from 'node:path';

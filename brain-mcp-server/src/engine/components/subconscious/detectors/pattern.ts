@@ -36,7 +36,7 @@
  * `agent_metrics`, never throws. Always caps emission at `medium`.
  *
  * @module engine/components/subconscious/detectors/pattern
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

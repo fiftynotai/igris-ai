@@ -20,7 +20,7 @@
  *                                                 into release notes if missed)
  *
  * @module engine/components/subconscious/detectors/gap
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

@@ -7,7 +7,7 @@
  * guaranteed to exist by the time this runs.
  *
  * @module engine/components/coordination/schema
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../../../db.js';

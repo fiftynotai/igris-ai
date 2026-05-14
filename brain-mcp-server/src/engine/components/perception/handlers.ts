@@ -13,7 +13,7 @@
  * every error path returns an `errorResult`.
  *
  * @module engine/components/perception/handlers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';

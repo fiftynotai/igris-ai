@@ -222,4 +222,4 @@ requests.post(
 
 ---
 
-**Maintained by:** Igris AI (Fifty.ai)
+**Maintained by:** Igris AI (fifty.dev)

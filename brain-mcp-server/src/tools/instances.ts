@@ -12,7 +12,7 @@
  * - igris_instance_remove: Deregister an instance on /rest
  *
  * @module tools/instances
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../db.js';

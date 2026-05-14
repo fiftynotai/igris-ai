@@ -13,7 +13,7 @@
  * - igris_registry_update: Partial update of an existing entry
  *
  * @module tools/registry
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { randomUUID } from 'node:crypto';

@@ -19,7 +19,7 @@
  * unblocking cascade) fire exactly as they would for a normal completion.
  *
  * @module scripts/sweep-stale-brief-tasks
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import Database from 'better-sqlite3';

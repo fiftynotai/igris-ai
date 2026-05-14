@@ -11,7 +11,7 @@
  * - igris_project_status: Get detailed project status dashboard
  *
  * @module tools/projects
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../db.js';

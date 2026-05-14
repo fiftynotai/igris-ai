@@ -6,7 +6,7 @@
  * Shutdown runs in reverse order.
  *
  * @module engine/registry
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

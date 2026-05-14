@@ -6,7 +6,7 @@
  * so that user-supplied strings can be safely used in MATCH expressions.
  *
  * @module utils/fts5
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 /**

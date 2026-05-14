@@ -11,7 +11,7 @@
  * - http   (--http)  — for remote/VPS access via Streamable HTTP
  *
  * @version 7.0.0
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';

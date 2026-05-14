@@ -25,7 +25,7 @@
  *      gated by human review.
  *
  * @module engine/components/perception/extractors/llm_via_claude_code
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { spawn } from 'node:child_process';

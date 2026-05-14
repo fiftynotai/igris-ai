@@ -10,7 +10,7 @@
  * pattern, plus a `pattern_observations` table for multi-run smoothing.
  *
  * @module engine/components/subconscious/types
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 // ---------------------------------------------------------------------------

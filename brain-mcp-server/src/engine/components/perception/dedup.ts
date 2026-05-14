@@ -48,7 +48,7 @@
  * the dedup pass.
  *
  * @module engine/components/perception/dedup
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';

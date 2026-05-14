@@ -7,7 +7,7 @@
  * a single database connection per MCP server process.
  *
  * @module db
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { createRequire } from 'node:module';

@@ -14,7 +14,7 @@
  * - Batched events (memory/errors/projects/metrics): buffer for 10s then flush
  *
  * @module engine/components/sync
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { readFileSync } from 'node:fs';

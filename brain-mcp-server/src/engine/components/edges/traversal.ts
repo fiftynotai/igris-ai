@@ -26,7 +26,7 @@
  *     edge.removed bus events.
  *
  * @module engine/components/edges/traversal
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';

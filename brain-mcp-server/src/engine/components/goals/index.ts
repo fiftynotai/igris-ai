@@ -19,7 +19,7 @@
  * Listens: (none in Phase 1 — listeners deferred to FR-106 subconscious)
  *
  * @module engine/components/goals
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

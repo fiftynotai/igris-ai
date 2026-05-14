@@ -12,7 +12,7 @@
  * assume the args came from the MCP gateway.
  *
  * @module engine/components/edges/handlers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../../../db.js';

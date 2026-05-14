@@ -6,7 +6,7 @@
  * can read briefs/sessions without querying the MCP server.
  *
  * @module engine/components/cache/handlers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';

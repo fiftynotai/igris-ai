@@ -10,7 +10,7 @@
  * - igris_session_recall: Recall recent sessions across projects
  *
  * @module tools/sessions
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { createHash, randomUUID } from 'node:crypto';

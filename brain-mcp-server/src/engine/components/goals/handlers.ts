@@ -14,7 +14,7 @@
  * stay reusable from contexts without a bus.
  *
  * @module engine/components/goals/handlers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../../../db.js';

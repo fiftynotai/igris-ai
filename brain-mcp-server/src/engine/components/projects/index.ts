@@ -5,7 +5,7 @@
  * Provides: igris_project_register, igris_project_list, igris_project_status
  *
  * @module engine/components/projects
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {
