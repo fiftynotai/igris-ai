@@ -19,78 +19,62 @@ Before you begin, ensure you have:
 
 ## Installation
 
-Igris AI v7.0 offers two installation paths.
-
-### Path 1: Brain-First Install (Recommended)
-
-This installs the centralized brain at `~/.igris/` and uses symlinks so all projects share the same Igris AI files. Updates to the brain automatically propagate to all linked projects.
+Igris AI v7.0 uses a single brain-based install. The centralized brain lives at `~/.igris/` and projects receive symlinks into it, so updates to the brain automatically propagate to every linked project.
 
 ```bash
-# Step 1: Clone Igris AI
-cd /path/to/projects/
-git clone https://github.com/fiftynotai/igris-ai
+# Step 1: Install the CLI globally from npm
+npm install -g igris-ai
 
 # Step 2: Initialize the brain
-cd igris-ai
 igris init
 
-# Step 3: Install into your project (symlinks)
+# Step 3: Install into your project
 cd /path/to/your-project/
 igris install .
 ```
 
 **What this does:**
-- Creates the centralized brain at `~/.igris/`
-- Initializes SQLite database with FTS5 search
-- Symlinks `.claude/` directory (agents, rules, skills) into your project
-- Creates `ai/` directory with templates and session files
-- Sets up `CLAUDE.md` for Claude Code integration
+- Bootstraps the centralized brain at `~/.igris/` (SQLite database with FTS5 search, agents, rules, skills, prompts)
+- Symlinks `.claude/agents/`, `.claude/rules/`, and `.claude/skills/` into your project so all projects share the same brain content
+- Merges the canonical Igris hooks block into `.claude/settings.json` (creating the file if absent, backing up any existing one)
+- Regenerates `CLAUDE.md` in your project root from the brain template
+- Writes a `.igris_version` marker for upgrade detection
+- Registers the project in the brain so it shows up in `/projects` and cross-project queries
 
-### Path 2: Copy-Based Install (Standalone)
-
-This copies all files directly into your project. Useful when you want a self-contained setup or cannot use symlinks.
-
-```bash
-# Step 1: Clone Igris AI
-cd /path/to/projects/
-git clone https://github.com/fiftynotai/igris-ai
-
-# Step 2: Initialize in your project
-cd /path/to/your-project/
-igris install .
-```
-
-**What this does:**
-- Creates `ai/` directory with all templates
-- Copies `.claude/` directory (agents, rules, skills)
-- Creates session files and brief templates
-- Sets up `CLAUDE.md` for Claude Code integration
+Project state (sessions, briefs, plans, generated context docs) lives under `~/.igris/projects/<slug>/` — **not** in the project repo. The only files Igris writes into the project repo are `.claude/`, `CLAUDE.md`, and `.igris_version`.
 
 ### Verify Installation
 
 ```bash
-# Check that the core directories exist
+# Confirm the Igris surface inside your project
 ls -la .claude/
-ls -la ai/
+cat .igris_version
+ls -la CLAUDE.md
 
-# Expected structure:
+# Expected structure inside the project repo:
 # .claude/
-# ├── agents/          # 7 native subagents
-# ├── hooks/           # Session start, pre/post commit
-# ├── rules/           # 5 modular rules
-# ├── skills/          # 21 skills
-# └── settings.json    # Claude Code config
+# ├── agents/             # 7 native subagents (symlinks → ~/.igris/core/agents/)
+# │   ├── architect.md
+# │   ├── forger.md
+# │   ├── sentinel.md
+# │   ├── warden.md
+# │   ├── mender.md
+# │   ├── seeker.md
+# │   └── sage.md
+# ├── rules/              # 1 universal rule (symlink → ~/.igris/core/rules/)
+# │   └── 00-igris-universal.md
+# ├── skills/             # 21 skills (per-dir symlinks → ~/.igris/core/skills/)
+# └── settings.json       # Claude Code config + Igris hooks block
 #
-# ai/
-# ├── briefs/          # Work items (9 brief types)
-# ├── context/         # Architecture docs
-# ├── masks/           # Mask greeting files
-# ├── prompts/         # System prompts
-# ├── session/         # Session tracking
-# └── templates/       # PR/commit templates
-#
-# CLAUDE.md            # Claude Code instructions
-# SOUL.md              # Igris persona identity (if brain-first)
+# CLAUDE.md               # Claude Code project instructions (generated from template)
+# .igris_version          # JSON marker recording the installed CLI version
+
+# Brain-side state (outside the project repo) lives under:
+# ~/.igris/projects/<slug>/
+# ├── session/            # Session tracking
+# ├── briefs/             # Local brief cache (briefs live in the brain DB)
+# ├── plans/              # Architect plans
+# └── context/            # Generated architecture docs (from /document)
 ```
 
 ### Check Brain Health (Brain-First Only)
@@ -290,7 +274,7 @@ sudo apt-get install sqlite3
 sqlite3 ~/.igris/memory/knowledge.db "PRAGMA integrity_check;"
 
 # If corrupted, re-initialize
-/path/to/igris-aigris init
+cd /path/to/igris-ai && igris init
 ```
 
 ### Issue: Symlinks broken after moving Igris AI repo
