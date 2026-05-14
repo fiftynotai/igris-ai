@@ -16,7 +16,7 @@ speed without structure is not engineering. it is chaos with better autocomplete
 
 ## claude writes. igris decides what gets written.
 
-igris orchestrates claude code. it is not the model. it is the workbench around it — the brief-protocol that gates every write, the brain that survives your context reset, the seven agents with tool restrictions that mean a planner cannot implement and a reviewer cannot fix.
+claude writes. igris decides what gets written, by whom, and whether it ships. it is hierarchical actor-critic with bounded iteration. metagpt split the roles. self-refine ran the loop. we did both, then made the brief a contract. it is not the model. it is the workbench around it — the brief-protocol that gates every write, the brain that survives your context reset, the seven agents with tool restrictions that mean a planner cannot implement and a reviewer cannot fix.
 
 every file modification routes through a brief. every brief routes through a plan. every plan routes through a role. nothing ships because the prompt sounded confident.
 
