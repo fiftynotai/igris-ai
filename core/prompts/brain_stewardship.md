@@ -141,7 +141,7 @@ Mapping common phrasings to the legal `category` enum:
 
 **Provenance defaults.** If you don't specify `provenance`, it defaults to `observed`. Use `human_asserted` only when the user explicitly told you the rule; use `inferred` when you derived it from code without confirmation; use `synthesized` when you combined multiple sources; use `ambiguous` only when you genuinely can't tell.
 
-**Scope guidance.** Default `scope=local`. Promote to `global` only when the same lesson applies across project archetypes (bash quoting, secret handling, generic algorithmic patterns). Cross-project promotion is normally automatic when the same memory is observed in 2+ projects (see `/distill`) — don't pre-promote out of optimism.
+**Scope guidance.** Default `scope=local`. Promote to `global` only when the same lesson applies across project archetypes (bash quoting, secret handling, generic algorithmic patterns). Cross-project promotion happens later when the same memory is observed in 2+ projects — don't pre-promote out of optimism.
 
 **Decision log mirror.** Architectural decisions stored as `category=decision` should also be mirrored to the project's `DECISIONS.md` log when one exists — the memory captures the lesson for future recall, the file gives reviewers an in-repo audit trail.
 
@@ -177,8 +177,6 @@ igris_memory_store({
   provenance: "observed"
 })
 ```
-
-See also `/distill` for end-of-session extraction across larger work.
 
 ## 2. Knowledge Graph (`igris_graph_*`)
 
