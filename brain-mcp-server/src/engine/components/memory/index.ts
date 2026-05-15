@@ -3,7 +3,10 @@
  *
  * Wraps the existing memory tool handlers as a BrainComponent.
  * Provides: igris_memory_store, igris_memory_search, igris_memory_recall,
- *           igris_pattern_suggest
+ *           igris_memory_get, igris_memory_hybrid_search,
+ *           igris_memory_backfill_embeddings,
+ *           igris_memory_update, igris_memory_delete, igris_memory_dashboard
+ *           (TD-171 M1), igris_pattern_suggest
  *
  * @module engine/components/memory
  * @author fifty.dev
@@ -23,6 +26,9 @@ import {
   handleMemoryGet,
   handleMemoryHybridSearch,
   handleMemoryBackfillEmbeddings,
+  handleMemoryUpdate,
+  handleMemoryDelete,
+  handleMemoryDashboard,
   handlePatternSuggest,
 } from '../../../tools/memory.js';
 import type {
@@ -32,6 +38,9 @@ import type {
   MemoryGetInput,
   HybridSearchInput,
   BackfillInput,
+  MemoryUpdateInput,
+  MemoryDeleteInput,
+  MemoryDashboardInput,
   PatternSuggestInput,
 } from '../../../tools/memory.js';
 
@@ -268,6 +277,110 @@ export function createMemoryComponent(): BrainComponent {
           },
           handler: (args) => handlePatternSuggest(args as unknown as PatternSuggestInput),
         },
+        // -------------------------------------------------------------------
+        // TD-171 M1 — update / delete / dashboard
+        // -------------------------------------------------------------------
+        {
+          name: 'igris_memory_update',
+          description: 'Update mutable fields of an existing learning (title, content, tags, category, scope, confidence). Bumps updated_at. Provenance, review_status, and source_extractor are intentionally immutable through this surface — _delete + _store afresh if you need to rewrite them.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              id: {
+                type: 'number',
+                description: 'Learning ID to update',
+              },
+              title: {
+                type: 'string',
+                description: 'Optional new title',
+              },
+              content: {
+                type: 'string',
+                description: 'Optional new content',
+              },
+              tags: {
+                type: 'string',
+                description: 'Optional comma-separated tags (replaces existing)',
+              },
+              category: {
+                type: 'string',
+                enum: ['pattern', 'decision', 'discovery', 'mistake', 'optimization'],
+                description: 'Optional new category',
+              },
+              scope: {
+                type: 'string',
+                enum: ['local', 'global'],
+                description: 'Optional new scope',
+              },
+              confidence: {
+                type: 'number',
+                description: 'Optional new confidence (0-1)',
+              },
+            },
+            required: ['id'],
+          },
+          handler: (args) => handleMemoryUpdate(args as unknown as MemoryUpdateInput),
+        },
+        {
+          name: 'igris_memory_delete',
+          description: 'Hard-delete a learning by ID and emit a memory.deleted bus event. Mirrors igris_perception_reject delete semantics. Use when a learning is provably wrong or duplicates a higher-quality entry; prefer igris_memory_update for fixable rows.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              id: {
+                type: 'number',
+                description: 'Learning ID to delete',
+              },
+              reason: {
+                type: 'string',
+                description: 'Optional human-readable reason for the audit log',
+              },
+            },
+            required: ['id'],
+          },
+          handler: async (args) => {
+            const result = handleMemoryDelete(args as unknown as MemoryDeleteInput);
+            // Only emit when the handler actually deleted (avoid emitting on
+            // validation errors / not-found). Look for the JSON marker in the
+            // text payload — same shape every successful delete returns.
+            const text = result.content[0]?.text ?? '';
+            if (text.includes('"deleted": true')) {
+              const id = (args as Record<string, unknown>).id;
+              const reason = (args as Record<string, unknown>).reason;
+              _ctx?.bus.emit('memory.deleted', {
+                id,
+                reason: typeof reason === 'string' ? reason : '',
+              });
+            }
+            return result;
+          },
+        },
+        {
+          name: 'igris_memory_dashboard',
+          description: 'Aggregate counts (by_category, by_scope, by_provenance, by_review_status) plus recent storage stats and top tags over the learnings table. CANONICAL _dashboard shape — TD-171 M2/M3/M4 mirror this structure. Honors summary_only to skip the samples array.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Optional project filter; omit for cross-project view',
+              },
+              summary_only: {
+                type: 'boolean',
+                description: 'Counts only, no samples. Default false.',
+              },
+              days: {
+                type: 'number',
+                description: 'Time window for "recent" stats (and top_tags). Default 30. Must be non-negative.',
+              },
+            },
+            required: [],
+          },
+          handler: (args) => handleMemoryDashboard(args as unknown as MemoryDashboardInput),
+        },
       ];
     },
 
@@ -276,6 +389,10 @@ export function createMemoryComponent(): BrainComponent {
         emits: [
           // Orphan: sync auto-push extension point — will be consumed when sync auto-push is implemented
           { name: 'memory.stored', description: 'A new learning was stored' },
+          // TD-171 M1: emitted by igris_memory_delete after a successful hard-DELETE.
+          // Payload: { id: number, reason: string }. Currently no in-process
+          // listener — same orphan extension-point pattern as memory.stored.
+          { name: 'memory.deleted', description: 'A learning was hard-deleted via igris_memory_delete' },
           // Note: promoteToGlobal() runs inline in handleMemoryStore and results are included in the response text. No separate event needed.
         ],
         listens: [],

@@ -105,6 +105,20 @@ Avoid redundant recalls within the same session over the same topic — once you
 
 **Category filter limitation (TD-093 follow-up):** `igris_memory_recall` does NOT currently accept a `category` parameter. To bias recall toward a specific category (e.g., `mistake`), include category-evocative keywords in the `context` query (e.g., `"... mistake regression bug"`). FTS5 ranking biases the match but does not strictly filter. If you need a hard filter, see TD-093.
 
+### When to Update
+
+Use `igris_memory_update` when an existing learning needs a title or content correction post-extraction (typo, wrong tag, sharper rationale). Pass the learning ID and at least one of the updatable fields: title, content, tags, category, scope, confidence. The handler bumps the row's update timestamp automatically and returns the list of fields actually changed.
+
+Do NOT update to flip provenance, review status, or source extractor — provenance is permanent (FR-107 audit trail), review status is owned by the perception lifecycle (`igris_perception_approve` / `_reject`), and source extractor records who originally produced the row. If any of those is genuinely wrong, `igris_memory_delete` + `igris_memory_store` afresh — the audit history loss is the price of the rewrite.
+
+### When to Delete
+
+Use `igris_memory_delete` when a stored learning is provably wrong (the rule it states is false) or duplicates a higher-quality entry. Prefer `igris_memory_update` for fixable entries — deletion is hard and irreversible (no soft-delete column on `learnings` today; FR-116 may add one). The delete emits a `memory.deleted` bus event so future audit-log subscribers can record the action; pass an optional `reason` arg to make that audit trail readable.
+
+### When to Inspect (Dashboard)
+
+Use `igris_memory_dashboard` with `summary_only: true` during `/scan` and `/awaken` to size the project's memory footprint without dumping content. Cross-reference `by_review_status.pending_review` against `igris_perception_dashboard` (TD-171 M3) to confirm the subconscious is healthy — large pending counts that aren't draining mean the approve loop is stalled. Default `days=30`; pass a smaller window when triaging "what landed today" and a larger one for quarterly health checks. The dashboard is unfiltered by review_status by design — you are sizing the full memory footprint, not just the conscious channel.
+
 ### How to Tag a Stored Memory
 
 `igris_memory_store` requires `project`, `category`, `title`, and `content`. The enums are strict — use them exactly:

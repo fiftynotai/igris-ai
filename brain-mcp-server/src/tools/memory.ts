@@ -12,6 +12,9 @@
  * - igris_memory_get: Fetch full content of a single learning by ID
  * - igris_memory_hybrid_search: RRF-fused BM25 + vector search
  * - igris_memory_backfill_embeddings: Batch-embed learnings missing embeddings
+ * - igris_memory_update: Edit fields of an existing learning (TD-171 M1)
+ * - igris_memory_delete: Hard-DELETE a learning + emit bus event (TD-171 M1)
+ * - igris_memory_dashboard: Aggregate counts + recent stats (TD-171 M1; canonical _dashboard shape)
  * - igris_pattern_suggest: Suggest relevant patterns for current context
  *
  * Internal functions:
@@ -1254,6 +1257,417 @@ function promoteToGlobal(): number {
   return promotedCount;
 }
 
+// ---------------------------------------------------------------------------
+// TD-171 M1 — igris_memory_update / igris_memory_delete / igris_memory_dashboard
+// ---------------------------------------------------------------------------
+//
+// Three new tools added in TD-171 M1 against the existing learnings table.
+// No schema migration is needed: the `updated_at` column has been part of
+// the `learnings` table since db.ts v1 and is already declared in
+// `SYNC_TABLES.learnings.columns` (`tools/sync.ts`). The component-level
+// `memory/schema.ts` is intentionally NOT created — per L-142 we only add
+// per-component schema files when there is a real migration to own.
+//
+// Dashboard output shape is the CANONICAL `_dashboard` shape that TD-171
+// M2 (graph), M3 (project/perception/error), and M4 (goal/metrics) MUST
+// mirror. Layout:
+//   { totals: { total, by_<dimension>: { ... } },
+//     recent: { last_n_days, stored, top_tags },
+//     samples: [...] (omitted when summary_only=true)
+//   }
+//
+// `_update` and `_delete` use parameterized queries throughout (security §7
+// of coding_guidelines). Provenance is intentionally NOT updatable — flipping
+// provenance after extraction breaks the audit trail (FR-107). Callers wanting
+// to "fix" a wrong provenance must `_delete` and `_store` afresh.
+
+/** Input shape for igris_memory_update */
+interface MemoryUpdateInput {
+  id: number;
+  title?: string;
+  content?: string;
+  tags?: string;
+  category?: 'pattern' | 'decision' | 'discovery' | 'mistake' | 'optimization';
+  scope?: 'local' | 'global';
+  confidence?: number;
+}
+
+/** Input shape for igris_memory_delete */
+interface MemoryDeleteInput {
+  id: number;
+  reason?: string;
+}
+
+/** Input shape for igris_memory_dashboard */
+interface MemoryDashboardInput {
+  project?: string;
+  summary_only?: boolean;
+  days?: number;
+}
+
+/**
+ * Update mutable fields of an existing learning (TD-171 M1).
+ *
+ * Only the fields listed in `MemoryUpdateInput` are updatable: title,
+ * content, tags, category, scope, confidence. Provenance, review_status,
+ * source_extractor, source_brief, project, tech_stack, created_at,
+ * access_count, last_accessed_at, embedding, embedding_model,
+ * seen_again_count, and last_seen_at are immutable through this surface
+ * by design — they are either audit fields, lifecycle fields owned by
+ * other tools (e.g. perception_approve flips review_status), or
+ * derived telemetry. Callers wanting to "rewrite history" of any of
+ * those fields must `_delete` + `_store` afresh.
+ *
+ * Bumps `updated_at` to the current ISO timestamp on every successful
+ * update. `_update` is idempotent in the sense that updating with no
+ * fields beyond `id` is a no-op error (caller passed a stub).
+ *
+ * Returns a JSON payload `{ id, updated_fields: [...], updated_at }` so
+ * callers can confirm exactly which fields changed.
+ *
+ * @param args - The learning ID + optional new field values
+ * @returns MCP-formatted response with the update summary
+ */
+function handleMemoryUpdate(args: MemoryUpdateInput): { content: { type: string; text: string }[] } {
+  // Validate id
+  if (typeof args.id !== 'number' || !Number.isInteger(args.id) || args.id <= 0) {
+    return { content: [{ type: 'text', text: 'Validation error: id must be a positive integer.' }] };
+  }
+
+  // Validate enum-typed fields when present
+  if (args.category !== undefined && !VALID_CATEGORIES.includes(args.category)) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Validation error: category must be one of ${VALID_CATEGORIES.join(', ')}.`,
+      }],
+    };
+  }
+  if (args.scope !== undefined && args.scope !== 'local' && args.scope !== 'global') {
+    return {
+      content: [{ type: 'text', text: 'Validation error: scope must be "local" or "global".' }],
+    };
+  }
+  if (args.confidence !== undefined) {
+    if (typeof args.confidence !== 'number' || args.confidence < 0 || args.confidence > 1) {
+      return {
+        content: [{ type: 'text', text: 'Validation error: confidence must be a number between 0 and 1.' }],
+      };
+    }
+  }
+  if (args.title !== undefined && (args.title.length === 0 || args.title.length > MAX_TITLE_LENGTH)) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Validation error: title must be 1-${MAX_TITLE_LENGTH} characters.`,
+      }],
+    };
+  }
+  if (args.content !== undefined && (args.content.length === 0 || args.content.length > MAX_CONTENT_LENGTH)) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Validation error: content must be 1-${MAX_CONTENT_LENGTH} characters (1 MB max).`,
+      }],
+    };
+  }
+
+  const db = getDb();
+
+  // Verify the row exists before any UPDATE (so the caller gets a clear
+  // "not found" instead of a silent zero-rows-changed).
+  const existing = db
+    .prepare('SELECT id FROM learnings WHERE id = ?')
+    .get(args.id) as { id: number } | undefined;
+  if (!existing) {
+    return { content: [{ type: 'text', text: `Learning with ID ${args.id} not found.` }] };
+  }
+
+  // Build dynamic SET clause. Only set fields the caller explicitly passed.
+  const setClauses: string[] = [];
+  const params: unknown[] = [];
+  const updatedFields: string[] = [];
+
+  if (args.title !== undefined) {
+    setClauses.push('title = ?');
+    params.push(args.title);
+    updatedFields.push('title');
+  }
+  if (args.content !== undefined) {
+    setClauses.push('content = ?');
+    params.push(args.content);
+    updatedFields.push('content');
+  }
+  if (args.tags !== undefined) {
+    setClauses.push('tags = ?');
+    params.push(args.tags);
+    updatedFields.push('tags');
+  }
+  if (args.category !== undefined) {
+    setClauses.push('category = ?');
+    params.push(args.category);
+    updatedFields.push('category');
+  }
+  if (args.scope !== undefined) {
+    setClauses.push('scope = ?');
+    params.push(args.scope);
+    updatedFields.push('scope');
+  }
+  if (args.confidence !== undefined) {
+    setClauses.push('confidence = ?');
+    params.push(args.confidence);
+    updatedFields.push('confidence');
+  }
+
+  if (setClauses.length === 0) {
+    return {
+      content: [{
+        type: 'text',
+        text: 'Validation error: no updatable fields provided. At least one of title/content/tags/category/scope/confidence must be set.',
+      }],
+    };
+  }
+
+  // Always bump updated_at to a fresh ISO timestamp. Using ISO 8601 (UTC)
+  // for cross-machine consistency in sync_state — `created_at` defaults to
+  // SQLite's `datetime('now')` which is also UTC, so the formats stay
+  // comparable for LWW resolution.
+  const updatedAt = new Date().toISOString();
+  setClauses.push('updated_at = ?');
+  params.push(updatedAt);
+
+  // Final param: the WHERE id
+  params.push(args.id);
+
+  const sql = `UPDATE learnings SET ${setClauses.join(', ')} WHERE id = ?`;
+  db.prepare(sql).run(...params);
+
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({ id: args.id, updated_fields: updatedFields, updated_at: updatedAt }, null, 2),
+    }],
+  };
+}
+
+/**
+ * Hard-delete a learning by ID (TD-171 M1).
+ *
+ * Mirrors `igris_perception_reject`'s hard-DELETE semantics — there is no
+ * soft-delete column on `learnings` (FR-116 may add one in the future; if
+ * it does, this handler should switch to UPDATE rather than DELETE). The
+ * delete cascades to:
+ *   - `learnings_fts` (via the kept `learnings_ad` AFTER DELETE trigger).
+ *   - `learnings_vec` (NOT cascaded — the `learnings_vec_ad` trigger was
+ *     dropped in TD-098 because sqlite-vec rejects writes to vec0 virtual
+ *     tables from inside trigger context under `PRAGMA trusted_schema = OFF`).
+ *     Vec orphans are tolerable here: the `igris_memory_recall` and
+ *     `_hybrid_search` paths re-hydrate from `learnings` and discard any
+ *     vec hit whose `learnings.id` doesn't resolve. A future janitor pass
+ *     can reap orphans if they accumulate. We do NOT mirror perception's
+ *     transactional vec cleanup here because conscious-channel deletes are
+ *     rare (a manual operator decision) — the complexity-vs-orphan trade
+ *     favours the simpler path.
+ *
+ * Emits a `memory.deleted` bus event (wired in `engine/components/memory/index.ts`)
+ * so future subscribers (e.g., a sync auto-push or audit log) can react.
+ * Deletion is unconditional — we do NOT refuse to delete approved or
+ * pending_review learnings; the operator decision-trigger entry in
+ * brain_stewardship.md is the gate.
+ *
+ * Returns `{ deleted: true, id, reason }` JSON.
+ *
+ * @param args - The learning ID and optional reason for the audit log
+ * @returns MCP-formatted response with the deletion summary
+ */
+function handleMemoryDelete(args: MemoryDeleteInput): { content: { type: string; text: string }[] } {
+  if (typeof args.id !== 'number' || !Number.isInteger(args.id) || args.id <= 0) {
+    return { content: [{ type: 'text', text: 'Validation error: id must be a positive integer.' }] };
+  }
+
+  const db = getDb();
+
+  const existing = db
+    .prepare('SELECT id, title FROM learnings WHERE id = ?')
+    .get(args.id) as { id: number; title: string } | undefined;
+  if (!existing) {
+    return { content: [{ type: 'text', text: `Learning with ID ${args.id} not found.` }] };
+  }
+
+  db.prepare('DELETE FROM learnings WHERE id = ?').run(args.id);
+
+  const reason = typeof args.reason === 'string' ? args.reason : '';
+
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({ deleted: true, id: args.id, title: existing.title, reason }, null, 2),
+    }],
+  };
+}
+
+/**
+ * Aggregate counts + recent stats over the learnings table (TD-171 M1).
+ *
+ * CANONICAL `_dashboard` shape — TD-171 M2/M3/M4 dashboards MUST mirror this
+ * structure. Output:
+ *   {
+ *     totals: {
+ *       total: N,
+ *       by_category: { pattern: N, decision: N, ... },
+ *       by_scope: { local: N, global: N },
+ *       by_provenance: { observed: N, inferred: N, synthesized: N, ambiguous: N, human_asserted: N },
+ *       by_review_status: { pending_review: N, approved: N }
+ *     },
+ *     recent: {
+ *       last_n_days: <days>,
+ *       stored: N,
+ *       top_tags: [{ tag, count }, ...]
+ *     },
+ *     samples: [{ id, title, category, scope, created_at }, ...]   // omitted when summary_only=true
+ *   }
+ *
+ * `pending_review` rows ARE memory data and DO appear in `by_review_status`
+ * — they are the same `learnings` table, just gated from default recall.
+ * `_dashboard` is unfiltered by review_status by design (you are sizing the
+ * full memory footprint, not just the conscious channel). Per L-152 framing,
+ * perception-engine-specific stats (run outcomes, dedup rediscoveries) are
+ * NOT included here — those belong in M3's `igris_perception_dashboard`.
+ *
+ * Optional filters:
+ *   - `project`: scope all aggregations (totals + recent + samples) to a
+ *     single project. Omitted = cross-project.
+ *   - `days`: window for `recent.stored` and top-tags. Default 30. Must be
+ *     a non-negative number; 0 = "today only".
+ *   - `summary_only`: when true, omit the `samples` array. Counts are still
+ *     fully computed.
+ *
+ * @param args - Optional filters
+ * @returns MCP-formatted response with the dashboard JSON
+ */
+function handleMemoryDashboard(args: MemoryDashboardInput): { content: { type: string; text: string }[] } {
+  const days = args.days !== undefined ? Number(args.days) : 30;
+  if (!Number.isFinite(days) || days < 0) {
+    return { content: [{ type: 'text', text: 'Validation error: days must be a non-negative number.' }] };
+  }
+  const summaryOnly = args.summary_only === true;
+  const projectFilter = typeof args.project === 'string' && args.project.length > 0 ? args.project : null;
+
+  const db = getDb();
+
+  // Build a project-filter fragment we can splice into each aggregation.
+  // Parameterized — no string interpolation of project name.
+  const projectWhere = projectFilter ? 'WHERE project = ?' : '';
+  const projectParams: string[] = projectFilter ? [projectFilter] : [];
+
+  // --- totals.total ---
+  const totalRow = db
+    .prepare(`SELECT COUNT(*) AS n FROM learnings ${projectWhere}`)
+    .get(...projectParams) as { n: number };
+
+  // --- totals.by_category ---
+  const categoryRows = db
+    .prepare(`SELECT category, COUNT(*) AS n FROM learnings ${projectWhere} GROUP BY category`)
+    .all(...projectParams) as { category: string; n: number }[];
+  const byCategory: Record<string, number> = {};
+  for (const c of VALID_CATEGORIES) byCategory[c] = 0;
+  for (const r of categoryRows) byCategory[r.category] = r.n;
+
+  // --- totals.by_scope ---
+  const scopeRows = db
+    .prepare(`SELECT scope, COUNT(*) AS n FROM learnings ${projectWhere} GROUP BY scope`)
+    .all(...projectParams) as { scope: string; n: number }[];
+  const byScope: Record<string, number> = { local: 0, global: 0 };
+  for (const r of scopeRows) byScope[r.scope] = r.n;
+
+  // --- totals.by_provenance ---
+  const provRows = db
+    .prepare(`SELECT provenance, COUNT(*) AS n FROM learnings ${projectWhere} GROUP BY provenance`)
+    .all(...projectParams) as { provenance: string; n: number }[];
+  const byProvenance: Record<string, number> = {};
+  for (const p of VALID_LEARNING_PROVENANCE) byProvenance[p] = 0;
+  for (const r of provRows) byProvenance[r.provenance] = r.n;
+
+  // --- totals.by_review_status ---
+  const reviewRows = db
+    .prepare(`SELECT review_status, COUNT(*) AS n FROM learnings ${projectWhere} GROUP BY review_status`)
+    .all(...projectParams) as { review_status: string; n: number }[];
+  const byReviewStatus: Record<string, number> = { pending_review: 0, approved: 0 };
+  for (const r of reviewRows) byReviewStatus[r.review_status] = r.n;
+
+  // --- recent.stored (last `days` window) ---
+  // SQLite `datetime('now', '-N days')` honours fractional days. `days = 0`
+  // resolves to "now" so the window is empty — useful for an "any rows
+  // logged today only" sanity probe (rows with created_at >= now() are
+  // future-dated and shouldn't exist).
+  const recentSql = projectFilter
+    ? `SELECT COUNT(*) AS n FROM learnings WHERE project = ? AND created_at >= datetime('now', ?)`
+    : `SELECT COUNT(*) AS n FROM learnings WHERE created_at >= datetime('now', ?)`;
+  const recentParams: (string | number)[] = projectFilter
+    ? [projectFilter, `-${days} days`]
+    : [`-${days} days`];
+  const recentRow = db.prepare(recentSql).get(...recentParams) as { n: number };
+
+  // --- recent.top_tags ---
+  // Tags are stored as a single comma-separated string. We split in TS
+  // rather than relying on a SQLite extension. Cap the scan to reasonable
+  // size to keep the dashboard fast on large DBs (project filter applies).
+  const tagSql = projectFilter
+    ? `SELECT tags FROM learnings WHERE project = ? AND created_at >= datetime('now', ?) AND tags IS NOT NULL AND tags <> ''`
+    : `SELECT tags FROM learnings WHERE created_at >= datetime('now', ?) AND tags IS NOT NULL AND tags <> ''`;
+  const tagParams: (string | number)[] = projectFilter
+    ? [projectFilter, `-${days} days`]
+    : [`-${days} days`];
+  const tagRows = db.prepare(tagSql).all(...tagParams) as { tags: string }[];
+  const tagCounts = new Map<string, number>();
+  for (const r of tagRows) {
+    const split = r.tags.split(',').map((t) => t.trim()).filter((t) => t.length > 0);
+    for (const t of split) {
+      tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
+    }
+  }
+  const topTags = [...tagCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([tag, count]) => ({ tag, count }));
+
+  // --- samples (omitted when summary_only) ---
+  let samples: Record<string, unknown>[] = [];
+  if (!summaryOnly) {
+    const sampleSql = projectFilter
+      ? `SELECT id, project, title, category, scope, provenance, review_status, created_at
+         FROM learnings WHERE project = ? ORDER BY created_at DESC LIMIT 20`
+      : `SELECT id, project, title, category, scope, provenance, review_status, created_at
+         FROM learnings ORDER BY created_at DESC LIMIT 20`;
+    samples = db.prepare(sampleSql).all(...projectParams) as Record<string, unknown>[];
+  }
+
+  const result: Record<string, unknown> = {
+    totals: {
+      total: totalRow.n,
+      by_category: byCategory,
+      by_scope: byScope,
+      by_provenance: byProvenance,
+      by_review_status: byReviewStatus,
+    },
+    recent: {
+      last_n_days: days,
+      stored: recentRow.n,
+      top_tags: topTags,
+    },
+  };
+  if (!summaryOnly) {
+    result.samples = samples;
+  }
+  if (projectFilter) {
+    result.project = projectFilter;
+  }
+
+  return {
+    content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+  };
+}
+
 export {
   handleMemoryStore,
   handleMemorySearch,
@@ -1261,6 +1675,9 @@ export {
   handleMemoryGet,
   handleMemoryHybridSearch,
   handleMemoryBackfillEmbeddings,
+  handleMemoryUpdate,
+  handleMemoryDelete,
+  handleMemoryDashboard,
   handlePatternSuggest,
   promoteToGlobal,
   wordJaccardSimilarity,
@@ -1273,5 +1690,8 @@ export type {
   MemoryGetInput,
   HybridSearchInput,
   BackfillInput,
+  MemoryUpdateInput,
+  MemoryDeleteInput,
+  MemoryDashboardInput,
   PatternSuggestInput,
 };
