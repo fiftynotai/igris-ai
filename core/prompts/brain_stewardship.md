@@ -168,8 +168,9 @@ See also `/distill` for end-of-session extraction across larger work.
 
 ## 2. Knowledge Graph (`igris_graph_*`)
 
-**Tools:** `igris_graph_node_create`, `igris_graph_node_get`, `igris_graph_edge_create`,
-`igris_graph_traverse`, `igris_graph_search`, `igris_graph_dashboard`.
+**Tools:** `igris_graph_node_create`, `igris_graph_node_get`,
+`igris_edge_create`, `igris_graph_neighbors`, `igris_graph_path`,
+`igris_graph_subgraph`, `igris_graph_search`, `igris_graph_dashboard`.
 
 **What's there:** typed nodes (concepts, projects, briefs, decisions) and
 edges (relates-to, supersedes, blocks, derived-from). The graph captures
@@ -178,8 +179,10 @@ dependency trees between briefs, lineage of decisions.
 
 ### When to call
 
-- Before proposing a refactor: `igris_graph_traverse` from the affected
-  module/concept node to surface dependents and prior decisions.
+- Before proposing a refactor: `igris_graph_neighbors` from the affected
+  module/concept node (depth: 2, direction: 'in') to surface dependents
+  and prior decisions. Use `igris_graph_path` for shortest-path between two
+  known nodes and `igris_graph_subgraph` for the connected component.
 - When the user asks "why did we change X to Y?" — `igris_graph_search` the
   concept node and walk `supersedes` edges.
 - When stitching together a broader context for an architect prompt — the
@@ -189,15 +192,19 @@ dependency trees between briefs, lineage of decisions.
 
 ```jsonc
 igris_graph_search({ query: "memory_agency rename", limit: 5 })
-igris_graph_traverse({ node_id: 142, edge_types: ["supersedes", "derived-from"], depth: 2 })
+igris_graph_neighbors({ node_type: "concept", node_id: "concept:142", edge_types: ["supersedes", "derived_from"], depth: 2 })
 ```
 
 ## 3. Briefs (`igris_brief_*`)
 
 **Tools:** `igris_brief_create`, `igris_brief_get`, `igris_brief_list`,
-`igris_brief_update`, `igris_brief_search`, `igris_brief_similar`,
-`igris_brief_sync`, `igris_brief_dashboard`, `igris_brief_velocity`,
-`igris_brief_archive`.
+`igris_brief_update`, `igris_brief_similar`, `igris_brief_sync`,
+`igris_brief_dashboard`, `igris_brief_velocity`.
+
+Archival is a status transition: call `igris_brief_update` with
+`status: 'Archived'` rather than reaching for a separate archive tool.
+Hybrid search lives on `igris_brief_similar` (vector + FTS) — there is no
+separate `_search` tool.
 
 **What's there:** every BR/FR/TD/MG/PR/RE/IN brief — current state, history,
 phase, agent log, similarity vectors. Source of truth post-v5 (filesystem
@@ -228,7 +235,7 @@ igris_brief_dashboard({ project: "igris-ai", summary_only: true })
 
 ## 4. Errors (`igris_error_*`)
 
-**Tools:** `igris_error_lookup`, `igris_error_store`, `igris_error_dashboard`.
+**Tools:** `igris_error_lookup`, `igris_error_dashboard`.
 
 **What's there:** error fingerprints (file-path/line-number-agnostic) mapped
 to known root causes and solutions. Built up over time from mender's diagnoses.
@@ -239,8 +246,9 @@ to known root causes and solutions. Built up over time from mender's diagnoses.
   parsing. A fingerprint match short-circuits the entire diagnosis loop.
 - When the same stack trace surfaces twice in a session: stop guessing,
   look it up.
-- After a hard-won fix: `igris_error_store` with the canonical message and
-  the resolution so the next agent doesn't relearn it.
+- After a hard-won fix: call `igris_error_lookup` with the canonical message
+  AND a `solution` arg — the same handler upserts when `solution` is present,
+  so the next agent doesn't relearn it.
 
 ### Example invocation
 
@@ -253,15 +261,15 @@ igris_error_lookup({
 
 ## 5. Registry (`igris_project_*`)
 
-**Tools:** `igris_project_register`, `igris_project_list`, `igris_project_get`,
-`igris_project_update`, `igris_project_dashboard`.
+**Tools:** `igris_project_register`, `igris_project_list`,
+`igris_project_status`, `igris_project_update`.
 
 **What's there:** all registered Igris projects — slug, path, tech stack,
 archetype, status, last session. Drives the affinity boosts in recall.
 
 ### When to call
 
-- Before a cross-project recommendation: `igris_project_get` the target to
+- Before a cross-project recommendation: `igris_project_status` the target to
   verify tech stack and archetype match before suggesting reuse.
 - When onboarding a new project: `igris_project_register` so its briefs and
   learnings can participate in cross-project recall and promotion.
@@ -270,13 +278,14 @@ archetype, status, last session. Drives the affinity boosts in recall.
 ### Example invocation
 
 ```jsonc
-igris_project_get({ slug: "fifty-flutter-kit" })
+igris_project_status({ slug: "fifty-flutter-kit" })
 ```
 
 ## 6. Subconscious (`igris_perception_*`)
 
-**Tools:** `igris_perception_list`, `igris_perception_get`,
-`igris_perception_review`, `igris_perception_dashboard`.
+**Tools:** `igris_perception_review_pending`, `igris_perception_get`,
+`igris_perception_approve`, `igris_perception_reject`,
+`igris_perception_dashboard`.
 
 **What's there:** background-extracted perception records — pending-review
 learnings the subconscious extractor surfaced from session events. Not yet
@@ -288,13 +297,13 @@ promoted to the conscious learnings channel.
   for triage.
 - Before storing a similar new learning manually: check if the subconscious
   already has a draft of it (avoid double-entry).
-- After a long session: `igris_perception_review` to approve/reject
-  candidates so they migrate to the conscious channel.
+- After a long session: `igris_perception_approve` / `igris_perception_reject`
+  to migrate candidates to the conscious channel.
 
 ### Example invocation
 
 ```jsonc
-igris_perception_list({ project: "igris-ai", status: "pending_review", limit: 10 })
+igris_perception_review_pending({ project: "igris-ai", limit: 10 })
 ```
 
 ## 7. Goals (`igris_goal_*`)
@@ -320,10 +329,10 @@ to become over weeks/months, distinct from per-brief tactical work.
 igris_goal_list({ project: "igris-ai", status: "active" })
 ```
 
-## 8. Metrics (`igris_metric_*`, velocity)
+## 8. Metrics (`igris_metrics_*`)
 
-**Tools:** `igris_metric_record`, `igris_metric_query`, `igris_metric_dashboard`,
-`igris_brief_velocity` (cross-listed under briefs but metric-flavored).
+**Tools:** `igris_metrics_record`, `igris_metrics_query`,
+`igris_metrics_dashboard`, `igris_metrics_velocity`.
 
 **What's there:** time-series of agent invocations, token spend, brief
 throughput, error rates. Source for agent activity dashboards.
@@ -339,8 +348,8 @@ throughput, error rates. Source for agent activity dashboards.
 ### Example invocation
 
 ```jsonc
-igris_brief_velocity({ project: "igris-ai", days: 30 })
-igris_metric_query({ project: "igris-ai", metric: "agent_duration_seconds", agent: "forger", days: 7 })
+igris_metrics_velocity({ project: "igris-ai", days: 30 })
+igris_metrics_query({ project: "igris-ai", metric: "agent_duration_seconds", agent: "forger", days: 7 })
 ```
 
 <!-- /SECTION: brain_stewardship -->
