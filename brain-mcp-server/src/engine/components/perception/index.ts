@@ -33,8 +33,10 @@ import {
 } from './types.js';
 import {
   handlePerceptionApprove,
+  handlePerceptionDashboard,
   handlePerceptionExpireStale,
   handlePerceptionExtractNow,
+  handlePerceptionGet,
   handlePerceptionReject,
   handlePerceptionReviewPending,
   handlePerceptionSubmit,
@@ -248,6 +250,55 @@ export function createPerceptionComponent(): BrainComponent {
             required: ['project'],
           },
           handler: (args) => handlePerceptionExtractNow(args),
+        },
+
+        // -------------------------------------------------------------------
+        // TD-171 M3 — igris_perception_get
+        // -------------------------------------------------------------------
+        {
+          name: 'igris_perception_get',
+          description:
+            'Return the full row of a single pending_review learning. Use this when igris_perception_review_pending shows truncated content and you need the full candidate before approve/reject. Errors on approved/non-existent rows.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              learning_id: {
+                type: 'integer',
+                description: 'ID of the pending_review learning to fetch.',
+              },
+            },
+            required: ['learning_id'],
+          },
+          handler: (args) => handlePerceptionGet(args),
+        },
+
+        // -------------------------------------------------------------------
+        // TD-171 M3 — igris_perception_dashboard
+        // -------------------------------------------------------------------
+        {
+          name: 'igris_perception_dashboard',
+          description:
+            'Aggregate dashboard for the perception channel. Reports inbox size (pending), recent approve/reject volume, run outcomes (succeeded/failed/skipped) from event_log, and dedup rediscovery counts. Per L-152 strictly perception scope — no subconscious or janitor concerns.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Optional project filter — narrows totals AND recent windows.',
+              },
+              days: {
+                type: 'number',
+                description: 'Time window for recent and *_last_n totals. Default 30.',
+              },
+              summary_only: {
+                type: 'boolean',
+                description: 'Counts only — omit samples.top_extractors. Default false.',
+              },
+            },
+          },
+          handler: (args) => handlePerceptionDashboard(args),
         },
 
         // -------------------------------------------------------------------

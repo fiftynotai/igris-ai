@@ -772,6 +772,266 @@ export function handlePerceptionExpireStale(args: Record<string, unknown>): Tool
 }
 
 // ---------------------------------------------------------------------------
+// igris_perception_get (TD-171 M3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the full row of one `pending_review` learning.
+ *
+ * Companion to `igris_perception_review_pending`, which returns a list with
+ * truncated content. Use this when the operator needs to see the full
+ * candidate before approve/reject. Approved or absent rows return an
+ * error — the perception channel scope ends at promotion.
+ */
+export function handlePerceptionGet(args: Record<string, unknown>): ToolResult {
+  const idRaw = args.learning_id;
+  if (idRaw === undefined || idRaw === null) {
+    return errorResult('learning_id is required');
+  }
+  const id = Number(idRaw);
+  if (!Number.isInteger(id) || id <= 0) {
+    return errorResult('learning_id must be a positive integer');
+  }
+
+  const db = getDb();
+  const row = db
+    .prepare(
+      `SELECT id, project, category, title, content, tags, tech_stack,
+              source_brief, confidence, created_at, provenance,
+              review_status, source_extractor
+       FROM learnings
+       WHERE id = ? AND review_status = 'pending_review'`,
+    )
+    .get(id) as Record<string, unknown> | undefined;
+
+  if (!row) {
+    return errorResult(
+      `Learning ${id} not found or not in pending_review state. ` +
+        `Use igris_memory_get for non-pending learnings.`,
+    );
+  }
+
+  return successResult(JSON.stringify(row, null, 2));
+}
+
+// ---------------------------------------------------------------------------
+// igris_perception_dashboard (TD-171 M3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Aggregate dashboard for the perception channel.
+ *
+ * Per L-152, this dashboard is strictly perception-engine concerns —
+ * subconscious detector stats and janitor metrics belong elsewhere.
+ *
+ * Mirrors the canonical TD-171 `_dashboard` shape established by M1's
+ * `handleMemoryDashboard` and M2's `handleGraphDashboard`:
+ *
+ *   {
+ *     totals: { pending: N, approved_last_n: N, rejected_last_n: N },
+ *     recent: {
+ *       last_n_days: 30,
+ *       run_outcomes: { succeeded, failed, skipped },
+ *       dedup_rediscoveries: N,
+ *     },
+ *     samples: { top_extractors: [...] },         // omitted when summary_only
+ *     project?: 'foo',                            // echoed when filter set
+ *   }
+ *
+ * Filter semantics:
+ *   - `project`: scopes both totals and recent windows.
+ *   - `days`: window for `recent.*` and the `*_last_n` totals. Default 30.
+ *   - `summary_only`: omits the `samples.top_extractors` block (counts
+ *     are still computed).
+ *
+ * Reject is a hard DELETE today, so `rejected_last_n` is sourced from
+ * the `perception.candidate_rejected` event_log rows rather than a
+ * `learnings WHERE review_status='rejected'` query (which would always
+ * return 0 in TD-086 v1). FR-116 may add soft-delete; if so, swap this
+ * to read from `learnings` directly.
+ */
+export function handlePerceptionDashboard(args: Record<string, unknown>): ToolResult {
+  const days = args.days !== undefined ? Number(args.days) : 30;
+  if (!Number.isFinite(days) || days < 0) {
+    return errorResult('days must be a non-negative number');
+  }
+  const summaryOnly = args.summary_only === true;
+  const projectFilter =
+    typeof args.project === 'string' && args.project.length > 0 ? args.project : null;
+
+  const db = getDb();
+
+  // --- totals.pending ---
+  // pending_review subset of learnings (perception channel inbox).
+  // Note: do NOT apply the TTL filter here — this is the operator's
+  // raw inbox count, including stale rows that the lazy-on-read filter
+  // would hide. /scan wants to see "everything queued" not "everything
+  // queued AND fresh".
+  const pendingSql = projectFilter
+    ? `SELECT COUNT(*) AS n FROM learnings
+       WHERE review_status = 'pending_review' AND project = ?`
+    : `SELECT COUNT(*) AS n FROM learnings WHERE review_status = 'pending_review'`;
+  const pendingParams: unknown[] = projectFilter ? [projectFilter] : [];
+  const pendingRow = db.prepare(pendingSql).get(...pendingParams) as { n: number };
+
+  // --- totals.approved_last_n ---
+  // Approved rows live as learnings.review_status='approved'. There is no
+  // "approved_at" column today; use created_at as a proxy. Acceptable
+  // because perception candidates are ingested fresh and approval-vs-
+  // creation is generally <days apart in practice.
+  const approvedSql = projectFilter
+    ? `SELECT COUNT(*) AS n FROM learnings
+       WHERE review_status = 'approved'
+         AND provenance = 'inferred'
+         AND project = ?
+         AND created_at >= datetime('now', ?)`
+    : `SELECT COUNT(*) AS n FROM learnings
+       WHERE review_status = 'approved'
+         AND provenance = 'inferred'
+         AND created_at >= datetime('now', ?)`;
+  const approvedParams: unknown[] = projectFilter
+    ? [projectFilter, `-${days} days`]
+    : [`-${days} days`];
+  const approvedRow = db.prepare(approvedSql).get(...approvedParams) as { n: number };
+
+  // --- totals.rejected_last_n ---
+  // Reject is a hard DELETE in TD-086 v1. Source from event_log rows
+  // emitted by handlePerceptionReject. Per L-152, scope this to
+  // perception.candidate_rejected events only.
+  let rejectedCount = 0;
+  try {
+    const rejectedSql = projectFilter
+      ? `SELECT COUNT(*) AS n FROM event_log
+         WHERE event_name = 'perception.candidate_rejected'
+           AND project_slug = ?
+           AND created_at >= datetime('now', ?)`
+      : `SELECT COUNT(*) AS n FROM event_log
+         WHERE event_name = 'perception.candidate_rejected'
+           AND created_at >= datetime('now', ?)`;
+    const rejectedParams: unknown[] = projectFilter
+      ? [projectFilter, `-${days} days`]
+      : [`-${days} days`];
+    const r = db.prepare(rejectedSql).get(...rejectedParams) as { n: number };
+    rejectedCount = r.n;
+  } catch {
+    rejectedCount = 0;
+  }
+
+  // --- recent.run_outcomes (last `days` window) ---
+  // run_started/run_succeeded/run_failed/run_skipped per perception/runner.ts.
+  // Project filter: event_log.project_slug. Some run_started rows may not
+  // carry project_slug (depending on writePerceptionEvent payload). Best-
+  // effort filter: rows with NULL project_slug are excluded when filter
+  // is set.
+  const runOutcomes: { succeeded: number; failed: number; skipped: number } = {
+    succeeded: 0,
+    failed: 0,
+    skipped: 0,
+  };
+  try {
+    const outcomeSql = projectFilter
+      ? `SELECT event_name, COUNT(*) AS n FROM event_log
+         WHERE event_name IN (
+           'perception.run_succeeded', 'perception.run_failed', 'perception.run_skipped'
+         )
+           AND project_slug = ?
+           AND created_at >= datetime('now', ?)
+         GROUP BY event_name`
+      : `SELECT event_name, COUNT(*) AS n FROM event_log
+         WHERE event_name IN (
+           'perception.run_succeeded', 'perception.run_failed', 'perception.run_skipped'
+         )
+           AND created_at >= datetime('now', ?)
+         GROUP BY event_name`;
+    const outcomeParams: unknown[] = projectFilter
+      ? [projectFilter, `-${days} days`]
+      : [`-${days} days`];
+    const rows = db.prepare(outcomeSql).all(...outcomeParams) as {
+      event_name: string;
+      n: number;
+    }[];
+    for (const r of rows) {
+      if (r.event_name === 'perception.run_succeeded') runOutcomes.succeeded = r.n;
+      else if (r.event_name === 'perception.run_failed') runOutcomes.failed = r.n;
+      else if (r.event_name === 'perception.run_skipped') runOutcomes.skipped = r.n;
+    }
+  } catch {
+    // event_log table absent — leave at zero.
+  }
+
+  // --- recent.dedup_rediscoveries ---
+  let dedupCount = 0;
+  try {
+    const dedupSql = projectFilter
+      ? `SELECT COUNT(*) AS n FROM event_log
+         WHERE event_name = 'perception.rediscovery'
+           AND project_slug = ?
+           AND created_at >= datetime('now', ?)`
+      : `SELECT COUNT(*) AS n FROM event_log
+         WHERE event_name = 'perception.rediscovery'
+           AND created_at >= datetime('now', ?)`;
+    const dedupParams: unknown[] = projectFilter
+      ? [projectFilter, `-${days} days`]
+      : [`-${days} days`];
+    const r = db.prepare(dedupSql).get(...dedupParams) as { n: number };
+    dedupCount = r.n;
+  } catch {
+    dedupCount = 0;
+  }
+
+  // --- samples.top_extractors (omitted when summary_only) ---
+  // Group pending_review + recent-approved rows by source_extractor.
+  // Helps operator spot extractor health imbalances ("LLM extractor
+  // produced 90% of approvals; manual is dormant" or vice versa).
+  let samples: Record<string, unknown> | undefined;
+  if (!summaryOnly) {
+    const extractorSql = projectFilter
+      ? `SELECT source_extractor, COUNT(*) AS n FROM learnings
+         WHERE provenance = 'inferred'
+           AND project = ?
+           AND created_at >= datetime('now', ?)
+         GROUP BY source_extractor
+         ORDER BY n DESC
+         LIMIT 10`
+      : `SELECT source_extractor, COUNT(*) AS n FROM learnings
+         WHERE provenance = 'inferred'
+           AND created_at >= datetime('now', ?)
+         GROUP BY source_extractor
+         ORDER BY n DESC
+         LIMIT 10`;
+    const extractorParams: unknown[] = projectFilter
+      ? [projectFilter, `-${days} days`]
+      : [`-${days} days`];
+    const extractorRows = db.prepare(extractorSql).all(...extractorParams) as {
+      source_extractor: string;
+      n: number;
+    }[];
+    samples = { top_extractors: extractorRows };
+  }
+
+  const result: Record<string, unknown> = {
+    totals: {
+      pending: pendingRow.n,
+      approved_last_n: approvedRow.n,
+      rejected_last_n: rejectedCount,
+    },
+    recent: {
+      last_n_days: days,
+      run_outcomes: runOutcomes,
+      dedup_rediscoveries: dedupCount,
+    },
+  };
+  if (!summaryOnly) {
+    result.samples = samples;
+  }
+  if (projectFilter) {
+    result.project = projectFilter;
+  }
+
+  return successResult(JSON.stringify(result, null, 2));
+}
+
+// ---------------------------------------------------------------------------
 // Watermark accessors (exported for tests and the inbox drain logic)
 // ---------------------------------------------------------------------------
 

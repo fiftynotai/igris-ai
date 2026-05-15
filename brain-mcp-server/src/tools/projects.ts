@@ -9,6 +9,8 @@
  * - igris_project_register: Register a project in the brain
  * - igris_project_list: List all registered projects
  * - igris_project_status: Get detailed project status dashboard
+ * - igris_project_update: Partial UPDATE of an existing project record (TD-171 M3)
+ * - igris_project_dashboard: Unified per-project / cross-project view (TD-171 M3)
  *
  * @module tools/projects
  * @author fifty.dev
@@ -33,6 +35,36 @@ interface ProjectListInput {
 /** Input shape for igris_project_status */
 interface ProjectStatusInput {
   slug: string;
+}
+
+/** Input shape for igris_project_update (TD-171 M3) */
+interface ProjectUpdateInput {
+  slug: string;
+  name?: string;
+  path?: string;
+  tech_stack?: string;
+  archetype?: string;
+  status?: 'active' | 'archived' | 'inactive';
+}
+
+/** Input shape for igris_project_dashboard (TD-171 M3 — operator override 2026-05-15) */
+interface ProjectDashboardInput {
+  /** When set, returns single-project detail view (replaces igris_project_status use case). */
+  slug?: string;
+  /** Cross-project filter — omit for all statuses. Ignored when `slug` is set. */
+  status?: 'active' | 'archived' | 'inactive';
+  /** Cross-project filter (e.g., "ai-agent-system"). Ignored when `slug` is set. */
+  archetype?: string;
+  /** Cross-project filter — substring match on tech_stack column. Ignored when `slug` is set. */
+  tech_stack?: string;
+  /** Join brief counts per project. Default true. */
+  include_briefs?: boolean;
+  /** Join last_session_at per project. Default true. */
+  include_last_session?: boolean;
+  /** Counts only, no per-project rows. Default false. */
+  summary_only?: boolean;
+  /** Time window for "recent" stats. Default 30. */
+  days?: number;
 }
 
 /**
@@ -211,6 +243,461 @@ function handleProjectStatus(args: ProjectStatusInput): { content: { type: strin
 }
 
 // ---------------------------------------------------------------------------
+// igris_project_update (TD-171 M3)
+// ---------------------------------------------------------------------------
+
+/** Subset of ProjectUpdateInput fields that may be UPDATEd via this handler. */
+const PROJECT_UPDATABLE_FIELDS = [
+  'name',
+  'path',
+  'tech_stack',
+  'archetype',
+  'status',
+] as const;
+
+const PROJECT_VALID_STATUSES = ['active', 'archived', 'inactive'] as const;
+
+/**
+ * Partial UPDATE of an existing project record.
+ *
+ * Mirrors `handleProjectRegister`'s upsert semantics but rejects on missing
+ * slug instead of inserting. Only the fields explicitly present in `args`
+ * are written — omitted fields retain their existing values. Returns the
+ * list of fields actually updated for caller observability.
+ *
+ * @param args - Partial project record (slug required, at least one optional field)
+ * @returns MCP-formatted response with the updated field list
+ */
+function handleProjectUpdate(args: ProjectUpdateInput): { content: { type: string; text: string }[] } {
+  if (!args.slug || typeof args.slug !== 'string') {
+    return {
+      content: [{ type: 'text', text: 'Error: slug is required' }],
+    };
+  }
+
+  const db = getDb();
+
+  const existing = db
+    .prepare('SELECT slug FROM projects WHERE slug = ?')
+    .get(args.slug) as { slug: string } | undefined;
+  if (!existing) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Error: project "${args.slug}" not found. Use igris_project_register to create it first.`,
+      }],
+    };
+  }
+
+  // Validate status if present.
+  if (args.status !== undefined) {
+    if (!PROJECT_VALID_STATUSES.includes(args.status as typeof PROJECT_VALID_STATUSES[number])) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error: invalid status "${args.status}". Allowed: ${PROJECT_VALID_STATUSES.join(', ')}`,
+        }],
+      };
+    }
+  }
+
+  // Build SET clauses only for fields present in args.
+  const setClauses: string[] = [];
+  const params: unknown[] = [];
+  const updatedFields: string[] = [];
+
+  for (const field of PROJECT_UPDATABLE_FIELDS) {
+    const value = (args as unknown as Record<string, unknown>)[field];
+    if (value === undefined) continue;
+    if (typeof value !== 'string') {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error: field "${field}" must be a string`,
+        }],
+      };
+    }
+    setClauses.push(`${field} = ?`);
+    params.push(value);
+    updatedFields.push(field);
+  }
+
+  if (setClauses.length === 0) {
+    return {
+      content: [{
+        type: 'text',
+        text: 'Error: no updatable fields provided. Pass at least one of: name, path, tech_stack, archetype, status.',
+      }],
+    };
+  }
+
+  params.push(args.slug);
+  db.prepare(`UPDATE projects SET ${setClauses.join(', ')} WHERE slug = ?`).run(...params);
+
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({ slug: args.slug, updated_fields: updatedFields }, null, 2),
+    }],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// igris_project_dashboard (TD-171 M3 — operator override 2026-05-15)
+// ---------------------------------------------------------------------------
+
+/**
+ * Unified project dashboard.
+ *
+ * Single filterable tool that subsumes the historic `_status` (single-project
+ * detail) and `_list` (cross-project listing) patterns:
+ *
+ *   - When `slug` is set → single-project detail view. Mirrors
+ *     `handleProjectStatus`'s shape and ALSO emits a `recent` block
+ *     (sessions / brief completions in the last `days` window).
+ *   - When `slug` omitted → cross-project view filtered by `status` /
+ *     `archetype` / `tech_stack`. Returns the canonical TD-171 dashboard
+ *     shape: `{ totals, projects, recent }`.
+ *
+ * `summary_only: true` collapses the per-project rows (cross-project mode)
+ * or the recent metrics list (single-project mode) — counts are still
+ * computed.
+ *
+ * Defaults: `include_briefs=true`, `include_last_session=true`, `days=30`.
+ *
+ * Per L-152, this dashboard concerns the projects channel only. Perception
+ * and subconscious aggregations belong to their own dashboards.
+ */
+function handleProjectDashboard(args: ProjectDashboardInput): { content: { type: string; text: string }[] } {
+  const days = args.days !== undefined ? Number(args.days) : 30;
+  if (!Number.isFinite(days) || days < 0) {
+    return { content: [{ type: 'text', text: 'Error: days must be a non-negative number' }] };
+  }
+  const summaryOnly = args.summary_only === true;
+  const includeBriefs = args.include_briefs !== false; // default true
+  const includeLastSession = args.include_last_session !== false; // default true
+
+  const db = getDb();
+
+  // -------------------------------------------------------------------------
+  // Single-project mode (slug set)
+  // -------------------------------------------------------------------------
+  if (typeof args.slug === 'string' && args.slug.length > 0) {
+    const project = db
+      .prepare('SELECT * FROM projects WHERE slug = ?')
+      .get(args.slug) as Record<string, unknown> | undefined;
+    if (!project) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error: project "${args.slug}" not found.`,
+        }],
+      };
+    }
+
+    const learningCount = db
+      .prepare('SELECT COUNT(*) AS n FROM learnings WHERE project = ?')
+      .get(args.slug) as { n: number };
+    const errorCount = db
+      .prepare('SELECT COUNT(*) AS n FROM errors WHERE project = ?')
+      .get(args.slug) as { n: number };
+
+    let briefCounts: { total: number; by_status: Record<string, number> } | undefined;
+    if (includeBriefs) {
+      try {
+        const briefRows = db
+          .prepare('SELECT status, COUNT(*) AS n FROM brief_status WHERE project = ? GROUP BY status')
+          .all(args.slug) as { status: string; n: number }[];
+        const byStatus: Record<string, number> = {};
+        let totalBriefs = 0;
+        for (const r of briefRows) {
+          byStatus[r.status] = r.n;
+          totalBriefs += r.n;
+        }
+        briefCounts = { total: totalBriefs, by_status: byStatus };
+      } catch {
+        // brief_status table absent (test fixtures, fresh DB) — skip silently.
+        briefCounts = undefined;
+      }
+    }
+
+    // recent: sessions + brief completions in last `days` window.
+    let recentSessions = 0;
+    let recentBriefCompletions = 0;
+    try {
+      const r = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sessions
+           WHERE project = ? AND ended_at IS NOT NULL
+             AND ended_at >= datetime('now', ?)`,
+        )
+        .get(args.slug, `-${days} days`) as { n: number };
+      recentSessions = r.n;
+    } catch {
+      // sessions table absent — leave at 0.
+    }
+    try {
+      const r = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM brief_status
+           WHERE project = ? AND status IN ('Done', 'Completed', 'Closed')
+             AND COALESCE(updated_at, created_at) >= datetime('now', ?)`,
+        )
+        .get(args.slug, `-${days} days`) as { n: number };
+      recentBriefCompletions = r.n;
+    } catch {
+      // brief_status table absent — leave at 0.
+    }
+
+    let recentMetrics: Record<string, unknown>[] = [];
+    if (!summaryOnly) {
+      try {
+        recentMetrics = db
+          .prepare(
+            `SELECT agent, action, result, duration_ms, brief_id, recorded_at
+             FROM agent_metrics
+             WHERE project = ?
+             ORDER BY recorded_at DESC
+             LIMIT 10`,
+          )
+          .all(args.slug) as Record<string, unknown>[];
+      } catch {
+        recentMetrics = [];
+      }
+    }
+
+    const result: Record<string, unknown> = {
+      mode: 'single',
+      project: {
+        slug: project.slug,
+        name: project.name,
+        path: project.path,
+        tech_stack: project.tech_stack ?? '',
+        archetype: project.archetype ?? 'unclassified',
+        status: project.status,
+        igris_version: project.igris_version,
+        registered_at: project.registered_at,
+        last_session_at: includeLastSession ? (project.last_session_at ?? null) : undefined,
+      },
+      totals: {
+        learnings: learningCount.n,
+        errors: errorCount.n,
+        briefs: briefCounts ?? null,
+      },
+      recent: {
+        last_n_days: days,
+        sessions: recentSessions,
+        brief_completions: recentBriefCompletions,
+      },
+    };
+    if (!summaryOnly) {
+      result.recent_metrics = recentMetrics;
+    }
+
+    return {
+      content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Cross-project mode (slug omitted)
+  // -------------------------------------------------------------------------
+
+  const filters: string[] = [];
+  const filterParams: unknown[] = [];
+
+  if (args.status !== undefined) {
+    if (!PROJECT_VALID_STATUSES.includes(args.status as typeof PROJECT_VALID_STATUSES[number])) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Error: invalid status "${args.status}". Allowed: ${PROJECT_VALID_STATUSES.join(', ')}`,
+        }],
+      };
+    }
+    filters.push('status = ?');
+    filterParams.push(args.status);
+  }
+  if (args.archetype !== undefined) {
+    filters.push('archetype = ?');
+    filterParams.push(args.archetype);
+  }
+  if (args.tech_stack !== undefined) {
+    // Substring match — tech_stack is a comma-separated string column.
+    filters.push('tech_stack LIKE ?');
+    filterParams.push(`%${args.tech_stack}%`);
+  }
+
+  const whereSql = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : '';
+
+  // --- totals.total ---
+  const totalRow = db
+    .prepare(`SELECT COUNT(*) AS n FROM projects ${whereSql}`)
+    .get(...filterParams) as { n: number };
+
+  // --- totals.by_status ---
+  // Always grouped over the full filtered set (e.g., user filtered by
+  // archetype but still wants to see status breakdown across that slice).
+  const byStatusRows = db
+    .prepare(`SELECT status, COUNT(*) AS n FROM projects ${whereSql} GROUP BY status`)
+    .all(...filterParams) as { status: string; n: number }[];
+  const byStatus: Record<string, number> = { active: 0, archived: 0, inactive: 0 };
+  for (const r of byStatusRows) byStatus[r.status] = r.n;
+
+  // --- totals.by_archetype ---
+  const byArchetypeRows = db
+    .prepare(`SELECT archetype, COUNT(*) AS n FROM projects ${whereSql} GROUP BY archetype`)
+    .all(...filterParams) as { archetype: string | null; n: number }[];
+  const byArchetype: Record<string, number> = {};
+  for (const r of byArchetypeRows) {
+    byArchetype[r.archetype ?? 'unclassified'] = r.n;
+  }
+
+  // --- totals.by_tech_stack ---
+  // tech_stack is a comma-separated string. Split per row, count token
+  // membership across the filtered set.
+  const techRows = db
+    .prepare(`SELECT tech_stack FROM projects ${whereSql}`)
+    .all(...filterParams) as { tech_stack: string | null }[];
+  const byTechStack: Record<string, number> = {};
+  for (const r of techRows) {
+    if (!r.tech_stack) continue;
+    const tokens = r.tech_stack.split(',').map((t) => t.trim()).filter((t) => t.length > 0);
+    for (const t of tokens) {
+      byTechStack[t] = (byTechStack[t] ?? 0) + 1;
+    }
+  }
+
+  // --- recent: sessions + brief completions across all matching projects ---
+  let recentSessions = 0;
+  let recentBriefCompletions = 0;
+  // Reuse the matching-project slugs to scope the recent counters. If the
+  // project filter is empty the set is "all projects" so no extra IN-clause
+  // is needed.
+  if (filters.length === 0) {
+    try {
+      const r = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM sessions
+           WHERE ended_at IS NOT NULL AND ended_at >= datetime('now', ?)`,
+        )
+        .get(`-${days} days`) as { n: number };
+      recentSessions = r.n;
+    } catch {
+      recentSessions = 0;
+    }
+    try {
+      const r = db
+        .prepare(
+          `SELECT COUNT(*) AS n FROM brief_status
+           WHERE status IN ('Done', 'Completed', 'Closed')
+             AND COALESCE(updated_at, created_at) >= datetime('now', ?)`,
+        )
+        .get(`-${days} days`) as { n: number };
+      recentBriefCompletions = r.n;
+    } catch {
+      recentBriefCompletions = 0;
+    }
+  } else {
+    // Filtered: select matching slugs, then scope the counters.
+    const slugRows = db
+      .prepare(`SELECT slug FROM projects ${whereSql}`)
+      .all(...filterParams) as { slug: string }[];
+    const slugs = slugRows.map((r) => r.slug);
+    if (slugs.length > 0) {
+      const placeholders = slugs.map(() => '?').join(',');
+      try {
+        const r = db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM sessions
+             WHERE project IN (${placeholders}) AND ended_at IS NOT NULL
+               AND ended_at >= datetime('now', ?)`,
+          )
+          .get(...slugs, `-${days} days`) as { n: number };
+        recentSessions = r.n;
+      } catch {
+        recentSessions = 0;
+      }
+      try {
+        const r = db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM brief_status
+             WHERE project IN (${placeholders}) AND status IN ('Done', 'Completed', 'Closed')
+               AND COALESCE(updated_at, created_at) >= datetime('now', ?)`,
+          )
+          .get(...slugs, `-${days} days`) as { n: number };
+        recentBriefCompletions = r.n;
+      } catch {
+        recentBriefCompletions = 0;
+      }
+    }
+  }
+
+  // --- per-project rows (omitted when summary_only) ---
+  const result: Record<string, unknown> = {
+    mode: 'cross',
+    totals: {
+      total: totalRow.n,
+      by_status: byStatus,
+      by_archetype: byArchetype,
+      by_tech_stack: byTechStack,
+    },
+    recent: {
+      last_n_days: days,
+      sessions: recentSessions,
+      brief_completions: recentBriefCompletions,
+    },
+  };
+
+  if (!summaryOnly) {
+    const selectFields = [
+      'slug',
+      'name',
+      'path',
+      'tech_stack',
+      'archetype',
+      'status',
+      'registered_at',
+    ];
+    if (includeLastSession) selectFields.push('last_session_at');
+    const projectsSql = `SELECT ${selectFields.join(', ')} FROM projects ${whereSql} ORDER BY last_session_at DESC`;
+    const rows = db.prepare(projectsSql).all(...filterParams) as Record<string, unknown>[];
+
+    if (includeBriefs && rows.length > 0) {
+      // Bulk-fetch brief counts for the matching slug set, then attach.
+      try {
+        const slugs = rows.map((r) => r.slug as string);
+        const placeholders = slugs.map(() => '?').join(',');
+        const briefRows = db
+          .prepare(
+            `SELECT project, COUNT(*) AS n FROM brief_status
+             WHERE project IN (${placeholders}) GROUP BY project`,
+          )
+          .all(...slugs) as { project: string; n: number }[];
+        const briefMap = new Map<string, number>();
+        for (const r of briefRows) briefMap.set(r.project, r.n);
+        for (const row of rows) {
+          row.brief_count = briefMap.get(row.slug as string) ?? 0;
+        }
+      } catch {
+        // brief_status absent — leave brief_count off the rows.
+      }
+    }
+
+    result.projects = rows;
+  }
+
+  // Echo applied filters for caller observability.
+  if (args.status !== undefined) (result as Record<string, unknown>).status_filter = args.status;
+  if (args.archetype !== undefined) (result as Record<string, unknown>).archetype_filter = args.archetype;
+  if (args.tech_stack !== undefined) (result as Record<string, unknown>).tech_stack_filter = args.tech_stack;
+
+  return {
+    content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Budget tracking
 // ---------------------------------------------------------------------------
 
@@ -360,5 +847,21 @@ function handleProjectBudgetSet(args: ProjectBudgetSetInput): {
   };
 }
 
-export { handleProjectRegister, handleProjectList, handleProjectStatus, handleProjectBudget, handleProjectBudgetSet };
-export type { ProjectRegisterInput, ProjectListInput, ProjectStatusInput, ProjectBudgetInput, ProjectBudgetSetInput };
+export {
+  handleProjectRegister,
+  handleProjectList,
+  handleProjectStatus,
+  handleProjectUpdate,
+  handleProjectDashboard,
+  handleProjectBudget,
+  handleProjectBudgetSet,
+};
+export type {
+  ProjectRegisterInput,
+  ProjectListInput,
+  ProjectStatusInput,
+  ProjectUpdateInput,
+  ProjectDashboardInput,
+  ProjectBudgetInput,
+  ProjectBudgetSetInput,
+};

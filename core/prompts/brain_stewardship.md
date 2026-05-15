@@ -303,6 +303,10 @@ to known root causes and solutions. Built up over time from mender's diagnoses.
 - After a hard-won fix: call `igris_error_lookup` with the canonical message
   AND a `solution` arg — the same handler upserts when `solution` is present,
   so the next agent doesn't relearn it.
+- During `/scan` or after a long debug session: `igris_error_dashboard` to
+  spot recurring errors that warrant a `/hunt`. The top-N recurring rows
+  without a recorded solution are the next mender targets — pair the
+  `summary_only: true` mode with `project` filter for a focused triage view.
 
 ### Example invocation
 
@@ -311,12 +315,13 @@ igris_error_lookup({
   message: "TypeError: Cannot read properties of undefined (reading 'rowid')",
   project: "igris-ai"
 })
+igris_error_dashboard({ project: "igris-ai", summary_only: true })
 ```
 
 ## 5. Registry (`igris_project_*`)
 
 **Tools:** `igris_project_register`, `igris_project_list`,
-`igris_project_status`, `igris_project_update`.
+`igris_project_status`, `igris_project_update`, `igris_project_dashboard`.
 
 **What's there:** all registered Igris projects — slug, path, tech stack,
 archetype, status, last session. Drives the affinity boosts in recall.
@@ -324,15 +329,28 @@ archetype, status, last session. Drives the affinity boosts in recall.
 ### When to call
 
 - Before a cross-project recommendation: `igris_project_status` the target to
-  verify tech stack and archetype match before suggesting reuse.
+  verify tech stack and archetype match before suggesting reuse. (For new
+  code prefer `igris_project_dashboard({ slug })` — it returns the same
+  detail PLUS a `recent` block.)
 - When onboarding a new project: `igris_project_register` so its briefs and
   learnings can participate in cross-project recall and promotion.
+- After registration, to flip `status` (e.g., archive a project) or correct
+  `tech_stack` / `archetype`: `igris_project_update`. Partial UPDATE — only
+  the fields you pass are written. For brand-new projects use
+  `igris_project_register`, not `_update`.
+- For a unified per-project / cross-project view: `igris_project_dashboard`.
+  Set `slug` for one project's detail (replaces the older `_status` pattern);
+  omit `slug` and pass `status` / `archetype` / `tech_stack` filters for
+  narrowed cross-project listings (replaces the older `_list` pattern).
+  `summary_only: true` for counts-only during `/scan`.
 - During `/portfolio` or `/projects` skill flows.
 
 ### Example invocation
 
 ```jsonc
 igris_project_status({ slug: "fifty-flutter-kit" })
+igris_project_update({ slug: "old-prototype", status: "archived" })
+igris_project_dashboard({ archetype: "ai-agent-system", summary_only: true })
 ```
 
 ## 6. Subconscious (`igris_perception_*`)
@@ -353,11 +371,23 @@ promoted to the conscious learnings channel.
   already has a draft of it (avoid double-entry).
 - After a long session: `igris_perception_approve` / `igris_perception_reject`
   to migrate candidates to the conscious channel.
+- Before approve/reject when `igris_perception_review_pending` shows
+  truncated content: `igris_perception_get` with the candidate's
+  `learning_id` to inspect the full row (title, content, tags, confidence,
+  source_extractor, dedup metadata). Errors on approved/non-existent rows
+  by design — perception scope ends at promotion.
+- During `/scan` to spot extractor health issues: `igris_perception_dashboard`
+  reports inbox size (`pending`), recent approve/reject volume, run outcomes
+  (`succeeded`/`failed`/`skipped` from `event_log`) and dedup rediscoveries.
+  A failed-run spike or a dedup-rate drop is the early-warning signal.
+  Pair with `igris_memory_dashboard` for the post-promotion view.
 
 ### Example invocation
 
 ```jsonc
 igris_perception_review_pending({ project: "igris-ai", limit: 10 })
+igris_perception_get({ learning_id: 4321 })
+igris_perception_dashboard({ project: "igris-ai", summary_only: true })
 ```
 
 ## 7. Goals (`igris_goal_*`)
