@@ -3,7 +3,7 @@
  *
  * Tests the event-driven auto-push system in the sync component:
  * 1. Config loading (enabled/disabled, missing fields, malformed JSON)
- * 2. SYNC_TABLES completeness (26 entries — FR-106 added suggestions + dismissed_patterns)
+ * 2. SYNC_TABLES completeness (27 entries — TD-171 M2 added graph_nodes)
  * 3. Immediate push (brief/session/instance events)
  * 4. Batched push (memory/error/project/metrics events with 10s window)
  * 5. Cleanup (destroy clears timers, listeners, pending set)
@@ -276,8 +276,8 @@ describe('Sync Auto-Push', () => {
   // -------------------------------------------------------------------------
 
   describe('SYNC_TABLES completeness', () => {
-    it('has exactly 26 entries', () => {
-      expect(SYNC_TABLES).toHaveLength(26);
+    it('has exactly 27 entries', () => {
+      expect(SYNC_TABLES).toHaveLength(27);
     });
 
     const newTables = [
@@ -313,6 +313,13 @@ describe('Sync Auto-Push', () => {
         syncKey: ['source_module', 'project_slug', 'evidence_signature'],
         strategy: 'lww',
         timestampCol: 'last_dismissed_at',
+      },
+      // TD-171 M2: graph_nodes (free-standing concept/decision nodes)
+      {
+        table: 'graph_nodes',
+        syncKey: ['node_type', 'node_external_id'],
+        strategy: 'append',
+        timestampCol: 'created_at',
       },
     ];
 

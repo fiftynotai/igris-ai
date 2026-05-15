@@ -23,13 +23,26 @@ import { errorResult, successResult, WhereBuilder } from '../../helpers.js';
 // Validation catalogs (runtime defense, complementary to JSON Schema enums)
 // ---------------------------------------------------------------------------
 
-/** Accepted entity types in from_type / to_type columns. */
+/**
+ * Accepted entity types in from_type / to_type columns.
+ *
+ * TD-171 M2 (operator-locked Decision 2): extended with `concept` and
+ * `decision` to support free-standing nodes registered via
+ * igris_graph_node_create. The cascade affects every tool that lists
+ * VALID_ENTITY_TYPES in its inputSchema.enum (igris_edge_create / list,
+ * igris_graph_neighbors / path / subgraph) — all now accept the extended
+ * types automatically because they reference this constant directly.
+ * No standalone validator besides handleEdgeCreate / handleEdgeList
+ * references this list, so no other validator update was required.
+ */
 export const VALID_ENTITY_TYPES = [
   'brief',
   'learning',
   'error',
   'session',
   'goal',
+  'concept',
+  'decision',
 ] as const;
 
 /** Accepted edge type vocabulary. Stored as plain strings — extensible later. */

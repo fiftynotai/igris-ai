@@ -303,6 +303,21 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     ],
   },
   {
+    // TD-171 M2: graph_nodes — free-standing concept/decision nodes.
+    // Append strategy + composite syncKey on (node_type, node_external_id)
+    // matches the local UNIQUE constraint so remote INSERT OR IGNORE shares
+    // idempotency semantics with handleGraphNodeCreate. Properties bag is
+    // free-form JSON; LWW would risk stomping merged property changes —
+    // append + UNIQUE handles the dominant create-once pattern correctly.
+    table: 'graph_nodes',
+    syncKey: ['node_type', 'node_external_id'],
+    timestampCol: 'created_at',
+    strategy: 'append',
+    columns: [
+      'node_type', 'node_external_id', 'label', 'properties', 'created_at',
+    ],
+  },
+  {
     // FR-110: goals (outcome-level entities).
     // LWW on goal_id (UNIQUE) using updated_at — matches the briefs/projects
     // pattern. The auto-increment `id` column is intentionally omitted from

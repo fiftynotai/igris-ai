@@ -191,6 +191,13 @@ edges (relates-to, supersedes, blocks, derived-from). The graph captures
 relationships that a flat learnings table cannot: chains of supersession,
 dependency trees between briefs, lineage of decisions.
 
+Brief / learning / error / session / goal nodes live in their own tables
+and are referenced by `entity_edges` directly via `(type, id)`. The
+`graph_nodes` table (TD-171 M2) is dedicated to free-standing nodes —
+typically `node_type=concept` or `node_type=decision` — that have no
+backing row elsewhere. Register those explicitly via
+`igris_graph_node_create` before linking them.
+
 ### When to call
 
 - Before proposing a refactor: `igris_graph_neighbors` from the affected
@@ -202,9 +209,42 @@ dependency trees between briefs, lineage of decisions.
 - When stitching together a broader context for an architect prompt — the
   graph gives structured ancestry that recall does not.
 
+### When to Register a Node
+
+Use `igris_graph_node_create` to register a free-standing concept or decision node before linking it via `igris_edge_create`. Briefs / learnings / errors / sessions / goals are addressable by their existing IDs without explicit registration — only concept and decision nodes need this call. The handler is idempotent: re-creating an identical `(node_type, node_external_id)` pair returns the existing row's id with `created: false`. The original label is preserved on conflict; rename via delete-then-recreate (or wait for an `igris_graph_node_update` follow-up). Use the `properties.project` key to scope a node so `igris_graph_dashboard` project filtering can find it.
+
+### When to Inspect a Single Node
+
+Use `igris_graph_node_get` to inspect one node's metadata plus its in/out edge degrees before traversal. Cheaper than `igris_graph_neighbors` when you only need to confirm the node exists and gauge its connectedness; reach for `_neighbors` once you want the actual neighbour rows. Soft-deleted edges are excluded from the degree counts (parity with `igris_edge_list`). Errors with `Node not found` when the `(node_type, node_external_id)` pair does not match a registered row.
+
+### When to Search
+
+Use `igris_graph_search` to find concept or decision nodes by partial name when you only know a fragment of the label or external id. Substring (LIKE) match against `label` and `node_external_id`; SQL wildcards in user input are escaped, so pass plain text. Optional `node_type` filter narrows by type. Default limit 20, max 100. Score = fraction of the matched field the query covers (1.0 = exact match) — a deliberate v1 placeholder; FTS5 ranking is a follow-up. Use the score to disambiguate when multiple candidates are returned.
+
+### When to Inspect (Dashboard)
+
+Use `igris_graph_dashboard` with `summary_only: true` for a topology snapshot during `/scan` and `/awaken` — counts only, no samples block, fast on large graphs. The full call surfaces `samples.top_god_nodes` (top 10 nodes by total in+out degree) which is the same data `igris_brief_graph_render` visualizes, in textual form. Reach for it before refactoring to spot god-nodes whose extraction would touch many edges. Project filter narrows `graph_nodes` via `properties.project`; edge totals stay unfiltered (edges have no project column — flagged for follow-up). Default `days=30` window for the `recent.*` block; totals always count the full table.
+
 ### Example invocation
 
 ```jsonc
+// Register a free-standing concept node, then link it.
+igris_graph_node_create({
+  node_type: "concept",
+  node_external_id: "concept:vector-search",
+  label: "Vector search",
+  properties: { project: "igris-ai" }
+})
+igris_edge_create({
+  from_type: "concept", from_id: "concept:vector-search",
+  to_type: "brief", to_id: "FR-076",
+  edge_type: "related_to"
+})
+
+// Topology snapshot before a refactor.
+igris_graph_dashboard({ project: "igris-ai", summary_only: true })
+
+// Find a node by partial label.
 igris_graph_search({ query: "memory_agency rename", limit: 5 })
 igris_graph_neighbors({ node_type: "concept", node_id: "concept:142", edge_types: ["supersedes", "derived_from"], depth: 2 })
 ```

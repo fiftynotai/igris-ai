@@ -2,10 +2,12 @@
  * Brain Engine v7.0 — Edges Component
  *
  * Wraps the typed-edges graph layer as a BrainComponent.
- * Provides 7 MCP tools:
- *   CRUD (FR-105):       igris_edge_create / list / remove
- *   Graph (FR-113):      igris_graph_neighbors / path / subgraph
- *   Visualization (FR-111): igris_brief_graph_render
+ * Provides 11 MCP tools:
+ *   CRUD (FR-105):                igris_edge_create / list / remove
+ *   Graph traversal (FR-113):     igris_graph_neighbors / path / subgraph
+ *   Node CRUD + search (TD-171 M2): igris_graph_node_create / node_get /
+ *                                    search / dashboard
+ *   Visualization (FR-111):       igris_brief_graph_render
  * Subscribes to brief.created so structural Parent edges are captured
  * at insert time without coupling the briefs component to edge logic.
  * Self-listens on edge.created and edge.removed to invalidate the
@@ -47,6 +49,12 @@ import {
   invalidateSubgraphCache,
 } from './traversal.js';
 import { handleBriefGraphRender } from './visualization-tool.js';
+import {
+  handleGraphNodeCreate,
+  handleGraphNodeGet,
+  handleGraphSearch,
+  handleGraphDashboard,
+} from './nodes-handlers.js';
 
 /**
  * Build the edges component instance.
@@ -123,7 +131,7 @@ export function createEdgesComponent(): BrainComponent {
 
   return {
     name: 'edges',
-    version: '1.2.0',
+    version: '1.3.0',
     depends: ['briefs'],
 
     schema(): Migration[] {
@@ -387,6 +395,127 @@ export function createEdgesComponent(): BrainComponent {
         },
 
         // -----------------------------------------------------------------
+        // TD-171 M2: igris_graph_node_create
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_graph_node_create',
+          description:
+            'Idempotently register a free-standing graph node (typically node_type=concept or decision). Brief / learning / error / session / goal nodes auto-register on first reference via igris_edge_create — only call this for nodes that do NOT have a backing row in another table. Returns created=false on UNIQUE(node_type, node_external_id) re-creation; the existing label is preserved (rename via delete + recreate).',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              node_type: {
+                type: 'string',
+                enum: [...VALID_ENTITY_TYPES],
+                description:
+                  'Node type. Typically "concept" or "decision" for free-standing nodes; the brief/learning/error/session/goal types are accepted but those nodes usually live in their own tables and are referenced by entity_edges directly.',
+              },
+              node_external_id: {
+                type: 'string',
+                description:
+                  'Stable string id (e.g. "FR-105", "concept:vector-search", "decision:swap-better-sqlite3-for-libsql"). Used as the join key from entity_edges.',
+              },
+              label: {
+                type: 'string',
+                description: 'Human-readable display label (used by graph visualizations and search).',
+              },
+              properties: {
+                type: 'object',
+                description: 'Free-form JSON property bag (default {}). Use the `project` key to scope a node for igris_graph_dashboard project filtering.',
+                additionalProperties: true,
+              },
+            },
+            required: ['node_type', 'node_external_id', 'label'],
+          },
+          handler: (args) => handleGraphNodeCreate(args),
+        },
+
+        // -----------------------------------------------------------------
+        // TD-171 M2: igris_graph_node_get
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_graph_node_get',
+          description:
+            'Inspect one graph_nodes row plus its in/out edge degrees. Soft-deleted edges are excluded from the degree counts (parity with igris_edge_list). Errors when the (node_type, node_external_id) pair does not match a registered node.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              node_type: {
+                type: 'string',
+                description: 'Node type to look up (matches graph_nodes.node_type).',
+              },
+              node_external_id: {
+                type: 'string',
+                description: 'Stable id to look up (matches graph_nodes.node_external_id).',
+              },
+            },
+            required: ['node_type', 'node_external_id'],
+          },
+          handler: (args) => handleGraphNodeGet(args),
+        },
+
+        // -----------------------------------------------------------------
+        // TD-171 M2: igris_graph_search
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_graph_search',
+          description:
+            'Find graph_nodes by partial label or node_external_id (LIKE substring match). Optional node_type filter restricts to a single type. Returns a score per result (fraction of the matched field the query covers; 1.0 = exact match). Default limit 20, max 100.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              query: {
+                type: 'string',
+                description:
+                  'Search term. Matched (case-sensitive in SQLite default) against label and node_external_id. SQL LIKE wildcards in the input are escaped — pass plain text.',
+              },
+              node_type: {
+                type: 'string',
+                description: 'Optional exact-match filter on node_type (e.g. "concept").',
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum results to return. Default 20, capped at 100.',
+              },
+            },
+            required: ['query'],
+          },
+          handler: (args) => handleGraphSearch(args),
+        },
+
+        // -----------------------------------------------------------------
+        // TD-171 M2: igris_graph_dashboard
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_graph_dashboard',
+          description:
+            'Aggregate snapshot over graph_nodes + entity_edges: node counts by type, edge counts by type, orphan-node count, recent stats, and top god-nodes by total degree. Mirrors the canonical TD-171 _dashboard shape (totals + recent + samples). Honors summary_only to skip the samples block. Project filter applies to graph_nodes via properties.project; edge totals are unfiltered (edges have no project column).',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description:
+                  'Optional project filter — narrows graph_nodes via properties.project. Edge counts remain global.',
+              },
+              summary_only: {
+                type: 'boolean',
+                description: 'Counts only, no samples block (omits top_god_nodes). Default false.',
+              },
+              days: {
+                type: 'number',
+                description: 'Time window for recent.* stats. Default 30. Must be non-negative.',
+              },
+            },
+          },
+          handler: (args) => handleGraphDashboard(args),
+        },
+
+        // -----------------------------------------------------------------
         // FR-111: igris_brief_graph_render
         // -----------------------------------------------------------------
         {
@@ -450,7 +579,7 @@ export function createEdgesComponent(): BrainComponent {
       // Self-listen for cache invalidation (FR-113 subgraph cache).
       ctx.bus.on('edge.created', onEdgeMutated);
       ctx.bus.on('edge.removed', onEdgeMutated);
-      ctx.log.info('Edges component initialized (v1.2.0 — FR-111 visualization)');
+      ctx.log.info('Edges component initialized (v1.3.0 — TD-171 M2 graph nodes)');
     },
 
     destroy(): void {
