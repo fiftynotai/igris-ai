@@ -316,7 +316,7 @@ sqlite3 ~/.igris/memory/knowledge.db "PRAGMA integrity_check;"
 
 # If corrupted, re-initialize the brain
 # WARNING: This resets brain data (learnings, cross-project data)
-/path/to/igris-aigris init
+cd /path/to/igris-ai && igris init
 ```
 
 ### Files Look Corrupted After Update
