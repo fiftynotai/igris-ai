@@ -267,66 +267,7 @@ IGRIS v7.0 introduces a centralized brain at `~/.igris/` that provides persisten
 
 ### Brain MCP Tools
 
-**Note:** The following MCP tools require `igris-brain` to be registered in `~/.claude.json`; skills detect availability at call time and skip gracefully when the server is unreachable. Core Igris features (briefs, sessions, agents, quality gates) work fully in local-only mode.
-
-**Memory domain:**
-| Tool | Purpose |
-|------|---------|
-| `igris_memory_store` | Store a learning in knowledge DB |
-| `igris_memory_search` | Full-text search across learnings |
-| `igris_memory_recall` | Contextual retrieval for current project |
-| `igris_pattern_suggest` | Suggest relevant patterns |
-
-**Errors domain:**
-| Tool | Purpose |
-|------|---------|
-| `igris_error_lookup` | Look up or store error solutions |
-
-**Projects domain:**
-| Tool | Purpose |
-|------|---------|
-| `igris_project_register` | Register a project in the brain |
-| `igris_project_list` | List all registered projects |
-| `igris_project_status` | Get detailed project status |
-
-**Metrics domain:**
-| Tool | Purpose |
-|------|---------|
-| `igris_metrics_record` | Record an agent metric |
-| `igris_metrics_query` | Query agent performance metrics |
-| `igris_metrics_velocity` | Velocity dashboard |
-
-**Sessions domain:**
-| Tool | Purpose |
-|------|---------|
-| `igris_session_sync` | Sync session snapshot to brain |
-| `igris_session_recall` | Recall recent sessions across projects |
-
-**Briefs domain:**
-| Tool | Purpose |
-|------|---------|
-| `igris_brief_sync` | Sync brief status change to brain |
-| `igris_brief_dashboard` | Cross-project brief dashboard |
-
-**Instances domain:**
-| Tool | Purpose |
-|------|---------|
-| `igris_instance_heartbeat` | Register or refresh instance heartbeat |
-| `igris_instance_list` | List active instances across machines |
-| `igris_instance_remove` | Deregister an instance |
-
-**Sync domain:**
-| Tool | Purpose |
-|------|---------|
-| `igris_brain_push` | Push local changes to remote brain |
-| `igris_brain_pull` | Pull remote changes to local brain |
-| `igris_sync_queue_status` | Show sync queue depth and status |
-| `igris_sync_queue_drain` | Retry failed sync queue items |
-| `igris_brief_file_sync` | Sync brief file content to brain |
-| `igris_session_file_sync` | Sync session file content to brain |
-| `igris_session_file_pull` | Pull session files from brain |
-| `igris_definition_sync` | Sync definition file (agent/skill/rule/prompt) to brain |
-| `igris_definition_pull` | Pull latest definitions from brain |
+Brain has 121 MCP tools registered via the `igris-brain` MCP server; their full schemas (descriptions + parameters) are surfaced to the agent automatically at session start via the MCP protocol — so no in-prompt enumeration is needed. Decision triggers for the 48 actor-facing tools (WHEN to reach for which) live in `~/.igris/core/prompts/brain_stewardship.md`. The remaining 73 internal tools (orchestrator hooks, sync, registry CRUD, task queue) are tracked under `INTERNAL_TOOL_ALLOWLIST` in `scripts/validate_brain_stewardship_enums.sh`. Brain integration is optional — if `igris-brain` is not registered in `~/.claude.json`, skills detect this at call time and degrade to local-only mode silently.
 
 ### Brain Integration Points
 - **Session Start (/awaken):** Recall relevant learnings, register session, recall cross-project session context, **register instance via heartbeat (mandatory)**, **pull from remote brain (mandatory)**, **drain sync queue (mandatory)**, **pull session files (mandatory)**, **pull latest definitions (mandatory)**
