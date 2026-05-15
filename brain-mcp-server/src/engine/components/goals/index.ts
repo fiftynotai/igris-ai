@@ -36,6 +36,7 @@ import {
   handleGoalGet,
   handleGoalUpdate,
   handleGoalProgress,
+  handleGoalDashboard,
   VALID_GOAL_STATUSES,
 } from './handlers.js';
 
@@ -241,6 +242,30 @@ export function createGoalsComponent(): BrainComponent {
             }
             return result;
           },
+        },
+
+        // -----------------------------------------------------------------
+        // igris_goal_dashboard (TD-171 M4)
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_goal_dashboard',
+          description:
+            'Aggregate dashboard over goals — totals (total + by_status across active/achieved/abandoned/deferred), recent.upcoming_deadlines (active goals with deadlines in next 30d, top 10), and samples.stalled_goals (active goals untouched for 30+ days, top 10). Optional `project` scopes everything; `summary_only=true` omits the samples block. Use before a release announcement or quarterly review to frame shipped briefs against stated goals.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Filter all aggregations to a single project slug',
+              },
+              summary_only: {
+                type: 'boolean',
+                description: 'Counts + upcoming deadlines only — omit samples.stalled_goals (default false)',
+              },
+            },
+          },
+          handler: (args) => handleGoalDashboard(args),
         },
 
         // -----------------------------------------------------------------

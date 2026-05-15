@@ -201,6 +201,167 @@ if orphan_unique:
     print("\nFix: either restore the value to the schema enum, or remove the stale reference from brain_stewardship.md.")
     sys.exit(1)
 
+# ---------------------------------------------------------------------------
+# TD-171 M4: tool-name drift validator (long-term safety net)
+# ---------------------------------------------------------------------------
+#
+# Goal: prevent the brain_stewardship.md vs gateway divergence that
+# motivated TD-171 from recurring. Two-direction check:
+#   FORWARD: every igris_<name> backticked in brain_stewardship.md MUST
+#            be registered in some component gateway (or in the
+#            DOC_ONLY_ALLOWLIST).
+#   REVERSE: every igris_<name> registered in any
+#            brain-mcp-server/src/engine/components/*/index.ts MUST
+#            appear (backticked) somewhere in brain_stewardship.md so
+#            docs are not silently behind the gateway.
+#
+# Override hooks for bats tests (mirrors SCHEMA_FILE / PROMPT_FILE
+# pattern above): COMPONENTS_GLOB env var lets a test redirect the
+# components scan to a fixture tree.
+import glob, os
+
+# Default: scan repo's real component tree. Derive from SCHEMA_FILE's
+# parent-of-parent so the glob tracks the schema location even if the
+# repo layout shifts. Tests override via env to point at a fixture dir.
+#
+# schema_path points at .../engine/components/memory/index.ts; dirname is
+# .../engine/components/memory; '..' walks back to .../engine/components,
+# then the glob picks up every */index.ts under it.
+default_components_glob = os.path.normpath(
+    os.path.join(os.path.dirname(schema_path), '..', '*', 'index.ts')
+)
+components_glob = os.environ.get('COMPONENTS_GLOB', default_components_glob)
+
+# Extract gateway tool names: matches `name: 'igris_<...>'` lines inside
+# ToolDefinition objects. Same regex shape as the strict-input contract.
+gateway_names = set()
+component_files = glob.glob(components_glob)
+for path in component_files:
+    src = open(path).read()
+    for m in re.finditer(r"name:\s*'(igris_[a-z_]+)'", src):
+        gateway_names.add(m.group(1))
+
+# Extract advertised names: any backticked `igris_<name>` token in the
+# brain_stewardship section.
+doc_names = set(re.findall(r"`(igris_[a-z_]+)`", section))
+
+# Doc-only allowlist: intentional aliases or skill-style names that
+# happen to start with igris_. Empty by default — every igris_ prefix
+# in the docs MUST be a real registered tool.
+#
+# Intentionally NOT including forward-looking "wait for future tool"
+# references — those should either be implemented or have the doc
+# reference rewritten to drop the tool-name backticks.
+DOC_ONLY_ALLOWLIST = set()
+
+# Reverse-allowlist: tools that ARE registered on the gateway but are
+# intentionally undocumented in brain_stewardship.md. These are mostly
+# internal / orchestration / sync surfaces that don't carry an "actor
+# decision trigger" — they are called by skills, hooks, or the engine
+# itself, not by the orchestrator deciding which tool to use.
+#
+# TD-171 M4 ships this with a non-empty seed reflecting the state at
+# the time the safety net was installed. The drift gate's job FROM
+# THIS POINT FORWARD is to prevent new undocumented tools from
+# accumulating — adding a new tool will fail the validator unless it
+# is either documented in brain_stewardship.md or explicitly
+# allowlisted here with a one-line rationale.
+#
+# Future cleanup (separate brief): walk the allowlist, decide per-tool
+# whether to (a) document it (move it out of the allowlist) or (b)
+# leave it as intentionally-internal (keep it here, with a sharper
+# rationale string).
+INTERNAL_TOOL_ALLOWLIST = {
+    # agent / instance internals — managed by orchestrator hooks, not advertised
+    'igris_agent_capability_list', 'igris_agent_capability_set',
+    'igris_agent_event',
+    'igris_instance_heartbeat', 'igris_instance_list', 'igris_instance_remove',
+
+    # backfill / embedding maintenance — operator-run, not actor-decision
+    'igris_brief_backfill_embeddings',
+    'igris_error_backfill_embeddings',
+    'igris_memory_backfill_embeddings',
+
+    # file / session sync mechanics — sync layer, not tool-choice surface
+    'igris_brief_file_sync',
+    'igris_definition_pull', 'igris_definition_sync',
+    'igris_file_pull', 'igris_file_push',
+    'igris_session_file_get', 'igris_session_file_pull',
+    'igris_session_file_sync', 'igris_session_file_update',
+    'igris_session_recall', 'igris_session_sync',
+    'igris_sync_queue_drain', 'igris_sync_queue_status',
+
+    # cache management — operator/janitor surface
+    'igris_cache_clean', 'igris_cache_rebuild',
+
+    # context tree mechanics — wired into /awaken, not actor-chosen
+    'igris_context_get', 'igris_context_load', 'igris_context_register',
+    'igris_context_tree',
+
+    # coordination / scheduling subsystem — orchestrator / cron surface,
+    # not part of actor decision triggers documented in brain_stewardship.md
+    'igris_coordination_adjust_priorities', 'igris_coordination_audit',
+    'igris_coordination_auto_route',
+    'igris_coordination_config_get', 'igris_coordination_config_set',
+    'igris_schedule_create', 'igris_schedule_delete',
+    'igris_schedule_disable', 'igris_schedule_enable',
+    'igris_schedule_fire_now', 'igris_schedule_get', 'igris_schedule_list',
+
+    # event log primitives — internal observability
+    'igris_event_log', 'igris_event_log_cleanup',
+
+    # graph internals: node-get is documented at section level via prose,
+    # but `_get` (single read) and `_remove` (delete edge) are tactical
+    # surfaces not on the decision-trigger ladder
+    'igris_edge_remove',
+    'igris_error_similar',
+    'igris_goal_get',
+    'igris_memory_hybrid_search',
+    'igris_pattern_suggest',
+
+    # perception lifecycle internals — the public surface is approve/reject/list
+    'igris_perception_expire_stale', 'igris_perception_extract_now',
+    'igris_perception_submit',
+
+    # registry CRUD — managed via /register skill, not actor-chosen
+    'igris_registry_add', 'igris_registry_get', 'igris_registry_list',
+    'igris_registry_remove', 'igris_registry_search', 'igris_registry_update',
+
+    # subconscious + suggestion surface — paused per v7 (subconscious.enabled=false)
+    'igris_subconscious_run',
+    'igris_suggestion_acted', 'igris_suggestion_dismiss', 'igris_suggestion_list',
+
+    # task subsystem — orchestrator-only worker queue, not actor-chosen
+    'igris_task_assign', 'igris_task_block', 'igris_task_claim',
+    'igris_task_complete', 'igris_task_create', 'igris_task_fail',
+    'igris_task_get', 'igris_task_list', 'igris_task_next',
+    'igris_task_result_add', 'igris_task_result_get',
+    'igris_task_retry', 'igris_task_update',
+}
+
+forward_misses = doc_names - gateway_names - DOC_ONLY_ALLOWLIST
+reverse_misses = gateway_names - doc_names - INTERNAL_TOOL_ALLOWLIST
+
+if forward_misses:
+    print("Tool-name drift (FORWARD — doc references missing tool):")
+    for n in sorted(forward_misses):
+        print(f"  - `{n}` mentioned in brain_stewardship.md but NOT registered in any component")
+    print("\nFix: implement the tool, or remove/redirect the doc reference,")
+    print("     or add the name to DOC_ONLY_ALLOWLIST in scripts/validate_brain_stewardship_enums.sh")
+    print("     if it is intentionally doc-only.")
+    sys.exit(1)
+
+if reverse_misses:
+    print("Tool-name drift (REVERSE — gateway tool not documented):")
+    for n in sorted(reverse_misses):
+        print(f"  - `{n}` registered in a component but NOT mentioned in brain_stewardship.md")
+    print("\nFix: add a decision-trigger entry to brain_stewardship.md (with the")
+    print("     tool name in backticks), OR add to INTERNAL_TOOL_ALLOWLIST in")
+    print("     scripts/validate_brain_stewardship_enums.sh if the tool is")
+    print("     internal/orchestration-only and intentionally not advertised.")
+    sys.exit(1)
+
 total = sum(len(v) for v in expected.values())
 print(f"OK: all {total} enum values from memory schema present in brain_stewardship section")
+print(f"OK: tool-name parity ({len(gateway_names)} registered tools, all referenced in brain_stewardship)")
 PY

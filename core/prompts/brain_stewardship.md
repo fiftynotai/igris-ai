@@ -211,7 +211,7 @@ backing row elsewhere. Register those explicitly via
 
 ### When to Register a Node
 
-Use `igris_graph_node_create` to register a free-standing concept or decision node before linking it via `igris_edge_create`. Briefs / learnings / errors / sessions / goals are addressable by their existing IDs without explicit registration — only concept and decision nodes need this call. The handler is idempotent: re-creating an identical `(node_type, node_external_id)` pair returns the existing row's id with `created: false`. The original label is preserved on conflict; rename via delete-then-recreate (or wait for an `igris_graph_node_update` follow-up). Use the `properties.project` key to scope a node so `igris_graph_dashboard` project filtering can find it.
+Use `igris_graph_node_create` to register a free-standing concept or decision node before linking it via `igris_edge_create`. Briefs / learnings / errors / sessions / goals are addressable by their existing IDs without explicit registration — only concept and decision nodes need this call. The handler is idempotent: re-creating an identical `(node_type, node_external_id)` pair returns the existing row's id with `created: false`. The original label is preserved on conflict; rename via delete-then-recreate (a node-update tool is a planned follow-up but is not yet registered — the validator drift gate enforces that intended-future tool names are not backticked as if they exist). Use the `properties.project` key to scope a node so `igris_graph_dashboard` project filtering can find it.
 
 ### When to Inspect a Single Node
 
@@ -407,10 +407,25 @@ to become over weeks/months, distinct from per-brief tactical work.
 - Before writing a release announcement: `igris_goal_dashboard` to frame
   shipped work against stated direction.
 
+### When to Inspect (Dashboard)
+
+Use `igris_goal_dashboard` before a release announcement or quarterly
+review to frame shipped briefs against stated goals. The canonical
+`_dashboard` shape returns `totals.by_status` (active / achieved /
+abandoned / deferred), `recent.upcoming_deadlines` (active goals with
+deadlines in the next 30 days, with serving-brief and completed-brief
+counts so you can see "how close is this one to shipping?"), and
+`samples.stalled_goals` — active goals untouched for 30+ days. Stalled
+goals are the candidates for revisit / abandon / re-scope. Pair with
+`igris_goal_progress` for completion math on a specific goal. Pass
+`summary_only: true` during `/scan` to drop the samples block when you
+just need the headline counts.
+
 ### Example invocation
 
 ```jsonc
 igris_goal_list({ project: "igris-ai", status: "active" })
+igris_goal_dashboard({ project: "igris-ai" })
 ```
 
 ## 8. Metrics (`igris_metrics_*`)
@@ -429,11 +444,25 @@ throughput, error rates. Source for agent activity dashboards.
 - Before refactoring a hot path: check the current cost so you can measure
   the win.
 
+### When to Inspect (Dashboard)
+
+Use `igris_metrics_dashboard` during `/scan` or `/dashboard` for a
+one-shot agent-utilization view. The canonical `_dashboard` shape
+returns `totals.by_agent` (invocations / success_rate / avg_duration_ms
+/ retries per agent), `totals.by_action`, `totals.by_result` (the four
+CHECK-constraint outcomes — `success`, `failure`, `partial`, `blocked`
+— always present), `recent.invocations` over the last N days (default
+30) plus `week_over_week_delta_pct`, and `samples.top_durations` (top
+10 longest-running invocations). Pair with `igris_brief_velocity` for
+completion-rate context. Optional `agent` filter scopes everything to
+one agent (combinable with `project`); `summary_only: true` drops the
+samples block when you only need the headline counters.
+
 ### Example invocation
 
 ```jsonc
 igris_metrics_velocity({ project: "igris-ai", days: 30 })
-igris_metrics_query({ project: "igris-ai", metric: "agent_duration_seconds", agent: "forger", days: 7 })
+igris_metrics_dashboard({ project: "igris-ai", agent: "forger" })
 ```
 
 <!-- /SECTION: brain_stewardship -->
