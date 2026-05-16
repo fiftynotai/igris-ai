@@ -278,6 +278,114 @@ sys.stdout.write(escaped)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# read_canonical_version <md-path>
+#
+# Extracts the agent-prompt version marker from a canonical prompt file.
+# Strategy (TD-021):
+#   1. Look for a `> **Version:** X.Y` blockquote line in the body —
+#      content-pipeline prompts use this (confirmed in deck/system-prompt-*).
+#   2. Fall back to a `version:` top-level frontmatter key.
+# Emits the bare version string (e.g. `1.6`) to stdout, or an empty string
+# when neither marker is present (Igris-core agents carry no version marker —
+# the manifest declares them `versioned: false`, so empty is expected there).
+#
+# Returns 0 always.
+# ---------------------------------------------------------------------------
+read_canonical_version() {
+  local md_path="$1"
+  python3 - "$md_path" <<'PY'
+import re
+import sys
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        text = fh.read()
+except OSError:
+    print("")
+    sys.exit(0)
+# Strategy 1: `> **Version:** X.Y` blockquote line in the body.
+m = re.search(r'^\s*>\s*\*\*Version:\*\*\s*([0-9][0-9.]*)\s*$', text, re.MULTILINE)
+if m:
+    print(m.group(1))
+    sys.exit(0)
+# Strategy 2: `version:` frontmatter key (only inside the frontmatter block).
+if text.startswith("---"):
+    lines = text.splitlines(keepends=True)
+    body_start = None
+    for i in range(1, len(lines)):
+        if lines[i].rstrip("\n") == "---":
+            body_start = i
+            break
+    if body_start is not None:
+        fm = "".join(lines[1:body_start])
+        fm_m = re.search(r'^\s*version:\s*["\']?([0-9][0-9.]*)["\']?\s*$',
+                         fm, re.MULTILINE)
+        if fm_m:
+            print(fm_m.group(1))
+            sys.exit(0)
+print("")
+PY
+}
+
+# ---------------------------------------------------------------------------
+# latest_canonical <dir> <basename-glob>
+#
+# Given a directory and a glob (e.g. `agents/deck` + `system-prompt-v*.md`),
+# resolves the highest-versioned matching file. Versions are compared with
+# `sort -V` so `v1.10` sorts after `v1.9`. Emits the absolute path of the
+# newest file to stdout.
+#
+# Returns 0 when a match was found and emitted; returns 1 when the directory
+# does not exist or no file matches the glob (callers should check status).
+# ---------------------------------------------------------------------------
+latest_canonical() {
+  local dir="$1"
+  local glob="$2"
+  if [ ! -d "$dir" ]; then
+    return 1
+  fi
+  local newest
+  # `find` for the matches, `sort -V` for version-aware ordering, take the
+  # last line as the highest. Newline-delimited: agent prompt filenames are
+  # plain ASCII (`system-prompt-vX.Y.md`), so embedded newlines are not a
+  # concern here and `tail -z` is unavailable on BSD/macOS tail anyway.
+  newest=$(
+    find "$dir" -mindepth 1 -maxdepth 1 -type f -name "$glob" 2>/dev/null \
+      | sort -V \
+      | tail -n 1
+  )
+  if [ -z "$newest" ]; then
+    return 1
+  fi
+  # Emit an absolute path for caller convenience.
+  ( cd "$(dirname "$newest")" && printf '%s/%s\n' "$(pwd)" "$(basename "$newest")" )
+}
+
+# ---------------------------------------------------------------------------
+# sha_body <md-path>
+#
+# Emits the sha256 hex digest of the markdown BODY only (frontmatter stripped
+# via strip_frontmatter). This is the idempotency / drift primitive used by
+# the harness compiler and the drift guard — comparing body shas ignores
+# intentional frontmatter divergence between canonical and harness copies.
+#
+# Emits the bare 64-char digest to stdout. Returns 0 always.
+# ---------------------------------------------------------------------------
+sha_body() {
+  local md_path="$1"
+  local body
+  body=$(strip_frontmatter "$md_path")
+  # Pass the body as an argv arg, not stdin — a `<<PY` heredoc on the python3
+  # call would otherwise override any piped stdin (shellcheck SC2259).
+  python3 - "$body" <<'PY'
+import hashlib
+import sys
+data = sys.argv[1].encode("utf-8")
+print(hashlib.sha256(data).hexdigest())
+PY
+}
+
 # Export functions for subshell use (bats tests spawn subshells).
 export -f parse_frontmatter
 export -f get_skill_field
@@ -285,3 +393,6 @@ export -f strip_frontmatter
 export -f is_claude_only
 export -f toml_escape
 export -f toml_escape_description
+export -f read_canonical_version
+export -f latest_canonical
+export -f sha_body

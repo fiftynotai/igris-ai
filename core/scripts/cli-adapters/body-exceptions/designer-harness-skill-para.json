@@ -1,0 +1,10 @@
+{
+  "_comment": "TD-021 body-exception: DESIGNER's .claude/agents harness body intentionally diverges from canonical by exactly one appended paragraph - the harness-skill invocation note. This is the TD-018 D5 documented exception. sync_claude_agents.sh inserts `text` immediately after the line containing `anchor`; check_harness_drift.sh compares the harness body against canonical-plus-this-insertion. The anchor line must be unique within the canonical body.",
+  "exception": "designer-harness-skill-para",
+  "agent": "content-designer",
+  "anchor": "You are not a generalist designer. You are not a copywriter. You are not a strategist. You are the brand's visual producer — the last stage before pixels exist. The brand book is your contract. The archetype library is your toolkit — read its `_index.md` to know what exists, `_routing.md` to pick the right one, and the per-archetype file for the template. **You never invent copy** — every word that appears in a visual was already written by WRITER or by Fifty directly. You translate filled briefs into renderable prompts.",
+  "insert": [
+    "",
+    "**When invoked from the Claude Code harness skill (`/content-pipeline`):** the archetype library lives at `/Users/m.elamin/automation/content/agents/designer/archetypes/`. Use the Read tool to load the four meta-files (`_index.md`, `_shared.md`, `_routing.md`, `_composition.md`) at the start of every invocation, plus the single per-archetype file (`ARCH-NN-{slug}.md`) for the archetype you route to per card. Return the FULL updated brief as your response (frontmatter + §1 unchanged + §2 unchanged + §3 filled)."
+  ]
+}

@@ -58,6 +58,17 @@ Each entry supports:
 - `converter` / `compiler` — path (relative to repo) of the adapter script
 - `note` — human-readable intent, for maintainers
 
+> **Scope of `cli_targets`:** this block governs **SKILLS distribution only** —
+> turning `~/.igris/core/skills/` into per-CLI skill artifacts. It does **not**
+> govern per-agent subagent prompts. The `codex` entry's `compiler`
+> (`md_to_agents_md.sh`) builds a single skills-aggregation `AGENTS.md`; it is a
+> different artifact from the per-agent `.codex/agents/*.toml` subagent files.
+> Subagent distribution is a separate layer — see
+> [Subagent Distribution](#subagent-distribution) below (TD-021). When reading
+> the `codex` entry, treat its `note` as describing the skills surface; the
+> optional `codex.agents` sub-block (added by TD-021) describes the subagent
+> surface.
+
 ---
 
 ## Portability Convention
@@ -169,6 +180,119 @@ portability trade-off.
 `--cli-bridge=auto` (the default) expands to every CLI detected on
 PATH AND with a config dir present. `--cli-bridge=none` opts out of
 all bridges.
+
+---
+
+## Subagent Distribution
+
+**Brief:** TD-021 (parent FR-006)
+
+Skills distribution (above) and subagent distribution are **two separate
+concerns**. The `cli_targets` block and `md_to_agents_md.sh` handle SKILLS —
+concatenating `~/.igris/core/skills/` into one `AGENTS.md` per project. Agent
+*subagent prompts* are different: each agent has one canonical prompt that must
+be regenerated into per-CLI harness files (`.claude/agents/<name>.md`,
+`.codex/agents/<name>.toml`). Conflating the two is a known drift trap — the
+`AGENTS.md` skills compiler is NOT a subagent generator.
+
+### Canonical is the sole source of truth
+
+Each agent has exactly one canonical prompt. Every harness file is a GENERATED
+artifact derived from it. **Editing a harness file directly is a process
+error** — the next compile run will overwrite it. Two canonical conventions
+coexist:
+
+- **Content-pipeline agents** — versioned canonical:
+  `agents/<name>/system-prompt-v<X.Y>.md`. The compiler resolves the newest
+  version via `latest_canonical`.
+- **Igris-core agents** — unversioned canonical: `core/agents/<name>.md`.
+
+### Components
+
+| File | Role |
+|------|------|
+| `scripts/cli-adapters/harness-manifest.json` | Declarative manifest: per agent, the canonical source (dir + glob/file + `versioned` flag) and the set of harness targets. Handles both canonical conventions. |
+| `scripts/cli-adapters/sync_claude_agents.sh` | Per-target adapter — canonical `.md` → `.claude/agents/<name>.md`. Overwrites the harness body with the canonical body; **preserves** the harness YAML frontmatter (the TD-018 D5 convention, mechanized). The harness file must already exist — this adapter syncs, it does not create. |
+| `scripts/cli-adapters/sync_codex_agents.sh` | Per-target adapter — canonical `.md` → `.codex/agents/<name>.toml` (3-key TOML: `description`, `developer_instructions`, `name`). Gated on Decision D1 (see below). |
+| `scripts/cli-adapters/compile_harnesses.sh` | Orchestrator — reads the manifest, calls the per-target adapter for every agent/target. `--project-root`, `--filter`, `--target` flags. |
+| `scripts/cli-adapters/check_harness_drift.sh` | CI-style drift guard — exits non-zero if any harness body sha or version marker has diverged from canonical. |
+| `scripts/cli-adapters/body-exceptions/*.json` | Documented intentional body divergences (see below). |
+
+### Manifest schema
+
+```json
+{
+  "agents": [
+    {
+      "name": "content-deck",
+      "canonical": { "dir": "agents/deck", "glob": "system-prompt-v*.md", "versioned": true },
+      "targets": [
+        { "type": "claude", "path": ".claude/agents/content-deck.md" },
+        { "type": "codex",  "path": ".codex/agents/content-deck.toml" }
+      ]
+    },
+    {
+      "name": "forger",
+      "canonical": { "dir": "core/agents", "file": "forger.md", "versioned": false },
+      "targets": [
+        { "type": "codex", "path": ".codex/agents/forger.toml" }
+      ]
+    }
+  ]
+}
+```
+
+- `canonical.dir` / `glob` / `file` resolve relative to `--project-root`.
+- `versioned: true` → adapter uses `latest_canonical` on `glob`;
+  `versioned: false` → adapter uses `file` verbatim.
+- An optional `body_exception` key names a sidecar in `body-exceptions/` —
+  see below.
+
+### Body exceptions
+
+A harness body is normally byte-equal to the canonical body (minus
+frontmatter). One documented exception exists: DESIGNER's `.claude/agents`
+harness carries one extra paragraph (the harness-skill invocation note). The
+manifest entry sets `"body_exception": "designer-harness-skill-para"`, and the
+sidecar `body-exceptions/designer-harness-skill-para.json` declares a unique
+`anchor` line plus the `insert` paragraph. Both `sync_claude_agents.sh` and
+`check_harness_drift.sh` honor it: the harness is compared against canonical
+body **plus** the documented appendix, so the exception is not flagged as
+drift and is not silently lost on recompile.
+
+### Decision D1 — codex wrap vs reimplement (BLOCKED)
+
+`sync_codex_agents.sh` could either WRAP the codex CLI's native agent-import
+command or REIMPLEMENT the TOML emit. Resolving this requires probing the
+`codex` CLI for a scriptable, idempotent import subcommand. As of TD-021 the
+`codex` binary was not on PATH and not at any probeable install location, so
+D1 is **BLOCKED**. `sync_codex_agents.sh` ships the REIMPLEMENT path (the TOML
+format is fully specified) but **gates it** behind a `--d1-reimplement` flag
+(or `IGRIS_CODEX_D1=reimplement`) so the decision stays with the operator. The
+codex backfill is deferred until D1 is resolved.
+
+### `cli_targets.codex.agents` sub-block
+
+The runtime `~/.igris/config.json` `cli_targets.codex` entry carries an
+`agents` sub-block (TD-021) describing the subagent surface — its `compiler`,
+`orchestrator`, `manifest`, `drift_guard`, and `target`. This is distinct from
+the sibling skills `compiler` (`md_to_agents_md.sh`). The two are no longer
+conflated under one mechanism.
+
+### Invocation
+
+```bash
+# Regenerate every harness for a project (claude targets; codex is D1-gated):
+bash ~/.igris/core/scripts/cli-adapters/compile_harnesses.sh \
+  --project-root /path/to/project --filter 'content-*' --target claude
+
+# Check for drift (exit non-zero if any harness is stale):
+bash ~/.igris/core/scripts/cli-adapters/check_harness_drift.sh \
+  --project-root /path/to/project --filter 'content-*'
+```
+
+The content-pipeline wires this into its `install.sh` via a
+`compile-harnesses.sh` step (see that project's `agents/MAINTAINING.md`).
 
 ---
 
