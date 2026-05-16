@@ -290,6 +290,10 @@ Brain integration is optional. If `~/.igris/` does not exist or MCP server is no
 
 Core Igris features (brief management, session tracking, agent delegation, quality gates, commit standards) work fully in local-only mode regardless of these flags.
 
+### Experimental State (v7.0)
+- **Subconscious** is disabled in v7.0 (`config.subconscious.enabled: false`); `perception_extract_cli` still runs at `session_end` for push, but autonomous extraction is paused pending FR-118 re-enable.
+- **Worker daemon** (`scripts/igris_worker.sh`) is an autonomous background task executor; end-to-end behavior is tracked under FR-121 and is experimental in v7.0.
+
 ---
 
 ## Subagent Delegation Protocol (MANDATORY)
