@@ -35,11 +35,14 @@ igris install .
 
 **What this does:**
 - Bootstraps the centralized brain at `~/.igris/` (SQLite database with FTS5 search, agents, rules, skills, prompts)
+- Registers the bundled `igris-brain` MCP server in `~/.claude.json` so Claude Code serves the brain tools (no manual MCP setup — it ships inside the `igris-ai` npm package)
 - Symlinks `.claude/agents/`, `.claude/rules/`, and `.claude/skills/` into your project so all projects share the same brain content
 - Merges the canonical Igris hooks block into `.claude/settings.json` (creating the file if absent, backing up any existing one)
 - Regenerates `CLAUDE.md` in your project root from the brain template
 - Writes a `.igris_version` marker for upgrade detection
 - Registers the project in the brain so it shows up in `/projects` and cross-project queries
+
+> **Restart Claude Code after `igris init`** so it picks up the newly registered `igris-brain` MCP server. The brain tools are not available until Claude Code reloads its `~/.claude.json`.
 
 Project state (sessions, briefs, plans, generated context docs) lives under `~/.igris/projects/<slug>/` — **not** in the project repo. The only files Igris writes into the project repo are `.claude/`, `CLAUDE.md`, and `.igris_version`.
 
@@ -90,25 +93,57 @@ sqlite3 ~/.igris/memory/knowledge.db "PRAGMA integrity_check; PRAGMA journal_mod
 sqlite3 ~/.igris/memory/knowledge.db "SELECT slug, path, status FROM projects;"
 ```
 
----
-
-## Optional: MCP Server Setup
-
-The MCP (Model Context Protocol) server provides brain tools served via the `igris-brain` MCP server for cross-project intelligence. This is optional but recommended for multi-project workflows.
+### Verify the brain MCP is registered
 
 ```bash
-# Navigate to MCP server directory
-cd /path/to/igris-ai/brain-mcp-server
+# Confirm the igris-brain MCP entry exists in ~/.claude.json
+python3 -c "import json; print(json.load(open('$HOME/.claude.json'))['mcpServers']['igris-brain'])"
 
-# Install dependencies
-npm install
-
-# Build the server
-npm run build
-
-# The server is configured in .claude/settings.json
-# It will be available as MCP tools in Claude Code
+# Or let doctor check it for you (reports the `mcp-unregistered` drift
+# class if the entry is missing or points at a deleted file):
+igris doctor
 ```
+
+If `igris doctor` reports `mcp-unregistered`, run `igris doctor --fix` (or
+`igris init --upgrade`) to register it, then restart Claude Code.
+
+---
+
+## The Brain MCP Server
+
+The `igris-brain` MCP (Model Context Protocol) server provides the brain
+tools — persistent memory, brief management, cross-project intelligence —
+to Claude Code.
+
+**It ships inside the `igris-ai` npm package and registers itself
+automatically.** `npm install -g igris-ai` bundles a pre-built
+brain-mcp-server, and `igris init` / `igris install` add the `igris-brain`
+entry to `~/.claude.json`. There is no separate clone-build-configure step.
+
+**Restart Claude Code** after `igris init` so it picks up the new MCP
+server.
+
+### Degraded mode (vector search)
+
+The MCP's vector-search feature depends on `@huggingface/transformers`, a
+heavyweight optional dependency (ONNX runtime). It is listed under
+`optionalDependencies`, so if `npm install -g igris-ai` cannot build it on
+your platform, the install still succeeds and the MCP still boots — only
+semantic/vector search degrades to FTS5 keyword search. Briefs, memory,
+sessions, tasks, and sync are unaffected.
+
+### Contributors (developing Igris itself)
+
+If you are working on the Igris source and want Claude Code to use your
+working clone's MCP rather than the bundled copy:
+
+```bash
+igris init --upgrade --dev --from-source /path/to/igris-ai
+```
+
+`--dev` registers `<clone>/brain-mcp-server/dist/index.js` so your
+edit-rebuild-test loop is not broken by a repoint to the stale bundled
+copy. `--dev` requires `--from-source`.
 
 ---
 
@@ -291,11 +326,11 @@ igris install .
 
 After setup:
 
-1. **Generate architecture docs** - Run `/document architecture`
-2. **Analyze codebase** - Run `/migrate-analyze`
-3. **Review generated briefs** - Run `List all briefs`
-4. **Start implementing** - Run `/hunt BR-XXX`
-5. **Set up MCP** - (Optional) Build the MCP server for cross-project intelligence
+1. **Restart Claude Code** - so it picks up the bundled `igris-brain` MCP server registered by `igris init`
+2. **Generate architecture docs** - Run `/document architecture`
+3. **Analyze codebase** - Run `/migrate-analyze`
+4. **Review generated briefs** - Run `List all briefs`
+5. **Start implementing** - Run `/hunt BR-XXX`
 
 ---
 

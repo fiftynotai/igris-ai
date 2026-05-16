@@ -65,10 +65,12 @@ import { copyFromSource, FromSourceError } from "../lib/from-source.js";
 import {
   brainDir,
   cacheDir,
+  claudeJsonPath,
   configJsonPath,
   installSourcePath,
   userMdPath,
 } from "../lib/paths.js";
+import { registerMcpInClaudeJson } from "../lib/mcp-register.js";
 import {
   checkNetwork,
   checkNodeVersion,
@@ -114,6 +116,15 @@ export interface InitOptions {
   dryRun?: boolean;
   /** Skip confirmation prompts (e.g. channel switch). */
   yes?: boolean;
+  /**
+   * Contributor dev-loop flag (TD-168 §5). When set, the igris-brain MCP
+   * is registered pointing at the CLONE's brain-mcp-server
+   * (`<fromSource>/brain-mcp-server/dist/index.js`) instead of the bundled
+   * copy — so the operator's edit-rebuild-test loop is not broken by an
+   * `igris init` repointing the entry at a stale bundle. Requires
+   * `--from-source` (the path the clone is derived from).
+   */
+  dev?: boolean;
   /** Internal/test: override package version baked into config.json. */
   cliVersion?: string;
   /**
@@ -174,6 +185,28 @@ export async function runInit(opts: InitOptions): Promise<number> {
       `--upgrade was passed but no existing install found at ${brainDir()}. Drop --upgrade for a fresh init.`,
     );
     return 1;
+  }
+
+  // --- --dev validation + path resolution (TD-168 §5) ------------------
+  // --dev (contributor dev-loop): register the igris-brain MCP from the
+  // --from-source clone instead of the bundled copy, so the operator's
+  // edit-rebuild-test loop is not broken by a repoint to a stale bundle.
+  // Validated EARLY (before the core fetch) so a misuse fails fast rather
+  // than after a multi-second download.
+  let devMcpPath: string | undefined;
+  if (opts.dev === true) {
+    if (opts.fromSource === undefined) {
+      logError(
+        "--dev requires --from-source <path> (the clone to register the MCP from).",
+      );
+      return 1;
+    }
+    devMcpPath = join(
+      pathResolve(opts.fromSource),
+      "brain-mcp-server",
+      "dist",
+      "index.js",
+    );
   }
 
   // --- Interactive prompts (TD-144) ------------------------------------
@@ -558,6 +591,37 @@ export async function runInit(opts: InitOptions): Promise<number> {
     void cacheStore;
     void findCached;
     void cacheDir;
+  }
+
+  // --- 13. Register igris-brain MCP in ~/.claude.json (TD-168) ----------
+  // `npm install -g igris-ai` ships a bundled brain-mcp-server; Claude Code
+  // only serves its tools once the `igris-brain` entry exists in the user's
+  // ~/.claude.json. This step upserts it. Non-fatal (mirrors step 9b): a
+  // registration failure WARNs and lets init complete with exit 0.
+  //
+  // --dev resolution happened early (right after pre-flight) — devMcpPath
+  // is the clone's MCP path when --dev was passed, else undefined.
+  if (dry !== null) {
+    dry.wouldWriteFile(
+      claudeJsonPath(),
+      "register igris-brain MCP server",
+    );
+  } else {
+    const mcpRes = registerMcpInClaudeJson(
+      devMcpPath !== undefined ? { mcpEntryPath: devMcpPath } : undefined,
+    );
+    if (mcpRes.outcome === "failed") {
+      warn(`MCP registration skipped: ${mcpRes.error}`);
+      warn(
+        `  Manual fix: add an "igris-brain" entry to mcpServers in ${mcpRes.claudeJsonPath}`,
+      );
+      warn(`  pointing at: ${mcpRes.mcpEntryPath}`);
+    } else if (mcpRes.outcome === "unchanged") {
+      debug(`igris-brain MCP already registered at ${mcpRes.mcpEntryPath}`);
+    } else {
+      info(`Registered igris-brain MCP (${mcpRes.outcome}) -> ${mcpRes.mcpEntryPath}`);
+      info("  Restart Claude Code to pick up the new MCP server.");
+    }
   }
 
   // --- 12. Final report -------------------------------------------------

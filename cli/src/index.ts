@@ -99,6 +99,11 @@ async function main(argv: string[]): Promise<void> {
       "accept all defaults; skip prompts (identity + remote_brain + channel switch)",
       false,
     )
+    .option(
+      "--dev",
+      "contributor dev-loop: register the igris-brain MCP from the --from-source clone, not the bundled copy (requires --from-source)",
+      false,
+    )
     .action(
       async (opts: {
         fromSource?: string;
@@ -108,6 +113,7 @@ async function main(argv: string[]): Promise<void> {
         cliBridge?: string;
         dryRun?: boolean;
         yes?: boolean;
+        dev?: boolean;
       }): Promise<void> => {
         const code = await runInit({
           fromSource: opts.fromSource,
@@ -117,6 +123,7 @@ async function main(argv: string[]): Promise<void> {
           cliBridge: opts.cliBridge,
           dryRun: opts.dryRun === true,
           yes: opts.yes === true,
+          dev: opts.dev === true,
         });
         process.exitCode = code;
       },

@@ -7,7 +7,8 @@
  */
 
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** Absolute path to the brain root (default: `~/.igris/`, override via IGRIS_BRAIN_DIR). */
 export function brainDir(): string {
@@ -71,4 +72,36 @@ export function userMdPath(): string {
 /** Absolute path to `~/.igris/config.json`. */
 export function configJsonPath(): string {
   return join(brainDir(), "config.json");
+}
+
+/**
+ * Absolute path to `~/.claude.json` — Claude Code's per-user config FILE.
+ *
+ * NOTE: this is `~/.claude.json` (a file), NOT `~/.claude/settings.json`.
+ * It carries the `mcpServers` map that registers MCP servers for Claude
+ * Code. TD-168 upserts the `igris-brain` entry into that map.
+ */
+export function claudeJsonPath(): string {
+  return join(homedir(), ".claude.json");
+}
+
+/**
+ * Absolute path to the bundled brain-mcp-server entrypoint shipped inside
+ * the CLI npm package: `cli/dist/brain-mcp-server/dist/index.js`.
+ *
+ * Resolved by walking up two levels from this module's directory to the
+ * `cli/` package root, then into `dist/brain-mcp-server/dist/index.js`:
+ *   compiled: cli/dist/lib/paths.js → ../.. = cli/ → cli/dist/brain-mcp-server/...
+ *   source:   cli/src/lib/paths.ts  → ../.. = cli/ → cli/dist/brain-mcp-server/...
+ *
+ * Both contexts resolve to the SAME real bundled location — the path the
+ * `copy-templates.sh` bundling stage (TD-168) stages. Anchoring on `cli/`
+ * rather than the module's parent makes the resolution correct under
+ * vitest (which runs `src/`) as well as in the published package (`dist/`).
+ * Same `dirname(fileURLToPath(import.meta.url))` idiom as
+ * `init.ts#templateRoot()` and `global-claude-md.ts`.
+ */
+export function bundledMcpEntryPath(): string {
+  const here = dirname(fileURLToPath(import.meta.url)); // cli/dist/lib or cli/src/lib
+  return join(here, "..", "..", "dist", "brain-mcp-server", "dist", "index.js");
 }

@@ -242,6 +242,55 @@ describe("tarball — utility surface", () => {
 });
 
 // ----------------------------------------------------------------------
+// TD-168: the CLI npm package bundles brain-mcp-server under
+// cli/dist/brain-mcp-server/. `npm pack --dry-run --json` lists every file
+// that WOULD ship in the published tarball; we assert the bundled MCP is
+// in that manifest. The test depends on `cli/dist/` being built (CI runs
+// `npm run build` before `npm test`) — it SKIPS with a clear message when
+// the build has not run, so a bare `vitest` against unbuilt src/ is green.
+// ----------------------------------------------------------------------
+describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
+  it("npm pack --dry-run includes dist/brain-mcp-server/dist/index.js", async () => {
+    const cp = await import("node:child_process");
+    const path = await import("node:path");
+    // cli/ root: this test file is at cli/src/__tests__/tarball.test.ts.
+    const cliRoot = path.join(__dirname, "..", "..");
+    const bundledEntry = path.join(
+      cliRoot,
+      "dist",
+      "brain-mcp-server",
+      "dist",
+      "index.js",
+    );
+    if (!existsSync(bundledEntry)) {
+      // The build has not run — skip rather than fail. CI builds first.
+      console.warn(
+        "[tarball TD-168] skipped: cli/dist/brain-mcp-server/dist/index.js " +
+          "absent — run `npm run build` in cli/ before this test.",
+      );
+      return;
+    }
+
+    const out = cp.execFileSync(
+      "npm",
+      ["pack", "--dry-run", "--json"],
+      { cwd: cliRoot, encoding: "utf-8" },
+    );
+    const parsed = JSON.parse(out) as Array<{
+      files: Array<{ path: string }>;
+    }>;
+    expect(parsed.length).toBeGreaterThan(0);
+    const filePaths = parsed[0].files.map((f) => f.path);
+    expect(
+      filePaths.includes("dist/brain-mcp-server/dist/index.js"),
+    ).toBe(true);
+    expect(
+      filePaths.includes("dist/brain-mcp-server/package.json"),
+    ).toBe(true);
+  });
+});
+
+// ----------------------------------------------------------------------
 // Helpers — synthetic tarball builders for tests that the committed
 // fixtures don't already cover.
 // ----------------------------------------------------------------------

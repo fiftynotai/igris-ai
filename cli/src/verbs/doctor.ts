@@ -8,6 +8,8 @@
  *   brain-core-missing      → ~/.igris/core/ absent or empty
  *   brain-core-stale        → ~/.igris/core/ content hash diverges from channel head
  *   bridge-missing          → CLI on PATH lacks configured bridge
+ *   mcp-unregistered        → ~/.claude.json lacks the igris-brain MCP entry
+ *                             (or it points at a missing file) — TD-168
  *
  * Per-project:
  *   path-missing            → orphan (registry row points at deleted dir)
@@ -22,12 +24,16 @@
  *   clean                   → none of the above
  *
  * Precedence (high → low): path-missing → brain-core-missing → brain-core-stale →
- * channel-mismatch → bridge-missing → duplicate-path → not-installed →
- * hooks-missing → hooks-stale → symlink-target → slug-basename-mismatch → clean.
+ * channel-mismatch → bridge-missing → mcp-unregistered → duplicate-path →
+ * not-installed → hooks-missing → hooks-stale → symlink-target →
+ * slug-basename-mismatch → clean.
+ * (mcp-unregistered sits next to bridge-missing — both brain-level,
+ *  config-driven, and orthogonal to core state.)
  *
  * --fix repairs not-installed / hooks-missing / hooks-stale by re-running install,
  * brain-core-missing by invoking runRefresh(), bridge-missing by invoking
- * partial-mode runInit({ upgrade: true }).
+ * partial-mode runInit({ upgrade: true }), mcp-unregistered by calling
+ * registerMcpInClaudeJson() directly (cheap — no need to re-run init).
  * --remove-orphans deletes path-missing rows after per-row confirmation
  * (skip prompt with --yes).
  */
@@ -43,8 +49,13 @@ import {
   computeFeatureHashes,
 } from "../lib/installed-features.js";
 import {
+  claudeJsonPath,
   projectSettingsPath,
 } from "../lib/paths.js";
+import {
+  inspectMcpRegistration,
+  registerMcpInClaudeJson,
+} from "../lib/mcp-register.js";
 import { runInstall } from "./install.js";
 import { runRefresh } from "./refresh.js";
 import { runInit } from "./init.js";
@@ -143,6 +154,18 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
           // help and may compound state damage).
           bridgeFixApplied = true;
         }
+      } else if (row.driftClass === "mcp-unregistered") {
+        // TD-168: register the bundled igris-brain MCP directly. Cheap —
+        // no need to re-run init. registerMcpInClaudeJson never throws;
+        // a failed outcome is surfaced as an error row.
+        info("fix: mcp-unregistered — registering igris-brain MCP in ~/.claude.json");
+        const mcpRes = registerMcpInClaudeJson();
+        if (mcpRes.outcome === "failed") {
+          errored++;
+          logError(`mcp-unregistered fix: ${mcpRes.error}`);
+        } else {
+          info(`  igris-brain MCP ${mcpRes.outcome} -> ${mcpRes.mcpEntryPath}`);
+        }
       } else if (
         row.driftClass === "slug-basename-mismatch" ||
         row.driftClass === "duplicate-path" ||
@@ -179,7 +202,8 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
           r.driftClass === "hooks-missing" ||
           r.driftClass === "hooks-stale" ||
           r.driftClass === "brain-core-missing" ||
-          r.driftClass === "bridge-missing")
+          r.driftClass === "bridge-missing" ||
+          r.driftClass === "mcp-unregistered")
       ),
   );
 
@@ -216,6 +240,21 @@ export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]>
   // knowing a CLI on PATH lacks a bridge entry.
   const bridges = detectBridgeMissing();
   for (const b of bridges) out.push(b);
+
+  // mcp-unregistered (TD-168): brain-level, config-driven, sits next to
+  // bridge-missing. Flagged when ~/.claude.json lacks the igris-brain MCP
+  // entry OR the entry points at a missing file — in either case Claude
+  // Code serves zero brain tools.
+  const mcp = inspectMcpRegistration();
+  if (!mcp.registered || !mcp.pathExists) {
+    out.push({
+      slug: "(brain)",
+      path: claudeJsonPath(),
+      driftClass: "mcp-unregistered",
+      recommendedFix:
+        "run 'igris init --upgrade' or 'igris doctor --fix' to register the igris-brain MCP",
+    });
+  }
 
   // Per-project: channel-mismatch + the existing classifyDrift output.
   // channel-mismatch sits BEFORE the existing per-project chain in

@@ -45,9 +45,11 @@ import {
 } from "../lib/installed-features.js";
 import {
   brainDir,
+  claudeJsonPath,
   projectSettingsPath,
   installedFeaturesPath,
 } from "../lib/paths.js";
+import { registerMcpInClaudeJson } from "../lib/mcp-register.js";
 import { linkDir, linkFile, SymlinkConflictError } from "../lib/symlinks.js";
 import {
   discoverAgentEntries,
@@ -295,6 +297,24 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
     debug(`remote brain push outcome: ${pushOutcome}`);
   }
 
+  // 11. Register igris-brain MCP in ~/.claude.json (TD-168). Belt-and-
+  // suspenders so a user who runs `igris install` without `igris init`
+  // (the from-source contributor flow) still gets the MCP registered.
+  // Non-fatal: a registration failure WARNs and the install completes.
+  const mcpRes = registerMcpInClaudeJson();
+  if (mcpRes.outcome === "failed") {
+    warn(`MCP registration skipped: ${mcpRes.error}`);
+    warn(
+      `  Manual fix: add an "igris-brain" entry to mcpServers in ${mcpRes.claudeJsonPath}`,
+    );
+    warn(`  pointing at: ${mcpRes.mcpEntryPath}`);
+  } else if (mcpRes.outcome === "unchanged") {
+    debug(`igris-brain MCP already registered at ${mcpRes.mcpEntryPath}`);
+  } else {
+    info(`Registered igris-brain MCP (${mcpRes.outcome}) -> ${mcpRes.mcpEntryPath}`);
+    info("  Restart Claude Code to pick up the new MCP server.");
+  }
+
   info("");
   info("Install summary:");
   info(`  slug:           ${slug}`);
@@ -458,6 +478,12 @@ function enumerateInstallPlan(
   dry.wouldWriteFile(
     installedFeaturesPath(slug),
     "content hashes for upgrade detection",
+  );
+
+  // igris-brain MCP registration in ~/.claude.json (TD-168)
+  dry.wouldWriteFile(
+    claudeJsonPath(),
+    "register igris-brain MCP server",
   );
 }
 

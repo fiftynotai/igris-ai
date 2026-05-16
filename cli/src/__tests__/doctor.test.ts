@@ -18,6 +18,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 let tmpRoot: string;
+/** Sandboxed HOME so claudeJsonPath() (used by the mcp-unregistered
+ *  drift check, TD-168) resolves into a tmp dir, not the real ~. */
+let homeOverride: string;
+let homeBackup: string | undefined;
 const projectDirs: string[] = [];
 
 const CANONICAL_HOOKS = {
@@ -61,6 +65,34 @@ function stageBrain(): void {
   mkdirSync(join(tmpRoot, "memory"), { recursive: true });
 }
 
+/**
+ * Write a valid `~/.claude.json` (in the sandboxed HOME) with the
+ * igris-brain MCP registered pointing at a real on-disk file. Keeps
+ * the existing exit-code tests free of the TD-168 mcp-unregistered
+ * drift row. The mcp-unregistered tests explicitly skip this.
+ */
+function stageValidClaudeJson(): void {
+  const mcpFile = join(tmpRoot, "fake-bundled-mcp.js");
+  writeFileSync(mcpFile, "// fake bundled mcp\n");
+  writeFileSync(
+    join(homeOverride, ".claude.json"),
+    JSON.stringify(
+      {
+        mcpServers: {
+          "igris-brain": {
+            type: "stdio",
+            command: "node",
+            args: [mcpFile],
+            env: {},
+          },
+        },
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+}
+
 function stageProject(name = "proj"): string {
   const dir = mkdtempSync(join(tmpdir(), `igris-cli-doctor-${name}-`));
   mkdirSync(join(dir, ".claude"), { recursive: true });
@@ -71,7 +103,18 @@ function stageProject(name = "proj"): string {
 beforeEach(async () => {
   tmpRoot = mkdtempSync(join(tmpdir(), "igris-cli-doctor-brain-"));
   process.env.IGRIS_BRAIN_DIR = tmpRoot;
+  // Sandbox HOME so the TD-168 mcp-unregistered check (claudeJsonPath()
+  // -> ~/.claude.json) resolves into tmp. Without this, the check would
+  // read the developer's real ~/.claude.json and tests would be
+  // non-hermetic. By default the sandboxed home has no .claude.json, so
+  // mcp-unregistered DOES fire; tests that need it absent register a
+  // valid entry in their own setup.
+  homeOverride = join(tmpRoot, "home");
+  mkdirSync(homeOverride, { recursive: true });
+  homeBackup = process.env.HOME;
+  process.env.HOME = homeOverride;
   stageBrain();
+  stageValidClaudeJson();
   const ch = await import("../lib/canonical-hooks.js");
   ch.clearCache();
   const reg = await import("../lib/registry.js");
@@ -85,6 +128,7 @@ afterEach(async () => {
   for (const d of projectDirs) rmSync(d, { recursive: true, force: true });
   projectDirs.length = 0;
   delete process.env.IGRIS_BRAIN_DIR;
+  process.env.HOME = homeBackup;
 });
 
 describe("doctor — drift classification (read-only)", () => {
@@ -272,6 +316,73 @@ describe("doctor — drift classification (read-only)", () => {
     const drift = classifyDrift(reg.listProjects());
     expect(drift.length).toBe(1);
     expect(drift[0].driftClass).toBe("symlink-target");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-168: mcp-unregistered drift class. classifyDriftAll synthesizes a
+// `(brain)`-slug row when ~/.claude.json lacks the igris-brain MCP entry
+// (or it points at a missing file). The sandboxed HOME starts WITH a valid
+// entry (stageValidClaudeJson in beforeEach), so these tests mutate it.
+// ---------------------------------------------------------------------------
+describe("doctor — mcp-unregistered drift class (TD-168)", () => {
+  it("no mcp-unregistered row when ~/.claude.json has a valid igris-brain entry", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    // beforeEach already staged a valid ~/.claude.json.
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "mcp-unregistered")).toBe(false);
+  });
+
+  it("yields a mcp-unregistered row when ~/.claude.json is absent", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    // Remove the staged ~/.claude.json so the MCP is unregistered.
+    rmSync(join(homeOverride, ".claude.json"), { force: true });
+    const drift = await classifyDriftAll(reg.listProjects());
+    const row = drift.find((r) => r.driftClass === "mcp-unregistered");
+    expect(row).toBeDefined();
+    expect(row!.slug).toBe("(brain)");
+  });
+
+  it("yields a mcp-unregistered row when the entry points at a missing file", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    // Repoint the entry at a path that doesn't exist.
+    writeFileSync(
+      join(homeOverride, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          "igris-brain": {
+            type: "stdio",
+            command: "node",
+            args: ["/no/such/mcp/index.js"],
+            env: {},
+          },
+        },
+      }) + "\n",
+    );
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "mcp-unregistered")).toBe(true);
+  });
+
+  it("--fix registers the igris-brain MCP (mcp-unregistered resolved)", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    // Drop ~/.claude.json so mcp-unregistered fires. runInstall (via no
+    // project) is not involved — the fix arm calls registerMcpInClaudeJson
+    // directly, which writes to the sandboxed HOME pointing at the real
+    // bundled path (built in Phase 1 — cli/dist/brain-mcp-server/...).
+    rmSync(join(homeOverride, ".claude.json"), { force: true });
+    const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    expect(code).toBe(0);
+    // After --fix, ~/.claude.json exists with the igris-brain entry.
+    const data = JSON.parse(
+      require("node:fs").readFileSync(
+        join(homeOverride, ".claude.json"),
+        "utf-8",
+      ),
+    ) as { mcpServers: Record<string, unknown> };
+    expect(data.mcpServers["igris-brain"]).toBeDefined();
   });
 });
 
