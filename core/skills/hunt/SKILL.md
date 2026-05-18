@@ -13,6 +13,8 @@ allowed-tools:
   - mcp__igris-brain__igris_brief_sync
   - mcp__igris-brain__igris_brief_get
   - mcp__igris-brain__igris_brief_update
+  - mcp__igris-brain__igris_brief_claim
+  - mcp__igris-brain__igris_brief_release
   - mcp__igris-brain__igris_instance_heartbeat
   - mcp__igris-brain__igris_instance_list
   - mcp__igris-brain__igris_agent_event
@@ -90,6 +92,38 @@ bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "hunt" 2>/dev/null || tru
    **This step is display-only — it does NOT block the hunt.** If a sibling already owns the brief being hunted, the hunt still proceeds; the operator is merely informed. FR-127 owns the atomic claim gate — its enforced claim-and-lock sits immediately after this surfacing step and turns this advisory display into a gate. This step is FR-127's merge base.
 
    If brain MCP is NOT available or `igris_instance_list` is unavailable (older brain), skip silently. Do NOT block the hunt.
+
+6.5. **Atomically claim the brief (FR-127 — the hard gate):**
+   If the `igris-brain` MCP server is available, call `igris_brief_claim` with
+   `project` = current project slug, `brief_id` = `$ARGUMENTS`, and
+   `instance_id` = the Instance ID from the per-instance session file.
+
+   Branch on the result:
+
+   - **`claimed: true`** — proceed. (If `reentrant: true`, this instance already
+     held the brief — a resumed hunt; display "Re-claimed FR-XXX (already
+     yours)." and continue. Otherwise display nothing and continue to step 7.)
+
+   - **`claimed: false`** — the brief is claimed by `held_by`. Determine if that
+     claim is LIVE or STALE: call `igris_instance_list` with `status='active'`
+     and the project slug, and check whether `held_by` appears in the active set.
+       - **`held_by` IS in the active set** (live claim) → **HARD STOP.** Display:
+         "BR-XXX is being hunted by instance {held_by} ({harness}, active {T}
+         ago). Two instances cannot hunt the same brief. Aborting /hunt."
+         Do NOT proceed to step 7. Do NOT mutate brief status. End the skill.
+       - **`held_by` is NOT in the active set, OR `held_since` is older than 24h**
+         (stale claim) → display: "BR-XXX's claim by {held_by} looks stale
+         (claimer not active / claim {age} old). Reclaim? [y/N]" — WAIT for
+         explicit operator input. On **N / anything but y** → HARD STOP, end the
+         skill. On **y** → call `igris_brief_release` with the STALE `held_by`
+         instance_id, then call `igris_brief_claim` again with THIS instance's
+         `instance_id`; if that second claim returns `claimed: true`, proceed to
+         step 7. (If it returns `claimed: false` again — a race where another
+         instance grabbed it in the gap — HARD STOP with the live-claim message.)
+
+   If brain MCP is NOT available or `igris_brief_claim` is unavailable (older
+   brain), skip this step silently and proceed — the gate degrades to the
+   FR-132 display-only advisory. Do NOT block the hunt on MCP absence.
 
 7. Update `~/.igris/projects/{project}/session/instances/<instance_id>.md`:
    - Set Active Brief
@@ -477,6 +511,11 @@ EOF
      {"timestamp":"{ISO-8601 now}","operation":"brief_sync","project":"{project}","brief_id":"{BRIEF_ID}","title":"{title}","status":"Done","phase":"COMMITTING"}
      ```
    - Do NOT block the hunt workflow — continue to COMPLETE.
+5.5. **Release the brief claim (FR-127):** Call `igris_brief_release` with
+   `project` = current project slug, `brief_id` = the brief ID, and
+   `instance_id` = the stored Instance ID. The brief is Done — its claim must
+   be freed so the slot is clean. Idempotent; skip silently if brain MCP is
+   unavailable.
 6. Proceed to COMPLETE
 
 ### Phase 8: COMPLETE

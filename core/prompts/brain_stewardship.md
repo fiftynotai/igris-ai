@@ -251,7 +251,8 @@ igris_graph_neighbors({ node_type: "concept", node_id: "concept:142", edge_types
 
 **Tools:** `igris_brief_create`, `igris_brief_get`, `igris_brief_list`,
 `igris_brief_update`, `igris_brief_similar`, `igris_brief_sync`,
-`igris_brief_dashboard`, `igris_brief_velocity`.
+`igris_brief_dashboard`, `igris_brief_velocity`, `igris_brief_claim`,
+`igris_brief_release`.
 
 Archival is a status transition: call `igris_brief_update` with
 `status: 'Archived'` rather than reaching for a separate archive tool.
@@ -272,6 +273,11 @@ fallback at `~/.igris/projects/{project}/briefs/`).
 - **For dashboards / standup:** `igris_brief_dashboard` with `summary_only:
   true` (NEVER `limit: 0` — that dumps ~13k tokens).
 - **Before a release cut:** `igris_brief_velocity` for cadence sanity.
+- **Claiming a brief for a hunt is automatic via `/hunt`;** `igris_brief_claim`
+  / `igris_brief_release` are the FR-127 atomic claim/release gate that stops
+  two instances hunting the same brief — not called by hand. `/hunt` claims
+  before INIT (a second instance's claim affects 0 rows and hard-stops);
+  `/rest` and brief-completion release.
 
 ### Example invocation
 

@@ -1,9 +1,10 @@
 /**
  * TD-171 M4 — Pinned tool-count contract test.
  *
- * Asserts the registered surface on the gateway is exactly the 122 tools
+ * Asserts the registered surface on the gateway is exactly the 124 tools
  * targeted by TD-171 closeout (107 baseline + 14 net-new across M0-M4)
- * plus 1 net-new from FR-130 (igris_session_file_list).
+ * plus 1 net-new from FR-130 (igris_session_file_list)
+ * plus 2 net-new from FR-127 (igris_brief_claim / igris_brief_release).
  *
  * Why a literal-count test:
  *   - The tool-name drift validator (`scripts/validate_brain_stewardship_enums.sh`,
@@ -86,12 +87,12 @@ describe('gateway tool count (TD-171 closeout)', () => {
   gateway.register(collectAllTools());
   const tools = gateway.listTools();
 
-  it('exposes exactly 122 tools (TD-171 closeout: 107 baseline + 14 net-new + 1 FR-130 igris_session_file_list)', () => {
+  it('exposes exactly 124 tools (TD-171 closeout: 107 baseline + 14 net-new + 1 FR-130 igris_session_file_list + 2 FR-127 igris_brief_claim/release)', () => {
     // If this assertion fires, the registered surface drifted. Either a tool
     // was added/removed without bumping the count here, or the closeout
     // baseline shifted intentionally. In either case: open a brief, decide,
     // and update this literal in the same commit that moves the surface.
-    expect(tools.length).toBe(122);
+    expect(tools.length).toBe(124);
   });
 
   it('every component factory contributes at least one tool', () => {

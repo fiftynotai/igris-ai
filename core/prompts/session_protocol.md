@@ -99,6 +99,21 @@ Liveness is the **instance registry's** job — never the session file's.
   crashed scratchpad. It is NEVER consumed as a handoff and NEVER
   auto-archived. Only a `state='rested'` file is a genuine handoff.
 
+### The atomic brief-claim gate (FR-127)
+
+Liveness display alone does not *prevent* two instances hunting the same
+brief — it only warns. **FR-127 adds the enforced gate.** Before INIT,
+`/hunt` atomically claims the brief in `brief_status` via `igris_brief_claim`,
+setting the `claimed_by` column to the hunting instance's UUID. The claim is
+a single conditional `UPDATE` whose precondition is the gate: a second
+instance's claim of the same brief affects **0 rows** and `/hunt` hard-stops.
+A resumed hunt by the *same* instance re-claims its own brief as a no-op
+success (re-entrant). `/rest` (via `igris_brief_release`) and brief-completion
+release the claim — both ownership-scoped, so an instance only frees a claim
+it holds. A stale claim (claimer absent from the active registry, or claim
+older than 24h) is reclaimable ONLY via explicit operator confirmation in
+`/hunt` — heartbeat silence never auto-releases (Lock 1).
+
 ---
 
 ## 4. No Shared Section; Standing State → Goal  [Lock 3 — boundaries]

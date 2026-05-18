@@ -39,6 +39,29 @@ const ENGINE_INDEX_PATH = join(ENGINE_DIR, 'index.ts');
 // ---------------------------------------------------------------------------
 
 /**
+ * Legacy `brief_status` DDL — byte-equivalent to `db.ts` schema_version v2.
+ * The briefs component's v2 migration (FR-127) only ALTERs this table; it
+ * does not create it. Tests that run engine migrations on a bare DB must
+ * pre-create it, reproducing the production boot ordering (legacy
+ * migrateSchema before component migrations).
+ */
+const LEGACY_BRIEF_STATUS_DDL = `
+  CREATE TABLE IF NOT EXISTS brief_status (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project TEXT NOT NULL,
+    brief_id TEXT NOT NULL,
+    brief_type TEXT,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,
+    priority TEXT,
+    effort TEXT,
+    phase TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_brief_status_unique ON brief_status(project, brief_id);
+`;
+
+/**
  * Run legacy migrateSchema-equivalent SQL (v1-v9) on an in-memory DB.
  * This simulates what migrateSchema() does, using the actual SQL from db.ts.
  */
@@ -76,6 +99,24 @@ function runLegacyMigrations(db: Database.Database): void {
       UNIQUE(project, brief_id)
     );
     CREATE INDEX IF NOT EXISTS idx_brief_files_project ON brief_files(project);
+
+    -- brief_status is created by legacy db.ts migrateSchema() (schema_version
+    -- v2). The briefs component's v2 migration (FR-127) ALTERs it, so the
+    -- legacy simulation must create it for the engine migrations to apply
+    -- cleanly on top — exactly the production boot ordering.
+    CREATE TABLE IF NOT EXISTS brief_status (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project TEXT NOT NULL,
+      brief_id TEXT NOT NULL,
+      brief_type TEXT,
+      title TEXT NOT NULL,
+      status TEXT NOT NULL,
+      priority TEXT,
+      effort TEXT,
+      phase TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_brief_status_unique ON brief_status(project, brief_id);
 
     CREATE TABLE IF NOT EXISTS session_files (
       id TEXT PRIMARY KEY,
@@ -171,13 +212,14 @@ describe('Legacy Migration Bridge (BR-035)', () => {
   describe('component schema declarations', () => {
     // `migrationCount` is the number of migrations the component currently
     // ships. sessions ships 2 as of FR-130 (v1 = session_files DDL, v2 =
-    // instance_id + state columns); the rest ship a single v1. The v1
-    // migration of every component still owns the table-creation DDL, so
-    // the sub-tests below all read migrations[0].
+    // instance_id + state columns); briefs ships 2 as of FR-127 (v1 =
+    // brief_files DDL, v2 = claimed_by + claimed_at on brief_status); the
+    // rest ship a single v1. The v1 migration of every component still owns
+    // the table-creation DDL, so the sub-tests below all read migrations[0].
     const componentFactories = [
       { name: 'instances', factory: createInstancesComponent, table: 'agent_events', migrationCount: 1 },
       { name: 'sync', factory: createSyncComponent, table: 'sync_queue', migrationCount: 1 },
-      { name: 'briefs', factory: createBriefsComponent, table: 'brief_files', migrationCount: 1 },
+      { name: 'briefs', factory: createBriefsComponent, table: 'brief_files', migrationCount: 2 },
       { name: 'sessions', factory: createSessionsComponent, table: 'session_files', migrationCount: 2 },
       { name: 'cache', factory: createCacheComponent, table: 'definition_files', migrationCount: 1 },
     ];
@@ -222,6 +264,9 @@ describe('Legacy Migration Bridge (BR-035)', () => {
     it('should create all 5 tables without error', () => {
       const db = new Database(':memory:');
       db.pragma('journal_mode = WAL');
+
+      // brief_status is a legacy-created table the briefs v2 migration ALTERs.
+      db.exec(LEGACY_BRIEF_STATUS_DDL);
 
       const components = [
         createInstancesComponent(),
@@ -338,6 +383,8 @@ describe('Legacy Migration Bridge (BR-035)', () => {
     function setup(): void {
       db = new Database(':memory:');
       db.pragma('journal_mode = WAL');
+      // brief_status is a legacy-created table the briefs v2 migration ALTERs.
+      db.exec(LEGACY_BRIEF_STATUS_DDL);
       const components = [
         createInstancesComponent(),
         createSyncComponent(),
