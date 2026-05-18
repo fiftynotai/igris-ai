@@ -7,6 +7,7 @@ allowed-tools:
   - Write
   - Edit
   - mcp__igris-brain__igris_session_file_update
+  - mcp__igris-brain__igris_instance_heartbeat
   - mcp__igris-brain__igris_instance_remove
 triggers:
   - "REST"
@@ -30,21 +31,26 @@ bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "rest" 2>/dev/null || tru
 
 ### 1. Read Current Session
 
-Read `~/.igris/projects/{project}/session/CURRENT_SESSION.md` to understand current state.
+Read this instance's own LIVE scratchpad: `~/.igris/projects/{project}/session/instances/<instance_id>.md`. The `<instance_id>` is the Instance ID already stored in the session file body from `/awaken` §3.7 (the `**Instance ID:**` field). This per-instance file is where `/awaken` wrote the LIVE state for this instance; it has no shared `CURRENT_SESSION.md`.
 
 ### 2. Confirm with User
 
 Ask: "Save session and enter REST MODE? Any unsaved work will be noted for resumption."
 
-### 2.5. Deregister Instance (Mandatory)
+### 2.5. Close Instance Ownership (Mandatory)
 
-You MUST deregister the instance when ending a session. This removes the instance from the VPS dashboard.
+You MUST close out this instance's ownership when ending a session. This is the deliberate "task closed" signal (Lock 1: ownership is explicit, never implied) AND it removes the instance from the VPS dashboard.
 
-If the `igris-brain` MCP server is available:
-1. Read the Instance ID from `~/.igris/projects/{project}/session/CURRENT_SESSION.md` (look for `**Instance ID:**` field)
-2. If Instance ID exists, call `igris_instance_remove` with the instance_id
-3. Display: "Instance deregistered: {instance_id}"
-4. Remove the `**Instance ID:**` line from `~/.igris/projects/{project}/session/CURRENT_SESSION.md` (clean up for next session)
+Read the Instance ID from the per-instance session file body (the `**Instance ID:**` field). Do NOT remove the `**Instance ID:**` line — §3 below needs it to write the per-instance path.
+
+If the `igris-brain` MCP server is available AND an Instance ID exists, perform TWO actions in this order:
+
+1. **Clear `current_brief` ownership** — call `igris_instance_heartbeat` with the stored `instance_id` and `current_brief=""` (empty string). This is the documented Lock-1 release signal: the empty `current_brief` is the auditable "task closed" event. Pass the same `machine_hostname` / `machine_os` / `project_slug` / `project_path` the instance was registered with so the heartbeat upserts the existing row rather than minting a new one.
+2. **Deregister the instance** — call `igris_instance_remove` with the `instance_id`. This is dashboard cleanup. Display: "Instance ownership closed and deregistered: {instance_id}".
+
+Ordering rationale: the ownership-clear runs first so that even if `igris_instance_remove` fails, the `current_brief` flag is already cleared — the release event is recorded regardless. (`igris_instance_remove` deletes the instance row entirely, which would *implicitly* drop `current_brief` with it; the explicit heartbeat-with-empty-brief makes the release deliberate and auditable, which Lock 1 requires.)
+
+> FR-127 note: FR-127's atomic brief-claim gate releases the lock it took at hunt-start; it extends this section by adding the lock-release alongside the ownership-clear. This section is named "Close Instance Ownership" so FR-127 has a named home for that lock-release.
 
 If brain MCP is NOT available or no Instance ID is stored, skip gracefully. Do NOT block session end.
 
@@ -90,11 +96,23 @@ If remote brain is not configured or push fails, skip with one-line notice: "Bra
 
 ### 3. Update Session File
 
-Edit `~/.igris/projects/{project}/session/CURRENT_SESSION.md`:
+Write the per-instance session file `~/.igris/projects/{project}/session/instances/<instance_id>.md` — the SAME path the LIVE scratchpad already lives at. `/rest` does LIVE → RESTED only: the on-disk file STAYS in `session/instances/`. `/rest` does NOT move it to `session/archive/` — RESTED → ARCHIVED is the next instance's job (Lock 2). The brain `state` column is the authoritative state; the disk location is unchanged.
+
+After writing the file content, call `igris_session_file_update` with:
+- `project` = current project slug
+- `filename` = `instances/<instance_id>.md`
+- `content` = the full file content below
+- `instance_id` = `<instance_id>`
+- `state` = `'rested'`
+
+Keep the `**Instance ID:**` line in the file body — it is the per-instance identity.
+
+File content:
 
 ```markdown
 ## Status
 **Mode:** REST MODE
+**Instance ID:** <instance_id>
 **Updated:** [current date]
 **Active Brief:** [current brief or None]
 

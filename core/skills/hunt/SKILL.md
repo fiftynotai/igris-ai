@@ -14,6 +14,7 @@ allowed-tools:
   - mcp__igris-brain__igris_brief_get
   - mcp__igris-brain__igris_brief_update
   - mcp__igris-brain__igris_instance_heartbeat
+  - mcp__igris-brain__igris_instance_list
   - mcp__igris-brain__igris_agent_event
 triggers:
   - "HUNT"
@@ -83,11 +84,19 @@ bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "hunt" 2>/dev/null || tru
 3. Verify Status is "Ready" or "In Progress"
 4. If Status is "Done" or "Draft", refuse with message
 5. Update Status: "Ready" -> "In Progress" if needed
-6. Update `~/.igris/projects/{project}/session/CURRENT_SESSION.md`:
+6. **Surface the instance registry (Lock 1 — display-only):**
+   If the `igris-brain` MCP server is available, call `igris_instance_list` with `status='active'` and `project` = current project slug. For every *other* live instance returned (any instance that is not this harness's own), surface a one-line advisory: "instance {short_id} is on {current_brief}, last active {last_active}". This warns the operator before they claim a brief a sibling is already working.
+
+   **This step is display-only — it does NOT block the hunt.** If a sibling already owns the brief being hunted, the hunt still proceeds; the operator is merely informed. FR-127 owns the atomic claim gate — its enforced claim-and-lock sits immediately after this surfacing step and turns this advisory display into a gate. This step is FR-127's merge base.
+
+   If brain MCP is NOT available or `igris_instance_list` is unavailable (older brain), skip silently. Do NOT block the hunt.
+
+7. Update `~/.igris/projects/{project}/session/instances/<instance_id>.md`:
    - Set Active Brief
    - Set Mode: HUNT MODE
+   - `<instance_id>` is read from the `**Instance ID:**` field in the per-instance session file. `/hunt` always runs after `/awaken` registered the instance, so the per-instance file and its `**Instance ID:**` field always exist here.
 
-7. Call `igris_brief_sync` with:
+8. Call `igris_brief_sync` with:
    - project: current project slug
    - brief_id: the brief ID
    - brief_type: type from the brief
@@ -120,14 +129,14 @@ Loading brief and preparing for implementation.
 Proceed to PLANNING phase.
 ```
 
-**Heartbeat:** If Instance ID exists in `~/.igris/projects/{project}/session/CURRENT_SESSION.md`, call `igris_instance_heartbeat` with current_brief and current_phase="INIT". See "Instance Heartbeat" section below.
+**Heartbeat:** If Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call `igris_instance_heartbeat` with current_brief and current_phase="INIT". See "Instance Heartbeat" section below.
 
 ### Phase 2: PLANNING
 
 1. Update brief: Phase = PLANNING, Active Agent = architect
 2. Add Agent Log entry: "Starting architect..."
-3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/CURRENT_SESSION.md`, call `igris_agent_event` with:
-   - instance_id: {Instance ID from `~/.igris/projects/{project}/session/CURRENT_SESSION.md`}
+3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call `igris_agent_event` with:
+   - instance_id: {Instance ID from `~/.igris/projects/{project}/session/instances/<instance_id>.md`}
    - agent: "architect"
    - event_type: "start"
    - brief_id: {current brief ID}
@@ -199,7 +208,7 @@ Agent tool parameters:
 
 1. Update brief: Phase = BUILDING, Active Agent = forger
 2. Add Agent Log entry: "Starting forger..."
-3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/CURRENT_SESSION.md`, call `igris_agent_event` with:
+3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call `igris_agent_event` with:
    - instance_id: {Instance ID}
    - agent: "forger"
    - event_type: "start"
@@ -263,7 +272,7 @@ Agent tool parameters:
 
 1. Update brief: Phase = TESTING, Active Agent = sentinel
 2. Add Agent Log entry: "Starting sentinel..."
-3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/CURRENT_SESSION.md`, call `igris_agent_event` with:
+3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call `igris_agent_event` with:
    - instance_id: {Instance ID}
    - agent: "sentinel"
    - event_type: "start"
@@ -325,7 +334,7 @@ Agent tool parameters:
 
 1. Update brief: Phase = REVIEWING, Active Agent = warden
 2. Add Agent Log entry: "Starting warden..."
-3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/CURRENT_SESSION.md`, call `igris_agent_event` with:
+3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call `igris_agent_event` with:
    - instance_id: {Instance ID}
    - agent: "warden"
    - event_type: "start"
@@ -402,7 +411,7 @@ Agent tool parameters:
 - Session/config changes
 
 4. **If docs needed:**
-   - **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/CURRENT_SESSION.md`, call `igris_agent_event` with:
+   - **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call `igris_agent_event` with:
      - instance_id: {Instance ID}
      - agent: "document"
      - event_type: "start"
@@ -473,7 +482,7 @@ EOF
 ### Phase 8: COMPLETE
 
 1. Update brief: Phase = COMPLETE
-2. Update `~/.igris/projects/{project}/session/CURRENT_SESSION.md`:
+2. Update `~/.igris/projects/{project}/session/instances/<instance_id>.md`:
    - Add to Last Session Summary
    - Clear Active Brief (or set to next)
 
@@ -494,12 +503,12 @@ Next actions:
 
 ## Instance Heartbeat (Mandatory When Available)
 
-On each phase transition (PLANNING, BUILDING, TESTING, REVIEWING, DOCUMENTING, COMMITTING, COMPLETE), you MUST refresh the instance heartbeat if an instance ID exists in `~/.igris/projects/{project}/session/CURRENT_SESSION.md`.
+On each phase transition (PLANNING, BUILDING, TESTING, REVIEWING, DOCUMENTING, COMMITTING, COMPLETE), you MUST refresh the instance heartbeat if an instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`.
 
 If the `igris-brain` MCP server is available AND an instance ID is stored:
-1. Read the Instance ID from `~/.igris/projects/{project}/session/CURRENT_SESSION.md`
+1. Read the Instance ID from `~/.igris/projects/{project}/session/instances/<instance_id>.md`
 2. Call `igris_instance_heartbeat` with:
-   - instance_id = the instance ID from `~/.igris/projects/{project}/session/CURRENT_SESSION.md`
+   - instance_id = the instance ID from `~/.igris/projects/{project}/session/instances/<instance_id>.md`
    - machine_hostname = system hostname
    - machine_os = platform (e.g., "darwin", "linux")
    - project_slug = current project slug
@@ -515,7 +524,7 @@ If brain MCP is not available or no instance ID is stored, skip silently. Do NOT
 
 During long phases (BUILDING, TESTING), the active subagent may run for extended periods. To prevent the instance from being marked stale mid-workflow:
 
-- When delegating to **forger** (BUILDING phase), include in the Task prompt: "If you have access to `igris_instance_heartbeat` and the instance_id from `~/.igris/projects/{project}/session/CURRENT_SESSION.md`, call it periodically during long implementations to keep the instance active."
+- When delegating to **forger** (BUILDING phase), include in the Task prompt: "If you have access to `igris_instance_heartbeat` and the instance_id from `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call it periodically during long implementations to keep the instance active."
 - When delegating to **sentinel** (TESTING phase), include the same heartbeat reminder in the Task prompt.
 - The orchestrator should also call `igris_instance_heartbeat` immediately before each Task delegation (not just on phase transitions) to maximize the heartbeat window for the subagent.
 
@@ -523,7 +532,7 @@ This ensures instances remain visible on the dashboard even during phases that e
 
 ## Agent Event Emission (Mandatory When Available)
 
-On each agent invocation, you MUST emit `igris_agent_event` calls if brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/CURRENT_SESSION.md`.
+On each agent invocation, you MUST emit `igris_agent_event` calls if brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`.
 
 **Pattern for every agent:**
 

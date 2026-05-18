@@ -13,6 +13,9 @@ allowed-tools:
   - mcp__igris-brain__igris_goal_progress
   - mcp__igris-brain__igris_suggestion_list
   - mcp__igris-brain__igris_event_log
+  - mcp__igris-brain__igris_session_file_get
+  - mcp__igris-brain__igris_session_file_list
+  - mcp__igris-brain__igris_instance_list
 triggers:
   - "SCAN"
   - "REPORT"
@@ -45,10 +48,32 @@ bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "scan" 2>/dev/null || tru
 
 ### 1. Load Session State
 
-Read `~/.igris/projects/{project}/session/CURRENT_SESSION.md` for:
+Read the per-instance session file for:
 - Current session mode (Active/REST MODE)
 - Active briefs
 - Resume point
+
+`/scan` may run *before* this harness's `/awaken` (the operator just opens a terminal and types `SCAN`), so resolve the file gracefully:
+
+1. If a `**Instance ID:**` is discoverable for this harness, read `~/.igris/projects/{project}/session/instances/<instance_id>.md`.
+2. Otherwise, call `igris_session_file_list` with `project=<slug>` (no `state` filter) to enumerate all session files, and read the one with the most-recent `updated_at`.
+3. If no session file exists at all, treat the session as "no session" and render the `### Session` block with `Mode: None` / `Active Brief: None` — do NOT error.
+
+`/scan` is read-only and must NEVER error if no session file exists. Degrade gracefully in every branch.
+
+### 1.5. Active Instances
+
+Call `igris_instance_list` with `status='active'` to surface the live instance registry (Lock 1: the registry is the source of liveness). Render a compact table — this feeds the `### Active Instances` block in §6:
+
+```
+### Active Instances
+| Instance | Project | Current Brief | Last Active |
+|----------|---------|---------------|-------------|
+| a1b2c3d4 | igris-ai | FR-132 | 2026-05-18 14:22 |
+| e5f6g7h8 | other-app | BR-009 | 2026-05-18 13:50 |
+```
+
+Show the short form of each `instance_id` (first 8 chars). If `igris_instance_list` is unavailable (older brain) or returns no rows, omit the section entirely. Do NOT block `/scan`.
 
 ### 2. Scan Briefs
 
@@ -107,9 +132,12 @@ Format as:
 ## System Status Report
 
 ### Session
-- Mode: [Active | REST MODE]
+- Mode: [Active | REST MODE | None]
 - Active Brief: [ID or None]
 - Resume Point: [description]
+
+### Active Instances
+[The §1.5 table — or omit if no active instances / tool unavailable]
 
 ### Briefs Inventory
 | Status | Count |
