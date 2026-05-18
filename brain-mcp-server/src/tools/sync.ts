@@ -168,7 +168,7 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     syncKey: ['project', 'filename'],
     timestampCol: 'updated_at',
     strategy: 'lww',
-    columns: ['project', 'filename', 'content', 'content_hash', 'updated_at'],
+    columns: ['project', 'filename', 'content', 'content_hash', 'updated_at', 'instance_id', 'state'],
   },
   {
     table: 'definition_files',

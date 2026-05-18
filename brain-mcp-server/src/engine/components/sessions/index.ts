@@ -20,13 +20,16 @@ import {
   handleSessionRecall,
   handleSessionFileGet,
   handleSessionFileUpdate,
+  handleSessionFileList,
 } from '../../../tools/sessions.js';
 import type {
   SessionSyncInput,
   SessionRecallInput,
   SessionFileGetInput,
   SessionFileUpdateInput,
+  SessionFileListInput,
 } from '../../../tools/sessions.js';
+import { sessionMigrations } from './schema.js';
 
 export function createSessionsComponent(): BrainComponent {
   let _ctx: ComponentContext | null = null;
@@ -37,24 +40,7 @@ export function createSessionsComponent(): BrainComponent {
     depends: [],
 
     schema(): Migration[] {
-      return [
-        {
-          version: 1,
-          description: 'Create session_files table (idempotent with legacy v7)',
-          sql: `
-            CREATE TABLE IF NOT EXISTS session_files (
-              id TEXT PRIMARY KEY,
-              project TEXT NOT NULL,
-              filename TEXT NOT NULL,
-              content TEXT NOT NULL,
-              content_hash TEXT NOT NULL,
-              updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-              UNIQUE(project, filename)
-            );
-            CREATE INDEX IF NOT EXISTS idx_session_files_project ON session_files(project);
-          `,
-        },
-      ];
+      return sessionMigrations;
     },
 
     tools(): ToolDefinition[] {
@@ -149,6 +135,15 @@ export function createSessionsComponent(): BrainComponent {
                 type: 'string',
                 description: 'Full file content to store',
               },
+              instance_id: {
+                type: 'string',
+                description: 'Owning instance UUID (optional; from igris_instance_heartbeat)',
+              },
+              state: {
+                type: 'string',
+                enum: ['live', 'rested', 'archived'],
+                description: "Lifecycle state (optional; defaults to 'live' for new rows)",
+              },
             },
             required: ['project', 'filename', 'content'],
           },
@@ -160,6 +155,27 @@ export function createSessionsComponent(): BrainComponent {
             });
             return result;
           },
+        },
+        {
+          name: 'igris_session_file_list',
+          description: 'List session files for a project, optionally filtered by lifecycle state. Returns filename, instance_id, state, content_hash, and updated_at for each (content omitted to keep the list lightweight).',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project slug',
+              },
+              state: {
+                type: 'string',
+                enum: ['live', 'rested', 'archived'],
+                description: 'Optional lifecycle-state filter. Omit to list all states.',
+              },
+            },
+            required: ['project'],
+          },
+          handler: (args) => handleSessionFileList(args as unknown as SessionFileListInput),
         },
       ];
     },

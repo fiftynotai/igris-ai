@@ -169,20 +169,25 @@ describe('Legacy Migration Bridge (BR-035)', () => {
   // -------------------------------------------------------------------------
 
   describe('component schema declarations', () => {
+    // `migrationCount` is the number of migrations the component currently
+    // ships. sessions ships 2 as of FR-130 (v1 = session_files DDL, v2 =
+    // instance_id + state columns); the rest ship a single v1. The v1
+    // migration of every component still owns the table-creation DDL, so
+    // the sub-tests below all read migrations[0].
     const componentFactories = [
-      { name: 'instances', factory: createInstancesComponent, table: 'agent_events' },
-      { name: 'sync', factory: createSyncComponent, table: 'sync_queue' },
-      { name: 'briefs', factory: createBriefsComponent, table: 'brief_files' },
-      { name: 'sessions', factory: createSessionsComponent, table: 'session_files' },
-      { name: 'cache', factory: createCacheComponent, table: 'definition_files' },
+      { name: 'instances', factory: createInstancesComponent, table: 'agent_events', migrationCount: 1 },
+      { name: 'sync', factory: createSyncComponent, table: 'sync_queue', migrationCount: 1 },
+      { name: 'briefs', factory: createBriefsComponent, table: 'brief_files', migrationCount: 1 },
+      { name: 'sessions', factory: createSessionsComponent, table: 'session_files', migrationCount: 2 },
+      { name: 'cache', factory: createCacheComponent, table: 'definition_files', migrationCount: 1 },
     ];
 
-    for (const { name, factory, table } of componentFactories) {
+    for (const { name, factory, table, migrationCount } of componentFactories) {
       describe(`${name} component`, () => {
-        it('should return exactly 1 migration at version 1', () => {
+        it(`should return exactly ${migrationCount} migration(s), the first at version 1`, () => {
           const component = factory();
           const migrations = component.schema();
-          expect(migrations).toHaveLength(1);
+          expect(migrations).toHaveLength(migrationCount);
           expect(migrations[0].version).toBe(1);
         });
 
@@ -407,6 +412,9 @@ describe('Legacy Migration Bridge (BR-035)', () => {
       expect(cols).toContain('content');
       expect(cols).toContain('content_hash');
       expect(cols).toContain('updated_at');
+      // FR-130: per-instance keying + 3-state lifecycle columns.
+      expect(cols).toContain('instance_id');
+      expect(cols).toContain('state');
       db.close();
     });
 
