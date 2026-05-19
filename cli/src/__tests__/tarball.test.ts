@@ -250,26 +250,27 @@ describe("tarball — utility surface", () => {
 // the build has not run, so a bare `vitest` against unbuilt src/ is green.
 // ----------------------------------------------------------------------
 describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
-  it("npm pack --dry-run includes dist/brain-mcp-server/dist/index.js", async () => {
-    const cp = await import("node:child_process");
-    const path = await import("node:path");
-    // cli/ root: this test file is at cli/src/__tests__/tarball.test.ts.
-    const cliRoot = path.join(__dirname, "..", "..");
-    const bundledEntry = path.join(
-      cliRoot,
-      "dist",
-      "brain-mcp-server",
-      "dist",
-      "index.js",
+  // cli/ root: this test file is at cli/src/__tests__/tarball.test.ts.
+  const cliRoot = join(__dirname, "..", "..");
+  const bundleDir = join(cliRoot, "dist", "brain-mcp-server");
+  const bundledEntry = join(bundleDir, "dist", "index.js");
+
+  /** True when `npm run build` has staged the brain bundle. */
+  function bundleBuilt(): boolean {
+    if (existsSync(bundledEntry)) return true;
+    console.warn(
+      "[tarball TD-168] skipped: cli/dist/brain-mcp-server/dist/index.js " +
+        "absent — run `npm run build` in cli/ before this test.",
     );
-    if (!existsSync(bundledEntry)) {
-      // The build has not run — skip rather than fail. CI builds first.
-      console.warn(
-        "[tarball TD-168] skipped: cli/dist/brain-mcp-server/dist/index.js " +
-          "absent — run `npm run build` in cli/ before this test.",
-      );
-      return;
-    }
+    return false;
+  }
+
+  // `npm pack --dry-run` runs npm + spawns a child; modest headroom
+  // over vitest's 5 s default is enough now that node_modules is
+  // excluded from the manifest (BR-068).
+  it("npm pack --dry-run includes dist/brain-mcp-server/dist/index.js", async () => {
+    if (!bundleBuilt()) return;
+    const cp = await import("node:child_process");
 
     const out = cp.execFileSync(
       "npm",
@@ -287,7 +288,99 @@ describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
     expect(
       filePaths.includes("dist/brain-mcp-server/package.json"),
     ).toBe(true);
+  }, 15_000);
+
+  // BR-068: the bundle must vendor its production node_modules so the
+  // igris-brain MCP can resolve @modelcontextprotocol/sdk on spawn.
+  it("bundle vendors node_modules/@modelcontextprotocol/sdk (BR-068)", () => {
+    if (!bundleBuilt()) return;
+    expect(
+      existsSync(
+        join(
+          bundleDir,
+          "node_modules",
+          "@modelcontextprotocol",
+          "sdk",
+          "package.json",
+        ),
+      ),
+    ).toBe(true);
   });
+
+  // BR-068: the bundled entrypoint must boot without a module-resolution
+  // error. The brain MCP is a stdio server that idles until killed, so a
+  // `timeout`-kill is treated as PASS (server booted OK) and any
+  // ERR_MODULE_NOT_FOUND in stderr is FAIL.
+  it("bundled entry spawns clean — no ERR_MODULE_NOT_FOUND (BR-068)", async () => {
+    if (!bundleBuilt()) return;
+    const cp = await import("node:child_process");
+    const os = await import("node:os");
+
+    const brainDir = mkdtempSync(join(tmpdir(), "igris-mcp-spawn-test-"));
+    try {
+      let stderr = "";
+      let timedOut = false;
+      try {
+        cp.execFileSync("node", [bundledEntry], {
+          timeout: 4000,
+          encoding: "utf-8",
+          env: { ...process.env, IGRIS_BRAIN_DIR: brainDir },
+        });
+      } catch (err) {
+        const e = err as {
+          signal?: string;
+          killed?: boolean;
+          stderr?: string;
+        };
+        // A timeout-kill means the server booted and idled — that is the
+        // expected healthy outcome for a stdio server with no stdin.
+        timedOut = e.killed === true || e.signal === "SIGTERM";
+        stderr = e.stderr ?? "";
+      }
+      expect(stderr).not.toMatch(
+        /ERR_MODULE_NOT_FOUND|Cannot find package/,
+      );
+      // It either idled until the timeout kill, or exited cleanly — both
+      // are acceptable; what is NOT acceptable is a resolution failure.
+      void timedOut;
+      void os;
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  // BR-068: the vendored node_modules is a build/CI artifact only — it
+  // MUST NOT ship in the published tarball (platform-locked native
+  // addons + ~54 MB bloat; the `postinstall` hook rebuilds it fresh on
+  // the user's machine). The tarball ships only the bundle's dist/ +
+  // package.json + package-lock.json — which is all `npm ci` needs.
+  it("npm pack manifest excludes bundled node_modules, keeps lockfile (BR-068)", async () => {
+    if (!bundleBuilt()) return;
+    const cp = await import("node:child_process");
+
+    const out = cp.execFileSync(
+      "npm",
+      ["pack", "--dry-run", "--json"],
+      { cwd: cliRoot, encoding: "utf-8" },
+    );
+    const parsed = JSON.parse(out) as Array<{
+      files: Array<{ path: string }>;
+    }>;
+    const filePaths = parsed[0].files.map((f) => f.path);
+    // node_modules under the bundle must be ABSENT from the tarball.
+    const nodeModulesEntries = filePaths.filter((p) =>
+      p.startsWith("dist/brain-mcp-server/node_modules/"),
+    );
+    expect(nodeModulesEntries).toEqual([]);
+    // The manifest + lockfile MUST ship — the postinstall `npm ci`
+    // needs both to rebuild node_modules on the user's machine.
+    expect(
+      filePaths.includes("dist/brain-mcp-server/package.json"),
+    ).toBe(true);
+    expect(
+      filePaths.includes("dist/brain-mcp-server/package-lock.json"),
+    ).toBe(true);
+  }, 15_000);
 });
 
 // ----------------------------------------------------------------------

@@ -123,6 +123,32 @@ entry to `~/.claude.json`. There is no separate clone-build-configure step.
 **Restart Claude Code** after `igris init` so it picks up the new MCP
 server.
 
+### Native dependencies (built at install time)
+
+The brain MCP relies on native modules (`better-sqlite3`, `sqlite-vec`)
+whose compiled binaries must match your machine's OS and architecture — so
+the `igris-ai` package does **not** ship them pre-built. A `postinstall`
+step builds them on your machine immediately after `npm install -g igris-ai`.
+Watch the install output for these lines:
+
+```
+igris-ai: installing igris-brain MCP dependencies...
+igris-ai: igris-brain MCP dependencies ready.
+```
+
+**Verify after install** that the dependencies landed:
+
+```bash
+ls "$(npm root -g)/igris-ai/dist/brain-mcp-server/node_modules/@modelcontextprotocol/sdk" >/dev/null 2>&1 \
+  && echo "brain MCP dependencies OK" \
+  || echo "brain MCP dependencies MISSING — see Troubleshooting"
+```
+
+If the install instead printed a `WARNING: igris-brain MCP dependency
+install did not complete` block, or the check above reports `MISSING`, the
+brain MCP will fail to spawn — see [Brain MCP fails to spawn](#issue-brain-mcp-fails-to-spawn-err_module_not_found)
+in Troubleshooting for the one-command fix.
+
 ### Degraded mode (vector search)
 
 The MCP's vector-search feature depends on `@huggingface/transformers`, a
@@ -311,6 +337,39 @@ sqlite3 ~/.igris/memory/knowledge.db "PRAGMA integrity_check;"
 # If corrupted, re-initialize
 cd /path/to/igris-ai && igris init
 ```
+
+### Issue: Brain MCP fails to spawn (`ERR_MODULE_NOT_FOUND`)
+
+**Symptom:** The `igris-brain` MCP server does not connect in Claude Code.
+Its MCP log shows:
+
+```
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@modelcontextprotocol/sdk'
+```
+
+**Cause:** The brain MCP's native dependencies were never installed. This
+happens when `npm install -g igris-ai` ran with install scripts disabled
+(`--ignore-scripts`, or `npm config get ignore-scripts` returns `true`), so
+the `postinstall` step that builds them was skipped.
+
+**Solution:** Build the brain dependencies manually. The bundle lives at
+`$(npm root -g)/igris-ai/dist/brain-mcp-server`:
+
+```bash
+cd "$(npm root -g)/igris-ai/dist/brain-mcp-server"
+npm install --omit=dev
+```
+
+If npm is configured to ignore scripts, the native modules still cannot
+build — re-enable scripts first, then re-run the install above:
+
+```bash
+npm config set ignore-scripts false
+```
+
+Restart Claude Code once the install completes. To confirm the fix, re-run
+the verification check from
+[Native dependencies (built at install time)](#native-dependencies-built-at-install-time).
 
 ### Issue: Symlinks broken after moving Igris AI repo
 
