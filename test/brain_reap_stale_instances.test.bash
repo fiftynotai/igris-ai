@@ -138,4 +138,7 @@ run_reaper() {
   # A malformed pidfile is skipped, not fatal — the sweep still succeeds.
   assert_success
   [[ "$output" == *"SIGTERM'd 0 orphan"* ]]
+  # TD-184: the malformed pidfile must also be unlinked, not left to
+  # accumulate on every subsequent sweep.
+  [[ ! -f "$IGRIS_PIDS_DIR/12345.json" ]]
 }

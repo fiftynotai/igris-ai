@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Brain MCP: BR-067 polish — schedules `last_run_at` parity with the daemon's claim-instant semantics (manual fire-now path was writing the finish instant), malformed pidfile pruning on read so unparseable entries don't accumulate across sweeps, stdio teardown comments clarified (`stdin.resume()` defensive-only intent, PID-recycling caveat documented above the reaper's parent-liveness check). (TD-184)
+
 ---
 
 ## [7.0.0] - TBD

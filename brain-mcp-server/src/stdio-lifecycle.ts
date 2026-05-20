@@ -147,6 +147,10 @@ export function readInstanceRegistry(): Array<{ file: string; record: InstanceRe
       }
     } catch {
       console.error(`[brain] skipping malformed instance pidfile: ${file}`);
+      // Best-effort prune of the malformed file so it doesn't accumulate
+      // across sweeps. Same idempotency contract as the reaper's prune
+      // (lines 201-206 / 227-232) — a concurrent unlink is fine.
+      try { unlinkSync(file); } catch { /* ignore */ }
     }
   }
   return out;
@@ -208,6 +212,17 @@ export function reapStaleInstances(self: number = process.pid): ReapResult {
     }
 
     // Server is alive. Decide orphan vs. live by parent liveness.
+    //
+    // PID-recycling caveat: the recorded `ppid` is a snapshot from boot
+    // time. In principle the OS could recycle that PID to an unrelated
+    // live process between server start and this sweep, producing a
+    // false-NEGATIVE — we'd see "parent alive" and leave a real orphan
+    // untouched. The symmetrical false-POSITIVE (reap a non-orphan
+    // because we wrongly read its parent as dead) is impossible: we
+    // only reap when the parent is provably DEAD, never the reverse.
+    // The current code therefore prefers the safer failure mode —
+    // a missed orphan is opportunistically reaped on the next sweep
+    // (or on the next server boot's pre-flight reap).
     const parentAlive = isProcessAlive(record.ppid);
 
     if (parentAlive) {
@@ -283,9 +298,16 @@ export function installStdioTeardown(opts: {
     exit(0);
   };
 
-  // Phase 2: the stdin-EOF teardown. `resume()` ensures stdin is in
-  // flowing mode so 'end' actually fires when the client's write side
-  // closes — a paused stdin would never emit 'end'.
+  // Phase 2: the stdin-EOF teardown.
+  //
+  // Defensive-only `resume()`: in production, `StdioServerTransport`
+  // attaches a `'data'` listener on `process.stdin` which Node treats as
+  // an implicit `resume()` — flowing mode is already in effect by the
+  // time we arrive here, so this call is a no-op for the real transport.
+  // We retain it as belt-and-braces for test harnesses that inject a
+  // plain `Readable` (no `'data'` listener) where the stream would
+  // otherwise stay paused and never emit `'end'`. Zero-cost when the
+  // stream is already flowing.
   if (typeof (stdin as NodeJS.ReadStream).resume === 'function') {
     (stdin as NodeJS.ReadStream).resume();
   }
