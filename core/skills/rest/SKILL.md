@@ -85,9 +85,19 @@ If the `igris-brain` MCP server is available:
 
 If brain MCP is not available, skip this step silently. No errors, no warnings.
 
-### 2.6.5. Drain Sync Queue (Mandatory)
+### 2.6.4.5. Drain Local Sync Queue (Mandatory)
 
-You MUST drain the sync queue before the final push. This is NOT optional.
+You MUST drain the local sync queue file before the final push when brain MCP is available. This is NOT optional — briefs queued locally during this session depend on this.
+
+If the `igris-brain` MCP server is available:
+- Invoke the canonical atomic drain via the CLI: `igris sync data` (delegates to `cli/src/lib/sync/queue.ts`). Same contract as `/awaken` §3.6.1.1: rename-then-process atomicity (FR-128), `.draining-*` crash recovery, strict-allow-list (TD-128 M3), and `cache_path → content` resolution for `brief_create`.
+- The drain is gated on a non-empty queue: when the queue is empty (the common `/rest` case), the CLI short-circuits after a single filesystem stat plus the remote drain call. No-op-fast.
+
+If brain MCP is NOT available, skip silently — matching the existing `/rest` skip-on-MCP-unavailable convention. The local queue (and any `.draining-*` temp) is preserved for `/awaken` to drain on the next session start. Do NOT block session end.
+
+### 2.6.5. Drain Brain Sync Queue (Mandatory)
+
+You MUST drain the brain-side sync queue before the final push. This is NOT optional.
 
 If the `igris-brain` MCP server is available:
 1. Call `igris_sync_queue_drain` to process any queued sync operations from previous failed pushes

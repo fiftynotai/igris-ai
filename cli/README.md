@@ -117,7 +117,7 @@ Replaces the retired `scripts/igris_vps_update.sh` (deleted in M4 of MG-014).
 | Sub-verb | Action |
 |---|---|
 | `status` | HTTP GET `<remote_brain.url>/health`, prints reachability + brain version + local queue depth + last-push timestamp |
-| `data`   | Drains local `~/.igris/projects/<slug>/sync_queue.jsonl` via remote `igris_sync_queue_drain` MCP call |
+| `data`   | Atomically drains local `~/.igris/projects/<slug>/sync_queue.jsonl` (rename-then-process; concurrency-safe under multi-harness use — see FR-128) via remote `igris_sync_queue_drain` MCP call. Recovers any stale `sync_queue.jsonl.draining-*` files from a prior crashed drain before processing. |
 | `code`   | rsync local repo to `<vps.user>@<vps.host>:<vps.repo_path>` (excludes `node_modules/`, `.git/`, `dist/`, `.env`, IDE files, etc.), run `npm ci` + `npm run build` (brain-mcp-server) on VPS, smoke-check `require("better-sqlite3")`, ssh-restart `igris-brain` via PM2, then verify `/health` |
 | `all`    | `code` then `data` sequentially; aborts on `code` failure |
 

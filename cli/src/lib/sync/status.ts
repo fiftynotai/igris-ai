@@ -3,8 +3,12 @@
  *
  * Reports:
  *   - VPS reachability (HTTP GET to <remote_brain.url>/health)
- *   - Sync queue depth (line count of local sync_queue.jsonl)
- *   - Last-push timestamp (mtime of sync_queue.jsonl, OR "never" when missing)
+ *   - Sync queue depth (line count of local sync_queue.jsonl PLUS
+ *     any `.draining-*` temps from a mid-flight or crashed drain
+ *     — FR-128: under-counting during a drain misled operators)
+ *   - Stale drains in-progress count (when any `.draining-*` exists)
+ *   - Last-push timestamp (mtime of sync_queue.jsonl, OR newest
+ *     `.draining-*` mtime when no canonical file, OR "never")
  *   - Brain version (from /health response body when available)
  *
  * No SSH, no MCP tool calls — just an HTTP GET + a couple of fs.stat calls.
@@ -18,12 +22,13 @@
  * TD-098: never `vi.mock` the module under test).
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { healthCheck, readRemoteBrainConfig } from "../mcp-client.js";
 import { DryRunCollector } from "../dry-run.js";
 import { brainDir } from "../paths.js";
 import { basenameOfCwd } from "./util.js";
+import { inspectQueueDepth } from "./queue.js";
 import { info, warn, error as logError } from "../log.js";
 
 export interface SyncStatusOptions {
@@ -40,9 +45,19 @@ export interface SyncStatusReport {
   vpsReachable: boolean;
   vpsHealthStatusCode: number | null;
   brainVersion: string | null;
+  /**
+   * True queue depth: live `sync_queue.jsonl` lines PLUS any lines
+   * currently held in `.draining-*` temps from a mid-flight or
+   * crashed drain (FR-128). Without this, a mid-drain status report
+   * under-counts and the operator mis-judges queue pressure.
+   */
   queueDepth: number;
   queuePath: string;
   lastPushAt: string | null;
+  /** Absolute paths of any `sync_queue.jsonl.draining-*` files present (FR-128). */
+  drainingFiles?: string[];
+  /** Non-empty lines across all `.draining-*` files (subset of queueDepth). */
+  drainingLines?: number;
 }
 
 /**
@@ -85,21 +100,32 @@ export async function runSyncStatus(
   const vpsReachable = health.statusCode !== null;
   const brainVersion = extractBrainVersion(health.body);
 
-  // Local queue depth + last-push.
-  let queueDepth = 0;
+  // Local queue depth + last-push. FR-128: depth = live lines + lines
+  // in any `.draining-*` temp files (mid-drain status must not
+  // under-report).
+  const depth = inspectQueueDepth(slug);
+  const queueDepth = depth.liveLines + depth.drainingLines;
   let lastPushAt: string | null = null;
   if (existsSync(queuePath)) {
     try {
-      const raw = readFileSync(queuePath, "utf-8");
-      queueDepth = raw
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line.length > 0).length;
       const stat = statSync(queuePath);
       lastPushAt = stat.mtime.toISOString();
     } catch {
-      // Queue file unreadable — treat as zero depth, no timestamp.
+      // Queue file unreadable — leave timestamp null.
     }
+  } else if (depth.drainingFiles.length > 0) {
+    // Canonical queue absent (mid-drain) — fall back to the newest
+    // `.draining-*` mtime so the operator still has a timestamp.
+    let newest = 0;
+    for (const dp of depth.drainingFiles) {
+      try {
+        const m = statSync(dp).mtime.getTime();
+        if (m > newest) newest = m;
+      } catch {
+        // skip
+      }
+    }
+    if (newest > 0) lastPushAt = new Date(newest).toISOString();
   }
 
   // Print report.
@@ -111,6 +137,11 @@ export async function runSyncStatus(
   );
   info(`  brain version:   ${brainVersion ?? "unknown"}`);
   info(`  queue depth:     ${queueDepth} entries`);
+  if (depth.drainingFiles.length > 0) {
+    info(
+      `  stale drains:    ${depth.drainingFiles.length} in-progress (drainingLines=${depth.drainingLines}) — will be reclaimed by next sync data`,
+    );
+  }
   info(`  queue path:      ${queuePath}`);
   info(`  last push:       ${lastPushAt ?? "never"}`);
   info("");

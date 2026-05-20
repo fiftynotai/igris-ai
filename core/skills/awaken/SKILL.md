@@ -155,21 +155,12 @@ If brain MCP is NOT available or drain fails, skip silently. Do NOT block sessio
 You MUST drain the local sync queue file when brain MCP is available. This is NOT optional — briefs queued during previous MCP outages depend on this.
 
 If the `igris-brain` MCP server is available:
-1. Check if `~/.igris/projects/{project}/sync_queue.jsonl` exists
-2. If it exists and has entries:
-   a. Read each JSON line
-   b. For each entry, call the appropriate MCP tool based on the `operation` field:
-      - `"brief_sync"` -> call `igris_brief_sync` with the stored parameters
-      - `"brief_create"` -> call `igris_brief_create` with the stored parameters (read content from `cache_path` if present)
-   c. On success: remove the processed line from the file
-   d. On failure: leave the line in the file for next attempt
-   e. Display summary: `Drained X of Y local sync queue entries`
-3. If all entries processed successfully, delete the queue file
-4. If some entries failed, display: `WARNING: {N} sync queue entries could not be processed — will retry on next /awaken or /sync data`
+- Invoke the canonical atomic drain via the CLI: `igris sync data` (defined in `cli/src/lib/sync/data.ts`, delegating to the atomic primitive in `cli/src/lib/sync/queue.ts`). The CLI handles rename-then-process atomicity (FR-128), crash recovery from stale `sync_queue.jsonl.draining-*` files, per-entry strict-allow-list enforcement under TD-128 M3, and the `cache_path → content` resolution for `brief_create` entries. Do NOT inline the read-then-truncate algorithm in markdown — the atomicity contract cannot be enforced from a skill recipe; the single CLI code path is the contract.
+- Exit code 0 means success (drained N or empty queue). Non-zero means the local queue (or its `.draining-*` recovery temp) is preserved for the next attempt; surface the CLI's stderr to the operator and continue session start.
 
 If brain MCP is NOT available:
-- Check if `~/.igris/projects/{project}/sync_queue.jsonl` exists and has entries
-- If yes, display: `WARNING: {N} brief sync(s) are queued locally — brain MCP unavailable. Will retry on next /awaken or /sync data.`
+- Check `~/.igris/projects/{project}/sync_queue.jsonl` line count AND any `sync_queue.jsonl.draining-*` line counts via `igris sync status` (read-only, no rename).
+- If the combined depth is > 0, display: `WARNING: {N} brief sync(s) are queued locally — brain MCP unavailable. Will retry on next /awaken or /sync data.`
 - Do NOT block session start.
 
 ### 3.6.2. Pull Session Files (Mandatory)
