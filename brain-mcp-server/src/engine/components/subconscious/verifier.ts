@@ -36,6 +36,93 @@
 import { spawn, spawnSync } from 'node:child_process';
 
 // ---------------------------------------------------------------------------
+// Concurrency cap (BR-067)
+// ---------------------------------------------------------------------------
+
+/**
+ * Hard ceiling on concurrent `claude -p` subprocesses spawned by the headless
+ * verifier (BR-067).
+ *
+ * The runner invokes the verifier sequentially per conflict pair today, so in
+ * normal operation in-flight count never exceeds 1. The cap is defence in
+ * depth against the two amplification paths the BR-067 diagnosis proved:
+ *   (a) a future `Promise.all` batching change in the runner (the runner
+ *       comment itself contemplates this), and
+ *   (b) overlapping `handleSubconsciousRun()` invocations from a misfiring
+ *       schedules daemon — exactly the cascade that spawned ~58 brain MCP
+ *       servers in a 40-second window on 2026-05-15.
+ *
+ * The cap is UNCONDITIONAL — it is NOT gated on `config.subconscious.enabled`.
+ * Diagnosis D3b proved that flag does not gate this spawn path, so the cap
+ * must hold whether the subconscious feature is "enabled" or not. A cap of 2
+ * keeps a modest amount of parallelism available while bounding the worst
+ * case far below host-pinning levels.
+ */
+const MAX_CONCURRENT_VERIFIER_SPAWNS = 2;
+
+/**
+ * Minimal FIFO semaphore. Bounds the number of concurrently-held permits to
+ * `max`; `acquire()` resolves immediately when a permit is free, otherwise it
+ * queues and resolves when an earlier holder calls `release()`.
+ *
+ * Cannot deadlock a sequential caller (the runner) — every `acquire()` is
+ * paired with exactly one `release()` on BOTH the success and the
+ * spawn-failure paths in `makeClaudeHeadlessVerifier`.
+ */
+class Semaphore {
+  private available: number;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(private readonly max: number) {
+    this.available = max;
+  }
+
+  /** Number of permits currently held (in-flight). Exposed for tests. */
+  get inFlight(): number {
+    return this.max - this.available;
+  }
+
+  /** Acquire a permit, queueing FIFO if none is free. */
+  acquire(): Promise<void> {
+    if (this.available > 0) {
+      this.available -= 1;
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      this.waiters.push(resolve);
+    });
+  }
+
+  /** Release a permit, handing it directly to the next waiter if any. */
+  release(): void {
+    const next = this.waiters.shift();
+    if (next) {
+      // Hand the permit straight to the waiter — available stays consumed.
+      next();
+      return;
+    }
+    if (this.available < this.max) {
+      this.available += 1;
+    }
+  }
+}
+
+/**
+ * Process-wide spawn gate. Shared across every verifier instance so the cap
+ * bounds the total `claude -p` fan-out, not just one verifier's calls.
+ */
+const verifierSpawnGate = new Semaphore(MAX_CONCURRENT_VERIFIER_SPAWNS);
+
+/**
+ * Current in-flight `claude -p` spawn count. Exposed for the BR-067
+ * concurrency-cap test so it can assert the cap is never exceeded.
+ * @internal
+ */
+export function verifierInFlightSpawns(): number {
+  return verifierSpawnGate.inFlight;
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -325,6 +412,12 @@ export function makeClaudeHeadlessVerifier(
   return async (a, b) => {
     const prompt = buildPrompt(a, b);
 
+    // BR-067: bound concurrent `claude -p` spawns. Acquire a permit BEFORE
+    // spawning; release it when the subprocess is provably done. The await
+    // here is what enforces the cap — a third concurrent verifier call
+    // queues until an in-flight subprocess exits.
+    await verifierSpawnGate.acquire();
+
     return new Promise<VerifierResult>((resolve) => {
       let settled = false;
       const settle = (r: VerifierResult): void => {
@@ -333,12 +426,26 @@ export function makeClaudeHeadlessVerifier(
         resolve(r);
       };
 
+      // BR-067: the permit is released on whichever terminal event arrives
+      // first (spawn-throw, 'error', or 'close') and exactly once. The
+      // subprocess lifecycle — not the promise settle — owns the permit:
+      // the timeout path settles the promise on SIGTERM but the child may
+      // still be alive, so releasing on settle would let the cap be
+      // breached by a process that has not yet exited.
+      let permitReleased = false;
+      const releasePermit = (): void => {
+        if (permitReleased) return;
+        permitReleased = true;
+        verifierSpawnGate.release();
+      };
+
       let child;
       try {
         child = spawn(command, args, {
           stdio: ['pipe', 'pipe', 'pipe'],
         });
       } catch (err) {
+        releasePermit();
         settle({
           is_conflict: true,
           reason: `spawn failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -385,6 +492,10 @@ export function makeClaudeHeadlessVerifier(
 
       child.on('error', (err) => {
         clearTimeout(softTimer);
+        // On a spawn failure (e.g. ENOENT) 'close' may never fire, so the
+        // permit must be released here. The permitReleased guard makes the
+        // later 'close' release (if it does fire) a safe no-op.
+        releasePermit();
         settle({
           is_conflict: true,
           reason: `spawn error: ${err.message}`,
@@ -411,6 +522,8 @@ export function makeClaudeHeadlessVerifier(
 
       child.on('close', (code) => {
         clearTimeout(softTimer);
+        // The subprocess has exited — release its spawn permit (BR-067).
+        releasePermit();
         if (code !== 0) {
           settle({
             is_conflict: true,

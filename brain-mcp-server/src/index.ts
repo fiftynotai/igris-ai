@@ -50,6 +50,14 @@ import { SYNC_TABLES, processSyncPush } from './tools/sync.js';
 import { getDb, closeDb, DB_PATH, BRAIN_DIR } from './db.js';
 import * as os from 'node:os';
 
+// stdio lifecycle — teardown, per-client pidfile registry, stale-instance reaper (BR-067)
+import {
+  installStdioTeardown,
+  registerInstance,
+  deregisterInstance,
+  reapStaleInstances,
+} from './stdio-lifecycle.js';
+
 /** Timestamp when this server process started, used for uptime calculation. */
 const SERVER_START_TIME = Date.now();
 
@@ -231,8 +239,34 @@ function createBrainServer(): Server {
 
 /**
  * Run the brain server with stdio transport (default, local mode).
+ *
+ * BR-067 lifecycle hardening:
+ *   - On boot, opportunistically reap provably-orphaned stale instances
+ *     (alive server whose recorded parent is dead) — never SIGKILL, never
+ *     `pkill`, never a server whose parent is still alive.
+ *   - Register a per-client pidfile so the next process's reaper can find
+ *     this instance.
+ *   - Wire stdin EOF/close → graceful shutdown so this server exits when
+ *     its Claude Code client disconnects (the H2 leak fix), sharing one
+ *     idempotent shutdown function with the SIGINT/SIGTERM handlers.
  */
 async function runStdio(): Promise<void> {
+  // BR-067 Phase 4: opportunistic stale-instance reap on boot. Runs before
+  // engine boot so a leak that has already accumulated is bounded even if
+  // this boot itself were to fail later. Cheap (a few pidfile reads).
+  try {
+    const swept = reapStaleInstances();
+    if (swept.reaped.length > 0 || swept.prunedStale.length > 0) {
+      console.error(
+        `[brain] reap sweep: SIGTERM'd ${swept.reaped.length} orphan(s), ` +
+        `pruned ${swept.prunedStale.length} stale pidfile(s), ` +
+        `left ${swept.skippedAlive.length} live instance(s) untouched`,
+      );
+    }
+  } catch (err) {
+    console.error(`[brain] reap sweep failed (non-fatal): ${errMsg(err)}`);
+  }
+
   // Boot engine (also bridges db.ts)
   const engine = getEngine();
 
@@ -242,14 +276,24 @@ async function runStdio(): Promise<void> {
 
   console.error('Igris Brain MCP Server v7.0.0 started (stdio)');
 
-  // Clean up on exit
-  process.on('SIGINT', () => {
-    engine.shutdown();
-    process.exit(0);
+  // BR-067 Phase 4: register a per-client pidfile (keyed by parent PID).
+  // Registration failure is non-fatal — the server still serves.
+  const ppid = process.ppid;
+  registerInstance({
+    pid: process.pid,
+    ppid,
+    started_at: new Date().toISOString(),
+    db_path: DB_PATH,
   });
-  process.on('SIGTERM', () => {
-    engine.shutdown();
-    process.exit(0);
+
+  // BR-067 Phase 2: one idempotent shutdown wired to stdin EOF/close AND
+  // SIGINT/SIGTERM. The stdin handlers are the leak fix — a client that
+  // simply exits (no signal) now reliably tears down its server.
+  installStdioTeardown({
+    onShutdown: () => {
+      deregisterInstance(ppid);
+      engine.shutdown();
+    },
   });
 }
 
