@@ -69,6 +69,64 @@ Each entry supports:
 > optional `codex.agents` sub-block (added by TD-021) describes the subagent
 > surface.
 
+### Skills as a `surfaces.skills` manifest declaration (FR-137)
+
+As of FR-137 the skills compilers (`md_to_agents_md.sh`, `md_to_gemini_toml.sh`)
+are **no longer orphaned scripts driven only by the `cli_targets` config** —
+they are first-class projection targets of the FR-136 manifest-driven harness
+engine. Skills are declared as a `surfaces.skills` block and projected (and
+drift-checked) by `igris harness compile` / `igris harness drift`, exactly the
+way per-agent harnesses are.
+
+The core skills surface is declared once, globally, in the core-owned
+`core/scripts/cli-adapters/surfaces-manifest.json`:
+
+```json
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "skills": {
+      "source": "~/.igris/core/skills",
+      "layer": "core",
+      "targets": [
+        { "type": "codex",  "method": "compiler",  "path": "AGENTS.md" },
+        { "type": "gemini", "method": "converter", "path": "~/.gemini/commands" }
+      ]
+    }
+  }
+}
+```
+
+- `source` — skills root (`{name}/SKILL.md` entries). `~`/absolute paths are
+  used verbatim; a relative path resolves from `--project-root`.
+- `targets[].method` — `compiler` (codex: all non-Claude-only skills folded into
+  one `AGENTS.md`, 32 KB cap) or `converter` (gemini: one `{name}.toml` per
+  skill). `claude` is intentionally NOT a valid skills target `type`: Claude
+  consumes skills via the FR-103 symlink mechanism and needs no projection.
+- The compiler invokes the existing `md_to_*` scripts unchanged (their cap,
+  Claude-only heuristic, and byte-level emit are preserved). The drift guard
+  re-derives each artifact and compares; for `AGENTS.md` the trailing
+  date-stamped generated-marker line is stripped before the sha so the verdict
+  is **date-stable** across days (a re-compile on a later date is not flagged).
+- `igris harness compile --surface skills` projects only the skills surface;
+  `--target codex|gemini` narrows to one harness.
+
+The core `surfaces-manifest.json` declares **global Layer-1** skills and is only
+unioned when the project being compiled owns it (its realpath is under
+`--project-root`) — so core skills never leak into an unrelated project's
+projection. A project may also carry its own `surfaces.skills` in its
+`harness-manifest.json` for project-specific skills.
+
+**FR-139 overlay seam.** A consumer's **personal** skills arrive via the FR-139
+overlay (`~/.igris/registry/harness-manifest.personal.json`), which may carry
+its own `surfaces.skills.targets[]`. `merge_overlay_manifest` merges those
+targets additively into the base. A personal skill-target whose `path` collides
+with a core skill-target is a **hard error** — a personal customization must not
+silently shadow a core skill (mirroring the agent name-collision guard). FR-139
+inherits this seam for free: it remains an overlay-writer, not a schema/compiler
+rewrite.
+
 ---
 
 ## Portability Convention

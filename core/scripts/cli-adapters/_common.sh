@@ -526,6 +526,55 @@ for i, agent in enumerate(agents):
             fail(f"{twhere}.type '{target['type']}' is not one of "
                  f"{sorted(valid_target_types)}")
 
+# ---- FR-137: structural validation of the surfaces.skills sub-shape --------
+# The structural fallback (no jsonschema) previously did NOT recurse into
+# `surfaces`, so a malformed surfaces block passed silently. Validate the
+# skills surface here so the "schema validates surfaces" contract holds in
+# BOTH code paths. os_context is left permissive (RESERVED for FR-140).
+surfaces = manifest.get("surfaces")
+if surfaces is not None:
+    if not isinstance(surfaces, dict):
+        fail("'surfaces' must be an object")
+    allowed_surface_keys = {"skills", "os_context"}
+    for key in surfaces:
+        if key not in allowed_surface_keys:
+            fail(f"surfaces: unknown key '{key}' (additionalProperties:false)")
+
+    skills = surfaces.get("skills")
+    if skills is not None:
+        if not isinstance(skills, dict):
+            fail("surfaces.skills must be an object")
+        allowed_skills_keys = {"source", "layer", "targets"}
+        for key in skills:
+            if key not in allowed_skills_keys:
+                fail(f"surfaces.skills: unknown key '{key}' "
+                     "(additionalProperties:false)")
+        if "targets" not in skills:
+            fail("surfaces.skills missing required key 'targets'")
+        s_targets = skills["targets"]
+        if not isinstance(s_targets, list) or len(s_targets) < 1:
+            fail("surfaces.skills.targets must be a non-empty array")
+        valid_skill_types = {"codex", "gemini"}
+        valid_skill_methods = {"compiler", "converter"}
+        allowed_skill_target_keys = {"type", "method", "path"}
+        for k, st in enumerate(s_targets):
+            stwhere = f"surfaces.skills.targets[{k}]"
+            if not isinstance(st, dict):
+                fail(f"{stwhere} must be an object")
+            for req in ("type", "method", "path"):
+                if req not in st:
+                    fail(f"{stwhere} missing required key '{req}'")
+            for key in st:
+                if key not in allowed_skill_target_keys:
+                    fail(f"{stwhere}: unknown key '{key}' "
+                         "(additionalProperties:false)")
+            if st["type"] not in valid_skill_types:
+                fail(f"{stwhere}.type '{st['type']}' is not one of "
+                     f"{sorted(valid_skill_types)}")
+            if st["method"] not in valid_skill_methods:
+                fail(f"{stwhere}.method '{st['method']}' is not one of "
+                     f"{sorted(valid_skill_methods)}")
+
 sys.exit(0)
 PY
 }
@@ -543,8 +592,16 @@ PY
 # name is a HARD ERROR (returns non-zero) - a customization must never
 # silently shadow a core agent. FR-139 inherits this guard for free.
 #
+# FR-137: the overlay may ALSO carry a `surfaces.skills` block whose
+# `targets[]` are merged additively into the base `surfaces.skills.targets[]`
+# (the FR-139 seam for projecting personal skills). A personal skill-target
+# whose `path` collides with a base (core) skill-target `path` is the same
+# HARD ERROR - a personal skill must not silently shadow a core skill. When
+# the base has no `surfaces.skills`, the overlay's block becomes the merged
+# one (still permissive enough that an absent overlay surfaces block is fine).
+#
 # When the overlay path is empty or absent, emits the base manifest verbatim.
-# Returns 0 on success, non-zero on a name collision or read error.
+# Returns 0 on success, non-zero on a name/path collision or read error.
 # ---------------------------------------------------------------------------
 merge_overlay_manifest() {
   local base="$1"
@@ -580,6 +637,35 @@ for agent in overlay_agents:
 
 merged = dict(base)
 merged["agents"] = list(base_agents) + list(overlay_agents)
+
+# FR-137: merge surfaces.skills.targets[] additively (base ++ overlay) with a
+# path-collision hard error mirroring the agent name-collision guard.
+base_surfaces = base.get("surfaces", {}) or {}
+overlay_surfaces = overlay.get("surfaces", {}) or {}
+base_skills = base_surfaces.get("skills")
+overlay_skills = overlay_surfaces.get("skills")
+
+if overlay_skills is not None:
+    base_targets = (base_skills or {}).get("targets", []) if base_skills else []
+    overlay_targets = overlay_skills.get("targets", [])
+    base_paths = {t.get("path") for t in base_targets}
+    for t in overlay_targets:
+        p = t.get("path")
+        if p in base_paths:
+            sys.stderr.write(
+                f"Error: overlay skill-target path '{p}' collides with a base "
+                "(core) skill-target; a personal skill must not shadow a core "
+                "skill.\n"
+            )
+            sys.exit(1)
+    # Start from the base skills object (preserving source/layer) when present,
+    # else adopt the overlay's. Then union the targets.
+    merged_skills = dict(base_skills) if base_skills else dict(overlay_skills)
+    merged_skills["targets"] = list(base_targets) + list(overlay_targets)
+    merged_surfaces = dict(base_surfaces)
+    merged_surfaces["skills"] = merged_skills
+    merged["surfaces"] = merged_surfaces
+
 sys.stdout.write(json.dumps(merged))
 PY
 }

@@ -63,5 +63,12 @@ CLAUDE.local.md
 .claude/rules/
 .claude/skills/
 
+# Generated harness projections (FR-137) — mechanically derived from canonical
+# sources by `igris harness compile`; never committed (regenerated on demand,
+# drift-checked against canonical). Codex skills aggregate + gemini commands.
+/AGENTS.md
+.codex/
+.gemini/
+
 # Machine-local version stamp written by the CLI installer
 .igris_version

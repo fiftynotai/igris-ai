@@ -18,7 +18,12 @@
 #                            if present (absent is the normal case).
 #   --filter <name-glob>   - Only process agents whose name matches the glob
 #                            (shell case-glob, e.g. 'content-*'). Default: all.
-#   --target claude|codex|all - Restrict to one target type. Default: all.
+#   --target claude|codex|gemini|all - Restrict to one target type. Default: all.
+#                            Applies to BOTH agent targets and skills-surface
+#                            targets (FR-137).
+#   --surface agents|skills|all - Restrict to one projection surface (FR-137).
+#                            Default: all. `agents` = the per-agent harnesses;
+#                            `skills` = the surfaces.skills projection.
 # Dependencies: python3, _common.sh + sync_*.sh (auto-located from script dir)
 # Exit codes:
 #   0 - All selected agent/target syncs succeeded (or were cleanly skipped)
@@ -41,6 +46,9 @@ ADAPTER_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 source "$ADAPTER_DIR/_common.sh"
 
 readonly SCHEMA="$ADAPTER_DIR/manifest.schema.json"
+# FR-137: the core-owned Layer-1 surface declaration (skills). The compiler
+# unions its surfaces with any surfaces the merged agent manifest carries.
+readonly CORE_SURFACES="$ADAPTER_DIR/surfaces-manifest.json"
 
 # Resolve the runtime brain dir like the brain MCP / verify_mirror.sh do:
 # honor IGRIS_BRAIN_DIR, else ~/.igris. The personal overlay (FR-139 seam)
@@ -53,7 +61,8 @@ readonly DEFAULT_OVERLAY="$BRAIN_DIR/registry/harness-manifest.personal.json"
 # ---------------------------------------------------------------------------
 usage() {
   echo "Usage: $0 --project-root <dir> [--manifest <path>] [--overlay <path>]" >&2
-  echo "                          [--filter <name-glob>] [--target claude|codex|all]" >&2
+  echo "                          [--filter <name-glob>] [--target claude|codex|gemini|all]" >&2
+  echo "                          [--surface agents|skills|all]" >&2
   echo "" >&2
   echo "Regenerates harness files declared in the manifest from canonical prompts." >&2
   exit 2
@@ -68,6 +77,7 @@ OVERLAY=""
 OVERLAY_SET=0
 FILTER='*'
 TARGET_KIND="all"
+SURFACE_KIND="all"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -90,6 +100,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --target)
       TARGET_KIND="${2:-}"
+      shift 2 || usage
+      ;;
+    --surface)
+      SURFACE_KIND="${2:-}"
       shift 2 || usage
       ;;
     --help|-h)
@@ -127,9 +141,17 @@ if [ ! -f "$MANIFEST" ]; then
 fi
 
 case "$TARGET_KIND" in
-  claude|codex|all) : ;;
+  claude|codex|gemini|all) : ;;
   *)
-    echo "Error: --target must be claude, codex, or all (got '$TARGET_KIND')" >&2
+    echo "Error: --target must be claude, codex, gemini, or all (got '$TARGET_KIND')" >&2
+    usage
+    ;;
+esac
+
+case "$SURFACE_KIND" in
+  agents|skills|all) : ;;
+  *)
+    echo "Error: --surface must be agents, skills, or all (got '$SURFACE_KIND')" >&2
     usage
     ;;
 esac
@@ -177,7 +199,10 @@ fi
 #   body-exception-or-empty <TAB> target-type <TAB> target-path
 # One row per agent/target. python3 (no jq) per the _common.sh convention.
 # ---------------------------------------------------------------------------
-WORK_ROWS=$(python3 - "$MERGED_MANIFEST" "$FILTER" "$TARGET_KIND" <<'PY'
+if [ "$SURFACE_KIND" = "skills" ]; then
+  WORK_ROWS=""
+else
+  WORK_ROWS=$(python3 - "$MERGED_MANIFEST" "$FILTER" "$TARGET_KIND" <<'PY'
 import fnmatch
 import json
 import sys
@@ -213,20 +238,18 @@ for agent in manifest.get("agents", []):
         print(row)
 PY
 )
-
-if [ -z "$WORK_ROWS" ]; then
-  echo "No agent/target rows matched (filter='$FILTER', target='$TARGET_KIND')." >&2
-  exit 0
 fi
 
 # ---------------------------------------------------------------------------
-# Process each work row.
+# Process each work row. Accumulators span BOTH the agents surface (this loop)
+# and the skills surface (the FR-137 pass below).
 # ---------------------------------------------------------------------------
 TOTAL=0
 OK=0
 FAIL=0
 SUMMARY=()
 
+if [ -n "$WORK_ROWS" ]; then
 while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target_path; do
   [ -z "$name" ] && continue
   TOTAL=$((TOTAL + 1))
@@ -289,6 +312,145 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
     FAIL=$((FAIL + 1))
   fi
 done <<< "$WORK_ROWS"
+fi
+
+# ---------------------------------------------------------------------------
+# FR-137: skills-surface pass. Union the skills targets declared in the core
+# surfaces-manifest.json with any the merged agent manifest carries, then for
+# each target invoke the matching md_to_* compiler/converter (D-4:
+# invoke-from-compiler — the emit logic lives in those scripts, unchanged).
+# Skipped entirely when --surface agents.
+# ---------------------------------------------------------------------------
+if [ "$SURFACE_KIND" != "agents" ]; then
+  # Flatten skills targets from both sources into rows:
+  #   source <TAB> type <TAB> method <TAB> path
+  # `-` is the empty-source sentinel (caller falls back to md_to_*'s default).
+  SKILL_ROWS=$(python3 - "$CORE_SURFACES" "$MERGED_MANIFEST" "$TARGET_KIND" "$PROJECT_ROOT" <<'PY'
+import json
+import os
+import sys
+
+core_surfaces_path = sys.argv[1]
+agent_manifest_path = sys.argv[2]
+target_kind = sys.argv[3]
+project_root = sys.argv[4]
+
+
+def load_skills(path):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except OSError:
+        return None
+    return (data.get("surfaces") or {}).get("skills")
+
+
+# The core surfaces-manifest.json declares GLOBAL Layer-1 skills. It is only
+# unioned when the project being compiled OWNS it (its realpath is under
+# --project-root) — i.e. when compiling the igris-core repo itself. For any
+# other project, only that project's own (merged) manifest surfaces apply, so
+# core skills never leak into an unrelated project's projection.
+sources = [agent_manifest_path]
+try:
+    cs_real = os.path.realpath(core_surfaces_path)
+    pr_real = os.path.realpath(project_root)
+    if os.path.commonpath([cs_real, pr_real]) == pr_real:
+        sources.insert(0, core_surfaces_path)
+except (OSError, ValueError):
+    pass
+
+seen_paths = set()
+# Core surfaces own the core skills; the merged agent manifest (incl. the
+# FR-139 personal overlay) contributes project + personal skills. Core first.
+for src in sources:
+    skills = load_skills(src)
+    if not skills:
+        continue
+    source = skills.get("source", "") or "-"
+    for t in skills.get("targets", []):
+        ttype = t.get("type", "")
+        if target_kind != "all" and ttype != target_kind:
+            continue
+        path = t.get("path", "")
+        dedup_key = (ttype, path)
+        if dedup_key in seen_paths:
+            continue
+        seen_paths.add(dedup_key)
+        print("\t".join([source, ttype, t.get("method", ""), path]))
+PY
+)
+
+  if [ -n "$SKILL_ROWS" ]; then
+    while IFS=$'\t' read -r s_source s_type s_method s_path; do
+      [ -z "$s_type" ] && continue
+      TOTAL=$((TOTAL + 1))
+
+      # Resolve the skills source: `~`/absolute used verbatim, else relative
+      # to --project-root. `-` means "let the md_to_* default apply".
+      src_abs=""
+      if [ -n "$s_source" ] && [ "$s_source" != "-" ]; then
+        case "$s_source" in
+          "~"/*) src_abs="$HOME/${s_source#"~/"}" ;;
+          /*)    src_abs="$s_source" ;;
+          *)     src_abs="$PROJECT_ROOT/$s_source" ;;
+        esac
+      fi
+
+      # Resolve the output path the same way (codex AGENTS.md is typically
+      # project-relative; gemini commands dir is typically `~/.gemini/...`).
+      case "$s_path" in
+        "~"/*) out_abs="$HOME/${s_path#"~/"}" ;;
+        /*)    out_abs="$s_path" ;;
+        *)     out_abs="$PROJECT_ROOT/$s_path" ;;
+      esac
+
+      rc=0
+      case "$s_type/$s_method" in
+        codex/compiler)
+          if [ -n "$src_abs" ]; then
+            bash "$ADAPTER_DIR/md_to_agents_md.sh" "$out_abs" "$src_abs" || rc=$?
+          else
+            bash "$ADAPTER_DIR/md_to_agents_md.sh" "$out_abs" || rc=$?
+          fi
+          ;;
+        gemini/converter)
+          # Per-skill conversion: one {name}.toml per {name}/SKILL.md.
+          conv_root="${src_abs:-$HOME/.igris/core/skills}"
+          if [ ! -d "$conv_root" ]; then
+            SUMMARY+=("FAIL  skills/$s_type — skills root missing: $conv_root")
+            FAIL=$((FAIL + 1))
+            continue
+          fi
+          mkdir -p "$out_abs"
+          while IFS= read -r -d '' skill_md; do
+            skill_name="$(basename "$(dirname "$skill_md")")"
+            bash "$ADAPTER_DIR/md_to_gemini_toml.sh" \
+              "$skill_md" "$out_abs/$skill_name.toml" || rc=$?
+          done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
+                     -name 'SKILL.md' -print0 | sort -z)
+          ;;
+        *)
+          SUMMARY+=("FAIL  skills/$s_type — unsupported type/method '$s_type/$s_method'")
+          FAIL=$((FAIL + 1))
+          continue
+          ;;
+      esac
+
+      if [ "$rc" -eq 0 ]; then
+        SUMMARY+=("OK    skills/$s_type ($s_method) -> $s_path")
+        OK=$((OK + 1))
+      else
+        SUMMARY+=("FAIL  skills/$s_type — adapter exited $rc")
+        FAIL=$((FAIL + 1))
+      fi
+    done <<< "$SKILL_ROWS"
+  fi
+fi
+
+if [ "$TOTAL" -eq 0 ]; then
+  echo "No agent/skills targets matched (filter='$FILTER', target='$TARGET_KIND', surface='$SURFACE_KIND')." >&2
+  exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # Summary report.
