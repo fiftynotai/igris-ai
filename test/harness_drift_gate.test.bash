@@ -19,12 +19,14 @@
 # guard's MATCH/DRIFTED/MISSING logic is target-type-agnostic, so the claude
 # path fully exercises the verdict machinery FR-135 depends on.
 #
-# The wrapper (scripts/validate_harness_drift.sh) adds a STOPGAP tolerance ON
-# TOP of the strict guard: DRIFTED is always fatal (exit 1), but MISSING-only
-# is a non-blocking NOTICE (exit 0) while the codex targets are D1-gated and
-# uncompiled. FR-138 reverts that. The wrapper-level tests below build a
-# synthetic git repo whose manifest uses a CORE_AGENTS name (`forger`) so the
-# wrapper's hardcoded per-agent loop actually checks it.
+# The wrapper (scripts/validate_harness_drift.sh) scopes the strict guard:
+# DRIFTED is always fatal (exit 1); MISSING is fatal for PROJECT-RELATIVE
+# targets (FR-138 flipped this back from the FR-135 STOPGAP, now that codex is
+# un-gated and compiled), but a MISSING home/absolute-path target (e.g. the
+# gemini ~/.gemini/commands skills surface) is an out-of-scope NOTICE (exit 0).
+# The wrapper-level tests below build a synthetic git repo whose manifest uses a
+# core-agent name (`forger`) with a project-relative claude target, plus one
+# test that injects a home-path gemini skills target to exercise the scoping.
 
 load test_helper
 
@@ -242,18 +244,77 @@ EOF
   [[ "$output" != *"NOTICE:"* ]]
 }
 
-@test "wrapper: MISSING-only (gated, never compiled) -> exit 0 + NOTICE" {
+@test "wrapper: project-relative MISSING harness is FATAL -> exit 1 (FR-138)" {
+  # FR-138 flipped MISSING back to FATAL for PROJECT-RELATIVE targets. The
+  # forger claude target is project-relative (.claude/agents/forger.md), so a
+  # never-compiled (absent) harness now hard-fails the gate — it means "you
+  # forgot to compile", not "gated and not built yet".
   local root
   root="$(build_wrapper_repo missing)"
 
   run bash -c "cd '$root' && bash scripts/validate_harness_drift.sh"
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 1 ]
   [[ "$output" == *"[forger/claude] MISSING"* ]]
-  # STOPGAP NOTICE present and references the revert brief.
+  [[ "$output" == *"FATAL"* ]]
+  [[ "$output" == *"project-relative"* ]]
+  [[ "$output" == *"forgot to compile"* ]]
+  # The old STOPGAP NOTICE language must be gone.
+  [[ "$output" != *"STOPGAP"* ]]
+}
+
+@test "wrapper: home-path MISSING target does NOT hard-fail the gate (FR-138 scoping)" {
+  # The dominant FR-138 risk: the guard always checks BOTH surfaces and the
+  # skills surface includes a HOME-PATH gemini target (~/.gemini/commands). On
+  # a machine that never projected gemini TOMLs that target is MISSING, but it
+  # must NOT hard-fail the commit gate — it is out of the gate's scope. Build a
+  # repo whose project-relative agent is in sync (MATCH) and whose ONLY MISSING
+  # verdict is a home-path skills target.
+  local root
+  root="$(build_wrapper_repo match)"
+
+  # Point the gemini skills source at a guaranteed-empty temp skills root so the
+  # converter finds zero SKILL.md files and the artifact dir is a home path that
+  # is reported MISSING (no projected {name}.toml). Inject a skills surface into
+  # the project manifest with a ~-path target.
+  local empty_skills="$TEST_TEMP_DIR/empty_skills_$BATS_TEST_NUMBER"
+  mkdir -p "$empty_skills/placeholder"
+  cat > "$empty_skills/placeholder/SKILL.md" <<'EOF'
+---
+name: placeholder
+description: a placeholder skill so the converter has one target
+---
+body
+EOF
+
+  python3 - "$root/harness-manifest.json" "$empty_skills" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+skills_src = sys.argv[2]
+with open(path, "r", encoding="utf-8") as fh:
+    m = json.load(fh)
+m["surfaces"] = {
+    "skills": {
+        "source": skills_src,
+        "layer": "core",
+        "targets": [
+            {"type": "gemini", "method": "converter", "path": "~/.gemini/commands"}
+        ],
+    }
+}
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(m, fh, indent=2)
+PY
+
+  run bash -c "cd '$root' && bash scripts/validate_harness_drift.sh"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[forger/claude] MATCH"* ]]
+  # The home-path gemini target is reported MISSING by the guard...
+  [[ "$output" == *"[skills/gemini] MISSING"* ]]
+  # ...but the wrapper classifies it OUT OF SCOPE: NOTICE, never FATAL.
   [[ "$output" == *"NOTICE:"* ]]
-  [[ "$output" == *"STOPGAP"* ]]
-  [[ "$output" == *"FR-138"* ]]
-  # MISSING is not drift — must not be reported FATAL.
+  [[ "$output" == *"out-of-scope"* ]]
   [[ "$output" != *"FATAL"* ]]
 }
 

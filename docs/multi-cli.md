@@ -271,7 +271,7 @@ coexist:
 |------|------|
 | `scripts/cli-adapters/harness-manifest.json` | Declarative manifest: per agent, the canonical source (dir + glob/file + `versioned` flag) and the set of harness targets. Handles both canonical conventions. |
 | `scripts/cli-adapters/sync_claude_agents.sh` | Per-target adapter — canonical `.md` → `.claude/agents/<name>.md`. Overwrites the harness body with the canonical body; **preserves** the harness YAML frontmatter (the TD-018 D5 convention, mechanized). The harness file must already exist — this adapter syncs, it does not create. |
-| `scripts/cli-adapters/sync_codex_agents.sh` | Per-target adapter — canonical `.md` → `.codex/agents/<name>.toml` (3-key TOML: `description`, `developer_instructions`, `name`). Gated on Decision D1 (see below). |
+| `scripts/cli-adapters/sync_codex_agents.sh` | Per-target adapter — canonical `.md` → `.codex/agents/<name>.toml` (3-key TOML: `description`, `developer_instructions`, `name`). Live emit path (D1 RESOLVED — REIMPLEMENT, FR-138). |
 | `scripts/cli-adapters/compile_harnesses.sh` | Orchestrator — reads the manifest, calls the per-target adapter for every agent/target. `--project-root`, `--filter`, `--target` flags. |
 | `scripts/cli-adapters/check_harness_drift.sh` | CI-style drift guard — exits non-zero if any harness body sha or version marker has diverged from canonical. |
 | `scripts/cli-adapters/body-exceptions/*.json` | Documented intentional body divergences (see below). |
@@ -318,16 +318,18 @@ sidecar `body-exceptions/designer-harness-skill-para.json` declares a unique
 body **plus** the documented appendix, so the exception is not flagged as
 drift and is not silently lost on recompile.
 
-### Decision D1 — codex wrap vs reimplement (BLOCKED)
+### Decision D1 — codex wrap vs reimplement (RESOLVED — REIMPLEMENT, FR-138)
 
 `sync_codex_agents.sh` could either WRAP the codex CLI's native agent-import
-command or REIMPLEMENT the TOML emit. Resolving this requires probing the
-`codex` CLI for a scriptable, idempotent import subcommand. As of TD-021 the
-`codex` binary was not on PATH and not at any probeable install location, so
-D1 is **BLOCKED**. `sync_codex_agents.sh` ships the REIMPLEMENT path (the TOML
-format is fully specified) but **gates it** behind a `--d1-reimplement` flag
-(or `IGRIS_CODEX_D1=reimplement`) so the decision stays with the operator. The
-codex backfill is deferred until D1 is resolved.
+command or REIMPLEMENT the TOML emit. FR-138 **resolved D1 in favor of
+REIMPLEMENT**: the script emits the fully-specified 3-key codex subagent TOML
+directly, as the live default path — no opt-in flag, no env gate. The 7 Igris-
+core agents now distribute to `.codex/agents/*.toml` by default whenever
+`compile_harnesses.sh --target codex` (or `--target all`) runs. The former
+`--d1-reimplement` flag and `IGRIS_CODEX_D1=reimplement` env opt-in are retained
+only as deprecated, accepted no-ops for back-compat with any caller still
+passing them. A WRAP variant remains possible behind a future `--d1-wrap` flag
+if the `codex` CLI's native import is ever found to be scriptable + idempotent.
 
 ### `cli_targets.codex.agents` sub-block
 
@@ -340,9 +342,9 @@ conflated under one mechanism.
 ### Invocation
 
 ```bash
-# Regenerate every harness for a project (claude targets; codex is D1-gated):
+# Regenerate every harness for a project (all targets; codex is live since FR-138):
 bash ~/.igris/core/scripts/cli-adapters/compile_harnesses.sh \
-  --project-root /path/to/project --filter 'content-*' --target claude
+  --project-root /path/to/project --filter 'content-*' --target all
 
 # Check for drift (exit non-zero if any harness is stale):
 bash ~/.igris/core/scripts/cli-adapters/check_harness_drift.sh \
@@ -591,8 +593,57 @@ per-CLI harness files (Codex `.toml`, Claude `.md`) by the TD-021 adapters under
   (`compile_harnesses.sh` / `check_harness_drift.sh`) with exit-code passthrough.
   Flags: `--project-root`, `--manifest`, `--overlay`, `--target`, `--filter`.
 
-> Reconciling the three adapter naming families (`sync_*`/`compile_*`,
-> `md_to_*`, and the dormant `<target>.sh` bridges) is FR-138.
+### The three adapter naming families (reconciled — FR-138)
+
+Three naming families live under `core/scripts/cli-adapters/`. They are NOT
+interchangeable; each owns a distinct concern. FR-138 fixes the canonical
+disposition of each:
+
+| Family | Concern | Disposition |
+|--------|---------|-------------|
+| `sync_<target>.sh` (+ `compile_harnesses.sh` / `check_harness_drift.sh`) | **Per-agent subagent prompts** (TD-021). One canonical `core/agents/<name>.md` → one harness per target. | **Canonical** for subagent harnesses. `sync_*` are the per-target emitters; `compile_harnesses.sh` orchestrates; `check_harness_drift.sh` guards. |
+| `md_to_<surface>.sh` (`md_to_agents_md.sh`, `md_to_gemini_toml.sh`) | **Skills surfaces** (FR-103 / FR-137). The `~/.igris/core/skills/` tree → per-CLI skill artifacts. | **Canonical** for the skills surface. A distinct concern from agents — the compiler/converter methods live here, invoked by `compile_harnesses.sh`'s skills pass (FR-137 D-4). |
+| `<target>.sh` (e.g. `codex.sh`, `gemini.sh`) | The dormant FR-104-era bridge contract: `<target>.sh <project-path>`, invoked by `materializeBridges()` in `cli/src/lib/bridges.ts` during `igris init`. | **Superseded by the `igris harness` verb.** No `<target>.sh` script exists, so `materializeBridges` skips every target today (a silent no-op). The harness verb (`cli/src/verbs/harness.ts`) is the live seam — it shells out to `compile_harnesses.sh` / `check_harness_drift.sh` directly and deliberately never touches `bridges.ts`. The inert `bridges.ts` contract is left in place for a follow-up cleanup brief (no code change in FR-138); do not build `<target>.sh` scripts against it. |
+
+### Add a New Harness (target type)
+
+To add a new per-CLI subagent target type (say `cursor`):
+
+1. **Manifest schema** — add the new type to the `targets[].type` enum in
+   `core/scripts/cli-adapters/manifest.schema.json` (currently
+   `["claude", "codex", "gemini"]`). If the surface is also a skills surface,
+   add it to `surfaces.skills.targets[].type` too (currently
+   `["codex", "gemini"]`).
+2. **Per-agent adapter** — write `sync_cursor.sh` with the contract
+   `sync_cursor.sh <canonical-md> <output> [agent-name]`. Exit `0` success /
+   `1` error / `2` usage. Source `_common.sh`. Emit the output file
+   **atomically** (write to a `mktemp`, then `mv`). Strip the canonical
+   frontmatter via `strip_frontmatter` and reuse the `toml_escape*` /
+   body helpers as appropriate for the target format.
+3. **Dispatch arm** — add a `cursor)` case arm to the agents-surface dispatch
+   `case "$ttype" in` block in `compile_harnesses.sh` (next to `claude)` /
+   `codex)`), invoking `bash "$ADAPTER_DIR/sync_cursor.sh" ...`.
+4. **Drift-guard body extraction** — teach `check_harness_drift.sh` how to
+   read the new target's comparable body: add a `cursor)` branch in the guard's
+   actual-body resolution (mirroring `codex_body` for codex, or the
+   `strip_frontmatter` path for claude) so it can render MATCH / DRIFTED /
+   MISSING. The body extracted must be the canonical-equivalent body so the sha
+   compare is meaningful.
+5. **Declare targets** — add a `{ "type": "cursor", "path": "..." }` entry to
+   each agent in the relevant `harness-manifest.json`, and (if a skills surface)
+   to `surfaces-manifest.json`.
+6. **Gate scope** — if the new target's path is **project-relative** it is
+   automatically in scope for the `validate_harness_drift.sh` commit gate
+   (MISSING → fatal). If it is a **home/absolute path** (like the gemini
+   `~/.gemini/commands` skills target), it is automatically classified
+   out-of-scope (MISSING → NOTICE, not fatal) — no gate change needed.
+7. **Mirror + test** — `core/`-resident adapters are part of the TD-096 runtime
+   mirror set: `cp` to `~/.igris/core/scripts/cli-adapters/` and verify with
+   `verify_mirror.sh`. Add bats coverage in `test/harness_drift_gate.test.bash`.
+
+A new skills-surface converter follows the same shape but lives as
+`md_to_<surface>.sh` and is wired into the FR-137 skills pass of
+`compile_harnesses.sh` (and the matching skills branch of the drift guard).
 
 ---
 
@@ -601,6 +652,8 @@ per-CLI harness files (Codex `.toml`, Claude `.md`) by the TD-021 adapters under
 - Brief: FR-103 Multi-CLI Skill Distribution
 - Brief: FR-104 Multi-CLI Hook Bridge Layer
 - Brief: FR-136 Harness manifest schema + per-project model + `igris harness` verb
+- Brief: FR-137 Skills surface folded into the harness manifest engine
+- Brief: FR-138 Un-gate codex emit (D1 resolved) + drift-guard MISSING→FATAL scoping + add-a-harness contract
 - Canonical skills: `~/.igris/core/skills/`
 - Canonical shared hooks: `~/.igris/core/hooks/shared/`
 - Bridges: `~/.igris/core/hooks/bridges/`

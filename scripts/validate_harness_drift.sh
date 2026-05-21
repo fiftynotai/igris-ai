@@ -17,42 +17,45 @@ set -euo pipefail
 #
 # Dependencies: bash, git, python3 (transitively via the guard + _common.sh).
 # Exit codes:
-#   0 - All checked targets MATCH, OR the only non-MATCH verdicts are MISSING
-#       (the gated-codex stopgap — see STOPGAP block below).
-#   1 - One or more targets DRIFTED (a harness EXISTS but its body diverged
-#       from canonical). Real drift is always fatal.
+#   0 - All checked PROJECT-RELATIVE targets MATCH (home-path targets that are
+#       MISSING are excluded from the gate — see SCOPING block below).
+#   1 - One or more PROJECT-RELATIVE targets DRIFTED or MISSING. A drifted
+#       harness (exists but body diverged) and a missing project-relative
+#       harness (you forgot to compile) are both fatal.
 #   0 - (clean skip) the guard or manifest is absent — see fail-open note below.
 #
 # =========================================================================
-# STOPGAP: MISSING vs DRIFTED tolerance (FR-135 -> tightened by FR-138)
+# SCOPING: MISSING is FATAL for project-relative targets (FR-138)
 # -------------------------------------------------------------------------
 # The guard (check_harness_drift.sh) is STRICT by contract: MISSING -> exit 1,
-# DRIFTED -> exit 1. That contract is the source of truth and is left UNCHANGED.
-# The stopgap tolerance lives HERE, at the pre-commit/CI entry point, because
-# this is the layer that knows about the repo's transient state.
+# DRIFTED -> exit 1. That contract is the source of truth and is UNCHANGED.
 #
-# Why MISSING must be tolerated RIGHT NOW (and only now):
-#   The 7 Igris-core agents declare ONLY codex targets (.codex/agents/*.toml).
-#   Codex emit is gated on Decision D1 and is NOT built in this repo yet, so
-#   the guard reports every core-agent target MISSING. That is "not yet
-#   compiled because the emitter is gated", NOT "you forgot to recompile after
-#   an edit". Blocking every `core/agents/*.md` commit on a gated-inert target
-#   would be a false positive.
+# FR-135 added a STOPGAP here that tolerated MISSING-only (exit 0) because the
+# 7 core-agent codex targets were gated on Decision D1 and never compiled, so
+# every one reported MISSING — a false positive, not "you forgot to recompile".
 #
-# Discrimination rule applied below:
-#   - DRIFTED present  -> FATAL (exit 1). A harness that EXISTS but diverged is
-#                         real drift and must never be tolerated.
-#   - only MISSING      -> NON-BLOCKING NOTICE (exit 0). Surfaced loudly so it
-#                         is never silently forgotten.
-#   - all MATCH         -> pass (exit 0).
+# FR-138 un-gated codex (Decision D1 RESOLVED — REIMPLEMENT) and now compiles
+# the .codex/agents/*.toml harnesses. A MISSING project-relative target now
+# genuinely means "you forgot to compile" and MUST be fatal again. So this
+# wrapper flips MISSING -> FATAL — BUT only for PROJECT-RELATIVE targets.
 #
-# >>> FR-138 MUST flip MISSING back to FATAL <<<
-#   FR-138 un-gates codex and compiles the .codex/agents/*.toml harnesses.
-#   Once those exist, MISSING genuinely means "you forgot to recompile" and
-#   must again be a hard failure. When implementing FR-138, DELETE the MISSING
-#   tolerance below so this wrapper simply propagates the guard's strict exit
-#   code (and ideally drop the per-agent loop too once FR-136 cleans the
-#   manifest). Grep for "FR-138" in this file to find every spot to revert.
+# Why scope to project-relative:
+#   The guard always checks BOTH surfaces (agents + skills) — it has no
+#   --surface flag. The skills surface includes a HOME-PATH gemini target
+#   (~/.gemini/commands, declared in surfaces-manifest.json). That target is
+#   MISSING on any machine (incl. CI) that never projected gemini TOMLs.
+#   Hard-failing the commit gate on a home-path skills target the developer
+#   may legitimately not have projected would be a false positive everywhere.
+#   The gate enforces what THIS repo commits-as-canonical: the project-relative
+#   targets (.codex/agents/*.toml, AGENTS.md). Home/absolute-path targets are
+#   out of the gate's scope and only surfaced as a NOTICE.
+#
+# Discrimination rule applied below (per target's RESOLVED path):
+#   - DRIFTED (any path)            -> FATAL (exit 1). Existing-but-diverged is
+#                                      real drift; never tolerated.
+#   - MISSING, project-relative     -> FATAL (exit 1). You forgot to compile.
+#   - MISSING, home/absolute path   -> NON-BLOCKING NOTICE (exit 0, out of scope).
+#   - all in-scope targets MATCH    -> pass (exit 0).
 # =========================================================================
 #
 # Fail-open on a fresh clone WITHOUT the adapter layer:
@@ -93,12 +96,13 @@ fi
 # ---------------------------------------------------------------------------
 # Run the guard ONCE against the repo-root manifest (FR-136). The manifest now
 # declares only the agents that belong in this repo, so no per-agent filtering
-# is needed. We capture the self-evidencing report and parse the per-target
-# verdict lines (the guard emits `[name/type] DRIFTED|MISSING|MATCH`) to
-# discriminate fatal DRIFTED from tolerable MISSING (see STOPGAP block above).
+# is needed. We capture the self-evidencing report and classify each per-target
+# verdict (the guard emits `[name/type] DRIFTED|MISSING|MATCH`) by its resolved
+# path: DRIFTED is always fatal; MISSING is fatal ONLY for project-relative
+# targets (home/absolute-path targets are out of the gate's scope — see the
+# SCOPING block above). The guard has no --surface flag, so the project-relative
+# classification is done HERE, from the resolved paths in the report.
 # ---------------------------------------------------------------------------
-drifted=0
-missing=0
 # set -e is intentionally relaxed for the call so a non-MATCH verdict does not
 # abort before we classify it from the report.
 report=""
@@ -110,31 +114,131 @@ fi
 # auditable.
 printf '%s\n' "$report"
 
-# Count per-target verdicts. `grep -c` counts matching LINES; the guard prints
-# exactly one `[name/type] VERDICT` line per target.
-drifted="$(printf '%s\n' "$report" | grep -c 'DRIFTED' || true)"
-missing="$(printf '%s\n' "$report" | grep -c 'MISSING' || true)"
+# Classify verdicts via python3 (python3 is a guaranteed dependency). For each
+# `[name/type] VERDICT` block we resolve the target's on-disk path from the
+# block's path line (harness/artifact/artifact dir) and decide scope:
+#   - DRIFTED               -> always fatal.
+#   - MISSING, path under REPO_ROOT -> fatal (you forgot to compile).
+#   - MISSING, home/absolute path   -> out-of-scope NOTICE (not fatal).
+# The script prints three integers: <fatal_drifted> <fatal_missing> <oos_missing>
+# The classifier is written to a temp script and run as `python3 <file>` so the
+# heredoc (which contains parens and apostrophes) is NOT nested inside a `$(...)`
+# command substitution — bash's command-substitution tokenizer mis-parses such
+# nesting (SC2259-adjacent), causing "unexpected EOF". The report is passed via
+# an env var to avoid stdin/heredoc collisions.
+CLASSIFIER="$(mktemp "${TMPDIR:-/tmp}/igris_drift_classify.XXXXXX.py")"
+trap 'rm -f "$CLASSIFIER"' EXIT
+cat > "$CLASSIFIER" <<'PY'
+import os
+import re
+import sys
+
+repo_root = os.path.realpath(sys.argv[1])
+report = os.environ.get("IGRIS_DRIFT_REPORT", "").splitlines()
+
+verdict_re = re.compile(
+    r"^\s*\[(?P<name>[^\]]+)\]\s+(?P<verdict>MATCH|DRIFTED|MISSING)\b"
+    r"(?:\s+\S+\s+(?P<rest>.*))?$"
+)
+pathline_re = re.compile(
+    r"^\s*(?P<label>harness|artifact dir|artifact)\s*:\s*(?P<path>\S.*)$"
+)
+
+
+def is_project_relative(path):
+    """True if the resolved path lives under the repo root."""
+    if not path:
+        return False
+    rp = os.path.realpath(path)
+    try:
+        return os.path.commonpath([rp, repo_root]) == repo_root
+    except ValueError:
+        return False
+
+
+def strip_paren(text):
+    return re.sub(r"\s*\(.*\)\s*$", "", text).strip()
+
+
+def extract_inline_path(rest):
+    # Some MISSING reasons inline the path after a colon, e.g.
+    # "canonical file absent: /abs/path".
+    if rest and ":" in rest:
+        cand = strip_paren(rest.rsplit(":", 1)[1].strip())
+        if cand.startswith(("/", "~")):
+            return os.path.expanduser(cand)
+    return ""
+
+
+fatal_drifted = 0
+fatal_missing = 0
+oos_missing = 0
+
+i = 0
+n = len(report)
+while i < n:
+    m = verdict_re.match(report[i])
+    if not m:
+        i += 1
+        continue
+    verdict = m.group("verdict")
+    rest = m.group("rest") or ""
+    # Resolve this block's path: prefer an inline path in the verdict line,
+    # else scan following indented path lines until the next verdict block.
+    path = extract_inline_path(rest)
+    j = i + 1
+    while j < n and not verdict_re.match(report[j]):
+        pm = pathline_re.match(report[j])
+        if pm and not path:
+            path = os.path.expanduser(strip_paren(pm.group("path").strip()))
+        j += 1
+
+    if verdict == "DRIFTED":
+        fatal_drifted += 1
+    elif verdict == "MISSING":
+        if is_project_relative(path):
+            fatal_missing += 1
+        else:
+            oos_missing += 1
+    i = j
+
+print(f"{fatal_drifted} {fatal_missing} {oos_missing}")
+PY
+
+classification="$(IGRIS_DRIFT_REPORT="$report" python3 "$CLASSIFIER" "$REPO_ROOT")"
+rm -f "$CLASSIFIER"
+trap - EXIT
+read -r fatal_drifted fatal_missing oos_missing <<< "$classification"
 
 # ---------------------------------------------------------------------------
 # Verdict aggregation.
 # ---------------------------------------------------------------------------
-if [ "$drifted" -gt 0 ]; then
+if [ "$oos_missing" -gt 0 ]; then
+  # Home/absolute-path targets (e.g. the gemini skills ~/.gemini/commands
+  # surface) that are MISSING are out of the gate's scope — surface as a NOTICE
+  # so they are never silently forgotten, but do NOT block the commit.
+  echo ""
+  echo "[harness-drift] NOTICE: $oos_missing out-of-scope (home/absolute-path) harness target(s) MISSING — not projected on this machine. These are excluded from the commit gate (e.g. the gemini ~/.gemini/commands skills surface)."
+fi
+
+if [ "$fatal_drifted" -gt 0 ]; then
   # DRIFTED is always fatal — a harness exists but its body diverged.
   echo ""
-  echo "[harness-drift] FATAL: $drifted core-agent harness(es) DRIFTED from canonical."
+  echo "[harness-drift] FATAL: $fatal_drifted harness(es) DRIFTED from canonical."
   echo "[harness-drift] A harness body diverged from its canonical prompt. Regenerate:"
-  echo "[harness-drift]   bash core/scripts/cli-adapters/compile_harnesses.sh --project-root ."
-  echo "[harness-drift]   (or 'igris harness compile' once it lands), then re-stage."
+  echo "[harness-drift]   igris harness compile --project-root ."
+  echo "[harness-drift]   (or bash core/scripts/cli-adapters/compile_harnesses.sh --project-root .), then re-stage."
   exit 1
 fi
 
-if [ "$missing" -gt 0 ]; then
-  # STOPGAP (FR-135 -> revert in FR-138): MISSING-only is non-blocking. The
-  # codex targets are D1-gated and not yet compiled in this repo, so MISSING
-  # here means "not built yet", not "you forgot to recompile".
+if [ "$fatal_missing" -gt 0 ]; then
+  # FR-138: MISSING for a project-relative target is fatal again — codex is
+  # un-gated, so a missing .codex/agents/*.toml means you forgot to compile.
   echo ""
-  echo "[harness-drift] NOTICE: $missing core-agent codex harness(es) not yet compiled (codex emit gated until FR-138). Drift tolerance is a STOPGAP — FR-138 must flip MISSING back to fatal once codex is un-gated."
-  exit 0
+  echo "[harness-drift] FATAL: $fatal_missing project-relative harness(es) MISSING — you forgot to compile. Regenerate:"
+  echo "[harness-drift]   igris harness compile --project-root ."
+  echo "[harness-drift]   (or bash core/scripts/cli-adapters/compile_harnesses.sh --project-root .), then re-stage."
+  exit 1
 fi
 
 exit 0

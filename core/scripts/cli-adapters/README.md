@@ -24,7 +24,7 @@ editing one directly is a process error.
 | Script | Contract | Output |
 |--------|----------|--------|
 | `sync_claude_agents.sh` | `sync_claude_agents.sh <canonical-md> <output-harness-md> [body-exception-json]` | A `.claude/agents/<name>.md` whose body is the canonical body; harness frontmatter is preserved. The harness file must already exist. |
-| `sync_codex_agents.sh` | `sync_codex_agents.sh [--d1-reimplement] <canonical-md> <output-toml> [agent-name]` | A `.codex/agents/<name>.toml` (3 keys: `description`, `developer_instructions`, `name`). D1-gated — see below. |
+| `sync_codex_agents.sh` | `sync_codex_agents.sh <canonical-md> <output-toml> [agent-name]` | A `.codex/agents/<name>.toml` (3 keys: `description`, `developer_instructions`, `name`). Live emit path (D1 RESOLVED — REIMPLEMENT, FR-138). `--d1-reimplement` is a deprecated, accepted no-op. |
 | `compile_harnesses.sh` | `compile_harnesses.sh --project-root <dir> [--manifest <p>] [--filter <glob>] [--target claude\|codex\|all]` | Orchestrates: reads the manifest, runs the per-target adapter for every agent/target. |
 | `check_harness_drift.sh` | `check_harness_drift.sh --project-root <dir> [--manifest <p>] [--filter <glob>]` | CI-style guard — exit 1 if any harness body sha / version marker has drifted from canonical. |
 
@@ -56,13 +56,16 @@ between a harness body and the canonical body — an `anchor` line plus an
 Currently one exists: `designer-harness-skill-para` (DESIGNER's harness-skill
 invocation note).
 
-### Decision D1 — codex wrap vs reimplement (BLOCKED)
+### Decision D1 — codex wrap vs reimplement (RESOLVED — REIMPLEMENT, FR-138)
 
-`sync_codex_agents.sh` is gated on Decision D1: whether to WRAP the codex CLI's
-native agent-import command or REIMPLEMENT the TOML emit. As of TD-021 the
-`codex` CLI was not probeable (not on PATH), so D1 is BLOCKED and the operator
-owns the resolution. The script ships the REIMPLEMENT path but refuses to run
-unless `--d1-reimplement` (or `IGRIS_CODEX_D1=reimplement`) is supplied.
+`sync_codex_agents.sh` once faced Decision D1: whether to WRAP the codex CLI's
+native agent-import command or REIMPLEMENT the TOML emit. FR-138 RESOLVED it in
+favor of REIMPLEMENT — the script emits the fully-specified 3-key codex
+subagent TOML directly, as the live default path (no opt-in flag required). The
+former `--d1-reimplement` flag / `IGRIS_CODEX_D1=reimplement` env opt-in are
+retained only as deprecated, accepted no-ops for back-compat. A WRAP variant
+remains possible behind a future `--d1-wrap` flag if codex's import is ever
+found scriptable + idempotent.
 
 ## Shared helpers
 

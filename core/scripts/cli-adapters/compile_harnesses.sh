@@ -29,12 +29,6 @@
 #   0 - All selected agent/target syncs succeeded (or were cleanly skipped)
 #   1 - One or more syncs failed
 #   2 - Usage error (bad/missing arguments)
-#
-# CODEX TARGETS & DECISION D1:
-#   sync_codex_agents.sh is gated on Decision D1 (BLOCKED — see that script).
-#   When `--target` selects codex (or `all`), codex syncs will fail unless the
-#   environment has IGRIS_CODEX_D1=reimplement set. compile_harnesses.sh
-#   reports each failure but does not itself resolve D1.
 
 set -euo pipefail
 
