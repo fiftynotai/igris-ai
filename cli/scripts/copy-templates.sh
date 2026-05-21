@@ -96,11 +96,24 @@ fi
 # the bundled MCP actually needs:
 #   - devDependencies / optionalDependencies: dropped (build-only / not
 #     required at runtime).
-#   - @huggingface/transformers: dropped from `dependencies`. It is the
-#     embeddings backend — large, and it pulls native `onnxruntime-node`.
-#     The brain treats embeddings as optional (vector search degrades
-#     gracefully when transformers is absent), so excluding it keeps the
-#     bundle lean (~162 vs ~236 packages) without breaking the brain.
+#   - @huggingface/transformers: KEPT (BR-070). It is the embeddings
+#     backend that powers semantic/vector search (igris_brief_similar,
+#     memory recall's vector channel). An earlier scheme deleted it here
+#     to keep the bundle lean (~162 vs ~236 packages) on a "vector search
+#     degrades gracefully when transformers is absent" premise — but that
+#     premise was FALSE for the dynamic import itself: the first
+#     `await import('@huggingface/transformers')` threw ERR_MODULE_NOT_FOUND
+#     on the public `npm install -g igris-ai` path, silently disabling
+#     semantic search (the headline feature of a memory tool). We now
+#     vendor it. Cross-platform native deps (onnxruntime-node, host sharp)
+#     are resolved per-platform by npm's os/cpu gating during the
+#     user-side postinstall (BR-068), and node_modules is excluded from
+#     the published tarball via cli/package.json `files`, so the TARBALL
+#     size is unaffected — only the per-machine INSTALLED footprint grows
+#     (~150-250MB), an accepted trade for working semantic memory. The
+#     residual offline/native-load failure modes are handled by the
+#     embeddings module's hybrid graceful-degrade guard (BR-070), which
+#     latches one boot-time warning instead of a per-call throw storm.
 #   - sqlite-vec's own nested platform binaries (sqlite-vec-<os>-<arch>)
 #     are NOT touched — they are required for vector search, so this
 #     deliberately does NOT pass `npm --omit=optional` (that global flag
@@ -110,7 +123,6 @@ fi
 node -e 'const fs=require("fs");const p=process.argv[1];
   const j=JSON.parse(fs.readFileSync(p,"utf-8"));
   delete j.devDependencies;delete j.optionalDependencies;
-  if(j.dependencies)delete j.dependencies["@huggingface/transformers"];
   fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n");' "$MCP_DEST/package.json"
 
 # Vendor a production node_modules into the staged bundle. `npm install`
@@ -126,6 +138,21 @@ echo "copy-templates: vendoring brain-mcp-server production node_modules..."
 # runtime dep MUST be present or the bundled MCP cannot spawn.
 if [ ! -d "$MCP_DEST/node_modules/@modelcontextprotocol/sdk" ]; then
   echo "copy-templates: bundled MCP node_modules incomplete — @modelcontextprotocol/sdk missing" >&2
+  exit 1
+fi
+
+# BR-070: assert the embeddings backend RESOLVES in the vendored bundle.
+# This guards against a regression of the BR-070 prune (deleting
+# @huggingface/transformers from the staged manifest). It uses
+# `import.meta.resolve` of the bare specifier — exactly the resolution the
+# runtime dynamic `import('@huggingface/transformers')` performs, but
+# WITHOUT executing the module (so no onnxruntime native load and no
+# ~23MB MiniLM weight fetch from the HF Hub — that would slow/flake the
+# build). NB: the package's `exports` map does not expose ./package.json,
+# so a require.resolve of the manifest path would false-fail; resolving
+# the bare specifier is the correct, faithful check.
+if ! ( cd "$MCP_DEST" && node --input-type=module -e 'import.meta.resolve("@huggingface/transformers")' ) 2>/dev/null; then
+  echo "copy-templates: bundled MCP embeddings backend missing — @huggingface/transformers did not resolve (BR-070)" >&2
   exit 1
 fi
 echo "copy-templates: bundled brain-mcp-server -> $MCP_DEST"

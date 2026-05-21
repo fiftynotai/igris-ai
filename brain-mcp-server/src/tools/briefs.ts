@@ -15,7 +15,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { getDb } from '../db.js';
-import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL } from '../utils/embeddings.js';
+import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL, EmbeddingsUnavailableError } from '../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbeddingInto, vectorSearchFrom } from '../utils/vector-search.js';
 import { l2ToCosine } from '../utils/hybrid-search.js';
 
@@ -937,6 +937,19 @@ async function handleBriefSimilar(args: BriefSimilarInput): Promise<{ content: {
   try {
     queryEmbedding = await generateEmbedding(args.query);
   } catch (err) {
+    // BR-070: when the embeddings backend is unavailable (transformers
+    // absent, offline cold-cache, or native-load failure), return a clean
+    // capability message mirroring the sqlite-vec-unavailable branch above
+    // rather than leaking a raw ERR_MODULE_NOT_FOUND string. Other errors
+    // still surface their detail for diagnosis.
+    if (err instanceof EmbeddingsUnavailableError) {
+      return {
+        content: [{
+          type: 'text',
+          text: 'Brief similarity search unavailable: embeddings backend not loaded (semantic search disabled, keyword search still available).',
+        }],
+      };
+    }
     return {
       content: [{
         type: 'text',

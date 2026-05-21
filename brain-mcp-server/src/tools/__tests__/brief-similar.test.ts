@@ -44,6 +44,14 @@ vi.mock('../../db.js', () => ({
 
 // Mock embedding utilities
 vi.mock('../../utils/embeddings.js', () => {
+  // BR-070: a faithful stand-in for the real typed error so brief_similar's
+  // `instanceof EmbeddingsUnavailableError` branch can be exercised.
+  class EmbeddingsUnavailableError extends Error {
+    constructor(reason: string) {
+      super(`embeddings backend unavailable: ${reason}`);
+      this.name = 'EmbeddingsUnavailableError';
+    }
+  }
   return {
     generateEmbedding: vi.fn(async (text: string) => fakeEmbedding(text)),
     embeddingToBuffer: vi.fn((embedding: Float32Array) =>
@@ -62,6 +70,7 @@ vi.mock('../../utils/embeddings.js', () => {
       }
       return { succeeded, failed };
     }),
+    EmbeddingsUnavailableError,
     EMBEDDING_MODEL: 'Xenova/all-MiniLM-L6-v2',
     EMBEDDING_DIMENSIONS: 384,
   };
@@ -263,6 +272,38 @@ Add vector similarity search.
       const result = await handleBriefSimilar({ query: 'test query' });
 
       expect(result.content[0].text).toContain('unavailable');
+    });
+
+    it('should return a clean unavailable message (not a raw error) when embeddings backend is disabled (BR-070)', async () => {
+      _vecAvailable = true; // sqlite-vec is fine; the embeddings backend is the problem
+
+      const { generateEmbedding: mockGenerate, EmbeddingsUnavailableError } =
+        await import('../../utils/embeddings.js');
+      vi.mocked(mockGenerate).mockRejectedValueOnce(
+        new EmbeddingsUnavailableError("Cannot find package '@huggingface/transformers'"),
+      );
+
+      const result = await handleBriefSimilar({ query: 'test query' });
+
+      const text = result.content[0].text;
+      expect(text).toContain('unavailable');
+      expect(text).toContain('embeddings backend not loaded');
+      // Must NOT leak the raw module-resolution error string.
+      expect(text).not.toContain('@huggingface/transformers');
+      expect(text).not.toContain('Failed to generate embedding');
+    });
+
+    it('should still surface non-unavailable embedding errors with detail', async () => {
+      _vecAvailable = true;
+
+      const { generateEmbedding: mockGenerate } = await import('../../utils/embeddings.js');
+      vi.mocked(mockGenerate).mockRejectedValueOnce(new Error('Unexpected pipeline crash'));
+
+      const result = await handleBriefSimilar({ query: 'test query' });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Failed to generate embedding');
+      expect(text).toContain('Unexpected pipeline crash');
     });
 
     it('should return results when similar briefs exist', async () => {
