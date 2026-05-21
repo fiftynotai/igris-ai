@@ -170,6 +170,9 @@ X agents registered (Y skills available)
 - Cross-project patterns: N available
 - Last brain sync: [timestamp]
 
+### Harness Drift
+[The §6.7 line — or omit if the guard / manifest is absent]
+
 ### Recommendations
 1. [Primary recommendation]
 2. [Secondary recommendation]
@@ -331,3 +334,48 @@ No perception runs yet for this project.
 
 If `sqlite3` is absent AND the `igris_event_log` MCP fallback also fails,
 omit the section entirely. Do NOT block /scan.
+
+### 6.7. Harness Drift (FR-135, TD-021)
+
+Surface whether the generated agent-prompt harnesses are in sync with their
+canonical `core/agents/*.md` prompts. Read-only — this NEVER blocks /scan and
+NEVER regenerates anything. Token budget: ~80 tokens.
+
+#### Query
+
+Run the drift guard wrapper read-only and capture its exit code + summary:
+```bash
+GUARD="$REPO_ROOT/core/scripts/cli-adapters/check_harness_drift.sh"
+MANIFEST="$REPO_ROOT/core/scripts/cli-adapters/harness-manifest.json"
+
+# Silent-degradation posture (matches §5.5 / §6.6): if the adapter layer or
+# manifest is absent, render NOTHING for this section. The guard's verdict is
+# only meaningful when the guard itself is present.
+if [ -f "$GUARD" ] && [ -f "$MANIFEST" ]; then
+  bash "$REPO_ROOT/scripts/validate_harness_drift.sh" 2>&1 | tail -1
+fi
+```
+
+The wrapper checks the 7 Igris-core agents (content-pipeline agents are
+excluded — they have no canonical in this repo until FR-136). The guard's
+per-agent summary line reads `N targets — M in sync, K drifted/missing`.
+
+#### Render
+
+When the guard ran, render a single line under a `### Harness Drift` heading
+summing the per-agent results into one MATCH/DRIFTED count:
+
+```
+### Harness Drift
+7 agent targets — 7 in sync
+```
+
+When any target is out of sync (DRIFTED or MISSING), name the count and the
+remedy:
+```
+### Harness Drift
+7 agent targets — 4 in sync, 3 drifted/missing — run `compile_harnesses.sh` to resync
+```
+
+If the guard script or the manifest is absent, omit the section entirely.
+Do NOT block /scan, do NOT print an error.

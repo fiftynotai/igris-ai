@@ -17,6 +17,12 @@ set -e
 #       Triggers if: package.json (root) OR package-lock.json OR
 #                    cli/package.json OR brain-mcp-server/package.json
 #                    is staged.
+#   - validate_harness_drift.sh  (FR-135, TD-021)
+#       Triggers if a CANONICAL agent-prompt SOURCE is staged:
+#                    core/agents/*.md OR core/rules/*.md OR the harness
+#                    manifest. NOT triggered on generated harness paths —
+#                    those are gitignored and never staged (OD-4); the guard
+#                    validates the ON-DISK generated copies, not the index.
 #
 # (TD-110 canonical-hooks lockstep validator was retired in MG-014 M5;
 #  the legacy `install_claude_hooks.sh` shell emitter is gone, so the
@@ -91,6 +97,7 @@ staged="$(git diff --cached --name-only --diff-filter=ACM)"
 needs_enum_check=0
 needs_lineranges_check=0
 needs_lockfile_check=0
+needs_harness_check=0
 
 if echo "$staged" | grep -qE '^(core/prompts/igris_os\.md|core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
   needs_enum_check=1
@@ -102,6 +109,14 @@ fi
 
 if echo "$staged" | grep -qE '^(package\.json|package-lock\.json|cli/package\.json|brain-mcp-server/package\.json)$'; then
   needs_lockfile_check=1
+fi
+
+# OD-4: trigger on a staged CANONICAL SOURCE, never on the generated harness
+# paths. Generated harnesses are gitignored (e.g. .claude/agents/, .codex/) so
+# they never appear in the staged set — keying off them would never fire. The
+# guard then validates the on-disk generated copies against canonical.
+if echo "$staged" | grep -qE '^(core/agents/.*\.md|core/rules/.*\.md|core/scripts/cli-adapters/harness-manifest\.json)$'; then
+  needs_harness_check=1
 fi
 
 failed=0
@@ -132,6 +147,19 @@ if [ "$needs_lockfile_check" = "1" ]; then
   # so multiple validator failures are aggregated into $failed and reported
   # together at the end, rather than aborting on the first failure.
   if ! bash "$REPO_ROOT/scripts/validate_lockfile_in_sync.sh"; then
+    failed=1
+  fi
+fi
+
+if [ "$needs_harness_check" = "1" ]; then
+  echo "[pre-commit] Validating agent-prompt harness drift..."
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed and reported
+  # together at the end, rather than aborting on the first failure.
+  if ! bash "$REPO_ROOT/scripts/validate_harness_drift.sh"; then
+    echo "[pre-commit] Harness drift detected (or a generated harness is missing)."
+    echo "[pre-commit]   Run: bash core/scripts/cli-adapters/compile_harnesses.sh --project-root ."
+    echo "[pre-commit]   (or 'igris harness compile' once FR-136 lands), then re-stage."
     failed=1
   fi
 fi

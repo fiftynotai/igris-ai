@@ -52,6 +52,19 @@ jobs:
             bats "$test_file" || exit 1
           done
 
+      - name: Check agent-prompt harness drift (FR-135)
+        # Belt-and-suspenders behind the pre-commit hook (scripts/git-hooks/
+        # pre-commit -> validate_harness_drift.sh). Surfaces drift between the
+        # canonical core/agents/*.md prompts and their generated harnesses.
+        #
+        # HARD step: the wrapper exits 1 on real DRIFTED but exits 0 (with a
+        # loud NOTICE) on the gated-codex MISSING-only state. The 7 core agents
+        # declare only codex targets, whose .codex/agents/*.toml are not built
+        # yet (codex emit gated until FR-138). STOPGAP: FR-138 un-gates codex
+        # and must flip MISSING back to fatal in the wrapper.
+        run: |
+          bash scripts/validate_harness_drift.sh
+
       - name: Test results summary
         if: always()
         run: |
