@@ -33,6 +33,7 @@ import { runInit } from "./verbs/init.js";
 import { runRefresh } from "./verbs/refresh.js";
 import { runRegisterProject } from "./verbs/register-project.js";
 import { runSync, type SyncSubVerb } from "./verbs/sync.js";
+import { runHarness, type HarnessAction } from "./verbs/harness.js";
 import { setVerbosity, error as logError } from "./lib/log.js";
 
 function readPackageVersion(): string {
@@ -285,6 +286,42 @@ async function main(argv: string[]): Promise<void> {
           subVerb: subVerb as SyncSubVerb,
           dryRun: opts.dryRun === true,
           ifChanged: opts.ifChanged === true,
+        });
+        process.exitCode = code;
+      },
+    );
+
+  program
+    .command("harness <action>")
+    .description(
+      "Regenerate or drift-check agent-prompt harnesses (FR-136). Actions: compile, check.",
+    )
+    .option(
+      "--project-root <dir>",
+      "root that canonical/target paths resolve against (default: cwd)",
+    )
+    .option("--manifest <path>", "base manifest override (default: <project-root>/harness-manifest.json)")
+    .option("--overlay <path>", "personal-overlay manifest override (default: auto-discover)")
+    .option("--target <kind>", "restrict to one target type: claude | codex | all (compile only)")
+    .option("--filter <glob>", "only process agents whose name matches the glob")
+    .action(
+      async (
+        action: string,
+        opts: {
+          projectRoot?: string;
+          manifest?: string;
+          overlay?: string;
+          target?: string;
+          filter?: string;
+        },
+      ): Promise<void> => {
+        const code = await runHarness({
+          action: action as HarnessAction,
+          projectRoot: opts.projectRoot,
+          manifest: opts.manifest,
+          overlay: opts.overlay,
+          target: opts.target,
+          filter: opts.filter,
         });
         process.exitCode = code;
       },

@@ -74,6 +74,7 @@ EOF
   MANIFEST="$PROJ/harness-manifest.json"
   cat > "$MANIFEST" <<'EOF'
 {
+  "version": 1,
   "agents": [
     {
       "name": "sample",
@@ -186,9 +187,11 @@ description: synthetic canonical for the wrapper test
 Canonical body the harness must match.
 EOF
 
-  # Manifest at the path the wrapper expects, declaring forger -> claude.
-  cat > "$root/core/scripts/cli-adapters/harness-manifest.json" <<'EOF'
+  # Manifest at the path the wrapper expects (FR-136: repo root), declaring
+  # forger -> claude.
+  cat > "$root/harness-manifest.json" <<'EOF'
 {
+  "version": 1,
   "agents": [
     {
       "name": "forger",
@@ -217,7 +220,7 @@ placeholder
 EOF
     bash "$root/core/scripts/cli-adapters/compile_harnesses.sh" \
       --project-root "$root" \
-      --manifest "$root/core/scripts/cli-adapters/harness-manifest.json" \
+      --manifest "$root/harness-manifest.json" \
       --target claude >/dev/null
     if [ "$state" = "drifted" ]; then
       printf '\n- injected drift\n' >> "$root/.claude/agents/forger.md"

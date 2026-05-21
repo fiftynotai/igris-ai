@@ -7,8 +7,15 @@
 # Usage: compile_harnesses.sh --project-root <dir> [options]
 #   --project-root <dir>   - REQUIRED. Root that canonical/target paths in the
 #                            manifest resolve against.
-#   --manifest <path>      - Manifest file. Default: harness-manifest.json
-#                            next to this script.
+#   --manifest <path>      - Manifest file. Default: <project-root>/
+#                            harness-manifest.json (FR-136: each project ships
+#                            its own data manifest; core ships only the schema).
+#   --overlay <path>       - OPTIONAL Layer-2 personal-overlay manifest whose
+#                            agents[] are merged into the base before flatten
+#                            (FR-136 base+overlay seam; FR-139 registry seam).
+#                            Default: auto-discover
+#                            <brain>/registry/harness-manifest.personal.json
+#                            if present (absent is the normal case).
 #   --filter <name-glob>   - Only process agents whose name matches the glob
 #                            (shell case-glob, e.g. 'content-*'). Default: all.
 #   --target claude|codex|all - Restrict to one target type. Default: all.
@@ -33,13 +40,19 @@ ADAPTER_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 # shellcheck source=_common.sh
 source "$ADAPTER_DIR/_common.sh"
 
-readonly DEFAULT_MANIFEST="$ADAPTER_DIR/harness-manifest.json"
+readonly SCHEMA="$ADAPTER_DIR/manifest.schema.json"
+
+# Resolve the runtime brain dir like the brain MCP / verify_mirror.sh do:
+# honor IGRIS_BRAIN_DIR, else ~/.igris. The personal overlay (FR-139 seam)
+# lives under <brain>/registry/ and is OPTIONAL (absent is the normal case).
+BRAIN_DIR="${IGRIS_BRAIN_DIR:-$HOME/.igris}"
+readonly DEFAULT_OVERLAY="$BRAIN_DIR/registry/harness-manifest.personal.json"
 
 # ---------------------------------------------------------------------------
 # usage — prints usage and exits with code 2.
 # ---------------------------------------------------------------------------
 usage() {
-  echo "Usage: $0 --project-root <dir> [--manifest <path>]" >&2
+  echo "Usage: $0 --project-root <dir> [--manifest <path>] [--overlay <path>]" >&2
   echo "                          [--filter <name-glob>] [--target claude|codex|all]" >&2
   echo "" >&2
   echo "Regenerates harness files declared in the manifest from canonical prompts." >&2
@@ -50,7 +63,9 @@ usage() {
 # Argument parsing
 # ---------------------------------------------------------------------------
 PROJECT_ROOT=""
-MANIFEST="$DEFAULT_MANIFEST"
+MANIFEST=""
+OVERLAY=""
+OVERLAY_SET=0
 FILTER='*'
 TARGET_KIND="all"
 
@@ -62,6 +77,11 @@ while [ "$#" -gt 0 ]; do
       ;;
     --manifest)
       MANIFEST="${2:-}"
+      shift 2 || usage
+      ;;
+    --overlay)
+      OVERLAY="${2:-}"
+      OVERLAY_SET=1
       shift 2 || usage
       ;;
     --filter)
@@ -90,10 +110,22 @@ if [ ! -d "$PROJECT_ROOT" ]; then
   echo "Error: project root '$PROJECT_ROOT' is not a directory" >&2
   exit 1
 fi
+
+# Resolve project root to an absolute path.
+PROJECT_ROOT="$( cd "$PROJECT_ROOT" && pwd )"
+
+# FR-136 manifest resolution: default to <project-root>/harness-manifest.json
+# (each project ships its own data manifest). NO fallback to the old
+# next-to-script location - if the resolved manifest is absent, fail with a
+# clear, actionable error naming the path and the override flag.
+if [ -z "$MANIFEST" ]; then
+  MANIFEST="$PROJECT_ROOT/harness-manifest.json"
+fi
 if [ ! -f "$MANIFEST" ]; then
-  echo "Error: manifest '$MANIFEST' does not exist" >&2
+  echo "Error: harness manifest not found at $MANIFEST; pass --manifest <path>" >&2
   exit 1
 fi
+
 case "$TARGET_KIND" in
   claude|codex|all) : ;;
   *)
@@ -102,8 +134,42 @@ case "$TARGET_KIND" in
     ;;
 esac
 
-# Resolve project root to an absolute path.
-PROJECT_ROOT="$( cd "$PROJECT_ROOT" && pwd )"
+# FR-136 overlay resolution: an explicit --overlay wins; otherwise auto-discover
+# the personal overlay in the runtime registry (OPTIONAL - absent is normal).
+if [ "$OVERLAY_SET" -eq 0 ]; then
+  if [ -f "$DEFAULT_OVERLAY" ]; then
+    OVERLAY="$DEFAULT_OVERLAY"
+  else
+    OVERLAY=""
+  fi
+elif [ -n "$OVERLAY" ] && [ ! -f "$OVERLAY" ]; then
+  echo "Error: overlay manifest not found at $OVERLAY" >&2
+  exit 1
+fi
+
+# Validate the base manifest against the schema (FR-136). validate_manifest
+# never no-ops: jsonschema when importable, structural check otherwise.
+if ! validate_manifest "$MANIFEST" "$SCHEMA"; then
+  exit 1
+fi
+if [ -n "$OVERLAY" ] && ! validate_manifest "$OVERLAY" "$SCHEMA"; then
+  exit 1
+fi
+
+# Merge base + optional personal overlay (FR-136 base+overlay seam; FR-139
+# registry seam). A name collision between an overlay (personal) agent and a
+# base (core) agent is a HARD ERROR. The merged manifest is written to a temp
+# file that the python3 flatten step below reads.
+MERGED_MANIFEST="$MANIFEST"
+TMP_MERGED=""
+if [ -n "$OVERLAY" ]; then
+  TMP_MERGED="$(mktemp "${TMPDIR:-/tmp}/igris-harness-merged.XXXXXX.json")"
+  trap 'rm -f "$TMP_MERGED"' EXIT
+  if ! merge_overlay_manifest "$MANIFEST" "$OVERLAY" > "$TMP_MERGED"; then
+    exit 1
+  fi
+  MERGED_MANIFEST="$TMP_MERGED"
+fi
 
 # ---------------------------------------------------------------------------
 # Flatten the manifest into tab-separated work rows via python3:
@@ -111,7 +177,7 @@ PROJECT_ROOT="$( cd "$PROJECT_ROOT" && pwd )"
 #   body-exception-or-empty <TAB> target-type <TAB> target-path
 # One row per agent/target. python3 (no jq) per the _common.sh convention.
 # ---------------------------------------------------------------------------
-WORK_ROWS=$(python3 - "$MANIFEST" "$FILTER" "$TARGET_KIND" <<'PY'
+WORK_ROWS=$(python3 - "$MERGED_MANIFEST" "$FILTER" "$TARGET_KIND" <<'PY'
 import fnmatch
 import json
 import sys

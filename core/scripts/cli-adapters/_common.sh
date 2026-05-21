@@ -386,6 +386,204 @@ print(hashlib.sha256(data).hexdigest())
 PY
 }
 
+# ---------------------------------------------------------------------------
+# validate_manifest <manifest-path> <schema-path>
+#
+# Validates a harness manifest against the JSON Schema (FR-136). Two code
+# paths, chosen at runtime:
+#   1. If `python3 -c "import jsonschema"` succeeds -> full JSON Schema
+#      validation against the schema file (authoritative).
+#   2. Otherwise -> a structural fallback that asserts the load-bearing
+#      contract WITHOUT the jsonschema dependency: required top-level keys
+#      (version, agents), version == 1, each agent has name/canonical/targets,
+#      each target type is in {claude, codex, gemini}, and the
+#      versioned-glob / unversioned-file `oneOf` (versioned=true requires
+#      canonical.glob; versioned=false requires canonical.file).
+#
+# This helper NEVER no-ops: when jsonschema is absent the structural check
+# still runs. On failure it prints a clear, actionable message naming the
+# offending field/agent and returns non-zero. Returns 0 on a valid manifest.
+# Dependency posture matches the rest of _common.sh: python3 only, no jq.
+# ---------------------------------------------------------------------------
+validate_manifest() {
+  local manifest="$1"
+  local schema="$2"
+  if [ ! -f "$manifest" ]; then
+    echo "Error: manifest '$manifest' does not exist" >&2
+    return 1
+  fi
+  python3 - "$manifest" "$schema" <<'PY'
+import json
+import sys
+
+manifest_path = sys.argv[1]
+schema_path = sys.argv[2]
+
+
+def fail(msg: str) -> None:
+    sys.stderr.write(f"Manifest validation failed ({manifest_path}): {msg}\n")
+    sys.exit(1)
+
+
+try:
+    with open(manifest_path, "r", encoding="utf-8") as fh:
+        manifest = json.load(fh)
+except json.JSONDecodeError as exc:
+    fail(f"not valid JSON: {exc}")
+except OSError as exc:
+    fail(f"cannot read manifest: {exc}")
+
+try:
+    import jsonschema  # type: ignore
+    have_jsonschema = True
+except Exception:
+    have_jsonschema = False
+
+if have_jsonschema:
+    try:
+        with open(schema_path, "r", encoding="utf-8") as fh:
+            schema = json.load(fh)
+    except OSError as exc:
+        fail(f"cannot read schema '{schema_path}': {exc}")
+    try:
+        jsonschema.validate(instance=manifest, schema=schema)
+    except jsonschema.ValidationError as exc:
+        loc = "/".join(str(p) for p in exc.absolute_path) or "<root>"
+        fail(f"at '{loc}': {exc.message}")
+    sys.exit(0)
+
+# ---- Structural fallback (no jsonschema available) ----
+if not isinstance(manifest, dict):
+    fail("top-level value must be an object")
+
+for required_key in ("version", "agents"):
+    if required_key not in manifest:
+        fail(f"missing required top-level key '{required_key}'")
+
+if manifest["version"] != 1:
+    fail(f"'version' must be 1 (got {manifest['version']!r})")
+
+allowed_top = {"$schema", "_comment", "_schema", "version", "agents", "surfaces"}
+for key in manifest:
+    if key not in allowed_top:
+        fail(f"unknown top-level key '{key}' (additionalProperties:false)")
+
+agents = manifest["agents"]
+if not isinstance(agents, list):
+    fail("'agents' must be an array")
+
+valid_target_types = {"claude", "codex", "gemini"}
+allowed_agent_keys = {"name", "layer", "canonical", "body_exception", "targets"}
+allowed_canon_keys = {"dir", "glob", "file", "versioned"}
+allowed_target_keys = {"type", "path"}
+
+for i, agent in enumerate(agents):
+    where = f"agents[{i}]"
+    if not isinstance(agent, dict):
+        fail(f"{where} must be an object")
+    for req in ("name", "canonical", "targets"):
+        if req not in agent:
+            fail(f"{where} missing required key '{req}'")
+    name = agent["name"]
+    where = f"agents[{i}] ('{name}')"
+    for key in agent:
+        if key not in allowed_agent_keys:
+            fail(f"{where}: unknown key '{key}' (additionalProperties:false)")
+
+    canon = agent["canonical"]
+    if not isinstance(canon, dict):
+        fail(f"{where}.canonical must be an object")
+    for req in ("dir", "versioned"):
+        if req not in canon:
+            fail(f"{where}.canonical missing required key '{req}'")
+    for key in canon:
+        if key not in allowed_canon_keys:
+            fail(f"{where}.canonical: unknown key '{key}' "
+                 "(additionalProperties:false)")
+    versioned = canon["versioned"]
+    if not isinstance(versioned, bool):
+        fail(f"{where}.canonical.versioned must be a boolean")
+    if versioned and "glob" not in canon:
+        fail(f"{where}.canonical: versioned=true requires 'glob'")
+    if not versioned and "file" not in canon:
+        fail(f"{where}.canonical: versioned=false requires 'file'")
+
+    targets = agent["targets"]
+    if not isinstance(targets, list) or len(targets) < 1:
+        fail(f"{where}.targets must be a non-empty array")
+    for j, target in enumerate(targets):
+        twhere = f"{where}.targets[{j}]"
+        if not isinstance(target, dict):
+            fail(f"{twhere} must be an object")
+        for req in ("type", "path"):
+            if req not in target:
+                fail(f"{twhere} missing required key '{req}'")
+        for key in target:
+            if key not in allowed_target_keys:
+                fail(f"{twhere}: unknown key '{key}' "
+                     "(additionalProperties:false)")
+        if target["type"] not in valid_target_types:
+            fail(f"{twhere}.type '{target['type']}' is not one of "
+                 f"{sorted(valid_target_types)}")
+
+sys.exit(0)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# merge_overlay_manifest <base-manifest> <overlay-manifest-or-empty>
+#
+# Implements the FR-136 base+overlay merge seam (the FR-139 registry seam,
+# plan section 2 Option B). Emits to stdout a merged manifest JSON whose
+# `agents[]` is base.agents ++ overlay.agents. The base manifest is the
+# Layer-1 (public, in-repo) data; the overlay is an OPTIONAL gitignored
+# Layer-2 (personal/customization) file in the runtime registry.
+#
+# Guard: a personal (overlay) agent whose `name` collides with a base agent
+# name is a HARD ERROR (returns non-zero) - a customization must never
+# silently shadow a core agent. FR-139 inherits this guard for free.
+#
+# When the overlay path is empty or absent, emits the base manifest verbatim.
+# Returns 0 on success, non-zero on a name collision or read error.
+# ---------------------------------------------------------------------------
+merge_overlay_manifest() {
+  local base="$1"
+  local overlay="${2:-}"
+  if [ -z "$overlay" ] || [ ! -f "$overlay" ]; then
+    cat "$base"
+    return 0
+  fi
+  python3 - "$base" "$overlay" <<'PY'
+import json
+import sys
+
+base_path = sys.argv[1]
+overlay_path = sys.argv[2]
+
+with open(base_path, "r", encoding="utf-8") as fh:
+    base = json.load(fh)
+with open(overlay_path, "r", encoding="utf-8") as fh:
+    overlay = json.load(fh)
+
+base_agents = base.get("agents", [])
+overlay_agents = overlay.get("agents", [])
+
+base_names = {a.get("name") for a in base_agents}
+for agent in overlay_agents:
+    nm = agent.get("name")
+    if nm in base_names:
+        sys.stderr.write(
+            f"Error: overlay agent '{nm}' collides with a base (core) agent "
+            "name; a personal customization must not shadow a core agent.\n"
+        )
+        sys.exit(1)
+
+merged = dict(base)
+merged["agents"] = list(base_agents) + list(overlay_agents)
+sys.stdout.write(json.dumps(merged))
+PY
+}
+
 # Export functions for subshell use (bats tests spawn subshells).
 export -f parse_frontmatter
 export -f get_skill_field
@@ -396,3 +594,5 @@ export -f toml_escape_description
 export -f read_canonical_version
 export -f latest_canonical
 export -f sha_body
+export -f validate_manifest
+export -f merge_overlay_manifest

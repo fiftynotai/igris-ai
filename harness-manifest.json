@@ -1,0 +1,56 @@
+{
+  "$schema": "core/scripts/cli-adapters/manifest.schema.json",
+  "_comment": "Igris-ai PROJECT harness manifest (FR-136). Declares the 7 core agents whose codex harnesses are mechanically regenerated from their canonical core/agents/<name>.md prompts (TD-021). Core ships only the SCHEMA (core/scripts/cli-adapters/manifest.schema.json); each project ships its own data manifest at its repo root. Canonical is the SOLE source of truth; every target listed here is a GENERATED artifact - editing a target file directly is a process error. Personal/Layer-2 customizations are NOT declared here - they live in an optional gitignored overlay at ~/.igris/registry/harness-manifest.personal.json (FR-139).",
+  "version": 1,
+  "agents": [
+    {
+      "name": "architect",
+      "canonical": { "dir": "core/agents", "file": "architect.md", "versioned": false },
+      "targets": [
+        { "type": "codex", "path": ".codex/agents/architect.toml" }
+      ]
+    },
+    {
+      "name": "forger",
+      "canonical": { "dir": "core/agents", "file": "forger.md", "versioned": false },
+      "targets": [
+        { "type": "codex", "path": ".codex/agents/forger.toml" }
+      ]
+    },
+    {
+      "name": "mender",
+      "canonical": { "dir": "core/agents", "file": "mender.md", "versioned": false },
+      "targets": [
+        { "type": "codex", "path": ".codex/agents/mender.toml" }
+      ]
+    },
+    {
+      "name": "sage",
+      "canonical": { "dir": "core/agents", "file": "sage.md", "versioned": false },
+      "targets": [
+        { "type": "codex", "path": ".codex/agents/sage.toml" }
+      ]
+    },
+    {
+      "name": "seeker",
+      "canonical": { "dir": "core/agents", "file": "seeker.md", "versioned": false },
+      "targets": [
+        { "type": "codex", "path": ".codex/agents/seeker.toml" }
+      ]
+    },
+    {
+      "name": "sentinel",
+      "canonical": { "dir": "core/agents", "file": "sentinel.md", "versioned": false },
+      "targets": [
+        { "type": "codex", "path": ".codex/agents/sentinel.toml" }
+      ]
+    },
+    {
+      "name": "warden",
+      "canonical": { "dir": "core/agents", "file": "warden.md", "versioned": false },
+      "targets": [
+        { "type": "codex", "path": ".codex/agents/warden.toml" }
+      ]
+    }
+  ]
+}

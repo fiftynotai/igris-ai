@@ -509,10 +509,40 @@ Linux.
 
 ---
 
+## Agent-prompt harnesses (FR-136)
+
+Agent prompts (the 7 Igris-core agents and any project agents) are projected to
+per-CLI harness files (Codex `.toml`, Claude `.md`) by the TD-021 adapters under
+`core/scripts/cli-adapters/`. FR-136 formalized this:
+
+- **Schema** — `core/scripts/cli-adapters/manifest.schema.json` is the canonical
+  contract. Core ships only the schema; **each project ships its own data
+  manifest** validated against it.
+- **Per-project manifest** — lives at the project's repo root
+  (`<project-root>/harness-manifest.json`), NOT under `core/`. It declares each
+  agent's canonical prompt source and the harness targets to regenerate. The
+  adapters resolve `<project-root>/harness-manifest.json` by default (override
+  with `--manifest <path>`).
+- **Personal overlay (Layer-2)** — an OPTIONAL gitignored overlay at
+  `~/.igris/registry/harness-manifest.personal.json` is auto-discovered and its
+  `agents[]` merged into the base before flattening. A personal agent whose name
+  collides with a core agent is a hard error (no shadowing). This is the FR-139
+  customization-registry seam. Override with `--overlay <path>`.
+- **`igris harness` verb** — `igris harness compile` regenerates harnesses;
+  `igris harness check` runs the drift guard. Both shell out to the bash adapters
+  (`compile_harnesses.sh` / `check_harness_drift.sh`) with exit-code passthrough.
+  Flags: `--project-root`, `--manifest`, `--overlay`, `--target`, `--filter`.
+
+> Reconciling the three adapter naming families (`sync_*`/`compile_*`,
+> `md_to_*`, and the dormant `<target>.sh` bridges) is FR-138.
+
+---
+
 ## Related
 
 - Brief: FR-103 Multi-CLI Skill Distribution
 - Brief: FR-104 Multi-CLI Hook Bridge Layer
+- Brief: FR-136 Harness manifest schema + per-project model + `igris harness` verb
 - Canonical skills: `~/.igris/core/skills/`
 - Canonical shared hooks: `~/.igris/core/hooks/shared/`
 - Bridges: `~/.igris/core/hooks/bridges/`

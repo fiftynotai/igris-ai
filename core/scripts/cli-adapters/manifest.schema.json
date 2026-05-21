@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://igris.fifty.dev/schema/harness-manifest.json",
+  "title": "Igris harness distribution manifest",
+  "description": "Per-project declaration of agent prompt harnesses to mechanically regenerate from canonical sources. Core owns this schema; each project ships its own data manifest. See FR-136.",
+  "type": "object",
+  "required": ["version", "agents"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema":  { "type": "string" },
+    "_comment": { "type": "string" },
+    "_schema":  { "type": "object", "description": "free-form human field-doc block; ignored by tooling" },
+
+    "version": {
+      "description": "Manifest format version. Bump only on a breaking schema change; FR-136 ships v1.",
+      "const": 1
+    },
+
+    "agents": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/agent" }
+    },
+
+    "surfaces": {
+      "description": "RESERVED for FR-137. Non-agent projection surfaces (rules, prompts, skills). Empty/absent in FR-136. FR-137 fleshes this out additively without a version bump.",
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+
+  "$defs": {
+    "agent": {
+      "type": "object",
+      "required": ["name", "canonical", "targets"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "layer": {
+          "description": "RESERVED / forward-compat for FR-139 (Layer-2 customization registry). Provenance only - the compiler enforces the Core/Personal boundary physically via separate base + overlay manifest files (see FR-136 plan section 2), NOT via this field. Defaults to 'core' when absent. FR-139 may write 'personal' (or a namespaced value) on overlay entries.",
+          "type": "string",
+          "default": "core"
+        },
+        "canonical": {
+          "type": "object",
+          "required": ["dir", "versioned"],
+          "additionalProperties": false,
+          "properties": {
+            "dir":       { "type": "string", "description": "canonical prompt dir, resolved relative to --project-root" },
+            "glob":      { "type": "string", "description": "filename glob; required iff versioned=true" },
+            "file":      { "type": "string", "description": "literal filename; required iff versioned=false" },
+            "versioned": { "type": "boolean" }
+          },
+          "oneOf": [
+            { "properties": { "versioned": { "const": true  } }, "required": ["glob"] },
+            { "properties": { "versioned": { "const": false } }, "required": ["file"] }
+          ]
+        },
+        "body_exception": {
+          "type": "string",
+          "description": "optional; basename of a body-exceptions/<name>.json sidecar"
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["type", "path"],
+            "additionalProperties": false,
+            "properties": {
+              "type": { "enum": ["claude", "codex", "gemini"] },
+              "path": { "type": "string", "description": "output harness path, resolved relative to --project-root" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

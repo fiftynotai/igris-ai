@@ -2,14 +2,14 @@
 set -euo pipefail
 
 # Description: Pre-commit / CI wrapper around the TD-021 harness drift guard
-#   (core/scripts/cli-adapters/check_harness_drift.sh). Runs the guard for the
-#   Igris-core agents only, deliberately excluding the content-pipeline agents
-#   (content-deck/writer/designer) whose canonical prompts do NOT exist in this
-#   repo — calling them would always report MISSING and is meaningless here.
+#   (core/scripts/cli-adapters/check_harness_drift.sh). Runs the guard ONCE
+#   against igris-ai's repo-root harness manifest, which (post-FR-136) declares
+#   ONLY the agents that belong in this repo (the 7 Igris-core agents).
 #
-#   This content-* exclusion is a STOPGAP for FR-135. FR-136 removes the
-#   content-pipeline entries from igris-ai's core manifest, after which this
-#   wrapper can drop the per-agent core-only loop and call the guard once.
+#   FR-136 removed the content-pipeline entries from the manifest and moved it
+#   to the repo root, so the per-agent CORE_AGENTS loop (the FR-135 content-*
+#   exclusion stopgap) is no longer needed - a single guard call against the
+#   clean manifest is sufficient.
 #
 # Usage: validate_harness_drift.sh
 #   No arguments. Resolves the repo root via git and invokes the guard with
@@ -73,7 +73,8 @@ else
 fi
 
 GUARD="$REPO_ROOT/core/scripts/cli-adapters/check_harness_drift.sh"
-MANIFEST="$REPO_ROOT/core/scripts/cli-adapters/harness-manifest.json"
+# FR-136: the project manifest lives at the repo root (not under core/).
+MANIFEST="$REPO_ROOT/harness-manifest.json"
 
 # ---------------------------------------------------------------------------
 # Fail-open if the adapter layer is not present in this checkout.
@@ -90,38 +91,29 @@ if [ ! -f "$MANIFEST" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Igris-core agents to check. The guard's --filter is an fnmatch INCLUSION
-# glob on the agent name with no negation, and the 7 core agents share no
-# common prefix, so we enumerate them and run the guard once per agent. This
-# is the stopgap that excludes content-* (FR-136 cleans the manifest).
-#
-# We capture each invocation's self-evidencing report and parse the per-target
+# Run the guard ONCE against the repo-root manifest (FR-136). The manifest now
+# declares only the agents that belong in this repo, so no per-agent filtering
+# is needed. We capture the self-evidencing report and parse the per-target
 # verdict lines (the guard emits `[name/type] DRIFTED|MISSING|MATCH`) to
 # discriminate fatal DRIFTED from tolerable MISSING (see STOPGAP block above).
 # ---------------------------------------------------------------------------
-CORE_AGENTS=(architect forger mender sage seeker sentinel warden)
-
 drifted=0
 missing=0
-for agent in "${CORE_AGENTS[@]}"; do
-  # set -e is intentionally relaxed for the call so a single non-MATCH agent
-  # does not abort the loop — we want the full report across all agents.
-  report=""
-  if ! report="$(bash "$GUARD" --project-root "$REPO_ROOT" \
-        --manifest "$MANIFEST" --filter "$agent" 2>&1)"; then
-    : # non-zero exit is expected on MISSING/DRIFTED; classify via the report.
-  fi
-  # Echo the guard's self-evidencing report through so the surface stays
-  # auditable (matches the original wrapper behavior).
-  printf '%s\n' "$report"
+# set -e is intentionally relaxed for the call so a non-MATCH verdict does not
+# abort before we classify it from the report.
+report=""
+if ! report="$(bash "$GUARD" --project-root "$REPO_ROOT" \
+      --manifest "$MANIFEST" 2>&1)"; then
+  : # non-zero exit is expected on MISSING/DRIFTED; classify via the report.
+fi
+# Echo the guard's self-evidencing report through so the surface stays
+# auditable.
+printf '%s\n' "$report"
 
-  # Count per-target verdicts. `grep -c` counts matching LINES; the guard
-  # prints exactly one `[name/type] VERDICT` line per target.
-  d="$(printf '%s\n' "$report" | grep -c 'DRIFTED' || true)"
-  m="$(printf '%s\n' "$report" | grep -c 'MISSING' || true)"
-  drifted=$((drifted + d))
-  missing=$((missing + m))
-done
+# Count per-target verdicts. `grep -c` counts matching LINES; the guard prints
+# exactly one `[name/type] VERDICT` line per target.
+drifted="$(printf '%s\n' "$report" | grep -c 'DRIFTED' || true)"
+missing="$(printf '%s\n' "$report" | grep -c 'MISSING' || true)"
 
 # ---------------------------------------------------------------------------
 # Verdict aggregation.
