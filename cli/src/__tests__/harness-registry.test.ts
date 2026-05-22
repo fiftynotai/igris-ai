@@ -37,6 +37,7 @@ import {
   runRegistry,
   validateAgentEntry,
   validateOverlayShape,
+  validateSkillsSurface,
 } from "../verbs/registry.js";
 import type {
   GithubSpec,
@@ -469,10 +470,28 @@ describe("validateAgentEntry / validateOverlayShape", () => {
     ).toMatch(/additionalProperties/);
   });
 
-  it("overlay: accepts a surfaces block (FR-143 forward-compat)", () => {
+  it("overlay: accepts a VALID surfaces.skills block (FR-143)", () => {
+    // FR-143 tightened the validator: a skills block must satisfy
+    // $defs.skills_surface (targets required). The old `{ skills: {} }` fixture
+    // is now invalid (deliberate) — assert a valid block validates instead.
+    expect(
+      validateOverlayShape({
+        version: 1,
+        agents: [],
+        surfaces: {
+          skills: {
+            source: "/abs/skills",
+            layer: "personal",
+            targets: [{ type: "codex", method: "compiler", path: "AGENTS.md" }],
+          },
+        },
+      }),
+    ).toBeNull();
+    // The previously-accepted empty skills block is now rejected (missing
+    // required `targets`).
     expect(
       validateOverlayShape({ version: 1, agents: [], surfaces: { skills: {} } }),
-    ).toBeNull();
+    ).toMatch(/targets/);
   });
 });
 
@@ -529,10 +548,17 @@ describe("registry remove", () => {
     expect(readFileSync(overlayPath, "utf-8")).toBe(before);
   });
 
-  it("preserves a forward-compat surfaces block across add+remove", async () => {
+  it("preserves a surfaces.skills block across add+remove", async () => {
+    // FR-143: the block must be schema-valid now (targets required), so seed a
+    // valid one. The agent add/remove round-trip must leave it untouched.
+    const skillsBlock = {
+      source: "/abs/skills",
+      layer: "personal",
+      targets: [{ type: "codex", method: "compiler", path: "AGENTS.md" }],
+    };
     writeFileSync(
       overlayPath,
-      JSON.stringify({ version: 1, agents: [], surfaces: { skills: {} } }),
+      JSON.stringify({ version: 1, agents: [], surfaces: { skills: skillsBlock } }),
     );
     await runRegistry(
       addOpts({
@@ -549,7 +575,7 @@ describe("registry remove", () => {
       vendorDir,
     });
     const overlay = readOverlayFile() as { surfaces?: unknown };
-    expect(overlay.surfaces).toEqual({ skills: {} });
+    expect(overlay.surfaces).toEqual({ skills: skillsBlock });
   });
 });
 
@@ -575,6 +601,258 @@ describe("registry unknown action", () => {
     });
     expect(code).toBe(2);
     expect(existsSync(overlayPath)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-143: add-skill (surfaces.skills overlay — REFERENCE, no vendor/origin)
+// ---------------------------------------------------------------------------
+
+/** Build add-skill opts; `from` defaults to a real skills dir under projectRoot. */
+function skillOpts(
+  extra: Record<string, unknown>,
+): Parameters<typeof runRegistry>[0] {
+  return {
+    action: "add-skill",
+    projectRoot,
+    overlayPath,
+    originsPath,
+    vendorDir,
+    from: "skills",
+    ...extra,
+  } as Parameters<typeof runRegistry>[0];
+}
+
+describe("registry add-skill", () => {
+  beforeEach(() => {
+    // A live skills root with one {name}/SKILL.md (referenced, never vendored).
+    mkdirSync(join(projectRoot, "skills", "demo"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, "skills", "demo", "SKILL.md"),
+      "---\nname: demo\ndescription: d\n---\nbody\n",
+    );
+  });
+
+  it("writes a schema-valid surfaces.skills block (source, layer:personal, targets)", async () => {
+    const code = await runRegistry(
+      skillOpts({
+        targets: [
+          "codex:compiler:AGENTS.md",
+          "gemini:converter:.gemini/commands",
+        ],
+      }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: Record<string, unknown> };
+    };
+    const skills = overlay.surfaces?.skills;
+    expect(skills).toBeDefined();
+    expect(skills?.layer).toBe("personal");
+    // source is the resolved ABSOLUTE referenced dir (no vendoring).
+    expect(skills?.source).toBe(join(projectRoot, "skills"));
+    expect(skills?.targets).toEqual([
+      { type: "codex", method: "compiler", path: "AGENTS.md" },
+      { type: "gemini", method: "converter", path: ".gemini/commands" },
+    ]);
+    // The written block validates against the schema port.
+    expect(validateSkillsSurface(skills)).toBeNull();
+    // NO vendoring + NO origin entry for skills (deliberate divergence).
+    expect(existsSync(originsPath)).toBe(false);
+  });
+
+  it("does NOT vendor the skills source dir (reference mode)", async () => {
+    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS.md"] }));
+    // The registry vendor base must not have gained a skills copy.
+    expect(existsSync(join(vendorBase, "skills"))).toBe(false);
+    expect(existsSync(join(vendorBase, "demo"))).toBe(false);
+  });
+
+  it("merges a second add-skill into the same block (single object, path-deduped)", async () => {
+    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS.md"] }));
+    const code = await runRegistry(
+      skillOpts({ targets: ["gemini:converter:.gemini/commands"] }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: { targets: unknown[] } };
+    };
+    expect(overlay.surfaces?.skills?.targets).toEqual([
+      { type: "codex", method: "compiler", path: "AGENTS.md" },
+      { type: "gemini", method: "converter", path: ".gemini/commands" },
+    ]);
+  });
+
+  it("rejects a target path duplicated within the overlay's own block (exit 1, unchanged)", async () => {
+    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS.md"] }));
+    const before = readFileSync(overlayPath, "utf-8");
+    const code = await runRegistry(
+      skillOpts({ targets: ["codex:compiler:AGENTS.md"] }),
+    );
+    expect(code).toBe(1);
+    expect(readFileSync(overlayPath, "utf-8")).toBe(before);
+  });
+
+  it("rejects a path colliding with a CORE skill-target at write-time (exit 1, unchanged)", async () => {
+    // Seed a base manifest carrying a core skill-target path.
+    writeFileSync(
+      join(projectRoot, "harness-manifest.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [],
+        surfaces: {
+          skills: {
+            source: "core/skills",
+            targets: [
+              { type: "codex", method: "compiler", path: "AGENTS.md" },
+            ],
+          },
+        },
+      }),
+    );
+    const code = await runRegistry(
+      skillOpts({ targets: ["codex:compiler:AGENTS.md"] }),
+    );
+    expect(code).toBe(1);
+    // Overlay never written (collision rejected before persist).
+    expect(existsSync(overlayPath)).toBe(false);
+  });
+
+  it("requires source and at least one target (usage error exit 2)", async () => {
+    expect(
+      await runRegistry({
+        action: "add-skill",
+        overlayPath,
+        from: undefined,
+        targets: ["codex:compiler:AGENTS.md"],
+      }),
+    ).toBe(2);
+    expect(
+      await runRegistry({
+        action: "add-skill",
+        overlayPath,
+        projectRoot,
+        from: "skills",
+        targets: [],
+      }),
+    ).toBe(2);
+  });
+
+  it("rejects a nonexistent source dir (exit 1)", async () => {
+    const code = await runRegistry(
+      skillOpts({ from: "does-not-exist", targets: ["codex:compiler:AGENTS.md"] }),
+    );
+    expect(code).toBe(1);
+  });
+});
+
+describe("registry add-skill — type:method:path parsing", () => {
+  beforeEach(() => {
+    mkdirSync(join(projectRoot, "skills"), { recursive: true });
+  });
+
+  it("parses a valid triple", async () => {
+    const code = await runRegistry(
+      skillOpts({ targets: ["gemini:converter:.gemini/commands"] }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: { targets: unknown[] } };
+    };
+    expect(overlay.surfaces?.skills?.targets).toEqual([
+      { type: "gemini", method: "converter", path: ".gemini/commands" },
+    ]);
+  });
+
+  it("preserves a path containing a colon", async () => {
+    const code = await runRegistry(
+      skillOpts({ targets: ["codex:compiler:dir:with:colons/AGENTS.md"] }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: { targets: { path: string }[] } };
+    };
+    expect(overlay.surfaces?.skills?.targets[0].path).toBe(
+      "dir:with:colons/AGENTS.md",
+    );
+  });
+
+  it("rejects a bad type (exit 2, no claude for skills)", async () => {
+    const code = await runRegistry(
+      skillOpts({ targets: ["claude:compiler:AGENTS.md"] }),
+    );
+    expect(code).toBe(2);
+  });
+
+  it("rejects a bad method (exit 2)", async () => {
+    const code = await runRegistry(
+      skillOpts({ targets: ["codex:bogus:AGENTS.md"] }),
+    );
+    expect(code).toBe(2);
+  });
+
+  it("rejects a missing third part (exit 2)", async () => {
+    const code = await runRegistry(
+      skillOpts({ targets: ["codex:compiler"] }),
+    );
+    expect(code).toBe(2);
+  });
+});
+
+describe("validateSkillsSurface (schema port)", () => {
+  const valid = {
+    source: "/abs/skills",
+    layer: "personal",
+    targets: [{ type: "codex", method: "compiler", path: "AGENTS.md" }],
+  };
+
+  it("accepts a valid block", () => {
+    expect(validateSkillsSurface(valid)).toBeNull();
+  });
+
+  it("rejects a stray key (additionalProperties:false)", () => {
+    expect(validateSkillsSurface({ ...valid, bogus: 1 })).toMatch(
+      /additionalProperties/,
+    );
+  });
+
+  it("rejects missing targets", () => {
+    expect(validateSkillsSurface({ source: "/abs/skills" })).toMatch(/targets/);
+  });
+
+  it("rejects empty targets", () => {
+    expect(validateSkillsSurface({ ...valid, targets: [] })).toMatch(
+      /non-empty array/,
+    );
+  });
+
+  it("rejects a bad target type", () => {
+    expect(
+      validateSkillsSurface({
+        ...valid,
+        targets: [{ type: "claude", method: "compiler", path: "p" }],
+      }),
+    ).toMatch(/type/);
+  });
+
+  it("rejects a bad target method", () => {
+    expect(
+      validateSkillsSurface({
+        ...valid,
+        targets: [{ type: "codex", method: "bogus", path: "p" }],
+      }),
+    ).toMatch(/method/);
+  });
+
+  it("rejects a stray target key", () => {
+    expect(
+      validateSkillsSurface({
+        ...valid,
+        targets: [
+          { type: "codex", method: "compiler", path: "p", extra: 1 },
+        ],
+      }),
+    ).toMatch(/additionalProperties/);
   });
 });
 
@@ -1375,5 +1653,97 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
       "utf-8",
     );
     expect(produced).toContain("XYZZY");
+  });
+
+  it("add-skill overlay: REAL compiler --surface skills projects the personal skill ALONGSIDE the core skill (core first)", async () => {
+    if (!toolingAvailable()) {
+      return;
+    }
+    process.env.IGRIS_BRAIN_DIR = brainDir;
+
+    // Shared skills root with two skills. NOTE on the FR-137 merge semantics:
+    // `surfaces.skills` is a SINGLE block with ONE `source`. The merge keeps the
+    // BASE source and UNIONS targets (base ++ overlay). So a personal target is
+    // projected against the base source ALONGSIDE the core target — "core first"
+    // is the target ORDER. A personal target adds a NEW projection (e.g. a new
+    // output dir or harness) for the same skills root.
+    const skillsRoot = join(fixtureRoot, "skills");
+    mkdirSync(join(skillsRoot, "alpha"), { recursive: true });
+    writeFileSync(
+      join(skillsRoot, "alpha", "SKILL.md"),
+      "---\nname: alpha\ndescription: skill alpha\n---\nALPHA BODY\n",
+    );
+    mkdirSync(join(skillsRoot, "beta"), { recursive: true });
+    writeFileSync(
+      join(skillsRoot, "beta", "SKILL.md"),
+      "---\nname: beta\ndescription: skill beta\n---\nBETA BODY\n",
+    );
+
+    // Base manifest carries a CORE skill-target (gemini converter → one
+    // {name}.toml per SKILL.md into the target dir). The personal overlay adds a
+    // SECOND target dir for the same source. Distinct paths (the write-time +
+    // merge guards both reject identical paths).
+    const coreOut = join(fixtureRoot, "gemini-core");
+    const personalOut = join(fixtureRoot, "gemini-personal");
+    writeFileSync(
+      join(fixtureRoot, "harness-manifest.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [],
+        surfaces: {
+          skills: {
+            source: skillsRoot,
+            layer: "core",
+            targets: [
+              { type: "gemini", method: "converter", path: coreOut },
+            ],
+          },
+        },
+      }),
+    );
+
+    // Write the personal overlay via the REAL verb (reference mode, absolute
+    // source). No --overlay/--vendor seams: drive through IGRIS_BRAIN_DIR so the
+    // verb + adapter agree on the auto-discovered overlay path.
+    const writtenOverlay = join(
+      brainDir,
+      "registry",
+      "harness-manifest.personal.json",
+    );
+    const addCode = await runRegistry({
+      action: "add-skill",
+      from: skillsRoot,
+      targets: [`gemini:converter:${personalOut}`],
+      projectRoot: fixtureRoot,
+    });
+    expect(addCode).toBe(0);
+    expect(existsSync(writtenOverlay)).toBe(true);
+
+    // The overlay passes the REAL validate_manifest (surfaces sub-shape).
+    const validate = execFileSync(
+      "bash",
+      [
+        "-c",
+        `source "${COMMON_SH}" && validate_manifest "${writtenOverlay}" "${SCHEMA}"`,
+      ],
+      { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
+    );
+    expect(typeof validate).toBe("string");
+
+    // Run the REAL compiler restricted to the skills surface. It auto-discovers
+    // the personal overlay, merges base(core)++overlay(personal) skills targets,
+    // and projects BOTH targets from the merged source.
+    execFileSync(
+      "bash",
+      [COMPILE_SH, "--project-root", fixtureRoot, "--surface", "skills"],
+      { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
+    );
+    // Core target projected (the base skill-target, FIRST in merged order).
+    expect(existsSync(join(coreOut, "alpha.toml"))).toBe(true);
+    expect(existsSync(join(coreOut, "beta.toml"))).toBe(true);
+    // Personal target projected ALONGSIDE core — proves the overlay's
+    // surfaces.skills target was merged in and compiled.
+    expect(existsSync(join(personalOut, "alpha.toml"))).toBe(true);
+    expect(existsSync(join(personalOut, "beta.toml"))).toBe(true);
   });
 });

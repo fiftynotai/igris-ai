@@ -72,11 +72,32 @@ import {
   type FetchedRepo,
 } from "../lib/github-source.js";
 
-export type RegistryAction = "add" | "list" | "remove" | "update";
+export type RegistryAction =
+  | "add"
+  | "add-skill"
+  | "list"
+  | "remove"
+  | "update";
 
 /** Allowed harness target types (mirrors manifest.schema.json target enum). */
 const VALID_TARGET_TYPES = ["claude", "codex", "gemini"] as const;
 type TargetType = (typeof VALID_TARGET_TYPES)[number];
+
+/**
+ * FR-143: allowed SKILL target types — a NARROWER enum than agent targets
+ * (`claude` is intentionally absent; Claude consumes skills via the FR-103
+ * symlink and needs no projection). Mirrors `$defs.skills_surface.targets.type`.
+ */
+const VALID_SKILL_TARGET_TYPES = ["codex", "gemini"] as const;
+type SkillTargetType = (typeof VALID_SKILL_TARGET_TYPES)[number];
+
+/**
+ * FR-143: allowed SKILL target methods. `compiler` = the codex AGENTS.md
+ * compiler; `converter` = the gemini per-skill TOML converter. Mirrors
+ * `$defs.skills_surface.targets.method`.
+ */
+const VALID_SKILL_METHODS = ["compiler", "converter"] as const;
+type SkillMethod = (typeof VALID_SKILL_METHODS)[number];
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -100,6 +121,30 @@ interface AgentEntry {
   targets: TargetSpec[];
 }
 
+/**
+ * FR-143: one skill target — a `type:method:path` triple. `type` ∈
+ * {codex,gemini}, `method` ∈ {compiler,converter}. `path` is the projection
+ * output path (codex: an AGENTS.md file; gemini: an output dir).
+ */
+interface SkillTargetSpec {
+  type: string;
+  method: string;
+  path: string;
+}
+
+/**
+ * FR-143: the `surfaces.skills` block. A SINGLE object (not a per-name array
+ * like agents). `source` is the LIVE skills root dir REFERENCED (NOT vendored —
+ * the compiler reads it as a live directory, and the gemini converter does a
+ * recursive `find -name SKILL.md` a flat vendor would break). `layer` is
+ * always `"personal"` when written by this verb. Mirrors `$defs.skills_surface`.
+ */
+interface SkillsSurface {
+  source?: string;
+  layer?: string;
+  targets: SkillTargetSpec[];
+}
+
 /** The overlay file shape. `surfaces` is FR-143's; preserved on read-modify-write. */
 interface Overlay {
   $schema?: string;
@@ -107,7 +152,10 @@ interface Overlay {
   _schema?: Record<string, unknown>;
   version: number;
   agents: AgentEntry[];
-  surfaces?: Record<string, unknown>;
+  surfaces?: { skills?: SkillsSurface; os_context?: Record<string, unknown> } & Record<
+    string,
+    unknown
+  >;
 }
 
 /**
@@ -305,6 +353,71 @@ export function validateAgentEntry(entry: unknown): string | null {
   return null;
 }
 
+/**
+ * FR-143: validate a `surfaces.skills` block field-for-field against
+ * `manifest.schema.json` `$defs.skills_surface`. `additionalProperties:false`
+ * → only `source`/`layer`/`targets` allowed; `targets` is a REQUIRED non-empty
+ * array of `{type,method,path}` objects with the narrower skill enums. Returns
+ * an error message, or null if valid.
+ */
+export function validateSkillsSurface(skills: unknown): string | null {
+  if (typeof skills !== "object" || skills === null || Array.isArray(skills)) {
+    return "surfaces.skills must be an object";
+  }
+  const s = skills as Record<string, unknown>;
+  const allowedKeys = new Set(["source", "layer", "targets"]);
+  for (const key of Object.keys(s)) {
+    if (!allowedKeys.has(key)) {
+      return `surfaces.skills: unknown key '${key}' (additionalProperties:false)`;
+    }
+  }
+  if (!("targets" in s)) {
+    return "surfaces.skills missing required key 'targets'";
+  }
+  if (s.source !== undefined && typeof s.source !== "string") {
+    return "surfaces.skills.source must be a string";
+  }
+  if (s.layer !== undefined && typeof s.layer !== "string") {
+    return "surfaces.skills.layer must be a string";
+  }
+  const targets = s.targets;
+  if (!Array.isArray(targets) || targets.length < 1) {
+    return "surfaces.skills.targets must be a non-empty array";
+  }
+  const allowedTargetKeys = new Set(["type", "method", "path"]);
+  for (let i = 0; i < targets.length; i++) {
+    const t = targets[i];
+    if (typeof t !== "object" || t === null || Array.isArray(t)) {
+      return `surfaces.skills.targets[${i}] must be an object`;
+    }
+    const tRec = t as Record<string, unknown>;
+    for (const key of Object.keys(tRec)) {
+      if (!allowedTargetKeys.has(key)) {
+        return `surfaces.skills.targets[${i}]: unknown key '${key}' (additionalProperties:false)`;
+      }
+    }
+    for (const req of ["type", "method", "path"]) {
+      if (!(req in tRec)) {
+        return `surfaces.skills.targets[${i}] missing required key '${req}'`;
+      }
+    }
+    if (
+      typeof tRec.type !== "string" ||
+      typeof tRec.method !== "string" ||
+      typeof tRec.path !== "string"
+    ) {
+      return `surfaces.skills.targets[${i}] type/method/path must be strings`;
+    }
+    if (!(VALID_SKILL_TARGET_TYPES as readonly string[]).includes(tRec.type)) {
+      return `surfaces.skills.targets[${i}].type '${tRec.type}' is not one of ${JSON.stringify(VALID_SKILL_TARGET_TYPES)}`;
+    }
+    if (!(VALID_SKILL_METHODS as readonly string[]).includes(tRec.method)) {
+      return `surfaces.skills.targets[${i}].method '${tRec.method}' is not one of ${JSON.stringify(VALID_SKILL_METHODS)}`;
+    }
+  }
+  return null;
+}
+
 /** Validate the whole overlay shape. Returns an error message, or null. */
 export function validateOverlayShape(overlay: unknown): string | null {
   if (typeof overlay !== "object" || overlay === null || Array.isArray(overlay)) {
@@ -334,6 +447,32 @@ export function validateOverlayShape(overlay: unknown): string | null {
     const err = validateAgentEntry(o.agents[i]);
     if (err !== null) {
       return `agents[${i}]: ${err}`;
+    }
+  }
+  // FR-143: validate the `surfaces` block when present. `surfaces.skills` (when
+  // present) must match `$defs.skills_surface`; `surfaces.os_context` stays
+  // RESERVED/permissive (FR-140). Mirrors the schema's
+  // `properties.surfaces.additionalProperties:false`.
+  if (o.surfaces !== undefined) {
+    if (
+      typeof o.surfaces !== "object" ||
+      o.surfaces === null ||
+      Array.isArray(o.surfaces)
+    ) {
+      return "overlay 'surfaces' must be an object";
+    }
+    const surfaces = o.surfaces as Record<string, unknown>;
+    const allowedSurfaceKeys = new Set(["skills", "os_context"]);
+    for (const key of Object.keys(surfaces)) {
+      if (!allowedSurfaceKeys.has(key)) {
+        return `surfaces: unknown key '${key}' (additionalProperties:false)`;
+      }
+    }
+    if (surfaces.skills !== undefined) {
+      const skillsErr = validateSkillsSurface(surfaces.skills);
+      if (skillsErr !== null) {
+        return skillsErr;
+      }
     }
   }
   return null;
@@ -412,6 +551,36 @@ function readBaseAgentNames(projectRoot: string): Set<string> {
   } catch {
     // A malformed base manifest is not FR-141's problem to fix; the adapters
     // validate it. Treat as no base agents for the write-time collision check.
+    return new Set();
+  }
+}
+
+/**
+ * FR-143: read the base manifest's CORE skill-target paths (for the write-time
+ * skill path-collision guard). Parallels `readBaseAgentNames`, but reads
+ * `surfaces.skills.targets[].path`. The runtime merge guard in `_common.sh`
+ * rejects a personal skill-target path that collides with a core one; this
+ * mirrors that check at write-time so the overlay never reaches a state the
+ * merge would reject. Absent/malformed base → empty set (the merge guard only
+ * fires when both sides exist).
+ */
+function readBaseSkillTargetPaths(projectRoot: string): Set<string> {
+  const basePath = join(projectRoot, "harness-manifest.json");
+  if (!existsSync(basePath)) {
+    return new Set();
+  }
+  try {
+    const base = JSON.parse(readFileSync(basePath, "utf-8")) as {
+      surfaces?: { skills?: { targets?: { path?: unknown }[] } };
+    };
+    const paths = new Set<string>();
+    for (const t of base.surfaces?.skills?.targets ?? []) {
+      if (typeof t?.path === "string") {
+        paths.add(t.path);
+      }
+    }
+    return paths;
+  } catch {
     return new Set();
   }
 }
@@ -604,6 +773,38 @@ function parseTarget(spec: string): TargetSpec | string {
     return `--target '${spec}' has an empty path`;
   }
   return { type: type as TargetType, path };
+}
+
+/**
+ * FR-143: parse a SKILL `--target type:method:path` triple. Splits the `type`
+ * off the first `:`, then the `method` off the next `:`; everything remaining
+ * is the `path` (which MAY itself contain `:`, e.g. a Windows-style or
+ * URL-ish path — preserved verbatim). Validates `type` ∈ {codex,gemini} and
+ * `method` ∈ {compiler,converter}. Returns the target or an error message.
+ */
+function parseSkillTarget(spec: string): SkillTargetSpec | string {
+  const firstIdx = spec.indexOf(":");
+  if (firstIdx < 0) {
+    return `--target '${spec}' must be of the form type:method:path`;
+  }
+  const type = spec.slice(0, firstIdx);
+  const rest = spec.slice(firstIdx + 1);
+  const secondIdx = rest.indexOf(":");
+  if (secondIdx < 0) {
+    return `--target '${spec}' must be of the form type:method:path`;
+  }
+  const method = rest.slice(0, secondIdx);
+  const path = rest.slice(secondIdx + 1);
+  if (!(VALID_SKILL_TARGET_TYPES as readonly string[]).includes(type)) {
+    return `--target type '${type}' is not one of ${JSON.stringify(VALID_SKILL_TARGET_TYPES)}`;
+  }
+  if (!(VALID_SKILL_METHODS as readonly string[]).includes(method)) {
+    return `--target method '${method}' is not one of ${JSON.stringify(VALID_SKILL_METHODS)}`;
+  }
+  if (path.length === 0) {
+    return `--target '${spec}' has an empty path`;
+  }
+  return { type: type as SkillTargetType, method: method as SkillMethod, path };
 }
 
 // ---------------------------------------------------------------------------
@@ -970,6 +1171,143 @@ async function runAddGithub(
   }
 }
 
+/**
+ * FR-143 `add-skill` — register a personal SKILL projection into the overlay's
+ * `surfaces.skills` block. Deliberately DIVERGES from `add`'s copy-vendor mode:
+ * skills are REFERENCED, not vendored — the compiler reads the skills `source`
+ * as a LIVE dir (the gemini converter does a recursive `find -name SKILL.md`
+ * that a flat vendor would break, and `skills_surface` has no glob/file). So
+ * there is NO origin entry and NO `update` support for skills.
+ *
+ * Writes a SINGLE `surfaces.skills` object `{source, layer:"personal",
+ * targets:[{type,method,path}]}`. On re-run it MERGES new targets into the
+ * existing block (path-deduped) rather than appending a sibling — `surfaces`
+ * is a single object, not a per-name array.
+ *
+ * Guard chain (overlay unchanged on any reject):
+ *   1. parse each `type:method:path` triple (usage error → exit 2),
+ *   2. validate the resulting `surfaces.skills` block shape,
+ *   3. reject a target `path` colliding with a CORE skill-target path
+ *      (mirrors the `_common.sh` merge guard at write-time),
+ *   4. reject a target `path` already present in the overlay's own block
+ *      (intra-overlay dedupe — the merge does not dedupe overlay-vs-overlay).
+ */
+function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
+  if (opts.from === undefined || opts.from.length === 0) {
+    logError("registry add-skill: <source-dir> is required");
+    return 2;
+  }
+  if (opts.targets === undefined || opts.targets.length === 0) {
+    logError(
+      "registry add-skill: at least one --target <type:method:path> is required",
+    );
+    return 2;
+  }
+
+  // Parse the skill targets (type:method:path triples).
+  const newTargets: SkillTargetSpec[] = [];
+  for (const spec of opts.targets) {
+    const parsed = parseSkillTarget(spec);
+    if (typeof parsed === "string") {
+      logError(`registry add-skill: ${parsed}`);
+      return 2;
+    }
+    newTargets.push(parsed);
+  }
+
+  const projectRoot = opts.projectRoot ?? process.cwd();
+
+  // REFERENCE (not vendor): resolve the source dir to an absolute path the
+  // compiler uses verbatim (`~`/absolute used as-is, relative resolved vs
+  // --project-root — the SAME rules compile_harnesses.sh applies). This keeps
+  // resolution unambiguous + sandbox-safe and never copies the dir.
+  const sourceDir = resolveSourcePath(opts.from, projectRoot);
+  if (!existsSync(sourceDir)) {
+    logError(`registry add-skill: skills source dir does not exist: ${sourceDir}`);
+    return 1;
+  }
+
+  // Read current overlay (unchanged on any reject below).
+  let overlay: Overlay;
+  try {
+    overlay = readOverlay(overlayPath);
+  } catch (err) {
+    logError((err as Error).message);
+    return 1;
+  }
+
+  // Merge into the existing block (single object) — preserve the existing
+  // source unless this is the first write; new targets are unioned in.
+  const existing = overlay.surfaces?.skills;
+  const existingTargets: SkillTargetSpec[] =
+    existing !== undefined && Array.isArray(existing.targets)
+      ? existing.targets
+      : [];
+
+  // (intra-overlay dedupe) Reject a path already present in the overlay's block.
+  const overlayPaths = new Set(existingTargets.map((t) => t.path));
+  for (const t of newTargets) {
+    if (overlayPaths.has(t.path)) {
+      logError(
+        `registry add-skill: skill-target path '${t.path}' already exists in the ` +
+          `overlay's surfaces.skills block; remove it first or choose another path. ` +
+          `Overlay unchanged: ${overlayPath}`,
+      );
+      return 1;
+    }
+  }
+
+  // (core-collision reject) Mirror the _common.sh merge guard at write-time.
+  const baseSkillPaths = readBaseSkillTargetPaths(projectRoot);
+  for (const t of newTargets) {
+    if (baseSkillPaths.has(t.path)) {
+      logError(
+        `registry add-skill: skill-target path '${t.path}' collides with a base ` +
+          "(core) skill-target; a personal skill must not shadow a core skill. " +
+          "Overlay unchanged.",
+      );
+      return 1;
+    }
+  }
+
+  const merged: SkillsSurface = {
+    source: sourceDir,
+    layer: "personal",
+    targets: [...existingTargets, ...newTargets],
+  };
+
+  // Validate the resulting block shape before persist.
+  const skillsErr = validateSkillsSurface(merged);
+  if (skillsErr !== null) {
+    logError(`registry add-skill: invalid skills surface: ${skillsErr}`);
+    return 1;
+  }
+
+  // Splice the block back into the overlay (preserving any os_context), then
+  // validate the WHOLE overlay (defense-in-depth) before persist.
+  const surfaces = { ...(overlay.surfaces ?? {}) };
+  surfaces.skills = merged;
+  overlay.surfaces = surfaces;
+  const overlayErr = validateOverlayShape(overlay);
+  if (overlayErr !== null) {
+    logError(`registry add-skill: resulting overlay invalid: ${overlayErr}`);
+    return 1;
+  }
+
+  try {
+    writeOverlayAtomic(overlayPath, overlay);
+  } catch (err) {
+    logError(`registry add-skill: failed to write overlay: ${(err as Error).message}`);
+    return 1;
+  }
+
+  info(
+    `Registered personal skill projection (source ${sourceDir}, ` +
+      `${newTargets.length} target(s)) in ${overlayPath}`,
+  );
+  return 0;
+}
+
 function runList(overlayPath: string): number {
   let overlay: Overlay;
   try {
@@ -1306,6 +1644,8 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
   switch (opts.action) {
     case "add":
       return runAdd(opts, overlayPath);
+    case "add-skill":
+      return runAddSkill(opts, overlayPath);
     case "list":
       return runList(overlayPath);
     case "remove":
@@ -1314,7 +1654,7 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runUpdate(opts, overlayPath);
     default:
       logError(
-        `unknown registry action '${String(opts.action)}'. Valid: add, list, remove, update.`,
+        `unknown registry action '${String(opts.action)}'. Valid: add, add-skill, list, remove, update.`,
       );
       return 2;
   }

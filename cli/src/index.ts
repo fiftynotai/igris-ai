@@ -336,11 +336,12 @@ async function main(argv: string[]): Promise<void> {
   program
     .command("registry <action>")
     .description(
-      "Register Layer-2 personal agent customizations into the overlay (FR-141/FR-142/FR-148). " +
-        "Actions: add (copy-vendors the canonical files), list, remove, update (re-vendors from origin). " +
-        "--from accepts a local path OR github:owner/repo@<ref>[#subdir].",
+      "Register Layer-2 personal customizations into the overlay (FR-141/FR-142/FR-143/FR-148). " +
+        "Actions: add (copy-vendors the canonical files), add-skill (references a skills source dir into surfaces.skills), list, remove, update (re-vendors from origin). " +
+        "--from accepts a local path OR github:owner/repo@<ref>[#subdir]. " +
+        "For add-skill, the positional <source-dir> (or --from) is the live skills root and --target is type:method:path.",
     )
-    .argument("[name]", "agent name (add/remove/update)")
+    .argument("[name]", "agent name (add/remove/update) OR skills source-dir (add-skill)")
     .option(
       "--from <path-or-github>",
       "source: local dir-or-file, or github:owner/repo@<ref>[#subdir]",
@@ -381,10 +382,19 @@ async function main(argv: string[]): Promise<void> {
         if (opts.canonical !== undefined && opts.from === undefined) {
           info("registry: --canonical is deprecated; use --from <path> instead.");
         }
+        // FR-143: `add-skill` takes its skills source-dir as the positional
+        // arg (`igris registry add-skill <source-dir> --target ...`); coalesce
+        // it into `from` when --from was not given explicitly. The positional
+        // is NOT a `name` for skills (surfaces.skills is a single object).
+        const isAddSkill = action === "add-skill";
+        const from =
+          opts.from ??
+          opts.canonical ??
+          (isAddSkill ? name : undefined);
         const code = await runRegistry({
           action: action as RegistryAction,
-          name,
-          from: opts.from ?? opts.canonical,
+          name: isAddSkill ? undefined : name,
+          from,
           versioned: opts.versioned === true,
           glob: opts.glob,
           targets: opts.target,
