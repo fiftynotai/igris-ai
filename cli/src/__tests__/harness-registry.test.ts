@@ -26,6 +26,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -37,6 +38,12 @@ import {
   validateAgentEntry,
   validateOverlayShape,
 } from "../verbs/registry.js";
+import type {
+  GithubSpec,
+  FetchedRepo,
+  FetchRepoFn,
+  ListReleasesFn,
+} from "../lib/github-source.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 // cli/src/__tests__ -> repo root -> core/scripts/cli-adapters
@@ -761,6 +768,461 @@ describe("registry update", () => {
     expect(existsSync(join(vendorDir("vupd"), "v1.md"))).toBe(true);
     expect(existsSync(join(vendorDir("vupd"), "v2.md"))).toBe(true);
     expect(readOriginsFile().vupd.hash).not.toBe(hashBefore);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-148: github origin (add + update) — fetch boundary STUBBED via the
+// injectable fetchRepo / listReleases seams (L-159/L-173: never vi.mock the
+// SUT; stub the network boundary instead).
+// ---------------------------------------------------------------------------
+
+/**
+ * Stage a fixture repo on disk and return a FetchRepoFn that resolves to it.
+ * The returned repo dir carries an `igris.json` + the canonical files. Each
+ * call records the spec it was invoked with (so `update` re-fetch can be
+ * asserted). `cleanup` is a no-op here — the staged dir is owned by the test.
+ */
+function makeStubFetch(opts: {
+  repoDir: string;
+  sha?: string;
+  calls?: GithubSpec[];
+}): FetchRepoFn {
+  return async (spec: GithubSpec): Promise<FetchedRepo> => {
+    opts.calls?.push(spec);
+    return {
+      dir: opts.repoDir,
+      sha: opts.sha ?? "0123456789abcdef0123456789abcdef01234567",
+      cleanup: () => {
+        /* test owns the dir */
+      },
+    };
+  };
+}
+
+function makeStubReleases(tags: string[]): ListReleasesFn {
+  return async () => tags;
+}
+
+describe("registry add — github origin (stubbed fetch)", () => {
+  let repoDir: string;
+
+  beforeEach(() => {
+    repoDir = join(tmpRoot, "ghrepo");
+    mkdirSync(join(repoDir, "agents"), { recursive: true });
+    writeFileSync(join(repoDir, "agents", "mypack.md"), "# mypack\nbody\n");
+    writeFileSync(
+      join(repoDir, "igris.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [
+          {
+            name: "mypack",
+            canonical: { dir: "agents", versioned: false, file: "mypack.md" },
+            targets: [{ type: "claude", path: ".claude/agents/mypack.md" }],
+          },
+        ],
+      }),
+    );
+  });
+
+  it("parses + vendors + records a github origin (single-entry manifest)", async () => {
+    const code = await runRegistry({
+      action: "add",
+      name: "mypack",
+      from: "github:owner/repo@v1.0.0",
+      targets: ["claude:.claude/agents/mypack.md"],
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      fetchRepo: makeStubFetch({ repoDir }),
+    });
+    expect(code).toBe(0);
+
+    // Vendored copy is byte-equal to the fixture.
+    const vendored = join(vendorDir("mypack"), "mypack.md");
+    expect(existsSync(vendored)).toBe(true);
+    expect(readFileSync(vendored, "utf-8")).toBe(
+      readFileSync(join(repoDir, "agents", "mypack.md"), "utf-8"),
+    );
+
+    // Overlay entry points canonical.dir at the vendored copy.
+    const overlay = readOverlayFile() as {
+      agents: { name: string; layer: string; canonical: Record<string, unknown> }[];
+    };
+    expect(overlay.agents[0].name).toBe("mypack");
+    expect(overlay.agents[0].canonical.dir).toBe(vendorDir("mypack"));
+
+    // origins.json carries a github origin.
+    const origins = readOriginsFile() as Record<string, Record<string, unknown>>;
+    expect(origins.mypack.type).toBe("github");
+    expect(origins.mypack.repo).toBe("owner/repo");
+    expect(origins.mypack.ref).toBe("v1.0.0");
+    expect(origins.mypack.sha).toBe(
+      "0123456789abcdef0123456789abcdef01234567",
+    );
+    expect(origins.mypack.hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("selects the named surface from a multi-entry repo manifest", async () => {
+    mkdirSync(join(repoDir, "b"), { recursive: true });
+    writeFileSync(join(repoDir, "b", "beta.md"), "# beta\n");
+    writeFileSync(
+      join(repoDir, "igris.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [
+          {
+            name: "mypack",
+            canonical: { dir: "agents", versioned: false, file: "mypack.md" },
+            targets: [{ type: "claude", path: ".claude/agents/mypack.md" }],
+          },
+          {
+            name: "beta",
+            canonical: { dir: "b", versioned: false, file: "beta.md" },
+            targets: [{ type: "claude", path: ".claude/agents/beta.md" }],
+          },
+        ],
+      }),
+    );
+    const code = await runRegistry({
+      action: "add",
+      name: "beta",
+      from: "github:owner/repo@v1.0.0",
+      targets: ["claude:.claude/agents/beta.md"],
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      fetchRepo: makeStubFetch({ repoDir }),
+    });
+    expect(code).toBe(0);
+    expect(existsSync(join(vendorDir("beta"), "beta.md"))).toBe(true);
+  });
+
+  it("errors (exit 1) when <name> matches no surface in a multi-entry manifest", async () => {
+    writeFileSync(
+      join(repoDir, "igris.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [
+          {
+            name: "alpha",
+            canonical: { dir: "agents", versioned: false, file: "mypack.md" },
+            targets: [{ type: "claude", path: ".claude/agents/alpha.md" }],
+          },
+          {
+            name: "beta",
+            canonical: { dir: "agents", versioned: false, file: "mypack.md" },
+            targets: [{ type: "claude", path: ".claude/agents/beta.md" }],
+          },
+        ],
+      }),
+    );
+    const code = await runRegistry({
+      action: "add",
+      name: "gamma",
+      from: "github:owner/repo@v1.0.0",
+      targets: ["claude:.claude/agents/gamma.md"],
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      fetchRepo: makeStubFetch({ repoDir }),
+    });
+    expect(code).toBe(1);
+    expect(existsSync(vendorDir("gamma"))).toBe(false);
+    expect(existsSync(originsPath)).toBe(false);
+  });
+
+  it("scopes the canonical dir under a #subdir", async () => {
+    // Move the fixture under packs/.
+    mkdirSync(join(repoDir, "packs", "agents"), { recursive: true });
+    writeFileSync(join(repoDir, "packs", "agents", "mypack.md"), "# scoped\n");
+    const code = await runRegistry({
+      action: "add",
+      name: "mypack",
+      from: "github:owner/repo@v1.0.0#packs",
+      targets: ["claude:.claude/agents/mypack.md"],
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      fetchRepo: makeStubFetch({ repoDir }),
+    });
+    expect(code).toBe(0);
+    expect(readFileSync(join(vendorDir("mypack"), "mypack.md"), "utf-8")).toBe(
+      "# scoped\n",
+    );
+    const origins = readOriginsFile() as Record<string, Record<string, unknown>>;
+    expect(origins.mypack.subdir).toBe("packs");
+  });
+
+  it("rejects a bad repo manifest (exit 1, no vendor)", async () => {
+    writeFileSync(join(repoDir, "igris.json"), JSON.stringify({ version: 2 }));
+    const code = await runRegistry({
+      action: "add",
+      name: "mypack",
+      from: "github:owner/repo@v1.0.0",
+      targets: ["claude:.claude/agents/mypack.md"],
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      fetchRepo: makeStubFetch({ repoDir }),
+    });
+    expect(code).toBe(1);
+    expect(existsSync(vendorDir("mypack"))).toBe(false);
+  });
+
+  it("rejects a bad spec (exit 2) WITHOUT attempting a fetch", async () => {
+    const calls: GithubSpec[] = [];
+    const code = await runRegistry({
+      action: "add",
+      name: "mypack",
+      from: "github:owner/repo", // no @ref
+      targets: ["claude:.claude/agents/mypack.md"],
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      fetchRepo: makeStubFetch({ repoDir, calls }),
+    });
+    expect(code).toBe(2);
+    expect(calls).toHaveLength(0); // parse precedes fetch
+  });
+
+  it("surfaces a fetch failure as exit 1 (actionable error)", async () => {
+    const code = await runRegistry({
+      action: "add",
+      name: "mypack",
+      from: "github:owner/private@v1.0.0",
+      targets: ["claude:.claude/agents/mypack.md"],
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      fetchRepo: async () => {
+        throw new Error(
+          "cannot fetch owner/private@v1.0.0: 404. If this is a private repo, run 'gh auth login'.",
+        );
+      },
+    });
+    expect(code).toBe(1);
+    expect(existsSync(vendorDir("mypack"))).toBe(false);
+  });
+
+  it("rejects a path-traversal manifest (canonical.dir escapes repo) — no vendor", async () => {
+    // A malicious repo manifest whose canonical.dir tries to escape the fetched
+    // repo root. The fetch SEAM is stubbed (no network); the staged repo dir
+    // carries the hostile manifest. selectSurface's containment guard must
+    // reject BEFORE vendoring anything.
+    writeFileSync(
+      join(repoDir, "igris.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [
+          {
+            name: "mypack",
+            canonical: {
+              dir: "../../../../../../etc",
+              versioned: false,
+              file: "passwd",
+            },
+            targets: [{ type: "claude", path: ".claude/agents/mypack.md" }],
+          },
+        ],
+      }),
+    );
+    const code = await runRegistry({
+      action: "add",
+      name: "mypack",
+      from: "github:owner/repo@v1.0.0",
+      targets: ["claude:.claude/agents/mypack.md"],
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      fetchRepo: makeStubFetch({ repoDir }),
+    });
+    expect(code).toBe(1);
+    // Nothing vendored, no origin recorded, no overlay written.
+    expect(existsSync(vendorDir("mypack"))).toBe(false);
+    expect(existsSync(originsPath)).toBe(false);
+    expect(existsSync(overlayPath)).toBe(false);
+  });
+
+  it("rejects a symlinked canonical.dir escaping the repo (clone-tier vuln) — no vendor", async () => {
+    // Simulate what the gh/git clone tiers materialize for a repo that checks
+    // in `canonical.dir` as a symlink pointing OUTSIDE the fetched repo root.
+    // Lexical `..` containment passes (the link's own path is under repo); the
+    // realpath guard must reject the dereferenced out-of-repo target before any
+    // copyFileSync vendors host files into ~/.igris/registry/.
+    const outside = mkdtempSync(join(tmpdir(), "igris-host-secret-"));
+    writeFileSync(join(outside, "passwd"), "root:x:0:0\n");
+    // Replace the fixture's real `agents/` dir with a symlink to `outside`.
+    rmSync(join(repoDir, "agents"), { recursive: true, force: true });
+    try {
+      symlinkSync(outside, join(repoDir, "agents"));
+    } catch {
+      // Sandbox without symlink perms — skip.
+      rmSync(outside, { recursive: true, force: true });
+      return;
+    }
+    writeFileSync(
+      join(repoDir, "igris.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [
+          {
+            name: "mypack",
+            canonical: { dir: "agents", versioned: false, file: "passwd" },
+            targets: [{ type: "claude", path: ".claude/agents/mypack.md" }],
+          },
+        ],
+      }),
+    );
+    const code = await runRegistry({
+      action: "add",
+      name: "mypack",
+      from: "github:owner/repo@v1.0.0",
+      targets: ["claude:.claude/agents/mypack.md"],
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      fetchRepo: makeStubFetch({ repoDir }),
+    });
+    rmSync(outside, { recursive: true, force: true });
+    expect(code).toBe(1);
+    // The host file was NOT vendored; no origin, no overlay.
+    expect(existsSync(vendorDir("mypack"))).toBe(false);
+    expect(existsSync(originsPath)).toBe(false);
+    expect(existsSync(overlayPath)).toBe(false);
+  });
+});
+
+describe("registry update — github origin (stubbed fetch + releases)", () => {
+  let repoDir: string;
+
+  beforeEach(async () => {
+    repoDir = join(tmpRoot, "ghrepo-upd");
+    mkdirSync(join(repoDir, "agents"), { recursive: true });
+    writeFileSync(join(repoDir, "agents", "mypack.md"), "# v1\n");
+    writeFileSync(
+      join(repoDir, "igris.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [
+          {
+            name: "mypack",
+            canonical: { dir: "agents", versioned: false, file: "mypack.md" },
+            targets: [{ type: "claude", path: ".claude/agents/mypack.md" }],
+          },
+        ],
+      }),
+    );
+    // Seed an add at v1.0.0.
+    await runRegistry({
+      action: "add",
+      name: "mypack",
+      from: "github:owner/repo@v1.0.0",
+      targets: ["claude:.claude/agents/mypack.md"],
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      fetchRepo: makeStubFetch({ repoDir, sha: "aaaaaaaaaaaaaaaa" }),
+    });
+  });
+
+  it("reports unchanged when the pinned tag is the latest", async () => {
+    const code = await runRegistry({
+      action: "update",
+      name: "mypack",
+      overlayPath,
+      originsPath,
+      vendorDir,
+      listReleases: makeStubReleases(["v1.0.0", "v0.9.0"]),
+      fetchRepo: makeStubFetch({ repoDir }),
+    });
+    expect(code).toBe(0);
+    const origins = readOriginsFile() as Record<string, Record<string, unknown>>;
+    expect(origins.mypack.ref).toBe("v1.0.0");
+    expect(origins.mypack.sha).toBe("aaaaaaaaaaaaaaaa");
+  });
+
+  it("reports no releases found (unchanged) when releases is empty", async () => {
+    const code = await runRegistry({
+      action: "update",
+      name: "mypack",
+      overlayPath,
+      originsPath,
+      vendorDir,
+      listReleases: makeStubReleases([]),
+      fetchRepo: makeStubFetch({ repoDir }),
+    });
+    expect(code).toBe(0);
+    expect(
+      (readOriginsFile() as Record<string, Record<string, unknown>>).mypack.ref,
+    ).toBe("v1.0.0");
+  });
+
+  it("detects a newer release, re-vendors, and advances ref/sha", async () => {
+    // Mutate the fixture so the re-vendored bytes differ.
+    writeFileSync(join(repoDir, "agents", "mypack.md"), "# v2 fresh\n");
+    const calls: GithubSpec[] = [];
+    const code = await runRegistry({
+      action: "update",
+      name: "mypack",
+      overlayPath,
+      originsPath,
+      vendorDir,
+      listReleases: makeStubReleases(["v1.0.0", "v1.1.0"]),
+      fetchRepo: makeStubFetch({
+        repoDir,
+        sha: "bbbbbbbbbbbbbbbb",
+        calls,
+      }),
+    });
+    expect(code).toBe(0);
+    // fetchRepo was re-invoked at the NEW tag.
+    expect(calls).toHaveLength(1);
+    expect(calls[0].ref).toBe("v1.1.0");
+    // origin advanced.
+    const origins = readOriginsFile() as Record<string, Record<string, unknown>>;
+    expect(origins.mypack.ref).toBe("v1.1.0");
+    expect(origins.mypack.sha).toBe("bbbbbbbbbbbbbbbb");
+    // re-vendored bytes reflect the mutation.
+    expect(readFileSync(join(vendorDir("mypack"), "mypack.md"), "utf-8")).toBe(
+      "# v2 fresh\n",
+    );
+  });
+
+  it("--all processes a github origin alongside a path origin", async () => {
+    // Add a sibling path origin.
+    await runRegistry(
+      addOpts({
+        name: "localpack",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/localpack.md"],
+      }),
+    );
+    const code = await runRegistry({
+      action: "update",
+      all: true,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      listReleases: makeStubReleases(["v1.0.0"]),
+      fetchRepo: makeStubFetch({ repoDir }),
+    });
+    expect(code).toBe(0);
+    // Both origins are intact; github stayed at v1.0.0.
+    const origins = readOriginsFile() as Record<string, Record<string, unknown>>;
+    expect(origins.mypack.type).toBe("github");
+    expect(origins.localpack.type).toBe("path");
   });
 });
 

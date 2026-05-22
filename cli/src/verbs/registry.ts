@@ -57,6 +57,20 @@ import {
   registrySurfaceDirPath,
 } from "../lib/paths.js";
 import { info, error as logError } from "../lib/log.js";
+import {
+  isGithubSpec,
+  parseGithubSpec,
+  readRepoManifest,
+  selectSurface,
+  pickNewerReleaseTag,
+  hashFileSet,
+  fetchRepoDefault,
+  listReleasesDefault,
+  type GithubSpec,
+  type FetchRepoFn,
+  type ListReleasesFn,
+  type FetchedRepo,
+} from "../lib/github-source.js";
 
 export type RegistryAction = "add" | "list" | "remove" | "update";
 
@@ -97,17 +111,40 @@ interface Overlay {
 }
 
 /**
- * FR-142 typed origin: provenance + update metadata for a vendored surface.
- * Stored OUTSIDE the harness manifest (option (b)) in `origins.json`. `dir` is
- * the absolute SOURCE dir the files were copied FROM; `hash` is the content
- * hash over the vendored copy (freshness comparison for `update`). `type` is
- * `"path"` for FR-142; `"github"` is reserved for FR-148 (skipped by `update`).
+ * FR-142 path origin: provenance + update metadata for a locally-vendored
+ * surface. `dir` is the absolute SOURCE dir the files were copied FROM; `hash`
+ * is the content hash over the vendored copy (freshness comparison for
+ * `update`). Byte-identical on disk to FR-142's shipped shape.
  */
-export interface Origin {
-  type: string;
+export interface PathOrigin {
+  type: "path";
   dir: string;
   hash: string;
 }
+
+/**
+ * FR-148 github origin: provenance + update metadata for a surface vendored
+ * from a GitHub repo at a release. `repo` is `owner/repo`; `ref` is the pinned
+ * tag/branch/SHA; `sha` is the resolved immutable commit; `hash` is the content
+ * hash over the vendored copy. Freshness for `update` is RELEASE-TAG comparison
+ * (not hash). `subdir`/`surfaceVersion` are optional provenance.
+ */
+export interface GithubOrigin {
+  type: "github";
+  repo: string;
+  ref: string;
+  sha: string;
+  hash: string;
+  subdir?: string;
+  surfaceVersion?: string;
+}
+
+/**
+ * The typed origin recorded per surface, stored OUTSIDE the harness manifest
+ * (option (b)) in `origins.json`. A discriminated union over `type`; the
+ * compiler never reads this file (only `igris registry update` does).
+ */
+export type Origin = PathOrigin | GithubOrigin;
 
 /** Map of surface name → its typed origin. The shape of `origins.json`. */
 export type OriginsMap = Record<string, Origin>;
@@ -141,6 +178,17 @@ export interface RegistryOptions {
   originsPath?: string;
   /** Test seam: vendor-dir base override (defaults to registrySurfaceDirPath()). */
   vendorDir?: (name: string) => string;
+  /**
+   * FR-148 test seam: github fetch boundary. Defaults to `fetchRepoDefault`
+   * (gh→git→tarball). Unit tests inject a fake returning a staged fixture
+   * repo dir + a fake sha (NEVER vi.mock the SUT — L-159/L-173).
+   */
+  fetchRepo?: FetchRepoFn;
+  /**
+   * FR-148 test seam: github release-listing boundary. Defaults to
+   * `listReleasesDefault` (gh→public API). Unit tests inject a fake tag list.
+   */
+  listReleases?: ListReleasesFn;
 }
 
 // ---------------------------------------------------------------------------
@@ -562,7 +610,10 @@ function parseTarget(spec: string): TargetSpec | string {
 // Sub-verb branches
 // ---------------------------------------------------------------------------
 
-function runAdd(opts: RegistryOptions, overlayPath: string): number {
+async function runAdd(
+  opts: RegistryOptions,
+  overlayPath: string,
+): Promise<number> {
   if (opts.name === undefined || opts.name.length === 0) {
     logError("registry add: <name> is required");
     return 2;
@@ -574,6 +625,12 @@ function runAdd(opts: RegistryOptions, overlayPath: string): number {
   if (opts.targets === undefined || opts.targets.length === 0) {
     logError("registry add: at least one --target <type:path> is required");
     return 2;
+  }
+
+  // FR-148: a `github:` --from is a remote source — branch BEFORE the
+  // filesystem-path resolution below.
+  if (isGithubSpec(opts.from)) {
+    return runAddGithub(opts, overlayPath);
   }
 
   // Parse targets.
@@ -732,6 +789,187 @@ function runAdd(opts: RegistryOptions, overlayPath: string): number {
   return 0;
 }
 
+/**
+ * FR-148 github-origin add. Parses the `github:owner/repo@ref[#subdir]` spec
+ * (usage errors exit 2), fetches the repo via the injectable `fetchRepo` seam
+ * into a temp dir, reads + validates the repo manifest, selects ONE surface by
+ * `<name>`, runs the SAME guard chain as `runAdd` (validate, intra-overlay
+ * dedupe, core-collision), vendors the selected files into the registry dir,
+ * persists the overlay, and records a `GithubOrigin`. The temp clone is always
+ * cleaned up in a finally. `<name>` is guaranteed defined by the caller.
+ */
+async function runAddGithub(
+  opts: RegistryOptions,
+  overlayPath: string,
+): Promise<number> {
+  const name = opts.name!;
+  const from = opts.from!;
+
+  // Parse targets (same as runAdd).
+  const targets: TargetSpec[] = [];
+  for (const spec of opts.targets!) {
+    const parsed = parseTarget(spec);
+    if (typeof parsed === "string") {
+      logError(`registry add: ${parsed}`);
+      return 2;
+    }
+    targets.push(parsed);
+  }
+
+  // Parse the github spec (usage error → exit 2). Parse PRECEDES fetch.
+  const spec = parseGithubSpec(from);
+  if (typeof spec === "string") {
+    logError(`registry add: ${spec}`);
+    return 2;
+  }
+
+  const vendorDirFor = opts.vendorDir ?? registrySurfaceDirPath;
+  const vendoredDir = vendorDirFor(name);
+  const fetchRepo = opts.fetchRepo ?? fetchRepoDefault;
+
+  let fetched: FetchedRepo;
+  try {
+    fetched = await fetchRepo(spec);
+  } catch (err) {
+    logError(`registry add: ${(err as Error).message}`);
+    return 1;
+  }
+
+  try {
+    // Read + validate the repo manifest (reuses validateOverlayShape).
+    const manifest = readRepoManifest(fetched.dir);
+    if (typeof manifest === "string") {
+      logError(`registry add: ${manifest}`);
+      return 1;
+    }
+
+    // Select ONE surface by <name>; resolve its canonical files on disk.
+    const selected = selectSurface(manifest, name, fetched.dir, spec.subdir);
+    if (typeof selected === "string") {
+      logError(`registry add: ${selected}`);
+      return 1;
+    }
+
+    // Build the overlay entry — canonical.dir points at the VENDORED copy.
+    let canonical: CanonicalSpec;
+    if (selected.entry.canonical.versioned) {
+      canonical = {
+        dir: vendoredDir,
+        versioned: true,
+        glob: selected.entry.canonical.glob,
+      };
+    } else {
+      canonical = {
+        dir: vendoredDir,
+        versioned: false,
+        file: selected.entry.canonical.file,
+      };
+    }
+    const entry: AgentEntry = {
+      name,
+      layer: "personal",
+      canonical,
+      targets,
+    };
+    if (opts.bodyException !== undefined && opts.bodyException.length > 0) {
+      entry.body_exception = opts.bodyException;
+    }
+
+    // (a) Validate the new entry shape.
+    const entryErr = validateAgentEntry(entry);
+    if (entryErr !== null) {
+      logError(`registry add: invalid agent entry: ${entryErr}`);
+      return 1;
+    }
+
+    // Read current overlay.
+    let overlay: Overlay;
+    try {
+      overlay = readOverlay(overlayPath);
+    } catch (err) {
+      logError((err as Error).message);
+      return 1;
+    }
+
+    // (b) Intra-overlay dedupe.
+    if (overlay.agents.some((a) => a.name === name)) {
+      logError(
+        `registry add: an overlay agent named '${name}' already exists; ` +
+          `remove it first or choose another name. Overlay unchanged: ${overlayPath}`,
+      );
+      return 1;
+    }
+
+    // (c) Core-collision reject.
+    const projectRoot = opts.projectRoot ?? process.cwd();
+    const baseNames = readBaseAgentNames(projectRoot);
+    if (baseNames.has(name)) {
+      logError(
+        `registry add: '${name}' collides with a base (core) agent name; ` +
+          "a personal customization must not shadow a core agent. Overlay unchanged.",
+      );
+      return 1;
+    }
+
+    // Append + validate the RESULT before persist.
+    overlay.agents.push(entry);
+    const overlayErr = validateOverlayShape(overlay);
+    if (overlayErr !== null) {
+      logError(`registry add: resulting overlay invalid: ${overlayErr}`);
+      return 1;
+    }
+
+    // Vendor → persist overlay → record origin (same rollback discipline).
+    let hash: string;
+    try {
+      vendorSurfaceAtomic(selected.srcDir, selected.files, vendoredDir);
+      hash = hashSurface(vendoredDir, selected.files);
+    } catch (err) {
+      rmSync(vendoredDir, { recursive: true, force: true });
+      logError(
+        `registry add: failed to vendor canonical files: ${(err as Error).message}`,
+      );
+      return 1;
+    }
+
+    try {
+      writeOverlayAtomic(overlayPath, overlay);
+    } catch (err) {
+      rmSync(vendoredDir, { recursive: true, force: true });
+      logError(`registry add: failed to write overlay: ${(err as Error).message}`);
+      return 1;
+    }
+
+    const originsPath = opts.originsPath ?? registryOriginsPath();
+    try {
+      const origins = readOrigins(originsPath);
+      const origin: GithubOrigin = {
+        type: "github",
+        repo: `${spec.owner}/${spec.repo}`,
+        ref: spec.ref,
+        sha: fetched.sha,
+        hash,
+      };
+      if (spec.subdir !== undefined) {
+        origin.subdir = spec.subdir;
+      }
+      origins[name] = origin;
+      writeOriginsAtomic(originsPath, origins);
+    } catch (err) {
+      logError(`registry add: failed to record origin: ${(err as Error).message}`);
+      return 1;
+    }
+
+    info(
+      `Registered personal agent '${name}' (vendored ${selected.files.length} ` +
+        `file(s) from github:${spec.owner}/${spec.repo}@${spec.ref} into ${vendoredDir}) in ${overlayPath}`,
+    );
+    return 0;
+  } finally {
+    fetched.cleanup();
+  }
+}
+
 function runList(overlayPath: string): number {
   let overlay: Overlay;
   try {
@@ -804,18 +1042,50 @@ function runRemove(opts: RegistryOptions, overlayPath: string): number {
 }
 
 /**
- * Re-vendor a single overlay entry from its recorded path-origin. Returns a
- * status: `changed` (hash differs), `unchanged` (hash stable), `skipped`
- * (non-path origin — FR-148 forward-compat), or an `error:` string.
+ * The outcome of re-vendoring one entry. `changed`/`unchanged`/`skipped`
+ * mirror FR-142; `origin` (when present) is the FULL updated origin to persist
+ * (github advances ref/sha/hash; path advances hash only). `note` carries a
+ * human-readable delta line for the report.
  */
-function reVendorEntry(
+type ReVendorResult =
+  | {
+      status: "changed" | "unchanged" | "skipped";
+      origin?: Origin;
+      note?: string;
+    }
+  | string;
+
+/**
+ * Re-vendor a single overlay entry from its recorded origin. Dispatches on
+ * `origin.type`:
+ *   - `path`   → re-resolve from the recorded source dir, hash-compare.
+ *   - `github` → release-check; re-fetch + re-vendor when a newer release tag
+ *                is found, advancing ref/sha/hash.
+ *   - other / malformed github → graceful skip (FR-148 forward-compat).
+ */
+async function reVendorEntry(
   entry: AgentEntry,
   origin: Origin,
   vendoredDir: string,
-): { status: "changed" | "unchanged" | "skipped"; hash?: string } | string {
-  if (origin.type !== "path") {
-    return { status: "skipped" };
+  fetchRepo: FetchRepoFn,
+  listReleases: ListReleasesFn,
+): Promise<ReVendorResult> {
+  if (origin.type === "path") {
+    return reVendorPath(entry, origin, vendoredDir);
   }
+  if (origin.type === "github") {
+    return reVendorGithub(entry, origin, vendoredDir, fetchRepo, listReleases);
+  }
+  // Unknown origin type → defensive forward-compat skip.
+  return { status: "skipped" };
+}
+
+/** FR-142 path re-vendor: hash-compare against the recorded origin. */
+function reVendorPath(
+  entry: AgentEntry,
+  origin: PathOrigin,
+  vendoredDir: string,
+): ReVendorResult {
   // Re-resolve the source file set from the recorded origin dir + the entry's
   // versioned/glob/file. A versioned glob may now match a DIFFERENT set; the
   // vendor replaces the whole dir, so that is handled transparently.
@@ -841,11 +1111,100 @@ function reVendorEntry(
   }
   const newHash = hashSurface(vendoredDir, resolved.files);
   return newHash === origin.hash
-    ? { status: "unchanged", hash: newHash }
-    : { status: "changed", hash: newHash };
+    ? { status: "unchanged", origin: { ...origin, hash: newHash } }
+    : { status: "changed", origin: { ...origin, hash: newHash } };
 }
 
-function runUpdate(opts: RegistryOptions, overlayPath: string): number {
+/**
+ * FR-148 github re-vendor: freshness is RELEASE-TAG comparison (not hash).
+ * Lists releases, picks the newest tag strictly greater than the pinned ref,
+ * and (if found) re-fetches + re-vendors at that tag, advancing ref/sha/hash.
+ * A malformed github origin (missing repo/ref) → graceful skip with a note
+ * (keeps the FR-142 forward-compat fixture green without a rewrite).
+ */
+async function reVendorGithub(
+  entry: AgentEntry,
+  origin: GithubOrigin,
+  vendoredDir: string,
+  fetchRepo: FetchRepoFn,
+  listReleases: ListReleasesFn,
+): Promise<ReVendorResult> {
+  if (
+    typeof origin.repo !== "string" ||
+    origin.repo.length === 0 ||
+    typeof origin.ref !== "string" ||
+    origin.ref.length === 0
+  ) {
+    return { status: "skipped", note: "malformed github origin (missing repo/ref)" };
+  }
+  const slashIdx = origin.repo.indexOf("/");
+  if (slashIdx < 0) {
+    return { status: "skipped", note: "malformed github origin (repo not owner/repo)" };
+  }
+  const owner = origin.repo.slice(0, slashIdx);
+  const repo = origin.repo.slice(slashIdx + 1);
+
+  let tags: string[];
+  try {
+    tags = await listReleases(owner, repo);
+  } catch (err) {
+    return `error: failed to list releases: ${(err as Error).message}`;
+  }
+  if (tags.length === 0) {
+    return { status: "unchanged", note: "no releases found (pinned ref unchanged)" };
+  }
+  const newer = pickNewerReleaseTag(origin.ref, tags);
+  if (newer === null) {
+    return { status: "unchanged", note: `up to date (pinned ${origin.ref})` };
+  }
+
+  // A newer release exists → re-fetch at the new tag + re-vendor.
+  const spec: GithubSpec = origin.subdir !== undefined
+    ? { owner, repo, ref: newer.tag, subdir: origin.subdir }
+    : { owner, repo, ref: newer.tag };
+
+  let fetched: FetchedRepo;
+  try {
+    fetched = await fetchRepo(spec);
+  } catch (err) {
+    return `error: failed to re-fetch ${origin.repo}@${newer.tag}: ${(err as Error).message}`;
+  }
+  try {
+    const manifest = readRepoManifest(fetched.dir);
+    if (typeof manifest === "string") {
+      return `error: ${manifest}`;
+    }
+    const selected = selectSurface(manifest, entry.name, fetched.dir, origin.subdir);
+    if (typeof selected === "string") {
+      return `error: ${selected}`;
+    }
+    try {
+      vendorSurfaceAtomic(selected.srcDir, selected.files, vendoredDir);
+    } catch (err) {
+      return `error: failed to re-vendor: ${(err as Error).message}`;
+    }
+    const newHash = hashFileSet(vendoredDir, selected.files);
+    const updated: GithubOrigin = {
+      ...origin,
+      ref: newer.tag,
+      sha: fetched.sha,
+      hash: newHash,
+    };
+    const modeNote = newer.mode === "non-semver-pin" ? " [non-semver pin]" : "";
+    return {
+      status: "changed",
+      origin: updated,
+      note: `${origin.ref} -> ${newer.tag}${modeNote} (sha ${fetched.sha.slice(0, 7)})`,
+    };
+  } finally {
+    fetched.cleanup();
+  }
+}
+
+async function runUpdate(
+  opts: RegistryOptions,
+  overlayPath: string,
+): Promise<number> {
   const hasName = opts.name !== undefined && opts.name.length > 0;
   const hasAll = opts.all === true;
   if (hasName === hasAll) {
@@ -869,8 +1228,10 @@ function runUpdate(opts: RegistryOptions, overlayPath: string): number {
     return 1;
   }
   const vendorDirFor = opts.vendorDir ?? registrySurfaceDirPath;
+  const fetchRepo = opts.fetchRepo ?? fetchRepoDefault;
+  const listReleases = opts.listReleases ?? listReleasesDefault;
 
-  // Build the work set: one named entry, or every path-origin entry under --all.
+  // Build the work set: one named entry, or every recorded-origin entry under --all.
   let work: AgentEntry[];
   if (hasName) {
     const found = overlay.agents.find((a) => a.name === opts.name);
@@ -888,7 +1249,7 @@ function runUpdate(opts: RegistryOptions, overlayPath: string): number {
   } else {
     work = overlay.agents.filter((a) => a.name in origins);
     if (work.length === 0) {
-      info("No path-origin entries to update.");
+      info("No origin-backed entries to update.");
       return 0;
     }
   }
@@ -897,22 +1258,31 @@ function runUpdate(opts: RegistryOptions, overlayPath: string): number {
   let hadError = false;
   for (const entry of work) {
     const origin = origins[entry.name];
-    const result = reVendorEntry(entry, origin, vendorDirFor(entry.name));
+    const result = await reVendorEntry(
+      entry,
+      origin,
+      vendorDirFor(entry.name),
+      fetchRepo,
+      listReleases,
+    );
     if (typeof result === "string") {
       logError(`registry update: ${entry.name}: ${result.replace(/^error: /, "")}`);
       hadError = true;
       continue;
     }
+    const noteSuffix = result.note !== undefined ? ` (${result.note})` : "";
     if (result.status === "skipped") {
-      info(`  ${entry.name}: skipped (non-path origin '${origin.type}')`);
+      info(`  ${entry.name}: skipped${noteSuffix || ` (origin '${origin.type}')`}`);
       continue;
     }
     if (result.status === "changed") {
-      origins[entry.name] = { ...origin, hash: result.hash! };
+      if (result.origin !== undefined) {
+        origins[entry.name] = result.origin;
+      }
       originsChanged = true;
-      info(`  ${entry.name}: changed`);
+      info(`  ${entry.name}: changed${noteSuffix}`);
     } else {
-      info(`  ${entry.name}: unchanged`);
+      info(`  ${entry.name}: unchanged${noteSuffix}`);
     }
   }
 

@@ -336,11 +336,15 @@ async function main(argv: string[]): Promise<void> {
   program
     .command("registry <action>")
     .description(
-      "Register Layer-2 personal agent customizations into the overlay (FR-141/FR-142). " +
-        "Actions: add (copy-vendors the canonical files), list, remove, update (re-vendors from origin).",
+      "Register Layer-2 personal agent customizations into the overlay (FR-141/FR-142/FR-148). " +
+        "Actions: add (copy-vendors the canonical files), list, remove, update (re-vendors from origin). " +
+        "--from accepts a local path OR github:owner/repo@<ref>[#subdir].",
     )
     .argument("[name]", "agent name (add/remove/update)")
-    .option("--from <path>", "source dir-or-file to copy the canonical from")
+    .option(
+      "--from <path-or-github>",
+      "source: local dir-or-file, or github:owner/repo@<ref>[#subdir]",
+    )
     .option("--canonical <dir-or-file>", "(deprecated alias for --from)")
     .option("--versioned", "canonical is versioned (requires --glob)", false)
     .option("--glob <g>", "filename glob (versioned only)")
