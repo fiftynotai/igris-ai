@@ -221,13 +221,17 @@ for agent in manifest.get("agents", []):
     # adjacent tabs (tab is whitespace), so an empty column would shift all
     # later columns. A literal `-` keeps every column positionally stable.
     body_exc = agent.get("body_exception", "") or "-"
+    # FR-144: propagate `layer` as the last column so body-exception sidecar
+    # resolution can be keyed on it (core -> in-repo, personal -> registry).
+    # Defaults to non-empty "core", so no `-` sentinel / tab-collapse risk.
+    layer = agent.get("layer", "") or "core"
     for target in agent.get("targets", []):
         ttype = target["type"]
         if target_kind != "all" and ttype != target_kind:
             continue
         row = "\t".join([
             name, versioned, canon_dir, canon_ref, body_exc,
-            ttype, target["path"],
+            ttype, target["path"], layer,
         ])
         print(row)
 PY
@@ -244,7 +248,7 @@ FAIL=0
 SUMMARY=()
 
 if [ -n "$WORK_ROWS" ]; then
-while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target_path; do
+while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target_path layer; do
   [ -z "$name" ] && continue
   TOTAL=$((TOTAL + 1))
 
@@ -278,9 +282,20 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
   target_abs="$PROJECT_ROOT/$target_path"
 
   # Resolve an optional body-exception sidecar. `-` is the empty sentinel.
+  # FR-144: resolution is LAYER-KEYED (not fallback). A `layer:"personal"`
+  # agent's sidecar lives in the runtime registry (Layer-2,
+  # <brain>/registry/body-exceptions/, honoring IGRIS_BRAIN_DIR); a core
+  # agent's sidecar lives in-repo alongside the adapter (Layer-1, unchanged).
+  # Keying on layer (rather than try-registry-then-repo) keeps provenance
+  # one-directional: a re-introduced repo sidecar can never serve a personal
+  # agent — closing the L-498 leak this brief addresses.
   exc_abs=""
   if [ -n "$body_exc" ] && [ "$body_exc" != "-" ]; then
-    exc_abs="$ADAPTER_DIR/body-exceptions/$body_exc.json"
+    if [ "$layer" = "personal" ]; then
+      exc_abs="$BRAIN_DIR/registry/body-exceptions/$body_exc.json"
+    else
+      exc_abs="$ADAPTER_DIR/body-exceptions/$body_exc.json"
+    fi
     if [ ! -f "$exc_abs" ]; then
       SUMMARY+=("FAIL  $name/$ttype — body-exception sidecar missing: $exc_abs")
       FAIL=$((FAIL + 1))

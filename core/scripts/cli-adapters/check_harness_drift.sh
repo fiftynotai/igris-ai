@@ -258,10 +258,14 @@ for agent in manifest.get("agents", []):
     canon_dir = canon["dir"]
     canon_ref = canon.get("glob", "") if canon.get("versioned") else canon.get("file", "")
     body_exc = agent.get("body_exception", "") or "-"
+    # FR-144: propagate `layer` as the last column so body-exception sidecar
+    # resolution can be keyed on it (core -> in-repo, personal -> registry).
+    # Defaults to non-empty "core", so no `-` sentinel / tab-collapse risk.
+    layer = agent.get("layer", "") or "core"
     for target in agent.get("targets", []):
         print("\t".join([
             name, versioned, canon_dir, canon_ref, body_exc,
-            target["type"], target["path"],
+            target["type"], target["path"], layer,
         ]))
 PY
 )
@@ -278,7 +282,7 @@ echo "Harness drift check (project root: $PROJECT_ROOT):"
 echo ""
 
 if [ -n "$WORK_ROWS" ]; then
-while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target_path; do
+while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target_path layer; do
   [ -z "$name" ] && continue
   TOTAL=$((TOTAL + 1))
 
@@ -310,9 +314,20 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
   fi
 
   # Resolve the body-exception sidecar.
+  # FR-144: resolution is LAYER-KEYED (not fallback). A `layer:"personal"`
+  # agent's sidecar lives in the runtime registry (Layer-2,
+  # <brain>/registry/body-exceptions/, honoring IGRIS_BRAIN_DIR); a core
+  # agent's sidecar lives in-repo alongside the adapter (Layer-1, unchanged).
+  # Keying on layer (rather than try-registry-then-repo) keeps provenance
+  # one-directional: a re-introduced repo sidecar can never serve a personal
+  # agent — closing the L-498 leak this brief addresses.
   exc_abs=""
   if [ -n "$body_exc" ] && [ "$body_exc" != "-" ]; then
-    exc_abs="$ADAPTER_DIR/body-exceptions/$body_exc.json"
+    if [ "$layer" = "personal" ]; then
+      exc_abs="$BRAIN_DIR/registry/body-exceptions/$body_exc.json"
+    else
+      exc_abs="$ADAPTER_DIR/body-exceptions/$body_exc.json"
+    fi
     if [ ! -f "$exc_abs" ]; then
       echo "  [$name/$ttype] MISSING — body-exception sidecar absent: $exc_abs"
       DRIFT=$((DRIFT + 1))
