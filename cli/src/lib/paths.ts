@@ -49,6 +49,28 @@ export function rulesFilePath(): string {
   return join(brainDir(), "core", "rules", "00-igris-universal.md");
 }
 
+/**
+ * Absolute path to the Layer-2 customization registry dir: `~/.igris/registry/`.
+ *
+ * Honors IGRIS_BRAIN_DIR (so tests sandbox it via the same env seam the bash
+ * adapters use). The FR-136 compile/check adapters resolve the personal
+ * overlay under this exact dir (`compile_harnesses.sh` sets
+ * `DEFAULT_OVERLAY="$BRAIN_DIR/registry/harness-manifest.personal.json"`), so a
+ * sandboxed brain dir makes the FR-141 verb and the adapters agree automatically.
+ */
+export function registryDirPath(): string {
+  return join(brainDir(), "registry");
+}
+
+/**
+ * Absolute path to the Layer-2 personal overlay manifest written by
+ * `igris registry add|remove`: `~/.igris/registry/harness-manifest.personal.json`.
+ * Byte-identical to the adapter's auto-discovered `DEFAULT_OVERLAY`.
+ */
+export function registryOverlayPath(): string {
+  return join(registryDirPath(), "harness-manifest.personal.json");
+}
+
 /** Absolute path to a project's .claude/settings.json. */
 export function projectSettingsPath(projectPath: string): string {
   return join(projectPath, ".claude", "settings.json");

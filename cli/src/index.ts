@@ -34,7 +34,13 @@ import { runRefresh } from "./verbs/refresh.js";
 import { runRegisterProject } from "./verbs/register-project.js";
 import { runSync, type SyncSubVerb } from "./verbs/sync.js";
 import { runHarness, type HarnessAction } from "./verbs/harness.js";
+import { runRegistry, type RegistryAction } from "./verbs/registry.js";
 import { setVerbosity, error as logError } from "./lib/log.js";
+
+/** Commander reducer for a repeatable option: accumulate into an array. */
+function collect(value: string, previous: string[]): string[] {
+  return previous.concat([value]);
+}
 
 function readPackageVersion(): string {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -322,6 +328,53 @@ async function main(argv: string[]): Promise<void> {
           overlay: opts.overlay,
           target: opts.target,
           filter: opts.filter,
+        });
+        process.exitCode = code;
+      },
+    );
+
+  program
+    .command("registry <action>")
+    .description(
+      "Register Layer-2 personal agent customizations into the overlay (FR-141). Actions: add, list, remove.",
+    )
+    .argument("[name]", "agent name (add/remove)")
+    .option("--canonical <dir-or-file>", "canonical prompt dir or file")
+    .option("--versioned", "canonical is versioned (requires --glob)", false)
+    .option("--glob <g>", "filename glob (versioned only)")
+    .option(
+      "--target <type:path>",
+      "output target type:path (repeatable)",
+      collect,
+      [],
+    )
+    .option("--body-exception <basename>", "body-exception sidecar basename")
+    .option(
+      "--project-root <dir>",
+      "root for base-manifest collision check (default: cwd)",
+    )
+    .action(
+      async (
+        action: string,
+        name: string | undefined,
+        opts: {
+          canonical?: string;
+          versioned?: boolean;
+          glob?: string;
+          target?: string[];
+          bodyException?: string;
+          projectRoot?: string;
+        },
+      ): Promise<void> => {
+        const code = await runRegistry({
+          action: action as RegistryAction,
+          name,
+          canonical: opts.canonical,
+          versioned: opts.versioned === true,
+          glob: opts.glob,
+          targets: opts.target,
+          bodyException: opts.bodyException,
+          projectRoot: opts.projectRoot,
         });
         process.exitCode = code;
       },
