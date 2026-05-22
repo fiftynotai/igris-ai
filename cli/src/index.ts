@@ -35,7 +35,7 @@ import { runRegisterProject } from "./verbs/register-project.js";
 import { runSync, type SyncSubVerb } from "./verbs/sync.js";
 import { runHarness, type HarnessAction } from "./verbs/harness.js";
 import { runRegistry, type RegistryAction } from "./verbs/registry.js";
-import { setVerbosity, error as logError } from "./lib/log.js";
+import { setVerbosity, info, error as logError } from "./lib/log.js";
 
 /** Commander reducer for a repeatable option: accumulate into an array. */
 function collect(value: string, previous: string[]): string[] {
@@ -336,10 +336,12 @@ async function main(argv: string[]): Promise<void> {
   program
     .command("registry <action>")
     .description(
-      "Register Layer-2 personal agent customizations into the overlay (FR-141). Actions: add, list, remove.",
+      "Register Layer-2 personal agent customizations into the overlay (FR-141/FR-142). " +
+        "Actions: add (copy-vendors the canonical files), list, remove, update (re-vendors from origin).",
     )
-    .argument("[name]", "agent name (add/remove)")
-    .option("--canonical <dir-or-file>", "canonical prompt dir or file")
+    .argument("[name]", "agent name (add/remove/update)")
+    .option("--from <path>", "source dir-or-file to copy the canonical from")
+    .option("--canonical <dir-or-file>", "(deprecated alias for --from)")
     .option("--versioned", "canonical is versioned (requires --glob)", false)
     .option("--glob <g>", "filename glob (versioned only)")
     .option(
@@ -349,31 +351,41 @@ async function main(argv: string[]): Promise<void> {
       [],
     )
     .option("--body-exception <basename>", "body-exception sidecar basename")
+    .option("--all", "update every path-origin entry (update only)", false)
     .option(
       "--project-root <dir>",
-      "root for base-manifest collision check (default: cwd)",
+      "root for base-manifest collision check + relative --from (default: cwd)",
     )
     .action(
       async (
         action: string,
         name: string | undefined,
         opts: {
+          from?: string;
           canonical?: string;
           versioned?: boolean;
           glob?: string;
           target?: string[];
           bodyException?: string;
+          all?: boolean;
           projectRoot?: string;
         },
       ): Promise<void> => {
+        // Coalesce the deprecated --canonical alias into --from; emit a one-line
+        // deprecation notice if the alias is used (FR-141 shipped --canonical
+        // days ago — keep it working, but steer toward --from).
+        if (opts.canonical !== undefined && opts.from === undefined) {
+          info("registry: --canonical is deprecated; use --from <path> instead.");
+        }
         const code = await runRegistry({
           action: action as RegistryAction,
           name,
-          canonical: opts.canonical,
+          from: opts.from ?? opts.canonical,
           versioned: opts.versioned === true,
           glob: opts.glob,
           targets: opts.target,
           bodyException: opts.bodyException,
+          all: opts.all === true,
           projectRoot: opts.projectRoot,
         });
         process.exitCode = code;

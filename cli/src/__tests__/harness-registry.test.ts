@@ -1,16 +1,22 @@
 /**
- * FR-141 registry-verb tests — `igris registry add|list|remove`.
+ * FR-141/FR-142 registry-verb tests — `igris registry add|list|remove|update`.
  *
  * NOTE on the filename: this is `harness-registry.test.ts`, NOT
  * `registry.test.ts`. The latter is taken by the UNRELATED project-registry
  * SQLite module (`lib/registry.ts`). This file tests the harness-overlay verb
  * at `verbs/registry.ts`.
  *
+ * FR-142 COPY-VENDOR MODE: `add` no longer references a live external path; it
+ * COPIES the canonical files into a vendored dir and points `canonical.dir` at
+ * that copy, recording a typed origin in `origins.json`. `update` re-vendors.
+ * The tests therefore stage a REAL source file on disk for every add, assert the
+ * vendored copy + the origins entry, and exercise the new `update` action.
+ *
  * Boundary-mocking discipline (L-159 / L-173): we NEVER `vi.mock` the module
- * under test. Unit tests use the explicit `opts.overlayPath` seam over a real
- * tmp dir; the integration test uses the `IGRIS_BRAIN_DIR` env sandbox (the
- * seam the REAL bash adapter reads) and runs the actual `compile_harnesses.sh`
- * / `validate_manifest` — no mocked merge.
+ * under test. Unit tests use the explicit `opts.overlayPath` / `opts.originsPath`
+ * / `opts.vendorDir` seams over a real tmp dir; the integration test uses the
+ * `IGRIS_BRAIN_DIR` env sandbox (the seam the REAL bash adapter reads) and runs
+ * the actual `compile_harnesses.sh` / `validate_manifest` — no mocked merge.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -42,13 +48,25 @@ const SCHEMA = join(ADAPTER_DIR, "manifest.schema.json");
 
 let tmpRoot: string;
 let overlayPath: string;
+let originsPath: string;
 let projectRoot: string;
+let vendorBase: string;
+
+/** Test-seam vendor-dir resolver: `<vendorBase>/<name>`. */
+function vendorDir(name: string): string {
+  return join(vendorBase, name);
+}
 
 beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "igris-cli-harness-registry-"));
   overlayPath = join(tmpRoot, "overlay.json");
+  originsPath = join(tmpRoot, "origins.json");
+  vendorBase = join(tmpRoot, "registry");
   projectRoot = join(tmpRoot, "proj");
   mkdirSync(projectRoot, { recursive: true });
+  // Most add tests need a real unversioned source file at canon/x.md.
+  mkdirSync(join(projectRoot, "canon"), { recursive: true });
+  writeFileSync(join(projectRoot, "canon", "x.md"), "# x\nbody\n");
 });
 
 afterEach(() => {
@@ -62,20 +80,38 @@ function readOverlayFile(): Record<string, unknown> {
   >;
 }
 
+function readOriginsFile(): Record<string, { type: string; dir: string; hash: string }> {
+  return JSON.parse(readFileSync(originsPath, "utf-8")) as Record<
+    string,
+    { type: string; dir: string; hash: string }
+  >;
+}
+
+/** A complete copy-mode add with the common test seams wired. */
+function addOpts(extra: Record<string, unknown>): Parameters<typeof runRegistry>[0] {
+  return {
+    action: "add",
+    projectRoot,
+    overlayPath,
+    originsPath,
+    vendorDir,
+    ...extra,
+  } as Parameters<typeof runRegistry>[0];
+}
+
 // ---------------------------------------------------------------------------
-// add
+// add (copy-vendor)
 // ---------------------------------------------------------------------------
 
 describe("registry add", () => {
-  it("creates a valid overlay on an absent file, layer=personal", async () => {
-    const code = await runRegistry({
-      action: "add",
-      name: "mycustom",
-      canonical: "canon/x.md",
-      targets: ["claude:.claude/agents/mycustom.md"],
-      projectRoot,
-      overlayPath,
-    });
+  it("copies the canonical into the vendored dir + records origin (layer=personal)", async () => {
+    const code = await runRegistry(
+      addOpts({
+        name: "mycustom",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/mycustom.md"],
+      }),
+    );
     expect(code).toBe(0);
     expect(existsSync(overlayPath)).toBe(true);
     const overlay = readOverlayFile() as {
@@ -86,88 +122,109 @@ describe("registry add", () => {
     expect(overlay.agents).toHaveLength(1);
     expect(overlay.agents[0].name).toBe("mycustom");
     expect(overlay.agents[0].layer).toBe("personal");
-    expect(overlay.agents[0].canonical).toEqual({
-      dir: "canon",
-      versioned: false,
-      file: "x.md",
-    });
+    // canonical.dir points at the VENDORED copy (absolute), file preserved.
+    expect(overlay.agents[0].canonical.dir).toBe(vendorDir("mycustom"));
+    expect(overlay.agents[0].canonical.versioned).toBe(false);
+    expect(overlay.agents[0].canonical.file).toBe("x.md");
     expect(validateOverlayShape(overlay)).toBeNull();
+
+    // The vendored copy exists + is byte-equal to the source.
+    const vendored = join(vendorDir("mycustom"), "x.md");
+    expect(existsSync(vendored)).toBe(true);
+    expect(readFileSync(vendored, "utf-8")).toBe(
+      readFileSync(join(projectRoot, "canon", "x.md"), "utf-8"),
+    );
+
+    // origins.json records a typed path origin pointing at the SOURCE dir.
+    const origins = readOriginsFile();
+    expect(origins.mycustom.type).toBe("path");
+    expect(origins.mycustom.dir).toBe(join(projectRoot, "canon"));
+    expect(origins.mycustom.hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("--versioned --glob produces a versioned canonical (no file)", async () => {
-    const code = await runRegistry({
-      action: "add",
-      name: "vagent",
-      canonical: "canon",
-      versioned: true,
-      glob: "v*.md",
-      targets: ["codex:.codex/agents/vagent.toml"],
-      projectRoot,
-      overlayPath,
-    });
+  it("--versioned --glob vendors the matching file set (no file in canonical)", async () => {
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(join(projectRoot, "vcanon", "v1.md"), "one\n");
+    writeFileSync(join(projectRoot, "vcanon", "v2.md"), "two\n");
+    writeFileSync(join(projectRoot, "vcanon", "skip.txt"), "nope\n");
+    const code = await runRegistry(
+      addOpts({
+        name: "vagent",
+        from: "vcanon",
+        versioned: true,
+        glob: "v*.md",
+        targets: ["codex:.codex/agents/vagent.toml"],
+      }),
+    );
     expect(code).toBe(0);
     const overlay = readOverlayFile() as {
       agents: { canonical: Record<string, unknown> }[];
     };
-    expect(overlay.agents[0].canonical).toEqual({
-      dir: "canon",
-      versioned: true,
-      glob: "v*.md",
-    });
+    expect(overlay.agents[0].canonical.dir).toBe(vendorDir("vagent"));
+    expect(overlay.agents[0].canonical.versioned).toBe(true);
+    expect(overlay.agents[0].canonical.glob).toBe("v*.md");
     expect("file" in overlay.agents[0].canonical).toBe(false);
+    // Only the glob-matching files vendored.
+    expect(existsSync(join(vendorDir("vagent"), "v1.md"))).toBe(true);
+    expect(existsSync(join(vendorDir("vagent"), "v2.md"))).toBe(true);
+    expect(existsSync(join(vendorDir("vagent"), "skip.txt"))).toBe(false);
   });
 
-  it("--versioned without --glob is a usage error (exit 2)", async () => {
-    const code = await runRegistry({
-      action: "add",
-      name: "vagent",
-      canonical: "canon",
-      versioned: true,
-      targets: ["codex:.codex/agents/vagent.toml"],
-      projectRoot,
-      overlayPath,
-    });
+  it("--versioned without --glob is a usage error (exit 2), no vendor dir", async () => {
+    const code = await runRegistry(
+      addOpts({
+        name: "vagent",
+        from: "vcanon",
+        versioned: true,
+        targets: ["codex:.codex/agents/vagent.toml"],
+      }),
+    );
     expect(code).toBe(2);
     expect(existsSync(overlayPath)).toBe(false);
+    expect(existsSync(vendorDir("vagent"))).toBe(false);
   });
 
-  it("--glob without --versioned is a usage error (exit 2)", async () => {
-    const code = await runRegistry({
-      action: "add",
-      name: "agent",
-      canonical: "canon/x.md",
-      glob: "v*.md",
-      targets: ["claude:.claude/agents/agent.md"],
-      projectRoot,
-      overlayPath,
-    });
+  it("--glob without --versioned is a usage error (exit 2), no vendor dir", async () => {
+    const code = await runRegistry(
+      addOpts({
+        name: "agent",
+        from: "canon/x.md",
+        glob: "v*.md",
+        targets: ["claude:.claude/agents/agent.md"],
+      }),
+    );
     expect(code).toBe(2);
+    expect(existsSync(vendorDir("agent"))).toBe(false);
   });
 
   it("rejects a second add with an existing overlay name (intra-overlay dedupe)", async () => {
-    await runRegistry({
-      action: "add",
-      name: "dup",
-      canonical: "canon/x.md",
-      targets: ["claude:.claude/agents/dup.md"],
-      projectRoot,
-      overlayPath,
-    });
+    await runRegistry(
+      addOpts({
+        name: "dup",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/dup.md"],
+      }),
+    );
     const before = readFileSync(overlayPath, "utf-8");
-    const code = await runRegistry({
-      action: "add",
-      name: "dup",
-      canonical: "canon/y.md",
-      targets: ["claude:.claude/agents/dup2.md"],
-      projectRoot,
-      overlayPath,
-    });
+    const originsBefore = readFileSync(originsPath, "utf-8");
+    writeFileSync(join(projectRoot, "canon", "y.md"), "# y\nother\n");
+    const code = await runRegistry(
+      addOpts({
+        name: "dup",
+        from: "canon/y.md",
+        targets: ["claude:.claude/agents/dup2.md"],
+      }),
+    );
     expect(code).toBe(1);
-    // Overlay byte-unchanged.
+    // Overlay + origins byte-unchanged; the first vendor not corrupted.
     expect(readFileSync(overlayPath, "utf-8")).toBe(before);
+    expect(readFileSync(originsPath, "utf-8")).toBe(originsBefore);
+    // The first vendored copy is intact (still x.md, not overwritten by y.md).
+    expect(existsSync(join(vendorDir("dup"), "x.md"))).toBe(true);
+    expect(existsSync(join(vendorDir("dup"), "y.md"))).toBe(false);
   });
 
-  it("rejects a name colliding with a base (core) agent", async () => {
+  it("rejects a name colliding with a base (core) agent, no vendor/origin", async () => {
     writeFileSync(
       join(projectRoot, "harness-manifest.json"),
       JSON.stringify({
@@ -181,60 +238,76 @@ describe("registry add", () => {
         ],
       }),
     );
-    const code = await runRegistry({
-      action: "add",
-      name: "forger",
-      canonical: "canon/forger.md",
-      targets: ["claude:.claude/agents/forger.md"],
-      projectRoot,
-      overlayPath,
-    });
+    const code = await runRegistry(
+      addOpts({
+        name: "forger",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/forger.md"],
+      }),
+    );
     expect(code).toBe(1);
     expect(existsSync(overlayPath)).toBe(false);
+    // Collision is rejected BEFORE vendoring → no orphan copy, no origins entry.
+    expect(existsSync(vendorDir("forger"))).toBe(false);
+    expect(existsSync(originsPath)).toBe(false);
   });
 
   it("treats an absent base manifest as no base agents (no hard-fail)", async () => {
-    const code = await runRegistry({
-      action: "add",
-      name: "nobase",
-      canonical: "canon/x.md",
-      targets: ["claude:.claude/agents/nobase.md"],
-      projectRoot, // no harness-manifest.json written
-      overlayPath,
-    });
+    const code = await runRegistry(
+      addOpts({
+        name: "nobase",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/nobase.md"],
+        // no harness-manifest.json written
+      }),
+    );
     expect(code).toBe(0);
   });
 
-  it("requires <name>, --canonical, and --target (usage errors)", async () => {
+  it("fails (exit 1) when the source file does not exist (nothing to copy)", async () => {
+    const code = await runRegistry(
+      addOpts({
+        name: "ghostsrc",
+        from: "canon/missing.md",
+        targets: ["claude:.claude/agents/ghostsrc.md"],
+      }),
+    );
+    expect(code).toBe(1);
+    expect(existsSync(overlayPath)).toBe(false);
+    expect(existsSync(vendorDir("ghostsrc"))).toBe(false);
+  });
+
+  it("requires <name>, --from, and --target (usage errors)", async () => {
     expect(
-      await runRegistry({ action: "add", canonical: "c/x.md", targets: ["claude:p"], overlayPath }),
+      await runRegistry(
+        addOpts({ from: "canon/x.md", targets: ["claude:p"] }),
+      ),
     ).toBe(2);
     expect(
-      await runRegistry({ action: "add", name: "x", targets: ["claude:p"], overlayPath }),
+      await runRegistry(addOpts({ name: "x", targets: ["claude:p"] })),
     ).toBe(2);
     expect(
-      await runRegistry({ action: "add", name: "x", canonical: "c/x.md", overlayPath }),
+      await runRegistry(addOpts({ name: "x", from: "canon/x.md" })),
     ).toBe(2);
   });
 });
 
 // ---------------------------------------------------------------------------
-// --target parsing
+// --target parsing (still pure parse — must fail fast BEFORE copy on bad input)
 // ---------------------------------------------------------------------------
 
 describe("registry add — --target parsing", () => {
   it("parses type:path and supports multiple --target", async () => {
-    await runRegistry({
-      action: "add",
-      name: "multi",
-      canonical: "canon/x.md",
-      targets: [
-        "codex:.codex/agents/multi.toml",
-        "gemini:.gemini/agents/multi.toml",
-      ],
-      projectRoot,
-      overlayPath,
-    });
+    await runRegistry(
+      addOpts({
+        name: "multi",
+        from: "canon/x.md",
+        targets: [
+          "codex:.codex/agents/multi.toml",
+          "gemini:.gemini/agents/multi.toml",
+        ],
+      }),
+    );
     const overlay = readOverlayFile() as {
       agents: { targets: { type: string; path: string }[] }[];
     };
@@ -245,14 +318,13 @@ describe("registry add — --target parsing", () => {
   });
 
   it("preserves a path containing ':' (splits on first colon only)", async () => {
-    await runRegistry({
-      action: "add",
-      name: "colon",
-      canonical: "canon/x.md",
-      targets: ["claude:dir/with:colon/agent.md"],
-      projectRoot,
-      overlayPath,
-    });
+    await runRegistry(
+      addOpts({
+        name: "colon",
+        from: "canon/x.md",
+        targets: ["claude:dir/with:colon/agent.md"],
+      }),
+    );
     const overlay = readOverlayFile() as {
       agents: { targets: { type: string; path: string }[] }[];
     };
@@ -262,34 +334,55 @@ describe("registry add — --target parsing", () => {
     });
   });
 
-  it("rejects an unknown target type (exit 2)", async () => {
-    const code = await runRegistry({
-      action: "add",
-      name: "bad",
-      canonical: "canon/x.md",
-      targets: ["opencode:.opencode/bad.md"],
-      projectRoot,
-      overlayPath,
-    });
+  it("rejects an unknown target type (exit 2), no vendor dir", async () => {
+    const code = await runRegistry(
+      addOpts({
+        name: "bad",
+        from: "canon/x.md",
+        targets: ["opencode:.opencode/bad.md"],
+      }),
+    );
     expect(code).toBe(2);
     expect(existsSync(overlayPath)).toBe(false);
+    expect(existsSync(vendorDir("bad"))).toBe(false);
   });
 
-  it("rejects a target with no colon (exit 2)", async () => {
-    const code = await runRegistry({
-      action: "add",
-      name: "bad",
-      canonical: "canon/x.md",
-      targets: ["claude-no-colon"],
-      projectRoot,
-      overlayPath,
-    });
+  it("rejects a target with no colon (exit 2), no vendor dir", async () => {
+    const code = await runRegistry(
+      addOpts({
+        name: "bad",
+        from: "canon/x.md",
+        targets: ["claude-no-colon"],
+      }),
+    );
     expect(code).toBe(2);
+    expect(existsSync(vendorDir("bad"))).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// validators (direct)
+// --canonical deprecated alias
+// ---------------------------------------------------------------------------
+
+describe("registry add — --canonical deprecated alias", () => {
+  it("the verb still accepts the value via the from field (alias coalesced at CLI)", async () => {
+    // The CLI boundary coalesces --canonical into opts.from; the verb itself
+    // takes a single `from` field. Assert from works (the alias path is wired
+    // in index.ts; this asserts the field the alias maps to).
+    const code = await runRegistry(
+      addOpts({
+        name: "aliased",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/aliased.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    expect(existsSync(join(vendorDir("aliased"), "x.md"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validators (direct) — UNCHANGED under option (b): origin is NOT on the entry
 // ---------------------------------------------------------------------------
 
 describe("validateAgentEntry / validateOverlayShape", () => {
@@ -344,10 +437,14 @@ describe("validateAgentEntry / validateOverlayShape", () => {
     ).toMatch(/must not set 'file'/);
   });
 
-  it("rejects a stray agent key", () => {
+  it("rejects a stray agent key (origin must NOT live on the entry)", () => {
     expect(validateAgentEntry({ ...valid, extra: 1 })).toMatch(
       /additionalProperties/,
     );
+    // option (b): a stray `origin` key on the entry is also rejected.
+    expect(
+      validateAgentEntry({ ...valid, origin: { type: "path" } }),
+    ).toMatch(/additionalProperties/);
   });
 
   it("rejects empty targets", () => {
@@ -377,41 +474,49 @@ describe("validateAgentEntry / validateOverlayShape", () => {
 // ---------------------------------------------------------------------------
 
 describe("registry remove", () => {
-  it("removes an entry; removing the last leaves a valid empty overlay", async () => {
-    await runRegistry({
-      action: "add",
-      name: "only",
-      canonical: "canon/x.md",
-      targets: ["claude:.claude/agents/only.md"],
-      projectRoot,
-      overlayPath,
-    });
+  it("removes entry + vendored copy + origin; last leaves a valid empty overlay", async () => {
+    await runRegistry(
+      addOpts({
+        name: "only",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/only.md"],
+      }),
+    );
+    expect(existsSync(vendorDir("only"))).toBe(true);
+    expect("only" in readOriginsFile()).toBe(true);
+
     const code = await runRegistry({
       action: "remove",
       name: "only",
       overlayPath,
+      originsPath,
+      vendorDir,
     });
     expect(code).toBe(0);
     expect(existsSync(overlayPath)).toBe(true);
     const overlay = readOverlayFile() as { version: number; agents: unknown[] };
     expect(overlay.version).toBe(1);
     expect(overlay.agents).toEqual([]);
+    // Cleanup: vendored copy gone, origins entry gone.
+    expect(existsSync(vendorDir("only"))).toBe(false);
+    expect("only" in readOriginsFile()).toBe(false);
   });
 
   it("rejects removing a nonexistent name (exit 1), overlay unchanged", async () => {
-    await runRegistry({
-      action: "add",
-      name: "keep",
-      canonical: "canon/x.md",
-      targets: ["claude:.claude/agents/keep.md"],
-      projectRoot,
-      overlayPath,
-    });
+    await runRegistry(
+      addOpts({
+        name: "keep",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/keep.md"],
+      }),
+    );
     const before = readFileSync(overlayPath, "utf-8");
     const code = await runRegistry({
       action: "remove",
       name: "ghost",
       overlayPath,
+      originsPath,
+      vendorDir,
     });
     expect(code).toBe(1);
     expect(readFileSync(overlayPath, "utf-8")).toBe(before);
@@ -422,15 +527,20 @@ describe("registry remove", () => {
       overlayPath,
       JSON.stringify({ version: 1, agents: [], surfaces: { skills: {} } }),
     );
+    await runRegistry(
+      addOpts({
+        name: "tmp",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/tmp.md"],
+      }),
+    );
     await runRegistry({
-      action: "add",
+      action: "remove",
       name: "tmp",
-      canonical: "canon/x.md",
-      targets: ["claude:.claude/agents/tmp.md"],
-      projectRoot,
       overlayPath,
+      originsPath,
+      vendorDir,
     });
-    await runRegistry({ action: "remove", name: "tmp", overlayPath });
     const overlay = readOverlayFile() as { surfaces?: unknown };
     expect(overlay.surfaces).toEqual({ skills: {} });
   });
@@ -439,14 +549,13 @@ describe("registry remove", () => {
 describe("registry list", () => {
   it("reports empty then populated", async () => {
     expect(await runRegistry({ action: "list", overlayPath })).toBe(0);
-    await runRegistry({
-      action: "add",
-      name: "shown",
-      canonical: "canon/x.md",
-      targets: ["claude:.claude/agents/shown.md"],
-      projectRoot,
-      overlayPath,
-    });
+    await runRegistry(
+      addOpts({
+        name: "shown",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/shown.md"],
+      }),
+    );
     expect(await runRegistry({ action: "list", overlayPath })).toBe(0);
   });
 });
@@ -459,6 +568,199 @@ describe("registry unknown action", () => {
     });
     expect(code).toBe(2);
     expect(existsSync(overlayPath)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// update (re-vendor from recorded origin)
+// ---------------------------------------------------------------------------
+
+describe("registry update", () => {
+  async function seedAdd(name: string, file = "canon/x.md"): Promise<void> {
+    const code = await runRegistry(
+      addOpts({
+        name,
+        from: file,
+        targets: [`claude:.claude/agents/${name}.md`],
+      }),
+    );
+    expect(code).toBe(0);
+  }
+
+  it("reports unchanged when the source is identical (hash stable)", async () => {
+    await seedAdd("u1");
+    const hashBefore = readOriginsFile().u1.hash;
+    const code = await runRegistry({
+      action: "update",
+      name: "u1",
+      overlayPath,
+      originsPath,
+      vendorDir,
+    });
+    expect(code).toBe(0);
+    expect(readOriginsFile().u1.hash).toBe(hashBefore);
+  });
+
+  it("reports changed after the source mutates; re-vendors + updates hash, overlay unchanged", async () => {
+    await seedAdd("u2");
+    const overlayBefore = readFileSync(overlayPath, "utf-8");
+    const hashBefore = readOriginsFile().u2.hash;
+    // Mutate the SOURCE file.
+    writeFileSync(join(projectRoot, "canon", "x.md"), "# x\nMUTATED\n");
+    const code = await runRegistry({
+      action: "update",
+      name: "u2",
+      overlayPath,
+      originsPath,
+      vendorDir,
+    });
+    expect(code).toBe(0);
+    // Vendored copy reflects the new bytes.
+    expect(readFileSync(join(vendorDir("u2"), "x.md"), "utf-8")).toBe(
+      "# x\nMUTATED\n",
+    );
+    // Hash updated, overlay canonical.dir unchanged.
+    expect(readOriginsFile().u2.hash).not.toBe(hashBefore);
+    expect(readFileSync(overlayPath, "utf-8")).toBe(overlayBefore);
+  });
+
+  it("--all updates every path-origin entry (mixed changed/unchanged)", async () => {
+    // Two separate sources so we can mutate one and leave the other.
+    writeFileSync(join(projectRoot, "canon", "a.md"), "alpha\n");
+    writeFileSync(join(projectRoot, "canon", "b.md"), "beta\n");
+    await seedAdd("ua", "canon/a.md");
+    await seedAdd("ub", "canon/b.md");
+    const hashA = readOriginsFile().ua.hash;
+    const hashB = readOriginsFile().ub.hash;
+    // Mutate only a.md.
+    writeFileSync(join(projectRoot, "canon", "a.md"), "alpha-CHANGED\n");
+    const code = await runRegistry({
+      action: "update",
+      all: true,
+      overlayPath,
+      originsPath,
+      vendorDir,
+    });
+    expect(code).toBe(0);
+    expect(readOriginsFile().ua.hash).not.toBe(hashA);
+    expect(readOriginsFile().ub.hash).toBe(hashB);
+  });
+
+  it("exit 1 for an absent agent", async () => {
+    const code = await runRegistry({
+      action: "update",
+      name: "nope",
+      overlayPath,
+      originsPath,
+      vendorDir,
+    });
+    expect(code).toBe(1);
+  });
+
+  it("exit 1 for an agent with no recorded origin", async () => {
+    // Seed an overlay entry directly with no origins entry.
+    writeFileSync(
+      overlayPath,
+      JSON.stringify({
+        version: 1,
+        agents: [
+          {
+            name: "noorigin",
+            layer: "personal",
+            canonical: { dir: vendorDir("noorigin"), versioned: false, file: "x.md" },
+            targets: [{ type: "claude", path: ".claude/agents/noorigin.md" }],
+          },
+        ],
+      }),
+    );
+    writeFileSync(originsPath, JSON.stringify({}));
+    const code = await runRegistry({
+      action: "update",
+      name: "noorigin",
+      overlayPath,
+      originsPath,
+      vendorDir,
+    });
+    expect(code).toBe(1);
+  });
+
+  it("exactly one of <name> or --all is required (exit 2)", async () => {
+    expect(
+      await runRegistry({ action: "update", overlayPath, originsPath, vendorDir }),
+    ).toBe(2);
+    expect(
+      await runRegistry({
+        action: "update",
+        name: "x",
+        all: true,
+        overlayPath,
+        originsPath,
+        vendorDir,
+      }),
+    ).toBe(2);
+  });
+
+  it("--all skips a non-path origin gracefully (forward-compat for FR-148)", async () => {
+    await seedAdd("pathone");
+    // Seed a fake github-origin entry whose agent also exists in the overlay.
+    const overlay = readOverlayFile() as {
+      version: number;
+      agents: Record<string, unknown>[];
+    };
+    overlay.agents.push({
+      name: "ghorigin",
+      layer: "personal",
+      canonical: { dir: vendorDir("ghorigin"), versioned: false, file: "x.md" },
+      targets: [{ type: "claude", path: ".claude/agents/ghorigin.md" }],
+    });
+    writeFileSync(overlayPath, JSON.stringify(overlay));
+    const origins = readOriginsFile();
+    origins.ghorigin = { type: "github", dir: "owner/repo@main", hash: "deadbeef" };
+    writeFileSync(originsPath, JSON.stringify(origins));
+
+    const code = await runRegistry({
+      action: "update",
+      all: true,
+      overlayPath,
+      originsPath,
+      vendorDir,
+    });
+    // Non-path origin is skipped (reported), not errored.
+    expect(code).toBe(0);
+    // The github origin is untouched.
+    expect(readOriginsFile().ghorigin.hash).toBe("deadbeef");
+  });
+
+  it("re-vendors a versioned surface whose glob now matches a DIFFERENT file set", async () => {
+    mkdirSync(join(projectRoot, "vsrc"), { recursive: true });
+    writeFileSync(join(projectRoot, "vsrc", "v1.md"), "one\n");
+    await runRegistry(
+      addOpts({
+        name: "vupd",
+        from: "vsrc",
+        versioned: true,
+        glob: "v*.md",
+        targets: ["codex:.codex/agents/vupd.toml"],
+      }),
+    );
+    const hashBefore = readOriginsFile().vupd.hash;
+    expect(existsSync(join(vendorDir("vupd"), "v1.md"))).toBe(true);
+    expect(existsSync(join(vendorDir("vupd"), "v2.md"))).toBe(false);
+
+    // Add a second matching file at the source.
+    writeFileSync(join(projectRoot, "vsrc", "v2.md"), "two\n");
+    const code = await runRegistry({
+      action: "update",
+      name: "vupd",
+      overlayPath,
+      originsPath,
+      vendorDir,
+    });
+    expect(code).toBe(0);
+    // The vendored dir is fully replaced — now carries both files.
+    expect(existsSync(join(vendorDir("vupd"), "v1.md"))).toBe(true);
+    expect(existsSync(join(vendorDir("vupd"), "v2.md"))).toBe(true);
+    expect(readOriginsFile().vupd.hash).not.toBe(hashBefore);
   });
 });
 
@@ -519,14 +821,16 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
     }
   });
 
-  it("TS-written overlay is auto-discovered + produces the target, and passes validate_manifest", async () => {
+  it("copy-mode overlay is auto-discovered + the REAL compiler resolves the vendored canonical, and validate_manifest passes", async () => {
     if (!toolingAvailable()) {
       // Graceful skip on a minimal box (no bash/python3 or no adapters).
       return;
     }
 
     // Write the overlay via the REAL verb into the sandboxed brain registry,
-    // using the same path the adapter auto-discovers (no --overlay flag).
+    // using the same paths the adapter auto-discovers (no test seams here:
+    // exercise registryOverlayPath()/registrySurfaceDirPath()/registryOriginsPath()
+    // via IGRIS_BRAIN_DIR so the verb + adapter agree automatically).
     process.env.IGRIS_BRAIN_DIR = brainDir;
     const writtenOverlay = join(
       brainDir,
@@ -536,16 +840,18 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
     const addCode = await runRegistry({
       action: "add",
       name: "mycustom",
-      canonical: "canon/mycustom.md",
+      from: "canon/mycustom.md",
       targets: ["codex:.codex/agents/mycustom.toml"],
       projectRoot: fixtureRoot,
-      // No overlayPath seam: exercise registryOverlayPath() via IGRIS_BRAIN_DIR.
     });
     expect(addCode).toBe(0);
     expect(existsSync(writtenOverlay)).toBe(true);
+    // The vendored copy landed under the sandboxed brain registry dir.
+    const vendored = join(brainDir, "registry", "mycustom", "mycustom.md");
+    expect(existsSync(vendored)).toBe(true);
 
     // (AC4) The overlay passes the REAL validate_manifest — closes the
-    // TS-validator-vs-schema parity loop end-to-end.
+    // TS-validator-vs-schema parity loop end-to-end (schema-clean under option b).
     const validate = execFileSync(
       "bash",
       [
@@ -554,12 +860,12 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
       ],
       { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
     );
-    // validate_manifest exits 0 on success (execFileSync throws otherwise).
     expect(typeof validate).toBe("string");
 
     // (AC5) Run the REAL compiler with NO --overlay flag → it must
-    // auto-discover the personal overlay under $IGRIS_BRAIN_DIR/registry/ and
-    // produce the personal agent's declared target file.
+    // auto-discover the personal overlay AND resolve the ABSOLUTE vendored
+    // canonical.dir verbatim (the patched 3-case resolution) → produce the
+    // declared target. This proves the core/ compiler edit works end-to-end.
     execFileSync(
       "bash",
       [COMPILE_SH, "--project-root", fixtureRoot, "--filter", "mycustom"],
@@ -568,5 +874,44 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
     expect(
       existsSync(join(fixtureRoot, ".codex", "agents", "mycustom.toml")),
     ).toBe(true);
+  });
+
+  it("after update re-vendors mutated source, the REAL compiler reflects the UPDATED bytes", async () => {
+    if (!toolingAvailable()) {
+      return;
+    }
+    process.env.IGRIS_BRAIN_DIR = brainDir;
+    const addCode = await runRegistry({
+      action: "add",
+      name: "mycustom",
+      from: "canon/mycustom.md",
+      targets: ["codex:.codex/agents/mycustom.toml"],
+      projectRoot: fixtureRoot,
+    });
+    expect(addCode).toBe(0);
+
+    // Mutate the SOURCE, then update (re-vendor).
+    writeFileSync(
+      join(fixtureRoot, "canon", "mycustom.md"),
+      "# mycustom\n\nUPDATED personal agent body marker XYZZY.\n",
+    );
+    const updCode = await runRegistry({
+      action: "update",
+      name: "mycustom",
+      projectRoot: fixtureRoot,
+    });
+    expect(updCode).toBe(0);
+
+    // Compile reads the VENDORED copy (now updated), not the origin.
+    execFileSync(
+      "bash",
+      [COMPILE_SH, "--project-root", fixtureRoot, "--filter", "mycustom"],
+      { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
+    );
+    const produced = readFileSync(
+      join(fixtureRoot, ".codex", "agents", "mycustom.toml"),
+      "utf-8",
+    );
+    expect(produced).toContain("XYZZY");
   });
 });

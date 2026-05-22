@@ -248,16 +248,26 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
   [ -z "$name" ] && continue
   TOTAL=$((TOTAL + 1))
 
+  # Resolve the canonical source dir. An absolute or `~`-prefixed canon_dir is
+  # used verbatim (FR-142 copy-vendor points canonical.dir at the vendored copy
+  # under ~/.igris/registry/<name>/); a relative dir is project-relative. Mirrors
+  # the skills-source 3-case resolution below (lines ~386-390).
+  case "$canon_dir" in
+    "~"/*) canon_base="$HOME/${canon_dir#"~/"}" ;;
+    /*)    canon_base="$canon_dir" ;;
+    *)     canon_base="$PROJECT_ROOT/$canon_dir" ;;
+  esac
+
   # Resolve the canonical source path.
   canon_abs=""
   if [ "$versioned" = "1" ]; then
-    if ! canon_abs=$(latest_canonical "$PROJECT_ROOT/$canon_dir" "$canon_ref"); then
+    if ! canon_abs=$(latest_canonical "$canon_base" "$canon_ref"); then
       SUMMARY+=("FAIL  $name/$ttype — no canonical match for '$canon_ref' in $canon_dir")
       FAIL=$((FAIL + 1))
       continue
     fi
   else
-    canon_abs="$PROJECT_ROOT/$canon_dir/$canon_ref"
+    canon_abs="$canon_base/$canon_ref"
     if [ ! -f "$canon_abs" ]; then
       SUMMARY+=("FAIL  $name/$ttype — canonical file missing: $canon_abs")
       FAIL=$((FAIL + 1))

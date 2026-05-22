@@ -1,12 +1,21 @@
 /**
- * `igris registry <add|list|remove> [options]` — the FR-141 Layer-2
- * customization-registry overlay WRITER.
+ * `igris registry <add|list|remove|update> [options]` — the FR-141/FR-142
+ * Layer-2 customization-registry overlay WRITER.
+ *
+ * FR-142 COPY-VENDOR MODE: `add` no longer references a live external path;
+ * it COPIES the surface's canonical files into `~/.igris/registry/<name>/`
+ * (atomic temp-dir + rename) and points the overlay's `canonical.dir` at that
+ * VENDORED copy (as an absolute `brainDir()`-derived path the patched
+ * compiler resolves verbatim). A typed origin `{type:"path", dir, hash}` is
+ * recorded in a sibling `~/.igris/registry/origins.json` (option (b): OUTSIDE
+ * the manifest so the overlay stays schema-clean). The new `update` action
+ * re-vendors from the recorded origin and reports per-surface changed/unchanged
+ * via content-hash comparison.
  *
  * Writes the runtime-only personal overlay
  * `~/.igris/registry/harness-manifest.personal.json`, which the already-live
  * FR-136 merge seam (`compile_harnesses.sh` / `check_harness_drift.sh`)
  * auto-discovers and merges with the project's base `harness-manifest.json`.
- * FR-141 only WRITES the overlay — no schema or adapter change.
  *
  * The load-bearing logic is the write-path enforcement:
  *   1. intra-overlay dedupe (the bash merge only dedupes overlay-vs-base,
@@ -15,7 +24,8 @@
  *      `_common.sh` `merge_overlay_manifest`, by reading the base manifest),
  *   3. TS schema-shape validation before persist (port of the load-bearing
  *      rules below), and
- *   4. atomic persist (temp file + rename).
+ *   4. atomic persist (temp file + rename) for BOTH the overlay and the
+ *      vendored copy and the origins sidecar.
  *
  * SCHEMA SOURCE OF TRUTH (keep this in sync if the schema changes):
  *   core/scripts/cli-adapters/manifest.schema.json  §"$defs.agent" / top-level
@@ -28,12 +38,27 @@
  * despite the shared basename. This verb does NOT import `lib/registry.ts`.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { registryOverlayPath } from "../lib/paths.js";
+import { createHash } from "node:crypto";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { homedir } from "node:os";
+import {
+  registryOriginsPath,
+  registryOverlayPath,
+  registrySurfaceDirPath,
+} from "../lib/paths.js";
 import { info, error as logError } from "../lib/log.js";
 
-export type RegistryAction = "add" | "list" | "remove";
+export type RegistryAction = "add" | "list" | "remove" | "update";
 
 /** Allowed harness target types (mirrors manifest.schema.json target enum). */
 const VALID_TARGET_TYPES = ["claude", "codex", "gemini"] as const;
@@ -71,13 +96,33 @@ interface Overlay {
   surfaces?: Record<string, unknown>;
 }
 
+/**
+ * FR-142 typed origin: provenance + update metadata for a vendored surface.
+ * Stored OUTSIDE the harness manifest (option (b)) in `origins.json`. `dir` is
+ * the absolute SOURCE dir the files were copied FROM; `hash` is the content
+ * hash over the vendored copy (freshness comparison for `update`). `type` is
+ * `"path"` for FR-142; `"github"` is reserved for FR-148 (skipped by `update`).
+ */
+export interface Origin {
+  type: string;
+  dir: string;
+  hash: string;
+}
+
+/** Map of surface name → its typed origin. The shape of `origins.json`. */
+export type OriginsMap = Record<string, Origin>;
+
 export interface RegistryOptions {
   /** Which sub-verb to run. */
   action: RegistryAction;
-  /** Agent name (add/remove). */
+  /** Agent name (add/remove/update). */
   name?: string;
-  /** Canonical prompt dir-or-file. Unversioned: dir+file derived from this. */
-  canonical?: string;
+  /**
+   * Source path to copy the canonical file set FROM (FR-142 `--from`).
+   * Unversioned: dir+file derived from this. The CLI boundary coalesces the
+   * deprecated `--canonical` alias into this field.
+   */
+  from?: string;
   /** Canonical is versioned (requires `glob`). */
   versioned?: boolean;
   /** Filename glob (versioned only). */
@@ -86,10 +131,16 @@ export interface RegistryOptions {
   targets?: string[];
   /** Optional body-exception sidecar basename. */
   bodyException?: string;
-  /** Root for base-manifest collision check (default: cwd). */
+  /** Root for base-manifest collision check + relative `--from` resolution (default: cwd). */
   projectRoot?: string;
+  /** Update every path-origin entry (`update --all`). */
+  all?: boolean;
   /** Test seam: overlay path override (defaults to registryOverlayPath()). */
   overlayPath?: string;
+  /** Test seam: origins.json path override (defaults to registryOriginsPath()). */
+  originsPath?: string;
+  /** Test seam: vendor-dir base override (defaults to registrySurfaceDirPath()). */
+  vendorDir?: (name: string) => string;
 }
 
 // ---------------------------------------------------------------------------
@@ -318,6 +369,172 @@ function readBaseAgentNames(projectRoot: string): Set<string> {
 }
 
 // ---------------------------------------------------------------------------
+// FR-142: origins sidecar (read / write)
+// ---------------------------------------------------------------------------
+
+class OriginsReadError extends Error {}
+
+/** Read `origins.json`; absent → empty map. Malformed → throw (same idiom as readOverlay). */
+function readOrigins(path: string): OriginsMap {
+  if (!existsSync(path)) {
+    return {};
+  }
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf-8");
+  } catch (err) {
+    throw new OriginsReadError(
+      `cannot read origins at ${path}: ${(err as Error).message}`,
+    );
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error("not a JSON object");
+    }
+    return parsed as OriginsMap;
+  } catch (err) {
+    throw new OriginsReadError(
+      `origins at ${path} is not valid JSON: ${(err as Error).message}`,
+    );
+  }
+}
+
+/** Atomically persist origins: write a sibling temp file, then rename. */
+function writeOriginsAtomic(path: string, origins: OriginsMap): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp-${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(origins, null, 2) + "\n", "utf-8");
+  renameSync(tmp, path);
+}
+
+// ---------------------------------------------------------------------------
+// FR-142: source resolution + content hash + atomic vendor copy
+// ---------------------------------------------------------------------------
+
+/** Resolve a `~`/absolute/relative source path to an absolute path. */
+function resolveSourcePath(p: string, projectRoot: string): string {
+  if (p.startsWith("~/")) {
+    return join(homedir(), p.slice(2));
+  }
+  if (isAbsolute(p)) {
+    return p;
+  }
+  return resolve(projectRoot, p);
+}
+
+/**
+ * Compute a stable content hash over a vendored file set: for each file
+ * (sorted by relative path) fold `relpath\0bytes` into one sha256. Stable
+ * across machines (relpaths, not abspaths) and order-independent (sorted).
+ */
+function hashSurface(absDir: string, fileRelPaths: string[]): string {
+  const h = createHash("sha256");
+  for (const rel of [...fileRelPaths].sort()) {
+    h.update(rel);
+    h.update("\0");
+    h.update(readFileSync(join(absDir, rel)));
+  }
+  return h.digest("hex");
+}
+
+/**
+ * The resolved source file set for a surface. `srcDir` is the absolute origin
+ * dir; `files` are the relative basenames to copy out of it.
+ */
+interface ResolvedSource {
+  srcDir: string;
+  files: string[];
+}
+
+/**
+ * Resolve the source dir + file list from a `--from`/origin path.
+ * Unversioned: `from` is `<dir>/<file>` → srcDir=<abs dir>, files=[<file>].
+ * Versioned: `from` is `<dir>` → srcDir=<abs dir>, files=[every entry matching glob].
+ * Returns a ResolvedSource or an error message string.
+ */
+function resolveSource(
+  from: string,
+  versioned: boolean,
+  glob: string | undefined,
+  projectRoot: string,
+): ResolvedSource | string {
+  if (versioned) {
+    const srcDir = resolveSourcePath(from, projectRoot);
+    if (!existsSync(srcDir)) {
+      return `canonical source dir does not exist: ${srcDir}`;
+    }
+    const re = globToRegExp(glob ?? "");
+    let entries: string[];
+    try {
+      entries = readdirSync(srcDir, { withFileTypes: true })
+        .filter((d) => d.isFile() && re.test(d.name))
+        .map((d) => d.name);
+    } catch (err) {
+      return `cannot read canonical source dir ${srcDir}: ${(err as Error).message}`;
+    }
+    if (entries.length === 0) {
+      return `no files in ${srcDir} match glob '${glob ?? ""}'`;
+    }
+    return { srcDir, files: entries };
+  }
+  // Unversioned: split dir/file off the source path.
+  const abs = resolveSourcePath(from, projectRoot);
+  const srcDir = dirname(abs);
+  const file = basename(abs);
+  const full = join(srcDir, file);
+  if (!existsSync(full)) {
+    return `canonical source file does not exist: ${full}`;
+  }
+  return { srcDir, files: [file] };
+}
+
+/** Translate a simple shell-style glob (`*`, `?`) into an anchored RegExp. */
+function globToRegExp(glob: string): RegExp {
+  let out = "^";
+  for (const ch of glob) {
+    if (ch === "*") {
+      out += "[^/]*";
+    } else if (ch === "?") {
+      out += "[^/]";
+    } else {
+      out += ch.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+    }
+  }
+  out += "$";
+  return new RegExp(out);
+}
+
+/**
+ * Atomically vendor a file set into `destDir`: copy into a sibling temp dir on
+ * the SAME filesystem (under the registry dir), then `renameSync` over destDir
+ * (replacing any prior copy). No partial-vendor window. Returns nothing; throws
+ * on copy failure (caller cleans up).
+ */
+function vendorSurfaceAtomic(
+  srcDir: string,
+  files: string[],
+  destDir: string,
+): void {
+  mkdirSync(dirname(destDir), { recursive: true });
+  const tmp = `${destDir}.tmp-${process.pid}`;
+  // Start from a clean temp dir.
+  rmSync(tmp, { recursive: true, force: true });
+  mkdirSync(tmp, { recursive: true });
+  try {
+    for (const f of files) {
+      copyFileSync(join(srcDir, f), join(tmp, f));
+    }
+  } catch (err) {
+    rmSync(tmp, { recursive: true, force: true });
+    throw err;
+  }
+  // Replace any prior vendored copy atomically.
+  rmSync(destDir, { recursive: true, force: true });
+  renameSync(tmp, destDir);
+}
+
+// ---------------------------------------------------------------------------
 // --target parsing
 // ---------------------------------------------------------------------------
 
@@ -350,8 +567,8 @@ function runAdd(opts: RegistryOptions, overlayPath: string): number {
     logError("registry add: <name> is required");
     return 2;
   }
-  if (opts.canonical === undefined || opts.canonical.length === 0) {
-    logError("registry add: --canonical <dir-or-file> is required");
+  if (opts.from === undefined || opts.from.length === 0) {
+    logError("registry add: --from <dir-or-file> is required");
     return 2;
   }
   if (opts.targets === undefined || opts.targets.length === 0) {
@@ -370,31 +587,56 @@ function runAdd(opts: RegistryOptions, overlayPath: string): number {
     targets.push(parsed);
   }
 
-  // Build the canonical spec.
-  let canonical: CanonicalSpec;
+  const projectRoot = opts.projectRoot ?? process.cwd();
+  const vendorDirFor = opts.vendorDir ?? registrySurfaceDirPath;
+  const vendoredDir = vendorDirFor(opts.name);
+
+  // Resolve the canonical SOURCE file set from --from (validates flags + that
+  // the source actually exists on disk — copy-mode needs real files).
+  let resolved: ResolvedSource;
+  let unversionedFile: string | undefined;
   if (opts.versioned === true) {
     if (opts.glob === undefined || opts.glob.length === 0) {
       logError("registry add: --versioned requires --glob <g>");
       return 2;
     }
-    // For a versioned canonical, --canonical is the dir.
-    canonical = { dir: opts.canonical, versioned: true, glob: opts.glob };
+    const r = resolveSource(opts.from, true, opts.glob, projectRoot);
+    if (typeof r === "string") {
+      logError(`registry add: ${r}`);
+      return 1;
+    }
+    resolved = r;
   } else {
     if (opts.glob !== undefined) {
       logError("registry add: --glob is only valid with --versioned");
       return 2;
     }
-    // Unversioned: --canonical is a dir/file; derive dir + file.
-    const idx = opts.canonical.lastIndexOf("/");
-    const dir = idx >= 0 ? opts.canonical.slice(0, idx) : ".";
-    const file = idx >= 0 ? opts.canonical.slice(idx + 1) : opts.canonical;
+    const idx = opts.from.lastIndexOf("/");
+    const file = idx >= 0 ? opts.from.slice(idx + 1) : opts.from;
     if (file.length === 0) {
       logError(
-        "registry add: --canonical must include a filename when not --versioned",
+        "registry add: --from must include a filename when not --versioned",
       );
       return 2;
     }
-    canonical = { dir, versioned: false, file };
+    const r = resolveSource(opts.from, false, undefined, projectRoot);
+    if (typeof r === "string") {
+      logError(`registry add: ${r}`);
+      return 1;
+    }
+    resolved = r;
+    unversionedFile = file;
+  }
+
+  // Build the canonical spec — `dir` points at the VENDORED copy (absolute,
+  // brainDir()-derived). The patched compiler resolves an absolute canon.dir
+  // verbatim (its `/*` case), correct under both the prod brain and the
+  // IGRIS_BRAIN_DIR test sandbox (which is where registrySurfaceDirPath lands).
+  let canonical: CanonicalSpec;
+  if (opts.versioned === true) {
+    canonical = { dir: vendoredDir, versioned: true, glob: opts.glob };
+  } else {
+    canonical = { dir: vendoredDir, versioned: false, file: unversionedFile };
   }
 
   const entry: AgentEntry = {
@@ -434,7 +676,6 @@ function runAdd(opts: RegistryOptions, overlayPath: string): number {
   }
 
   // (c) Core-collision reject — mirror the merge guard (_common.sh).
-  const projectRoot = opts.projectRoot ?? process.cwd();
   const baseNames = readBaseAgentNames(projectRoot);
   if (baseNames.has(opts.name)) {
     logError(
@@ -452,8 +693,42 @@ function runAdd(opts: RegistryOptions, overlayPath: string): number {
     return 1;
   }
 
-  writeOverlayAtomic(overlayPath, overlay);
-  info(`Registered personal agent '${opts.name}' in ${overlayPath}`);
+  // All guards passed → VENDOR the file set (atomic), then persist the overlay,
+  // then record the origin. If overlay persist fails after vendoring, clean up
+  // the just-vendored dir so a rejected add leaves no orphan copy.
+  let hash: string;
+  try {
+    vendorSurfaceAtomic(resolved.srcDir, resolved.files, vendoredDir);
+    hash = hashSurface(vendoredDir, resolved.files);
+  } catch (err) {
+    rmSync(vendoredDir, { recursive: true, force: true });
+    logError(`registry add: failed to vendor canonical files: ${(err as Error).message}`);
+    return 1;
+  }
+
+  try {
+    writeOverlayAtomic(overlayPath, overlay);
+  } catch (err) {
+    rmSync(vendoredDir, { recursive: true, force: true });
+    logError(`registry add: failed to write overlay: ${(err as Error).message}`);
+    return 1;
+  }
+
+  // Record the typed origin (option (b): outside the manifest).
+  const originsPath = opts.originsPath ?? registryOriginsPath();
+  try {
+    const origins = readOrigins(originsPath);
+    origins[opts.name] = { type: "path", dir: resolved.srcDir, hash };
+    writeOriginsAtomic(originsPath, origins);
+  } catch (err) {
+    logError(`registry add: failed to record origin: ${(err as Error).message}`);
+    return 1;
+  }
+
+  info(
+    `Registered personal agent '${opts.name}' (vendored ${resolved.files.length} ` +
+      `file(s) from ${resolved.srcDir} into ${vendoredDir}) in ${overlayPath}`,
+  );
   return 0;
 }
 
@@ -507,8 +782,149 @@ function runRemove(opts: RegistryOptions, overlayPath: string): number {
     return 1;
   }
   writeOverlayAtomic(overlayPath, overlay);
+
+  // FR-142: drop the typed origin + the vendored copy (no orphan copies).
+  const originsPath = opts.originsPath ?? registryOriginsPath();
+  try {
+    const origins = readOrigins(originsPath);
+    if (opts.name in origins) {
+      delete origins[opts.name];
+      writeOriginsAtomic(originsPath, origins);
+    }
+  } catch {
+    // A malformed origins sidecar should not block overlay removal; the
+    // overlay (the compile-time truth) is already cleaned. Leave a note.
+    info(`registry remove: could not update origins sidecar at ${originsPath}`);
+  }
+  const vendorDirFor = opts.vendorDir ?? registrySurfaceDirPath;
+  rmSync(vendorDirFor(opts.name), { recursive: true, force: true });
+
   info(`Removed personal agent '${opts.name}' from ${overlayPath}`);
   return 0;
+}
+
+/**
+ * Re-vendor a single overlay entry from its recorded path-origin. Returns a
+ * status: `changed` (hash differs), `unchanged` (hash stable), `skipped`
+ * (non-path origin — FR-148 forward-compat), or an `error:` string.
+ */
+function reVendorEntry(
+  entry: AgentEntry,
+  origin: Origin,
+  vendoredDir: string,
+): { status: "changed" | "unchanged" | "skipped"; hash?: string } | string {
+  if (origin.type !== "path") {
+    return { status: "skipped" };
+  }
+  // Re-resolve the source file set from the recorded origin dir + the entry's
+  // versioned/glob/file. A versioned glob may now match a DIFFERENT set; the
+  // vendor replaces the whole dir, so that is handled transparently.
+  let resolved: ResolvedSource;
+  if (entry.canonical.versioned) {
+    const r = resolveSource(origin.dir, true, entry.canonical.glob, origin.dir);
+    if (typeof r === "string") {
+      return `error: ${r}`;
+    }
+    resolved = r;
+  } else {
+    const file = entry.canonical.file ?? "";
+    const r = resolveSource(join(origin.dir, file), false, undefined, origin.dir);
+    if (typeof r === "string") {
+      return `error: ${r}`;
+    }
+    resolved = r;
+  }
+  try {
+    vendorSurfaceAtomic(resolved.srcDir, resolved.files, vendoredDir);
+  } catch (err) {
+    return `error: failed to re-vendor: ${(err as Error).message}`;
+  }
+  const newHash = hashSurface(vendoredDir, resolved.files);
+  return newHash === origin.hash
+    ? { status: "unchanged", hash: newHash }
+    : { status: "changed", hash: newHash };
+}
+
+function runUpdate(opts: RegistryOptions, overlayPath: string): number {
+  const hasName = opts.name !== undefined && opts.name.length > 0;
+  const hasAll = opts.all === true;
+  if (hasName === hasAll) {
+    logError("registry update: provide exactly one of <name> or --all");
+    return 2;
+  }
+
+  let overlay: Overlay;
+  try {
+    overlay = readOverlay(overlayPath);
+  } catch (err) {
+    logError((err as Error).message);
+    return 1;
+  }
+  const originsPath = opts.originsPath ?? registryOriginsPath();
+  let origins: OriginsMap;
+  try {
+    origins = readOrigins(originsPath);
+  } catch (err) {
+    logError((err as Error).message);
+    return 1;
+  }
+  const vendorDirFor = opts.vendorDir ?? registrySurfaceDirPath;
+
+  // Build the work set: one named entry, or every path-origin entry under --all.
+  let work: AgentEntry[];
+  if (hasName) {
+    const found = overlay.agents.find((a) => a.name === opts.name);
+    if (found === undefined) {
+      logError(`registry update: no personal agent named '${opts.name}'.`);
+      return 1;
+    }
+    if (!(opts.name! in origins)) {
+      logError(
+        `registry update: '${opts.name}' has no recorded origin (cannot re-vendor).`,
+      );
+      return 1;
+    }
+    work = [found];
+  } else {
+    work = overlay.agents.filter((a) => a.name in origins);
+    if (work.length === 0) {
+      info("No path-origin entries to update.");
+      return 0;
+    }
+  }
+
+  let originsChanged = false;
+  let hadError = false;
+  for (const entry of work) {
+    const origin = origins[entry.name];
+    const result = reVendorEntry(entry, origin, vendorDirFor(entry.name));
+    if (typeof result === "string") {
+      logError(`registry update: ${entry.name}: ${result.replace(/^error: /, "")}`);
+      hadError = true;
+      continue;
+    }
+    if (result.status === "skipped") {
+      info(`  ${entry.name}: skipped (non-path origin '${origin.type}')`);
+      continue;
+    }
+    if (result.status === "changed") {
+      origins[entry.name] = { ...origin, hash: result.hash! };
+      originsChanged = true;
+      info(`  ${entry.name}: changed`);
+    } else {
+      info(`  ${entry.name}: unchanged`);
+    }
+  }
+
+  if (originsChanged) {
+    try {
+      writeOriginsAtomic(originsPath, origins);
+    } catch (err) {
+      logError(`registry update: failed to persist origins: ${(err as Error).message}`);
+      return 1;
+    }
+  }
+  return hadError ? 1 : 0;
 }
 
 /**
@@ -524,9 +940,11 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runList(overlayPath);
     case "remove":
       return runRemove(opts, overlayPath);
+    case "update":
+      return runUpdate(opts, overlayPath);
     default:
       logError(
-        `unknown registry action '${String(opts.action)}'. Valid: add, list, remove.`,
+        `unknown registry action '${String(opts.action)}'. Valid: add, list, remove, update.`,
       );
       return 2;
   }
