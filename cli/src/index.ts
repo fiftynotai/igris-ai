@@ -361,6 +361,7 @@ async function main(argv: string[]): Promise<void> {
       "--project-root <dir>",
       "root for base-manifest collision check + relative --from (default: cwd)",
     )
+    .option("--name <slug>", "personal skill name (add-skill); REQUIRED for add-skill")
     .action(
       async (
         action: string,
@@ -374,6 +375,7 @@ async function main(argv: string[]): Promise<void> {
           bodyException?: string;
           all?: boolean;
           projectRoot?: string;
+          name?: string;
         },
       ): Promise<void> => {
         // Coalesce the deprecated --canonical alias into --from; emit a one-line
@@ -393,7 +395,7 @@ async function main(argv: string[]): Promise<void> {
           (isAddSkill ? name : undefined);
         const code = await runRegistry({
           action: action as RegistryAction,
-          name: isAddSkill ? undefined : name,
+          name: isAddSkill ? (opts.name ?? name) : name,
           from,
           versioned: opts.versioned === true,
           glob: opts.glob,
