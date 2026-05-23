@@ -338,8 +338,13 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
   target_abs="$PROJECT_ROOT/$target_path"
   canon_version=$(read_canonical_version "$canon_abs")
 
-  # Expected body = canonical body (+ exception appendix when applicable).
-  expected_body=$(canonical_body_with_exception "$canon_abs" "$exc_abs")
+  # FR-144 body_exception is claude-only; non-claude emitters write the plain canonical body.
+  # Mirror compile_harnesses.sh's ttype dispatch here (L-519 §18.1 compile/drift-verify pairing).
+  if [ "$ttype" = "claude" ]; then
+    expected_body=$(canonical_body_with_exception "$canon_abs" "$exc_abs")
+  else
+    expected_body=$(strip_frontmatter "$canon_abs")
+  fi
   expected_sha=$(sha_of_string "$expected_body")
 
   # Resolve the actual harness body per target type.

@@ -40,6 +40,15 @@ setup() {
   [ -x "$COMPILE" ] || skip "compile_harnesses.sh missing at $COMPILE"
   require_python3
 
+  # Isolate from the live brain dir so the guard/compile do NOT
+  # auto-discover the user's personal overlay manifest at
+  # ~/.igris/registry/harness-manifest.personal.json (FR-146 leaves this in
+  # place between runs; without isolation it merges into every test's
+  # manifest and breaks synthetic-root tests).
+  ISOLATED_BRAIN="$TEST_TEMP_DIR/brain_$BATS_TEST_NUMBER"
+  mkdir -p "$ISOLATED_BRAIN"
+  export IGRIS_BRAIN_DIR="$ISOLATED_BRAIN"
+
   # Per-test scratch project root.
   PROJ="$TEST_TEMP_DIR/harness_drift_$BATS_TEST_NUMBER"
   mkdir -p "$PROJ/canon" "$PROJ/.claude/agents"
@@ -327,4 +336,155 @@ PY
   [[ "$output" == *"[forger/claude] MATCH"* ]]
   [[ "$output" != *"NOTICE:"* ]]
   [[ "$output" != *"FATAL"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# TD-193: ttype-gated body_exception in the drift verifier.
+#
+# `compile_harnesses.sh` only routes the body-exception sidecar into the
+# claude adapter — the codex emitter writes the plain canonical body via
+# strip_frontmatter (no appendix). The drift verifier used to apply the
+# appendix unconditionally, which produced a false-DRIFTED (body sha
+# mismatch) for any agent that combined `body_exception` with a codex
+# target. The fix gates `canonical_body_with_exception` on
+# `ttype == "claude"`; for non-claude targets the expected body is the
+# plain canonical body. The two tests below pin that contract.
+# ---------------------------------------------------------------------------
+
+# build_td193_repo <target_type>  where target_type is: claude | codex
+# Builds a self-contained scratch project with: canonical containing the
+# anchor, a body-exception sidecar JSON under the per-test isolated
+# IGRIS_BRAIN_DIR's registry/body-exceptions/ dir (already exported by
+# setup()), a manifest declaring the agent with `body_exception` +
+# `layer: "personal"` (so the sidecar resolves under the isolated brain dir,
+# NOT the live in-repo body-exceptions/) + the requested target. Echoes the
+# project root path.
+build_td193_repo() {
+  local ttype="$1"
+  local root="$TEST_TEMP_DIR/td193_${ttype}_$BATS_TEST_NUMBER"
+  mkdir -p "$root/canon" "$IGRIS_BRAIN_DIR/registry/body-exceptions"
+
+  # Canonical body with the anchor line that the sidecar will append after.
+  cat > "$root/canon/sample.md" <<'EOF'
+---
+name: sample
+description: canonical for TD-193 body_exception gate test
+---
+
+# SAMPLE AGENT
+
+Body with the anchor below.
+
+## CONSTRAINTS
+
+- rule one
+- rule two
+EOF
+
+  # Body-exception sidecar under the isolated brain's registry dir. The
+  # `personal` layer keys sidecar resolution to
+  # IGRIS_BRAIN_DIR/registry/body-exceptions/<name>.json — see
+  # check_harness_drift.sh:327 + compile_harnesses.sh:286.
+  cat > "$IGRIS_BRAIN_DIR/registry/body-exceptions/test_excerpt.json" <<'EOF'
+{
+  "anchor": "## CONSTRAINTS",
+  "insert": ["", "Extra rule for the appendix.", ""]
+}
+EOF
+
+  if [ "$ttype" = "claude" ]; then
+    mkdir -p "$root/.claude/agents"
+    # Pre-existing harness frontmatter (sync, not create).
+    cat > "$root/.claude/agents/sample.md" <<'EOF'
+---
+name: sample
+description: harness frontmatter preserved on sync
+tools: Read, Edit
+---
+
+placeholder body — will be overwritten by compile
+EOF
+    cat > "$root/harness-manifest.json" <<'EOF'
+{
+  "version": 1,
+  "agents": [
+    {
+      "name": "sample",
+      "layer": "personal",
+      "canonical": { "dir": "canon", "file": "sample.md", "versioned": false },
+      "body_exception": "test_excerpt",
+      "targets": [
+        { "type": "claude", "path": ".claude/agents/sample.md" }
+      ]
+    }
+  ]
+}
+EOF
+  else
+    mkdir -p "$root/.codex/agents"
+    cat > "$root/harness-manifest.json" <<'EOF'
+{
+  "version": 1,
+  "agents": [
+    {
+      "name": "sample",
+      "layer": "personal",
+      "canonical": { "dir": "canon", "file": "sample.md", "versioned": false },
+      "body_exception": "test_excerpt",
+      "targets": [
+        { "type": "codex", "path": ".codex/agents/sample.toml" }
+      ]
+    }
+  ]
+}
+EOF
+  fi
+
+  echo "$root"
+}
+
+@test "TD-193: codex + body_exception compiles + drift-checks MATCH (no false DRIFTED)" {
+  # The fix this brief lands. Without the ttype gate the guard applies the
+  # appendix to the expected body but the codex emitter wrote the PLAIN
+  # canonical body — body sha mismatch -> false DRIFTED. With the gate the
+  # expected body for codex is the plain canonical body, matching what the
+  # codex emitter actually wrote.
+  local root
+  root="$(build_td193_repo codex)"
+
+  # Real compile (setup() exports IGRIS_BRAIN_DIR -> the scratch brain that
+  # holds the body-exception sidecar; no live overlay is auto-discovered).
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json" \
+                      --target codex
+  [ "$status" -eq 0 ]
+  [ -f "$root/.codex/agents/sample.toml" ]
+
+  # Real drift check — must MATCH, not false-DRIFTED.
+  run bash "$GUARD" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[sample/codex] MATCH"* ]]
+  [[ "$output" != *"DRIFTED"* ]]
+  [[ "$output" != *"body sha mismatch"* ]]
+}
+
+@test "TD-193: claude + body_exception still MATCH (FR-144 regression guard)" {
+  # Proves the gate did not regress the claude path: claude + body_exception
+  # must still compile WITH the appendix and the guard must still recognize
+  # canonical+appendix as the expected body. If the gate accidentally
+  # bypasses the appendix for claude this test would false-DRIFT.
+  local root
+  root="$(build_td193_repo claude)"
+
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json" \
+                      --target claude
+  [ "$status" -eq 0 ]
+
+  run bash "$GUARD" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[sample/claude] MATCH"* ]]
+  [[ "$output" != *"DRIFTED"* ]]
 }

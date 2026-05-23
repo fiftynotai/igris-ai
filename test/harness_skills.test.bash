@@ -41,6 +41,15 @@ setup() {
   [ -f "$SURFACES" ] || skip "surfaces-manifest.json missing at $SURFACES"
   require_python3
 
+  # Isolate from the live brain dir so the guard/compile do NOT
+  # auto-discover the user's personal overlay manifest at
+  # ~/.igris/registry/harness-manifest.personal.json (FR-146 leaves this in
+  # place between runs; without isolation it merges into every test's
+  # manifest and breaks synthetic-root tests).
+  ISOLATED_BRAIN="$TEST_TEMP_DIR/brain_$BATS_TEST_NUMBER"
+  mkdir -p "$ISOLATED_BRAIN"
+  export IGRIS_BRAIN_DIR="$ISOLATED_BRAIN"
+
   PROJ="$TEST_TEMP_DIR/harness_skills_$BATS_TEST_NUMBER"
   mkdir -p "$PROJ/skills/alpha" "$PROJ/skills/beta" "$PROJ/.gemini/commands"
 
