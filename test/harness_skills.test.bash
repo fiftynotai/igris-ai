@@ -309,3 +309,201 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"collides"* || "$output" == *"shadow"* ]]
 }
+
+# --- TD-191 multi-source skills surface --------------------------------------
+#
+# `surfaces.skills` is now an ARRAY of blocks. Each block carries its OWN
+# source + targets. Personal blocks compile ALONGSIDE the core block (the
+# pre-TD-191 model unioned targets against the BASE source; that's gone).
+# These tests prove:
+#   1. The schema accepts the new array shape (both schema + structural-fallback).
+#   2. An empty array is rejected (minItems:1).
+#   3. The legacy single-object shape still normalizes (back-compat).
+#   4. The cross-block path-collision merge guard fires across the wider surface.
+#   5. The DUAL-SOURCE DUAL-COMPILE load-bearing scenario: TWO sibling blocks
+#      with distinct sources project to DISTINCT outputs from their OWN sources
+#      (proves the multi-source fix end-to-end via the REAL compiler).
+#   6. Drift-parity holds (drift returns MATCH; mutation flips it; recompile
+#      restores MATCH — L-519 §18.1 compile/drift-verify pairing).
+
+@test "TD-191 schema accepts an array of skills blocks" {
+  cat > "$PROJ/array.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": [
+    { "source": "skills",
+      "targets": [ { "type": "codex", "method": "compiler", "path": "AGENTS-core.md" } ] },
+    { "source": "skills",
+      "targets": [ { "type": "gemini", "method": "converter", "path": ".gemini/commands" } ] }
+  ] } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/array.json' '$SCHEMA'"
+  [ "$status" -eq 0 ]
+}
+
+@test "TD-191 schema rejects an empty array of skills blocks (minItems:1)" {
+  cat > "$PROJ/empty-array.json" <<'EOF'
+{ "version": 1, "agents": [], "surfaces": { "skills": [] } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/empty-array.json' '$SCHEMA'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"array"* || "$output" == *"minItems"* ]]
+}
+
+@test "TD-191 back-compat: legacy single-object skills normalizes (structural fallback)" {
+  # Force the no-jsonschema path so the structural-fallback's array normalizer
+  # is the one under test. (The jsonschema path is array-only by schema; the
+  # fallback must agree by normalizing a legacy single-object to [object].)
+  local blockdir="$PROJ/noimport"
+  mkdir -p "$blockdir"
+  cat > "$blockdir/sitecustomize.py" <<'PY'
+import sys
+class _Blocker:
+    def find_module(self, name, path=None):
+        if name == "jsonschema":
+            return self
+        return None
+    def load_module(self, name):
+        raise ImportError("jsonschema blocked for test")
+sys.meta_path.insert(0, _Blocker())
+PY
+  # Legacy single-object surfaces.skills (pre-TD-191) — must still pass via
+  # structural-fallback normalize.
+  cat > "$PROJ/legacy.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills",
+    "targets": [ { "type": "codex", "method": "compiler", "path": "AGENTS.md" } ] } } }
+EOF
+  run bash -c "PYTHONPATH='$blockdir' source '$COMMON' && PYTHONPATH='$blockdir' validate_manifest '$PROJ/legacy.json' '$SCHEMA'"
+  [ "$status" -eq 0 ]
+}
+
+@test "TD-191 cross-block path-collision (overlay-vs-base) is a hard error" {
+  # Same pattern as the original collision test, but explicitly using the
+  # TD-191 array shape on both sides — proves the wider cross-block guard
+  # supersedes the legacy base-vs-overlay-only check.
+  cat > "$PROJ/base-array.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": [
+    { "source": "skills-core",
+      "targets": [ { "type": "codex", "method": "compiler", "path": "AGENTS.md" } ] }
+  ] } }
+EOF
+  cat > "$PROJ/overlay-array.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": [
+    { "source": "skills-personal",
+      "targets": [ { "type": "codex", "method": "compiler", "path": "AGENTS.md" } ] }
+  ] } }
+EOF
+  run bash -c "source '$COMMON' && merge_overlay_manifest '$PROJ/base-array.json' '$PROJ/overlay-array.json'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"collides"* ]]
+}
+
+@test "TD-191 dual-source dual-compile: distinct sources project to distinct outputs" {
+  # The LOAD-BEARING scenario this brief exists to enable. Pre-TD-191 the
+  # personal source was DROPPED because the merge kept base.source and
+  # unioned targets only. Post-TD-191 both blocks compile from their OWN
+  # sources, producing two distinct output trees with body-distinct content.
+  mkdir -p "$PROJ/skills-core/alpha" "$PROJ/skills-mine/mine"
+  cat > "$PROJ/skills-core/alpha/SKILL.md" <<'EOF'
+---
+name: alpha
+description: core alpha
+---
+
+ALPHA_CORE_BODY_MARKER
+EOF
+  cat > "$PROJ/skills-mine/mine/SKILL.md" <<'EOF'
+---
+name: mine
+description: personal mine
+---
+
+MINE_PERSONAL_BODY_MARKER
+EOF
+  # The base manifest carries TWO blocks (a "merged-shape" of what core+overlay
+  # would look like post-merge); we drive the compiler directly without an
+  # overlay to keep the test hermetic to the bash core (no CLI involvement).
+  cat > "$PROJ/harness-manifest.json" <<'EOF'
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "skills": [
+      { "source": "skills-core",
+        "layer": "core",
+        "targets": [ { "type": "gemini", "method": "converter", "path": "gemini-core" } ] },
+      { "source": "skills-mine",
+        "layer": "personal",
+        "targets": [ { "type": "gemini", "method": "converter", "path": "gemini-mine" } ] }
+    ]
+  }
+}
+EOF
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  assert_file_exists "$PROJ/gemini-core/alpha.toml"
+  assert_file_exists "$PROJ/gemini-mine/mine.toml"
+  # Cross-source isolation: alpha.toml MUST NOT be in the personal output,
+  # and mine.toml MUST NOT be in the core output. Pre-TD-191's collapse
+  # would have either produced alpha.toml in both, or only honored block 1.
+  [ ! -f "$PROJ/gemini-mine/alpha.toml" ]
+  [ ! -f "$PROJ/gemini-core/mine.toml" ]
+  # Body distinctness: each output's TOML contains the body of its OWN
+  # source skill (not the sibling block's body).
+  grep -q "ALPHA_CORE_BODY_MARKER" "$PROJ/gemini-core/alpha.toml"
+  grep -q "MINE_PERSONAL_BODY_MARKER" "$PROJ/gemini-mine/mine.toml"
+  ! grep -q "MINE_PERSONAL_BODY_MARKER" "$PROJ/gemini-core/alpha.toml"
+  ! grep -q "ALPHA_CORE_BODY_MARKER" "$PROJ/gemini-mine/mine.toml"
+}
+
+@test "TD-191 drift-parity: dual-source compile + drift MATCH; mutation flips it; recompile restores" {
+  # L-519 §18.1 compile + drift-verify pairing. The compile pass and the
+  # drift pass must produce IDENTICAL flatten rows so a freshly-compiled
+  # dual-source surface returns MATCH for every block/target, and a
+  # mutation flips ONLY the affected one.
+  mkdir -p "$PROJ/skills-core/alpha" "$PROJ/skills-mine/mine"
+  cat > "$PROJ/skills-core/alpha/SKILL.md" <<'EOF'
+---
+name: alpha
+description: a
+---
+alpha body
+EOF
+  cat > "$PROJ/skills-mine/mine/SKILL.md" <<'EOF'
+---
+name: mine
+description: m
+---
+mine body
+EOF
+  cat > "$PROJ/harness-manifest.json" <<'EOF'
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "skills": [
+      { "source": "skills-core", "layer": "core",
+        "targets": [ { "type": "gemini", "method": "converter", "path": "gemini-core" } ] },
+      { "source": "skills-mine", "layer": "personal",
+        "targets": [ { "type": "gemini", "method": "converter", "path": "gemini-mine" } ] }
+    ]
+  }
+}
+EOF
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  run bash "$GUARD" --project-root "$PROJ"
+  [ "$status" -eq 0 ]
+  # Mutate the personal block's output to flip drift on it.
+  printf '\nextra = "x"\n' >> "$PROJ/gemini-mine/mine.toml"
+  run bash "$GUARD" --project-root "$PROJ"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"DRIFTED"* ]]
+  # Recompile → both blocks back to MATCH.
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  run bash "$GUARD" --project-root "$PROJ"
+  [ "$status" -eq 0 ]
+}

@@ -540,40 +540,57 @@ if surfaces is not None:
         if key not in allowed_surface_keys:
             fail(f"surfaces: unknown key '{key}' (additionalProperties:false)")
 
+    # TD-191: `surfaces.skills` is now an array of blocks (multi-source). The
+    # normalizer wraps a legacy single-object value as `[object]` so loaders
+    # accept stale overlays without a version bump. The jsonschema path uses
+    # the schema's array-only contract directly; this structural fallback
+    # mirrors it (the schema is the source of truth, validate_manifest just
+    # has to agree).
     skills = surfaces.get("skills")
     if skills is not None:
-        if not isinstance(skills, dict):
-            fail("surfaces.skills must be an object")
-        allowed_skills_keys = {"source", "layer", "targets"}
-        for key in skills:
-            if key not in allowed_skills_keys:
-                fail(f"surfaces.skills: unknown key '{key}' "
-                     "(additionalProperties:false)")
-        if "targets" not in skills:
-            fail("surfaces.skills missing required key 'targets'")
-        s_targets = skills["targets"]
-        if not isinstance(s_targets, list) or len(s_targets) < 1:
-            fail("surfaces.skills.targets must be a non-empty array")
+        if isinstance(skills, dict):
+            skills_blocks = [skills]
+        elif isinstance(skills, list):
+            skills_blocks = skills
+        else:
+            fail("surfaces.skills must be an array of blocks "
+                 "(or a single legacy object — both normalize)")
+        if len(skills_blocks) < 1:
+            fail("surfaces.skills must be a non-empty array")
         valid_skill_types = {"codex", "gemini"}
         valid_skill_methods = {"compiler", "converter"}
         allowed_skill_target_keys = {"type", "method", "path"}
-        for k, st in enumerate(s_targets):
-            stwhere = f"surfaces.skills.targets[{k}]"
-            if not isinstance(st, dict):
-                fail(f"{stwhere} must be an object")
-            for req in ("type", "method", "path"):
-                if req not in st:
-                    fail(f"{stwhere} missing required key '{req}'")
-            for key in st:
-                if key not in allowed_skill_target_keys:
-                    fail(f"{stwhere}: unknown key '{key}' "
+        allowed_skills_keys = {"source", "layer", "targets"}
+        for b_idx, skills_block in enumerate(skills_blocks):
+            bwhere = f"surfaces.skills[{b_idx}]"
+            if not isinstance(skills_block, dict):
+                fail(f"{bwhere} must be an object")
+            for key in skills_block:
+                if key not in allowed_skills_keys:
+                    fail(f"{bwhere}: unknown key '{key}' "
                          "(additionalProperties:false)")
-            if st["type"] not in valid_skill_types:
-                fail(f"{stwhere}.type '{st['type']}' is not one of "
-                     f"{sorted(valid_skill_types)}")
-            if st["method"] not in valid_skill_methods:
-                fail(f"{stwhere}.method '{st['method']}' is not one of "
-                     f"{sorted(valid_skill_methods)}")
+            if "targets" not in skills_block:
+                fail(f"{bwhere} missing required key 'targets'")
+            s_targets = skills_block["targets"]
+            if not isinstance(s_targets, list) or len(s_targets) < 1:
+                fail(f"{bwhere}.targets must be a non-empty array")
+            for k, st in enumerate(s_targets):
+                stwhere = f"{bwhere}.targets[{k}]"
+                if not isinstance(st, dict):
+                    fail(f"{stwhere} must be an object")
+                for req in ("type", "method", "path"):
+                    if req not in st:
+                        fail(f"{stwhere} missing required key '{req}'")
+                for key in st:
+                    if key not in allowed_skill_target_keys:
+                        fail(f"{stwhere}: unknown key '{key}' "
+                             "(additionalProperties:false)")
+                if st["type"] not in valid_skill_types:
+                    fail(f"{stwhere}.type '{st['type']}' is not one of "
+                         f"{sorted(valid_skill_types)}")
+                if st["method"] not in valid_skill_methods:
+                    fail(f"{stwhere}.method '{st['method']}' is not one of "
+                         f"{sorted(valid_skill_methods)}")
 
 sys.exit(0)
 PY
@@ -638,32 +655,60 @@ for agent in overlay_agents:
 merged = dict(base)
 merged["agents"] = list(base_agents) + list(overlay_agents)
 
-# FR-137: merge surfaces.skills.targets[] additively (base ++ overlay) with a
-# path-collision hard error mirroring the agent name-collision guard.
+# FR-137 / TD-191: merge surfaces.skills as a MULTI-BLOCK ARRAY. Personal
+# blocks compile ALONGSIDE core (each carries its own source/layer/targets),
+# so the merge is a simple concatenation rather than the legacy "keep base
+# source + union targets" model. Cross-block target-path collisions (any
+# pair, base-vs-overlay, base-vs-base, overlay-vs-overlay) are a HARD error
+# — the same FR-137 collision contract, now scoped to the wider surface.
+# This guard SUPERSEDES the flatten-pass `seen_paths` dedup (drift #4 in
+# TD-191): every legitimate (block, target) row is distinct by construction
+# once it passes here. Legacy single-object blocks normalize to `[object]`
+# so back-compat holds without a version bump.
+def _normalize_skills(value):
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return list(value)
+    sys.stderr.write(
+        "Error: surfaces.skills must be an array of blocks (or a single "
+        "legacy object — both normalize)\n"
+    )
+    sys.exit(1)
+
+
 base_surfaces = base.get("surfaces", {}) or {}
 overlay_surfaces = overlay.get("surfaces", {}) or {}
-base_skills = base_surfaces.get("skills")
-overlay_skills = overlay_surfaces.get("skills")
+base_blocks = _normalize_skills(base_surfaces.get("skills"))
+overlay_blocks = _normalize_skills(overlay_surfaces.get("skills"))
 
-if overlay_skills is not None:
-    base_targets = (base_skills or {}).get("targets", []) if base_skills else []
-    overlay_targets = overlay_skills.get("targets", [])
-    base_paths = {t.get("path") for t in base_targets}
-    for t in overlay_targets:
-        p = t.get("path")
-        if p in base_paths:
-            sys.stderr.write(
-                f"Error: overlay skill-target path '{p}' collides with a base "
-                "(core) skill-target; a personal skill must not shadow a core "
-                "skill.\n"
-            )
-            sys.exit(1)
-    # Start from the base skills object (preserving source/layer) when present,
-    # else adopt the overlay's. Then union the targets.
-    merged_skills = dict(base_skills) if base_skills else dict(overlay_skills)
-    merged_skills["targets"] = list(base_targets) + list(overlay_targets)
+if base_blocks or overlay_blocks:
+    merged_blocks = list(base_blocks) + list(overlay_blocks)
+    # Cross-block path-collision guard: every (block, target) row's `path`
+    # must be unique across ALL blocks. Mirrors the agent name-collision
+    # guard above. Used to live as a base-vs-overlay-only check; widened so
+    # the multi-block surface preserves the FR-137 contract end-to-end.
+    seen_paths = {}
+    for b_idx, block in enumerate(merged_blocks):
+        for t in (block or {}).get("targets", []) or []:
+            p = (t or {}).get("path")
+            if p is None:
+                continue
+            if p in seen_paths:
+                prev = seen_paths[p]
+                sys.stderr.write(
+                    f"Error: skill-target path '{p}' collides between "
+                    f"surfaces.skills[{prev}] and surfaces.skills[{b_idx}]; "
+                    "every skill-target path must be unique across all "
+                    "blocks (a personal skill must not shadow a core skill, "
+                    "nor a sibling personal one).\n"
+                )
+                sys.exit(1)
+            seen_paths[p] = b_idx
     merged_surfaces = dict(base_surfaces)
-    merged_surfaces["skills"] = merged_skills
+    merged_surfaces["skills"] = merged_blocks
     merged["surfaces"] = merged_surfaces
 
 sys.stdout.write(json.dumps(merged))

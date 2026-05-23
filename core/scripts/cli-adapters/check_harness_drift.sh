@@ -409,12 +409,21 @@ import sys
 
 
 def load_skills(path):
+    # TD-191: returns a LIST of skills blocks (mirrors compile_harnesses.sh's
+    # loader). Legacy single-object normalized to `[object]`; missing → [].
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except OSError:
-        return None
-    return (data.get("surfaces") or {}).get("skills")
+        return []
+    value = (data.get("surfaces") or {}).get("skills")
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return value
+    return []
 
 
 # Only union the GLOBAL core surfaces-manifest.json when the checked project
@@ -429,20 +438,22 @@ try:
 except (OSError, ValueError):
     pass
 
-seen = set()
+# TD-191: NO `seen` dedup here. The drift pass mirrors compile_harnesses.sh
+# (L-519 §18.1 compile/drift-verify pairing) — every (block, target) row
+# that passes the merge's cross-block path-collision guard is legitimately
+# distinct. A `seen` dedup would mask a legitimate multi-block target row.
 for src in sources:
-    skills = load_skills(src)
-    if not skills:
-        continue
-    source = skills.get("source", "") or "-"
-    for t in skills.get("targets", []):
-        ttype = t.get("type", "")
-        path = t.get("path", "")
-        key = (ttype, path)
-        if key in seen:
+    for block in load_skills(src):
+        if not isinstance(block, dict):
             continue
-        seen.add(key)
-        print("\t".join([source, ttype, t.get("method", ""), path]))
+        source = block.get("source", "") or "-"
+        for t in block.get("targets", []) or []:
+            print("\t".join([
+                source,
+                (t or {}).get("type", ""),
+                (t or {}).get("method", ""),
+                (t or {}).get("path", ""),
+            ]))
 PY
 )
 

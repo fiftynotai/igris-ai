@@ -356,12 +356,22 @@ project_root = sys.argv[4]
 
 
 def load_skills(path):
+    # TD-191: returns a LIST of skills blocks (always). Legacy single-object
+    # `surfaces.skills` is normalized to `[object]` so back-compat overlays
+    # parse without a version bump. Missing/absent → [].
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except OSError:
-        return None
-    return (data.get("surfaces") or {}).get("skills")
+        return []
+    value = (data.get("surfaces") or {}).get("skills")
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return value
+    return []
 
 
 # The core surfaces-manifest.json declares GLOBAL Layer-1 skills. It is only
@@ -378,24 +388,29 @@ try:
 except (OSError, ValueError):
     pass
 
-seen_paths = set()
+# TD-191: NO `seen_paths` dedup here. The cross-block path-collision guard
+# in `_common.sh`'s `merge_overlay_manifest` rejects any duplicate
+# (block, target) path at merge time, so every row that reaches flatten is
+# legitimately distinct. Keeping a dedup here would mask a legitimate
+# multi-block target row (e.g., a personal block's `AGENTS-mine.md` next to
+# the core block's `AGENTS-core.md`).
 # Core surfaces own the core skills; the merged agent manifest (incl. the
 # FR-139 personal overlay) contributes project + personal skills. Core first.
 for src in sources:
-    skills = load_skills(src)
-    if not skills:
-        continue
-    source = skills.get("source", "") or "-"
-    for t in skills.get("targets", []):
-        ttype = t.get("type", "")
-        if target_kind != "all" and ttype != target_kind:
+    for block in load_skills(src):
+        if not isinstance(block, dict):
             continue
-        path = t.get("path", "")
-        dedup_key = (ttype, path)
-        if dedup_key in seen_paths:
-            continue
-        seen_paths.add(dedup_key)
-        print("\t".join([source, ttype, t.get("method", ""), path]))
+        source = block.get("source", "") or "-"
+        for t in block.get("targets", []) or []:
+            ttype = (t or {}).get("type", "")
+            if target_kind != "all" and ttype != target_kind:
+                continue
+            print("\t".join([
+                source,
+                ttype,
+                (t or {}).get("method", ""),
+                (t or {}).get("path", ""),
+            ]))
 PY
 )
 

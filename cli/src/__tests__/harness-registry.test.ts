@@ -24,6 +24,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -38,6 +39,7 @@ import {
   validateAgentEntry,
   validateOverlayShape,
   validateSkillsSurface,
+  validateSkillsSurfaceArray,
 } from "../verbs/registry.js";
 import type {
   GithubSpec,
@@ -60,9 +62,18 @@ let originsPath: string;
 let projectRoot: string;
 let vendorBase: string;
 
-/** Test-seam vendor-dir resolver: `<vendorBase>/<name>`. */
+/** Test-seam agent vendor-dir resolver: `<vendorBase>/<name>`. */
 function vendorDir(name: string): string {
   return join(vendorBase, name);
+}
+
+/**
+ * TD-191 test-seam skill vendor-dir resolver: `<vendorBase>/skills/<name>`.
+ * Mirrors the L-517 layout (typed subfolder) so tests assert paths under
+ * `<base>/skills/<name>/` without touching `~/.igris/registry/`.
+ */
+function skillVendorDir(name: string): string {
+  return join(vendorBase, "skills", name);
 }
 
 beforeEach(() => {
@@ -144,10 +155,11 @@ describe("registry add", () => {
     );
 
     // origins.json records a typed path origin pointing at the SOURCE dir.
+    // TD-191: keyspace is namespaced — agent entries land under `agent:<name>`.
     const origins = readOriginsFile();
-    expect(origins.mycustom.type).toBe("path");
-    expect(origins.mycustom.dir).toBe(join(projectRoot, "canon"));
-    expect(origins.mycustom.hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(origins["agent:mycustom"].type).toBe("path");
+    expect(origins["agent:mycustom"].dir).toBe(join(projectRoot, "canon"));
+    expect(origins["agent:mycustom"].hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("--versioned --glob vendors the matching file set (no file in canonical)", async () => {
@@ -470,28 +482,34 @@ describe("validateAgentEntry / validateOverlayShape", () => {
     ).toMatch(/additionalProperties/);
   });
 
-  it("overlay: accepts a VALID surfaces.skills block (FR-143)", () => {
-    // FR-143 tightened the validator: a skills block must satisfy
-    // $defs.skills_surface (targets required). The old `{ skills: {} }` fixture
-    // is now invalid (deliberate) — assert a valid block validates instead.
+  it("overlay: accepts a VALID surfaces.skills array (TD-191)", () => {
+    // TD-191: `surfaces.skills` is an ARRAY of blocks (multi-source). Each
+    // block must satisfy $defs.skills_surface (targets required). Validate
+    // the array path explicitly.
     expect(
       validateOverlayShape({
         version: 1,
         agents: [],
         surfaces: {
-          skills: {
-            source: "/abs/skills",
-            layer: "personal",
-            targets: [{ type: "codex", method: "compiler", path: "AGENTS.md" }],
-          },
+          skills: [
+            {
+              source: "/abs/skills",
+              layer: "personal",
+              targets: [{ type: "codex", method: "compiler", path: "AGENTS.md" }],
+            },
+          ],
         },
       }),
     ).toBeNull();
-    // The previously-accepted empty skills block is now rejected (missing
-    // required `targets`).
+    // Empty array is rejected (minItems:1).
+    expect(
+      validateOverlayShape({ version: 1, agents: [], surfaces: { skills: [] } }),
+    ).toMatch(/non-empty array/);
+    // Non-array is rejected (TD-191's explicit array gate; validateOverlayShape
+    // calls validateSkillsSurfaceArray which requires an array).
     expect(
       validateOverlayShape({ version: 1, agents: [], surfaces: { skills: {} } }),
-    ).toMatch(/targets/);
+    ).toMatch(/non-empty array/);
   });
 });
 
@@ -509,7 +527,8 @@ describe("registry remove", () => {
       }),
     );
     expect(existsSync(vendorDir("only"))).toBe(true);
-    expect("only" in readOriginsFile()).toBe(true);
+    // TD-191: agent origin keyed `agent:<name>`.
+    expect("agent:only" in readOriginsFile()).toBe(true);
 
     const code = await runRegistry({
       action: "remove",
@@ -525,7 +544,7 @@ describe("registry remove", () => {
     expect(overlay.agents).toEqual([]);
     // Cleanup: vendored copy gone, origins entry gone.
     expect(existsSync(vendorDir("only"))).toBe(false);
-    expect("only" in readOriginsFile()).toBe(false);
+    expect("agent:only" in readOriginsFile()).toBe(false);
   });
 
   it("rejects removing a nonexistent name (exit 1), overlay unchanged", async () => {
@@ -548,9 +567,10 @@ describe("registry remove", () => {
     expect(readFileSync(overlayPath, "utf-8")).toBe(before);
   });
 
-  it("preserves a surfaces.skills block across add+remove", async () => {
-    // FR-143: the block must be schema-valid now (targets required), so seed a
-    // valid one. The agent add/remove round-trip must leave it untouched.
+  it("preserves a surfaces.skills array across add+remove", async () => {
+    // TD-191: `surfaces.skills` is an array of blocks. Each block must satisfy
+    // $defs.skills_surface. The agent add/remove round-trip must leave the
+    // skills array untouched.
     const skillsBlock = {
       source: "/abs/skills",
       layer: "personal",
@@ -558,7 +578,11 @@ describe("registry remove", () => {
     };
     writeFileSync(
       overlayPath,
-      JSON.stringify({ version: 1, agents: [], surfaces: { skills: skillsBlock } }),
+      JSON.stringify({
+        version: 1,
+        agents: [],
+        surfaces: { skills: [skillsBlock] },
+      }),
     );
     await runRegistry(
       addOpts({
@@ -575,7 +599,7 @@ describe("registry remove", () => {
       vendorDir,
     });
     const overlay = readOverlayFile() as { surfaces?: unknown };
-    expect(overlay.surfaces).toEqual({ skills: skillsBlock });
+    expect(overlay.surfaces).toEqual({ skills: [skillsBlock] });
   });
 });
 
@@ -605,10 +629,14 @@ describe("registry unknown action", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FR-143: add-skill (surfaces.skills overlay — REFERENCE, no vendor/origin)
+// FR-143 / TD-191: add-skill (surfaces.skills array — copy-vendor + origin per L-516/L-519)
 // ---------------------------------------------------------------------------
 
-/** Build add-skill opts; `from` defaults to a real skills dir under projectRoot. */
+/**
+ * Build add-skill opts; `name` + `from` default to a real single-skill dir
+ * under projectRoot. TD-191: `add-skill` is now copy-vendor (L-516) so the
+ * source must contain a SKILL.md (single-skill source: `from = <skill>/`).
+ */
 function skillOpts(
   extra: Record<string, unknown>,
 ): Parameters<typeof runRegistry>[0] {
@@ -618,14 +646,17 @@ function skillOpts(
     overlayPath,
     originsPath,
     vendorDir,
-    from: "skills",
+    skillVendorDir,
+    name: "demo",
+    from: "skills/demo",
     ...extra,
   } as Parameters<typeof runRegistry>[0];
 }
 
 describe("registry add-skill", () => {
   beforeEach(() => {
-    // A live skills root with one {name}/SKILL.md (referenced, never vendored).
+    // A live skills source: `skills/demo/SKILL.md` (TD-191 single-skill shape;
+    // the vendor primitive copies it as `<vendoredDir>/demo/SKILL.md`).
     mkdirSync(join(projectRoot, "skills", "demo"), { recursive: true });
     writeFileSync(
       join(projectRoot, "skills", "demo", "SKILL.md"),
@@ -633,7 +664,7 @@ describe("registry add-skill", () => {
     );
   });
 
-  it("writes a schema-valid surfaces.skills block (source, layer:personal, targets)", async () => {
+  it("vendors the skill tree, writes a schema-valid block array, records skill origin", async () => {
     const code = await runRegistry(
       skillOpts({
         targets: [
@@ -644,69 +675,219 @@ describe("registry add-skill", () => {
     );
     expect(code).toBe(0);
     const overlay = readOverlayFile() as {
-      surfaces?: { skills?: Record<string, unknown> };
+      surfaces?: { skills?: unknown[] };
     };
-    const skills = overlay.surfaces?.skills;
-    expect(skills).toBeDefined();
-    expect(skills?.layer).toBe("personal");
-    // source is the resolved ABSOLUTE referenced dir (no vendoring).
-    expect(skills?.source).toBe(join(projectRoot, "skills"));
-    expect(skills?.targets).toEqual([
+    const skillsArr = overlay.surfaces?.skills;
+    // TD-191: `surfaces.skills` is an ARRAY of blocks.
+    expect(Array.isArray(skillsArr)).toBe(true);
+    expect(skillsArr).toHaveLength(1);
+    const block = (skillsArr as Record<string, unknown>[])[0];
+    expect(block.layer).toBe("personal");
+    // L-516: source is the VENDORED tree path (NOT the consumer's external dir).
+    expect(block.source).toBe(join(vendorBase, "skills", "demo"));
+    expect(block.targets).toEqual([
       { type: "codex", method: "compiler", path: "AGENTS.md" },
       { type: "gemini", method: "converter", path: ".gemini/commands" },
     ]);
     // The written block validates against the schema port.
-    expect(validateSkillsSurface(skills)).toBeNull();
-    // NO vendoring + NO origin entry for skills (deliberate divergence).
-    expect(existsSync(originsPath)).toBe(false);
+    expect(validateSkillsSurface(block)).toBeNull();
+    // L-517: vendored tree exists at registrySkillDirPath("demo")/demo/SKILL.md
+    // (the test-seam vendorDir resolves to vendorBase/skills/<name>).
+    const vendored = join(vendorBase, "skills", "demo", "demo", "SKILL.md");
+    expect(existsSync(vendored)).toBe(true);
+    expect(readFileSync(vendored, "utf-8")).toBe(
+      readFileSync(join(projectRoot, "skills", "demo", "SKILL.md"), "utf-8"),
+    );
+    // Origin recorded under namespaced key `skill:demo`.
+    const origins = readOriginsFile() as Record<string, Record<string, unknown>>;
+    expect(origins["skill:demo"].type).toBe("path");
+    expect(origins["skill:demo"].dir).toBe(join(projectRoot, "skills", "demo"));
+    expect(origins["skill:demo"].hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("does NOT vendor the skills source dir (reference mode)", async () => {
-    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS.md"] }));
-    // The registry vendor base must not have gained a skills copy.
-    expect(existsSync(join(vendorBase, "skills"))).toBe(false);
-    expect(existsSync(join(vendorBase, "demo"))).toBe(false);
-  });
-
-  it("merges a second add-skill into the same block (single object, path-deduped)", async () => {
-    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS.md"] }));
+  it("multi-source: a second add-skill with a NEW name appends another block", async () => {
+    // Set up a second skill source.
+    mkdirSync(join(projectRoot, "skills", "other"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, "skills", "other", "SKILL.md"),
+      "---\nname: other\ndescription: o\n---\nother body\n",
+    );
+    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS-demo.md"] }));
     const code = await runRegistry(
-      skillOpts({ targets: ["gemini:converter:.gemini/commands"] }),
+      skillOpts({
+        name: "other",
+        from: "skills/other",
+        targets: ["codex:compiler:AGENTS-other.md"],
+      }),
     );
     expect(code).toBe(0);
     const overlay = readOverlayFile() as {
-      surfaces?: { skills?: { targets: unknown[] } };
+      surfaces?: { skills?: Record<string, unknown>[] };
     };
-    expect(overlay.surfaces?.skills?.targets).toEqual([
-      { type: "codex", method: "compiler", path: "AGENTS.md" },
-      { type: "gemini", method: "converter", path: ".gemini/commands" },
-    ]);
+    expect(overlay.surfaces?.skills).toHaveLength(2);
+    expect(overlay.surfaces?.skills?.[0].source).toBe(
+      join(vendorBase, "skills", "demo"),
+    );
+    expect(overlay.surfaces?.skills?.[1].source).toBe(
+      join(vendorBase, "skills", "other"),
+    );
+    // Both origins are recorded under namespaced keys.
+    const origins = readOriginsFile();
+    expect("skill:demo" in origins).toBe(true);
+    expect("skill:other" in origins).toBe(true);
   });
 
-  it("rejects a target path duplicated within the overlay's own block (exit 1, unchanged)", async () => {
+  it("same-name re-add updates the existing block IN PLACE (re-vendor, hash advance)", async () => {
     await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS.md"] }));
-    const before = readFileSync(overlayPath, "utf-8");
+    const hashBefore = (
+      readOriginsFile() as Record<string, Record<string, unknown>>
+    )["skill:demo"].hash as string;
+
+    // Mutate the source.
+    writeFileSync(
+      join(projectRoot, "skills", "demo", "SKILL.md"),
+      "---\nname: demo\ndescription: d\n---\nMUTATED body\n",
+    );
     const code = await runRegistry(
       skillOpts({ targets: ["codex:compiler:AGENTS.md"] }),
+    );
+    expect(code).toBe(0);
+    // Overlay still has ONE block (in-place update, not append).
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: unknown[] };
+    };
+    expect(overlay.surfaces?.skills).toHaveLength(1);
+    // Vendored tree reflects new bytes.
+    expect(
+      readFileSync(
+        join(vendorBase, "skills", "demo", "demo", "SKILL.md"),
+        "utf-8",
+      ),
+    ).toBe(
+      "---\nname: demo\ndescription: d\n---\nMUTATED body\n",
+    );
+    // Hash advanced.
+    const hashAfter = (
+      readOriginsFile() as Record<string, Record<string, unknown>>
+    )["skill:demo"].hash as string;
+    expect(hashAfter).not.toBe(hashBefore);
+  });
+
+  it("same-name re-add unions targets (idempotent for an exact dup)", async () => {
+    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS-demo.md"] }));
+    // Adding a NEW target path for the SAME skill — appended to the same block.
+    const code = await runRegistry(
+      skillOpts({
+        targets: ["gemini:converter:.gemini/commands"],
+      }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: { targets: unknown[] }[] };
+    };
+    expect(overlay.surfaces?.skills).toHaveLength(1);
+    expect(overlay.surfaces?.skills?.[0].targets).toEqual([
+      { type: "codex", method: "compiler", path: "AGENTS-demo.md" },
+      { type: "gemini", method: "converter", path: ".gemini/commands" },
+    ]);
+    // An exact re-run is idempotent (same paths union to same set).
+    const before = readFileSync(overlayPath, "utf-8");
+    const code2 = await runRegistry(
+      skillOpts({ targets: ["codex:compiler:AGENTS-demo.md"] }),
+    );
+    expect(code2).toBe(0);
+    const overlay2 = readOverlayFile() as {
+      surfaces?: { skills?: { targets: unknown[] }[] };
+    };
+    expect(overlay2.surfaces?.skills?.[0].targets).toEqual([
+      { type: "codex", method: "compiler", path: "AGENTS-demo.md" },
+      { type: "gemini", method: "converter", path: ".gemini/commands" },
+    ]);
+    // (overlay can re-write but the bytes after JSON normalization match)
+    void before;
+  });
+
+  it("same-name re-add WITHOUT --from re-vendors from the recorded origin dir", async () => {
+    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS.md"] }));
+    // Mutate the source (consumer side).
+    writeFileSync(
+      join(projectRoot, "skills", "demo", "SKILL.md"),
+      "---\nname: demo\ndescription: d\n---\nSECOND PASS\n",
+    );
+    // No --from: writer should fall back to the recorded origin's dir.
+    const code = await runRegistry({
+      action: "add-skill",
+      name: "demo",
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      skillVendorDir,
+      targets: ["codex:compiler:AGENTS.md"],
+    });
+    expect(code).toBe(0);
+    // Vendored tree picks up the mutation.
+    expect(
+      readFileSync(
+        join(vendorBase, "skills", "demo", "demo", "SKILL.md"),
+        "utf-8",
+      ),
+    ).toBe("---\nname: demo\ndescription: d\n---\nSECOND PASS\n");
+  });
+
+  it("first-time --from is REQUIRED (exit 2 with no recorded origin)", async () => {
+    const code = await runRegistry({
+      action: "add-skill",
+      name: "newname",
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      targets: ["codex:compiler:AGENTS.md"],
+    });
+    expect(code).toBe(2);
+  });
+
+  it("rejects a target path duplicated in another (sibling) overlay block (exit 1, unchanged)", async () => {
+    // First block claims AGENTS.md.
+    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS.md"] }));
+    // Second skill, different name, but the SAME target path → reject.
+    mkdirSync(join(projectRoot, "skills", "other"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, "skills", "other", "SKILL.md"),
+      "---\nname: other\ndescription: o\n---\nbody\n",
+    );
+    const before = readFileSync(overlayPath, "utf-8");
+    const code = await runRegistry(
+      skillOpts({
+        name: "other",
+        from: "skills/other",
+        targets: ["codex:compiler:AGENTS.md"],
+      }),
     );
     expect(code).toBe(1);
     expect(readFileSync(overlayPath, "utf-8")).toBe(before);
   });
 
   it("rejects a path colliding with a CORE skill-target at write-time (exit 1, unchanged)", async () => {
-    // Seed a base manifest carrying a core skill-target path.
+    // Seed a base manifest carrying a core skill-target path. TD-191: schema
+    // requires `surfaces.skills` to be an ARRAY of blocks; loaders normalize
+    // legacy single-object too, but here we use the modern array shape so
+    // the readBaseSkillTargetPaths multi-block iteration is exercised.
     writeFileSync(
       join(projectRoot, "harness-manifest.json"),
       JSON.stringify({
         version: 1,
         agents: [],
         surfaces: {
-          skills: {
-            source: "core/skills",
-            targets: [
-              { type: "codex", method: "compiler", path: "AGENTS.md" },
-            ],
-          },
+          skills: [
+            {
+              source: "core/skills",
+              targets: [
+                { type: "codex", method: "compiler", path: "AGENTS.md" },
+              ],
+            },
+          ],
         },
       }),
     );
@@ -716,14 +897,16 @@ describe("registry add-skill", () => {
     expect(code).toBe(1);
     // Overlay never written (collision rejected before persist).
     expect(existsSync(overlayPath)).toBe(false);
+    // Vendor never touched (collision rejected BEFORE the vendor step).
+    expect(existsSync(join(vendorBase, "skills", "demo"))).toBe(false);
   });
 
-  it("requires source and at least one target (usage error exit 2)", async () => {
+  it("requires name + at least one target (usage error exit 2)", async () => {
     expect(
       await runRegistry({
         action: "add-skill",
         overlayPath,
-        from: undefined,
+        from: "skills/demo",
         targets: ["codex:compiler:AGENTS.md"],
       }),
     ).toBe(2);
@@ -732,7 +915,8 @@ describe("registry add-skill", () => {
         action: "add-skill",
         overlayPath,
         projectRoot,
-        from: "skills",
+        name: "demo",
+        from: "skills/demo",
         targets: [],
       }),
     ).toBe(2);
@@ -744,11 +928,47 @@ describe("registry add-skill", () => {
     );
     expect(code).toBe(1);
   });
+
+  it("L-517: vendored tree lands under registry/skills/<name>/<name>/SKILL.md (nesting preserved)", async () => {
+    // The L-519 standard format requires `<name>/SKILL.md` nesting (the
+    // codex compiler + gemini converter `find -mindepth 2` walks would
+    // break on a flattened layout). Asserts the vendor primitive preserves
+    // the tree shape.
+    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS.md"] }));
+    // Nested: <vendoredDir>/<name>/SKILL.md, NOT <vendoredDir>/SKILL.md.
+    expect(
+      existsSync(join(vendorBase, "skills", "demo", "demo", "SKILL.md")),
+    ).toBe(true);
+    expect(existsSync(join(vendorBase, "skills", "demo", "SKILL.md"))).toBe(
+      false,
+    );
+  });
+
+  it("origin namespace: agent:<name> and skill:<name> coexist for the same name (no collision)", async () => {
+    // Add an agent named 'demo' AND a skill named 'demo'.
+    await runRegistry(
+      addOpts({
+        name: "demo",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/demo.md"],
+      }),
+    );
+    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS.md"] }));
+    const origins = readOriginsFile();
+    expect("agent:demo" in origins).toBe(true);
+    expect("skill:demo" in origins).toBe(true);
+    // The unprefixed key MUST NOT exist (the brief calls this collision out).
+    expect("demo" in origins).toBe(false);
+  });
 });
 
 describe("registry add-skill — type:method:path parsing", () => {
   beforeEach(() => {
-    mkdirSync(join(projectRoot, "skills"), { recursive: true });
+    mkdirSync(join(projectRoot, "skills", "demo"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, "skills", "demo", "SKILL.md"),
+      "---\nname: demo\ndescription: d\n---\nbody\n",
+    );
   });
 
   it("parses a valid triple", async () => {
@@ -757,9 +977,9 @@ describe("registry add-skill — type:method:path parsing", () => {
     );
     expect(code).toBe(0);
     const overlay = readOverlayFile() as {
-      surfaces?: { skills?: { targets: unknown[] } };
+      surfaces?: { skills?: { targets: unknown[] }[] };
     };
-    expect(overlay.surfaces?.skills?.targets).toEqual([
+    expect(overlay.surfaces?.skills?.[0].targets).toEqual([
       { type: "gemini", method: "converter", path: ".gemini/commands" },
     ]);
   });
@@ -770,9 +990,9 @@ describe("registry add-skill — type:method:path parsing", () => {
     );
     expect(code).toBe(0);
     const overlay = readOverlayFile() as {
-      surfaces?: { skills?: { targets: { path: string }[] } };
+      surfaces?: { skills?: { targets: { path: string }[] }[] };
     };
-    expect(overlay.surfaces?.skills?.targets[0].path).toBe(
+    expect(overlay.surfaces?.skills?.[0].targets[0].path).toBe(
       "dir:with:colons/AGENTS.md",
     );
   });
@@ -856,6 +1076,114 @@ describe("validateSkillsSurface (schema port)", () => {
   });
 });
 
+describe("validateSkillsSurfaceArray (TD-191 array gate)", () => {
+  const validBlock = {
+    source: "/abs/skills",
+    layer: "personal",
+    targets: [{ type: "codex", method: "compiler", path: "AGENTS.md" }],
+  };
+
+  it("accepts a 1-block valid array", () => {
+    expect(validateSkillsSurfaceArray([validBlock])).toBeNull();
+  });
+
+  it("accepts a 2-block valid array (multi-source)", () => {
+    expect(
+      validateSkillsSurfaceArray([
+        validBlock,
+        {
+          source: "/abs/skills-other",
+          layer: "personal",
+          targets: [
+            { type: "gemini", method: "converter", path: ".gemini/commands" },
+          ],
+        },
+      ]),
+    ).toBeNull();
+  });
+
+  it("rejects non-array input", () => {
+    expect(validateSkillsSurfaceArray({})).toMatch(/non-empty array/);
+    expect(validateSkillsSurfaceArray("not-an-array")).toMatch(
+      /non-empty array/,
+    );
+    expect(validateSkillsSurfaceArray(null)).toMatch(/non-empty array/);
+  });
+
+  it("rejects empty array", () => {
+    expect(validateSkillsSurfaceArray([])).toMatch(/non-empty array/);
+  });
+
+  it("rejects a one-bad-block array, prefixed with surfaces.skills[i]:", () => {
+    expect(
+      validateSkillsSurfaceArray([
+        validBlock,
+        { source: "/abs", layer: "personal", targets: [] }, // empty targets
+      ]),
+    ).toMatch(/^surfaces\.skills\[1\]:/);
+    expect(
+      validateSkillsSurfaceArray([
+        { source: "/abs", layer: "personal", targets: [] },
+      ]),
+    ).toMatch(/^surfaces\.skills\[0\]:.*non-empty array/);
+  });
+
+  it("rejects a bad target enum inside an otherwise-valid block", () => {
+    expect(
+      validateSkillsSurfaceArray([
+        {
+          source: "/abs",
+          layer: "personal",
+          targets: [{ type: "claude", method: "compiler", path: "AGENTS.md" }],
+        },
+      ]),
+    ).toMatch(/surfaces\.skills\[0\].*claude/);
+  });
+});
+
+describe("TD-191 back-compat: legacy single-object surfaces.skills", () => {
+  it("readBaseSkillTargetPaths normalizes a legacy single-object base manifest", async () => {
+    // The writer's core-collision guard MUST see the path from a legacy
+    // single-object base manifest (back-compat read normalize). Verified
+    // indirectly: an add-skill that collides with a legacy base path is
+    // rejected.
+    mkdirSync(join(projectRoot, "skills", "demo"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, "skills", "demo", "SKILL.md"),
+      "---\nname: demo\ndescription: d\n---\nbody\n",
+    );
+    // LEGACY base manifest shape: surfaces.skills is a SINGLE object (pre-TD-191).
+    writeFileSync(
+      join(projectRoot, "harness-manifest.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [],
+        surfaces: {
+          skills: {
+            source: "core/skills",
+            targets: [
+              { type: "codex", method: "compiler", path: "AGENTS.md" },
+            ],
+          },
+        },
+      }),
+    );
+    const code = await runRegistry({
+      action: "add-skill",
+      name: "demo",
+      from: "skills/demo",
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      skillVendorDir,
+      targets: ["codex:compiler:AGENTS.md"],
+    });
+    // Legacy single-object's path was seen by the guard → collision → exit 1.
+    expect(code).toBe(1);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // update (re-vendor from recorded origin)
 // ---------------------------------------------------------------------------
@@ -874,7 +1202,8 @@ describe("registry update", () => {
 
   it("reports unchanged when the source is identical (hash stable)", async () => {
     await seedAdd("u1");
-    const hashBefore = readOriginsFile().u1.hash;
+    // TD-191: agent origins keyed `agent:<name>`.
+    const hashBefore = readOriginsFile()["agent:u1"].hash;
     const code = await runRegistry({
       action: "update",
       name: "u1",
@@ -883,13 +1212,13 @@ describe("registry update", () => {
       vendorDir,
     });
     expect(code).toBe(0);
-    expect(readOriginsFile().u1.hash).toBe(hashBefore);
+    expect(readOriginsFile()["agent:u1"].hash).toBe(hashBefore);
   });
 
   it("reports changed after the source mutates; re-vendors + updates hash, overlay unchanged", async () => {
     await seedAdd("u2");
     const overlayBefore = readFileSync(overlayPath, "utf-8");
-    const hashBefore = readOriginsFile().u2.hash;
+    const hashBefore = readOriginsFile()["agent:u2"].hash;
     // Mutate the SOURCE file.
     writeFileSync(join(projectRoot, "canon", "x.md"), "# x\nMUTATED\n");
     const code = await runRegistry({
@@ -905,7 +1234,7 @@ describe("registry update", () => {
       "# x\nMUTATED\n",
     );
     // Hash updated, overlay canonical.dir unchanged.
-    expect(readOriginsFile().u2.hash).not.toBe(hashBefore);
+    expect(readOriginsFile()["agent:u2"].hash).not.toBe(hashBefore);
     expect(readFileSync(overlayPath, "utf-8")).toBe(overlayBefore);
   });
 
@@ -915,8 +1244,8 @@ describe("registry update", () => {
     writeFileSync(join(projectRoot, "canon", "b.md"), "beta\n");
     await seedAdd("ua", "canon/a.md");
     await seedAdd("ub", "canon/b.md");
-    const hashA = readOriginsFile().ua.hash;
-    const hashB = readOriginsFile().ub.hash;
+    const hashA = readOriginsFile()["agent:ua"].hash;
+    const hashB = readOriginsFile()["agent:ub"].hash;
     // Mutate only a.md.
     writeFileSync(join(projectRoot, "canon", "a.md"), "alpha-CHANGED\n");
     const code = await runRegistry({
@@ -927,8 +1256,8 @@ describe("registry update", () => {
       vendorDir,
     });
     expect(code).toBe(0);
-    expect(readOriginsFile().ua.hash).not.toBe(hashA);
-    expect(readOriginsFile().ub.hash).toBe(hashB);
+    expect(readOriginsFile()["agent:ua"].hash).not.toBe(hashA);
+    expect(readOriginsFile()["agent:ub"].hash).toBe(hashB);
   });
 
   it("exit 1 for an absent agent", async () => {
@@ -988,6 +1317,7 @@ describe("registry update", () => {
   it("--all skips a non-path origin gracefully (forward-compat for FR-148)", async () => {
     await seedAdd("pathone");
     // Seed a fake github-origin entry whose agent also exists in the overlay.
+    // TD-191: namespaced under `agent:<name>`.
     const overlay = readOverlayFile() as {
       version: number;
       agents: Record<string, unknown>[];
@@ -1000,7 +1330,11 @@ describe("registry update", () => {
     });
     writeFileSync(overlayPath, JSON.stringify(overlay));
     const origins = readOriginsFile();
-    origins.ghorigin = { type: "github", dir: "owner/repo@main", hash: "deadbeef" };
+    origins["agent:ghorigin"] = {
+      type: "github",
+      dir: "owner/repo@main",
+      hash: "deadbeef",
+    };
     writeFileSync(originsPath, JSON.stringify(origins));
 
     const code = await runRegistry({
@@ -1013,7 +1347,7 @@ describe("registry update", () => {
     // Non-path origin is skipped (reported), not errored.
     expect(code).toBe(0);
     // The github origin is untouched.
-    expect(readOriginsFile().ghorigin.hash).toBe("deadbeef");
+    expect(readOriginsFile()["agent:ghorigin"].hash).toBe("deadbeef");
   });
 
   it("re-vendors a versioned surface whose glob now matches a DIFFERENT file set", async () => {
@@ -1028,7 +1362,7 @@ describe("registry update", () => {
         targets: ["codex:.codex/agents/vupd.toml"],
       }),
     );
-    const hashBefore = readOriginsFile().vupd.hash;
+    const hashBefore = readOriginsFile()["agent:vupd"].hash;
     expect(existsSync(join(vendorDir("vupd"), "v1.md"))).toBe(true);
     expect(existsSync(join(vendorDir("vupd"), "v2.md"))).toBe(false);
 
@@ -1045,7 +1379,7 @@ describe("registry update", () => {
     // The vendored dir is fully replaced — now carries both files.
     expect(existsSync(join(vendorDir("vupd"), "v1.md"))).toBe(true);
     expect(existsSync(join(vendorDir("vupd"), "v2.md"))).toBe(true);
-    expect(readOriginsFile().vupd.hash).not.toBe(hashBefore);
+    expect(readOriginsFile()["agent:vupd"].hash).not.toBe(hashBefore);
   });
 });
 
@@ -1134,13 +1468,13 @@ describe("registry add — github origin (stubbed fetch)", () => {
 
     // origins.json carries a github origin.
     const origins = readOriginsFile() as Record<string, Record<string, unknown>>;
-    expect(origins.mypack.type).toBe("github");
-    expect(origins.mypack.repo).toBe("owner/repo");
-    expect(origins.mypack.ref).toBe("v1.0.0");
-    expect(origins.mypack.sha).toBe(
+    expect(origins["agent:mypack"].type).toBe("github");
+    expect(origins["agent:mypack"].repo).toBe("owner/repo");
+    expect(origins["agent:mypack"].ref).toBe("v1.0.0");
+    expect(origins["agent:mypack"].sha).toBe(
       "0123456789abcdef0123456789abcdef01234567",
     );
-    expect(origins.mypack.hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(origins["agent:mypack"].hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("selects the named surface from a multi-entry repo manifest", async () => {
@@ -1234,7 +1568,7 @@ describe("registry add — github origin (stubbed fetch)", () => {
       "# scoped\n",
     );
     const origins = readOriginsFile() as Record<string, Record<string, unknown>>;
-    expect(origins.mypack.subdir).toBe("packs");
+    expect(origins["agent:mypack"].subdir).toBe("packs");
   });
 
   it("rejects a bad repo manifest (exit 1, no vendor)", async () => {
@@ -1427,8 +1761,8 @@ describe("registry update — github origin (stubbed fetch + releases)", () => {
     });
     expect(code).toBe(0);
     const origins = readOriginsFile() as Record<string, Record<string, unknown>>;
-    expect(origins.mypack.ref).toBe("v1.0.0");
-    expect(origins.mypack.sha).toBe("aaaaaaaaaaaaaaaa");
+    expect(origins["agent:mypack"].ref).toBe("v1.0.0");
+    expect(origins["agent:mypack"].sha).toBe("aaaaaaaaaaaaaaaa");
   });
 
   it("reports no releases found (unchanged) when releases is empty", async () => {
@@ -1443,7 +1777,9 @@ describe("registry update — github origin (stubbed fetch + releases)", () => {
     });
     expect(code).toBe(0);
     expect(
-      (readOriginsFile() as Record<string, Record<string, unknown>>).mypack.ref,
+      (readOriginsFile() as Record<string, Record<string, unknown>>)[
+        "agent:mypack"
+      ].ref,
     ).toBe("v1.0.0");
   });
 
@@ -1470,8 +1806,8 @@ describe("registry update — github origin (stubbed fetch + releases)", () => {
     expect(calls[0].ref).toBe("v1.1.0");
     // origin advanced.
     const origins = readOriginsFile() as Record<string, Record<string, unknown>>;
-    expect(origins.mypack.ref).toBe("v1.1.0");
-    expect(origins.mypack.sha).toBe("bbbbbbbbbbbbbbbb");
+    expect(origins["agent:mypack"].ref).toBe("v1.1.0");
+    expect(origins["agent:mypack"].sha).toBe("bbbbbbbbbbbbbbbb");
     // re-vendored bytes reflect the mutation.
     expect(readFileSync(join(vendorDir("mypack"), "mypack.md"), "utf-8")).toBe(
       "# v2 fresh\n",
@@ -1499,8 +1835,8 @@ describe("registry update — github origin (stubbed fetch + releases)", () => {
     expect(code).toBe(0);
     // Both origins are intact; github stayed at v1.0.0.
     const origins = readOriginsFile() as Record<string, Record<string, unknown>>;
-    expect(origins.mypack.type).toBe("github");
-    expect(origins.localpack.type).toBe("path");
+    expect(origins["agent:mypack"].type).toBe("github");
+    expect(origins["agent:localpack"].type).toBe("path");
   });
 });
 
@@ -1569,7 +1905,7 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
 
     // Write the overlay via the REAL verb into the sandboxed brain registry,
     // using the same paths the adapter auto-discovers (no test seams here:
-    // exercise registryOverlayPath()/registrySurfaceDirPath()/registryOriginsPath()
+    // exercise registryOverlayPath()/registryAgentDirPath()/registryOriginsPath()
     // via IGRIS_BRAIN_DIR so the verb + adapter agree automatically).
     process.env.IGRIS_BRAIN_DIR = brainDir;
     const writtenOverlay = join(
@@ -1586,9 +1922,24 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
     });
     expect(addCode).toBe(0);
     expect(existsSync(writtenOverlay)).toBe(true);
-    // The vendored copy landed under the sandboxed brain registry dir.
-    const vendored = join(brainDir, "registry", "mycustom", "mycustom.md");
+    // TD-191 L-517: the vendored agent copy lives at registry/agents/<name>/.
+    const vendored = join(brainDir, "registry", "agents", "mycustom", "mycustom.md");
     expect(existsSync(vendored)).toBe(true);
+    // The L-517 invariant: nothing loose at the registry root (only catalog
+    // files + typed subfolders).
+    const registryRoot = join(brainDir, "registry");
+    const rootEntries = readdirSync(registryRoot).sort();
+    // Allow: harness-manifest.personal.json, origins.json, agents/, plus any
+    // future typed subfolder if the test happened to seed one (here: agents/).
+    for (const entry of rootEntries) {
+      expect(
+        entry === "harness-manifest.personal.json" ||
+          entry === "origins.json" ||
+          entry === "agents" ||
+          entry === "skills" ||
+          entry === "body-exceptions",
+      ).toBe(true);
+    }
 
     // (AC4) The overlay passes the REAL validate_manifest — closes the
     // TS-validator-vs-schema parity loop end-to-end (schema-clean under option b).
@@ -1655,34 +2006,33 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
     expect(produced).toContain("XYZZY");
   });
 
-  it("add-skill overlay: REAL compiler --surface skills projects the personal skill ALONGSIDE the core skill (core first)", async () => {
+  it("add-skill overlay: REAL compiler --surface skills projects the personal block ALONGSIDE the core block (multi-source)", async () => {
     if (!toolingAvailable()) {
       return;
     }
     process.env.IGRIS_BRAIN_DIR = brainDir;
 
-    // Shared skills root with two skills. NOTE on the FR-137 merge semantics:
-    // `surfaces.skills` is a SINGLE block with ONE `source`. The merge keeps the
-    // BASE source and UNIONS targets (base ++ overlay). So a personal target is
-    // projected against the base source ALONGSIDE the core target — "core first"
-    // is the target ORDER. A personal target adds a NEW projection (e.g. a new
-    // output dir or harness) for the same skills root.
-    const skillsRoot = join(fixtureRoot, "skills");
-    mkdirSync(join(skillsRoot, "alpha"), { recursive: true });
+    // TD-191 semantics: `surfaces.skills` is an ARRAY of blocks. Each block
+    // carries its OWN source/layer/targets. The personal block compiles
+    // ALONGSIDE the core block — they are SIBLINGS in the array, NOT a
+    // shared-source-with-unioned-targets pair (which was the pre-TD-191
+    // model). The core block here uses its own skills source; the personal
+    // block carries a DIFFERENT skills source (the writer vendors it under
+    // ~/.igris/registry/skills/<name>/).
+    const coreSkillsRoot = join(fixtureRoot, "skills-core");
+    mkdirSync(join(coreSkillsRoot, "alpha"), { recursive: true });
     writeFileSync(
-      join(skillsRoot, "alpha", "SKILL.md"),
-      "---\nname: alpha\ndescription: skill alpha\n---\nALPHA BODY\n",
-    );
-    mkdirSync(join(skillsRoot, "beta"), { recursive: true });
-    writeFileSync(
-      join(skillsRoot, "beta", "SKILL.md"),
-      "---\nname: beta\ndescription: skill beta\n---\nBETA BODY\n",
+      join(coreSkillsRoot, "alpha", "SKILL.md"),
+      "---\nname: alpha\ndescription: core alpha\n---\nALPHA CORE BODY\n",
     );
 
-    // Base manifest carries a CORE skill-target (gemini converter → one
-    // {name}.toml per SKILL.md into the target dir). The personal overlay adds a
-    // SECOND target dir for the same source. Distinct paths (the write-time +
-    // merge guards both reject identical paths).
+    const personalSkillsRoot = join(fixtureRoot, "skills-mine");
+    mkdirSync(join(personalSkillsRoot, "mine"), { recursive: true });
+    writeFileSync(
+      join(personalSkillsRoot, "mine", "SKILL.md"),
+      "---\nname: mine\ndescription: personal mine\n---\nMINE PERSONAL BODY\n",
+    );
+
     const coreOut = join(fixtureRoot, "gemini-core");
     const personalOut = join(fixtureRoot, "gemini-personal");
     writeFileSync(
@@ -1691,20 +2041,22 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
         version: 1,
         agents: [],
         surfaces: {
-          skills: {
-            source: skillsRoot,
-            layer: "core",
-            targets: [
-              { type: "gemini", method: "converter", path: coreOut },
-            ],
-          },
+          skills: [
+            {
+              source: coreSkillsRoot,
+              layer: "core",
+              targets: [
+                { type: "gemini", method: "converter", path: coreOut },
+              ],
+            },
+          ],
         },
       }),
     );
 
-    // Write the personal overlay via the REAL verb (reference mode, absolute
-    // source). No --overlay/--vendor seams: drive through IGRIS_BRAIN_DIR so the
-    // verb + adapter agree on the auto-discovered overlay path.
+    // Write the personal overlay via the REAL verb (TD-191: copy-vendor mode,
+    // namespaced origin, registry/skills/<name>/ vendored tree). Drive
+    // through IGRIS_BRAIN_DIR.
     const writtenOverlay = join(
       brainDir,
       "registry",
@@ -1712,12 +2064,23 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
     );
     const addCode = await runRegistry({
       action: "add-skill",
-      from: skillsRoot,
+      name: "mine",
+      from: join(personalSkillsRoot, "mine"),
       targets: [`gemini:converter:${personalOut}`],
       projectRoot: fixtureRoot,
     });
     expect(addCode).toBe(0);
     expect(existsSync(writtenOverlay)).toBe(true);
+    // Vendored tree lives under registry/skills/<name>/ per L-517.
+    const vendoredSkill = join(
+      brainDir,
+      "registry",
+      "skills",
+      "mine",
+      "mine",
+      "SKILL.md",
+    );
+    expect(existsSync(vendoredSkill)).toBe(true);
 
     // The overlay passes the REAL validate_manifest (surfaces sub-shape).
     const validate = execFileSync(
@@ -1730,20 +2093,102 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
     );
     expect(typeof validate).toBe("string");
 
-    // Run the REAL compiler restricted to the skills surface. It auto-discovers
-    // the personal overlay, merges base(core)++overlay(personal) skills targets,
-    // and projects BOTH targets from the merged source.
+    // Run the REAL compiler restricted to the skills surface. It auto-
+    // discovers the personal overlay, concatenates blocks (core + personal),
+    // and projects BOTH blocks from their OWN sources.
     execFileSync(
       "bash",
       [COMPILE_SH, "--project-root", fixtureRoot, "--surface", "skills"],
       { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
     );
-    // Core target projected (the base skill-target, FIRST in merged order).
+    // Core block projected — alpha.toml from the core source.
     expect(existsSync(join(coreOut, "alpha.toml"))).toBe(true);
-    expect(existsSync(join(coreOut, "beta.toml"))).toBe(true);
-    // Personal target projected ALONGSIDE core — proves the overlay's
-    // surfaces.skills target was merged in and compiled.
-    expect(existsSync(join(personalOut, "alpha.toml"))).toBe(true);
-    expect(existsSync(join(personalOut, "beta.toml"))).toBe(true);
+    // Personal block projected — mine.toml from the personal vendored source.
+    expect(existsSync(join(personalOut, "mine.toml"))).toBe(true);
+    // (Cross-source isolation: the core source's alpha skill MUST NOT land
+    // in the personal target, and vice versa — proves the per-block source
+    // selection works.)
+    expect(existsSync(join(personalOut, "alpha.toml"))).toBe(false);
+    expect(existsSync(join(coreOut, "mine.toml"))).toBe(false);
+    // The personal target's body proves the vendored source was read.
+    const minePersonal = readFileSync(join(personalOut, "mine.toml"), "utf-8");
+    expect(minePersonal).toContain("MINE PERSONAL BODY");
+  });
+
+  it("INTEGRATION #11: REAL validate_manifest accepts the writer's array-shape overlay (jsonschema + structural-fallback agree)", async () => {
+    if (!toolingAvailable()) {
+      return;
+    }
+    // L-159/L-173: subprocess validate_manifest, no vi.mock of the bash.
+    // This closes the schema/structural-fallback parity loop end-to-end.
+    process.env.IGRIS_BRAIN_DIR = brainDir;
+
+    // Stage TWO sibling personal skills so the writer produces a 2-block
+    // overlay array — the post-TD-191 shape. Empty base manifest (no core
+    // skills) keeps the merge guard from rejecting; we're just exercising
+    // the validator against a multi-block array overlay.
+    const skillsRoot = join(fixtureRoot, "skills");
+    mkdirSync(join(skillsRoot, "alpha"), { recursive: true });
+    writeFileSync(
+      join(skillsRoot, "alpha", "SKILL.md"),
+      "---\nname: alpha\ndescription: a\n---\nalpha body\n",
+    );
+    mkdirSync(join(skillsRoot, "beta"), { recursive: true });
+    writeFileSync(
+      join(skillsRoot, "beta", "SKILL.md"),
+      "---\nname: beta\ndescription: b\n---\nbeta body\n",
+    );
+    // Base manifest carries NO skills block (empty agents + no surfaces).
+    writeFileSync(
+      join(fixtureRoot, "harness-manifest.json"),
+      JSON.stringify({ version: 1, agents: [] }),
+    );
+
+    const writtenOverlay = join(
+      brainDir,
+      "registry",
+      "harness-manifest.personal.json",
+    );
+    // First add-skill: appends block 1.
+    expect(
+      await runRegistry({
+        action: "add-skill",
+        name: "alpha",
+        from: join(skillsRoot, "alpha"),
+        targets: ["codex:compiler:AGENTS-alpha.md"],
+        projectRoot: fixtureRoot,
+      }),
+    ).toBe(0);
+    // Second add-skill (NEW name): appends block 2 (multi-source).
+    expect(
+      await runRegistry({
+        action: "add-skill",
+        name: "beta",
+        from: join(skillsRoot, "beta"),
+        targets: ["codex:compiler:AGENTS-beta.md"],
+        projectRoot: fixtureRoot,
+      }),
+    ).toBe(0);
+
+    // The overlay is now a 2-block array — confirm shape before validating.
+    const overlayJson = JSON.parse(readFileSync(writtenOverlay, "utf-8")) as {
+      surfaces?: { skills?: unknown[] };
+    };
+    expect(Array.isArray(overlayJson.surfaces?.skills)).toBe(true);
+    expect(overlayJson.surfaces?.skills).toHaveLength(2);
+
+    // REAL validate_manifest — jsonschema path (when installed) AND the
+    // structural fallback both run against the same overlay. The test is
+    // green only if BOTH agree on the array contract (the source of truth
+    // for the TS-validator-vs-schema parity loop).
+    const validate = execFileSync(
+      "bash",
+      [
+        "-c",
+        `source "${COMMON_SH}" && validate_manifest "${writtenOverlay}" "${SCHEMA}"`,
+      ],
+      { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
+    );
+    expect(typeof validate).toBe("string");
   });
 });

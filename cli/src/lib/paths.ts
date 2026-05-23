@@ -65,28 +65,44 @@ export function registryDirPath(): string {
 /**
  * Absolute path to the Layer-2 personal overlay manifest written by
  * `igris registry add|remove`: `~/.igris/registry/harness-manifest.personal.json`.
- * Byte-identical to the adapter's auto-discovered `DEFAULT_OVERLAY`.
+ * Byte-identical to the adapter's auto-discovered `DEFAULT_OVERLAY`. Catalog
+ * file at the registry root under L-517 (typed-subfolder layout).
  */
 export function registryOverlayPath(): string {
   return join(registryDirPath(), "harness-manifest.personal.json");
 }
 
 /**
- * Absolute path to the vendored-copy directory for a registry surface:
- * `~/.igris/registry/<name>/`. FR-142 copy-vendor mode copies a surface's
- * canonical files here and points the overlay's `canonical.dir` at this dir.
- * Honors IGRIS_BRAIN_DIR (so the vendored copy lands in the sandboxed brain
- * during tests, exactly where the compiler resolves it).
+ * Absolute path to the vendored-copy directory for a registry AGENT:
+ * `~/.igris/registry/agents/<name>/`. TD-191 introduces the L-517 typed-
+ * subfolder layout (`agents/`, `skills/`, `body-exceptions/`) so the
+ * registry root stays catalog-only. Renamed from the generic-named
+ * `registrySurfaceDirPath` per L-519 §18.4 (a generic helper that named a
+ * specific use case). See L-517 (typed layout) and L-519 (anti-pattern).
  */
-export function registrySurfaceDirPath(name: string): string {
-  return join(registryDirPath(), name);
+export function registryAgentDirPath(name: string): string {
+  return join(registryDirPath(), "agents", name);
+}
+
+/**
+ * Absolute path to the vendored-tree directory for a registry SKILL:
+ * `~/.igris/registry/skills/<name>/`. Mirrors `registryAgentDirPath` under
+ * the L-517 typed-subfolder layout; the FR-143/TD-191 `add-skill` writer
+ * vendors `<src>/<name>/SKILL.md` into here so the codex compiler + gemini
+ * converter's `find -mindepth 2` walks still resolve. See L-517.
+ */
+export function registrySkillDirPath(name: string): string {
+  return join(registryDirPath(), "skills", name);
 }
 
 /**
  * Absolute path to the FR-142 typed-origin sidecar:
- * `~/.igris/registry/origins.json`. Stored OUTSIDE the harness manifest
- * (option (b)) so the overlay stays schema-clean — the compiler never reads
- * this file; only `igris registry update` does. Honors IGRIS_BRAIN_DIR.
+ * `~/.igris/registry/origins.json`. Catalog file at the registry root under
+ * L-517 (the only catalog files at root are this and `harness-manifest.
+ * personal.json`; everything else is in a typed subfolder). Stored OUTSIDE
+ * the harness manifest (option (b)) so the overlay stays schema-clean — the
+ * compiler never reads this file; only `igris registry update` does.
+ * Honors IGRIS_BRAIN_DIR.
  */
 export function registryOriginsPath(): string {
   return join(registryDirPath(), "origins.json");

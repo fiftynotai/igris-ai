@@ -1,16 +1,18 @@
 {
   "$schema": "./manifest.schema.json",
-  "_comment": "FR-137: core-owned Layer-1 surface declaration. Declares the global skills surface (canonical skills root + the non-Claude harness targets that project it). Distinct from a project's per-project harness-manifest.json (which carries agents[]). The compiler reads BOTH this file and the merged agent manifest, unioning their surface declarations: this file owns core skills; the merged agent manifest (incl. the FR-139 personal overlay) contributes project + personal skills. MIRRORED under core/scripts/ (TD-096). os_context is reserved for FR-140 and intentionally omitted here.",
+  "_comment": "FR-137 / TD-191: core-owned Layer-1 surface declaration. `surfaces.skills` is an ARRAY of blocks (multi-source model). This file contributes the CORE block; personal blocks land in the overlay (~/.igris/registry/harness-manifest.personal.json) under ~/.igris/registry/skills/<name>/ per L-516 (universal copy-vendor) + L-517 (typed-subfolder layout). The compiler reads BOTH this file and the merged agent manifest, concatenating every block: core blocks first, then personal. MIRRORED under ~/.igris/core/scripts/ (TD-096). os_context is reserved for FR-140 and intentionally omitted here.",
   "version": 1,
   "agents": [],
   "surfaces": {
-    "skills": {
-      "source": "~/.igris/core/skills",
-      "layer": "core",
-      "targets": [
-        { "type": "codex",  "method": "compiler",  "path": "AGENTS.md" },
-        { "type": "gemini", "method": "converter", "path": "~/.gemini/commands" }
-      ]
-    }
+    "skills": [
+      {
+        "source": "~/.igris/core/skills",
+        "layer": "core",
+        "targets": [
+          { "type": "codex",  "method": "compiler",  "path": "AGENTS.md" },
+          { "type": "gemini", "method": "converter", "path": "~/.gemini/commands" }
+        ]
+      }
+    ]
   }
 }

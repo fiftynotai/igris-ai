@@ -22,11 +22,15 @@
     },
 
     "surfaces": {
-      "description": "FR-137: non-agent projection surfaces. 'skills' is fleshed out here (core-owned in surfaces-manifest.json, or personal via the FR-139 overlay). 'os_context' remains RESERVED for FR-140 (permissive). An absent or skills-only surfaces block validates. Additive flesh-out — no version bump (still v1).",
+      "description": "FR-137: non-agent projection surfaces. 'skills' is fleshed out here (core-owned in surfaces-manifest.json, or personal via the FR-139 overlay). 'os_context' remains RESERVED for FR-140 (permissive). An absent or skills-only surfaces block validates. Additive flesh-out — no version bump (still v1). TD-191: `skills` is now an ARRAY of blocks (multi-source) — loaders normalize legacy single-object overlays to `[object]` on read so back-compat holds without a version bump.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "skills":     { "$ref": "#/$defs/skills_surface" },
+        "skills": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/skills_surface" }
+        },
         "os_context": {
           "description": "RESERVED for FR-140 (rules+prompts OS-context projection). Permissive until FR-140 fleshes it out; an absent block is the normal case in FR-137.",
           "type": "object",
@@ -38,7 +42,7 @@
 
   "$defs": {
     "skills_surface": {
-      "description": "FR-137: the skills projection surface. Declares a skills root and the non-Claude harness targets that project it (codex via the AGENTS.md compiler, gemini via the per-skill TOML converter). Claude is intentionally absent — it consumes skills via the FR-103 symlink mechanism and needs no projection.",
+      "description": "FR-137/TD-191: ONE skills projection block. Multiple coexist as elements of `surfaces.skills[]`; each carries its OWN source/layer/targets so personal blocks compile ALONGSIDE the core block. For personal blocks `source` points at a registry-vendored path (L-516 universal copy-vendor). Declares a skills root and the non-Claude harness targets that project it (codex via the AGENTS.md compiler, gemini via the per-skill TOML converter). Claude is intentionally absent — it consumes skills via the FR-103 symlink mechanism and needs no projection.",
       "type": "object",
       "additionalProperties": false,
       "required": ["targets"],

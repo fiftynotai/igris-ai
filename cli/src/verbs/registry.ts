@@ -52,9 +52,10 @@ import {
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import {
+  registryAgentDirPath,
   registryOriginsPath,
   registryOverlayPath,
-  registrySurfaceDirPath,
+  registrySkillDirPath,
 } from "../lib/paths.js";
 import { info, error as logError } from "../lib/log.js";
 import {
@@ -133,11 +134,12 @@ interface SkillTargetSpec {
 }
 
 /**
- * FR-143: the `surfaces.skills` block. A SINGLE object (not a per-name array
- * like agents). `source` is the LIVE skills root dir REFERENCED (NOT vendored —
- * the compiler reads it as a live directory, and the gemini converter does a
- * recursive `find -name SKILL.md` a flat vendor would break). `layer` is
- * always `"personal"` when written by this verb. Mirrors `$defs.skills_surface`.
+ * TD-191: ONE skills projection block. Multiple coexist as elements of
+ * `surfaces.skills[]` (multi-source: a personal block compiles ALONGSIDE
+ * the core block). `source` points at the VENDORED tree under the registry
+ * (L-516 universal copy-vendor — `registrySkillDirPath(<name>)` for personal
+ * blocks, the canonical skills dir for the core block). Mirrors
+ * `$defs.skills_surface` in `manifest.schema.json`.
  */
 interface SkillsSurface {
   source?: string;
@@ -145,17 +147,48 @@ interface SkillsSurface {
   targets: SkillTargetSpec[];
 }
 
-/** The overlay file shape. `surfaces` is FR-143's; preserved on read-modify-write. */
+/** The overlay file shape. TD-191: `surfaces.skills` is now an array of blocks. */
 interface Overlay {
   $schema?: string;
   _comment?: string;
   _schema?: Record<string, unknown>;
   version: number;
   agents: AgentEntry[];
-  surfaces?: { skills?: SkillsSurface; os_context?: Record<string, unknown> } & Record<
+  surfaces?: { skills?: SkillsSurface[]; os_context?: Record<string, unknown> } & Record<
     string,
     unknown
   >;
+}
+
+/**
+ * TD-191 helper: normalize `surfaces.skills` to a list of blocks.
+ * Legacy single-object input → `[object]`; array input → as-is; absent → `[]`.
+ * Mirrors the bash adapters' loader-side normalization so the TS writer
+ * reads stale overlays the same way the compiler does (back-compat without
+ * a version bump). See L-516 / TD-191 supersedes-section.
+ */
+function normalizeSkillsBlocks(value: unknown): SkillsSurface[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (Array.isArray(value)) {
+    return value as SkillsSurface[];
+  }
+  if (typeof value === "object") {
+    return [value as SkillsSurface];
+  }
+  return [];
+}
+
+/**
+ * TD-191 origin-key namespace helper. Returns `"agent:<name>"` /
+ * `"skill:<name>"` so the `origins.json` keyspace cannot collide between an
+ * agent and a skill of the same name. Per the brief's zero-migration
+ * justification, `origins.json` did not exist on disk before TD-191; the
+ * first write under this brief establishes the keyspace shape.
+ */
+function originKey(type: "agent" | "skill", name: string): string {
+  return `${type}:${name}`;
 }
 
 /**
@@ -224,8 +257,14 @@ export interface RegistryOptions {
   overlayPath?: string;
   /** Test seam: origins.json path override (defaults to registryOriginsPath()). */
   originsPath?: string;
-  /** Test seam: vendor-dir base override (defaults to registrySurfaceDirPath()). */
+  /** Test seam: agent vendor-dir base override (defaults to registryAgentDirPath()). */
   vendorDir?: (name: string) => string;
+  /**
+   * TD-191 test seam: skill vendor-dir base override (defaults to
+   * `registrySkillDirPath()`). Parallels `vendorDir` for the L-516 skill
+   * copy-vendor path so tests can sandbox the skill registry tree.
+   */
+  skillVendorDir?: (name: string) => string;
   /**
    * FR-148 test seam: github fetch boundary. Defaults to `fetchRepoDefault`
    * (gh→git→tarball). Unit tests inject a fake returning a staged fixture
@@ -418,6 +457,31 @@ export function validateSkillsSurface(skills: unknown): string | null {
   return null;
 }
 
+/**
+ * TD-191: validate `surfaces.skills` as an ARRAY of `skills_surface` blocks
+ * (the post-TD-191 schema shape). Rejects non-array input and empty array;
+ * delegates per-block validation to `validateSkillsSurface` (unchanged
+ * signature, so every pre-TD-191 test against a single block keeps passing).
+ * Error messages get a `surfaces.skills[i]:` prefix so the offender block is
+ * named. Used by `validateOverlayShape`'s skills branch — keeping the array
+ * expectation overt at the call site rather than implicit via type coercion.
+ */
+export function validateSkillsSurfaceArray(skills: unknown): string | null {
+  if (!Array.isArray(skills)) {
+    return "surfaces.skills must be a non-empty array";
+  }
+  if (skills.length < 1) {
+    return "surfaces.skills must be a non-empty array";
+  }
+  for (let i = 0; i < skills.length; i++) {
+    const err = validateSkillsSurface(skills[i]);
+    if (err !== null) {
+      return `surfaces.skills[${i}]: ${err}`;
+    }
+  }
+  return null;
+}
+
 /** Validate the whole overlay shape. Returns an error message, or null. */
 export function validateOverlayShape(overlay: unknown): string | null {
   if (typeof overlay !== "object" || overlay === null || Array.isArray(overlay)) {
@@ -449,8 +513,9 @@ export function validateOverlayShape(overlay: unknown): string | null {
       return `agents[${i}]: ${err}`;
     }
   }
-  // FR-143: validate the `surfaces` block when present. `surfaces.skills` (when
-  // present) must match `$defs.skills_surface`; `surfaces.os_context` stays
+  // TD-191: `surfaces.skills` is an ARRAY of blocks. Calling the array
+  // validator explicitly (not `validateSkillsSurface` directly) makes the
+  // shape expectation overt at the boundary. `surfaces.os_context` stays
   // RESERVED/permissive (FR-140). Mirrors the schema's
   // `properties.surfaces.additionalProperties:false`.
   if (o.surfaces !== undefined) {
@@ -469,7 +534,7 @@ export function validateOverlayShape(overlay: unknown): string | null {
       }
     }
     if (surfaces.skills !== undefined) {
-      const skillsErr = validateSkillsSurface(surfaces.skills);
+      const skillsErr = validateSkillsSurfaceArray(surfaces.skills);
       if (skillsErr !== null) {
         return skillsErr;
       }
@@ -556,13 +621,14 @@ function readBaseAgentNames(projectRoot: string): Set<string> {
 }
 
 /**
- * FR-143: read the base manifest's CORE skill-target paths (for the write-time
- * skill path-collision guard). Parallels `readBaseAgentNames`, but reads
- * `surfaces.skills.targets[].path`. The runtime merge guard in `_common.sh`
- * rejects a personal skill-target path that collides with a core one; this
- * mirrors that check at write-time so the overlay never reaches a state the
- * merge would reject. Absent/malformed base → empty set (the merge guard only
- * fires when both sides exist).
+ * TD-191: read the base manifest's CORE skill-target paths across ALL blocks
+ * (post-TD-191 multi-source array model). Parallels `readBaseAgentNames`, but
+ * unions `surfaces.skills[*].targets[].path`. The runtime merge guard in
+ * `_common.sh merge_overlay_manifest` rejects any cross-block path collision;
+ * this mirrors that check at write-time so the overlay never reaches a state
+ * the merge would reject. Legacy single-object `surfaces.skills` is normalized
+ * to `[object]` before iteration (back-compat). Absent/malformed base → empty
+ * set.
  */
 function readBaseSkillTargetPaths(projectRoot: string): Set<string> {
   const basePath = join(projectRoot, "harness-manifest.json");
@@ -571,12 +637,15 @@ function readBaseSkillTargetPaths(projectRoot: string): Set<string> {
   }
   try {
     const base = JSON.parse(readFileSync(basePath, "utf-8")) as {
-      surfaces?: { skills?: { targets?: { path?: unknown }[] } };
+      surfaces?: { skills?: unknown };
     };
+    const blocks = normalizeSkillsBlocks(base.surfaces?.skills);
     const paths = new Set<string>();
-    for (const t of base.surfaces?.skills?.targets ?? []) {
-      if (typeof t?.path === "string") {
-        paths.add(t.path);
+    for (const block of blocks) {
+      for (const t of block?.targets ?? []) {
+        if (typeof t?.path === "string") {
+          paths.add(t.path);
+        }
       }
     }
     return paths;
@@ -751,6 +820,168 @@ function vendorSurfaceAtomic(
   renameSync(tmp, destDir);
 }
 
+/**
+ * TD-191: enumerate `<name>/SKILL.md` entries under a skills source root.
+ * Returns the list of skill subdir names that carry a `SKILL.md` (the same
+ * shape the gemini converter's `find -mindepth 2 -maxdepth 2 -type f -name
+ * 'SKILL.md'` walk discovers, mirrored in JS — see compile_harnesses.sh
+ * lines 448-449 + check_harness_drift.sh 536-537).
+ */
+function enumerateSkillsAtRoot(root: string): string[] {
+  if (!existsSync(root)) {
+    return [];
+  }
+  let entries: string[];
+  try {
+    entries = readdirSync(root, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const name of entries) {
+    if (existsSync(join(root, name, "SKILL.md"))) {
+      out.push(name);
+    }
+  }
+  return out;
+}
+
+/**
+ * TD-191: atomically vendor a skill tree into `destDir`, preserving the
+ * `<name>/SKILL.md` nesting load-bearing under L-519 (the per-harness gemini
+ * converter + codex compiler both walk `find -mindepth 2 -maxdepth 2 -name
+ * SKILL.md`; a flattened layout breaks them — verified at
+ * compile_harnesses.sh:448-449 + check_harness_drift.sh:536-537).
+ *
+ * Accepts either shape for `srcDir`:
+ *   - The `<root>/<name>/SKILL.md` SINGLE-skill source: when `srcDir`
+ *     directly contains `SKILL.md`, the skill name is `basename(srcDir)`
+ *     and the vendor copy lands at `<destDir>/<basename(srcDir)>/SKILL.md`.
+ *   - A multi-skill root containing one or more `<name>/SKILL.md` entries:
+ *     each `<name>/` subtree is copied verbatim under `<destDir>/<name>/`.
+ *
+ * Atomic: copy into a sibling temp dir on the SAME filesystem, then
+ * `renameSync` over `destDir` (replacing any prior copy). No partial-vendor
+ * window. Future remote-skill sources (L-515 sandbox containment) MUST clamp
+ * resolved paths inside the fetch sandbox before calling this primitive.
+ */
+function vendorSkillTreeAtomic(srcDir: string, destDir: string): void {
+  mkdirSync(dirname(destDir), { recursive: true });
+  const tmp = `${destDir}.tmp-${process.pid}`;
+  rmSync(tmp, { recursive: true, force: true });
+  mkdirSync(tmp, { recursive: true });
+  try {
+    // Single-skill shape: srcDir/SKILL.md → tmp/<basename(srcDir)>/SKILL.md
+    if (existsSync(join(srcDir, "SKILL.md"))) {
+      const skillName = basename(srcDir);
+      mkdirSync(join(tmp, skillName), { recursive: true });
+      copySkillTreeRecursive(srcDir, join(tmp, skillName));
+    } else {
+      // Multi-skill root: copy every <name>/ that contains a SKILL.md.
+      const names = enumerateSkillsAtRoot(srcDir);
+      if (names.length === 0) {
+        rmSync(tmp, { recursive: true, force: true });
+        throw new Error(
+          `no SKILL.md found under ${srcDir} (expected either ` +
+            `<srcDir>/SKILL.md or <srcDir>/<name>/SKILL.md)`,
+        );
+      }
+      for (const name of names) {
+        mkdirSync(join(tmp, name), { recursive: true });
+        copySkillTreeRecursive(join(srcDir, name), join(tmp, name));
+      }
+    }
+  } catch (err) {
+    rmSync(tmp, { recursive: true, force: true });
+    throw err;
+  }
+  // Replace any prior vendored copy atomically.
+  rmSync(destDir, { recursive: true, force: true });
+  renameSync(tmp, destDir);
+}
+
+/**
+ * Recursively copy a single skill's directory tree (files + nested
+ * subdirs). Bash adapters copy SKILL.md only — but a skill MAY ship
+ * supporting assets (scripts, fixtures), so we mirror the whole tree to
+ * stay forward-compatible.
+ */
+function copySkillTreeRecursive(srcDir: string, destDir: string): void {
+  const entries = readdirSync(srcDir, { withFileTypes: true });
+  for (const e of entries) {
+    const s = join(srcDir, e.name);
+    const d = join(destDir, e.name);
+    if (e.isDirectory()) {
+      mkdirSync(d, { recursive: true });
+      copySkillTreeRecursive(s, d);
+    } else if (e.isFile()) {
+      copyFileSync(s, d);
+    }
+    // Symlinks intentionally skipped — vendor is bytes, not refs.
+  }
+}
+
+/**
+ * TD-191: stable content hash over a vendored skill tree. Folds every file's
+ * relpath (sorted) + bytes into one sha256. Same idiom as `hashSurface` but
+ * walks the full tree (skills can carry nested dirs). Used to detect source
+ * mutation in `igris registry update` for skill blocks.
+ */
+function hashSkillTree(treeDir: string): string {
+  const h = createHash("sha256");
+  const rels: string[] = [];
+  function walk(rel: string): void {
+    const abs = rel === "" ? treeDir : join(treeDir, rel);
+    const entries = readdirSync(abs, { withFileTypes: true });
+    for (const e of entries) {
+      const childRel = rel === "" ? e.name : `${rel}/${e.name}`;
+      if (e.isDirectory()) {
+        walk(childRel);
+      } else if (e.isFile()) {
+        rels.push(childRel);
+      }
+    }
+  }
+  if (existsSync(treeDir)) {
+    walk("");
+  }
+  for (const rel of rels.sort()) {
+    h.update(rel);
+    h.update("\0");
+    h.update(readFileSync(join(treeDir, rel)));
+  }
+  return h.digest("hex");
+}
+
+/**
+ * TD-191 path re-vendor for SKILLS. Mirrors `reVendorPath` semantics
+ * (hash-compare against recorded origin) but uses `vendorSkillTreeAtomic` +
+ * `hashSkillTree`. The vendored `destDir` is passed in (defaults to
+ * `registrySkillDirPath(name)` at the call site) so tests can sandbox it.
+ * Symmetric topology with agent updates per L-519 §18.1.
+ */
+function reVendorSkillPath(
+  name: string,
+  origin: Origin,
+  destDir: string,
+): ReVendorResult {
+  void name; // reserved for future per-skill logging hooks
+  if (origin.type !== "path") {
+    return { status: "skipped", note: `non-path skill origin '${origin.type}'` };
+  }
+  try {
+    vendorSkillTreeAtomic(origin.dir, destDir);
+  } catch (err) {
+    return `error: failed to re-vendor skill: ${(err as Error).message}`;
+  }
+  const newHash = hashSkillTree(destDir);
+  return newHash === origin.hash
+    ? { status: "unchanged", origin: { ...origin, hash: newHash } }
+    : { status: "changed", origin: { ...origin, hash: newHash } };
+}
+
 // ---------------------------------------------------------------------------
 // --target parsing
 // ---------------------------------------------------------------------------
@@ -846,7 +1077,7 @@ async function runAdd(
   }
 
   const projectRoot = opts.projectRoot ?? process.cwd();
-  const vendorDirFor = opts.vendorDir ?? registrySurfaceDirPath;
+  const vendorDirFor = opts.vendorDir ?? registryAgentDirPath;
   const vendoredDir = vendorDirFor(opts.name);
 
   // Resolve the canonical SOURCE file set from --from (validates flags + that
@@ -889,7 +1120,7 @@ async function runAdd(
   // Build the canonical spec — `dir` points at the VENDORED copy (absolute,
   // brainDir()-derived). The patched compiler resolves an absolute canon.dir
   // verbatim (its `/*` case), correct under both the prod brain and the
-  // IGRIS_BRAIN_DIR test sandbox (which is where registrySurfaceDirPath lands).
+  // IGRIS_BRAIN_DIR test sandbox (which is where registryAgentDirPath lands).
   let canonical: CanonicalSpec;
   if (opts.versioned === true) {
     canonical = { dir: vendoredDir, versioned: true, glob: opts.glob };
@@ -972,11 +1203,19 @@ async function runAdd(
     return 1;
   }
 
-  // Record the typed origin (option (b): outside the manifest).
+  // Record the typed origin (option (b): outside the manifest). TD-191:
+  // keyspace is namespaced via `originKey("agent", name)` so a same-named
+  // skill cannot collide. Zero-migration: origins.json did not exist on
+  // disk before TD-191, so the first write under this brief establishes
+  // the keyspace shape.
   const originsPath = opts.originsPath ?? registryOriginsPath();
   try {
     const origins = readOrigins(originsPath);
-    origins[opts.name] = { type: "path", dir: resolved.srcDir, hash };
+    origins[originKey("agent", opts.name)] = {
+      type: "path",
+      dir: resolved.srcDir,
+      hash,
+    };
     writeOriginsAtomic(originsPath, origins);
   } catch (err) {
     logError(`registry add: failed to record origin: ${(err as Error).message}`);
@@ -1024,7 +1263,7 @@ async function runAddGithub(
     return 2;
   }
 
-  const vendorDirFor = opts.vendorDir ?? registrySurfaceDirPath;
+  const vendorDirFor = opts.vendorDir ?? registryAgentDirPath;
   const vendoredDir = vendorDirFor(name);
   const fetchRepo = opts.fetchRepo ?? fetchRepoDefault;
 
@@ -1154,7 +1393,8 @@ async function runAddGithub(
       if (spec.subdir !== undefined) {
         origin.subdir = spec.subdir;
       }
-      origins[name] = origin;
+      // TD-191: namespaced key (`agent:<name>`).
+      origins[originKey("agent", name)] = origin;
       writeOriginsAtomic(originsPath, origins);
     } catch (err) {
       logError(`registry add: failed to record origin: ${(err as Error).message}`);
@@ -1172,29 +1412,44 @@ async function runAddGithub(
 }
 
 /**
- * FR-143 `add-skill` — register a personal SKILL projection into the overlay's
- * `surfaces.skills` block. Deliberately DIVERGES from `add`'s copy-vendor mode:
- * skills are REFERENCED, not vendored — the compiler reads the skills `source`
- * as a LIVE dir (the gemini converter does a recursive `find -name SKILL.md`
- * that a flat vendor would break, and `skills_surface` has no glob/file). So
- * there is NO origin entry and NO `update` support for skills.
+ * `add-skill` — register a personal SKILL projection in the overlay.
  *
- * Writes a SINGLE `surfaces.skills` object `{source, layer:"personal",
- * targets:[{type,method,path}]}`. On re-run it MERGES new targets into the
- * existing block (path-deduped) rather than appending a sibling — `surfaces`
- * is a single object, not a per-name array.
+ * Vendors the source tree into `~/.igris/registry/skills/<name>/`, persists
+ * one block in `overlay.surfaces.skills[]` whose `source` points at the
+ * vendored tree, and records a path origin keyed `skill:<name>`. A second
+ * call with a DIFFERENT name appends a new block (multi-source); a second
+ * call with the SAME name re-vendors atomically and updates the existing
+ * block in place (hash-advance only; targets union; `--from` optional).
  *
  * Guard chain (overlay unchanged on any reject):
- *   1. parse each `type:method:path` triple (usage error → exit 2),
- *   2. validate the resulting `surfaces.skills` block shape,
+ *   1. parse each `type:method:path` triple (usage error → exit 2);
+ *   2. validate the resulting `surfaces.skills` block shape;
  *   3. reject a target `path` colliding with a CORE skill-target path
- *      (mirrors the `_common.sh` merge guard at write-time),
- *   4. reject a target `path` already present in the overlay's own block
- *      (intra-overlay dedupe — the merge does not dedupe overlay-vs-overlay).
+ *      (mirrors the `_common.sh merge_overlay_manifest` cross-block guard
+ *      at write-time);
+ *   4. reject a target `path` already present in another overlay block
+ *      (intra-overlay cross-block dedupe);
+ *   5. atomic vendor → atomic overlay write → origin write (rollback the
+ *      just-vendored tree on any post-vendor failure).
+ *
+ * See L-516 (universal copy-vendor), L-517 (typed-subfolder layout),
+ * L-519 (Igris-owned topology — vendor preserves the standard format).
+ * See L-515 — future remote-skill sources MUST clamp resolved paths inside
+ * the fetch sandbox.
  */
 function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
-  if (opts.from === undefined || opts.from.length === 0) {
-    logError("registry add-skill: <source-dir> is required");
+  if (opts.name === undefined || opts.name.length === 0) {
+    // `--name` is now REQUIRED (per L-516 + drift #7: block identity by name).
+    // A `--from`-only run (legacy) cannot key origins or re-vendor the same
+    // block in place. `--from` becomes optional on re-runs (see below) but the
+    // name is always required.
+    logError("registry add-skill: <name> is required");
+    return 2;
+  }
+  if (!NAME_PATTERN.test(opts.name)) {
+    logError(
+      `registry add-skill: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
+    );
     return 2;
   }
   if (opts.targets === undefined || opts.targets.length === 0) {
@@ -1216,14 +1471,39 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
   }
 
   const projectRoot = opts.projectRoot ?? process.cwd();
+  const name = opts.name;
+  const originsPath = opts.originsPath ?? registryOriginsPath();
 
-  // REFERENCE (not vendor): resolve the source dir to an absolute path the
-  // compiler uses verbatim (`~`/absolute used as-is, relative resolved vs
-  // --project-root — the SAME rules compile_harnesses.sh applies). This keeps
-  // resolution unambiguous + sandbox-safe and never copies the dir.
-  const sourceDir = resolveSourcePath(opts.from, projectRoot);
-  if (!existsSync(sourceDir)) {
-    logError(`registry add-skill: skills source dir does not exist: ${sourceDir}`);
+  // Read existing origins early so a same-name re-run can fall back to the
+  // recorded origin's `dir` when `--from` is omitted (per drift #7).
+  let origins: OriginsMap;
+  try {
+    origins = readOrigins(originsPath);
+  } catch (err) {
+    logError((err as Error).message);
+    return 1;
+  }
+  const skillOriginKey = originKey("skill", name);
+  const recordedOrigin: Origin | undefined = origins[skillOriginKey];
+
+  // Resolve the consumer's source dir. `--from` wins; otherwise fall back to
+  // the recorded origin's `dir` (drift #7 fallback). Either way the result
+  // is an absolute path the L-515 sandbox guard owns (no traversal here).
+  let consumerSourceDir: string;
+  if (opts.from !== undefined && opts.from.length > 0) {
+    consumerSourceDir = resolveSourcePath(opts.from, projectRoot);
+  } else if (recordedOrigin !== undefined && recordedOrigin.type === "path") {
+    consumerSourceDir = recordedOrigin.dir;
+  } else {
+    logError(
+      `registry add-skill: --from <source-dir> is required (no recorded origin for '${name}')`,
+    );
+    return 2;
+  }
+  if (!existsSync(consumerSourceDir)) {
+    logError(
+      `registry add-skill: skills source dir does not exist: ${consumerSourceDir}`,
+    );
     return 1;
   }
 
@@ -1236,21 +1516,29 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
     return 1;
   }
 
-  // Merge into the existing block (single object) — preserve the existing
-  // source unless this is the first write; new targets are unioned in.
-  const existing = overlay.surfaces?.skills;
-  const existingTargets: SkillTargetSpec[] =
-    existing !== undefined && Array.isArray(existing.targets)
-      ? existing.targets
-      : [];
+  // Normalize legacy single-object `surfaces.skills` to array shape (back-compat).
+  const existingBlocks = normalizeSkillsBlocks(overlay.surfaces?.skills);
+  const existingBlockIndex = findSkillBlockIndex(overlay, name);
 
-  // (intra-overlay dedupe) Reject a path already present in the overlay's block.
-  const overlayPaths = new Set(existingTargets.map((t) => t.path));
+  // (intra-overlay cross-block dedupe) Reject a target `path` already present
+  // in ANY OTHER overlay block (a same-name re-add is allowed to KEEP its own
+  // targets — they're unioned in place, not duplicated).
+  const otherBlockPaths = new Set<string>();
+  for (let i = 0; i < existingBlocks.length; i++) {
+    if (i === existingBlockIndex) {
+      continue;
+    }
+    for (const t of existingBlocks[i]?.targets ?? []) {
+      if (typeof t?.path === "string") {
+        otherBlockPaths.add(t.path);
+      }
+    }
+  }
   for (const t of newTargets) {
-    if (overlayPaths.has(t.path)) {
+    if (otherBlockPaths.has(t.path)) {
       logError(
-        `registry add-skill: skill-target path '${t.path}' already exists in the ` +
-          `overlay's surfaces.skills block; remove it first or choose another path. ` +
+        `registry add-skill: skill-target path '${t.path}' already exists in ` +
+          `another overlay block; remove it first or choose another path. ` +
           `Overlay unchanged: ${overlayPath}`,
       );
       return 1;
@@ -1270,40 +1558,99 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
     }
   }
 
-  const merged: SkillsSurface = {
-    source: sourceDir,
+  // Existing block's targets (when re-adding the same name) — union below.
+  const existingOwnTargets: SkillTargetSpec[] =
+    existingBlockIndex >= 0
+      ? (existingBlocks[existingBlockIndex]?.targets ?? [])
+      : [];
+  const existingOwnPaths = new Set(existingOwnTargets.map((t) => t.path));
+  // Append-only union (skip exact dup paths in the same block — idempotent).
+  const unionedTargets: SkillTargetSpec[] = [...existingOwnTargets];
+  for (const t of newTargets) {
+    if (!existingOwnPaths.has(t.path)) {
+      unionedTargets.push(t);
+      existingOwnPaths.add(t.path);
+    }
+  }
+
+  // Build the block. `source` points at the VENDORED tree per L-516.
+  const skillVendorDirFor = opts.skillVendorDir ?? registrySkillDirPath;
+  const vendoredDir = skillVendorDirFor(name);
+  const newBlock: SkillsSurface = {
+    source: vendoredDir,
     layer: "personal",
-    targets: [...existingTargets, ...newTargets],
+    targets: unionedTargets,
   };
 
-  // Validate the resulting block shape before persist.
-  const skillsErr = validateSkillsSurface(merged);
-  if (skillsErr !== null) {
-    logError(`registry add-skill: invalid skills surface: ${skillsErr}`);
+  // Per-block validation. (validateSkillsSurfaceArray is the array gate that
+  // runs as part of validateOverlayShape later — this is a quick local check
+  // so the block-level error names the offender clearly.)
+  const blockErr = validateSkillsSurface(newBlock);
+  if (blockErr !== null) {
+    logError(`registry add-skill: invalid skills block: ${blockErr}`);
     return 1;
   }
 
-  // Splice the block back into the overlay (preserving any os_context), then
-  // validate the WHOLE overlay (defense-in-depth) before persist.
+  // Splice the block into the overlay's blocks array (in place at the existing
+  // index if same-name; appended otherwise).
+  const mergedBlocks =
+    existingBlockIndex >= 0
+      ? existingBlocks.map((b, i) => (i === existingBlockIndex ? newBlock : b))
+      : [...existingBlocks, newBlock];
+
   const surfaces = { ...(overlay.surfaces ?? {}) };
-  surfaces.skills = merged;
+  surfaces.skills = mergedBlocks;
   overlay.surfaces = surfaces;
+
+  // Validate the WHOLE overlay (defense-in-depth) before any side effect.
   const overlayErr = validateOverlayShape(overlay);
   if (overlayErr !== null) {
     logError(`registry add-skill: resulting overlay invalid: ${overlayErr}`);
     return 1;
   }
 
+  // All guards passed → atomic vendor → atomic overlay write → origin write.
+  // Rollback the just-vendored tree on any post-vendor failure (mirror
+  // runAddAgent's cleanup at lines 962/970/1129/1139).
+  let newHash: string;
   try {
-    writeOverlayAtomic(overlayPath, overlay);
+    vendorSkillTreeAtomic(consumerSourceDir, vendoredDir);
+    newHash = hashSkillTree(vendoredDir);
   } catch (err) {
-    logError(`registry add-skill: failed to write overlay: ${(err as Error).message}`);
+    rmSync(vendoredDir, { recursive: true, force: true });
+    logError(
+      `registry add-skill: failed to vendor skill tree: ${(err as Error).message}`,
+    );
     return 1;
   }
 
+  try {
+    writeOverlayAtomic(overlayPath, overlay);
+  } catch (err) {
+    rmSync(vendoredDir, { recursive: true, force: true });
+    logError(
+      `registry add-skill: failed to write overlay: ${(err as Error).message}`,
+    );
+    return 1;
+  }
+
+  // Record/advance the origin (path origin; key = `skill:<name>`).
+  try {
+    origins[skillOriginKey] = {
+      type: "path",
+      dir: consumerSourceDir,
+      hash: newHash,
+    };
+    writeOriginsAtomic(originsPath, origins);
+  } catch (err) {
+    logError(`registry add-skill: failed to record origin: ${(err as Error).message}`);
+    return 1;
+  }
+
+  const verb = existingBlockIndex >= 0 ? "Re-vendored" : "Registered";
   info(
-    `Registered personal skill projection (source ${sourceDir}, ` +
-      `${newTargets.length} target(s)) in ${overlayPath}`,
+    `${verb} personal skill '${name}' (vendored tree at ${vendoredDir}, ` +
+      `${unionedTargets.length} target(s)) in ${overlayPath}`,
   );
   return 0;
 }
@@ -1360,11 +1707,13 @@ function runRemove(opts: RegistryOptions, overlayPath: string): number {
   writeOverlayAtomic(overlayPath, overlay);
 
   // FR-142: drop the typed origin + the vendored copy (no orphan copies).
+  // TD-191: namespaced origin key (`agent:<name>`).
   const originsPath = opts.originsPath ?? registryOriginsPath();
+  const agentOriginKey = originKey("agent", opts.name);
   try {
     const origins = readOrigins(originsPath);
-    if (opts.name in origins) {
-      delete origins[opts.name];
+    if (agentOriginKey in origins) {
+      delete origins[agentOriginKey];
       writeOriginsAtomic(originsPath, origins);
     }
   } catch {
@@ -1372,7 +1721,7 @@ function runRemove(opts: RegistryOptions, overlayPath: string): number {
     // overlay (the compile-time truth) is already cleaned. Leave a note.
     info(`registry remove: could not update origins sidecar at ${originsPath}`);
   }
-  const vendorDirFor = opts.vendorDir ?? registrySurfaceDirPath;
+  const vendorDirFor = opts.vendorDir ?? registryAgentDirPath;
   rmSync(vendorDirFor(opts.name), { recursive: true, force: true });
 
   info(`Removed personal agent '${opts.name}' from ${overlayPath}`);
@@ -1539,6 +1888,26 @@ async function reVendorGithub(
   }
 }
 
+/**
+ * TD-191: locate the skill block matching `name` in `overlay.surfaces.skills`.
+ * A personal block's `source` is `registrySkillDirPath(<name>)` (L-516 +
+ * L-517) so its basename is the skill name. Returns the block index, or -1
+ * if no block matches.
+ */
+function findSkillBlockIndex(overlay: Overlay, name: string): number {
+  const blocks = overlay.surfaces?.skills;
+  if (!Array.isArray(blocks)) {
+    return -1;
+  }
+  for (let i = 0; i < blocks.length; i++) {
+    const src = blocks[i]?.source;
+    if (typeof src === "string" && basename(src) === name) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 async function runUpdate(
   opts: RegistryOptions,
   overlayPath: string,
@@ -1565,27 +1934,66 @@ async function runUpdate(
     logError((err as Error).message);
     return 1;
   }
-  const vendorDirFor = opts.vendorDir ?? registrySurfaceDirPath;
+  const agentVendorDirFor = opts.vendorDir ?? registryAgentDirPath;
+  const skillVendorDirFor = opts.skillVendorDir ?? registrySkillDirPath;
   const fetchRepo = opts.fetchRepo ?? fetchRepoDefault;
   const listReleases = opts.listReleases ?? listReleasesDefault;
 
-  // Build the work set: one named entry, or every recorded-origin entry under --all.
-  let work: AgentEntry[];
+  /**
+   * Per-entry work item — TD-191 supports BOTH agents and skills under one
+   * update protocol. `kind` distinguishes the dispatch arm; `name` is the
+   * (namespaced) origin-key lookup; `entry`/`blockIndex` carry the live
+   * overlay reference for the re-vendor step.
+   */
+  type WorkItem =
+    | { kind: "agent"; name: string; entry: AgentEntry }
+    | { kind: "skill"; name: string; blockIndex: number };
+
+  // Build the work set: one named entry, or every namespaced-origin entry
+  // under --all (selected by the `agent:`/`skill:` originKey prefix).
+  const work: WorkItem[] = [];
   if (hasName) {
-    const found = overlay.agents.find((a) => a.name === opts.name);
-    if (found === undefined) {
-      logError(`registry update: no personal agent named '${opts.name}'.`);
+    const name = opts.name!;
+    const agentEntry = overlay.agents.find((a) => a.name === name);
+    const skillIdx = findSkillBlockIndex(overlay, name);
+    const agentKey = originKey("agent", name);
+    const skillKey = originKey("skill", name);
+    const hasAgent = agentEntry !== undefined && agentKey in origins;
+    const hasSkill = skillIdx >= 0 && skillKey in origins;
+    if (!hasAgent && !hasSkill) {
+      if (agentEntry === undefined && skillIdx < 0) {
+        logError(`registry update: no personal agent or skill named '${name}'.`);
+      } else {
+        logError(
+          `registry update: '${name}' has no recorded origin (cannot re-vendor).`,
+        );
+      }
       return 1;
     }
-    if (!(opts.name! in origins)) {
-      logError(
-        `registry update: '${opts.name}' has no recorded origin (cannot re-vendor).`,
-      );
-      return 1;
+    if (hasAgent) {
+      work.push({ kind: "agent", name, entry: agentEntry });
     }
-    work = [found];
+    if (hasSkill) {
+      work.push({ kind: "skill", name, blockIndex: skillIdx });
+    }
   } else {
-    work = overlay.agents.filter((a) => a.name in origins);
+    // --all: iterate origins keyspace, prefix-matched. Agents + skills share
+    // one protocol (L-519 §18.1: symmetric topology — future MCPs follow).
+    for (const key of Object.keys(origins)) {
+      if (key.startsWith("agent:")) {
+        const name = key.slice("agent:".length);
+        const entry = overlay.agents.find((a) => a.name === name);
+        if (entry !== undefined) {
+          work.push({ kind: "agent", name, entry });
+        }
+      } else if (key.startsWith("skill:")) {
+        const name = key.slice("skill:".length);
+        const idx = findSkillBlockIndex(overlay, name);
+        if (idx >= 0) {
+          work.push({ kind: "skill", name, blockIndex: idx });
+        }
+      }
+    }
     if (work.length === 0) {
       info("No origin-backed entries to update.");
       return 0;
@@ -1594,33 +2002,68 @@ async function runUpdate(
 
   let originsChanged = false;
   let hadError = false;
-  for (const entry of work) {
-    const origin = origins[entry.name];
-    const result = await reVendorEntry(
-      entry,
-      origin,
-      vendorDirFor(entry.name),
-      fetchRepo,
-      listReleases,
-    );
-    if (typeof result === "string") {
-      logError(`registry update: ${entry.name}: ${result.replace(/^error: /, "")}`);
-      hadError = true;
-      continue;
-    }
-    const noteSuffix = result.note !== undefined ? ` (${result.note})` : "";
-    if (result.status === "skipped") {
-      info(`  ${entry.name}: skipped${noteSuffix || ` (origin '${origin.type}')`}`);
-      continue;
-    }
-    if (result.status === "changed") {
-      if (result.origin !== undefined) {
-        origins[entry.name] = result.origin;
+  for (const item of work) {
+    if (item.kind === "agent") {
+      const key = originKey("agent", item.name);
+      const origin = origins[key];
+      const result = await reVendorEntry(
+        item.entry,
+        origin,
+        agentVendorDirFor(item.name),
+        fetchRepo,
+        listReleases,
+      );
+      if (typeof result === "string") {
+        logError(`registry update: ${item.name}: ${result.replace(/^error: /, "")}`);
+        hadError = true;
+        continue;
       }
-      originsChanged = true;
-      info(`  ${entry.name}: changed${noteSuffix}`);
+      const noteSuffix = result.note !== undefined ? ` (${result.note})` : "";
+      if (result.status === "skipped") {
+        info(
+          `  ${item.name}: skipped${noteSuffix || ` (origin '${origin.type}')`}`,
+        );
+        continue;
+      }
+      if (result.status === "changed") {
+        if (result.origin !== undefined) {
+          origins[key] = result.origin;
+        }
+        originsChanged = true;
+        info(`  ${item.name}: changed${noteSuffix}`);
+      } else {
+        info(`  ${item.name}: unchanged${noteSuffix}`);
+      }
     } else {
-      info(`  ${entry.name}: unchanged${noteSuffix}`);
+      // kind === "skill"
+      const key = originKey("skill", item.name);
+      const origin = origins[key];
+      const result = reVendorSkillPath(
+        item.name,
+        origin,
+        skillVendorDirFor(item.name),
+      );
+      if (typeof result === "string") {
+        logError(`registry update: ${item.name}: ${result.replace(/^error: /, "")}`);
+        hadError = true;
+        continue;
+      }
+      const noteSuffix = result.note !== undefined ? ` (${result.note})` : "";
+      if (result.status === "skipped") {
+        info(
+          `  ${item.name}: skipped${noteSuffix || ` (origin '${origin.type}')`}`,
+        );
+        continue;
+      }
+      if (result.status === "changed") {
+        if (result.origin !== undefined) {
+          origins[key] = result.origin;
+        }
+        originsChanged = true;
+        info(`  ${item.name}: changed${noteSuffix}`);
+      } else {
+        info(`  ${item.name}: unchanged${noteSuffix}`);
+      }
     }
   }
 

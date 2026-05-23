@@ -86,17 +86,27 @@ The core skills surface is declared once, globally, in the core-owned
   "version": 1,
   "agents": [],
   "surfaces": {
-    "skills": {
-      "source": "~/.igris/core/skills",
-      "layer": "core",
-      "targets": [
-        { "type": "codex",  "method": "compiler",  "path": "AGENTS.md" },
-        { "type": "gemini", "method": "converter", "path": "~/.gemini/commands" }
-      ]
-    }
+    "skills": [
+      {
+        "source": "~/.igris/core/skills",
+        "layer": "core",
+        "targets": [
+          { "type": "codex",  "method": "compiler",  "path": "AGENTS.md" },
+          { "type": "gemini", "method": "converter", "path": "~/.gemini/commands" }
+        ]
+      }
+    ]
   }
 }
 ```
+
+Post-TD-191 `surfaces.skills` is an ARRAY of `{source, layer, targets}` blocks
+(was a single object pre-TD-191; legacy single-object manifests normalize to a
+1-element array on read — no schema version bump). Each block compiles its own
+source independently; personal blocks coexist alongside core. See L-519
+(Igris-owned topology — per-harness compilers inside Igris OS project each
+block to its own targets) and the array schema at
+`core/scripts/cli-adapters/manifest.schema.json`.
 
 - `source` — skills root (`{name}/SKILL.md` entries). `~`/absolute paths are
   used verbatim; a relative path resolves from `--project-root`.
@@ -118,14 +128,21 @@ unioned when the project being compiled owns it (its realpath is under
 projection. A project may also carry its own `surfaces.skills` in its
 `harness-manifest.json` for project-specific skills.
 
-**FR-139 overlay seam.** A consumer's **personal** skills arrive via the FR-139
-overlay (`~/.igris/registry/harness-manifest.personal.json`), which may carry
-its own `surfaces.skills.targets[]`. `merge_overlay_manifest` merges those
-targets additively into the base. A personal skill-target whose `path` collides
-with a core skill-target is a **hard error** — a personal customization must not
-silently shadow a core skill (mirroring the agent name-collision guard). FR-139
-inherits this seam for free: it remains an overlay-writer, not a schema/compiler
-rewrite.
+**FR-139 overlay seam (post-TD-191).** A consumer's **personal** skills arrive
+via the FR-139 overlay (`~/.igris/registry/harness-manifest.personal.json`),
+which carries its own `surfaces.skills` array — typically one block per
+personal-skill source written by `igris registry add-skill` (per L-516,
+copy-vendored to `~/.igris/registry/skills/<name>/`; per L-517, typed
+subfolder layout). `merge_overlay_manifest` **concatenates** the base
+`surfaces.skills[]` with the overlay `surfaces.skills[]` — overlay blocks
+coexist alongside base blocks (NOT merged into a single base block; the
+pre-TD-191 "additive merge into base" semantics is superseded). A
+**cross-block target-path collision** between any pair of blocks (base-vs-base,
+base-vs-overlay, or overlay-vs-overlay) is a **hard error** — a personal
+customization must not silently shadow a core skill (and the writer-side
+`runAddSkill` mirrors the same guard at write time). See L-519 (Igris-owned
+topology — each per-harness compiler inside Igris OS reads every block's
+canonical content from the registry, regardless of which block it came from).
 
 ---
 
