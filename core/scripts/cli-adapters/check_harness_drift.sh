@@ -338,6 +338,49 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
   target_abs="$PROJECT_ROOT/$target_path"
   canon_version=$(read_canonical_version "$canon_abs")
 
+  # FR-149: claude symlink targets verify by target-path realpath, NOT body
+  # sha. Pair this with the new compile-side symlink branch (L-519 §18.1
+  # compile/drift-verify pairing — see compile_claude_agent_target).
+  # Both sides of the containment check are realpath'd so macOS `/var` →
+  # `/private/var` (and similar symlink-resolved prefixes under TMPDIR) do
+  # not produce false "not registry-anchored" verdicts.
+  if [ "$ttype" = "claude" ] && [ -L "$target_abs" ]; then
+    resolved=$(realpath "$target_abs" 2>/dev/null || true)
+    if [ -z "$resolved" ]; then
+      echo "  [$name/$ttype] DRIFTED"
+      echo "      symlink target: $target_abs → $(readlink "$target_abs" 2>/dev/null || echo "?") [broken]"
+      echo "      reason    : claude symlink target is broken (resolves to nothing)"
+      DRIFT=$((DRIFT + 1))
+      continue
+    fi
+    registry_real=$(realpath "$BRAIN_DIR/registry" 2>/dev/null || echo "$BRAIN_DIR/registry")
+    canon_real=$(realpath "$canon_abs" 2>/dev/null || echo "$canon_abs")
+    case "$resolved" in
+      "$registry_real"/*|"$registry_real")
+        if [ "$resolved" = "$canon_real" ]; then
+          echo "  [$name/$ttype] MATCH"
+          echo "      canonical : $canon_abs"
+          echo "      symlink target: $target_abs → $resolved [registry-anchored]"
+          MATCH=$((MATCH + 1))
+        else
+          echo "  [$name/$ttype] DRIFTED"
+          echo "      canonical : $canon_abs"
+          echo "      symlink target: $target_abs → $resolved [registry-anchored but mismatched]"
+          echo "      reason    : claude symlink registry-anchored but points at the wrong canonical (got: $resolved, expected: $canon_real)"
+          DRIFT=$((DRIFT + 1))
+        fi
+        ;;
+      *)
+        echo "  [$name/$ttype] DRIFTED"
+        echo "      canonical : $canon_abs"
+        echo "      symlink target: $target_abs → $resolved"
+        echo "      reason    : claude symlink target not registry-anchored (legacy reference-mode state — run \`igris harness compile\` to migrate)"
+        DRIFT=$((DRIFT + 1))
+        ;;
+    esac
+    continue
+  fi
+
   # FR-144 body_exception is claude-only; non-claude emitters write the plain canonical body.
   # Mirror compile_harnesses.sh's ttype dispatch here (L-519 §18.1 compile/drift-verify pairing).
   if [ "$ttype" = "claude" ]; then
@@ -557,6 +600,74 @@ if [ -n "$SKILL_ROWS" ]; then
         elif [ "$any_drift" -eq 1 ]; then
           verdict="DRIFTED"
           reason="re-derived TOML differs from on-disk"
+        fi
+        echo "  [skills/$s_type] $verdict"
+        echo "      source     : $conv_root"
+        echo "      artifact dir: $out_abs ($checked skills checked)"
+        ;;
+      claude/symlink)
+        # FR-149: per-skill symlinks under <out_abs>/<name> pointing at
+        # <src_abs>/<name>. Verdict by target-path realpath + L-515 registry
+        # containment. Pairs line-for-line with the compile-side branch
+        # (L-519 §18.1) — every <name>/SKILL.md walked at compile time must
+        # have a registry-anchored symlink under out_abs at drift time.
+        # Both sides of the containment check are realpath'd so macOS `/var`
+        # → `/private/var` does not produce false "not registry-anchored".
+        conv_root="${src_abs:-$HOME/.igris/core/skills}"
+        if [ ! -d "$conv_root" ]; then
+          echo "  [skills/$s_type] MISSING — skills root absent: $conv_root"
+          DRIFT=$((DRIFT + 1))
+          continue
+        fi
+        registry_real=$(realpath "$BRAIN_DIR/registry" 2>/dev/null || echo "$BRAIN_DIR/registry")
+        any_missing=0
+        any_drift=0
+        any_unanchored=0
+        any_realfile=0
+        checked=0
+        while IFS= read -r -d '' skill_md; do
+          skill_name="$(basename "$(dirname "$skill_md")")"
+          skill_dir="$(dirname "$skill_md")"
+          skill_dir_real=$(realpath "$skill_dir" 2>/dev/null || echo "$skill_dir")
+          link_path="$out_abs/$skill_name"
+          if [ ! -e "$link_path" ] && [ ! -L "$link_path" ]; then
+            any_missing=1
+          elif [ -L "$link_path" ]; then
+            resolved=$(realpath "$link_path" 2>/dev/null || true)
+            if [ -z "$resolved" ]; then
+              any_drift=1
+            else
+              case "$resolved" in
+                "$registry_real"/*|"$registry_real")
+                  if [ "$resolved" != "$skill_dir_real" ]; then
+                    any_drift=1
+                  fi
+                  ;;
+                *)
+                  any_unanchored=1
+                  ;;
+              esac
+            fi
+          else
+            # Not a symlink — a regular file/dir at the symlink target. Treated
+            # as drift: the symlink mechanism is not in effect.
+            any_realfile=1
+          fi
+          checked=$((checked + 1))
+        done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
+                   -name 'SKILL.md' -print0 | sort -z)
+        if [ "$any_missing" -eq 1 ]; then
+          verdict="MISSING"
+          reason="one or more claude skill symlinks absent"
+        elif [ "$any_realfile" -eq 1 ]; then
+          verdict="DRIFTED"
+          reason="one or more target paths are regular files/dirs, not symlinks (legacy reference-mode state — remove manually, then run \`igris harness compile\`)"
+        elif [ "$any_unanchored" -eq 1 ]; then
+          verdict="DRIFTED"
+          reason="one or more claude skill symlinks not registry-anchored (legacy reference-mode state — run \`igris harness compile\` to migrate)"
+        elif [ "$any_drift" -eq 1 ]; then
+          verdict="DRIFTED"
+          reason="one or more claude skill symlinks point at the wrong canonical (registry-anchored but mismatched)"
         fi
         echo "  [skills/$s_type] $verdict"
         echo "      source     : $conv_root"

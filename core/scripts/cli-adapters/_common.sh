@@ -557,8 +557,16 @@ if surfaces is not None:
                  "(or a single legacy object — both normalize)")
         if len(skills_blocks) < 1:
             fail("surfaces.skills must be a non-empty array")
-        valid_skill_types = {"codex", "gemini"}
-        valid_skill_methods = {"compiler", "converter"}
+        # FR-149: claude is a first-class skills target via the `symlink` method.
+        # The per-type method allowlist (codex/compiler, gemini/converter,
+        # claude/symlink) is enforced via `valid_pairs` below — mirrors the
+        # `oneOf` constraint in manifest.schema.json so both validation paths
+        # agree. See L-519 (Igris-owned topology — the claude symlink IS a
+        # projection, anchored at the registry-vendored copy).
+        valid_skill_types = {"codex", "gemini", "claude"}
+        valid_skill_methods = {"compiler", "converter", "symlink"}
+        valid_pairs = {("codex", "compiler"), ("gemini", "converter"),
+                       ("claude", "symlink")}
         allowed_skill_target_keys = {"type", "method", "path"}
         allowed_skills_keys = {"source", "layer", "targets"}
         for b_idx, skills_block in enumerate(skills_blocks):
@@ -591,6 +599,13 @@ if surfaces is not None:
                 if st["method"] not in valid_skill_methods:
                     fail(f"{stwhere}.method '{st['method']}' is not one of "
                          f"{sorted(valid_skill_methods)}")
+                # FR-149: per-type method allowlist (mirrors schema `oneOf`).
+                pair = (st["type"], st["method"])
+                if pair not in valid_pairs:
+                    fail(f"{stwhere}: type/method pair "
+                         f"'{st['type']}/{st['method']}' is not allowed; "
+                         "valid pairs: codex/compiler, gemini/converter, "
+                         "claude/symlink")
 
 sys.exit(0)
 PY

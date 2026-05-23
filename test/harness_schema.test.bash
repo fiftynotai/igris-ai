@@ -275,3 +275,78 @@ EOF
 
   [ "$first" = "$second" ]
 }
+
+# ---------------------------------------------------------------------------
+# FR-149: claude as a first-class skills target type (claude/symlink).
+# Schema-level checks: the new (type, method) pair is accepted, and the
+# invalid pair combinations are rejected at schema validation.
+# ---------------------------------------------------------------------------
+
+@test "FR-149: schema accepts claude/symlink skill target" {
+  cat > "$PROJ/ok-claude.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "claude", "method": "symlink", "path": "~/.claude/skills" } ] } } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/ok-claude.json' '$SCHEMA'"
+  [ "$status" -eq 0 ]
+}
+
+@test "FR-149: schema rejects claude/compiler skill target (bad pair)" {
+  cat > "$PROJ/bad-claude-compiler.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "claude", "method": "compiler", "path": "AGENTS.md" } ] } } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/bad-claude-compiler.json' '$SCHEMA'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"pair"* || "$output" == *"claude"* || "$output" == *"oneOf"* ]]
+}
+
+@test "FR-149: schema rejects codex/symlink skill target (bad pair)" {
+  cat > "$PROJ/bad-codex-symlink.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "codex", "method": "symlink", "path": "AGENTS.md" } ] } } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/bad-codex-symlink.json' '$SCHEMA'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"pair"* || "$output" == *"symlink"* || "$output" == *"oneOf"* ]]
+}
+
+@test "FR-149: schema rejects claude/converter skill target (bad pair)" {
+  cat > "$PROJ/bad-claude-converter.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "claude", "method": "converter", "path": "x" } ] } } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/bad-claude-converter.json' '$SCHEMA'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"pair"* || "$output" == *"claude"* || "$output" == *"oneOf"* ]]
+}
+
+@test "FR-149: structural fallback rejects claude/compiler skill target" {
+  # Forces the no-jsonschema path so the structural-fallback's pair-allowlist
+  # is the one under test (the jsonschema path agrees via `oneOf`).
+  local blockdir="$PROJ/noimport"
+  mkdir -p "$blockdir"
+  cat > "$blockdir/sitecustomize.py" <<'PY'
+import sys
+class _Blocker:
+    def find_module(self, name, path=None):
+        if name == "jsonschema":
+            return self
+        return None
+    def load_module(self, name):
+        raise ImportError("jsonschema blocked for test")
+sys.meta_path.insert(0, _Blocker())
+PY
+  cat > "$PROJ/bad-claude-compiler.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "claude", "method": "compiler", "path": "AGENTS.md" } ] } } }
+EOF
+  run bash -c "PYTHONPATH='$blockdir' source '$COMMON' && PYTHONPATH='$blockdir' validate_manifest '$PROJ/bad-claude-compiler.json' '$SCHEMA'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"pair"* || "$output" == *"claude"* ]]
+}

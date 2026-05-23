@@ -488,3 +488,221 @@ EOF
   [[ "$output" == *"[sample/claude] MATCH"* ]]
   [[ "$output" != *"DRIFTED"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# FR-149: claude as a first-class harness consumer of the registry.
+#
+# Compile-side behavior emits registry-anchored symlinks for the common case
+# (Case A new, Case B repoint) and falls back to sync_claude_agents.sh for
+# real-file claude agent targets (Case C). The drift verifier MUST
+# discriminate the two: symlink targets verify by realpath containment under
+# $BRAIN_DIR/registry/ (L-515); real-file targets continue to verify by body
+# sha (FR-144 / TD-193 back-compat). Pairs line-for-line with compile.
+# ---------------------------------------------------------------------------
+
+# build_fr149_agent_project: helper to seed a per-test project with ONE
+# registry-anchored canonical (so $BRAIN_DIR/registry/agents/<name>/<file>
+# points at a real file) and a claude target at .claude/agents/<name>.md.
+# Returns project root via stdout.
+build_fr149_agent_project() {
+  local name="$1"
+  local root="$TEST_TEMP_DIR/fr149_agent_${name}_$BATS_TEST_NUMBER"
+  local registry_dir="$IGRIS_BRAIN_DIR/registry/agents/$name"
+  mkdir -p "$root/.claude/agents" "$registry_dir"
+  cat > "$registry_dir/system-prompt-v1.0.md" <<EOF
+---
+name: $name
+description: canonical body for FR-149 registry-anchored test
+---
+
+# $name AGENT
+
+Registry-anchored canonical body.
+EOF
+  cat > "$root/harness-manifest.json" <<EOF
+{
+  "version": 1,
+  "agents": [
+    {
+      "name": "$name",
+      "layer": "personal",
+      "canonical": {
+        "dir": "$registry_dir",
+        "versioned": true,
+        "glob": "system-prompt-v*.md"
+      },
+      "targets": [
+        { "type": "claude", "path": ".claude/agents/$name.md" }
+      ]
+    }
+  ]
+}
+EOF
+  echo "$root"
+}
+
+@test "FR-149: registry-anchored claude AGENT symlink yields MATCH" {
+  local root
+  root="$(build_fr149_agent_project demo)"
+  # Compile creates the symlink (Case A — target absent).
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json" --target claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"creating claude symlink"* ]]
+  # The symlink resolves under $BRAIN_DIR/registry/. Realpath both sides so
+  # macOS `/var` → `/private/var` doesn't produce a false negative.
+  [ -L "$root/.claude/agents/demo.md" ]
+  local resolved registry_real
+  resolved="$(realpath "$root/.claude/agents/demo.md")"
+  registry_real="$(realpath "$IGRIS_BRAIN_DIR/registry")"
+  case "$resolved" in
+    "$registry_real"/*) : ;;
+    *)  printf 'expected under %s, got: %s\n' "$registry_real" "$resolved" >&2; false ;;
+  esac
+  # Drift verifier returns MATCH on the symlink path.
+  run bash "$GUARD" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[demo/claude] MATCH"* ]]
+  [[ "$output" == *"registry-anchored"* ]]
+}
+
+@test "FR-149: legacy claude AGENT symlink (non-registry) yields DRIFTED" {
+  local root
+  root="$(build_fr149_agent_project demo)"
+  # Pre-create a symlink pointing OUTSIDE the registry — simulates legacy
+  # reference-mode state pre-FR-149.
+  mkdir -p "$root/consumer-side"
+  cat > "$root/consumer-side/demo.md" <<'EOF'
+legacy consumer-side body
+EOF
+  ln -s "$root/consumer-side/demo.md" "$root/.claude/agents/demo.md"
+  # Drift verifier WITHOUT a recompile reports DRIFTED with the migrate hint.
+  run bash "$GUARD" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"[demo/claude] DRIFTED"* ]]
+  [[ "$output" == *"not registry-anchored"* ]]
+  [[ "$output" == *"igris harness compile"* ]]
+}
+
+@test "FR-149: claude AGENT repoint then drift MATCH (auto-migration end-to-end)" {
+  local root
+  root="$(build_fr149_agent_project demo)"
+  # Pre-create a legacy non-registry symlink.
+  mkdir -p "$root/consumer-side"
+  echo "legacy" > "$root/consumer-side/demo.md"
+  ln -s "$root/consumer-side/demo.md" "$root/.claude/agents/demo.md"
+  # Compile auto-migrates (Case B repoint).
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json" --target claude
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"migrating legacy claude symlink"* ]]
+  # Symlink now points at the registry. Realpath both sides for macOS.
+  local resolved registry_real
+  resolved="$(realpath "$root/.claude/agents/demo.md")"
+  registry_real="$(realpath "$IGRIS_BRAIN_DIR/registry")"
+  case "$resolved" in
+    "$registry_real"/*) : ;;
+    *)  printf 'expected under %s, got: %s\n' "$registry_real" "$resolved" >&2; false ;;
+  esac
+  # Drift verifier returns MATCH.
+  run bash "$GUARD" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[demo/claude] MATCH"* ]]
+}
+
+@test "FR-149: real-file claude AGENT (Case C back-compat) drift uses sha-equality" {
+  # The brief's load-bearing back-compat path: a hand-authored .claude/agents/<name>.md
+  # that is a REGULAR FILE (not a symlink) falls through to sync_claude_agents.sh
+  # at compile time, and is verified by body sha equality at drift time. This
+  # test pins that path so a future change can't silently regress it (FR-144 /
+  # TD-193 also depend on this path being intact for the claude+body_exception
+  # contract).
+  local root
+  root="$(build_fr149_agent_project demo)"
+  # Pre-create the target as a REGULAR FILE with its own frontmatter — Case C.
+  cat > "$root/.claude/agents/demo.md" <<'EOF'
+---
+name: demo
+description: hand-authored harness file
+tools: Read, Edit
+---
+
+placeholder body — will be overwritten by compile via Case C fallback
+EOF
+  # Compile: Case C goes through sync_claude_agents.sh (no symlink created).
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json" --target claude
+  [ "$status" -eq 0 ]
+  # Target is STILL a regular file, not a symlink.
+  [ -f "$root/.claude/agents/demo.md" ]
+  [ ! -L "$root/.claude/agents/demo.md" ]
+  # Drift verifier returns MATCH via the existing sha-equality path
+  # (verdict line includes "canon sha"/"harness sha" — NOT the symlink shape).
+  run bash "$GUARD" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[demo/claude] MATCH"* ]]
+  [[ "$output" == *"canon sha"* ]]
+}
+
+# Helper for claude/symlink SKILLS drift tests. Seeds a per-test project
+# whose source is registry-anchored (under $IGRIS_BRAIN_DIR/registry/skills/).
+build_fr149_skill_project() {
+  local skill_name="$1"
+  local registry_skill_dir="$IGRIS_BRAIN_DIR/registry/skills/$skill_name"
+  mkdir -p "$PROJ/.claude/skills" "$registry_skill_dir"
+  cat > "$registry_skill_dir/SKILL.md" <<EOF
+---
+name: $skill_name
+description: registry-anchored skill for FR-149 drift
+---
+
+body
+EOF
+  cat > "$PROJ/harness-manifest.json" <<EOF
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "skills": [
+      {
+        "source": "$IGRIS_BRAIN_DIR/registry/skills",
+        "layer": "personal",
+        "targets": [
+          { "type": "claude", "method": "symlink", "path": ".claude/skills" }
+        ]
+      }
+    ]
+  }
+}
+EOF
+}
+
+@test "FR-149: registry-anchored claude SKILL symlink yields MATCH on drift" {
+  build_fr149_skill_project demo
+  # Compile creates the symlink.
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  [ -L "$PROJ/.claude/skills/demo" ]
+  # Drift verifier returns MATCH.
+  run bash "$GUARD" --project-root "$PROJ"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[skills/claude] MATCH"* ]]
+}
+
+@test "FR-149: non-registry claude SKILL symlink yields DRIFTED" {
+  build_fr149_skill_project demo
+  # Pre-create a symlink pointing OUTSIDE the registry.
+  mkdir -p "$PROJ/.claude/skills" "$PROJ/elsewhere/demo"
+  echo "x" > "$PROJ/elsewhere/demo/SKILL.md"
+  ln -s "$PROJ/elsewhere/demo" "$PROJ/.claude/skills/demo"
+  # Drift verifier WITHOUT recompile reports DRIFTED.
+  run bash "$GUARD" --project-root "$PROJ"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"[skills/claude] DRIFTED"* ]]
+  [[ "$output" == *"not registry-anchored"* ]]
+  [[ "$output" == *"igris harness compile"* ]]
+}

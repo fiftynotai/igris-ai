@@ -42,7 +42,7 @@
 
   "$defs": {
     "skills_surface": {
-      "description": "FR-137/TD-191: ONE skills projection block. Multiple coexist as elements of `surfaces.skills[]`; each carries its OWN source/layer/targets so personal blocks compile ALONGSIDE the core block. For personal blocks `source` points at a registry-vendored path (L-516 universal copy-vendor). Declares a skills root and the non-Claude harness targets that project it (codex via the AGENTS.md compiler, gemini via the per-skill TOML converter). Claude is intentionally absent — it consumes skills via the FR-103 symlink mechanism and needs no projection.",
+      "description": "FR-137/TD-191/FR-149: ONE skills projection block. Multiple coexist as elements of `surfaces.skills[]`; each carries its OWN source/layer/targets so personal blocks compile ALONGSIDE the core block. For personal blocks `source` points at a registry-vendored path (L-516 universal copy-vendor). Valid (type, method) pairs: codex/compiler (AGENTS.md), gemini/converter (per-skill TOML), claude/symlink (registry-anchored symlink). All three are first-class projection targets — the claude symlink IS the projection, anchored at the registry-vendored copy (see L-519).",
       "type": "object",
       "additionalProperties": false,
       "required": ["targets"],
@@ -64,13 +64,18 @@
             "required": ["type", "method", "path"],
             "additionalProperties": false,
             "properties": {
-              "type":   { "enum": ["codex", "gemini"] },
-              "method": { "enum": ["compiler", "converter"] },
+              "type":   { "enum": ["codex", "gemini", "claude"] },
+              "method": { "enum": ["compiler", "converter", "symlink"] },
               "path":   {
                 "type": "string",
-                "description": "compiler (codex): output AGENTS.md path. converter (gemini): output dir for per-skill {name}.toml files."
+                "description": "compiler (codex): output AGENTS.md path. converter (gemini): output dir for per-skill {name}.toml files. symlink (claude): output dir under which each <skill>/ becomes a symlink to its registry-vendored canonical (FR-149)."
               }
-            }
+            },
+            "oneOf": [
+              { "properties": { "type": { "const": "codex"  }, "method": { "const": "compiler"  } } },
+              { "properties": { "type": { "const": "gemini" }, "method": { "const": "converter" } } },
+              { "properties": { "type": { "const": "claude" }, "method": { "const": "symlink"   } } }
+            ]
           }
         }
       }

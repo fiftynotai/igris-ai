@@ -997,9 +997,12 @@ describe("registry add-skill — type:method:path parsing", () => {
     );
   });
 
-  it("rejects a bad type (exit 2, no claude for skills)", async () => {
+  it("rejects a bad type (exit 2 — codex/symlink not a valid pair)", async () => {
+    // FR-149: claude is now a valid SKILL target TYPE, but `codex:symlink:` is
+    // not a valid (type, method) PAIR. The parser rejects the spec at exit 2
+    // and the pair allowlist names the valid combinations.
     const code = await runRegistry(
-      skillOpts({ targets: ["claude:compiler:AGENTS.md"] }),
+      skillOpts({ targets: ["codex:symlink:AGENTS.md"] }),
     );
     expect(code).toBe(2);
   });
@@ -1016,6 +1019,72 @@ describe("registry add-skill — type:method:path parsing", () => {
       skillOpts({ targets: ["codex:compiler"] }),
     );
     expect(code).toBe(2);
+  });
+
+  // FR-149: claude is now a first-class skills target via the symlink method.
+  // The parser accepts claude/symlink, rejects claude/compiler and gemini/compiler,
+  // and runAddSkill refuses a claude:symlink:<path> that lands inside the registry.
+
+  it("FR-149: accepts claude:symlink:<path>", async () => {
+    const code = await runRegistry(
+      skillOpts({ targets: ["claude:symlink:.claude/skills"] }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: { targets: unknown[] }[] };
+    };
+    expect(overlay.surfaces?.skills?.[0].targets).toEqual([
+      { type: "claude", method: "symlink", path: ".claude/skills" },
+    ]);
+  });
+
+  it("FR-149: rejects claude:compiler:<path> with pair allowlist message", async () => {
+    const code = await runRegistry(
+      skillOpts({ targets: ["claude:compiler:AGENTS.md"] }),
+    );
+    expect(code).toBe(2);
+  });
+
+  it("FR-149: rejects gemini:compiler:<path> with pair allowlist message", async () => {
+    const code = await runRegistry(
+      skillOpts({ targets: ["gemini:compiler:AGENTS.md"] }),
+    );
+    expect(code).toBe(2);
+  });
+
+  it("FR-149: runAddSkill rejects claude:symlink:<path> pointing inside the registry (cycle)", async () => {
+    // The target path resolves to ~/.igris/registry/skills (or similar) — pointing
+    // a symlink target INSIDE the registry would create a self-loop. The writer
+    // must reject pre-vendor so neither the overlay nor the vendor tree change.
+    const overlayBefore = existsSync(overlayPath)
+      ? readFileSync(overlayPath, "utf-8")
+      : null;
+    // Sandbox the registry under tmpRoot via IGRIS_BRAIN_DIR for this test only.
+    const prevBrainDir = process.env.IGRIS_BRAIN_DIR;
+    process.env.IGRIS_BRAIN_DIR = join(tmpRoot, ".igris");
+    try {
+      const code = await runRegistry(
+        skillOpts({
+          // resolves under the sandboxed registry root via IGRIS_BRAIN_DIR.
+          targets: [`claude:symlink:${join(tmpRoot, ".igris", "registry", "skills")}`],
+        }),
+      );
+      expect(code).toBe(1);
+    } finally {
+      if (prevBrainDir === undefined) {
+        delete process.env.IGRIS_BRAIN_DIR;
+      } else {
+        process.env.IGRIS_BRAIN_DIR = prevBrainDir;
+      }
+    }
+    // Overlay file is UNCHANGED on this reject.
+    if (overlayBefore === null) {
+      expect(existsSync(overlayPath)).toBe(false);
+    } else {
+      expect(readFileSync(overlayPath, "utf-8")).toBe(overlayBefore);
+    }
+    // The vendored copy was NOT written (containment guard fires pre-vendor).
+    expect(existsSync(join(vendorBase, "skills", "demo"))).toBe(false);
   });
 });
 

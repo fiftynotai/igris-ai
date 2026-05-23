@@ -516,3 +516,113 @@ EOF
   run bash "$GUARD" --project-root "$PROJ"
   [ "$status" -eq 0 ]
 }
+
+# ---------------------------------------------------------------------------
+# FR-149: claude as a first-class skills target (claude/symlink).
+#
+# Compile-side behavior: registry-anchored per-skill symlinks under the
+# target dir (one per <skill>/SKILL.md in `source`). Idempotent on rerun
+# (silent no-op), atomic-repoint on path mismatch with a log line, and
+# refuse-to-clobber a non-symlink at the target path. L-519 §18.1 pairs
+# this with the drift-verify branch (covered in harness_drift_gate.test.bash).
+# ---------------------------------------------------------------------------
+
+# build_fr149_skill_project: helper to seed a per-test project with ONE
+# personal skills block declaring a claude:symlink target. The "source"
+# (skills root) lives at PROJ/registry-skills/<name>/ to simulate the
+# L-516 registry-vendored layout; the compiler emits the symlink under
+# PROJ/.claude/skills/<name>.
+build_fr149_skill_project() {
+  mkdir -p "$PROJ/registry-skills/alpha"
+  cat > "$PROJ/registry-skills/alpha/SKILL.md" <<'EOF'
+---
+name: alpha
+description: alpha skill for FR-149 claude/symlink
+---
+
+alpha body
+EOF
+  cat > "$PROJ/harness-manifest.json" <<EOF
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "skills": [
+      {
+        "source": "registry-skills",
+        "layer": "personal",
+        "targets": [
+          { "type": "claude", "method": "symlink", "path": ".claude/skills" }
+        ]
+      }
+    ]
+  }
+}
+EOF
+}
+
+@test "FR-149: cold compile creates a claude/symlink per skill at the right target" {
+  build_fr149_skill_project
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  # The symlink lives at PROJ/.claude/skills/alpha → PROJ/registry-skills/alpha.
+  [ -L "$PROJ/.claude/skills/alpha" ]
+  local resolved
+  resolved="$(readlink "$PROJ/.claude/skills/alpha")"
+  [ "$resolved" = "$PROJ/registry-skills/alpha" ]
+  [[ "$output" == *"creating claude skill symlink"* ]]
+  [[ "$output" == *"OK    skills/claude (symlink)"* ]]
+}
+
+@test "FR-149: legacy symlink gets atomically repointed (migration log line)" {
+  build_fr149_skill_project
+  # Pre-create a symlink pointing somewhere ELSE (simulating legacy state).
+  mkdir -p "$PROJ/.claude/skills" "$PROJ/elsewhere/alpha"
+  ln -s "$PROJ/elsewhere/alpha" "$PROJ/.claude/skills/alpha"
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  local resolved
+  resolved="$(readlink "$PROJ/.claude/skills/alpha")"
+  [ "$resolved" = "$PROJ/registry-skills/alpha" ]
+  # Migration log line, NOT a create log line.
+  [[ "$output" == *"migrating legacy claude skill symlink"* ]]
+  [[ "$output" != *"creating claude skill symlink"* ]]
+}
+
+@test "FR-149: refuse-to-clobber a regular file at the symlink path" {
+  build_fr149_skill_project
+  # Pre-create a REGULAR FILE at the symlink target.
+  mkdir -p "$PROJ/.claude/skills"
+  echo "operator-authored content" > "$PROJ/.claude/skills/alpha"
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -ne 0 ]
+  # File is unchanged (refuse-to-clobber guarantee).
+  local content
+  content="$(cat "$PROJ/.claude/skills/alpha")"
+  [ "$content" = "operator-authored content" ]
+  # Still a regular file, NOT a symlink.
+  [ ! -L "$PROJ/.claude/skills/alpha" ]
+  [[ "$output" == *"refuse to clobber"* ]]
+  [[ "$output" == *"FAIL  skills/claude/alpha"* ]]
+}
+
+@test "FR-149: claude/symlink compile is idempotent (silent no-op on rerun)" {
+  build_fr149_skill_project
+  # First compile creates the symlink.
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"creating claude skill symlink"* ]]
+  # Capture the inode so we can prove no churn.
+  local inode_before
+  inode_before="$(stat -f '%i' "$PROJ/.claude/skills/alpha" 2>/dev/null \
+                 || stat -c '%i' "$PROJ/.claude/skills/alpha")"
+  # Second compile: no create log, no migrate log, symlink unchanged.
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"creating claude skill symlink"* ]]
+  [[ "$output" != *"migrating legacy claude skill symlink"* ]]
+  local inode_after
+  inode_after="$(stat -f '%i' "$PROJ/.claude/skills/alpha" 2>/dev/null \
+                || stat -c '%i' "$PROJ/.claude/skills/alpha")"
+  [ "$inode_before" = "$inode_after" ]
+}

@@ -53,6 +53,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import {
   registryAgentDirPath,
+  registryDirPath,
   registryOriginsPath,
   registryOverlayPath,
   registrySkillDirPath,
@@ -85,20 +86,32 @@ const VALID_TARGET_TYPES = ["claude", "codex", "gemini"] as const;
 type TargetType = (typeof VALID_TARGET_TYPES)[number];
 
 /**
- * FR-143: allowed SKILL target types — a NARROWER enum than agent targets
- * (`claude` is intentionally absent; Claude consumes skills via the FR-103
- * symlink and needs no projection). Mirrors `$defs.skills_surface.targets.type`.
+ * FR-143/FR-149: allowed SKILL target types. Mirrors
+ * `$defs.skills_surface.targets.type` (codex / gemini / claude). The per-type
+ * method allowlist is enforced by VALID_SKILL_TYPE_METHOD_PAIRS below.
  */
-const VALID_SKILL_TARGET_TYPES = ["codex", "gemini"] as const;
+const VALID_SKILL_TARGET_TYPES = ["codex", "gemini", "claude"] as const;
 type SkillTargetType = (typeof VALID_SKILL_TARGET_TYPES)[number];
 
 /**
- * FR-143: allowed SKILL target methods. `compiler` = the codex AGENTS.md
- * compiler; `converter` = the gemini per-skill TOML converter. Mirrors
+ * FR-143/FR-149: allowed SKILL target methods. `compiler` = the codex
+ * AGENTS.md compiler; `converter` = the gemini per-skill TOML converter;
+ * `symlink` = the claude registry-anchored per-skill symlink. Mirrors
  * `$defs.skills_surface.targets.method`.
  */
-const VALID_SKILL_METHODS = ["compiler", "converter"] as const;
+const VALID_SKILL_METHODS = ["compiler", "converter", "symlink"] as const;
 type SkillMethod = (typeof VALID_SKILL_METHODS)[number];
+
+/**
+ * FR-149: allowed (type, method) pairs for skill targets. Mirrors the
+ * `oneOf` constraint in `manifest.schema.json` and the `valid_pairs` check
+ * in `_common.sh validate_manifest`. See L-519.
+ */
+const VALID_SKILL_TYPE_METHOD_PAIRS = new Set<string>([
+  "codex/compiler",
+  "gemini/converter",
+  "claude/symlink",
+]);
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -452,6 +465,14 @@ export function validateSkillsSurface(skills: unknown): string | null {
     }
     if (!(VALID_SKILL_METHODS as readonly string[]).includes(tRec.method)) {
       return `surfaces.skills.targets[${i}].method '${tRec.method}' is not one of ${JSON.stringify(VALID_SKILL_METHODS)}`;
+    }
+    // FR-149: per-type method allowlist mirrors schema `oneOf` + _common.sh.
+    const pair = `${tRec.type}/${tRec.method}`;
+    if (!VALID_SKILL_TYPE_METHOD_PAIRS.has(pair)) {
+      return (
+        `surfaces.skills.targets[${i}]: type/method pair '${pair}' is not allowed; ` +
+        "valid pairs: codex/compiler, gemini/converter, claude/symlink"
+      );
     }
   }
   return null;
@@ -1007,11 +1028,13 @@ function parseTarget(spec: string): TargetSpec | string {
 }
 
 /**
- * FR-143: parse a SKILL `--target type:method:path` triple. Splits the `type`
- * off the first `:`, then the `method` off the next `:`; everything remaining
- * is the `path` (which MAY itself contain `:`, e.g. a Windows-style or
- * URL-ish path — preserved verbatim). Validates `type` ∈ {codex,gemini} and
- * `method` ∈ {compiler,converter}. Returns the target or an error message.
+ * FR-143/FR-149: parse a SKILL `--target type:method:path` triple. Splits
+ * the `type` off the first `:`, then the `method` off the next `:`;
+ * everything remaining is the `path` (which MAY itself contain `:` —
+ * preserved verbatim). Validates `type` ∈ {codex,gemini,claude}, `method` ∈
+ * {compiler,converter,symlink}, and the per-type method allowlist via
+ * VALID_SKILL_TYPE_METHOD_PAIRS (rejects e.g. claude/compiler). Returns
+ * the target or an error message.
  */
 function parseSkillTarget(spec: string): SkillTargetSpec | string {
   const firstIdx = spec.indexOf(":");
@@ -1034,6 +1057,14 @@ function parseSkillTarget(spec: string): SkillTargetSpec | string {
   }
   if (path.length === 0) {
     return `--target '${spec}' has an empty path`;
+  }
+  // FR-149: per-type method allowlist (mirrors schema `oneOf` + _common.sh).
+  const pair = `${type}/${method}`;
+  if (!VALID_SKILL_TYPE_METHOD_PAIRS.has(pair)) {
+    return (
+      `--target '${spec}': type/method pair '${pair}' is not allowed; ` +
+      "valid pairs: codex/compiler, gemini/converter, claude/symlink"
+    );
   }
   return { type: type as SkillTargetType, method: method as SkillMethod, path };
 }
@@ -1473,6 +1504,26 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
   const projectRoot = opts.projectRoot ?? process.cwd();
   const name = opts.name;
   const originsPath = opts.originsPath ?? registryOriginsPath();
+
+  // FR-149: claude:symlink:<path> must NOT resolve INSIDE ~/.igris/registry/.
+  // The symlink target IS the registry-vendored copy; aiming a claude target
+  // there would create a self-referential symlink the compiler can't safely
+  // follow. See L-515 (containment) + L-519.
+  const registryRoot = registryDirPath();
+  for (const t of newTargets) {
+    if (t.type === "claude" && t.method === "symlink") {
+      const resolved = resolveSourcePath(t.path, projectRoot);
+      if (resolved === registryRoot || resolved.startsWith(`${registryRoot}/`)) {
+        logError(
+          `registry add-skill: claude:symlink target '${t.path}' resolves under ` +
+            `the registry root (${registryRoot}); the symlink target IS the ` +
+            "registry — pointing a target inside the registry creates a cycle. " +
+            "Use a path under ~/.claude/skills/ or another consumer location.",
+        );
+        return 1;
+      }
+    }
+  }
 
   // Read existing origins early so a same-name re-run can fall back to the
   // recorded origin's `dir` when `--from` is omitted (per drift #7).

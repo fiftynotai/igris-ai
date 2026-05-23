@@ -51,6 +51,93 @@ BRAIN_DIR="${IGRIS_BRAIN_DIR:-$HOME/.igris}"
 readonly DEFAULT_OVERLAY="$BRAIN_DIR/registry/harness-manifest.personal.json"
 
 # ---------------------------------------------------------------------------
+# atomic_symlink <link_path> <target>
+#
+# Atomically create-or-replace a symlink at $link_path pointing at $target.
+# Uses temp-symlink + `os.rename(2)` — atomic on the same filesystem. Same
+# atomicity primitive as the TS `vendorSurfaceAtomic` / `vendorSkillTreeAtomic`
+# helpers (FR-149 D2). Discards any stale `.tmp-$$` before writing the new
+# temp so a concurrent or prior-interrupted run cannot block this one.
+#
+# IMPORTANT — macOS `mv` BUG: on macOS the shell `mv` command, when given a
+# target that is itself a symlink, FOLLOWS the symlink and renames into the
+# linked-to dir instead of replacing the symlink. The kernel's `rename(2)`
+# does the correct thing on both BSD and Linux, so we delegate to
+# `os.rename` via python3 (which calls `rename(2)` directly).
+# ---------------------------------------------------------------------------
+atomic_symlink() {
+  local link_path="$1"
+  local target="$2"
+  local tmp="${link_path}.tmp-$$"
+  rm -f "$tmp"
+  ln -sf "$target" "$tmp"
+  python3 -c "import os, sys; os.rename(sys.argv[1], sys.argv[2])" \
+    "$tmp" "$link_path"
+}
+
+# ---------------------------------------------------------------------------
+# compile_claude_agent_target <name> <canon_abs> <target_abs> <exc_abs>
+#
+# FR-149 D3 decision tree for the claude agent target. The 3 cases produce
+# registry-anchored symlinks at the target with safe back-compat:
+#
+#   Case A — target absent → create symlink → registry-vendored canonical.
+#   Case B — target IS a symlink → if it already resolves to the canonical
+#            (registry-anchored), no-op silently; else atomically repoint and
+#            log the migration line.
+#   Case C — target IS a regular file (NOT symlink) → fall through to the
+#            legacy sync_claude_agents.sh body-refresh path (preserves
+#            hand-authored real-file claude harness consumers).
+#
+# Any other target shape (e.g. a directory) is a hard error — refuse to
+# clobber. See L-519 (the claude symlink IS the projection, anchored at the
+# registry-vendored copy).
+# ---------------------------------------------------------------------------
+compile_claude_agent_target() {
+  local name="$1"
+  local canon_abs="$2"
+  local target_abs="$3"
+  local exc_abs="$4"
+
+  # Case C: real file, NOT a symlink → back-compat sync.
+  if [ -f "$target_abs" ] && [ ! -L "$target_abs" ]; then
+    if [ -n "$exc_abs" ]; then
+      bash "$ADAPTER_DIR/sync_claude_agents.sh" "$canon_abs" "$target_abs" "$exc_abs"
+    else
+      bash "$ADAPTER_DIR/sync_claude_agents.sh" "$canon_abs" "$target_abs"
+    fi
+    return $?
+  fi
+
+  # Case B: existing symlink — re-anchor or no-op.
+  if [ -L "$target_abs" ]; then
+    local current_target
+    current_target=$(readlink "$target_abs" 2>/dev/null || true)
+    local resolved
+    resolved=$(realpath "$target_abs" 2>/dev/null || true)
+    if [ -n "$resolved" ] && [ "$resolved" = "$canon_abs" ]; then
+      return 0  # already correctly anchored — silent no-op
+    fi
+    mkdir -p "$(dirname "$target_abs")"
+    atomic_symlink "$target_abs" "$canon_abs"
+    echo "migrating legacy claude symlink: $target_abs → $canon_abs (was: $current_target)"
+    return 0
+  fi
+
+  # Case A: nothing there — create.
+  if [ ! -e "$target_abs" ]; then
+    mkdir -p "$(dirname "$target_abs")"
+    atomic_symlink "$target_abs" "$canon_abs"
+    echo "creating claude symlink: $target_abs → $canon_abs"
+    return 0
+  fi
+
+  # Anything else (e.g. directory) — refuse to clobber.
+  echo "[$name/claude] ERROR — refuse to clobber non-symlink, non-file target: $target_abs" >&2
+  return 1
+}
+
+# ---------------------------------------------------------------------------
 # usage — prints usage and exits with code 2.
 # ---------------------------------------------------------------------------
 usage() {
@@ -307,11 +394,10 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
   rc=0
   case "$ttype" in
     claude)
-      if [ -n "$exc_abs" ]; then
-        bash "$ADAPTER_DIR/sync_claude_agents.sh" "$canon_abs" "$target_abs" "$exc_abs" || rc=$?
-      else
-        bash "$ADAPTER_DIR/sync_claude_agents.sh" "$canon_abs" "$target_abs" || rc=$?
-      fi
+      # FR-149: registry-anchored symlink for the common case, with Case C
+      # back-compat fallback to sync_claude_agents.sh for hand-authored
+      # real-file claude targets.
+      compile_claude_agent_target "$name" "$canon_abs" "$target_abs" "$exc_abs" || rc=$?
       ;;
     codex)
       bash "$ADAPTER_DIR/sync_codex_agents.sh" "$canon_abs" "$target_abs" "$name" || rc=$?
@@ -460,6 +546,46 @@ PY
             skill_name="$(basename "$(dirname "$skill_md")")"
             bash "$ADAPTER_DIR/md_to_gemini_toml.sh" \
               "$skill_md" "$out_abs/$skill_name.toml" || rc=$?
+          done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
+                     -name 'SKILL.md' -print0 | sort -z)
+          ;;
+        claude/symlink)
+          # FR-149: per-skill registry-anchored symlinks. For each
+          # <name>/SKILL.md under the source root, emit a symlink at
+          # <out_abs>/<name> pointing at <src_abs>/<name>. Idempotent (already
+          # correct → silent no-op), atomic-repoint on path change, and
+          # refuse-to-clobber on a non-symlink target. See L-519.
+          conv_root="${src_abs:-$HOME/.igris/core/skills}"
+          if [ ! -d "$conv_root" ]; then
+            SUMMARY+=("FAIL  skills/$s_type — skills root missing: $conv_root")
+            FAIL=$((FAIL + 1))
+            continue
+          fi
+          mkdir -p "$out_abs"
+          while IFS= read -r -d '' skill_md; do
+            skill_name="$(basename "$(dirname "$skill_md")")"
+            skill_dir="$(dirname "$skill_md")"
+            link_path="$out_abs/$skill_name"
+            # Refuse-to-clobber: regular file or directory at the symlink
+            # target — preserves operator-authored state under ~/.claude/.
+            if [ -e "$link_path" ] && [ ! -L "$link_path" ]; then
+              echo "[$s_type/skills/$skill_name] ERROR — refuse to clobber non-symlink at $link_path (remove manually if it should be a registry-anchored symlink)" >&2
+              SUMMARY+=("FAIL  skills/$s_type/$skill_name — refuse to clobber non-symlink at $link_path")
+              rc=1
+              continue
+            fi
+            if [ -L "$link_path" ]; then
+              current=$(readlink "$link_path" 2>/dev/null || true)
+              if [ "$current" = "$skill_dir" ]; then
+                : # already correctly anchored — silent no-op
+              else
+                atomic_symlink "$link_path" "$skill_dir"
+                echo "migrating legacy claude skill symlink: $link_path → $skill_dir (was: $current)"
+              fi
+            else
+              atomic_symlink "$link_path" "$skill_dir"
+              echo "creating claude skill symlink: $link_path → $skill_dir"
+            fi
           done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
                      -name 'SKILL.md' -print0 | sort -z)
           ;;
