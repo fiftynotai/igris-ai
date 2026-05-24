@@ -856,6 +856,215 @@ function vendorSurfaceAtomic(
 }
 
 /**
+ * FR-152 + FR-144: resolve a personal-layer body-exception sidecar to its
+ * absolute path under the runtime registry (`<brain>/registry/body-exceptions/
+ * <name>.json`). Personal agents (the only layer the registry writer touches)
+ * key their sidecars off the brain dir, mirroring
+ * `compile_harnesses.sh:381-385`. Returns the resolved path when the sidecar
+ * exists; returns undefined when no body-exception is configured. Throws when
+ * declared but missing on disk — same posture as the bash adapter. See FR-144.
+ */
+function resolvePersonalBodyExceptionPath(
+  bodyException: string | undefined,
+): string | undefined {
+  if (bodyException === undefined || bodyException.length === 0) {
+    return undefined;
+  }
+  const sidecar = join(
+    registryDirPath(),
+    "body-exceptions",
+    `${bodyException}.json`,
+  );
+  if (!existsSync(sidecar)) {
+    throw new Error(
+      `body-exception sidecar missing: ${sidecar}`,
+    );
+  }
+  return sidecar;
+}
+
+/**
+ * FR-152 α-assembly: derive `<vendoredDir>/harness.md` = `---\n<frontmatter>\n---\n\n<body>`.
+ * Claude + gemini compile-time symlinks resolve to this ONE file. No-op when no
+ * `frontmatter.md` sidecar exists (vendor-side assembly is opt-in via FR-151
+ * sidecar presence; compile-side fallback handles core agents). See L-519.
+ *
+ * Picks the latest `system-prompt-v*.md` for versioned shape via `sort -V`
+ * semantics (split on dots, numeric-compare components — ports
+ * `_common.sh:latest_canonical`). For unversioned, uses the single non-sidecar
+ * file. Atomic temp-then-rename. Body-exception applied when `bodyExceptionPath`
+ * is non-empty (FR-144 + TD-193 regression guard).
+ */
+export function assembleAgentHarness(
+  vendoredDir: string,
+  files: string[],
+  bodyExceptionPath?: string,
+): void {
+  const fmPath = join(vendoredDir, "frontmatter.md");
+  if (!existsSync(fmPath)) {
+    return; // assembly is opt-in via the FR-151 sidecar's presence
+  }
+  // Pick body file: prefer the latest versioned `system-prompt-v*.md`; else
+  // the single non-sidecar file in the vendored set.
+  const versioned = files.filter((f) => /^system-prompt-v[0-9]/.test(f));
+  let bodyFile: string | undefined;
+  if (versioned.length > 0) {
+    bodyFile = pickLatestVersionedFile(versioned);
+  } else {
+    const nonSidecar = files.filter((f) => f !== "frontmatter.md");
+    if (nonSidecar.length !== 1) {
+      // No deterministic body: skip rather than guess (the operator can re-add
+      // with a sharper glob).
+      return;
+    }
+    bodyFile = nonSidecar[0];
+  }
+  if (bodyFile === undefined) {
+    return;
+  }
+  // FR-151's frontmatter.md sidecar carries the SAME `---\n<fields>\n---\n`
+  // shape as a canonical's inline frontmatter (verified by the FR-151 tests
+  // at lines 326-329, 384-385). Strip the delimiters here so the α-assembled
+  // `harness.md` doesn't double-wrap.
+  const fmRaw = stripLeadingFrontmatterBlockToFields(
+    readFileSync(fmPath, "utf-8"),
+  ).trim();
+  let body = readFileSync(join(vendoredDir, bodyFile), "utf-8");
+  // Strip a leading `---\n...\n---\n` block from the body (some canonicals
+  // carry inline frontmatter even when a sidecar is present; the sidecar
+  // wins).
+  body = stripLeadingFrontmatter(body);
+  // FR-144 / TD-193: apply the body-exception appendix when provided. The
+  // sidecar JSON shape (`{anchor, insert}`) matches what the runtime
+  // body-exceptions/<name>.json files carry — see
+  // ~/.igris/registry/body-exceptions/ + repo core/scripts/cli-adapters/
+  // body-exceptions/ (FR-144 layer-keyed resolution; this helper is layer-
+  // agnostic — callers pass the resolved path).
+  if (bodyExceptionPath !== undefined && bodyExceptionPath.length > 0) {
+    body = applyBodyException(body, bodyExceptionPath);
+  }
+  let text = `---\n${fmRaw}\n---\n\n${body}`;
+  if (!text.endsWith("\n")) {
+    text += "\n";
+  }
+  const out = join(vendoredDir, "harness.md");
+  const tmp = `${out}.tmp-${process.pid}`;
+  writeFileSync(tmp, text, "utf-8");
+  renameSync(tmp, out);
+}
+
+/**
+ * FR-152: natural-sort versioned filename pick. Ports `sort -V` semantics by
+ * splitting filename digits on dots and comparing components numerically.
+ * Mirrors `_common.sh:latest_canonical` so the JS vendor path picks the same
+ * file as the bash compile path. See L-519.
+ */
+function pickLatestVersionedFile(versioned: string[]): string | undefined {
+  if (versioned.length === 0) return undefined;
+  const tokenize = (name: string): number[] => {
+    const m = name.match(/^system-prompt-v([0-9.]+)/);
+    if (m === null) return [0];
+    return m[1].split(".").map((p) => parseInt(p, 10) || 0);
+  };
+  const sorted = [...versioned].sort((a, b) => {
+    const ta = tokenize(a);
+    const tb = tokenize(b);
+    const len = Math.max(ta.length, tb.length);
+    for (let i = 0; i < len; i++) {
+      const va = ta[i] ?? 0;
+      const vb = tb[i] ?? 0;
+      if (va !== vb) return va - vb;
+    }
+    return a.localeCompare(b);
+  });
+  return sorted[sorted.length - 1];
+}
+
+/**
+ * FR-152: extract the FIELDS BLOCK out of an FR-151 frontmatter.md sidecar.
+ * The sidecar's on-disk shape is `---\n<fields>\n---\n` (matches inline-
+ * frontmatter convention). This helper returns only `<fields>` (without the
+ * surrounding `---` delimiters) so `assembleAgentHarness` can re-wrap with its
+ * own delimiters. When the input has no delimiters (e.g., a malformed sidecar
+ * or a TD-195 inline-extracted tempfile that's already pre-stripped), returns
+ * the input verbatim. Mirrors `_common.sh:parse_frontmatter` byte semantics.
+ */
+function stripLeadingFrontmatterBlockToFields(text: string): string {
+  if (!text.startsWith("---")) return text;
+  const lines = text.split("\n");
+  if (lines[0] !== "---") return text;
+  let endIdx = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i] === "---") {
+      endIdx = i;
+      break;
+    }
+  }
+  if (endIdx < 0) return text;
+  return lines.slice(1, endIdx).join("\n");
+}
+
+/**
+ * FR-152: strip a leading `---\n...\n---\n` block from a markdown body. Mirrors
+ * `_common.sh:strip_frontmatter` behavior so the JS assembly path produces the
+ * same bytes as the bash compile-side path. Returns the body verbatim when no
+ * frontmatter block is present.
+ */
+function stripLeadingFrontmatter(text: string): string {
+  if (!text.startsWith("---")) return text;
+  const lines = text.split("\n");
+  if (lines[0] !== "---") return text;
+  let bodyStart = -1;
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i] === "---") {
+      bodyStart = i + 1;
+      break;
+    }
+  }
+  if (bodyStart < 0) return text;
+  // Trim leading blank lines from the body (matches the bash helper).
+  while (bodyStart < lines.length && lines[bodyStart].trim() === "") {
+    bodyStart++;
+  }
+  return lines.slice(bodyStart).join("\n");
+}
+
+/**
+ * FR-144 / TD-193: insert appendix lines after a unique `anchor` line in
+ * `body`. Byte-for-byte semantics match the bash compile-side path's
+ * `apply_body_exception` (in `assemble_agent_harness_into_registry`) so the JS
+ * vendor path produces the same bytes. Throws on non-unique anchor (zero or
+ * multiple matches).
+ */
+function applyBodyException(body: string, exceptionPath: string): string {
+  const exc = JSON.parse(readFileSync(exceptionPath, "utf-8")) as {
+    anchor: string;
+    insert: string[];
+  };
+  const anchor = exc.anchor.trim();
+  const insertLines = exc.insert;
+  const bodyLines = body.split("\n");
+  const matches: number[] = [];
+  for (let i = 0; i < bodyLines.length; i++) {
+    if (bodyLines[i].trim() === anchor) matches.push(i);
+  }
+  if (matches.length !== 1) {
+    throw new Error(
+      `body-exception anchor matched ${matches.length} lines (expected exactly 1) in canonical body`,
+    );
+  }
+  const idx = matches[0];
+  const out = [
+    ...bodyLines.slice(0, idx + 1),
+    ...insertLines,
+    ...bodyLines.slice(idx + 1),
+  ];
+  let result = out.join("\n");
+  if (!result.endsWith("\n")) result += "\n";
+  return result;
+}
+
+/**
  * TD-191: enumerate `<name>/SKILL.md` entries under a skills source root.
  * Returns the list of skill subdir names that carry a `SKILL.md` (the same
  * shape the gemini converter's `find -mindepth 2 -maxdepth 2 -type f -name
@@ -1234,6 +1443,12 @@ async function runAdd(
   try {
     vendorSurfaceAtomic(resolved.srcDir, resolved.files, vendoredDir);
     hash = hashSurface(vendoredDir, resolved.files);
+    // FR-152 α-assembly: emit `<vendoredDir>/harness.md` alongside frontmatter +
+    // body so claude/gemini compile-time symlinks resolve to ONE registry file.
+    // No-op when no FR-151 sidecar exists. Hash is computed BEFORE assembly so
+    // the derived file is excluded from origin freshness (downstream-derived).
+    const bxPath = resolvePersonalBodyExceptionPath(entry.body_exception);
+    assembleAgentHarness(vendoredDir, resolved.files, bxPath);
   } catch (err) {
     rmSync(vendoredDir, { recursive: true, force: true });
     logError(`registry add: failed to vendor canonical files: ${(err as Error).message}`);
@@ -1409,6 +1624,11 @@ async function runAddGithub(
     try {
       vendorSurfaceAtomic(selected.srcDir, selected.files, vendoredDir);
       hash = hashSurface(vendoredDir, selected.files);
+      // FR-152 α-assembly (github path): mirrors the path-origin call above.
+      // Personal layer body-exception sidecar resolution (FR-144). Hash already
+      // computed before assembly to keep harness.md out of origin freshness.
+      const bxPath = resolvePersonalBodyExceptionPath(entry.body_exception);
+      assembleAgentHarness(vendoredDir, selected.files, bxPath);
     } catch (err) {
       rmSync(vendoredDir, { recursive: true, force: true });
       logError(
@@ -1858,6 +2078,10 @@ function reVendorPath(
   }
   try {
     vendorSurfaceAtomic(resolved.srcDir, resolved.files, vendoredDir);
+    // FR-152 α-assembly on re-vendor: regenerate harness.md from the freshly
+    // re-vendored frontmatter + body. Idempotent — same inputs → same bytes.
+    const bxPath = resolvePersonalBodyExceptionPath(entry.body_exception);
+    assembleAgentHarness(vendoredDir, resolved.files, bxPath);
   } catch (err) {
     return `error: failed to re-vendor: ${(err as Error).message}`;
   }
@@ -1932,6 +2156,9 @@ async function reVendorGithub(
     }
     try {
       vendorSurfaceAtomic(selected.srcDir, selected.files, vendoredDir);
+      // FR-152 α-assembly on github re-vendor: same idempotent regeneration.
+      const bxPath = resolvePersonalBodyExceptionPath(entry.body_exception);
+      assembleAgentHarness(vendoredDir, selected.files, bxPath);
     } catch (err) {
       return `error: failed to re-vendor: ${(err as Error).message}`;
     }

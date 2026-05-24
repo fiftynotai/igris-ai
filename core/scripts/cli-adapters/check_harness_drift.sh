@@ -148,12 +148,27 @@ if [ -n "$OVERLAY" ] && ! validate_manifest "$OVERLAY" "$SCHEMA"; then
   exit 1
 fi
 
+# FR-152: arm the EXIT trap BEFORE allocating the tempfile so an `exit 1` from
+# a downstream merge failure still cleans up. Same trap-order discipline as
+# compile_harnesses.sh under FR-152.
+TMP_MERGED=""
+# Force return 0 from the trap (a trailing failing `[ -n ... ] && ...` would
+# propagate as the script's exit status under `set -e` and turn a clean success
+# into 1). See FR-152 + the matching compile_harnesses.sh trap.
+_drift_cleanup() {
+  if [ -n "$TMP_MERGED" ]; then
+    rm -f "$TMP_MERGED"
+  fi
+  return 0
+}
+trap '_drift_cleanup' EXIT
+
 # Merge base + optional personal overlay (collision = hard error).
 MERGED_MANIFEST="$MANIFEST"
-TMP_MERGED=""
 if [ -n "$OVERLAY" ]; then
-  TMP_MERGED="$(mktemp "${TMPDIR:-/tmp}/igris-harness-merged.XXXXXX.json")"
-  trap 'rm -f "$TMP_MERGED"' EXIT
+  # FR-152: drop the .json suffix — BSD mktemp on macOS treats only trailing X's
+  # as a template; a suffix makes the literal filename and leaks across runs.
+  TMP_MERGED="$(mktemp "${TMPDIR:-/tmp}/igris-harness-merged.XXXXXX")"
   if ! merge_overlay_manifest "$MANIFEST" "$OVERLAY" > "$TMP_MERGED"; then
     exit 1
   fi
@@ -234,6 +249,89 @@ if val is None:
     sys.exit(1)
 sys.stdout.write(val)
 PY
+}
+
+# ---------------------------------------------------------------------------
+# verify_md_agent_symlink_drift <name> <harness_label> <target_abs>
+#
+# FR-152 unified drift verdict for claude + gemini AGENT targets. Both share
+# the same registry-resident `<BRAIN_DIR>/registry/agents/<name>/harness.md`
+# expected file (the assembly happens at compile time). Verdicts:
+#
+#   MISSING — target absent.
+#   DRIFTED — target is a regular file (refuse-to-clobber posture; the
+#             compile-side Case C is retired by FR-152, with the legacy
+#             body-refresh adapter).
+#   DRIFTED — target is a symlink resolving outside the registry (legacy
+#             reference-mode state — run `igris harness compile` to migrate).
+#   DRIFTED — symlink resolves under the registry but to the WRONG file
+#             (registry-anchored but mismatched).
+#   DRIFTED — symlink broken.
+#   MATCH   — symlink resolves to the expected harness.md.
+#
+# Pairs line-for-line with `compile_md_agent_target` in compile_harnesses.sh.
+# Updates MATCH/DRIFT counters (caller-scoped). Both sides realpath'd for the
+# macOS `/var` → `/private/var` prefix. See L-515, L-519 §18.1.
+# ---------------------------------------------------------------------------
+verify_md_agent_symlink_drift() {
+  local name="$1"
+  local harness_label="$2"
+  local target_abs="$3"
+
+  local expected_target="$BRAIN_DIR/registry/agents/$name/harness.md"
+
+  if [ ! -e "$target_abs" ] && [ ! -L "$target_abs" ]; then
+    echo "  [$name/$harness_label] MISSING — harness symlink absent: $target_abs"
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+
+  if [ ! -L "$target_abs" ]; then
+    # Regular file (or other non-symlink shape) → refuse-to-clobber DRIFTED.
+    echo "  [$name/$harness_label] DRIFTED"
+    echo "      target    : $target_abs"
+    echo "      reason    : non-symlink target — remove manually if it should be a registry-anchored symlink (FR-152 retired the body-refresh back-compat)"
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+
+  local resolved
+  resolved=$(realpath "$target_abs" 2>/dev/null || true)
+  if [ -z "$resolved" ]; then
+    echo "  [$name/$harness_label] DRIFTED"
+    echo "      symlink target: $target_abs → $(readlink "$target_abs" 2>/dev/null || echo "?") [broken]"
+    echo "      reason    : $harness_label symlink target is broken (resolves to nothing)"
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+
+  local registry_real expected_real
+  registry_real=$(realpath "$BRAIN_DIR/registry" 2>/dev/null || echo "$BRAIN_DIR/registry")
+  expected_real=$(realpath "$expected_target" 2>/dev/null || echo "$expected_target")
+
+  case "$resolved" in
+    "$registry_real"/*|"$registry_real")
+      if [ "$resolved" = "$expected_real" ]; then
+        echo "  [$name/$harness_label] MATCH"
+        echo "      expected  : $expected_target"
+        echo "      symlink target: $target_abs → $resolved [registry-anchored]"
+        MATCH=$((MATCH + 1))
+      else
+        echo "  [$name/$harness_label] DRIFTED"
+        echo "      expected  : $expected_target"
+        echo "      symlink target: $target_abs → $resolved [registry-anchored but mismatched]"
+        echo "      reason    : $harness_label symlink registry-anchored but points at the wrong file (got: $resolved, expected: $expected_real)"
+        DRIFT=$((DRIFT + 1))
+      fi
+      ;;
+    *)
+      echo "  [$name/$harness_label] DRIFTED"
+      echo "      expected  : $expected_target"
+      echo "      symlink target: $target_abs → $resolved"
+      echo "      reason    : $harness_label symlink target not registry-anchored (legacy reference-mode state — run \`igris harness compile\` to migrate)"
+      DRIFT=$((DRIFT + 1))
+      ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -338,68 +436,26 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
   target_abs="$PROJECT_ROOT/$target_path"
   canon_version=$(read_canonical_version "$canon_abs")
 
-  # FR-149: claude symlink targets verify by target-path realpath, NOT body
-  # sha. Pair this with the new compile-side symlink branch (L-519 §18.1
-  # compile/drift-verify pairing — see compile_claude_agent_target).
-  # Both sides of the containment check are realpath'd so macOS `/var` →
-  # `/private/var` (and similar symlink-resolved prefixes under TMPDIR) do
+  # FR-152: claude + gemini AGENT verdicts are by target-path realpath against
+  # the registry-resident assembled harness.md (NOT body sha). Pair line-for-
+  # line with `compile_md_agent_target` (L-519 §18.1 compile/drift-verify
+  # pairing). Both sides of the containment check are realpath'd so macOS
+  # `/var` → `/private/var` (and similar symlink-resolved TMPDIR prefixes) do
   # not produce false "not registry-anchored" verdicts.
-  if [ "$ttype" = "claude" ] && [ -L "$target_abs" ]; then
-    resolved=$(realpath "$target_abs" 2>/dev/null || true)
-    if [ -z "$resolved" ]; then
-      echo "  [$name/$ttype] DRIFTED"
-      echo "      symlink target: $target_abs → $(readlink "$target_abs" 2>/dev/null || echo "?") [broken]"
-      echo "      reason    : claude symlink target is broken (resolves to nothing)"
-      DRIFT=$((DRIFT + 1))
-      continue
-    fi
-    registry_real=$(realpath "$BRAIN_DIR/registry" 2>/dev/null || echo "$BRAIN_DIR/registry")
-    canon_real=$(realpath "$canon_abs" 2>/dev/null || echo "$canon_abs")
-    case "$resolved" in
-      "$registry_real"/*|"$registry_real")
-        if [ "$resolved" = "$canon_real" ]; then
-          echo "  [$name/$ttype] MATCH"
-          echo "      canonical : $canon_abs"
-          echo "      symlink target: $target_abs → $resolved [registry-anchored]"
-          MATCH=$((MATCH + 1))
-        else
-          echo "  [$name/$ttype] DRIFTED"
-          echo "      canonical : $canon_abs"
-          echo "      symlink target: $target_abs → $resolved [registry-anchored but mismatched]"
-          echo "      reason    : claude symlink registry-anchored but points at the wrong canonical (got: $resolved, expected: $canon_real)"
-          DRIFT=$((DRIFT + 1))
-        fi
-        ;;
-      *)
-        echo "  [$name/$ttype] DRIFTED"
-        echo "      canonical : $canon_abs"
-        echo "      symlink target: $target_abs → $resolved"
-        echo "      reason    : claude symlink target not registry-anchored (legacy reference-mode state — run \`igris harness compile\` to migrate)"
-        DRIFT=$((DRIFT + 1))
-        ;;
-    esac
+  if [ "$ttype" = "claude" ] || [ "$ttype" = "gemini" ]; then
+    verify_md_agent_symlink_drift "$name" "$ttype" "$target_abs"
     continue
   fi
 
-  # FR-144 body_exception is claude-only; non-claude emitters write the plain canonical body.
-  # Mirror compile_harnesses.sh's ttype dispatch here (L-519 §18.1 compile/drift-verify pairing).
-  if [ "$ttype" = "claude" ]; then
-    expected_body=$(canonical_body_with_exception "$canon_abs" "$exc_abs")
-  else
-    expected_body=$(strip_frontmatter "$canon_abs")
-  fi
+  # codex-only branch from here on. Body-exception is claude-only at the
+  # SYMBOLIC level (TD-193 gate); codex emitters write the plain canonical
+  # body so the expected body is `strip_frontmatter "$canon_abs"`.
+  expected_body=$(strip_frontmatter "$canon_abs")
   expected_sha=$(sha_of_string "$expected_body")
 
-  # Resolve the actual harness body per target type.
+  # Resolve the actual codex body (decoded developer_instructions).
   actual_body=""
-  if [ "$ttype" = "claude" ]; then
-    if [ ! -f "$target_abs" ]; then
-      echo "  [$name/$ttype] MISSING — harness file absent: $target_abs"
-      DRIFT=$((DRIFT + 1))
-      continue
-    fi
-    actual_body=$(strip_frontmatter "$target_abs")
-  elif [ "$ttype" = "codex" ]; then
+  if [ "$ttype" = "codex" ]; then
     if ! actual_body=$(codex_body "$target_abs"); then
       echo "  [$name/$ttype] MISSING — codex harness absent or unparseable: $target_abs"
       DRIFT=$((DRIFT + 1))
@@ -549,7 +605,10 @@ if [ -n "$SKILL_ROWS" ]; then
           DRIFT=$((DRIFT + 1))
           continue
         fi
-        tmp_agents="$(mktemp "${TMPDIR:-/tmp}/igris-drift-agents.XXXXXX.md")"
+        # FR-152: drop the .md suffix from the mktemp template (BSD mktemp on
+        # macOS treats only trailing X's as the template; .md after made the
+        # filename literal and leaked).
+        tmp_agents="$(mktemp "${TMPDIR:-/tmp}/igris-drift-agents.XXXXXX")"
         if [ -n "$src_abs" ]; then
           bash "$ADAPTER_DIR/md_to_agents_md.sh" "$tmp_agents" "$src_abs" >/dev/null 2>&1 || true
         else
@@ -585,7 +644,8 @@ if [ -n "$SKILL_ROWS" ]; then
             any_missing=1
             continue
           fi
-          tmp_toml="$(mktemp "${TMPDIR:-/tmp}/igris-drift-gemini.XXXXXX.toml")"
+          # FR-152: drop the .toml suffix (BSD mktemp template — see above).
+          tmp_toml="$(mktemp "${TMPDIR:-/tmp}/igris-drift-gemini.XXXXXX")"
           bash "$ADAPTER_DIR/md_to_gemini_toml.sh" "$skill_md" "$tmp_toml" >/dev/null 2>&1 || true
           if ! diff -q "$tmp_toml" "$on_disk" >/dev/null 2>&1; then
             any_drift=1

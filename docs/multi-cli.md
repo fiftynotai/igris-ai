@@ -296,8 +296,7 @@ coexist:
 | File | Role |
 |------|------|
 | `scripts/cli-adapters/harness-manifest.json` | Declarative manifest: per agent, the canonical source (dir + glob/file + `versioned` flag) and the set of harness targets. Handles both canonical conventions. |
-| `scripts/cli-adapters/sync_claude_agents.sh` | Per-target adapter — canonical `.md` → `.claude/agents/<name>.md`. Overwrites the harness body with the canonical body; **preserves** the harness YAML frontmatter (the TD-018 D5 convention, mechanized). The harness file must already exist — this adapter syncs, it does not create. |
-| `scripts/cli-adapters/sync_codex_agents.sh` | Per-target adapter — canonical `.md` → `.codex/agents/<name>.toml` (3-key TOML: `description`, `developer_instructions`, `name`). Live emit path (D1 RESOLVED — REIMPLEMENT, FR-138). |
+| `scripts/cli-adapters/sync_codex_agents.sh` | Per-target adapter — `<frontmatter-md> <body-md>` → `.codex/agents/<name>.toml` (3-key TOML: `description`, `developer_instructions`, `name`). Live emit path (D1 RESOLVED — REIMPLEMENT, FR-138; signature refactored FR-152). |
 | `scripts/cli-adapters/compile_harnesses.sh` | Orchestrator — reads the manifest, calls the per-target adapter for every agent/target. `--project-root`, `--filter`, `--target` flags. |
 | `scripts/cli-adapters/check_harness_drift.sh` | CI-style drift guard — exits non-zero if any harness body sha or version marker has diverged from canonical. |
 | `scripts/cli-adapters/body-exceptions/*.json` | Documented intentional body divergences (see below). |
@@ -339,10 +338,12 @@ frontmatter). One documented exception exists: DESIGNER's `.claude/agents`
 harness carries one extra paragraph (the harness-skill invocation note). The
 manifest entry sets `"body_exception": "designer-harness-skill-para"`, and the
 sidecar `body-exceptions/designer-harness-skill-para.json` declares a unique
-`anchor` line plus the `insert` paragraph. Both `sync_claude_agents.sh` and
-`check_harness_drift.sh` honor it: the harness is compared against canonical
-body **plus** the documented appendix, so the exception is not flagged as
-drift and is not silently lost on recompile.
+`anchor` line plus the `insert` paragraph. The appendix is applied at
+ASSEMBLY time (FR-152) — baked into the registry-resident `harness.md` by both
+the TS vendor primitive and the bash `compile_harnesses.sh` assembly helper —
+and `check_harness_drift.sh` verifies registry-anchored containment of the
+symlink, so the exception is not flagged as drift and is not silently lost on
+recompile.
 
 ### Decision D1 — codex wrap vs reimplement (RESOLVED — REIMPLEMENT, FR-138)
 

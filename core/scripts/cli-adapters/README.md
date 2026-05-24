@@ -15,18 +15,20 @@ Turn `~/.igris/core/skills/` into per-CLI skill artifacts.
 Adapter contract for new skills adapters: see
 `docs/multi-cli.md` § "How to Add a New CLI Adapter".
 
-## Subagent adapters (TD-021)
+## Subagent adapters (TD-021 + FR-152 — unified harness projection)
 
-Regenerate per-agent harness files from a single canonical agent prompt.
-Canonical is the **sole source of truth**; every harness file is GENERATED —
-editing one directly is a process error.
+Regenerate per-agent harness projections from a single canonical agent prompt.
+Canonical (plus its FR-151 `frontmatter.md` sidecar) is the **sole source of
+truth**; every claude/gemini `~/.claude/agents/<name>.md` /
+`~/.gemini/agents/<name>.md` is an atomic symlink resolving to a registry-
+resident `harness.md` assembled at compile/vendor time. Codex emits a 3-key
+`.codex/agents/<name>.toml`. Editing a target file directly is a process error.
 
 | Script | Contract | Output |
 |--------|----------|--------|
-| `sync_claude_agents.sh` | `sync_claude_agents.sh <canonical-md> <output-harness-md> [body-exception-json]` | A `.claude/agents/<name>.md` whose body is the canonical body; harness frontmatter is preserved. The harness file must already exist. |
-| `sync_codex_agents.sh` | `sync_codex_agents.sh <canonical-md> <output-toml> [agent-name]` | A `.codex/agents/<name>.toml` (3 keys: `description`, `developer_instructions`, `name`). Live emit path (D1 RESOLVED — REIMPLEMENT, FR-138). `--d1-reimplement` is a deprecated, accepted no-op. |
-| `compile_harnesses.sh` | `compile_harnesses.sh --project-root <dir> [--manifest <p>] [--filter <glob>] [--target claude\|codex\|all]` | Orchestrates: reads the manifest, runs the per-target adapter for every agent/target. |
-| `check_harness_drift.sh` | `check_harness_drift.sh --project-root <dir> [--manifest <p>] [--filter <glob>]` | CI-style guard — exit 1 if any harness body sha / version marker has drifted from canonical. |
+| `sync_codex_agents.sh` | `sync_codex_agents.sh <frontmatter-md> <body-md> <output-toml> [agent-name]` | A `.codex/agents/<name>.toml` (3 keys: `description`, `developer_instructions`, `name`). Frontmatter sidecar + body addressed separately (FR-151/FR-152). Live emit path (D1 RESOLVED — REIMPLEMENT, FR-138). `--d1-reimplement` is a deprecated, accepted no-op. |
+| `compile_harnesses.sh` | `compile_harnesses.sh --project-root <dir> [--manifest <p>] [--filter <glob>] [--target claude\|codex\|gemini\|all]` | Orchestrates: reads the manifest. claude/gemini → assembles `<brain>/registry/agents/<name>/harness.md` (FR-152 α-assembly) + atomic symlink; codex → invokes refactored `sync_codex_agents.sh`. |
+| `check_harness_drift.sh` | `check_harness_drift.sh --project-root <dir> [--manifest <p>] [--filter <glob>]` | CI-style guard — exit 1 if any harness body sha / version marker has drifted from canonical (codex), or if any claude/gemini symlink target is non-registry-anchored / refuses-to-clobber a real-file target. |
 
 ### Exit codes (all subagent adapters)
 
@@ -50,11 +52,16 @@ Schema details and an example: `docs/multi-cli.md` § "Subagent Distribution".
 ### Body exceptions
 
 `body-exceptions/<name>.json` declares a documented, intentional divergence
-between a harness body and the canonical body — an `anchor` line plus an
-`insert` paragraph list. A manifest entry opts in via `"body_exception":
-"<name>"`. Both `sync_claude_agents.sh` and `check_harness_drift.sh` honor it.
-Currently one exists: `designer-harness-skill-para` (DESIGNER's harness-skill
-invocation note).
+between a claude harness body and the canonical body — an `anchor` line plus
+an `insert` paragraph list. A manifest entry opts in via
+`"body_exception": "<name>"`. FR-144/FR-152: the appendix is applied at
+ASSEMBLY time (by `compile_harnesses.sh` and the TS vendor primitive in
+`registry.ts`), baked into the registry-resident `harness.md`. Codex emitters
+write the plain canonical body — the exception is claude/gemini-only via
+assembly. Resolution is layer-keyed: personal-layer sidecars live under
+`<brain>/registry/body-exceptions/<name>.json`; core-layer sidecars live next
+to this adapter directory. Currently one exists: `designer-harness-skill-para`
+(DESIGNER's harness-skill invocation note).
 
 ### Decision D1 — codex wrap vs reimplement (RESOLVED — REIMPLEMENT, FR-138)
 

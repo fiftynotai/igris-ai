@@ -54,14 +54,9 @@ description: a sample canonical agent prompt
 Canonical body. Must match the harness body exactly.
 EOF
 
-  cat > "$PROJ/.claude/agents/sample.md" <<'EOF'
----
-name: sample
-description: harness frontmatter (preserved on sync)
----
-
-placeholder
-EOF
+  # FR-152: claude target is a registry-anchored symlink the compiler creates.
+  # No pre-authored real harness file (that was the FR-149-era Case C path,
+  # retired by FR-152; pre-creating one would now hard-error refuse-to-clobber).
 
   # A valid base manifest at the project root (FR-136 default location).
   cat > "$PROJ/harness-manifest.json" <<'EOF'
@@ -220,9 +215,9 @@ EOF
 # --- Overlay merge ----------------------------------------------------------
 
 @test "overlay merge adds an extra agent to the work set" {
-  # Second canonical + target for the overlay agent.
+  # Second canonical for the overlay agent. FR-152: the claude target is a
+  # symlink the compiler creates atomically — no pre-authored real file.
   cp "$PROJ/canon/sample.md" "$PROJ/canon/extra.md"
-  cp "$PROJ/.claude/agents/sample.md" "$PROJ/.claude/agents/extra.md"
   cat > "$PROJ/overlay.json" <<'EOF'
 {
   "version": 1,

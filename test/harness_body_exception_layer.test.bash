@@ -65,16 +65,9 @@ ANCHOR-LINE-FOR-BODY-EXCEPTION
 - rule two
 EOF
 
-  # A pre-existing harness file (sync, not create) with its own frontmatter.
-  cat > "$PROJ/.claude/agents/sample.md" <<'EOF'
----
-name: sample
-description: harness frontmatter (authored by hand, preserved on sync)
-tools: Read, Edit
----
-
-placeholder body — will be overwritten by compile
-EOF
+  # FR-152: claude target is a registry-anchored symlink the compiler creates
+  # at compile time. The FR-149-era pre-authored real harness file is now an
+  # error (refuse-to-clobber); we just leave the target dir empty.
 }
 
 teardown() {

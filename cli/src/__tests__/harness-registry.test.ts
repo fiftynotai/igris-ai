@@ -421,6 +421,189 @@ describe("registry add", () => {
     expect(fmCount).toBe(1);
     expect(vendored).toContain("system-prompt-v1.md");
   });
+
+  // -------------------------------------------------------------------------
+  // FR-152: vendor-side α-assembly — produce `<vendoredDir>/harness.md` from
+  // the FR-151 frontmatter.md sidecar + the canonical body. Claude + gemini
+  // compile-time symlinks resolve to this ONE file. See L-519, FR-152.
+  // -------------------------------------------------------------------------
+
+  it("FR-152: runAdd assembles harness.md from frontmatter.md + body", async () => {
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, "vcanon", "system-prompt-v1.md"),
+      "# DEMO\n\nbody line one\nbody line two\n",
+    );
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.md"),
+      "---\nname: demo\ndescription: FR-152 α-assembly\n---\n",
+    );
+    const code = await runRegistry(
+      addOpts({
+        name: "demo",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["claude:.claude/agents/demo.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    // harness.md exists in the vendored dir and starts with `---\n<fm>\n---\n`
+    // followed by the body.
+    const harnessPath = join(vendorDir("demo"), "harness.md");
+    expect(existsSync(harnessPath)).toBe(true);
+    const harness = readFileSync(harnessPath, "utf-8");
+    expect(harness.startsWith("---\nname: demo\ndescription: FR-152 α-assembly\n---\n")).toBe(
+      true,
+    );
+    expect(harness).toContain("body line one");
+    expect(harness).toContain("body line two");
+  });
+
+  it("FR-152: assembly idempotency — re-add reproduces identical harness.md bytes", async () => {
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, "vcanon", "system-prompt-v1.md"),
+      "body\n",
+    );
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.md"),
+      "---\nname: idem\n---\n",
+    );
+    await runRegistry(
+      addOpts({
+        name: "idem",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["claude:.claude/agents/idem.md"],
+      }),
+    );
+    const harnessPath = join(vendorDir("idem"), "harness.md");
+    const first = readFileSync(harnessPath, "utf-8");
+    // Remove the existing entry and re-add → same bytes.
+    await runRegistry({
+      action: "remove",
+      name: "idem",
+      overlayPath,
+      originsPath,
+      vendorDir,
+    });
+    await runRegistry(
+      addOpts({
+        name: "idem",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["claude:.claude/agents/idem.md"],
+      }),
+    );
+    const second = readFileSync(harnessPath, "utf-8");
+    expect(first).toBe(second);
+  });
+
+  it("FR-152: versioned assembly picks LATEST system-prompt-vN (sort -V semantics)", async () => {
+    // v1.0 vs v1.10 vs v1.2 — `sort -V` orders v1.10 last. Assembly must pick
+    // v1.10's content.
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.0.md"), "v1.0\n");
+    writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.2.md"), "v1.2\n");
+    writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.10.md"), "v1.10 latest body\n");
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.md"),
+      "---\nname: ver\n---\n",
+    );
+    await runRegistry(
+      addOpts({
+        name: "ver",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["claude:.claude/agents/ver.md"],
+      }),
+    );
+    const harness = readFileSync(join(vendorDir("ver"), "harness.md"), "utf-8");
+    expect(harness).toContain("v1.10 latest body");
+    expect(harness).not.toContain("v1.0\n");
+    expect(harness).not.toContain("v1.2\n");
+  });
+
+  it("FR-152: assembly is a no-op when frontmatter.md is absent (back-compat)", async () => {
+    // Personal agents added pre-FR-151 don't have a sidecar; the vendor must
+    // not emit a half-assembled harness.md. The compile-side fallback in
+    // compile_harnesses.sh handles those cases at compile time.
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, "vcanon", "system-prompt-v1.md"),
+      "body without sidecar\n",
+    );
+    await runRegistry(
+      addOpts({
+        name: "nofm",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["claude:.claude/agents/nofm.md"],
+      }),
+    );
+    expect(existsSync(join(vendorDir("nofm"), "harness.md"))).toBe(false);
+  });
+
+  it("FR-152: harness.md is NOT folded into the origin hash (excluded from freshness)", async () => {
+    // The hash is computed BEFORE assembly so re-running `update` with no
+    // source change produces an unchanged hash. If harness.md were in the
+    // hash, re-derivation would tickle a phantom freshness delta.
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.md"), "body\n");
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.md"),
+      "---\nname: hashed\n---\n",
+    );
+    await runRegistry(
+      addOpts({
+        name: "hashed",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["claude:.claude/agents/hashed.md"],
+      }),
+    );
+    const beforeHash = readOriginsFile()["agent:hashed"].hash;
+    // `update` re-vendors + re-assembles; the hash MUST stay constant when
+    // source bytes are unchanged.
+    const upd = await runRegistry({
+      action: "update",
+      name: "hashed",
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+    });
+    expect(upd).toBe(0);
+    const afterHash = readOriginsFile()["agent:hashed"].hash;
+    expect(afterHash).toBe(beforeHash);
+  });
+
+  it("FR-152: gemini agent target is accepted via parseTarget (no schema regression)", async () => {
+    // A direct add with a gemini target succeeds and produces a valid overlay
+    // entry. FR-151 already extended the type enum to include gemini for agent
+    // targets; this exercises the path end-to-end.
+    const code = await runRegistry(
+      addOpts({
+        name: "gem",
+        from: "canon/x.md",
+        targets: ["gemini:.gemini/agents/gem.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      agents: { name: string; targets: { type: string; path: string }[] }[];
+    };
+    expect(overlay.agents[0].targets[0]).toEqual({
+      type: "gemini",
+      path: ".gemini/agents/gem.md",
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2097,16 +2280,19 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
     brainDir = join(tmpRoot, "brain");
     mkdirSync(join(brainDir, "registry"), { recursive: true });
     fixtureRoot = join(tmpRoot, "fixture");
-    // Canonical prompt (unversioned) at canon/mycustom.md.
+    // Canonical prompt (unversioned) at canon/mycustom.md. FR-152: includes
+    // inline frontmatter so the TD-195 fallback in resolve_or_extract_frontmatter
+    // (compile_harnesses.sh) can produce a TOML for the codex target.
     mkdirSync(join(fixtureRoot, "canon"), { recursive: true });
     writeFileSync(
       join(fixtureRoot, "canon", "mycustom.md"),
-      "# mycustom\n\nPersonal agent body.\n",
+      "---\nname: mycustom\ndescription: personal agent\n---\n\n# mycustom\n\nPersonal agent body.\n",
     );
     // Target dir for the produced codex harness. (We use a codex target, not
-    // claude: sync_claude_agents.sh SYNCS frontmatter into a pre-existing
-    // harness file, whereas sync_codex_agents.sh GENERATES the .toml fresh —
-    // proving auto-discovery produced output without a pre-seeded target.)
+    // claude: under FR-152 claude is a registry-anchored symlink to an
+    // assembled harness.md, while sync_codex_agents.sh GENERATES the .toml
+    // fresh — proving auto-discovery produced output without a pre-seeded
+    // target.)
     mkdirSync(join(fixtureRoot, ".codex", "agents"), { recursive: true });
     // Base manifest with ONE base agent of a DIFFERENT name (so no collision).
     writeFileSync(
@@ -2219,7 +2405,7 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
     // Mutate the SOURCE, then update (re-vendor).
     writeFileSync(
       join(fixtureRoot, "canon", "mycustom.md"),
-      "# mycustom\n\nUPDATED personal agent body marker XYZZY.\n",
+      "---\nname: mycustom\ndescription: personal agent\n---\n\n# mycustom\n\nUPDATED personal agent body marker XYZZY.\n",
     );
     const updCode = await runRegistry({
       action: "update",
