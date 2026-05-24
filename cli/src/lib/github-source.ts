@@ -508,6 +508,16 @@ export function selectSurface(
     files = [file];
   }
 
+  // FR-151: include the harness-agnostic frontmatter.md sidecar if co-located.
+  // Falls through to the SAME containment-check loop below — basename-only,
+  // so lexical + realpath guards apply identically. See L-515.
+  if (
+    existsSync(join(srcDir, "frontmatter.md")) &&
+    !files.includes("frontmatter.md")
+  ) {
+    files.push("frontmatter.md");
+  }
+
   // Containment-check EACH resolved file BEFORE vendoring. Two layers:
   //   1. LEXICAL (`isContainedUnder`): rejects `..`/separator escapes in the
   //      attacker-controlled `file` (the `glob` is basename-only, but `file`

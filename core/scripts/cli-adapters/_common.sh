@@ -563,10 +563,13 @@ if surfaces is not None:
         # `oneOf` constraint in manifest.schema.json so both validation paths
         # agree. See L-519 (Igris-owned topology — the claude symlink IS a
         # projection, anchored at the registry-vendored copy).
+        # FR-151: codex/symlink + gemini/symlink for unified harness projection
+        # (legacy codex/compiler + gemini/converter retired by FR-153).
         valid_skill_types = {"codex", "gemini", "claude"}
         valid_skill_methods = {"compiler", "converter", "symlink"}
         valid_pairs = {("codex", "compiler"), ("gemini", "converter"),
-                       ("claude", "symlink")}
+                       ("claude", "symlink"), ("codex", "symlink"),
+                       ("gemini", "symlink")}
         allowed_skill_target_keys = {"type", "method", "path"}
         allowed_skills_keys = {"source", "layer", "targets"}
         for b_idx, skills_block in enumerate(skills_blocks):
@@ -605,7 +608,7 @@ if surfaces is not None:
                     fail(f"{stwhere}: type/method pair "
                          f"'{st['type']}/{st['method']}' is not allowed; "
                          "valid pairs: codex/compiler, gemini/converter, "
-                         "claude/symlink")
+                         "claude/symlink, codex/symlink, gemini/symlink")
 
 sys.exit(0)
 PY

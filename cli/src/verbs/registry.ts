@@ -103,14 +103,16 @@ const VALID_SKILL_METHODS = ["compiler", "converter", "symlink"] as const;
 type SkillMethod = (typeof VALID_SKILL_METHODS)[number];
 
 /**
- * FR-149: allowed (type, method) pairs for skill targets. Mirrors the
+ * FR-149/FR-151: allowed (type, method) pairs for skill targets. Mirrors the
  * `oneOf` constraint in `manifest.schema.json` and the `valid_pairs` check
- * in `_common.sh validate_manifest`. See L-519.
+ * in `_common.sh validate_manifest`. See L-519, FR-151.
  */
 const VALID_SKILL_TYPE_METHOD_PAIRS = new Set<string>([
   "codex/compiler",
   "gemini/converter",
   "claude/symlink",
+  "codex/symlink",
+  "gemini/symlink",
 ]);
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
@@ -471,7 +473,7 @@ export function validateSkillsSurface(skills: unknown): string | null {
     if (!VALID_SKILL_TYPE_METHOD_PAIRS.has(pair)) {
       return (
         `surfaces.skills.targets[${i}]: type/method pair '${pair}' is not allowed; ` +
-        "valid pairs: codex/compiler, gemini/converter, claude/symlink"
+        "valid pairs: codex/compiler, gemini/converter, claude/symlink, codex/symlink, gemini/symlink"
       );
     }
   }
@@ -783,6 +785,13 @@ function resolveSource(
     if (entries.length === 0) {
       return `no files in ${srcDir} match glob '${glob ?? ""}'`;
     }
+    // FR-151: include the harness-agnostic frontmatter.md sidecar if co-located.
+    if (
+      existsSync(join(srcDir, "frontmatter.md")) &&
+      !entries.includes("frontmatter.md")
+    ) {
+      entries.push("frontmatter.md");
+    }
     return { srcDir, files: entries };
   }
   // Unversioned: split dir/file off the source path.
@@ -793,7 +802,12 @@ function resolveSource(
   if (!existsSync(full)) {
     return `canonical source file does not exist: ${full}`;
   }
-  return { srcDir, files: [file] };
+  // FR-151: include the harness-agnostic frontmatter.md sidecar if co-located.
+  const files = [file];
+  if (existsSync(join(srcDir, "frontmatter.md")) && file !== "frontmatter.md") {
+    files.push("frontmatter.md");
+  }
+  return { srcDir, files };
 }
 
 /** Translate a simple shell-style glob (`*`, `?`) into an anchored RegExp. */
@@ -1063,7 +1077,7 @@ function parseSkillTarget(spec: string): SkillTargetSpec | string {
   if (!VALID_SKILL_TYPE_METHOD_PAIRS.has(pair)) {
     return (
       `--target '${spec}': type/method pair '${pair}' is not allowed; ` +
-      "valid pairs: codex/compiler, gemini/converter, claude/symlink"
+      "valid pairs: codex/compiler, gemini/converter, claude/symlink, codex/symlink, gemini/symlink"
     );
   }
   return { type: type as SkillTargetType, method: method as SkillMethod, path };

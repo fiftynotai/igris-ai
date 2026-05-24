@@ -310,6 +310,117 @@ describe("registry add", () => {
       await runRegistry(addOpts({ name: "x", from: "canon/x.md" })),
     ).toBe(2);
   });
+
+  // -------------------------------------------------------------------------
+  // FR-151: harness-agnostic frontmatter.md sidecar vendor pickup
+  // The vendor primitive picks up a co-located `frontmatter.md` next to the
+  // canonical(s) and folds it into the content hash. See L-519, FR-151.
+  // -------------------------------------------------------------------------
+
+  it("FR-151: --versioned with a frontmatter.md sibling vendors BOTH", async () => {
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, "vcanon", "system-prompt-v1.md"),
+      "v1 body\n",
+    );
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.md"),
+      "---\nname: vfront\n---\n",
+    );
+    const code = await runRegistry(
+      addOpts({
+        name: "vfront",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["claude:.claude/agents/vfront.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    // BOTH files vendored.
+    expect(existsSync(join(vendorDir("vfront"), "system-prompt-v1.md"))).toBe(
+      true,
+    );
+    expect(existsSync(join(vendorDir("vfront"), "frontmatter.md"))).toBe(true);
+    // Glob is unchanged (frontmatter.md does NOT mutate the glob).
+    const overlay = readOverlayFile() as {
+      agents: { canonical: Record<string, unknown> }[];
+    };
+    expect(overlay.agents[0].canonical.glob).toBe("system-prompt-v*.md");
+    // Hash includes the sidecar.
+    const origins = readOriginsFile();
+    expect(origins["agent:vfront"].hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("FR-151: --versioned WITHOUT frontmatter.md still works (backward-compat)", async () => {
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, "vcanon", "system-prompt-v1.md"),
+      "v1 body\n",
+    );
+    const code = await runRegistry(
+      addOpts({
+        name: "vplain",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["claude:.claude/agents/vplain.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    // Only the canonical was vendored; no spurious frontmatter.md.
+    expect(existsSync(join(vendorDir("vplain"), "system-prompt-v1.md"))).toBe(
+      true,
+    );
+    expect(existsSync(join(vendorDir("vplain"), "frontmatter.md"))).toBe(false);
+  });
+
+  it("FR-151: unversioned with a frontmatter.md sibling vendors BOTH", async () => {
+    // Reuse the default canon/ dir (carries x.md from beforeEach).
+    writeFileSync(
+      join(projectRoot, "canon", "frontmatter.md"),
+      "---\nname: ufront\n---\n",
+    );
+    const code = await runRegistry(
+      addOpts({
+        name: "ufront",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/ufront.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    expect(existsSync(join(vendorDir("ufront"), "x.md"))).toBe(true);
+    expect(existsSync(join(vendorDir("ufront"), "frontmatter.md"))).toBe(true);
+  });
+
+  it("FR-151: --versioned glob double-match for frontmatter.md vendors exactly once", async () => {
+    // Glob `*.md` matches BOTH system-prompt-v1.md AND frontmatter.md; the
+    // sidecar-pickup must not double-push. Final files[] has each name once.
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, "vcanon", "system-prompt-v1.md"),
+      "v1\n",
+    );
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.md"),
+      "fm body\n",
+    );
+    const code = await runRegistry(
+      addOpts({
+        name: "vdouble",
+        from: "vcanon",
+        versioned: true,
+        glob: "*.md",
+        targets: ["claude:.claude/agents/vdouble.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    // BOTH present; frontmatter.md appears exactly once (vendor-dir read).
+    const vendored = readdirSync(vendorDir("vdouble"));
+    const fmCount = vendored.filter((n) => n === "frontmatter.md").length;
+    expect(fmCount).toBe(1);
+    expect(vendored).toContain("system-prompt-v1.md");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -997,14 +1108,35 @@ describe("registry add-skill — type:method:path parsing", () => {
     );
   });
 
-  it("rejects a bad type (exit 2 — codex/symlink not a valid pair)", async () => {
-    // FR-149: claude is now a valid SKILL target TYPE, but `codex:symlink:` is
-    // not a valid (type, method) PAIR. The parser rejects the spec at exit 2
-    // and the pair allowlist names the valid combinations.
+  it("FR-151: accepts codex:symlink:<path> (widened pair allowlist)", async () => {
+    // FR-149 originally rejected `codex/symlink`; FR-151 widens the allowlist
+    // to admit codex/symlink + gemini/symlink for the unified harness work
+    // (FR-152/FR-153). See L-519.
     const code = await runRegistry(
-      skillOpts({ targets: ["codex:symlink:AGENTS.md"] }),
+      skillOpts({ targets: ["codex:symlink:.codex/skills"] }),
     );
-    expect(code).toBe(2);
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: { targets: unknown[] }[] };
+    };
+    expect(overlay.surfaces?.skills?.[0].targets).toEqual([
+      { type: "codex", method: "symlink", path: ".codex/skills" },
+    ]);
+  });
+
+  it("FR-151: accepts gemini:symlink:<path> (widened pair allowlist)", async () => {
+    // FR-149's gemini target was only valid with `converter`; FR-151 admits
+    // gemini/symlink as a first-class projection pair.
+    const code = await runRegistry(
+      skillOpts({ targets: ["gemini:symlink:.gemini/skills"] }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: { targets: unknown[] }[] };
+    };
+    expect(overlay.surfaces?.skills?.[0].targets).toEqual([
+      { type: "gemini", method: "symlink", path: ".gemini/skills" },
+    ]);
   });
 
   it("rejects a bad method (exit 2)", async () => {
@@ -1449,6 +1581,40 @@ describe("registry update", () => {
     expect(existsSync(join(vendorDir("vupd"), "v1.md"))).toBe(true);
     expect(existsSync(join(vendorDir("vupd"), "v2.md"))).toBe(true);
     expect(readOriginsFile()["agent:vupd"].hash).not.toBe(hashBefore);
+  });
+
+  it("FR-151: hash advances when frontmatter.md mutates", async () => {
+    // Seed an agent with a frontmatter.md sidecar. The hash is folded over
+    // BOTH files (canonical + sidecar). Mutating only the sidecar must still
+    // cause `update` to re-vendor and report a hash advance — proving the
+    // sidecar bytes participate in the content hash.
+    writeFileSync(
+      join(projectRoot, "canon", "frontmatter.md"),
+      "---\nname: fmhash\nv: 1\n---\n",
+    );
+    await seedAdd("fmhash");
+    expect(existsSync(join(vendorDir("fmhash"), "frontmatter.md"))).toBe(true);
+    const hashBefore = readOriginsFile()["agent:fmhash"].hash;
+
+    // Mutate ONLY the sidecar — the canonical x.md is untouched.
+    writeFileSync(
+      join(projectRoot, "canon", "frontmatter.md"),
+      "---\nname: fmhash\nv: 2\n---\n",
+    );
+    const code = await runRegistry({
+      action: "update",
+      name: "fmhash",
+      overlayPath,
+      originsPath,
+      vendorDir,
+    });
+    expect(code).toBe(0);
+    // Re-vendored sidecar reflects the new bytes.
+    expect(
+      readFileSync(join(vendorDir("fmhash"), "frontmatter.md"), "utf-8"),
+    ).toBe("---\nname: fmhash\nv: 2\n---\n");
+    // Hash advanced (sidecar participates in the content hash).
+    expect(readOriginsFile()["agent:fmhash"].hash).not.toBe(hashBefore);
   });
 });
 

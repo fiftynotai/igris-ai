@@ -303,15 +303,18 @@ EOF
   [[ "$output" == *"pair"* || "$output" == *"claude"* || "$output" == *"oneOf"* ]]
 }
 
-@test "FR-149: schema rejects codex/symlink skill target (bad pair)" {
-  cat > "$PROJ/bad-codex-symlink.json" <<'EOF'
+@test "FR-151: schema ACCEPTS codex/symlink skill target (widened allowlist)" {
+  # FR-149 originally rejected codex/symlink; FR-151 widens the allowlist to
+  # admit codex/symlink + gemini/symlink for the unified harness work (the
+  # legacy codex/compiler + gemini/converter stay valid until FR-153 retires
+  # them). See L-519, FR-151.
+  cat > "$PROJ/ok-codex-symlink.json" <<'EOF'
 { "version": 1, "agents": [],
   "surfaces": { "skills": { "source": "skills", "layer": "core",
-    "targets": [ { "type": "codex", "method": "symlink", "path": "AGENTS.md" } ] } } }
+    "targets": [ { "type": "codex", "method": "symlink", "path": "~/.codex/skills" } ] } } }
 EOF
-  run bash -c "source '$COMMON' && validate_manifest '$PROJ/bad-codex-symlink.json' '$SCHEMA'"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"pair"* || "$output" == *"symlink"* || "$output" == *"oneOf"* ]]
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/ok-codex-symlink.json' '$SCHEMA'"
+  [ "$status" -eq 0 ]
 }
 
 @test "FR-149: schema rejects claude/converter skill target (bad pair)" {
@@ -349,4 +352,87 @@ EOF
   run bash -c "PYTHONPATH='$blockdir' source '$COMMON' && PYTHONPATH='$blockdir' validate_manifest '$PROJ/bad-claude-compiler.json' '$SCHEMA'"
   [ "$status" -ne 0 ]
   [[ "$output" == *"pair"* || "$output" == *"claude"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# FR-151: widen the (type, method) pair allowlist to include codex/symlink +
+# gemini/symlink. The legacy codex/compiler + gemini/converter remain valid
+# back-compat until FR-153 retires them. See L-519, FR-151.
+# ---------------------------------------------------------------------------
+
+@test "FR-151: schema accepts gemini/symlink skill target" {
+  cat > "$PROJ/ok-gemini-symlink.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "gemini", "method": "symlink", "path": "~/.gemini/skills" } ] } } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/ok-gemini-symlink.json' '$SCHEMA'"
+  [ "$status" -eq 0 ]
+}
+
+@test "FR-151: schema still accepts legacy codex/compiler (back-compat)" {
+  # FR-153 retires this pair; until then it MUST remain valid so existing
+  # personal overlays don't break mid-transition.
+  cat > "$PROJ/ok-codex-compiler.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "codex", "method": "compiler", "path": "AGENTS.md" } ] } } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/ok-codex-compiler.json' '$SCHEMA'"
+  [ "$status" -eq 0 ]
+}
+
+@test "FR-151: schema still accepts legacy gemini/converter (back-compat)" {
+  cat > "$PROJ/ok-gemini-converter.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "gemini", "method": "converter", "path": "out" } ] } } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/ok-gemini-converter.json' '$SCHEMA'"
+  [ "$status" -eq 0 ]
+}
+
+@test "FR-151: schema rejects gemini/compiler skill target (still invalid)" {
+  # gemini/compiler is NOT in the allowlist (gemini is converter-method OR
+  # symlink-method; compiler is codex's legacy method).
+  cat > "$PROJ/bad-gemini-compiler.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "gemini", "method": "compiler", "path": "AGENTS.md" } ] } } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/bad-gemini-compiler.json' '$SCHEMA'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"pair"* || "$output" == *"gemini"* || "$output" == *"oneOf"* ]]
+}
+
+@test "FR-151: structural fallback accepts codex/symlink + gemini/symlink" {
+  # Forces the no-jsonschema path so the structural-fallback's pair-allowlist
+  # is under test. Both new pairs must be accepted via valid_pairs.
+  local blockdir="$PROJ/noimport"
+  mkdir -p "$blockdir"
+  cat > "$blockdir/sitecustomize.py" <<'PY'
+import sys
+class _Blocker:
+    def find_module(self, name, path=None):
+        if name == "jsonschema":
+            return self
+        return None
+    def load_module(self, name):
+        raise ImportError("jsonschema blocked for test")
+sys.meta_path.insert(0, _Blocker())
+PY
+  cat > "$PROJ/ok-codex-symlink.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "codex", "method": "symlink", "path": "~/.codex/skills" } ] } } }
+EOF
+  run bash -c "PYTHONPATH='$blockdir' source '$COMMON' && PYTHONPATH='$blockdir' validate_manifest '$PROJ/ok-codex-symlink.json' '$SCHEMA'"
+  [ "$status" -eq 0 ]
+  cat > "$PROJ/ok-gemini-symlink.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "gemini", "method": "symlink", "path": "~/.gemini/skills" } ] } } }
+EOF
+  run bash -c "PYTHONPATH='$blockdir' source '$COMMON' && PYTHONPATH='$blockdir' validate_manifest '$PROJ/ok-gemini-symlink.json' '$SCHEMA'"
+  [ "$status" -eq 0 ]
 }
