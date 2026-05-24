@@ -2,7 +2,7 @@
 
 **Briefs:** FR-103 (Skill Distribution), FR-104 (Hook Bridge Layer)
 **Status:** Stable
-**Last Updated:** 2026-04-20
+**Last Updated:** 2026-05-24
 
 Igris skills and hooks live canonically under `~/.igris/core/`. This document defines
 how those surfaces are distributed to multiple CLI agents (Claude Code, OpenCode,
@@ -175,18 +175,26 @@ platform_overrides:
     triggers:
       - "SCAN"
       - "REPORT"
-  codex:
-    include: false   # opt-out from AGENTS.md aggregation
 ---
 ```
+
+> **Note (post-FR-153):** the legacy `platform_overrides.codex.include: false`
+> opt-out is **no longer load-bearing** for the skill projection. Every
+> `SKILL.md` under the source tree gets a per-skill symlink under every
+> consumer's skills dir — there is no exclusion step. Authors targeting only
+> Claude can omit the codex/gemini blocks entirely; co-installed Claude-only
+> skills appear as inert reference docs in `~/.codex/skills/` /
+> `~/.gemini/skills/` rather than being skipped at compile time. The
+> `is_claude_only` helper in `_common.sh` remains defined for back-compat but
+> is no longer called by the live compile path.
 
 ### Frontmatter Handling Per CLI
 
 | CLI | Behavior |
 |-----|----------|
-| Claude | Full frontmatter preserved (all keys including `platform_overrides.claude`). |
-| Gemini | Only `description` is extracted — used for the TOML `description` key. Everything else is stripped. |
-| Codex | Entire frontmatter is stripped. Body-only concatenation under a `# {name}` header. |
+| Claude | Reads `SKILL.md` natively via per-skill directory symlink. Full frontmatter preserved verbatim (all keys including `platform_overrides.claude`). |
+| Gemini | Reads `SKILL.md` natively via per-skill directory symlink (FR-153 — unified onto the claude/symlink primitive). Full frontmatter preserved verbatim. Pre-FR-153 only `description` was extracted into a per-skill TOML; the converter (`md_to_gemini_toml.sh`) has been retired. |
+| Codex | Reads `SKILL.md` natively via per-skill directory symlink (FR-153 — unified onto the claude/symlink primitive). Full frontmatter preserved verbatim. Pre-FR-153 the entire frontmatter was stripped and the body concatenated into a single `AGENTS.md` under a 32 KB cap; the aggregator (`md_to_agents_md.sh`) has been retired. |
 
 ### Flat Frontmatter (Current Default)
 
@@ -197,17 +205,24 @@ required.
 
 ---
 
-## Claude-Only Skill Detection
+## Claude-Only Skill Detection — RETIRED
 
-The Codex compiler excludes skills that are Claude-only. A skill is considered
-Claude-only if **either** signal is present:
+**Pre-FR-153** the codex compiler excluded skills that were Claude-only. A
+skill was considered Claude-only when **either** signal was present:
 
 1. `platform_overrides.codex.include: false` in frontmatter (explicit opt-out).
-2. The body contains `Agent(...)` or `Skill(...)` invocation patterns — a heuristic for
-   orchestration skills that assume Claude's subagent API.
+2. The body contained `Agent(...)` or `Skill(...)` invocation patterns — a
+   heuristic for orchestration skills that assume Claude's subagent API.
 
-Excluded skills are logged to stderr and listed in a trailing `<!-- -->` comment inside
-the generated `AGENTS.md`.
+Excluded skills were logged to stderr and listed in a trailing `<!-- -->`
+comment inside the generated `AGENTS.md`.
+
+**Post-FR-153 the entire mechanism is dead.** The symlink projection has no
+exclusion step — every `SKILL.md` under the source tree gets a per-skill
+symlink in every consumer's skills dir. Consumers that can't execute
+Claude-orchestration skills will see them as inert reference docs rather than
+active commands. The `is_claude_only` helper in `_common.sh` is preserved as
+defence-in-depth back-compat but is no longer called by the live compile path.
 
 ---
 
@@ -619,11 +634,13 @@ per-CLI harness files (Codex `.toml`, Claude `.md`) by the TD-021 adapters under
   (`compile_harnesses.sh` / `check_harness_drift.sh`) with exit-code passthrough.
   Flags: `--project-root`, `--manifest`, `--overlay`, `--target`, `--filter`.
 
-### The three adapter naming families (reconciled — FR-138)
+### The three adapter naming families (reconciled — FR-138; middle family retired by FR-153)
 
-Three naming families live under `core/scripts/cli-adapters/`. They are NOT
-interchangeable; each owns a distinct concern. FR-138 fixes the canonical
-disposition of each:
+Three naming families have lived under `core/scripts/cli-adapters/` since
+FR-138. They are NOT interchangeable; each owns a distinct concern. FR-138
+fixed the canonical disposition of each, and **FR-153 retired the middle
+family** in favor of the unified symlink projection — only the first and
+third families have live disposition today:
 
 | Family | Concern | Disposition |
 |--------|---------|-------------|
