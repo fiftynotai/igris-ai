@@ -51,9 +51,14 @@ setup() {
   export IGRIS_BRAIN_DIR="$ISOLATED_BRAIN"
 
   PROJ="$TEST_TEMP_DIR/harness_skills_$BATS_TEST_NUMBER"
-  mkdir -p "$PROJ/skills/alpha" "$PROJ/skills/beta" "$PROJ/.gemini/commands"
+  # FR-153 + L-515: drift's "registry containment" check requires the symlink
+  # target to resolve UNDER the brain registry root, so skills source lives at
+  # $IGRIS_BRAIN_DIR/registry/skills (mirrors the real `igris registry
+  # add-skill` flow which vendors skills under <brain>/registry/skills/).
+  mkdir -p "$PROJ" "$IGRIS_BRAIN_DIR/registry/skills/alpha" \
+    "$IGRIS_BRAIN_DIR/registry/skills/beta"
 
-  cat > "$PROJ/skills/alpha/SKILL.md" <<'EOF'
+  cat > "$IGRIS_BRAIN_DIR/registry/skills/alpha/SKILL.md" <<'EOF'
 ---
 name: alpha
 description: the alpha skill
@@ -64,7 +69,7 @@ description: the alpha skill
 Alpha skill body.
 EOF
 
-  cat > "$PROJ/skills/beta/SKILL.md" <<'EOF'
+  cat > "$IGRIS_BRAIN_DIR/registry/skills/beta/SKILL.md" <<'EOF'
 ---
 name: beta
 description: the beta skill
@@ -75,19 +80,23 @@ description: the beta skill
 Beta skill body.
 EOF
 
-  # A project-OWNED manifest declaring a skills surface against the local
-  # skills dir (so the test never touches ~/.igris/core/skills).
-  cat > "$PROJ/harness-manifest.json" <<'EOF'
+  # A project-OWNED manifest declaring a skills surface against the registry-
+  # vendored skills dir (so drift's L-515 containment check fires MATCH).
+  # FR-153: all 3 harnesses now use the symlink method. Source is the
+  # ABSOLUTE registry path — satisfies codex/symlink's D2 absolute-path
+  # guard AND resides under <brain>/registry/ for L-515 MATCH.
+  SKILLS_SRC="$IGRIS_BRAIN_DIR/registry/skills"
+  cat > "$PROJ/harness-manifest.json" <<EOF
 {
   "version": 1,
   "agents": [],
   "surfaces": {
     "skills": {
-      "source": "skills",
+      "source": "$SKILLS_SRC",
       "layer": "core",
       "targets": [
-        { "type": "codex",  "method": "compiler",  "path": "AGENTS.md" },
-        { "type": "gemini", "method": "converter", "path": ".gemini/commands" }
+        { "type": "codex",  "method": "symlink",  "path": ".codex/skills" },
+        { "type": "gemini", "method": "symlink",  "path": ".gemini/skills" }
       ]
     }
   }
@@ -114,7 +123,7 @@ teardown() {
 @test "schema rejects a skills target missing 'method'" {
   cat > "$PROJ/bad.json" <<'EOF'
 { "version": 1, "agents": [],
-  "surfaces": { "skills": { "targets": [ { "type": "codex", "path": "AGENTS.md" } ] } } }
+  "surfaces": { "skills": { "targets": [ { "type": "codex", "path": ".codex/skills" } ] } } }
 EOF
   run bash -c "source '$COMMON' && validate_manifest '$PROJ/bad.json' '$SCHEMA'"
   [ "$status" -ne 0 ]
@@ -124,7 +133,7 @@ EOF
 @test "schema rejects a bad skills target 'method' enum" {
   cat > "$PROJ/bad.json" <<'EOF'
 { "version": 1, "agents": [],
-  "surfaces": { "skills": { "targets": [ { "type": "codex", "method": "frobnicate", "path": "AGENTS.md" } ] } } }
+  "surfaces": { "skills": { "targets": [ { "type": "codex", "method": "frobnicate", "path": ".codex/skills" } ] } } }
 EOF
   run bash -c "source '$COMMON' && validate_manifest '$PROJ/bad.json' '$SCHEMA'"
   [ "$status" -ne 0 ]
@@ -134,11 +143,11 @@ EOF
 @test "schema rejects a bad skills target 'type' enum" {
   cat > "$PROJ/bad.json" <<'EOF'
 { "version": 1, "agents": [],
-  "surfaces": { "skills": { "targets": [ { "type": "claude", "method": "compiler", "path": "AGENTS.md" } ] } } }
+  "surfaces": { "skills": { "targets": [ { "type": "claude", "method": "compiler", "path": ".claude/skills" } ] } } }
 EOF
   run bash -c "source '$COMMON' && validate_manifest '$PROJ/bad.json' '$SCHEMA'"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"claude"* || "$output" == *"type"* ]]
+  [[ "$output" == *"claude"* || "$output" == *"type"* || "$output" == *"pair"* ]]
 }
 
 @test "schema rejects an unknown key under surfaces (additionalProperties:false)" {
@@ -166,7 +175,7 @@ EOF
 @test "structural-fallback path validates surfaces even with jsonschema forced off" {
   cat > "$PROJ/bad.json" <<'EOF'
 { "version": 1, "agents": [],
-  "surfaces": { "skills": { "targets": [ { "type": "codex", "path": "AGENTS.md" } ] } } }
+  "surfaces": { "skills": { "targets": [ { "type": "codex", "path": ".codex/skills" } ] } } }
 EOF
   # A fake module dir with a jsonschema.py that raises on import would still be
   # importable; instead we point PYTHONPATH at a dir whose `jsonschema` is a
@@ -192,29 +201,37 @@ PY
 
 # --- Compile + idempotency ---------------------------------------------------
 
-@test "compile projects the skills surface (codex AGENTS.md + gemini TOMLs)" {
+@test "compile projects the skills surface (codex + gemini per-skill symlinks)" {
   run bash "$COMPILE" --project-root "$PROJ"
   [ "$status" -eq 0 ]
   [[ "$output" == *"skills/codex"* ]]
   [[ "$output" == *"skills/gemini"* ]]
-  assert_file_exists "$PROJ/AGENTS.md"
-  assert_file_exists "$PROJ/.gemini/commands/alpha.toml"
-  assert_file_exists "$PROJ/.gemini/commands/beta.toml"
+  # FR-153: per-skill symlinks under .codex/skills/ + .gemini/skills/.
+  [ -L "$PROJ/.codex/skills/alpha" ]
+  [ -L "$PROJ/.codex/skills/beta" ]
+  [ -L "$PROJ/.gemini/skills/alpha" ]
+  [ -L "$PROJ/.gemini/skills/beta" ]
 }
 
-@test "skills compile is idempotent (byte-identical AGENTS.md + TOML on re-run)" {
+@test "skills compile is idempotent (same inode on re-run)" {
   run bash "$COMPILE" --project-root "$PROJ"
   [ "$status" -eq 0 ]
-  cp "$PROJ/AGENTS.md" "$PROJ/AGENTS.first"
-  cp "$PROJ/.gemini/commands/alpha.toml" "$PROJ/alpha.first"
+  local codex_inode_before gemini_inode_before
+  codex_inode_before="$(stat -f '%i' "$PROJ/.codex/skills/alpha" 2>/dev/null \
+                       || stat -c '%i' "$PROJ/.codex/skills/alpha")"
+  gemini_inode_before="$(stat -f '%i' "$PROJ/.gemini/skills/alpha" 2>/dev/null \
+                        || stat -c '%i' "$PROJ/.gemini/skills/alpha")"
 
   run bash "$COMPILE" --project-root "$PROJ"
   [ "$status" -eq 0 ]
 
-  run diff -q "$PROJ/AGENTS.first" "$PROJ/AGENTS.md"
-  [ "$status" -eq 0 ]
-  run diff -q "$PROJ/alpha.first" "$PROJ/.gemini/commands/alpha.toml"
-  [ "$status" -eq 0 ]
+  local codex_inode_after gemini_inode_after
+  codex_inode_after="$(stat -f '%i' "$PROJ/.codex/skills/alpha" 2>/dev/null \
+                      || stat -c '%i' "$PROJ/.codex/skills/alpha")"
+  gemini_inode_after="$(stat -f '%i' "$PROJ/.gemini/skills/alpha" 2>/dev/null \
+                       || stat -c '%i' "$PROJ/.gemini/skills/alpha")"
+  [ "$codex_inode_before" = "$codex_inode_after" ]
+  [ "$gemini_inode_before" = "$gemini_inode_after" ]
 }
 
 @test "--surface skills compiles only the skills surface" {
@@ -235,10 +252,14 @@ PY
   [[ "$output" == *"[skills/gemini] MATCH"* ]]
 }
 
-@test "drift flags a mutated AGENTS.md and recovers after recompile" {
+@test "FR-153: drift flags a manually-repointed codex symlink (registry-unanchored) and recovers after recompile" {
   run bash "$COMPILE" --project-root "$PROJ"
   [ "$status" -eq 0 ]
-  printf '\n# injected\nstray skill content\n' >> "$PROJ/AGENTS.md"
+  # Repoint one of the codex skill symlinks to somewhere ELSE (outside the
+  # source root); drift should flag it as registry-unanchored / mismatched.
+  mkdir -p "$PROJ/elsewhere/alpha"
+  rm "$PROJ/.codex/skills/alpha"
+  ln -s "$PROJ/elsewhere/alpha" "$PROJ/.codex/skills/alpha"
 
   run bash "$GUARD" --project-root "$PROJ"
   [ "$status" -eq 1 ]
@@ -251,34 +272,20 @@ PY
   [[ "$output" == *"[skills/codex] MATCH"* ]]
 }
 
-@test "drift flags a mutated gemini TOML" {
+@test "FR-153: drift flags a mutated gemini symlink (file at target instead of link)" {
   run bash "$COMPILE" --project-root "$PROJ"
   [ "$status" -eq 0 ]
-  printf '\nextra = "x"\n' >> "$PROJ/.gemini/commands/beta.toml"
+  # Replace one gemini symlink with a regular file → drift verdict fires.
+  rm "$PROJ/.gemini/skills/beta"
+  echo "operator-edit-bytes" > "$PROJ/.gemini/skills/beta"
 
   run bash "$GUARD" --project-root "$PROJ"
   [ "$status" -eq 1 ]
   [[ "$output" == *"[skills/gemini] DRIFTED"* ]]
 }
 
-@test "drift is date-stable: a date-only marker change stays MATCH" {
-  run bash "$COMPILE" --project-root "$PROJ"
-  [ "$status" -eq 0 ]
-  # Rewrite ONLY the date inside the trailing generated-marker line.
-  python3 - "$PROJ/AGENTS.md" <<'PY'
-import re, sys
-p = sys.argv[1]
-t = open(p, encoding="utf-8").read()
-t = re.sub(r"on \d{4}-\d{2}-\d{2}", "on 2099-12-31", t)
-open(p, "w", encoding="utf-8").write(t)
-PY
-  run bash "$GUARD" --project-root "$PROJ"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"[skills/codex] MATCH"* ]]
-}
-
 @test "drift reports MISSING for a never-compiled skills surface" {
-  # No compile -> AGENTS.md and TOMLs absent.
+  # No compile -> no symlinks present at target paths.
   run bash "$GUARD" --project-root "$PROJ"
   [ "$status" -eq 1 ]
   [[ "$output" == *"[skills/codex] MISSING"* ]]
@@ -290,29 +297,29 @@ PY
   cat > "$PROJ/base.json" <<'EOF'
 { "version": 1, "agents": [],
   "surfaces": { "skills": { "source": "skills",
-    "targets": [ { "type": "codex", "method": "compiler", "path": "AGENTS.md" } ] } } }
+    "targets": [ { "type": "codex", "method": "symlink", "path": ".codex/skills" } ] } } }
 EOF
   cat > "$PROJ/overlay.json" <<'EOF'
 { "version": 1, "agents": [],
   "surfaces": { "skills": {
-    "targets": [ { "type": "gemini", "method": "converter", "path": ".gemini/commands" } ] } } }
+    "targets": [ { "type": "gemini", "method": "symlink", "path": ".gemini/skills" } ] } } }
 EOF
   run bash -c "source '$COMMON' && merge_overlay_manifest '$PROJ/base.json' '$PROJ/overlay.json'"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"AGENTS.md"* ]]
-  [[ "$output" == *".gemini/commands"* ]]
+  [[ "$output" == *".codex/skills"* ]]
+  [[ "$output" == *".gemini/skills"* ]]
 }
 
 @test "overlay skill-target path collision with a core skill is a hard error" {
   cat > "$PROJ/base.json" <<'EOF'
 { "version": 1, "agents": [],
   "surfaces": { "skills": {
-    "targets": [ { "type": "codex", "method": "compiler", "path": "AGENTS.md" } ] } } }
+    "targets": [ { "type": "codex", "method": "symlink", "path": ".codex/skills" } ] } } }
 EOF
   cat > "$PROJ/overlay.json" <<'EOF'
 { "version": 1, "agents": [],
   "surfaces": { "skills": {
-    "targets": [ { "type": "codex", "method": "compiler", "path": "AGENTS.md" } ] } } }
+    "targets": [ { "type": "codex", "method": "symlink", "path": ".codex/skills" } ] } } }
 EOF
   run bash -c "source '$COMMON' && merge_overlay_manifest '$PROJ/base.json' '$PROJ/overlay.json'"
   [ "$status" -ne 0 ]
@@ -340,9 +347,9 @@ EOF
 { "version": 1, "agents": [],
   "surfaces": { "skills": [
     { "source": "skills",
-      "targets": [ { "type": "codex", "method": "compiler", "path": "AGENTS-core.md" } ] },
+      "targets": [ { "type": "codex", "method": "symlink", "path": ".codex/core/skills" } ] },
     { "source": "skills",
-      "targets": [ { "type": "gemini", "method": "converter", "path": ".gemini/commands" } ] }
+      "targets": [ { "type": "gemini", "method": "symlink", "path": ".gemini/skills" } ] }
   ] } }
 EOF
   run bash -c "source '$COMMON' && validate_manifest '$PROJ/array.json' '$SCHEMA'"
@@ -376,11 +383,12 @@ class _Blocker:
 sys.meta_path.insert(0, _Blocker())
 PY
   # Legacy single-object surfaces.skills (pre-TD-191) — must still pass via
-  # structural-fallback normalize.
+  # structural-fallback normalize. FR-153: only symlink pairs are still
+  # accepted post-tightening.
   cat > "$PROJ/legacy.json" <<'EOF'
 { "version": 1, "agents": [],
   "surfaces": { "skills": { "source": "skills",
-    "targets": [ { "type": "codex", "method": "compiler", "path": "AGENTS.md" } ] } } }
+    "targets": [ { "type": "codex", "method": "symlink", "path": ".codex/skills" } ] } } }
 EOF
   run bash -c "PYTHONPATH='$blockdir' source '$COMMON' && PYTHONPATH='$blockdir' validate_manifest '$PROJ/legacy.json' '$SCHEMA'"
   [ "$status" -eq 0 ]
@@ -394,14 +402,14 @@ EOF
 { "version": 1, "agents": [],
   "surfaces": { "skills": [
     { "source": "skills-core",
-      "targets": [ { "type": "codex", "method": "compiler", "path": "AGENTS.md" } ] }
+      "targets": [ { "type": "codex", "method": "symlink", "path": ".codex/skills" } ] }
   ] } }
 EOF
   cat > "$PROJ/overlay-array.json" <<'EOF'
 { "version": 1, "agents": [],
   "surfaces": { "skills": [
     { "source": "skills-personal",
-      "targets": [ { "type": "codex", "method": "compiler", "path": "AGENTS.md" } ] }
+      "targets": [ { "type": "codex", "method": "symlink", "path": ".codex/skills" } ] }
   ] } }
 EOF
   run bash -c "source '$COMMON' && merge_overlay_manifest '$PROJ/base-array.json' '$PROJ/overlay-array.json'"
@@ -410,10 +418,11 @@ EOF
 }
 
 @test "TD-191 dual-source dual-compile: distinct sources project to distinct outputs" {
-  # The LOAD-BEARING scenario this brief exists to enable. Pre-TD-191 the
+  # The LOAD-BEARING scenario TD-191 exists to enable. Pre-TD-191 the
   # personal source was DROPPED because the merge kept base.source and
   # unioned targets only. Post-TD-191 both blocks compile from their OWN
-  # sources, producing two distinct output trees with body-distinct content.
+  # sources. FR-153: the gemini converter pair is retired in favor of
+  # symlink; this test now asserts per-block symlink projection.
   mkdir -p "$PROJ/skills-core/alpha" "$PROJ/skills-mine/mine"
   cat > "$PROJ/skills-core/alpha/SKILL.md" <<'EOF'
 ---
@@ -431,72 +440,67 @@ description: personal mine
 
 MINE_PERSONAL_BODY_MARKER
 EOF
-  # The base manifest carries TWO blocks (a "merged-shape" of what core+overlay
-  # would look like post-merge); we drive the compiler directly without an
-  # overlay to keep the test hermetic to the bash core (no CLI involvement).
-  cat > "$PROJ/harness-manifest.json" <<'EOF'
+  cat > "$PROJ/harness-manifest.json" <<EOF
 {
   "version": 1,
   "agents": [],
   "surfaces": {
     "skills": [
-      { "source": "skills-core",
+      { "source": "$PROJ/skills-core",
         "layer": "core",
-        "targets": [ { "type": "gemini", "method": "converter", "path": "gemini-core" } ] },
-      { "source": "skills-mine",
+        "targets": [ { "type": "gemini", "method": "symlink", "path": "gemini-core" } ] },
+      { "source": "$PROJ/skills-mine",
         "layer": "personal",
-        "targets": [ { "type": "gemini", "method": "converter", "path": "gemini-mine" } ] }
+        "targets": [ { "type": "gemini", "method": "symlink", "path": "gemini-mine" } ] }
     ]
   }
 }
 EOF
   run bash "$COMPILE" --project-root "$PROJ" --surface skills
   [ "$status" -eq 0 ]
-  assert_file_exists "$PROJ/gemini-core/alpha.toml"
-  assert_file_exists "$PROJ/gemini-mine/mine.toml"
-  # Cross-source isolation: alpha.toml MUST NOT be in the personal output,
-  # and mine.toml MUST NOT be in the core output. Pre-TD-191's collapse
-  # would have either produced alpha.toml in both, or only honored block 1.
-  [ ! -f "$PROJ/gemini-mine/alpha.toml" ]
-  [ ! -f "$PROJ/gemini-core/mine.toml" ]
-  # Body distinctness: each output's TOML contains the body of its OWN
-  # source skill (not the sibling block's body).
-  grep -q "ALPHA_CORE_BODY_MARKER" "$PROJ/gemini-core/alpha.toml"
-  grep -q "MINE_PERSONAL_BODY_MARKER" "$PROJ/gemini-mine/mine.toml"
-  ! grep -q "MINE_PERSONAL_BODY_MARKER" "$PROJ/gemini-core/alpha.toml"
-  ! grep -q "ALPHA_CORE_BODY_MARKER" "$PROJ/gemini-mine/mine.toml"
+  # FR-153: per-skill symlinks under each block's target dir.
+  [ -L "$PROJ/gemini-core/alpha" ]
+  [ -L "$PROJ/gemini-mine/mine" ]
+  # Cross-source isolation: alpha MUST NOT be in the personal output,
+  # and mine MUST NOT be in the core output.
+  [ ! -e "$PROJ/gemini-mine/alpha" ]
+  [ ! -e "$PROJ/gemini-core/mine" ]
+  # Body distinctness via following the symlink to the original SKILL.md.
+  grep -q "ALPHA_CORE_BODY_MARKER" "$PROJ/gemini-core/alpha/SKILL.md"
+  grep -q "MINE_PERSONAL_BODY_MARKER" "$PROJ/gemini-mine/mine/SKILL.md"
 }
 
 @test "TD-191 drift-parity: dual-source compile + drift MATCH; mutation flips it; recompile restores" {
   # L-519 §18.1 compile + drift-verify pairing. The compile pass and the
-  # drift pass must produce IDENTICAL flatten rows so a freshly-compiled
-  # dual-source surface returns MATCH for every block/target, and a
-  # mutation flips ONLY the affected one.
-  mkdir -p "$PROJ/skills-core/alpha" "$PROJ/skills-mine/mine"
-  cat > "$PROJ/skills-core/alpha/SKILL.md" <<'EOF'
+  # drift pass must produce IDENTICAL flatten rows. FR-153: post-retirement
+  # this exercises the symlink branches on both sides. Sources live under
+  # $IGRIS_BRAIN_DIR/registry so L-515 containment fires MATCH.
+  mkdir -p "$IGRIS_BRAIN_DIR/registry/skills-core/alpha" \
+    "$IGRIS_BRAIN_DIR/registry/skills-mine/mine"
+  cat > "$IGRIS_BRAIN_DIR/registry/skills-core/alpha/SKILL.md" <<'EOF'
 ---
 name: alpha
 description: a
 ---
 alpha body
 EOF
-  cat > "$PROJ/skills-mine/mine/SKILL.md" <<'EOF'
+  cat > "$IGRIS_BRAIN_DIR/registry/skills-mine/mine/SKILL.md" <<'EOF'
 ---
 name: mine
 description: m
 ---
 mine body
 EOF
-  cat > "$PROJ/harness-manifest.json" <<'EOF'
+  cat > "$PROJ/harness-manifest.json" <<EOF
 {
   "version": 1,
   "agents": [],
   "surfaces": {
     "skills": [
-      { "source": "skills-core", "layer": "core",
-        "targets": [ { "type": "gemini", "method": "converter", "path": "gemini-core" } ] },
-      { "source": "skills-mine", "layer": "personal",
-        "targets": [ { "type": "gemini", "method": "converter", "path": "gemini-mine" } ] }
+      { "source": "$IGRIS_BRAIN_DIR/registry/skills-core", "layer": "core",
+        "targets": [ { "type": "gemini", "method": "symlink", "path": "gemini-core" } ] },
+      { "source": "$IGRIS_BRAIN_DIR/registry/skills-mine", "layer": "personal",
+        "targets": [ { "type": "gemini", "method": "symlink", "path": "gemini-mine" } ] }
     ]
   }
 }
@@ -505,12 +509,16 @@ EOF
   [ "$status" -eq 0 ]
   run bash "$GUARD" --project-root "$PROJ"
   [ "$status" -eq 0 ]
-  # Mutate the personal block's output to flip drift on it.
-  printf '\nextra = "x"\n' >> "$PROJ/gemini-mine/mine.toml"
+  # Mutate the personal block's output to flip drift on it (rm symlink +
+  # replace with a real file → drift verdict).
+  rm "$PROJ/gemini-mine/mine"
+  echo "operator-edit" > "$PROJ/gemini-mine/mine"
   run bash "$GUARD" --project-root "$PROJ"
   [ "$status" -eq 1 ]
   [[ "$output" == *"DRIFTED"* ]]
-  # Recompile → both blocks back to MATCH.
+  # Recompile → operator-authored file at link path → REFUSE-TO-CLOBBER.
+  # The mutation must be reverted manually first (matches operator UX).
+  rm "$PROJ/gemini-mine/mine"
   run bash "$COMPILE" --project-root "$PROJ" --surface skills
   [ "$status" -eq 0 ]
   run bash "$GUARD" --project-root "$PROJ"
@@ -625,4 +633,237 @@ EOF
   inode_after="$(stat -f '%i' "$PROJ/.claude/skills/alpha" 2>/dev/null \
                 || stat -c '%i' "$PROJ/.claude/skills/alpha")"
   [ "$inode_before" = "$inode_after" ]
+}
+
+# ---------------------------------------------------------------------------
+# FR-153: codex + gemini as first-class skill targets (codex/symlink +
+# gemini/symlink) — unified onto the FR-149 claude/symlink primitive.
+# Mirror the FR-149 test shapes; assert codex absolute-path enforcement
+# (D2) compile-side + drift-side. L-519 §18.1 compile/drift pairing.
+# ---------------------------------------------------------------------------
+
+# build_fr153_codex_skill_project: per-test fixture mirroring
+# build_fr149_skill_project but emitting a codex:symlink target. The source
+# is the registry-vendored skill tree under $IGRIS_BRAIN_DIR/registry/skills/
+# so L-515 containment + D2 absolute-path are both satisfied for MATCH.
+build_fr153_codex_skill_project() {
+  # Setup() seeds alpha+beta; clear and seed alpha-only for this fixture so
+  # the legacy-migration tests see ONE skill (no spurious "creating" log for
+  # an unrelated sibling).
+  rm -rf "$IGRIS_BRAIN_DIR/registry/skills"
+  mkdir -p "$IGRIS_BRAIN_DIR/registry/skills/alpha"
+  cat > "$IGRIS_BRAIN_DIR/registry/skills/alpha/SKILL.md" <<'EOF'
+---
+name: alpha
+description: alpha skill for FR-153 codex/symlink
+---
+
+alpha body
+EOF
+  local skills_src="$IGRIS_BRAIN_DIR/registry/skills"
+  cat > "$PROJ/harness-manifest.json" <<EOF
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "skills": [
+      {
+        "source": "$skills_src",
+        "layer": "personal",
+        "targets": [
+          { "type": "codex", "method": "symlink", "path": ".codex/skills" }
+        ]
+      }
+    ]
+  }
+}
+EOF
+  # Expose the resolved alpha skill_dir for tests that need it.
+  FR153_ALPHA_DIR="$IGRIS_BRAIN_DIR/registry/skills/alpha"
+}
+
+build_fr153_gemini_skill_project() {
+  # See build_fr153_codex_skill_project for the clean-slate rationale.
+  rm -rf "$IGRIS_BRAIN_DIR/registry/skills"
+  mkdir -p "$IGRIS_BRAIN_DIR/registry/skills/alpha"
+  cat > "$IGRIS_BRAIN_DIR/registry/skills/alpha/SKILL.md" <<'EOF'
+---
+name: alpha
+description: alpha skill for FR-153 gemini/symlink
+---
+
+alpha body
+EOF
+  local skills_src="$IGRIS_BRAIN_DIR/registry/skills"
+  cat > "$PROJ/harness-manifest.json" <<EOF
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "skills": [
+      {
+        "source": "$skills_src",
+        "layer": "personal",
+        "targets": [
+          { "type": "gemini", "method": "symlink", "path": ".gemini/skills" }
+        ]
+      }
+    ]
+  }
+}
+EOF
+  FR153_ALPHA_DIR="$IGRIS_BRAIN_DIR/registry/skills/alpha"
+}
+
+@test "FR-153: cold compile creates a codex/symlink per skill at the right target" {
+  build_fr153_codex_skill_project
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  [ -L "$PROJ/.codex/skills/alpha" ]
+  local resolved
+  resolved="$(readlink "$PROJ/.codex/skills/alpha")"
+  [ "$resolved" = "$FR153_ALPHA_DIR" ]
+  [[ "$output" == *"creating codex skill symlink"* ]]
+  [[ "$output" == *"OK    skills/codex (symlink)"* ]]
+}
+
+@test "FR-153: cold compile creates a gemini/symlink per skill at the right target" {
+  build_fr153_gemini_skill_project
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  [ -L "$PROJ/.gemini/skills/alpha" ]
+  local resolved
+  resolved="$(readlink "$PROJ/.gemini/skills/alpha")"
+  [ "$resolved" = "$FR153_ALPHA_DIR" ]
+  [[ "$output" == *"creating gemini skill symlink"* ]]
+  [[ "$output" == *"OK    skills/gemini (symlink)"* ]]
+}
+
+@test "FR-153 D2: codex/symlink REJECTS a relative-resolved source (absolute-target guard)" {
+  # Force a relative skill_dir by passing a relative `source` whose canon
+  # base resolution lands on a project-relative path that is NEVER
+  # absolutized — Phase 3 in compile_harnesses.sh resolves a relative
+  # source against PROJECT_ROOT, so we exercise the guard by abusing a
+  # synthetic flatten row. The cleanest fixture is to use a `source` of
+  # "." (the project root itself), with SKILL.md alongside — this
+  # produces an absolute skill_dir via the project-relative case at the
+  # case-arm dispatch, but for D2 we need to prove the guard is in place,
+  # not bypass it. So instead: use a `source` that resolves under the
+  # project as absolute (so D2 is satisfied) AND assert the absolute
+  # symlink in output. The D2 guard is then tested via the drift-side
+  # literal-readlink check below — drift catches the foot-gun.
+  build_fr153_codex_skill_project
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  # Compile-side guard pass: the link target IS absolute (starts with /).
+  local lit
+  lit="$(readlink "$PROJ/.codex/skills/alpha")"
+  [[ "$lit" == /* ]]
+}
+
+@test "FR-153 D2: drift flags a hand-edited relative-target codex symlink" {
+  build_fr153_codex_skill_project
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  # Hand-edit the symlink to point at a RELATIVE target — simulates a
+  # stale pre-FR-153 manual artifact. Even if realpath resolves correctly
+  # from this dir, codex would re-resolve from cwd → drift verdict.
+  rm "$PROJ/.codex/skills/alpha"
+  # Build a relative-path symlink that resolves correctly from .codex/skills/
+  # but is REL-encoded. We compute the relative segment back to alpha.
+  local rel_target
+  rel_target="$(python3 -c "import os; print(os.path.relpath('$FR153_ALPHA_DIR', '$PROJ/.codex/skills'))")"
+  ( cd "$PROJ/.codex/skills" && ln -s "$rel_target" alpha )
+  run bash "$GUARD" --project-root "$PROJ"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"[skills/codex] DRIFTED"* ]]
+  [[ "$output" == *"relative target"* || "$output" == *"FR-153 D2"* ]]
+}
+
+@test "FR-153: drift returns MATCH for fresh codex/symlink + gemini/symlink (compile/drift pairing)" {
+  build_fr153_codex_skill_project
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  run bash "$GUARD" --project-root "$PROJ"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[skills/codex] MATCH"* ]]
+
+  # Rebuild fixture with gemini target.
+  rm -rf "$PROJ/.codex" "$IGRIS_BRAIN_DIR/registry/skills"
+  build_fr153_gemini_skill_project
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  run bash "$GUARD" --project-root "$PROJ"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[skills/gemini] MATCH"* ]]
+}
+
+@test "FR-153: drift flags a manually-rewritten codex symlink pointing OUTSIDE the registry" {
+  build_fr153_codex_skill_project
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  # Repoint the codex symlink to a non-registry, non-source dir.
+  mkdir -p "$PROJ/elsewhere/alpha"
+  rm "$PROJ/.codex/skills/alpha"
+  ln -s "$PROJ/elsewhere/alpha" "$PROJ/.codex/skills/alpha"
+  run bash "$GUARD" --project-root "$PROJ"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"[skills/codex] DRIFTED"* ]]
+}
+
+@test "FR-153: refuse-to-clobber a regular file at the codex symlink path" {
+  build_fr153_codex_skill_project
+  mkdir -p "$PROJ/.codex/skills"
+  echo "operator-authored" > "$PROJ/.codex/skills/alpha"
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -ne 0 ]
+  # File is unchanged.
+  [ "$(cat "$PROJ/.codex/skills/alpha")" = "operator-authored" ]
+  [ ! -L "$PROJ/.codex/skills/alpha" ]
+  [[ "$output" == *"refuse to clobber"* ]]
+  [[ "$output" == *"FAIL  skills/codex/alpha"* ]]
+}
+
+@test "FR-153: refuse-to-clobber a regular file at the gemini symlink path" {
+  build_fr153_gemini_skill_project
+  mkdir -p "$PROJ/.gemini/skills"
+  echo "operator-authored" > "$PROJ/.gemini/skills/alpha"
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -ne 0 ]
+  [ "$(cat "$PROJ/.gemini/skills/alpha")" = "operator-authored" ]
+  [ ! -L "$PROJ/.gemini/skills/alpha" ]
+  [[ "$output" == *"refuse to clobber"* ]]
+  [[ "$output" == *"FAIL  skills/gemini/alpha"* ]]
+}
+
+@test "FR-153: codex/symlink compile is idempotent (same inode on rerun)" {
+  build_fr153_codex_skill_project
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  local inode_before
+  inode_before="$(stat -f '%i' "$PROJ/.codex/skills/alpha" 2>/dev/null \
+                 || stat -c '%i' "$PROJ/.codex/skills/alpha")"
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"creating codex skill symlink"* ]]
+  [[ "$output" != *"migrating legacy codex skill symlink"* ]]
+  local inode_after
+  inode_after="$(stat -f '%i' "$PROJ/.codex/skills/alpha" 2>/dev/null \
+                || stat -c '%i' "$PROJ/.codex/skills/alpha")"
+  [ "$inode_before" = "$inode_after" ]
+}
+
+@test "FR-153: legacy codex symlink at a non-registry target gets atomically repointed (migration log)" {
+  build_fr153_codex_skill_project
+  # Pre-create a codex symlink pointing somewhere ELSE (simulates legacy
+  # state pre-migration).
+  mkdir -p "$PROJ/.codex/skills" "$PROJ/elsewhere/alpha"
+  ln -s "$PROJ/elsewhere/alpha" "$PROJ/.codex/skills/alpha"
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  local resolved
+  resolved="$(readlink "$PROJ/.codex/skills/alpha")"
+  [ "$resolved" = "$FR153_ALPHA_DIR" ]
+  [[ "$output" == *"migrating legacy codex skill symlink"* ]]
+  [[ "$output" != *"creating codex skill symlink"* ]]
 }

@@ -103,13 +103,13 @@ const VALID_SKILL_METHODS = ["compiler", "converter", "symlink"] as const;
 type SkillMethod = (typeof VALID_SKILL_METHODS)[number];
 
 /**
- * FR-149/FR-151: allowed (type, method) pairs for skill targets. Mirrors the
- * `oneOf` constraint in `manifest.schema.json` and the `valid_pairs` check
- * in `_common.sh validate_manifest`. See L-519, FR-151.
+ * FR-149/FR-151/FR-153: allowed (type, method) pairs for skill targets.
+ * Mirrors the `oneOf` constraint in `manifest.schema.json` and the
+ * `valid_pairs` check in `_common.sh validate_manifest`. The legacy
+ * codex/compiler + gemini/converter pairs were retired by FR-153.
+ * See L-519, FR-153.
  */
 const VALID_SKILL_TYPE_METHOD_PAIRS = new Set<string>([
-  "codex/compiler",
-  "gemini/converter",
   "claude/symlink",
   "codex/symlink",
   "gemini/symlink",
@@ -468,12 +468,12 @@ export function validateSkillsSurface(skills: unknown): string | null {
     if (!(VALID_SKILL_METHODS as readonly string[]).includes(tRec.method)) {
       return `surfaces.skills.targets[${i}].method '${tRec.method}' is not one of ${JSON.stringify(VALID_SKILL_METHODS)}`;
     }
-    // FR-149: per-type method allowlist mirrors schema `oneOf` + _common.sh.
+    // FR-153: per-type method allowlist mirrors schema `oneOf` + _common.sh.
     const pair = `${tRec.type}/${tRec.method}`;
     if (!VALID_SKILL_TYPE_METHOD_PAIRS.has(pair)) {
       return (
         `surfaces.skills.targets[${i}]: type/method pair '${pair}' is not allowed; ` +
-        "valid pairs: codex/compiler, gemini/converter, claude/symlink, codex/symlink, gemini/symlink"
+        "valid pairs: claude/symlink, codex/symlink, gemini/symlink"
       );
     }
   }
@@ -1281,12 +1281,12 @@ function parseSkillTarget(spec: string): SkillTargetSpec | string {
   if (path.length === 0) {
     return `--target '${spec}' has an empty path`;
   }
-  // FR-149: per-type method allowlist (mirrors schema `oneOf` + _common.sh).
+  // FR-153: per-type method allowlist (mirrors schema `oneOf` + _common.sh).
   const pair = `${type}/${method}`;
   if (!VALID_SKILL_TYPE_METHOD_PAIRS.has(pair)) {
     return (
       `--target '${spec}': type/method pair '${pair}' is not allowed; ` +
-      "valid pairs: codex/compiler, gemini/converter, claude/symlink, codex/symlink, gemini/symlink"
+      "valid pairs: claude/symlink, codex/symlink, gemini/symlink"
     );
   }
   return { type: type as SkillTargetType, method: method as SkillMethod, path };

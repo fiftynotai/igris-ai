@@ -789,7 +789,7 @@ describe("validateAgentEntry / validateOverlayShape", () => {
             {
               source: "/abs/skills",
               layer: "personal",
-              targets: [{ type: "codex", method: "compiler", path: "AGENTS.md" }],
+              targets: [{ type: "codex", method: "symlink", path: ".codex/skills" }],
             },
           ],
         },
@@ -868,7 +868,7 @@ describe("registry remove", () => {
     const skillsBlock = {
       source: "/abs/skills",
       layer: "personal",
-      targets: [{ type: "codex", method: "compiler", path: "AGENTS.md" }],
+      targets: [{ type: "codex", method: "symlink", path: ".codex/skills" }],
     };
     writeFileSync(
       overlayPath,
@@ -962,8 +962,8 @@ describe("registry add-skill", () => {
     const code = await runRegistry(
       skillOpts({
         targets: [
-          "codex:compiler:AGENTS.md",
-          "gemini:converter:.gemini/commands",
+          "codex:symlink:.codex/skills",
+          "gemini:symlink:.gemini/skills",
         ],
       }),
     );
@@ -980,8 +980,8 @@ describe("registry add-skill", () => {
     // L-516: source is the VENDORED tree path (NOT the consumer's external dir).
     expect(block.source).toBe(join(vendorBase, "skills", "demo"));
     expect(block.targets).toEqual([
-      { type: "codex", method: "compiler", path: "AGENTS.md" },
-      { type: "gemini", method: "converter", path: ".gemini/commands" },
+      { type: "codex", method: "symlink", path: ".codex/skills" },
+      { type: "gemini", method: "symlink", path: ".gemini/skills" },
     ]);
     // The written block validates against the schema port.
     expect(validateSkillsSurface(block)).toBeNull();
@@ -1006,12 +1006,12 @@ describe("registry add-skill", () => {
       join(projectRoot, "skills", "other", "SKILL.md"),
       "---\nname: other\ndescription: o\n---\nother body\n",
     );
-    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS-demo.md"] }));
+    await runRegistry(skillOpts({ targets: ["codex:symlink:.codex/skills-demo"] }));
     const code = await runRegistry(
       skillOpts({
         name: "other",
         from: "skills/other",
-        targets: ["codex:compiler:AGENTS-other.md"],
+        targets: ["codex:symlink:.codex/skills-other"],
       }),
     );
     expect(code).toBe(0);
@@ -1032,7 +1032,7 @@ describe("registry add-skill", () => {
   });
 
   it("same-name re-add updates the existing block IN PLACE (re-vendor, hash advance)", async () => {
-    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS.md"] }));
+    await runRegistry(skillOpts({ targets: ["codex:symlink:.codex/skills"] }));
     const hashBefore = (
       readOriginsFile() as Record<string, Record<string, unknown>>
     )["skill:demo"].hash as string;
@@ -1043,7 +1043,7 @@ describe("registry add-skill", () => {
       "---\nname: demo\ndescription: d\n---\nMUTATED body\n",
     );
     const code = await runRegistry(
-      skillOpts({ targets: ["codex:compiler:AGENTS.md"] }),
+      skillOpts({ targets: ["codex:symlink:.codex/skills"] }),
     );
     expect(code).toBe(0);
     // Overlay still has ONE block (in-place update, not append).
@@ -1068,11 +1068,11 @@ describe("registry add-skill", () => {
   });
 
   it("same-name re-add unions targets (idempotent for an exact dup)", async () => {
-    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS-demo.md"] }));
+    await runRegistry(skillOpts({ targets: ["codex:symlink:.codex/skills-demo"] }));
     // Adding a NEW target path for the SAME skill — appended to the same block.
     const code = await runRegistry(
       skillOpts({
-        targets: ["gemini:converter:.gemini/commands"],
+        targets: ["gemini:symlink:.gemini/skills"],
       }),
     );
     expect(code).toBe(0);
@@ -1081,28 +1081,28 @@ describe("registry add-skill", () => {
     };
     expect(overlay.surfaces?.skills).toHaveLength(1);
     expect(overlay.surfaces?.skills?.[0].targets).toEqual([
-      { type: "codex", method: "compiler", path: "AGENTS-demo.md" },
-      { type: "gemini", method: "converter", path: ".gemini/commands" },
+      { type: "codex", method: "symlink", path: ".codex/skills-demo" },
+      { type: "gemini", method: "symlink", path: ".gemini/skills" },
     ]);
     // An exact re-run is idempotent (same paths union to same set).
     const before = readFileSync(overlayPath, "utf-8");
     const code2 = await runRegistry(
-      skillOpts({ targets: ["codex:compiler:AGENTS-demo.md"] }),
+      skillOpts({ targets: ["codex:symlink:.codex/skills-demo"] }),
     );
     expect(code2).toBe(0);
     const overlay2 = readOverlayFile() as {
       surfaces?: { skills?: { targets: unknown[] }[] };
     };
     expect(overlay2.surfaces?.skills?.[0].targets).toEqual([
-      { type: "codex", method: "compiler", path: "AGENTS-demo.md" },
-      { type: "gemini", method: "converter", path: ".gemini/commands" },
+      { type: "codex", method: "symlink", path: ".codex/skills-demo" },
+      { type: "gemini", method: "symlink", path: ".gemini/skills" },
     ]);
     // (overlay can re-write but the bytes after JSON normalization match)
     void before;
   });
 
   it("same-name re-add WITHOUT --from re-vendors from the recorded origin dir", async () => {
-    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS.md"] }));
+    await runRegistry(skillOpts({ targets: ["codex:symlink:.codex/skills"] }));
     // Mutate the source (consumer side).
     writeFileSync(
       join(projectRoot, "skills", "demo", "SKILL.md"),
@@ -1117,7 +1117,7 @@ describe("registry add-skill", () => {
       originsPath,
       vendorDir,
       skillVendorDir,
-      targets: ["codex:compiler:AGENTS.md"],
+      targets: ["codex:symlink:.codex/skills"],
     });
     expect(code).toBe(0);
     // Vendored tree picks up the mutation.
@@ -1137,14 +1137,14 @@ describe("registry add-skill", () => {
       overlayPath,
       originsPath,
       vendorDir,
-      targets: ["codex:compiler:AGENTS.md"],
+      targets: ["codex:symlink:.codex/skills"],
     });
     expect(code).toBe(2);
   });
 
   it("rejects a target path duplicated in another (sibling) overlay block (exit 1, unchanged)", async () => {
     // First block claims AGENTS.md.
-    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS.md"] }));
+    await runRegistry(skillOpts({ targets: ["codex:symlink:.codex/skills"] }));
     // Second skill, different name, but the SAME target path → reject.
     mkdirSync(join(projectRoot, "skills", "other"), { recursive: true });
     writeFileSync(
@@ -1156,7 +1156,7 @@ describe("registry add-skill", () => {
       skillOpts({
         name: "other",
         from: "skills/other",
-        targets: ["codex:compiler:AGENTS.md"],
+        targets: ["codex:symlink:.codex/skills"],
       }),
     );
     expect(code).toBe(1);
@@ -1178,7 +1178,7 @@ describe("registry add-skill", () => {
             {
               source: "core/skills",
               targets: [
-                { type: "codex", method: "compiler", path: "AGENTS.md" },
+                { type: "codex", method: "symlink", path: ".codex/skills" },
               ],
             },
           ],
@@ -1186,7 +1186,7 @@ describe("registry add-skill", () => {
       }),
     );
     const code = await runRegistry(
-      skillOpts({ targets: ["codex:compiler:AGENTS.md"] }),
+      skillOpts({ targets: ["codex:symlink:.codex/skills"] }),
     );
     expect(code).toBe(1);
     // Overlay never written (collision rejected before persist).
@@ -1201,7 +1201,7 @@ describe("registry add-skill", () => {
         action: "add-skill",
         overlayPath,
         from: "skills/demo",
-        targets: ["codex:compiler:AGENTS.md"],
+        targets: ["codex:symlink:.codex/skills"],
       }),
     ).toBe(2);
     expect(
@@ -1218,17 +1218,17 @@ describe("registry add-skill", () => {
 
   it("rejects a nonexistent source dir (exit 1)", async () => {
     const code = await runRegistry(
-      skillOpts({ from: "does-not-exist", targets: ["codex:compiler:AGENTS.md"] }),
+      skillOpts({ from: "does-not-exist", targets: ["codex:symlink:.codex/skills"] }),
     );
     expect(code).toBe(1);
   });
 
   it("L-517: vendored tree lands under registry/skills/<name>/<name>/SKILL.md (nesting preserved)", async () => {
     // The L-519 standard format requires `<name>/SKILL.md` nesting (the
-    // codex compiler + gemini converter `find -mindepth 2` walks would
-    // break on a flattened layout). Asserts the vendor primitive preserves
-    // the tree shape.
-    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS.md"] }));
+    // per-harness `find -mindepth 2 -maxdepth 2` walks in compile_harnesses.sh
+    // would break on a flattened layout). Asserts the vendor primitive
+    // preserves the tree shape.
+    await runRegistry(skillOpts({ targets: ["codex:symlink:.codex/skills"] }));
     // Nested: <vendoredDir>/<name>/SKILL.md, NOT <vendoredDir>/SKILL.md.
     expect(
       existsSync(join(vendorBase, "skills", "demo", "demo", "SKILL.md")),
@@ -1247,7 +1247,7 @@ describe("registry add-skill", () => {
         targets: ["claude:.claude/agents/demo.md"],
       }),
     );
-    await runRegistry(skillOpts({ targets: ["codex:compiler:AGENTS.md"] }));
+    await runRegistry(skillOpts({ targets: ["codex:symlink:.codex/skills"] }));
     const origins = readOriginsFile();
     expect("agent:demo" in origins).toBe(true);
     expect("skill:demo" in origins).toBe(true);
@@ -1267,27 +1267,27 @@ describe("registry add-skill — type:method:path parsing", () => {
 
   it("parses a valid triple", async () => {
     const code = await runRegistry(
-      skillOpts({ targets: ["gemini:converter:.gemini/commands"] }),
+      skillOpts({ targets: ["gemini:symlink:.gemini/skills"] }),
     );
     expect(code).toBe(0);
     const overlay = readOverlayFile() as {
       surfaces?: { skills?: { targets: unknown[] }[] };
     };
     expect(overlay.surfaces?.skills?.[0].targets).toEqual([
-      { type: "gemini", method: "converter", path: ".gemini/commands" },
+      { type: "gemini", method: "symlink", path: ".gemini/skills" },
     ]);
   });
 
   it("preserves a path containing a colon", async () => {
     const code = await runRegistry(
-      skillOpts({ targets: ["codex:compiler:dir:with:colons/AGENTS.md"] }),
+      skillOpts({ targets: ["codex:symlink:dir:with:colons/.codex/skills"] }),
     );
     expect(code).toBe(0);
     const overlay = readOverlayFile() as {
       surfaces?: { skills?: { targets: { path: string }[] }[] };
     };
     expect(overlay.surfaces?.skills?.[0].targets[0].path).toBe(
-      "dir:with:colons/AGENTS.md",
+      "dir:with:colons/.codex/skills",
     );
   });
 
@@ -1407,7 +1407,7 @@ describe("validateSkillsSurface (schema port)", () => {
   const valid = {
     source: "/abs/skills",
     layer: "personal",
-    targets: [{ type: "codex", method: "compiler", path: "AGENTS.md" }],
+    targets: [{ type: "codex", method: "symlink", path: ".codex/skills" }],
   };
 
   it("accepts a valid block", () => {
@@ -1453,7 +1453,7 @@ describe("validateSkillsSurface (schema port)", () => {
       validateSkillsSurface({
         ...valid,
         targets: [
-          { type: "codex", method: "compiler", path: "p", extra: 1 },
+          { type: "codex", method: "symlink", path: "p", extra: 1 },
         ],
       }),
     ).toMatch(/additionalProperties/);
@@ -1464,7 +1464,7 @@ describe("validateSkillsSurfaceArray (TD-191 array gate)", () => {
   const validBlock = {
     source: "/abs/skills",
     layer: "personal",
-    targets: [{ type: "codex", method: "compiler", path: "AGENTS.md" }],
+    targets: [{ type: "codex", method: "symlink", path: ".codex/skills" }],
   };
 
   it("accepts a 1-block valid array", () => {
@@ -1479,7 +1479,7 @@ describe("validateSkillsSurfaceArray (TD-191 array gate)", () => {
           source: "/abs/skills-other",
           layer: "personal",
           targets: [
-            { type: "gemini", method: "converter", path: ".gemini/commands" },
+            { type: "gemini", method: "symlink", path: ".gemini/skills" },
           ],
         },
       ]),
@@ -1546,7 +1546,7 @@ describe("TD-191 back-compat: legacy single-object surfaces.skills", () => {
           skills: {
             source: "core/skills",
             targets: [
-              { type: "codex", method: "compiler", path: "AGENTS.md" },
+              { type: "codex", method: "symlink", path: ".codex/skills" },
             ],
           },
         },
@@ -1561,7 +1561,7 @@ describe("TD-191 back-compat: legacy single-object surfaces.skills", () => {
       originsPath,
       vendorDir,
       skillVendorDir,
-      targets: ["codex:compiler:AGENTS.md"],
+      targets: ["codex:symlink:.codex/skills"],
     });
     // Legacy single-object's path was seen by the guard → collision → exit 1.
     expect(code).toBe(1);
@@ -2467,7 +2467,7 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
               source: coreSkillsRoot,
               layer: "core",
               targets: [
-                { type: "gemini", method: "converter", path: coreOut },
+                { type: "gemini", method: "symlink", path: coreOut },
               ],
             },
           ],
@@ -2487,7 +2487,7 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
       action: "add-skill",
       name: "mine",
       from: join(personalSkillsRoot, "mine"),
-      targets: [`gemini:converter:${personalOut}`],
+      targets: [`gemini:symlink:${personalOut}`],
       projectRoot: fixtureRoot,
     });
     expect(addCode).toBe(0);
@@ -2522,17 +2522,22 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
       [COMPILE_SH, "--project-root", fixtureRoot, "--surface", "skills"],
       { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
     );
-    // Core block projected — alpha.toml from the core source.
-    expect(existsSync(join(coreOut, "alpha.toml"))).toBe(true);
-    // Personal block projected — mine.toml from the personal vendored source.
-    expect(existsSync(join(personalOut, "mine.toml"))).toBe(true);
+    // FR-153: per-skill symlinks at <out>/<name> → <source>/<name>.
+    // Core block projected — alpha symlink from the core source.
+    expect(existsSync(join(coreOut, "alpha"))).toBe(true);
+    // Personal block projected — mine symlink from the personal vendored source.
+    expect(existsSync(join(personalOut, "mine"))).toBe(true);
     // (Cross-source isolation: the core source's alpha skill MUST NOT land
     // in the personal target, and vice versa — proves the per-block source
     // selection works.)
-    expect(existsSync(join(personalOut, "alpha.toml"))).toBe(false);
-    expect(existsSync(join(coreOut, "mine.toml"))).toBe(false);
-    // The personal target's body proves the vendored source was read.
-    const minePersonal = readFileSync(join(personalOut, "mine.toml"), "utf-8");
+    expect(existsSync(join(personalOut, "alpha"))).toBe(false);
+    expect(existsSync(join(coreOut, "mine"))).toBe(false);
+    // The personal target's body proves the vendored source was read (follow
+    // the symlink to the original SKILL.md content).
+    const minePersonal = readFileSync(
+      join(personalOut, "mine", "SKILL.md"),
+      "utf-8",
+    );
     expect(minePersonal).toContain("MINE PERSONAL BODY");
   });
 
@@ -2576,7 +2581,7 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
         action: "add-skill",
         name: "alpha",
         from: join(skillsRoot, "alpha"),
-        targets: ["codex:compiler:AGENTS-alpha.md"],
+        targets: ["codex:symlink:.codex/skills-alpha"],
         projectRoot: fixtureRoot,
       }),
     ).toBe(0);
@@ -2586,7 +2591,7 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
         action: "add-skill",
         name: "beta",
         from: join(skillsRoot, "beta"),
-        targets: ["codex:compiler:AGENTS-beta.md"],
+        targets: ["codex:symlink:.codex/skills-beta"],
         projectRoot: fixtureRoot,
       }),
     ).toBe(0);

@@ -78,6 +78,41 @@ atomic_symlink() {
 }
 
 # ---------------------------------------------------------------------------
+# emit_skill_symlink <harness_label> <link_path> <skill_dir>
+#
+# FR-153 D1: per-symlink emit shared across the 3 skills/symlink compile
+# branches (claude/codex/gemini). Encodes the SAME 3-case dispatch the FR-149
+# claude branch did, parameterized by <harness_label> for log strings:
+#   - regular file at link_path → echo ERROR + return 1 (refuse-to-clobber)
+#   - existing symlink resolving to skill_dir → silent no-op (idempotent)
+#   - existing symlink with different target → atomic repoint + migration log
+#   - nothing there → create + log
+# Caller owns rc + SUMMARY bookkeeping. See L-519 §18.1.
+# ---------------------------------------------------------------------------
+emit_skill_symlink() {
+  local harness_label="$1"
+  local link_path="$2"
+  local skill_dir="$3"
+  if [ -e "$link_path" ] && [ ! -L "$link_path" ]; then
+    echo "[$harness_label/skills/$(basename "$link_path")] ERROR — refuse to clobber non-symlink at $link_path (remove manually if it should be a registry-anchored symlink)" >&2
+    return 1
+  fi
+  if [ -L "$link_path" ]; then
+    local current
+    current=$(readlink "$link_path" 2>/dev/null || true)
+    if [ "$current" = "$skill_dir" ]; then
+      return 0  # already correctly anchored — silent no-op
+    fi
+    atomic_symlink "$link_path" "$skill_dir"
+    echo "migrating legacy $harness_label skill symlink: $link_path → $skill_dir (was: $current)"
+    return 0
+  fi
+  atomic_symlink "$link_path" "$skill_dir"
+  echo "creating $harness_label skill symlink: $link_path → $skill_dir"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # assemble_agent_harness_into_registry <name> <canon_abs> <exc_abs> <out_dir>
 #
 # FR-152 α-assembly (compile-side fallback). Materializes
@@ -733,32 +768,9 @@ PY
 
       rc=0
       case "$s_type/$s_method" in
-        codex/compiler)
-          if [ -n "$src_abs" ]; then
-            bash "$ADAPTER_DIR/md_to_agents_md.sh" "$out_abs" "$src_abs" || rc=$?
-          else
-            bash "$ADAPTER_DIR/md_to_agents_md.sh" "$out_abs" || rc=$?
-          fi
-          ;;
-        gemini/converter)
-          # Per-skill conversion: one {name}.toml per {name}/SKILL.md.
-          conv_root="${src_abs:-$HOME/.igris/core/skills}"
-          if [ ! -d "$conv_root" ]; then
-            SUMMARY+=("FAIL  skills/$s_type — skills root missing: $conv_root")
-            FAIL=$((FAIL + 1))
-            continue
-          fi
-          mkdir -p "$out_abs"
-          while IFS= read -r -d '' skill_md; do
-            skill_name="$(basename "$(dirname "$skill_md")")"
-            bash "$ADAPTER_DIR/md_to_gemini_toml.sh" \
-              "$skill_md" "$out_abs/$skill_name.toml" || rc=$?
-          done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
-                     -name 'SKILL.md' -print0 | sort -z)
-          ;;
         claude/symlink)
-          # FR-149: per-skill registry-anchored symlinks. For each
-          # <name>/SKILL.md under the source root, emit a symlink at
+          # FR-149/FR-153: per-skill registry-anchored symlinks (claude). For
+          # each <name>/SKILL.md under the source root, emit a symlink at
           # <out_abs>/<name> pointing at <src_abs>/<name>. Idempotent (already
           # correct → silent no-op), atomic-repoint on path change, and
           # refuse-to-clobber on a non-symlink target. See L-519.
@@ -773,25 +785,66 @@ PY
             skill_name="$(basename "$(dirname "$skill_md")")"
             skill_dir="$(dirname "$skill_md")"
             link_path="$out_abs/$skill_name"
-            # Refuse-to-clobber: regular file or directory at the symlink
-            # target — preserves operator-authored state under ~/.claude/.
-            if [ -e "$link_path" ] && [ ! -L "$link_path" ]; then
-              echo "[$s_type/skills/$skill_name] ERROR — refuse to clobber non-symlink at $link_path (remove manually if it should be a registry-anchored symlink)" >&2
+            if ! emit_skill_symlink "claude" "$link_path" "$skill_dir"; then
               SUMMARY+=("FAIL  skills/$s_type/$skill_name — refuse to clobber non-symlink at $link_path")
               rc=1
               continue
             fi
-            if [ -L "$link_path" ]; then
-              current=$(readlink "$link_path" 2>/dev/null || true)
-              if [ "$current" = "$skill_dir" ]; then
-                : # already correctly anchored — silent no-op
-              else
-                atomic_symlink "$link_path" "$skill_dir"
-                echo "migrating legacy claude skill symlink: $link_path → $skill_dir (was: $current)"
-              fi
-            else
-              atomic_symlink "$link_path" "$skill_dir"
-              echo "creating claude skill symlink: $link_path → $skill_dir"
+          done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
+                     -name 'SKILL.md' -print0 | sort -z)
+          ;;
+        codex/symlink)
+          # FR-153: per-skill registry-anchored symlinks (codex). Mirror shape
+          # of claude/symlink, with one extra guard: codex resolves relative-
+          # path symlinks from cwd (POSIX-incorrect — D2). Hard-fail when
+          # skill_dir is not absolute. See L-519.
+          conv_root="${src_abs:-$HOME/.igris/core/skills}"
+          if [ ! -d "$conv_root" ]; then
+            SUMMARY+=("FAIL  skills/$s_type — skills root missing: $conv_root")
+            FAIL=$((FAIL + 1))
+            continue
+          fi
+          mkdir -p "$out_abs"
+          while IFS= read -r -d '' skill_md; do
+            skill_name="$(basename "$(dirname "$skill_md")")"
+            skill_dir="$(dirname "$skill_md")"
+            link_path="$out_abs/$skill_name"
+            # FR-153 D2: codex absolute-path enforcement.
+            case "$skill_dir" in
+              /*) : ;;
+              *)
+                echo "[$s_type/skills/$skill_name] ERROR — codex symlink requires absolute target (got relative: $skill_dir). The 'source' field must be absolute, '~'-prefixed, or relative-resolved (compile_harnesses.sh source-resolution should have absolutized this)." >&2
+                SUMMARY+=("FAIL  skills/$s_type/$skill_name — codex symlink target not absolute: $skill_dir")
+                rc=1
+                continue
+                ;;
+            esac
+            if ! emit_skill_symlink "codex" "$link_path" "$skill_dir"; then
+              SUMMARY+=("FAIL  skills/$s_type/$skill_name — refuse to clobber non-symlink at $link_path")
+              rc=1
+              continue
+            fi
+          done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
+                     -name 'SKILL.md' -print0 | sort -z)
+          ;;
+        gemini/symlink)
+          # FR-153: per-skill registry-anchored symlinks (gemini). Exact mirror
+          # of claude/symlink (no codex absolute-path guard). See L-519.
+          conv_root="${src_abs:-$HOME/.igris/core/skills}"
+          if [ ! -d "$conv_root" ]; then
+            SUMMARY+=("FAIL  skills/$s_type — skills root missing: $conv_root")
+            FAIL=$((FAIL + 1))
+            continue
+          fi
+          mkdir -p "$out_abs"
+          while IFS= read -r -d '' skill_md; do
+            skill_name="$(basename "$(dirname "$skill_md")")"
+            skill_dir="$(dirname "$skill_md")"
+            link_path="$out_abs/$skill_name"
+            if ! emit_skill_symlink "gemini" "$link_path" "$skill_dir"; then
+              SUMMARY+=("FAIL  skills/$s_type/$skill_name — refuse to clobber non-symlink at $link_path")
+              rc=1
+              continue
             fi
           done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
                      -name 'SKILL.md' -print0 | sort -z)

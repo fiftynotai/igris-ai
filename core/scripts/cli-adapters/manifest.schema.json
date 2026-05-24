@@ -42,7 +42,7 @@
 
   "$defs": {
     "skills_surface": {
-      "description": "FR-137/TD-191/FR-149/FR-151: ONE skills projection block. Multiple coexist as elements of `surfaces.skills[]`; each carries its OWN source/layer/targets so personal blocks compile ALONGSIDE the core block. For personal blocks `source` points at a registry-vendored path (L-516 universal copy-vendor). Valid (type, method) pairs: codex/compiler (AGENTS.md, legacy; FR-153 retires), gemini/converter (per-skill TOML, legacy; FR-153 retires), claude/symlink, codex/symlink, gemini/symlink (registry-anchored per-skill symlinks). All three symlink targets vendor identically — the per-harness compiler walks the registry-vendored skill tree (FR-153). See L-519.",
+      "description": "FR-137/TD-191/FR-149/FR-151/FR-153: ONE skills projection block. Multiple coexist as elements of `surfaces.skills[]`; each carries its OWN source/layer/targets so personal blocks compile ALONGSIDE the core block. For personal blocks `source` points at a registry-vendored path (L-516 universal copy-vendor). Valid (type, method) pairs: claude/symlink, codex/symlink, gemini/symlink (registry-anchored per-skill symlinks). All three symlink targets vendor identically — the per-harness compiler walks the registry-vendored skill tree. The legacy codex/compiler (AGENTS.md aggregator) + gemini/converter (per-skill TOML) pairs were retired by FR-153. See L-519.",
       "type": "object",
       "additionalProperties": false,
       "required": ["targets"],
@@ -68,15 +68,13 @@
               "method": { "enum": ["compiler", "converter", "symlink"] },
               "path":   {
                 "type": "string",
-                "description": "compiler (codex, legacy): output AGENTS.md path. converter (gemini, legacy): output dir for per-skill {name}.toml files. symlink (claude/codex/gemini): output dir under which each <skill>/ becomes a symlink to its registry-vendored canonical (FR-149/FR-151/FR-153)."
+                "description": "symlink (claude/codex/gemini): output dir under which each <skill>/ becomes a symlink to its registry-vendored canonical (FR-149/FR-151/FR-153). The legacy compiler/converter methods were retired by FR-153."
               }
             },
             "oneOf": [
-              { "properties": { "type": { "const": "codex"  }, "method": { "const": "compiler"  } } },
-              { "properties": { "type": { "const": "gemini" }, "method": { "const": "converter" } } },
-              { "properties": { "type": { "const": "claude" }, "method": { "const": "symlink"   } } },
-              { "properties": { "type": { "const": "codex"  }, "method": { "const": "symlink"   } } },
-              { "properties": { "type": { "const": "gemini" }, "method": { "const": "symlink"   } } }
+              { "properties": { "type": { "const": "claude" }, "method": { "const": "symlink" } } },
+              { "properties": { "type": { "const": "codex"  }, "method": { "const": "symlink" } } },
+              { "properties": { "type": { "const": "gemini" }, "method": { "const": "symlink" } } }
             ]
           }
         }

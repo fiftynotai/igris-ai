@@ -557,18 +557,17 @@ if surfaces is not None:
                  "(or a single legacy object — both normalize)")
         if len(skills_blocks) < 1:
             fail("surfaces.skills must be a non-empty array")
-        # FR-149: claude is a first-class skills target via the `symlink` method.
-        # The per-type method allowlist (codex/compiler, gemini/converter,
-        # claude/symlink) is enforced via `valid_pairs` below — mirrors the
-        # `oneOf` constraint in manifest.schema.json so both validation paths
-        # agree. See L-519 (Igris-owned topology — the claude symlink IS a
-        # projection, anchored at the registry-vendored copy).
-        # FR-151: codex/symlink + gemini/symlink for unified harness projection
-        # (legacy codex/compiler + gemini/converter retired by FR-153).
+        # FR-149/FR-151/FR-153: the per-type method allowlist (claude/symlink,
+        # codex/symlink, gemini/symlink) is enforced via `valid_pairs` below
+        # — mirrors the `oneOf` constraint in manifest.schema.json so both
+        # validation paths agree. The legacy codex/compiler + gemini/converter
+        # pairs were retired by FR-153. `valid_skill_methods` retains the
+        # legacy method strings so a recognized-but-disallowed pair produces
+        # the clearer pair-allowlist error message (not "method unknown").
+        # See L-519.
         valid_skill_types = {"codex", "gemini", "claude"}
         valid_skill_methods = {"compiler", "converter", "symlink"}
-        valid_pairs = {("codex", "compiler"), ("gemini", "converter"),
-                       ("claude", "symlink"), ("codex", "symlink"),
+        valid_pairs = {("claude", "symlink"), ("codex", "symlink"),
                        ("gemini", "symlink")}
         allowed_skill_target_keys = {"type", "method", "path"}
         allowed_skills_keys = {"source", "layer", "targets"}
@@ -602,13 +601,13 @@ if surfaces is not None:
                 if st["method"] not in valid_skill_methods:
                     fail(f"{stwhere}.method '{st['method']}' is not one of "
                          f"{sorted(valid_skill_methods)}")
-                # FR-149: per-type method allowlist (mirrors schema `oneOf`).
+                # FR-153: per-type method allowlist (mirrors schema `oneOf`).
                 pair = (st["type"], st["method"])
                 if pair not in valid_pairs:
                     fail(f"{stwhere}: type/method pair "
                          f"'{st['type']}/{st['method']}' is not allowed; "
-                         "valid pairs: codex/compiler, gemini/converter, "
-                         "claude/symlink, codex/symlink, gemini/symlink")
+                         "valid pairs: claude/symlink, codex/symlink, "
+                         "gemini/symlink")
 
 sys.exit(0)
 PY

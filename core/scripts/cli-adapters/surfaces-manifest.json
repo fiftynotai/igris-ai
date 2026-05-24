@@ -1,6 +1,6 @@
 {
   "$schema": "./manifest.schema.json",
-  "_comment": "FR-137 / TD-191: core-owned Layer-1 surface declaration. `surfaces.skills` is an ARRAY of blocks (multi-source model). This file contributes the CORE block; personal blocks land in the overlay (~/.igris/registry/harness-manifest.personal.json) under ~/.igris/registry/skills/<name>/ per L-516 (universal copy-vendor) + L-517 (typed-subfolder layout). The compiler reads BOTH this file and the merged agent manifest, concatenating every block: core blocks first, then personal. MIRRORED under ~/.igris/core/scripts/ (TD-096). os_context is reserved for FR-140 and intentionally omitted here.",
+  "_comment": "FR-137 / TD-191 / FR-153: core-owned Layer-1 surface declaration. `surfaces.skills` is an ARRAY of blocks (multi-source model). This file contributes the CORE block; personal blocks land in the overlay (~/.igris/registry/harness-manifest.personal.json) under ~/.igris/registry/skills/<name>/ per L-516 (universal copy-vendor) + L-517 (typed-subfolder layout). The compiler reads BOTH this file and the merged agent manifest, concatenating every block: core blocks first, then personal. MIRRORED under ~/.igris/core/scripts/ (TD-096). FR-153: codex + gemini skill targets unified onto the FR-149 claude/symlink primitive. AGENTS.md aggregation + per-skill TOML conversion both RETIRED. os_context is reserved for FR-140 and intentionally omitted here.",
   "version": 1,
   "agents": [],
   "surfaces": {
@@ -9,8 +9,9 @@
         "source": "~/.igris/core/skills",
         "layer": "core",
         "targets": [
-          { "type": "codex",  "method": "compiler",  "path": "AGENTS.md" },
-          { "type": "gemini", "method": "converter", "path": "~/.gemini/commands" }
+          { "type": "claude", "method": "symlink", "path": "~/.claude/skills" },
+          { "type": "codex",  "method": "symlink", "path": "~/.codex/skills" },
+          { "type": "gemini", "method": "symlink", "path": "~/.gemini/skills" }
         ]
       }
     ]

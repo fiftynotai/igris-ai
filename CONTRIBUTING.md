@@ -439,7 +439,7 @@ script here, update this table in the same PR.
 | `scripts/igris_brain_deploy.sh` | manual (on a VPS) | Deploy the brain MCP server with PM2 + nginx reverse-proxy config + API-key generation; copies `brain-mcp-server/` source into `~/.igris/mcp-server/`. |
 | `core/scripts/verify_mirror.sh` | forger MIRROR_SYNC protocol, sentinel MIRROR_CHECK contract, `/hunt` skill, architect plan template | Byte-equality check between repo `core/*` files and their `~/.igris/core/*` runtime mirrors (realpath-resolved, exit-code-checked, verdict-per-pair output). |
 | `core/scripts/cli_smoke.sh` | manual diagnostic | CLI smoke test. |
-| `core/scripts/cli-adapters/{_common,md_to_agents_md,md_to_gemini_toml}.sh` | the cross-CLI adapter layer (Codex / Gemini targets) | Convert `.md` agent/skill definitions to other-CLI formats (`AGENTS.md`, Gemini TOML). |
+| `core/scripts/cli-adapters/_common.sh` | sourced by every adapter | Shared helpers (parse_frontmatter, atomic_symlink, validate_manifest, merge_overlay_manifest). FR-153 RETIRED `md_to_agents_md.sh` + `md_to_gemini_toml.sh` (codex + gemini now read SKILL.md natively via symlink — no aggregation/conversion). FR-152 RETIRED `sync_claude_agents.sh` (claude reads symlink to registry-vendored canonical). `sync_codex_agents.sh` is the only remaining format converter (MD → TOML for codex agents). |
 
 > Build-time helper (not under top-level `scripts/`): `cli/scripts/copy-templates.sh` is run from `cli/` by `npm run build` (`tsc && bash scripts/copy-templates.sh`) to copy template assets into `cli/dist/`.
 

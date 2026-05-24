@@ -3,17 +3,14 @@
 Scripts that distribute Igris surfaces to non-Claude CLIs. Two distinct
 families live here — do not conflate them.
 
-## Skills adapters (FR-103)
+## Skills adapters (FR-103 → FR-153)
 
-Turn `~/.igris/core/skills/` into per-CLI skill artifacts.
-
-| Script | Contract | Output |
-|--------|----------|--------|
-| `md_to_agents_md.sh` | `md_to_agents_md.sh <output-agents-md> [skills-root]` | One aggregated `AGENTS.md` for Codex (32KB cap). |
-| `md_to_gemini_toml.sh` | `md_to_gemini_toml.sh <input-skill-md> <output-toml>` | One per-skill Gemini command TOML. |
-
-Adapter contract for new skills adapters: see
-`docs/multi-cli.md` § "How to Add a New CLI Adapter".
+Skill harness projection lives in `compile_harnesses.sh` (skills pass) — for
+each `<name>/SKILL.md` under the source root, every consumer (claude/codex/
+gemini) projects ONE per-skill registry-anchored symlink at `<target>/<name>`
+→ `<source>/<name>` (FR-153). The legacy AGENTS.md aggregator + per-skill
+TOML converter scripts (`md_to_agents_md.sh`, `md_to_gemini_toml.sh`) were
+retired by FR-153 in favor of the unified symlink projection.
 
 ## Subagent adapters (TD-021 + FR-152 — unified harness projection)
 
