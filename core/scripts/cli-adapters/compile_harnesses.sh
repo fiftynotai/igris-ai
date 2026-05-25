@@ -537,13 +537,26 @@ for agent in manifest.get("agents", []):
     # resolution can be keyed on it (core -> in-repo, personal -> registry).
     # Defaults to non-empty "core", so no `-` sentinel / tab-collapse risk.
     layer = agent.get("layer", "") or "core"
+    # FR-155: propagate `scope` as the FINAL columns (appended AFTER layer so
+    # the FR-154 read shape is back-compat — a downstream IFS=$'\t' read with
+    # the old column list still gets the right values up through `layer`).
+    # Absent scope → "global" (default per the schema). For type=project, the
+    # paths array is comma-joined; the `-` sentinel preserves column count
+    # when the array is empty (which `type=global` enforces by structural
+    # validation, but defensive nonetheless to keep the read shape stable
+    # against any future scope kind that legitimately omits paths). Mirrors
+    # the body_exception `-`-sentinel discipline a few lines up.
+    scope = agent.get("scope") or {}
+    scope_type = scope.get("type") or "global"
+    scope_paths_list = scope.get("paths") or []
+    scope_paths_csv = ",".join(scope_paths_list) if scope_paths_list else "-"
     for target in agent.get("targets", []):
         ttype = target["type"]
         if target_kind != "all" and ttype != target_kind:
             continue
         row = "\t".join([
             name, versioned, canon_dir, canon_ref, body_exc,
-            ttype, target["path"], layer,
+            ttype, target["path"], layer, scope_type, scope_paths_csv,
         ])
         print(row)
 PY
@@ -562,8 +575,46 @@ SUMMARY=()
 # already references it (loop-pushed inline tempfiles get cleaned on exit).
 
 if [ -n "$WORK_ROWS" ]; then
-while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target_path layer; do
+while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target_path layer scope_type scope_paths; do
   [ -z "$name" ] && continue
+
+  # FR-155: project-scope filter. A `scope.type=project` entry emits only when
+  # the current --project-root realpath EQUALS the realpath of at least one
+  # path in scope.paths[]. Both sides are realpath'd so macOS `/tmp` (→
+  # `/private/tmp`), `/var` (→ `/private/var`), and similar symlink-resolved
+  # TMPDIR prefixes do NOT produce false skips. A non-match is a SILENT skip
+  # — neither counted in TOTAL nor emitted as DRIFTED/MISSING. Project-scoped
+  # entries that don't apply to the current root are NOT drift; they are
+  # correctly filtered. Filter MUST run BEFORE the TOTAL++ increment so the
+  # summary line counts only the rows that survived the filter.
+  if [ "$scope_type" = "project" ]; then
+    project_root_real="$(realpath "$PROJECT_ROOT" 2>/dev/null || echo "$PROJECT_ROOT")"
+    matched=0
+    if [ -n "$scope_paths" ] && [ "$scope_paths" != "-" ]; then
+      IFS=',' read -ra scope_paths_arr <<< "$scope_paths"
+      for sp in "${scope_paths_arr[@]}"; do
+        [ -z "$sp" ] && continue
+        # Mirrors the FR-154 3-case target.path resolver: `~/...` → $HOME,
+        # `/abs/...` → verbatim, else project-relative. The CLI realpath's
+        # `--project` at WRITE time so paths[] is canonical absolute in
+        # practice; the relative arm is tolerated for hand-edited manifests.
+        case "$sp" in
+          "~"/*) sp_abs="$HOME/${sp#"~/"}" ;;
+          /*)    sp_abs="$sp" ;;
+          *)     sp_abs="$PROJECT_ROOT/$sp" ;;
+        esac
+        sp_real="$(realpath "$sp_abs" 2>/dev/null || echo "$sp_abs")"
+        if [ "$sp_real" = "$project_root_real" ]; then
+          matched=1
+          break
+        fi
+      done
+    fi
+    if [ "$matched" -eq 0 ]; then
+      continue
+    fi
+  fi
+
   TOTAL=$((TOTAL + 1))
 
   # Resolve the canonical source dir. An absolute or `~`-prefixed canon_dir is
@@ -678,8 +729,11 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$SURFACE_KIND" != "agents" ]; then
   # Flatten skills targets from both sources into rows:
-  #   source <TAB> type <TAB> method <TAB> path
-  # `-` is the empty-source sentinel (caller falls back to md_to_*'s default).
+  #   source <TAB> type <TAB> method <TAB> path <TAB> scope_type <TAB> scope_paths
+  # `-` is the empty-source / empty-paths sentinel (caller falls back to md_to_*'s
+  # default; scope_paths="-" means scope=global so no project-root match needed).
+  # FR-155: scope_type+scope_paths appended at the END so any downstream parser
+  # reading only the first 4 columns stays back-compat with the pre-FR-155 shape.
   SKILL_ROWS=$(python3 - "$CORE_SURFACES" "$MERGED_MANIFEST" "$TARGET_KIND" "$PROJECT_ROOT" <<'PY'
 import json
 import os
@@ -737,6 +791,13 @@ for src in sources:
         if not isinstance(block, dict):
             continue
         source = block.get("source", "") or "-"
+        # FR-155: emit per-block scope columns. Absent → global default. The
+        # comma-joined paths list uses the `-` sentinel when empty (mirrors
+        # the body_exception precedent in the agent flatten).
+        scope = block.get("scope") or {}
+        scope_type = scope.get("type") or "global"
+        scope_paths_list = scope.get("paths") or []
+        scope_paths_csv = ",".join(scope_paths_list) if scope_paths_list else "-"
         for t in block.get("targets", []) or []:
             ttype = (t or {}).get("type", "")
             if target_kind != "all" and ttype != target_kind:
@@ -746,13 +807,46 @@ for src in sources:
                 ttype,
                 (t or {}).get("method", ""),
                 (t or {}).get("path", ""),
+                scope_type,
+                scope_paths_csv,
             ]))
 PY
 )
 
   if [ -n "$SKILL_ROWS" ]; then
-    while IFS=$'\t' read -r s_source s_type s_method s_path; do
+    while IFS=$'\t' read -r s_source s_type s_method s_path s_scope_type s_scope_paths; do
       [ -z "$s_type" ] && continue
+
+      # FR-155: skills surface project-scope filter. Identical posture to the
+      # agent-loop filter above — silent skip when scope.type=project and the
+      # current --project-root realpath is not in scope.paths[]. Both sides
+      # realpath'd for macOS `/tmp` ↔ `/private/tmp` equality. MUST gate the
+      # TOTAL++ so a project-scoped non-matching row doesn't pollute the
+      # summary count.
+      if [ "$s_scope_type" = "project" ]; then
+        project_root_real="$(realpath "$PROJECT_ROOT" 2>/dev/null || echo "$PROJECT_ROOT")"
+        s_matched=0
+        if [ -n "$s_scope_paths" ] && [ "$s_scope_paths" != "-" ]; then
+          IFS=',' read -ra s_scope_paths_arr <<< "$s_scope_paths"
+          for sp in "${s_scope_paths_arr[@]}"; do
+            [ -z "$sp" ] && continue
+            case "$sp" in
+              "~"/*) sp_abs="$HOME/${sp#"~/"}" ;;
+              /*)    sp_abs="$sp" ;;
+              *)     sp_abs="$PROJECT_ROOT/$sp" ;;
+            esac
+            sp_real="$(realpath "$sp_abs" 2>/dev/null || echo "$sp_abs")"
+            if [ "$sp_real" = "$project_root_real" ]; then
+              s_matched=1
+              break
+            fi
+          done
+        fi
+        if [ "$s_matched" -eq 0 ]; then
+          continue
+        fi
+      fi
+
       TOTAL=$((TOTAL + 1))
 
       # Resolve the skills source: `~`/absolute used verbatim, else relative

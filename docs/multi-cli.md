@@ -699,6 +699,57 @@ compile branch calling `emit_skill_symlink <label> <link_path> <skill_dir>`.
 
 ---
 
+## Overlay scope (FR-155)
+
+Personal overlay entries (agents + skills declared in the Layer-2 customization
+overlay, FR-139) carry an optional `scope` field that controls **which working
+directories** the harness emits the entry into.
+
+| Shape | Behavior |
+|---|---|
+| `scope` absent | Default: emit unconditionally (back-compat) |
+| `{type: "global"}` | Emit unconditionally |
+| `{type: "project", paths: [...]}` | Emit only when `--project-root`'s realpath ∈ realpath'd `paths[]` |
+
+`paths[]` entries and `--project-root` are realpath'd before comparison on both
+sides (handles macOS `/tmp` ↔ `/private/tmp`). Non-matching project-scoped
+entries are silently skipped — neither counted in `TOTAL` nor flagged as drift.
+
+### CLI semantics
+
+```bash
+# Global (default): targets emit as absolute paths (~/.claude/agents/<name>.md, etc.).
+# Available to claude/codex/gemini from any working directory.
+igris registry add --name X --from ./path/to/source
+
+# Project-scoped: targets emit as project-relative paths. Only emits when
+# compile/drift runs against the listed --project-root realpath.
+igris registry add --name X --from ./source --project /abs/proj-a
+
+# Multi-project additive: same name + --project again appends to scope.paths.
+igris registry add --name X --project /abs/proj-b   # paths becomes [proj-a, proj-b]
+
+# Idempotent: re-adding the same project on a project entry is a no-op.
+igris registry add --name X --project /abs/proj-a   # already present; no change
+
+# Conversion (explicit — silent auto-convert is refused):
+igris registry add --name X --scope project --project /abs/proj-a   # global → project
+igris registry add --name X --scope global                          # project → global (paths dropped)
+```
+
+Re-add with `--project P` against an existing **global** entry is refused with
+an actionable hint pointing at `--scope project` for explicit conversion —
+narrowing availability has downstream effects on every harness consumer, so
+the conversion must be operator-acknowledged.
+
+The same `--project` / `--scope` flags apply to `add-skill`.
+
+On-disk shape: `scope` is OMITTED when global (schema treats absent as
+global). Project-scoped entries write `scope: {type: "project", paths: [...]}`
+with realpath'd absolute paths.
+
+---
+
 ## Related
 
 - Brief: FR-103 Multi-CLI Skill Distribution

@@ -473,9 +473,47 @@ if not isinstance(agents, list):
     fail("'agents' must be an array")
 
 valid_target_types = {"claude", "codex", "gemini"}
-allowed_agent_keys = {"name", "layer", "canonical", "body_exception", "targets"}
+# FR-155: `scope` is allowed on agent + skills_surface entries. Absent → global
+# (default, back-compat). The structural shape ({type:"global"} OR
+# {type:"project", paths:[...]}) is validated by validate_scope_shape below.
+allowed_agent_keys = {"name", "layer", "canonical", "body_exception", "scope",
+                      "targets"}
 allowed_canon_keys = {"dir", "glob", "file", "versioned"}
 allowed_target_keys = {"type", "path"}
+
+
+def validate_scope_shape(scope, where):
+    """FR-155: structural validate of the `scope` field. Mirrors `$defs.scope`
+    in manifest.schema.json: oneOf {type:"global"} OR
+    {type:"project", paths:[non-empty array of strings]}.
+    `additionalProperties:false`. The caller is responsible for `where` (the
+    breadcrumb prefix). Returns on success; calls `fail` otherwise.
+    """
+    if not isinstance(scope, dict):
+        fail(f"{where}.scope must be an object")
+    t = scope.get("type")
+    if t == "global":
+        allowed = {"type"}
+        for key in scope:
+            if key not in allowed:
+                fail(f"{where}.scope: unknown key '{key}' "
+                     "(additionalProperties:false; scope.type=global allows only 'type')")
+    elif t == "project":
+        allowed = {"type", "paths"}
+        for key in scope:
+            if key not in allowed:
+                fail(f"{where}.scope: unknown key '{key}' "
+                     "(additionalProperties:false; scope.type=project allows only 'type'+'paths')")
+        if "paths" not in scope:
+            fail(f"{where}.scope: type=project requires 'paths'")
+        paths = scope["paths"]
+        if not isinstance(paths, list) or len(paths) < 1:
+            fail(f"{where}.scope.paths must be a non-empty array")
+        for k, p in enumerate(paths):
+            if not isinstance(p, str):
+                fail(f"{where}.scope.paths[{k}] must be a string")
+    else:
+        fail(f"{where}.scope.type '{t!r}' is not one of ['global', 'project']")
 
 for i, agent in enumerate(agents):
     where = f"agents[{i}]"
@@ -526,6 +564,10 @@ for i, agent in enumerate(agents):
             fail(f"{twhere}.type '{target['type']}' is not one of "
                  f"{sorted(valid_target_types)}")
 
+    # FR-155: optional scope.
+    if "scope" in agent:
+        validate_scope_shape(agent["scope"], where)
+
 # ---- FR-137: structural validation of the surfaces.skills sub-shape --------
 # The structural fallback (no jsonschema) previously did NOT recurse into
 # `surfaces`, so a malformed surfaces block passed silently. Validate the
@@ -570,7 +612,9 @@ if surfaces is not None:
         valid_pairs = {("claude", "symlink"), ("codex", "symlink"),
                        ("gemini", "symlink")}
         allowed_skill_target_keys = {"type", "method", "path"}
-        allowed_skills_keys = {"source", "layer", "targets"}
+        # FR-155: `scope` is allowed on a skills_surface block (same shape as
+        # on an agent entry). Absent → global (default, back-compat).
+        allowed_skills_keys = {"source", "layer", "scope", "targets"}
         for b_idx, skills_block in enumerate(skills_blocks):
             bwhere = f"surfaces.skills[{b_idx}]"
             if not isinstance(skills_block, dict):
@@ -608,6 +652,9 @@ if surfaces is not None:
                          f"'{st['type']}/{st['method']}' is not allowed; "
                          "valid pairs: claude/symlink, codex/symlink, "
                          "gemini/symlink")
+            # FR-155: optional scope on the skills_surface block.
+            if "scope" in skills_block:
+                validate_scope_shape(skills_block["scope"], bwhere)
 
 sys.exit(0)
 PY

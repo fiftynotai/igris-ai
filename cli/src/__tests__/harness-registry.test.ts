@@ -808,6 +808,484 @@ describe("validateAgentEntry / validateOverlayShape", () => {
 });
 
 // ---------------------------------------------------------------------------
+// FR-155: scope-aware overlay (default global + optional --project + --scope)
+// ---------------------------------------------------------------------------
+
+/**
+ * FR-155 scope vitest matrix — pins the runAdd + runAddSkill scope handling
+ * documented in `cli/src/verbs/registry.ts`.
+ *
+ *   - default add (no --scope / no --project) → on-disk overlay OMITS the
+ *     `scope` field (schema treats absent as global) so the diff for an
+ *     unrelated overlay is minimal.
+ *   - `--project P` → entry.scope === {type:"project", paths:[realpath(P)]}.
+ *     CLI realpath's at WRITE time so the matrix below uses /tmp paths and
+ *     asserts /private/tmp realpath'd shape (macOS).
+ *   - re-add `--project Q` against an existing project entry → APPEND Q's
+ *     realpath to scope.paths (idempotent on duplicate).
+ *   - re-add `--project Q` against an existing GLOBAL entry → exit 1 with
+ *     the `--scope project` hint.
+ *   - `--scope project --project Q` against an existing GLOBAL entry →
+ *     CONVERT to scope.type=project with paths=[realpath(Q)].
+ *   - `--scope global` against an existing project entry → CONVERT to
+ *     global (the `scope` field is DROPPED from the overlay).
+ *   - same matrix for `runAddSkill`.
+ *
+ * macOS-only realpath case (/tmp ↔ /private/tmp): we don't skip; instead we
+ * derive `EXPECTED_TMP_REAL` once from `realpathSync(tmpdir())` so the test
+ * works on Linux too (where the realpath is just the literal path).
+ */
+describe("registry add — FR-155 scope", () => {
+  // Derive the canonical realpath of the OS tmp dir so the test works on
+  // BOTH macOS (where /tmp -> /private/tmp) and Linux (where they coincide).
+  // The matrix below stages `--project <path>` values under tmpdir() and
+  // asserts that `entry.scope.paths` contains the realpath'd shape.
+  const realpathOf = (p: string): string => {
+    const fs = require("node:fs") as typeof import("node:fs");
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+
+  it("default add (no --scope, no --project) → overlay entry has no `scope` field", async () => {
+    const code = await runRegistry(
+      addOpts({
+        name: "globdefault",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/globdefault.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      agents: { name: string; scope?: unknown }[];
+    };
+    const entry = overlay.agents.find((a) => a.name === "globdefault");
+    expect(entry).toBeDefined();
+    expect("scope" in (entry as Record<string, unknown>)).toBe(false);
+  });
+
+  it("--project P → entry.scope === {type:'project', paths:[realpath(P)]}", async () => {
+    const projP = join(projectRoot, "consumerA");
+    mkdirSync(projP, { recursive: true });
+    const code = await runRegistry(
+      addOpts({
+        name: "scoped",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/scoped.md"],
+        project: projP,
+      } as Parameters<typeof runRegistry>[0]),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      agents: { name: string; scope?: { type: string; paths: string[] } }[];
+    };
+    const entry = overlay.agents.find((a) => a.name === "scoped");
+    expect(entry).toBeDefined();
+    expect(entry!.scope).toEqual({
+      type: "project",
+      paths: [realpathOf(projP)],
+    });
+  });
+
+  it("re-add --project Q against an existing project entry → paths grows additively", async () => {
+    const projP = join(projectRoot, "consumerA");
+    const projQ = join(projectRoot, "consumerB");
+    mkdirSync(projP, { recursive: true });
+    mkdirSync(projQ, { recursive: true });
+    let code = await runRegistry(
+      addOpts({
+        name: "multi",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/multi.md"],
+        project: projP,
+      } as Parameters<typeof runRegistry>[0]),
+    );
+    expect(code).toBe(0);
+    code = await runRegistry(
+      addOpts({
+        name: "multi",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/multi.md"],
+        project: projQ,
+      } as Parameters<typeof runRegistry>[0]),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      agents: { name: string; scope?: { type: string; paths: string[] } }[];
+    };
+    const entry = overlay.agents.find((a) => a.name === "multi");
+    expect(entry!.scope).toEqual({
+      type: "project",
+      paths: [realpathOf(projP), realpathOf(projQ)],
+    });
+  });
+
+  it("re-add --project P (same) on existing project entry is IDEMPOTENT (no duplicate, exit 0)", async () => {
+    const projP = join(projectRoot, "consumerA");
+    mkdirSync(projP, { recursive: true });
+    let code = await runRegistry(
+      addOpts({
+        name: "idem",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/idem.md"],
+        project: projP,
+      } as Parameters<typeof runRegistry>[0]),
+    );
+    expect(code).toBe(0);
+    code = await runRegistry(
+      addOpts({
+        name: "idem",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/idem.md"],
+        project: projP,
+      } as Parameters<typeof runRegistry>[0]),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      agents: { name: string; scope?: { type: string; paths: string[] } }[];
+    };
+    const entry = overlay.agents.find((a) => a.name === "idem");
+    expect(entry!.scope).toEqual({
+      type: "project",
+      paths: [realpathOf(projP)],
+    });
+  });
+
+  it("re-add --project Q against an existing GLOBAL entry → exit 1 with --scope project hint", async () => {
+    let code = await runRegistry(
+      addOpts({
+        name: "globthenproj",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/globthenproj.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    const projQ = join(projectRoot, "consumerB");
+    mkdirSync(projQ, { recursive: true });
+    const overlayBefore = readFileSync(overlayPath, "utf-8");
+    code = await runRegistry(
+      addOpts({
+        name: "globthenproj",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/globthenproj.md"],
+        project: projQ,
+      } as Parameters<typeof runRegistry>[0]),
+    );
+    expect(code).toBe(1);
+    // Overlay byte-unchanged — reject is non-destructive.
+    expect(readFileSync(overlayPath, "utf-8")).toBe(overlayBefore);
+  });
+
+  it("--scope project --project Q on existing GLOBAL entry → CONVERT to project (paths=[realpath(Q)])", async () => {
+    let code = await runRegistry(
+      addOpts({
+        name: "convert",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/convert.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    const projQ = join(projectRoot, "consumerC");
+    mkdirSync(projQ, { recursive: true });
+    code = await runRegistry(
+      addOpts({
+        name: "convert",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/convert.md"],
+        scope: "project",
+        project: projQ,
+      } as Parameters<typeof runRegistry>[0]),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      agents: { name: string; scope?: { type: string; paths: string[] } }[];
+    };
+    const entry = overlay.agents.find((a) => a.name === "convert");
+    expect(entry!.scope).toEqual({
+      type: "project",
+      paths: [realpathOf(projQ)],
+    });
+  });
+
+  it("--scope global on existing project entry → CONVERT to global (scope field DROPPED)", async () => {
+    const projP = join(projectRoot, "consumerD");
+    mkdirSync(projP, { recursive: true });
+    let code = await runRegistry(
+      addOpts({
+        name: "globback",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/globback.md"],
+        project: projP,
+      } as Parameters<typeof runRegistry>[0]),
+    );
+    expect(code).toBe(0);
+    code = await runRegistry(
+      addOpts({
+        name: "globback",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/globback.md"],
+        scope: "global",
+      } as Parameters<typeof runRegistry>[0]),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      agents: { name: string; scope?: unknown }[];
+    };
+    const entry = overlay.agents.find((a) => a.name === "globback");
+    expect(entry).toBeDefined();
+    expect("scope" in (entry as Record<string, unknown>)).toBe(false);
+  });
+
+  it("--scope global + --project is a USAGE error (exit 2)", async () => {
+    const code = await runRegistry(
+      addOpts({
+        name: "badcombo",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/badcombo.md"],
+        scope: "global",
+        project: "/tmp/foo",
+      } as Parameters<typeof runRegistry>[0]),
+    );
+    expect(code).toBe(2);
+  });
+
+  it("--scope project without --project is a USAGE error (exit 2)", async () => {
+    const code = await runRegistry(
+      addOpts({
+        name: "badscope",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/badscope.md"],
+        scope: "project",
+      } as Parameters<typeof runRegistry>[0]),
+    );
+    expect(code).toBe(2);
+  });
+});
+
+describe("registry add-skill — FR-155 scope", () => {
+  const realpathOf = (p: string): string => {
+    const fs = require("node:fs") as typeof import("node:fs");
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+
+  /** Stage a real skills source tree under <projectRoot>/skills-mine/<name>/SKILL.md. */
+  function stageSkillsSource(): string {
+    const src = join(projectRoot, "skills-mine");
+    mkdirSync(join(src, "widget"), { recursive: true });
+    writeFileSync(
+      join(src, "widget", "SKILL.md"),
+      "---\nname: widget\ndescription: a widget\n---\n# widget\n\nbody\n",
+    );
+    return src;
+  }
+
+  function skillOpts(extra: Record<string, unknown>): Parameters<typeof runRegistry>[0] {
+    return {
+      action: "add-skill",
+      projectRoot,
+      overlayPath,
+      originsPath,
+      skillVendorDir,
+      ...extra,
+    } as Parameters<typeof runRegistry>[0];
+  }
+
+  it("default add-skill (no --scope, no --project) → block has no `scope` field", async () => {
+    const src = stageSkillsSource();
+    const code = await runRegistry(
+      skillOpts({
+        name: "myskills",
+        from: src,
+        targets: ["claude:symlink:.claude/skills"],
+      }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: { scope?: unknown }[] };
+    };
+    const block = overlay.surfaces?.skills?.[0];
+    expect(block).toBeDefined();
+    expect("scope" in (block as Record<string, unknown>)).toBe(false);
+  });
+
+  it("--project P → block.scope === {type:'project', paths:[realpath(P)]}", async () => {
+    const src = stageSkillsSource();
+    const projP = join(projectRoot, "consumerSkillA");
+    mkdirSync(projP, { recursive: true });
+    const code = await runRegistry(
+      skillOpts({
+        name: "myskills",
+        from: src,
+        targets: ["claude:symlink:.claude/skills"],
+        project: projP,
+      }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: { scope?: { type: string; paths: string[] } }[] };
+    };
+    const block = overlay.surfaces?.skills?.[0];
+    expect(block!.scope).toEqual({
+      type: "project",
+      paths: [realpathOf(projP)],
+    });
+  });
+
+  it("re-add --project Q against existing project block → paths grows additively", async () => {
+    const src = stageSkillsSource();
+    const projP = join(projectRoot, "consumerSkillA");
+    const projQ = join(projectRoot, "consumerSkillB");
+    mkdirSync(projP, { recursive: true });
+    mkdirSync(projQ, { recursive: true });
+    let code = await runRegistry(
+      skillOpts({
+        name: "myskills",
+        from: src,
+        targets: ["claude:symlink:.claude/skills"],
+        project: projP,
+      }),
+    );
+    expect(code).toBe(0);
+    code = await runRegistry(
+      skillOpts({
+        name: "myskills",
+        from: src,
+        targets: ["claude:symlink:.claude/skills"],
+        project: projQ,
+      }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: { scope?: { type: string; paths: string[] } }[] };
+    };
+    const block = overlay.surfaces?.skills?.[0];
+    expect(block!.scope).toEqual({
+      type: "project",
+      paths: [realpathOf(projP), realpathOf(projQ)],
+    });
+  });
+
+  it("re-add --project Q against existing GLOBAL block → exit 1 with --scope project hint", async () => {
+    const src = stageSkillsSource();
+    let code = await runRegistry(
+      skillOpts({
+        name: "myskills",
+        from: src,
+        targets: ["claude:symlink:.claude/skills"],
+      }),
+    );
+    expect(code).toBe(0);
+    const projQ = join(projectRoot, "consumerSkillC");
+    mkdirSync(projQ, { recursive: true });
+    const overlayBefore = readFileSync(overlayPath, "utf-8");
+    code = await runRegistry(
+      skillOpts({
+        name: "myskills",
+        from: src,
+        targets: ["claude:symlink:.claude/skills"],
+        project: projQ,
+      }),
+    );
+    expect(code).toBe(1);
+    expect(readFileSync(overlayPath, "utf-8")).toBe(overlayBefore);
+  });
+
+  it("--scope project --project Q on existing GLOBAL block → CONVERT to project", async () => {
+    const src = stageSkillsSource();
+    let code = await runRegistry(
+      skillOpts({
+        name: "myskills",
+        from: src,
+        targets: ["claude:symlink:.claude/skills"],
+      }),
+    );
+    expect(code).toBe(0);
+    const projQ = join(projectRoot, "consumerSkillD");
+    mkdirSync(projQ, { recursive: true });
+    code = await runRegistry(
+      skillOpts({
+        name: "myskills",
+        from: src,
+        targets: ["claude:symlink:.claude/skills"],
+        scope: "project",
+        project: projQ,
+      }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: { scope?: { type: string; paths: string[] } }[] };
+    };
+    const block = overlay.surfaces?.skills?.[0];
+    expect(block!.scope).toEqual({
+      type: "project",
+      paths: [realpathOf(projQ)],
+    });
+  });
+
+  it("--scope global on existing project block → CONVERT to global (scope field DROPPED)", async () => {
+    const src = stageSkillsSource();
+    const projP = join(projectRoot, "consumerSkillE");
+    mkdirSync(projP, { recursive: true });
+    let code = await runRegistry(
+      skillOpts({
+        name: "myskills",
+        from: src,
+        targets: ["claude:symlink:.claude/skills"],
+        project: projP,
+      }),
+    );
+    expect(code).toBe(0);
+    code = await runRegistry(
+      skillOpts({
+        name: "myskills",
+        from: src,
+        targets: ["claude:symlink:.claude/skills"],
+        scope: "global",
+      }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: { scope?: unknown }[] };
+    };
+    const block = overlay.surfaces?.skills?.[0];
+    expect("scope" in (block as Record<string, unknown>)).toBe(false);
+  });
+
+  it("--scope global + --project is a USAGE error (exit 2)", async () => {
+    const src = stageSkillsSource();
+    const code = await runRegistry(
+      skillOpts({
+        name: "myskills",
+        from: src,
+        targets: ["claude:symlink:.claude/skills"],
+        scope: "global",
+        project: "/tmp/foo",
+      }),
+    );
+    expect(code).toBe(2);
+  });
+
+  it("--scope project without --project is a USAGE error (exit 2)", async () => {
+    const src = stageSkillsSource();
+    const code = await runRegistry(
+      skillOpts({
+        name: "myskills",
+        from: src,
+        targets: ["claude:symlink:.claude/skills"],
+        scope: "project",
+      }),
+    );
+    expect(code).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // remove + list
 // ---------------------------------------------------------------------------
 

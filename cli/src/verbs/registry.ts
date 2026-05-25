@@ -45,6 +45,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -129,11 +130,27 @@ interface TargetSpec {
   path: string;
 }
 
+/**
+ * FR-155: scope-aware overlay. Absent → global (default, back-compat with
+ * pre-FR-155 overlays). `{type:"global"}` is also accepted; the compiler/drift
+ * treat both as 'emit unconditionally'. `{type:"project", paths:[...realpath'd
+ * project roots...]}` emits ONLY when --project-root realpath equals the
+ * realpath of at least one entry in paths[]. CLI realpath's `--project` at
+ * WRITE time so paths[] is canonical absolute (handles macOS /tmp ↔
+ * /private/tmp); compile/drift realpath both --project-root and each entry at
+ * READ time so the two sides agree regardless of which TMPDIR shape the
+ * operator hands in. Mirrors `$defs.scope` in manifest.schema.json.
+ */
+export type Scope =
+  | { type: "global" }
+  | { type: "project"; paths: string[] };
+
 interface AgentEntry {
   name: string;
   layer?: string;
   canonical: CanonicalSpec;
   body_exception?: string;
+  scope?: Scope;
   targets: TargetSpec[];
 }
 
@@ -159,6 +176,8 @@ interface SkillTargetSpec {
 interface SkillsSurface {
   source?: string;
   layer?: string;
+  /** FR-155: see {@link Scope}. Absent → global (default, back-compat). */
+  scope?: Scope;
   targets: SkillTargetSpec[];
 }
 
@@ -268,6 +287,26 @@ export interface RegistryOptions {
   projectRoot?: string;
   /** Update every path-origin entry (`update --all`). */
   all?: boolean;
+  /**
+   * FR-155 `--project <path>`: opts into PROJECT scope for `add` / `add-skill`.
+   * On a NEW entry, scope becomes `{type:"project", paths:[realpath(--project)]}`.
+   * On a same-name re-add against an existing PROJECT entry, the realpath is
+   * APPENDED to `paths[]` (idempotent — duplicate is silently dropped). On a
+   * same-name re-add against an existing GLOBAL entry, the run ERRORs with an
+   * actionable `--scope project` hint (the conversion path is explicit).
+   * Absent → global default (the on-disk overlay omits the `scope` field for
+   * minimal diff churn).
+   */
+  project?: string;
+  /**
+   * FR-155 `--scope <kind>`: explicit scope kind for `add` / `add-skill`. One
+   * of "global" or "project". Used to CONVERT an existing entry between
+   * scopes: `--scope project --project <path>` converts a global entry to
+   * project scope (paths=[realpath]); `--scope global` converts a project
+   * entry to global (paths dropped). Absent → no conversion; default-global
+   * for a new entry.
+   */
+  scope?: "global" | "project";
   /** Test seam: overlay path override (defaults to registryOverlayPath()). */
   overlayPath?: string;
   /** Test seam: origins.json path override (defaults to registryOriginsPath()). */
@@ -297,17 +336,86 @@ export interface RegistryOptions {
 // Schema-shape validators (port of manifest.schema.json + _common.sh fallback)
 // ---------------------------------------------------------------------------
 
+/**
+ * FR-155: validate the optional `scope` field. Mirrors `$defs.scope` in
+ * `manifest.schema.json` and `validate_scope_shape` in `_common.sh` —
+ * `{type:"global"}` OR `{type:"project", paths:[non-empty array of strings]}`,
+ * `additionalProperties:false`. `where` is the breadcrumb prefix used in the
+ * error message (e.g. "agent 'forger'", "surfaces.skills[0]"). Returns an
+ * error message, or null when valid.
+ */
+export function validateScope(scope: unknown, where: string): string | null {
+  if (typeof scope !== "object" || scope === null || Array.isArray(scope)) {
+    return `${where}.scope must be an object`;
+  }
+  const s = scope as Record<string, unknown>;
+  if (s.type === "global") {
+    for (const key of Object.keys(s)) {
+      if (key !== "type") {
+        return (
+          `${where}.scope: unknown key '${key}' ` +
+          `(additionalProperties:false; scope.type=global allows only 'type')`
+        );
+      }
+    }
+    return null;
+  }
+  if (s.type === "project") {
+    for (const key of Object.keys(s)) {
+      if (key !== "type" && key !== "paths") {
+        return (
+          `${where}.scope: unknown key '${key}' ` +
+          `(additionalProperties:false; scope.type=project allows only 'type'+'paths')`
+        );
+      }
+    }
+    if (!("paths" in s)) {
+      return `${where}.scope: type=project requires 'paths'`;
+    }
+    if (!Array.isArray(s.paths) || s.paths.length < 1) {
+      return `${where}.scope.paths must be a non-empty array`;
+    }
+    for (let i = 0; i < s.paths.length; i++) {
+      if (typeof s.paths[i] !== "string") {
+        return `${where}.scope.paths[${i}] must be a string`;
+      }
+    }
+    return null;
+  }
+  return `${where}.scope.type '${String(s.type)}' is not one of ['global', 'project']`;
+}
+
+/**
+ * FR-155: canonicalize a `--project <path>` value at WRITE time so paths[]
+ * entries are stable across the macOS `/tmp` ↔ `/private/tmp` divergence (and
+ * any other symlink-resolved TMPDIR prefix). Falls back to `path.resolve` when
+ * the path does not yet exist on disk (a not-yet-created project root is the
+ * only realistic case where realpathSync throws). Either way the result is
+ * an absolute string — compile/drift realpath their --project-root at READ
+ * time too, so the two sides agree either way.
+ */
+export function realpathStrict(p: string): string {
+  const absolute = isAbsolute(p) ? p : resolve(p);
+  try {
+    return realpathSync(absolute);
+  } catch {
+    return resolve(absolute);
+  }
+}
+
 /** Validate one agent entry. Returns an error message, or null if valid. */
 export function validateAgentEntry(entry: unknown): string | null {
   if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
     return "agent entry must be an object";
   }
   const agent = entry as Record<string, unknown>;
+  // FR-155: `scope` is an optional agent key (absent → global).
   const allowedAgentKeys = new Set([
     "name",
     "layer",
     "canonical",
     "body_exception",
+    "scope",
     "targets",
   ]);
   for (const key of Object.keys(agent)) {
@@ -404,6 +512,15 @@ export function validateAgentEntry(entry: unknown): string | null {
     }
   }
 
+  // FR-155: optional scope (absent → global).
+  if (agent.scope !== undefined) {
+    const nm = typeof agent.name === "string" ? agent.name : "?";
+    const scopeErr = validateScope(agent.scope, `agent '${nm}'`);
+    if (scopeErr !== null) {
+      return scopeErr;
+    }
+  }
+
   return null;
 }
 
@@ -419,7 +536,8 @@ export function validateSkillsSurface(skills: unknown): string | null {
     return "surfaces.skills must be an object";
   }
   const s = skills as Record<string, unknown>;
-  const allowedKeys = new Set(["source", "layer", "targets"]);
+  // FR-155: `scope` is an optional skills_surface key (absent → global).
+  const allowedKeys = new Set(["source", "layer", "scope", "targets"]);
   for (const key of Object.keys(s)) {
     if (!allowedKeys.has(key)) {
       return `surfaces.skills: unknown key '${key}' (additionalProperties:false)`;
@@ -475,6 +593,14 @@ export function validateSkillsSurface(skills: unknown): string | null {
         `surfaces.skills.targets[${i}]: type/method pair '${pair}' is not allowed; ` +
         "valid pairs: claude/symlink, codex/symlink, gemini/symlink"
       );
+    }
+  }
+  // FR-155: optional scope (absent → global). `surfaces.skills` is the
+  // breadcrumb prefix — the array-level wrapper adds the `[i]` index.
+  if (s.scope !== undefined) {
+    const scopeErr = validateScope(s.scope, "surfaces.skills");
+    if (scopeErr !== null) {
+      return scopeErr;
     }
   }
   return null;
@@ -1382,6 +1508,33 @@ async function runAdd(
     canonical = { dir: vendoredDir, versioned: false, file: unversionedFile };
   }
 
+  // FR-155: parse the scope flags FIRST (usage errors exit 2 before any
+  // disk side effect). The `desiredScope` computed here is what a NEW entry
+  // receives (when `--scope global` or no scope flags → undefined / global
+  // default; `--project P` → project scope with paths=[realpath(P)]). For an
+  // existing same-name entry the branching below uses the raw opts to decide
+  // append/convert/error.
+  if (opts.scope === "global" && opts.project !== undefined) {
+    logError(
+      "registry add: --scope global is incompatible with --project (global " +
+        "entries have no paths[]). Omit --project to convert to global.",
+    );
+    return 2;
+  }
+  if (opts.scope === "project" && opts.project === undefined) {
+    logError(
+      "registry add: --scope project requires --project <path> (paths[] must " +
+        "be non-empty for project scope).",
+    );
+    return 2;
+  }
+  // --project alone (no --scope) implies project scope for a NEW entry; on a
+  // same-name existing entry, the branching below decides append vs. error.
+  const projectArg: string | undefined =
+    opts.project !== undefined && opts.project.length > 0
+      ? realpathStrict(opts.project)
+      : undefined;
+
   const entry: AgentEntry = {
     name: opts.name,
     layer: "personal",
@@ -1390,6 +1543,13 @@ async function runAdd(
   };
   if (opts.bodyException !== undefined && opts.bodyException.length > 0) {
     entry.body_exception = opts.bodyException;
+  }
+  // FR-155: write `scope` ONLY when project-scoped. Global is the default
+  // and the on-disk overlay OMITS the field (schema treats absent as global)
+  // to minimize diff churn for pre-FR-155 overlays. A scope=global entry
+  // therefore looks IDENTICAL on disk to a pre-FR-155 entry.
+  if (projectArg !== undefined) {
+    entry.scope = { type: "project", paths: [projectArg] };
   }
 
   // (a) Validate the new entry shape (surfaces additionalProperties/oneOf/enum
@@ -1407,6 +1567,128 @@ async function runAdd(
   } catch (err) {
     logError((err as Error).message);
     return 1;
+  }
+
+  // FR-155: same-name re-add branching. ORDER MATTERS — this runs BEFORE the
+  // existing intra-overlay reject so the scope-aware paths (append, convert,
+  // explicit error) get to handle the collision. Cases:
+  //   - existing.scope=project + --project P (no --scope): APPEND realpath(P)
+  //     to existing.scope.paths (idempotent — silent dedupe). Targets and
+  //     canonical NOT re-vendored (use `update` for that).
+  //   - existing.scope=global + --project P (no --scope): ERROR with the
+  //     `--scope project` hint (the explicit conversion path).
+  //   - existing.* + --scope project + --project P: CONVERT to project (or
+  //     reset paths to [realpath(P)] if already project).
+  //   - existing.* + --scope global: CONVERT to global (paths dropped).
+  //   - existing + no scope flags: fall through to the existing reject.
+  const existingIndex = overlay.agents.findIndex((a) => a.name === opts.name);
+  if (existingIndex >= 0) {
+    const existing = overlay.agents[existingIndex];
+    const existingScopeType = existing.scope?.type ?? "global";
+
+    // --scope global: CONVERT existing to global, drop paths.
+    if (opts.scope === "global") {
+      const mutated: AgentEntry = { ...existing };
+      delete mutated.scope;
+      overlay.agents[existingIndex] = mutated;
+      const overlayErr = validateOverlayShape(overlay);
+      if (overlayErr !== null) {
+        logError(`registry add: resulting overlay invalid: ${overlayErr}`);
+        return 1;
+      }
+      try {
+        writeOverlayAtomic(overlayPath, overlay);
+      } catch (err) {
+        logError(
+          `registry add: failed to write overlay: ${(err as Error).message}`,
+        );
+        return 1;
+      }
+      info(
+        `Converted agent '${opts.name}' to scope=global (paths dropped). ` +
+          `Overlay: ${overlayPath}`,
+      );
+      return 0;
+    }
+
+    // --scope project: CONVERT (or reset) to project scope. --project is
+    // required (gate above already enforces this when --scope project is set).
+    if (opts.scope === "project") {
+      const mutated: AgentEntry = {
+        ...existing,
+        scope: { type: "project", paths: [projectArg!] },
+      };
+      overlay.agents[existingIndex] = mutated;
+      const overlayErr = validateOverlayShape(overlay);
+      if (overlayErr !== null) {
+        logError(`registry add: resulting overlay invalid: ${overlayErr}`);
+        return 1;
+      }
+      try {
+        writeOverlayAtomic(overlayPath, overlay);
+      } catch (err) {
+        logError(
+          `registry add: failed to write overlay: ${(err as Error).message}`,
+        );
+        return 1;
+      }
+      info(
+        `Converted agent '${opts.name}' to scope=project paths=[${projectArg!}]. ` +
+          `Overlay: ${overlayPath}`,
+      );
+      return 0;
+    }
+
+    // No --scope; just --project. Append (project→project additive) OR error
+    // (global→project narrowing — explicit conversion required).
+    if (projectArg !== undefined) {
+      if (existingScopeType === "project") {
+        const existingPaths = existing.scope?.type === "project"
+          ? existing.scope.paths
+          : [];
+        if (existingPaths.includes(projectArg)) {
+          // Idempotent — no overlay write, no error.
+          info(
+            `Agent '${opts.name}' already includes project path ${projectArg}; ` +
+              `overlay unchanged.`,
+          );
+          return 0;
+        }
+        const mutated: AgentEntry = {
+          ...existing,
+          scope: { type: "project", paths: [...existingPaths, projectArg] },
+        };
+        overlay.agents[existingIndex] = mutated;
+        const overlayErr = validateOverlayShape(overlay);
+        if (overlayErr !== null) {
+          logError(`registry add: resulting overlay invalid: ${overlayErr}`);
+          return 1;
+        }
+        try {
+          writeOverlayAtomic(overlayPath, overlay);
+        } catch (err) {
+          logError(
+            `registry add: failed to write overlay: ${(err as Error).message}`,
+          );
+          return 1;
+        }
+        info(
+          `Appended project path ${projectArg} to agent '${opts.name}' ` +
+            `(scope.paths now has ${mutated.scope!.type === "project" ? mutated.scope!.paths.length : 0} entries). Overlay: ${overlayPath}`,
+        );
+        return 0;
+      }
+      // existing scope=global; --project narrows availability → require
+      // explicit --scope project per the FR-155 decision (no silent convert).
+      logError(
+        `registry add: entry '${opts.name}' is currently scope=global; ` +
+          `re-run with --scope project to convert (this narrows availability — ` +
+          `claude/codex/gemini outside the listed --project paths will stop ` +
+          `seeing '${opts.name}'). Overlay unchanged: ${overlayPath}`,
+      );
+      return 1;
+    }
+    // No scope flags at all — fall through to the existing reject below.
   }
 
   // (b) Intra-overlay dedupe — the bash merge does NOT dedupe overlay-vs-overlay.
@@ -1724,6 +2006,29 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
     return 2;
   }
 
+  // FR-155: parse scope flags BEFORE any disk side effect (overlay reads do
+  // happen below but no writes/vendors until all guards pass). Same usage
+  // contract as `runAdd`: `--scope global` is incompatible with `--project`;
+  // `--scope project` requires `--project`. Mirrors L-519.
+  if (opts.scope === "global" && opts.project !== undefined) {
+    logError(
+      "registry add-skill: --scope global is incompatible with --project " +
+        "(global blocks have no paths[]). Omit --project to convert to global.",
+    );
+    return 2;
+  }
+  if (opts.scope === "project" && opts.project === undefined) {
+    logError(
+      "registry add-skill: --scope project requires --project <path> " +
+        "(paths[] must be non-empty for project scope).",
+    );
+    return 2;
+  }
+  const projectArg: string | undefined =
+    opts.project !== undefined && opts.project.length > 0
+      ? realpathStrict(opts.project)
+      : undefined;
+
   // Parse the skill targets (type:method:path triples).
   const newTargets: SkillTargetSpec[] = [];
   for (const spec of opts.targets) {
@@ -1858,6 +2163,62 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
     }
   }
 
+  // FR-155: resolve the resulting block scope from (existing scope) × (opts).
+  // Skill blocks re-vendor on same-name re-add (the normal flow), so unlike
+  // `runAdd` the scope mutation is folded INTO the re-vendor — there's no
+  // separate "additive-only" early-return path. Same conflict semantics:
+  //   - new block (no existing): scope from opts (project iff --project,
+  //     else global → field omitted on disk).
+  //   - existing + --scope global: drop scope (convert to global).
+  //   - existing + --scope project + --project P: set scope=project paths=[P].
+  //   - existing.scope=project + --project P (no --scope): append P (idempotent).
+  //   - existing.scope=global + --project P (no --scope): ERROR (per FR-155 decision).
+  //   - existing + no scope flags: preserve existing scope verbatim.
+  const existingBlock: SkillsSurface | undefined =
+    existingBlockIndex >= 0 ? existingBlocks[existingBlockIndex] : undefined;
+  const existingScope: Scope | undefined = existingBlock?.scope;
+  const existingScopeType: "global" | "project" = existingScope?.type ?? "global";
+  let resolvedScope: Scope | undefined;
+  if (existingBlockIndex < 0) {
+    // New block — scope from opts only.
+    resolvedScope =
+      projectArg !== undefined
+        ? { type: "project", paths: [projectArg] }
+        : undefined;
+  } else if (opts.scope === "global") {
+    // Convert existing to global; field omitted.
+    resolvedScope = undefined;
+  } else if (opts.scope === "project") {
+    // Explicit conversion to project — projectArg is required (gated above).
+    resolvedScope = { type: "project", paths: [projectArg!] };
+  } else if (projectArg !== undefined) {
+    // No --scope, just --project: append OR error.
+    if (existingScopeType === "project") {
+      const existingPaths =
+        existingScope?.type === "project" ? existingScope.paths : [];
+      if (existingPaths.includes(projectArg)) {
+        resolvedScope = { type: "project", paths: [...existingPaths] };
+      } else {
+        resolvedScope = {
+          type: "project",
+          paths: [...existingPaths, projectArg],
+        };
+      }
+    } else {
+      logError(
+        `registry add-skill: block '${name}' is currently scope=global; ` +
+          `re-run with --scope project to convert (this narrows availability — ` +
+          `claude/codex/gemini outside the listed --project paths will stop ` +
+          `seeing skill block '${name}'). Overlay unchanged: ${overlayPath}`,
+      );
+      return 1;
+    }
+  } else {
+    // No scope flags — preserve existing scope verbatim.
+    resolvedScope =
+      existingScope !== undefined ? { ...existingScope } : undefined;
+  }
+
   // Build the block. `source` points at the VENDORED tree per L-516.
   const skillVendorDirFor = opts.skillVendorDir ?? registrySkillDirPath;
   const vendoredDir = skillVendorDirFor(name);
@@ -1866,6 +2227,11 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
     layer: "personal",
     targets: unionedTargets,
   };
+  // FR-155: write `scope` ONLY when project-scoped (back-compat: a global
+  // block on disk looks identical to a pre-FR-155 block).
+  if (resolvedScope !== undefined) {
+    newBlock.scope = resolvedScope;
+  }
 
   // Per-block validation. (validateSkillsSurfaceArray is the array gate that
   // runs as part of validateOverlayShape later — this is a quick local check

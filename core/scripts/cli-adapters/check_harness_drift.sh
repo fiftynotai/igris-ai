@@ -356,10 +356,19 @@ for agent in manifest.get("agents", []):
     # resolution can be keyed on it (core -> in-repo, personal -> registry).
     # Defaults to non-empty "core", so no `-` sentinel / tab-collapse risk.
     layer = agent.get("layer", "") or "core"
+    # FR-155: propagate `scope` as the FINAL columns (mirrors compile_harnesses.sh).
+    # Appended AFTER `layer` so any IFS=$'\t' read with the pre-FR-155 column
+    # list still gets the right values up through `layer`. Absent → global
+    # (default per schema). `-` is the empty-paths sentinel (preserves column
+    # count when paths is empty / scope is global).
+    scope = agent.get("scope") or {}
+    scope_type = scope.get("type") or "global"
+    scope_paths_list = scope.get("paths") or []
+    scope_paths_csv = ",".join(scope_paths_list) if scope_paths_list else "-"
     for target in agent.get("targets", []):
         print("\t".join([
             name, versioned, canon_dir, canon_ref, body_exc,
-            target["type"], target["path"], layer,
+            target["type"], target["path"], layer, scope_type, scope_paths_csv,
         ]))
 PY
 )
@@ -376,8 +385,39 @@ echo "Harness drift check (project root: $PROJECT_ROOT):"
 echo ""
 
 if [ -n "$WORK_ROWS" ]; then
-while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target_path layer; do
+while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target_path layer scope_type scope_paths; do
   [ -z "$name" ] && continue
+
+  # FR-155: project-scope filter. Mirrors compile_harnesses.sh — a
+  # `scope.type=project` row is silently skipped (no verdict, no TOTAL++)
+  # when the current --project-root realpath is not in scope.paths[]. Both
+  # sides realpath'd (macOS `/tmp` ↔ `/private/tmp` equality). A project-
+  # scoped entry that does not apply to the current root is NOT drift; it
+  # is correctly filtered. MUST run BEFORE TOTAL=$((TOTAL+1)) so summary
+  # counts align with the compile-side filter.
+  if [ "$scope_type" = "project" ]; then
+    project_root_real="$(realpath "$PROJECT_ROOT" 2>/dev/null || echo "$PROJECT_ROOT")"
+    matched=0
+    if [ -n "$scope_paths" ] && [ "$scope_paths" != "-" ]; then
+      IFS=',' read -ra scope_paths_arr <<< "$scope_paths"
+      for sp in "${scope_paths_arr[@]}"; do
+        [ -z "$sp" ] && continue
+        case "$sp" in
+          "~"/*) sp_abs="$HOME/${sp#"~/"}" ;;
+          /*)    sp_abs="$sp" ;;
+          *)     sp_abs="$PROJECT_ROOT/$sp" ;;
+        esac
+        sp_real="$(realpath "$sp_abs" 2>/dev/null || echo "$sp_abs")"
+        if [ "$sp_real" = "$project_root_real" ]; then
+          matched=1
+          break
+        fi
+      done
+    fi
+    if [ "$matched" -eq 0 ]; then
+      continue
+    fi
+  fi
   TOTAL=$((TOTAL + 1))
 
   # Resolve canonical. An absolute or `~`-prefixed canon_dir is used verbatim
@@ -555,19 +595,56 @@ for src in sources:
         if not isinstance(block, dict):
             continue
         source = block.get("source", "") or "-"
+        # FR-155: per-block scope (absent → global; `-` is the empty-paths
+        # sentinel). Mirrors compile_harnesses.sh skills-flatten.
+        scope = block.get("scope") or {}
+        scope_type = scope.get("type") or "global"
+        scope_paths_list = scope.get("paths") or []
+        scope_paths_csv = ",".join(scope_paths_list) if scope_paths_list else "-"
         for t in block.get("targets", []) or []:
             print("\t".join([
                 source,
                 (t or {}).get("type", ""),
                 (t or {}).get("method", ""),
                 (t or {}).get("path", ""),
+                scope_type,
+                scope_paths_csv,
             ]))
 PY
 )
 
 if [ -n "$SKILL_ROWS" ]; then
-  while IFS=$'\t' read -r s_source s_type s_method s_path; do
+  while IFS=$'\t' read -r s_source s_type s_method s_path s_scope_type s_scope_paths; do
     [ -z "$s_type" ] && continue
+
+    # FR-155: skills surface project-scope filter (mirrors agent-loop filter
+    # above and compile_harnesses.sh skills-loop filter). Silent skip when
+    # scope.type=project and --project-root realpath not in scope.paths[];
+    # gates TOTAL++ so summary count is filter-aware.
+    if [ "$s_scope_type" = "project" ]; then
+      project_root_real="$(realpath "$PROJECT_ROOT" 2>/dev/null || echo "$PROJECT_ROOT")"
+      s_matched=0
+      if [ -n "$s_scope_paths" ] && [ "$s_scope_paths" != "-" ]; then
+        IFS=',' read -ra s_scope_paths_arr <<< "$s_scope_paths"
+        for sp in "${s_scope_paths_arr[@]}"; do
+          [ -z "$sp" ] && continue
+          case "$sp" in
+            "~"/*) sp_abs="$HOME/${sp#"~/"}" ;;
+            /*)    sp_abs="$sp" ;;
+            *)     sp_abs="$PROJECT_ROOT/$sp" ;;
+          esac
+          sp_real="$(realpath "$sp_abs" 2>/dev/null || echo "$sp_abs")"
+          if [ "$sp_real" = "$project_root_real" ]; then
+            s_matched=1
+            break
+          fi
+        done
+      fi
+      if [ "$s_matched" -eq 0 ]; then
+        continue
+      fi
+    fi
+
     TOTAL=$((TOTAL + 1))
 
     # Resolve source (`~`/absolute verbatim, else project-relative; `-`=default).

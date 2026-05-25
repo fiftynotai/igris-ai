@@ -362,6 +362,14 @@ async function main(argv: string[]): Promise<void> {
       "root for base-manifest collision check + relative --from (default: cwd)",
     )
     .option("--name <slug>", "personal skill name (add-skill); REQUIRED for add-skill")
+    .option(
+      "--project <path>",
+      "FR-155: scope this entry to one project root (path; on re-add against an existing project entry, the path is appended additively to scope.paths[]; against an existing global entry the run errors unless --scope project is also supplied).",
+    )
+    .option(
+      "--scope <kind>",
+      "FR-155: explicit scope kind for add/add-skill: 'global' or 'project'. Used to CONVERT an existing entry. --scope global drops scope.paths; --scope project + --project P resets scope.paths to [realpath(P)].",
+    )
     .action(
       async (
         action: string,
@@ -376,6 +384,8 @@ async function main(argv: string[]): Promise<void> {
           all?: boolean;
           projectRoot?: string;
           name?: string;
+          project?: string;
+          scope?: string;
         },
       ): Promise<void> => {
         // Coalesce the deprecated --canonical alias into --from; emit a one-line
@@ -393,6 +403,23 @@ async function main(argv: string[]): Promise<void> {
           opts.from ??
           opts.canonical ??
           (isAddSkill ? name : undefined);
+        // FR-155: --scope must be one of {"global","project"} — validate at
+        // the CLI boundary so the verb layer can trust the type. Commander
+        // accepts any string; we narrow here. An invalid value is a usage
+        // error (exit 2) like other CLI-boundary checks (parseTarget etc.).
+        let scopeArg: "global" | "project" | undefined;
+        if (opts.scope !== undefined) {
+          if (opts.scope === "global" || opts.scope === "project") {
+            scopeArg = opts.scope;
+          } else {
+            // Print on stderr through the same logError channel the verb uses.
+            process.stderr.write(
+              `registry: --scope value '${opts.scope}' is not one of 'global' | 'project'\n`,
+            );
+            process.exitCode = 2;
+            return;
+          }
+        }
         const code = await runRegistry({
           action: action as RegistryAction,
           name: isAddSkill ? (opts.name ?? name) : name,
@@ -403,6 +430,8 @@ async function main(argv: string[]): Promise<void> {
           bodyException: opts.bodyException,
           all: opts.all === true,
           projectRoot: opts.projectRoot,
+          project: opts.project,
+          scope: scopeArg,
         });
         process.exitCode = code;
       },

@@ -41,8 +41,34 @@
   },
 
   "$defs": {
+    "scope": {
+      "description": "FR-155: scope-aware overlay. Absent → global (default, back-compat). `{type:'global'}` is also accepted; the compiler/drift treat both as 'emit unconditionally'. `{type:'project', paths:[...]}` emits ONLY when --project-root realpath ∈ realpath'd paths[]. CLI realpath's `--project` at WRITE time so paths[] entries are canonical; compile/drift realpath both PROJECT_ROOT and each entry at READ time (handles macOS /tmp ↔ /private/tmp).",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "global" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "paths"],
+          "properties": {
+            "type": { "const": "project" },
+            "paths": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string" }
+            }
+          }
+        }
+      ]
+    },
     "skills_surface": {
-      "description": "FR-137/TD-191/FR-149/FR-151/FR-153: ONE skills projection block. Multiple coexist as elements of `surfaces.skills[]`; each carries its OWN source/layer/targets so personal blocks compile ALONGSIDE the core block. For personal blocks `source` points at a registry-vendored path (L-516 universal copy-vendor). Valid (type, method) pairs: claude/symlink, codex/symlink, gemini/symlink (registry-anchored per-skill symlinks). All three symlink targets vendor identically — the per-harness compiler walks the registry-vendored skill tree. The legacy codex/compiler (AGENTS.md aggregator) + gemini/converter (per-skill TOML) pairs were retired by FR-153. See L-519.",
+      "description": "FR-137/TD-191/FR-149/FR-151/FR-153/FR-155: ONE skills projection block. Multiple coexist as elements of `surfaces.skills[]`; each carries its OWN source/layer/targets so personal blocks compile ALONGSIDE the core block. For personal blocks `source` points at a registry-vendored path (L-516 universal copy-vendor). Valid (type, method) pairs: claude/symlink, codex/symlink, gemini/symlink (registry-anchored per-skill symlinks). All three symlink targets vendor identically — the per-harness compiler walks the registry-vendored skill tree. The legacy codex/compiler (AGENTS.md aggregator) + gemini/converter (per-skill TOML) pairs were retired by FR-153. `scope` (FR-155) is optional; absent → global. See L-519.",
       "type": "object",
       "additionalProperties": false,
       "required": ["targets"],
@@ -56,6 +82,7 @@
           "default": "core",
           "description": "FR-139 provenance seam: 'core' (declared in surfaces-manifest.json) or 'personal' (contributed by the FR-139 overlay)."
         },
+        "scope": { "$ref": "#/$defs/scope" },
         "targets": {
           "type": "array",
           "minItems": 1,
@@ -113,6 +140,7 @@
           "type": "string",
           "description": "optional; basename of a body-exceptions/<name>.json sidecar"
         },
+        "scope": { "$ref": "#/$defs/scope" },
         "targets": {
           "type": "array",
           "minItems": 1,
