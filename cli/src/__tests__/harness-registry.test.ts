@@ -162,7 +162,7 @@ describe("registry add", () => {
     expect(origins["agent:mycustom"].hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("--versioned --glob vendors the matching file set (no file in canonical)", async () => {
+  it("--versioned --glob persists the overlay shape; FR-156 vendors the WHOLE source tree (closes L-516)", async () => {
     mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
     writeFileSync(join(projectRoot, "vcanon", "v1.md"), "one\n");
     writeFileSync(join(projectRoot, "vcanon", "v2.md"), "two\n");
@@ -184,10 +184,15 @@ describe("registry add", () => {
     expect(overlay.agents[0].canonical.versioned).toBe(true);
     expect(overlay.agents[0].canonical.glob).toBe("v*.md");
     expect("file" in overlay.agents[0].canonical).toBe(false);
-    // Only the glob-matching files vendored.
+    // FR-156: tree vendor brings the WHOLE source dir minus the skip-list.
+    // The overlay still records `glob: 'v*.md'` (consumed by
+    // `assembleAgentHarness`'s body-picker), but unrelated sibling files
+    // are no longer dropped — that was the L-516 violation (registry copy
+    // was not self-sufficient when authors shipped sibling supporting
+    // files like routing/ or archetypes/).
     expect(existsSync(join(vendorDir("vagent"), "v1.md"))).toBe(true);
     expect(existsSync(join(vendorDir("vagent"), "v2.md"))).toBe(true);
-    expect(existsSync(join(vendorDir("vagent"), "skip.txt"))).toBe(false);
+    expect(existsSync(join(vendorDir("vagent"), "skip.txt"))).toBe(true);
   });
 
   it("--versioned without --glob is a usage error (exit 2), no vendor dir", async () => {
@@ -2101,15 +2106,19 @@ describe("registry update", () => {
   });
 
   it("--all updates every path-origin entry (mixed changed/unchanged)", async () => {
-    // Two separate sources so we can mutate one and leave the other.
-    writeFileSync(join(projectRoot, "canon", "a.md"), "alpha\n");
-    writeFileSync(join(projectRoot, "canon", "b.md"), "beta\n");
-    await seedAdd("ua", "canon/a.md");
-    await seedAdd("ub", "canon/b.md");
+    // FR-156: tree-vendor takes the WHOLE source dir, so two agents that
+    // share one canon/ dir would drift in lockstep — give each its own
+    // source subdir to keep the mixed-state test meaningful.
+    mkdirSync(join(projectRoot, "canon_a"), { recursive: true });
+    mkdirSync(join(projectRoot, "canon_b"), { recursive: true });
+    writeFileSync(join(projectRoot, "canon_a", "a.md"), "alpha\n");
+    writeFileSync(join(projectRoot, "canon_b", "b.md"), "beta\n");
+    await seedAdd("ua", "canon_a/a.md");
+    await seedAdd("ub", "canon_b/b.md");
     const hashA = readOriginsFile()["agent:ua"].hash;
     const hashB = readOriginsFile()["agent:ub"].hash;
-    // Mutate only a.md.
-    writeFileSync(join(projectRoot, "canon", "a.md"), "alpha-CHANGED\n");
+    // Mutate only canon_a/a.md.
+    writeFileSync(join(projectRoot, "canon_a", "a.md"), "alpha-CHANGED\n");
     const code = await runRegistry({
       action: "update",
       all: true,
@@ -3094,5 +3103,323 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
       { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
     );
     expect(typeof validate).toBe("string");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-156 — agent TREE vendor + hash + drift-aware update.
+//
+// Promotes agent vendor from "file-set" (frontmatter.md + system-prompt-vN.md
+// only) to "tree vendor" (whole source directory minus skip-list). Closes
+// the L-516 violation where supporting files (DECK's routing/+registry/,
+// DESIGNER's archetypes/) lived in the operator's source dir only — making
+// the registry copy non-self-sufficient. Symmetric topology with the TD-191
+// skill tree primitives (L-519 §18.1).
+//
+// Primitives are not exported; tested end-to-end through `runRegistry` —
+// the only orthodox surface. Covered axes (architect's L-29 enumeration):
+//   - tree vendoring (nested dirs preserved; skip-list excludes correctly)
+//   - hash determinism (deterministic + order-independent + harness.md
+//     excluded from basis + skip-list excluded)
+//   - update axis: content change, file addition, file removal → all flip
+//     hash → status=changed; null mutation → status=unchanged
+//   - L-515 containment: symlink escapes are dropped from the vendored tree
+//   - atomicity: failure rollback leaves no orphan `.tmp-PID` dir
+// ---------------------------------------------------------------------------
+
+describe("FR-156: agent tree vendor + hash", () => {
+  it("vendors a nested source tree — sibling dirs preserved under the registry copy", async () => {
+    // Source shape mirrors DECK / DESIGNER's actual layout: frontmatter +
+    // body + routing/ + registry/.
+    const src = join(projectRoot, "tree_src");
+    mkdirSync(src, { recursive: true });
+    mkdirSync(join(src, "routing"), { recursive: true });
+    mkdirSync(join(src, "registry"), { recursive: true });
+    writeFileSync(
+      join(src, "frontmatter.md"),
+      "---\nname: t1\ndescription: tree-shaped\n---\n",
+    );
+    writeFileSync(join(src, "system-prompt-v1.md"), "# body v1\n");
+    writeFileSync(join(src, "routing", "_routing.md"), "routing-rules\n");
+    writeFileSync(join(src, "registry", "types.md"), "types-doc\n");
+    const code = await runRegistry(
+      addOpts({
+        name: "t1",
+        from: "tree_src/system-prompt-v1.md",
+        targets: ["claude:.claude/agents/t1.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    // All four source files vendored, nesting preserved (L-516 closed).
+    const v = vendorDir("t1");
+    expect(existsSync(join(v, "frontmatter.md"))).toBe(true);
+    expect(existsSync(join(v, "system-prompt-v1.md"))).toBe(true);
+    expect(existsSync(join(v, "routing", "_routing.md"))).toBe(true);
+    expect(existsSync(join(v, "registry", "types.md"))).toBe(true);
+    // FR-152 α-assembly still works against the tree-vendored sources.
+    expect(existsSync(join(v, "harness.md"))).toBe(true);
+    // Recorded origin hash is the tree hash (matches what the bash drift
+    // pre-check will compute against the same dir).
+    const recordedHash = readOriginsFile()["agent:t1"].hash;
+    expect(recordedHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("skip-list excludes operator-author noise — MAINTAINING.md, .DS_Store, .git*, __pycache__, node_modules, *.pyc", async () => {
+    const src = join(projectRoot, "noise_src");
+    mkdirSync(src, { recursive: true });
+    mkdirSync(join(src, "node_modules", "foo"), { recursive: true });
+    mkdirSync(join(src, ".git"), { recursive: true });
+    mkdirSync(join(src, "__pycache__"), { recursive: true });
+    writeFileSync(
+      join(src, "frontmatter.md"),
+      "---\nname: t2\ndescription: skip\n---\n",
+    );
+    writeFileSync(join(src, "system-prompt-v1.md"), "# body\n");
+    writeFileSync(join(src, "MAINTAINING.md"), "internal-author-only\n");
+    writeFileSync(join(src, ".DS_Store"), "macos-cruft\n");
+    writeFileSync(join(src, ".gitignore"), "*.log\n");
+    writeFileSync(join(src, "node_modules", "foo", "x.js"), "module\n");
+    writeFileSync(join(src, ".git", "HEAD"), "ref\n");
+    writeFileSync(join(src, "__pycache__", "x.pyc"), "bytecode\n");
+    writeFileSync(join(src, "stale.pyc"), "bytecode-top-level\n");
+    const code = await runRegistry(
+      addOpts({
+        name: "t2",
+        from: "noise_src/system-prompt-v1.md",
+        targets: ["claude:.claude/agents/t2.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    const v = vendorDir("t2");
+    // KEPT.
+    expect(existsSync(join(v, "frontmatter.md"))).toBe(true);
+    expect(existsSync(join(v, "system-prompt-v1.md"))).toBe(true);
+    // SKIPPED.
+    expect(existsSync(join(v, "MAINTAINING.md"))).toBe(false);
+    expect(existsSync(join(v, ".DS_Store"))).toBe(false);
+    expect(existsSync(join(v, ".gitignore"))).toBe(false);
+    expect(existsSync(join(v, ".git"))).toBe(false);
+    expect(existsSync(join(v, "node_modules"))).toBe(false);
+    expect(existsSync(join(v, "__pycache__"))).toBe(false);
+    expect(existsSync(join(v, "stale.pyc"))).toBe(false);
+  });
+
+  it("L-515 containment: symlinks in the source are dropped from the vendored tree (not followed out)", async () => {
+    const src = join(projectRoot, "esc_src");
+    const outside = join(tmpRoot, "outside_secrets");
+    mkdirSync(src, { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(
+      join(src, "frontmatter.md"),
+      "---\nname: t3\ndescription: esc\n---\n",
+    );
+    writeFileSync(join(src, "system-prompt-v1.md"), "# body\n");
+    writeFileSync(join(outside, "SECRET.md"), "should-not-leak\n");
+    // Symlink inside the source that points OUTSIDE the source tree.
+    symlinkSync(join(outside, "SECRET.md"), join(src, "escape.md"));
+    const code = await runRegistry(
+      addOpts({
+        name: "t3",
+        from: "esc_src/system-prompt-v1.md",
+        targets: ["claude:.claude/agents/t3.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    const v = vendorDir("t3");
+    // Expected entries vendored.
+    expect(existsSync(join(v, "frontmatter.md"))).toBe(true);
+    expect(existsSync(join(v, "system-prompt-v1.md"))).toBe(true);
+    // The symlink and its (escaped) target MUST NOT appear in the vendored
+    // tree — vendor is bytes, not refs, and symlink escapes are the L-515
+    // attack surface this primitive must close.
+    expect(existsSync(join(v, "escape.md"))).toBe(false);
+    // The contents of the secret must not have leaked under any name.
+    for (const f of readdirSync(v)) {
+      const p = join(v, f);
+      if (existsSync(p) && f.endsWith(".md")) {
+        const text = readFileSync(p, "utf-8");
+        expect(text.includes("should-not-leak")).toBe(false);
+      }
+    }
+  });
+
+  it("hash is deterministic + order-independent + harness.md is excluded from basis", async () => {
+    // Build a tree, hash twice through add+update — the update with no
+    // mutation must report `unchanged` (proves the hash basis equals what
+    // assembleAgentHarness produced; harness.md must be excluded from the
+    // basis or the assembly would advance the hash).
+    const src = join(projectRoot, "stable_src");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(
+      join(src, "frontmatter.md"),
+      "---\nname: t4\ndescription: stable\n---\n",
+    );
+    writeFileSync(join(src, "system-prompt-v1.md"), "# body\n");
+    expect(
+      await runRegistry(
+        addOpts({
+          name: "t4",
+          from: "stable_src/system-prompt-v1.md",
+          targets: ["claude:.claude/agents/t4.md"],
+        }),
+      ),
+    ).toBe(0);
+    const hashBefore = readOriginsFile()["agent:t4"].hash;
+    // Re-vendor without touching the source.
+    const code = await runRegistry({
+      action: "update",
+      name: "t4",
+      overlayPath,
+      originsPath,
+      vendorDir,
+    });
+    expect(code).toBe(0);
+    expect(readOriginsFile()["agent:t4"].hash).toBe(hashBefore);
+    // Dropping a `.DS_Store` into the source after the first add → still
+    // `unchanged` (skip-list excludes it from the basis on both sides).
+    writeFileSync(join(src, ".DS_Store"), "x\n");
+    const code2 = await runRegistry({
+      action: "update",
+      name: "t4",
+      overlayPath,
+      originsPath,
+      vendorDir,
+    });
+    expect(code2).toBe(0);
+    expect(readOriginsFile()["agent:t4"].hash).toBe(hashBefore);
+  });
+
+  it("update axis — content change in a nested file flips the hash → status=changed", async () => {
+    const src = join(projectRoot, "mut_src");
+    mkdirSync(join(src, "routing"), { recursive: true });
+    writeFileSync(
+      join(src, "frontmatter.md"),
+      "---\nname: t5\ndescription: mut\n---\n",
+    );
+    writeFileSync(join(src, "system-prompt-v1.md"), "# body\n");
+    writeFileSync(join(src, "routing", "_routing.md"), "v1\n");
+    expect(
+      await runRegistry(
+        addOpts({
+          name: "t5",
+          from: "mut_src/system-prompt-v1.md",
+          targets: ["claude:.claude/agents/t5.md"],
+        }),
+      ),
+    ).toBe(0);
+    const hashBefore = readOriginsFile()["agent:t5"].hash;
+    // Mutate the NESTED file.
+    writeFileSync(join(src, "routing", "_routing.md"), "v2-CHANGED\n");
+    expect(
+      await runRegistry({
+        action: "update",
+        name: "t5",
+        overlayPath,
+        originsPath,
+        vendorDir,
+      }),
+    ).toBe(0);
+    expect(readOriginsFile()["agent:t5"].hash).not.toBe(hashBefore);
+    // Re-vendored content reflects the new bytes.
+    expect(
+      readFileSync(join(vendorDir("t5"), "routing", "_routing.md"), "utf-8"),
+    ).toBe("v2-CHANGED\n");
+  });
+
+  it("update axis — adding a sibling file flips the hash → status=changed (the L-430 walk-set axis)", async () => {
+    const src = join(projectRoot, "add_src");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(
+      join(src, "frontmatter.md"),
+      "---\nname: t6\ndescription: add\n---\n",
+    );
+    writeFileSync(join(src, "system-prompt-v1.md"), "# body\n");
+    expect(
+      await runRegistry(
+        addOpts({
+          name: "t6",
+          from: "add_src/system-prompt-v1.md",
+          targets: ["claude:.claude/agents/t6.md"],
+        }),
+      ),
+    ).toBe(0);
+    const hashBefore = readOriginsFile()["agent:t6"].hash;
+    // Drop a NEW sibling file into the source.
+    writeFileSync(join(src, "new_sibling.md"), "added-content\n");
+    expect(
+      await runRegistry({
+        action: "update",
+        name: "t6",
+        overlayPath,
+        originsPath,
+        vendorDir,
+      }),
+    ).toBe(0);
+    expect(readOriginsFile()["agent:t6"].hash).not.toBe(hashBefore);
+    expect(existsSync(join(vendorDir("t6"), "new_sibling.md"))).toBe(true);
+  });
+
+  it("update axis — removing a sibling file flips the hash → status=changed (the L-430 walk-set axis, removal)", async () => {
+    const src = join(projectRoot, "rm_src");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(
+      join(src, "frontmatter.md"),
+      "---\nname: t7\ndescription: rm\n---\n",
+    );
+    writeFileSync(join(src, "system-prompt-v1.md"), "# body\n");
+    writeFileSync(join(src, "extra.md"), "extra\n");
+    expect(
+      await runRegistry(
+        addOpts({
+          name: "t7",
+          from: "rm_src/system-prompt-v1.md",
+          targets: ["claude:.claude/agents/t7.md"],
+        }),
+      ),
+    ).toBe(0);
+    const hashBefore = readOriginsFile()["agent:t7"].hash;
+    // Remove a sibling file from the source.
+    rmSync(join(src, "extra.md"));
+    expect(
+      await runRegistry({
+        action: "update",
+        name: "t7",
+        overlayPath,
+        originsPath,
+        vendorDir,
+      }),
+    ).toBe(0);
+    expect(readOriginsFile()["agent:t7"].hash).not.toBe(hashBefore);
+    // Registry copy no longer has the removed file (re-vendor replaces the
+    // whole dir atomically).
+    expect(existsSync(join(vendorDir("t7"), "extra.md"))).toBe(false);
+  });
+
+  it("atomicity: empty-after-skip source throws and leaves no orphan registry dir", async () => {
+    // A source dir whose ENTIRE contents are in the skip-list — vendor must
+    // throw the "no files after skip-list" error and not leave any partial
+    // copy behind.
+    const src = join(projectRoot, "empty_src");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(join(src, ".DS_Store"), "cruft\n");
+    writeFileSync(join(src, "MAINTAINING.md"), "author-only\n");
+    const code = await runRegistry(
+      addOpts({
+        name: "tnone",
+        from: "empty_src/MAINTAINING.md",
+        targets: ["claude:.claude/agents/tnone.md"],
+      }),
+    );
+    // Add fails (vendor error → exit 1).
+    expect(code).toBe(1);
+    // No orphan vendored copy.
+    expect(existsSync(vendorDir("tnone"))).toBe(false);
+    // No orphan .tmp-PID sibling either.
+    const parentEntries = existsSync(vendorBase)
+      ? readdirSync(vendorBase)
+      : [];
+    for (const e of parentEntries) {
+      expect(e.startsWith("tnone.tmp-")).toBe(false);
+    }
   });
 });

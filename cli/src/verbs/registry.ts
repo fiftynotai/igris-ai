@@ -66,7 +66,6 @@ import {
   readRepoManifest,
   selectSurface,
   pickNewerReleaseTag,
-  hashFileSet,
   fetchRepoDefault,
   listReleasesDefault,
   type GithubSpec,
@@ -859,19 +858,11 @@ function resolveSourcePath(p: string, projectRoot: string): string {
 }
 
 /**
- * Compute a stable content hash over a vendored file set: for each file
- * (sorted by relative path) fold `relpath\0bytes` into one sha256. Stable
- * across machines (relpaths, not abspaths) and order-independent (sorted).
+ * FR-156 retired `hashSurface` (file-set hash) — agent vendor is now tree-
+ * shaped; see `hashAgentTree`/`hashSkillTree`. Single-file-set semantics
+ * remain available via `hashFileSet` in github-source.ts if a future
+ * non-tree surface needs them.
  */
-function hashSurface(absDir: string, fileRelPaths: string[]): string {
-  const h = createHash("sha256");
-  for (const rel of [...fileRelPaths].sort()) {
-    h.update(rel);
-    h.update("\0");
-    h.update(readFileSync(join(absDir, rel)));
-  }
-  return h.digest("hex");
-}
 
 /**
  * The resolved source file set for a surface. `srcDir` is the absolute origin
@@ -953,33 +944,12 @@ function globToRegExp(glob: string): RegExp {
 }
 
 /**
- * Atomically vendor a file set into `destDir`: copy into a sibling temp dir on
- * the SAME filesystem (under the registry dir), then `renameSync` over destDir
- * (replacing any prior copy). No partial-vendor window. Returns nothing; throws
- * on copy failure (caller cleans up).
+ * FR-156 retired `vendorSurfaceAtomic` (file-set vendor) — agent vendor is
+ * now tree-shaped; see `vendorAgentTreeAtomic`/`vendorSkillTreeAtomic`. A
+ * future non-tree surface that needs single-file vendor can resurrect from
+ * git history; the file-set primitive had a single internal caller (the
+ * agent runAdd/reVendor) which now uses the tree primitive uniformly.
  */
-function vendorSurfaceAtomic(
-  srcDir: string,
-  files: string[],
-  destDir: string,
-): void {
-  mkdirSync(dirname(destDir), { recursive: true });
-  const tmp = `${destDir}.tmp-${process.pid}`;
-  // Start from a clean temp dir.
-  rmSync(tmp, { recursive: true, force: true });
-  mkdirSync(tmp, { recursive: true });
-  try {
-    for (const f of files) {
-      copyFileSync(join(srcDir, f), join(tmp, f));
-    }
-  } catch (err) {
-    rmSync(tmp, { recursive: true, force: true });
-    throw err;
-  }
-  // Replace any prior vendored copy atomically.
-  rmSync(destDir, { recursive: true, force: true });
-  renameSync(tmp, destDir);
-}
 
 /**
  * FR-152 + FR-144: resolve a personal-layer body-exception sidecar to its
@@ -1352,6 +1322,180 @@ function reVendorSkillPath(
     : { status: "changed", origin: { ...origin, hash: newHash } };
 }
 
+/**
+ * FR-156: derive the {frontmatter.md, body_filename} list that
+ * `assembleAgentHarness` needs, POST-VENDOR. Tree vendoring brings the entire
+ * source dir minus the skip-list; `assembleAgentHarness` only consumes the
+ * frontmatter sidecar + ONE body file (latest `system-prompt-vN.md` when
+ * versioned, the named unversioned file otherwise). Returning the filtered
+ * set preserves FR-152 assembly semantics across the vendor-shape change.
+ * Operates over top-level vendored files (does NOT descend into nested
+ * sibling dirs like `routing/` or `archetypes/`).
+ */
+function pickAssemblyFiles(
+  vendoredDir: string,
+  versioned: boolean,
+  glob: string | undefined,
+  unversionedFile: string | undefined,
+): string[] {
+  const top = readdirSync(vendoredDir, { withFileTypes: true })
+    .filter((d) => d.isFile())
+    .map((d) => d.name);
+  const out: string[] = [];
+  if (top.includes("frontmatter.md")) {
+    out.push("frontmatter.md");
+  }
+  if (versioned) {
+    const re = globToRegExp(glob ?? "");
+    for (const n of top) {
+      if (n === "frontmatter.md") continue;
+      if (re.test(n)) out.push(n);
+    }
+  } else if (unversionedFile !== undefined && top.includes(unversionedFile)) {
+    out.push(unversionedFile);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// FR-156: AGENT-TREE vendor primitives. Promote the agent vendor path from
+// "file-set" (vendorSurfaceAtomic over frontmatter.md + system-prompt-vN.md)
+// to "tree vendor" (whole source directory minus a fixed skip-list) so agents
+// with sibling content (DECK's routing/+registry/, DESIGNER's archetypes/)
+// vendor self-sufficiently — closes the L-516 violation where supporting
+// files lived in the operator's source dir only. Symmetric topology with the
+// TD-191 SKILL-TREE primitives above (L-519 §18.1).
+// ---------------------------------------------------------------------------
+
+/**
+ * FR-156 vendor + hash skip-list (basename-keyed). MUST stay byte-for-byte
+ * in sync with the bash side at `core/scripts/cli-adapters/_common.sh`
+ * `hash_agent_tree`. Skips operator-author noise (`MAINTAINING.md`),
+ * filesystem cruft (`.DS_Store`), VCS metadata (`.git*` glob — intentional
+ * `.git`/`.gitignore`/`.gitkeep`/`.github` sweep), language caches
+ * (`__pycache__/`, `*.pyc`), node deps (`node_modules/`), and venvs
+ * (`.venv/`). Returns true when the basename should be SKIPPED.
+ */
+function isAgentTreeSkipped(name: string): boolean {
+  // Exact basenames.
+  if (name === "MAINTAINING.md") return true;
+  if (name === ".DS_Store") return true;
+  if (name === "node_modules") return true;
+  if (name === ".venv") return true;
+  if (name === "__pycache__") return true;
+  // Globs.
+  if (name.startsWith(".git")) return true; // .git, .gitignore, .gitkeep, .github
+  if (name.endsWith(".pyc")) return true;
+  return false;
+}
+
+/**
+ * FR-156 atomically vendor an agent's source tree into `destDir`. Mirrors
+ * `vendorSkillTreeAtomic`'s atomicity posture (sibling temp dir on the same
+ * filesystem, then `renameSync`) but WITHOUT the SKILL.md root-discriminator
+ * (agents have no equivalent gate). Empty-after-skip throws so callers can
+ * roll back. Containment (L-515): symlinks are intentionally NOT followed in
+ * `copyAgentTreeRecursive` — `readdirSync(.., withFileTypes:true)` reports
+ * symlinks via `e.isSymbolicLink()`, and our copy branches only on
+ * `e.isDirectory()` / `e.isFile()`, so symlink entries fall through and are
+ * dropped (vendor is bytes, not refs). Future remote-agent sources MUST
+ * clamp resolved paths inside the fetch sandbox before calling this
+ * primitive.
+ */
+function vendorAgentTreeAtomic(srcDir: string, destDir: string): void {
+  mkdirSync(dirname(destDir), { recursive: true });
+  const tmp = `${destDir}.tmp-${process.pid}`;
+  rmSync(tmp, { recursive: true, force: true });
+  mkdirSync(tmp, { recursive: true });
+  let copied = 0;
+  try {
+    copied = copyAgentTreeRecursive(srcDir, tmp);
+    if (copied === 0) {
+      throw new Error(
+        `no files in ${srcDir} after applying the agent-tree skip-list`,
+      );
+    }
+  } catch (err) {
+    rmSync(tmp, { recursive: true, force: true });
+    throw err;
+  }
+  // Replace any prior vendored copy atomically.
+  rmSync(destDir, { recursive: true, force: true });
+  renameSync(tmp, destDir);
+}
+
+/**
+ * Recursively copy an agent's directory tree (files + nested subdirs)
+ * applying `isAgentTreeSkipped` at EACH level. Symlinks are intentionally
+ * skipped (containment + "vendor is bytes, not refs" — same posture as
+ * `copySkillTreeRecursive`). Returns the number of FILES copied so the
+ * caller can enforce the "empty after skip" guard.
+ */
+function copyAgentTreeRecursive(srcDir: string, destDir: string): number {
+  const entries = readdirSync(srcDir, { withFileTypes: true });
+  let count = 0;
+  for (const e of entries) {
+    if (isAgentTreeSkipped(e.name)) continue;
+    const s = join(srcDir, e.name);
+    const d = join(destDir, e.name);
+    if (e.isDirectory()) {
+      mkdirSync(d, { recursive: true });
+      count += copyAgentTreeRecursive(s, d);
+    } else if (e.isFile()) {
+      copyFileSync(s, d);
+      count += 1;
+    }
+    // Symlinks intentionally skipped — L-515 containment (don't follow
+    // symlinks out of the source tree) + vendor-as-bytes invariant.
+  }
+  return count;
+}
+
+/**
+ * FR-156 stable content hash over a vendored agent tree. Same idiom as
+ * `hashSkillTree` (sorted relpath + `\0` + bytes folded into one sha256) but
+ * applies `isAgentTreeSkipped` AND explicitly excludes `harness.md`. The
+ * `harness.md` exclusion is load-bearing: it is FR-152 α-assembly OUTPUT
+ * (derived from frontmatter.md + chosen system-prompt-vN.md + body-exception)
+ * and including it in the hash basis would make every assembly re-write read
+ * as drift — same "hash before assembly" principle `hashSurface` uses by
+ * computing the hash BEFORE `assembleAgentHarness` at the call site.
+ *
+ * Skip-list MUST match `isAgentTreeSkipped` byte-for-byte AND the bash
+ * `hash_agent_tree` helper in `_common.sh` — three sites, one rule.
+ */
+function hashAgentTree(treeDir: string): string {
+  const h = createHash("sha256");
+  const rels: string[] = [];
+  function walk(rel: string): void {
+    const abs = rel === "" ? treeDir : join(treeDir, rel);
+    const entries = readdirSync(abs, { withFileTypes: true });
+    for (const e of entries) {
+      if (isAgentTreeSkipped(e.name)) continue;
+      const childRel = rel === "" ? e.name : `${rel}/${e.name}`;
+      if (e.isDirectory()) {
+        walk(childRel);
+      } else if (e.isFile()) {
+        // FR-156: harness.md is derived OUTPUT from α-assembly — excluding
+        // it from the hash basis keeps assembly re-runs from registering as
+        // drift. Mirrors `hashSurface`'s "hash before assembly" timing.
+        if (rel === "" && e.name === "harness.md") continue;
+        rels.push(childRel);
+      }
+      // Symlinks skipped — see copyAgentTreeRecursive for rationale.
+    }
+  }
+  if (existsSync(treeDir)) {
+    walk("");
+  }
+  for (const rel of rels.sort()) {
+    h.update(rel);
+    h.update("\0");
+    h.update(readFileSync(join(treeDir, rel)));
+  }
+  return h.digest("hex");
+}
+
 // ---------------------------------------------------------------------------
 // --target parsing
 // ---------------------------------------------------------------------------
@@ -1718,19 +1862,35 @@ async function runAdd(
     return 1;
   }
 
-  // All guards passed → VENDOR the file set (atomic), then persist the overlay,
-  // then record the origin. If overlay persist fails after vendoring, clean up
-  // the just-vendored dir so a rejected add leaves no orphan copy.
+  // All guards passed → VENDOR the agent TREE (atomic), then persist the
+  // overlay, then record the origin. FR-156 promotes the vendor from
+  // "file-set" to "tree" so sibling files (DECK's routing/+registry/,
+  // DESIGNER's archetypes/) land in the registry alongside the body. If
+  // overlay persist fails after vendoring, clean up the just-vendored tree
+  // so a rejected add leaves no orphan copy.
+  //
+  // `assembleAgentHarness` still needs the EXACT input set (frontmatter +
+  // chosen system-prompt-vN.md) that it derived pre-FR-156; we recompute it
+  // POST-VENDOR by filtering top-level vendored files against the canonical
+  // glob/file. This keeps FR-152 assembly semantics unchanged.
   let hash: string;
   try {
-    vendorSurfaceAtomic(resolved.srcDir, resolved.files, vendoredDir);
-    hash = hashSurface(vendoredDir, resolved.files);
+    vendorAgentTreeAtomic(resolved.srcDir, vendoredDir);
+    hash = hashAgentTree(vendoredDir);
     // FR-152 α-assembly: emit `<vendoredDir>/harness.md` alongside frontmatter +
     // body so claude/gemini compile-time symlinks resolve to ONE registry file.
     // No-op when no FR-151 sidecar exists. Hash is computed BEFORE assembly so
-    // the derived file is excluded from origin freshness (downstream-derived).
+    // the derived file is excluded from origin freshness (downstream-derived;
+    // `hashAgentTree` also excludes harness.md from the basis as belt-and-
+    // suspenders).
     const bxPath = resolvePersonalBodyExceptionPath(entry.body_exception);
-    assembleAgentHarness(vendoredDir, resolved.files, bxPath);
+    const assemblyFiles = pickAssemblyFiles(
+      vendoredDir,
+      opts.versioned === true,
+      opts.glob,
+      unversionedFile,
+    );
+    assembleAgentHarness(vendoredDir, assemblyFiles, bxPath);
   } catch (err) {
     rmSync(vendoredDir, { recursive: true, force: true });
     logError(`registry add: failed to vendor canonical files: ${(err as Error).message}`);
@@ -1902,15 +2062,24 @@ async function runAddGithub(
     }
 
     // Vendor → persist overlay → record origin (same rollback discipline).
+    // FR-156: tree vendor (mirrors the path-origin branch). `selected.srcDir`
+    // is already the sandbox-clamped subdir under the fetched repo, so the
+    // tree walk stays inside the sandbox (L-515).
     let hash: string;
     try {
-      vendorSurfaceAtomic(selected.srcDir, selected.files, vendoredDir);
-      hash = hashSurface(vendoredDir, selected.files);
+      vendorAgentTreeAtomic(selected.srcDir, vendoredDir);
+      hash = hashAgentTree(vendoredDir);
       // FR-152 α-assembly (github path): mirrors the path-origin call above.
       // Personal layer body-exception sidecar resolution (FR-144). Hash already
       // computed before assembly to keep harness.md out of origin freshness.
       const bxPath = resolvePersonalBodyExceptionPath(entry.body_exception);
-      assembleAgentHarness(vendoredDir, selected.files, bxPath);
+      const assemblyFiles = pickAssemblyFiles(
+        vendoredDir,
+        selected.entry.canonical.versioned === true,
+        selected.entry.canonical.glob,
+        selected.entry.canonical.file,
+      );
+      assembleAgentHarness(vendoredDir, assemblyFiles, bxPath);
     } catch (err) {
       rmSync(vendoredDir, { recursive: true, force: true });
       logError(
@@ -2418,40 +2587,40 @@ async function reVendorEntry(
   return { status: "skipped" };
 }
 
-/** FR-142 path re-vendor: hash-compare against the recorded origin. */
+/**
+ * FR-142 path re-vendor: hash-compare against the recorded origin.
+ * FR-156: tree-shaped — re-vendors the WHOLE origin dir (minus skip-list)
+ * and re-hashes the resulting tree. A change anywhere in the source tree
+ * (content, added file, removed file) flips the hash → status=changed.
+ */
 function reVendorPath(
   entry: AgentEntry,
   origin: PathOrigin,
   vendoredDir: string,
 ): ReVendorResult {
-  // Re-resolve the source file set from the recorded origin dir + the entry's
-  // versioned/glob/file. A versioned glob may now match a DIFFERENT set; the
-  // vendor replaces the whole dir, so that is handled transparently.
-  let resolved: ResolvedSource;
-  if (entry.canonical.versioned) {
-    const r = resolveSource(origin.dir, true, entry.canonical.glob, origin.dir);
-    if (typeof r === "string") {
-      return `error: ${r}`;
-    }
-    resolved = r;
-  } else {
-    const file = entry.canonical.file ?? "";
-    const r = resolveSource(join(origin.dir, file), false, undefined, origin.dir);
-    if (typeof r === "string") {
-      return `error: ${r}`;
-    }
-    resolved = r;
+  // FR-156: the origin dir IS the agent's source tree root. No more file-set
+  // resolution at the vendor site — `vendorAgentTreeAtomic` walks the dir
+  // and applies the skip-list. The entry's canonical.versioned/glob/file
+  // metadata is still needed for `assembleAgentHarness`'s body-picker.
+  if (!existsSync(origin.dir)) {
+    return `error: canonical source dir does not exist: ${origin.dir}`;
   }
   try {
-    vendorSurfaceAtomic(resolved.srcDir, resolved.files, vendoredDir);
+    vendorAgentTreeAtomic(origin.dir, vendoredDir);
     // FR-152 α-assembly on re-vendor: regenerate harness.md from the freshly
     // re-vendored frontmatter + body. Idempotent — same inputs → same bytes.
     const bxPath = resolvePersonalBodyExceptionPath(entry.body_exception);
-    assembleAgentHarness(vendoredDir, resolved.files, bxPath);
+    const assemblyFiles = pickAssemblyFiles(
+      vendoredDir,
+      entry.canonical.versioned === true,
+      entry.canonical.glob,
+      entry.canonical.file,
+    );
+    assembleAgentHarness(vendoredDir, assemblyFiles, bxPath);
   } catch (err) {
     return `error: failed to re-vendor: ${(err as Error).message}`;
   }
-  const newHash = hashSurface(vendoredDir, resolved.files);
+  const newHash = hashAgentTree(vendoredDir);
   return newHash === origin.hash
     ? { status: "unchanged", origin: { ...origin, hash: newHash } }
     : { status: "changed", origin: { ...origin, hash: newHash } };
@@ -2521,14 +2690,23 @@ async function reVendorGithub(
       return `error: ${selected}`;
     }
     try {
-      vendorSurfaceAtomic(selected.srcDir, selected.files, vendoredDir);
+      // FR-156: tree vendor (mirrors reVendorPath). `selected.srcDir` is the
+      // sandbox-clamped repo subdir, so the walk stays inside the fetched
+      // tarball's sandbox (L-515).
+      vendorAgentTreeAtomic(selected.srcDir, vendoredDir);
       // FR-152 α-assembly on github re-vendor: same idempotent regeneration.
       const bxPath = resolvePersonalBodyExceptionPath(entry.body_exception);
-      assembleAgentHarness(vendoredDir, selected.files, bxPath);
+      const assemblyFiles = pickAssemblyFiles(
+        vendoredDir,
+        selected.entry.canonical.versioned === true,
+        selected.entry.canonical.glob,
+        selected.entry.canonical.file,
+      );
+      assembleAgentHarness(vendoredDir, assemblyFiles, bxPath);
     } catch (err) {
       return `error: failed to re-vendor: ${(err as Error).message}`;
     }
-    const newHash = hashFileSet(vendoredDir, selected.files);
+    const newHash = hashAgentTree(vendoredDir);
     const updated: GithubOrigin = {
       ...origin,
       ref: newer.tag,

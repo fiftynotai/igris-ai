@@ -380,6 +380,12 @@ PY
 TOTAL=0
 MATCH=0
 DRIFT=0
+# FR-156: per-agent tree-hash verdict is fired ONCE per agent (the loop walks
+# per-target rows, so a 3-target agent would otherwise emit 3 tree verdicts).
+# Tracked as a colon-delimited string `:name1:name2:` so the membership check
+# `case "$TREE_CHECKED" in *":$name:"*)` works under bash 3.2 (macOS default
+# — no associative arrays).
+TREE_CHECKED=":"
 
 echo "Harness drift check (project root: $PROJECT_ROOT):"
 echo ""
@@ -466,6 +472,146 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
       echo "  [$name/$ttype] MISSING — body-exception sidecar absent: $exc_abs"
       DRIFT=$((DRIFT + 1))
       continue
+    fi
+  fi
+
+  # FR-156: TREE pre-check. ONE verdict per agent (deduped via TREE_CHECKED)
+  # comparing the vendored registry tree against the recorded path-origin's
+  # source tree. Runs BEFORE the per-target FR-152 symlink check (plan
+  # step 11) — the two verdicts are ORTHOGONAL (tree-match doesn't imply
+  # symlink-correct, and vice versa) so both must fire so the summary count
+  # is honest. Github origins are release-tag-tracked (not source-tree-
+  # tracked) so we skip them with a note. The verdict diff sub-line caps at
+  # N=5 differing relpaths with `(... and N more)` suffix (architect's
+  # Decision 2 — single MATCH/DRIFTED + diff sub-line).
+  tree_already_checked=0
+  case "$TREE_CHECKED" in
+    *":$name:"*) tree_already_checked=1 ;;
+  esac
+  if [ "$layer" = "personal" ] && [ "$tree_already_checked" -eq 0 ]; then
+    TREE_CHECKED="${TREE_CHECKED}${name}:"
+    tree_origins_path="$BRAIN_DIR/registry/origins.json"
+    tree_origin_info=""
+    if [ -f "$tree_origins_path" ]; then
+      tree_origin_info=$(python3 - "$tree_origins_path" "$name" <<'PY'
+import json
+import sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        origins = json.load(fh)
+except OSError:
+    sys.exit(0)
+o = origins.get("agent:" + sys.argv[2])
+if not isinstance(o, dict):
+    sys.exit(0)
+otype = o.get("type", "")
+# tab-separated: type \t dir (path) | repo@ref (github)
+if otype == "path":
+    print(otype + "\t" + (o.get("dir") or ""))
+elif otype == "github":
+    print(otype + "\t" + (o.get("repo") or "") + "@" + (o.get("ref") or ""))
+PY
+)
+    fi
+    if [ -z "$tree_origin_info" ]; then
+      : # no origin recorded for this personal agent — skip the tree pre-check
+        # silently. The per-target FR-152 verdict still fires below; absence
+        # of an origin is a recoverable state (operator never ran update on a
+        # legacy entry — TD-191 zero-migration posture).
+    else
+      tree_origin_type="${tree_origin_info%%	*}"
+      tree_origin_payload="${tree_origin_info#*	}"
+      if [ "$tree_origin_type" = "path" ]; then
+        tree_origin_dir="$tree_origin_payload"
+        # Resolve `~/...` for sources recorded with a tilde prefix.
+        case "$tree_origin_dir" in
+          "~"/*) tree_origin_dir="$HOME/${tree_origin_dir#"~/"}" ;;
+        esac
+        tree_registry_dir="$BRAIN_DIR/registry/agents/$name"
+        if [ ! -d "$tree_registry_dir" ]; then
+          echo "  [$name/tree] DRIFTED — registry dir absent: $tree_registry_dir"
+          DRIFT=$((DRIFT + 1))
+        elif [ ! -d "$tree_origin_dir" ]; then
+          echo "  [$name/tree] NOTE — source dir gone ($tree_origin_dir); tree drift undetectable, per-target verify continues"
+        else
+          tree_expected=$(hash_agent_tree "$tree_registry_dir")
+          tree_actual=$(hash_agent_tree "$tree_origin_dir")
+          if [ "$tree_expected" = "$tree_actual" ]; then
+            echo "  [$name/tree] MATCH"
+            MATCH=$((MATCH + 1))
+          else
+            echo "  [$name/tree] DRIFTED"
+            echo "      registry  : $tree_registry_dir (sha $tree_expected)"
+            echo "      source    : $tree_origin_dir (sha $tree_actual)"
+            # Locate up to N=5 differing relpaths so the operator can act
+            # without re-deriving the diff manually.
+            tree_diff=$(python3 - "$tree_registry_dir" "$tree_origin_dir" <<'PY'
+import hashlib
+import os
+import sys
+
+EXACT = {"MAINTAINING.md", ".DS_Store", "node_modules", ".venv", "__pycache__"}
+
+
+def skipped(name):
+    if name in EXACT:
+        return True
+    if name.startswith(".git"):
+        return True
+    if name.endswith(".pyc"):
+        return True
+    return False
+
+
+def walk(tree):
+    out = {}
+    if not os.path.isdir(tree):
+        return out
+    for root, dirs, files in os.walk(tree):
+        dirs[:] = [d for d in dirs if not skipped(d)]
+        for f in files:
+            if skipped(f):
+                continue
+            abs_p = os.path.join(root, f)
+            rel = os.path.relpath(abs_p, tree).replace(os.sep, "/")
+            if rel == "harness.md":
+                continue
+            try:
+                with open(abs_p, "rb") as fh:
+                    out[rel] = hashlib.sha256(fh.read()).hexdigest()
+            except OSError:
+                out[rel] = "<unreadable>"
+    return out
+
+
+a = walk(sys.argv[1])  # registry
+b = walk(sys.argv[2])  # source
+diffs = []
+keys = sorted(set(a) | set(b))
+for k in keys:
+    if k not in a:
+        diffs.append("+ " + k + " (only in source)")
+    elif k not in b:
+        diffs.append("- " + k + " (only in registry)")
+    elif a[k] != b[k]:
+        diffs.append("~ " + k + " (contents differ)")
+N = 5
+for d in diffs[:N]:
+    print("      " + d)
+if len(diffs) > N:
+    print("      (... and {} more)".format(len(diffs) - N))
+PY
+)
+            if [ -n "$tree_diff" ]; then
+              printf '%s\n' "$tree_diff"
+            fi
+            echo "      reason    : agent tree diverges from recorded path-origin source — \`igris registry update $name\` re-vendors"
+            DRIFT=$((DRIFT + 1))
+          fi
+        fi
+      elif [ "$tree_origin_type" = "github" ]; then
+        echo "  [$name/tree] NOTE — github origin ($tree_origin_payload); freshness is release-tag tracked, tree-hash drift not applicable"
+      fi
     fi
   fi
 

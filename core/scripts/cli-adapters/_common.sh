@@ -387,6 +387,77 @@ PY
 }
 
 # ---------------------------------------------------------------------------
+# hash_agent_tree <dir>
+#
+# FR-156: stable content hash over a vendored agent tree (sorted relpath +
+# \0 + bytes, folded into one sha256). Bash counterpart to TS
+# `hashAgentTree` in cli/src/verbs/registry.ts — must produce IDENTICAL hex
+# output for the same tree contents so drift-verify's pre-check pairs with
+# the recorded origin hash written by `igris registry add/update`.
+#
+# Skip-list MUST stay byte-for-byte in sync with the TS side at
+# `cli/src/verbs/registry.ts:isAgentTreeSkipped` (three sites, one rule —
+# any drift between them re-opens the L-430 "hash basis ≠ disk" trap).
+# `harness.md` is excluded from the basis because it is FR-152 α-assembly
+# OUTPUT (derived) — including it would make every assembly re-write
+# register as drift. Same posture as TS `hashAgentTree`.
+#
+# Returns 0 always; emits 64-char hex to stdout. Missing dir → empty sha256
+# (the well-known `e3b0c4...` digest), matching TS's `existsSync` guard.
+# ---------------------------------------------------------------------------
+hash_agent_tree() {
+  local tree_dir="$1"
+  python3 - "$tree_dir" <<'PY'
+import hashlib
+import os
+import sys
+
+# Skip-list: keep byte-for-byte in sync with
+# cli/src/verbs/registry.ts:isAgentTreeSkipped (FR-156).
+EXACT = {"MAINTAINING.md", ".DS_Store", "node_modules", ".venv", "__pycache__"}
+
+
+def skipped(name):
+    if name in EXACT:
+        return True
+    if name.startswith(".git"):
+        return True  # .git, .gitignore, .gitkeep, .github
+    if name.endswith(".pyc"):
+        return True
+    return False
+
+
+tree = sys.argv[1]
+rels = []
+if os.path.isdir(tree):
+    for root, dirs, files in os.walk(tree):
+        # Filter dirs IN-PLACE so os.walk does not descend into skipped dirs
+        # (matches the TS recursive walk's pre-recursion skip check).
+        dirs[:] = [d for d in dirs if not skipped(d)]
+        for f in files:
+            if skipped(f):
+                continue
+            abs_path = os.path.join(root, f)
+            rel = os.path.relpath(abs_path, tree).replace(os.sep, "/")
+            # Exclude FR-152 α-assembled output from the basis (top-level
+            # harness.md only — a nested file named harness.md would be
+            # legitimate operator content, same as the TS side).
+            if rel == "harness.md":
+                continue
+            rels.append(rel)
+
+rels.sort()
+h = hashlib.sha256()
+for rel in rels:
+    h.update(rel.encode("utf-8"))
+    h.update(b"\x00")
+    with open(os.path.join(tree, rel), "rb") as fh:
+        h.update(fh.read())
+print(h.hexdigest())
+PY
+}
+
+# ---------------------------------------------------------------------------
 # validate_manifest <manifest-path> <schema-path>
 #
 # Validates a harness manifest against the JSON Schema (FR-136). Two code

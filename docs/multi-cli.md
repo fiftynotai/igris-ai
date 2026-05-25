@@ -240,6 +240,60 @@ that read sibling files (e.g. claude reading `scripts/`) see them automatically.
 
 ---
 
+## Nested Agent Files (FR-156)
+
+Personal-overlay agents are vendored as **full directory trees** into
+`~/.igris/registry/agents/<name>/` — the same shape as skills (symmetric
+topology with FR-149 + TD-191, L-519 §18.1). An agent's `system-prompt-vN.md`
+body can reference siblings like `routing/_routing.md`, `registry/types.md`,
+or `archetypes/ARCH-*.md` and `igris registry add` / `igris registry update`
+will vendor the entire source dir alongside the body. This closes the L-516
+violation where pre-FR-156 only the frontmatter + chosen body file were
+copied — supporting files lived in the operator's source dir only, so the
+registry copy was not self-sufficient.
+
+**Reference convention** — bodies SHOULD cite siblings via the absolute
+registry path:
+
+```
+See ~/.igris/registry/agents/deck/routing/_routing.md for the routing rules.
+```
+
+NOT a relative path. Igris does **not** rewrite operator-authored body text;
+the body you author is the body the harness reads. (See TD-197 for the
+content-pipeline migration that converts the in-tree DECK/DESIGNER bodies
+to this convention.)
+
+**Vendor skip-list** excludes operator-author noise from the registry copy:
+
+- `MAINTAINING.md` — internal-author-only doc
+- `.DS_Store` — macOS filesystem cruft
+- `.git*` — VCS metadata (matches `.git`, `.gitignore`, `.gitkeep`, `.github`)
+- `node_modules/`, `.venv/`, `__pycache__/` — language deps + caches
+- `*.pyc` — compiled python
+- `harness.md` — FR-152 α-assembled output (derived, not source)
+
+The skip-list is fixed (per-agent `.igrisignore` overrides are deferred —
+add as a fast-follow if a real case appears post-ship).
+
+**Drift detection** — `check_harness_drift.sh` runs a per-agent tree-hash
+pre-check (`[<name>/tree] MATCH/DRIFTED`) BEFORE the per-target FR-152
+symlink check. The two verdicts are orthogonal (tree-match doesn't imply
+symlink-correct, and vice versa) so both fire so the summary count is
+honest. A DRIFTED verdict locates up to 5 differing relpaths in a sub-line
+(architect-chosen Decision 2 — strict single tree verdict + file-list diff,
+NOT per-file fan-out).
+
+**`igris registry update <name>`** re-vendors the whole tree from the
+recorded path origin. A change ANYWHERE in the source tree (content,
+addition, removal) flips the recorded hash → status=changed. Update
+semantics widened with FR-156: pre-FR-156 a sibling unrelated file added to
+the source dir was IGNORED; post-FR-156 it's vendored on next update. This
+is BY DESIGN (closes L-516). Author-only files belong in the skip-list or
+outside the agent dir.
+
+---
+
 ## 32KB Cap (Codex) — RETIRED
 
 Pre-FR-153 the codex skill surface was an aggregated `AGENTS.md` under a 32KB
