@@ -122,7 +122,7 @@
             "additionalProperties": false,
             "properties": {
               "type": { "enum": ["claude", "codex", "gemini"] },
-              "path": { "type": "string", "description": "output harness path, resolved relative to --project-root" }
+              "path": { "type": "string", "description": "output harness path. Resolved per 3-case shape (FR-154): leading `~/` expands against $HOME, `/abs/...` is verbatim, otherwise relative to --project-root." }
             }
           }
         }

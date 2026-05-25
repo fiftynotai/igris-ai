@@ -593,7 +593,15 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
     fi
   fi
 
-  target_abs="$PROJECT_ROOT/$target_path"
+  # FR-154: agent target.path resolution mirrors the skills 3-case resolver
+  # (compile_harnesses.sh:763 / check_harness_drift.sh parity). `~/...` expands
+  # against $HOME, `/abs/...` is honored verbatim, anything else is taken as
+  # project-relative. Drift sibling carries the identical block.
+  case "$target_path" in
+    "~"/*) target_abs="$HOME/${target_path#"~/"}" ;;
+    /*)    target_abs="$target_path" ;;
+    *)     target_abs="$PROJECT_ROOT/$target_path" ;;
+  esac
 
   # Resolve an optional body-exception sidecar. `-` is the empty sentinel.
   # FR-144: resolution is LAYER-KEYED (not fallback). A `layer:"personal"`
