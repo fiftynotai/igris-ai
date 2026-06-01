@@ -3,7 +3,8 @@
 # Description: Orchestrate harness regeneration. Reads harness-manifest.json
 #              and, for each agent/target, emits the matching per-harness
 #              projection: claude/gemini → atomic symlink to the registry-
-#              resident harness.md (FR-152 α-assembly); codex → TOML via the
+#              resident harness.<harness>.md (FR-152/FR-158 α-assembly);
+#              codex → TOML via the
 #              refactored sync_codex_agents.sh (frontmatter + body separated,
 #              FR-151 sidecar). See L-519 §18.1 (compile/drift-verify pairing).
 # Usage: compile_harnesses.sh --project-root <dir> [options]
@@ -113,43 +114,176 @@ emit_skill_symlink() {
 }
 
 # ---------------------------------------------------------------------------
-# assemble_agent_harness_into_registry <name> <canon_abs> <exc_abs> <out_dir>
+# assemble_agent_harness_into_registry <harness_label> <name> <canon_abs>
+#                                      <exc_abs> <out_dir>
 #
-# FR-152 α-assembly (compile-side fallback). Materializes
-# `<out_dir>/harness.md` = `---\n<frontmatter>\n---\n\n<body>` so claude/gemini
-# symlinks resolve to ONE registry-resident file. Frontmatter resolution
-# preference:
-#   1. `<out_dir>/frontmatter.md` (FR-151 vendor-side sidecar — personal agent),
-#   2. `<dirname canon_abs>/frontmatter.md` (FR-151 in-place sidecar),
-#   3. inline frontmatter extracted from `canon_abs` (TD-195 fallback — core
-#      agents whose split hasn't landed).
+# FR-152 / FR-158 α-assembly (compile-side fallback). Materializes
+# `<out_dir>/harness.<harness_label>.md` = `---\n<frontmatter>\n---\n\n<body>`
+# for the given harness ("claude" or "gemini"). Symlinks at compile time
+# resolve to this registry-resident file.
+#
+# Frontmatter resolution preference per harness:
+#   claude:
+#     1. `<out_dir>/frontmatter.claude.md`        (FR-151/FR-158 vendor-side sidecar — personal agent),
+#     2. `<dirname canon_abs>/frontmatter.claude.md` (FR-151/FR-158 in-place sidecar),
+#     3. inline frontmatter extracted from `canon_abs` (TD-195 fallback — core
+#        agents whose split hasn't landed).
+#   gemini:
+#     1. `<out_dir>/frontmatter.gemini.md`        (operator-authored override — honored verbatim),
+#     2. `<dirname canon_abs>/frontmatter.gemini.md` (in-place gemini override),
+#     3. FALLBACK to the Claude resolution chain, then AUTO-TRANSLATE
+#        Claude-shape → Gemini-shape (FR-158 retry 1 regression fix). Brings
+#        the bash compile path to parity with TS `assembleGeminiHarness`:
+#        translates `tools:` via CLAUDE_TO_GEMINI_TOOLS, injects `kind: local`
+#        (unless operator-provided), drops `model:/temperature:/max_turns:`
+#        per FR-158 plan §4.1 (Gemini uses defaults; operators override via
+#        `frontmatter.gemini.md`). Before this fix, `igris harness compile`
+#        clobbered the TS-produced Gemini-shape `harness.gemini.md` back to
+#        Claude-shape, silently re-breaking Gemini's `invoke_agent`.
+#
 # Body is `strip_frontmatter "$canon_abs"`. When `<exc_abs>` is non-empty
-# the FR-144 / TD-193 body-exception is applied at the unique anchor line.
-# Atomic temp + mv. Idempotent — same inputs → same bytes. See L-519, FR-151.
+# the FR-144 / TD-193 body-exception is applied at the unique anchor line
+# (same JSON for both harness labels — Decision 3).
+# Atomic temp + mv. Idempotent — same inputs → same bytes. See L-519, FR-158.
 # ---------------------------------------------------------------------------
 assemble_agent_harness_into_registry() {
-  local name="$1"
-  local canon_abs="$2"
-  local exc_abs="$3"
-  local out_dir="$4"
+  local harness_label="$1"
+  local name="$2"
+  local canon_abs="$3"
+  local exc_abs="$4"
+  local out_dir="$5"
 
   mkdir -p "$out_dir"
 
-  # Resolve frontmatter.md per the preference order above. Note the on-disk
-  # sidecar shape is `---\n<fields>\n---\n` (FR-151 contract); we strip the
-  # surrounding delimiters here so the assembled harness.md doesn't double-wrap.
+  # FR-158: pick the sidecar basename for this harness label, then fall back
+  # to the Claude basename so a Gemini compile against a sidecar-less core
+  # agent still produces output. For Gemini, the fallback content is then
+  # auto-translated below (matches TS `assembleGeminiHarness`).
+  local primary_sidecar="frontmatter.${harness_label}.md"
+  local fallback_sidecar="frontmatter.claude.md"
+
   local fm_text=""
-  if [ -f "$out_dir/frontmatter.md" ]; then
-    fm_text=$(parse_frontmatter "$out_dir/frontmatter.md" || cat "$out_dir/frontmatter.md")
-  elif [ -f "$(dirname "$canon_abs")/frontmatter.md" ]; then
-    fm_text=$(parse_frontmatter "$(dirname "$canon_abs")/frontmatter.md" \
-              || cat "$(dirname "$canon_abs")/frontmatter.md")
+  # Track whether the resolved frontmatter came from the FALLBACK Claude
+  # sidecar / inline extract (not the primary). When harness_label=gemini
+  # AND this flag is 1, we auto-translate the Claude-shape fields into
+  # Gemini-shape before assembly. The primary `frontmatter.gemini.md` is
+  # honored verbatim (operator override), so the flag stays 0 in that case.
+  local fm_is_fallback=0
+  if [ -f "$out_dir/$primary_sidecar" ]; then
+    fm_text=$(parse_frontmatter "$out_dir/$primary_sidecar" || cat "$out_dir/$primary_sidecar")
+  elif [ -f "$(dirname "$canon_abs")/$primary_sidecar" ]; then
+    fm_text=$(parse_frontmatter "$(dirname "$canon_abs")/$primary_sidecar" \
+              || cat "$(dirname "$canon_abs")/$primary_sidecar")
+  elif [ -f "$out_dir/$fallback_sidecar" ]; then
+    fm_text=$(parse_frontmatter "$out_dir/$fallback_sidecar" || cat "$out_dir/$fallback_sidecar")
+    fm_is_fallback=1
+  elif [ -f "$(dirname "$canon_abs")/$fallback_sidecar" ]; then
+    fm_text=$(parse_frontmatter "$(dirname "$canon_abs")/$fallback_sidecar" \
+              || cat "$(dirname "$canon_abs")/$fallback_sidecar")
+    fm_is_fallback=1
   else
     # TD-195 fallback: extract inline frontmatter from canonical. Falls back to
     # an empty fields block when there's no inline frontmatter either (matches
-    # pre-FR-152 lenient codex behavior; the assembled harness.md will have an
+    # pre-FR-152 lenient codex behavior; the assembled harness will have an
     # empty `---\n---\n` block, which is harmless).
     fm_text=$(parse_frontmatter "$canon_abs" || echo "")
+    fm_is_fallback=1
+  fi
+
+  # FR-158 retry 1: when emitting the Gemini harness AND the frontmatter was
+  # sourced from the Claude fallback (no operator-authored `frontmatter.gemini.md`),
+  # auto-translate Claude-shape → Gemini-shape. Mirrors TS
+  # `translateClaudeToGeminiFrontmatter` byte-for-byte: 9-mapping tool-name
+  # table, `kind: local` injection (unless operator-provided in the source),
+  # `model:/temperature:/max_turns:` drop, other fields passthrough,
+  # `tools:` output normalized to YAML flow-list. Empty `fm_text` (TD-195
+  # empty-extract case) passes through this no-op-friendly translator.
+  if [ "$harness_label" = "gemini" ] && [ "$fm_is_fallback" = "1" ]; then
+    fm_text=$(python3 - "$fm_text" <<'PY'
+import re
+import sys
+
+# CLAUDE_TO_GEMINI_TOOLS — mirror of cli/src/verbs/registry.ts's
+# CLAUDE_TO_GEMINI_TOOLS record. Keep byte-for-byte in sync.
+TOOL_MAP = {
+    "Read": "read_file",
+    "Write": "write_file",
+    "Edit": "edit_file",
+    "Bash": "run_shell_command",
+    "Grep": "grep_search",
+    "Glob": "list_directory",  # imperfect — operator override is the escape hatch
+    "Task": "task",
+    "WebFetch": "web_fetch",
+    "WebSearch": "web_search",
+}
+
+# Drop set — Gemini uses defaults; operator override via
+# `frontmatter.gemini.md` is the escape hatch.
+DROPS = {"model", "temperature", "max_turns"}
+
+
+def parse_tools_field(value):
+    """Mirror of TS `parseToolsField`. Accepts string / CSV / YAML flow-list,
+    with or without quotes. Returns a list of bare token strings."""
+    trimmed = value.strip()
+    if trimmed == "":
+        return []
+    inner = trimmed
+    if inner.startswith("[") and inner.endswith("]"):
+        inner = inner[1:-1]
+    out = []
+    for t in inner.split(","):
+        t = t.strip()
+        # Strip surrounding single OR double quotes.
+        if (t.startswith('"') and t.endswith('"')) or (
+            t.startswith("'") and t.endswith("'")
+        ):
+            t = t[1:-1]
+        if t:
+            out.append(t)
+    return out
+
+
+def parse_simple_frontmatter_fields(fields):
+    """Mirror of TS `parseSimpleFrontmatterFields`. Returns ordered list of
+    {key, value} dicts. Skips blank lines and non-`key: value` lines."""
+    out = []
+    pattern = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$")
+    for raw in fields.split("\n"):
+        line = raw.rstrip("\r")
+        if line.strip() == "":
+            continue
+        m = pattern.match(line)
+        if not m:
+            continue
+        out.append({"key": m.group(1), "value": m.group(2)})
+    return out
+
+
+fields = sys.argv[1]
+parsed = parse_simple_frontmatter_fields(fields)
+out_lines = []
+kind_emitted = False
+for entry in parsed:
+    key = entry["key"]
+    value = entry["value"]
+    if key == "tools":
+        tokens = parse_tools_field(value)
+        translated = [TOOL_MAP.get(t, t) for t in tokens]
+        out_lines.append("tools: [" + ", ".join(translated) + "]")
+        continue
+    if key == "kind":
+        out_lines.append(key + ": " + value)
+        kind_emitted = True
+        continue
+    if key in DROPS:
+        continue
+    out_lines.append(key + ": " + value)
+if not kind_emitted:
+    out_lines.append("kind: local")
+sys.stdout.write("\n".join(out_lines))
+PY
+)
   fi
 
   # Strip a trailing newline from frontmatter; we add our own delimiters.
@@ -161,7 +295,7 @@ assemble_agent_harness_into_registry() {
   # Atomic assemble: build text via python3 so anchor-application + the
   # `---\n<fm>\n---\n\n<body>` concatenation matches the TS vendor path
   # byte-for-byte (FR-144/TD-193 regression guard).
-  local out_path="$out_dir/harness.md"
+  local out_path="$out_dir/harness.${harness_label}.md"
   local tmp="$out_path.tmp-$$"
   python3 - "$tmp" "$fm_text" "$body" "$exc_abs" <<'PY'
 import json
@@ -208,34 +342,40 @@ PY
 # ---------------------------------------------------------------------------
 # resolve_or_extract_frontmatter <name> <canon_abs>
 #
-# FR-152: emit the absolute path of a file containing the agent's YAML
-# frontmatter (newline-separated, NO `---` delimiters) so the refactored
+# FR-152 / FR-158: emit the absolute path of a file containing the agent's YAML
+# frontmatter (newline-separated, NO `---` delimiters) so the bash-driven
 # `sync_codex_agents.sh` can read it. Preference order mirrors
-# `assemble_agent_harness_into_registry`:
-#   1. `<dirname canon_abs>/frontmatter.md` (FR-151 in-place sidecar),
-#   2. `$BRAIN_DIR/registry/agents/<name>/frontmatter.md` (vendor-side sidecar),
+# `assemble_agent_harness_into_registry` (Claude side; codex consumes the
+# Claude-shape frontmatter):
+#   1. `<dirname canon_abs>/frontmatter.claude.md` (FR-151/FR-158 in-place sidecar),
+#   2. `$BRAIN_DIR/registry/agents/<name>/frontmatter.claude.md` (vendor-side sidecar),
 #   3. extract inline from `canon_abs` via parse_frontmatter, write to a
 #      tempfile (TD-195 fallback for core agents). Tempfile path is appended
 #      to TMPFILES_TO_CLEAN for trap cleanup.
 # Echoes the resolved path. Returns non-zero when no frontmatter exists.
+#
+# FR-158 interim: this resolver feeds the codex bash compiler with the
+# Claude-shape sidecar (renamed `frontmatter.md` -> `frontmatter.claude.md`
+# in FR-158). FR-159 will port codex emission to TS, at which point this
+# helper can be retired in favor of a parameterized TS path.
 # ---------------------------------------------------------------------------
 resolve_or_extract_frontmatter() {
   local name="$1"
   local canon_abs="$2"
 
-  local in_place="$(dirname "$canon_abs")/frontmatter.md"
+  local in_place="$(dirname "$canon_abs")/frontmatter.claude.md"
   if [ -f "$in_place" ]; then
     echo "$in_place"
     return 0
   fi
-  local in_vendor="$BRAIN_DIR/registry/agents/$name/frontmatter.md"
+  local in_vendor="$BRAIN_DIR/registry/agents/$name/frontmatter.claude.md"
   if [ -f "$in_vendor" ]; then
     echo "$in_vendor"
     return 0
   fi
   # TD-195 fallback: extract inline. BSD mktemp on macOS only treats the LAST
   # contiguous `X`s before EOF as the template, so the pattern has no `.md`
-  # suffix; the file content is identical to a `frontmatter.md` sidecar shape
+  # suffix; the file content is identical to a `frontmatter.claude.md` sidecar shape
   # which is what `get_skill_field` reads (no extension dependency).
   # FR-152 D4: this preserves the pre-FR-152 lenient codex behavior for canonicals
   # that have neither a sidecar nor inline frontmatter. The wrapped tempfile is
@@ -250,7 +390,7 @@ resolve_or_extract_frontmatter() {
   fi
   rm -f "$tmp"
   # Wrap in `---\n...\n---\n` so `get_skill_field` (which expects delimiters)
-  # reads it. Same shape as a real frontmatter.md sidecar regardless of whether
+  # reads it. Same shape as a real frontmatter.claude.md sidecar regardless of whether
   # the inline extract succeeded — empty block is fine downstream.
   wrapped="$(mktemp "${TMPDIR:-/tmp}/igris_codex_fm_wrapped.XXXXXX")"
   {
@@ -269,20 +409,23 @@ resolve_or_extract_frontmatter() {
 # compile_md_agent_target <harness_label> <name> <canon_abs> <exc_abs>
 #                         <target_abs>
 #
-# FR-152 unified α-projection for claude + gemini agent targets. Both harnesses
-# share the SAME registry-resident derived file (`harness.md`); only the log
-# strings differ. The 3-case dispatch:
+# FR-152 / FR-158 per-harness α-projection for claude + gemini agent targets.
+# Each harness owns its own registry-resident derived file
+# (`harness.claude.md` or `harness.gemini.md`); the projection symlink at
+# `<target_abs>` points at the matching one. The 3-case dispatch:
 #
-#   Case A — target absent → assemble harness.md + create symlink → it.
-#   Case B — target IS a symlink → if it resolves to the registry harness.md,
-#            silent no-op; else atomically repoint + log migration.
+#   Case A — target absent → assemble harness.<label>.md + create symlink → it.
+#   Case B — target IS a symlink → if it resolves to the registry
+#            harness.<label>.md, silent no-op; else atomically repoint + log
+#            migration.
 #   Case C — target IS a regular file → HARD ERROR (refuse-to-clobber). The
 #            FR-149 Case C back-compat path is RETIRED by FR-152 (along with
-#            the legacy body-refresh adapter, retired by FR-152). Operator
-#            must rm + re-run compile.
+#            the legacy body-refresh adapter). Operator must rm + re-run
+#            compile.
 #
 # See L-519 (the symlink IS the projection, anchored at the registry-resident
-# harness.md). Body-exception is applied at assembly time, not symlink time.
+# harness.<label>.md). Body-exception is applied at assembly time, not symlink
+# time.
 # ---------------------------------------------------------------------------
 compile_md_agent_target() {
   local harness_label="$1"
@@ -292,11 +435,12 @@ compile_md_agent_target() {
   local target_abs="$5"
 
   local registry_agent_dir="$BRAIN_DIR/registry/agents/$name"
-  if ! assemble_agent_harness_into_registry "$name" "$canon_abs" "$exc_abs" \
+  if ! assemble_agent_harness_into_registry "$harness_label" "$name" \
+                                            "$canon_abs" "$exc_abs" \
                                             "$registry_agent_dir"; then
     return 1
   fi
-  local harness_target="$registry_agent_dir/harness.md"
+  local harness_target="$registry_agent_dir/harness.${harness_label}.md"
 
   # Case C: real file, NOT a symlink → refuse-to-clobber. The FR-149 back-compat
   # via the legacy body-refresh adapter is retired by FR-152; the operator
@@ -680,14 +824,18 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
   rc=0
   case "$ttype" in
     claude)
-      # FR-152: registry-anchored symlink → assembled harness.md (Case A/B);
-      # real-file target → refuse-to-clobber (Case C retired). See L-519.
+      # FR-152 / FR-158: registry-anchored symlink → assembled
+      # harness.claude.md (Case A/B); real-file target → refuse-to-clobber
+      # (Case C retired). See L-519.
       compile_md_agent_target "claude" "$name" "$canon_abs" "$exc_abs" \
                               "$target_abs" || rc=$?
       ;;
     gemini)
-      # FR-152: first-class gemini agent target. SAME α-projection as claude —
-      # both symlinks resolve to the same registry harness.md.
+      # FR-152 / FR-158: first-class gemini agent target. Per-harness
+      # α-projection — gemini symlink resolves to harness.gemini.md (own
+      # derived output), allowing Gemini-shape frontmatter (kind: local,
+      # snake_case tool names) via auto-translate or operator-authored
+      # frontmatter.gemini.md override.
       compile_md_agent_target "gemini" "$name" "$canon_abs" "$exc_abs" \
                               "$target_abs" || rc=$?
       ;;

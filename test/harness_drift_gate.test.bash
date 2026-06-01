@@ -58,7 +58,7 @@ setup() {
 
   # A canonical agent prompt (frontmatter + body). The compile-time α-assembly
   # extracts the frontmatter inline (TD-195 fallback — no FR-151 sidecar
-  # present) and produces a registry-resident harness.md the symlink points at.
+  # present) and produces a registry-resident harness.claude.md the symlink points at.
   cat > "$PROJ/canon/sample.md" <<'EOF'
 ---
 name: sample
@@ -98,7 +98,7 @@ teardown() {
 
 @test "in-sync compiled harness yields exit 0 and MATCH" {
   # FR-152: compile creates a registry-anchored symlink (Case A); MATCH verdict
-  # is symlink containment + final-component equality against harness.md.
+  # is symlink containment + final-component equality against harness.claude.md.
   run bash "$COMPILE" --project-root "$PROJ" --manifest "$MANIFEST" --target claude
   [ "$status" -eq 0 ]
   [ -L "$PROJ/.claude/agents/sample.md" ]
@@ -458,7 +458,7 @@ EOF
 @test "TD-193: claude + body_exception still MATCH (FR-144 regression guard)" {
   # Proves the gate did not regress the claude path under FR-152 α-assembly:
   # claude + body_exception must still ASSEMBLE WITH the appendix into the
-  # registry-resident harness.md, and the symlink resolves there → MATCH.
+  # registry-resident harness.claude.md, and the symlink resolves there → MATCH.
   # If the gate accidentally bypasses the appendix for claude or the assembly
   # never applies it, this test would surface as a missing appendix in the
   # registry file (we assert content end-to-end below).
@@ -469,9 +469,9 @@ EOF
                       --manifest "$root/harness-manifest.json" \
                       --target claude
   [ "$status" -eq 0 ]
-  # Symlink resolves to the registry-resident harness.md.
+  # Symlink resolves to the registry-resident harness.claude.md.
   [ -L "$root/.claude/agents/sample.md" ]
-  # The assembled harness.md contains the body-exception appendix.
+  # The assembled harness.claude.md contains the body-exception appendix.
   local resolved
   resolved="$(realpath "$root/.claude/agents/sample.md")"
   grep -q "Extra rule for the appendix." "$resolved"
@@ -709,12 +709,12 @@ EOF
 # ---------------------------------------------------------------------------
 # FR-152: agent harness unification — claude direct symlink, gemini first-class,
 # codex signature refactor. Both claude + gemini symlinks resolve to the SAME
-# registry-resident `<BRAIN_DIR>/registry/agents/<name>/harness.md` assembled
+# registry-resident `<BRAIN_DIR>/registry/agents/<name>/harness.claude.md` assembled
 # from frontmatter + body at compile/vendor time. See L-519 §18.1 pairing.
 # ---------------------------------------------------------------------------
 
 # build_fr152_agent_project <name> <ttype>  where ttype ∈ claude|gemini|codex.
-# Seeds a project with FR-151-shape vendored frontmatter.md + system-prompt-v1.md
+# Seeds a project with FR-151-shape vendored frontmatter.claude.md + system-prompt-v1.md
 # at $IGRIS_BRAIN_DIR/registry/agents/<name>/ and a manifest declaring the
 # requested target type. Mirrors build_fr149_agent_project but addresses the
 # new FR-151 split-canonical shape. Echoes the project root.
@@ -731,8 +731,8 @@ build_fr152_agent_project() {
     *) echo "unknown ttype: $ttype" >&2; return 1 ;;
   esac
   mkdir -p "$target_dir" "$registry_dir"
-  # FR-151 sidecar shape: separate frontmatter.md + system-prompt-vN.md.
-  cat > "$registry_dir/frontmatter.md" <<EOF
+  # FR-151 sidecar shape: separate frontmatter.claude.md + system-prompt-vN.md.
+  cat > "$registry_dir/frontmatter.claude.md" <<EOF
 ---
 name: $name
 description: FR-152 split-shape canonical for $ttype
@@ -765,18 +765,18 @@ EOF
   echo "$root"
 }
 
-@test "FR-152: claude AGENT cold compile creates symlink to registry harness.md" {
+@test "FR-152: claude AGENT cold compile creates symlink to registry harness.claude.md" {
   local root
   root="$(build_fr152_agent_project demo claude)"
   run bash "$COMPILE" --project-root "$root" \
                       --manifest "$root/harness-manifest.json" --target claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"creating claude symlink"* ]]
-  # Symlink resolves under $BRAIN_DIR/registry/agents/<name>/harness.md.
+  # Symlink resolves under $BRAIN_DIR/registry/agents/<name>/harness.claude.md.
   [ -L "$root/.claude/agents/demo.md" ]
   local resolved expected
   resolved="$(realpath "$root/.claude/agents/demo.md")"
-  expected="$(realpath "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.md")"
+  expected="$(realpath "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.claude.md")"
   [ "$resolved" = "$expected" ]
   # Drift verifier returns MATCH.
   run bash "$GUARD" --project-root "$root" \
@@ -786,7 +786,7 @@ EOF
   [[ "$output" == *"registry-anchored"* ]]
 }
 
-@test "FR-152: gemini AGENT cold compile creates symlink to registry harness.md" {
+@test "FR-152/FR-158: gemini AGENT cold compile creates symlink to registry harness.gemini.md" {
   local root
   root="$(build_fr152_agent_project demo gemini)"
   run bash "$COMPILE" --project-root "$root" \
@@ -796,7 +796,7 @@ EOF
   [ -L "$root/.gemini/agents/demo.md" ]
   local resolved expected
   resolved="$(realpath "$root/.gemini/agents/demo.md")"
-  expected="$(realpath "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.md")"
+  expected="$(realpath "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md")"
   [ "$resolved" = "$expected" ]
   run bash "$GUARD" --project-root "$root" \
                       --manifest "$root/harness-manifest.json"
@@ -805,17 +805,17 @@ EOF
   [[ "$output" == *"registry-anchored"* ]]
 }
 
-@test "FR-152: claude + gemini AGENT symlinks resolve to the SAME harness.md" {
-  # Both first-class harnesses share ONE registry-resident assembled file —
-  # the load-bearing α decision (D1). Build a project with both targets;
-  # both symlinks must realpath to the same registry harness.md.
+@test "FR-152/FR-158: claude + gemini AGENT symlinks resolve to DIFFERENT per-harness files" {
+  # FR-158 supersedes FR-152's "shared harness.md" with per-harness derived
+  # outputs. claude symlink → harness.claude.md; gemini symlink →
+  # harness.gemini.md (BOTH registry-resident in the SAME agent dir).
   local root="$TEST_TEMP_DIR/fr152_both_$BATS_TEST_NUMBER"
   local registry_dir="$IGRIS_BRAIN_DIR/registry/agents/twin"
   mkdir -p "$root/.claude/agents" "$root/.gemini/agents" "$registry_dir"
-  cat > "$registry_dir/frontmatter.md" <<'EOF'
+  cat > "$registry_dir/frontmatter.claude.md" <<'EOF'
 ---
 name: twin
-description: FR-152 shared harness.md across both harnesses
+description: FR-158 per-harness derived outputs
 ---
 EOF
   cat > "$registry_dir/system-prompt-v1.0.md" <<'EOF'
@@ -838,10 +838,15 @@ EOF
   local c_resolved g_resolved
   c_resolved="$(realpath "$root/.claude/agents/twin.md")"
   g_resolved="$(realpath "$root/.gemini/agents/twin.md")"
-  [ "$c_resolved" = "$g_resolved" ]
+  # FR-158: each harness has its own derived output.
+  [ "$c_resolved" != "$g_resolved" ]
+  [[ "$c_resolved" == *"/harness.claude.md" ]]
+  [[ "$g_resolved" == *"/harness.gemini.md" ]]
+  # Both registry-anchored under the SAME agent dir.
+  [ "$(dirname "$c_resolved")" = "$(dirname "$g_resolved")" ]
 }
 
-@test "FR-152: gemini AGENT legacy symlink (non-registry) is auto-repointed" {
+@test "FR-152/FR-158: gemini AGENT legacy symlink (non-registry) is auto-repointed" {
   local root
   root="$(build_fr152_agent_project demo gemini)"
   # Pre-create a symlink pointing OUTSIDE the registry.
@@ -855,7 +860,7 @@ EOF
   [[ "$output" == *"migrating legacy gemini symlink"* ]]
   local resolved expected
   resolved="$(realpath "$root/.gemini/agents/demo.md")"
-  expected="$(realpath "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.md")"
+  expected="$(realpath "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md")"
   [ "$resolved" = "$expected" ]
 }
 
@@ -897,7 +902,7 @@ EOF
                       --manifest "$root/harness-manifest.json" --target codex
   [ "$status" -eq 0 ]
   [ -f "$root/.codex/agents/demo.toml" ]
-  # The TOML's description came from the FR-151 frontmatter.md sidecar.
+  # The TOML's description came from the FR-151 frontmatter.claude.md sidecar.
   grep -q 'description = "FR-152 split-shape canonical for codex"' \
        "$root/.codex/agents/demo.toml"
   # The TOML's developer_instructions body came from the system-prompt-v1.0.md.
@@ -914,7 +919,7 @@ EOF
 }
 
 @test "FR-152: codex AGENT compile with inline-frontmatter canonical (TD-195 fallback)" {
-  # No frontmatter.md sidecar; canonical has inline frontmatter (the shape of
+  # No frontmatter.claude.md sidecar; canonical has inline frontmatter (the shape of
   # today's 7 igris-core agents). The compile-side resolve_or_extract_frontmatter
   # helper extracts to a tempfile and passes it to the refactored adapter.
   local root="$TEST_TEMP_DIR/fr152_inline_$BATS_TEST_NUMBER"
@@ -946,9 +951,9 @@ EOF
 }
 
 @test "FR-152: claude AGENT cold compile with inline-frontmatter canonical (TD-195 compile-time α-assembly fallback)" {
-  # Core agents don't have an FR-151 frontmatter.md sidecar yet. The compile-
+  # Core agents don't have an FR-151 frontmatter.claude.md sidecar yet. The compile-
   # side assemble_agent_harness_into_registry helper extracts inline
-  # frontmatter from the canonical and builds harness.md in the registry; the
+  # frontmatter from the canonical and builds harness.claude.md in the registry; the
   # claude symlink then resolves there. This pins the D4 fallback path.
   local root="$TEST_TEMP_DIR/fr152_inline_claude_$BATS_TEST_NUMBER"
   mkdir -p "$root/canon" "$root/.claude/agents"
@@ -973,10 +978,10 @@ EOF
                       --manifest "$root/harness-manifest.json" --target claude
   [ "$status" -eq 0 ]
   [ -L "$root/.claude/agents/core.md" ]
-  # The registry's harness.md was assembled by the D4 fallback.
-  local registry_file="$IGRIS_BRAIN_DIR/registry/agents/core/harness.md"
+  # The registry's harness.claude.md was assembled by the D4 fallback.
+  local registry_file="$IGRIS_BRAIN_DIR/registry/agents/core/harness.claude.md"
   [ -f "$registry_file" ]
-  # Both frontmatter (preserved) + body are present in harness.md.
+  # Both frontmatter (preserved) + body are present in harness.claude.md.
   grep -q '^name: core$' "$registry_file"
   grep -q "Body assembled from inline frontmatter" "$registry_file"
   # Drift MATCH.
@@ -988,14 +993,14 @@ EOF
 
 @test "FR-152: claude AGENT compile is idempotent — no churn on a second run" {
   # FR-152: assembly is deterministic, so two compiles produce identical
-  # registry harness.md bytes and the symlink's resolved target is unchanged.
+  # registry harness.claude.md bytes and the symlink's resolved target is unchanged.
   local root
   root="$(build_fr152_agent_project demo claude)"
   run bash "$COMPILE" --project-root "$root" \
                       --manifest "$root/harness-manifest.json" --target claude
   [ "$status" -eq 0 ]
   local first_sha
-  first_sha="$(shasum "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.md" \
+  first_sha="$(shasum "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.claude.md" \
                 | awk '{print $1}')"
   local first_resolved
   first_resolved="$(realpath "$root/.claude/agents/demo.md")"
@@ -1004,11 +1009,210 @@ EOF
                       --manifest "$root/harness-manifest.json" --target claude
   [ "$status" -eq 0 ]
   local second_sha
-  second_sha="$(shasum "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.md" \
+  second_sha="$(shasum "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.claude.md" \
                  | awk '{print $1}')"
   local second_resolved
   second_resolved="$(realpath "$root/.claude/agents/demo.md")"
 
   [ "$first_sha" = "$second_sha" ]
   [ "$first_resolved" = "$second_resolved" ]
+}
+
+@test "FR-158: gemini AGENT compile produces own harness.gemini.md (auto-translate path)" {
+  # FR-158 retry 1: a gemini target compiles against a frontmatter.claude.md
+  # sidecar (no frontmatter.gemini.md). The bash compile-side fallback NOW
+  # auto-translates Claude-shape → Gemini-shape (mirror of TS
+  # `assembleGeminiHarness`): `kind: local` is injected and Claude tool names
+  # are translated via the 9-mapping table. Symlink resolves to the new
+  # derived output.
+  local root
+  root="$(build_fr152_agent_project demo gemini)"
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json" --target gemini
+  [ "$status" -eq 0 ]
+  # The new per-harness derived output exists.
+  [ -f "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md" ]
+  # Symlink resolves to the gemini-shape file.
+  local resolved expected
+  resolved="$(realpath "$root/.gemini/agents/demo.md")"
+  expected="$(realpath "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md")"
+  [ "$resolved" = "$expected" ]
+  # FR-158 retry 1: the bash compile auto-translates — `kind: local` is now
+  # injected even when only `frontmatter.claude.md` exists. This is the
+  # post-fix shape (pre-fix had verbatim Claude-shape with no `kind`).
+  grep -q "kind: local" "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md"
+  # Drift verdict MATCH against the new expected.
+  run bash "$GUARD" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[demo/gemini] MATCH"* ]]
+}
+
+@test "FR-158: gemini AGENT compile uses frontmatter.gemini.md override when present" {
+  # FR-158 operator override: a frontmatter.gemini.md sidecar is honored
+  # verbatim (no auto-translate). The bash compile-side picks it up via the
+  # primary_sidecar lookup at $registry_dir/frontmatter.gemini.md.
+  local root
+  root="$(build_fr152_agent_project demo gemini)"
+  # Author an operator override at the registry-side path the bash compile
+  # uses (build_fr152_agent_project seeds the registry dir with the sidecar +
+  # body — we add the gemini override alongside).
+  cat > "$IGRIS_BRAIN_DIR/registry/agents/demo/frontmatter.gemini.md" <<'EOF'
+---
+name: demo
+kind: local
+tools: [web_search]
+custom_gemini_marker: present
+---
+EOF
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json" --target gemini
+  [ "$status" -eq 0 ]
+  # The Gemini harness reflects the operator override.
+  grep -q "kind: local" "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md"
+  grep -q "custom_gemini_marker: present" "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md"
+  grep -q "tools: \[web_search\]" "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md"
+}
+
+@test "FR-158 retry 1: bash compile auto-translates Claude-shape tools to Gemini-shape" {
+  # FR-158 retry 1 regression guard. Operator flow scenario:
+  #   1. Vendor an agent with `frontmatter.claude.md` carrying Claude-shape
+  #      `tools: Read` (no `kind:` field — the typical case for personal
+  #      agents authored against Claude semantics).
+  #   2. `igris harness compile` regenerates `harness.gemini.md`.
+  #   3. Post-compile, harness.gemini.md MUST carry Gemini-shape:
+  #        - `kind: local` injected (closes "Subagent not found" rejection)
+  #        - `tools: [read_file]` translated via CLAUDE_TO_GEMINI_TOOLS
+  # The pre-fix behavior (verbatim Claude-shape passthrough) silently
+  # clobbered the TS-produced Gemini harness back to broken-on-Gemini state
+  # after every `igris harness compile`. The live-machine evidence: the
+  # 3 content-pipeline agents in Gemini-shape after `igris registry update`
+  # were re-broken on the next harness compile cycle.
+  local root="$TEST_TEMP_DIR/fr158_retry_xlate_$BATS_TEST_NUMBER"
+  local registry_dir="$IGRIS_BRAIN_DIR/registry/agents/xlate"
+  mkdir -p "$root/.gemini/agents" "$registry_dir"
+  # Author a Claude-shape frontmatter sidecar with multiple tools shapes
+  # exercised (string, multiple tools — we use CSV here; flow-list path is
+  # covered by the operator-override test). model: must be DROPPED.
+  cat > "$registry_dir/frontmatter.claude.md" <<'EOF'
+---
+name: xlate
+description: FR-158 retry 1 — bash auto-translate guard
+tools: Read, Grep, Bash
+model: sonnet
+---
+EOF
+  cat > "$registry_dir/system-prompt-v1.0.md" <<'EOF'
+# XLATE
+
+Body for the bash auto-translate guard.
+EOF
+  cat > "$root/harness-manifest.json" <<EOF
+{ "version": 1, "agents": [ {
+  "name": "xlate", "layer": "personal",
+  "canonical": { "dir": "$registry_dir", "versioned": true, "glob": "system-prompt-v*.md" },
+  "targets": [
+    { "type": "gemini", "path": ".gemini/agents/xlate.md" }
+  ] } ] }
+EOF
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 0 ]
+  # POST-FIX (FR-158 retry 1) — these assertions WOULD HAVE FAILED before
+  # the fix: bash compile was emitting verbatim Claude-shape frontmatter to
+  # harness.gemini.md, silently regressing Gemini's `invoke_agent`.
+  local gemini_harness="$IGRIS_BRAIN_DIR/registry/agents/xlate/harness.gemini.md"
+  [ -f "$gemini_harness" ]
+  # 1. kind: local must be injected.
+  grep -q "^kind: local$" "$gemini_harness"
+  # 2. tools translated: Read → read_file, Grep → grep_search, Bash → run_shell_command.
+  grep -q "tools: \[read_file, grep_search, run_shell_command\]" "$gemini_harness"
+  # 3. model: dropped (Gemini uses defaults).
+  ! grep -q "^model:" "$gemini_harness"
+  # 4. description: + name: pass through verbatim.
+  grep -q "^name: xlate$" "$gemini_harness"
+  grep -q "^description: " "$gemini_harness"
+  # 5. The Claude-shape `tools: Read, Grep, Bash` MUST NOT survive — the
+  #    pre-fix bug was passthrough of this exact string.
+  ! grep -q "^tools: Read, Grep, Bash$" "$gemini_harness"
+  # Idempotency: re-running compile must NOT flip the shape.
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 0 ]
+  grep -q "^kind: local$" "$gemini_harness"
+  grep -q "tools: \[read_file, grep_search, run_shell_command\]" "$gemini_harness"
+}
+
+@test "FR-158 retry 1: bash compile respects operator-provided kind: in claude sidecar (no double-inject)" {
+  # Edge case — a Claude sidecar that ALREADY has `kind: local` (e.g., a
+  # cross-CLI author who put it there for any reason). The translator must
+  # not double-inject; the operator-provided line passes through.
+  local root="$TEST_TEMP_DIR/fr158_retry_kind_$BATS_TEST_NUMBER"
+  local registry_dir="$IGRIS_BRAIN_DIR/registry/agents/kindops"
+  mkdir -p "$root/.gemini/agents" "$registry_dir"
+  cat > "$registry_dir/frontmatter.claude.md" <<'EOF'
+---
+name: kindops
+kind: local
+tools: Read
+---
+EOF
+  cat > "$registry_dir/system-prompt-v1.0.md" <<'EOF'
+# KINDOPS body
+EOF
+  cat > "$root/harness-manifest.json" <<EOF
+{ "version": 1, "agents": [ {
+  "name": "kindops", "layer": "personal",
+  "canonical": { "dir": "$registry_dir", "versioned": true, "glob": "system-prompt-v*.md" },
+  "targets": [ { "type": "gemini", "path": ".gemini/agents/kindops.md" } ] } ] }
+EOF
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 0 ]
+  local gemini_harness="$IGRIS_BRAIN_DIR/registry/agents/kindops/harness.gemini.md"
+  # `kind: local` appears EXACTLY ONCE.
+  local kind_count
+  kind_count=$(grep -c "^kind: local$" "$gemini_harness" || true)
+  [ "$kind_count" -eq 1 ]
+}
+
+@test "FR-158: drift on harness.claude.md does NOT flag harness.gemini.md (independent verdicts)" {
+  # Per-harness derived outputs mean per-harness drift verdicts. Corrupt one;
+  # the other stays MATCH.
+  local root="$TEST_TEMP_DIR/fr158_indep_$BATS_TEST_NUMBER"
+  local registry_dir="$IGRIS_BRAIN_DIR/registry/agents/indep"
+  mkdir -p "$root/.claude/agents" "$root/.gemini/agents" "$registry_dir"
+  cat > "$registry_dir/frontmatter.claude.md" <<'EOF'
+---
+name: indep
+description: per-harness independent verdicts
+---
+EOF
+  cat > "$registry_dir/system-prompt-v1.0.md" <<'EOF'
+# INDEP
+
+Body for independent-verdict test.
+EOF
+  cat > "$root/harness-manifest.json" <<EOF
+{ "version": 1, "agents": [ {
+  "name": "indep", "layer": "personal",
+  "canonical": { "dir": "$registry_dir", "versioned": true, "glob": "system-prompt-v*.md" },
+  "targets": [
+    { "type": "claude", "path": ".claude/agents/indep.md" },
+    { "type": "gemini", "path": ".gemini/agents/indep.md" }
+  ] } ] }
+EOF
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 0 ]
+  # Corrupt only the claude derived output by repointing the symlink off-registry.
+  rm "$root/.claude/agents/indep.md"
+  mkdir -p "$root/elsewhere"
+  echo "stale" > "$root/elsewhere/indep.md"
+  ln -s "$root/elsewhere/indep.md" "$root/.claude/agents/indep.md"
+  run bash "$GUARD" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"[indep/claude] DRIFTED"* ]]
+  [[ "$output" == *"[indep/gemini] MATCH"* ]]
 }

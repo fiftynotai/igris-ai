@@ -905,12 +905,18 @@ function resolveSource(
     if (entries.length === 0) {
       return `no files in ${srcDir} match glob '${glob ?? ""}'`;
     }
-    // FR-151: include the harness-agnostic frontmatter.md sidecar if co-located.
-    if (
-      existsSync(join(srcDir, "frontmatter.md")) &&
-      !entries.includes("frontmatter.md")
-    ) {
-      entries.push("frontmatter.md");
+    // FR-151 / FR-158: include the per-harness frontmatter sidecars if
+    // co-located. `frontmatter.claude.md` feeds `assembleClaudeHarness` and
+    // (when no `frontmatter.gemini.md` exists) `assembleGeminiHarness` via
+    // auto-translate. `frontmatter.gemini.md` is the operator-authored
+    // Gemini override.
+    for (const fmName of ["frontmatter.claude.md", "frontmatter.gemini.md"]) {
+      if (
+        existsSync(join(srcDir, fmName)) &&
+        !entries.includes(fmName)
+      ) {
+        entries.push(fmName);
+      }
     }
     return { srcDir, files: entries };
   }
@@ -922,10 +928,13 @@ function resolveSource(
   if (!existsSync(full)) {
     return `canonical source file does not exist: ${full}`;
   }
-  // FR-151: include the harness-agnostic frontmatter.md sidecar if co-located.
+  // FR-151 / FR-158: include the per-harness frontmatter sidecars if
+  // co-located.
   const files = [file];
-  if (existsSync(join(srcDir, "frontmatter.md")) && file !== "frontmatter.md") {
-    files.push("frontmatter.md");
+  for (const fmName of ["frontmatter.claude.md", "frontmatter.gemini.md"]) {
+    if (existsSync(join(srcDir, fmName)) && file !== fmName) {
+      files.push(fmName);
+    }
   }
   return { srcDir, files };
 }
@@ -983,25 +992,33 @@ function resolvePersonalBodyExceptionPath(
 }
 
 /**
- * FR-152 α-assembly: derive `<vendoredDir>/harness.md` = `---\n<frontmatter>\n---\n\n<body>`.
- * Claude + gemini compile-time symlinks resolve to this ONE file. No-op when no
- * `frontmatter.md` sidecar exists (vendor-side assembly is opt-in via FR-151
- * sidecar presence; compile-side fallback handles core agents). See L-519.
+ * FR-152 / FR-158 α-assembly (Claude branch): derive
+ * `<vendoredDir>/harness.claude.md` = `---\n<frontmatter>\n---\n\n<body>`.
+ * Claude compile-time symlinks resolve to this file. No-op when no
+ * `frontmatter.claude.md` sidecar exists (vendor-side assembly is opt-in via
+ * the FR-151/FR-158 sidecar presence; compile-side fallback handles core
+ * agents). See L-519.
  *
  * Picks the latest `system-prompt-v*.md` for versioned shape via `sort -V`
  * semantics (split on dots, numeric-compare components — ports
  * `_common.sh:latest_canonical`). For unversioned, uses the single non-sidecar
  * file. Atomic temp-then-rename. Body-exception applied when `bodyExceptionPath`
  * is non-empty (FR-144 + TD-193 regression guard).
+ *
+ * FR-158 rename: was `assembleAgentHarness` reading `frontmatter.md` /
+ * writing `harness.md`; the per-harness pair (`assembleClaudeHarness` +
+ * `assembleGeminiHarness`) makes the sidecar/output names symmetric so Gemini
+ * gets first-class auto-translate. Callers invoke BOTH in sequence at every
+ * agent vendor site (runAdd, runAddGithub, reVendorPath, reVendorGithub).
  */
-export function assembleAgentHarness(
+export function assembleClaudeHarness(
   vendoredDir: string,
   files: string[],
   bodyExceptionPath?: string,
 ): void {
-  const fmPath = join(vendoredDir, "frontmatter.md");
+  const fmPath = join(vendoredDir, "frontmatter.claude.md");
   if (!existsSync(fmPath)) {
-    return; // assembly is opt-in via the FR-151 sidecar's presence
+    return; // assembly is opt-in via the FR-151/FR-158 sidecar's presence
   }
   // Pick body file: prefer the latest versioned `system-prompt-v*.md`; else
   // the single non-sidecar file in the vendored set.
@@ -1010,7 +1027,9 @@ export function assembleAgentHarness(
   if (versioned.length > 0) {
     bodyFile = pickLatestVersionedFile(versioned);
   } else {
-    const nonSidecar = files.filter((f) => f !== "frontmatter.md");
+    const nonSidecar = files.filter(
+      (f) => f !== "frontmatter.claude.md" && f !== "frontmatter.gemini.md",
+    );
     if (nonSidecar.length !== 1) {
       // No deterministic body: skip rather than guess (the operator can re-add
       // with a sharper glob).
@@ -1021,10 +1040,9 @@ export function assembleAgentHarness(
   if (bodyFile === undefined) {
     return;
   }
-  // FR-151's frontmatter.md sidecar carries the SAME `---\n<fields>\n---\n`
-  // shape as a canonical's inline frontmatter (verified by the FR-151 tests
-  // at lines 326-329, 384-385). Strip the delimiters here so the α-assembled
-  // `harness.md` doesn't double-wrap.
+  // FR-151's frontmatter.claude.md sidecar carries the SAME `---\n<fields>\n---\n`
+  // shape as a canonical's inline frontmatter. Strip the delimiters here so
+  // the α-assembled `harness.claude.md` doesn't double-wrap.
   const fmRaw = stripLeadingFrontmatterBlockToFields(
     readFileSync(fmPath, "utf-8"),
   ).trim();
@@ -1046,7 +1064,212 @@ export function assembleAgentHarness(
   if (!text.endsWith("\n")) {
     text += "\n";
   }
-  const out = join(vendoredDir, "harness.md");
+  const out = join(vendoredDir, "harness.claude.md");
+  const tmp = `${out}.tmp-${process.pid}`;
+  writeFileSync(tmp, text, "utf-8");
+  renameSync(tmp, out);
+}
+
+/**
+ * FR-158: Claude → Gemini tool-name translation map. Closes the auto-translate
+ * gap that prevented `frontmatter.claude.md` from being honored by Gemini's
+ * `invoke_agent` (Gemini rejects Claude's PascalCase tool names + missing
+ * `kind: local`). The 9 mappings cover Claude's current tool surface;
+ * unknown tool names pass through verbatim so Gemini surfaces an explicit
+ * "unknown tool" error (the operator override path — author
+ * `frontmatter.gemini.md` — is the escape hatch).
+ *
+ * `Glob → list_directory` is the IMPERFECT mapping (Claude's Glob is a
+ * recursive filesystem-pattern matcher; Gemini's `list_directory` is a
+ * single-dir listing). None of the current personal agents declare Glob,
+ * but operators with Glob-using agents should author a
+ * `frontmatter.gemini.md` sidecar — see `docs/multi-cli.md` §"Per-harness
+ * frontmatter sidecars".
+ */
+const CLAUDE_TO_GEMINI_TOOLS: Record<string, string> = {
+  Read: "read_file",
+  Write: "write_file",
+  Edit: "edit_file",
+  Bash: "run_shell_command",
+  Grep: "grep_search",
+  Glob: "list_directory", // imperfect — operator override is the escape hatch
+  Task: "task",
+  WebFetch: "web_fetch",
+  WebSearch: "web_search",
+};
+
+/**
+ * FR-158: parse a YAML-frontmatter fields block (the unwrapped form returned
+ * by `stripLeadingFrontmatterBlockToFields` — no `---` delimiters) into an
+ * ordered list of (key, raw-value) pairs. Supports the narrow subset of YAML
+ * the agent frontmatter actually uses (`key: value` lines, possibly
+ * continued; nothing more). Avoids adding a `js-yaml` dependency — agent
+ * frontmatter shapes are constrained by the FR-151 contract.
+ *
+ * Returns an array of `{key, value}` to preserve operator-authored ordering
+ * when re-serializing. Values are the raw post-colon trim'd string (caller
+ * decides how to interpret string vs list vs CSV for `tools:`).
+ */
+function parseSimpleFrontmatterFields(
+  fields: string,
+): Array<{ key: string; value: string }> {
+  const out: Array<{ key: string; value: string }> = [];
+  for (const rawLine of fields.split("\n")) {
+    const line = rawLine.replace(/\r$/, "");
+    if (line.trim() === "") continue;
+    const m = line.match(/^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$/);
+    if (!m) continue;
+    out.push({ key: m[1], value: m[2] });
+  }
+  return out;
+}
+
+/**
+ * FR-158: translate Claude-shape frontmatter fields into Gemini-shape.
+ * Behavior per Decision 2 of FR-158 plan:
+ *   - `name:` / `description:` pass through unchanged.
+ *   - `tools:` is translated via `CLAUDE_TO_GEMINI_TOOLS`. Handles BOTH
+ *     string (`tools: Read`), CSV (`tools: Read, Grep`), and YAML-flow-list
+ *     (`tools: [Read, Grep]`) input shapes. Output is emitted as YAML
+ *     flow-list (`tools: [read_file, grep_search]`) for shape stability.
+ *   - `kind: local` is ALWAYS added (the root-cause field for Gemini's
+ *     "Subagent not found" rejection).
+ *   - `model:` / `temperature:` / `max_turns:` are NOT added; operators
+ *     override via `frontmatter.gemini.md`.
+ *   - All other fields pass through verbatim (e.g., a project-specific
+ *     `tags:` line stays as-is).
+ *
+ * Returns the serialized fields block (no `---` delimiters; caller wraps).
+ */
+function translateClaudeToGeminiFrontmatter(claudeFields: string): string {
+  const parsed = parseSimpleFrontmatterFields(claudeFields);
+  const out: string[] = [];
+  let kindEmitted = false;
+  let toolsEmitted = false;
+  for (const { key, value } of parsed) {
+    if (key === "tools") {
+      const tokens = parseToolsField(value);
+      const translated = tokens.map(
+        (t) => CLAUDE_TO_GEMINI_TOOLS[t] ?? t, // unknown → pass through verbatim
+      );
+      out.push(`tools: [${translated.join(", ")}]`);
+      toolsEmitted = true;
+      continue;
+    }
+    if (key === "kind") {
+      // Operator-authored `kind:` (e.g., `kind: local` already present in
+      // the Claude sidecar) — pass through; mark as emitted so we don't
+      // double-add below.
+      out.push(`${key}: ${value}`);
+      kindEmitted = true;
+      continue;
+    }
+    if (key === "model" || key === "temperature" || key === "max_turns") {
+      // Drop per Decision 2 — Gemini uses defaults; operators override via
+      // `frontmatter.gemini.md`.
+      continue;
+    }
+    out.push(`${key}: ${value}`);
+  }
+  if (!kindEmitted) {
+    out.push("kind: local");
+  }
+  // If the source Claude frontmatter had no `tools:` field, we still don't
+  // emit one — agents without explicit tools accept the loader's default set.
+  void toolsEmitted;
+  return out.join("\n");
+}
+
+/**
+ * FR-158: parse a `tools:` field value (raw post-colon trim'd string) into a
+ * list of tool-name tokens. Accepts:
+ *   - empty string → `[]`
+ *   - string token (`Read`) → `["Read"]`
+ *   - CSV (`Read, Grep`) → `["Read", "Grep"]`
+ *   - YAML flow list (`[Read, Grep]`) → `["Read", "Grep"]`
+ *   - YAML flow list with quotes (`["Read", "Grep"]`) → `["Read", "Grep"]`
+ */
+function parseToolsField(value: string): string[] {
+  const trimmed = value.trim();
+  if (trimmed === "") return [];
+  let inner = trimmed;
+  if (inner.startsWith("[") && inner.endsWith("]")) {
+    inner = inner.slice(1, -1);
+  }
+  return inner
+    .split(",")
+    .map((t) => t.trim().replace(/^["']|["']$/g, ""))
+    .filter((t) => t.length > 0);
+}
+
+/**
+ * FR-158 α-assembly (Gemini branch): derive
+ * `<vendoredDir>/harness.gemini.md` so Gemini's `invoke_agent` resolves to a
+ * Gemini-shaped harness rather than the Claude-shape one.
+ *
+ * Frontmatter source preference:
+ *   1. `<vendoredDir>/frontmatter.gemini.md` (operator-authored override
+ *      — honored verbatim; no field-by-field merge with Claude sidecar).
+ *   2. `<vendoredDir>/frontmatter.claude.md` (auto-translated via
+ *      `translateClaudeToGeminiFrontmatter` — adds `kind: local`,
+ *      translates `tools:` per `CLAUDE_TO_GEMINI_TOOLS`).
+ *   3. Neither present → early-return (parity with `assembleClaudeHarness`).
+ *
+ * Body picking, body-exception application, atomic temp+rename match
+ * `assembleClaudeHarness` exactly (same body file, same sidecar JSON).
+ */
+export function assembleGeminiHarness(
+  vendoredDir: string,
+  files: string[],
+  bodyExceptionPath?: string,
+): void {
+  const geminiFmPath = join(vendoredDir, "frontmatter.gemini.md");
+  const claudeFmPath = join(vendoredDir, "frontmatter.claude.md");
+  let fmRaw: string;
+  if (existsSync(geminiFmPath)) {
+    // Operator-authored override — honor verbatim.
+    fmRaw = stripLeadingFrontmatterBlockToFields(
+      readFileSync(geminiFmPath, "utf-8"),
+    ).trim();
+  } else if (existsSync(claudeFmPath)) {
+    // Auto-translate the Claude sidecar.
+    const claudeFields = stripLeadingFrontmatterBlockToFields(
+      readFileSync(claudeFmPath, "utf-8"),
+    ).trim();
+    fmRaw = translateClaudeToGeminiFrontmatter(claudeFields).trim();
+  } else {
+    return; // assembly is opt-in via FR-151/FR-158 sidecar presence
+  }
+  const versioned = files.filter((f) => /^system-prompt-v[0-9]/.test(f));
+  let bodyFile: string | undefined;
+  if (versioned.length > 0) {
+    bodyFile = pickLatestVersionedFile(versioned);
+  } else {
+    const nonSidecar = files.filter(
+      (f) => f !== "frontmatter.claude.md" && f !== "frontmatter.gemini.md",
+    );
+    if (nonSidecar.length !== 1) {
+      return;
+    }
+    bodyFile = nonSidecar[0];
+  }
+  if (bodyFile === undefined) {
+    return;
+  }
+  let body = readFileSync(join(vendoredDir, bodyFile), "utf-8");
+  body = stripLeadingFrontmatter(body);
+  // FR-158 Decision 3: body-exception sidecar is body-relative (anchor lines
+  // are in the SAME body both harnesses consume), so apply identically to
+  // both outputs. A broken anchor throws from both assemblers — honest
+  // paired blast radius, not new risk.
+  if (bodyExceptionPath !== undefined && bodyExceptionPath.length > 0) {
+    body = applyBodyException(body, bodyExceptionPath);
+  }
+  let text = `---\n${fmRaw}\n---\n\n${body}`;
+  if (!text.endsWith("\n")) {
+    text += "\n";
+  }
+  const out = join(vendoredDir, "harness.gemini.md");
   const tmp = `${out}.tmp-${process.pid}`;
   writeFileSync(tmp, text, "utf-8");
   renameSync(tmp, out);
@@ -1166,13 +1389,15 @@ function pickLatestVersionedFile(versioned: string[]): string | undefined {
 }
 
 /**
- * FR-152: extract the FIELDS BLOCK out of an FR-151 frontmatter.md sidecar.
- * The sidecar's on-disk shape is `---\n<fields>\n---\n` (matches inline-
- * frontmatter convention). This helper returns only `<fields>` (without the
- * surrounding `---` delimiters) so `assembleAgentHarness` can re-wrap with its
- * own delimiters. When the input has no delimiters (e.g., a malformed sidecar
- * or a TD-195 inline-extracted tempfile that's already pre-stripped), returns
- * the input verbatim. Mirrors `_common.sh:parse_frontmatter` byte semantics.
+ * FR-152 / FR-158: extract the FIELDS BLOCK out of a per-harness frontmatter
+ * sidecar (`frontmatter.claude.md` or `frontmatter.gemini.md`). The on-disk
+ * shape is `---\n<fields>\n---\n` (matches inline-frontmatter convention).
+ * This helper returns only `<fields>` (without the surrounding `---`
+ * delimiters) so `assembleClaudeHarness` / `assembleGeminiHarness` can re-wrap
+ * with their own delimiters. When the input has no delimiters (e.g., a
+ * malformed sidecar or a TD-195 inline-extracted tempfile that's already
+ * pre-stripped), returns the input verbatim. Mirrors
+ * `_common.sh:parse_frontmatter` byte semantics.
  */
 function stripLeadingFrontmatterBlockToFields(text: string): string {
   if (!text.startsWith("---")) return text;
@@ -1363,8 +1588,9 @@ function copySkillTreeRecursive(srcDir: string, destDir: string): void {
  * skills under L-519 / TD-201 Option B) requires identical skip-lists on
  * both sides — otherwise `.DS_Store` / `__pycache__` etc. landing in either
  * tree silently flips the hash and produces false-DRIFTED verdicts. The
- * `harness.md` top-level exclusion is moot for skills (they don't carry
- * α-assembly output) but kept for parity with the shared algorithm.
+ * `harness.{claude,gemini}.md` top-level exclusion is moot for skills (they
+ * don't carry α-assembly output) but kept for parity with the shared
+ * algorithm.
  */
 function hashSkillTree(treeDir: string): string {
   const h = createHash("sha256");
@@ -1378,10 +1604,17 @@ function hashSkillTree(treeDir: string): string {
       if (e.isDirectory()) {
         walk(childRel);
       } else if (e.isFile()) {
-        // TD-201: parity with hashAgentTree — exclude top-level harness.md
-        // from the basis. Moot for skills today (none produce one) but
-        // harmless and keeps the two helpers algorithmically aligned.
-        if (rel === "" && e.name === "harness.md") continue;
+        // TD-201 / FR-158: parity with hashAgentTree — exclude top-level
+        // per-harness α-assembly outputs from the basis. Moot for skills
+        // today (none produce these) but harmless and keeps the two helpers
+        // algorithmically aligned across the FR-158 rename
+        // (`harness.md` → `harness.{claude,gemini}.md`).
+        if (
+          rel === "" &&
+          (e.name === "harness.claude.md" || e.name === "harness.gemini.md")
+        ) {
+          continue;
+        }
         rels.push(childRel);
       }
     }
@@ -1428,14 +1661,17 @@ function reVendorSkillPath(
 }
 
 /**
- * FR-156: derive the {frontmatter.md, body_filename} list that
- * `assembleAgentHarness` needs, POST-VENDOR. Tree vendoring brings the entire
- * source dir minus the skip-list; `assembleAgentHarness` only consumes the
- * frontmatter sidecar + ONE body file (latest `system-prompt-vN.md` when
- * versioned, the named unversioned file otherwise). Returning the filtered
- * set preserves FR-152 assembly semantics across the vendor-shape change.
- * Operates over top-level vendored files (does NOT descend into nested
- * sibling dirs like `routing/` or `archetypes/`).
+ * FR-156 / FR-158: derive the {frontmatter sidecars, body_filename} list that
+ * `assembleClaudeHarness` + `assembleGeminiHarness` need, POST-VENDOR. Tree
+ * vendoring brings the entire source dir minus the skip-list; the assemblers
+ * only consume the frontmatter sidecar(s) + ONE body file (latest
+ * `system-prompt-vN.md` when versioned, the named unversioned file otherwise).
+ *
+ * FR-158: includes BOTH `frontmatter.claude.md` and `frontmatter.gemini.md`
+ * when present, so the Gemini assembler can find its operator-authored
+ * override (path 1) before falling back to auto-translate from the Claude
+ * sidecar (path 2). Operates over top-level vendored files (does NOT descend
+ * into nested sibling dirs like `routing/` or `archetypes/`).
  */
 function pickAssemblyFiles(
   vendoredDir: string,
@@ -1447,13 +1683,21 @@ function pickAssemblyFiles(
     .filter((d) => d.isFile())
     .map((d) => d.name);
   const out: string[] = [];
-  if (top.includes("frontmatter.md")) {
-    out.push("frontmatter.md");
+  // FR-158: order matters only for human-readability — assemblers locate
+  // each sidecar by `existsSync(join(vendoredDir, ...))` directly, not by
+  // index into this list.
+  if (top.includes("frontmatter.claude.md")) {
+    out.push("frontmatter.claude.md");
+  }
+  if (top.includes("frontmatter.gemini.md")) {
+    out.push("frontmatter.gemini.md");
   }
   if (versioned) {
     const re = globToRegExp(glob ?? "");
     for (const n of top) {
-      if (n === "frontmatter.md") continue;
+      if (n === "frontmatter.claude.md" || n === "frontmatter.gemini.md") {
+        continue;
+      }
       if (re.test(n)) out.push(n);
     }
   } else if (unversionedFile !== undefined && top.includes(unversionedFile)) {
@@ -1464,7 +1708,8 @@ function pickAssemblyFiles(
 
 // ---------------------------------------------------------------------------
 // FR-156: AGENT-TREE vendor primitives. Promote the agent vendor path from
-// "file-set" (vendorSurfaceAtomic over frontmatter.md + system-prompt-vN.md)
+// "file-set" (vendorSurfaceAtomic over frontmatter.claude.md +
+// system-prompt-vN.md)
 // to "tree vendor" (whole source directory minus a fixed skip-list) so agents
 // with sibling content (DECK's routing/+registry/, DESIGNER's archetypes/)
 // vendor self-sufficiently — closes the L-516 violation where supporting
@@ -1565,17 +1810,21 @@ function copyAgentTreeRecursive(srcDir: string, destDir: string): number {
 }
 
 /**
- * FR-156 stable content hash over a vendored agent tree. Same idiom as
- * `hashSkillTree` (sorted relpath + `\0` + bytes folded into one sha256) but
- * applies `isAgentTreeSkipped` AND explicitly excludes `harness.md`. The
- * `harness.md` exclusion is load-bearing: it is FR-152 α-assembly OUTPUT
- * (derived from frontmatter.md + chosen system-prompt-vN.md + body-exception)
- * and including it in the hash basis would make every assembly re-write read
- * as drift — same "hash before assembly" principle `hashSurface` uses by
- * computing the hash BEFORE `assembleAgentHarness` at the call site.
+ * FR-156 / FR-158 stable content hash over a vendored agent tree. Same idiom
+ * as `hashSkillTree` (sorted relpath + `\0` + bytes folded into one sha256)
+ * but applies `isAgentTreeSkipped` AND explicitly excludes the per-harness
+ * α-assembly outputs (`harness.claude.md`, `harness.gemini.md`). The
+ * exclusion is load-bearing: those files are FR-152/FR-158 DERIVED OUTPUT
+ * (from `frontmatter.{claude,gemini}.md` + chosen system-prompt-vN.md +
+ * body-exception), and including them in the hash basis would make every
+ * assembly re-write read as drift — same "hash before assembly" principle
+ * `hashSurface` uses by computing the hash BEFORE the two assemble* calls
+ * at every vendor call site.
  *
  * Skip-list MUST match `isAgentTreeSkipped` byte-for-byte AND the bash
- * `hash_agent_tree` helper in `_common.sh` — three sites, one rule.
+ * `hash_agent_tree` helper in `_common.sh` — three sites, one rule. The
+ * harness-output exclusion lives in the same 5 sites (TS hashAgentTree +
+ * hashSkillTree, bash hash_agent_tree, drift inline Python agent + skill).
  */
 function hashAgentTree(treeDir: string): string {
   const h = createHash("sha256");
@@ -1589,10 +1838,17 @@ function hashAgentTree(treeDir: string): string {
       if (e.isDirectory()) {
         walk(childRel);
       } else if (e.isFile()) {
-        // FR-156: harness.md is derived OUTPUT from α-assembly — excluding
-        // it from the hash basis keeps assembly re-runs from registering as
-        // drift. Mirrors `hashSurface`'s "hash before assembly" timing.
-        if (rel === "" && e.name === "harness.md") continue;
+        // FR-156 / FR-158: per-harness outputs (`harness.claude.md`,
+        // `harness.gemini.md`) are derived OUTPUT from α-assembly —
+        // excluding them from the hash basis keeps assembly re-runs from
+        // registering as drift. Mirrors `hashSurface`'s "hash before
+        // assembly" timing.
+        if (
+          rel === "" &&
+          (e.name === "harness.claude.md" || e.name === "harness.gemini.md")
+        ) {
+          continue;
+        }
         rels.push(childRel);
       }
       // Symlinks skipped — see copyAgentTreeRecursive for rationale.
@@ -1982,20 +2238,22 @@ async function runAdd(
   // overlay persist fails after vendoring, clean up the just-vendored tree
   // so a rejected add leaves no orphan copy.
   //
-  // `assembleAgentHarness` still needs the EXACT input set (frontmatter +
-  // chosen system-prompt-vN.md) that it derived pre-FR-156; we recompute it
+  // `assembleClaudeHarness` / `assembleGeminiHarness` still need the EXACT
+  // input set (frontmatter + chosen system-prompt-vN.md) — we recompute it
   // POST-VENDOR by filtering top-level vendored files against the canonical
   // glob/file. This keeps FR-152 assembly semantics unchanged.
   let hash: string;
   try {
     vendorAgentTreeAtomic(resolved.srcDir, vendoredDir);
     hash = hashAgentTree(vendoredDir);
-    // FR-152 α-assembly: emit `<vendoredDir>/harness.md` alongside frontmatter +
-    // body so claude/gemini compile-time symlinks resolve to ONE registry file.
-    // No-op when no FR-151 sidecar exists. Hash is computed BEFORE assembly so
-    // the derived file is excluded from origin freshness (downstream-derived;
-    // `hashAgentTree` also excludes harness.md from the basis as belt-and-
-    // suspenders).
+    // FR-152 / FR-158 α-assembly: emit BOTH per-harness derived outputs
+    // (`harness.claude.md` and `harness.gemini.md`) alongside frontmatter +
+    // body so claude/gemini compile-time symlinks resolve to their
+    // respective registry file. No-op when no FR-151/FR-158 sidecar exists
+    // (the Gemini assembler will also no-op when neither sidecar is present).
+    // Hash is computed BEFORE assembly so derived files are excluded from
+    // origin freshness (downstream-derived; `hashAgentTree` also excludes
+    // both renamed outputs from the basis as belt-and-suspenders).
     const bxPath = resolvePersonalBodyExceptionPath(entry.body_exception);
     const assemblyFiles = pickAssemblyFiles(
       vendoredDir,
@@ -2003,7 +2261,8 @@ async function runAdd(
       opts.glob,
       unversionedFile,
     );
-    assembleAgentHarness(vendoredDir, assemblyFiles, bxPath);
+    assembleClaudeHarness(vendoredDir, assemblyFiles, bxPath);
+    assembleGeminiHarness(vendoredDir, assemblyFiles, bxPath);
   } catch (err) {
     rmSync(vendoredDir, { recursive: true, force: true });
     logError(`registry add: failed to vendor canonical files: ${(err as Error).message}`);
@@ -2187,9 +2446,10 @@ async function runAddGithub(
     try {
       vendorAgentTreeAtomic(selected.srcDir, vendoredDir);
       hash = hashAgentTree(vendoredDir);
-      // FR-152 α-assembly (github path): mirrors the path-origin call above.
-      // Personal layer body-exception sidecar resolution (FR-144). Hash already
-      // computed before assembly to keep harness.md out of origin freshness.
+      // FR-152 / FR-158 α-assembly (github path): mirrors the path-origin
+      // call above. Personal layer body-exception sidecar resolution (FR-144).
+      // Hash already computed before assembly to keep derived outputs out of
+      // origin freshness.
       const bxPath = resolvePersonalBodyExceptionPath(entry.body_exception);
       const assemblyFiles = pickAssemblyFiles(
         vendoredDir,
@@ -2197,7 +2457,8 @@ async function runAddGithub(
         selected.entry.canonical.glob,
         selected.entry.canonical.file,
       );
-      assembleAgentHarness(vendoredDir, assemblyFiles, bxPath);
+      assembleClaudeHarness(vendoredDir, assemblyFiles, bxPath);
+      assembleGeminiHarness(vendoredDir, assemblyFiles, bxPath);
     } catch (err) {
       rmSync(vendoredDir, { recursive: true, force: true });
       logError(
@@ -2734,14 +2995,15 @@ function reVendorPath(
   // FR-156: the origin dir IS the agent's source tree root. No more file-set
   // resolution at the vendor site — `vendorAgentTreeAtomic` walks the dir
   // and applies the skip-list. The entry's canonical.versioned/glob/file
-  // metadata is still needed for `assembleAgentHarness`'s body-picker.
+  // metadata is still needed for the assemble*Harness body-picker.
   if (!existsSync(origin.dir)) {
     return `error: canonical source dir does not exist: ${origin.dir}`;
   }
   try {
     vendorAgentTreeAtomic(origin.dir, vendoredDir);
-    // FR-152 α-assembly on re-vendor: regenerate harness.md from the freshly
-    // re-vendored frontmatter + body. Idempotent — same inputs → same bytes.
+    // FR-152 / FR-158 α-assembly on re-vendor: regenerate BOTH per-harness
+    // derived outputs from the freshly re-vendored frontmatter + body.
+    // Idempotent — same inputs → same bytes.
     const bxPath = resolvePersonalBodyExceptionPath(entry.body_exception);
     const assemblyFiles = pickAssemblyFiles(
       vendoredDir,
@@ -2749,7 +3011,8 @@ function reVendorPath(
       entry.canonical.glob,
       entry.canonical.file,
     );
-    assembleAgentHarness(vendoredDir, assemblyFiles, bxPath);
+    assembleClaudeHarness(vendoredDir, assemblyFiles, bxPath);
+    assembleGeminiHarness(vendoredDir, assemblyFiles, bxPath);
   } catch (err) {
     return `error: failed to re-vendor: ${(err as Error).message}`;
   }
@@ -2831,7 +3094,8 @@ async function reVendorGithub(
       // sandbox-clamped repo subdir, so the walk stays inside the fetched
       // tarball's sandbox (L-515).
       vendorAgentTreeAtomic(selected.srcDir, vendoredDir);
-      // FR-152 α-assembly on github re-vendor: same idempotent regeneration.
+      // FR-152 / FR-158 α-assembly on github re-vendor: same idempotent
+      // regeneration of BOTH per-harness derived outputs.
       const bxPath = resolvePersonalBodyExceptionPath(entry.body_exception);
       const assemblyFiles = pickAssemblyFiles(
         vendoredDir,
@@ -2839,7 +3103,8 @@ async function reVendorGithub(
         selected.entry.canonical.glob,
         selected.entry.canonical.file,
       );
-      assembleAgentHarness(vendoredDir, assemblyFiles, bxPath);
+      assembleClaudeHarness(vendoredDir, assemblyFiles, bxPath);
+      assembleGeminiHarness(vendoredDir, assemblyFiles, bxPath);
     } catch (err) {
       return `error: failed to re-vendor: ${(err as Error).message}`;
     }

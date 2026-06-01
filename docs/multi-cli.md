@@ -280,7 +280,8 @@ to this convention.)
 - `.git*` — VCS metadata (matches `.git`, `.gitignore`, `.gitkeep`, `.github`)
 - `node_modules/`, `.venv/`, `__pycache__/` — language deps + caches
 - `*.pyc` — compiled python
-- `harness.md` — FR-152 α-assembled output (derived, not source)
+- `harness.claude.md`, `harness.gemini.md` — FR-152 / FR-158 per-harness
+  α-assembled outputs (derived, not source)
 - `REGISTRY-NOTICE.md` — TD-202 sidecar (vendored-copy notice, not source)
 
 The skip-list is fixed (per-agent `.igrisignore` overrides are deferred —
@@ -467,11 +468,62 @@ harness carries one extra paragraph (the harness-skill invocation note). The
 manifest entry sets `"body_exception": "designer-harness-skill-para"`, and the
 sidecar `body-exceptions/designer-harness-skill-para.json` declares a unique
 `anchor` line plus the `insert` paragraph. The appendix is applied at
-ASSEMBLY time (FR-152) — baked into the registry-resident `harness.md` by both
-the TS vendor primitive and the bash `compile_harnesses.sh` assembly helper —
-and `check_harness_drift.sh` verifies registry-anchored containment of the
-symlink, so the exception is not flagged as drift and is not silently lost on
-recompile.
+ASSEMBLY time (FR-152) — baked into BOTH per-harness registry-resident outputs
+(`harness.claude.md` and `harness.gemini.md`, FR-158) by both the TS vendor
+primitive and the bash `compile_harnesses.sh` assembly helper — and
+`check_harness_drift.sh` verifies registry-anchored containment of the symlink,
+so the exception is not flagged as drift and is not silently lost on recompile.
+The body-exception sidecar is body-relative (the anchor line is in the SAME
+body both harnesses consume), so a single JSON file applies identically to
+both outputs — there is no per-harness body-exception variant.
+
+### Per-harness frontmatter sidecars (FR-158)
+
+Each agent that ships through `igris registry add` can carry one or both of
+two operator-authored sidecars co-located with its body file(s):
+
+| Sidecar | Consumed by | Behavior when present |
+|---|---|---|
+| `frontmatter.claude.md` | `assembleClaudeHarness` (always) AND `assembleGeminiHarness` (when no Gemini sidecar) | Claude-shape frontmatter (PascalCase tools, no `kind` field). Vendored verbatim into `<registry>/agents/<name>/harness.claude.md`. Auto-translated for Gemini when `frontmatter.gemini.md` is absent. |
+| `frontmatter.gemini.md` | `assembleGeminiHarness` (overrides) | Gemini-shape frontmatter — honored verbatim with no field-by-field merge. Author this when the Claude→Gemini auto-translate doesn't fit (e.g., an agent declaring `Glob` whose Gemini equivalent semantics matter). |
+
+When NEITHER sidecar is present, the assemblers no-op and the compile-side
+fallback in `compile_harnesses.sh` synthesizes the harness from the canonical's
+inline frontmatter (TD-195 / FR-158 compatible mode).
+
+#### Claude → Gemini tool-name translation map
+
+The auto-translate path (used when only `frontmatter.claude.md` exists) applies
+this 1:1 map to the `tools:` field, ALWAYS adds `kind: local`, and drops
+`model:` / `temperature:` / `max_turns:` (operators override via
+`frontmatter.gemini.md`). Other fields pass through verbatim.
+
+| Claude tool | Gemini tool | Notes |
+|---|---|---|
+| `Read` | `read_file` | direct match |
+| `Write` | `write_file` | direct match |
+| `Edit` | `edit_file` | direct match |
+| `Bash` | `run_shell_command` | direct match |
+| `Grep` | `grep_search` | direct match |
+| `Glob` | `list_directory` | **imperfect** — Glob is recursive pattern matching; `list_directory` is single-dir listing. Use a `frontmatter.gemini.md` override if semantics matter. |
+| `Task` | `task` | lowercased |
+| `WebFetch` | `web_fetch` | direct match |
+| `WebSearch` | `web_search` | direct match |
+
+`tools:` accepts string (`tools: Read`), CSV (`tools: Read, Grep`), and YAML
+flow-list (`tools: [Read, Grep]`) input shapes; output is emitted as YAML
+flow-list (`tools: [read_file, grep_search]`). Unknown tool names pass
+through verbatim — Gemini's loader will surface a clear "unknown tool" error,
+which IS the right behavior (an unknown tool means an operator override is
+required).
+
+#### Codex interim note (FR-158 → FR-159)
+
+Codex emission is still bash-driven (`sync_codex_agents.sh` called from
+`compile_harnesses.sh`). Under FR-158 the codex resolver reads the renamed
+`frontmatter.claude.md` (treating it as the Claude-shape frontmatter the codex
+emitter understands). FR-159 will port codex to TS, at which point this
+interim shape can be retired in favor of a parameterized codex assembler.
 
 ### Decision D1 — codex wrap vs reimplement (RESOLVED — REIMPLEMENT, FR-138)
 

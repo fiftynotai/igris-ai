@@ -60,7 +60,7 @@ setup() {
 
   # A canonical agent prompt (frontmatter + body). Compile-time α-assembly
   # extracts frontmatter inline (TD-195 fallback — no FR-151 sidecar present)
-  # and produces a registry-resident harness.md the symlink will point at.
+  # and produces a registry-resident harness.claude.md the symlink will point at.
   cat > "$PROJ/canon/sample.md" <<'EOF'
 ---
 name: sample
@@ -118,7 +118,7 @@ EOF
   # The symlink target must reside in the registry under $IGRIS_BRAIN_DIR.
   local resolved
   resolved="$(readlink "$PROJ/nested/dir/sample.md")"
-  [[ "$resolved" == "$IGRIS_BRAIN_DIR/registry/agents/sample/harness.md" ]]
+  [[ "$resolved" == "$IGRIS_BRAIN_DIR/registry/agents/sample/harness.claude.md" ]]
 }
 
 @test "FR-154 compile: absolute target outside PROJECT_ROOT resolves verbatim" {
@@ -317,7 +317,7 @@ EOF
 @test "FR-154 drift: an absolute target outside PROJECT_ROOT reports MATCH after compile" {
   # Sanity check that the abs-outside-PROJ_ROOT shape survives drift's
   # registry-containment check on the symlink TARGET (the symlink TARGET is
-  # still the registry harness.md; only the symlink LOCATION is outside
+  # still the registry harness.claude.md; only the symlink LOCATION is outside
   # PROJ). This guards against a future drift-side regression that confuses
   # "containment of the link path" with "containment of the link target".
   local abs_target="$TEST_TEMP_DIR/abs_outside_match_$BATS_TEST_NUMBER/sample.md"

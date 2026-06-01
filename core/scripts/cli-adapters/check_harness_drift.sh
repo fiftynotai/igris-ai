@@ -250,9 +250,10 @@ PY
 # ---------------------------------------------------------------------------
 # verify_md_agent_symlink_drift <name> <harness_label> <target_abs>
 #
-# FR-152 unified drift verdict for claude + gemini AGENT targets. Both share
-# the same registry-resident `<BRAIN_DIR>/registry/agents/<name>/harness.md`
-# expected file (the assembly happens at compile time). Verdicts:
+# FR-152 / FR-158 per-harness drift verdict for claude + gemini AGENT
+# targets. Each harness has its own registry-resident expected file
+# (`<BRAIN_DIR>/registry/agents/<name>/harness.<harness_label>.md`) — the
+# assembly happens at compile time. Verdicts:
 #
 #   MISSING — target absent.
 #   DRIFTED — target is a regular file (refuse-to-clobber posture; the
@@ -263,18 +264,18 @@ PY
 #   DRIFTED — symlink resolves under the registry but to the WRONG file
 #             (registry-anchored but mismatched).
 #   DRIFTED — symlink broken.
-#   MATCH   — symlink resolves to the expected harness.md.
+#   MATCH   — symlink resolves to the expected harness.<harness_label>.md.
 #
 # Pairs line-for-line with `compile_md_agent_target` in compile_harnesses.sh.
 # Updates MATCH/DRIFT counters (caller-scoped). Both sides realpath'd for the
-# macOS `/var` → `/private/var` prefix. See L-515, L-519 §18.1.
+# macOS `/var` → `/private/var` prefix. See L-515, L-519 §18.1, FR-158.
 # ---------------------------------------------------------------------------
 verify_md_agent_symlink_drift() {
   local name="$1"
   local harness_label="$2"
   local target_abs="$3"
 
-  local expected_target="$BRAIN_DIR/registry/agents/$name/harness.md"
+  local expected_target="$BRAIN_DIR/registry/agents/$name/harness.${harness_label}.md"
 
   if [ ! -e "$target_abs" ] && [ ! -L "$target_abs" ]; then
     echo "  [$name/$harness_label] MISSING — harness symlink absent: $target_abs"
@@ -579,7 +580,11 @@ def walk(tree):
                 continue
             abs_p = os.path.join(root, f)
             rel = os.path.relpath(abs_p, tree).replace(os.sep, "/")
-            if rel == "harness.md":
+            # FR-158: per-harness α-assembly outputs are derived; exclude
+            # both `harness.claude.md` AND `harness.gemini.md` from the
+            # tree-diff basis (top-level only — a nested file by either
+            # name would be legitimate operator content).
+            if rel in ("harness.claude.md", "harness.gemini.md"):
                 continue
             try:
                 with open(abs_p, "rb") as fh:
@@ -631,12 +636,13 @@ PY
   esac
   canon_version=$(read_canonical_version "$canon_abs")
 
-  # FR-152: claude + gemini AGENT verdicts are by target-path realpath against
-  # the registry-resident assembled harness.md (NOT body sha). Pair line-for-
-  # line with `compile_md_agent_target` (L-519 §18.1 compile/drift-verify
-  # pairing). Both sides of the containment check are realpath'd so macOS
-  # `/var` → `/private/var` (and similar symlink-resolved TMPDIR prefixes) do
-  # not produce false "not registry-anchored" verdicts.
+  # FR-152 / FR-158: claude + gemini AGENT verdicts are by target-path
+  # realpath against the per-harness registry-resident assembled file
+  # (`harness.claude.md` for claude, `harness.gemini.md` for gemini — NOT
+  # body sha). Pair line-for-line with `compile_md_agent_target` (L-519 §18.1
+  # compile/drift-verify pairing). Both sides of the containment check are
+  # realpath'd so macOS `/var` → `/private/var` (and similar symlink-resolved
+  # TMPDIR prefixes) do not produce false "not registry-anchored" verdicts.
   if [ "$ttype" = "claude" ] || [ "$ttype" = "gemini" ]; then
     verify_md_agent_symlink_drift "$name" "$ttype" "$target_abs"
     continue
@@ -937,9 +943,10 @@ def walk(tree):
                 continue
             abs_p = os.path.join(root, f)
             rel = os.path.relpath(abs_p, tree).replace(os.sep, "/")
-            # Harness.md exclusion is moot for skills (no α-assembly output)
-            # but kept for parity with hash_agent_tree — see TD-201 plan §2.
-            if rel == "harness.md":
+            # FR-158: per-harness α-assembly output exclusion is moot for
+            # skills (no α-assembly output) but kept for parity with
+            # hash_agent_tree — see TD-201 plan §2 + FR-158.
+            if rel in ("harness.claude.md", "harness.gemini.md"):
                 continue
             try:
                 with open(abs_p, "rb") as fh:

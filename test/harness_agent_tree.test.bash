@@ -2,7 +2,7 @@
 
 # harness_agent_tree.test.bash — FR-156 agent TREE vendor + tree drift verify.
 #
-# FR-156 promotes agent vendoring from "file-set" (frontmatter.md +
+# FR-156 promotes agent vendoring from "file-set" (frontmatter.claude.md +
 # system-prompt-vN.md only) to "tree" (whole source dir minus a fixed
 # skip-list). The drift verifier gets a NEW per-agent tree-hash pre-check
 # that pairs with the recorded path-origin source dir — one MATCH/DRIFTED
@@ -15,7 +15,7 @@
 #      drift between runs; the well-known empty-sha for a missing dir).
 #   2. hash_agent_tree skip-list matches TS `isAgentTreeSkipped` (.DS_Store
 #      + __pycache__/*.pyc + node_modules/* + .git* + MAINTAINING.md skipped
-#      from the basis; harness.md too).
+#      from the basis; harness.claude.md too).
 #   3. End-to-end: synthesize a vendored agent tree + recorded origin →
 #      drift reports `[<name>/tree] MATCH` (the new pre-check verdict).
 #   4. Mutate the REGISTRY side → drift flips to `[<name>/tree] DRIFTED`
@@ -72,7 +72,7 @@ teardown() {
 @test "hash_agent_tree: deterministic across two calls + 64-char hex" {
   local d="$PROJ/det"
   mkdir -p "$d/routing"
-  printf 'frontmatter\n' > "$d/frontmatter.md"
+  printf 'frontmatter\n' > "$d/frontmatter.claude.md"
   printf 'body\n'        > "$d/system-prompt-v1.md"
   printf 'routes\n'      > "$d/routing/_routing.md"
   run bash -c "source '$COMMON' && hash_agent_tree '$d'"
@@ -84,10 +84,10 @@ teardown() {
   [ "$output" = "$first" ]
 }
 
-@test "hash_agent_tree: skip-list excludes .DS_Store, __pycache__, node_modules, .git*, MAINTAINING.md, *.pyc, harness.md" {
+@test "hash_agent_tree: skip-list excludes .DS_Store, __pycache__, node_modules, .git*, MAINTAINING.md, *.pyc, harness.claude.md" {
   local d="$PROJ/skip"
   mkdir -p "$d"
-  printf 'fm\n'   > "$d/frontmatter.md"
+  printf 'fm\n'   > "$d/frontmatter.claude.md"
   printf 'body\n' > "$d/system-prompt-v1.md"
   run bash -c "source '$COMMON' && hash_agent_tree '$d'"
   [ "$status" -eq 0 ]
@@ -101,7 +101,7 @@ teardown() {
   printf 'cruft\n' > "$d/node_modules/foo/index.js"
   printf 'cruft\n' > "$d/.git/HEAD"
   printf 'cruft\n' > "$d/top.pyc"
-  printf 'derived\n' > "$d/harness.md"
+  printf 'derived\n' > "$d/harness.claude.md"
   run bash -c "source '$COMMON' && hash_agent_tree '$d'"
   [ "$status" -eq 0 ]
   [ "$output" = "$baseline" ]
@@ -110,7 +110,7 @@ teardown() {
 @test "hash_agent_tree: content change in a nested file flips the hash (L-430 — basis matches disk)" {
   local d="$PROJ/mut"
   mkdir -p "$d/routing"
-  printf 'fm\n'   > "$d/frontmatter.md"
+  printf 'fm\n'   > "$d/frontmatter.claude.md"
   printf 'body\n' > "$d/system-prompt-v1.md"
   printf 'v1\n'   > "$d/routing/_routing.md"
   run bash -c "source '$COMMON' && hash_agent_tree '$d'"
@@ -196,7 +196,7 @@ EOF
 @test "drift: synthesized tree → tree verdict is MATCH + per-target FR-152 verdict is MATCH" {
   local src="$PROJ/src_demo"
   mkdir -p "$src/routing"
-  cat > "$src/frontmatter.md" <<'EOF'
+  cat > "$src/frontmatter.claude.md" <<'EOF'
 ---
 name: demo
 description: FR-156 tree
@@ -216,7 +216,7 @@ EOF
 @test "drift: mutate the registry copy → tree verdict flips to DRIFTED + locates the relpath in the sub-line" {
   local src="$PROJ/src_mut"
   mkdir -p "$src/routing"
-  cat > "$src/frontmatter.md" <<'EOF'
+  cat > "$src/frontmatter.claude.md" <<'EOF'
 ---
 name: muta
 description: tree mutate
@@ -245,7 +245,7 @@ EOF
 @test "drift: mutate the source side → tree verdict flips to DRIFTED" {
   local src="$PROJ/src_invmut"
   mkdir -p "$src"
-  cat > "$src/frontmatter.md" <<'EOF'
+  cat > "$src/frontmatter.claude.md" <<'EOF'
 ---
 name: inv
 description: inverse mutation
@@ -266,7 +266,7 @@ EOF
 @test "drift: tree verdict fires ONCE per agent across multiple targets (dedup)" {
   local src="$PROJ/src_multi"
   mkdir -p "$src"
-  cat > "$src/frontmatter.md" <<'EOF'
+  cat > "$src/frontmatter.claude.md" <<'EOF'
 ---
 name: multi
 description: 3-target agent
@@ -334,7 +334,7 @@ EOF
 @test "drift: github-origin agent → tree pre-check NOTE (release-tag tracked, not source-tree tracked)" {
   local registry_dir="$IGRIS_BRAIN_DIR/registry/agents/ghagent"
   mkdir -p "$registry_dir"
-  cat > "$registry_dir/frontmatter.md" <<'EOF'
+  cat > "$registry_dir/frontmatter.claude.md" <<'EOF'
 ---
 name: ghagent
 description: github origin
@@ -390,7 +390,7 @@ EOF
 @test "drift: personal agent with NO recorded origin → tree pre-check silently skipped, per-target verdict still fires" {
   local registry_dir="$IGRIS_BRAIN_DIR/registry/agents/noorigin"
   mkdir -p "$registry_dir"
-  cat > "$registry_dir/frontmatter.md" <<'EOF'
+  cat > "$registry_dir/frontmatter.claude.md" <<'EOF'
 ---
 name: noorigin
 description: zero-migration legacy
@@ -433,7 +433,7 @@ EOF
 @test "drift: source dir deleted post-add → tree pre-check emits NOTE, per-target verdict still fires" {
   local src="$PROJ/src_gone"
   mkdir -p "$src"
-  cat > "$src/frontmatter.md" <<'EOF'
+  cat > "$src/frontmatter.claude.md" <<'EOF'
 ---
 name: gone
 description: source dir deleted

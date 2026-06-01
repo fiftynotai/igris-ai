@@ -186,7 +186,7 @@ describe("registry add", () => {
     expect("file" in overlay.agents[0].canonical).toBe(false);
     // FR-156: tree vendor brings the WHOLE source dir minus the skip-list.
     // The overlay still records `glob: 'v*.md'` (consumed by
-    // `assembleAgentHarness`'s body-picker), but unrelated sibling files
+    // `assembleClaudeHarness`'s body-picker), but unrelated sibling files
     // are no longer dropped — that was the L-516 violation (registry copy
     // was not self-sufficient when authors shipped sibling supporting
     // files like routing/ or archetypes/).
@@ -322,14 +322,14 @@ describe("registry add", () => {
   // canonical(s) and folds it into the content hash. See L-519, FR-151.
   // -------------------------------------------------------------------------
 
-  it("FR-151: --versioned with a frontmatter.md sibling vendors BOTH", async () => {
+  it("FR-151/FR-158: --versioned with a frontmatter.claude.md sibling vendors BOTH", async () => {
     mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
     writeFileSync(
       join(projectRoot, "vcanon", "system-prompt-v1.md"),
       "v1 body\n",
     );
     writeFileSync(
-      join(projectRoot, "vcanon", "frontmatter.md"),
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: vfront\n---\n",
     );
     const code = await runRegistry(
@@ -346,7 +346,7 @@ describe("registry add", () => {
     expect(existsSync(join(vendorDir("vfront"), "system-prompt-v1.md"))).toBe(
       true,
     );
-    expect(existsSync(join(vendorDir("vfront"), "frontmatter.md"))).toBe(true);
+    expect(existsSync(join(vendorDir("vfront"), "frontmatter.claude.md"))).toBe(true);
     // Glob is unchanged (frontmatter.md does NOT mutate the glob).
     const overlay = readOverlayFile() as {
       agents: { canonical: Record<string, unknown> }[];
@@ -357,7 +357,7 @@ describe("registry add", () => {
     expect(origins["agent:vfront"].hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("FR-151: --versioned WITHOUT frontmatter.md still works (backward-compat)", async () => {
+  it("FR-151/FR-158: --versioned WITHOUT frontmatter.claude.md still works (backward-compat)", async () => {
     mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
     writeFileSync(
       join(projectRoot, "vcanon", "system-prompt-v1.md"),
@@ -377,13 +377,13 @@ describe("registry add", () => {
     expect(existsSync(join(vendorDir("vplain"), "system-prompt-v1.md"))).toBe(
       true,
     );
-    expect(existsSync(join(vendorDir("vplain"), "frontmatter.md"))).toBe(false);
+    expect(existsSync(join(vendorDir("vplain"), "frontmatter.claude.md"))).toBe(false);
   });
 
-  it("FR-151: unversioned with a frontmatter.md sibling vendors BOTH", async () => {
+  it("FR-151/FR-158: unversioned with a frontmatter.claude.md sibling vendors BOTH", async () => {
     // Reuse the default canon/ dir (carries x.md from beforeEach).
     writeFileSync(
-      join(projectRoot, "canon", "frontmatter.md"),
+      join(projectRoot, "canon", "frontmatter.claude.md"),
       "---\nname: ufront\n---\n",
     );
     const code = await runRegistry(
@@ -395,10 +395,10 @@ describe("registry add", () => {
     );
     expect(code).toBe(0);
     expect(existsSync(join(vendorDir("ufront"), "x.md"))).toBe(true);
-    expect(existsSync(join(vendorDir("ufront"), "frontmatter.md"))).toBe(true);
+    expect(existsSync(join(vendorDir("ufront"), "frontmatter.claude.md"))).toBe(true);
   });
 
-  it("FR-151: --versioned glob double-match for frontmatter.md vendors exactly once", async () => {
+  it("FR-151/FR-158: --versioned glob double-match for frontmatter.claude.md vendors exactly once", async () => {
     // Glob `*.md` matches BOTH system-prompt-v1.md AND frontmatter.md; the
     // sidecar-pickup must not double-push. Final files[] has each name once.
     mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
@@ -407,7 +407,7 @@ describe("registry add", () => {
       "v1\n",
     );
     writeFileSync(
-      join(projectRoot, "vcanon", "frontmatter.md"),
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "fm body\n",
     );
     const code = await runRegistry(
@@ -422,7 +422,7 @@ describe("registry add", () => {
     expect(code).toBe(0);
     // BOTH present; frontmatter.md appears exactly once (vendor-dir read).
     const vendored = readdirSync(vendorDir("vdouble"));
-    const fmCount = vendored.filter((n) => n === "frontmatter.md").length;
+    const fmCount = vendored.filter((n) => n === "frontmatter.claude.md").length;
     expect(fmCount).toBe(1);
     expect(vendored).toContain("system-prompt-v1.md");
   });
@@ -433,14 +433,14 @@ describe("registry add", () => {
   // compile-time symlinks resolve to this ONE file. See L-519, FR-152.
   // -------------------------------------------------------------------------
 
-  it("FR-152: runAdd assembles harness.md from frontmatter.md + body", async () => {
+  it("FR-152/FR-158: runAdd assembles harness.claude.md from frontmatter.claude.md + body", async () => {
     mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
     writeFileSync(
       join(projectRoot, "vcanon", "system-prompt-v1.md"),
       "# DEMO\n\nbody line one\nbody line two\n",
     );
     writeFileSync(
-      join(projectRoot, "vcanon", "frontmatter.md"),
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: demo\ndescription: FR-152 α-assembly\n---\n",
     );
     const code = await runRegistry(
@@ -455,7 +455,7 @@ describe("registry add", () => {
     expect(code).toBe(0);
     // harness.md exists in the vendored dir and starts with `---\n<fm>\n---\n`
     // followed by the body.
-    const harnessPath = join(vendorDir("demo"), "harness.md");
+    const harnessPath = join(vendorDir("demo"), "harness.claude.md");
     expect(existsSync(harnessPath)).toBe(true);
     const harness = readFileSync(harnessPath, "utf-8");
     expect(harness.startsWith("---\nname: demo\ndescription: FR-152 α-assembly\n---\n")).toBe(
@@ -465,14 +465,14 @@ describe("registry add", () => {
     expect(harness).toContain("body line two");
   });
 
-  it("FR-152: assembly idempotency — re-add reproduces identical harness.md bytes", async () => {
+  it("FR-152/FR-158: assembly idempotency — re-add reproduces identical harness.claude.md bytes", async () => {
     mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
     writeFileSync(
       join(projectRoot, "vcanon", "system-prompt-v1.md"),
       "body\n",
     );
     writeFileSync(
-      join(projectRoot, "vcanon", "frontmatter.md"),
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: idem\n---\n",
     );
     await runRegistry(
@@ -484,7 +484,7 @@ describe("registry add", () => {
         targets: ["claude:.claude/agents/idem.md"],
       }),
     );
-    const harnessPath = join(vendorDir("idem"), "harness.md");
+    const harnessPath = join(vendorDir("idem"), "harness.claude.md");
     const first = readFileSync(harnessPath, "utf-8");
     // Remove the existing entry and re-add → same bytes.
     await runRegistry({
@@ -515,7 +515,7 @@ describe("registry add", () => {
     writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.2.md"), "v1.2\n");
     writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.10.md"), "v1.10 latest body\n");
     writeFileSync(
-      join(projectRoot, "vcanon", "frontmatter.md"),
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: ver\n---\n",
     );
     await runRegistry(
@@ -527,13 +527,13 @@ describe("registry add", () => {
         targets: ["claude:.claude/agents/ver.md"],
       }),
     );
-    const harness = readFileSync(join(vendorDir("ver"), "harness.md"), "utf-8");
+    const harness = readFileSync(join(vendorDir("ver"), "harness.claude.md"), "utf-8");
     expect(harness).toContain("v1.10 latest body");
     expect(harness).not.toContain("v1.0\n");
     expect(harness).not.toContain("v1.2\n");
   });
 
-  it("FR-152: assembly is a no-op when frontmatter.md is absent (back-compat)", async () => {
+  it("FR-152/FR-158: assembly is a no-op when frontmatter.claude.md is absent (back-compat)", async () => {
     // Personal agents added pre-FR-151 don't have a sidecar; the vendor must
     // not emit a half-assembled harness.md. The compile-side fallback in
     // compile_harnesses.sh handles those cases at compile time.
@@ -551,17 +551,17 @@ describe("registry add", () => {
         targets: ["claude:.claude/agents/nofm.md"],
       }),
     );
-    expect(existsSync(join(vendorDir("nofm"), "harness.md"))).toBe(false);
+    expect(existsSync(join(vendorDir("nofm"), "harness.claude.md"))).toBe(false);
   });
 
-  it("FR-152: harness.md is NOT folded into the origin hash (excluded from freshness)", async () => {
+  it("FR-152/FR-158: harness.claude.md is NOT folded into the origin hash (excluded from freshness)", async () => {
     // The hash is computed BEFORE assembly so re-running `update` with no
     // source change produces an unchanged hash. If harness.md were in the
     // hash, re-derivation would tickle a phantom freshness delta.
     mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
     writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.md"), "body\n");
     writeFileSync(
-      join(projectRoot, "vcanon", "frontmatter.md"),
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: hashed\n---\n",
     );
     await runRegistry(
@@ -587,6 +587,192 @@ describe("registry add", () => {
     expect(upd).toBe(0);
     const afterHash = readOriginsFile()["agent:hashed"].hash;
     expect(afterHash).toBe(beforeHash);
+  });
+
+  // ---------------------------------------------------------------------------
+  // FR-158: per-harness α-assembly — `assembleGeminiHarness` (auto-translate
+  // OR honor operator-authored `frontmatter.gemini.md`).
+  //
+  // Tests exercise the FOUR primary contract guarantees:
+  //   1. operator sidecar honored verbatim (no translation)
+  //   2. auto-translate Claude → Gemini (kind: local + tool-name map; string,
+  //      array, CSV `tools:` shapes)
+  //   3. body-exception applied IDENTICALLY to both outputs (FR-144 parity)
+  //   4. idempotency — re-add reproduces byte-identical `harness.gemini.md`
+  // ---------------------------------------------------------------------------
+  it("FR-158: runAdd assembles harness.gemini.md by auto-translating frontmatter.claude.md (string tools)", async () => {
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.md"), "body line 1\nbody line 2\n");
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
+      "---\nname: gemstr\ndescription: gemini string-tools test\ntools: Read\n---\n",
+    );
+    await runRegistry(
+      addOpts({
+        name: "gemstr",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["gemini:.gemini/agents/gemstr.md"],
+      }),
+    );
+    const harnessPath = join(vendorDir("gemstr"), "harness.gemini.md");
+    expect(existsSync(harnessPath)).toBe(true);
+    const content = readFileSync(harnessPath, "utf-8");
+    // Auto-translated: name+description verbatim, Read → read_file (list), kind: local injected
+    expect(content).toContain("name: gemstr");
+    expect(content).toContain("description: gemini string-tools test");
+    expect(content).toContain("tools: [read_file]");
+    expect(content).toContain("kind: local");
+    expect(content).toContain("body line 1");
+  });
+
+  it("FR-158: auto-translate handles CSV tools (Read, Grep, Bash) and unknown passthrough", async () => {
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.md"), "body\n");
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
+      "---\nname: gemcsv\ntools: Read, Grep, Bash, FakeFutureTool\n---\n",
+    );
+    await runRegistry(
+      addOpts({
+        name: "gemcsv",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["gemini:.gemini/agents/gemcsv.md"],
+      }),
+    );
+    const content = readFileSync(join(vendorDir("gemcsv"), "harness.gemini.md"), "utf-8");
+    expect(content).toContain("tools: [read_file, grep_search, run_shell_command, FakeFutureTool]");
+    expect(content).toContain("kind: local");
+  });
+
+  it("FR-158: auto-translate handles YAML flow-list tools ([Read, Grep])", async () => {
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.md"), "body\n");
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
+      "---\nname: gemarr\ntools: [Read, Grep]\n---\n",
+    );
+    await runRegistry(
+      addOpts({
+        name: "gemarr",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["gemini:.gemini/agents/gemarr.md"],
+      }),
+    );
+    const content = readFileSync(join(vendorDir("gemarr"), "harness.gemini.md"), "utf-8");
+    expect(content).toContain("tools: [read_file, grep_search]");
+    expect(content).toContain("kind: local");
+  });
+
+  it("FR-158: operator-authored frontmatter.gemini.md sidecar is honored verbatim (no translation)", async () => {
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.md"), "body\n");
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
+      "---\nname: gemov\ntools: Read\n---\n",
+    );
+    // Operator override — completely different shape, MUST be honored verbatim.
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.gemini.md"),
+      "---\nname: gemov-overridden\nkind: local\ntools: [read_file, web_search]\ncustom_field: special\n---\n",
+    );
+    await runRegistry(
+      addOpts({
+        name: "gemov",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["gemini:.gemini/agents/gemov.md"],
+      }),
+    );
+    const content = readFileSync(join(vendorDir("gemov"), "harness.gemini.md"), "utf-8");
+    // Operator-authored bytes preserved
+    expect(content).toContain("name: gemov-overridden");
+    expect(content).toContain("tools: [read_file, web_search]");
+    expect(content).toContain("custom_field: special");
+    // Crucially: the original Claude-shape (name: gemov + tools: Read) does NOT leak in
+    expect(content).not.toContain("name: gemov\n");
+    expect(content).not.toContain("tools: Read");
+  });
+
+  it("FR-158: assembleGeminiHarness no-ops when neither frontmatter sidecar is present (back-compat)", async () => {
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(join(projectRoot, "vcanon", "x.md"), "body without any sidecar\n");
+    await runRegistry(
+      addOpts({
+        name: "gemnone",
+        from: "vcanon/x.md",
+        targets: ["claude:.claude/agents/gemnone.md"],
+      }),
+    );
+    // Neither claude nor gemini sidecar → neither output exists
+    expect(existsSync(join(vendorDir("gemnone"), "harness.claude.md"))).toBe(false);
+    expect(existsSync(join(vendorDir("gemnone"), "harness.gemini.md"))).toBe(false);
+  });
+
+  it("FR-158: idempotency — re-update produces byte-identical harness.gemini.md", async () => {
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.md"), "body\n");
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
+      "---\nname: gemidem\ntools: Read\n---\n",
+    );
+    await runRegistry(
+      addOpts({
+        name: "gemidem",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["gemini:.gemini/agents/gemidem.md"],
+      }),
+    );
+    const harnessPath = join(vendorDir("gemidem"), "harness.gemini.md");
+    const first = readFileSync(harnessPath, "utf-8");
+    await runRegistry({
+      action: "update",
+      name: "gemidem",
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+    });
+    const second = readFileSync(harnessPath, "utf-8");
+    expect(second).toBe(first);
+  });
+
+  it("FR-158: both harness.claude.md and harness.gemini.md materialize in the same vendor", async () => {
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.md"), "body\n");
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
+      "---\nname: gemboth\ntools: Read\n---\n",
+    );
+    await runRegistry(
+      addOpts({
+        name: "gemboth",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: [
+          "claude:.claude/agents/gemboth.md",
+          "gemini:.gemini/agents/gemboth.md",
+        ],
+      }),
+    );
+    expect(existsSync(join(vendorDir("gemboth"), "harness.claude.md"))).toBe(true);
+    expect(existsSync(join(vendorDir("gemboth"), "harness.gemini.md"))).toBe(true);
+    const claude = readFileSync(join(vendorDir("gemboth"), "harness.claude.md"), "utf-8");
+    const gemini = readFileSync(join(vendorDir("gemboth"), "harness.gemini.md"), "utf-8");
+    // Same body, different frontmatter
+    expect(claude).toContain("tools: Read");
+    expect(claude).not.toContain("kind: local");
+    expect(gemini).toContain("tools: [read_file]");
+    expect(gemini).toContain("kind: local");
   });
 
   it("FR-152: gemini agent target is accepted via parseTarget (no schema regression)", async () => {
@@ -2334,22 +2520,22 @@ describe("registry update", () => {
     expect(readOriginsFile()["agent:vupd"].hash).not.toBe(hashBefore);
   });
 
-  it("FR-151: hash advances when frontmatter.md mutates", async () => {
+  it("FR-151/FR-158: hash advances when frontmatter.claude.md mutates", async () => {
     // Seed an agent with a frontmatter.md sidecar. The hash is folded over
     // BOTH files (canonical + sidecar). Mutating only the sidecar must still
     // cause `update` to re-vendor and report a hash advance — proving the
     // sidecar bytes participate in the content hash.
     writeFileSync(
-      join(projectRoot, "canon", "frontmatter.md"),
+      join(projectRoot, "canon", "frontmatter.claude.md"),
       "---\nname: fmhash\nv: 1\n---\n",
     );
     await seedAdd("fmhash");
-    expect(existsSync(join(vendorDir("fmhash"), "frontmatter.md"))).toBe(true);
+    expect(existsSync(join(vendorDir("fmhash"), "frontmatter.claude.md"))).toBe(true);
     const hashBefore = readOriginsFile()["agent:fmhash"].hash;
 
     // Mutate ONLY the sidecar — the canonical x.md is untouched.
     writeFileSync(
-      join(projectRoot, "canon", "frontmatter.md"),
+      join(projectRoot, "canon", "frontmatter.claude.md"),
       "---\nname: fmhash\nv: 2\n---\n",
     );
     const code = await runRegistry({
@@ -2362,7 +2548,7 @@ describe("registry update", () => {
     expect(code).toBe(0);
     // Re-vendored sidecar reflects the new bytes.
     expect(
-      readFileSync(join(vendorDir("fmhash"), "frontmatter.md"), "utf-8"),
+      readFileSync(join(vendorDir("fmhash"), "frontmatter.claude.md"), "utf-8"),
     ).toBe("---\nname: fmhash\nv: 2\n---\n");
     // Hash advanced (sidecar participates in the content hash).
     expect(readOriginsFile()["agent:fmhash"].hash).not.toBe(hashBefore);
@@ -3217,7 +3403,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     mkdirSync(join(src, "routing"), { recursive: true });
     mkdirSync(join(src, "registry"), { recursive: true });
     writeFileSync(
-      join(src, "frontmatter.md"),
+      join(src, "frontmatter.claude.md"),
       "---\nname: t1\ndescription: tree-shaped\n---\n",
     );
     writeFileSync(join(src, "system-prompt-v1.md"), "# body v1\n");
@@ -3233,12 +3419,12 @@ describe("FR-156: agent tree vendor + hash", () => {
     expect(code).toBe(0);
     // All four source files vendored, nesting preserved (L-516 closed).
     const v = vendorDir("t1");
-    expect(existsSync(join(v, "frontmatter.md"))).toBe(true);
+    expect(existsSync(join(v, "frontmatter.claude.md"))).toBe(true);
     expect(existsSync(join(v, "system-prompt-v1.md"))).toBe(true);
     expect(existsSync(join(v, "routing", "_routing.md"))).toBe(true);
     expect(existsSync(join(v, "registry", "types.md"))).toBe(true);
     // FR-152 α-assembly still works against the tree-vendored sources.
-    expect(existsSync(join(v, "harness.md"))).toBe(true);
+    expect(existsSync(join(v, "harness.claude.md"))).toBe(true);
     // Recorded origin hash is the tree hash (matches what the bash drift
     // pre-check will compute against the same dir).
     const recordedHash = readOriginsFile()["agent:t1"].hash;
@@ -3252,7 +3438,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     mkdirSync(join(src, ".git"), { recursive: true });
     mkdirSync(join(src, "__pycache__"), { recursive: true });
     writeFileSync(
-      join(src, "frontmatter.md"),
+      join(src, "frontmatter.claude.md"),
       "---\nname: t2\ndescription: skip\n---\n",
     );
     writeFileSync(join(src, "system-prompt-v1.md"), "# body\n");
@@ -3273,7 +3459,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     expect(code).toBe(0);
     const v = vendorDir("t2");
     // KEPT.
-    expect(existsSync(join(v, "frontmatter.md"))).toBe(true);
+    expect(existsSync(join(v, "frontmatter.claude.md"))).toBe(true);
     expect(existsSync(join(v, "system-prompt-v1.md"))).toBe(true);
     // SKIPPED.
     expect(existsSync(join(v, "MAINTAINING.md"))).toBe(false);
@@ -3291,7 +3477,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     mkdirSync(src, { recursive: true });
     mkdirSync(outside, { recursive: true });
     writeFileSync(
-      join(src, "frontmatter.md"),
+      join(src, "frontmatter.claude.md"),
       "---\nname: t3\ndescription: esc\n---\n",
     );
     writeFileSync(join(src, "system-prompt-v1.md"), "# body\n");
@@ -3308,7 +3494,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     expect(code).toBe(0);
     const v = vendorDir("t3");
     // Expected entries vendored.
-    expect(existsSync(join(v, "frontmatter.md"))).toBe(true);
+    expect(existsSync(join(v, "frontmatter.claude.md"))).toBe(true);
     expect(existsSync(join(v, "system-prompt-v1.md"))).toBe(true);
     // The symlink and its (escaped) target MUST NOT appear in the vendored
     // tree — vendor is bytes, not refs, and symlink escapes are the L-515
@@ -3324,15 +3510,16 @@ describe("FR-156: agent tree vendor + hash", () => {
     }
   });
 
-  it("hash is deterministic + order-independent + harness.md is excluded from basis", async () => {
+  it("hash is deterministic + order-independent + harness.{claude,gemini}.md is excluded from basis", async () => {
     // Build a tree, hash twice through add+update — the update with no
     // mutation must report `unchanged` (proves the hash basis equals what
-    // assembleAgentHarness produced; harness.md must be excluded from the
+    // assembleClaudeHarness/assembleGeminiHarness produced; both renamed
+    // harness outputs must be excluded from the
     // basis or the assembly would advance the hash).
     const src = join(projectRoot, "stable_src");
     mkdirSync(src, { recursive: true });
     writeFileSync(
-      join(src, "frontmatter.md"),
+      join(src, "frontmatter.claude.md"),
       "---\nname: t4\ndescription: stable\n---\n",
     );
     writeFileSync(join(src, "system-prompt-v1.md"), "# body\n");
@@ -3374,7 +3561,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     const src = join(projectRoot, "mut_src");
     mkdirSync(join(src, "routing"), { recursive: true });
     writeFileSync(
-      join(src, "frontmatter.md"),
+      join(src, "frontmatter.claude.md"),
       "---\nname: t5\ndescription: mut\n---\n",
     );
     writeFileSync(join(src, "system-prompt-v1.md"), "# body\n");
@@ -3411,7 +3598,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     const src = join(projectRoot, "add_src");
     mkdirSync(src, { recursive: true });
     writeFileSync(
-      join(src, "frontmatter.md"),
+      join(src, "frontmatter.claude.md"),
       "---\nname: t6\ndescription: add\n---\n",
     );
     writeFileSync(join(src, "system-prompt-v1.md"), "# body\n");
@@ -3444,7 +3631,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     const src = join(projectRoot, "rm_src");
     mkdirSync(src, { recursive: true });
     writeFileSync(
-      join(src, "frontmatter.md"),
+      join(src, "frontmatter.claude.md"),
       "---\nname: t7\ndescription: rm\n---\n",
     );
     writeFileSync(join(src, "system-prompt-v1.md"), "# body\n");
@@ -3539,7 +3726,7 @@ describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
     };
   }
 
-  it("agent add emits REGISTRY-NOTICE.md next to harness.md naming the source", async () => {
+  it("agent add emits REGISTRY-NOTICE.md next to harness.claude.md naming the source", async () => {
     const code = await runRegistry(
       addOpts({
         name: "td202agent",

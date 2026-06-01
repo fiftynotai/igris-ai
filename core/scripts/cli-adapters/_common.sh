@@ -398,9 +398,10 @@ PY
 # Skip-list MUST stay byte-for-byte in sync with the TS side at
 # `cli/src/verbs/registry.ts:isAgentTreeSkipped` (three sites, one rule —
 # any drift between them re-opens the L-430 "hash basis ≠ disk" trap).
-# `harness.md` is excluded from the basis because it is FR-152 α-assembly
-# OUTPUT (derived) — including it would make every assembly re-write
-# register as drift. Same posture as TS `hashAgentTree`.
+# Per-harness α-assembly outputs (`harness.claude.md`, `harness.gemini.md`)
+# are excluded from the basis because they are FR-152 / FR-158 DERIVED
+# OUTPUT — including either would make every assembly re-write register as
+# drift. Same posture as TS `hashAgentTree`.
 #
 # Returns 0 always; emits 64-char hex to stdout. Missing dir → empty sha256
 # (the well-known `e3b0c4...` digest), matching TS's `existsSync` guard.
@@ -444,10 +445,11 @@ if os.path.isdir(tree):
                 continue
             abs_path = os.path.join(root, f)
             rel = os.path.relpath(abs_path, tree).replace(os.sep, "/")
-            # Exclude FR-152 α-assembled output from the basis (top-level
-            # harness.md only — a nested file named harness.md would be
-            # legitimate operator content, same as the TS side).
-            if rel == "harness.md":
+            # FR-152 / FR-158: exclude per-harness α-assembled outputs from
+            # the basis (top-level `harness.claude.md` / `harness.gemini.md`
+            # only — a nested file by either name would be legitimate
+            # operator content, same as the TS side).
+            if rel in ("harness.claude.md", "harness.gemini.md"):
                 continue
             rels.append(rel)
 
