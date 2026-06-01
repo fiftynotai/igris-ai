@@ -79,6 +79,42 @@ atomic_symlink() {
 }
 
 # ---------------------------------------------------------------------------
+# emit_md_hardlink <link_path> <target>
+#
+# TD-208: install a HARD LINK at $link_path pointing at the same inode as
+# $target. The hard link IS the file from the kernel's perspective — same
+# inode, same bytes-on-disk, nlink increments. Gemini subagent loaders do NOT
+# follow symbolic links (verified live 2026-06-01) but DO follow hard links.
+# Hard link preserves L-516 registry-canonical: the registry file remains THE
+# single physical home; the target just adds a directory entry.
+#
+# IMPORTANT — atomicity model differs from atomic_symlink:
+#   - Symlinks support temp+rename for atomic repoint.
+#   - Hard links do NOT — `ln` itself is atomic, but a stale entry must be
+#     unlinked first. The window between rm and ln is acceptable because the
+#     consumer (Gemini loader) reads on-demand at subagent invocation, not
+#     during compile.
+#
+# Re-vendor invalidates hard links: vendorAgentTreeAtomic in cli/src/verbs/
+# registry.ts uses temp-file + rename for the registry-resident
+# harness.gemini.md, which assigns a NEW inode. The OLD hard link at
+# $link_path now points at an orphaned inode and must be removed BEFORE `ln`
+# re-shares the new one. The `rm -f` here handles that case.
+#
+# Precondition: $target exists as a regular file in the registry (assembled
+# by assemble_agent_harness_into_registry immediately prior).
+# Postcondition: stat -f %i "$link_path" == stat -f %i "$target" AND
+# stat -f %l "$target" >= 2.
+# ---------------------------------------------------------------------------
+emit_md_hardlink() {
+  local link_path="$1"
+  local target="$2"
+  mkdir -p "$(dirname "$link_path")"
+  rm -f "$link_path"
+  ln "$target" "$link_path"
+}
+
+# ---------------------------------------------------------------------------
 # emit_skill_symlink <harness_label> <link_path> <skill_dir>
 #
 # FR-153 D1: per-symlink emit shared across the 3 skills/symlink compile
@@ -409,23 +445,40 @@ resolve_or_extract_frontmatter() {
 # compile_md_agent_target <harness_label> <name> <canon_abs> <exc_abs>
 #                         <target_abs>
 #
-# FR-152 / FR-158 per-harness α-projection for claude + gemini agent targets.
-# Each harness owns its own registry-resident derived file
-# (`harness.claude.md` or `harness.gemini.md`); the projection symlink at
-# `<target_abs>` points at the matching one. The 3-case dispatch:
+# FR-152 / FR-158 / TD-208 per-harness α-projection for claude + gemini agent
+# targets. Each harness owns its own registry-resident derived file
+# (`harness.claude.md` or `harness.gemini.md`); the projection at
+# `<target_abs>` points at the matching one. The emit primitive is
+# PER-HARNESS:
 #
-#   Case A — target absent → assemble harness.<label>.md + create symlink → it.
+#   claude → symbolic link (`ln -sf` via atomic_symlink). Claude's subagent
+#            loader follows symlinks fine.
+#   gemini → HARD LINK (`ln` via emit_md_hardlink). TD-208: Gemini's subagent
+#            loader does NOT follow symbolic links (verified live 2026-06-01)
+#            but DOES follow hard links. Hard link preserves L-516
+#            registry-canonical: same inode = same bytes-on-disk = registry
+#            remains the single physical home.
+#
+# Claude branch — 3-case dispatch (unchanged from FR-152):
+#   Case A — target absent → assemble + create symlink → harness.claude.md.
 #   Case B — target IS a symlink → if it resolves to the registry
-#            harness.<label>.md, silent no-op; else atomically repoint + log
-#            migration.
-#   Case C — target IS a regular file → HARD ERROR (refuse-to-clobber). The
-#            FR-149 Case C back-compat path is RETIRED by FR-152 (along with
-#            the legacy body-refresh adapter). Operator must rm + re-run
-#            compile.
+#            harness.claude.md, silent no-op; else atomically repoint + log.
+#   Case C — target IS a regular file → HARD ERROR (refuse-to-clobber).
 #
-# See L-519 (the symlink IS the projection, anchored at the registry-resident
-# harness.<label>.md). Body-exception is applied at assembly time, not symlink
-# time.
+# Gemini branch — TD-208 contract (we own this path; idempotent re-emit):
+#   - target absent → emit hard link + log "creating".
+#   - target IS a symlink (legacy pre-TD-208 state) → migrate to hard link +
+#     log "migrating legacy ... to hard link".
+#   - target IS a regular file with inode equal to harness.gemini.md →
+#     already correctly hard-linked; silent no-op.
+#   - target IS a regular file with mismatching inode → re-emit + log
+#     "re-establishing". This SUPERSEDES the FR-152 refuse-to-clobber
+#     posture: a hard link IS a real file (non-symlink), so refusing any
+#     real file would make Gemini refuse to overwrite its own output. The
+#     compile pipeline is the only legitimate writer of this path.
+#
+# See L-519 §18.1 (compile/drift-verify pairing). Body-exception is applied
+# at assembly time, not at emit time.
 # ---------------------------------------------------------------------------
 compile_md_agent_target() {
   local harness_label="$1"
@@ -441,6 +494,42 @@ compile_md_agent_target() {
     return 1
   fi
   local harness_target="$registry_agent_dir/harness.${harness_label}.md"
+
+  # TD-208: gemini emits via hard link (Gemini loader does not follow
+  # symlinks). The harness IS a real file (non-symlink), so "real file at
+  # target" can mean "already correctly hard-linked" — distinguished by
+  # inode equality against harness.gemini.md.
+  if [ "$harness_label" = "gemini" ]; then
+    if [ -L "$target_abs" ]; then
+      # Legacy symlink left over from pre-TD-208 compile — migrate to hard link.
+      local current_target
+      current_target=$(readlink "$target_abs" 2>/dev/null || true)
+      emit_md_hardlink "$target_abs" "$harness_target"
+      echo "migrating legacy gemini symlink to hard link: $target_abs → $harness_target (was symlink: $current_target)"
+      return 0
+    fi
+    if [ -e "$target_abs" ]; then
+      # Regular file (or other non-symlink shape) at target — distinguish by
+      # inode: matching inode = correctly hard-linked (silent no-op);
+      # mismatching = stale orphan from re-vendor / operator `cp` / hand-edit
+      # → re-emit. We OWN this path; re-emit is the contract.
+      local tgt_inode src_inode
+      tgt_inode=$(stat -f %i "$target_abs" 2>/dev/null || echo "")
+      src_inode=$(stat -f %i "$harness_target" 2>/dev/null || echo "")
+      if [ -n "$tgt_inode" ] && [ "$tgt_inode" = "$src_inode" ]; then
+        return 0  # already correctly hard-linked — silent no-op
+      fi
+      emit_md_hardlink "$target_abs" "$harness_target"
+      echo "re-establishing gemini hard link: $target_abs → $harness_target"
+      return 0
+    fi
+    # Nothing there — create.
+    emit_md_hardlink "$target_abs" "$harness_target"
+    echo "creating gemini hard link: $target_abs → $harness_target"
+    return 0
+  fi
+
+  # claude branch — symbolic link projection (3-case dispatch unchanged).
 
   # Case C: real file, NOT a symlink → refuse-to-clobber. The FR-149 back-compat
   # via the legacy body-refresh adapter is retired by FR-152; the operator

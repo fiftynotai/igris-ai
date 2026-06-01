@@ -786,29 +786,48 @@ EOF
   [[ "$output" == *"registry-anchored"* ]]
 }
 
-@test "FR-152/FR-158: gemini AGENT cold compile creates symlink to registry harness.gemini.md" {
+# TD-208 helper: assert that $target is a hard link sharing an inode with
+# $source AND that nlink on $source is >= 2 (defensive — same-inode on a
+# single-link file would be a kernel inconsistency). Used by every TD-208
+# bats test below.
+# Usage: assert_gemini_hardlink <target_abs> <registry_source_abs>
+assert_gemini_hardlink() {
+  local target="$1" source="$2"
+  [ -f "$target" ]
+  [ ! -L "$target" ]
+  local tgt_inode src_inode src_nlink
+  tgt_inode=$(stat -f %i "$target")
+  src_inode=$(stat -f %i "$source")
+  src_nlink=$(stat -f %l "$source")
+  [ "$tgt_inode" = "$src_inode" ]
+  [ "$src_nlink" -ge 2 ]
+}
+
+@test "TD-208: gemini AGENT cold compile creates hard link to registry harness.gemini.md" {
   local root
   root="$(build_fr152_agent_project demo gemini)"
   run bash "$COMPILE" --project-root "$root" \
                       --manifest "$root/harness-manifest.json" --target gemini
   [ "$status" -eq 0 ]
-  [[ "$output" == *"creating gemini symlink"* ]]
-  [ -L "$root/.gemini/agents/demo.md" ]
-  local resolved expected
-  resolved="$(realpath "$root/.gemini/agents/demo.md")"
-  expected="$(realpath "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md")"
-  [ "$resolved" = "$expected" ]
+  [[ "$output" == *"creating gemini hard link"* ]]
+  # TD-208: target is a regular file (NOT a symlink) that shares an inode
+  # with the registry harness.gemini.md.
+  assert_gemini_hardlink "$root/.gemini/agents/demo.md" \
+                         "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md"
   run bash "$GUARD" --project-root "$root" \
                       --manifest "$root/harness-manifest.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"[demo/gemini] MATCH"* ]]
-  [[ "$output" == *"registry-anchored"* ]]
+  [[ "$output" == *"hard link"* ]]
 }
 
-@test "FR-152/FR-158: claude + gemini AGENT symlinks resolve to DIFFERENT per-harness files" {
+@test "FR-152/FR-158/TD-208: claude symlink + gemini hard link resolve to DIFFERENT per-harness files" {
   # FR-158 supersedes FR-152's "shared harness.md" with per-harness derived
-  # outputs. claude symlink → harness.claude.md; gemini symlink →
-  # harness.gemini.md (BOTH registry-resident in the SAME agent dir).
+  # outputs (claude → harness.claude.md, gemini → harness.gemini.md, BOTH
+  # registry-resident in the SAME agent dir). TD-208 furthers this: claude
+  # PATH uses a SYMLINK (realpath returns the registry file) while gemini
+  # PATH uses a HARD LINK (realpath returns the target's own path — its
+  # own inode IS the registry inode).
   local root="$TEST_TEMP_DIR/fr152_both_$BATS_TEST_NUMBER"
   local registry_dir="$IGRIS_BRAIN_DIR/registry/agents/twin"
   mkdir -p "$root/.claude/agents" "$root/.gemini/agents" "$registry_dir"
@@ -835,21 +854,27 @@ EOF
   run bash "$COMPILE" --project-root "$root" \
                       --manifest "$root/harness-manifest.json"
   [ "$status" -eq 0 ]
-  local c_resolved g_resolved
+  # Claude side — realpath traverses the symlink to harness.claude.md.
+  [ -L "$root/.claude/agents/twin.md" ]
+  local c_resolved
   c_resolved="$(realpath "$root/.claude/agents/twin.md")"
-  g_resolved="$(realpath "$root/.gemini/agents/twin.md")"
-  # FR-158: each harness has its own derived output.
-  [ "$c_resolved" != "$g_resolved" ]
   [[ "$c_resolved" == *"/harness.claude.md" ]]
-  [[ "$g_resolved" == *"/harness.gemini.md" ]]
-  # Both registry-anchored under the SAME agent dir.
-  [ "$(dirname "$c_resolved")" = "$(dirname "$g_resolved")" ]
+  # Gemini side — TD-208 hard link. realpath on a hard link returns its OWN
+  # path, but inode equality with harness.gemini.md is the contract.
+  assert_gemini_hardlink "$root/.gemini/agents/twin.md" \
+                         "$registry_dir/harness.gemini.md"
+  # Both registry-resident files live in the SAME agent dir.
+  local c_dir g_dir
+  c_dir="$(dirname "$c_resolved")"
+  g_dir="$(realpath "$registry_dir")"
+  [ "$c_dir" = "$g_dir" ]
 }
 
-@test "FR-152/FR-158: gemini AGENT legacy symlink (non-registry) is auto-repointed" {
+@test "TD-208: gemini AGENT legacy symlink is auto-migrated to hard link" {
   local root
   root="$(build_fr152_agent_project demo gemini)"
-  # Pre-create a symlink pointing OUTSIDE the registry.
+  # Pre-create a symlink pointing OUTSIDE the registry — simulates pre-TD-208
+  # state (where gemini was projected via symlink).
   mkdir -p "$root/consumer-side"
   echo "stale gemini body" > "$root/consumer-side/demo.md"
   ln -s "$root/consumer-side/demo.md" "$root/.gemini/agents/demo.md"
@@ -857,17 +882,21 @@ EOF
   run bash "$COMPILE" --project-root "$root" \
                       --manifest "$root/harness-manifest.json" --target gemini
   [ "$status" -eq 0 ]
-  [[ "$output" == *"migrating legacy gemini symlink"* ]]
-  local resolved expected
-  resolved="$(realpath "$root/.gemini/agents/demo.md")"
-  expected="$(realpath "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md")"
-  [ "$resolved" = "$expected" ]
+  [[ "$output" == *"migrating legacy gemini symlink to hard link"* ]]
+  # TD-208: after migration, target is a hard link (not a symlink) sharing
+  # inode with harness.gemini.md.
+  assert_gemini_hardlink "$root/.gemini/agents/demo.md" \
+                         "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md"
 }
 
-@test "FR-152: gemini AGENT drift DRIFTED (non-registry symlink)" {
+@test "TD-208: gemini AGENT drift DRIFTED (legacy symlink — any symlink is drift under hard-link primitive)" {
   local root
   root="$(build_fr152_agent_project demo gemini)"
-  # Pre-create a symlink pointing OUTSIDE the registry — simulates legacy state.
+  # Pre-create a symlink pointing OUTSIDE the registry — simulates pre-TD-208
+  # legacy state. Under TD-208, ANY symbolic link at the gemini target is
+  # DRIFTED (the primitive is hard link; Gemini loader does not follow
+  # symlinks). The non-registry-anchored detail is irrelevant — even a
+  # registry-anchored symlink would be drift.
   mkdir -p "$root/consumer-side"
   echo "stale" > "$root/consumer-side/demo.md"
   ln -s "$root/consumer-side/demo.md" "$root/.gemini/agents/demo.md"
@@ -876,23 +905,113 @@ EOF
                       --manifest "$root/harness-manifest.json"
   [ "$status" -eq 1 ]
   [[ "$output" == *"[demo/gemini] DRIFTED"* ]]
-  [[ "$output" == *"not registry-anchored"* ]]
+  [[ "$output" == *"symbolic link"* ]]
+  [[ "$output" == *"legacy pre-TD-208 emit"* ]]
   [[ "$output" == *"igris harness compile"* ]]
 }
 
-@test "FR-152: gemini AGENT real-file target refuses-to-clobber at compile" {
+# TD-208 supersedes the FR-152 "gemini real-file target refuses-to-clobber"
+# contract. Under TD-208 the gemini emit primitive IS a hard link (a real
+# non-symlink file), so refusing to clobber any real file at $target would
+# make Gemini refuse to overwrite its own output. The new contract: the
+# compile pipeline OWNS the gemini target path; re-emit is idempotent.
+# Operator-replaced state is surfaced at drift-check time via the DRIFT-WARN
+# verdict (see TD-208 drift tests below).
+
+@test "TD-208: atomic re-vendor + recompile re-establishes the gemini hard link" {
   local root
   root="$(build_fr152_agent_project demo gemini)"
-  cat > "$root/.gemini/agents/demo.md" <<'EOF'
-# DEMO (hand-authored, should not be clobbered)
-EOF
-  local before
-  before="$(cat "$root/.gemini/agents/demo.md")"
   run bash "$COMPILE" --project-root "$root" \
                       --manifest "$root/harness-manifest.json" --target gemini
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"refuse to clobber"* ]]
-  [ "$(cat "$root/.gemini/agents/demo.md")" = "$before" ]
+  [ "$status" -eq 0 ]
+  local registry_path="$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md"
+  local first_inode
+  first_inode=$(stat -f %i "$registry_path")
+  # Hard link established after first compile.
+  assert_gemini_hardlink "$root/.gemini/agents/demo.md" "$registry_path"
+
+  # Simulate atomic re-vendor by rewriting the canonical body. This forces
+  # assemble_agent_harness_into_registry to mv-replace the harness.gemini.md
+  # with a NEW inode at the next compile — the OLD hard link in
+  # ~/.gemini/agents/ now points at the orphaned old inode and must be
+  # re-emitted against the new one.
+  cat > "$IGRIS_BRAIN_DIR/registry/agents/demo/system-prompt-v1.0.md" <<'EOF'
+# demo AGENT (re-vendored body)
+
+Modified body to force a new inode at next compile.
+EOF
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json" --target gemini
+  [ "$status" -eq 0 ]
+  local second_inode
+  second_inode=$(stat -f %i "$registry_path")
+  [ "$first_inode" != "$second_inode" ]
+  # Hard link re-established against the new inode.
+  assert_gemini_hardlink "$root/.gemini/agents/demo.md" "$registry_path"
+}
+
+@test "TD-208: drift verifier MATCH for hard-linked gemini target" {
+  local root
+  root="$(build_fr152_agent_project demo gemini)"
+  bash "$COMPILE" --project-root "$root" \
+                  --manifest "$root/harness-manifest.json" --target gemini
+
+  run bash "$GUARD" --project-root "$root" \
+                    --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[demo/gemini] MATCH"* ]]
+  [[ "$output" == *"hard link"* ]]
+  [[ "$output" == *"nlink"* ]]
+}
+
+@test "TD-208: drift verifier DRIFT-WARN when hard link replaced by cp copy" {
+  local root
+  root="$(build_fr152_agent_project demo gemini)"
+  bash "$COMPILE" --project-root "$root" \
+                  --manifest "$root/harness-manifest.json" --target gemini
+  local target="$root/.gemini/agents/demo.md"
+  local registry_path="$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md"
+  # Replace hard link with a real-file copy (operator manually `cp`'d).
+  rm "$target"
+  cp "$registry_path" "$target"
+  # Sanity: byte content matches but inodes diverge.
+  [ "$(md5 -q "$target")" = "$(md5 -q "$registry_path")" ]
+  [ "$(stat -f %i "$target")" != "$(stat -f %i "$registry_path")" ]
+
+  run bash "$GUARD" --project-root "$root" \
+                    --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"[demo/gemini] DRIFT-WARN"* ]]
+  [[ "$output" == *"real-file copy"* ]]
+  [[ "$output" == *"igris harness compile"* ]]
+}
+
+@test "TD-208: drift verifier DRIFTED when content differs AND inode mismatches" {
+  # L-29 coverage guard: pin the hard-DRIFTED verdict path (verdict #5 in
+  # verify_gemini_agent_hardlink_drift) — operator both replaced the hard
+  # link with a copy AND modified the content. Distinct from the DRIFT-WARN
+  # path which requires byte-equality.
+  local root
+  root="$(build_fr152_agent_project demo gemini)"
+  bash "$COMPILE" --project-root "$root" \
+                  --manifest "$root/harness-manifest.json" --target gemini
+  local target="$root/.gemini/agents/demo.md"
+  local registry_path="$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md"
+  # Replace hard link with a different-content real file.
+  rm "$target"
+  cat > "$target" <<'EOF'
+# DEMO (operator hand-edited; content diverged from registry)
+EOF
+  # Sanity: content differs AND inodes diverge.
+  [ "$(md5 -q "$target")" != "$(md5 -q "$registry_path")" ]
+  [ "$(stat -f %i "$target")" != "$(stat -f %i "$registry_path")" ]
+
+  run bash "$GUARD" --project-root "$root" \
+                    --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"[demo/gemini] DRIFTED"* ]]
+  [[ "$output" == *"content differs"* ]]
+  [[ "$output" == *"igris harness compile"* ]]
 }
 
 @test "FR-152: codex AGENT compile uses refactored sync_codex_agents.sh with FR-151 sidecar" {
@@ -1018,13 +1137,13 @@ EOF
   [ "$first_resolved" = "$second_resolved" ]
 }
 
-@test "FR-158: gemini AGENT compile produces own harness.gemini.md (auto-translate path)" {
+@test "FR-158/TD-208: gemini AGENT compile produces own harness.gemini.md (auto-translate path)" {
   # FR-158 retry 1: a gemini target compiles against a frontmatter.claude.md
-  # sidecar (no frontmatter.gemini.md). The bash compile-side fallback NOW
+  # sidecar (no frontmatter.gemini.md). The bash compile-side fallback
   # auto-translates Claude-shape → Gemini-shape (mirror of TS
   # `assembleGeminiHarness`): `kind: local` is injected and Claude tool names
-  # are translated via the 9-mapping table. Symlink resolves to the new
-  # derived output.
+  # are translated via the 9-mapping table. TD-208: gemini target is a HARD
+  # LINK to the gemini-shape file (inode equality instead of realpath).
   local root
   root="$(build_fr152_agent_project demo gemini)"
   run bash "$COMPILE" --project-root "$root" \
@@ -1032,11 +1151,9 @@ EOF
   [ "$status" -eq 0 ]
   # The new per-harness derived output exists.
   [ -f "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md" ]
-  # Symlink resolves to the gemini-shape file.
-  local resolved expected
-  resolved="$(realpath "$root/.gemini/agents/demo.md")"
-  expected="$(realpath "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md")"
-  [ "$resolved" = "$expected" ]
+  # TD-208: target is a hard link to the gemini-shape file.
+  assert_gemini_hardlink "$root/.gemini/agents/demo.md" \
+                         "$IGRIS_BRAIN_DIR/registry/agents/demo/harness.gemini.md"
   # FR-158 retry 1: the bash compile auto-translates — `kind: local` is now
   # injected even when only `frontmatter.claude.md` exists. This is the
   # post-fix shape (pre-fix had verbatim Claude-shape with no `kind`).

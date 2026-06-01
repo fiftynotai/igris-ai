@@ -250,25 +250,27 @@ PY
 # ---------------------------------------------------------------------------
 # verify_md_agent_symlink_drift <name> <harness_label> <target_abs>
 #
-# FR-152 / FR-158 per-harness drift verdict for claude + gemini AGENT
+# FR-152 / FR-158 / TD-208 per-harness drift verdict for claude + gemini AGENT
 # targets. Each harness has its own registry-resident expected file
 # (`<BRAIN_DIR>/registry/agents/<name>/harness.<harness_label>.md`) — the
-# assembly happens at compile time. Verdicts:
+# assembly happens at compile time. The verdict primitive is PER-HARNESS:
 #
-#   MISSING — target absent.
-#   DRIFTED — target is a regular file (refuse-to-clobber posture; the
-#             compile-side Case C is retired by FR-152, with the legacy
-#             body-refresh adapter).
-#   DRIFTED — target is a symlink resolving outside the registry (legacy
-#             reference-mode state — run `igris harness compile` to migrate).
-#   DRIFTED — symlink resolves under the registry but to the WRONG file
-#             (registry-anchored but mismatched).
-#   DRIFTED — symlink broken.
-#   MATCH   — symlink resolves to the expected harness.<harness_label>.md.
+#   claude → symbolic-link verdict (readlink/realpath flow); see below.
+#   gemini → hard-link verdict (inode equality); delegates to
+#            verify_gemini_agent_hardlink_drift.
+#
+# Common precondition: MISSING when target absent (no -L, no -e).
+#
+# Claude branch verdicts (unchanged from FR-152):
+#   DRIFTED — target is a regular file (refuse-to-clobber posture).
+#   DRIFTED — symlink resolves outside the registry (legacy reference-mode).
+#   DRIFTED — symlink resolves inside the registry but to the wrong file.
+#   DRIFTED — symlink is broken.
+#   MATCH   — symlink resolves to the expected harness.claude.md.
 #
 # Pairs line-for-line with `compile_md_agent_target` in compile_harnesses.sh.
 # Updates MATCH/DRIFT counters (caller-scoped). Both sides realpath'd for the
-# macOS `/var` → `/private/var` prefix. See L-515, L-519 §18.1, FR-158.
+# macOS `/var` → `/private/var` prefix. See L-515, L-519 §18.1, FR-158, TD-208.
 # ---------------------------------------------------------------------------
 verify_md_agent_symlink_drift() {
   local name="$1"
@@ -277,12 +279,20 @@ verify_md_agent_symlink_drift() {
 
   local expected_target="$BRAIN_DIR/registry/agents/$name/harness.${harness_label}.md"
 
+  # Common precondition: MISSING when target absent (no -L, no -e). Applies
+  # to both claude and gemini branches.
   if [ ! -e "$target_abs" ] && [ ! -L "$target_abs" ]; then
-    echo "  [$name/$harness_label] MISSING — harness symlink absent: $target_abs"
+    echo "  [$name/$harness_label] MISSING — harness target absent: $target_abs"
     DRIFT=$((DRIFT + 1))
     return 0
   fi
 
+  if [ "$harness_label" = "gemini" ]; then
+    verify_gemini_agent_hardlink_drift "$name" "$target_abs" "$expected_target"
+    return $?
+  fi
+
+  # claude branch — symlink/realpath flow.
   if [ ! -L "$target_abs" ]; then
     # Regular file (or other non-symlink shape) → refuse-to-clobber DRIFTED.
     echo "  [$name/$harness_label] DRIFTED"
@@ -329,6 +339,104 @@ verify_md_agent_symlink_drift() {
       DRIFT=$((DRIFT + 1))
       ;;
   esac
+}
+
+# ---------------------------------------------------------------------------
+# verify_gemini_agent_hardlink_drift <name> <target_abs> <expected_target>
+#
+# TD-208 hard-link drift verdict for the Gemini agent target. The target is a
+# HARD LINK to <expected_target> — inode equality is the primary MATCH signal.
+# The Gemini subagent loader does NOT follow symbolic links (verified live
+# 2026-06-01) but DOES follow hard links; the registry-canonical (L-516)
+# invariant is preserved because hard link = same inode = same bytes-on-disk
+# = registry remains the single physical home.
+#
+# Verdict ordering (L-28 precondition discipline mirrors verify_mirror.sh):
+#   1. expected_target MISSING in registry → DRIFTED (compile never ran).
+#   2. target is a symbolic link → DRIFTED (legacy pre-TD-208 emit; recompile
+#      migrates to hard link).
+#   3. inode(target) == inode(expected_target) AND nlink(expected_target) >= 2
+#      → MATCH (correctly hard-linked).
+#   4. inode mismatch BUT byte-content equal (md5) → DRIFT-WARN. Operator
+#      manually `cp`-replaced the hard link; content is fine but the primitive
+#      contract is broken (L-516 violated — there are now TWO bytes-on-disk
+#      copies, not one). DRIFT-WARN counts as drift (exit 1).
+#   5. inode mismatch AND byte-content differs → DRIFTED (target diverged
+#      from registry; recompile re-establishes).
+#
+# Note: BSD `stat -f` and macOS `md5 -q` are darwin-only flags. TD-096 mirror
+# is darwin-only per current ops; Linux portability is a future brief if
+# needed (gate via `case "$(uname -s)" in Darwin) ...; *) ...; esac`).
+# ---------------------------------------------------------------------------
+verify_gemini_agent_hardlink_drift() {
+  local name="$1"
+  local target_abs="$2"
+  local expected_target="$3"
+
+  if [ ! -f "$expected_target" ]; then
+    echo "  [$name/gemini] DRIFTED"
+    echo "      target    : $target_abs"
+    echo "      expected  : $expected_target [absent in registry]"
+    echo "      reason    : registry harness.gemini.md missing — run \`igris harness compile\` to assemble + hard-link"
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+
+  if [ -L "$target_abs" ]; then
+    echo "  [$name/gemini] DRIFTED"
+    echo "      target    : $target_abs [symbolic link — legacy pre-TD-208 emit]"
+    echo "      expected  : $expected_target [hard link]"
+    echo "      reason    : gemini target is a symlink (Gemini loader does not follow symlinks) — run \`igris harness compile\` to migrate to hard link"
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+
+  local tgt_inode src_inode src_nlink
+  tgt_inode=$(stat -f %i "$target_abs" 2>/dev/null || echo "")
+  src_inode=$(stat -f %i "$expected_target" 2>/dev/null || echo "")
+  src_nlink=$(stat -f %l "$expected_target" 2>/dev/null || echo "0")
+
+  if [ -n "$tgt_inode" ] && [ "$tgt_inode" = "$src_inode" ]; then
+    # Defensive nlink check: a same-inode hit on a single-link file should be
+    # impossible, but surface it if the OS reports inconsistently.
+    if [ "$src_nlink" -lt 2 ]; then
+      echo "  [$name/gemini] DRIFTED"
+      echo "      target    : $target_abs [inode $tgt_inode, nlink=$src_nlink]"
+      echo "      expected  : $expected_target [nlink should be >= 2]"
+      echo "      reason    : inode equality but nlink=$src_nlink (defensive — filesystem reporting inconsistency)"
+      DRIFT=$((DRIFT + 1))
+      return 0
+    fi
+    echo "  [$name/gemini] MATCH"
+    echo "      target    : $target_abs [hard link, inode $tgt_inode, nlink $src_nlink]"
+    echo "      registry  : $expected_target"
+    MATCH=$((MATCH + 1))
+    return 0
+  fi
+
+  # Inode mismatch — fall through to content-equality check for the
+  # DRIFT-WARN case (operator replaced the hard link with a `cp` copy).
+  local tgt_md5 src_md5
+  tgt_md5=$(md5 -q "$target_abs" 2>/dev/null || echo "")
+  src_md5=$(md5 -q "$expected_target" 2>/dev/null || echo "")
+  if [ -n "$tgt_md5" ] && [ "$tgt_md5" = "$src_md5" ]; then
+    echo "  [$name/gemini] DRIFT-WARN"
+    echo "      target    : $target_abs [inode $tgt_inode, real-file copy]"
+    echo "      expected  : $expected_target [inode $src_inode, hard-link source]"
+    echo "      reason    : target content matches registry but the file is a real-file copy, not a hard link (operator manually \`cp\`-replaced, or CLI bug) — content fine, primitive wrong; run \`igris harness compile\` to re-establish the hard link"
+    # DRIFT-WARN counts as drift in the summary (exit 1) — content equality
+    # is a soft signal but the primitive contract is broken (L-516 violated).
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+
+  # Inode mismatch AND content differs — hard drift.
+  echo "  [$name/gemini] DRIFTED"
+  echo "      target    : $target_abs [inode $tgt_inode, content differs]"
+  echo "      expected  : $expected_target [inode $src_inode]"
+  echo "      reason    : gemini target diverged from registry (different bytes AND different inode) — run \`igris harness compile\` to re-establish"
+  DRIFT=$((DRIFT + 1))
+  return 0
 }
 
 # ---------------------------------------------------------------------------

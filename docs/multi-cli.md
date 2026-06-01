@@ -525,6 +525,47 @@ Codex emission is still bash-driven (`sync_codex_agents.sh` called from
 emitter understands). FR-159 will port codex to TS, at which point this
 interim shape can be retired in favor of a parameterized codex assembler.
 
+### Per-harness agent-target primitive (TD-208)
+
+The consumer-side agent target (`.claude/agents/<name>.md`,
+`.gemini/agents/<name>.md`, `.codex/agents/<name>.toml`) is materialized by
+`compile_harnesses.sh` from the registry-resident assembled harness file.
+Each harness uses a DIFFERENT filesystem primitive — chosen so the consumer's
+subagent loader actually reads the registry bytes:
+
+| Harness | Primitive | Path | Why |
+|---|---|---|---|
+| Claude | Symbolic link (`ln -sf` via `atomic_symlink`) | `~/.claude/agents/<name>.md` | Claude follows symlinks fine; symlink is the cheapest atomic-repoint primitive (temp+rename). |
+| Gemini | Hard link (`ln` via `emit_md_hardlink`) | `~/.gemini/agents/<name>.md` | Gemini's subagent loader does NOT follow symbolic links (verified live 2026-06-01) but DOES follow hard links. Hard link preserves **L-516** registry-canonical: same inode = same bytes-on-disk = registry is THE single physical home. A `cp` copy would break L-516 (two bytes-on-disk copies, not one). |
+| Codex | Real-file copy (`sync_codex_agents.sh` emit) | `~/.codex/agents/<name>.toml` | Codex consumes TOML, not Markdown; emission is a converter (frontmatter + body → 3-key TOML) writing a regenerated file. Codex is out of scope for the symlink/hardlink discussion entirely. |
+
+**Operational notes**
+
+- **Atomic re-vendor invalidates the hard link.** `vendorAgentTreeAtomic` in
+  `cli/src/verbs/registry.ts` uses temp-file + rename for the registry
+  `harness.gemini.md`, which assigns a NEW inode. The OLD hard link at
+  `~/.gemini/agents/<name>.md` now points at an orphaned inode. The very next
+  `igris harness compile` `rm -f`'s and re-`ln`'s the target against the new
+  inode. Tested in `test/harness_drift_gate.test.bash` — the
+  *atomic re-vendor + recompile* case.
+- **Operator `cp` is detectable.** If an operator manually `cp`-replaces the
+  hard link with a real-file copy (byte-equal but inode-divergent), the drift
+  verifier emits a `DRIFT-WARN` verdict: content is fine but the primitive
+  contract is broken (L-516 violated). The hint is `igris harness compile` to
+  re-establish the hard link.
+- **Cross-filesystem caveat.** Hard links require `~/.gemini/agents/` and
+  `~/.igris/registry/agents/<name>/` to be on the same filesystem. Both live
+  under `$HOME/` on the standard macOS dev setup. If `ln` ever fails with
+  "Cross-device link", it surfaces a clean error from `set -euo pipefail` —
+  no silent fallback. Linux portability + alternate-filesystem support are
+  out of scope for TD-208 (BSD `stat -f` / `md5 -q` are darwin-only flags).
+- **The Gemini compile branch does NOT refuse-to-clobber.** A hard link IS a
+  real file (non-symlink), so refusing any real file at the target would make
+  Gemini refuse to overwrite its own output. The new contract: the compile
+  pipeline OWNS the gemini target path; re-emit is idempotent. The
+  `DRIFT-WARN` verdict surfaces operator-replaced state at drift-check time
+  (the equivalent of a refuse-to-clobber for the symlink-era contract).
+
 ### Decision D1 — codex wrap vs reimplement (RESOLVED — REIMPLEMENT, FR-138)
 
 `sync_codex_agents.sh` could either WRAP the codex CLI's native agent-import
