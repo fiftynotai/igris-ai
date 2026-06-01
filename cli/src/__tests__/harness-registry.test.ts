@@ -3423,3 +3423,270 @@ describe("FR-156: agent tree vendor + hash", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// TD-202: in-band REGISTRY-NOTICE.md sidecar + skip-list parity + update hint
+// ---------------------------------------------------------------------------
+
+describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
+  /**
+   * Capture process.stdout.write so we can assert against the post-update
+   * reminder. `info()` from `lib/log.ts` writes to process.stdout — no spy
+   * library needed; we wrap the method on the global stream.
+   */
+  function captureStdout(): { lines: string[]; restore: () => void } {
+    const lines: string[] = [];
+    const orig = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((
+      chunk: string | Uint8Array,
+      ...rest: unknown[]
+    ): boolean => {
+      const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf-8");
+      lines.push(text);
+      // Forward the original call so the test runner's reporter still works.
+      // Cast back through the original signature.
+      return (orig as (c: string | Uint8Array, ...r: unknown[]) => boolean)(
+        chunk,
+        ...rest,
+      );
+    }) as typeof process.stdout.write;
+    return {
+      lines,
+      restore: () => {
+        process.stdout.write = orig as typeof process.stdout.write;
+      },
+    };
+  }
+
+  it("agent add emits REGISTRY-NOTICE.md next to harness.md naming the source", async () => {
+    const code = await runRegistry(
+      addOpts({
+        name: "td202agent",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/td202agent.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    const sidecar = join(vendorDir("td202agent"), "REGISTRY-NOTICE.md");
+    expect(existsSync(sidecar)).toBe(true);
+    const text = readFileSync(sidecar, "utf-8");
+    // Sidecar names the SOURCE dir (path origin → filesystem path).
+    expect(text).toContain(join(projectRoot, "canon"));
+    // Sidecar names the agent so the editor can copy the update command.
+    expect(text).toContain("igris registry update td202agent");
+    // Anti-edit guidance is the headline.
+    expect(text).toMatch(/DO NOT edit/);
+    expect(text).toMatch(/§18\.5/);
+  });
+
+  it("skill add emits REGISTRY-NOTICE.md NEXT TO SKILL.md (L-517 nested layout)", async () => {
+    mkdirSync(join(projectRoot, "skills", "td202skill"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, "skills", "td202skill", "SKILL.md"),
+      "---\nname: td202skill\ndescription: d\n---\nbody\n",
+    );
+    const code = await runRegistry({
+      action: "add-skill",
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      skillVendorDir,
+      name: "td202skill",
+      from: "skills/td202skill",
+      targets: ["codex:symlink:.codex/skills"],
+    });
+    expect(code).toBe(0);
+    // L-517 nested: <vendorBase>/skills/td202skill/td202skill/SKILL.md.
+    const skillDir = join(vendorBase, "skills", "td202skill", "td202skill");
+    expect(existsSync(join(skillDir, "SKILL.md"))).toBe(true);
+    const sidecar = join(skillDir, "REGISTRY-NOTICE.md");
+    expect(existsSync(sidecar)).toBe(true);
+    const text = readFileSync(sidecar, "utf-8");
+    expect(text).toContain(join(projectRoot, "skills", "td202skill"));
+    expect(text).toContain("igris registry update td202skill");
+  });
+
+  it("sidecar bytes are NOT in the hash basis (skip-list parity — agents)", async () => {
+    // Add an agent → record hash → manually drop a second REGISTRY-NOTICE.md
+    // (or mutate the existing one) → re-hash and assert no change.
+    // We use the public `update` path so the hash is recomputed by the same
+    // helper the production code uses.
+    const seedCode = await runRegistry(
+      addOpts({
+        name: "td202hash",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/td202hash.md"],
+      }),
+    );
+    expect(seedCode).toBe(0);
+    const hashBefore = readOriginsFile()["agent:td202hash"].hash;
+    // Hand-edit the sidecar contents (NOT the agent's bytes). If
+    // REGISTRY-NOTICE.md is correctly skip-listed, `update` re-hashes the
+    // tree and the hash MUST be unchanged.
+    const sidecar = join(vendorDir("td202hash"), "REGISTRY-NOTICE.md");
+    writeFileSync(sidecar, "garbled content — must not affect hash\n");
+    const upd = await runRegistry({
+      action: "update",
+      name: "td202hash",
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+    });
+    expect(upd).toBe(0);
+    // The hash recorded post-update equals the pre-edit hash → sidecar is
+    // excluded from the basis (three-site skip-list parity proved).
+    expect(readOriginsFile()["agent:td202hash"].hash).toBe(hashBefore);
+  });
+
+  it("sidecar bytes are NOT in the hash basis (skip-list parity — skills)", async () => {
+    mkdirSync(join(projectRoot, "skills", "td202skillhash"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, "skills", "td202skillhash", "SKILL.md"),
+      "---\nname: td202skillhash\ndescription: d\n---\nbody\n",
+    );
+    const seedCode = await runRegistry({
+      action: "add-skill",
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      skillVendorDir,
+      name: "td202skillhash",
+      from: "skills/td202skillhash",
+      targets: ["codex:symlink:.codex/skills"],
+    });
+    expect(seedCode).toBe(0);
+    const hashBefore = readOriginsFile()["skill:td202skillhash"].hash;
+    const skillDir = join(
+      vendorBase,
+      "skills",
+      "td202skillhash",
+      "td202skillhash",
+    );
+    const sidecar = join(skillDir, "REGISTRY-NOTICE.md");
+    writeFileSync(sidecar, "tampered sidecar — must not affect hash\n");
+    const upd = await runRegistry({
+      action: "update",
+      name: "td202skillhash",
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      skillVendorDir,
+    });
+    expect(upd).toBe(0);
+    expect(readOriginsFile()["skill:td202skillhash"].hash).toBe(hashBefore);
+  });
+
+  it("update re-emits REGISTRY-NOTICE.md (sidecar restored after deletion)", async () => {
+    await runRegistry(
+      addOpts({
+        name: "td202update",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/td202update.md"],
+      }),
+    );
+    const sidecar = join(vendorDir("td202update"), "REGISTRY-NOTICE.md");
+    expect(existsSync(sidecar)).toBe(true);
+    // Operator manually deletes the sidecar — update must put it back.
+    rmSync(sidecar);
+    expect(existsSync(sidecar)).toBe(false);
+    const upd = await runRegistry({
+      action: "update",
+      name: "td202update",
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+    });
+    expect(upd).toBe(0);
+    expect(existsSync(sidecar)).toBe(true);
+  });
+
+  it("post-update reminder line names TD-202 + §18.5", async () => {
+    await runRegistry(
+      addOpts({
+        name: "td202hint",
+        from: "canon/x.md",
+        targets: ["claude:.claude/agents/td202hint.md"],
+      }),
+    );
+    const cap = captureStdout();
+    try {
+      const upd = await runRegistry({
+        action: "update",
+        name: "td202hint",
+        projectRoot,
+        overlayPath,
+        originsPath,
+        vendorDir,
+      });
+      expect(upd).toBe(0);
+    } finally {
+      cap.restore();
+    }
+    const out = cap.lines.join("");
+    expect(out).toMatch(/Reminder: edits to vendored surfaces/);
+    expect(out).toMatch(/TD-202/);
+    expect(out).toMatch(/§18\.5/);
+  });
+
+  it("github-origin sidecar shows `github:owner/repo@ref` URI, not the temp dir", async () => {
+    // Stage a minimal repo manifest + canonical body in a temp dir; stub
+    // fetchRepo to point at it and listReleases to return no newer tags.
+    // Manifest filename is `igris.json` (per readRepoManifest's lookup order).
+    const fakeRepoDir = mkdtempSync(join(tmpdir(), "td202-gh-"));
+    mkdirSync(join(fakeRepoDir, "agents"), { recursive: true });
+    writeFileSync(join(fakeRepoDir, "agents", "td202gh.md"), "# td202gh\nbody\n");
+    writeFileSync(
+      join(fakeRepoDir, "igris.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [
+          {
+            name: "td202gh",
+            canonical: {
+              dir: "agents",
+              versioned: false,
+              file: "td202gh.md",
+            },
+            targets: [{ type: "claude", path: ".claude/agents/td202gh.md" }],
+          },
+        ],
+      }),
+    );
+    const fetchRepo: FetchRepoFn = async (_spec: GithubSpec): Promise<FetchedRepo> => {
+      return {
+        dir: fakeRepoDir,
+        sha: "0123456789abcdef0123456789abcdef01234567",
+        cleanup: () => {
+          /* test owns the dir */
+        },
+      };
+    };
+    const listReleases: ListReleasesFn = async () => [];
+    const code = await runRegistry({
+      action: "add",
+      projectRoot,
+      overlayPath,
+      originsPath,
+      vendorDir,
+      name: "td202gh",
+      from: "github:acme/sample@v1.0.0",
+      targets: ["claude:.claude/agents/td202gh.md"],
+      fetchRepo,
+      listReleases,
+    });
+    expect(code).toBe(0);
+    const sidecar = join(vendorDir("td202gh"), "REGISTRY-NOTICE.md");
+    expect(existsSync(sidecar)).toBe(true);
+    const text = readFileSync(sidecar, "utf-8");
+    // The sidecar's Source: line must be the github URI, NOT the temp dir.
+    expect(text).toContain("github:acme/sample@v1.0.0");
+    expect(text).not.toContain(fakeRepoDir);
+    // Cleanup the fake repo dir we held alive.
+    rmSync(fakeRepoDir, { recursive: true, force: true });
+  });
+});

@@ -412,9 +412,14 @@ import hashlib
 import os
 import sys
 
-# Skip-list: keep byte-for-byte in sync with
-# cli/src/verbs/registry.ts:isAgentTreeSkipped (FR-156).
-EXACT = {"MAINTAINING.md", ".DS_Store", "node_modules", ".venv", "__pycache__"}
+# Skip-list: keep byte-for-byte in sync with THREE sites total — TS
+# cli/src/verbs/registry.ts:isAgentTreeSkipped (FR-156), and the two
+# inline EXACT sets in check_harness_drift.sh (agent tree-diff at ~556,
+# skill tree-diff at ~912). REGISTRY-NOTICE.md is the TD-202 vendored-
+# copy sidecar — excluded from hash basis so its presence in the
+# registry copy (and absence at the operator's source) does not flip
+# the hash → DRIFTED.
+EXACT = {"MAINTAINING.md", ".DS_Store", "node_modules", ".venv", "__pycache__", "REGISTRY-NOTICE.md"}
 
 
 def skipped(name):

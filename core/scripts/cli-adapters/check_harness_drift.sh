@@ -547,13 +547,15 @@ PY
             echo "      registry  : $tree_registry_dir (sha $tree_expected)"
             echo "      source    : $tree_origin_dir (sha $tree_actual)"
             # Locate up to N=5 differing relpaths so the operator can act
-            # without re-deriving the diff manually.
+            # without re-deriving the diff manually. Skip-list MUST stay byte-
+            # for-byte in sync with TS isAgentTreeSkipped and bash
+            # hash_agent_tree (TD-202: REGISTRY-NOTICE.md added).
             tree_diff=$(python3 - "$tree_registry_dir" "$tree_origin_dir" <<'PY'
 import hashlib
 import os
 import sys
 
-EXACT = {"MAINTAINING.md", ".DS_Store", "node_modules", ".venv", "__pycache__"}
+EXACT = {"MAINTAINING.md", ".DS_Store", "node_modules", ".venv", "__pycache__", "REGISTRY-NOTICE.md"}
 
 
 def skipped(name):
@@ -903,13 +905,15 @@ PY
                 # Locate up to N=5 differing relpaths. Identical skip-list and
                 # cap to the FR-156 agent diff walker (so the two stay in
                 # lockstep). Diff emits relpaths only — no body bytes ever
-                # printed (L-515 read-only posture).
+                # printed (L-515 read-only posture). TD-202: REGISTRY-NOTICE.md
+                # added to skip-list — vendored-copy sidecar must not register
+                # as drift against the operator's source (which lacks it).
                 skill_tree_diff=$(python3 - "$skill_registry_dir" "$skill_origin_dir" <<'PY'
 import hashlib
 import os
 import sys
 
-EXACT = {"MAINTAINING.md", ".DS_Store", "node_modules", ".venv", "__pycache__"}
+EXACT = {"MAINTAINING.md", ".DS_Store", "node_modules", ".venv", "__pycache__", "REGISTRY-NOTICE.md"}
 
 
 def skipped(name):

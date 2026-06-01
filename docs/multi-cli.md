@@ -272,6 +272,7 @@ to this convention.)
 - `node_modules/`, `.venv/`, `__pycache__/` — language deps + caches
 - `*.pyc` — compiled python
 - `harness.md` — FR-152 α-assembled output (derived, not source)
+- `REGISTRY-NOTICE.md` — TD-202 sidecar (vendored-copy notice, not source)
 
 The skip-list is fixed (per-agent `.igrisignore` overrides are deferred —
 add as a fast-follow if a real case appears post-ship).
@@ -291,6 +292,56 @@ semantics widened with FR-156: pre-FR-156 a sibling unrelated file added to
 the source dir was IGNORED; post-FR-156 it's vendored on next update. This
 is BY DESIGN (closes L-516). Author-only files belong in the skip-list or
 outside the agent dir.
+
+---
+
+## Editing Vendored Content (TD-202)
+
+Personal-overlay skills and agents are copy-vendored from operator source dirs
+into `~/.igris/registry/{skills,agents}/<name>/`. The registry-vendored copy is
+what runtime harnesses load (claude/codex/gemini all read from the same
+registry-anchored symlinks per FR-152/FR-153/FR-156). **The registry is not the
+editing surface** — direct edits there are silently overwritten on the next
+`igris registry update` or `add` cycle.
+
+**Editing flow:**
+
+```bash
+# 1. Find the source dir (recorded at vendor time):
+cat ~/.igris/registry/origins.json | jq '."skill:content-pipeline"'
+# { "type": "path", "dir": "/Users/me/automation/content/skills/content-pipeline", "hash": "..." }
+
+# 2. Edit at source:
+$EDITOR /Users/me/automation/content/skills/content-pipeline/SKILL.md
+
+# 3. Re-vendor:
+igris registry update content-pipeline
+# →   content-pipeline: changed
+# →
+# →   Reminder: edits to vendored surfaces must happen at the SOURCE path,
+# →   not under ~/.igris/registry/. Re-run `igris registry update <name>`
+# →   after editing the source. See TD-202 / coding_guidelines.md §18.5.
+```
+
+**In-band notice.** Every vendored tree carries a `REGISTRY-NOTICE.md` sidecar
+(emitted by `igris registry add` / `add-skill` / `update`) naming the source
+path. Editors who open the registry-vendored copy see the notice next to the
+file they were about to mutate. The sidecar is excluded from the FR-156 vendor
+skip-list (hash basis stays in sync with the operator's source tree that has
+no such file).
+
+**Detection.** If the registry copy diverges from the recorded source tree,
+`check_harness_drift.sh` reports `[<name>/tree] DRIFTED` with up to 5
+differing relpaths (FR-156 for agents; TD-201 extended to skills). The
+verdict pairs the registry sha + source sha so the operator can locate the
+divergence without re-deriving the diff.
+
+**Github-origin caveat.** Surfaces vendored from `github:owner/repo@ref` have
+no on-disk source path — the `Source:` line in `REGISTRY-NOTICE.md` is the
+`github:owner/repo@ref` URI. Edit upstream, tag a new release, then
+`igris registry update` picks up the newer tag.
+
+See `coding_guidelines.md` §18.5 and TD-202 for the full rationale.
 
 ---
 

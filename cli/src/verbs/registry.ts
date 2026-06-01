@@ -1050,6 +1050,92 @@ export function assembleAgentHarness(
 }
 
 /**
+ * TD-202 — emit a `REGISTRY-NOTICE.md` sidecar inside a vendored tree naming
+ * the SOURCE the editor must mutate. The notice is best-effort UX (in-band
+ * "edit source, not registry" guidance) — its emission MUST NOT fail the
+ * containing add/update verb (the overlay write is the contract). Callers
+ * invoke this AFTER `hashAgentTree`/`hashSkillTree` so the notice's bytes
+ * never enter the hash basis even if the skip-list mirror lags (defense-in-
+ * depth; `isAgentTreeSkipped` IS the load-bearing rule).
+ *
+ * For `kind === "skill"` the L-517 nested layout is
+ * `<vendoredDir>/<name>/SKILL.md` (single-skill) or
+ * `<vendoredDir>/<sub>/SKILL.md` (multi-skill root). The notice is dropped
+ * NEXT TO every `SKILL.md` it can locate so an editor opening any skill
+ * variant sees it.
+ *
+ * `sourceRef` is the editor-actionable string: a filesystem path for
+ * path-origins, a `github:owner/repo@ref` URI for github-origins (the
+ * fetched temp dir is gone by the time the editor reads the notice, so
+ * passing it would be misleading — TD-202 plan §1.4).
+ *
+ * See TD-202, coding_guidelines.md §18.5, brain memory `td202-sidecar`.
+ */
+function writeRegistryNotice(
+  vendoredDir: string,
+  sourceRef: string,
+  name: string,
+  kind: "agent" | "skill",
+): void {
+  try {
+    const body =
+      `<!--\n` +
+      `  TD-202: this directory is a registry-vendored copy. DO NOT edit files here.\n` +
+      `  Source: ${sourceRef}\n` +
+      `  To change: edit the source, then run \`igris registry update ${name}\`.\n` +
+      `  Direct edits to this directory will be OVERWRITTEN on the next \`update\`\n` +
+      `  or \`add\` cycle, and the drift-verify check will flag them as DRIFTED.\n` +
+      `-->\n\n` +
+      `# Registry-vendored copy — do not edit here\n\n` +
+      `This is a copy of \`${sourceRef}\` maintained by \`igris registry\`. Edit the\n` +
+      `source, then run:\n\n` +
+      `\`\`\`bash\n` +
+      `igris registry update ${name}\n` +
+      `\`\`\`\n\n` +
+      `Why this file exists: see TD-202 (the 2026-06-01 Codex incident — direct\n` +
+      `registry edits to content-pipeline/SKILL.md got silently overwritten on the\n` +
+      `next update cycle). The drift checker (\`igris harness check\`) reports\n` +
+      `DRIFTED if this copy diverges from source. See coding_guidelines.md §18.5.\n`;
+
+    const writeAtomic = (dir: string): void => {
+      if (!existsSync(dir)) return; // skip silently if the dir vanished
+      const out = join(dir, "REGISTRY-NOTICE.md");
+      const tmp = `${out}.tmp-${process.pid}`;
+      writeFileSync(tmp, body, "utf-8");
+      renameSync(tmp, out);
+    };
+
+    if (kind === "agent") {
+      writeAtomic(vendoredDir);
+      return;
+    }
+    // Skill case — L-517 nested. Try single-skill shape first
+    // (<vendoredDir>/<name>/SKILL.md); else iterate every subdir with a SKILL.md.
+    const singleSkillDir = join(vendoredDir, name);
+    if (existsSync(join(singleSkillDir, "SKILL.md"))) {
+      writeAtomic(singleSkillDir);
+      return;
+    }
+    if (existsSync(vendoredDir)) {
+      const entries = readdirSync(vendoredDir, { withFileTypes: true });
+      for (const e of entries) {
+        if (!e.isDirectory()) continue;
+        const sub = join(vendoredDir, e.name);
+        if (existsSync(join(sub, "SKILL.md"))) {
+          writeAtomic(sub);
+        }
+      }
+    }
+  } catch (err) {
+    // TD-202: in-band notice is UX, not contract. Log + continue; the overlay
+    // write is the load-bearing artifact.
+    info(
+      `registry: could not write REGISTRY-NOTICE.md in ${vendoredDir}: ${(err as Error).message}`,
+    );
+  }
+}
+
+/**
  * FR-152: natural-sort versioned filename pick. Ports `sort -V` semantics by
  * splitting filename digits on dots and comparing components numerically.
  * Mirrors `_common.sh:latest_canonical` so the JS vendor path picks the same
@@ -1320,7 +1406,6 @@ function reVendorSkillPath(
   origin: Origin,
   destDir: string,
 ): ReVendorResult {
-  void name; // reserved for future per-skill logging hooks
   if (origin.type !== "path") {
     return { status: "skipped", note: `non-path skill origin '${origin.type}'` };
   }
@@ -1330,6 +1415,10 @@ function reVendorSkillPath(
     return `error: failed to re-vendor skill: ${(err as Error).message}`;
   }
   const newHash = hashSkillTree(destDir);
+  // TD-202 in-band notice — emitted post-hash so the notice's bytes never
+  // enter the basis. Re-emit on every re-vendor so the sidecar reflects the
+  // CURRENT origin (operator may have moved the source between vendor cycles).
+  writeRegistryNotice(destDir, origin.dir, name, "skill");
   return newHash === origin.hash
     ? { status: "unchanged", origin: { ...origin, hash: newHash } }
     : { status: "changed", origin: { ...origin, hash: newHash } };
@@ -1382,12 +1471,19 @@ function pickAssemblyFiles(
 
 /**
  * FR-156 vendor + hash skip-list (basename-keyed). MUST stay byte-for-byte
- * in sync with the bash side at `core/scripts/cli-adapters/_common.sh`
- * `hash_agent_tree`. Skips operator-author noise (`MAINTAINING.md`),
- * filesystem cruft (`.DS_Store`), VCS metadata (`.git*` glob — intentional
+ * in sync with THREE sites total: TS `isAgentTreeSkipped` (this function),
+ * bash `hash_agent_tree` in `core/scripts/cli-adapters/_common.sh`, and the
+ * two inline Python `EXACT` sets in `check_harness_drift.sh` (one for the
+ * agent tree-diff at ~line 556, one for the skill tree-diff at ~line 912).
+ * Skips operator-author noise (`MAINTAINING.md`), filesystem cruft
+ * (`.DS_Store`), VCS metadata (`.git*` glob — intentional
  * `.git`/`.gitignore`/`.gitkeep`/`.github` sweep), language caches
- * (`__pycache__/`, `*.pyc`), node deps (`node_modules/`), and venvs
- * (`.venv/`). Returns true when the basename should be SKIPPED.
+ * (`__pycache__/`, `*.pyc`), node deps (`node_modules/`), venvs (`.venv/`),
+ * and the TD-202 `REGISTRY-NOTICE.md` vendored sidecar (emitted post-vendor
+ * + post-hash so it is never in the basis, but skip-listed as defense-in-
+ * depth — if a future caller writes the notice BEFORE hashing, the skip-list
+ * keeps the hash basis invariant). Returns true when the basename should be
+ * SKIPPED.
  */
 function isAgentTreeSkipped(name: string): boolean {
   // Exact basenames.
@@ -1396,6 +1492,7 @@ function isAgentTreeSkipped(name: string): boolean {
   if (name === "node_modules") return true;
   if (name === ".venv") return true;
   if (name === "__pycache__") return true;
+  if (name === "REGISTRY-NOTICE.md") return true; // TD-202 vendored-copy notice
   // Globs.
   if (name.startsWith(".git")) return true; // .git, .gitignore, .gitkeep, .github
   if (name.endsWith(".pyc")) return true;
@@ -1909,6 +2006,11 @@ async function runAdd(
     logError(`registry add: failed to vendor canonical files: ${(err as Error).message}`);
     return 1;
   }
+  // TD-202 in-band notice — emitted post-hash (line 1986), post-assemble,
+  // OUTSIDE the vendor try/catch so a sidecar-write failure can NEVER
+  // trigger the rollback. Helper has its own internal try/catch (best-effort
+  // UX; the overlay write below is the contract).
+  writeRegistryNotice(vendoredDir, resolved.srcDir, opts.name, "agent");
 
   try {
     writeOverlayAtomic(overlayPath, overlay);
@@ -2100,6 +2202,13 @@ async function runAddGithub(
       );
       return 1;
     }
+    // TD-202 in-band notice — for github origins, the editor cannot `cd` to
+    // the fetched temp dir (cleaned up below in finally). Pass the canonical
+    // github URI so the notice points the editor at the upstream repo.
+    // Emitted OUTSIDE the vendor try/catch so a sidecar-write failure can
+    // NEVER trigger rollback (helper has its own internal try/catch).
+    const githubRef = `github:${spec.owner}/${spec.repo}@${spec.ref}`;
+    writeRegistryNotice(vendoredDir, githubRef, name, "agent");
 
     try {
       writeOverlayAtomic(overlayPath, overlay);
@@ -2456,6 +2565,11 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
     );
     return 1;
   }
+  // TD-202 in-band notice — emitted post-hash (above), OUTSIDE the vendor
+  // try/catch. L-517 nested layout: helper drops the notice next to every
+  // SKILL.md it locates under vendoredDir. Best-effort UX; no rollback on
+  // failure (helper has its own internal try/catch).
+  writeRegistryNotice(vendoredDir, consumerSourceDir, name, "skill");
 
   try {
     writeOverlayAtomic(overlayPath, overlay);
@@ -2634,6 +2748,10 @@ function reVendorPath(
     return `error: failed to re-vendor: ${(err as Error).message}`;
   }
   const newHash = hashAgentTree(vendoredDir);
+  // TD-202 in-band notice — emitted AFTER hashAgentTree so the notice's bytes
+  // never enter the basis even if the skip-list lags (belt-and-suspenders).
+  // Re-emit on every re-vendor so the sidecar reflects the CURRENT origin.
+  writeRegistryNotice(vendoredDir, origin.dir, entry.name, "agent");
   return newHash === origin.hash
     ? { status: "unchanged", origin: { ...origin, hash: newHash } }
     : { status: "changed", origin: { ...origin, hash: newHash } };
@@ -2720,6 +2838,11 @@ async function reVendorGithub(
       return `error: failed to re-vendor: ${(err as Error).message}`;
     }
     const newHash = hashAgentTree(vendoredDir);
+    // TD-202 in-band notice — github re-vendor lands a newer release tag,
+    // so the URI reference advances too. Emitted AFTER hashAgentTree so the
+    // notice bytes never enter basis (belt-and-suspenders).
+    const githubRef = `github:${owner}/${repo}@${newer.tag}`;
+    writeRegistryNotice(vendoredDir, githubRef, entry.name, "agent");
     const updated: GithubOrigin = {
       ...origin,
       ref: newer.tag,
@@ -2923,6 +3046,16 @@ async function runUpdate(
       logError(`registry update: failed to persist origins: ${(err as Error).message}`);
       return 1;
     }
+  }
+  // TD-202: subtle but visible nudge — remind the operator that future edits
+  // belong at the source, not under ~/.igris/registry/. Fires once per
+  // invocation when any work item was processed (not per-entry to keep the
+  // signal-to-noise ratio reasonable).
+  if (work.length > 0) {
+    info("");
+    info("Reminder: edits to vendored surfaces must happen at the SOURCE path,");
+    info("not under ~/.igris/registry/. Re-run `igris registry update <name>`");
+    info("after editing the source. See TD-202 / coding_guidelines.md §18.5.");
   }
   return hadError ? 1 : 0;
 }
