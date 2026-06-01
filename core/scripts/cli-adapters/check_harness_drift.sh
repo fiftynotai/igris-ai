@@ -221,63 +221,48 @@ PY
 }
 
 # ---------------------------------------------------------------------------
-# codex_body <toml-path>  — decode developer_instructions from a codex TOML.
-# Emits empty + returns 1 if the file is missing or unparseable.
-# ---------------------------------------------------------------------------
-codex_body() {
-  local toml_path="$1"
-  if [ ! -f "$toml_path" ]; then
-    return 1
-  fi
-  python3 - "$toml_path" <<'PY'
-import sys
-try:
-    import tomllib
-except ImportError:  # python < 3.11
-    sys.exit(2)
-try:
-    with open(sys.argv[1], "rb") as fh:
-        data = tomllib.load(fh)
-except Exception:
-    sys.exit(1)
-val = data.get("developer_instructions")
-if val is None:
-    sys.exit(1)
-sys.stdout.write(val)
-PY
-}
-
-# ---------------------------------------------------------------------------
 # verify_md_agent_symlink_drift <name> <harness_label> <target_abs>
 #
-# FR-152 / FR-158 / TD-208 per-harness drift verdict for claude + gemini AGENT
-# targets. Each harness has its own registry-resident expected file
-# (`<BRAIN_DIR>/registry/agents/<name>/harness.<harness_label>.md`) — the
-# assembly happens at compile time. The verdict primitive is PER-HARNESS:
+# FR-152 / FR-158 / FR-159 / TD-208 per-harness drift verdict for claude +
+# codex + gemini AGENT targets. Each harness has its own registry-resident
+# expected file (`<BRAIN_DIR>/registry/agents/<name>/harness.<label>.<ext>`,
+# where ext = `md` for claude/gemini and `toml` for codex) — the assembly
+# happens at compile time. The verdict primitive is PER-HARNESS:
 #
 #   claude → symbolic-link verdict (readlink/realpath flow); see below.
+#   codex  → symbolic-link verdict (FR-159: codex shares claude's primitive;
+#            expected file is harness.codex.toml).
 #   gemini → hard-link verdict (inode equality); delegates to
 #            verify_gemini_agent_hardlink_drift.
 #
 # Common precondition: MISSING when target absent (no -L, no -e).
 #
-# Claude branch verdicts (unchanged from FR-152):
+# Claude / Codex branch verdicts (FR-152 / FR-159):
 #   DRIFTED — target is a regular file (refuse-to-clobber posture).
 #   DRIFTED — symlink resolves outside the registry (legacy reference-mode).
 #   DRIFTED — symlink resolves inside the registry but to the wrong file.
 #   DRIFTED — symlink is broken.
-#   MATCH   — symlink resolves to the expected harness.claude.md.
+#   MATCH   — symlink resolves to the expected harness.<label>.<ext>.
 #
 # Pairs line-for-line with `compile_md_agent_target` in compile_harnesses.sh.
 # Updates MATCH/DRIFT counters (caller-scoped). Both sides realpath'd for the
-# macOS `/var` → `/private/var` prefix. See L-515, L-519 §18.1, FR-158, TD-208.
+# macOS `/var` → `/private/var` prefix. See L-515, L-519 §18.1, FR-158, FR-159,
+# TD-208.
 # ---------------------------------------------------------------------------
 verify_md_agent_symlink_drift() {
   local name="$1"
   local harness_label="$2"
   local target_abs="$3"
 
-  local expected_target="$BRAIN_DIR/registry/agents/$name/harness.${harness_label}.md"
+  # FR-159: codex's expected registry file is harness.codex.toml (TOML, not
+  # Markdown). Claude/gemini stay on .md. The rest of the function is
+  # extension-agnostic — the symlink/realpath compare cares only about
+  # paths, not file contents.
+  local harness_ext="md"
+  if [ "$harness_label" = "codex" ]; then
+    harness_ext="toml"
+  fi
+  local expected_target="$BRAIN_DIR/registry/agents/$name/harness.${harness_label}.${harness_ext}"
 
   # Common precondition: MISSING when target absent (no -L, no -e). Applies
   # to both claude and gemini branches.
@@ -688,11 +673,12 @@ def walk(tree):
                 continue
             abs_p = os.path.join(root, f)
             rel = os.path.relpath(abs_p, tree).replace(os.sep, "/")
-            # FR-158: per-harness α-assembly outputs are derived; exclude
-            # both `harness.claude.md` AND `harness.gemini.md` from the
-            # tree-diff basis (top-level only — a nested file by either
-            # name would be legitimate operator content).
-            if rel in ("harness.claude.md", "harness.gemini.md"):
+            # FR-158 / FR-159: per-harness α-assembly outputs are derived;
+            # exclude `harness.claude.md`, `harness.gemini.md`, AND
+            # `harness.codex.toml` from the tree-diff basis (top-level
+            # only — a nested file by either name would be legitimate
+            # operator content).
+            if rel in ("harness.claude.md", "harness.gemini.md", "harness.codex.toml"):
                 continue
             try:
                 with open(abs_p, "rb") as fh:
@@ -742,68 +728,23 @@ PY
     /*)    target_abs="$target_path" ;;
     *)     target_abs="$PROJECT_ROOT/$target_path" ;;
   esac
-  canon_version=$(read_canonical_version "$canon_abs")
 
-  # FR-152 / FR-158: claude + gemini AGENT verdicts are by target-path
-  # realpath against the per-harness registry-resident assembled file
-  # (`harness.claude.md` for claude, `harness.gemini.md` for gemini — NOT
-  # body sha). Pair line-for-line with `compile_md_agent_target` (L-519 §18.1
-  # compile/drift-verify pairing). Both sides of the containment check are
-  # realpath'd so macOS `/var` → `/private/var` (and similar symlink-resolved
-  # TMPDIR prefixes) do not produce false "not registry-anchored" verdicts.
-  if [ "$ttype" = "claude" ] || [ "$ttype" = "gemini" ]; then
+  # FR-152 / FR-158 / FR-159: claude + codex + gemini AGENT verdicts are by
+  # target-path realpath against the per-harness registry-resident assembled
+  # file (`harness.claude.md`, `harness.codex.toml`, `harness.gemini.md`
+  # respectively — NOT body sha). Pair line-for-line with
+  # `compile_md_agent_target` (L-519 §18.1 compile/drift-verify pairing).
+  # Both sides of the containment check are realpath'd so macOS `/var` →
+  # `/private/var` (and similar symlink-resolved TMPDIR prefixes) do not
+  # produce false "not registry-anchored" verdicts.
+  if [ "$ttype" = "claude" ] || [ "$ttype" = "gemini" ] || [ "$ttype" = "codex" ]; then
     verify_md_agent_symlink_drift "$name" "$ttype" "$target_abs"
     continue
   fi
 
-  # codex-only branch from here on. Body-exception is claude-only at the
-  # SYMBOLIC level (TD-193 gate); codex emitters write the plain canonical
-  # body so the expected body is `strip_frontmatter "$canon_abs"`.
-  expected_body=$(strip_frontmatter "$canon_abs")
-  expected_sha=$(sha_of_string "$expected_body")
-
-  # Resolve the actual codex body (decoded developer_instructions).
-  actual_body=""
-  if [ "$ttype" = "codex" ]; then
-    if ! actual_body=$(codex_body "$target_abs"); then
-      echo "  [$name/$ttype] MISSING — codex harness absent or unparseable: $target_abs"
-      DRIFT=$((DRIFT + 1))
-      continue
-    fi
-  else
-    echo "  [$name/$ttype] DRIFTED — unknown target type"
-    DRIFT=$((DRIFT + 1))
-    continue
-  fi
-
-  actual_sha=$(sha_of_string "$actual_body")
-  actual_version=$(read_canonical_version "$target_abs" 2>/dev/null || true)
-  # codex bodies live inside a TOML value; read_canonical_version on the .toml
-  # path scans the whole file and still finds the `> **Version:**` line.
-
-  # Verdict: sha must match; version marker must match when both present.
-  verdict="MATCH"
-  reason=""
-  if [ "$expected_sha" != "$actual_sha" ]; then
-    verdict="DRIFTED"
-    reason="body sha mismatch"
-  elif [ -n "$canon_version" ] && [ -n "$actual_version" ] \
-       && [ "$canon_version" != "$actual_version" ]; then
-    verdict="DRIFTED"
-    reason="version marker mismatch"
-  fi
-
-  echo "  [$name/$ttype] $verdict"
-  echo "      canonical : $canon_abs"
-  echo "      harness   : $target_abs"
-  echo "      canon sha : $expected_sha (version ${canon_version:-none})"
-  echo "      harness sha: $actual_sha (version ${actual_version:-none})"
-  if [ "$verdict" = "MATCH" ]; then
-    MATCH=$((MATCH + 1))
-  else
-    echo "      reason    : $reason"
-    DRIFT=$((DRIFT + 1))
-  fi
+  # No other agent target types are supported.
+  echo "  [$name/$ttype] DRIFTED — unknown target type"
+  DRIFT=$((DRIFT + 1))
 done <<< "$WORK_ROWS"
 fi
 
@@ -1051,10 +992,10 @@ def walk(tree):
                 continue
             abs_p = os.path.join(root, f)
             rel = os.path.relpath(abs_p, tree).replace(os.sep, "/")
-            # FR-158: per-harness α-assembly output exclusion is moot for
-            # skills (no α-assembly output) but kept for parity with
-            # hash_agent_tree — see TD-201 plan §2 + FR-158.
-            if rel in ("harness.claude.md", "harness.gemini.md"):
+            # FR-158 / FR-159: per-harness α-assembly output exclusion is
+            # moot for skills (no α-assembly output) but kept for parity
+            # with hash_agent_tree — see TD-201 plan §2 + FR-158 + FR-159.
+            if rel in ("harness.claude.md", "harness.gemini.md", "harness.codex.toml"):
                 continue
             try:
                 with open(abs_p, "rb") as fh:

@@ -445,11 +445,12 @@ if os.path.isdir(tree):
                 continue
             abs_path = os.path.join(root, f)
             rel = os.path.relpath(abs_path, tree).replace(os.sep, "/")
-            # FR-152 / FR-158: exclude per-harness α-assembled outputs from
-            # the basis (top-level `harness.claude.md` / `harness.gemini.md`
-            # only — a nested file by either name would be legitimate
-            # operator content, same as the TS side).
-            if rel in ("harness.claude.md", "harness.gemini.md"):
+            # FR-152 / FR-158 / FR-159: exclude per-harness α-assembled
+            # outputs from the basis (top-level `harness.claude.md` /
+            # `harness.gemini.md` / `harness.codex.toml` only — a nested file
+            # by either name would be legitimate operator content, same as
+            # the TS side).
+            if rel in ("harness.claude.md", "harness.gemini.md", "harness.codex.toml"):
                 continue
             rels.append(rel)
 

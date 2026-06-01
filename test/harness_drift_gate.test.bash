@@ -1014,13 +1014,24 @@ EOF
   [[ "$output" == *"igris harness compile"* ]]
 }
 
-@test "FR-152: codex AGENT compile uses refactored sync_codex_agents.sh with FR-151 sidecar" {
+@test "FR-159: codex AGENT compile via TS assembleCodexHarness path emits 3-key TOML + drift MATCH" {
+  # FR-159 retires sync_codex_agents.sh in favor of TS assembleCodexHarness
+  # (vendor-side) + bash assemble_codex_harness_into_registry (compile-side
+  # fallback for core agents). Compile dispatch routes through
+  # compile_md_agent_target "codex" so the .toml is the target of a symlink
+  # to <BRAIN_DIR>/registry/agents/<name>/harness.codex.toml. Drift verdict
+  # is symlink-realpath (parity with claude), not body-sha.
   local root
   root="$(build_fr152_agent_project demo codex)"
   run bash "$COMPILE" --project-root "$root" \
                       --manifest "$root/harness-manifest.json" --target codex
   [ "$status" -eq 0 ]
-  [ -f "$root/.codex/agents/demo.toml" ]
+  # Target is a symlink, NOT a regular file (FR-159 contract).
+  [ -L "$root/.codex/agents/demo.toml" ]
+  # Symlink resolves to the registry-resident harness.codex.toml.
+  local resolved
+  resolved="$(realpath "$root/.codex/agents/demo.toml")"
+  [[ "$resolved" == *"/registry/agents/demo/harness.codex.toml" ]]
   # The TOML's description came from the FR-151 frontmatter.claude.md sidecar.
   grep -q 'description = "FR-152 split-shape canonical for codex"' \
        "$root/.codex/agents/demo.toml"
@@ -1030,7 +1041,7 @@ EOF
   # And `name` came from the frontmatter sidecar.
   grep -q 'name = "demo"' "$root/.codex/agents/demo.toml"
 
-  # Drift verifier returns MATCH for codex (sha-equality on body).
+  # Drift verifier returns MATCH for codex (symlink-realpath verdict per FR-159).
   run bash "$GUARD" --project-root "$root" \
                       --manifest "$root/harness-manifest.json"
   [ "$status" -eq 0 ]

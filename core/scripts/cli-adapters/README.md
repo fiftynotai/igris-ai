@@ -23,9 +23,15 @@ resident `harness.md` assembled at compile/vendor time. Codex emits a 3-key
 
 | Script | Contract | Output |
 |--------|----------|--------|
-| `sync_codex_agents.sh` | `sync_codex_agents.sh <frontmatter-md> <body-md> <output-toml> [agent-name]` | A `.codex/agents/<name>.toml` (3 keys: `description`, `developer_instructions`, `name`). Frontmatter sidecar + body addressed separately (FR-151/FR-152). Live emit path (D1 RESOLVED — REIMPLEMENT, FR-138). `--d1-reimplement` is a deprecated, accepted no-op. |
-| `compile_harnesses.sh` | `compile_harnesses.sh --project-root <dir> [--manifest <p>] [--filter <glob>] [--target claude\|codex\|gemini\|all]` | Orchestrates: reads the manifest. claude/gemini → assembles `<brain>/registry/agents/<name>/harness.md` (FR-152 α-assembly) + atomic symlink; codex → invokes refactored `sync_codex_agents.sh`. |
-| `check_harness_drift.sh` | `check_harness_drift.sh --project-root <dir> [--manifest <p>] [--filter <glob>]` | CI-style guard — exit 1 if any harness body sha / version marker has drifted from canonical (codex), or if any claude/gemini symlink target is non-registry-anchored / refuses-to-clobber a real-file target. |
+| `compile_harnesses.sh` | `compile_harnesses.sh --project-root <dir> [--manifest <p>] [--filter <glob>] [--target claude\|codex\|gemini\|all]` | Orchestrates: reads the manifest. All three agent harnesses (claude/codex/gemini) α-project from registry-resident files (`harness.claude.md`, `harness.codex.toml`, `harness.gemini.md`). claude + codex emit via symlink; gemini emits via hard link (TD-208). Codex assembly is bash-side `assemble_codex_harness_into_registry` for core agents and TS-side `assembleCodexHarness` for vendor (FR-159). |
+| `check_harness_drift.sh` | `check_harness_drift.sh --project-root <dir> [--manifest <p>] [--filter <glob>]` | CI-style guard — exit 1 if any claude/codex symlink target is non-registry-anchored, refuses-to-clobber a real-file target, or any gemini hard link has diverged (TD-208). All three agent harnesses use the per-harness registry-resident file as their verdict basis (FR-159 retired the codex body-sha verdict). |
+
+`sync_codex_agents.sh` was RETIRED by FR-159 — the codex TOML emit moved to
+TS `assembleCodexHarness` in `cli/src/verbs/registry.ts` (vendor-side) with a
+parallel bash `assemble_codex_harness_into_registry` in `compile_harnesses.sh`
+(compile-side fallback for core agents). This mirrors the FR-153 retirement
+posture (`md_to_agents_md.sh` + `md_to_gemini_toml.sh` deleted; their work
+moved to symlink primitives + the TS harness assemblers).
 
 ### Exit codes (all subagent adapters)
 
@@ -62,14 +68,16 @@ to this adapter directory. Currently one exists: `designer-harness-skill-para`
 
 ### Decision D1 — codex wrap vs reimplement (RESOLVED — REIMPLEMENT, FR-138)
 
-`sync_codex_agents.sh` once faced Decision D1: whether to WRAP the codex CLI's
-native agent-import command or REIMPLEMENT the TOML emit. FR-138 RESOLVED it in
-favor of REIMPLEMENT — the script emits the fully-specified 3-key codex
-subagent TOML directly, as the live default path (no opt-in flag required). The
-former `--d1-reimplement` flag / `IGRIS_CODEX_D1=reimplement` env opt-in are
-retained only as deprecated, accepted no-ops for back-compat. A WRAP variant
-remains possible behind a future `--d1-wrap` flag if codex's import is ever
-found scriptable + idempotent.
+The legacy `sync_codex_agents.sh` (retired by FR-159) once faced Decision D1:
+whether to WRAP the codex CLI's native agent-import command or REIMPLEMENT
+the TOML emit. FR-138 RESOLVED it in favor of REIMPLEMENT — the emit path
+writes the fully-specified 3-key codex subagent TOML directly. FR-159 then
+ported the emit to TS (`assembleCodexHarness`) + a parallel bash helper
+(`assemble_codex_harness_into_registry`) for byte-equivalent compile-side
+fallback. The former `--d1-reimplement` flag / `IGRIS_CODEX_D1=reimplement`
+env opt-in are GONE (no surface to accept them on after the bash script
+deletion). A WRAP variant remains possible behind a future `--d1-wrap` flag
+if codex's import is ever found scriptable + idempotent.
 
 ## Shared helpers
 

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Codex agent converter ported from bash to TS (FR-159)** -- retired `core/scripts/cli-adapters/sync_codex_agents.sh` outright (FR-153 retirement posture) and replaced it with `assembleCodexHarness` in `cli/src/verbs/registry.ts` (vendor-side α-assembler, parity with `assembleClaudeHarness` + `assembleGeminiHarness`) + `assemble_codex_harness_into_registry` in `compile_harnesses.sh` (compile-side fallback for core agents). The 3-key codex TOML (`description`, `developer_instructions`, `name`) is now emitted into the registry at `<brain>/registry/agents/<name>/harness.codex.toml`; the consumer-side target at `.codex/agents/<name>.toml` becomes a SYMLINK to that file (parity with claude — codex follows symlinks for both its skill loader per FR-157 and its agent .toml loader). Drift verdict shifts from body-sha comparison to symlink-realpath verdict (per FR-152 §18.1 compile/drift-verify pairing). 5 skip-list parity sites updated to exclude the new `harness.codex.toml` from origin hashing (TS `hashAgentTree` + `hashSkillTree`, bash `hash_agent_tree`, drift agent + skill walkers). Body-exception is deliberately NOT applied to codex output (parity with the retired bash script + L-519 §18.1 contract). Golden-fixture byte-parity test guards regression against the retired bash output (modulo marker line). `resolve_or_extract_frontmatter` helper retired with its sole caller. (FR-159)
+
 ### Fixed
 
 - Brain MCP: BR-067 polish — schedules `last_run_at` parity with the daemon's claim-instant semantics (manual fire-now path was writing the finish instant), malformed pidfile pruning on read so unparseable entries don't accumulate across sweeps, stdio teardown comments clarified (`stdin.resume()` defensive-only intent, PID-recycling caveat documented above the reaper's parent-liveness check). (TD-184)

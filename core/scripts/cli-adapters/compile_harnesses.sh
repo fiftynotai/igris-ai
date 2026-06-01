@@ -2,11 +2,13 @@
 
 # Description: Orchestrate harness regeneration. Reads harness-manifest.json
 #              and, for each agent/target, emits the matching per-harness
-#              projection: claude/gemini → atomic symlink to the registry-
-#              resident harness.<harness>.md (FR-152/FR-158 α-assembly);
-#              codex → TOML via the
-#              refactored sync_codex_agents.sh (frontmatter + body separated,
-#              FR-151 sidecar). See L-519 §18.1 (compile/drift-verify pairing).
+#              projection: claude → atomic symlink to registry-resident
+#              harness.claude.md (FR-152); gemini → hard link to
+#              harness.gemini.md (TD-208); codex → atomic symlink to
+#              harness.codex.toml (FR-159 — TS `assembleCodexHarness` vendor-
+#              side, bash `assemble_codex_harness_into_registry` compile-side
+#              fallback for core agents). See L-519 §18.1 (compile/drift-verify
+#              pairing).
 # Usage: compile_harnesses.sh --project-root <dir> [options]
 #   --project-root <dir>   - REQUIRED. Root that canonical/target paths in the
 #                            manifest resolve against.
@@ -27,7 +29,7 @@
 #   --surface agents|skills|all - Restrict to one projection surface (FR-137).
 #                            Default: all. `agents` = the per-agent harnesses;
 #                            `skills` = the surfaces.skills projection.
-# Dependencies: python3, _common.sh + sync_*.sh (auto-located from script dir)
+# Dependencies: python3, _common.sh (auto-located from script dir)
 # Exit codes:
 #   0 - All selected agent/target syncs succeeded (or were cleanly skipped)
 #   1 - One or more syncs failed
@@ -376,93 +378,165 @@ PY
 }
 
 # ---------------------------------------------------------------------------
-# resolve_or_extract_frontmatter <name> <canon_abs>
+# assemble_codex_harness_into_registry <name> <canon_abs> <exc_abs> <out_dir>
 #
-# FR-152 / FR-158: emit the absolute path of a file containing the agent's YAML
-# frontmatter (newline-separated, NO `---` delimiters) so the bash-driven
-# `sync_codex_agents.sh` can read it. Preference order mirrors
-# `assemble_agent_harness_into_registry` (Claude side; codex consumes the
-# Claude-shape frontmatter):
-#   1. `<dirname canon_abs>/frontmatter.claude.md` (FR-151/FR-158 in-place sidecar),
-#   2. `$BRAIN_DIR/registry/agents/<name>/frontmatter.claude.md` (vendor-side sidecar),
-#   3. extract inline from `canon_abs` via parse_frontmatter, write to a
-#      tempfile (TD-195 fallback for core agents). Tempfile path is appended
-#      to TMPFILES_TO_CLEAN for trap cleanup.
-# Echoes the resolved path. Returns non-zero when no frontmatter exists.
+# FR-159: derive `<out_dir>/harness.codex.toml` from the FR-151 Claude-shape
+# frontmatter sidecar + canonical body. Byte-equivalent to the retired
+# `sync_codex_agents.sh` (modulo the leading marker line). Pairs with the TS
+# `assembleCodexHarness` in cli/src/verbs/registry.ts (L-519 cross-impl parity).
 #
-# FR-158 interim: this resolver feeds the codex bash compiler with the
-# Claude-shape sidecar (renamed `frontmatter.md` -> `frontmatter.claude.md`
-# in FR-158). FR-159 will port codex emission to TS, at which point this
-# helper can be retired in favor of a parameterized TS path.
+# Frontmatter resolution chain (mirrors `assemble_agent_harness_into_registry`
+# for the Claude side; codex only ever reads the Claude-shape sidecar):
+#   1. `<out_dir>/frontmatter.claude.md` (registry-vendored sidecar),
+#   2. `<dirname canon_abs>/frontmatter.claude.md` (in-place sidecar),
+#   3. TD-195 fallback: extract inline frontmatter from `canon_abs` via
+#      parse_frontmatter (empty block if none — preserves pre-FR-152 lenient
+#      codex behavior for core agents without a sidecar).
+#
+# Body is `strip_frontmatter "$canon_abs"`. `<exc_abs>` (body-exception sidecar
+# path) is ACCEPTED for signature symmetry with the Claude/Gemini assembler
+# but NEVER applied — codex emit deliberately bypasses body-exception per
+# FR-159 plan §Decision 3 + TD-193 gate. The drift verdict relies on this
+# (post-FR-159 the drift verdict is symlink-realpath, but the registry-side
+# expected body is still the plain canonical).
+#
+# Reads ONLY `description` and `name` from the frontmatter (TOML schema is
+# fixed at 3 keys per TD-021; `tools:` / `model:` / `temperature:` / etc.
+# are not part of the codex subagent contract).
+#
+# Atomic emit (mktemp + mv). Idempotent: same inputs → same bytes. See
+# L-519, FR-159.
 # ---------------------------------------------------------------------------
-resolve_or_extract_frontmatter() {
+assemble_codex_harness_into_registry() {
   local name="$1"
   local canon_abs="$2"
+  local exc_abs="$3"
+  local out_dir="$4"
 
-  local in_place="$(dirname "$canon_abs")/frontmatter.claude.md"
-  if [ -f "$in_place" ]; then
-    echo "$in_place"
-    return 0
-  fi
-  local in_vendor="$BRAIN_DIR/registry/agents/$name/frontmatter.claude.md"
-  if [ -f "$in_vendor" ]; then
-    echo "$in_vendor"
-    return 0
-  fi
-  # TD-195 fallback: extract inline. BSD mktemp on macOS only treats the LAST
-  # contiguous `X`s before EOF as the template, so the pattern has no `.md`
-  # suffix; the file content is identical to a `frontmatter.claude.md` sidecar shape
-  # which is what `get_skill_field` reads (no extension dependency).
-  # FR-152 D4: this preserves the pre-FR-152 lenient codex behavior for canonicals
-  # that have neither a sidecar nor inline frontmatter. The wrapped tempfile is
-  # an empty frontmatter block; `get_skill_field` returns "" for any field,
-  # mirroring the pre-FR-152 emit (empty description / name-from-basename).
-  local tmp wrapped inline_text
-  tmp="$(mktemp "${TMPDIR:-/tmp}/igris_codex_fm_inline.XXXXXX")"
-  if parse_frontmatter "$canon_abs" > "$tmp"; then
-    inline_text="$(cat "$tmp")"
+  # FR-159 Decision 3 + TD-193: body-exception is deliberately ignored for
+  # codex (parity with retired `sync_codex_agents.sh`). Bind the unused var
+  # so `set -u` doesn't trip if the caller passes empty.
+  : "${exc_abs:-}"
+
+  mkdir -p "$out_dir"
+
+  # Frontmatter resolution — Claude-shape sidecar only. The 3 cases mirror
+  # the retired `resolve_or_extract_frontmatter` helper but live here so the
+  # codex emit path is self-contained.
+  local fm_path=""
+  local fm_temp=""
+  if [ -f "$out_dir/frontmatter.claude.md" ]; then
+    fm_path="$out_dir/frontmatter.claude.md"
+  elif [ -f "$(dirname "$canon_abs")/frontmatter.claude.md" ]; then
+    fm_path="$(dirname "$canon_abs")/frontmatter.claude.md"
   else
-    inline_text=""
+    # TD-195 fallback: extract inline frontmatter and wrap in `---\n...\n---\n`
+    # so get_skill_field reads it. Empty block is fine — get_skill_field
+    # returns "" for any field, mirroring the pre-FR-152 lenient codex behavior.
+    local inline_text wrapped
+    inline_text="$(parse_frontmatter "$canon_abs" 2>/dev/null || echo "")"
+    wrapped="$(mktemp "${TMPDIR:-/tmp}/igris_codex_fm_wrapped.XXXXXX")"
+    {
+      echo "---"
+      if [ -n "$inline_text" ]; then
+        printf '%s\n' "$inline_text"
+      fi
+      echo "---"
+    } > "$wrapped"
+    fm_path="$wrapped"
+    fm_temp="$wrapped"
   fi
-  rm -f "$tmp"
-  # Wrap in `---\n...\n---\n` so `get_skill_field` (which expects delimiters)
-  # reads it. Same shape as a real frontmatter.claude.md sidecar regardless of whether
-  # the inline extract succeeded — empty block is fine downstream.
-  wrapped="$(mktemp "${TMPDIR:-/tmp}/igris_codex_fm_wrapped.XXXXXX")"
-  {
-    echo "---"
-    if [ -n "$inline_text" ]; then
-      printf '%s\n' "$inline_text"
-    fi
-    echo "---"
-  } > "$wrapped"
-  # Register for cleanup via the loop trap.
-  TMPFILES_TO_CLEAN+=("$wrapped")
-  echo "$wrapped"
+
+  local description
+  description=$(get_skill_field "$fm_path" "description")
+  if [ -z "$description" ]; then
+    echo "Warning: No description found in '$fm_path' — using empty string (codex)" >&2
+  fi
+  local escaped_desc
+  escaped_desc=$(toml_escape_description "$description")
+
+  local body
+  body=$(strip_frontmatter "$canon_abs")
+  local escaped_body
+  escaped_body=$(toml_escape "$body")
+
+  # Resolve the TOML `name`: frontmatter `name:` > basename of out_dir.
+  # (No CLI override here — the caller passes the agent name implicitly
+  # via the out_dir = `<BRAIN_DIR>/registry/agents/<name>` convention.)
+  local agent_name
+  agent_name=$(get_skill_field "$fm_path" "name")
+  if [ -z "$agent_name" ]; then
+    agent_name="$name"
+  fi
+  local escaped_name
+  escaped_name=$(toml_escape_description "$agent_name")
+
+  # Cleanup the inline-extract tempfile if we created one.
+  if [ -n "$fm_temp" ]; then
+    rm -f "$fm_temp"
+  fi
+
+  # Emit TOML atomically. Key order is load-bearing (TD-021 finding #2):
+  # description, developer_instructions, name.
+  local out_path="$out_dir/harness.codex.toml"
+  local tmp="$out_path.tmp-$$"
+  local marker="# Generated by igris assembleCodexHarness (FR-159)"
+
+  python3 - "$tmp" "$escaped_desc" "$escaped_body" "$escaped_name" "$marker" <<'PY'
+import sys
+
+out_path = sys.argv[1]
+description = sys.argv[2]
+body = sys.argv[3]
+name = sys.argv[4]
+marker = sys.argv[5]
+
+toml = marker + "\n"
+toml += f'description = "{description}"\n'
+toml += 'developer_instructions = """\n'
+toml += body
+if not toml.endswith("\n"):
+    toml += "\n"
+toml += '"""\n'
+toml += f'name = "{name}"\n'
+
+with open(out_path, "w", encoding="utf-8") as fh:
+    fh.write(toml)
+PY
+  local rc=$?
+  if [ "$rc" -ne 0 ]; then
+    rm -f "$tmp"
+    return $rc
+  fi
+  mv "$tmp" "$out_path"
 }
 
 # ---------------------------------------------------------------------------
 # compile_md_agent_target <harness_label> <name> <canon_abs> <exc_abs>
 #                         <target_abs>
 #
-# FR-152 / FR-158 / TD-208 per-harness α-projection for claude + gemini agent
-# targets. Each harness owns its own registry-resident derived file
-# (`harness.claude.md` or `harness.gemini.md`); the projection at
-# `<target_abs>` points at the matching one. The emit primitive is
-# PER-HARNESS:
+# FR-152 / FR-158 / FR-159 / TD-208 per-harness α-projection for claude +
+# gemini + codex agent targets. Each harness owns its own registry-resident
+# derived file (`harness.claude.md`, `harness.gemini.md`, or
+# `harness.codex.toml`); the projection at `<target_abs>` points at the
+# matching one. The emit primitive is PER-HARNESS:
 #
 #   claude → symbolic link (`ln -sf` via atomic_symlink). Claude's subagent
 #            loader follows symlinks fine.
+#   codex  → symbolic link (`ln -sf` via atomic_symlink). FR-159: codex's
+#            subagent .toml loader follows symlinks (sibling to its skill
+#            loader, which already follows them per FR-157 / TD-202 verified
+#            live). Output file is `harness.codex.toml` (TOML, not Markdown).
 #   gemini → HARD LINK (`ln` via emit_md_hardlink). TD-208: Gemini's subagent
 #            loader does NOT follow symbolic links (verified live 2026-06-01)
 #            but DOES follow hard links. Hard link preserves L-516
 #            registry-canonical: same inode = same bytes-on-disk = registry
 #            remains the single physical home.
 #
-# Claude branch — 3-case dispatch (unchanged from FR-152):
-#   Case A — target absent → assemble + create symlink → harness.claude.md.
+# Claude / Codex branch — 3-case symlink dispatch (FR-152 / FR-159):
+#   Case A — target absent → assemble + create symlink → harness.<label>.<ext>.
 #   Case B — target IS a symlink → if it resolves to the registry
-#            harness.claude.md, silent no-op; else atomically repoint + log.
+#            harness.<label>.<ext>, silent no-op; else atomically repoint + log.
 #   Case C — target IS a regular file → HARD ERROR (refuse-to-clobber).
 #
 # Gemini branch — TD-208 contract (we own this path; idempotent re-emit):
@@ -477,8 +551,14 @@ resolve_or_extract_frontmatter() {
 #     real file would make Gemini refuse to overwrite its own output. The
 #     compile pipeline is the only legitimate writer of this path.
 #
+# FR-159 codex assembly: codex uses a separate assembler
+# `assemble_codex_harness_into_registry` that emits a 3-key TOML document
+# (description, developer_instructions, name) byte-for-byte equivalent to
+# the retired `sync_codex_agents.sh`. Body-exception is NOT applied for
+# codex (parity with retired script; see L-519 §18.1 + TD-193).
+#
 # See L-519 §18.1 (compile/drift-verify pairing). Body-exception is applied
-# at assembly time, not at emit time.
+# at assembly time, not at emit time (claude/gemini only).
 # ---------------------------------------------------------------------------
 compile_md_agent_target() {
   local harness_label="$1"
@@ -487,13 +567,28 @@ compile_md_agent_target() {
   local exc_abs="$4"
   local target_abs="$5"
 
-  local registry_agent_dir="$BRAIN_DIR/registry/agents/$name"
-  if ! assemble_agent_harness_into_registry "$harness_label" "$name" \
-                                            "$canon_abs" "$exc_abs" \
-                                            "$registry_agent_dir"; then
-    return 1
+  # FR-159: per-harness extension + assembler selection. codex emits TOML
+  # via a separate assembler; claude/gemini share the .md assembler.
+  local harness_ext="md"
+  if [ "$harness_label" = "codex" ]; then
+    harness_ext="toml"
   fi
-  local harness_target="$registry_agent_dir/harness.${harness_label}.md"
+
+  local registry_agent_dir="$BRAIN_DIR/registry/agents/$name"
+  if [ "$harness_label" = "codex" ]; then
+    if ! assemble_codex_harness_into_registry "$name" "$canon_abs" \
+                                              "$exc_abs" \
+                                              "$registry_agent_dir"; then
+      return 1
+    fi
+  else
+    if ! assemble_agent_harness_into_registry "$harness_label" "$name" \
+                                              "$canon_abs" "$exc_abs" \
+                                              "$registry_agent_dir"; then
+      return 1
+    fi
+  fi
+  local harness_target="$registry_agent_dir/harness.${harness_label}.${harness_ext}"
 
   # TD-208: gemini emits via hard link (Gemini loader does not follow
   # symlinks). The harness IS a real file (non-symlink), so "real file at
@@ -529,7 +624,9 @@ compile_md_agent_target() {
     return 0
   fi
 
-  # claude branch — symbolic link projection (3-case dispatch unchanged).
+  # claude + codex branch (FR-159) — symbolic link projection (3-case
+  # dispatch unchanged from FR-152; codex shares it because codex's
+  # subagent .toml loader follows symlinks per FR-157 / TD-202).
 
   # Case C: real file, NOT a symlink → refuse-to-clobber. The FR-149 back-compat
   # via the legacy body-refresh adapter is retired by FR-152; the operator
@@ -929,16 +1026,12 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
                               "$target_abs" || rc=$?
       ;;
     codex)
-      # FR-152: refactored sync_codex_agents.sh consumes the FR-151 frontmatter
-      # sidecar separately from the body. The resolver provides one (in-place,
-      # vendor, or extracted-inline tempfile via TD-195 fallback).
-      fm_abs=""
-      if fm_abs=$(resolve_or_extract_frontmatter "$name" "$canon_abs"); then
-        bash "$ADAPTER_DIR/sync_codex_agents.sh" "$fm_abs" "$canon_abs" \
-                                                 "$target_abs" "$name" || rc=$?
-      else
-        rc=1
-      fi
+      # FR-159: codex now α-projects from the registry-resident
+      # harness.codex.toml (assembled by TS assembleCodexHarness at vendor
+      # time, or by compile-side assemble_codex_harness_into_registry as
+      # a fallback for core agents). Target is a symlink, parallel to claude.
+      compile_md_agent_target "codex" "$name" "$canon_abs" "$exc_abs" \
+                              "$target_abs" || rc=$?
       ;;
     *)
       SUMMARY+=("FAIL  $name/$ttype — unknown target type")

@@ -425,9 +425,9 @@ coexist:
 | File | Role |
 |------|------|
 | `scripts/cli-adapters/harness-manifest.json` | Declarative manifest: per agent, the canonical source (dir + glob/file + `versioned` flag) and the set of harness targets. Handles both canonical conventions. |
-| `scripts/cli-adapters/sync_codex_agents.sh` | Per-target adapter — `<frontmatter-md> <body-md>` → `.codex/agents/<name>.toml` (3-key TOML: `description`, `developer_instructions`, `name`). Live emit path (D1 RESOLVED — REIMPLEMENT, FR-138; signature refactored FR-152). |
-| `scripts/cli-adapters/compile_harnesses.sh` | Orchestrator — reads the manifest, calls the per-target adapter for every agent/target. `--project-root`, `--filter`, `--target` flags. |
-| `scripts/cli-adapters/check_harness_drift.sh` | CI-style drift guard — exits non-zero if any harness body sha or version marker has diverged from canonical. |
+| `cli/src/verbs/registry.ts::assembleCodexHarness` | Vendor-side α-assembler — writes `<brain>/registry/agents/<name>/harness.codex.toml` (3-key TOML: `description`, `developer_instructions`, `name`) from `frontmatter.claude.md` + body. FR-159 TS port replacing the retired `sync_codex_agents.sh`. |
+| `scripts/cli-adapters/compile_harnesses.sh` | Orchestrator — reads the manifest, projects per-harness registry-resident files (`harness.claude.md`, `harness.codex.toml`, `harness.gemini.md`) to each target. claude + codex emit via symlink; gemini emits via hard link (TD-208). For core agents without vendor-side α-assembly, `assemble_codex_harness_into_registry` provides byte-equivalent compile-side fallback. `--project-root`, `--filter`, `--target` flags. |
+| `scripts/cli-adapters/check_harness_drift.sh` | CI-style drift guard — exits non-zero if any claude/codex symlink target is non-registry-anchored, refuses-to-clobber a real-file target, or any gemini hard-link target has diverged (TD-208). All 3 agent harnesses use per-harness registry-resident files as verdict basis (FR-159 retired the codex body-sha verdict). |
 | `scripts/cli-adapters/body-exceptions/*.json` | Documented intentional body divergences (see below). |
 
 ### Manifest schema
@@ -517,13 +517,19 @@ through verbatim — Gemini's loader will surface a clear "unknown tool" error,
 which IS the right behavior (an unknown tool means an operator override is
 required).
 
-#### Codex interim note (FR-158 → FR-159)
+#### Codex emission (FR-159 — TS port complete)
 
-Codex emission is still bash-driven (`sync_codex_agents.sh` called from
-`compile_harnesses.sh`). Under FR-158 the codex resolver reads the renamed
-`frontmatter.claude.md` (treating it as the Claude-shape frontmatter the codex
-emitter understands). FR-159 will port codex to TS, at which point this
-interim shape can be retired in favor of a parameterized codex assembler.
+Codex emission is TS-driven from FR-159 onwards. `assembleCodexHarness` in
+`cli/src/verbs/registry.ts` reads the FR-151 `frontmatter.claude.md` sidecar
++ canonical body and writes `<brain>/registry/agents/<name>/harness.codex.toml`
+at vendor time (alongside `harness.claude.md` + `harness.gemini.md`). For core
+agents without vendor-side α-assembly, `compile_harnesses.sh` provides a
+byte-equivalent compile-side fallback (`assemble_codex_harness_into_registry`).
+The `.codex/agents/<name>.toml` target is a SYMLINK to the registry file
+(parity with the claude primitive — codex follows symlinks for both skills
+and agent .toml loaders). The retired `sync_codex_agents.sh` is gone (FR-153
+retirement posture; no `--d1-reimplement` no-op flag remains because the
+surface that accepted it was the bash script).
 
 ### Per-harness agent-target primitive (TD-208)
 
@@ -537,7 +543,7 @@ subagent loader actually reads the registry bytes:
 |---|---|---|---|
 | Claude | Symbolic link (`ln -sf` via `atomic_symlink`) | `~/.claude/agents/<name>.md` | Claude follows symlinks fine; symlink is the cheapest atomic-repoint primitive (temp+rename). |
 | Gemini | Hard link (`ln` via `emit_md_hardlink`) | `~/.gemini/agents/<name>.md` | Gemini's subagent loader does NOT follow symbolic links (verified live 2026-06-01) but DOES follow hard links. Hard link preserves **L-516** registry-canonical: same inode = same bytes-on-disk = registry is THE single physical home. A `cp` copy would break L-516 (two bytes-on-disk copies, not one). |
-| Codex | Real-file copy (`sync_codex_agents.sh` emit) | `~/.codex/agents/<name>.toml` | Codex consumes TOML, not Markdown; emission is a converter (frontmatter + body → 3-key TOML) writing a regenerated file. Codex is out of scope for the symlink/hardlink discussion entirely. |
+| Codex | Symbolic link (`ln -sf` via `atomic_symlink`) | `~/.codex/agents/<name>.toml` | FR-159: codex consumes TOML, but its subagent .toml loader follows symlinks fine (parity with claude and with codex's already-symlinked skill loader per FR-157). `assembleCodexHarness` writes the 3-key TOML to the registry; the target is a symlink to it. |
 
 **Operational notes**
 
@@ -568,10 +574,13 @@ subagent loader actually reads the registry bytes:
 
 ### Decision D1 — codex wrap vs reimplement (RESOLVED — REIMPLEMENT, FR-138)
 
-`sync_codex_agents.sh` could either WRAP the codex CLI's native agent-import
-command or REIMPLEMENT the TOML emit. FR-138 **resolved D1 in favor of
-REIMPLEMENT**: the script emits the fully-specified 3-key codex subagent TOML
-directly, as the live default path — no opt-in flag, no env gate. The 7 Igris-
+The legacy `sync_codex_agents.sh` (retired by FR-159) could either WRAP the
+codex CLI's native agent-import command or REIMPLEMENT the TOML emit. FR-138
+**resolved D1 in favor of REIMPLEMENT**: the emit writes the fully-specified
+3-key codex subagent TOML directly, as the live default path — no opt-in
+flag, no env gate. FR-159 ported the REIMPLEMENT path to TS
+(`assembleCodexHarness`) + a parallel bash helper for compile-side fallback.
+The 7 Igris-
 core agents now distribute to `.codex/agents/*.toml` by default whenever
 `compile_harnesses.sh --target codex` (or `--target all`) runs. The former
 `--d1-reimplement` flag and `IGRIS_CODEX_D1=reimplement` env opt-in are retained
