@@ -55,7 +55,7 @@ I am Igris, at your command, fifty.dev.
 
 ## Multi-Agent Architecture (v7.0)
 
-IGRIS v7.0 uses native Claude Code subagents for autonomous workflows, with an optional Agent Teams parallel execution layer and a centralized brain for persistent memory. The main agent (you) is the orchestrator that delegates work to 7 specialized subagents, and can spawn independent teammate sessions for parallel workloads via `/team`.
+IGRIS v7.0 uses native harness subagents for autonomous workflows, with an optional Agent Teams parallel execution layer and a centralized brain for persistent memory. The main agent (you) is the orchestrator that delegates work to 7 specialized subagents, and can spawn independent teammate sessions for parallel workloads via `/team`.
 
 ### Core Principle: Separation of Concerns
 
