@@ -1268,6 +1268,14 @@ function copySkillTreeRecursive(srcDir: string, destDir: string): void {
  * relpath (sorted) + bytes into one sha256. Same idiom as `hashSurface` but
  * walks the full tree (skills can carry nested dirs). Used to detect source
  * mutation in `igris registry update` for skill blocks.
+ *
+ * TD-201: applies `isAgentTreeSkipped` (same skip-list as `hashAgentTree`).
+ * Cross-implementation hash parity with bash `hash_agent_tree` (reused for
+ * skills under L-519 / TD-201 Option B) requires identical skip-lists on
+ * both sides — otherwise `.DS_Store` / `__pycache__` etc. landing in either
+ * tree silently flips the hash and produces false-DRIFTED verdicts. The
+ * `harness.md` top-level exclusion is moot for skills (they don't carry
+ * α-assembly output) but kept for parity with the shared algorithm.
  */
 function hashSkillTree(treeDir: string): string {
   const h = createHash("sha256");
@@ -1276,10 +1284,15 @@ function hashSkillTree(treeDir: string): string {
     const abs = rel === "" ? treeDir : join(treeDir, rel);
     const entries = readdirSync(abs, { withFileTypes: true });
     for (const e of entries) {
+      if (isAgentTreeSkipped(e.name)) continue;
       const childRel = rel === "" ? e.name : `${rel}/${e.name}`;
       if (e.isDirectory()) {
         walk(childRel);
       } else if (e.isFile()) {
+        // TD-201: parity with hashAgentTree — exclude top-level harness.md
+        // from the basis. Moot for skills today (none produce one) but
+        // harmless and keeps the two helpers algorithmically aligned.
+        if (rel === "" && e.name === "harness.md") continue;
         rels.push(childRel);
       }
     }

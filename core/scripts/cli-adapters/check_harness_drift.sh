@@ -386,6 +386,9 @@ DRIFT=0
 # `case "$TREE_CHECKED" in *":$name:"*)` works under bash 3.2 (macOS default
 # — no associative arrays).
 TREE_CHECKED=":"
+# TD-201: per-skill-NAME tree-hash dedup (a multi-target skill block fires one
+# tree verdict, not one per (type, method) row). Same idiom as TREE_CHECKED.
+SKILL_TREE_CHECKED=":"
 
 echo "Harness drift check (project root: $PROJECT_ROOT):"
 echo ""
@@ -747,6 +750,11 @@ for src in sources:
         scope_type = scope.get("type") or "global"
         scope_paths_list = scope.get("paths") or []
         scope_paths_csv = ",".join(scope_paths_list) if scope_paths_list else "-"
+        # TD-201: per-block `layer` (gates the tree pre-check to personal
+        # skills). Appended as the LAST column so existing pre-TD-201 IFS
+        # reads stay back-compat. Default `core` so absent → no `-` sentinel
+        # needed.
+        layer = block.get("layer", "core") or "core"
         for t in block.get("targets", []) or []:
             print("\t".join([
                 source,
@@ -755,13 +763,19 @@ for src in sources:
                 (t or {}).get("path", ""),
                 scope_type,
                 scope_paths_csv,
+                layer,
             ]))
 PY
 )
 
 if [ -n "$SKILL_ROWS" ]; then
-  while IFS=$'\t' read -r s_source s_type s_method s_path s_scope_type s_scope_paths; do
+  while IFS=$'\t' read -r s_source s_type s_method s_path s_scope_type s_scope_paths s_layer; do
     [ -z "$s_type" ] && continue
+    # TD-201: legacy IFS-read default for the trailing `layer` column when an
+    # older flatten elsewhere omits it (defensive — current flatten always
+    # emits it). `core` is the schema default, matches FR-155 body_exception
+    # precedent of falling back when the trailing column is missing.
+    [ -z "$s_layer" ] && s_layer="core"
 
     # FR-155: skills surface project-scope filter (mirrors agent-loop filter
     # above and compile_harnesses.sh skills-loop filter). Silent skip when
@@ -807,6 +821,161 @@ if [ -n "$SKILL_ROWS" ]; then
       /*)    out_abs="$s_path" ;;
       *)     out_abs="$PROJECT_ROOT/$s_path" ;;
     esac
+
+    # TD-201: skill TREE pre-check. ONE verdict per personal skill block
+    # regardless of how many (type, method) targets it declares. Mirrors the
+    # FR-156 agent tree pre-check above — `hash_agent_tree` is intentionally
+    # reused (Option B): the algorithm (sorted relpath + \0 + bytes folded
+    # into sha256) is surface-agnostic. See L-519 / TD-201 plan §2.
+    #
+    # Gated to layer=personal. Core skills (declared in surfaces-manifest.json)
+    # have no registry-vendored copy to drift against, so this is a silent
+    # no-op for them — same posture as FR-156's agent tree pre-check.
+    # MATCH/DRIFT counters bump WITHOUT TOTAL++, mirroring FR-156's posture
+    # exactly (the per-target FR-152 row counts toward TOTAL; this is an
+    # orthogonal pre-check). Dedup is keyed on the skill NAME (basename of
+    # src_abs, which is `registrySkillDirPath(<name>)` per L-517).
+    #
+    # SHAPE NOTE: `igris registry add-skill` vendors a single-skill source
+    # (containing top-level `SKILL.md`) as `<src_abs>/<skill_name>/...` —
+    # the vendor primitive name-prefixes (see `vendorSkillTreeAtomic` in
+    # cli/src/verbs/registry.ts:1217). So to compare apples-to-apples with
+    # the operator's original `origin.dir` (which has `SKILL.md` at root),
+    # the registry side is hashed one level DOWN at `<src_abs>/<name>`.
+    if [ "$s_layer" = "personal" ] && [ -n "$src_abs" ]; then
+      skill_name="$(basename "$src_abs")"
+      skill_registry_dir="$src_abs/$skill_name"
+      skill_dedup_already=0
+      case "$SKILL_TREE_CHECKED" in
+        *":$skill_name:"*) skill_dedup_already=1 ;;
+      esac
+      if [ "$skill_dedup_already" -eq 0 ]; then
+        SKILL_TREE_CHECKED="${SKILL_TREE_CHECKED}${skill_name}:"
+        skill_origins_path="$BRAIN_DIR/registry/origins.json"
+        skill_origin_info=""
+        if [ -f "$skill_origins_path" ]; then
+          skill_origin_info=$(python3 - "$skill_origins_path" "$skill_name" <<'PY'
+import json
+import sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        origins = json.load(fh)
+except OSError:
+    sys.exit(0)
+o = origins.get("skill:" + sys.argv[2])
+if not isinstance(o, dict):
+    sys.exit(0)
+otype = o.get("type", "")
+if otype == "path":
+    print(otype + "\t" + (o.get("dir") or ""))
+elif otype == "github":
+    print(otype + "\t" + (o.get("repo") or "") + "@" + (o.get("ref") or ""))
+PY
+)
+        fi
+        if [ -z "$skill_origin_info" ]; then
+          : # no origin recorded for this personal skill — silent skip. The
+            # per-target FR-153 verdict below still fires. Same zero-migration
+            # posture as the FR-156 agent pre-check.
+        else
+          skill_origin_type="${skill_origin_info%%	*}"
+          skill_origin_payload="${skill_origin_info#*	}"
+          if [ "$skill_origin_type" = "path" ]; then
+            skill_origin_dir="$skill_origin_payload"
+            case "$skill_origin_dir" in
+              "~"/*) skill_origin_dir="$HOME/${skill_origin_dir#"~/"}" ;;
+            esac
+            if [ ! -d "$skill_registry_dir" ]; then
+              echo "  [$skill_name/tree] DRIFTED — registry dir absent: $skill_registry_dir"
+              DRIFT=$((DRIFT + 1))
+            elif [ ! -d "$skill_origin_dir" ]; then
+              echo "  [$skill_name/tree] NOTE — source dir gone ($skill_origin_dir); tree drift undetectable, per-target verify continues"
+            else
+              skill_tree_expected=$(hash_agent_tree "$skill_registry_dir")
+              skill_tree_actual=$(hash_agent_tree "$skill_origin_dir")
+              if [ "$skill_tree_expected" = "$skill_tree_actual" ]; then
+                echo "  [$skill_name/tree] MATCH"
+                MATCH=$((MATCH + 1))
+              else
+                echo "  [$skill_name/tree] DRIFTED"
+                echo "      registry  : $skill_registry_dir (sha $skill_tree_expected)"
+                echo "      source    : $skill_origin_dir (sha $skill_tree_actual)"
+                # Locate up to N=5 differing relpaths. Identical skip-list and
+                # cap to the FR-156 agent diff walker (so the two stay in
+                # lockstep). Diff emits relpaths only — no body bytes ever
+                # printed (L-515 read-only posture).
+                skill_tree_diff=$(python3 - "$skill_registry_dir" "$skill_origin_dir" <<'PY'
+import hashlib
+import os
+import sys
+
+EXACT = {"MAINTAINING.md", ".DS_Store", "node_modules", ".venv", "__pycache__"}
+
+
+def skipped(name):
+    if name in EXACT:
+        return True
+    if name.startswith(".git"):
+        return True
+    if name.endswith(".pyc"):
+        return True
+    return False
+
+
+def walk(tree):
+    out = {}
+    if not os.path.isdir(tree):
+        return out
+    for root, dirs, files in os.walk(tree):
+        dirs[:] = [d for d in dirs if not skipped(d)]
+        for f in files:
+            if skipped(f):
+                continue
+            abs_p = os.path.join(root, f)
+            rel = os.path.relpath(abs_p, tree).replace(os.sep, "/")
+            # Harness.md exclusion is moot for skills (no α-assembly output)
+            # but kept for parity with hash_agent_tree — see TD-201 plan §2.
+            if rel == "harness.md":
+                continue
+            try:
+                with open(abs_p, "rb") as fh:
+                    out[rel] = hashlib.sha256(fh.read()).hexdigest()
+            except OSError:
+                out[rel] = "<unreadable>"
+    return out
+
+
+a = walk(sys.argv[1])  # registry
+b = walk(sys.argv[2])  # source
+diffs = []
+keys = sorted(set(a) | set(b))
+for k in keys:
+    if k not in a:
+        diffs.append("+ " + k + " (only in source)")
+    elif k not in b:
+        diffs.append("- " + k + " (only in registry)")
+    elif a[k] != b[k]:
+        diffs.append("~ " + k + " (contents differ)")
+N = 5
+for d in diffs[:N]:
+    print("      " + d)
+if len(diffs) > N:
+    print("      (... and {} more)".format(len(diffs) - N))
+PY
+)
+                if [ -n "$skill_tree_diff" ]; then
+                  printf '%s\n' "$skill_tree_diff"
+                fi
+                echo "      reason    : skill tree diverges from recorded path-origin source — \`igris registry add-skill --name $skill_name --from <src>\` re-vendors"
+                DRIFT=$((DRIFT + 1))
+              fi
+            fi
+          elif [ "$skill_origin_type" = "github" ]; then
+            echo "  [$skill_name/tree] NOTE — github origin ($skill_origin_payload); freshness is release-tag tracked, tree-hash drift not applicable"
+          fi
+        fi
+      fi
+    fi
 
     verdict="MATCH"
     reason=""
