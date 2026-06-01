@@ -633,6 +633,12 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"refuse to clobber"* ]]
   [[ "$output" == *"$root/.claude/agents/demo.md"* ]]
+  # TD-209: batched refuse-to-clobber summary block. Per-file ERROR line + FAIL
+  # row are preserved above; the consolidated block emits a header, lists the
+  # refused path, and ends in a copy-pasteable recovery command line.
+  [[ "$output" == *"Refuse-to-clobber: 1 non-symlink target(s) blocked compile:"* ]]
+  [[ "$output" == *"Recovery — inspect the files above"* ]]
+  [[ "$output" == *"rm "*"$root/.claude/agents/demo.md"*" && igris harness compile"* ]]
   # File unchanged + still a regular file (NOT a symlink).
   [ -f "$root/.claude/agents/demo.md" ]
   [ ! -L "$root/.claude/agents/demo.md" ]

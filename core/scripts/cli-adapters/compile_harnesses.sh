@@ -134,6 +134,8 @@ emit_skill_symlink() {
   local skill_dir="$3"
   if [ -e "$link_path" ] && [ ! -L "$link_path" ]; then
     echo "[$harness_label/skills/$(basename "$link_path")] ERROR — refuse to clobber non-symlink at $link_path (remove manually if it should be a registry-anchored symlink)" >&2
+    # TD-209: append to the global collector for the batched summary block.
+    REFUSE_TARGETS+=("$link_path")
     return 1
   fi
   if [ -L "$link_path" ]; then
@@ -634,6 +636,8 @@ compile_md_agent_target() {
   # symlink.
   if [ -f "$target_abs" ] && [ ! -L "$target_abs" ]; then
     echo "[$name/$harness_label] ERROR — refuse to clobber non-symlink target: $target_abs (remove manually if it should be a registry-anchored symlink)" >&2
+    # TD-209: append to the global collector for the batched summary block.
+    REFUSE_TARGETS+=("$target_abs")
     return 1
   fi
 
@@ -664,6 +668,8 @@ compile_md_agent_target() {
 
   # Anything else (e.g. directory) — refuse to clobber.
   echo "[$name/$harness_label] ERROR — refuse to clobber non-symlink, non-file target: $target_abs" >&2
+  # TD-209: append to the global collector for the batched summary block.
+  REFUSE_TARGETS+=("$target_abs")
   return 1
 }
 
@@ -901,6 +907,13 @@ TOTAL=0
 OK=0
 FAIL=0
 SUMMARY=()
+# TD-209: batched refuse-to-clobber collector. Per-target functions
+# (emit_skill_symlink + compile_md_agent_target Cases C and "other-shape")
+# append the offending path here; the post-loop summary emits ONE block
+# instead of N per-file ERROR lines. Global namespace (no `local -n`
+# nameref) — required for bash 3.2 (/bin/bash on macOS). Writers MUST
+# avoid `local REFUSE_TARGETS` shadowing.
+REFUSE_TARGETS=()
 # FR-152: TMPFILES_TO_CLEAN was initialized above the merge step; the EXIT trap
 # already references it (loop-pushed inline tempfiles get cleaned on exit).
 
@@ -1351,6 +1364,36 @@ for line in "${SUMMARY[@]}"; do
 done
 echo "  ----"
 echo "  $TOTAL targets — $OK ok, $FAIL failed"
+
+# TD-209: batched refuse-to-clobber block. Emitted only when at least one
+# refuse-to-clobber event was collected. The per-file ERROR lines (inside
+# each refusing function) and the per-row FAIL log lines (in $SUMMARY)
+# still appear above; this block adds the consolidated view plus a
+# copy-pasteable recovery `rm ... && igris harness compile` line. Each
+# path is shell-quoted via printf '%q' so paths with spaces / special
+# chars survive copy-paste verbatim. Zero-refuse runs produce
+# byte-identical output to pre-TD-209 (no header, no recovery line).
+# Refuse rows already increment FAIL → existing exit gate below covers
+# the contract; this block is purely diagnostic.
+if [ "${#REFUSE_TARGETS[@]}" -gt 0 ]; then
+  echo ""
+  echo "Refuse-to-clobber: ${#REFUSE_TARGETS[@]} non-symlink target(s) blocked compile:"
+  for p in "${REFUSE_TARGETS[@]}"; do
+    echo "  $p"
+  done
+  echo ""
+  echo "  Recovery — inspect the files above, then run:"
+  # Build the quoted path list. printf '%q' is bash-builtin (no fork).
+  quoted_paths=""
+  for p in "${REFUSE_TARGETS[@]}"; do
+    if [ -z "$quoted_paths" ]; then
+      quoted_paths="$(printf '%q' "$p")"
+    else
+      quoted_paths="$quoted_paths $(printf '%q' "$p")"
+    fi
+  done
+  echo "    rm $quoted_paths && igris harness compile"
+fi
 
 if [ "$FAIL" -gt 0 ]; then
   exit 1

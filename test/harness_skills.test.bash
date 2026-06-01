@@ -612,6 +612,10 @@ EOF
   [ ! -L "$PROJ/.claude/skills/alpha" ]
   [[ "$output" == *"refuse to clobber"* ]]
   [[ "$output" == *"FAIL  skills/claude/alpha"* ]]
+  # TD-209: batched refuse-to-clobber summary block (single-refuse case).
+  [[ "$output" == *"Refuse-to-clobber: 1 non-symlink target(s) blocked compile:"* ]]
+  [[ "$output" == *"$PROJ/.claude/skills/alpha"* ]]
+  [[ "$output" == *"rm "*"&& igris harness compile"* ]]
 }
 
 @test "FR-149: claude/symlink compile is idempotent (silent no-op on rerun)" {
@@ -822,6 +826,10 @@ EOF
   [ ! -L "$PROJ/.codex/skills/alpha" ]
   [[ "$output" == *"refuse to clobber"* ]]
   [[ "$output" == *"FAIL  skills/codex/alpha"* ]]
+  # TD-209: batched refuse-to-clobber summary block (single-refuse case).
+  [[ "$output" == *"Refuse-to-clobber: 1 non-symlink target(s) blocked compile:"* ]]
+  [[ "$output" == *"$PROJ/.codex/skills/alpha"* ]]
+  [[ "$output" == *"rm "*"&& igris harness compile"* ]]
 }
 
 @test "FR-153: refuse-to-clobber a regular file at the gemini symlink path" {
@@ -834,6 +842,10 @@ EOF
   [ ! -L "$PROJ/.gemini/skills/alpha" ]
   [[ "$output" == *"refuse to clobber"* ]]
   [[ "$output" == *"FAIL  skills/gemini/alpha"* ]]
+  # TD-209: batched refuse-to-clobber summary block (single-refuse case).
+  [[ "$output" == *"Refuse-to-clobber: 1 non-symlink target(s) blocked compile:"* ]]
+  [[ "$output" == *"$PROJ/.gemini/skills/alpha"* ]]
+  [[ "$output" == *"rm "*"&& igris harness compile"* ]]
 }
 
 @test "FR-153: codex/symlink compile is idempotent (same inode on rerun)" {
@@ -999,4 +1011,61 @@ EOF
   [ ! -L "$PROJ/.agents/skills/alpha" ]
   [[ "$output" == *"refuse to clobber"* ]]
   [[ "$output" == *"FAIL  skills/agents/alpha"* ]]
+  # TD-209: batched refuse-to-clobber summary block (single-refuse case).
+  [[ "$output" == *"Refuse-to-clobber: 1 non-symlink target(s) blocked compile:"* ]]
+  [[ "$output" == *"$PROJ/.agents/skills/alpha"* ]]
+  [[ "$output" == *"rm "*"&& igris harness compile"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# TD-209: batched refuse-to-clobber summary — multi-refuse regression test.
+# Two refused targets in one compile run MUST coalesce into ONE summary block
+# (header + listing + single recovery command containing both paths). The
+# per-row FAIL log lines are PRESERVED unchanged — only the noise of multiple
+# per-file ERROR-block headers is consolidated.
+# ---------------------------------------------------------------------------
+
+@test "TD-209: multi-refuse batches into ONE summary block with all paths and a single recovery command" {
+  # Build a project with TWO skills (alpha, beta) under the SAME claude
+  # symlink target, then plant regular files at BOTH so the compiler
+  # refuses both in one pass.
+  build_fr149_skill_project   # seeds alpha at $PROJ/registry-skills/alpha
+  # Add a second skill source under the same registry-skills root.
+  mkdir -p "$PROJ/registry-skills/beta"
+  cat > "$PROJ/registry-skills/beta/SKILL.md" <<'EOF'
+---
+name: beta
+description: second skill for TD-209 multi-refuse
+---
+
+beta body
+EOF
+  mkdir -p "$PROJ/.claude/skills"
+  echo "operator-alpha" > "$PROJ/.claude/skills/alpha"
+  echo "operator-beta"  > "$PROJ/.claude/skills/beta"
+
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -ne 0 ]
+
+  # Both per-file FAIL rows still present (per-row log lines unchanged).
+  [[ "$output" == *"FAIL  skills/claude/alpha"* ]]
+  [[ "$output" == *"FAIL  skills/claude/beta"* ]]
+
+  # ONE batched summary block listing TWO paths.
+  [[ "$output" == *"Refuse-to-clobber: 2 non-symlink target(s) blocked compile:"* ]]
+  [[ "$output" == *"$PROJ/.claude/skills/alpha"* ]]
+  [[ "$output" == *"$PROJ/.claude/skills/beta"* ]]
+
+  # ONE recovery command containing BOTH paths and the recompile invocation,
+  # on a single line (not fragmented across 2 rm lines).
+  local rm_line
+  rm_line="$(printf '%s\n' "$output" | grep -E '^[[:space:]]*rm ' || true)"
+  [ -n "$rm_line" ]
+  [[ "$rm_line" == *"alpha"* ]]
+  [[ "$rm_line" == *"beta"* ]]
+  [[ "$rm_line" == *"&& igris harness compile"* ]]
+
+  # Files unchanged (refuse-to-clobber guarantee).
+  [ "$(cat "$PROJ/.claude/skills/alpha")" = "operator-alpha" ]
+  [ "$(cat "$PROJ/.claude/skills/beta")"  = "operator-beta"  ]
 }
