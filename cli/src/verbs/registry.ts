@@ -86,11 +86,12 @@ const VALID_TARGET_TYPES = ["claude", "codex", "gemini"] as const;
 type TargetType = (typeof VALID_TARGET_TYPES)[number];
 
 /**
- * FR-143/FR-149: allowed SKILL target types. Mirrors
- * `$defs.skills_surface.targets.type` (codex / gemini / claude). The per-type
- * method allowlist is enforced by VALID_SKILL_TYPE_METHOD_PAIRS below.
+ * FR-143/FR-149/FR-157: allowed SKILL target types. Mirrors
+ * `$defs.skills_surface.targets.type` (codex / gemini / claude / agents).
+ * The per-type method allowlist is enforced by VALID_SKILL_TYPE_METHOD_PAIRS
+ * below. `agents` is the FR-157 cross-CLI shared `~/.agents/skills/` target.
  */
-const VALID_SKILL_TARGET_TYPES = ["codex", "gemini", "claude"] as const;
+const VALID_SKILL_TARGET_TYPES = ["codex", "gemini", "claude", "agents"] as const;
 type SkillTargetType = (typeof VALID_SKILL_TARGET_TYPES)[number];
 
 /**
@@ -103,16 +104,18 @@ const VALID_SKILL_METHODS = ["compiler", "converter", "symlink"] as const;
 type SkillMethod = (typeof VALID_SKILL_METHODS)[number];
 
 /**
- * FR-149/FR-151/FR-153: allowed (type, method) pairs for skill targets.
+ * FR-149/FR-151/FR-153/FR-157: allowed (type, method) pairs for skill targets.
  * Mirrors the `oneOf` constraint in `manifest.schema.json` and the
  * `valid_pairs` check in `_common.sh validate_manifest`. The legacy
  * codex/compiler + gemini/converter pairs were retired by FR-153.
- * See L-519, FR-153.
+ * `agents/symlink` (FR-157) is the cross-CLI shared `~/.agents/skills/`
+ * target that codex+gemini both read natively. See L-519, FR-153, FR-157.
  */
 const VALID_SKILL_TYPE_METHOD_PAIRS = new Set<string>([
   "claude/symlink",
   "codex/symlink",
   "gemini/symlink",
+  "agents/symlink",
 ]);
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
@@ -590,7 +593,7 @@ export function validateSkillsSurface(skills: unknown): string | null {
     if (!VALID_SKILL_TYPE_METHOD_PAIRS.has(pair)) {
       return (
         `surfaces.skills.targets[${i}]: type/method pair '${pair}' is not allowed; ` +
-        "valid pairs: claude/symlink, codex/symlink, gemini/symlink"
+        "valid pairs: claude/symlink, codex/symlink, gemini/symlink, agents/symlink"
       );
     }
   }
@@ -1666,7 +1669,7 @@ function parseSkillTarget(spec: string): SkillTargetSpec | string {
   if (!VALID_SKILL_TYPE_METHOD_PAIRS.has(pair)) {
     return (
       `--target '${spec}': type/method pair '${pair}' is not allowed; ` +
-      "valid pairs: claude/symlink, codex/symlink, gemini/symlink"
+      "valid pairs: claude/symlink, codex/symlink, gemini/symlink, agents/symlink"
     );
   }
   return { type: type as SkillTargetType, method: method as SkillMethod, path };
@@ -2335,20 +2338,23 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
   const name = opts.name;
   const originsPath = opts.originsPath ?? registryOriginsPath();
 
-  // FR-149: claude:symlink:<path> must NOT resolve INSIDE ~/.igris/registry/.
-  // The symlink target IS the registry-vendored copy; aiming a claude target
-  // there would create a self-referential symlink the compiler can't safely
-  // follow. See L-515 (containment) + L-519.
+  // FR-149/FR-157: any <type>:symlink:<path> must NOT resolve INSIDE
+  // ~/.igris/registry/. The symlink target IS the registry-vendored copy;
+  // aiming any symlink target there would create a self-referential link
+  // the compiler can't safely follow. FR-157 widens the original claude-
+  // only guard to all symlink methods (codex/gemini/agents) — the cycle
+  // hazard was always type-agnostic; claude-only was a code-paint accident.
+  // See L-515 (containment) + L-519.
   const registryRoot = registryDirPath();
   for (const t of newTargets) {
-    if (t.type === "claude" && t.method === "symlink") {
+    if (t.method === "symlink") {
       const resolved = resolveSourcePath(t.path, projectRoot);
       if (resolved === registryRoot || resolved.startsWith(`${registryRoot}/`)) {
         logError(
-          `registry add-skill: claude:symlink target '${t.path}' resolves under ` +
+          `registry add-skill: ${t.type}:symlink target '${t.path}' resolves under ` +
             `the registry root (${registryRoot}); the symlink target IS the ` +
             "registry — pointing a target inside the registry creates a cycle. " +
-            "Use a path under ~/.claude/skills/ or another consumer location.",
+            "Use a path under ~/.claude/skills/, ~/.agents/skills/, or another consumer location.",
         );
         return 1;
       }

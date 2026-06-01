@@ -468,3 +468,74 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"pair"* || "$output" == *"converter"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# FR-157: `agents` as a fourth skills target type (agents/symlink) — the
+# cross-CLI shared `~/.agents/skills/` standard. Schema-level checks: the new
+# (type, method) pair is accepted, invalid pair combinations are rejected.
+# ---------------------------------------------------------------------------
+
+@test "FR-157: schema accepts agents/symlink skill target" {
+  cat > "$PROJ/ok-agents-symlink.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "agents", "method": "symlink", "path": "~/.agents/skills" } ] } } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/ok-agents-symlink.json' '$SCHEMA'"
+  [ "$status" -eq 0 ]
+}
+
+@test "FR-157: schema rejects agents/compiler skill target (bad pair)" {
+  cat > "$PROJ/bad-agents-compiler.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "agents", "method": "compiler", "path": "AGENTS.md" } ] } } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/bad-agents-compiler.json' '$SCHEMA'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"pair"* || "$output" == *"agents"* || "$output" == *"oneOf"* ]]
+}
+
+@test "FR-157: schema rejects agents/converter skill target (bad pair)" {
+  cat > "$PROJ/bad-agents-converter.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "agents", "method": "converter", "path": "out" } ] } } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/bad-agents-converter.json' '$SCHEMA'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"pair"* || "$output" == *"agents"* || "$output" == *"oneOf"* ]]
+}
+
+@test "FR-157: structural fallback accepts agents/symlink and rejects agents/compiler" {
+  # Forces the no-jsonschema path so the structural-fallback's pair-allowlist
+  # is the one under test (the jsonschema path agrees via `oneOf`).
+  local blockdir="$PROJ/noimport"
+  mkdir -p "$blockdir"
+  cat > "$blockdir/sitecustomize.py" <<'PY'
+import sys
+class _Blocker:
+    def find_module(self, name, path=None):
+        if name == "jsonschema":
+            return self
+        return None
+    def load_module(self, name):
+        raise ImportError("jsonschema blocked for test")
+sys.meta_path.insert(0, _Blocker())
+PY
+  cat > "$PROJ/ok-agents-symlink.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "agents", "method": "symlink", "path": "~/.agents/skills" } ] } } }
+EOF
+  run bash -c "PYTHONPATH='$blockdir' source '$COMMON' && PYTHONPATH='$blockdir' validate_manifest '$PROJ/ok-agents-symlink.json' '$SCHEMA'"
+  [ "$status" -eq 0 ]
+  cat > "$PROJ/bad-agents-compiler.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "agents", "method": "compiler", "path": "AGENTS.md" } ] } } }
+EOF
+  run bash -c "PYTHONPATH='$blockdir' source '$COMMON' && PYTHONPATH='$blockdir' validate_manifest '$PROJ/bad-agents-compiler.json' '$SCHEMA'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"pair"* || "$output" == *"agents"* ]]
+}

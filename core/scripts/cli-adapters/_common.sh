@@ -683,10 +683,10 @@ if surfaces is not None:
         # legacy method strings so a recognized-but-disallowed pair produces
         # the clearer pair-allowlist error message (not "method unknown").
         # See L-519.
-        valid_skill_types = {"codex", "gemini", "claude"}
+        valid_skill_types = {"codex", "gemini", "claude", "agents"}
         valid_skill_methods = {"compiler", "converter", "symlink"}
         valid_pairs = {("claude", "symlink"), ("codex", "symlink"),
-                       ("gemini", "symlink")}
+                       ("gemini", "symlink"), ("agents", "symlink")}
         allowed_skill_target_keys = {"type", "method", "path"}
         # FR-155: `scope` is allowed on a skills_surface block (same shape as
         # on an agent entry). Absent → global (default, back-compat).
@@ -727,7 +727,7 @@ if surfaces is not None:
                     fail(f"{stwhere}: type/method pair "
                          f"'{st['type']}/{st['method']}' is not allowed; "
                          "valid pairs: claude/symlink, codex/symlink, "
-                         "gemini/symlink")
+                         "gemini/symlink, agents/symlink")
             # FR-155: optional scope on the skills_surface block.
             if "scope" in skills_block:
                 validate_scope_shape(skills_block["scope"], bwhere)

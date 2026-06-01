@@ -951,6 +951,43 @@ PY
           done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
                      -name 'SKILL.md' -print0 | sort -z)
           ;;
+        agents/symlink)
+          # FR-157: per-skill registry-anchored symlinks at the cross-CLI shared
+          # `~/.agents/skills/` standard (codex+gemini both read this natively).
+          # Byte-for-byte mirror of codex/symlink including the D2 absolute-
+          # target guard — codex resolves relative-path symlinks from cwd
+          # regardless of where the symlink LIVES, so the hazard applies to
+          # `~/.agents/skills/` too. See L-519, FR-157.
+          conv_root="${src_abs:-$HOME/.igris/core/skills}"
+          if [ ! -d "$conv_root" ]; then
+            SUMMARY+=("FAIL  skills/$s_type — skills root missing: $conv_root")
+            FAIL=$((FAIL + 1))
+            continue
+          fi
+          mkdir -p "$out_abs"
+          while IFS= read -r -d '' skill_md; do
+            skill_name="$(basename "$(dirname "$skill_md")")"
+            skill_dir="$(dirname "$skill_md")"
+            link_path="$out_abs/$skill_name"
+            # FR-157 D2: agents symlink absolute-path enforcement (inherits
+            # codex hazard via the cross-CLI `.agents/` consumer chain).
+            case "$skill_dir" in
+              /*) : ;;
+              *)
+                echo "[$s_type/skills/$skill_name] ERROR — agents symlink requires absolute target (got relative: $skill_dir). The 'source' field must be absolute, '~'-prefixed, or relative-resolved (compile_harnesses.sh source-resolution should have absolutized this)." >&2
+                SUMMARY+=("FAIL  skills/$s_type/$skill_name — agents symlink target not absolute: $skill_dir")
+                rc=1
+                continue
+                ;;
+            esac
+            if ! emit_skill_symlink "agents" "$link_path" "$skill_dir"; then
+              SUMMARY+=("FAIL  skills/$s_type/$skill_name — refuse to clobber non-symlink at $link_path")
+              rc=1
+              continue
+            fi
+          done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
+                     -name 'SKILL.md' -print0 | sort -z)
+          ;;
         *)
           SUMMARY+=("FAIL  skills/$s_type — unsupported type/method '$s_type/$s_method'")
           FAIL=$((FAIL + 1))

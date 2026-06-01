@@ -1188,6 +1188,81 @@ PY
         echo "      source     : $conv_root"
         echo "      artifact dir: $out_abs ($checked skills checked)"
         ;;
+      agents/symlink)
+        # FR-157: per-skill symlinks at the cross-CLI shared `~/.agents/skills/`
+        # standard. Byte-for-byte mirror of codex/symlink including the D2
+        # absolute-literal-target verdict — codex resolves relative symlinks
+        # from cwd regardless of where the symlink LIVES, so the hazard
+        # applies to `~/.agents/skills/` too. See L-519 §18.1, FR-157.
+        conv_root="${src_abs:-$HOME/.igris/core/skills}"
+        if [ ! -d "$conv_root" ]; then
+          echo "  [skills/$s_type] MISSING — skills root absent: $conv_root"
+          DRIFT=$((DRIFT + 1))
+          continue
+        fi
+        registry_real=$(realpath "$BRAIN_DIR/registry" 2>/dev/null || echo "$BRAIN_DIR/registry")
+        any_missing=0
+        any_drift=0
+        any_unanchored=0
+        any_realfile=0
+        any_relative_agents=0
+        checked=0
+        while IFS= read -r -d '' skill_md; do
+          skill_name="$(basename "$(dirname "$skill_md")")"
+          skill_dir="$(dirname "$skill_md")"
+          skill_dir_real=$(realpath "$skill_dir" 2>/dev/null || echo "$skill_dir")
+          link_path="$out_abs/$skill_name"
+          if [ ! -e "$link_path" ] && [ ! -L "$link_path" ]; then
+            any_missing=1
+          elif [ -L "$link_path" ]; then
+            # FR-157 D2: literal target must be absolute (codex re-resolves
+            # relative symlinks from cwd). Check readlink BEFORE realpath.
+            literal=$(readlink "$link_path" 2>/dev/null || true)
+            case "$literal" in
+              /*) : ;;
+              *) any_relative_agents=1 ;;
+            esac
+            resolved=$(realpath "$link_path" 2>/dev/null || true)
+            if [ -z "$resolved" ]; then
+              any_drift=1
+            else
+              case "$resolved" in
+                "$registry_real"/*|"$registry_real")
+                  if [ "$resolved" != "$skill_dir_real" ]; then
+                    any_drift=1
+                  fi
+                  ;;
+                *)
+                  any_unanchored=1
+                  ;;
+              esac
+            fi
+          else
+            any_realfile=1
+          fi
+          checked=$((checked + 1))
+        done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
+                   -name 'SKILL.md' -print0 | sort -z)
+        if [ "$any_missing" -eq 1 ]; then
+          verdict="MISSING"
+          reason="one or more agents skill symlinks absent"
+        elif [ "$any_realfile" -eq 1 ]; then
+          verdict="DRIFTED"
+          reason="one or more target paths are regular files/dirs, not symlinks (legacy reference-mode state — remove manually, then run \`igris harness compile\`)"
+        elif [ "$any_unanchored" -eq 1 ]; then
+          verdict="DRIFTED"
+          reason="one or more agents skill symlinks not registry-anchored (legacy reference-mode state — run \`igris harness compile\` to migrate)"
+        elif [ "$any_drift" -eq 1 ]; then
+          verdict="DRIFTED"
+          reason="one or more agents skill symlinks point at the wrong canonical (registry-anchored but mismatched)"
+        elif [ "$any_relative_agents" -eq 1 ]; then
+          verdict="DRIFTED"
+          reason="one or more agents skill symlinks have a relative target (codex resolves these from cwd, not symlink location — FR-157 D2)"
+        fi
+        echo "  [skills/$s_type] $verdict"
+        echo "      source     : $conv_root"
+        echo "      artifact dir: $out_abs ($checked skills checked)"
+        ;;
       *)
         verdict="DRIFTED"
         reason="unsupported type/method '$s_type/$s_method'"

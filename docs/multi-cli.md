@@ -32,8 +32,9 @@ ship (defaults to `all`).
 |-----|--------|--------|-------|
 | Claude Code | `symlink` | `~/.claude/skills/` | Each registry-vendored skill (`~/.igris/registry/skills/<name>/`) becomes a symlink at `~/.claude/skills/<name>/`. The compiler emits the symlink from `<target_path>` to the registry-vendored copy — first-class projection on par with codex/gemini (FR-149, see L-519). Core skills live at `~/.igris/core/skills/` and follow the same mechanism. Full directory linked so nested assets (`scripts/`, `workflow-template.md`, `templates/*.md`) are available. |
 | OpenCode | `none` | `~/.config/opencode/` | No-op. OpenCode reads `~/.claude/skills/` natively as a fallback; the Claude-side symlinks cover it. Flip `method: "symlink"` in `~/.igris/config.json` if a future OpenCode version stops falling back. |
-| Gemini CLI | `symlink` | `~/.gemini/skills/` | Per-skill symlink at `~/.gemini/skills/<name>/` → registry-vendored canonical (FR-153 — unified onto the FR-149 claude/symlink primitive). Full directory linked. |
-| Codex CLI | `symlink` | `~/.codex/skills/` | Per-skill symlink at `~/.codex/skills/<name>/` → registry-vendored canonical (FR-153 — unified onto the FR-149 claude/symlink primitive). Symlink target MUST be absolute (codex resolves relative-path symlinks from cwd). |
+| Codex CLI + Gemini CLI (cross-CLI shared) | `symlink` | `~/.agents/skills/` | **FR-157:** Codex AND Gemini both natively discover `~/.agents/skills/` as the cross-CLI shared skill location (Codex's `core-skills/src/loader.rs` walks it; Gemini docs at `docs/cli/skills.md` reference it explicitly). Per-skill symlink at `~/.agents/skills/<name>/` → registry-vendored canonical OR `~/.igris/core/skills/<name>/` for core skills. Symlink target MUST be absolute (codex resolves relative-path symlinks from cwd — same D2 enforcement as the legacy `codex/symlink` target). Antigravity CLI (Gemini's successor, post 2026-06-18) is expected to standardize on this path. |
+| Codex CLI (legacy per-CLI) | `symlink` | `~/.codex/skills/` | **Retained for back-compat**. Pre-FR-157 personal overlays may still declare `codex/symlink` targets at `~/.codex/skills/`. New manifests should use the cross-CLI `agents/symlink` target instead. Drift-verify enforces the same D2 absolute-path guard. |
+| Gemini CLI (legacy per-CLI) | `symlink` | `~/.gemini/skills/` | **Retained for back-compat**. Pre-FR-157 personal overlays may still declare `gemini/symlink` targets at `~/.gemini/skills/`. New manifests should use the cross-CLI `agents/symlink` target instead. |
 
 ---
 
@@ -77,7 +78,8 @@ projection that FR-149 established for claude, and **retired** the legacy
 TOML converter) scripts entirely.
 
 The core skills surface is declared once, globally, in the core-owned
-`core/scripts/cli-adapters/surfaces-manifest.json`:
+`core/scripts/cli-adapters/surfaces-manifest.json`. Post-**FR-157**, the
+recommended shape is the **2-target** form (claude + agents):
 
 ```json
 {
@@ -90,8 +92,7 @@ The core skills surface is declared once, globally, in the core-owned
         "layer": "core",
         "targets": [
           { "type": "claude", "method": "symlink", "path": "~/.claude/skills" },
-          { "type": "codex",  "method": "symlink", "path": "~/.codex/skills" },
-          { "type": "gemini", "method": "symlink", "path": "~/.gemini/skills" }
+          { "type": "agents", "method": "symlink", "path": "~/.agents/skills" }
         ]
       }
     ]
@@ -100,8 +101,10 @@ The core skills surface is declared once, globally, in the core-owned
 ```
 
 The compiler walks each `<skill>/SKILL.md` under `source` and emits one symlink
-per skill at `<path>/<name>` → `<source>/<name>` — same shape for claude,
-codex, and gemini.
+per skill at `<path>/<name>` → `<source>/<name>`. The `agents` target writes to
+the cross-CLI shared dir that both Codex and Gemini natively discover; the
+`claude` target writes to Claude Code's per-CLI dir (Claude does not yet read
+`~/.agents/skills/`).
 
 Post-TD-191 `surfaces.skills` is an ARRAY of `{source, layer, targets}` blocks
 (was a single object pre-TD-191; legacy single-object manifests normalize to a
@@ -113,16 +116,22 @@ block to its own targets) and the array schema at
 
 - `source` — skills root (`{name}/SKILL.md` entries). `~`/absolute paths are
   used verbatim; a relative path resolves from `--project-root`.
-- `targets[].method` — post-FR-153 the only valid `(type, method)` pairs are
-  `claude/symlink`, `codex/symlink`, `gemini/symlink`. All three are
-  first-class projection targets — the symlink IS the projection, anchored
-  at the registry-vendored copy (FR-149/FR-153). An invalid pair (e.g.
-  `claude/compiler`, `codex/compiler`, `gemini/converter`) is rejected at
-  schema validation.
-- **Codex absolute-path enforcement (FR-153 D2):** codex resolves relative-
-  path symlinks from cwd (POSIX-incorrect — observed behavior). The
-  compiler hard-fails when a codex symlink target would be relative;
-  drift-verify flags any literal-relative codex symlink as DRIFTED.
+- `targets[].method` — post-**FR-157** the valid `(type, method)` pairs are
+  `claude/symlink`, `agents/symlink`, `codex/symlink`, `gemini/symlink`. All
+  four are first-class projection targets — the symlink IS the projection,
+  anchored at the registry-vendored copy (FR-149/FR-153/FR-157). An invalid
+  pair (e.g. `claude/compiler`, `agents/compiler`, `codex/converter`) is
+  rejected at schema validation. **FR-157** introduces `agents/symlink` as the
+  cross-CLI shared target that Codex and Gemini both natively discover. The
+  legacy per-CLI pairs (`codex/symlink`, `gemini/symlink`) remain in the enum
+  for back-compat with pre-FR-157 personal overlays — new manifests should
+  prefer `agents/symlink`.
+- **Codex absolute-path enforcement (FR-153 D2, inherited by FR-157):** codex
+  resolves relative-path symlinks from cwd (POSIX-incorrect — observed
+  behavior). The compiler hard-fails when a `codex/symlink` OR `agents/symlink`
+  target would be relative; drift-verify flags any literal-relative symlink at
+  either path as DRIFTED. (The `agents/symlink` branch inherits this guard
+  because Codex reads `~/.agents/skills/` too, not just `~/.codex/skills/`.)
 - The drift guard verdicts each per-skill symlink by realpath against the
   registry-vendored canonical (L-515 containment), pairing line-for-line
   with the compile-side branch (L-519 §18.1). No more date-stamped marker

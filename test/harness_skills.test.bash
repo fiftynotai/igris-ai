@@ -867,3 +867,136 @@ EOF
   [[ "$output" == *"migrating legacy codex skill symlink"* ]]
   [[ "$output" != *"creating codex skill symlink"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# FR-157: `agents/symlink` as a fourth skill target — the cross-CLI shared
+# `~/.agents/skills/` standard. Byte-for-byte mirror of FR-153 codex/symlink
+# (including D2 absolute-target inheritance). L-519 §18.1 compile/drift
+# pairing.
+# ---------------------------------------------------------------------------
+
+# build_fr157_agents_skill_project: per-test fixture mirroring
+# build_fr153_codex_skill_project but emitting an agents:symlink target.
+build_fr157_agents_skill_project() {
+  # Clean slate (mirrors FR-153 setup posture).
+  rm -rf "$IGRIS_BRAIN_DIR/registry/skills"
+  mkdir -p "$IGRIS_BRAIN_DIR/registry/skills/alpha"
+  cat > "$IGRIS_BRAIN_DIR/registry/skills/alpha/SKILL.md" <<'EOF'
+---
+name: alpha
+description: alpha skill for FR-157 agents/symlink
+---
+
+alpha body
+EOF
+  local skills_src="$IGRIS_BRAIN_DIR/registry/skills"
+  cat > "$PROJ/harness-manifest.json" <<EOF
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "skills": [
+      {
+        "source": "$skills_src",
+        "layer": "personal",
+        "targets": [
+          { "type": "agents", "method": "symlink", "path": ".agents/skills" }
+        ]
+      }
+    ]
+  }
+}
+EOF
+  FR157_ALPHA_DIR="$IGRIS_BRAIN_DIR/registry/skills/alpha"
+}
+
+@test "FR-157: cold compile creates an agents/symlink per skill at the right target" {
+  build_fr157_agents_skill_project
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  [ -L "$PROJ/.agents/skills/alpha" ]
+  local resolved
+  resolved="$(readlink "$PROJ/.agents/skills/alpha")"
+  [ "$resolved" = "$FR157_ALPHA_DIR" ]
+  [[ "$output" == *"creating agents skill symlink"* ]]
+  [[ "$output" == *"OK    skills/agents (symlink)"* ]]
+}
+
+@test "FR-157: agents/symlink compile is idempotent (same inode on rerun)" {
+  build_fr157_agents_skill_project
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  local inode_before
+  inode_before="$(stat -f '%i' "$PROJ/.agents/skills/alpha" 2>/dev/null \
+                 || stat -c '%i' "$PROJ/.agents/skills/alpha")"
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"creating agents skill symlink"* ]]
+  [[ "$output" != *"migrating legacy agents skill symlink"* ]]
+  local inode_after
+  inode_after="$(stat -f '%i' "$PROJ/.agents/skills/alpha" 2>/dev/null \
+                || stat -c '%i' "$PROJ/.agents/skills/alpha")"
+  [ "$inode_before" = "$inode_after" ]
+}
+
+@test "FR-157 D2: agents/symlink emits absolute literal target (D2 guard satisfied)" {
+  # Compile-side D2 guard: assert the resulting symlink's LITERAL target
+  # starts with `/` (codex re-resolves relative symlinks from cwd; the
+  # agents/ standard inherits the same hazard).
+  build_fr157_agents_skill_project
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  local lit
+  lit="$(readlink "$PROJ/.agents/skills/alpha")"
+  [[ "$lit" == /* ]]
+}
+
+@test "FR-157 D2: drift flags a hand-edited relative-target agents symlink" {
+  build_fr157_agents_skill_project
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  # Hand-edit the symlink to a relative target — drift verdict.
+  rm "$PROJ/.agents/skills/alpha"
+  local rel_target
+  rel_target="$(python3 -c "import os; print(os.path.relpath('$FR157_ALPHA_DIR', '$PROJ/.agents/skills'))")"
+  ( cd "$PROJ/.agents/skills" && ln -s "$rel_target" alpha )
+  run bash "$GUARD" --project-root "$PROJ"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"[skills/agents] DRIFTED"* ]]
+  [[ "$output" == *"relative target"* || "$output" == *"FR-157 D2"* ]]
+}
+
+@test "FR-157: drift returns MATCH for fresh agents/symlink (compile/drift pairing)" {
+  build_fr157_agents_skill_project
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  run bash "$GUARD" --project-root "$PROJ"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[skills/agents] MATCH"* ]]
+}
+
+@test "FR-157: drift returns DRIFTED when a real file sits at the agents symlink target (refuse-to-clobber regression guard)" {
+  # Cold-compile, then replace the symlink with a regular file (simulates a
+  # stale pre-FR-157 operator-authored file at ~/.agents/skills/<name>).
+  build_fr157_agents_skill_project
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  rm "$PROJ/.agents/skills/alpha"
+  echo "operator-authored" > "$PROJ/.agents/skills/alpha"
+  run bash "$GUARD" --project-root "$PROJ"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"[skills/agents] DRIFTED"* ]]
+  [[ "$output" == *"regular files/dirs, not symlinks"* ]]
+}
+
+@test "FR-157: refuse-to-clobber a regular file at the agents symlink path" {
+  build_fr157_agents_skill_project
+  mkdir -p "$PROJ/.agents/skills"
+  echo "operator-authored" > "$PROJ/.agents/skills/alpha"
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -ne 0 ]
+  [ "$(cat "$PROJ/.agents/skills/alpha")" = "operator-authored" ]
+  [ ! -L "$PROJ/.agents/skills/alpha" ]
+  [[ "$output" == *"refuse to clobber"* ]]
+  [[ "$output" == *"FAIL  skills/agents/alpha"* ]]
+}

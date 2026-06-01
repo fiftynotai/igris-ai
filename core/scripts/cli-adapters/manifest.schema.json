@@ -68,7 +68,7 @@
       ]
     },
     "skills_surface": {
-      "description": "FR-137/TD-191/FR-149/FR-151/FR-153/FR-155: ONE skills projection block. Multiple coexist as elements of `surfaces.skills[]`; each carries its OWN source/layer/targets so personal blocks compile ALONGSIDE the core block. For personal blocks `source` points at a registry-vendored path (L-516 universal copy-vendor). Valid (type, method) pairs: claude/symlink, codex/symlink, gemini/symlink (registry-anchored per-skill symlinks). All three symlink targets vendor identically — the per-harness compiler walks the registry-vendored skill tree. The legacy codex/compiler (AGENTS.md aggregator) + gemini/converter (per-skill TOML) pairs were retired by FR-153. `scope` (FR-155) is optional; absent → global. See L-519.",
+      "description": "FR-137/TD-191/FR-149/FR-151/FR-153/FR-155/FR-157: ONE skills projection block. Multiple coexist as elements of `surfaces.skills[]`; each carries its OWN source/layer/targets so personal blocks compile ALONGSIDE the core block. For personal blocks `source` points at a registry-vendored path (L-516 universal copy-vendor). Valid (type, method) pairs: claude/symlink, codex/symlink, gemini/symlink, agents/symlink (registry-anchored per-skill symlinks). All four symlink targets vendor identically — the per-harness compiler walks the registry-vendored skill tree. The `agents` target projects into the cross-CLI shared `~/.agents/skills/` standard that codex+gemini both read natively (FR-157). The legacy codex/compiler (AGENTS.md aggregator) + gemini/converter (per-skill TOML) pairs were retired by FR-153. `scope` (FR-155) is optional; absent → global. See L-519.",
       "type": "object",
       "additionalProperties": false,
       "required": ["targets"],
@@ -91,7 +91,7 @@
             "required": ["type", "method", "path"],
             "additionalProperties": false,
             "properties": {
-              "type":   { "enum": ["codex", "gemini", "claude"] },
+              "type":   { "enum": ["codex", "gemini", "claude", "agents"] },
               "method": { "enum": ["compiler", "converter", "symlink"] },
               "path":   {
                 "type": "string",
@@ -101,7 +101,8 @@
             "oneOf": [
               { "properties": { "type": { "const": "claude" }, "method": { "const": "symlink" } } },
               { "properties": { "type": { "const": "codex"  }, "method": { "const": "symlink" } } },
-              { "properties": { "type": { "const": "gemini" }, "method": { "const": "symlink" } } }
+              { "properties": { "type": { "const": "gemini" }, "method": { "const": "symlink" } } },
+              { "properties": { "type": { "const": "agents" }, "method": { "const": "symlink" } } }
             ]
           }
         }

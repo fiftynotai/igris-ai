@@ -1884,6 +1884,69 @@ describe("registry add-skill — type:method:path parsing", () => {
     // The vendored copy was NOT written (containment guard fires pre-vendor).
     expect(existsSync(join(vendorBase, "skills", "demo"))).toBe(false);
   });
+
+  // FR-157: `agents` as a fourth skills target type (agents/symlink) — the
+  // cross-CLI shared `~/.agents/skills/` standard. The parser accepts
+  // agents/symlink, rejects agents/compiler + agents/converter, and the
+  // widened containment guard rejects agents:symlink pointing inside the
+  // registry (same cycle hazard as the FR-149 claude case).
+
+  it("FR-157: accepts agents:symlink:<path>", async () => {
+    const code = await runRegistry(
+      skillOpts({ targets: ["agents:symlink:.agents/skills"] }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: { targets: unknown[] }[] };
+    };
+    expect(overlay.surfaces?.skills?.[0].targets).toEqual([
+      { type: "agents", method: "symlink", path: ".agents/skills" },
+    ]);
+  });
+
+  it("FR-157: rejects agents:compiler:<path> with pair allowlist message", async () => {
+    const code = await runRegistry(
+      skillOpts({ targets: ["agents:compiler:AGENTS.md"] }),
+    );
+    expect(code).toBe(2);
+  });
+
+  it("FR-157: rejects agents:converter:<path> with pair allowlist message", async () => {
+    const code = await runRegistry(
+      skillOpts({ targets: ["agents:converter:out"] }),
+    );
+    expect(code).toBe(2);
+  });
+
+  it("FR-157: runAddSkill rejects agents:symlink:<path> pointing inside the registry (cycle — widened containment guard)", async () => {
+    // FR-157 widens the FR-149 claude-only containment guard to `method ===
+    // "symlink"` so codex/gemini/agents all share the cycle protection.
+    const overlayBefore = existsSync(overlayPath)
+      ? readFileSync(overlayPath, "utf-8")
+      : null;
+    const prevBrainDir = process.env.IGRIS_BRAIN_DIR;
+    process.env.IGRIS_BRAIN_DIR = join(tmpRoot, ".igris");
+    try {
+      const code = await runRegistry(
+        skillOpts({
+          targets: [`agents:symlink:${join(tmpRoot, ".igris", "registry", "skills")}`],
+        }),
+      );
+      expect(code).toBe(1);
+    } finally {
+      if (prevBrainDir === undefined) {
+        delete process.env.IGRIS_BRAIN_DIR;
+      } else {
+        process.env.IGRIS_BRAIN_DIR = prevBrainDir;
+      }
+    }
+    if (overlayBefore === null) {
+      expect(existsSync(overlayPath)).toBe(false);
+    } else {
+      expect(readFileSync(overlayPath, "utf-8")).toBe(overlayBefore);
+    }
+    expect(existsSync(join(vendorBase, "skills", "demo"))).toBe(false);
+  });
 });
 
 describe("validateSkillsSurface (schema port)", () => {
@@ -1940,6 +2003,24 @@ describe("validateSkillsSurface (schema port)", () => {
         ],
       }),
     ).toMatch(/additionalProperties/);
+  });
+
+  it("FR-157: accepts agents/symlink target", () => {
+    expect(
+      validateSkillsSurface({
+        ...valid,
+        targets: [{ type: "agents", method: "symlink", path: "~/.agents/skills" }],
+      }),
+    ).toBeNull();
+  });
+
+  it("FR-157: rejects agents/compiler target (pair allowlist)", () => {
+    expect(
+      validateSkillsSurface({
+        ...valid,
+        targets: [{ type: "agents", method: "compiler", path: "AGENTS.md" }],
+      }),
+    ).toMatch(/agents\/compiler/);
   });
 });
 
