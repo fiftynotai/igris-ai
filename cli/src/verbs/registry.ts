@@ -2793,6 +2793,31 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
     }
   }
 
+  // TD-218 (Option A): reject a per-skill symlink target whose basename equals
+  // the skill name. The compile loop appends `/<skill_name>` to the target
+  // `path` (the contract is that `path` is the PARENT skills dir — e.g.
+  // `~/.agents/skills`). A target that ALREADY ends in `/<name>` (e.g.
+  // `~/.agents/skills/content-pipeline`) double-appends → a depth-2 nest
+  // (`~/.agents/skills/content-pipeline/content-pipeline/SKILL.md`) that
+  // native loaders (which scan depth-1) never discover. Reject at write-time
+  // so malformed per-skill paths never enter the overlay; the deployed-data
+  // repair + the compiler de-dup (Option C) handle already-malformed
+  // manifests. This is a pure basename-equality check — NO path resolution,
+  // so it does not touch the L-515 containment guard above. See TD-218, L-519.
+  for (const t of newTargets) {
+    if (t.method === "symlink" && basename(t.path) === name) {
+      logError(
+        `registry add-skill: ${t.type}:symlink target '${t.path}' ends in the ` +
+          `skill name '${name}'. Use the PARENT skills dir (e.g. ` +
+          `'${dirname(t.path)}'), NOT '${t.path}' — the compiler appends ` +
+          `'/${name}' for you, so a per-skill path double-nests to ` +
+          `'${t.path}/${name}/SKILL.md', which native loaders (depth-1 scan) ` +
+          "cannot discover. Overlay unchanged.",
+      );
+      return 1;
+    }
+  }
+
   // Read existing origins early so a same-name re-run can fall back to the
   // recorded origin's `dir` when `--from` is omitted (per drift #7).
   let origins: OriginsMap;

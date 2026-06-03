@@ -1069,3 +1069,142 @@ EOF
   [ "$(cat "$PROJ/.claude/skills/alpha")" = "operator-alpha" ]
   [ "$(cat "$PROJ/.claude/skills/beta")"  = "operator-beta"  ]
 }
+
+# ---------------------------------------------------------------------------
+# TD-218: depth-1 skill discoverability + per-skill-path de-dup.
+#
+# A legacy/hand-edited manifest may carry a per-skill `target.path` that
+# already ends in `/<skill_name>` (e.g. `.agents/skills/content-pipeline`
+# instead of the PARENT `.agents/skills`). The compile loop appends
+# `/<skill_name>`, double-nesting to `.agents/skills/content-pipeline/
+# content-pipeline/SKILL.md` (depth-2) — invisible to native loaders that
+# scan depth-1. These tests prove:
+#   1. (Option C compile de-dup) A malformed per-skill `path` self-heals to
+#      a depth-1 symlink (no double-nest); SKILL.md is reachable at depth-1.
+#   2. The de-dup generalizes across harness types (agents + claude).
+#   3. (drift assertion) A genuine depth-2 nest (compiler de-dup bypassed via
+#      a hand-built broken symlink) is flagged DRIFTED with the depth-1 reason.
+#   4. Core/parent-path skills (path basename != skill name) do NOT regress —
+#      they still land depth-1 and drift stays MATCH.
+# ---------------------------------------------------------------------------
+
+# build_td218_malformed_project <type> — seed a per-test project whose ONE
+# skills block carries a PER-SKILL malformed path (`<parent>/<name>`) for the
+# given target <type> (agents|claude). The source models the REAL registry
+# layout: the vendored wrapper `registry/skills/content-pipeline/
+# content-pipeline/SKILL.md` (L-517 `<name>/<name>/SKILL.md`), with `source`
+# pointing at the OUTER dir — exactly how the deployed content-pipeline
+# overlay is shaped. So `skill_dir` = the INNER content-pipeline dir (which
+# holds SKILL.md), `skill_name` = content-pipeline, and `out_abs` = the
+# malformed `.${ttype}/skills/content-pipeline`. Source resides under
+# $IGRIS_BRAIN_DIR/registry so L-515 containment fires MATCH.
+build_td218_malformed_project() {
+  local ttype="$1"
+  rm -rf "$IGRIS_BRAIN_DIR/registry/skills"
+  mkdir -p "$IGRIS_BRAIN_DIR/registry/skills/content-pipeline/content-pipeline"
+  cat > "$IGRIS_BRAIN_DIR/registry/skills/content-pipeline/content-pipeline/SKILL.md" <<'EOF'
+---
+name: content-pipeline
+description: the content-pipeline skill for TD-218
+---
+
+content-pipeline body
+EOF
+  # `source` is the OUTER dir; find walks <source>/<name>/SKILL.md at depth-2.
+  local skills_src="$IGRIS_BRAIN_DIR/registry/skills/content-pipeline"
+  # NOTE the malformed path: it ends in the skill name `content-pipeline`
+  # (the per-skill shape that produced the FR-153/156/157 double-nest).
+  cat > "$PROJ/harness-manifest.json" <<EOF
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "skills": [
+      {
+        "source": "$skills_src",
+        "layer": "personal",
+        "targets": [
+          { "type": "$ttype", "method": "symlink", "path": ".${ttype}/skills/content-pipeline" }
+        ]
+      }
+    ]
+  }
+}
+EOF
+  # The INNER dir is the resolved skill_dir (holds SKILL.md directly).
+  TD218_SKILL_DIR="$IGRIS_BRAIN_DIR/registry/skills/content-pipeline/content-pipeline"
+  # The OUTER wrapper parent — used by the depth-2 drift test to plant a
+  # too-deep (but still registry-anchored) symlink.
+  TD218_WRAPPER_DIR="$IGRIS_BRAIN_DIR/registry/skills/content-pipeline"
+}
+
+@test "TD-218: compile de-dups a malformed per-skill agents path to depth-1 (no double-nest)" {
+  build_td218_malformed_project agents
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  # De-dup: the symlink lands at the malformed path itself (depth-1), NOT
+  # one level deeper.
+  [ -L "$PROJ/.agents/skills/content-pipeline" ]
+  [ ! -e "$PROJ/.agents/skills/content-pipeline/content-pipeline" ]
+  local resolved
+  resolved="$(readlink "$PROJ/.agents/skills/content-pipeline")"
+  [ "$resolved" = "$TD218_SKILL_DIR" ]
+  # SKILL.md is reachable at depth-1 through the symlink.
+  [ -f "$PROJ/.agents/skills/content-pipeline/SKILL.md" ]
+}
+
+@test "TD-218: compile de-dups a malformed per-skill claude path to depth-1 (generalizes across types)" {
+  build_td218_malformed_project claude
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  [ -L "$PROJ/.claude/skills/content-pipeline" ]
+  [ ! -e "$PROJ/.claude/skills/content-pipeline/content-pipeline" ]
+  [ -f "$PROJ/.claude/skills/content-pipeline/SKILL.md" ]
+}
+
+@test "TD-218: drift returns MATCH for a de-dup'd malformed per-skill path (compile/drift pairing)" {
+  build_td218_malformed_project agents
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  run bash "$GUARD" --project-root "$PROJ"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[skills/agents] MATCH"* ]]
+}
+
+@test "TD-218: drift flags a registry-anchored-but-too-deep symlink as DRIFTED" {
+  build_td218_malformed_project agents
+  # The de-dup'd link_path drift computes is .agents/skills/content-pipeline.
+  # Hand-build a symlink THERE that resolves into the registry (so L-515
+  # containment passes) but points at the WRAPPER PARENT
+  # (registry/skills/content-pipeline) rather than the inner skill dir — so
+  # SKILL.md is one level too deep (<link_path>/content-pipeline/SKILL.md, NOT
+  # <link_path>/SKILL.md). This is exactly the depth-2 nest the bug produced.
+  # Pre-TD-218 drift reported MATCH for this shape (registry-anchored); post-
+  # TD-218 it is flagged DRIFTED — either via the wrong-canonical verdict
+  # (resolved != skill_dir) or the new depth-1 assertion, both of which the
+  # bug's blindness missed.
+  rm -rf "$PROJ/.agents/skills/content-pipeline"
+  mkdir -p "$PROJ/.agents/skills"
+  ln -s "$TD218_WRAPPER_DIR" "$PROJ/.agents/skills/content-pipeline"
+  # Sanity: SKILL.md is NOT at depth-1 through this link (it is one deeper).
+  [ ! -f "$PROJ/.agents/skills/content-pipeline/SKILL.md" ]
+  [ -f "$PROJ/.agents/skills/content-pipeline/content-pipeline/SKILL.md" ]
+  run bash "$GUARD" --project-root "$PROJ"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"[skills/agents] DRIFTED"* ]]
+  [[ "$output" == *"depth-1"* || "$output" == *"wrong canonical"* ]]
+}
+
+@test "TD-218: parent-path skills do NOT regress (path basename != skill name stays depth-1 MATCH)" {
+  # The de-dup guard must ONLY fire when out_abs basename == skill_name. A
+  # normal parent path (basename = `skills`) must still append /<name> and
+  # land depth-1, exactly as before TD-218.
+  build_fr157_agents_skill_project   # uses path ".agents/skills" (parent)
+  run bash "$COMPILE" --project-root "$PROJ" --surface skills
+  [ "$status" -eq 0 ]
+  [ -L "$PROJ/.agents/skills/alpha" ]
+  [ -f "$PROJ/.agents/skills/alpha/SKILL.md" ]
+  run bash "$GUARD" --project-root "$PROJ"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[skills/agents] MATCH"* ]]
+}

@@ -2481,6 +2481,53 @@ describe("registry add-skill — type:method:path parsing", () => {
     }
     expect(existsSync(join(vendorBase, "skills", "demo"))).toBe(false);
   });
+
+  // TD-218 (Option A): the writer rejects a per-skill symlink target whose
+  // basename equals the skill name. The compile loop appends `/<name>`, so a
+  // target.path that ALREADY ends in `/<name>` double-nests to
+  // `<path>/<name>/SKILL.md` (depth-2) — undiscoverable by native loaders.
+  // Reject pre-vendor so the malformed path never enters the overlay.
+
+  it("TD-218: rejects a per-skill agents:symlink path ending in the skill name (depth-1 guard)", async () => {
+    const overlayBefore = existsSync(overlayPath)
+      ? readFileSync(overlayPath, "utf-8")
+      : null;
+    const code = await runRegistry(
+      // skillOpts default name is `demo`; the path ends in `/demo`.
+      skillOpts({ targets: ["agents:symlink:.agents/skills/demo"] }),
+    );
+    expect(code).toBe(1);
+    // Overlay UNCHANGED (reject fires before any disk side effect).
+    if (overlayBefore === null) {
+      expect(existsSync(overlayPath)).toBe(false);
+    } else {
+      expect(readFileSync(overlayPath, "utf-8")).toBe(overlayBefore);
+    }
+    // No vendor tree written.
+    expect(existsSync(join(vendorBase, "skills", "demo"))).toBe(false);
+  });
+
+  it("TD-218: rejects a per-skill claude:symlink path ending in the skill name (generalizes across types)", async () => {
+    const code = await runRegistry(
+      skillOpts({ targets: ["claude:symlink:~/.claude/skills/demo"] }),
+    );
+    expect(code).toBe(1);
+  });
+
+  it("TD-218: ACCEPTS the PARENT skills dir (basename != skill name) — the correct shape", async () => {
+    // The guard must NOT fire for the canonical parent-dir path. This is the
+    // shape `add-skill` is supposed to produce; it stays code 0.
+    const code = await runRegistry(
+      skillOpts({ targets: ["agents:symlink:.agents/skills"] }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: { targets: unknown[] }[] };
+    };
+    expect(overlay.surfaces?.skills?.[0].targets).toEqual([
+      { type: "agents", method: "symlink", path: ".agents/skills" },
+    ]);
+  });
 });
 
 describe("validateSkillsSurface (schema port)", () => {

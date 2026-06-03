@@ -117,6 +117,32 @@ emit_md_hardlink() {
 }
 
 # ---------------------------------------------------------------------------
+# resolve_skill_link_path <out_abs> <skill_name>
+#
+# TD-218 (Option C): compute the per-skill symlink link_path with a de-dup
+# guard. The contract is that the target `path` (→ out_abs) is the PARENT
+# skills dir, and the loop appends `/<skill_name>`. A LEGACY/hand-edited
+# manifest may carry a per-skill `path` that already ends in `/<skill_name>`
+# (e.g. `~/.agents/skills/content-pipeline`); naively appending would
+# double-nest to `<out_abs>/<skill_name>/<skill_name>/SKILL.md` (depth-2),
+# which native loaders (depth-1 scan) never discover. When out_abs already
+# terminates in <skill_name>, treat it as the link target itself and do NOT
+# append — so EVERY registry skill resolves depth-1 even with a malformed
+# manifest. Core blocks (out_abs basename = `skills`) never trigger this.
+# Echoes the resolved link_path on stdout. See TD-218, L-519 §18.1
+# (compile/drift MUST resolve link_path identically).
+# ---------------------------------------------------------------------------
+resolve_skill_link_path() {
+  local out_abs="$1"
+  local skill_name="$2"
+  if [ "$(basename "$out_abs")" = "$skill_name" ]; then
+    printf '%s\n' "$out_abs"
+  else
+    printf '%s\n' "$out_abs/$skill_name"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # emit_skill_symlink <harness_label> <link_path> <skill_dir>
 #
 # FR-153 D1: per-symlink emit shared across the 3 skills/symlink compile
@@ -1225,11 +1251,15 @@ PY
             FAIL=$((FAIL + 1))
             continue
           fi
-          mkdir -p "$out_abs"
           while IFS= read -r -d '' skill_md; do
             skill_name="$(basename "$(dirname "$skill_md")")"
             skill_dir="$(dirname "$skill_md")"
-            link_path="$out_abs/$skill_name"
+            link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
+            # TD-218: create the LINK's parent dir (not out_abs). For a parent
+            # target.path this is out_abs itself; for a de-dup'd per-skill path
+            # (link_path == out_abs) it is out_abs's parent — so the link path
+            # is NOT pre-created as a real dir (which would refuse-to-clobber).
+            mkdir -p "$(dirname "$link_path")"
             if ! emit_skill_symlink "claude" "$link_path" "$skill_dir"; then
               SUMMARY+=("FAIL  skills/$s_type/$skill_name — refuse to clobber non-symlink at $link_path")
               rc=1
@@ -1249,11 +1279,15 @@ PY
             FAIL=$((FAIL + 1))
             continue
           fi
-          mkdir -p "$out_abs"
           while IFS= read -r -d '' skill_md; do
             skill_name="$(basename "$(dirname "$skill_md")")"
             skill_dir="$(dirname "$skill_md")"
-            link_path="$out_abs/$skill_name"
+            link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
+            # TD-218: create the LINK's parent dir (not out_abs). For a parent
+            # target.path this is out_abs itself; for a de-dup'd per-skill path
+            # (link_path == out_abs) it is out_abs's parent — so the link path
+            # is NOT pre-created as a real dir (which would refuse-to-clobber).
+            mkdir -p "$(dirname "$link_path")"
             # FR-153 D2: codex absolute-path enforcement.
             case "$skill_dir" in
               /*) : ;;
@@ -1281,11 +1315,15 @@ PY
             FAIL=$((FAIL + 1))
             continue
           fi
-          mkdir -p "$out_abs"
           while IFS= read -r -d '' skill_md; do
             skill_name="$(basename "$(dirname "$skill_md")")"
             skill_dir="$(dirname "$skill_md")"
-            link_path="$out_abs/$skill_name"
+            link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
+            # TD-218: create the LINK's parent dir (not out_abs). For a parent
+            # target.path this is out_abs itself; for a de-dup'd per-skill path
+            # (link_path == out_abs) it is out_abs's parent — so the link path
+            # is NOT pre-created as a real dir (which would refuse-to-clobber).
+            mkdir -p "$(dirname "$link_path")"
             if ! emit_skill_symlink "gemini" "$link_path" "$skill_dir"; then
               SUMMARY+=("FAIL  skills/$s_type/$skill_name — refuse to clobber non-symlink at $link_path")
               rc=1
@@ -1307,11 +1345,15 @@ PY
             FAIL=$((FAIL + 1))
             continue
           fi
-          mkdir -p "$out_abs"
           while IFS= read -r -d '' skill_md; do
             skill_name="$(basename "$(dirname "$skill_md")")"
             skill_dir="$(dirname "$skill_md")"
-            link_path="$out_abs/$skill_name"
+            link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
+            # TD-218: create the LINK's parent dir (not out_abs). For a parent
+            # target.path this is out_abs itself; for a de-dup'd per-skill path
+            # (link_path == out_abs) it is out_abs's parent — so the link path
+            # is NOT pre-created as a real dir (which would refuse-to-clobber).
+            mkdir -p "$(dirname "$link_path")"
             # FR-157 D2: agents symlink absolute-path enforcement (inherits
             # codex hazard via the cross-CLI `.agents/` consumer chain).
             case "$skill_dir" in

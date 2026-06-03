@@ -221,6 +221,32 @@ PY
 }
 
 # ---------------------------------------------------------------------------
+# resolve_skill_link_path <out_abs> <skill_name>
+#
+# TD-218 (Option C): compute the per-skill symlink link_path with a de-dup
+# guard. MUST stay byte-identical to the same helper in compile_harnesses.sh
+# (L-519 §18.1 / L-554 — drift derives the expected layout the same way
+# compile creates it). The contract is that the target `path` (→ out_abs) is
+# the PARENT skills dir, and the loop appends `/<skill_name>`. A LEGACY/hand-
+# edited manifest may carry a per-skill `path` that already ends in
+# `/<skill_name>` (e.g. `~/.agents/skills/content-pipeline`); naively
+# appending would double-nest to `<out_abs>/<skill_name>/<skill_name>/
+# SKILL.md` (depth-2), which native loaders (depth-1 scan) never discover.
+# When out_abs already terminates in <skill_name>, treat it as the link
+# target itself and do NOT append. Echoes the resolved link_path on stdout.
+# See TD-218.
+# ---------------------------------------------------------------------------
+resolve_skill_link_path() {
+  local out_abs="$1"
+  local skill_name="$2"
+  if [ "$(basename "$out_abs")" = "$skill_name" ]; then
+    printf '%s\n' "$out_abs"
+  else
+    printf '%s\n' "$out_abs/$skill_name"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # verify_md_agent_symlink_drift <name> <harness_label> <target_abs>
 #
 # FR-152 / FR-158 / FR-159 / TD-208 per-harness drift verdict for claude +
@@ -1059,12 +1085,13 @@ PY
         any_drift=0
         any_unanchored=0
         any_realfile=0
+        any_too_deep=0
         checked=0
         while IFS= read -r -d '' skill_md; do
           skill_name="$(basename "$(dirname "$skill_md")")"
           skill_dir="$(dirname "$skill_md")"
           skill_dir_real=$(realpath "$skill_dir" 2>/dev/null || echo "$skill_dir")
-          link_path="$out_abs/$skill_name"
+          link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
           if [ ! -e "$link_path" ] && [ ! -L "$link_path" ]; then
             any_missing=1
           elif [ -L "$link_path" ]; then
@@ -1082,6 +1109,13 @@ PY
                   any_unanchored=1
                   ;;
               esac
+            fi
+            # TD-218: depth-1 discoverability — SKILL.md MUST be at
+            # <link_path>/SKILL.md. A registry-anchored-but-too-deep symlink
+            # (legacy per-skill target.path) leaves SKILL.md one level deeper,
+            # invisible to native loaders that scan depth-1.
+            if [ ! -f "$link_path/SKILL.md" ]; then
+              any_too_deep=1
             fi
           else
             # Not a symlink — a regular file/dir at the symlink target. Treated
@@ -1103,6 +1137,9 @@ PY
         elif [ "$any_drift" -eq 1 ]; then
           verdict="DRIFTED"
           reason="one or more claude skill symlinks point at the wrong canonical (registry-anchored but mismatched)"
+        elif [ "$any_too_deep" -eq 1 ]; then
+          verdict="DRIFTED"
+          reason="one or more claude skill symlinks resolve but SKILL.md is not at depth-1 (<link_path>/SKILL.md missing) — native loaders scan depth-1; repair target.path to the PARENT skills dir, then run \`igris harness compile\`"
         fi
         echo "  [skills/$s_type] $verdict"
         echo "      source     : $conv_root"
@@ -1125,13 +1162,14 @@ PY
         any_drift=0
         any_unanchored=0
         any_realfile=0
+        any_too_deep=0
         any_relative_codex=0
         checked=0
         while IFS= read -r -d '' skill_md; do
           skill_name="$(basename "$(dirname "$skill_md")")"
           skill_dir="$(dirname "$skill_md")"
           skill_dir_real=$(realpath "$skill_dir" 2>/dev/null || echo "$skill_dir")
-          link_path="$out_abs/$skill_name"
+          link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
           if [ ! -e "$link_path" ] && [ ! -L "$link_path" ]; then
             any_missing=1
           elif [ -L "$link_path" ]; then
@@ -1157,6 +1195,13 @@ PY
                   ;;
               esac
             fi
+            # TD-218: depth-1 discoverability — SKILL.md MUST be at
+            # <link_path>/SKILL.md. A registry-anchored-but-too-deep symlink
+            # (legacy per-skill target.path) leaves SKILL.md one level deeper,
+            # invisible to native loaders that scan depth-1.
+            if [ ! -f "$link_path/SKILL.md" ]; then
+              any_too_deep=1
+            fi
           else
             any_realfile=1
           fi
@@ -1175,6 +1220,9 @@ PY
         elif [ "$any_drift" -eq 1 ]; then
           verdict="DRIFTED"
           reason="one or more codex skill symlinks point at the wrong canonical (registry-anchored but mismatched)"
+        elif [ "$any_too_deep" -eq 1 ]; then
+          verdict="DRIFTED"
+          reason="one or more codex skill symlinks resolve but SKILL.md is not at depth-1 (<link_path>/SKILL.md missing) — native loaders scan depth-1; repair target.path to the PARENT skills dir, then run \`igris harness compile\`"
         elif [ "$any_relative_codex" -eq 1 ]; then
           verdict="DRIFTED"
           reason="one or more codex skill symlinks have a relative target (codex resolves these from cwd, not symlink location — FR-153 D2)"
@@ -1197,12 +1245,13 @@ PY
         any_drift=0
         any_unanchored=0
         any_realfile=0
+        any_too_deep=0
         checked=0
         while IFS= read -r -d '' skill_md; do
           skill_name="$(basename "$(dirname "$skill_md")")"
           skill_dir="$(dirname "$skill_md")"
           skill_dir_real=$(realpath "$skill_dir" 2>/dev/null || echo "$skill_dir")
-          link_path="$out_abs/$skill_name"
+          link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
           if [ ! -e "$link_path" ] && [ ! -L "$link_path" ]; then
             any_missing=1
           elif [ -L "$link_path" ]; then
@@ -1220,6 +1269,13 @@ PY
                   any_unanchored=1
                   ;;
               esac
+            fi
+            # TD-218: depth-1 discoverability — SKILL.md MUST be at
+            # <link_path>/SKILL.md. A registry-anchored-but-too-deep symlink
+            # (legacy per-skill target.path) leaves SKILL.md one level deeper,
+            # invisible to native loaders that scan depth-1.
+            if [ ! -f "$link_path/SKILL.md" ]; then
+              any_too_deep=1
             fi
           else
             any_realfile=1
@@ -1239,6 +1295,9 @@ PY
         elif [ "$any_drift" -eq 1 ]; then
           verdict="DRIFTED"
           reason="one or more gemini skill symlinks point at the wrong canonical (registry-anchored but mismatched)"
+        elif [ "$any_too_deep" -eq 1 ]; then
+          verdict="DRIFTED"
+          reason="one or more gemini skill symlinks resolve but SKILL.md is not at depth-1 (<link_path>/SKILL.md missing) — native loaders scan depth-1; repair target.path to the PARENT skills dir, then run \`igris harness compile\`"
         fi
         echo "  [skills/$s_type] $verdict"
         echo "      source     : $conv_root"
@@ -1261,13 +1320,14 @@ PY
         any_drift=0
         any_unanchored=0
         any_realfile=0
+        any_too_deep=0
         any_relative_agents=0
         checked=0
         while IFS= read -r -d '' skill_md; do
           skill_name="$(basename "$(dirname "$skill_md")")"
           skill_dir="$(dirname "$skill_md")"
           skill_dir_real=$(realpath "$skill_dir" 2>/dev/null || echo "$skill_dir")
-          link_path="$out_abs/$skill_name"
+          link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
           if [ ! -e "$link_path" ] && [ ! -L "$link_path" ]; then
             any_missing=1
           elif [ -L "$link_path" ]; then
@@ -1293,6 +1353,13 @@ PY
                   ;;
               esac
             fi
+            # TD-218: depth-1 discoverability — SKILL.md MUST be at
+            # <link_path>/SKILL.md. A registry-anchored-but-too-deep symlink
+            # (legacy per-skill target.path) leaves SKILL.md one level deeper,
+            # invisible to native loaders that scan depth-1.
+            if [ ! -f "$link_path/SKILL.md" ]; then
+              any_too_deep=1
+            fi
           else
             any_realfile=1
           fi
@@ -1311,6 +1378,9 @@ PY
         elif [ "$any_drift" -eq 1 ]; then
           verdict="DRIFTED"
           reason="one or more agents skill symlinks point at the wrong canonical (registry-anchored but mismatched)"
+        elif [ "$any_too_deep" -eq 1 ]; then
+          verdict="DRIFTED"
+          reason="one or more agents skill symlinks resolve but SKILL.md is not at depth-1 (<link_path>/SKILL.md missing) — native loaders scan depth-1; repair target.path to the PARENT skills dir, then run \`igris harness compile\`"
         elif [ "$any_relative_agents" -eq 1 ]; then
           verdict="DRIFTED"
           reason="one or more agents skill symlinks have a relative target (codex resolves these from cwd, not symlink location — FR-157 D2)"
