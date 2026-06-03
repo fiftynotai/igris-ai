@@ -37,6 +37,8 @@ import { fileURLToPath } from "node:url";
 import {
   runRegistry,
   validateAgentEntry,
+  validateMcpServersSurface,
+  validateMcpServersSurfaceArray,
   validateOverlayShape,
   validateSkillsSurface,
   validateSkillsSurfaceArray,
@@ -1343,6 +1345,179 @@ describe("validateAgentEntry / validateOverlayShape", () => {
     expect(
       validateOverlayShape({ version: 1, agents: [], surfaces: { skills: {} } }),
     ).toMatch(/non-empty array/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-161 (FR-160 epic): `surfaces.mcp_servers` projection-surface validation.
+// Foundation ONLY — nothing consumes the surface yet (the add-mcp verb is
+// FR-162, the compile/drift projection is FR-164). These tests pin the
+// schema/TS-validator contract: a well-formed `mcp_servers[]` block is
+// accepted, malformed blocks are rejected, the MCP target enum is SEPARATE
+// from agents/skills, and the surface is additive (no version bump).
+// ---------------------------------------------------------------------------
+describe("validateMcpServersSurface — FR-161", () => {
+  const validBlock = {
+    name: "igris-brain",
+    canonical: {
+      command: "node",
+      args: ["/p/index.js"],
+      env: { KEY: "${VAR}" },
+    },
+    targets: [
+      { type: "claude", method: "merge" },
+      { type: "opencode", method: "merge", enabled: true },
+    ],
+  };
+
+  const overlayWith = (block: unknown) => ({
+    version: 1,
+    agents: [],
+    surfaces: { mcp_servers: [block] },
+  });
+
+  // 1. Accepts a well-formed mcp_servers array.
+  it("accepts a well-formed mcp_servers array", () => {
+    expect(validateOverlayShape(overlayWith(validBlock))).toBeNull();
+    // The block-level validator agrees with the array/overlay path.
+    expect(validateMcpServersSurface(validBlock)).toBeNull();
+    expect(validateMcpServersSurfaceArray([validBlock])).toBeNull();
+  });
+
+  // 2. Rejects an unknown block key (additionalProperties:false).
+  it("rejects an unknown block key", () => {
+    expect(
+      validateOverlayShape(overlayWith({ ...validBlock, extra: 1 })),
+    ).toMatch(/unknown key 'extra'/);
+  });
+
+  // 3. Rejects an unknown canonical key.
+  it("rejects an unknown canonical key", () => {
+    expect(
+      validateOverlayShape(
+        overlayWith({
+          ...validBlock,
+          canonical: { command: "node", bogus: 1 },
+        }),
+      ),
+    ).toMatch(/canonical: unknown key 'bogus'/);
+  });
+
+  // 4. Requires canonical.command.
+  it("requires canonical.command", () => {
+    expect(
+      validateOverlayShape(
+        overlayWith({ ...validBlock, canonical: {} }),
+      ),
+    ).toMatch(/command/);
+  });
+
+  // 5. Rejects a non-MCP target type (proves the enum is SEPARATE — `agents`
+  //    is valid for skills but NOT for MCP).
+  it("rejects a non-MCP target type (agents)", () => {
+    expect(
+      validateOverlayShape(
+        overlayWith({
+          ...validBlock,
+          targets: [{ type: "agents", method: "merge" }],
+        }),
+      ),
+    ).toMatch(/not one of/);
+  });
+
+  // 6. Rejects a non-merge method.
+  it("rejects a non-merge method", () => {
+    expect(
+      validateOverlayShape(
+        overlayWith({
+          ...validBlock,
+          targets: [{ type: "claude", method: "symlink" }],
+        }),
+      ),
+    ).toMatch(/must be 'merge'|not one of/);
+  });
+
+  // 7. Empty array rejected (minItems:1).
+  it("rejects an empty mcp_servers array", () => {
+    expect(
+      validateOverlayShape({
+        version: 1,
+        agents: [],
+        surfaces: { mcp_servers: [] },
+      }),
+    ).toMatch(/non-empty array/);
+  });
+
+  // 8. Non-array rejected.
+  it("rejects a non-array mcp_servers", () => {
+    expect(
+      validateOverlayShape({
+        version: 1,
+        agents: [],
+        surfaces: { mcp_servers: {} },
+      }),
+    ).toMatch(/non-empty array/);
+  });
+
+  // 9. Unknown surfaces key still rejected (the allowedSurfaceKeys extension
+  //    did NOT open the surfaces object).
+  it("still rejects an unknown surfaces key", () => {
+    expect(
+      validateOverlayShape({
+        version: 1,
+        agents: [],
+        surfaces: { bogus: [] },
+      }),
+    ).toMatch(/surfaces: unknown key 'bogus'/);
+  });
+
+  // 10. Scope forward-compat accepted (v1 treats all as global).
+  it("accepts forward-compat scope:{type:'global'}", () => {
+    expect(
+      validateOverlayShape(
+        overlayWith({ ...validBlock, scope: { type: "global" } }),
+      ),
+    ).toBeNull();
+  });
+
+  // 11. (regression) skills + mcp_servers coexist; agent/skill validation
+  //     unaffected.
+  it("accepts an overlay carrying BOTH skills AND mcp_servers", () => {
+    expect(
+      validateOverlayShape({
+        version: 1,
+        agents: [
+          {
+            name: "ok",
+            canonical: { dir: "canon", versioned: false, file: "x.md" },
+            targets: [{ type: "claude", path: ".claude/agents/ok.md" }],
+          },
+        ],
+        surfaces: {
+          skills: [
+            {
+              source: "/abs/skills",
+              targets: [
+                { type: "codex", method: "symlink", path: ".codex/skills" },
+              ],
+            },
+          ],
+          mcp_servers: [validBlock],
+        },
+      }),
+    ).toBeNull();
+  });
+
+  // 15. No version bump: v1 with an mcp_servers block validates; v2 does not.
+  it("pins the no-version-bump contract (v1 ok, v2 rejected)", () => {
+    expect(validateOverlayShape(overlayWith(validBlock))).toBeNull();
+    expect(
+      validateOverlayShape({
+        version: 2,
+        agents: [],
+        surfaces: { mcp_servers: [validBlock] },
+      }),
+    ).toMatch(/version/);
   });
 });
 
@@ -3768,6 +3943,96 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
       { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
     );
     expect(typeof validate).toBe("string");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-161 (FR-160 epic): REAL validate_manifest accepts/rejects a manifest
+// carrying `surfaces.mcp_servers`. There is no `add-mcp` verb yet (FR-162), so
+// these tests write the manifest file DIRECTLY and exercise the real bash
+// `validate_manifest` subprocess (L-159/L-173: no vi.mock of the bash). This
+// closes the schema/structural-fallback parity loop for the new surface — the
+// jsonschema path (when `import jsonschema` succeeds) AND the structural
+// fallback must BOTH agree.
+// ---------------------------------------------------------------------------
+describe("registry integration — FR-161 mcp_servers (real validate_manifest)", () => {
+  let mcpTmp: string;
+
+  const wellFormedMcpManifest = {
+    version: 1,
+    agents: [],
+    surfaces: {
+      mcp_servers: [
+        {
+          name: "igris-brain",
+          canonical: {
+            command: "node",
+            args: ["/p/index.js"],
+            env: { KEY: "${VAR}" },
+          },
+          targets: [
+            { type: "claude", method: "merge" },
+            { type: "opencode", method: "merge", enabled: true },
+          ],
+        },
+      ],
+    },
+  };
+
+  beforeEach(() => {
+    mcpTmp = mkdtempSync(join(tmpdir(), "igris-fr161-"));
+  });
+
+  afterEach(() => {
+    rmSync(mcpTmp, { recursive: true, force: true });
+  });
+
+  const runValidate = (manifest: unknown): string =>
+    execFileSync(
+      "bash",
+      ["-c", (() => {
+        const p = join(mcpTmp, "manifest.json");
+        writeFileSync(p, JSON.stringify(manifest));
+        return `source "${COMMON_SH}" && validate_manifest "${p}" "${SCHEMA}"`;
+      })()],
+      { encoding: "utf-8", env: { ...process.env } },
+    );
+
+  // 12. Accepts the well-formed mcp_servers manifest (jsonschema + fallback).
+  it("INTEGRATION #12: accepts a well-formed mcp_servers manifest", () => {
+    if (!toolingAvailable()) {
+      return;
+    }
+    expect(typeof runValidate(wellFormedMcpManifest)).toBe("string");
+  });
+
+  // 13. Rejects an unknown block key (additionalProperties:false).
+  it("INTEGRATION #13: rejects an unknown mcp_servers block key", () => {
+    if (!toolingAvailable()) {
+      return;
+    }
+    const bad = JSON.parse(
+      JSON.stringify(wellFormedMcpManifest),
+    ) as typeof wellFormedMcpManifest & {
+      surfaces: { mcp_servers: Array<Record<string, unknown>> };
+    };
+    bad.surfaces.mcp_servers[0].bogus = 1;
+    expect(() => runValidate(bad)).toThrow();
+  });
+
+  // 14. Rejects a non-MCP target type (agents) the same way (proves the
+  //     SEPARATE enum holds in the bash structural fallback too).
+  it("INTEGRATION #14: rejects a non-MCP target type (agents)", () => {
+    if (!toolingAvailable()) {
+      return;
+    }
+    const bad = JSON.parse(
+      JSON.stringify(wellFormedMcpManifest),
+    ) as typeof wellFormedMcpManifest;
+    bad.surfaces.mcp_servers[0].targets = [
+      { type: "agents", method: "merge" },
+    ] as never;
+    expect(() => runValidate(bad)).toThrow();
   });
 });
 

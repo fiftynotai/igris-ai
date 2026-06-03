@@ -656,7 +656,7 @@ surfaces = manifest.get("surfaces")
 if surfaces is not None:
     if not isinstance(surfaces, dict):
         fail("'surfaces' must be an object")
-    allowed_surface_keys = {"skills", "os_context"}
+    allowed_surface_keys = {"skills", "mcp_servers", "os_context"}
     for key in surfaces:
         if key not in allowed_surface_keys:
             fail(f"surfaces: unknown key '{key}' (additionalProperties:false)")
@@ -734,6 +734,69 @@ if surfaces is not None:
             # FR-155: optional scope on the skills_surface block.
             if "scope" in skills_block:
                 validate_scope_shape(skills_block["scope"], bwhere)
+
+    # ---- FR-161 (FR-160 epic): structural validation of surfaces.mcp_servers
+    # ARRAY of mcp_surface blocks. Mirrors $defs.mcp_surface so the structural
+    # fallback AGREES with the jsonschema path (the parity loop integration
+    # test #11 asserts). SEPARATE 4-harness target enum (opencode added); the
+    # method is the const "merge". v1 is GLOBAL-ONLY — scope is accepted for
+    # forward-compat but consumers treat every block as global.
+    mcp_servers = surfaces.get("mcp_servers")
+    if mcp_servers is not None:
+        if not isinstance(mcp_servers, list):
+            fail("surfaces.mcp_servers must be a non-empty array")
+        if len(mcp_servers) < 1:
+            fail("surfaces.mcp_servers must be a non-empty array")
+        valid_mcp_target_types = {"claude", "codex", "gemini", "opencode"}
+        allowed_mcp_keys = {"name", "layer", "scope", "canonical", "targets"}
+        allowed_mcp_canon_keys = {"command", "args", "env", "startup_timeout_sec"}
+        allowed_mcp_target_keys = {"type", "method", "enabled"}
+        for m_idx, mcp_block in enumerate(mcp_servers):
+            mwhere = f"surfaces.mcp_servers[{m_idx}]"
+            if not isinstance(mcp_block, dict):
+                fail(f"{mwhere} must be an object")
+            for key in mcp_block:
+                if key not in allowed_mcp_keys:
+                    fail(f"{mwhere}: unknown key '{key}' "
+                         "(additionalProperties:false)")
+            for req in ("name", "canonical", "targets"):
+                if req not in mcp_block:
+                    fail(f"{mwhere} missing required key '{req}'")
+
+            canon = mcp_block["canonical"]
+            if not isinstance(canon, dict):
+                fail(f"{mwhere}.canonical must be an object")
+            for key in canon:
+                if key not in allowed_mcp_canon_keys:
+                    fail(f"{mwhere}.canonical: unknown key '{key}' "
+                         "(additionalProperties:false)")
+            if "command" not in canon or not isinstance(canon["command"], str):
+                fail(f"{mwhere}.canonical.command is required and must be a string")
+
+            m_targets = mcp_block["targets"]
+            if not isinstance(m_targets, list) or len(m_targets) < 1:
+                fail(f"{mwhere}.targets must be a non-empty array")
+            for k, mt in enumerate(m_targets):
+                mtwhere = f"{mwhere}.targets[{k}]"
+                if not isinstance(mt, dict):
+                    fail(f"{mtwhere} must be an object")
+                for req in ("type", "method"):
+                    if req not in mt:
+                        fail(f"{mtwhere} missing required key '{req}'")
+                for key in mt:
+                    if key not in allowed_mcp_target_keys:
+                        fail(f"{mtwhere}: unknown key '{key}' "
+                             "(additionalProperties:false)")
+                if mt["type"] not in valid_mcp_target_types:
+                    fail(f"{mtwhere}.type '{mt['type']}' is not one of "
+                         f"{sorted(valid_mcp_target_types)}")
+                if mt["method"] != "merge":
+                    fail(f"{mtwhere}.method '{mt['method']}' must be 'merge'")
+
+            # v1 GLOBAL-ONLY: scope accepted for forward-compat (consumers
+            # treat every block as global). Same structural shape as agents.
+            if "scope" in mcp_block:
+                validate_scope_shape(mcp_block["scope"], mwhere)
 
 sys.exit(0)
 PY

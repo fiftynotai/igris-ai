@@ -22,7 +22,7 @@
     },
 
     "surfaces": {
-      "description": "FR-137: non-agent projection surfaces. 'skills' is fleshed out here (core-owned in surfaces-manifest.json, or personal via the FR-139 overlay). 'os_context' remains RESERVED for FR-140 (permissive). An absent or skills-only surfaces block validates. Additive flesh-out — no version bump (still v1). TD-191: `skills` is now an ARRAY of blocks (multi-source) — loaders normalize legacy single-object overlays to `[object]` on read so back-compat holds without a version bump.",
+      "description": "FR-137: non-agent projection surfaces. 'skills' is fleshed out here (core-owned in surfaces-manifest.json, or personal via the FR-139 overlay). 'os_context' remains RESERVED for FR-140 (permissive). An absent or skills-only surfaces block validates. Additive flesh-out — no version bump (still v1). TD-191: `skills` is now an ARRAY of blocks (multi-source) — loaders normalize legacy single-object overlays to `[object]` on read so back-compat holds without a version bump. FR-161: `mcp_servers` is added as a 4th surface (ARRAY of blocks, mirroring `skills`); v1 is GLOBAL-ONLY (consumers treat every block as global even though the schema reuses $defs/scope for forward-compat). Additive — still v1, no version bump.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -30,6 +30,12 @@
           "type": "array",
           "minItems": 1,
           "items": { "$ref": "#/$defs/skills_surface" }
+        },
+        "mcp_servers": {
+          "description": "FR-161: MCP-server projection blocks (FR-160 epic). An ARRAY of blocks, one per MCP server, mirroring `skills`. Each block declares the canonical command/args/env once; the compile pass (FR-164) merges it into each target harness's config. v1 GLOBAL-ONLY: `scope` is accepted for forward-compat but consumers treat every block as global. Core-owned blocks land in surfaces-manifest.json; personal blocks via the FR-139 overlay. NOTHING consumes this in FR-161 — schema/validators only.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/mcp_surface" }
         },
         "os_context": {
           "description": "RESERVED for FR-140 (rules+prompts OS-context projection). Permissive until FR-140 fleshes it out; an absent block is the normal case in FR-137.",
@@ -104,6 +110,51 @@
               { "properties": { "type": { "const": "gemini" }, "method": { "const": "symlink" } } },
               { "properties": { "type": { "const": "agents" }, "method": { "const": "symlink" } } }
             ]
+          }
+        }
+      }
+    },
+    "mcp_surface": {
+      "description": "FR-161 (FR-160 epic): ONE MCP-server projection block. Multiple coexist as elements of `surfaces.mcp_servers[]`. `canonical` declares the command/args/env ONCE (env values are ${VAR} references, never inline secrets); the FR-164 compile pass merges this into each target harness config (config-MERGE, not symlink). `targets` carries a SEPARATE enum from agents/skills — MCP adds a 4th harness (`opencode`) and its `method` is always the const `merge`. v1 is GLOBAL-ONLY: `scope` is accepted (reuses $defs/scope for forward-compat) but consumers treat every block as global. `startup_timeout_sec` is a Codex-only passthrough. See FR-160 plan §FR-160a.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "canonical", "targets"],
+      "properties": {
+        "name":  { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "layer": {
+          "type": "string",
+          "default": "core",
+          "description": "FR-139 provenance seam: 'core' (declared in surfaces-manifest.json) or 'personal' (contributed by the FR-139 overlay)."
+        },
+        "scope": { "$ref": "#/$defs/scope" },
+        "canonical": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["command"],
+          "properties": {
+            "command": { "type": "string", "description": "executable, e.g. 'node' / 'npx'" },
+            "args":    { "type": "array", "items": { "type": "string" }, "default": [] },
+            "env":     {
+              "type": "object",
+              "additionalProperties": { "type": "string" },
+              "default": {},
+              "description": "values are ${VAR} references, NOT inline secrets (enforced at write-time by the FR-162 verb)"
+            },
+            "startup_timeout_sec": { "type": "integer", "description": "Codex-only passthrough; optional" }
+          }
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "method"],
+            "properties": {
+              "type":    { "enum": ["claude", "codex", "gemini", "opencode"] },
+              "method":  { "const": "merge" },
+              "enabled": { "type": "boolean", "default": true }
+            }
           }
         }
       }

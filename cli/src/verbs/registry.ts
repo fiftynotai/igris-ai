@@ -118,6 +118,22 @@ const VALID_SKILL_TYPE_METHOD_PAIRS = new Set<string>([
   "agents/symlink",
 ]);
 
+/**
+ * FR-161 (FR-160 epic): allowed MCP target types. SEPARATE from the agent
+ * (`VALID_TARGET_TYPES`) and skill (`VALID_SKILL_TARGET_TYPES`) enums — MCP
+ * adds a 4th harness, `opencode`, and MUST NOT widen those surfaces. Mirrors
+ * `$defs.mcp_surface.targets.type` in manifest.schema.json.
+ */
+const VALID_MCP_TARGET_TYPES = ["claude", "codex", "gemini", "opencode"] as const;
+type McpTargetType = (typeof VALID_MCP_TARGET_TYPES)[number];
+
+/**
+ * FR-161: MCP projection is always config-MERGE (not symlink/compiler).
+ * Mirrors `$defs.mcp_surface.targets.method` (`const "merge"`).
+ */
+const VALID_MCP_METHODS = ["merge"] as const;
+type McpMethod = (typeof VALID_MCP_METHODS)[number];
+
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
 interface CanonicalSpec {
@@ -183,6 +199,49 @@ interface SkillsSurface {
   targets: SkillTargetSpec[];
 }
 
+/**
+ * FR-161 (FR-160 epic): one MCP target — a `type` + `method` (+ optional
+ * `enabled`). `type` ∈ {claude,codex,gemini,opencode}, `method` is always
+ * "merge". Mirrors one item of `$defs.mcp_surface.targets`. The `McpTargetType`
+ * / `McpMethod` aliases (derived from the SEPARATE enums) keep the field types
+ * tied to the same allowlist the validator enforces — the FR-162 write-path
+ * reuses these casts at its parse boundary.
+ */
+interface McpTarget {
+  type: McpTargetType;
+  method: McpMethod;
+  enabled?: boolean;
+}
+
+/**
+ * FR-161: the canonical MCP launch spec, declared ONCE. `command` is required;
+ * `args`/`env` default to []/{}. `env` values are ${VAR} references (the
+ * FR-162 write-path verb enforces that — FR-161 only shape-checks types).
+ * `startup_timeout_sec` is a Codex-only passthrough. Mirrors
+ * `$defs.mcp_surface.canonical`.
+ */
+interface McpCanonical {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  startup_timeout_sec?: number;
+}
+
+/**
+ * FR-161 (FR-160 epic): ONE MCP-server projection block. Multiple coexist as
+ * elements of `surfaces.mcp_servers[]` (multi-source, like `skills`). v1 is
+ * GLOBAL-ONLY — `scope` is accepted for forward-compat but consumers treat
+ * every block as global. Mirrors `$defs.mcp_surface` in manifest.schema.json.
+ */
+interface McpServersSurface {
+  name: string;
+  layer?: string;
+  /** FR-155-style scope. Absent → global. v1 consumers treat ALL as global. */
+  scope?: Scope;
+  canonical: McpCanonical;
+  targets: McpTarget[];
+}
+
 /** The overlay file shape. TD-191: `surfaces.skills` is now an array of blocks. */
 interface Overlay {
   $schema?: string;
@@ -190,10 +249,11 @@ interface Overlay {
   _schema?: Record<string, unknown>;
   version: number;
   agents: AgentEntry[];
-  surfaces?: { skills?: SkillsSurface[]; os_context?: Record<string, unknown> } & Record<
-    string,
-    unknown
-  >;
+  surfaces?: {
+    skills?: SkillsSurface[];
+    mcp_servers?: McpServersSurface[];
+    os_context?: Record<string, unknown>;
+  } & Record<string, unknown>;
 }
 
 /**
@@ -633,6 +693,148 @@ export function validateSkillsSurfaceArray(skills: unknown): string | null {
   return null;
 }
 
+/**
+ * FR-161 (FR-160 epic): validate one `surfaces.mcp_servers` block field-for-
+ * field against `$defs.mcp_surface`. `additionalProperties:false` →
+ * name/layer/scope/canonical/targets only; `name`+`canonical`+`targets`
+ * required; `canonical.command` required; targets use the SEPARATE 4-harness
+ * enum + the `merge` method const. Returns an error message, or null if valid.
+ */
+export function validateMcpServersSurface(mcp: unknown): string | null {
+  if (typeof mcp !== "object" || mcp === null || Array.isArray(mcp)) {
+    return "surfaces.mcp_servers must be an object";
+  }
+  const m = mcp as Record<string, unknown>;
+  const allowedKeys = new Set(["name", "layer", "scope", "canonical", "targets"]);
+  for (const key of Object.keys(m)) {
+    if (!allowedKeys.has(key)) {
+      return `surfaces.mcp_servers: unknown key '${key}' (additionalProperties:false)`;
+    }
+  }
+  for (const req of ["name", "canonical", "targets"]) {
+    if (!(req in m)) {
+      return `surfaces.mcp_servers missing required key '${req}'`;
+    }
+  }
+  if (typeof m.name !== "string" || !NAME_PATTERN.test(m.name)) {
+    return `surfaces.mcp_servers.name '${String(m.name)}' must match /^[a-z0-9][a-z0-9-]*$/`;
+  }
+  if (m.layer !== undefined && typeof m.layer !== "string") {
+    return "surfaces.mcp_servers.layer must be a string";
+  }
+
+  // canonical
+  const canon = m.canonical;
+  if (typeof canon !== "object" || canon === null || Array.isArray(canon)) {
+    return "surfaces.mcp_servers.canonical must be an object";
+  }
+  const c = canon as Record<string, unknown>;
+  const allowedCanonKeys = new Set(["command", "args", "env", "startup_timeout_sec"]);
+  for (const key of Object.keys(c)) {
+    if (!allowedCanonKeys.has(key)) {
+      return `surfaces.mcp_servers.canonical: unknown key '${key}' (additionalProperties:false)`;
+    }
+  }
+  if (typeof c.command !== "string") {
+    return "surfaces.mcp_servers.canonical.command must be a string";
+  }
+  if (c.args !== undefined) {
+    if (!Array.isArray(c.args)) {
+      return "surfaces.mcp_servers.canonical.args must be an array";
+    }
+    for (let i = 0; i < c.args.length; i++) {
+      if (typeof c.args[i] !== "string") {
+        return `surfaces.mcp_servers.canonical.args[${i}] must be a string`;
+      }
+    }
+  }
+  if (c.env !== undefined) {
+    if (typeof c.env !== "object" || c.env === null || Array.isArray(c.env)) {
+      return "surfaces.mcp_servers.canonical.env must be an object";
+    }
+    for (const [k, v] of Object.entries(c.env as Record<string, unknown>)) {
+      if (typeof v !== "string") {
+        return `surfaces.mcp_servers.canonical.env['${k}'] must be a string`;
+      }
+    }
+  }
+  if (
+    c.startup_timeout_sec !== undefined &&
+    (typeof c.startup_timeout_sec !== "number" ||
+      !Number.isInteger(c.startup_timeout_sec))
+  ) {
+    return "surfaces.mcp_servers.canonical.startup_timeout_sec must be an integer";
+  }
+
+  // targets
+  const targets = m.targets;
+  if (!Array.isArray(targets) || targets.length < 1) {
+    return "surfaces.mcp_servers.targets must be a non-empty array";
+  }
+  const allowedTargetKeys = new Set(["type", "method", "enabled"]);
+  for (let i = 0; i < targets.length; i++) {
+    const t = targets[i];
+    if (typeof t !== "object" || t === null || Array.isArray(t)) {
+      return `surfaces.mcp_servers.targets[${i}] must be an object`;
+    }
+    const tRec = t as Record<string, unknown>;
+    for (const key of Object.keys(tRec)) {
+      if (!allowedTargetKeys.has(key)) {
+        return `surfaces.mcp_servers.targets[${i}]: unknown key '${key}' (additionalProperties:false)`;
+      }
+    }
+    for (const req of ["type", "method"]) {
+      if (!(req in tRec)) {
+        return `surfaces.mcp_servers.targets[${i}] missing required key '${req}'`;
+      }
+    }
+    if (typeof tRec.type !== "string" || typeof tRec.method !== "string") {
+      return `surfaces.mcp_servers.targets[${i}] type/method must be strings`;
+    }
+    if (!(VALID_MCP_TARGET_TYPES as readonly string[]).includes(tRec.type)) {
+      return `surfaces.mcp_servers.targets[${i}].type '${tRec.type}' is not one of ${JSON.stringify(VALID_MCP_TARGET_TYPES)}`;
+    }
+    if (!(VALID_MCP_METHODS as readonly string[]).includes(tRec.method)) {
+      return `surfaces.mcp_servers.targets[${i}].method '${tRec.method}' is not one of ${JSON.stringify(VALID_MCP_METHODS)}`;
+    }
+    if (tRec.enabled !== undefined && typeof tRec.enabled !== "boolean") {
+      return `surfaces.mcp_servers.targets[${i}].enabled must be a boolean`;
+    }
+  }
+
+  // FR-155-style optional scope (absent → global; v1 treats all as global).
+  if (m.scope !== undefined) {
+    const nm = typeof m.name === "string" ? m.name : "?";
+    const scopeErr = validateScope(m.scope, `surfaces.mcp_servers '${nm}'`);
+    if (scopeErr !== null) {
+      return scopeErr;
+    }
+  }
+  return null;
+}
+
+/**
+ * FR-161: validate `surfaces.mcp_servers` as an ARRAY of `mcp_surface` blocks
+ * (mirrors `validateSkillsSurfaceArray`). Rejects non-array + empty array;
+ * delegates per-block validation. Error messages get a
+ * `surfaces.mcp_servers[i]:` prefix so the offending block is named.
+ */
+export function validateMcpServersSurfaceArray(mcp: unknown): string | null {
+  if (!Array.isArray(mcp)) {
+    return "surfaces.mcp_servers must be a non-empty array";
+  }
+  if (mcp.length < 1) {
+    return "surfaces.mcp_servers must be a non-empty array";
+  }
+  for (let i = 0; i < mcp.length; i++) {
+    const err = validateMcpServersSurface(mcp[i]);
+    if (err !== null) {
+      return `surfaces.mcp_servers[${i}]: ${err}`;
+    }
+  }
+  return null;
+}
+
 /** Validate the whole overlay shape. Returns an error message, or null. */
 export function validateOverlayShape(overlay: unknown): string | null {
   if (typeof overlay !== "object" || overlay === null || Array.isArray(overlay)) {
@@ -678,7 +880,7 @@ export function validateOverlayShape(overlay: unknown): string | null {
       return "overlay 'surfaces' must be an object";
     }
     const surfaces = o.surfaces as Record<string, unknown>;
-    const allowedSurfaceKeys = new Set(["skills", "os_context"]);
+    const allowedSurfaceKeys = new Set(["skills", "mcp_servers", "os_context"]);
     for (const key of Object.keys(surfaces)) {
       if (!allowedSurfaceKeys.has(key)) {
         return `surfaces: unknown key '${key}' (additionalProperties:false)`;
@@ -688,6 +890,12 @@ export function validateOverlayShape(overlay: unknown): string | null {
       const skillsErr = validateSkillsSurfaceArray(surfaces.skills);
       if (skillsErr !== null) {
         return skillsErr;
+      }
+    }
+    if (surfaces.mcp_servers !== undefined) {
+      const mcpErr = validateMcpServersSurfaceArray(surfaces.mcp_servers);
+      if (mcpErr !== null) {
+        return mcpErr;
       }
     }
   }
