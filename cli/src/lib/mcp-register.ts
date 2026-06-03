@@ -109,24 +109,39 @@ function entryDeepEquals(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Upsert the `igris-brain` entry in `~/.claude.json`, pointing at the
- * bundled MCP. Idempotent. NEVER throws — returns `outcome: 'failed'` with
- * an `error` string so callers can warn-and-continue.
+ * FR-162: the generalized, harness-agnostic JSON-merge core extracted from
+ * `registerMcpInClaudeJson`. Upserts a single named `entry` under a `mapKey`
+ * map in a JSON config FILE, preserving the proven 6-step contract verbatim
+ * (see the file header): malformed-never-clobber, preserve all other keys +
+ * entries, idempotent deep-equal no-op, single rolling backup + .tmp +
+ * `renameSync`, non-object `mapKey` → failed, and NEVER throws.
  *
- * @param opts.mcpEntryPath  Override the bundled MCP path. The `--dev`
- *                           flag (registers a clone path) and tests use
- *                           this. Defaults to `bundledMcpEntryPath()`.
- * @param opts.claudeJsonPath  Override `~/.claude.json` location. Tests
- *                             sandbox HOME and use this. Defaults to
- *                             `claudeJsonPath()`.
+ * Used by `registerMcpInClaudeJson` (Claude's `mcpServers`) today and staged
+ * for FR-164's compile-time projection into Gemini's `mcpServers`, OpenCode's
+ * `mcp`, etc. The generic call site supplies its own `mapKey` (e.g. `"mcp"` for
+ * OpenCode) + `entryKey` (the server name) + the already-built `entry` shape.
+ *
+ * The `McpRegisterResult` outcome union is reused verbatim (DO NOT add a new
+ * union — the wrapper + its 30-case suite depend on the exact field names). For
+ * a generic call the `claudeJsonPath` result field carries `targetPath` and
+ * `mcpEntryPath` is set to `""` (it is meaningful only to the Claude wrapper,
+ * which re-stamps both fields).
+ *
+ * @param opts.targetPath  The JSON config FILE to upsert into.
+ * @param opts.mapKey      The top-level map key (`"mcpServers"` | `"mcp"`).
+ * @param opts.entryKey    The server name to upsert under `mapKey`.
+ * @param opts.entry       The per-harness entry SHAPE (built by the caller).
+ * @param opts.backup      Single rolling `<path>.igris.bak`. Defaults to true.
  */
-export function registerMcpInClaudeJson(opts?: {
-  mcpEntryPath?: string;
-  claudeJsonPath?: string;
+export function mergeJsonConfig(opts: {
+  targetPath: string;
+  mapKey: string;
+  entryKey: string;
+  entry: Record<string, unknown>;
+  backup?: boolean;
 }): McpRegisterResult {
-  const targetPath = opts?.claudeJsonPath ?? claudeJsonPath();
-  const mcpEntryPath = opts?.mcpEntryPath ?? bundledMcpEntryPath();
-  const desired = buildDesiredEntry(mcpEntryPath);
+  const { targetPath, mapKey, entryKey, entry } = opts;
+  const backup = opts.backup ?? true;
 
   // --- 1. Read ---------------------------------------------------------
   const fileExisted = existsSync(targetPath);
@@ -139,7 +154,7 @@ export function registerMcpInClaudeJson(opts?: {
       return {
         outcome: "failed",
         claudeJsonPath: targetPath,
-        mcpEntryPath,
+        mcpEntryPath: "",
         error: `could not read ${targetPath}: ${msg}`,
       };
     }
@@ -158,7 +173,7 @@ export function registerMcpInClaudeJson(opts?: {
       return {
         outcome: "failed",
         claudeJsonPath: targetPath,
-        mcpEntryPath,
+        mcpEntryPath: "",
         error: `malformed ${targetPath} — refusing to write; fix or remove the file manually`,
       };
     }
@@ -166,50 +181,50 @@ export function registerMcpInClaudeJson(opts?: {
       return {
         outcome: "failed",
         claudeJsonPath: targetPath,
-        mcpEntryPath,
+        mcpEntryPath: "",
         error: `${targetPath} is not a JSON object — refusing to write; fix or remove the file manually`,
       };
     }
     root = parsed;
   }
 
-  // --- 3. Locate mcpServers (preserve all other top-level keys) --------
-  let mcpServers: Record<string, unknown>;
-  const existingServers = root.mcpServers;
-  if (existingServers === undefined) {
-    mcpServers = {};
-  } else if (isPlainObject(existingServers)) {
-    mcpServers = existingServers;
+  // --- 3. Locate the mapKey map (preserve all other top-level keys) -----
+  let serverMap: Record<string, unknown>;
+  const existingMap = root[mapKey];
+  if (existingMap === undefined) {
+    serverMap = {};
+  } else if (isPlainObject(existingMap)) {
+    serverMap = existingMap;
   } else {
-    // `mcpServers` exists but isn't an object — treat as malformed shape.
+    // `mapKey` exists but isn't an object — treat as malformed shape.
     return {
       outcome: "failed",
       claudeJsonPath: targetPath,
-      mcpEntryPath,
-      error: `${targetPath} has a non-object 'mcpServers' — refusing to write; fix or remove the file manually`,
+      mcpEntryPath: "",
+      error: `${targetPath} has a non-object '${mapKey}' — refusing to write; fix or remove the file manually`,
     };
   }
 
   // --- 4. Idempotency check — return without writing if already correct -
-  const current = mcpServers[MCP_KEY];
+  const current = serverMap[entryKey];
   const keyExisted = current !== undefined;
-  if (keyExisted && entryDeepEquals(current, desired)) {
+  if (keyExisted && entryDeepEquals(current, entry)) {
     return {
       outcome: "unchanged",
       claudeJsonPath: targetPath,
-      mcpEntryPath,
+      mcpEntryPath: "",
     };
   }
 
   // --- 5. Upsert — direct key assignment, never object replacement -----
-  mcpServers[MCP_KEY] = desired;
-  root.mcpServers = mcpServers;
+  serverMap[entryKey] = entry;
+  root[mapKey] = serverMap;
 
   // --- 6. Backup-then-atomic-write -------------------------------------
   const serialized = JSON.stringify(root, null, 2) + "\n";
   const tmpPath = `${targetPath}.tmp.${process.pid}.${Date.now()}`;
   try {
-    if (fileExisted && rawBytes !== null) {
+    if (backup && fileExisted && rawBytes !== null) {
       // Single rolling backup — overwrite any prior `.igris.bak`.
       writeFileSync(`${targetPath}${BACKUP_SUFFIX}`, rawBytes);
     }
@@ -229,7 +244,7 @@ export function registerMcpInClaudeJson(opts?: {
     return {
       outcome: "failed",
       claudeJsonPath: targetPath,
-      mcpEntryPath,
+      mcpEntryPath: "",
       error: `could not write ${targetPath}: ${msg}`,
     };
   }
@@ -237,8 +252,43 @@ export function registerMcpInClaudeJson(opts?: {
   return {
     outcome: keyExisted ? "updated" : "registered",
     claudeJsonPath: targetPath,
-    mcpEntryPath,
+    mcpEntryPath: "",
   };
+}
+
+/**
+ * Upsert the `igris-brain` entry in `~/.claude.json`, pointing at the
+ * bundled MCP. Idempotent. NEVER throws — returns `outcome: 'failed'` with
+ * an `error` string so callers can warn-and-continue.
+ *
+ * FR-162: this is now a THIN WRAPPER over the generalized `mergeJsonConfig`.
+ * It passes the SAME hard-coded values the old monolithic body used
+ * (`mapKey:"mcpServers"`, `entryKey:"igris-brain"`, `backup:true`) and
+ * re-stamps the Claude-specific result fields (`claudeJsonPath`/`mcpEntryPath`)
+ * the existing 30-case test suite asserts — so the behavior is byte-identical.
+ *
+ * @param opts.mcpEntryPath  Override the bundled MCP path. The `--dev`
+ *                           flag (registers a clone path) and tests use
+ *                           this. Defaults to `bundledMcpEntryPath()`.
+ * @param opts.claudeJsonPath  Override `~/.claude.json` location. Tests
+ *                             sandbox HOME and use this. Defaults to
+ *                             `claudeJsonPath()`.
+ */
+export function registerMcpInClaudeJson(opts?: {
+  mcpEntryPath?: string;
+  claudeJsonPath?: string;
+}): McpRegisterResult {
+  const targetPath = opts?.claudeJsonPath ?? claudeJsonPath();
+  const mcpEntryPath = opts?.mcpEntryPath ?? bundledMcpEntryPath();
+  const result = mergeJsonConfig({
+    targetPath,
+    mapKey: "mcpServers",
+    entryKey: MCP_KEY,
+    entry: buildDesiredEntry(mcpEntryPath) as unknown as Record<string, unknown>,
+    backup: true,
+  });
+  // Re-stamp the Claude-specific result fields the existing suite asserts.
+  return { ...result, claudeJsonPath: targetPath, mcpEntryPath };
 }
 
 export interface McpInspectResult {

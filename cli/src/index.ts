@@ -336,10 +336,11 @@ async function main(argv: string[]): Promise<void> {
   program
     .command("registry <action>")
     .description(
-      "Register Layer-2 personal customizations into the overlay (FR-141/FR-142/FR-143/FR-148). " +
-        "Actions: add (copy-vendors the canonical files), add-skill (references a skills source dir into surfaces.skills), list, remove, update (re-vendors from origin). " +
+      "Register Layer-2 personal customizations into the overlay (FR-141/FR-142/FR-143/FR-148/FR-162). " +
+        "Actions: add (copy-vendors the canonical files), add-skill (references a skills source dir into surfaces.skills), add-mcp (registers a global MCP server into surfaces.mcp_servers), list, remove, update (re-vendors from origin). " +
         "--from accepts a local path OR github:owner/repo@<ref>[#subdir]. " +
-        "For add-skill, the positional <source-dir> (or --from) is the live skills root and --target is type:method:path.",
+        "For add-skill, the positional <source-dir> (or --from) is the live skills root and --target is type:method:path. " +
+        "For add-mcp, --command + --target type:merge[:enabled] register a global MCP; --env values must be ${VAR} indirection refs (inline secrets rejected).",
     )
     .argument("[name]", "agent name (add/remove/update) OR skills source-dir (add-skill)")
     .option(
@@ -370,6 +371,18 @@ async function main(argv: string[]): Promise<void> {
       "--scope <kind>",
       "FR-155: explicit scope kind for add/add-skill: 'global' or 'project'. Used to CONVERT an existing entry. --scope global drops scope.paths; --scope project + --project P resets scope.paths to [realpath(P)].",
     )
+    .option("--command <bin>", "MCP launch command (add-mcp); REQUIRED for a new MCP")
+    .option("--arg <value>", "MCP launch arg (add-mcp; repeatable)", collect, [])
+    .option(
+      "--env <KEY=${VAR}>",
+      "MCP env var as an indirection ref (add-mcp; repeatable). VALUE must be a single ${VAR} reference — inline secrets are rejected.",
+      collect,
+      [],
+    )
+    .option(
+      "--startup-timeout-sec <n>",
+      "MCP startup timeout in seconds (add-mcp; Codex-only passthrough)",
+    )
     .action(
       async (
         action: string,
@@ -386,6 +399,10 @@ async function main(argv: string[]): Promise<void> {
           name?: string;
           project?: string;
           scope?: string;
+          command?: string;
+          arg?: string[];
+          env?: string[];
+          startupTimeoutSec?: string;
         },
       ): Promise<void> => {
         // Coalesce the deprecated --canonical alias into --from; emit a one-line
@@ -403,6 +420,10 @@ async function main(argv: string[]): Promise<void> {
           opts.from ??
           opts.canonical ??
           (isAddSkill ? name : undefined);
+        // FR-162: `add-mcp` keys on the MCP block NAME. Accept it via either
+        // `--name <slug>` (preferred, parallels add-skill) OR the positional
+        // `[name]` arg, so both forms work.
+        const isAddMcp = action === "add-mcp";
         // FR-155: --scope must be one of {"global","project"} — validate at
         // the CLI boundary so the verb layer can trust the type. Commander
         // accepts any string; we narrow here. An invalid value is a usage
@@ -420,9 +441,25 @@ async function main(argv: string[]): Promise<void> {
             return;
           }
         }
+        // FR-162: --startup-timeout-sec is a STRING from Commander. Validate the
+        // numeric parse at the CLI boundary (mirror the --scope check above) so
+        // RegistryOptions.startupTimeoutSec stays typed `number` and the verb
+        // can trust it. An invalid value is a usage error (exit 2).
+        let startupTimeoutSec: number | undefined;
+        if (opts.startupTimeoutSec !== undefined) {
+          const n = Number(opts.startupTimeoutSec);
+          if (!Number.isInteger(n)) {
+            process.stderr.write(
+              `registry: --startup-timeout-sec value '${opts.startupTimeoutSec}' must be an integer\n`,
+            );
+            process.exitCode = 2;
+            return;
+          }
+          startupTimeoutSec = n;
+        }
         const code = await runRegistry({
           action: action as RegistryAction,
-          name: isAddSkill ? (opts.name ?? name) : name,
+          name: isAddSkill || isAddMcp ? (opts.name ?? name) : name,
           from,
           versioned: opts.versioned === true,
           glob: opts.glob,
@@ -432,6 +469,10 @@ async function main(argv: string[]): Promise<void> {
           projectRoot: opts.projectRoot,
           project: opts.project,
           scope: scopeArg,
+          command: opts.command,
+          args: opts.arg,
+          env: opts.env,
+          startupTimeoutSec,
         });
         process.exitCode = code;
       },

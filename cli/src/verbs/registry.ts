@@ -77,6 +77,7 @@ import {
 export type RegistryAction =
   | "add"
   | "add-skill"
+  | "add-mcp"
   | "list"
   | "remove"
   | "update";
@@ -283,7 +284,7 @@ function normalizeSkillsBlocks(value: unknown): SkillsSurface[] {
  * justification, `origins.json` did not exist on disk before TD-191; the
  * first write under this brief establishes the keyspace shape.
  */
-function originKey(type: "agent" | "skill", name: string): string {
+function originKey(type: "agent" | "skill" | "mcp", name: string): string {
   return `${type}:${name}`;
 }
 
@@ -317,11 +318,28 @@ export interface GithubOrigin {
 }
 
 /**
+ * FR-162 (FR-160 epic) inline origin: provenance for an MCP server registered
+ * by inline command-ref (`add-mcp --command ... --arg ...`), NOT vendored from
+ * a source dir or git release. `command`/`args` mirror the canonical launch
+ * spec at registration time; `hash` is a content hash over (command, args) for
+ * future drift detection. `update --all` SKIPS this (no source to re-vendor) —
+ * the `mcp:` key is not in its `agent:`/`skill:` keyspace, so an InlineOrigin
+ * is inert to `update` by construction. FR-167 (`--from` bundle vendoring) will
+ * record GithubOrigin/PathOrigin for vendored MCPs instead.
+ */
+export interface InlineOrigin {
+  type: "inline";
+  command: string;
+  args: string[];
+  hash: string;
+}
+
+/**
  * The typed origin recorded per surface, stored OUTSIDE the harness manifest
  * (option (b)) in `origins.json`. A discriminated union over `type`; the
  * compiler never reads this file (only `igris registry update` does).
  */
-export type Origin = PathOrigin | GithubOrigin;
+export type Origin = PathOrigin | GithubOrigin | InlineOrigin;
 
 /** Map of surface name → its typed origin. The shape of `origins.json`. */
 export type OriginsMap = Record<string, Origin>;
@@ -369,6 +387,24 @@ export interface RegistryOptions {
    * for a new entry.
    */
   scope?: "global" | "project";
+  /**
+   * FR-162 add-mcp: MCP launch command. Required for a NEW block; optional on a
+   * same-name re-add (inherits the existing block's canonical command).
+   */
+  command?: string;
+  /** FR-162 add-mcp: MCP launch args (repeatable --arg → args[]). */
+  args?: string[];
+  /**
+   * FR-162 add-mcp: MCP env indirection refs as "KEY=${VAR}" strings
+   * (repeatable --env). Each VALUE must be a single ${VAR} reference — inline
+   * secrets are rejected at the verb boundary (FR-160 decision #1).
+   */
+  env?: string[];
+  /**
+   * FR-162 add-mcp: Codex-only startup-timeout passthrough (seconds). Parsed to
+   * a number at the CLI boundary so the verb can trust the type.
+   */
+  startupTimeoutSec?: number;
   /** Test seam: overlay path override (defaults to registryOverlayPath()). */
   overlayPath?: string;
   /** Test seam: origins.json path override (defaults to registryOriginsPath()). */
@@ -1008,6 +1044,34 @@ function readBaseSkillTargetPaths(projectRoot: string): Set<string> {
       }
     }
     return paths;
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * FR-162 (FR-160 epic): read the base manifest's CORE mcp_servers block NAMES.
+ * Parallels `readBaseAgentNames`, but unions `surfaces.mcp_servers[].name`. MCP
+ * identity is the block NAME (one server per name), so the core-collision guard
+ * rejects a personal MCP whose name shadows a core one. Absent/malformed base →
+ * empty set (the runtime merge guard only fires when both exist).
+ */
+function readBaseMcpNames(projectRoot: string): Set<string> {
+  const basePath = join(projectRoot, "harness-manifest.json");
+  if (!existsSync(basePath)) {
+    return new Set();
+  }
+  try {
+    const base = JSON.parse(readFileSync(basePath, "utf-8")) as {
+      surfaces?: { mcp_servers?: { name?: unknown }[] };
+    };
+    const names = new Set<string>();
+    for (const m of base.surfaces?.mcp_servers ?? []) {
+      if (typeof m?.name === "string") {
+        names.add(m.name);
+      }
+    }
+    return names;
   } catch {
     return new Set();
   }
@@ -3273,6 +3337,323 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
   return 0;
 }
 
+// ---------------------------------------------------------------------------
+// FR-162 (FR-160 epic): add-mcp helpers + verb
+// ---------------------------------------------------------------------------
+
+/**
+ * FR-162: parse one MCP `--target` spec. Grammar is `type:merge` or
+ * `type:merge:enabled` (enabled = "true"/"false"). DIFFERENT grammar from the
+ * agent `type:path` and skill `type:method:path` forms — the shared `--target`
+ * Commander flag is routed through this parser only when `action === add-mcp`
+ * (same overload pattern `add-skill` uses with `parseSkillTarget`). Returns the
+ * `McpTarget` or an error string for the verb to log + reject.
+ */
+function parseMcpTarget(spec: string): McpTarget | string {
+  const parts = spec.split(":");
+  if (parts.length < 2 || parts.length > 3) {
+    return `--target '${spec}' must be of the form type:merge[:enabled]`;
+  }
+  const [type, method, enabledRaw] = parts;
+  if (!(VALID_MCP_TARGET_TYPES as readonly string[]).includes(type)) {
+    return `--target type '${type}' is not one of ${JSON.stringify(VALID_MCP_TARGET_TYPES)}`;
+  }
+  if (!(VALID_MCP_METHODS as readonly string[]).includes(method)) {
+    return `--target method '${method}' is not one of ${JSON.stringify(VALID_MCP_METHODS)}`;
+  }
+  const t: McpTarget = { type: type as McpTargetType, method: method as McpMethod };
+  if (enabledRaw !== undefined) {
+    if (enabledRaw !== "true" && enabledRaw !== "false") {
+      return `--target '${spec}' enabled flag must be 'true' or 'false'`;
+    }
+    t.enabled = enabledRaw === "true";
+  }
+  return t;
+}
+
+/**
+ * FR-162: the env-var-indirection WRITE GUARD (FR-160 decision #1). Parses
+ * `KEY=VALUE` and REJECTS any VALUE that is not a single `${VAR}` reference —
+ * inline secrets never enter the registry or any config. The real secret is
+ * resolved from the environment by the harness at launch time; the overlay only
+ * stores the indirection ref.
+ */
+const ENV_VAR_REF = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
+function parseEnvPair(spec: string): { key: string; value: string } | string {
+  const eq = spec.indexOf("=");
+  if (eq <= 0) {
+    return `--env '${spec}' must be of the form KEY=\${VAR}`;
+  }
+  const key = spec.slice(0, eq);
+  const value = spec.slice(eq + 1);
+  if (!ENV_VAR_REF.test(value)) {
+    return (
+      `--env '${spec}': value '${value}' must be a single \${VAR} reference ` +
+      "(e.g. ${MY_TOKEN}), NOT an inline secret. MCP env values are stored as " +
+      "indirection refs; the real secret never enters the registry or any config."
+    );
+  }
+  return { key, value };
+}
+
+/**
+ * FR-162: locate the `mcp_servers` block matching `name`. Mirrors
+ * `findSkillBlockIndex`, but keys on `block.name` (the `McpServersSurface.name`
+ * field) NOT `basename(source)` — an inline MCP block has no `source`/vendor
+ * dir in this child. Returns the block index, or -1 if none matches.
+ */
+function findMcpBlockIndex(overlay: Overlay, name: string): number {
+  const blocks = overlay.surfaces?.mcp_servers;
+  if (!Array.isArray(blocks)) {
+    return -1;
+  }
+  for (let i = 0; i < blocks.length; i++) {
+    if (blocks[i]?.name === name) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * FR-162: content hash over an inline MCP launch spec, for the `InlineOrigin`'s
+ * `hash` field (future drift detection). Mirrors how `hashSkillTree` produces an
+ * origin hash. `createHash` is already imported at the top of the module.
+ */
+function hashInlineCommand(command: string, args: string[]): string {
+  return createHash("sha256")
+    .update(JSON.stringify({ command, args }))
+    .digest("hex");
+}
+
+/**
+ * FR-162 (FR-160 epic): `igris registry add-mcp` — register a GLOBAL MCP server
+ * into `surfaces.mcp_servers[]` of the personal overlay, recording an
+ * `InlineOrigin`. Modeled on `runAddSkill`'s guard chain; MCP identity is the
+ * block NAME (one server per name). v1 is GLOBAL-ONLY (project scope rejected).
+ *
+ * This verb writes ONLY the overlay (via `writeOverlayAtomic`) + the origin —
+ * it does NOT call `mergeJsonConfig` and NEVER touches a live harness config
+ * (that compile-time projection is FR-164). Every guard returns BEFORE the
+ * first disk write, so the overlay stays UNCHANGED on any reject.
+ *
+ * Returns an exit code: 0 = success, 1 = enforcement reject, 2 = usage error.
+ */
+function runAddMcp(opts: RegistryOptions, overlayPath: string): number {
+  // Guard 1 — name required + pattern.
+  if (opts.name === undefined || opts.name.length === 0) {
+    logError("registry add-mcp: <name> is required");
+    return 2;
+  }
+  if (!NAME_PATTERN.test(opts.name)) {
+    logError(
+      `registry add-mcp: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
+    );
+    return 2;
+  }
+  const name = opts.name;
+
+  // Guard 2 — at least one target.
+  if (opts.targets === undefined || opts.targets.length === 0) {
+    logError(
+      "registry add-mcp: at least one --target <type:merge[:enabled]> is required",
+    );
+    return 2;
+  }
+
+  // Guard 4 — v1 GLOBAL-ONLY scope reject (defers FR-160 decision #2). Runs
+  // BEFORE any disk read/write. `--scope global` is harmless (no-op); only
+  // `--scope project` / `--project` are rejected.
+  if (opts.scope === "project" || opts.project !== undefined) {
+    logError(
+      "registry add-mcp: MCP servers are global-only in v1; --scope project / " +
+        "--project are not supported. Omit them to register globally.",
+    );
+    return 2;
+  }
+
+  // Guard parse — targets (MCP grammar via parseMcpTarget).
+  const newTargets: McpTarget[] = [];
+  for (const spec of opts.targets) {
+    const parsed = parseMcpTarget(spec);
+    if (typeof parsed === "string") {
+      logError(`registry add-mcp: ${parsed}`);
+      return 2;
+    }
+    newTargets.push(parsed);
+  }
+
+  // Guard 5 — env-var-indirection WRITE GUARD (FR-160 decision #1), before any
+  // disk write. Each --env VALUE must be a single ${VAR} reference.
+  const envMap: Record<string, string> = {};
+  for (const spec of opts.env ?? []) {
+    const parsed = parseEnvPair(spec);
+    if (typeof parsed === "string") {
+      logError(`registry add-mcp: ${parsed}`);
+      return 2;
+    }
+    envMap[parsed.key] = parsed.value;
+  }
+
+  const projectRoot = opts.projectRoot ?? process.cwd();
+  const originsPath = opts.originsPath ?? registryOriginsPath();
+
+  // Read existing origins early so a same-name re-add can fall back to the
+  // recorded inline command/args when --command is omitted (defense-in-depth).
+  let origins: OriginsMap;
+  try {
+    origins = readOrigins(originsPath);
+  } catch (err) {
+    logError((err as Error).message);
+    return 1;
+  }
+  const mcpKey = originKey("mcp", name);
+  const recordedOrigin: Origin | undefined = origins[mcpKey];
+
+  // Read current overlay (unchanged on any reject below).
+  let overlay: Overlay;
+  try {
+    overlay = readOverlay(overlayPath);
+  } catch (err) {
+    logError((err as Error).message);
+    return 1;
+  }
+  const existingBlocks = overlay.surfaces?.mcp_servers ?? [];
+  const existingBlockIndex = findMcpBlockIndex(overlay, name);
+  const existingBlock: McpServersSurface | undefined =
+    existingBlockIndex >= 0 ? existingBlocks[existingBlockIndex] : undefined;
+
+  // Guard 3 — --command required for a NEW block; optional on a same-name
+  // re-add (inherit the existing canonical command). On re-add, prefer the
+  // recorded InlineOrigin's command/args as defense-in-depth, falling back to
+  // the existing block's canonical.
+  let command: string;
+  let args: string[];
+  if (opts.command !== undefined && opts.command.length > 0) {
+    command = opts.command;
+    args = opts.args ?? [];
+  } else if (existingBlock !== undefined) {
+    if (recordedOrigin !== undefined && recordedOrigin.type === "inline") {
+      command = recordedOrigin.command;
+      args = recordedOrigin.args;
+    } else {
+      command = existingBlock.canonical.command;
+      args = existingBlock.canonical.args ?? [];
+    }
+  } else {
+    logError(
+      `registry add-mcp: --command is required for a new MCP server '${name}' ` +
+        "(no existing block to inherit from)",
+    );
+    return 2;
+  }
+
+  // Core-collision reject — a personal MCP must not shadow a core one (the MCP
+  // analogue of the skill core-collision guard; MCP identity is the NAME). A
+  // same-name re-add of a PERSONAL block is fine (findMcpBlockIndex routes it
+  // to an in-place UPDATE) — only a base/core name collision is rejected.
+  const baseMcpNames = readBaseMcpNames(projectRoot);
+  if (baseMcpNames.has(name)) {
+    logError(
+      `registry add-mcp: MCP name '${name}' collides with a base (core) ` +
+        "mcp_servers block; a personal MCP must not shadow a core one. " +
+        "Overlay unchanged.",
+    );
+    return 1;
+  }
+
+  // Append-only union of targets keyed on `type`. A re-add with an existing
+  // `type` OVERWRITES that target (so `--target claude:merge:false` can flip
+  // `enabled` — strict skip-if-present would make `enabled` un-editable without
+  // a remove). New types are appended in order.
+  const existingOwnTargets: McpTarget[] = existingBlock?.targets ?? [];
+  const unionedTargets: McpTarget[] = existingOwnTargets.map((t) => ({ ...t }));
+  for (const t of newTargets) {
+    const idx = unionedTargets.findIndex((u) => u.type === t.type);
+    if (idx >= 0) {
+      unionedTargets[idx] = t;
+    } else {
+      unionedTargets.push(t);
+    }
+  }
+
+  // Build the block. No `scope` field — v1 is global-only and Guard 4 already
+  // rejected project scope; omitting `scope` makes the on-disk block match a
+  // global block.
+  const canonical: McpCanonical = { command, args };
+  if (Object.keys(envMap).length > 0) {
+    canonical.env = envMap;
+  }
+  if (opts.startupTimeoutSec !== undefined) {
+    canonical.startup_timeout_sec = opts.startupTimeoutSec;
+  }
+  const newBlock: McpServersSurface = {
+    name,
+    layer: "personal",
+    canonical,
+    targets: unionedTargets,
+  };
+
+  // Per-block validation (the array gate runs in validateOverlayShape below;
+  // this names the offender clearly).
+  const blockErr = validateMcpServersSurface(newBlock);
+  if (blockErr !== null) {
+    logError(`registry add-mcp: invalid mcp block: ${blockErr}`);
+    return 1;
+  }
+
+  // Splice the block into the overlay (in place at the existing index if
+  // same-name; appended otherwise).
+  const mergedBlocks =
+    existingBlockIndex >= 0
+      ? existingBlocks.map((b, i) => (i === existingBlockIndex ? newBlock : b))
+      : [...existingBlocks, newBlock];
+
+  const surfaces = { ...(overlay.surfaces ?? {}) };
+  surfaces.mcp_servers = mergedBlocks;
+  overlay.surfaces = surfaces;
+
+  // Validate the WHOLE overlay (defense-in-depth) before any side effect.
+  const overlayErr = validateOverlayShape(overlay);
+  if (overlayErr !== null) {
+    logError(`registry add-mcp: resulting overlay invalid: ${overlayErr}`);
+    return 1;
+  }
+
+  // All guards passed → atomic overlay write (the FIRST disk write — no vendor
+  // step; an inline command-ref has no source tree).
+  try {
+    writeOverlayAtomic(overlayPath, overlay);
+  } catch (err) {
+    logError(
+      `registry add-mcp: failed to write overlay: ${(err as Error).message}`,
+    );
+    return 1;
+  }
+
+  // Record/advance the inline origin (key = `mcp:<name>`).
+  try {
+    origins[mcpKey] = {
+      type: "inline",
+      command,
+      args,
+      hash: hashInlineCommand(command, args),
+    };
+    writeOriginsAtomic(originsPath, origins);
+  } catch (err) {
+    logError(
+      `registry add-mcp: failed to record origin: ${(err as Error).message}`,
+    );
+    return 1;
+  }
+
+  const verb = existingBlockIndex >= 0 ? "Re-registered" : "Registered";
+  info(
+    `${verb} personal MCP '${name}' (${unionedTargets.length} target(s)) in ${overlayPath}`,
+  );
+  return 0;
+}
+
 function runList(overlayPath: string): number {
   let overlay: Overlay;
   try {
@@ -3748,6 +4129,8 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runAdd(opts, overlayPath);
     case "add-skill":
       return runAddSkill(opts, overlayPath);
+    case "add-mcp":
+      return runAddMcp(opts, overlayPath);
     case "list":
       return runList(overlayPath);
     case "remove":
@@ -3756,7 +4139,7 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runUpdate(opts, overlayPath);
     default:
       logError(
-        `unknown registry action '${String(opts.action)}'. Valid: add, add-skill, list, remove, update.`,
+        `unknown registry action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, list, remove, update.`,
       );
       return 2;
   }

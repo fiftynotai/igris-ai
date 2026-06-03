@@ -19,7 +19,7 @@
  * the actual `compile_harnesses.sh` / `validate_manifest` — no mocked merge.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   existsSync,
   mkdirSync,
@@ -4619,5 +4619,367 @@ describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
     expect(text).not.toContain(fakeRepoDir);
     // Cleanup the fake repo dir we held alive.
     rmSync(fakeRepoDir, { recursive: true, force: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-162 (FR-160 epic): add-mcp verb.
+//
+// Unit tests use the explicit overlayPath / originsPath / projectRoot seams
+// against tmp files (no harness launch, no live config touched — projection
+// is FR-164). Each REJECT asserts the overlay file is UNCHANGED.
+// ---------------------------------------------------------------------------
+
+/** A complete add-mcp run with the common test seams wired. */
+function addMcpOpts(
+  extra: Record<string, unknown>,
+): Parameters<typeof runRegistry>[0] {
+  return {
+    action: "add-mcp",
+    projectRoot,
+    overlayPath,
+    originsPath,
+    ...extra,
+  } as Parameters<typeof runRegistry>[0];
+}
+
+describe("registry add-mcp — guard-chain rejects (overlay unchanged)", () => {
+  it("rejects a bad name (exit 2); overlay absent stays absent", async () => {
+    const code = await runRegistry(
+      addMcpOpts({
+        name: "Bad Name",
+        command: "node",
+        targets: ["claude:merge"],
+      }),
+    );
+    expect(code).toBe(2);
+    expect(existsSync(overlayPath)).toBe(false);
+  });
+
+  it("rejects a missing name (exit 2)", async () => {
+    const code = await runRegistry(
+      addMcpOpts({ command: "node", targets: ["claude:merge"] }),
+    );
+    expect(code).toBe(2);
+    expect(existsSync(overlayPath)).toBe(false);
+  });
+
+  it("rejects when no --target is given (exit 2)", async () => {
+    const code = await runRegistry(
+      addMcpOpts({ name: "brain-x", command: "node" }),
+    );
+    expect(code).toBe(2);
+    expect(existsSync(overlayPath)).toBe(false);
+  });
+
+  it("rejects a new block with no --command (exit 2)", async () => {
+    const code = await runRegistry(
+      addMcpOpts({ name: "brain-x", targets: ["claude:merge"] }),
+    );
+    expect(code).toBe(2);
+    expect(existsSync(overlayPath)).toBe(false);
+  });
+
+  it("rejects --scope project (exit 2, 'global-only in v1')", async () => {
+    const spy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const code = await runRegistry(
+      addMcpOpts({
+        name: "brain-x",
+        command: "node",
+        targets: ["claude:merge"],
+        scope: "project",
+      }),
+    );
+    expect(code).toBe(2);
+    expect(existsSync(overlayPath)).toBe(false);
+    const out = spy.mock.calls.map((c) => String(c[0])).join("");
+    expect(out).toContain("global-only in v1");
+    spy.mockRestore();
+  });
+
+  it("rejects --project (exit 2, 'global-only in v1')", async () => {
+    const spy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const code = await runRegistry(
+      addMcpOpts({
+        name: "brain-x",
+        command: "node",
+        targets: ["claude:merge"],
+        project: "/some/proj",
+      }),
+    );
+    expect(code).toBe(2);
+    expect(existsSync(overlayPath)).toBe(false);
+    const out = spy.mock.calls.map((c) => String(c[0])).join("");
+    expect(out).toContain("global-only in v1");
+    spy.mockRestore();
+  });
+
+  it("rejects an inline-secret --env (exit 2, must be a ${VAR} ref)", async () => {
+    const spy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const code = await runRegistry(
+      addMcpOpts({
+        name: "brain-x",
+        command: "node",
+        targets: ["claude:merge"],
+        env: ["TOKEN=sk-realsecret123"],
+      }),
+    );
+    expect(code).toBe(2);
+    expect(existsSync(overlayPath)).toBe(false);
+    const out = spy.mock.calls.map((c) => String(c[0])).join("");
+    expect(out).toContain("must be a single ${VAR} reference");
+    spy.mockRestore();
+  });
+
+  it("rejects a malformed --env (no '=') (exit 2)", async () => {
+    const code = await runRegistry(
+      addMcpOpts({
+        name: "brain-x",
+        command: "node",
+        targets: ["claude:merge"],
+        env: ["NOEQUALS"],
+      }),
+    );
+    expect(code).toBe(2);
+    expect(existsSync(overlayPath)).toBe(false);
+  });
+
+  it("rejects target grammar errors (exit 2)", async () => {
+    // Too few parts.
+    expect(
+      await runRegistry(
+        addMcpOpts({ name: "brain-x", command: "node", targets: ["claude"] }),
+      ),
+    ).toBe(2);
+    // Bad method.
+    expect(
+      await runRegistry(
+        addMcpOpts({
+          name: "brain-x",
+          command: "node",
+          targets: ["claude:symlink"],
+        }),
+      ),
+    ).toBe(2);
+    // Bad type.
+    expect(
+      await runRegistry(
+        addMcpOpts({
+          name: "brain-x",
+          command: "node",
+          targets: ["foo:merge"],
+        }),
+      ),
+    ).toBe(2);
+    // Bad enabled flag.
+    expect(
+      await runRegistry(
+        addMcpOpts({
+          name: "brain-x",
+          command: "node",
+          targets: ["claude:merge:maybe"],
+        }),
+      ),
+    ).toBe(2);
+    expect(existsSync(overlayPath)).toBe(false);
+  });
+
+  it("rejects a core-name collision (exit 1, 'collides with a base')", async () => {
+    writeFileSync(
+      join(projectRoot, "harness-manifest.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [],
+        surfaces: {
+          mcp_servers: [
+            {
+              name: "igris-brain",
+              canonical: { command: "node" },
+              targets: [{ type: "claude", method: "merge" }],
+            },
+          ],
+        },
+      }),
+    );
+    const spy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const code = await runRegistry(
+      addMcpOpts({
+        name: "igris-brain",
+        command: "node",
+        targets: ["claude:merge"],
+      }),
+    );
+    expect(code).toBe(1);
+    expect(existsSync(overlayPath)).toBe(false);
+    const out = spy.mock.calls.map((c) => String(c[0])).join("");
+    expect(out).toContain("collides with a base");
+    spy.mockRestore();
+  });
+});
+
+describe("registry add-mcp — happy path + origin record", () => {
+  it("writes a well-formed block + an inline origin (exit 0)", async () => {
+    const code = await runRegistry(
+      addMcpOpts({
+        name: "brain-test",
+        command: "node",
+        args: ["/x/index.js"],
+        targets: ["claude:merge", "gemini:merge"],
+      }),
+    );
+    expect(code).toBe(0);
+
+    const overlay = readOverlayFile();
+    const surfaces = overlay.surfaces as Record<string, unknown>;
+    const blocks = surfaces.mcp_servers as Record<string, unknown>[];
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toEqual({
+      name: "brain-test",
+      layer: "personal",
+      canonical: { command: "node", args: ["/x/index.js"] },
+      targets: [
+        { type: "claude", method: "merge" },
+        { type: "gemini", method: "merge" },
+      ],
+    });
+
+    const origins = JSON.parse(readFileSync(originsPath, "utf-8")) as Record<
+      string,
+      { type: string; command: string; args: string[]; hash: string }
+    >;
+    const origin = origins["mcp:brain-test"];
+    expect(origin.type).toBe("inline");
+    expect(origin.command).toBe("node");
+    expect(origin.args).toEqual(["/x/index.js"]);
+    expect(origin.hash).toMatch(/^[0-9a-f]{64}$/);
+    // No `scope` field on the on-disk block (v1 global-only).
+    expect("scope" in blocks[0]).toBe(false);
+  });
+
+  it("accepts a valid ${VAR} env ref (regression guard against false-reject)", async () => {
+    const code = await runRegistry(
+      addMcpOpts({
+        name: "brain-env",
+        command: "node",
+        args: ["/x/index.js"],
+        targets: ["claude:merge"],
+        env: ["TOKEN=${MY_TOKEN}"],
+      }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile();
+    const surfaces = overlay.surfaces as Record<string, unknown>;
+    const blocks = surfaces.mcp_servers as Record<string, unknown>[];
+    const canonical = blocks[0].canonical as Record<string, unknown>;
+    expect(canonical.env).toEqual({ TOKEN: "${MY_TOKEN}" });
+  });
+
+  it("parses an enabled target flag (opencode:merge:true)", async () => {
+    const code = await runRegistry(
+      addMcpOpts({
+        name: "brain-en",
+        command: "node",
+        targets: ["opencode:merge:true"],
+      }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile();
+    const surfaces = overlay.surfaces as Record<string, unknown>;
+    const blocks = surfaces.mcp_servers as Record<string, unknown>[];
+    const targets = blocks[0].targets as Record<string, unknown>[];
+    expect(targets[0]).toEqual({
+      type: "opencode",
+      method: "merge",
+      enabled: true,
+    });
+  });
+
+  it("threads a startup-timeout-sec into canonical", async () => {
+    const code = await runRegistry(
+      addMcpOpts({
+        name: "brain-to",
+        command: "node",
+        targets: ["codex:merge"],
+        startupTimeoutSec: 30,
+      }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile();
+    const surfaces = overlay.surfaces as Record<string, unknown>;
+    const blocks = surfaces.mcp_servers as Record<string, unknown>[];
+    const canonical = blocks[0].canonical as Record<string, unknown>;
+    expect(canonical.startup_timeout_sec).toBe(30);
+  });
+});
+
+describe("registry add-mcp — same-name re-add union", () => {
+  it("unions a new target type + inherits command/args (in-place, exit 0)", async () => {
+    // First registration: claude + gemini.
+    expect(
+      await runRegistry(
+        addMcpOpts({
+          name: "brain-test",
+          command: "node",
+          args: ["/x/index.js"],
+          targets: ["claude:merge", "gemini:merge"],
+        }),
+      ),
+    ).toBe(0);
+
+    // Re-add with a NEW codex target + enabled:false, NO --command (inherited).
+    const code = await runRegistry(
+      addMcpOpts({
+        name: "brain-test",
+        targets: ["codex:merge:false"],
+      }),
+    );
+    expect(code).toBe(0);
+
+    const overlay = readOverlayFile();
+    const surfaces = overlay.surfaces as Record<string, unknown>;
+    const blocks = surfaces.mcp_servers as Record<string, unknown>[];
+    // Still a SINGLE block (in-place update, not duplicated).
+    expect(blocks).toHaveLength(1);
+    const canonical = blocks[0].canonical as Record<string, unknown>;
+    // command/args inherited.
+    expect(canonical.command).toBe("node");
+    expect(canonical.args).toEqual(["/x/index.js"]);
+    // 3 targets now (claude + gemini + codex).
+    const targets = blocks[0].targets as Record<string, unknown>[];
+    expect(targets).toHaveLength(3);
+    expect(targets[2]).toEqual({
+      type: "codex",
+      method: "merge",
+      enabled: false,
+    });
+  });
+
+  it("overwrites an existing target's enabled flag on re-add (same type)", async () => {
+    expect(
+      await runRegistry(
+        addMcpOpts({
+          name: "brain-test",
+          command: "node",
+          targets: ["claude:merge:true"],
+        }),
+      ),
+    ).toBe(0);
+    // Re-add the SAME type with enabled:false → overwrite in place.
+    expect(
+      await runRegistry(
+        addMcpOpts({ name: "brain-test", targets: ["claude:merge:false"] }),
+      ),
+    ).toBe(0);
+
+    const overlay = readOverlayFile();
+    const surfaces = overlay.surfaces as Record<string, unknown>;
+    const blocks = surfaces.mcp_servers as Record<string, unknown>[];
+    const targets = blocks[0].targets as Record<string, unknown>[];
+    expect(targets).toHaveLength(1);
+    expect(targets[0]).toEqual({
+      type: "claude",
+      method: "merge",
+      enabled: false,
+    });
   });
 });

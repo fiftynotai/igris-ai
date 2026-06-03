@@ -164,3 +164,41 @@ export function bundledMcpEntryPath(): string {
   const here = dirname(fileURLToPath(import.meta.url)); // cli/dist/lib or cli/src/lib
   return join(here, "..", "..", "dist", "brain-mcp-server", "dist", "index.js");
 }
+
+/**
+ * FR-162 (FR-160 epic): absolute path to Gemini's settings file:
+ * `~/.gemini/settings.json` (carries the `mcpServers` map). Staged here for
+ * FR-164's compile-time MCP projection; `add-mcp` itself writes only the
+ * overlay, never a live harness config.
+ */
+export function geminiSettingsPath(): string {
+  return join(homedir(), ".gemini", "settings.json");
+}
+
+/**
+ * FR-162: absolute path to Codex's config: `~/.codex/config.toml` (carries
+ * `[mcp_servers.*]` tables). Staged for FR-164; unused by `add-mcp`.
+ */
+export function codexConfigTomlPath(): string {
+  return join(homedir(), ".codex", "config.toml");
+}
+
+/**
+ * FR-162: absolute path to OpenCode's config: `~/.config/opencode/opencode.json`
+ * (carries the `mcp` map). Staged for FR-164; unused by `add-mcp`.
+ */
+export function opencodeConfigPath(): string {
+  return join(homedir(), ".config", "opencode", "opencode.json");
+}
+
+/**
+ * FR-162: absolute path to the vendored-bundle dir for a registry MCP server:
+ * `~/.igris/registry/mcp_servers/<name>/`. Declared now for FR-167 (`--from`
+ * bundle vendoring) parity with `registrySkillDirPath`; FR-162 (inline
+ * command-ref) does NOT vendor, so this is unused by `runAddMcp` but reserved
+ * under the L-517 typed-subfolder layout. Honors IGRIS_BRAIN_DIR via
+ * `registryDirPath()` (same env-sandbox seam as `registrySkillDirPath`).
+ */
+export function registryMcpDirPath(name: string): string {
+  return join(registryDirPath(), "mcp_servers", name);
+}

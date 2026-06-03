@@ -24,6 +24,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  mergeJsonConfig,
   registerMcpInClaudeJson,
   inspectMcpRegistration,
   __testing__,
@@ -341,5 +342,206 @@ describe("inspectMcpRegistration", () => {
     writeFileSync(claudeJson, "{ broken json");
     const res = inspectMcpRegistration({ claudeJsonPath: claudeJson });
     expect(res.registered).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-162: mergeJsonConfig — the generalized 6-step JSON-merge core.
+//
+// Exercised directly with a GENERIC mapKey ("mcp", like OpenCode) + an
+// arbitrary entryKey to prove the generalization holds. The existing
+// registerMcpInClaudeJson suite above (which now delegates to mergeJsonConfig
+// with mapKey:"mcpServers", entryKey:"igris-brain", backup:true) proves the
+// extraction is behavior-preserving for the Claude wrapper.
+// ---------------------------------------------------------------------------
+
+/** A target config FILE inside the tmp dir (generic, NOT ~/.claude.json). */
+let cfgPath: string;
+const ENTRY_KEY = "my-server";
+const SAMPLE_ENTRY: Record<string, unknown> = {
+  type: "stdio",
+  command: "node",
+  args: ["/x/index.js"],
+};
+
+beforeEach(() => {
+  cfgPath = join(workDir, "opencode.json");
+});
+
+describe("mergeJsonConfig — fresh file", () => {
+  it("creates the file with the entry under mapKey when the target is absent", () => {
+    expect(existsSync(cfgPath)).toBe(false);
+    const res = mergeJsonConfig({
+      targetPath: cfgPath,
+      mapKey: "mcp",
+      entryKey: ENTRY_KEY,
+      entry: SAMPLE_ENTRY,
+    });
+    expect(res.outcome).toBe("registered");
+    expect(res.claudeJsonPath).toBe(cfgPath);
+    expect(existsSync(cfgPath)).toBe(true);
+
+    const data = readJson(cfgPath);
+    const map = data.mcp as Record<string, unknown>;
+    expect(map[ENTRY_KEY]).toEqual(SAMPLE_ENTRY);
+  });
+});
+
+describe("mergeJsonConfig — idempotent", () => {
+  it("a second identical merge returns 'unchanged' and does not rewrite", () => {
+    mergeJsonConfig({
+      targetPath: cfgPath,
+      mapKey: "mcp",
+      entryKey: ENTRY_KEY,
+      entry: SAMPLE_ENTRY,
+    });
+    const bytesAfterFirst = readFileSync(cfgPath);
+    const mtimeFirst = statSync(cfgPath).mtimeMs;
+
+    const res = mergeJsonConfig({
+      targetPath: cfgPath,
+      mapKey: "mcp",
+      entryKey: ENTRY_KEY,
+      // Same content, different key ORDER — still deep-equal → unchanged.
+      entry: { args: ["/x/index.js"], command: "node", type: "stdio" },
+    });
+    expect(res.outcome).toBe("unchanged");
+    expect(readFileSync(cfgPath).equals(bytesAfterFirst)).toBe(true);
+    expect(statSync(cfgPath).mtimeMs).toBe(mtimeFirst);
+  });
+});
+
+describe("mergeJsonConfig — preserve / no-clobber", () => {
+  it("upserts only the target entry; sibling entries + top-level keys byte-preserved", () => {
+    const before = {
+      version: 9,
+      somethingElse: { a: 1 },
+      mcp: {
+        "other-server": { command: "python", args: ["/srv.py"] },
+      },
+    };
+    writeFileSync(cfgPath, JSON.stringify(before, null, 2) + "\n");
+
+    const res = mergeJsonConfig({
+      targetPath: cfgPath,
+      mapKey: "mcp",
+      entryKey: ENTRY_KEY,
+      entry: SAMPLE_ENTRY,
+    });
+    expect(res.outcome).toBe("registered");
+
+    const data = readJson(cfgPath);
+    expect(data.version).toBe(9);
+    expect(data.somethingElse).toEqual({ a: 1 });
+    const map = data.mcp as Record<string, unknown>;
+    // Sibling entry untouched.
+    expect(map["other-server"]).toEqual({
+      command: "python",
+      args: ["/srv.py"],
+    });
+    // New entry upserted.
+    expect(map[ENTRY_KEY]).toEqual(SAMPLE_ENTRY);
+  });
+});
+
+describe("mergeJsonConfig — malformed never clobbered", () => {
+  it("returns 'failed' on malformed JSON; file bytes UNCHANGED, no .tmp/.bak litter", () => {
+    writeFileSync(cfgPath, "{ not valid json,,,");
+    const bytesBefore = readFileSync(cfgPath);
+
+    const res = mergeJsonConfig({
+      targetPath: cfgPath,
+      mapKey: "mcp",
+      entryKey: ENTRY_KEY,
+      entry: SAMPLE_ENTRY,
+    });
+    expect(res.outcome).toBe("failed");
+    expect(res.error).toMatch(/malformed/);
+    // File untouched.
+    expect(readFileSync(cfgPath).equals(bytesBefore)).toBe(true);
+    // No litter next to the file.
+    const litter = readdirSync(workDir).filter(
+      (f) => f.includes(".tmp.") || f.endsWith(BACKUP_SUFFIX),
+    );
+    expect(litter).toEqual([]);
+  });
+});
+
+describe("mergeJsonConfig — non-object mapKey", () => {
+  it("returns 'failed' when the mapKey value is not an object; file untouched", () => {
+    const before = { mcp: "not-an-object" };
+    writeFileSync(cfgPath, JSON.stringify(before) + "\n");
+    const bytesBefore = readFileSync(cfgPath);
+
+    const res = mergeJsonConfig({
+      targetPath: cfgPath,
+      mapKey: "mcp",
+      entryKey: ENTRY_KEY,
+      entry: SAMPLE_ENTRY,
+    });
+    expect(res.outcome).toBe("failed");
+    expect(res.error).toMatch(/non-object 'mcp'/);
+    expect(readFileSync(cfgPath).equals(bytesBefore)).toBe(true);
+  });
+});
+
+describe("mergeJsonConfig — single rolling backup + backup gate", () => {
+  it("backs up the pre-existing file once; backup bytes equal the pre-write content", () => {
+    const before = { mcp: {} };
+    writeFileSync(cfgPath, JSON.stringify(before) + "\n");
+    const bytesBefore = readFileSync(cfgPath);
+
+    mergeJsonConfig({
+      targetPath: cfgPath,
+      mapKey: "mcp",
+      entryKey: ENTRY_KEY,
+      entry: SAMPLE_ENTRY,
+    });
+    const bakPath = `${cfgPath}${BACKUP_SUFFIX}`;
+    expect(existsSync(bakPath)).toBe(true);
+    expect(readFileSync(bakPath).equals(bytesBefore)).toBe(true);
+
+    // Second merge of a different entry overwrites the single rolling backup.
+    mergeJsonConfig({
+      targetPath: cfgPath,
+      mapKey: "mcp",
+      entryKey: ENTRY_KEY,
+      entry: { type: "stdio", command: "node", args: ["/y/index.js"] },
+    });
+    const baks = readdirSync(workDir).filter((f) =>
+      f.endsWith(BACKUP_SUFFIX),
+    );
+    expect(baks.length).toBe(1);
+  });
+
+  it("backup:false writes NO .bak file", () => {
+    writeFileSync(cfgPath, JSON.stringify({ mcp: {} }) + "\n");
+    mergeJsonConfig({
+      targetPath: cfgPath,
+      mapKey: "mcp",
+      entryKey: ENTRY_KEY,
+      entry: SAMPLE_ENTRY,
+      backup: false,
+    });
+    const bakPath = `${cfgPath}${BACKUP_SUFFIX}`;
+    expect(existsSync(bakPath)).toBe(false);
+  });
+});
+
+describe("mergeJsonConfig — update existing entry", () => {
+  it("returns 'updated' when the entry exists with different content", () => {
+    writeFileSync(
+      cfgPath,
+      JSON.stringify({ mcp: { [ENTRY_KEY]: { command: "old" } } }) + "\n",
+    );
+    const res = mergeJsonConfig({
+      targetPath: cfgPath,
+      mapKey: "mcp",
+      entryKey: ENTRY_KEY,
+      entry: SAMPLE_ENTRY,
+    });
+    expect(res.outcome).toBe("updated");
+    const map = readJson(cfgPath).mcp as Record<string, unknown>;
+    expect(map[ENTRY_KEY]).toEqual(SAMPLE_ENTRY);
   });
 });
