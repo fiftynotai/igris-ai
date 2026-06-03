@@ -38,6 +38,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import * as TOML from "@iarna/toml"; // FR-163: PARSE-ONLY (idempotency + malformed gate); never re-emit.
 import { bundledMcpEntryPath, claudeJsonPath } from "./paths.js";
 
 /** The fixed key under `mcpServers` that Igris owns. */
@@ -106,6 +107,53 @@ function entryDeepEquals(a: unknown, b: unknown): boolean {
     return ka.every((k) => entryDeepEquals(a[k], b[k]));
   }
   return false;
+}
+
+/**
+ * FR-163 parse-verify guard helper (Warden review): true when `original` and
+ * `candidate` are structurally identical EXCEPT for the target table
+ * `<tablePrefix>.<entryKey>` (which the splice is allowed to add/replace). We
+ * shallow-clone both parsed roots, delete the target entry from each `tablePrefix`
+ * map (dropping the `tablePrefix` map entirely when it becomes empty so an
+ * original with no `mcp_servers` and a candidate with only the new entry compare
+ * equal), then deep-equal the remainders. Any collateral change to a sibling
+ * table, a top-level key, or a comment-bearing structural element trips this.
+ */
+function othersUnchanged(
+  original: Record<string, unknown>,
+  candidate: Record<string, unknown>,
+  tablePrefix: string,
+  entryKey: string,
+): boolean {
+  const strip = (root: Record<string, unknown>): Record<string, unknown> => {
+    const clone: Record<string, unknown> = { ...root };
+    const prefixMap = clone[tablePrefix];
+    if (isPlainObject(prefixMap)) {
+      const mapClone: Record<string, unknown> = { ...prefixMap };
+      delete mapClone[entryKey];
+      if (Object.keys(mapClone).length === 0) {
+        delete clone[tablePrefix];
+      } else {
+        clone[tablePrefix] = mapClone;
+      }
+    }
+    return clone;
+  };
+  return entryDeepEquals(strip(original), strip(candidate));
+}
+
+/**
+ * Detect whether CRLF (`\r\n`) is the DOMINANT line ending of `text` (m1 fix).
+ * Returns true only when CRLF endings strictly outnumber bare-LF endings, so a
+ * pure-LF file (the common case) and an empty file both stay on `\n`. Used to
+ * keep the splice from introducing mixed endings on a Windows-authored file.
+ */
+function dominantLineEndingIsCrlf(text: string): boolean {
+  const crlf = (text.match(/\r\n/g) ?? []).length;
+  if (crlf === 0) return false;
+  const totalLf = (text.match(/\n/g) ?? []).length;
+  const bareLf = totalLf - crlf; // LF not preceded by CR
+  return crlf > bareLf;
 }
 
 /**
@@ -256,6 +304,440 @@ export function mergeJsonConfig(opts: {
   };
 }
 
+/** The desired shape of a Codex `[mcp_servers.<name>]` entry. */
+export interface TomlMcpEntry {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  startup_timeout_sec?: number;
+}
+
+/** A located table span, as a half-open `[start, end)` LINE index range. */
+interface TomlTableSpan {
+  /** Line index of the `[mcp_servers.<name>]` header (inclusive). */
+  start: number;
+  /** Line index ONE PAST the table's last line (exclusive). */
+  end: number;
+}
+
+/**
+ * Escape a TOML bare-string regex segment. Server names are
+ * `^[a-z0-9][a-z0-9-]*$` per the FR-160a schema (bare is the normal case)
+ * but we escape defensively in case a future caller passes a dotted/quoted key.
+ */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Advance the multiline-string tracking state for ONE source line (M2 fix).
+ *
+ * TOML basic/literal multiline strings are delimited by `"""` and `'''`. A
+ * line may OPEN a region (an odd number of unmatched delimiters appears) or
+ * CLOSE one, and a `"""..."""` that opens AND closes on the same line is a
+ * net no-op. We count delimiter occurrences per line and toggle: while
+ * `inMultiline` is set we are between an opening delimiter and its match, so
+ * any `[`-at-column-0 line in that window is string CONTENT, never a header.
+ *
+ * This is a deliberately small scanner — it does not attempt full TOML
+ * tokenization (escapes, inline comments, quoted keys with embedded triple
+ * quotes). That over-approximation is SAFE here because the parse-verify
+ * post-condition guard (the load-bearing net) catches any residual
+ * mislocation and converts it to a `failed` rather than a corrupting write.
+ *
+ * @param line          The current source line (a trailing `\r` is stripped
+ *                       internally so CRLF and LF files behave identically).
+ * @param inMultiline   The currently-open delimiter, or null when outside.
+ * @returns The delimiter still open AFTER this line, or null.
+ */
+function updateMultilineState(
+  line: string,
+  inMultiline: '"""' | "'''" | null,
+): '"""' | "'''" | null {
+  // Strip a trailing CR so CRLF files behave identically to LF files.
+  const l = line.endsWith("\r") ? line.slice(0, -1) : line;
+  if (inMultiline !== null) {
+    // Inside a region: count CLOSING delimiters; each pair (close+reopen) is
+    // a no-op, an odd count closes the region.
+    const closes = countOccurrences(l, inMultiline);
+    if (closes % 2 === 1) return null;
+    return inMultiline;
+  }
+  // Outside: count both delimiter kinds. An odd count of either OPENS a region
+  // of that kind. (A line opening BOTH is malformed TOML and would have been
+  // rejected by the parse gate; we treat the first odd one as the opener.)
+  const dq = countOccurrences(l, '"""');
+  const sq = countOccurrences(l, "'''");
+  if (dq % 2 === 1) return '"""';
+  if (sq % 2 === 1) return "'''";
+  return null;
+}
+
+/** Count non-overlapping occurrences of `needle` in `s`. */
+function countOccurrences(s: string, needle: string): number {
+  if (needle.length === 0) return 0;
+  let count = 0;
+  let idx = s.indexOf(needle);
+  while (idx !== -1) {
+    count++;
+    idx = s.indexOf(needle, idx + needle.length);
+  }
+  return count;
+}
+
+/**
+ * Locate the byte span (as a half-open line range) of the
+ * `[<tablePrefix>.<entryKey>]` table inside `lines`, INCLUDING any
+ * descendant headers (`[<tablePrefix>.<entryKey>.env]`, etc.). Returns
+ * `null` when the table is absent (caller appends a fresh block at EOF).
+ *
+ * Relies on the TOML column-0-header invariant (FR-163 §1): a table header
+ * is always the first non-whitespace token on its line, while multi-line
+ * array VALUES are indented continuation lines whose close is `]`, never a
+ * `[` at column 0 — so a `^\s*\[` scan cannot mistake an array-close for a
+ * header. The malformed-safe parse gate runs FIRST so genuinely broken files
+ * never reach here.
+ */
+function locateTomlTableSpan(
+  lines: string[],
+  tablePrefix: string,
+  entryKey: string,
+): TomlTableSpan | null {
+  const prefix = `${tablePrefix}.${entryKey}`;
+  // Header line for the exact target table: `[mcp_servers.<name>]`,
+  // tolerating the optional surrounding whitespace TOML allows AND an optional
+  // trailing `#` comment (M1 fix — Warden FR-163 review: a header carrying a
+  // legal trailing comment like `[mcp_servers.igris-brain] # pinned` was
+  // previously rejected by the `$`-anchored regex, falling through to the
+  // EOF-append path and writing a DUPLICATE table). `anyHeaderRe` /
+  // `isDescendantHeader` already tolerate trailing content — only the target
+  // header match was asymmetric. The dotted key segment may be bare OR quoted.
+  // (m2: bare keys only in scope — names are `^[a-z0-9][a-z0-9-]*$` per the
+  // FR-161 schema — but we keep the quoted alternation defensively.)
+  const keyForm = `(?:${escapeRegex(prefix)}|["']${escapeRegex(prefix)}["'])`;
+  const headerRe = new RegExp(`^\\s*\\[\\s*${keyForm}\\s*\\](?:\\s*#.*)?\\s*$`);
+  // Any column-0 table header (`[table]` or `[[array]]`).
+  const anyHeaderRe = /^\s*\[/;
+
+  // M2 fix (Warden FR-163 review): track multiline-string regions while
+  // scanning so a `[`-at-column-0 line INSIDE a basic/literal multiline string
+  // (`"""..."""` / `'''...'''`) is NOT mistaken for a table header. Such a line
+  // is VALID TOML — the malformed-parse gate passes it — but it would mislocate
+  // the splice span and corrupt the user's real bytes. `inMultiline` holds the
+  // open delimiter (`"""` or `'''`) while inside a region, else null.
+  let start = -1;
+  let inMultiline: '"""' | "'''" | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (inMultiline === null) {
+      // Only count a header match when NOT inside a multiline string.
+      if (headerRe.test(line)) {
+        start = i;
+        break;
+      }
+    }
+    inMultiline = updateMultilineState(line, inMultiline);
+  }
+  if (start === -1) return null;
+
+  // Extend the span across consecutive headers whose dotted path is a
+  // DESCENDANT of `<tablePrefix>.<entryKey>.` (the detached `.env` sub-table
+  // case); STOP at the first header that is NOT a descendant. The same
+  // multiline-string tracking applies — a fake `[...]` inside a string value of
+  // the target table (or a following sibling) must NOT be treated as a boundary.
+  let end = lines.length;
+  inMultiline = null;
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (inMultiline === null) {
+      if (anyHeaderRe.test(line) && !isDescendantHeader(line, prefix)) {
+        end = i;
+        break;
+      }
+    }
+    inMultiline = updateMultilineState(line, inMultiline);
+  }
+  return { start, end };
+}
+
+/**
+ * True when `line` is a column-0 table header whose dotted path starts with
+ * `<prefix>.` (a descendant sub-table such as `[mcp_servers.<name>.env]`).
+ * A non-descendant sibling/unrelated header (`[mcp_servers.other]`,
+ * `[marketplaces.x]`, `[[array]]`, quoted-key tables) returns false.
+ */
+function isDescendantHeader(line: string, prefix: string): boolean {
+  const descRe = new RegExp(
+    `^\\s*\\[\\s*(?:${escapeRegex(prefix)}\\.|["']${escapeRegex(prefix)}\\.)`,
+  );
+  return descRe.test(line);
+}
+
+/**
+ * Render the canonical text for a single `[<tablePrefix>.<entryKey>]` table
+ * (+ a detached `[<tablePrefix>.<entryKey>.env]` sub-table when env is
+ * present). This is the ONLY text the splice ever produces — a tiny, fully
+ * controlled emitter, NOT a whole-file `TOML.stringify`. String values are
+ * escaped via `JSON.stringify` (TOML basic-string escaping is JSON-compatible
+ * for the ASCII paths/`${VAR}` refs in scope here).
+ */
+function renderMcpTomlTable(
+  tablePrefix: string,
+  entryKey: string,
+  entry: TomlMcpEntry,
+): string {
+  const head = `${tablePrefix}.${entryKey}`;
+  const lines: string[] = [`[${head}]`];
+  lines.push(`command = ${JSON.stringify(entry.command)}`);
+  const args = entry.args ?? [];
+  lines.push(`args = [${args.map((a) => JSON.stringify(a)).join(", ")}]`);
+  if (entry.startup_timeout_sec !== undefined) {
+    lines.push(`startup_timeout_sec = ${entry.startup_timeout_sec}`);
+  }
+  const env = entry.env;
+  if (env && Object.keys(env).length > 0) {
+    lines.push("");
+    lines.push(`[${head}.env]`);
+    for (const k of Object.keys(env)) {
+      lines.push(`${k} = ${JSON.stringify(env[k])}`);
+    }
+  }
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * FR-163 (FR-160 epic): the TOML sibling of `mergeJsonConfig`. Upserts a
+ * single `[<tablePrefix>.<entryKey>]` table (+ a
+ * `[<tablePrefix>.<entryKey>.env]` sub-table when `entry.env` is present) in a
+ * TOML config FILE, via a TABLE-SCOPED STRING SPLICE that leaves every other
+ * byte of the file — comments, sibling tables, top-level keys, key ordering —
+ * physically untouched. `@iarna/toml` is used PARSE-ONLY (for the malformed-
+ * safe gate + the structural idempotency compare); the file is NEVER re-emitted
+ * wholesale.
+ *
+ * Reuses the `McpRegisterResult` outcome union VERBATIM (no new union). For
+ * this generic TOML call the `claudeJsonPath` result field carries
+ * `targetPath` and `mcpEntryPath` is `""`.
+ *
+ * Contract (identical 6 steps to `mergeJsonConfig`):
+ *   1. malformed TOML → 'failed', never write/backup/leave-tmp;
+ *   2. all other tables/keys preserved byte-for-byte (splice, not re-emit);
+ *   3. structural deep-equal existing → 'unchanged' (NOT byte-equal — key
+ *      order and formatting may differ);
+ *   4. single rolling `<path>.igris.bak` + atomic `.tmp.<pid>.<ts>` +
+ *      `renameSync`;
+ *   5. non-table `<tablePrefix>` OR non-table `<tablePrefix>[entryKey]` →
+ *      'failed';
+ *   6. never throws.
+ *
+ * @param opts.targetPath   The TOML config FILE to upsert into (`~/.codex/config.toml`).
+ * @param opts.tablePrefix  The table family (`"mcp_servers"`).
+ * @param opts.entryKey     The server name to upsert (e.g. `"igris-brain"`).
+ * @param opts.entry        The Codex entry SHAPE (command/args/env/timeout).
+ * @param opts.backup       Single rolling `<path>.igris.bak`. Defaults to true.
+ * @param opts.__renderOverride  TEST-ONLY seam (FR-163 guard tests). When set,
+ *   supplies the rendered replacement text instead of `renderMcpTomlTable`,
+ *   letting a test inject a deliberately mislocated/divergent splice candidate
+ *   to PROVE the parse-verify post-condition guard returns `failed` (not a
+ *   corrupting write). Never set in production call sites.
+ */
+export function mergeTomlConfig(opts: {
+  targetPath: string;
+  tablePrefix: string;
+  entryKey: string;
+  entry: TomlMcpEntry;
+  backup?: boolean;
+  __renderOverride?: (
+    tablePrefix: string,
+    entryKey: string,
+    entry: TomlMcpEntry,
+  ) => string;
+}): McpRegisterResult {
+  const { targetPath, tablePrefix, entryKey, entry } = opts;
+  const backup = opts.backup ?? true;
+  const render = opts.__renderOverride ?? renderMcpTomlTable;
+
+  const fail = (error: string): McpRegisterResult => ({
+    outcome: "failed",
+    claudeJsonPath: targetPath,
+    mcpEntryPath: "",
+    error,
+  });
+
+  // --- 1. Read ---------------------------------------------------------
+  const fileExisted = existsSync(targetPath);
+  let rawBytes: Buffer | null = null;
+  if (fileExisted) {
+    try {
+      rawBytes = readFileSync(targetPath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return fail(`could not read ${targetPath}: ${msg}`);
+    }
+  }
+  const existingText = rawBytes === null ? "" : rawBytes.toString("utf-8");
+
+  // --- 2. Parse for the malformed-safe gate (do NOT clobber) -----------
+  // PARSE-ONLY: used for malformed-detection + the idempotency compare. The
+  // file is NEVER re-emitted from this parsed root.
+  let parsed: TOML.JsonMap;
+  if (rawBytes === null) {
+    parsed = {};
+  } else {
+    try {
+      parsed = TOML.parse(existingText);
+    } catch {
+      return fail(
+        `malformed ${targetPath} — refusing to write; fix or remove the file manually`,
+      );
+    }
+  }
+
+  // --- 3. Refuse-to-write on a non-table conflict ----------------------
+  const existingPrefix = parsed[tablePrefix];
+  if (existingPrefix !== undefined && !isPlainObject(existingPrefix)) {
+    return fail(
+      `${targetPath} has a non-table '${tablePrefix}' — refusing to write; fix or remove the file manually`,
+    );
+  }
+  const existingTable = isPlainObject(existingPrefix)
+    ? existingPrefix[entryKey]
+    : undefined;
+  const keyExisted = existingTable !== undefined;
+  if (keyExisted && !isPlainObject(existingTable)) {
+    return fail(
+      `${targetPath} has a non-table '${tablePrefix}.${entryKey}' — refusing to write; fix or remove the file manually`,
+    );
+  }
+
+  // --- 4. Idempotency — structural deep-equal (NOT byte-equal) ---------
+  // Compare the existing parsed table against a parse of the would-be-new
+  // entry text, so key-order/formatting differences never force a rewrite.
+  const replacement = render(tablePrefix, entryKey, entry);
+  let desiredTable: unknown;
+  try {
+    const desiredParsed = TOML.parse(replacement);
+    const desiredPrefix = desiredParsed[tablePrefix];
+    desiredTable = isPlainObject(desiredPrefix)
+      ? desiredPrefix[entryKey]
+      : undefined;
+  } catch {
+    // Our own emitter produced unparseable TOML — should never happen; treat
+    // defensively as a write failure rather than a silent no-op.
+    return fail(`internal error: rendered TOML for '${entryKey}' did not parse`);
+  }
+  if (keyExisted && entryDeepEquals(existingTable, desiredTable)) {
+    return {
+      outcome: "unchanged",
+      claudeJsonPath: targetPath,
+      mcpEntryPath: "",
+    };
+  }
+
+  // --- 5. Splice the target table's text span (never re-emit) ----------
+  // m1 fix (Warden FR-163 review): preserve the file's DOMINANT line ending.
+  // `split("\n")`/`join("\n")` would normalize only the replaced region and
+  // leave a CRLF file with mixed endings. We detect whether CRLF dominates and
+  // splice on that delimiter so untouched lines keep their original bytes and
+  // the rendered region matches. (@iarna parses mixed endings either way — this
+  // is correctness/cleanliness, not a parse fix.)
+  const useCrlf = dominantLineEndingIsCrlf(existingText);
+  const eol = useCrlf ? "\r\n" : "\n";
+  let serialized: string;
+  if (rawBytes === null || existingText.length === 0) {
+    // Fresh / empty file — the rendered table(s) are the whole content.
+    serialized = replacement;
+  } else {
+    // Split on the detected EOL so each element is a clean line (no trailing
+    // `\r` when CRLF). The rendered `replacement` uses `\n`; re-join everything
+    // with the detected `eol` so the spliced output is uniform.
+    const lines = existingText.split(eol);
+    const span = locateTomlTableSpan(lines, tablePrefix, entryKey);
+    if (span === null) {
+      // Table absent — append a fresh block at EOF, separated by a blank
+      // line, leaving the entire existing file untouched above it. Re-join on
+      // the detected EOL to preserve CRLF on a Windows file.
+      const trimmedEnd = existingText.replace(/(\r?\n)+$/, "");
+      const replacementLines = replacement.replace(/\n$/, "").split("\n");
+      serialized = [...trimmedEnd.split(eol), "", ...replacementLines].join(eol);
+    } else {
+      // Replace ONLY the located span; before/after are untouched lines.
+      const before = lines.slice(0, span.start);
+      const after = lines.slice(span.end);
+      // `replacement` ends in a trailing "\n"; split it so the join keeps
+      // surrounding lines aligned without doubling the newline.
+      const replacementLines = replacement.replace(/\n$/, "").split("\n");
+      serialized = [...before, ...replacementLines, ...after].join(eol);
+    }
+  }
+
+  // --- 5b. PARSE-VERIFY POST-CONDITION GUARD (the load-bearing safety net) --
+  // Warden FR-163 review (M1/M2): the splice can mislocate the target span on
+  // shapes the malformed-parse gate cannot catch (well-formed TOML with a fake
+  // `[...]` header inside a multiline string, a commented target header, or any
+  // future unanticipated shape). The M1/M2 targeted fixes above make the COMMON
+  // shapes WORK; this guard makes the no-clobber promise actually TRUE for the
+  // rest — it converts EVERY residual span-mislocation into a safe `failed`
+  // instead of writing corrupt bytes over the user's hot config.
+  //
+  // We re-parse the candidate string (still PARSE-ONLY — no TOML.stringify) and
+  // assert: (a) it parses; (b) the target entry deep-equals what we intended;
+  // (c) every OTHER top-level key/table is structurally unchanged vs the
+  // ORIGINAL parsed file. On ANY mismatch → `fail(...)`, NO write.
+  let candidateParsed: TOML.JsonMap;
+  try {
+    candidateParsed = TOML.parse(serialized);
+  } catch {
+    return fail(
+      `splice verification failed (candidate did not parse) — refusing to write to avoid corrupting ${targetPath}`,
+    );
+  }
+  // (b) the target entry must deep-equal the intended table.
+  const candidatePrefix = candidateParsed[tablePrefix];
+  const candidateTable = isPlainObject(candidatePrefix)
+    ? candidatePrefix[entryKey]
+    : undefined;
+  if (!entryDeepEquals(candidateTable, desiredTable)) {
+    return fail(
+      `splice verification failed (target table mismatch) — refusing to write to avoid corrupting ${targetPath}`,
+    );
+  }
+  // (c) every OTHER top-level key/table unchanged vs the original parse.
+  // Compare the two parsed objects with the target entry removed from BOTH.
+  if (!othersUnchanged(parsed, candidateParsed, tablePrefix, entryKey)) {
+    return fail(
+      `splice verification failed (collateral change to other tables) — refusing to write to avoid corrupting ${targetPath}`,
+    );
+  }
+
+  // --- 6. Backup-then-atomic-write -------------------------------------
+  const tmpPath = `${targetPath}.tmp.${process.pid}.${Date.now()}`;
+  try {
+    if (backup && fileExisted && rawBytes !== null) {
+      // Single rolling backup — overwrite any prior `.igris.bak`.
+      writeFileSync(`${targetPath}${BACKUP_SUFFIX}`, rawBytes);
+    }
+    writeFileSync(tmpPath, serialized);
+    renameSync(tmpPath, targetPath);
+  } catch (err) {
+    if (existsSync(tmpPath)) {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        /* ignore — cleanup is best-effort */
+      }
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    return fail(`could not write ${targetPath}: ${msg}`);
+  }
+
+  return {
+    outcome: keyExisted ? "updated" : "registered",
+    claudeJsonPath: targetPath,
+    mcpEntryPath: "",
+  };
+}
+
 /**
  * Upsert the `igris-brain` entry in `~/.claude.json`, pointing at the
  * bundled MCP. Idempotent. NEVER throws — returns `outcome: 'failed'` with
@@ -348,5 +830,11 @@ export function inspectMcpRegistration(opts?: {
   };
 }
 
-/** Internal constants exposed for the unit-test suite. */
-export const __testing__ = { MCP_KEY, BACKUP_SUFFIX };
+/** Internal constants + helpers exposed for the unit-test suite. */
+export const __testing__ = {
+  MCP_KEY,
+  BACKUP_SUFFIX,
+  // FR-163: span-boundary edge cases (the splice's central risk) tested in isolation.
+  locateTomlTableSpan,
+  renderMcpTomlTable,
+};

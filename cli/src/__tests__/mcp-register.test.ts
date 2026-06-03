@@ -23,15 +23,18 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as TOML from "@iarna/toml";
 import {
   mergeJsonConfig,
+  mergeTomlConfig,
   registerMcpInClaudeJson,
   inspectMcpRegistration,
   __testing__,
 } from "../lib/mcp-register.js";
 import { bundledMcpEntryPath } from "../lib/paths.js";
 
-const { MCP_KEY, BACKUP_SUFFIX } = __testing__;
+const { MCP_KEY, BACKUP_SUFFIX, locateTomlTableSpan, renderMcpTomlTable } =
+  __testing__;
 
 let workDir: string;
 /** Sandboxed `~/.claude.json` path inside the tmp dir. */
@@ -543,5 +546,788 @@ describe("mergeJsonConfig — update existing entry", () => {
     expect(res.outcome).toBe("updated");
     const map = readJson(cfgPath).mcp as Record<string, unknown>;
     expect(map[ENTRY_KEY]).toEqual(SAMPLE_ENTRY);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-163: mergeTomlConfig — the TOML sibling of mergeJsonConfig.
+//
+// Table-scoped STRING-REGION SPLICE (NOT parse-and-re-emit). @iarna/toml is
+// used PARSE-ONLY (malformed gate + structural idempotency compare). The
+// defining guarantee — comments + sibling tables + key ordering survive
+// byte-for-byte — is asserted in the "sibling preservation" test below; a
+// lib-based re-emit (fallback B) would FAIL it. Same real-fs-no-mock idiom
+// as the FR-162 suite above.
+// ---------------------------------------------------------------------------
+
+/** A target config FILE inside the tmp dir (generic, NOT ~/.codex/config.toml). */
+let tomlPath: string;
+
+beforeEach(() => {
+  tomlPath = join(workDir, "config.toml");
+});
+
+/**
+ * Fixture mirroring the SHAPE of the real ~/.codex/config.toml (sanitized
+ * values): top-level model/notify (notify carries an escaped-JSON string),
+ * two [marketplaces.*], an [mcp_servers.igris-brain] with `args` BEFORE
+ * `command` (non-canonical key order), an [mcp_servers.mobile-mcp] with a
+ * MULTI-LINE `args` array, an [mcp_servers.node_repl] + detached
+ * [mcp_servers.node_repl.env] sub-table, inline `#` comments, and a tail
+ * [features] table.
+ */
+const CODEX_FIXTURE = `# Codex config — hand-edited, comments must survive
+model = "gpt-5"
+model_reasoning_effort = "high"
+notify = ["[\\"\\\\/Users\\\\/me\\\\/.igris\\\\/hook\\"]"]
+
+[marketplaces.openai-bundled]
+last_updated = "2026-01-01"
+source_type = "git"
+source = "https://example.com/a.git"
+
+[marketplaces.claude-plugins-official]
+last_updated = "2026-02-02"
+source_type = "git"
+source = "https://example.com/b.git"
+
+[mcp_servers.igris-brain]
+args = ["/repo/brain-mcp-server/dist/index.js"]
+command = "node"
+
+[mcp_servers.mobile-mcp]
+command = "npx"
+args = [
+  "-y",
+  "@mobile/mcp",
+  "--port",
+  "9000",
+]
+
+# node_repl is the detached-.env proof fixture
+[mcp_servers.node_repl]
+command = "node"
+args = []
+startup_timeout_sec = 120
+
+[mcp_servers.node_repl.env]
+NODE_ENV = "production"
+LOG_LEVEL = "debug"
+
+[features]
+js_repl = false
+`;
+
+describe("mergeTomlConfig — fresh / missing file", () => {
+  it("creates the file with ONLY the rendered table when target is absent", () => {
+    expect(existsSync(tomlPath)).toBe(false);
+    const res = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "igris-brain",
+      entry: { command: "node", args: ["/abs/index.js"] },
+    });
+    expect(res.outcome).toBe("registered");
+    expect(res.claudeJsonPath).toBe(tomlPath);
+    expect(res.mcpEntryPath).toBe("");
+    expect(existsSync(tomlPath)).toBe(true);
+
+    const parsed = TOML.parse(readFileSync(tomlPath, "utf-8"));
+    const servers = parsed.mcp_servers as Record<string, unknown>;
+    const entry = servers["igris-brain"] as Record<string, unknown>;
+    expect(entry.command).toBe("node");
+    expect(entry.args).toEqual(["/abs/index.js"]);
+    // Fresh file is ONLY the rendered table — no foreign content.
+    expect(Object.keys(parsed)).toEqual(["mcp_servers"]);
+  });
+});
+
+describe("mergeTomlConfig — sibling + comment preservation (headline AC)", () => {
+  it("preserves siblings, top-level keys, comments, and the multi-line array verbatim", () => {
+    writeFileSync(tomlPath, CODEX_FIXTURE);
+
+    const res = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "my-server", // NEW server — does not touch the existing ones
+      entry: { command: "node", args: ["/new/server.js"] },
+    });
+    expect(res.outcome).toBe("registered");
+
+    const out = readFileSync(tomlPath, "utf-8");
+
+    // 1. Comments survive BYTE-FOR-BYTE (the splice's defining guarantee — a
+    //    parse-and-re-emit impl would drop these and FAIL this assertion).
+    expect(out).toContain(
+      "# Codex config — hand-edited, comments must survive",
+    );
+    expect(out).toContain("# node_repl is the detached-.env proof fixture");
+
+    // 2. The multi-line mobile-mcp array survives verbatim (proves the
+    //    ^\s*\[ header scan does not mistake the indented array-close for a
+    //    header and split the file mid-array).
+    expect(out).toContain(
+      'args = [\n  "-y",\n  "@mobile/mcp",\n  "--port",\n  "9000",\n]',
+    );
+
+    // 3. The escaped-JSON notify string survives verbatim.
+    expect(out).toContain(
+      'notify = ["[\\"\\\\/Users\\\\/me\\\\/.igris\\\\/hook\\"]"]',
+    );
+
+    // 4. Structural intactness of everything else (re-parse).
+    const parsed = TOML.parse(out);
+    expect(parsed.model).toBe("gpt-5");
+    expect(parsed.model_reasoning_effort).toBe("high");
+    const marketplaces = parsed.marketplaces as Record<string, unknown>;
+    expect(marketplaces["openai-bundled"]).toBeDefined();
+    expect(marketplaces["claude-plugins-official"]).toBeDefined();
+    const servers = parsed.mcp_servers as Record<string, unknown>;
+    // Existing siblings intact.
+    expect(servers["igris-brain"]).toBeDefined();
+    expect(servers["mobile-mcp"]).toBeDefined();
+    expect(servers["node_repl"]).toBeDefined();
+    expect(
+      (servers["node_repl"] as Record<string, unknown>).env,
+    ).toEqual({ NODE_ENV: "production", LOG_LEVEL: "debug" });
+    // The new server upserted.
+    expect((servers["my-server"] as Record<string, unknown>).args).toEqual([
+      "/new/server.js",
+    ]);
+    // Tail table intact.
+    expect((parsed.features as Record<string, unknown>).js_repl).toBe(false);
+  });
+});
+
+describe("mergeTomlConfig — upsert existing table (span boundary)", () => {
+  it("replaces the target table and leaves the FOLLOWING table untouched", () => {
+    writeFileSync(tomlPath, CODEX_FIXTURE);
+
+    const res = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "igris-brain", // EXISTS — repoint its args
+      entry: { command: "node", args: ["/bundled/index.js"] },
+    });
+    expect(res.outcome).toBe("updated");
+
+    const parsed = TOML.parse(readFileSync(tomlPath, "utf-8"));
+    const servers = parsed.mcp_servers as Record<string, unknown>;
+    // Target repointed.
+    expect((servers["igris-brain"] as Record<string, unknown>).args).toEqual([
+      "/bundled/index.js",
+    ]);
+    // The table that FOLLOWS igris-brain (mobile-mcp) is untouched — proves
+    // the span boundary stops at the next non-descendant header.
+    expect((servers["mobile-mcp"] as Record<string, unknown>).args).toEqual([
+      "-y",
+      "@mobile/mcp",
+      "--port",
+      "9000",
+    ]);
+    // The multi-line mobile-mcp array text still survives verbatim.
+    expect(readFileSync(tomlPath, "utf-8")).toContain(
+      'args = [\n  "-y",\n  "@mobile/mcp",\n  "--port",\n  "9000",\n]',
+    );
+  });
+});
+
+describe("mergeTomlConfig — .env sub-table emission", () => {
+  it("emits a [mcp_servers.<name>.env] block when entry.env is present", () => {
+    writeFileSync(tomlPath, CODEX_FIXTURE);
+    const res = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "with-env",
+      entry: {
+        command: "node",
+        args: ["/srv.js"],
+        env: { API_KEY: "${IGRIS_API_KEY}" },
+      },
+    });
+    expect(res.outcome).toBe("registered");
+
+    const out = readFileSync(tomlPath, "utf-8");
+    expect(out).toContain("[mcp_servers.with-env.env]");
+    expect(out).toContain('API_KEY = "${IGRIS_API_KEY}"');
+
+    const parsed = TOML.parse(out);
+    const servers = parsed.mcp_servers as Record<string, unknown>;
+    const env = (servers["with-env"] as Record<string, unknown>).env as Record<
+      string,
+      unknown
+    >;
+    expect(env.API_KEY).toBe("${IGRIS_API_KEY}");
+  });
+
+  it("does NOT emit an .env block when env is absent or empty", () => {
+    writeFileSync(tomlPath, CODEX_FIXTURE);
+    mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "no-env",
+      entry: { command: "node", args: ["/srv.js"], env: {} },
+    });
+    const out = readFileSync(tomlPath, "utf-8");
+    expect(out).not.toContain("[mcp_servers.no-env.env]");
+  });
+});
+
+describe("mergeTomlConfig — .env sub-table span on update", () => {
+  it("replaces an existing detached .env sub-table without duplicating it", () => {
+    writeFileSync(tomlPath, CODEX_FIXTURE);
+    // node_repl already HAS a detached [mcp_servers.node_repl.env] block.
+    const res = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "node_repl",
+      entry: {
+        command: "node",
+        args: ["/new.js"],
+        env: { ONLY_KEY: "value" },
+      },
+    });
+    expect(res.outcome).toBe("updated");
+
+    const out = readFileSync(tomlPath, "utf-8");
+    // The OLD env keys are gone, the new one present, and the env header is
+    // NOT duplicated (proves the dotted-prefix continuation rule replaced the
+    // whole [parent + .env] span).
+    expect(out).not.toContain("NODE_ENV");
+    expect(out).not.toContain("LOG_LEVEL");
+    expect(out).toContain("ONLY_KEY");
+    const envHeaderCount = (
+      out.match(/\[mcp_servers\.node_repl\.env\]/g) ?? []
+    ).length;
+    expect(envHeaderCount).toBe(1);
+
+    // The NEXT non-descendant table (features) is untouched.
+    const parsed = TOML.parse(out);
+    expect((parsed.features as Record<string, unknown>).js_repl).toBe(false);
+    expect(
+      (
+        (parsed.mcp_servers as Record<string, unknown>)[
+          "node_repl"
+        ] as Record<string, unknown>
+      ).env,
+    ).toEqual({ ONLY_KEY: "value" });
+  });
+});
+
+describe("mergeTomlConfig — idempotent (structural, not byte)", () => {
+  it("a second identical merge returns 'unchanged'; bytes + mtime unchanged; no .bak", () => {
+    // Seed with a known entry first.
+    mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "igris-brain",
+      entry: { command: "node", args: ["/x/index.js"] },
+    });
+    const bytesAfterFirst = readFileSync(tomlPath);
+    const mtimeFirst = statSync(tomlPath).mtimeMs;
+    // Remove any backup from the first write so we can assert the no-op
+    // leaves nothing behind.
+    const bakPath = `${tomlPath}${BACKUP_SUFFIX}`;
+    if (existsSync(bakPath)) rmSync(bakPath);
+
+    // Second merge — same content, but the entry object's key order differs.
+    const res = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "igris-brain",
+      entry: { args: ["/x/index.js"], command: "node" },
+    });
+    expect(res.outcome).toBe("unchanged");
+    expect(readFileSync(tomlPath).equals(bytesAfterFirst)).toBe(true);
+    expect(statSync(tomlPath).mtimeMs).toBe(mtimeFirst);
+    // No backup written on the no-op.
+    expect(existsSync(bakPath)).toBe(false);
+  });
+});
+
+describe("mergeTomlConfig — malformed never clobbered", () => {
+  it("returns 'failed' on malformed TOML; bytes UNCHANGED; no .tmp/.bak litter", () => {
+    const broken = "[mcp_servers.x]\nbroken = = =\n";
+    writeFileSync(tomlPath, broken);
+    const bytesBefore = readFileSync(tomlPath);
+
+    const res = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "igris-brain",
+      entry: { command: "node", args: ["/x.js"] },
+    });
+    expect(res.outcome).toBe("failed");
+    expect(res.error).toMatch(/malformed/);
+    // File untouched.
+    expect(readFileSync(tomlPath).equals(bytesBefore)).toBe(true);
+    // No litter next to the file.
+    const litter = readdirSync(workDir).filter(
+      (f) => f.includes("config.toml.tmp.") || f.endsWith(BACKUP_SUFFIX),
+    );
+    expect(litter).toEqual([]);
+  });
+});
+
+describe("mergeTomlConfig — non-table conflict", () => {
+  it("returns 'failed' when mcp_servers is a non-table scalar; file untouched", () => {
+    const before = 'model = "x"\nmcp_servers = 1\n';
+    writeFileSync(tomlPath, before);
+    const bytesBefore = readFileSync(tomlPath);
+
+    const res = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "igris-brain",
+      entry: { command: "node", args: ["/x.js"] },
+    });
+    expect(res.outcome).toBe("failed");
+    expect(res.error).toMatch(/non-table 'mcp_servers'/);
+    expect(readFileSync(tomlPath).equals(bytesBefore)).toBe(true);
+  });
+});
+
+describe("mergeTomlConfig — single rolling backup + backup gate", () => {
+  it("backs up the pre-existing file once; backup bytes equal the pre-write content", () => {
+    writeFileSync(tomlPath, CODEX_FIXTURE);
+    const bytesBefore = readFileSync(tomlPath);
+
+    mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "first-add",
+      entry: { command: "node", args: ["/one.js"] },
+    });
+    const bakPath = `${tomlPath}${BACKUP_SUFFIX}`;
+    expect(existsSync(bakPath)).toBe(true);
+    expect(readFileSync(bakPath).equals(bytesBefore)).toBe(true);
+
+    // A second differing merge overwrites the SINGLE rolling backup.
+    mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "second-add",
+      entry: { command: "node", args: ["/two.js"] },
+    });
+    const baks = readdirSync(workDir).filter((f) => f.endsWith(BACKUP_SUFFIX));
+    expect(baks.length).toBe(1);
+  });
+
+  it("backup:false writes NO .bak file", () => {
+    writeFileSync(tomlPath, CODEX_FIXTURE);
+    mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "no-bak",
+      entry: { command: "node", args: ["/x.js"] },
+      backup: false,
+    });
+    expect(existsSync(`${tomlPath}${BACKUP_SUFFIX}`)).toBe(false);
+  });
+});
+
+describe("mergeTomlConfig — startup_timeout_sec passthrough", () => {
+  it("emits startup_timeout_sec only when present", () => {
+    mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "with-timeout",
+      entry: { command: "node", args: ["/x.js"], startup_timeout_sec: 120 },
+    });
+    const out = readFileSync(tomlPath, "utf-8");
+    expect(out).toContain("startup_timeout_sec = 120");
+    const parsed = TOML.parse(out);
+    expect(
+      (
+        (parsed.mcp_servers as Record<string, unknown>)[
+          "with-timeout"
+        ] as Record<string, unknown>
+      ).startup_timeout_sec,
+    ).toBe(120);
+  });
+});
+
+describe("__testing__.locateTomlTableSpan — span boundaries", () => {
+  it("spans exactly the header through the line before the next sibling header", () => {
+    const lines = CODEX_FIXTURE.split("\n");
+    const span = locateTomlTableSpan(lines, "mcp_servers", "igris-brain");
+    expect(span).not.toBeNull();
+    if (!span) return;
+    // Start line IS the [mcp_servers.igris-brain] header.
+    expect(lines[span.start].trim()).toBe("[mcp_servers.igris-brain]");
+    // End (exclusive) is the next non-descendant header — [mcp_servers.mobile-mcp].
+    expect(lines[span.end].trim()).toBe("[mcp_servers.mobile-mcp]");
+  });
+
+  it("includes the detached .env sub-table and stops at the next non-descendant", () => {
+    const lines = CODEX_FIXTURE.split("\n");
+    const span = locateTomlTableSpan(lines, "mcp_servers", "node_repl");
+    expect(span).not.toBeNull();
+    if (!span) return;
+    expect(lines[span.start].trim()).toBe("[mcp_servers.node_repl]");
+    // The span must INCLUDE the detached [mcp_servers.node_repl.env] header.
+    const spannedText = lines.slice(span.start, span.end).join("\n");
+    expect(spannedText).toContain("[mcp_servers.node_repl.env]");
+    expect(spannedText).toContain("NODE_ENV");
+    // And STOP at the following non-descendant table ([features]).
+    expect(lines[span.end].trim()).toBe("[features]");
+  });
+
+  it("returns null when the table is absent", () => {
+    const lines = CODEX_FIXTURE.split("\n");
+    expect(locateTomlTableSpan(lines, "mcp_servers", "does-not-exist")).toBeNull();
+  });
+});
+
+describe("__testing__.renderMcpTomlTable — emitter shape", () => {
+  it("renders command + args; empty args as []", () => {
+    const out = renderMcpTomlTable("mcp_servers", "srv", {
+      command: "node",
+      args: [],
+    });
+    expect(out).toContain("[mcp_servers.srv]");
+    expect(out).toContain('command = "node"');
+    expect(out).toContain("args = []");
+    expect(out).not.toContain(".env]");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-163 retry (Warden review): the two corrupting-on-legal-TOML defects + the
+// load-bearing parse-verify post-condition guard.
+//
+//  M1 — same-line comment on the target header → was duplicate-table append.
+//  M2 — `[`-at-column-0 line INSIDE a multiline string → was splice mislocation.
+//  Guard — any residual mislocation must become a SAFE `failed`, not a write.
+// ---------------------------------------------------------------------------
+
+describe("mergeTomlConfig — M1: commented target header (no duplicate table)", () => {
+  it("UPDATES a table whose header carries a trailing # comment, in place", () => {
+    const fixture = `model = "gpt-5"
+
+[mcp_servers.igris-brain] # pinned — do not remove
+args = ["/old/index.js"]
+command = "node"
+
+[features]
+js_repl = false
+`;
+    writeFileSync(tomlPath, fixture);
+
+    const res = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "igris-brain",
+      entry: { command: "node", args: ["/new/index.js"] },
+    });
+    expect(res.outcome).toBe("updated");
+
+    const out = readFileSync(tomlPath, "utf-8");
+    // Exactly ONE igris-brain header — no duplicate appended at EOF.
+    const headerCount = (
+      out.match(/^\s*\[mcp_servers\.igris-brain\]/gm) ?? []
+    ).length;
+    expect(headerCount).toBe(1);
+
+    // Result still parses (duplicate-table would make @iarna throw on re-read).
+    const parsed = TOML.parse(out);
+    const servers = parsed.mcp_servers as Record<string, unknown>;
+    expect((servers["igris-brain"] as Record<string, unknown>).args).toEqual([
+      "/new/index.js",
+    ]);
+    // The tail [features] table is untouched.
+    expect((parsed.features as Record<string, unknown>).js_repl).toBe(false);
+  });
+
+  it("is idempotent on a commented-header table (re-run → unchanged)", () => {
+    const fixture = `[mcp_servers.igris-brain] # pinned
+command = "node"
+args = ["/x/index.js"]
+`;
+    writeFileSync(tomlPath, fixture);
+
+    const first = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "igris-brain",
+      entry: { command: "node", args: ["/x/index.js"] },
+    });
+    // Already structurally equal → no rewrite at all.
+    expect(first.outcome).toBe("unchanged");
+
+    const second = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "igris-brain",
+      entry: { command: "node", args: ["/x/index.js"] },
+    });
+    expect(second.outcome).toBe("unchanged");
+    // Still exactly one header.
+    const headerCount = (
+      readFileSync(tomlPath, "utf-8").match(
+        /^\s*\[mcp_servers\.igris-brain\]/gm,
+      ) ?? []
+    ).length;
+    expect(headerCount).toBe(1);
+  });
+});
+
+describe("mergeTomlConfig — M2: bracket-line inside a multiline string", () => {
+  it("updates only the REAL igris-brain table; the multiline string survives byte-for-byte", () => {
+    // A sibling table whose `note` value is a multiline string CONTAINING a
+    // line that LOOKS like the target header. This is VALID TOML — the
+    // malformed gate passes it — but a naive line scan would match the FAKE
+    // header inside the string and mislocate the splice.
+    const fixture = `[mcp_servers.other]
+command = "python"
+note = """
+[mcp_servers.igris-brain]
+this is just text, not a real header
+"""
+
+[mcp_servers.igris-brain]
+command = "node"
+args = ["/old/index.js"]
+
+[features]
+js_repl = true
+`;
+    writeFileSync(tomlPath, fixture);
+
+    const res = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "igris-brain",
+      entry: { command: "node", args: ["/new/index.js"] },
+    });
+    expect(res.outcome).toBe("updated");
+
+    const out = readFileSync(tomlPath, "utf-8");
+    // The multiline string block survives verbatim.
+    expect(out).toContain(
+      'note = """\n[mcp_servers.igris-brain]\nthis is just text, not a real header\n"""',
+    );
+    // Result parses; the REAL igris-brain table was repointed; `other.note`
+    // string content preserved exactly.
+    const parsed = TOML.parse(out);
+    const servers = parsed.mcp_servers as Record<string, unknown>;
+    expect((servers["igris-brain"] as Record<string, unknown>).args).toEqual([
+      "/new/index.js",
+    ]);
+    const other = servers["other"] as Record<string, unknown>;
+    expect(other.note).toBe(
+      "[mcp_servers.igris-brain]\nthis is just text, not a real header\n",
+    );
+    expect((parsed.features as Record<string, unknown>).js_repl).toBe(true);
+  });
+
+  it("variant: the bracket-bearing multiline string is in the TARGET table's own value", () => {
+    // The fake header sits INSIDE the target table's own multiline value,
+    // BEFORE the real next sibling. The end-scan must not treat it as a span
+    // boundary (which would cut the table mid-string).
+    const fixture = `[mcp_servers.igris-brain]
+command = "node"
+args = ["/old/index.js"]
+note = """
+some prose
+[features]
+more prose
+"""
+
+[features]
+js_repl = false
+`;
+    writeFileSync(tomlPath, fixture);
+
+    const res = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "igris-brain",
+      entry: { command: "node", args: ["/new/index.js"] },
+    });
+    expect(res.outcome).toBe("updated");
+
+    const out = readFileSync(tomlPath, "utf-8");
+    const parsed = TOML.parse(out);
+    const servers = parsed.mcp_servers as Record<string, unknown>;
+    // The whole igris-brain table (including its multiline note) was replaced
+    // by the rendered table — the note is gone, args repointed — and crucially
+    // the REAL [features] table after the string is intact (not clobbered by a
+    // mid-string cut).
+    expect((servers["igris-brain"] as Record<string, unknown>).args).toEqual([
+      "/new/index.js",
+    ]);
+    expect((parsed.features as Record<string, unknown>).js_repl).toBe(false);
+    // The string's fake [features] line did not survive as a real table value.
+    expect(servers["igris-brain"]).not.toHaveProperty("note");
+  });
+});
+
+describe("mergeTomlConfig — [[array-of-tables]] boundary", () => {
+  it("treats a following [[array]] header as a span boundary (does not absorb it)", () => {
+    const fixture = `[mcp_servers.igris-brain]
+command = "node"
+args = ["/old/index.js"]
+
+[[servers]]
+name = "alpha"
+
+[[servers]]
+name = "beta"
+`;
+    writeFileSync(tomlPath, fixture);
+
+    const res = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "igris-brain",
+      entry: { command: "node", args: ["/new/index.js"] },
+    });
+    expect(res.outcome).toBe("updated");
+
+    const out = readFileSync(tomlPath, "utf-8");
+    const parsed = TOML.parse(out);
+    const servers = parsed.mcp_servers as Record<string, unknown>;
+    expect((servers["igris-brain"] as Record<string, unknown>).args).toEqual([
+      "/new/index.js",
+    ]);
+    // The array-of-tables is intact — both elements survive.
+    const arr = parsed.servers as Array<Record<string, unknown>>;
+    expect(arr).toHaveLength(2);
+    expect(arr[0].name).toBe("alpha");
+    expect(arr[1].name).toBe("beta");
+  });
+});
+
+describe("mergeTomlConfig — CRLF file is not corrupted", () => {
+  it("preserves CRLF line endings on a Windows-authored file and stays parseable", () => {
+    const fixture =
+      [
+        'model = "gpt-5"',
+        "",
+        "[mcp_servers.igris-brain]",
+        'command = "node"',
+        'args = ["/old/index.js"]',
+        "",
+        "[features]",
+        "js_repl = false",
+        "",
+      ].join("\r\n");
+    writeFileSync(tomlPath, fixture);
+
+    const res = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "igris-brain",
+      entry: { command: "node", args: ["/new/index.js"] },
+    });
+    expect(res.outcome).toBe("updated");
+
+    const out = readFileSync(tomlPath, "utf-8");
+    // Result parses cleanly.
+    const parsed = TOML.parse(out);
+    const servers = parsed.mcp_servers as Record<string, unknown>;
+    expect((servers["igris-brain"] as Record<string, unknown>).args).toEqual([
+      "/new/index.js",
+    ]);
+    expect((parsed.features as Record<string, unknown>).js_repl).toBe(false);
+    // No bare-LF lines introduced: every \n is part of a \r\n pair.
+    const bareLf = out.split("").filter((c, i) => c === "\n" && out[i - 1] !== "\r");
+    expect(bareLf).toHaveLength(0);
+  });
+});
+
+describe("mergeTomlConfig — parse-verify guard returns 'failed' on mislocation", () => {
+  it("an unparseable rendered table → SAFE 'failed', file UNCHANGED (no corrupting write)", () => {
+    // Belt-and-suspenders: any render that produces unparseable TOML is rejected
+    // BEFORE the write — caught at the step-4 emitter parse OR the step-5b
+    // post-splice guard, both of which return 'failed' and leave the file
+    // byte-for-byte intact. (Span mislocations that produce VALID-but-wrong TOML
+    // are exercised by the (c) cases below — that is the guard's primary job.)
+    const fixture = `[mcp_servers.igris-brain]
+command = "node"
+args = ["/old/index.js"]
+
+[features]
+js_repl = false
+`;
+    writeFileSync(tomlPath, fixture);
+    const bytesBefore = readFileSync(tomlPath);
+
+    const res = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "igris-brain",
+      entry: { command: "node", args: ["/new/index.js"] },
+      __renderOverride: () => "[mcp_servers.igris-brain\nbroken = = =\n",
+    });
+    expect(res.outcome).toBe("failed");
+    expect(res.error).toMatch(/splice verification failed|did not parse/);
+
+    // File is byte-for-byte unchanged — the corrupting write was refused.
+    expect(readFileSync(tomlPath).equals(bytesBefore)).toBe(true);
+    // No litter.
+    const litter = readdirSync(workDir).filter((f) =>
+      f.includes("config.toml.tmp."),
+    );
+    expect(litter).toEqual([]);
+  });
+
+  it("guard (c): a splice that mutates a sibling table becomes 'failed', file UNCHANGED", () => {
+    const fixture = `[mcp_servers.igris-brain]
+command = "node"
+args = ["/old/index.js"]
+
+[mcp_servers.keep-me]
+command = "python"
+args = ["/srv.py"]
+`;
+    writeFileSync(tomlPath, fixture);
+    const bytesBefore = readFileSync(tomlPath);
+
+    // The injected replacement spans correctly over igris-brain but ALSO
+    // re-declares the sibling mcp_servers.keep-me with a mutated command. The
+    // splice replaces only the igris-brain span, but the rendered text drags in
+    // a second table — so the candidate parse shows keep-me CHANGED vs the
+    // original. Guard (c) (collateral change to other tables) must fire.
+    const res = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "igris-brain",
+      entry: { command: "node", args: ["/new/index.js"] },
+      __renderOverride: () =>
+        '[mcp_servers.igris-brain]\ncommand = "node"\nargs = ["/new/index.js"]\n\n[mcp_servers.keep-me]\ncommand = "MUTATED"\nargs = []\n',
+    });
+    expect(res.outcome).toBe("failed");
+    expect(res.error).toMatch(/splice verification failed/);
+
+    expect(readFileSync(tomlPath).equals(bytesBefore)).toBe(true);
+  });
+
+  it("a splice that renames the target table away becomes 'failed', file UNCHANGED", () => {
+    const fixture = `model = "gpt-5"
+
+[mcp_servers.igris-brain]
+command = "node"
+args = ["/old/index.js"]
+`;
+    writeFileSync(tomlPath, fixture);
+    const bytesBefore = readFileSync(tomlPath);
+
+    // The override emits a table under a DIFFERENT name, so the spliced
+    // candidate loses mcp_servers.igris-brain and gains mcp_servers.elsewhere —
+    // a structural change to "other tables" that guard (c) catches. Either way
+    // the contract holds: any mislocation/emit defect → SAFE 'failed', no write.
+    const res = mergeTomlConfig({
+      targetPath: tomlPath,
+      tablePrefix: "mcp_servers",
+      entryKey: "igris-brain",
+      entry: { command: "node", args: ["/new/index.js"] },
+      __renderOverride: () =>
+        '[mcp_servers.elsewhere]\ncommand = "node"\nargs = []\n',
+    });
+    expect(res.outcome).toBe("failed");
+    expect(res.error).toMatch(/splice verification failed/);
+    expect(readFileSync(tomlPath).equals(bytesBefore)).toBe(true);
   });
 });
