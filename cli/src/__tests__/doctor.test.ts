@@ -366,23 +366,45 @@ describe("doctor — mcp-unregistered drift class (TD-168)", () => {
     expect(drift.some((r) => r.driftClass === "mcp-unregistered")).toBe(true);
   });
 
-  it("--fix registers the igris-brain MCP (mcp-unregistered resolved)", async () => {
+  it("--fix registers the igris-brain MCP into all 4 harnesses (FR-169)", async () => {
     const { runDoctor } = await import("../verbs/doctor.js");
+    const fs = require("node:fs");
     // Drop ~/.claude.json so mcp-unregistered fires. runInstall (via no
-    // project) is not involved — the fix arm calls registerMcpInClaudeJson
-    // directly, which writes to the sandboxed HOME pointing at the real
-    // bundled path (built in Phase 1 — cli/dist/brain-mcp-server/...).
+    // project) is not involved — the fix arm calls
+    // registerBrainAcrossHarnesses() directly, which writes into the sandboxed
+    // HOME pointing at the real bundled path (built in Phase 1 —
+    // cli/dist/brain-mcp-server/...). FR-169: backfills ALL 4 harnesses.
     rmSync(join(homeOverride, ".claude.json"), { force: true });
     const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
     expect(code).toBe(0);
-    // After --fix, ~/.claude.json exists with the igris-brain entry.
-    const data = JSON.parse(
-      require("node:fs").readFileSync(
-        join(homeOverride, ".claude.json"),
+
+    // Claude — ~/.claude.json now has the igris-brain entry.
+    const claude = JSON.parse(
+      fs.readFileSync(join(homeOverride, ".claude.json"), "utf-8"),
+    ) as { mcpServers: Record<string, unknown> };
+    expect(claude.mcpServers["igris-brain"]).toBeDefined();
+
+    // Gemini — ~/.gemini/settings.json.
+    const gemini = JSON.parse(
+      fs.readFileSync(join(homeOverride, ".gemini", "settings.json"), "utf-8"),
+    ) as { mcpServers: Record<string, unknown> };
+    expect(gemini.mcpServers["igris-brain"]).toBeDefined();
+
+    // OpenCode — ~/.config/opencode/opencode.json.
+    const opencode = JSON.parse(
+      fs.readFileSync(
+        join(homeOverride, ".config", "opencode", "opencode.json"),
         "utf-8",
       ),
-    ) as { mcpServers: Record<string, unknown> };
-    expect(data.mcpServers["igris-brain"]).toBeDefined();
+    ) as { mcp: Record<string, unknown> };
+    expect(opencode.mcp["igris-brain"]).toBeDefined();
+
+    // Codex — ~/.codex/config.toml.
+    const codexText = fs.readFileSync(
+      join(homeOverride, ".codex", "config.toml"),
+      "utf-8",
+    ) as string;
+    expect(codexText).toContain("[mcp_servers.igris-brain]");
   });
 });
 

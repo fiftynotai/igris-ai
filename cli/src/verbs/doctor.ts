@@ -33,7 +33,8 @@
  * --fix repairs not-installed / hooks-missing / hooks-stale by re-running install,
  * brain-core-missing by invoking runRefresh(), bridge-missing by invoking
  * partial-mode runInit({ upgrade: true }), mcp-unregistered by calling
- * registerMcpInClaudeJson() directly (cheap — no need to re-run init).
+ * registerBrainAcrossHarnesses() directly to backfill all 4 harnesses (FR-169;
+ * cheap — no need to re-run init).
  * --remove-orphans deletes path-missing rows after per-row confirmation
  * (skip prompt with --yes).
  */
@@ -56,7 +57,7 @@ import {
 import { extractVarName, parseSecretsEnv } from "../lib/secrets.js";
 import {
   inspectMcpRegistration,
-  registerMcpInClaudeJson,
+  registerBrainAcrossHarnesses,
 } from "../lib/mcp-register.js";
 import { runInstall } from "./install.js";
 import { runRefresh } from "./refresh.js";
@@ -162,16 +163,22 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
           bridgeFixApplied = true;
         }
       } else if (row.driftClass === "mcp-unregistered") {
-        // TD-168: register the bundled igris-brain MCP directly. Cheap —
-        // no need to re-run init. registerMcpInClaudeJson never throws;
-        // a failed outcome is surfaced as an error row.
-        info("fix: mcp-unregistered — registering igris-brain MCP in ~/.claude.json");
-        const mcpRes = registerMcpInClaudeJson();
-        if (mcpRes.outcome === "failed") {
-          errored++;
-          logError(`mcp-unregistered fix: ${mcpRes.error}`);
-        } else {
-          info(`  igris-brain MCP ${mcpRes.outcome} -> ${mcpRes.mcpEntryPath}`);
+        // FR-169: register the bundled igris-brain MCP into ALL 4 harnesses
+        // directly (Claude, Gemini, Codex, OpenCode). Cheap — no need to
+        // re-run init. registerBrainAcrossHarnesses never throws; a per-harness
+        // failed outcome counts into `errored`. (Detection is still
+        // Claude-only via inspectMcpRegistration — the trigger fires on
+        // Claude, the fix backfills all 4. Broadening detection to all 4
+        // harnesses is a tracked FR-169 follow-up.)
+        info("fix: mcp-unregistered — registering igris-brain MCP in all 4 harnesses");
+        const results = registerBrainAcrossHarnesses();
+        for (const { harness, result } of results) {
+          if (result.outcome === "failed") {
+            errored++;
+            logError(`mcp-unregistered fix (${harness}): ${result.error}`);
+          } else {
+            info(`  igris-brain MCP ${result.outcome} for ${harness} -> ${result.mcpEntryPath}`);
+          }
         }
       } else if (
         row.driftClass === "slug-basename-mismatch" ||

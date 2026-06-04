@@ -69,7 +69,7 @@ igris init
 cd /path/to/your-project && igris install .
 ```
 
-the `igris-brain` mcp server is bundled inside the `igris-ai` npm package — `igris init` registers it in `~/.claude.json` for you, no separate clone-build step. restart claude code afterward so it loads the new server, then run `/hunt BR-001` against the first brief you register. install matrix, channels, and v6 upgrade paths live in [`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md) and [`docs/UPDATE_GUIDE.md`](docs/UPDATE_GUIDE.md).
+the `igris-brain` mcp server is bundled inside the `igris-ai` npm package — `igris init` registers it into all 4 supported harnesses (claude, gemini, codex, opencode) for you, no separate clone-build step. restart your harness afterward so it loads the new server, then run `/hunt BR-001` against the first brief you register. install matrix, channels, and v6 upgrade paths live in [`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md) and [`docs/UPDATE_GUIDE.md`](docs/UPDATE_GUIDE.md).
 
 ---
 

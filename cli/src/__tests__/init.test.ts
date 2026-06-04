@@ -167,6 +167,53 @@ describe("init — fresh install via --from-source", () => {
     ) as { cli_targets: Record<string, true> };
     expect(Object.keys(cfg.cli_targets).length).toBe(0);
   });
+
+  // FR-169: init wires igris-brain into ALL 4 harness configs (not just Claude).
+  it("registers igris-brain into all 4 harness configs (FR-169)", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const { bundledMcpEntryPath } = await import("../lib/paths.js");
+    const code = await runInit({ fromSource: sourceRepo });
+    expect(code).toBe(0);
+
+    const bundled = bundledMcpEntryPath();
+
+    // Claude — ~/.claude.json mcpServers.igris-brain.
+    const claude = JSON.parse(
+      readFileSync(join(homeOverride, ".claude.json"), "utf-8"),
+    ) as { mcpServers: Record<string, { args: string[] }> };
+    expect(claude.mcpServers["igris-brain"]).toBeDefined();
+    expect(claude.mcpServers["igris-brain"].args[0]).toBe(bundled);
+    // The projected path must NOT be a hardcoded checkout-literal — it is
+    // resolved per-machine from bundledMcpEntryPath() (bundled layout).
+    expect(claude.mcpServers["igris-brain"].args[0]).toContain(
+      join("dist", "brain-mcp-server", "dist", "index.js"),
+    );
+
+    // Gemini — ~/.gemini/settings.json mcpServers.igris-brain.
+    const gemini = JSON.parse(
+      readFileSync(join(homeOverride, ".gemini", "settings.json"), "utf-8"),
+    ) as { mcpServers: Record<string, { args: string[] }> };
+    expect(gemini.mcpServers["igris-brain"]).toBeDefined();
+    expect(gemini.mcpServers["igris-brain"].args[0]).toBe(bundled);
+
+    // OpenCode — ~/.config/opencode/opencode.json mcp.igris-brain.
+    const opencode = JSON.parse(
+      readFileSync(
+        join(homeOverride, ".config", "opencode", "opencode.json"),
+        "utf-8",
+      ),
+    ) as { mcp: Record<string, { command: string[] }> };
+    expect(opencode.mcp["igris-brain"]).toBeDefined();
+    expect(opencode.mcp["igris-brain"].command[1]).toBe(bundled);
+
+    // Codex — ~/.codex/config.toml [mcp_servers.igris-brain].
+    const codexText = readFileSync(
+      join(homeOverride, ".codex", "config.toml"),
+      "utf-8",
+    );
+    expect(codexText).toContain("[mcp_servers.igris-brain]");
+    expect(codexText).toContain(bundled);
+  });
 });
 
 describe("init — --upgrade preservation (CRITICAL gate for M1.10)", () => {

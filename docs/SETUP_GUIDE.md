@@ -35,14 +35,14 @@ igris install .
 
 **What this does:**
 - Bootstraps the centralized brain at `~/.igris/` (SQLite database with FTS5 search, agents, rules, skills, prompts)
-- Registers the bundled `igris-brain` MCP server in `~/.claude.json` so Claude Code serves the brain tools (no manual MCP setup — it ships inside the `igris-ai` npm package)
+- Registers the bundled `igris-brain` MCP server into all 4 supported harnesses (Claude → `~/.claude.json`, Gemini → `~/.gemini/settings.json`, Codex → `~/.codex/config.toml`, OpenCode → `~/.config/opencode/opencode.json`) so each serves the brain tools (no manual MCP setup — it ships inside the `igris-ai` npm package)
 - Symlinks `.claude/agents/`, `.claude/rules/`, and `.claude/skills/` into your project so all projects share the same brain content
 - Merges the canonical Igris hooks block into `.claude/settings.json` (creating the file if absent, backing up any existing one)
 - Regenerates `CLAUDE.md` in your project root from the brain template
 - Writes a `.igris_version` marker for upgrade detection
 - Registers the project in the brain so it shows up in `/projects` and cross-project queries
 
-> **Restart Claude Code after `igris init`** so it picks up the newly registered `igris-brain` MCP server. The brain tools are not available until Claude Code reloads its `~/.claude.json`.
+> **Restart your harness(es) after `igris init`** so they pick up the newly registered `igris-brain` MCP server. The brain tools are not available until the harness reloads its config (e.g. Claude Code reloads `~/.claude.json`).
 
 Project state (sessions, briefs, plans, generated context docs) lives under `~/.igris/projects/<slug>/` — **not** in the project repo. The only files Igris writes into the project repo are `.claude/`, `CLAUDE.md`, and `.igris_version`.
 
@@ -113,12 +113,15 @@ If `igris doctor` reports `mcp-unregistered`, run `igris doctor --fix` (or
 
 The `igris-brain` MCP (Model Context Protocol) server provides the brain
 tools — persistent memory, brief management, cross-project intelligence —
-to Claude Code.
+to every supported harness (Claude, Gemini, Codex, OpenCode).
 
 **It ships inside the `igris-ai` npm package and registers itself
 automatically.** `npm install -g igris-ai` bundles a pre-built
 brain-mcp-server, and `igris init` / `igris install` add the `igris-brain`
-entry to `~/.claude.json`. There is no separate clone-build-configure step.
+entry to all 4 supported harness configs (`~/.claude.json`,
+`~/.gemini/settings.json`, `~/.codex/config.toml`,
+`~/.config/opencode/opencode.json`). There is no separate
+clone-build-configure step.
 
 **Restart Claude Code** after `igris init` so it picks up the new MCP
 server.
@@ -385,7 +388,7 @@ igris install .
 
 After setup:
 
-1. **Restart Claude Code** - so it picks up the bundled `igris-brain` MCP server registered by `igris init`
+1. **Restart your harness** (Claude, Gemini, Codex, or OpenCode) - so it picks up the bundled `igris-brain` MCP server registered by `igris init` into all 4 harness configs
 2. **Generate architecture docs** - Run `/document architecture`
 3. **Analyze codebase** - Run `/migrate-analyze`
 4. **Review generated briefs** - Run `List all briefs`

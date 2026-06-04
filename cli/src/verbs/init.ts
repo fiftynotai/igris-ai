@@ -66,11 +66,14 @@ import {
   brainDir,
   cacheDir,
   claudeJsonPath,
+  codexConfigTomlPath,
   configJsonPath,
+  geminiSettingsPath,
   installSourcePath,
+  opencodeConfigPath,
   userMdPath,
 } from "../lib/paths.js";
-import { registerMcpInClaudeJson } from "../lib/mcp-register.js";
+import { registerBrainAcrossHarnesses } from "../lib/mcp-register.js";
 import {
   checkNetwork,
   checkNodeVersion,
@@ -593,34 +596,42 @@ export async function runInit(opts: InitOptions): Promise<number> {
     void cacheDir;
   }
 
-  // --- 13. Register igris-brain MCP in ~/.claude.json (TD-168) ----------
-  // `npm install -g igris-ai` ships a bundled brain-mcp-server; Claude Code
-  // only serves its tools once the `igris-brain` entry exists in the user's
-  // ~/.claude.json. This step upserts it. Non-fatal (mirrors step 9b): a
-  // registration failure WARNs and lets init complete with exit 0.
+  // --- 13. Register igris-brain MCP in all 4 harness configs (FR-169) ----
+  // `npm install -g igris-ai` ships a bundled brain-mcp-server; a harness
+  // only serves its tools once the `igris-brain` entry exists in that
+  // harness's config. igris-brain is a CORE OS default (L-504), so init wires
+  // it into ALL supported harnesses (Claude, Gemini, Codex, OpenCode) via the
+  // proven FR-162/163 mergers. Non-fatal (mirrors step 9b): a per-harness
+  // failure WARNs and lets init complete with exit 0 — NEVER returns non-zero.
   //
   // --dev resolution happened early (right after pre-flight) — devMcpPath
   // is the clone's MCP path when --dev was passed, else undefined.
   if (dry !== null) {
-    dry.wouldWriteFile(
-      claudeJsonPath(),
-      "register igris-brain MCP server",
-    );
+    dry.wouldWriteFile(claudeJsonPath(), "register igris-brain MCP (Claude)");
+    dry.wouldWriteFile(geminiSettingsPath(), "register igris-brain MCP (Gemini)");
+    dry.wouldWriteFile(codexConfigTomlPath(), "register igris-brain MCP (Codex)");
+    dry.wouldWriteFile(opencodeConfigPath(), "register igris-brain MCP (OpenCode)");
   } else {
-    const mcpRes = registerMcpInClaudeJson(
+    const results = registerBrainAcrossHarnesses(
       devMcpPath !== undefined ? { mcpEntryPath: devMcpPath } : undefined,
     );
-    if (mcpRes.outcome === "failed") {
-      warn(`MCP registration skipped: ${mcpRes.error}`);
-      warn(
-        `  Manual fix: add an "igris-brain" entry to mcpServers in ${mcpRes.claudeJsonPath}`,
-      );
-      warn(`  pointing at: ${mcpRes.mcpEntryPath}`);
-    } else if (mcpRes.outcome === "unchanged") {
-      debug(`igris-brain MCP already registered at ${mcpRes.mcpEntryPath}`);
-    } else {
-      info(`Registered igris-brain MCP (${mcpRes.outcome}) -> ${mcpRes.mcpEntryPath}`);
-      info("  Restart Claude Code to pick up the new MCP server.");
+    let anyWired = false;
+    for (const { harness, result } of results) {
+      if (result.outcome === "failed") {
+        warn(`MCP registration skipped for ${harness}: ${result.error}`);
+        warn(
+          `  Manual fix: add an "igris-brain" entry to ${result.claudeJsonPath}`,
+        );
+        warn(`  pointing at: ${result.mcpEntryPath}`);
+      } else if (result.outcome === "unchanged") {
+        debug(`igris-brain MCP already registered for ${harness} -> ${result.mcpEntryPath}`);
+      } else {
+        anyWired = true;
+        info(`Registered igris-brain MCP for ${harness} (${result.outcome})`);
+      }
+    }
+    if (anyWired) {
+      info("  Restart your harness(es) to pick up the new MCP server.");
     }
   }
 

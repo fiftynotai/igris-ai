@@ -33,13 +33,33 @@
 
 import {
   existsSync,
+  mkdirSync,
   readFileSync,
   renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { dirname } from "node:path";
 import * as TOML from "@iarna/toml"; // FR-163: PARSE-ONLY (idempotency + malformed gate); never re-emit.
-import { bundledMcpEntryPath, claudeJsonPath } from "./paths.js";
+import {
+  bundledMcpEntryPath,
+  claudeJsonPath,
+  codexConfigTomlPath,
+  geminiSettingsPath,
+  opencodeConfigPath,
+} from "./paths.js";
+// FR-169: reuse the FR-164 pure per-harness shaper + canonical type. mcp-shape.ts
+// imports TomlMcpEntry FROM this module, but McpShapeCanonical/McpHarness/
+// buildHarnessMcpEntry live there — importing them back is a type-only + value
+// import with no runtime cycle (the value `buildHarnessMcpEntry` does not call
+// back into mcp-register at module-load time).
+import {
+  buildHarnessMcpEntry,
+  type McpHarness,
+  type McpShapeCanonical,
+} from "./mcp-shape.js";
+
+export type { McpHarness } from "./mcp-shape.js";
 
 /** The fixed key under `mcpServers` that Igris owns. */
 const MCP_KEY = "igris-brain";
@@ -60,23 +80,6 @@ export interface McpRegisterResult {
   mcpEntryPath: string;
   /** Populated when `outcome === 'failed'`. */
   error?: string;
-}
-
-/** The desired shape of the `mcpServers["igris-brain"]` entry. */
-interface McpEntry {
-  type: "stdio";
-  command: "node";
-  args: string[];
-  env: Record<string, string>;
-}
-
-function buildDesiredEntry(mcpEntryPath: string): McpEntry {
-  return {
-    type: "stdio",
-    command: "node",
-    args: [mcpEntryPath],
-    env: {},
-  };
 }
 
 /** True when `v` is a plain (non-array, non-null) object. */
@@ -738,16 +741,143 @@ export function mergeTomlConfig(opts: {
   };
 }
 
+// ---------------------------------------------------------------------------
+// FR-169: register the bundled igris-brain MCP into ALL 4 harnesses at init.
+//
+// igris-brain is a CORE OS default (L-504) — every install gets it in every
+// supported harness, not a personal add. This is Option A (direct in-process
+// projection): build an in-memory canonical, shape it per-harness via the
+// FR-164 pure `buildHarnessMcpEntry`, and dispatch to the proven FR-162/163
+// mergers. NO overlay write, NO manifest read, NO subprocess. The path is
+// `bundledMcpEntryPath()` (per-machine, gitignored configs only — never a
+// committed file). See FR-169 plan §"THE DESIGN FORK — RESOLVED: Option A".
+// ---------------------------------------------------------------------------
+
+/** The env-free canonical launch spec for igris-brain (L-588: no secrets). */
+function brainCanonical(mcpEntryPath: string): McpShapeCanonical {
+  return { command: "node", args: [mcpEntryPath], env: {} };
+}
+
+/**
+ * Per-harness config resolution table — the LOCAL mirror of
+ * `registry.ts`'s `mcpConfigPathFor`/`mcpMapKeyFor` switches (FR-164). Defined
+ * here (not imported) to avoid an import cycle: `registry.ts` already imports
+ * FROM this module. `mapKey` is the JSON map key for the three JSON harnesses,
+ * OR the TOML `tablePrefix` for codex (`isToml: true`). Path helpers come from
+ * `./paths.js`.
+ */
+const HARNESS_CONFIG: Record<
+  McpHarness,
+  { path: () => string; mapKey: string; isToml: boolean }
+> = {
+  claude: { path: claudeJsonPath, mapKey: "mcpServers", isToml: false },
+  gemini: { path: geminiSettingsPath, mapKey: "mcpServers", isToml: false },
+  opencode: { path: opencodeConfigPath, mapKey: "mcp", isToml: false },
+  codex: { path: codexConfigTomlPath, mapKey: "mcp_servers", isToml: true },
+};
+
+/** The default harness ordering for a full brain registration. */
+const ALL_HARNESSES: McpHarness[] = ["claude", "gemini", "codex", "opencode"];
+
+/** Per-harness registration outcome for the multi-harness wire-up. */
+export interface BrainHarnessResult {
+  harness: McpHarness; // "claude" | "gemini" | "codex" | "opencode"
+  result: McpRegisterResult; // reuses the existing union verbatim
+  /** Reserved: true when a harness was not targeted / skipped by choice. */
+  skipped?: boolean;
+}
+
+/**
+ * Register the bundled igris-brain MCP into ALL (or a subset of) the 4 harness
+ * configs, reusing `buildHarnessMcpEntry` + `mergeJsonConfig`/`mergeTomlConfig`.
+ * NEVER throws. The path is `bundledMcpEntryPath()` unless overridden
+ * (`--dev`/tests). igris-brain is env-free (L-588) so secrets are never needed
+ * (codex env = {}).
+ *
+ * Each harness's parent dir is benign-created (`mkdirSync … {recursive:true}`)
+ * before dispatch so a registered-but-not-yet-initialized harness still gets a
+ * config (FR-169 plan risk row "Absent harness config dir"). A failure on one
+ * harness folds into `outcome:"failed"` for THAT harness's result only — the
+ * other harnesses still wire (the function returns an array; init/doctor
+ * warn-and-continue per harness).
+ *
+ * @param opts.mcpEntryPath  Override the bundled path (`--dev` clone / tests).
+ *                           Defaults to `bundledMcpEntryPath()`.
+ * @param opts.harnesses     Subset to target. Defaults to all 4.
+ * @param opts.configPaths   Per-harness config-path overrides (test sandbox seam).
+ */
+export function registerBrainAcrossHarnesses(opts?: {
+  mcpEntryPath?: string;
+  harnesses?: McpHarness[];
+  configPaths?: Partial<Record<McpHarness, string>>;
+}): BrainHarnessResult[] {
+  const mcpEntryPath = opts?.mcpEntryPath ?? bundledMcpEntryPath();
+  const harnesses = opts?.harnesses ?? ALL_HARNESSES;
+  const canonical = brainCanonical(mcpEntryPath);
+
+  const results: BrainHarnessResult[] = [];
+  for (const harness of harnesses) {
+    const cfg = HARNESS_CONFIG[harness];
+    const targetPath = opts?.configPaths?.[harness] ?? cfg.path();
+
+    // Benign-create the parent dir so a missing ~/.gemini, ~/.codex,
+    // ~/.config/opencode etc. does not turn a clean install into a write
+    // failure. mkdirSync failure folds into the harness's `failed` result.
+    try {
+      mkdirSync(dirname(targetPath), { recursive: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      results.push({
+        harness,
+        result: {
+          outcome: "failed",
+          claudeJsonPath: targetPath,
+          mcpEntryPath,
+          error: `could not create parent dir for ${targetPath}: ${msg}`,
+        },
+      });
+      continue;
+    }
+
+    // igris-brain is env-free → no secrets needed for any harness (incl. codex).
+    const { entry } = buildHarnessMcpEntry(canonical, harness, undefined, undefined);
+
+    const result = cfg.isToml
+      ? mergeTomlConfig({
+          targetPath,
+          tablePrefix: cfg.mapKey,
+          entryKey: MCP_KEY,
+          entry: entry as TomlMcpEntry,
+          backup: true,
+        })
+      : mergeJsonConfig({
+          targetPath,
+          mapKey: cfg.mapKey,
+          entryKey: MCP_KEY,
+          entry: entry as Record<string, unknown>,
+          backup: true,
+        });
+
+    // Re-stamp `mcpEntryPath` so each per-harness result carries the resolved
+    // bundled path (the generic mergers set `mcpEntryPath:""`). `claudeJsonPath`
+    // already carries the per-harness targetPath from the merger.
+    results.push({ harness, result: { ...result, mcpEntryPath } });
+  }
+  return results;
+}
+
 /**
  * Upsert the `igris-brain` entry in `~/.claude.json`, pointing at the
  * bundled MCP. Idempotent. NEVER throws — returns `outcome: 'failed'` with
  * an `error` string so callers can warn-and-continue.
  *
- * FR-162: this is now a THIN WRAPPER over the generalized `mergeJsonConfig`.
- * It passes the SAME hard-coded values the old monolithic body used
- * (`mapKey:"mcpServers"`, `entryKey:"igris-brain"`, `backup:true`) and
- * re-stamps the Claude-specific result fields (`claudeJsonPath`/`mcpEntryPath`)
- * the existing 30-case test suite asserts — so the behavior is byte-identical.
+ * FR-169: this is now a THIN BACK-COMPAT SHIM over
+ * `registerBrainAcrossHarnesses({ harnesses:["claude"] })`. It preserves the
+ * exact `McpRegisterResult` shape (`claudeJsonPath`/`mcpEntryPath`) the
+ * existing 30-case suite + the `install.ts`/`doctor.ts` call sites assert — so
+ * behavior is byte-identical. (FR-162 made it a wrapper over `mergeJsonConfig`;
+ * FR-169 routes it through the new multi-harness function with a Claude-only
+ * subset, keeping ONE place that knows the brain's canonical shape.)
  *
  * @param opts.mcpEntryPath  Override the bundled MCP path. The `--dev`
  *                           flag (registers a clone path) and tests use
@@ -761,16 +891,17 @@ export function registerMcpInClaudeJson(opts?: {
   claudeJsonPath?: string;
 }): McpRegisterResult {
   const targetPath = opts?.claudeJsonPath ?? claudeJsonPath();
-  const mcpEntryPath = opts?.mcpEntryPath ?? bundledMcpEntryPath();
-  const result = mergeJsonConfig({
-    targetPath,
-    mapKey: "mcpServers",
-    entryKey: MCP_KEY,
-    entry: buildDesiredEntry(mcpEntryPath) as unknown as Record<string, unknown>,
-    backup: true,
+  const [{ result }] = registerBrainAcrossHarnesses({
+    mcpEntryPath: opts?.mcpEntryPath,
+    harnesses: ["claude"],
+    configPaths: opts?.claudeJsonPath ? { claude: opts.claudeJsonPath } : undefined,
   });
   // Re-stamp the Claude-specific result fields the existing suite asserts.
-  return { ...result, claudeJsonPath: targetPath, mcpEntryPath };
+  return {
+    ...result,
+    claudeJsonPath: targetPath,
+    mcpEntryPath: opts?.mcpEntryPath ?? bundledMcpEntryPath(),
+  };
 }
 
 export interface McpInspectResult {
