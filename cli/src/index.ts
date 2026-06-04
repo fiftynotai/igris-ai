@@ -35,6 +35,7 @@ import { runRegisterProject } from "./verbs/register-project.js";
 import { runSync, type SyncSubVerb } from "./verbs/sync.js";
 import { runHarness, type HarnessAction } from "./verbs/harness.js";
 import { runRegistry, type RegistryAction } from "./verbs/registry.js";
+import type { McpHarness } from "./lib/mcp-env-normalize.js";
 import { setVerbosity, info, error as logError } from "./lib/log.js";
 
 /** Commander reducer for a repeatable option: accumulate into an array. */
@@ -308,7 +309,8 @@ async function main(argv: string[]): Promise<void> {
     )
     .option("--manifest <path>", "base manifest override (default: <project-root>/harness-manifest.json)")
     .option("--overlay <path>", "personal-overlay manifest override (default: auto-discover)")
-    .option("--target <kind>", "restrict to one target type: claude | codex | all (compile only)")
+    .option("--target <kind>", "restrict to one target type: claude | codex | gemini | opencode | all (compile only)")
+    .option("--surface <kind>", "restrict to one projection surface: agents | skills | mcp | all (compile only)")
     .option("--filter <glob>", "only process agents whose name matches the glob")
     .action(
       async (
@@ -318,6 +320,7 @@ async function main(argv: string[]): Promise<void> {
           manifest?: string;
           overlay?: string;
           target?: string;
+          surface?: string;
           filter?: string;
         },
       ): Promise<void> => {
@@ -327,6 +330,7 @@ async function main(argv: string[]): Promise<void> {
           manifest: opts.manifest,
           overlay: opts.overlay,
           target: opts.target,
+          surface: opts.surface,
           filter: opts.filter,
         });
         process.exitCode = code;
@@ -383,6 +387,22 @@ async function main(argv: string[]): Promise<void> {
       "--startup-timeout-sec <n>",
       "MCP startup timeout in seconds (add-mcp; Codex-only passthrough)",
     )
+    .option(
+      "--harness <type>",
+      "INTERNAL (project-mcp): which harness to project ONE MCP into: claude | codex | gemini | opencode",
+    )
+    .option(
+      "--overlay <path>",
+      "INTERNAL (project-mcp): personal-overlay manifest override (default: auto-discover under IGRIS_BRAIN_DIR)",
+    )
+    .option(
+      "--config-path <path>",
+      "INTERNAL (project-mcp): override the harness config FILE (test/compile seam)",
+    )
+    .option(
+      "--secrets-path <path>",
+      "INTERNAL (project-mcp): override ~/.igris/secrets.env (codex only; test seam)",
+    )
     .action(
       async (
         action: string,
@@ -403,6 +423,10 @@ async function main(argv: string[]): Promise<void> {
           arg?: string[];
           env?: string[];
           startupTimeoutSec?: string;
+          harness?: string;
+          overlay?: string;
+          configPath?: string;
+          secretsPath?: string;
         },
       ): Promise<void> => {
         // Coalesce the deprecated --canonical alias into --from; emit a one-line
@@ -424,6 +448,9 @@ async function main(argv: string[]): Promise<void> {
         // `--name <slug>` (preferred, parallels add-skill) OR the positional
         // `[name]` arg, so both forms work.
         const isAddMcp = action === "add-mcp";
+        // FR-164 project-mcp also keys on `--name` (the bash driver passes it
+        // explicitly). Accept `--name <slug>` OR the positional, like add-mcp.
+        const isProjectMcp = action === "project-mcp";
         // FR-155: --scope must be one of {"global","project"} — validate at
         // the CLI boundary so the verb layer can trust the type. Commander
         // accepts any string; we narrow here. An invalid value is a usage
@@ -457,9 +484,29 @@ async function main(argv: string[]): Promise<void> {
           }
           startupTimeoutSec = n;
         }
+        // FR-164 project-mcp: --harness must be one of the 4 MCP harnesses.
+        // Validate at the CLI boundary (mirror --scope) so RegistryOptions
+        // .harness stays typed. An invalid value is a usage error (exit 2).
+        let harnessArg: McpHarness | undefined;
+        if (opts.harness !== undefined) {
+          if (
+            opts.harness === "claude" ||
+            opts.harness === "codex" ||
+            opts.harness === "gemini" ||
+            opts.harness === "opencode"
+          ) {
+            harnessArg = opts.harness;
+          } else {
+            process.stderr.write(
+              `registry: --harness value '${opts.harness}' is not one of 'claude' | 'codex' | 'gemini' | 'opencode'\n`,
+            );
+            process.exitCode = 2;
+            return;
+          }
+        }
         const code = await runRegistry({
           action: action as RegistryAction,
-          name: isAddSkill || isAddMcp ? (opts.name ?? name) : name,
+          name: isAddSkill || isAddMcp || isProjectMcp ? (opts.name ?? name) : name,
           from,
           versioned: opts.versioned === true,
           glob: opts.glob,
@@ -473,6 +520,12 @@ async function main(argv: string[]): Promise<void> {
           args: opts.arg,
           env: opts.env,
           startupTimeoutSec,
+          harness: harnessArg,
+          // FR-164 project-mcp: --overlay maps to the overlayPath seam
+          // (the bash compile/drift driver passes the resolved overlay).
+          overlayPath: opts.overlay,
+          configPath: opts.configPath,
+          secretsPath: opts.secretsPath,
         });
         process.exitCode = code;
       },

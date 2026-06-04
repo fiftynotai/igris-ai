@@ -35,8 +35,10 @@ export interface HarnessOptions {
   manifest?: string;
   /** Explicit personal-overlay path override (else adapter auto-discovers). */
   overlay?: string;
-  /** Restrict to one target type (compile only): claude | codex | all. */
+  /** Restrict to one target type (compile only): claude | codex | gemini | opencode | all. */
   target?: string;
+  /** Restrict to one projection surface (compile only): agents | skills | mcp | all. */
+  surface?: string;
   /** Only process agents whose name matches this glob. */
   filter?: string;
   /**
@@ -98,6 +100,9 @@ export async function runHarness(opts: HarnessOptions): Promise<number> {
   }
   if (opts.target !== undefined) {
     args.push("--target", opts.target);
+  }
+  if (opts.surface !== undefined) {
+    args.push("--surface", opts.surface);
   }
   if (opts.filter !== undefined) {
     args.push("--filter", opts.filter);

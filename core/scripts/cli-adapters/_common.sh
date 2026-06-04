@@ -890,14 +890,20 @@ overlay_surfaces = overlay.get("surfaces", {}) or {}
 base_blocks = _normalize_skills(base_surfaces.get("skills"))
 overlay_blocks = _normalize_skills(overlay_surfaces.get("skills"))
 
+# `merged_surfaces` accumulates BOTH the skills and the FR-164 mcp_servers
+# merges, so the two are independent (an overlay carrying only mcp_servers, or
+# only skills, both reach the merged manifest). Start from the base surfaces and
+# overlay each block family in turn.
+merged_surfaces = None
+
 if base_blocks or overlay_blocks:
-    merged_blocks = list(base_blocks) + list(overlay_blocks)
+    merged_skill_blocks = list(base_blocks) + list(overlay_blocks)
     # Cross-block path-collision guard: every (block, target) row's `path`
     # must be unique across ALL blocks. Mirrors the agent name-collision
     # guard above. Used to live as a base-vs-overlay-only check; widened so
     # the multi-block surface preserves the FR-137 contract end-to-end.
     seen_paths = {}
-    for b_idx, block in enumerate(merged_blocks):
+    for b_idx, block in enumerate(merged_skill_blocks):
         for t in (block or {}).get("targets", []) or []:
             p = (t or {}).get("path")
             if p is None:
@@ -914,10 +920,343 @@ if base_blocks or overlay_blocks:
                 sys.exit(1)
             seen_paths[p] = b_idx
     merged_surfaces = dict(base_surfaces)
-    merged_surfaces["skills"] = merged_blocks
+    merged_surfaces["skills"] = merged_skill_blocks
+
+# FR-164 (FR-160 epic): merge surfaces.mcp_servers as a MULTI-BLOCK ARRAY
+# (base ++ overlay), mirroring the skills concat. WITHOUT this, a personal MCP
+# block written by `add-mcp` into the overlay would never reach the compile/
+# drift flatten (finding #2 gap). MCP identity is the block NAME — a personal
+# (overlay) block whose `name` collides with a base (core) block is a HARD
+# error (the analogue of the agent name-collision guard). Always normalizes
+# missing/single/list shapes; an absent mcp_servers surface contributes [].
+def _normalize_mcp(value):
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return list(value)
+    sys.stderr.write(
+        "Error: surfaces.mcp_servers must be an array of blocks (or a single "
+        "object — both normalize)\n"
+    )
+    sys.exit(1)
+
+
+base_mcp = _normalize_mcp(base_surfaces.get("mcp_servers"))
+overlay_mcp = _normalize_mcp(overlay_surfaces.get("mcp_servers"))
+
+if base_mcp or overlay_mcp:
+    base_mcp_names = {m.get("name") for m in base_mcp}
+    for block in overlay_mcp:
+        nm = (block or {}).get("name")
+        if nm in base_mcp_names:
+            sys.stderr.write(
+                f"Error: overlay mcp_servers block '{nm}' collides with a base "
+                "(core) block name; a personal customization must not shadow a "
+                "core MCP server.\n"
+            )
+            sys.exit(1)
+    if merged_surfaces is None:
+        merged_surfaces = dict(base_surfaces)
+    merged_surfaces["mcp_servers"] = list(base_mcp) + list(overlay_mcp)
+
+if merged_surfaces is not None:
     merged["surfaces"] = merged_surfaces
 
 sys.stdout.write(json.dumps(merged))
+PY
+}
+
+# ---------------------------------------------------------------------------
+# FR-164 (FR-160 epic): MCP projection helpers (shared by compile + drift).
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# flatten_mcp_rows <merged-manifest> <core-surfaces> <target-kind> <project-root>
+#
+# Emits one TAB-separated row per (mcp-block, target). Mirrors the skills
+# flatten (compile_harnesses.sh): the core surfaces-manifest.json is only
+# unioned when the project being compiled OWNS it (its realpath is under
+# --project-root). Rows are filtered by <target-kind> (the per-target emit
+# gate); "all" emits every target.
+#
+# Row columns (TAB-separated, fixed order):
+#   name <TAB> canonical_json <TAB> target_type <TAB> enabled <TAB>
+#   scope_type <TAB> scope_paths_csv
+#
+# `canonical_json` is the block's canonical launch spec as compact JSON (it can
+# carry tabs/newlines only inside JSON strings, which compact json.dumps
+# escapes — so the column stays a single physical line, safe for IFS=$'\t'
+# read). It NEVER contains a resolved secret — `canonical.env` holds the
+# ${VAR} REFERENCE; the literal is resolved only inside the TS projector /
+# drift compare, never in this row. `enabled` is `true`/`false`/`-` (sentinel
+# for absent). `scope_paths_csv` uses the `-` empty sentinel (mirrors skills).
+# v1 is GLOBAL-ONLY — scope columns are emitted for forward-compat but every
+# consumer treats blocks as global.
+# ---------------------------------------------------------------------------
+flatten_mcp_rows() {
+  local merged="$1"
+  local core_surfaces="$2"
+  local target_kind="$3"
+  local project_root="$4"
+  python3 - "$core_surfaces" "$merged" "$target_kind" "$project_root" <<'PY'
+import json
+import os
+import sys
+
+core_surfaces_path = sys.argv[1]
+merged_manifest_path = sys.argv[2]
+target_kind = sys.argv[3]
+project_root = sys.argv[4]
+
+
+def load_mcp(path):
+    # Returns a LIST of mcp_servers blocks. Legacy single-object normalized to
+    # `[object]`; missing/absent → []. Mirrors merge_overlay_manifest's
+    # _normalize_mcp + the skills loader shape.
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except OSError:
+        return []
+    value = (data.get("surfaces") or {}).get("mcp_servers")
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return value
+    return []
+
+
+# The core surfaces-manifest.json declares GLOBAL Layer-1 surfaces. It is only
+# unioned when the project being compiled OWNS it (its realpath is under
+# --project-root) — identical posture to the skills flatten. The merged agent
+# manifest (incl. the FR-139 personal overlay) is always read.
+sources = [merged_manifest_path]
+try:
+    cs_real = os.path.realpath(core_surfaces_path)
+    pr_real = os.path.realpath(project_root)
+    if os.path.commonpath([cs_real, pr_real]) == pr_real:
+        sources.insert(0, core_surfaces_path)
+except (OSError, ValueError):
+    pass
+
+for src in sources:
+    for block in load_mcp(src):
+        if not isinstance(block, dict):
+            continue
+        name = block.get("name", "")
+        if not name:
+            continue
+        canonical = block.get("canonical") or {}
+        # Compact JSON (no spaces) keeps the column on one physical line; any
+        # embedded control chars inside JSON strings are escaped by json.dumps.
+        canonical_json = json.dumps(canonical, separators=(",", ":"))
+        # FR-155-style scope columns (absent → global). v1 consumers treat all
+        # as global, but we carry them for forward-compat + row-shape parity
+        # with the skills flatten.
+        scope = block.get("scope") or {}
+        scope_type = scope.get("type") or "global"
+        scope_paths_list = scope.get("paths") or []
+        scope_paths_csv = ",".join(scope_paths_list) if scope_paths_list else "-"
+        for t in block.get("targets", []) or []:
+            ttype = (t or {}).get("type", "")
+            if not ttype:
+                continue
+            if target_kind != "all" and ttype != target_kind:
+                continue
+            enabled = (t or {}).get("enabled")
+            if enabled is True:
+                enabled_col = "true"
+            elif enabled is False:
+                enabled_col = "false"
+            else:
+                enabled_col = "-"
+            print("\t".join([
+                name,
+                canonical_json,
+                ttype,
+                enabled_col,
+                scope_type,
+                scope_paths_csv,
+            ]))
+PY
+}
+
+# ---------------------------------------------------------------------------
+# extract_mcp_entry <config-path> <map-key> <name>
+#
+# Drift-side reader: reads the harness config (JSON for claude/gemini/opencode,
+# TOML for codex — dispatched by file extension), extracts the entry stored
+# under <map-key>.<name>, and emits it as canonical compact JSON on stdout.
+#
+# Status is signaled via the EXIT CODE (NEVER by printing a secret):
+#   0  → entry present; the entry JSON is on stdout.
+#   10 → config file absent OR <map-key> map absent OR <name> entry absent
+#        (MISSING). Stdout is empty.
+#   11 → config file present but UNPARSEABLE (malformed JSON/TOML). Stdout is
+#        empty. The caller maps this to a DRIFTED "unparseable" verdict.
+#
+# NEVER throws under `set -euo pipefail`: the python call's own rc is captured
+# and re-emitted, never a stack trace. TOML is parsed via tomllib (py3.11+) or
+# the `toml`/`tomli` shim; absent → treated as MISSING-safe (rc 10) so a host
+# without a TOML parser never crashes drift.
+# ---------------------------------------------------------------------------
+extract_mcp_entry() {
+  local config_path="$1"
+  local map_key="$2"
+  local name="$3"
+  python3 - "$config_path" "$map_key" "$name" <<'PY'
+import json
+import os
+import sys
+
+config_path = sys.argv[1]
+map_key = sys.argv[2]
+name = sys.argv[3]
+
+# Code 10 = MISSING (absent file / map / entry); 11 = malformed config.
+if not os.path.exists(config_path):
+    sys.exit(10)
+
+is_toml = config_path.endswith(".toml")
+
+try:
+    if is_toml:
+        data = None
+        try:
+            import tomllib  # py3.11+
+            with open(config_path, "rb") as fh:
+                data = tomllib.load(fh)
+        except ImportError:
+            loaded = False
+            for mod in ("tomli", "toml"):
+                try:
+                    m = __import__(mod)
+                    with open(config_path, "rb" if mod == "tomli" else "r",
+                              encoding=None if mod == "tomli" else "utf-8") as fh:
+                        data = m.load(fh)
+                    loaded = True
+                    break
+                except ImportError:
+                    continue
+            if not loaded:
+                # No TOML parser available — cannot read; treat as MISSING-safe
+                # rather than crash drift on a host without tomllib.
+                sys.exit(10)
+    else:
+        with open(config_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+except (ValueError, OSError):
+    # Malformed JSON / TOML — DRIFTED "unparseable" (compile refuses to write).
+    sys.exit(11)
+
+if not isinstance(data, dict):
+    sys.exit(11)
+
+server_map = data.get(map_key)
+if not isinstance(server_map, dict):
+    sys.exit(10)
+
+entry = server_map.get(name)
+if entry is None:
+    sys.exit(10)
+
+sys.stdout.write(json.dumps(entry, separators=(",", ":"), sort_keys=True))
+sys.exit(0)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# normalize_mcp_shape <canonical-json> <harness> <enabled>
+#
+# The §18.1 / L-554 SHARED SHAPE HELPER. Given the canonical launch spec (as
+# JSON) it emits the EXPECTED native per-harness entry as canonical compact
+# JSON (sort_keys) — byte-identical to the TS `buildHarnessMcpEntry` (the
+# golden-fixture + bats parity tests pin the two together).
+#
+# Per-harness shapes (finding #8):
+#   claude   → {"type":"stdio","command":...,"args":[...],"env":{...}}
+#   gemini   → {"command":...,"args":[...],"env":{...}}        (NO "type")
+#   opencode → {"type":"local","command":[cmd,...args],"enabled":bool,
+#               "environment":{...}}   (cmd+args FUSED; env KEY is "environment")
+#   codex    → {"command":...,"args":[...],"env":{...}[,"startup_timeout_sec":n]}
+#
+# ENV VALUES are emitted as the REFERENCE per harness (NEVER a resolved secret):
+#   claude/gemini → ${VAR} verbatim
+#   opencode      → {env:VAR}
+#   codex         → ${VAR} as the drift-comparison STAND-IN (the codex value-
+#                   equality re-resolve happens in the drift compare, not here —
+#                   so this helper NEVER reads secrets.env and NEVER emits a
+#                   literal). A non-ref value passes through verbatim for all.
+#
+# `enabled` is "true"/"false"/"-" (the flatten sentinel); only opencode uses it
+# (absent → defaults true). The output is what the drift compare deep-equals
+# against the on-disk entry (with the codex env values swapped to literals at
+# compare time by the caller, never here).
+# ---------------------------------------------------------------------------
+normalize_mcp_shape() {
+  local canonical_json="$1"
+  local harness="$2"
+  local enabled="$3"
+  python3 - "$canonical_json" "$harness" "$enabled" <<'PY'
+import json
+import re
+import sys
+
+canonical = json.loads(sys.argv[1])
+harness = sys.argv[2]
+enabled_col = sys.argv[3]
+
+command = canonical.get("command", "")
+args = canonical.get("args", []) or []
+env = canonical.get("env", {}) or {}
+
+# Canonical ${VAR} grammar (byte-identical to ENV_VAR_REF in secrets.ts /
+# registry.ts) + opencode {env:VAR} grammar. Used only to translate the
+# REFERENCE token per harness — a value is never resolved here.
+VAR_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+
+
+def var_name(value):
+    m = VAR_RE.match(value)
+    return m.group(1) if m else None
+
+
+def env_for(value):
+    if harness == "opencode":
+        nm = var_name(value)
+        return f"{{env:{nm}}}" if nm is not None else value
+    # claude / gemini / codex → emit the ${VAR} reference verbatim (codex's
+    # literal re-resolve is the drift compare's job, never this helper's).
+    return value
+
+
+norm_env = {k: env_for(env[k]) for k in env}
+
+if harness == "claude":
+    entry = {"type": "stdio", "command": command, "args": args, "env": norm_env}
+elif harness == "gemini":
+    entry = {"command": command, "args": args, "env": norm_env}
+elif harness == "opencode":
+    en = True if enabled_col == "true" else (False if enabled_col == "false" else True)
+    entry = {
+        "type": "local",
+        "command": [command] + list(args),
+        "enabled": en,
+        "environment": norm_env,
+    }
+elif harness == "codex":
+    entry = {"command": command, "args": args, "env": norm_env}
+    if "startup_timeout_sec" in canonical and canonical["startup_timeout_sec"] is not None:
+        entry["startup_timeout_sec"] = canonical["startup_timeout_sec"]
+else:
+    sys.stderr.write(f"normalize_mcp_shape: unknown harness '{harness}'\n")
+    sys.exit(2)
+
+sys.stdout.write(json.dumps(entry, separators=(",", ":"), sort_keys=True))
 PY
 }
 
@@ -933,3 +1272,6 @@ export -f latest_canonical
 export -f sha_body
 export -f validate_manifest
 export -f merge_overlay_manifest
+export -f flatten_mcp_rows
+export -f extract_mcp_entry
+export -f normalize_mcp_shape

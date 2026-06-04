@@ -451,6 +451,200 @@ verify_gemini_agent_hardlink_drift() {
 }
 
 # ---------------------------------------------------------------------------
+# verify_mcp_entry_drift <name> <harness> <config_path> <map_key>
+#                        <canonical_json> <enabled> <secrets_path>
+#
+# FR-164 (FR-160 epic): per-(mcp,harness) MCP drift verdict, line-paired with
+# the compile MCP pass (§18.1). Reads the on-disk harness config entry via
+# `extract_mcp_entry`, derives the EXPECTED native shape via `normalize_mcp_shape`
+# (the SAME helper that defines what compile writes), and structurally compares.
+#
+# Verdicts (single per row, via the any_* idiom inside the python compare):
+#   MISSING — config file absent OR the entry absent (extract rc 10). DRIFT++.
+#   DRIFTED — config UNPARSEABLE (extract rc 11); reason "unparseable". DRIFT++.
+#   DRIFTED — entry present but diverges; reason names the differing KEY(s),
+#             NEVER a value. DRIFT++.
+#   MATCH   — entry deep-equals the expected shape. MATCH++.
+#
+# SECRET HYGIENE: for the codex env values, the expected shape carries the
+# ${VAR} REFERENCE (normalize_mcp_shape's stand-in). This function re-resolves
+# each codex ${VAR} from secrets.env and compares the RESOLVED LITERAL against
+# the on-disk literal INSIDE the python compare — it prints only "env.<KEY>
+# differs", NEVER the literal (resolved or on-disk). claude/gemini/opencode
+# compare the reference directly (no secrets read). Updates MATCH/DRIFT
+# (caller-scoped, same as the agent verdict fns). NEVER throws under set -e.
+# ---------------------------------------------------------------------------
+verify_mcp_entry_drift() {
+  local name="$1"
+  local harness="$2"
+  local config_path="$3"
+  local map_key="$4"
+  local canonical_json="$5"
+  local enabled="$6"
+  local secrets_path="$7"
+
+  # 1) Read the on-disk entry. rc 0 = present (JSON on stdout); 10 = MISSING;
+  #    11 = unparseable. Capture rc without tripping set -e.
+  local on_disk extract_rc=0
+  on_disk=$(extract_mcp_entry "$config_path" "$map_key" "$name") || extract_rc=$?
+
+  if [ "$extract_rc" -eq 10 ]; then
+    echo "  [mcp/$name/$harness] MISSING"
+    echo "      config    : $config_path"
+    echo "      reason    : no '$name' entry under '$map_key' — run \`igris harness compile\` to project it"
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+  if [ "$extract_rc" -eq 11 ]; then
+    echo "  [mcp/$name/$harness] DRIFTED"
+    echo "      config    : $config_path"
+    echo "      reason    : config unparseable — compile refuses to write; fix the file manually, then run \`igris harness compile\`"
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+  if [ "$extract_rc" -ne 0 ]; then
+    # Any other rc is an internal extract error — treat as DRIFTED, never crash.
+    echo "  [mcp/$name/$harness] DRIFTED"
+    echo "      config    : $config_path"
+    echo "      reason    : could not read the entry (extract rc $extract_rc)"
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+
+  # 2) Expected shape via the SHARED helper (reference stand-in for env values).
+  local expected
+  expected=$(normalize_mcp_shape "$canonical_json" "$harness" "$enabled")
+
+  # 3) Structural compare. The python compare re-resolves codex ${VAR} from
+  #    secrets.env (never printing a literal) and emits a verdict line:
+  #      MATCH                  → entry deep-equals expected.
+  #      DRIFTED:<keys>         → diverges; <keys> is a comma-joined KEY list
+  #                               (top-level + env.<K>), NEVER any value.
+  #      MISSING_SECRET:<VAR>   → codex ${VAR} absent from secrets.env (cannot
+  #                               compute the expected literal) → drift.
+  local cmp_verdict
+  cmp_verdict=$(python3 - "$on_disk" "$expected" "$harness" "$secrets_path" <<'PY'
+import json
+import re
+import sys
+
+on_disk = json.loads(sys.argv[1])
+expected = json.loads(sys.argv[2])
+harness = sys.argv[3]
+secrets_path = sys.argv[4]
+
+VAR_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+
+
+def load_secrets(path):
+    # Mirror secrets.ts:parseSecretsEnv — never throw, absent → {}.
+    out = {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            raw = fh.read()
+    except OSError:
+        return out
+    for line in raw.split("\n"):
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if s.startswith("export "):
+            s = s[len("export "):].lstrip()
+        eq = s.find("=")
+        if eq <= 0:
+            continue
+        key = s[:eq].strip()
+        if not key:
+            continue
+        val = s[eq + 1:]
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        out[key] = val
+    return out
+
+
+# For codex, swap the expected env REFERENCE for the resolved LITERAL so the
+# compare matches what compile actually wrote. A missing secret → cannot
+# compute the expected → report MISSING_SECRET (drift) WITHOUT printing a value.
+env_key = "environment" if harness == "opencode" else "env"
+missing_secret = None
+if harness == "codex":
+    secrets = load_secrets(secrets_path)
+    exp_env = expected.get("env", {}) or {}
+    resolved_env = {}
+    for k, v in exp_env.items():
+        m = VAR_RE.match(v) if isinstance(v, str) else None
+        if m is not None:
+            var = m.group(1)
+            if var in secrets:
+                resolved_env[k] = secrets[var]
+            else:
+                missing_secret = var
+                break
+        else:
+            resolved_env[k] = v
+    if missing_secret is not None:
+        sys.stdout.write(f"MISSING_SECRET:{missing_secret}")
+        sys.exit(0)
+    expected["env"] = resolved_env
+
+# Collect the differing KEY names (never values). Top-level keys first, then
+# per-env-key diffs as env.<K>.
+diff_keys = []
+
+exp_top = {k: expected.get(k) for k in expected if k != env_key}
+od_top = {k: on_disk.get(k) for k in on_disk if k != env_key}
+for k in sorted(set(list(exp_top.keys()) + list(od_top.keys()))):
+    if exp_top.get(k) != od_top.get(k):
+        diff_keys.append(k)
+
+exp_env = expected.get(env_key, {}) or {}
+od_env = on_disk.get(env_key, {}) or {}
+if not isinstance(od_env, dict):
+    diff_keys.append(env_key)
+else:
+    for k in sorted(set(list(exp_env.keys()) + list(od_env.keys()))):
+        if exp_env.get(k) != od_env.get(k):
+            diff_keys.append(f"{env_key}.{k}")
+
+if diff_keys:
+    sys.stdout.write("DRIFTED:" + ",".join(diff_keys))
+else:
+    sys.stdout.write("MATCH")
+PY
+)
+
+  case "$cmp_verdict" in
+    MATCH)
+      echo "  [mcp/$name/$harness] MATCH"
+      echo "      config    : $config_path"
+      MATCH=$((MATCH + 1))
+      ;;
+    MISSING_SECRET:*)
+      local var="${cmp_verdict#MISSING_SECRET:}"
+      echo "  [mcp/$name/$harness] DRIFTED"
+      echo "      config    : $config_path"
+      echo "      reason    : codex secret for \${$var} is not set in secrets.env — cannot verify the projected literal; add it, then run \`igris harness compile\`"
+      DRIFT=$((DRIFT + 1))
+      ;;
+    DRIFTED:*)
+      local keys="${cmp_verdict#DRIFTED:}"
+      echo "  [mcp/$name/$harness] DRIFTED"
+      echo "      config    : $config_path"
+      echo "      reason    : entry diverges from the projected shape; differing key(s): $keys — run \`igris harness compile\` to re-project (no values shown)"
+      DRIFT=$((DRIFT + 1))
+      ;;
+    *)
+      echo "  [mcp/$name/$harness] DRIFTED"
+      echo "      config    : $config_path"
+      echo "      reason    : internal compare error"
+      DRIFT=$((DRIFT + 1))
+      ;;
+  esac
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Flatten the manifest into work rows (same column layout as
 # compile_harnesses.sh; `-` is the empty-body-exception sentinel).
 # ---------------------------------------------------------------------------
@@ -1405,8 +1599,66 @@ PY
   done <<< "$SKILL_ROWS"
 fi
 
+# ---------------------------------------------------------------------------
+# FR-164 (FR-160 epic): MCP-server drift pass, line-paired with the compile MCP
+# pass (§18.1). Flattens the SAME (mcp,target) rows via `flatten_mcp_rows`
+# (target_kind="all" — drift checks all 4 harness targets per block, consistent
+# with drift's "check everything" posture). For each row it resolves the harness
+# config path + map key and calls `verify_mcp_entry_drift` (which reads the
+# on-disk entry, derives the expected shape via the SHARED normalize_mcp_shape,
+# and compares — re-resolving codex literals inside the compare WITHOUT printing
+# any value).
+#
+# Config-path resolution honors per-harness env overrides (test sandbox seam)
+# then falls back to the native default ($HOME-anchored, matching paths.ts).
+# secrets.env is resolved from <brain>/secrets.env (honored by the codex
+# re-resolve) with an IGRIS_SECRETS_PATH override for tests.
+# ---------------------------------------------------------------------------
+MCP_DRIFT_ROWS=$(flatten_mcp_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "all" "$PROJECT_ROOT")
+if [ -n "$MCP_DRIFT_ROWS" ]; then
+  mcp_secrets_path="${IGRIS_SECRETS_PATH:-$BRAIN_DIR/secrets.env}"
+  while IFS=$'\t' read -r d_name d_canon d_type d_enabled d_scope_type d_scope_paths; do
+    [ -z "$d_name" ] && continue
+    [ -z "$d_type" ] && continue
+    : "$d_scope_type" "$d_scope_paths"  # v1 global-only; carried, not filtered.
+
+    TOTAL=$((TOTAL + 1))
+
+    # Resolve config path + map key per harness. Per-harness env overrides
+    # (IGRIS_MCP_<HARNESS>_CONFIG) are the test-sandbox seam; defaults are the
+    # native $HOME-anchored paths (byte-identical to paths.ts).
+    case "$d_type" in
+      claude)
+        d_map_key="mcpServers"
+        d_config="${IGRIS_MCP_CLAUDE_CONFIG:-$HOME/.claude.json}"
+        ;;
+      gemini)
+        d_map_key="mcpServers"
+        d_config="${IGRIS_MCP_GEMINI_CONFIG:-$HOME/.gemini/settings.json}"
+        ;;
+      opencode)
+        d_map_key="mcp"
+        d_config="${IGRIS_MCP_OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json}"
+        ;;
+      codex)
+        d_map_key="mcp_servers"
+        d_config="${IGRIS_MCP_CODEX_CONFIG:-$HOME/.codex/config.toml}"
+        ;;
+      *)
+        echo "  [mcp/$d_name/$d_type] DRIFTED"
+        echo "      reason    : unknown harness type '$d_type'"
+        DRIFT=$((DRIFT + 1))
+        continue
+        ;;
+    esac
+
+    verify_mcp_entry_drift "$d_name" "$d_type" "$d_config" "$d_map_key" \
+      "$d_canon" "$d_enabled" "$mcp_secrets_path"
+  done <<< "$MCP_DRIFT_ROWS"
+fi
+
 if [ "$TOTAL" -eq 0 ]; then
-  echo "No agent/skills targets matched (filter='$FILTER')." >&2
+  echo "No agent/skills/mcp targets matched (filter='$FILTER')." >&2
   exit 0
 fi
 

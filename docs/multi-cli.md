@@ -163,6 +163,92 @@ canonical content from the registry, regardless of which block it came from).
 
 ---
 
+## MCP Servers as a `surfaces.mcp_servers` manifest declaration (FR-160 epic)
+
+MCP servers are a **third** first-class manifest surface, alongside agents and
+skills — projected and drift-checked by `igris harness compile` /
+`igris harness check`, exactly the way skills are. Unlike skills (symlinks) and
+agents (symlinks/hardlinks), **MCP projection is a config MERGE**: each declared
+server is upserted into the four CLIs' native MCP config files, leaving every
+other entry and top-level key in those (hot, user-owned) files byte-for-byte
+untouched.
+
+### Registering an MCP server — `igris registry add-mcp`
+
+`add-mcp` registers a **global** MCP server into the personal overlay's
+`surfaces.mcp_servers[]` (it writes only the overlay + an inline origin — it
+never touches a live CLI config; that projection is `igris harness compile`):
+
+```
+igris registry add-mcp <name> \
+  --command <bin> [--arg <value> ...] \
+  [--env KEY=${VAR} ...] \
+  [--startup-timeout-sec <n>] \
+  --target <type>:merge[:enabled] [--target ...]
+```
+
+- `<name>` matches `/^[a-z0-9][a-z0-9-]*$/` and is the server identity (one
+  block per name).
+- `--command` is **required for a new server**; a same-name re-add inherits it.
+- `--arg` is repeatable → the launch `args[]`.
+- `--target` is repeatable; `<type>` ∈ `{claude, codex, gemini, opencode}`,
+  `method` is always `merge`, and an optional `:false` disables the entry for
+  that harness (opencode passthrough).
+- **`--env` values MUST be a single `${VAR}` indirection reference** (e.g.
+  `--env API_KEY=${MY_TOKEN}`). An inline secret is **rejected** at the verb
+  boundary — the real secret never enters the registry or any config. The
+  literal lives only in `~/.igris/secrets.env` (chmod 600, gitignored, outside
+  the repo) and is resolved at projection time **for Codex only**.
+- v1 is **global-only**: `--scope project` / `--project` are rejected.
+
+### The four native per-harness shapes (the projection)
+
+`igris harness compile --surface mcp` (or `--surface all`) flattens every
+`surfaces.mcp_servers[]` block into one `(server, target)` row per declared
+harness and merges the native entry into that harness's config. The bash pass is
+a thin driver; the JSON/TOML merge (atomic, idempotent, malformed-never-clobber,
+single rolling `.igris.bak`) lives in **one** place in the CLI — bash never
+re-implements it (L-519 §18.1). The four shapes:
+
+| Harness | Config file | Map | Native entry shape |
+|---------|-------------|-----|--------------------|
+| Claude | `~/.claude.json` | `mcpServers.<name>` | `{ type:"stdio", command, args[], env{} }` — env values are `${VAR}` |
+| Gemini | `~/.gemini/settings.json` | `mcpServers.<name>` | `{ command, args[], env{} }` (no `type`) — env values are `${VAR}` |
+| OpenCode | `~/.config/opencode/opencode.json` | `mcp.<name>` | `{ type:"local", command:[cmd, ...args], enabled, environment{} }` — command+args **fused** into one array; env KEY is `environment`; env values are `{env:VAR}` |
+| Codex | `~/.codex/config.toml` | `[mcp_servers.<name>]` | `{ command, args[], startup_timeout_sec?, [.env] }` — env values are **resolved literals** |
+
+**The `${VAR}` indirection rule (FR-160e).** Claude, Gemini and OpenCode resolve
+the env reference + inherit exported env at launch, so the registry's `${VAR}`
+(translated to `{env:VAR}` for OpenCode) is written verbatim — **no secret ever
+lands in those configs**. Codex's sandbox (`inherit="core"`) resolves neither
+refs nor inherited env, so its env values are the **resolved literal** read from
+`~/.igris/secrets.env` at compile time. When a Codex `${VAR}` has no entry in
+`secrets.env`, the projection **fails for that row** naming the missing VAR (never
+a value) — the other harnesses are unaffected.
+
+**Overlay merge.** `merge_overlay_manifest` concatenates the base
+`surfaces.mcp_servers[]` with the overlay's, with a block-NAME collision being a
+**hard error** (a personal MCP must not shadow a core one) — the same posture as
+agents and skills.
+
+### Drift verification
+
+`igris harness check` runs a line-paired MCP drift pass: for each
+`(server, harness)` it reads the on-disk entry, derives the expected native
+shape from the **same** shared shape helper compile uses, and compares —
+verdict `MATCH` / `DRIFTED` (naming the differing **key names**, never values) /
+`MISSING` (no entry; run compile). For Codex it re-resolves each `${VAR}` from
+`secrets.env` and compares the resolved literal against the on-disk literal
+**without printing either**. A malformed config is reported `DRIFTED`
+("unparseable") rather than clobbered.
+
+> `igris registry project-mcp` is the **internal** per-harness projector the
+> compile/drift bash passes invoke (one config write per call). It is not a
+> user-facing verb — register servers with `add-mcp` and project them with
+> `igris harness compile`.
+
+---
+
 ## Portability Convention
 
 Skills are authored for Claude Code first. To mark CLI-specific frontmatter, use the

@@ -55,6 +55,23 @@ readonly CORE_SURFACES="$ADAPTER_DIR/surfaces-manifest.json"
 BRAIN_DIR="${IGRIS_BRAIN_DIR:-$HOME/.igris}"
 readonly DEFAULT_OVERLAY="$BRAIN_DIR/registry/harness-manifest.personal.json"
 
+# FR-164: how the MCP pass invokes the TS projector (`igris registry
+# project-mcp`). The merge engine (mergeJsonConfig/mergeTomlConfig) lives in the
+# built CLI — bash NEVER re-implements it (§18.1). Resolution order:
+#   1. $IGRIS_CLI — a full command string (e.g. "node /repo/cli/dist/index.js").
+#      The bats seam sets this so the suite runs against the freshly-built CLI
+#      without depending on a globally-linked `igris`. (L-552: rebuild first.)
+#   2. the `igris` binary on PATH (the normal `igris harness compile` flow).
+# Stored as an ARRAY so a multi-word $IGRIS_CLI ("node /path/index.js") splits
+# correctly without eval. Empty array → fall back to the `igris` binary.
+IGRIS_CLI_CMD=()
+if [ -n "${IGRIS_CLI:-}" ]; then
+  # Word-split the override on whitespace (it is a trusted operator/test seam).
+  read -ra IGRIS_CLI_CMD <<< "$IGRIS_CLI"
+else
+  IGRIS_CLI_CMD=(igris)
+fi
+
 # ---------------------------------------------------------------------------
 # atomic_symlink <link_path> <target>
 #
@@ -704,8 +721,8 @@ compile_md_agent_target() {
 # ---------------------------------------------------------------------------
 usage() {
   echo "Usage: $0 --project-root <dir> [--manifest <path>] [--overlay <path>]" >&2
-  echo "                          [--filter <name-glob>] [--target claude|codex|gemini|all]" >&2
-  echo "                          [--surface agents|skills|all]" >&2
+  echo "                          [--filter <name-glob>] [--target claude|codex|gemini|opencode|all]" >&2
+  echo "                          [--surface agents|skills|mcp|all]" >&2
   echo "" >&2
   echo "Regenerates harness files declared in the manifest from canonical prompts." >&2
   exit 2
@@ -783,18 +800,22 @@ if [ ! -f "$MANIFEST" ]; then
   exit 1
 fi
 
+# FR-164: --target accepts `opencode` (the 4th MCP-only harness). It applies to
+# the MCP pass row filter; the agent + skills passes silently match nothing for
+# opencode (no agent/skill targets declare it), which is correct.
 case "$TARGET_KIND" in
-  claude|codex|gemini|all) : ;;
+  claude|codex|gemini|opencode|all) : ;;
   *)
-    echo "Error: --target must be claude, codex, gemini, or all (got '$TARGET_KIND')" >&2
+    echo "Error: --target must be claude, codex, gemini, opencode, or all (got '$TARGET_KIND')" >&2
     usage
     ;;
 esac
 
+# FR-164: --surface accepts `mcp` (the MCP projection pass).
 case "$SURFACE_KIND" in
-  agents|skills|all) : ;;
+  agents|skills|mcp|all) : ;;
   *)
-    echo "Error: --surface must be agents, skills, or all (got '$SURFACE_KIND')" >&2
+    echo "Error: --surface must be agents, skills, mcp, or all (got '$SURFACE_KIND')" >&2
     usage
     ;;
 esac
@@ -867,7 +888,8 @@ fi
 #   body-exception-or-empty <TAB> target-type <TAB> target-path
 # One row per agent/target. python3 (no jq) per the _common.sh convention.
 # ---------------------------------------------------------------------------
-if [ "$SURFACE_KIND" = "skills" ]; then
+# FR-164: the agent pass runs only for agents/all (skipped for skills and mcp).
+if [ "$SURFACE_KIND" = "skills" ] || [ "$SURFACE_KIND" = "mcp" ]; then
   WORK_ROWS=""
 else
   WORK_ROWS=$(python3 - "$MERGED_MANIFEST" "$FILTER" "$TARGET_KIND" <<'PY'
@@ -1094,9 +1116,9 @@ fi
 # surfaces-manifest.json with any the merged agent manifest carries, then for
 # each target invoke the matching md_to_* compiler/converter (D-4:
 # invoke-from-compiler — the emit logic lives in those scripts, unchanged).
-# Skipped entirely when --surface agents.
+# Skipped entirely when --surface agents or --surface mcp (FR-164).
 # ---------------------------------------------------------------------------
-if [ "$SURFACE_KIND" != "agents" ]; then
+if [ "$SURFACE_KIND" = "skills" ] || [ "$SURFACE_KIND" = "all" ]; then
   # Flatten skills targets from both sources into rows:
   #   source <TAB> type <TAB> method <TAB> path <TAB> scope_type <TAB> scope_paths
   # `-` is the empty-source / empty-paths sentinel (caller falls back to md_to_*'s
@@ -1391,8 +1413,62 @@ PY
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# FR-164 (FR-160 epic): MCP-server projection pass. For each (mcp-block,target)
+# row, dispatch to the TS projector (`igris registry project-mcp`) which builds
+# the native per-harness entry and MERGES it into the live harness config via
+# the proven mergeJsonConfig/mergeTomlConfig (§18.1: bash NEVER re-implements
+# the merge — this pass is a thin driver + accounting). Each invocation writes
+# ONE config; we count OK/FAIL per (mcp,target) into the shared accumulators.
+#
+# SECRET HYGIENE: the row carries the ${VAR} REFERENCE in `canonical_json`, NOT
+# a resolved literal. The codex literal is resolved only INSIDE the projector
+# (from secrets.env), never in a bash variable that could be `set -x`'d. We
+# NEVER echo `canonical_json`. The projector itself prints only the outcome +
+# name + harness (no env values).
+# ---------------------------------------------------------------------------
+if [ "$SURFACE_KIND" = "mcp" ] || [ "$SURFACE_KIND" = "all" ]; then
+  MCP_ROWS=$(flatten_mcp_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "$TARGET_KIND" "$PROJECT_ROOT")
+  if [ -n "$MCP_ROWS" ]; then
+    while IFS=$'\t' read -r m_name m_canon m_type m_enabled m_scope_type m_scope_paths; do
+      [ -z "$m_name" ] && continue
+      [ -z "$m_type" ] && continue
+
+      # v1 is GLOBAL-ONLY; scope columns are carried for forward-compat but
+      # every block is treated as global (no project-scope filter here, unlike
+      # skills). m_canon/m_scope_* are intentionally NOT echoed (m_canon holds
+      # the ${VAR} ref).
+      : "$m_scope_type" "$m_scope_paths"
+
+      TOTAL=$((TOTAL + 1))
+
+      # Dispatch to the TS projector. ONE harness per call. The projector reads
+      # the SAME merged manifest (base ++ overlay) via --project-root/--overlay,
+      # finds the named block, and writes the native shape atomically. Its
+      # stdout/stderr passes through (the projector never prints a secret).
+      rc=0
+      "${IGRIS_CLI_CMD[@]}" registry project-mcp \
+        --name "$m_name" \
+        --harness "$m_type" \
+        --project-root "$PROJECT_ROOT" \
+        ${OVERLAY:+--overlay "$OVERLAY"} || rc=$?
+
+      if [ "$rc" -eq 0 ]; then
+        SUMMARY+=("OK    mcp/$m_name/$m_type")
+        OK=$((OK + 1))
+      else
+        # Observable FAIL (L-232): a real exit code + a counted FAIL row, never
+        # a silent empty success. The projector already named the failure on
+        # stderr (block-not-found / missing-secret VAR name / merge error).
+        SUMMARY+=("FAIL  mcp/$m_name/$m_type — projector exited $rc")
+        FAIL=$((FAIL + 1))
+      fi
+    done <<< "$MCP_ROWS"
+  fi
+fi
+
 if [ "$TOTAL" -eq 0 ]; then
-  echo "No agent/skills targets matched (filter='$FILTER', target='$TARGET_KIND', surface='$SURFACE_KIND')." >&2
+  echo "No agent/skills/mcp targets matched (filter='$FILTER', target='$TARGET_KIND', surface='$SURFACE_KIND')." >&2
   exit 0
 fi
 

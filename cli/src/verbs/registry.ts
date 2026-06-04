@@ -58,8 +58,19 @@ import {
   registryOriginsPath,
   registryOverlayPath,
   registrySkillDirPath,
+  claudeJsonPath,
+  geminiSettingsPath,
+  codexConfigTomlPath,
+  opencodeConfigPath,
 } from "../lib/paths.js";
 import { info, error as logError } from "../lib/log.js";
+import { buildHarnessMcpEntry, type McpHarness } from "../lib/mcp-shape.js";
+import { parseSecretsEnv } from "../lib/secrets.js";
+import {
+  mergeJsonConfig,
+  mergeTomlConfig,
+  type TomlMcpEntry,
+} from "../lib/mcp-register.js";
 import {
   isGithubSpec,
   parseGithubSpec,
@@ -78,6 +89,7 @@ export type RegistryAction =
   | "add"
   | "add-skill"
   | "add-mcp"
+  | "project-mcp"
   | "list"
   | "remove"
   | "update";
@@ -428,6 +440,25 @@ export interface RegistryOptions {
    * `listReleasesDefault` (gh→public API). Unit tests inject a fake tag list.
    */
   listReleases?: ListReleasesFn;
+  /**
+   * FR-164 project-mcp: which harness to project ONE MCP block into. The bash
+   * compile/drift driver loops the per-(mcp,target) rows and calls this verb
+   * once per target, so a single invocation is a pure 1-config-write unit.
+   */
+  harness?: McpHarness;
+  /**
+   * FR-164 project-mcp test seam: override the harness config FILE path. When
+   * absent the verb resolves it from `harness` (claudeJsonPath /
+   * geminiSettingsPath / codexConfigTomlPath / opencodeConfigPath). Tests
+   * sandbox the hot config via this seam.
+   */
+  configPath?: string;
+  /**
+   * FR-164 project-mcp test seam: override `~/.igris/secrets.env` (codex only).
+   * Defaults to `secretsEnvPath()` (honored by `parseSecretsEnv`). Tests inject
+   * a fixture secrets file. Never read for claude/gemini/opencode.
+   */
+  secretsPath?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -3654,6 +3685,219 @@ function runAddMcp(opts: RegistryOptions, overlayPath: string): number {
   return 0;
 }
 
+/**
+ * FR-164: per-harness map key for the MCP entry. claude/gemini both nest under
+ * `mcpServers` (JSON); opencode nests under `mcp` (JSON); codex nests under the
+ * `[mcp_servers.<name>]` TOML table family. Mirrors `_common.sh`'s
+ * `mcp_map_key`.
+ */
+function mcpMapKeyFor(harness: McpHarness): string {
+  switch (harness) {
+    case "claude":
+    case "gemini":
+      return "mcpServers";
+    case "opencode":
+      return "mcp";
+    case "codex":
+      return "mcp_servers";
+  }
+}
+
+/**
+ * FR-164: resolve the live harness CONFIG FILE path for a harness. Tests
+ * override via `opts.configPath` (the sandbox seam the bash driver passes
+ * through). Mirrors `_common.sh`'s `mcp_config_path` resolution.
+ */
+function mcpConfigPathFor(harness: McpHarness): string {
+  switch (harness) {
+    case "claude":
+      return claudeJsonPath();
+    case "gemini":
+      return geminiSettingsPath();
+    case "opencode":
+      return opencodeConfigPath();
+    case "codex":
+      return codexConfigTomlPath();
+  }
+}
+
+/**
+ * FR-164: read the base manifest + auto-discovered/explicit personal overlay
+ * and return the CONCATENATED `surfaces.mcp_servers[]` blocks (base ++ overlay),
+ * so a personal MCP block written by `add-mcp` is visible to the projector.
+ * This is the TS analogue of `_common.sh merge_overlay_manifest`'s mcp_servers
+ * concat (finding #2). A name-collision between base and overlay is a HARD error
+ * (matches the bash guard) — returned as a string for the caller to log.
+ *
+ * Absent base/overlay → that side contributes []. Malformed → throw (the caller
+ * maps to exit 1). The order is base-first, overlay-second (same as bash).
+ */
+function loadMergedMcpBlocks(
+  manifestPath: string,
+  overlayPath: string | undefined,
+): McpServersSurface[] | string {
+  const readMcp = (path: string): McpServersSurface[] => {
+    if (!existsSync(path)) {
+      return [];
+    }
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as {
+      surfaces?: { mcp_servers?: McpServersSurface[] };
+    };
+    const blocks = parsed.surfaces?.mcp_servers;
+    return Array.isArray(blocks) ? blocks : [];
+  };
+
+  const baseBlocks = readMcp(manifestPath);
+  const overlayBlocks =
+    overlayPath !== undefined && overlayPath.length > 0
+      ? readMcp(overlayPath)
+      : [];
+
+  // Name-collision hard error (mirrors merge_overlay_manifest): a personal MCP
+  // must not shadow a core one.
+  const baseNames = new Set(baseBlocks.map((b) => b?.name));
+  for (const ob of overlayBlocks) {
+    if (baseNames.has(ob?.name)) {
+      return (
+        `overlay mcp_servers block '${String(ob?.name)}' collides with a base ` +
+        "(core) block name; a personal customization must not shadow a core one"
+      );
+    }
+  }
+  return [...baseBlocks, ...overlayBlocks];
+}
+
+/**
+ * FR-164 (FR-160 epic): `igris registry project-mcp` — the INTERNAL compile-time
+ * MCP projector. Reads the merged manifest (base ++ personal overlay), finds the
+ * `mcp_servers` block whose `name === --name`, builds the native per-harness
+ * entry via `buildHarnessMcpEntry` (which calls FR-165's `normalizeEnvForHarness`
+ * per env key), and dispatches the write to the proven `mergeJsonConfig`
+ * (claude/gemini/opencode) or `mergeTomlConfig` (codex). ONE harness per
+ * invocation — the bash compile/drift driver loops the per-(mcp,target) rows.
+ *
+ * SECURITY: the ONLY harness that resolves a secret literal is codex (the others
+ * emit `${VAR}` / `{env:VAR}` refs). When a codex `${VAR}` secret is absent,
+ * the verb FAILS with the VAR NAME on stderr and NEVER writes a partial value —
+ * and NEVER prints any resolved literal.
+ *
+ * Exit codes: 0 = registered/updated/unchanged; 1 = block-not-found /
+ * missing-secret / merge failure (error on stderr); 2 = usage error.
+ *
+ * NOT a user-facing verb — invoked only by the bash harness compile pass.
+ */
+function runProjectMcp(opts: RegistryOptions): number {
+  // Guard — name + harness required.
+  if (opts.name === undefined || opts.name.length === 0) {
+    logError("registry project-mcp: --name is required");
+    return 2;
+  }
+  const name = opts.name;
+  if (opts.harness === undefined) {
+    logError(
+      "registry project-mcp: --harness <claude|codex|gemini|opencode> is required",
+    );
+    return 2;
+  }
+  if (!(VALID_MCP_TARGET_TYPES as readonly string[]).includes(opts.harness)) {
+    logError(
+      `registry project-mcp: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_MCP_TARGET_TYPES)}`,
+    );
+    return 2;
+  }
+  const harness = opts.harness;
+
+  // Resolve the merged manifest blocks (base ++ overlay; collision = hard error).
+  const projectRoot = opts.projectRoot ?? process.cwd();
+  const manifestPath = join(projectRoot, "harness-manifest.json");
+  const overlayPath = opts.overlayPath ?? registryOverlayPath();
+
+  let blocks: McpServersSurface[];
+  try {
+    const merged = loadMergedMcpBlocks(manifestPath, overlayPath);
+    if (typeof merged === "string") {
+      logError(`registry project-mcp: ${merged}`);
+      return 1;
+    }
+    blocks = merged;
+  } catch (err) {
+    logError(
+      `registry project-mcp: cannot read manifest/overlay: ${(err as Error).message}`,
+    );
+    return 1;
+  }
+
+  const block = blocks.find((b) => b?.name === name);
+  if (block === undefined) {
+    logError(
+      `registry project-mcp: no mcp_servers block named '${name}' in the merged manifest`,
+    );
+    return 1;
+  }
+
+  // The per-target enabled flag for THIS harness (opencode passthrough). Absent
+  // target → still project (the bash driver only emits rows for declared
+  // targets, but defend here against a direct call for an undeclared harness).
+  const target = block.targets.find((t) => t.type === harness);
+  const enabled = target?.enabled;
+
+  // Build the native entry. secrets are loaded ONLY for codex (the only harness
+  // that resolves a literal). parseSecretsEnv honors secretsPath (test seam).
+  const secrets =
+    harness === "codex" ? parseSecretsEnv(opts.secretsPath) : undefined;
+  const { entry, missing } = buildHarnessMcpEntry(
+    block.canonical,
+    harness,
+    enabled,
+    secrets,
+  );
+  if (missing !== undefined) {
+    // Codex-only: a ${VAR} whose secret is absent. Name ONLY the VAR — NEVER a
+    // value. The overlay/manifest stays unchanged (no write attempted).
+    logError(
+      `registry project-mcp: cannot project '${name}' to codex — secret for ` +
+        `\${${missing}} is not set in secrets.env; add it or remove the env ref`,
+    );
+    return 1;
+  }
+
+  // Resolve the config path + map key, then dispatch to the proven merger.
+  const targetPath = opts.configPath ?? mcpConfigPathFor(harness);
+  const mapKey = mcpMapKeyFor(harness);
+
+  const result =
+    harness === "codex"
+      ? mergeTomlConfig({
+          targetPath,
+          tablePrefix: mapKey,
+          entryKey: name,
+          entry: entry as TomlMcpEntry,
+        })
+      : mergeJsonConfig({
+          targetPath,
+          mapKey,
+          entryKey: name,
+          entry: entry as Record<string, unknown>,
+        });
+
+  if (result.outcome === "failed") {
+    // Map the merger's failure to exit 1 with its actionable error on stderr.
+    // The error text NEVER contains a secret value (the mergers only ever see
+    // the already-shaped entry; codex literals are inside the entry object the
+    // merger writes atomically, never echoed). NEVER a silent empty success.
+    logError(
+      `registry project-mcp: failed to project '${name}' to ${harness} ` +
+        `(${targetPath}): ${result.error ?? "unknown merge error"}`,
+    );
+    return 1;
+  }
+
+  // registered | updated | unchanged → success. Print only the outcome + name +
+  // harness (no env values).
+  info(`project-mcp: ${name} → ${harness} (${result.outcome})`);
+  return 0;
+}
+
 function runList(overlayPath: string): number {
   let overlay: Overlay;
   try {
@@ -4131,6 +4375,8 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runAddSkill(opts, overlayPath);
     case "add-mcp":
       return runAddMcp(opts, overlayPath);
+    case "project-mcp":
+      return runProjectMcp(opts);
     case "list":
       return runList(overlayPath);
     case "remove":
@@ -4139,7 +4385,7 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runUpdate(opts, overlayPath);
     default:
       logError(
-        `unknown registry action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, list, remove, update.`,
+        `unknown registry action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, project-mcp, list, remove, update.`,
       );
       return 2;
   }
