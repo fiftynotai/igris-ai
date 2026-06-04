@@ -247,6 +247,50 @@ verdict `MATCH` / `DRIFTED` (naming the differing **key names**, never values) /
 > user-facing verb — register servers with `add-mcp` and project them with
 > `igris harness compile`.
 
+### Shipped default: `igris-brain`
+
+The Igris brain MCP server is itself a **registry-distributed default** — it
+rides the very mechanism described above to reach all four harnesses. It is
+registered and projected exactly like any other server:
+
+```
+igris registry add-mcp igris-brain \
+  --command node --arg <bundled-path> \
+  --target claude:merge --target gemini:merge \
+  --target opencode:merge --target codex:merge
+igris harness compile --surface mcp
+```
+
+**Canonical path (resolved, not invented).** `<bundled-path>` is the bundled
+`cli/dist/brain-mcp-server/dist/index.js`. This was triangulated from three
+agreeing sources — the live `~/.claude.json` entry, `paths.ts`'s
+`bundledMcpEntryPath()`, and what `igris init` registers — not chosen by hand.
+The Codex entry had been the one outlier, still pointing at the repo-source
+`brain-mcp-server/dist/index.js` (L-427: same-name MCP, divergent paths across
+harnesses); `compile --surface mcp` normalized it onto the bundled path. Prefer
+the **bundled** path: it survives a `npm install -g` reinstall, whereas the
+repo-source path does not.
+
+**Env-free, by design.** `igris-brain` carries **no `--env`** — it reads
+`~/.igris/config.json` directly (the config-file-read pattern), so its
+projection exercises the merge mechanism with **no secret path involved**. It
+sits at the verbatim end of the env model above (no `${VAR}`, so nothing to
+translate for OpenCode and nothing to resolve from `secrets.env` for Codex).
+
+**Per-harness native shapes apply unchanged.** `igris-brain` lands in each
+harness in that harness's native shape per the matrix above — Claude's
+`type:"stdio"` + `env`, Gemini's no-`type` form, OpenCode's `type:"local"` +
+fused `command[]` + `enabled` + `environment`, and Codex's
+`[mcp_servers.igris-brain]` table.
+
+**Verifying a rollout (fresh process, not the running one).** An MCP config
+change takes effect only on a process's **next** launch — a CLI already running
+holds its config from start-up (L-256: verify MCP changes in a fresh process).
+The rollout was confirmed by running `gemini mcp list` in a **fresh** Gemini
+process, which reported `✓ igris-brain ... - Connected`; checking the
+already-running session would have shown stale state. `igris harness check`
+returned **MATCH** for the `igris-brain` entry on all four harness targets.
+
 ---
 
 ## Portability Convention
