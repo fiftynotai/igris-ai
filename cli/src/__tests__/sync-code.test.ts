@@ -268,6 +268,7 @@ describe("sync code — runSyncCode", () => {
       "CLAUDE.local.md",
       ".env",
       ".env.local",
+      "secrets.env",
       "*.log",
       "logs/",
       ".DS_Store",

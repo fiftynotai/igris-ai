@@ -134,6 +134,20 @@ export function configJsonPath(): string {
 }
 
 /**
+ * FR-165 (FR-160 epic): absolute path to `~/.igris/secrets.env` — the SINGLE
+ * source of real MCP secrets. chmod 600, gitignored (lives OUTSIDE the repo).
+ * Honors IGRIS_BRAIN_DIR (the test-sandbox seam every other helper uses).
+ *
+ * The registry overlay stores only `${VAR}` indirection refs; the actual
+ * literal a Codex compile resolves at FR-164 projection time is read from
+ * this file. claude/gemini/opencode never read it (they resolve the ref +
+ * inherit exported env at launch).
+ */
+export function secretsEnvPath(): string {
+  return join(brainDir(), "secrets.env");
+}
+
+/**
  * Absolute path to `~/.claude.json` — Claude Code's per-user config FILE.
  *
  * NOTE: this is `~/.claude.json` (a file), NOT `~/.claude/settings.json`.

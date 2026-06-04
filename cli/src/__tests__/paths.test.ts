@@ -22,6 +22,7 @@ import {
   registryOriginsPath,
   registryOverlayPath,
   registrySkillDirPath,
+  secretsEnvPath,
 } from "../lib/paths.js";
 
 let sandbox: string;
@@ -78,6 +79,17 @@ describe("TD-191 L-517 path helpers", () => {
     expect(agentPath.replace("/agents/alpha", "")).toBe(
       skillPath.replace("/skills/alpha", ""),
     );
+  });
+
+  it("FR-165: secretsEnvPath() resolves under <brain>/secrets.env (IGRIS_BRAIN_DIR honored)", () => {
+    expect(secretsEnvPath()).toBe(join(sandbox, "secrets.env"));
+    const other = mkdtempSync(join(tmpdir(), "igris-paths-secrets-other-"));
+    try {
+      process.env.IGRIS_BRAIN_DIR = other;
+      expect(secretsEnvPath()).toBe(join(other, "secrets.env"));
+    } finally {
+      rmSync(other, { recursive: true, force: true });
+    }
   });
 
   it("L-517 invariant: catalog files live at the registry root, NOT in typed subfolders", () => {

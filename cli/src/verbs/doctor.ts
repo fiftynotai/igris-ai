@@ -51,7 +51,9 @@ import {
 import {
   claudeJsonPath,
   projectSettingsPath,
+  registryOverlayPath,
 } from "../lib/paths.js";
+import { extractVarName, parseSecretsEnv } from "../lib/secrets.js";
 import {
   inspectMcpRegistration,
   registerMcpInClaudeJson,
@@ -77,6 +79,11 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
   const drift = await classifyDriftAll(rows);
 
   printDriftTable(drift);
+
+  // FR-165: read-only WARNING for MCP env refs whose VAR is resolvable nowhere
+  // (neither secrets.env nor process.env). Not a fixable drift-row — the fix is
+  // "add it to secrets.env", which doctor cannot do safely. Never echoes a value.
+  detectMissingSecrets();
 
   let errored = 0;
   // TD-122: bridge-missing fix is invocation-bounded — a single partial
@@ -437,6 +444,85 @@ function realpathSyncSafe(p: string): string {
     return realpathSync(p);
   } catch {
     return p;
+  }
+}
+
+/**
+ * FR-165: read-only WARNING path for MCP env-var indirection refs that resolve
+ * NOWHERE — i.e. a `${VAR}` in some `surfaces.mcp_servers[*].canonical.env`
+ * that is absent from BOTH `~/.igris/secrets.env` AND `process.env`. claude /
+ * gemini / opencode resolve the ref + inherit exported env at launch, and the
+ * Codex compile (FR-164) reads `secrets.env` for the literal — so an unresolved
+ * VAR means that server will launch with an empty/missing value on at least one
+ * harness.
+ *
+ * This is a WARN, NOT a fixable drift-row: the fix is "add it to secrets.env",
+ * which doctor cannot do safely (it would be writing a secret). The warning
+ * names the VAR + the server only — there is NO value to log (the VAR is, by
+ * definition, missing), and we never echo a resolved env value either.
+ *
+ * Read-only: parses the overlay + secrets.env without writing anything.
+ * Servers with no `canonical.env` (e.g. igris-brain) never trip this — the
+ * natural iteration over `canonical.env` entries already scopes it correctly.
+ */
+function detectMissingSecrets(): void {
+  // Parse the personal overlay defensively — a malformed/absent overlay must
+  // not break doctor (it is best-effort advisory).
+  let mcpBlocks: Array<{
+    name?: unknown;
+    canonical?: { env?: unknown };
+  }> = [];
+  try {
+    const overlayPath = registryOverlayPath();
+    if (!existsSync(overlayPath)) {
+      return;
+    }
+    const parsed = JSON.parse(readFileSync(overlayPath, "utf-8")) as {
+      surfaces?: { mcp_servers?: unknown };
+    };
+    const blocks = parsed.surfaces?.mcp_servers;
+    if (Array.isArray(blocks)) {
+      mcpBlocks = blocks as typeof mcpBlocks;
+    }
+  } catch {
+    // Malformed overlay → skip the advisory check silently.
+    return;
+  }
+
+  if (mcpBlocks.length === 0) {
+    return;
+  }
+
+  const secrets = parseSecretsEnv();
+  for (const block of mcpBlocks) {
+    const env = block.canonical?.env;
+    if (env === null || typeof env !== "object" || Array.isArray(env)) {
+      continue;
+    }
+    const serverName = typeof block.name === "string" ? block.name : "(unnamed)";
+    for (const value of Object.values(env as Record<string, unknown>)) {
+      if (typeof value !== "string") {
+        continue;
+      }
+      const varName = extractVarName(value);
+      if (varName === null) {
+        continue; // not a ref (write-guard should prevent this, but be safe)
+      }
+      const inSecrets = Object.prototype.hasOwnProperty.call(secrets, varName);
+      const inProcessEnv = Object.prototype.hasOwnProperty.call(
+        process.env,
+        varName,
+      );
+      if (!inSecrets && !inProcessEnv) {
+        // Name the VAR + server ONLY — never a value (there is none to leak).
+        warn(
+          `MCP secret '${varName}' (server '${serverName}') is not set in ` +
+            `~/.igris/secrets.env or the environment. Add 'export ${varName}=...' ` +
+            `to ~/.igris/secrets.env (chmod 600) so Codex can resolve it and ` +
+            `claude/gemini/opencode inherit it at launch.`,
+        );
+      }
+    }
   }
 }
 

@@ -104,6 +104,9 @@ export const RSYNC_EXCLUDES: readonly string[] = [
   "CLAUDE.local.md",
   ".env",
   ".env.local",
+  // FR-165 MCP secrets — real file lives at ~/.igris/secrets.env (outside repo);
+  // mirror the .gitignore belt-and-suspenders so the TD-140 contract stays green.
+  "secrets.env",
   // Logs
   "*.log",
   "logs/",

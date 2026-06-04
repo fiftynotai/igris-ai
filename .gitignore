@@ -52,6 +52,13 @@ test-output/
 .env
 .env.local
 
+# FR-165 MCP secrets — the real file lives at ~/.igris/secrets.env (OUTSIDE the
+# repo); this is defense-in-depth against a stray in-repo copy. The load-bearing
+# guarantee is that the projector never writes a resolved literal into any
+# git-tracked file (Codex config.toml lives at ~/.codex/, the registry overlay
+# stays ${VAR}-only). See core/scripts/cli-adapters/README.md § "MCP secrets".
+secrets.env
+
 # Local overrides (developer-specific, never commit)
 CLAUDE.local.md
 

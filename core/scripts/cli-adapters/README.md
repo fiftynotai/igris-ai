@@ -89,6 +89,62 @@ TD-021:
 - `latest_canonical <dir> <glob>` — newest version-matching file (`sort -V`).
 - `sha_body <md>` — sha256 of the body only (frontmatter stripped).
 
+## MCP secrets (FR-160e)
+
+MCP servers often need a secret (an API key, a token). Igris NEVER stores the
+literal secret in the registry overlay or in any git-tracked file — the overlay
+holds only a `${VAR}` indirection ref (the `add-mcp` write-guard rejects any
+other form). How that ref is emitted into each harness's live config depends on
+the harness. Three patterns cover every MCP server:
+
+| Pattern | Who | What the harness config holds | Secret source |
+|---------|-----|-------------------------------|---------------|
+| ① config-file-read | igris-brain (env-free) | nothing — no `env` block | n/a (no secret) |
+| ② env-resolution | claude / gemini / opencode | a ref the harness resolves at launch | exported env (inherited) |
+| ③ compile-time-literal | codex | the RESOLVED literal, written at compile time | `~/.igris/secrets.env` |
+
+igris-brain is pattern ①: its canonical `env` is empty, so it never references
+a secret and never trips the `doctor` missing-secret warning.
+
+### Per-harness emit-rule matrix
+
+The canonical env value is always `${VAR}`. The FR-165 normalizer
+(`cli/src/lib/mcp-env-normalize.ts#normalizeEnvForHarness`) maps it per harness;
+FR-164's projector consumes those values and splices them into each config.
+
+| Harness | Canonical value | Emitted value | Why |
+|---------|-----------------|---------------|-----|
+| claude   | `${VAR}` | `${VAR}` (verbatim) | resolves the ref + inherits exported env |
+| gemini   | `${VAR}` | `${VAR}` (verbatim) | resolves the ref + inherits exported env |
+| opencode | `${VAR}` | `{env:VAR}` (token) | resolves its own `{env:…}` token |
+| codex    | `${VAR}` | the literal from `secrets.env` | resolves NOTHING (sandbox `inherit="core"`) — needs the bare value |
+
+### secrets.env setup
+
+The real secrets live in `~/.igris/secrets.env` (OUTSIDE any repo, gitignored
+belt-and-suspenders). It is a shell-sourceable file:
+
+```sh
+# ~/.igris/secrets.env  — chmod 600, never committed
+export MY_TOKEN=sk-...real...value...
+export OTHER_KEY="value with spaces"
+```
+
+1. Create it and lock it down: `chmod 600 ~/.igris/secrets.env`.
+2. Source it from your shell rc so claude/gemini/opencode inherit the exported
+   env at launch (pattern ②): `source ~/.igris/secrets.env`.
+3. Codex (pattern ③) does NOT inherit env — FR-164's compile reads the literal
+   directly from `secrets.env` and bakes it into `~/.codex/config.toml`.
+
+`igris doctor` emits a read-only WARNING (never the value) for any MCP `${VAR}`
+that is absent from BOTH `secrets.env` and the environment. The fix is to add
+the `export VAR=…` line above; doctor will not write secrets for you.
+
+The load-bearing guarantee: the projector NEVER writes a resolved literal into
+a git-tracked file — Codex `config.toml` lives at `~/.codex/`, outside the repo,
+and the registry overlay stays `${VAR}`-only. The `.gitignore` entry for
+`secrets.env` is defense-in-depth against a stray in-repo copy.
+
 ## Mirror obligation (TD-096)
 
 Every file in this directory lives under `core/` and is part of the runtime

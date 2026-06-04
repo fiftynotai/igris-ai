@@ -420,6 +420,65 @@ describe("doctor — runDoctor exit codes", () => {
     expect(code).toBe(1);
   });
 
+  it("FR-165: warns (read-only) when an MCP ${VAR} resolves nowhere", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const path = await import("node:path");
+    // Unique VAR name guaranteed absent from process.env + the (absent)
+    // sandboxed secrets.env (tmpRoot has none).
+    const VAR = "IGRIS_FR165_MISSING_TOK_TEST";
+    delete process.env[VAR];
+    // Personal overlay with an MCP block carrying an unresolved env ref.
+    const overlayPath = path.join(
+      tmpRoot,
+      "registry",
+      "harness-manifest.personal.json",
+    );
+    mkdirSync(path.dirname(overlayPath), { recursive: true });
+    writeFileSync(
+      overlayPath,
+      JSON.stringify({
+        version: 1,
+        agents: [],
+        surfaces: {
+          mcp_servers: [
+            {
+              name: "needs-secret",
+              canonical: {
+                command: "node",
+                args: [],
+                env: { API_KEY: `\${${VAR}}` },
+              },
+              targets: [],
+            },
+          ],
+        },
+      }) + "\n",
+    );
+
+    const stderrChunks: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrChunks.push(String(chunk));
+        return true;
+      });
+    try {
+      // No projects registered; the only output of interest is the warning.
+      await runDoctor({ fix: false, removeOrphans: false, yes: false });
+    } finally {
+      spy.mockRestore();
+    }
+
+    const out = stderrChunks.join("");
+    // Names the VAR + server, never a value (there is none to leak).
+    expect(out).toContain(VAR);
+    expect(out).toContain("needs-secret");
+    expect(out).toContain("warn:");
+    // Read-only: the overlay we wrote must be byte-unchanged (no doctor write).
+    const after = require("node:fs").readFileSync(overlayPath, "utf-8");
+    expect(after).toContain(`\${${VAR}}`);
+  });
+
   it("--fix repairs hooks-missing", async () => {
     const { runDoctor } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
