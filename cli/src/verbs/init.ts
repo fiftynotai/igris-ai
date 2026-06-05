@@ -71,9 +71,11 @@ import {
   geminiSettingsPath,
   installSourcePath,
   opencodeConfigPath,
+  secretsEnvPath,
   userMdPath,
 } from "../lib/paths.js";
 import { registerBrainAcrossHarnesses } from "../lib/mcp-register.js";
+import { chmodSecretFile } from "../lib/secret-perms.js";
 import {
   checkNetwork,
   checkNodeVersion,
@@ -505,6 +507,22 @@ export async function runInit(opts: InitOptions): Promise<number> {
     if (!existsSync(configJson)) {
       dry.wouldWriteFile(configJson, "initial config.json");
     }
+    // TD-220: config.json always exists post-run (we write it if absent,
+    // preserve it otherwise), so it is always a chmod-600 candidate.
+    dry.wouldInvokeCommand(
+      "chmod",
+      ["600", configJson],
+      "harden secret-file perms (config.json)",
+    );
+    // secrets.env is tightened ONLY if it already exists — init never
+    // fabricates it (Decision 3). Mirror that condition in the dry plan.
+    if (existsSync(secretsEnvPath())) {
+      dry.wouldInvokeCommand(
+        "chmod",
+        ["600", secretsEnvPath()],
+        "harden secret-file perms (secrets.env)",
+      );
+    }
   } else {
     if (!existsSync(userMd)) {
       writeFileSync(
@@ -531,6 +549,20 @@ export async function runInit(opts: InitOptions): Promise<number> {
       info(`Wrote ${configJson}`);
     } else {
       debug(`config.json exists at ${configJson}, preserved`);
+    }
+
+    // TD-220: harden the Igris-owned secret-bearing files to mode 600.
+    // config.json is Igris-authored, so we tighten it unconditionally —
+    // this covers BOTH the freshly-written case AND a pre-existing file
+    // that was sitting at a loose mode (e.g. 644 from an older install).
+    // chmodSecretFile is a no-op on win32 / absent and never throws; it
+    // changes metadata only, so it does NOT disturb the --upgrade byte-
+    // for-byte preservation gate (verifyPreservation hashes content).
+    chmodSecretFile(configJson);
+    // secrets.env is USER-authored (FR-165): tighten it ONLY if present —
+    // never fabricate an empty secrets.env (Decision 3).
+    if (existsSync(secretsEnvPath())) {
+      chmodSecretFile(secretsEnvPath());
     }
   }
 

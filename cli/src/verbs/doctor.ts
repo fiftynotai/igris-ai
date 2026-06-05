@@ -10,6 +10,9 @@
  *   bridge-missing          → CLI on PATH lacks configured bridge
  *   mcp-unregistered        → ~/.claude.json lacks the igris-brain MCP entry
  *                             (or it points at a missing file) — TD-168
+ *   secret-perms            → an Igris-written secret file (config.json,
+ *                             secrets.env) OR a harness config is group/world-
+ *                             readable or git-tracked — TD-220
  *
  * Per-project:
  *   path-missing            → orphan (registry row points at deleted dir)
@@ -24,17 +27,19 @@
  *   clean                   → none of the above
  *
  * Precedence (high → low): path-missing → brain-core-missing → brain-core-stale →
- * channel-mismatch → bridge-missing → mcp-unregistered → duplicate-path →
- * not-installed → hooks-missing → hooks-stale → symlink-target →
+ * channel-mismatch → bridge-missing → mcp-unregistered → secret-perms →
+ * duplicate-path → not-installed → hooks-missing → hooks-stale → symlink-target →
  * slug-basename-mismatch → clean.
- * (mcp-unregistered sits next to bridge-missing — both brain-level,
+ * (mcp-unregistered + secret-perms sit next to bridge-missing — all brain-level,
  *  config-driven, and orthogonal to core state.)
  *
  * --fix repairs not-installed / hooks-missing / hooks-stale by re-running install,
  * brain-core-missing by invoking runRefresh(), bridge-missing by invoking
  * partial-mode runInit({ upgrade: true }), mcp-unregistered by calling
  * registerBrainAcrossHarnesses() directly to backfill all 4 harnesses (FR-169;
- * cheap — no need to re-run init).
+ * cheap — no need to re-run init), secret-perms by chmod'ing the flagged file
+ * to 600 (TD-220; both Igris-owned and harness-owned under the explicit flag —
+ * a git-tracked file stays flagged since chmod can't untrack it).
  * --remove-orphans deletes path-missing rows after per-row confirmation
  * (skip prompt with --yes).
  */
@@ -51,10 +56,19 @@ import {
 } from "../lib/installed-features.js";
 import {
   claudeJsonPath,
+  codexConfigTomlPath,
+  configJsonPath,
+  geminiSettingsPath,
+  opencodeConfigPath,
   projectSettingsPath,
   registryOverlayPath,
+  secretsEnvPath,
 } from "../lib/paths.js";
 import { extractVarName, parseSecretsEnv } from "../lib/secrets.js";
+import {
+  checkSecretFilePerms,
+  chmodSecretFile,
+} from "../lib/secret-perms.js";
 import {
   inspectMcpRegistration,
   registerBrainAcrossHarnesses,
@@ -85,6 +99,26 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
   // (neither secrets.env nor process.env). Not a fixable drift-row — the fix is
   // "add it to secrets.env", which doctor cannot do safely. Never echoes a value.
   detectMissingSecrets();
+
+  // TD-220: in the read pass (no --fix), the 4 harness configs are harness-
+  // owned — Igris WARNs but does NOT auto-tighten them ("don't fight the
+  // harness"). The drift table already shows the row; this names it as
+  // harness-owned and offers --fix. (Igris-owned config.json/secrets.env are
+  // fixed proactively at init + under --fix, so they don't get this warn.)
+  if (!opts.fix) {
+    for (const row of drift) {
+      if (
+        row.driftClass === "secret-perms" &&
+        !isIgrisOwnedSecretFile(row.path)
+      ) {
+        warn(
+          `harness config '${row.path}' has loose/world-readable or ` +
+            `git-tracked perms — run 'igris doctor --fix' to chmod 600 ` +
+            `(metadata only; file contents are untouched).`,
+        );
+      }
+    }
+  }
 
   let errored = 0;
   // TD-122: bridge-missing fix is invocation-bounded — a single partial
@@ -180,6 +214,19 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
             info(`  igris-brain MCP ${result.outcome} for ${harness} -> ${result.mcpEntryPath}`);
           }
         }
+      } else if (row.driftClass === "secret-perms") {
+        // TD-220: the actual chmod runs in the FINAL re-harden pass below
+        // (after the fix loop) — NOT here. Rationale: an mcp-unregistered /
+        // not-installed fix earlier or later in this same loop re-writes a
+        // harness config via tmp+renameSync, which adopts the umask-default
+        // mode (644) and re-loosens it (Risk R1). Chmod'ing in-loop would
+        // race that rewrite. Deferring to a post-loop pass makes the chmod
+        // ordering-independent WITHOUT touching the FR-162/163 mergers
+        // (R1 stays a deferred follow-up). Here we only announce intent.
+        const owner = isIgrisOwnedSecretFile(row.path)
+          ? "Igris-owned"
+          : "harness-owned";
+        info(`fix: secret-perms (${owner}) — will chmod 600 ${row.path}`);
       } else if (
         row.driftClass === "slug-basename-mismatch" ||
         row.driftClass === "duplicate-path" ||
@@ -188,6 +235,30 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
       ) {
         warn(
           `${row.slug}: ${row.driftClass} — ${row.recommendedFix}`,
+        );
+      }
+    }
+
+    // TD-220: FINAL re-harden pass — chmod 600 every flagged secret file AFTER
+    // all other fixes have run, so an install/MCP rewrite earlier in this loop
+    // (tmp+renameSync re-loosens to 644 — Risk R1) is corrected last. Pure
+    // doctor-side, never touches mcp-register.ts. chmod fixes the loose-bit
+    // dimension only — a git-tracked file stays flagged (chmod can't untrack).
+    for (const row of drift) {
+      if (row.driftClass !== "secret-perms") continue;
+      const ok = chmodSecretFile(row.path);
+      const verdict = checkSecretFilePerms(row.path);
+      // A failed chmod on a still-flagged present file is an error; a no-op on
+      // an absent/win32 file is NOT (it would already be "ok" and unflagged).
+      if (!ok && verdict !== "ok") {
+        errored++;
+        logError(`secret-perms fix: could not chmod 600 ${row.path}`);
+      } else if (verdict !== "ok") {
+        // chmod succeeded (or was a no-op) but the file is still flagged —
+        // i.e. git-tracked, which chmod cannot untrack.
+        warn(
+          `${row.path}: still flagged after --fix (git-tracked secret cannot ` +
+            `be untracked by chmod — remove it from git).`,
         );
       }
     }
@@ -204,22 +275,31 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
   }
 
   // Exit code: 0 if all clean, 1 if any non-clean drift remains, 1 on fix errors.
-  const nonCleanRemaining = drift.some(
-    (r) =>
-      r.driftClass !== "clean" &&
-      // After --remove-orphans, path-missing is conceptually resolved.
-      !(opts.removeOrphans && r.driftClass === "path-missing") &&
+  const nonCleanRemaining = drift.some((r) => {
+    if (r.driftClass === "clean") return false;
+    // After --remove-orphans, path-missing is conceptually resolved.
+    if (opts.removeOrphans && r.driftClass === "path-missing") return false;
+    if (opts.fix) {
       // After --fix, the auto-fixable classes are conceptually resolved (best-effort).
-      !(
-        opts.fix &&
-        (r.driftClass === "not-installed" ||
-          r.driftClass === "hooks-missing" ||
-          r.driftClass === "hooks-stale" ||
-          r.driftClass === "brain-core-missing" ||
-          r.driftClass === "bridge-missing" ||
-          r.driftClass === "mcp-unregistered")
-      ),
-  );
+      if (
+        r.driftClass === "not-installed" ||
+        r.driftClass === "hooks-missing" ||
+        r.driftClass === "hooks-stale" ||
+        r.driftClass === "brain-core-missing" ||
+        r.driftClass === "bridge-missing" ||
+        r.driftClass === "mcp-unregistered"
+      ) {
+        return false;
+      }
+      // TD-220: a secret-perms row is resolved by --fix ONLY if the post-fix
+      // verdict is "ok". A git-tracked row stays flagged (chmod can't untrack)
+      // — re-check the live verdict rather than assuming chmod cleared it.
+      if (r.driftClass === "secret-perms") {
+        return checkSecretFilePerms(r.path) !== "ok";
+      }
+    }
+    return true;
+  });
 
   if (errored > 0) return 1;
   return nonCleanRemaining ? 1 : 0;
@@ -269,6 +349,12 @@ export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]>
         "run 'igris init --upgrade' or 'igris doctor --fix' to register the igris-brain MCP",
     });
   }
+
+  // secret-perms (TD-220): brain-level, config-driven, sits next to
+  // mcp-unregistered (lowest brain-level precedence). Flags Igris-owned
+  // config.json/secrets.env + the 4 harness configs when their perms are
+  // group/world-readable or they are git-tracked.
+  for (const sp of detectSecretFilePerms()) out.push(sp);
 
   // Per-project: channel-mismatch + the existing classifyDrift output.
   // channel-mismatch sits BEFORE the existing per-project chain in
@@ -452,6 +538,71 @@ function realpathSyncSafe(p: string): string {
   } catch {
     return p;
   }
+}
+
+/**
+ * TD-220: the Igris-OWNED secret files. Igris authored these, so it owns
+ * their perms outright — proactively tightened at init AND fixed by doctor
+ * in the read pass (well, flagged in read; chmod'd under --fix). The 4
+ * harness configs are harness-owned: WARN-only in the read pass, chmod ONLY
+ * under --fix ("don't fight the harness").
+ */
+function igrisOwnedSecretFiles(): string[] {
+  return [configJsonPath(), secretsEnvPath()];
+}
+
+/** True when `path` is one of the Igris-owned secret files. */
+function isIgrisOwnedSecretFile(path: string): boolean {
+  return igrisOwnedSecretFiles().includes(path);
+}
+
+/**
+ * TD-220: classify the perms of every Igris-written secret-bearing file +
+ * the 4 harness configs into `secret-perms` drift rows. A row is emitted
+ * ONLY when the verdict is not "ok" (loose group/other bits, or git-tracked,
+ * or both). Absent files and win32 produce "ok" (no row) — see
+ * checkSecretFilePerms (never throws).
+ *
+ * NOTE (Risk R1 — atomic-rename re-loosens harness configs): the FR-162/163
+ * mergers in mcp-register.ts write via tmp+renameSync, which adopts the
+ * tmp file's umask mode (often 644). So every MCP re-registration re-loosens
+ * a harness config — which is exactly why the 4 harness configs are
+ * warn/--fix-only (Decision 5) rather than proactively tightened. The clean
+ * fix (chmod 600 after the rename inside the mergers) is a DEFERRED follow-up,
+ * NOT TD-220 — keeping TD-220 off the FR-162/163 splice path.
+ */
+function detectSecretFilePerms(): DriftRow[] {
+  const out: DriftRow[] = [];
+  const igrisOwned = igrisOwnedSecretFiles();
+  const harnessOwned = [
+    claudeJsonPath(),
+    geminiSettingsPath(),
+    codexConfigTomlPath(),
+    opencodeConfigPath(),
+  ];
+
+  for (const p of [...igrisOwned, ...harnessOwned]) {
+    const verdict = checkSecretFilePerms(p);
+    if (verdict === "ok") continue;
+
+    const owned = igrisOwned.includes(p);
+    const ownerTag = owned ? "Igris-owned" : "harness-owned";
+    // git-tracked is NOT resolved by chmod — name it explicitly so the
+    // operator knows --fix alone won't clear the row.
+    const tracked = verdict === "git-tracked" || verdict === "loose+git-tracked";
+    const recommendedFix = tracked
+      ? `${ownerTag} secret file is git-tracked — remove it from git (chmod alone won't untrack); 'igris doctor --fix' chmods 600`
+      : `${ownerTag} secret file has loose perms — run 'igris doctor --fix' to chmod 600`;
+
+    out.push({
+      slug: "(brain)",
+      path: p,
+      driftClass: "secret-perms",
+      recommendedFix,
+    });
+  }
+
+  return out;
 }
 
 /**

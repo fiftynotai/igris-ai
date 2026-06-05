@@ -59,6 +59,12 @@ test-output/
 # stays ${VAR}-only). See core/scripts/cli-adapters/README.md § "MCP secrets".
 secrets.env
 
+# TD-220 — ~/.igris/config.json may carry remote_brain credentials. The real
+# file lives at ~/.igris/config.json (OUTSIDE the repo) at mode 600; this is
+# defense-in-depth against a stray in-repo copy (same rationale as secrets.env
+# above). `igris doctor` flags it if it ever becomes git-tracked.
+config.json
+
 # Local overrides (developer-specific, never commit)
 CLAUDE.local.md
 

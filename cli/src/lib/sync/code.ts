@@ -107,6 +107,10 @@ export const RSYNC_EXCLUDES: readonly string[] = [
   // FR-165 MCP secrets — real file lives at ~/.igris/secrets.env (outside repo);
   // mirror the .gitignore belt-and-suspenders so the TD-140 contract stays green.
   "secrets.env",
+  // TD-220 — ~/.igris/config.json (may carry remote_brain credentials) lives
+  // outside the repo at mode 600; mirror the .gitignore defense-in-depth so the
+  // TD-140 bidirectional contract stays green. MUST NOT ship to the VPS.
+  "config.json",
   // Logs
   "*.log",
   "logs/",

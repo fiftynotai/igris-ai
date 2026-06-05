@@ -201,6 +201,17 @@ igris registry add-mcp <name> \
   the repo) and is resolved at projection time **for Codex only**.
 - v1 is **global-only**: `--scope project` / `--project` are rejected.
 
+### Secret-file permissions (TD-220)
+
+Igris writes `~/.igris/config.json` (may carry `remote_brain` credentials) and
+`~/.igris/secrets.env` at mode **600** (owner read/write only) — `igris init`
+creates them at 600 and tightens a pre-existing loose file on every run. **Never
+commit these files.** `igris doctor` flags any secret file that is group/world-
+readable or git-tracked (including the four harness configs above); `igris doctor
+--fix` chmods them to 600. A git-tracked file stays flagged after `--fix` because
+chmod cannot untrack it — remove it from git. On Windows the perms check is a
+no-op (NTFS has no POSIX mode bits), so init/doctor never false-flag there.
+
 ### The four native per-harness shapes (the projection)
 
 `igris harness compile --surface mcp` (or `--surface all`) flattens every

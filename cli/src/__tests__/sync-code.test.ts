@@ -269,6 +269,7 @@ describe("sync code — runSyncCode", () => {
       ".env",
       ".env.local",
       "secrets.env",
+      "config.json",
       "*.log",
       "logs/",
       ".DS_Store",

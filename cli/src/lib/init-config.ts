@@ -20,6 +20,7 @@
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { configJsonPath } from "./paths.js";
+import { chmodSecretFile } from "./secret-perms.js";
 
 export type SubconsciousDefaultOutcome =
   | "config_missing"   // config.json doesn't exist — no-op
@@ -66,5 +67,10 @@ export function applySubconsciousDefault(): SubconsciousDefaultOutcome {
   const tmp = `${cfgPath}.tmp.${process.pid}.${Date.now()}`;
   writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n");
   renameSync(tmp, cfgPath);
+  // TD-220 (R2): renameSync adopts the tmp file's umask-default mode (often
+  // 644), NOT config.json's prior 600. Re-tighten so an `igris install`
+  // (which calls this) cannot silently re-loosen what `igris init` hardened.
+  // This is an Igris-OWNED file, so TD-220 must close the gap here.
+  chmodSecretFile(cfgPath);
   return "default_set";
 }

@@ -19,6 +19,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -213,6 +214,73 @@ describe("init — fresh install via --from-source", () => {
     );
     expect(codexText).toContain("[mcp_servers.igris-brain]");
     expect(codexText).toContain(bundled);
+  });
+});
+
+// TD-220: init hardens the Igris-owned secret files to mode 600. config.json
+// is always tightened (created-or-preserved); secrets.env is tightened ONLY
+// if it already exists (never fabricated — Decision 3). Real fs + real chmod;
+// `statSync(p).mode & 0o777` is the assertion idiom.
+describe("init — secret-file perms hardening (TD-220)", () => {
+  it("T6: fresh --from-source init writes config.json at mode 600", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const { configJsonPath } = await import("../lib/paths.js");
+    const code = await runInit({ fromSource: sourceRepo, cliVersion: "7.0.0" });
+    expect(code).toBe(0);
+    expect(statSync(configJsonPath()).mode & 0o777).toBe(0o600);
+  });
+
+  it("T7: pre-existing config.json at 644 is tightened to 600 on --upgrade AND preserved byte-for-byte", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const { configJsonPath } = await import("../lib/paths.js");
+    // Fresh init, then loosen config.json to 644 with deterministic bytes.
+    expect(await runInit({ fromSource: sourceRepo })).toBe(0);
+    const cfg = configJsonPath();
+    const cfgBytes = Buffer.from(
+      JSON.stringify(
+        {
+          version: "7.0.0",
+          subconscious: { enabled: true },
+          remote_brain: { url: "https://example.com", api_key: "secret" },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    writeFileSync(cfg, cfgBytes);
+    chmodSync(cfg, 0o644);
+    expect(statSync(cfg).mode & 0o777).toBe(0o644);
+
+    // --upgrade: chmod is a metadata change → does NOT trip verifyPreservation.
+    const code = await runInit({ fromSource: sourceRepo, upgrade: true });
+    expect(code).toBe(0);
+    expect(statSync(cfg).mode & 0o777).toBe(0o600);
+    // Content preserved byte-for-byte (chmod is metadata-only).
+    expect(readFileSync(cfg).equals(cfgBytes)).toBe(true);
+  });
+
+  it("T8: a pre-existing secrets.env at 644 is tightened to 600", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const { secretsEnvPath } = await import("../lib/paths.js");
+    // The brain root must exist for secrets.env to be staged at the right path.
+    // Run a fresh init first, then stage secrets.env loose and re-run --upgrade.
+    expect(await runInit({ fromSource: sourceRepo })).toBe(0);
+    const sec = secretsEnvPath();
+    writeFileSync(sec, "export FOO=bar\n");
+    chmodSync(sec, 0o644);
+    expect(statSync(sec).mode & 0o777).toBe(0o644);
+
+    const code = await runInit({ fromSource: sourceRepo, upgrade: true });
+    expect(code).toBe(0);
+    expect(statSync(sec).mode & 0o777).toBe(0o600);
+  });
+
+  it("T9: secrets.env is NOT fabricated when absent (Decision 3)", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const { secretsEnvPath } = await import("../lib/paths.js");
+    const code = await runInit({ fromSource: sourceRepo });
+    expect(code).toBe(0);
+    expect(existsSync(secretsEnvPath())).toBe(false);
   });
 });
 

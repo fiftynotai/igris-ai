@@ -8,9 +8,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -70,12 +72,18 @@ function stageBrain(): void {
  * igris-brain MCP registered pointing at a real on-disk file. Keeps
  * the existing exit-code tests free of the TD-168 mcp-unregistered
  * drift row. The mcp-unregistered tests explicitly skip this.
+ *
+ * TD-220: chmod 600 so the new `secret-perms` drift class does NOT flag
+ * this staged harness config — writeFileSync produces 644 under the default
+ * umask, which would trip the read-pass exit-code tests below. A real post-
+ * TD-220 install keeps ~/.claude.json at 600, so 600 is the correct baseline.
  */
 function stageValidClaudeJson(): void {
   const mcpFile = join(tmpRoot, "fake-bundled-mcp.js");
   writeFileSync(mcpFile, "// fake bundled mcp\n");
+  const claudeJson = join(homeOverride, ".claude.json");
   writeFileSync(
-    join(homeOverride, ".claude.json"),
+    claudeJson,
     JSON.stringify(
       {
         mcpServers: {
@@ -91,6 +99,7 @@ function stageValidClaudeJson(): void {
       2,
     ) + "\n",
   );
+  chmodSync(claudeJson, 0o600);
 }
 
 function stageProject(name = "proj"): string {
@@ -98,6 +107,31 @@ function stageProject(name = "proj"): string {
   mkdirSync(join(dir, ".claude"), { recursive: true });
   projectDirs.push(dir);
   return dir;
+}
+
+/**
+ * TD-220: `runInstall` registers the igris-brain MCP across all 4 harnesses,
+ * which the FR-162/163 mergers write via tmp+renameSync at the umask-default
+ * mode (644) — Risk R1. A no-`--fix` doctor read pass would then flag those
+ * harness configs as `secret-perms` (harness-owned, loose). Tests that install
+ * a project and assert a CLEAN read-pass exit must harden the harness configs
+ * to 600 first — representing a machine where `igris doctor --fix` (or a
+ * future R1 follow-up) has already tightened them. This is the L-331 self-heal
+ * for the pre-TD-220 "clean = exit 0" assertion.
+ */
+function hardenStagedHarnessConfigs(): void {
+  for (const p of [
+    join(homeOverride, ".claude.json"),
+    join(homeOverride, ".gemini", "settings.json"),
+    join(homeOverride, ".codex", "config.toml"),
+    join(homeOverride, ".config", "opencode", "opencode.json"),
+  ]) {
+    try {
+      chmodSync(p, 0o600);
+    } catch {
+      // Absent harness config — nothing to harden.
+    }
+  }
 }
 
 beforeEach(async () => {
@@ -419,6 +453,9 @@ describe("doctor — runDoctor exit codes", () => {
       installHooks: true,
       skipSymlinkLayer: true,
     });
+    // TD-220: install re-loosened the harness configs (R1); a genuinely
+    // "clean" machine has them at 600. Harden so the read-pass stays clean.
+    hardenStagedHarnessConfigs();
     const code = await runDoctor({ fix: false, removeOrphans: false, yes: false });
     expect(code).toBe(0);
   });
@@ -787,5 +824,103 @@ describe("doctor — --remove-orphans interactive prompt (TD-111)", () => {
     expect(removed).toBe(1);
     const remaining = reg.listProjects().map((r) => r.slug);
     expect(remaining).toEqual(["upper-2"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-220: secret-perms drift class. classifyDriftAll synthesizes a
+// `(brain)`-slug `secret-perms` row for any Igris-written secret file
+// (config.json, secrets.env) OR harness config that is group/world-readable
+// or git-tracked. Igris-owned + harness-owned both chmod'd to 600 under --fix
+// (the read pass WARNs harness-owned). The sandboxed brain (tmpRoot) has no
+// config.json/secrets.env by default, and stageValidClaudeJson() stages
+// ~/.claude.json at 600 — so the baseline has NO secret-perms rows.
+// ---------------------------------------------------------------------------
+describe("doctor — secret-perms drift class (TD-220)", () => {
+  it("T10: a 644 config.json yields a secret-perms row; runDoctor (no --fix) exits 1", async () => {
+    const { classifyDriftAll, runDoctor } = await import("../verbs/doctor.js");
+    const { configJsonPath } = await import("../lib/paths.js");
+    const reg = await import("../lib/registry.js");
+
+    const cfg = configJsonPath(); // resolves under tmpRoot (IGRIS_BRAIN_DIR)
+    writeFileSync(cfg, JSON.stringify({ version: "7.0.0" }) + "\n");
+    chmodSync(cfg, 0o644);
+
+    const drift = await classifyDriftAll(reg.listProjects());
+    const row = drift.find(
+      (r) => r.driftClass === "secret-perms" && r.path === cfg,
+    );
+    expect(row).toBeDefined();
+    expect(row!.slug).toBe("(brain)");
+
+    const code = await runDoctor({ fix: false, removeOrphans: false, yes: false });
+    expect(code).toBe(1);
+  });
+
+  it("T11: runDoctor({fix:true}) on the 644 config.json chmods it to 600 and exits 0", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const { configJsonPath } = await import("../lib/paths.js");
+
+    const cfg = configJsonPath();
+    writeFileSync(cfg, JSON.stringify({ version: "7.0.0" }) + "\n");
+    chmodSync(cfg, 0o644);
+    expect(statSync(cfg).mode & 0o777).toBe(0o644);
+
+    const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    expect(code).toBe(0);
+    expect(statSync(cfg).mode & 0o777).toBe(0o600);
+  });
+
+  it("T12: a 644 harness config (gemini) WARNs in the read pass + is chmod'd 600 under --fix", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const { geminiSettingsPath } = await import("../lib/paths.js");
+
+    const gem = geminiSettingsPath(); // ~/.gemini/settings.json under sandboxed HOME
+    mkdirSync(join(homeOverride, ".gemini"), { recursive: true });
+    writeFileSync(gem, JSON.stringify({ mcpServers: {} }) + "\n");
+    chmodSync(gem, 0o644);
+
+    // Read pass: WARNs (harness-owned) and exits 1.
+    const stderrChunks: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrChunks.push(String(chunk));
+        return true;
+      });
+    let readCode: number;
+    try {
+      readCode = await runDoctor({ fix: false, removeOrphans: false, yes: false });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readCode).toBe(1);
+    const out = stderrChunks.join("");
+    expect(out).toContain("harness config");
+    expect(out).toContain(gem);
+    // gemini is still 644 — the read pass never chmods a harness config.
+    expect(statSync(gem).mode & 0o777).toBe(0o644);
+
+    // --fix chmods it to 600 and exits 0.
+    const fixCode = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    expect(fixCode).toBe(0);
+    expect(statSync(gem).mode & 0o777).toBe(0o600);
+  });
+
+  it("T13: clean — all secret files at 600 (or absent) → no secret-perms rows", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const { configJsonPath, secretsEnvPath } = await import("../lib/paths.js");
+    const reg = await import("../lib/registry.js");
+
+    // config.json + secrets.env staged at 600; harness claude.json already 600.
+    const cfg = configJsonPath();
+    writeFileSync(cfg, JSON.stringify({ version: "7.0.0" }) + "\n");
+    chmodSync(cfg, 0o600);
+    const sec = secretsEnvPath();
+    writeFileSync(sec, "export FOO=bar\n");
+    chmodSync(sec, 0o600);
+
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "secret-perms")).toBe(false);
   });
 });

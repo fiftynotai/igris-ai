@@ -74,7 +74,8 @@ export interface DriftRow {
     | "brain-core-stale"
     | "channel-mismatch"
     | "bridge-missing"
-    | "mcp-unregistered";
+    | "mcp-unregistered"
+    | "secret-perms";
   recommendedFix: string;
   /** Resolved realpath when row.path is itself a symlink. */
   resolvedPath?: string;
