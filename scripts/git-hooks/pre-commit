@@ -13,6 +13,10 @@ set -e
 #   - validate_igris_tree_lineranges.py  (DRIFT-3, TD-070)
 #       Triggers if: core/prompts/igris_os.md OR core/igris_tree.json
 #                    is staged.
+#   - validate_skill_frontmatter_yaml.py  (TD-219, #587)
+#       Triggers if: any core/skills/*/SKILL.md is staged.
+#       Strict YAML parse of SKILL.md frontmatter — catches an unquoted
+#       mid-scalar `: ` that strict parsers (Codex) silently skip.
 #   - validate_lockfile_in_sync.sh  (TD-134)
 #       Triggers if: package.json (root) OR package-lock.json OR
 #                    cli/package.json OR brain-mcp-server/package.json
@@ -98,6 +102,7 @@ needs_enum_check=0
 needs_lineranges_check=0
 needs_lockfile_check=0
 needs_harness_check=0
+needs_skill_yaml_check=0
 
 if echo "$staged" | grep -qE '^(core/prompts/igris_os\.md|core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
   needs_enum_check=1
@@ -117,6 +122,13 @@ fi
 # guard then validates the on-disk generated copies against canonical.
 if echo "$staged" | grep -qE '^(core/agents/.*\.md|core/rules/.*\.md|core/scripts/cli-adapters/harness-manifest\.json)$'; then
   needs_harness_check=1
+fi
+
+# TD-219: trigger on a staged canonical SKILL.md source. The validator parses
+# the whole tree regardless of which file changed (cheap), so the trigger only
+# decides whether to run at all.
+if echo "$staged" | grep -qE '^core/skills/.*/SKILL\.md$'; then
+  needs_skill_yaml_check=1
 fi
 
 failed=0
@@ -147,6 +159,16 @@ if [ "$needs_lockfile_check" = "1" ]; then
   # so multiple validator failures are aggregated into $failed and reported
   # together at the end, rather than aborting on the first failure.
   if ! bash "$REPO_ROOT/scripts/validate_lockfile_in_sync.sh"; then
+    failed=1
+  fi
+fi
+
+if [ "$needs_skill_yaml_check" = "1" ]; then
+  echo "[pre-commit] Validating SKILL.md frontmatter (strict YAML)..."
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed and reported
+  # together at the end, rather than aborting on the first failure.
+  if ! python3 "$REPO_ROOT/scripts/validate_skill_frontmatter_yaml.py"; then
     failed=1
   fi
 fi

@@ -35,6 +35,14 @@ jobs:
         run: |
           python3 --version
 
+      - name: Verify PyYAML installed (TD-219 strict-YAML SKILL.md guard)
+        # The SKILL.md frontmatter validator (and its bats test) needs PyYAML
+        # to run. Without this the bats test would skip silently and the
+        # recurrence guard would be a no-op in CI. Install on miss.
+        run: |
+          python3 -c "import yaml" || python3 -m pip install --user pyyaml
+          python3 -c "import yaml, sys; print('PyYAML', yaml.__version__)"
+
       - name: Verify jq installed
         run: |
           jq --version

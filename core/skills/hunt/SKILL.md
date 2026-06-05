@@ -1,6 +1,6 @@
 ---
 name: hunt
-description: Implement a brief with full workflow - usage: /hunt BR-008
+description: "Implement a brief with full workflow - usage: /hunt BR-008"
 disable-model-invocation: false
 allowed-tools:
   - Read

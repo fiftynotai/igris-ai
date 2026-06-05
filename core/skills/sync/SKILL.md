@@ -1,6 +1,6 @@
 ---
 name: sync
-description: Deploy code and/or data to VPS brain - usage: /sync [code|data|all|status]
+description: "Deploy code and/or data to VPS brain - usage: /sync [code|data|all|status]"
 disable-model-invocation: false
 allowed-tools:
   - Bash

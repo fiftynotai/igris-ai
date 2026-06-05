@@ -1,6 +1,6 @@
 ---
 name: archive
-description: Archive a completed brief - usage: /archive BR-008
+description: "Archive a completed brief - usage: /archive BR-008"
 disable-model-invocation: false
 allowed-tools:
   - Read

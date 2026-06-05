@@ -1,6 +1,6 @@
 ---
 name: register
-description: Create a new brief - usage: /register bug|feature|migration|debt "title"
+description: "Create a new brief - usage: /register bug|feature|migration|debt \"title\""
 disable-model-invocation: false
 allowed-tools:
   - Read
