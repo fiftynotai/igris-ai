@@ -58,6 +58,13 @@ import {
   type McpHarness,
   type McpShapeCanonical,
 } from "./mcp-shape.js";
+// TD-221: these four harness configs are secret-bearing — `renameSync(tmp,
+// target)` below adopts the tmp file's umask-default mode (typically 644),
+// re-loosening a previously-600 config on every MCP (re-)registration. Re-harden
+// to 600 right after the rename, reusing TD-220's win32-gated, never-throwing
+// `chmodSecretFile` (do NOT re-implement the chmod/win32 logic — §18.1). No
+// import cycle: secret-perms.ts imports nothing from this module.
+import { chmodSecretFile } from "./secret-perms.js";
 
 export type { McpHarness } from "./mcp-shape.js";
 
@@ -281,6 +288,13 @@ export function mergeJsonConfig(opts: {
     }
     writeFileSync(tmpPath, serialized);
     renameSync(tmpPath, targetPath);
+    // TD-221: re-harden to 600 — `renameSync` adopted the tmp file's
+    // umask-default mode (644), re-loosening a previously-600 config. Placed on
+    // the line AFTER the rename, inside this write block, so it is structurally
+    // unreachable on the `unchanged`/`failed` early-return paths (runs ONLY on
+    // a successful registered/updated write). chmodSecretFile is win32-gated +
+    // never-throws (TD-220) — purely additive after a successful rename.
+    chmodSecretFile(targetPath);
   } catch (err) {
     // Best-effort cleanup of the tmp file so a write error never leaves
     // litter next to the hot config file.
@@ -722,6 +736,13 @@ export function mergeTomlConfig(opts: {
     }
     writeFileSync(tmpPath, serialized);
     renameSync(tmpPath, targetPath);
+    // TD-221: re-harden to 600 — `renameSync` adopted the tmp file's
+    // umask-default mode (644), re-loosening a previously-600 config. Placed on
+    // the line AFTER the rename, inside this write block, so it is structurally
+    // unreachable on the `unchanged`/`failed` early-return paths (runs ONLY on
+    // a successful registered/updated write). chmodSecretFile is win32-gated +
+    // never-throws (TD-220) — purely additive after a successful rename.
+    chmodSecretFile(targetPath);
   } catch (err) {
     if (existsSync(tmpPath)) {
       try {

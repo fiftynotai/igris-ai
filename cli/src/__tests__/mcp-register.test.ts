@@ -13,6 +13,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readdirSync,
@@ -1330,4 +1331,200 @@ args = ["/old/index.js"]
     expect(res.error).toMatch(/splice verification failed/);
     expect(readFileSync(tomlPath).equals(bytesBefore)).toBe(true);
   });
+});
+
+// ---------------------------------------------------------------------------
+// TD-221: the merger writes are perms-preserving — after a successful
+// registered/updated write the target config is 600, NOT umask-default 644.
+// `renameSync(tmp, target)` adopts the tmp file's mode (typically 644), which
+// silently re-loosened a previously-600 harness config on every MCP
+// (re-)registration; the post-rename `chmodSecretFile(target)` closes that gap
+// (R1). The chmod sits AFTER the rename inside the write block, so it is
+// structurally unreachable on the `unchanged`/`failed` paths.
+//
+// Mode bits are meaningless on win32 (`chmodSecretFile` is a no-op there and
+// `statSync().mode` carries no POSIX perm bits), so the mode assertions are
+// POSIX-gated — mirroring the secret-perms suite.
+// ---------------------------------------------------------------------------
+
+/** True when POSIX mode bits are meaningful on this host (NOT win32). */
+const POSIX = process.platform !== "win32";
+/** Extract the owner/group/other perm bits from a file's mode. */
+const modeOf = (path: string): number => statSync(path).mode & 0o777;
+
+describe("TD-221 — mergers leave the config at 600 (perms durability)", () => {
+  it.skipIf(!POSIX)(
+    "mergeJsonConfig: a NEW file created by a registered write is 600",
+    () => {
+      expect(existsSync(cfgPath)).toBe(false);
+      const res = mergeJsonConfig({
+        targetPath: cfgPath,
+        mapKey: "mcp",
+        entryKey: ENTRY_KEY,
+        entry: SAMPLE_ENTRY,
+      });
+      expect(res.outcome).toBe("registered");
+      expect(modeOf(cfgPath)).toBe(0o600);
+    },
+  );
+
+  it.skipIf(!POSIX)(
+    "mergeTomlConfig: a NEW file created by a registered write is 600",
+    () => {
+      expect(existsSync(tomlPath)).toBe(false);
+      const res = mergeTomlConfig({
+        targetPath: tomlPath,
+        tablePrefix: "mcp_servers",
+        entryKey: "igris-brain",
+        entry: { command: "node", args: ["/x/index.js"] },
+      });
+      expect(res.outcome).toBe("registered");
+      expect(modeOf(tomlPath)).toBe(0o600);
+    },
+  );
+
+  it.skipIf(!POSIX)(
+    "mergeJsonConfig: a config pre-set to 600 then re-merged (updated) REMAINS 600",
+    () => {
+      // Register, then tighten to 600 to model a doctor --fix'd config.
+      mergeJsonConfig({
+        targetPath: cfgPath,
+        mapKey: "mcp",
+        entryKey: ENTRY_KEY,
+        entry: SAMPLE_ENTRY,
+      });
+      chmodSync(cfgPath, 0o600);
+      expect(modeOf(cfgPath)).toBe(0o600);
+
+      // Re-merge with DIFFERENT content so the outcome is 'updated' (a real write).
+      const res = mergeJsonConfig({
+        targetPath: cfgPath,
+        mapKey: "mcp",
+        entryKey: ENTRY_KEY,
+        entry: { type: "stdio", command: "node", args: ["/y/index.js"] },
+      });
+      expect(res.outcome).toBe("updated");
+      // Durability AC: still 600, NO doctor --fix needed.
+      expect(modeOf(cfgPath)).toBe(0o600);
+    },
+  );
+
+  it.skipIf(!POSIX)(
+    "mergeTomlConfig: a config pre-set to 600 then re-merged (updated) REMAINS 600",
+    () => {
+      mergeTomlConfig({
+        targetPath: tomlPath,
+        tablePrefix: "mcp_servers",
+        entryKey: "igris-brain",
+        entry: { command: "node", args: ["/x/index.js"] },
+      });
+      chmodSync(tomlPath, 0o600);
+      expect(modeOf(tomlPath)).toBe(0o600);
+
+      const res = mergeTomlConfig({
+        targetPath: tomlPath,
+        tablePrefix: "mcp_servers",
+        entryKey: "igris-brain",
+        entry: { command: "node", args: ["/y/index.js"] },
+      });
+      expect(res.outcome).toBe("updated");
+      expect(modeOf(tomlPath)).toBe(0o600);
+    },
+  );
+
+  it.skipIf(!POSIX)(
+    "mergeJsonConfig: a config pre-loosened to 644 is RE-TIGHTENED to 600 on write",
+    () => {
+      mergeJsonConfig({
+        targetPath: cfgPath,
+        mapKey: "mcp",
+        entryKey: ENTRY_KEY,
+        entry: SAMPLE_ENTRY,
+      });
+      // Simulate the pre-TD-221 re-loosen.
+      chmodSync(cfgPath, 0o644);
+      expect(modeOf(cfgPath)).toBe(0o644);
+
+      const res = mergeJsonConfig({
+        targetPath: cfgPath,
+        mapKey: "mcp",
+        entryKey: ENTRY_KEY,
+        entry: { type: "stdio", command: "node", args: ["/y/index.js"] },
+      });
+      expect(res.outcome).toBe("updated");
+      expect(modeOf(cfgPath)).toBe(0o600);
+    },
+  );
+
+  it.skipIf(!POSIX)(
+    "mergeTomlConfig: a config pre-loosened to 644 is RE-TIGHTENED to 600 on write",
+    () => {
+      mergeTomlConfig({
+        targetPath: tomlPath,
+        tablePrefix: "mcp_servers",
+        entryKey: "igris-brain",
+        entry: { command: "node", args: ["/x/index.js"] },
+      });
+      chmodSync(tomlPath, 0o644);
+      expect(modeOf(tomlPath)).toBe(0o644);
+
+      const res = mergeTomlConfig({
+        targetPath: tomlPath,
+        tablePrefix: "mcp_servers",
+        entryKey: "igris-brain",
+        entry: { command: "node", args: ["/y/index.js"] },
+      });
+      expect(res.outcome).toBe("updated");
+      expect(modeOf(tomlPath)).toBe(0o600);
+    },
+  );
+
+  it.skipIf(!POSIX)(
+    "mergeJsonConfig: an 'unchanged' re-merge does NOT touch the mode (chmod gated off)",
+    () => {
+      mergeJsonConfig({
+        targetPath: cfgPath,
+        mapKey: "mcp",
+        entryKey: ENTRY_KEY,
+        entry: SAMPLE_ENTRY,
+      });
+      // Leave a DISTINCTIVE non-600, non-644 mode so we can prove the chmod
+      // never ran on the unchanged path (it would force 600).
+      chmodSync(cfgPath, 0o640);
+
+      const res = mergeJsonConfig({
+        targetPath: cfgPath,
+        mapKey: "mcp",
+        entryKey: ENTRY_KEY,
+        // Same content, different key ORDER → deep-equal → 'unchanged'.
+        entry: { args: ["/x/index.js"], command: "node", type: "stdio" },
+      });
+      expect(res.outcome).toBe("unchanged");
+      // Mode untouched — the early-return path never reaches the post-rename chmod.
+      expect(modeOf(cfgPath)).toBe(0o640);
+    },
+  );
+
+  it.skipIf(!POSIX)(
+    "mergeTomlConfig: an 'unchanged' re-merge does NOT touch the mode (chmod gated off)",
+    () => {
+      mergeTomlConfig({
+        targetPath: tomlPath,
+        tablePrefix: "mcp_servers",
+        entryKey: "igris-brain",
+        entry: { command: "node", args: ["/x/index.js"] },
+      });
+      chmodSync(tomlPath, 0o640);
+
+      const res = mergeTomlConfig({
+        targetPath: tomlPath,
+        tablePrefix: "mcp_servers",
+        entryKey: "igris-brain",
+        // Same content → structural deep-equal → 'unchanged'.
+        entry: { command: "node", args: ["/x/index.js"] },
+      });
+      expect(res.outcome).toBe("unchanged");
+      expect(modeOf(tomlPath)).toBe(0o640);
+    },
+  );
 });
