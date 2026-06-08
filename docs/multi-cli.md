@@ -1,8 +1,8 @@
 # Multi-CLI Support
 
-**Briefs:** FR-103 (Skill Distribution), FR-104 (Hook Bridge Layer)
+**Briefs:** FR-103 (Skill Distribution), FR-104 (Hook Bridge Layer), FR-170 (Harness abstraction), FR-171 (OpenCode first-class), FR-172 (Onboard-harness runbook)
 **Status:** Stable
-**Last Updated:** 2026-05-24
+**Last Updated:** 2026-06-08
 
 Igris skills and hooks live canonically under `~/.igris/core/`. This document defines
 how those surfaces are distributed to multiple CLI agents (Claude Code, OpenCode,
@@ -66,6 +66,16 @@ Each entry supports:
 > — see [Subagent Distribution](#subagent-distribution) below (TD-021). The
 > optional `codex.agents` sub-block (added by TD-021) describes the subagent
 > surface.
+
+> **`cli_targets.<harness>.target` is DESCRIPTIVE, not load-bearing (FR-172).**
+> The string `cli_targets` does **not appear at all** in the bash adapters
+> (`compile_harnesses.sh` / `check_harness_drift.sh`), and the only TS consumers
+> read its **top-level keys** for a CLI-installed-but-unbridged presence check
+> (`cli/src/lib/drift/bridge-missing.ts`) — neither dereferences `.target`. The
+> **actual projection paths** come from `surfaces-manifest.json` (skills) and
+> `harness-manifest.json` + the personal overlay (agents). So `target`/`method`
+> here are honest documentation for human readers, but editing `.target` will
+> **not** change where a surface projects — edit the manifest for that.
 
 ### Skills as a `surfaces.skills` manifest declaration (FR-137 → FR-153)
 
@@ -1007,55 +1017,134 @@ third families have live disposition today:
 | `md_to_<surface>.sh` (`md_to_agents_md.sh`, `md_to_gemini_toml.sh`) | **Skills surfaces** (FR-103 / FR-137). The `~/.igris/core/skills/` tree → per-CLI skill artifacts. | **RETIRED by FR-153** — superseded by the symlink-based registry-anchored skill projection (`compile_harnesses.sh` skills pass + `_common.sh`'s pair allowlist). Both scripts deleted. |
 | `<target>.sh` (e.g. `codex.sh`, `gemini.sh`) | The dormant FR-104-era bridge contract: `<target>.sh <project-path>`, invoked by `materializeBridges()` in `cli/src/lib/bridges.ts` during `igris init`. | **Superseded by the `igris harness` verb.** No `<target>.sh` script exists, so `materializeBridges` skips every target today (a silent no-op). The harness verb (`cli/src/verbs/harness.ts`) is the live seam — it shells out to `compile_harnesses.sh` / `check_harness_drift.sh` directly and deliberately never touches `bridges.ts`. The inert `bridges.ts` contract is left in place for a follow-up cleanup brief (no code change in FR-138); do not build `<target>.sh` scripts against it. |
 
-### Add a New Harness (target type)
+### Add a New Harness (the four-surface runbook)
 
-To add a new per-CLI subagent target type (say `cursor`):
+> **The harness abstraction.** Igris keeps **one canonical source** per surface
+> and derives **N per-harness artifacts** from it deterministically. Editing a
+> derived artifact (a `~/.claude/agents/<name>.md` symlink, a
+> `~/.config/opencode/command/<name>.md` wrapper, an `AGENTS.md`) is a **process
+> error** — the compiler regenerates it from the canonical source on the next
+> run. To change a harness's behavior, edit the canonical source (the agent
+> prompt, the SKILL.md, the manifest) and recompile. A new harness is "onboarded"
+> by teaching the four surfaces how to project to it, never by hand-writing its
+> artifacts.
 
-1. **Manifest schema** — add the new type to the `targets[].type` enum in
-   `core/scripts/cli-adapters/manifest.schema.json` (currently
-   `["claude", "codex", "gemini", "opencode"]`). If the surface is also a skills
-   surface, add it to `surfaces.skills.targets[].type` too (currently
-   `["codex", "gemini", "claude", "agents", "opencode"]`), and add the new
-   `(type, method)` pair to the `oneOf` constraint on the skills target item.
-   `symlink` is the canonical skills method (claude/codex/gemini/agents);
-   **FR-171** added `command` for OpenCode (a thin `@file` wrapper into the
-   harness's native command surface, not a symlink). The method enum is
-   `["compiler", "converter", "symlink", "command"]` — pick `symlink` unless the
-   harness reads skills from a native command/prompt surface (then `command`),
-   and add any new value to both the enum AND the pair allowlist. Mirror the
-   same pair in `valid_pairs` inside `_common.sh validate_manifest` and in
-   `VALID_SKILL_TYPE_METHOD_PAIRS` inside `cli/src/verbs/registry.ts`.
-2. **Per-agent adapter** — write `sync_cursor.sh` with the contract
-   `sync_cursor.sh <canonical-md> <output> [agent-name]`. Exit `0` success /
-   `1` error / `2` usage. Source `_common.sh`. Emit the output file
-   **atomically** (write to a `mktemp`, then `mv`). Strip the canonical
-   frontmatter via `strip_frontmatter` and reuse the `toml_escape*` /
-   body helpers as appropriate for the target format.
-3. **Dispatch arm** — add a `cursor)` case arm to the agents-surface dispatch
-   `case "$ttype" in` block in `compile_harnesses.sh` (next to `claude)` /
-   `codex)`), invoking `bash "$ADAPTER_DIR/sync_cursor.sh" ...`.
-4. **Drift-guard body extraction** — teach `check_harness_drift.sh` how to
-   read the new target's comparable body: add a `cursor)` branch in the guard's
-   actual-body resolution (mirroring `codex_body` for codex, or the
-   `strip_frontmatter` path for claude) so it can render MATCH / DRIFTED /
-   MISSING. The body extracted must be the canonical-equivalent body so the sha
-   compare is meaningful.
-5. **Declare targets** — add a `{ "type": "cursor", "path": "..." }` entry to
-   each agent in the relevant `harness-manifest.json`, and (if a skills surface)
-   to `surfaces-manifest.json`.
-6. **Gate scope** — if the new target's path is **project-relative** it is
-   automatically in scope for the `validate_harness_drift.sh` commit gate
-   (MISSING → fatal). If it is a **home/absolute path** (like the gemini
-   `~/.gemini/commands` skills target), it is automatically classified
-   out-of-scope (MISSING → NOTICE, not fatal) — no gate change needed.
-7. **Mirror + test** — `core/`-resident adapters are part of the TD-096 runtime
-   mirror set: `cp` to `~/.igris/core/scripts/cli-adapters/` and verify with
-   `verify_mirror.sh`. Add bats coverage in `test/harness_drift_gate.test.bash`.
+A harness becomes first-class across **four surfaces**, each with its own
+projection primitive:
 
-A new skills-surface target type follows the same shape and is wired into the
-FR-137 skills pass of `compile_harnesses.sh` (and the matching skills branch
-of the drift guard) — post-FR-153 the canonical method is `symlink`, with the
-compile branch calling `emit_skill_symlink <label> <link_path> <skill_dir>`.
+| Surface | Canonical source | Projection primitive |
+|---------|------------------|----------------------|
+| **Agents** | `core/agents/<name>.md` → registry-assembled `harness.<label>.<ext>` | per-harness symlink **or** hard-link (depends on whether the loader follows symlinks) |
+| **Skills** | `core/skills/<name>/SKILL.md` (+ registry-vendored personal skills) | `symlink` (whole skill dir) **or** `command` (thin `@file` wrapper) |
+| **MCP** | `surfaces.mcp_servers[]` canonical block | config-**merge** into the harness's native MCP config |
+| **Hooks** | `~/.igris/core/hooks/shared/*.sh` | per-harness **bridge** (plugin / notify-wrapper) |
+
+#### Per-harness method matrix (the four harnesses today)
+
+This consolidates the per-surface facts; the authoritative tables it draws from
+are linked so a reader chases the single source of truth, not a copy:
+
+| Harness | Agent primitive | Skills method | MCP map key + entry shape | Hooks |
+|---------|-----------------|---------------|---------------------------|-------|
+| **Claude** | Symlink (`atomic_symlink`) → `~/.claude/agents/<name>.md` | `symlink` → `~/.claude/skills/` | `mcpServers.<name>` / `{type:"stdio",…}` | All 6 portable + Claude-only events |
+| **Codex** | Symlink (`atomic_symlink`) → `~/.codex/agents/<name>.toml` (FR-159) | `symlink` → `~/.agents/skills/` (FR-157 cross-CLI) | `[mcp_servers.<name>]` / resolved-literal env | `session_end` only (notify wrapper) |
+| **Gemini** | **Hard link** (`emit_md_hardlink`) → `~/.gemini/agents/<name>.md` — loader does NOT follow symlinks (TD-208) | `symlink` → `~/.agents/skills/` (FR-157 cross-CLI) | `mcpServers.<name>` / no-`type` env | **None** (no hook API) |
+| **OpenCode** | Symlink → `~/.config/opencode/agent/<name>.md` — loader **does** follow symlinks (FR-171, verified live 1.14.22) | `command` → `~/.config/opencode/command/<name>.md` thin `@file` wrapper (FR-171) | `mcp.<name>` / `{type:"local", command:[…fused…], environment{}}` | All 6 portable (TS plugin) |
+
+- Agent primitive details: see the **TD-208 subagent-distribution primitive
+  table** (above, "The consumer-side agent target …").
+- MCP entry shapes: see the **FR-160 four-native-shapes table** (above, "The four
+  shapes").
+- Hook coverage: see the **FR-104 per-CLI coverage table** (above, "Per-CLI
+  Coverage").
+
+#### OpenCode-native-location facts (FR-171, verified live `opencode 1.14.22`)
+
+- **Agents** — `~/.config/opencode/agent/<name>.md` (singular `agent/`). The
+  loader **follows symlinks**, so OpenCode uses the symlink primitive (like
+  Claude/Codex), not the Gemini hard-link.
+- **Skills/commands** — `~/.config/opencode/command/<name>.md` (singular
+  `command/`). Each is a thin wrapper whose body is `@~/.igris/core/skills/<name>/SKILL.md`
+  + `$ARGUMENTS` — the canonical SKILL.md stays the single source of truth.
+- **MCP** — `~/.config/opencode/opencode.json`, map `mcp.<name>`, `type:"local"`,
+  command+args **fused** into one `command[]` array, env key `environment`,
+  values `{env:VAR}`.
+- **Hooks** — `~/.config/opencode/plugins/igris-bridge.ts` (TS plugin, Bun
+  auto-loads; no build step).
+
+> **Gemini `~/.gemini/commands/` is RETIRED (L-608).** The legacy per-command
+> TOML converter target was removed by FR-153; Gemini now reads skills from the
+> cross-CLI shared `~/.agents/skills/` (FR-157), the same location Codex reads.
+> Any `cli_targets.gemini.target` still pointing at `~/.gemini/commands/` is
+> stale documentation, not a live projection path.
+
+#### Steps (each surface in dependency order)
+
+1. **Phase 0 — PROBE the loader first** (non-destructive, throwaway HOME): which
+   agent dir? command dir? does the loader follow symlinks (→ symlink) or not
+   (→ hard-link)? frontmatter/tools shape? MCP-permission key shape? The emit
+   primitive and dir names are CHOSEN from these probes — see FR-171 plan §1.
+2. **Type catalog** — add `"<NEW>"` to the `CLITarget` union in `cli/src/types.ts`.
+3. **MCP surface** — add the native entry shape to `buildHarnessMcpEntry`
+   (`cli/src/lib/mcp-shape.ts`), `"<NEW>"` to `ALL_HARNESSES`
+   (`cli/src/lib/mcp-register.ts`), and the config path to `cli/src/lib/paths.ts`.
+4. **Manifest schema** — add `"<NEW>"` to the agent `targets[].type` enum and the
+   `surfaces.skills.targets[].type` enum in `manifest.schema.json`, plus a new
+   `(type, method)` `oneOf` branch on the skills target item. The skills method
+   enum is `["compiler", "converter", "symlink", "command"]` (`compiler`/`converter`
+   are retired-but-retained for back-compat) — pick `symlink` unless the harness
+   reads skills from a native command/prompt surface (then `command`). Mirror the
+   same pair in `valid_pairs` inside `_common.sh validate_manifest` and
+   `VALID_SKILL_TYPE_METHOD_PAIRS` in `cli/src/verbs/registry.ts`.
+5. **Compiler passes (dual-impl — §18.1 parity MANDATORY)** — add the agent
+   dispatch arm to `case "$ttype" in` and the skills dispatch arm to
+   `case "$s_type/$s_method" in` in `compile_harnesses.sh`; add the bash
+   compile-side α-assembler `assemble_<NEW>_harness_into_registry` (core-agent
+   path) + its inline-python3 tool translator; add the TS vendor-side
+   `assemble<New>Harness` + `CLAUDE_TO_<NEW>_TOOLS` in `cli/src/verbs/registry.ts`
+   (personal-agent path) wired into the 4 vendor sites. The bash and TS
+   translators MUST be **byte-identical**, pinned by a golden-fixture parity test
+   (L-554). Post-FR-153 the skills compile branch calls either
+   `emit_skill_symlink <label> <link_path> <skill_dir>` (symlink) or the
+   `<NEW>/command` wrapper-writer (command), never a `sync_<target>.sh` adapter —
+   those were retired by FR-152/FR-153/FR-159.
+6. **Drift checker** — add `"<NEW>"` to the agent verdict gate, the per-harness
+   agent verdict, and the skills drift branch in `check_harness_drift.sh`. The
+   drift verdict for symlink/hard-link agents is **link-realpath**, not a body-sha
+   compare (FR-159). Drift MUST mirror the compile emit line-for-line (L-519
+   §18.1) — a divergence makes `check` report DRIFTED right after a clean compile.
+7. **Hooks / bridge** — add the harness's event bridge under
+   `core/hooks/bridges/<NEW>/` routing the portable events to
+   `~/.igris/core/hooks/shared/*.sh`. A harness with no hook API (like Gemini) has
+   a documented no-op bridge, not a missing touchpoint.
+8. **Declare targets** — add the `<NEW>` agent targets to `harness-manifest.json`
+   (core agents) + `~/.igris/registry/harness-manifest.personal.json` (personal
+   agents), and the `<NEW>` skills target to `surfaces-manifest.json`.
+9. **Runtime config (descriptive)** — add `cli_targets.<NEW>` to
+   `~/.igris/config.json` with `{method, target, note, hooks}`. Remember:
+   `target`/`method` here are **descriptive labels, not read by the projection**
+   (see the Configuration section's `cli_targets` callout) — the live paths come
+   from the manifests in steps 4 + 8.
+10. **Mirror + test** — every touched `core/scripts/cli-adapters/*` file is in the
+    TD-096 runtime mirror set: `cp` to `~/.igris/core/scripts/cli-adapters/` and
+    verify with `verify_mirror.sh`. Add `<NEW>` to the bats matrix
+    (`test/harness_*.test.bash`) + the vitest `assemble<New>Harness` + parity
+    tests. **Gate scope:** a project-relative target path is auto in-scope for the
+    `validate_harness_drift.sh` commit gate (MISSING → fatal); a home/absolute
+    path is auto out-of-scope (MISSING → NOTICE).
+
+**Closing gate:** `igris harness compile && igris harness check` must be
+drift-CLEAN, then a fresh `<NEW> agent list` must enumerate every agent. A
+DRIFTED/MISSING verdict names the harness + surface — trace it back to the step
+above.
+
+#### Procedure: the `/onboard-harness` skill
+
+The doc above is the **why** (the harness abstraction + the four-surface model).
+The **do** is the executable [`/onboard-harness`](../core/skills/onboard-harness/SKILL.md)
+skill — run it to walk this same checklist step-by-step with a cheap self-verify
+after each touchpoint (so a dropped step is CAUGHT, not assumed). The skill
+treats `opencode` (FR-171) as its worked example throughout.
 
 ---
 
