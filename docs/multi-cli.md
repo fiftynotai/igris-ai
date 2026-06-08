@@ -246,6 +246,31 @@ readable or git-tracked (including the four harness configs above); `igris docto
 chmod cannot untrack it — remove it from git. On Windows the perms check is a
 no-op (NTFS has no POSIX mode bits), so init/doctor never false-flag there.
 
+### Skill/agent surface migration — legacy whole-dir symlinks (TD-223)
+
+The per-surface model wants `~/.claude/skills` and `~/.claude/agents` to be **real
+directories** holding one symlink per skill/agent (core → `~/.igris/core/...`,
+personal → the registry-vendored copy). A **v6-era install** instead made each a
+**whole-directory symlink** → `~/.igris/core/{skills,agents}`. That state is
+actively harmful: because the target *is* the canonical source, a per-item
+projection (`igris harness compile`) writes its symlink **into** `~/.igris/core/`,
+polluting the source (observed: a `content-pipeline` skill symlink and three
+`content-{deck,writer,designer}.md` agent symlinks leaked into the core dirs).
+
+`igris doctor` detects this as the `skills-pollution` drift class: it flags any
+declared surface root that is a whole-dir symlink to its canonical source, plus
+any stray registry-projection symlink found inside the core source. `igris doctor
+--fix` **migrates** each affected root to a real directory of per-item symlinks
+(materialized directly from the canonical source + the personal overlay — never
+via a recompile, which the FR-137 commonpath gate / the absence of a core-agent
+`claude` target would leave empty), then removes the stray source symlinks. The
+fix is guarded: it prints a before/after inventory and **fails closed** if any
+item would be lost, **backs up** the old root symlink to `<root>.bak-<UTC>`
+(never deletes canonical content), removes **only** registry-anchored projection
+symlinks from the source (never a real dir), realpath-contains every mutation,
+refuses a root symlink pointing anywhere other than the canonical source, and is
+idempotent (a migrated real dir is a no-op on re-run). On Windows it is a no-op.
+
 ### The four native per-harness shapes (the projection)
 
 `igris harness compile --surface mcp` (or `--surface all`) flattens every

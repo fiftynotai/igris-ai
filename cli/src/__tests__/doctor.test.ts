@@ -9,8 +9,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,
+  cpSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -922,5 +926,298 @@ describe("doctor — secret-perms drift class (TD-220)", () => {
 
     const drift = await classifyDriftAll(reg.listProjects());
     expect(drift.some((r) => r.driftClass === "secret-perms")).toBe(false);
+  });
+});
+
+describe("doctor — skills-pollution drift class (TD-223 RE-SCOPED)", () => {
+  /**
+   * Stage the core surfaces-manifest under the sandbox brain dir declaring the
+   * canonical claude/symlink skills target (~/.igris/core/skills →
+   * ~/.claude/skills). Both resolve under the sandboxed HOME.
+   */
+  function stageSkillsSurface(): void {
+    const adapterDir = join(tmpRoot, "core", "scripts", "cli-adapters");
+    mkdirSync(adapterDir, { recursive: true });
+    writeFileSync(
+      join(adapterDir, "surfaces-manifest.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [],
+        surfaces: {
+          skills: [
+            {
+              source: "~/.igris/core/skills",
+              layer: "core",
+              targets: [
+                { type: "claude", method: "symlink", path: "~/.claude/skills" },
+              ],
+            },
+          ],
+        },
+      }) + "\n",
+    );
+  }
+
+  function coreSkillsRoot(): string {
+    return join(homeOverride, ".igris", "core", "skills");
+  }
+  function coreAgentsRoot(): string {
+    return join(homeOverride, ".igris", "core", "agents");
+  }
+  function claudeSkillsRoot(): string {
+    return join(homeOverride, ".claude", "skills");
+  }
+  function claudeAgentsRoot(): string {
+    return join(homeOverride, ".claude", "agents");
+  }
+
+  function stageCanonicalSkill(name: string): void {
+    const dir = join(coreSkillsRoot(), name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "SKILL.md"),
+      `---\nname: ${name}\ndescription: "${name}"\n---\n\nBody.\n`,
+    );
+  }
+
+  function stageCoreAgent(name: string): void {
+    mkdirSync(coreAgentsRoot(), { recursive: true });
+    writeFileSync(join(coreAgentsRoot(), `${name}.md`), `# ${name}\n`);
+  }
+
+  /** Make ~/.claude/skills a legacy whole-dir symlink → the core source. */
+  function legacySkillsSymlink(): void {
+    mkdirSync(join(homeOverride, ".claude"), { recursive: true });
+    symlinkSync(coreSkillsRoot(), claudeSkillsRoot());
+  }
+  function legacyAgentsSymlink(): void {
+    mkdirSync(join(homeOverride, ".claude"), { recursive: true });
+    symlinkSync(coreAgentsRoot(), claudeAgentsRoot());
+  }
+
+  function claudeBaks(prefix: string): string[] {
+    return require("node:fs")
+      .readdirSync(join(homeOverride, ".claude"))
+      .filter((n: string) => n.includes(`${prefix}.bak-`));
+  }
+
+  it("T1: a legacy whole-dir skills symlink yields a skills-pollution row; read pass exits 1", async () => {
+    const { classifyDriftAll, runDoctor } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("foo");
+    legacySkillsSymlink();
+
+    const drift = await classifyDriftAll(reg.listProjects());
+    const row = drift.find((r) => r.driftClass === "skills-pollution");
+    expect(row).toBeDefined();
+    expect(row!.slug).toBe("(brain)");
+    expect(row!.recommendedFix).toContain("migrate");
+
+    const code = await runDoctor({ fix: false, removeOrphans: false, yes: false });
+    expect(code).toBe(1);
+  });
+
+  it("T1/fix: runDoctor({fix:true}) migrates the skills root to a real dir of per-item symlinks, exits 0", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("foo");
+    stageCanonicalSkill("bar");
+    legacySkillsSymlink();
+    expect(lstatSync(claudeSkillsRoot()).isSymbolicLink()).toBe(true);
+
+    const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    expect(code).toBe(0);
+
+    // Root is now a REAL dir of per-skill symlinks → the core source.
+    expect(lstatSync(claudeSkillsRoot()).isSymbolicLink()).toBe(false);
+    for (const n of ["foo", "bar"]) {
+      const link = join(claudeSkillsRoot(), n);
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+      expect(realpathSync(link)).toBe(realpathSync(join(coreSkillsRoot(), n)));
+    }
+    // The old root symlink is backed up.
+    expect(claudeBaks("skills").length).toBe(1);
+  });
+
+  it("T2: agents whole-dir symlink also migrated (parity)", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("foo");
+    legacySkillsSymlink();
+    stageCoreAgent("architect");
+    writeFileSync(join(coreAgentsRoot(), "manifest.yaml"), "agents: []\n");
+    legacyAgentsSymlink();
+
+    const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    expect(code).toBe(0);
+
+    expect(lstatSync(claudeAgentsRoot()).isSymbolicLink()).toBe(false);
+    const agentLink = join(claudeAgentsRoot(), "architect.md");
+    expect(lstatSync(agentLink).isSymbolicLink()).toBe(true);
+    expect(realpathSync(agentLink)).toBe(
+      realpathSync(join(coreAgentsRoot(), "architect.md")),
+    );
+    // manifest.yaml preserved as a symlink (aux file, not an agent).
+    const manifest = join(claudeAgentsRoot(), "manifest.yaml");
+    expect(lstatSync(manifest).isSymbolicLink()).toBe(true);
+    expect(claudeBaks("agents").length).toBe(1);
+  });
+
+  it("T4: a registry-projection stray in the source is cleaned under --fix", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("foo");
+    // The registry lives under brainDir() (IGRIS_BRAIN_DIR=tmpRoot) — that is
+    // where registryOverlayPath() + registryDirPath() resolve. Stage the
+    // personal content-pipeline skill there (L-517 nested layout).
+    const registrySkillDir = join(tmpRoot, "registry", "skills", "content-pipeline");
+    const nested = join(registrySkillDir, "content-pipeline");
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(
+      join(nested, "SKILL.md"),
+      `---\nname: content-pipeline\ndescription: "cp"\n---\n\nBody.\n`,
+    );
+    writeFileSync(
+      join(tmpRoot, "registry", "harness-manifest.personal.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [],
+        surfaces: {
+          skills: [
+            {
+              source: registrySkillDir,
+              layer: "personal",
+              targets: [
+                { type: "claude", method: "symlink", path: "~/.claude/skills" },
+              ],
+            },
+          ],
+        },
+      }) + "\n",
+    );
+    // The leaked projection stray inside the canonical source (→ the registry).
+    symlinkSync(nested, join(coreSkillsRoot(), "content-pipeline"));
+    legacySkillsSymlink();
+
+    const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    expect(code).toBe(0);
+
+    // Stray removed from the source; the migrated per-item home exists.
+    expect(require("node:fs").existsSync(join(coreSkillsRoot(), "content-pipeline"))).toBe(
+      false,
+    );
+    expect(
+      lstatSync(join(claudeSkillsRoot(), "content-pipeline")).isSymbolicLink(),
+    ).toBe(true);
+  });
+
+  it("T5: a stray NOT a registry projection is reported but never removed (exits 1)", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("foo");
+    // A stray symlink pointing OUTSIDE the registry.
+    const outside = mkdtempSync(join(tmpdir(), "igris-doctor-stray-outside-"));
+    projectDirs.push(outside);
+    symlinkSync(outside, join(coreSkillsRoot(), "weird"));
+    legacySkillsSymlink();
+
+    const stderrChunks: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrChunks.push(String(chunk));
+        return true;
+      });
+    let code: number;
+    try {
+      code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    } finally {
+      spy.mockRestore();
+    }
+    // The non-projection stray keeps the row non-clean → exit 1.
+    expect(code).toBe(1);
+    // Stray left in place.
+    expect(require("node:fs").existsSync(join(coreSkillsRoot(), "weird"))).toBe(true);
+    const out = stderrChunks.join("");
+    expect(out).toContain("weird");
+  });
+
+  it("T3 (T9): a per-surface-model real dir produces NO skills-pollution row", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("foo");
+    // ~/.claude/skills is a REAL dir of per-skill symlinks already.
+    mkdirSync(claudeSkillsRoot(), { recursive: true });
+    symlinkSync(join(coreSkillsRoot(), "foo"), join(claudeSkillsRoot(), "foo"));
+    // ~/.claude/agents is also a real dir.
+    mkdirSync(claudeAgentsRoot(), { recursive: true });
+
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "skills-pollution")).toBe(false);
+  });
+
+  it("T6: idempotent — a 2nd --fix on a migrated root is a no-op (no 2nd backup, exits 0)", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("foo");
+    legacySkillsSymlink();
+    // ~/.claude/agents absent → real-dir/missing → no agent migration.
+
+    expect(
+      await runDoctor({ fix: true, removeOrphans: false, yes: false }),
+    ).toBe(0);
+    expect(claudeBaks("skills").length).toBe(1);
+
+    // 2nd --fix: root is now a real dir → no row, no new backup.
+    expect(
+      await runDoctor({ fix: true, removeOrphans: false, yes: false }),
+    ).toBe(0);
+    expect(claudeBaks("skills").length).toBe(1);
+  });
+
+  it("T7: a root symlinked to an UNEXPECTED target is reported, never rewritten (exits 1)", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("foo");
+    const other = mkdtempSync(join(tmpdir(), "igris-doctor-unexpected-"));
+    projectDirs.push(other);
+    mkdirSync(join(homeOverride, ".claude"), { recursive: true });
+    symlinkSync(other, claudeSkillsRoot());
+
+    const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    expect(code).toBe(1);
+    // Root untouched: still a symlink → the unexpected target, no backup.
+    expect(lstatSync(claudeSkillsRoot()).isSymbolicLink()).toBe(true);
+    expect(realpathSync(claudeSkillsRoot())).toBe(realpathSync(other));
+    expect(claudeBaks("skills")).toEqual([]);
+  });
+
+  it("T3/no-loss: --fix prints the before/after enumeration to stdout (no skill lost)", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("alpha");
+    stageCanonicalSkill("beta");
+    legacySkillsSymlink();
+
+    // The before/after enumeration is emitted via info() → stdout.
+    const stdoutChunks: string[] = [];
+    const spy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: unknown) => {
+        stdoutChunks.push(String(chunk));
+        return true;
+      });
+    try {
+      await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    } finally {
+      spy.mockRestore();
+    }
+    const out = stdoutChunks.join("");
+    expect(out).toContain("before");
+    expect(out).toContain("after");
+    expect(out).toContain("alpha");
+    expect(out).toContain("beta");
   });
 });

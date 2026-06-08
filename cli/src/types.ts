@@ -75,7 +75,8 @@ export interface DriftRow {
     | "channel-mismatch"
     | "bridge-missing"
     | "mcp-unregistered"
-    | "secret-perms";
+    | "secret-perms"
+    | "skills-pollution";
   recommendedFix: string;
   /** Resolved realpath when row.path is itself a symlink. */
   resolvedPath?: string;

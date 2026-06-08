@@ -13,6 +13,18 @@
  *   secret-perms            → an Igris-written secret file (config.json,
  *                             secrets.env) OR a harness config is group/world-
  *                             readable or git-tracked — TD-220
+ *   skills-pollution        → a managed surface root (~/.claude/skills or
+ *                             ~/.claude/agents) is a legacy v6-era WHOLE-DIR
+ *                             symlink pointing AT the canonical source
+ *                             (~/.igris/core/{skills,agents}), OR a stray
+ *                             projection symlink leaked INTO that canonical
+ *                             source. The whole-dir symlink makes a live
+ *                             `igris harness compile --surface skills` write
+ *                             per-item symlinks INTO the canonical source
+ *                             (active damage). --fix migrates each root to a
+ *                             REAL dir of per-item symlinks (direct-materialize,
+ *                             never compile) and cleans the strays — TD-223
+ *                             (RE-SCOPED, corrected root cause).
  *
  * Per-project:
  *   path-missing            → orphan (registry row points at deleted dir)
@@ -28,10 +40,11 @@
  *
  * Precedence (high → low): path-missing → brain-core-missing → brain-core-stale →
  * channel-mismatch → bridge-missing → mcp-unregistered → secret-perms →
- * duplicate-path → not-installed → hooks-missing → hooks-stale → symlink-target →
- * slug-basename-mismatch → clean.
- * (mcp-unregistered + secret-perms sit next to bridge-missing — all brain-level,
- *  config-driven, and orthogonal to core state.)
+ * skills-pollution → duplicate-path → not-installed → hooks-missing → hooks-stale →
+ * symlink-target → slug-basename-mismatch → clean.
+ * (mcp-unregistered + secret-perms + skills-pollution sit next to bridge-missing
+ *  — all brain-level, config/state-driven, and orthogonal to core state.
+ *  skills-pollution is lowest brain-level precedence — TD-223.)
  *
  * --fix repairs not-installed / hooks-missing / hooks-stale by re-running install,
  * brain-core-missing by invoking runRefresh(), bridge-missing by invoking
@@ -39,13 +52,21 @@
  * registerBrainAcrossHarnesses() directly to backfill all 4 harnesses (FR-169;
  * cheap — no need to re-run init), secret-perms by chmod'ing the flagged file
  * to 600 (TD-220; both Igris-owned and harness-owned under the explicit flag —
- * a git-tracked file stays flagged since chmod can't untrack it).
+ * a git-tracked file stays flagged since chmod can't untrack it),
+ * skills-pollution by migrating each legacy whole-dir surface root into a REAL
+ * dir of per-item symlinks (direct-materialize from the canonical source +
+ * personal overlay — NEVER a compile, which would lose every skill + core
+ * agent) and cleaning each stray projection symlink leaked into the canonical
+ * source (TD-223 RE-SCOPED; backup-not-delete the old root symlink, atomic
+ * rename, realpath-contained, refuse-on-unexpected-target, idempotent — a stray
+ * that is not a registry projection stays flagged for manual resolution; --fix
+ * prints the before/after enumeration as the no-loss proof).
  * --remove-orphans deletes path-missing rows after per-row confirmation
  * (skip prompt with --yes).
  */
 
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import {
   listProjects,
@@ -69,6 +90,13 @@ import {
   checkSecretFilePerms,
   chmodSecretFile,
 } from "../lib/secret-perms.js";
+import {
+  classifyMigration,
+  migrateSurfaceRoot,
+  removeStraySourceSymlink,
+  coreSkillsSource,
+  coreAgentsSource,
+} from "../lib/skills-pollution.js";
 import {
   inspectMcpRegistration,
   registerBrainAcrossHarnesses,
@@ -118,6 +146,12 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
         );
       }
     }
+    // TD-223: in the read pass, name each polluted skills entry by skill name
+    // (NO body bytes — L-515 read-only posture). Divergent entries get an
+    // explicit manual-resolution warning since --fix will NEVER touch them.
+    if (drift.some((r) => r.driftClass === "skills-pollution")) {
+      warnSkillsPollutionEntries();
+    }
   }
 
   let errored = 0;
@@ -128,6 +162,9 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
   // (not-installed / hooks-* / brain-core-missing) that come after
   // bridge-missing in `drift`.
   let bridgeFixApplied = false;
+  // TD-223: skills-pollution emits a single brain-level row, but guard against
+  // a repeated convert pass defensively (mirrors bridgeFixApplied).
+  let skillsPollutionFixApplied = false;
 
   if (opts.fix) {
     for (const row of drift) {
@@ -227,6 +264,20 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
           ? "Igris-owned"
           : "harness-owned";
         info(`fix: secret-perms (${owner}) — will chmod 600 ${row.path}`);
+      } else if (row.driftClass === "skills-pollution") {
+        // TD-223 (RE-SCOPED): migrate each legacy whole-dir surface root into a
+        // REAL dir of per-item symlinks (direct-materialize — never compile),
+        // then clean the stray projection symlinks leaked into the canonical
+        // source. The migrator backs up the old root symlink (rename, never rm),
+        // realpath-contains every mutation, and refuses an unexpected target.
+        // The before/after enumeration is PRINTED as the no-loss proof. A stray
+        // that is not a registry projection is left untouched (manual review).
+        // There is ONE skills-pollution row, so guard against a repeated pass.
+        if (skillsPollutionFixApplied) {
+          continue;
+        }
+        skillsPollutionFixApplied = true;
+        errored += fixSkillsPollution();
       } else if (
         row.driftClass === "slug-basename-mismatch" ||
         row.driftClass === "duplicate-path" ||
@@ -297,6 +348,23 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
       if (r.driftClass === "secret-perms") {
         return checkSecretFilePerms(r.path) !== "ok";
       }
+      // TD-223 (RE-SCOPED): a skills-pollution row resolves to clean ONLY if a
+      // LIVE re-classification finds NO surface root still in the migration
+      // condition (or an unexpected-target symlink) AND no removable stray
+      // projection symlink remains (re-probe — don't assume --fix cleared
+      // everything). An unexpected-target root or a non-projection stray is
+      // never auto-fixed, so it keeps the row non-clean (exit 1) until resolved
+      // manually.
+      if (r.driftClass === "skills-pollution") {
+        const post = classifyMigration();
+        // Any remaining migration condition, unexpected-target symlink, OR stray
+        // projection symlink in the canonical source keeps the row non-clean.
+        return (
+          post.toMigrate.length > 0 ||
+          post.unexpected.length > 0 ||
+          post.strays.length > 0
+        );
+      }
     }
     return true;
   });
@@ -351,10 +419,17 @@ export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]>
   }
 
   // secret-perms (TD-220): brain-level, config-driven, sits next to
-  // mcp-unregistered (lowest brain-level precedence). Flags Igris-owned
-  // config.json/secrets.env + the 4 harness configs when their perms are
-  // group/world-readable or they are git-tracked.
+  // mcp-unregistered. Flags Igris-owned config.json/secrets.env + the 4
+  // harness configs when their perms are group/world-readable or git-tracked.
   for (const sp of detectSecretFilePerms()) out.push(sp);
+
+  // skills-pollution (TD-223 RE-SCOPED): brain-level, state-driven, LOWEST
+  // brain-level precedence (sits after secret-perms). Flagged when a managed
+  // surface root (~/.claude/skills or ~/.claude/agents) is a legacy v6-era
+  // WHOLE-DIR symlink pointing at the canonical source, OR a stray projection
+  // symlink leaked into that canonical source.
+  const sp = detectSkillsPollution();
+  if (sp !== null) out.push(sp);
 
   // Per-project: channel-mismatch + the existing classifyDrift output.
   // channel-mismatch sits BEFORE the existing per-project chain in
@@ -603,6 +678,253 @@ function detectSecretFilePerms(): DriftRow[] {
   }
 
   return out;
+}
+
+/**
+ * TD-223 (RE-SCOPED): classify the managed surface roots (~/.claude/skills,
+ * ~/.claude/agents) + the canonical-source strays into a SINGLE brain-level
+ * `skills-pollution` row. The row is emitted ONLY when ≥1 root is in the
+ * migration condition (legacy whole-dir symlink), OR a root is a symlink to an
+ * unexpected target, OR a stray projection symlink leaked into the canonical
+ * source. A pure per-surface-model machine (real dirs, no strays) produces no
+ * row. The row.path is the first affected root/source (for the table) and
+ * `recommendedFix` summarizes what --fix will migrate/clean. Never throws
+ * (classifyMigration degrades to an empty report on any error / win32).
+ */
+function detectSkillsPollution(): DriftRow | null {
+  const report = classifyMigration();
+  if (
+    report.toMigrate.length === 0 &&
+    report.unexpected.length === 0 &&
+    report.strays.length === 0
+  ) {
+    return null;
+  }
+  const parts: string[] = [];
+  if (report.toMigrate.length > 0) {
+    const roots = report.toMigrate.map((s) => s.kind).join("+");
+    parts.push(
+      `${report.toMigrate.length} legacy whole-dir symlink root(s) [${roots}] ` +
+        `to migrate (fixable via 'igris doctor --fix')`,
+    );
+  }
+  if (report.unexpected.length > 0) {
+    parts.push(
+      `${report.unexpected.length} root(s) symlinked to an UNEXPECTED target ` +
+        `(resolve manually — never auto-rewritten)`,
+    );
+  }
+  const removableStrays = report.strays.filter((s) => s.isRegistryProjection);
+  const unknownStrays = report.strays.filter((s) => !s.isRegistryProjection);
+  if (removableStrays.length > 0) {
+    parts.push(
+      `${removableStrays.length} stray projection symlink(s) in the canonical ` +
+        `source (fixable via 'igris doctor --fix')`,
+    );
+  }
+  if (unknownStrays.length > 0) {
+    parts.push(
+      `${unknownStrays.length} non-projection stray symlink(s) (resolve ` +
+        `manually — never auto-removed)`,
+    );
+  }
+  const affectedRoot =
+    report.toMigrate[0]?.root ??
+    report.unexpected[0]?.root ??
+    report.strays[0]?.path ??
+    "~/.claude/skills";
+  return {
+    slug: "(brain)",
+    path: affectedRoot,
+    driftClass: "skills-pollution",
+    recommendedFix: parts.join(", "),
+  };
+}
+
+/**
+ * TD-223 (RE-SCOPED): read-pass WARN — name each surface root to migrate, each
+ * unexpected-target root, and each stray projection symlink by PATH ONLY (NEVER
+ * file contents — L-515). Unexpected-target roots + non-projection strays get an
+ * explicit "resolve manually" warning since --fix will never touch them.
+ */
+function warnSkillsPollutionEntries(): void {
+  const report = classifyMigration();
+  for (const s of report.toMigrate) {
+    warn(
+      `skills-pollution: ${s.kind} surface root '${s.root}' is a legacy ` +
+        `whole-dir symlink → '${s.source}'. 'igris doctor --fix' will migrate ` +
+        `it to a REAL dir of per-item symlinks (the old symlink is backed up).`,
+    );
+  }
+  for (const s of report.unexpected) {
+    warn(
+      `skills-pollution: ${s.kind} surface root '${s.root}' is a symlink to an ` +
+        `UNEXPECTED target (not the canonical source '${s.source}') — NOT ` +
+        `auto-fixable. Resolve manually before recompiling.`,
+    );
+  }
+  for (const stray of report.strays) {
+    if (stray.isRegistryProjection) {
+      warn(
+        `skills-pollution: stray projection symlink '${stray.path}' leaked into ` +
+          `the canonical source — 'igris doctor --fix' will unlink it (it is a ` +
+          `registry projection, not core content).`,
+      );
+    } else {
+      warn(
+        `skills-pollution: stray symlink '${stray.path}' in the canonical source ` +
+          `does NOT resolve into the registry — NOT auto-removed. Resolve ` +
+          `manually (verify it is not hand-authored, then remove).`,
+      );
+    }
+  }
+}
+
+/**
+ * TD-223 (RE-SCOPED) `--fix` worker: migrate each legacy whole-dir surface root
+ * to a REAL dir of per-item symlinks, then clean each stray projection symlink
+ * leaked into the canonical source. PRINTS the before/after enumeration as the
+ * no-loss proof. Returns the number of errors encountered (for the exit code).
+ *
+ * Order matters: migrate the roots FIRST so the personal per-item symlinks
+ * exist in the real surface dir, THEN clean the strays (removeStraySourceSymlink
+ * refuses until the migrated home exists — its precondition #3).
+ */
+function fixSkillsPollution(): number {
+  let errs = 0;
+  info(
+    "fix: skills-pollution — migrating legacy whole-dir surface roots to " +
+      "per-item symlinks (direct-materialize; never compile)",
+  );
+
+  // Re-classify LIVE at fix time (the read-pass report may be stale).
+  const report = classifyMigration();
+
+  // 1. Migrate each surface root in the migration condition.
+  for (const sr of report.toMigrate) {
+    const result = migrateSurfaceRoot({
+      kind: sr.kind,
+      root: sr.root,
+      source: sr.source,
+    });
+    if (result.outcome === "migrated") {
+      info(
+        `  migrated ${sr.kind} root '${sr.root}' -> REAL dir; old symlink ` +
+          `backed up to ${result.backupPath}`,
+      );
+      // The before/after enumeration is the no-loss safety proof (print names
+      // only — never contents). AFTER must ⊇ BEFORE.
+      const beforeNames = result.before.map((b) => b.name).sort();
+      const afterNames = result.after.map((a) => a.name).sort();
+      info(`    before (${beforeNames.length}): ${beforeNames.join(", ")}`);
+      info(`    after  (${afterNames.length}): ${afterNames.join(", ")}`);
+      const lost = beforeNames.filter((n) => !afterNames.includes(n));
+      if (lost.length > 0) {
+        // Should never happen — the inventory is the source walk + overlay. If
+        // it does, surface it loudly (the operator can restore from .bak).
+        errs++;
+        logError(
+          `skills-pollution fix: ${sr.kind} migration would lose name(s): ` +
+            `${lost.join(", ")} — old symlink preserved at ${result.backupPath}.`,
+        );
+      }
+    } else if (result.outcome === "refused-unexpected-target") {
+      errs++;
+      logError(
+        `skills-pollution fix: refused ${sr.kind} root '${sr.root}' — it is a ` +
+          `symlink to an UNEXPECTED target (not the canonical source). ` +
+          `Resolve manually.`,
+      );
+    } else if (result.outcome === "refused-containment") {
+      errs++;
+      logError(
+        `skills-pollution fix: refused ${sr.kind} root '${sr.root}' — a ` +
+          `staging/backup path escaped containment (#515).`,
+      );
+    } else if (result.outcome === "skipped-not-migratable") {
+      // No longer the migration condition at fix time (TOCTOU / already real
+      // dir) — informational, not an error.
+      info(
+        `  skipped ${sr.kind} root '${sr.root}' — no longer a whole-dir ` +
+          `symlink at fix time (already migrated).`,
+      );
+    } else {
+      errs++;
+      logError(`skills-pollution fix: failed to migrate ${sr.kind} root '${sr.root}'.`);
+    }
+  }
+
+  // Name unexpected-target roots that --fix deliberately leaves untouched (the
+  // read-pass WARN is gated behind !opts.fix). NEVER logs contents.
+  for (const sr of report.unexpected) {
+    warn(
+      `skills-pollution: ${sr.kind} root '${sr.root}' is a symlink to an ` +
+        `UNEXPECTED target — left untouched. Resolve manually.`,
+    );
+  }
+
+  // 2. Clean the stray projection symlinks AFTER migration (so the per-item
+  // home exists). Map each stray's source to the matching migrated surface root.
+  for (const stray of report.strays) {
+    const surfaceRoot = surfaceRootForStray(stray.path, report);
+    const outcome = removeStraySourceSymlink(stray.path, surfaceRoot);
+    if (outcome === "removed") {
+      info(`  removed stray projection symlink '${stray.path}'`);
+    } else if (outcome === "skipped-not-projection") {
+      warn(
+        `skills-pollution: stray '${stray.path}' is NOT a registry projection ` +
+          `— left untouched. Resolve manually.`,
+      );
+    } else if (outcome === "skipped-no-migrated-target") {
+      // The migrated per-item home does not exist (e.g. the overlay does not
+      // declare this name) — leave the stray and tell the operator.
+      warn(
+        `skills-pollution: stray '${stray.path}' left in place — no migrated ` +
+          `per-item symlink at '${join(surfaceRoot, basename(stray.path))}'.`,
+      );
+    } else if (outcome === "skipped-not-symlink") {
+      info(`  skipped stray '${stray.path}' — no longer a symlink at fix time.`);
+    } else {
+      errs++;
+      logError(`skills-pollution fix: failed to remove stray '${stray.path}'.`);
+    }
+  }
+
+  return errs;
+}
+
+/**
+ * Map a stray symlink path (inside a canonical source) to the migrated surface
+ * root that should hold its per-item home. The stray lives in
+ * `~/.igris/core/skills` (→ `~/.claude/skills`) or `~/.igris/core/agents`
+ * (→ `~/.claude/agents`). Resolved from the report's surface list by matching
+ * the stray's parent dir against each surface's source. Falls back to
+ * `coreSkillsSource` vs `coreAgentsSource` lexical comparison.
+ */
+function surfaceRootForStray(
+  strayPath: string,
+  report: ReturnType<typeof classifyMigration>,
+): string {
+  const parent = dirname(strayPath);
+  for (const sr of report.surfaces) {
+    if (samePath(sr.source, parent)) return sr.root;
+  }
+  // Fallback: lexical match on the known source roots.
+  if (samePath(parent, coreAgentsSource())) {
+    const agents = report.surfaces.find((s) => s.kind === "agents");
+    if (agents) return agents.root;
+  }
+  const skills = report.surfaces.find((s) => s.kind === "skills");
+  if (skills) return skills.root;
+  // Last resort — derive `~/.claude/<kind>` from the source basename.
+  return samePath(parent, coreAgentsSource())
+    ? coreAgentsSource()
+    : coreSkillsSource();
+}
+
+/** realpath-equality of two paths (verbatim fallback when unresolvable). */
+function samePath(a: string, b: string): boolean {
+  return realpathSyncSafe(a) === realpathSyncSafe(b);
 }
 
 /**
