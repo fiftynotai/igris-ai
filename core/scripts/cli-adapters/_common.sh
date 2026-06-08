@@ -445,12 +445,12 @@ if os.path.isdir(tree):
                 continue
             abs_path = os.path.join(root, f)
             rel = os.path.relpath(abs_path, tree).replace(os.sep, "/")
-            # FR-152 / FR-158 / FR-159: exclude per-harness α-assembled
+            # FR-152 / FR-158 / FR-159 / FR-171: exclude per-harness α-assembled
             # outputs from the basis (top-level `harness.claude.md` /
-            # `harness.gemini.md` / `harness.codex.toml` only — a nested file
-            # by either name would be legitimate operator content, same as
-            # the TS side).
-            if rel in ("harness.claude.md", "harness.gemini.md", "harness.codex.toml"):
+            # `harness.gemini.md` / `harness.codex.toml` / `harness.opencode.md`
+            # only — a nested file by either name would be legitimate operator
+            # content, same as the TS side).
+            if rel in ("harness.claude.md", "harness.gemini.md", "harness.codex.toml", "harness.opencode.md"):
                 continue
             rels.append(rel)
 
@@ -551,7 +551,7 @@ agents = manifest["agents"]
 if not isinstance(agents, list):
     fail("'agents' must be an array")
 
-valid_target_types = {"claude", "codex", "gemini"}
+valid_target_types = {"claude", "codex", "gemini", "opencode"}
 # FR-155: `scope` is allowed on agent + skills_surface entries. Absent → global
 # (default, back-compat). The structural shape ({type:"global"} OR
 # {type:"project", paths:[...]}) is validated by validate_scope_shape below.
@@ -678,18 +678,19 @@ if surfaces is not None:
                  "(or a single legacy object — both normalize)")
         if len(skills_blocks) < 1:
             fail("surfaces.skills must be a non-empty array")
-        # FR-149/FR-151/FR-153: the per-type method allowlist (claude/symlink,
-        # codex/symlink, gemini/symlink) is enforced via `valid_pairs` below
-        # — mirrors the `oneOf` constraint in manifest.schema.json so both
-        # validation paths agree. The legacy codex/compiler + gemini/converter
-        # pairs were retired by FR-153. `valid_skill_methods` retains the
-        # legacy method strings so a recognized-but-disallowed pair produces
-        # the clearer pair-allowlist error message (not "method unknown").
-        # See L-519.
-        valid_skill_types = {"codex", "gemini", "claude", "agents"}
-        valid_skill_methods = {"compiler", "converter", "symlink"}
+        # FR-149/FR-151/FR-153/FR-171: the per-type method allowlist
+        # (claude/symlink, codex/symlink, gemini/symlink, agents/symlink,
+        # opencode/command) is enforced via `valid_pairs` below — mirrors the
+        # `oneOf` constraint in manifest.schema.json so both validation paths
+        # agree. The legacy codex/compiler + gemini/converter pairs were retired
+        # by FR-153. `valid_skill_methods` retains the legacy method strings so
+        # a recognized-but-disallowed pair produces the clearer pair-allowlist
+        # error message (not "method unknown"). See L-519.
+        valid_skill_types = {"codex", "gemini", "claude", "agents", "opencode"}
+        valid_skill_methods = {"compiler", "converter", "symlink", "command"}
         valid_pairs = {("claude", "symlink"), ("codex", "symlink"),
-                       ("gemini", "symlink"), ("agents", "symlink")}
+                       ("gemini", "symlink"), ("agents", "symlink"),
+                       ("opencode", "command")}
         allowed_skill_target_keys = {"type", "method", "path"}
         # FR-155: `scope` is allowed on a skills_surface block (same shape as
         # on an agent entry). Absent → global (default, back-compat).
@@ -730,7 +731,7 @@ if surfaces is not None:
                     fail(f"{stwhere}: type/method pair "
                          f"'{st['type']}/{st['method']}' is not allowed; "
                          "valid pairs: claude/symlink, codex/symlink, "
-                         "gemini/symlink, agents/symlink")
+                         "gemini/symlink, agents/symlink, opencode/command")
             # FR-155: optional scope on the skills_surface block.
             if "scope" in skills_block:
                 validate_scope_shape(skills_block["scope"], bwhere)

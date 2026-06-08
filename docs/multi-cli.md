@@ -31,7 +31,7 @@ ship (defaults to `all`).
 | CLI | Method | Target | Notes |
 |-----|--------|--------|-------|
 | Claude Code | `symlink` | `~/.claude/skills/` | Each registry-vendored skill (`~/.igris/registry/skills/<name>/`) becomes a symlink at `~/.claude/skills/<name>/`. The compiler emits the symlink from `<target_path>` to the registry-vendored copy — first-class projection on par with codex/gemini (FR-149, see L-519). Core skills live at `~/.igris/core/skills/` and follow the same mechanism. Full directory linked so nested assets (`scripts/`, `workflow-template.md`, `templates/*.md`) are available. |
-| OpenCode | `none` | `~/.config/opencode/` | No-op. OpenCode reads `~/.claude/skills/` natively as a fallback; the Claude-side symlinks cover it. Flip `method: "symlink"` in `~/.igris/config.json` if a future OpenCode version stops falling back. |
+| OpenCode | `command` | `~/.config/opencode/command/` | **FR-171:** First-class skills distribution via thin command wrappers. Each registry-vendored / core skill gets a `<command-dir>/<name>.md` wrapper whose body loads the canonical `SKILL.md` via OpenCode's `@file` directive (`@~/.igris/core/skills/<name>/SKILL.md`) plus `$ARGUMENTS`. The canonical SKILL.md stays the single source of truth — the wrapper is a pointer, not a copy (no edit-drift; only ADD/REMOVE drift). Supersedes the prior `none`/soft-fallback posture that relied on OpenCode reading `~/.claude/skills/`. OpenCode is ALSO first-class for agents — see [Subagent Distribution](#subagent-distribution). |
 | Codex CLI + Gemini CLI (cross-CLI shared) | `symlink` | `~/.agents/skills/` | **FR-157:** Codex AND Gemini both natively discover `~/.agents/skills/` as the cross-CLI shared skill location (Codex's `core-skills/src/loader.rs` walks it; Gemini docs at `docs/cli/skills.md` reference it explicitly). Per-skill symlink at `~/.agents/skills/<name>/` → registry-vendored canonical OR `~/.igris/core/skills/<name>/` for core skills. Symlink target MUST be absolute (codex resolves relative-path symlinks from cwd — same D2 enforcement as the legacy `codex/symlink` target). Antigravity CLI (Gemini's successor, post 2026-06-18) is expected to standardize on this path. |
 | Codex CLI (legacy per-CLI) | `symlink` | `~/.codex/skills/` | **Retained for back-compat**. Pre-FR-157 personal overlays may still declare `codex/symlink` targets at `~/.codex/skills/`. New manifests should use the cross-CLI `agents/symlink` target instead. Drift-verify enforces the same D2 absolute-path guard. |
 | Gemini CLI (legacy per-CLI) | `symlink` | `~/.gemini/skills/` | **Retained for back-compat**. Pre-FR-157 personal overlays may still declare `gemini/symlink` targets at `~/.gemini/skills/`. New manifests should use the cross-CLI `agents/symlink` target instead. |
@@ -46,7 +46,7 @@ ship (defaults to `all`).
 {
   "cli_targets": {
     "claude":   { "method": "symlink", "target": "~/.claude/skills/" },
-    "opencode": { "method": "none",    "target": "~/.config/opencode/" },
+    "opencode": { "method": "command", "target": "~/.config/opencode/command/" },
     "gemini":   { "method": "symlink", "target": "~/.gemini/skills/" },
     "codex":    { "method": "symlink", "target": "~/.codex/skills/" }
   }
@@ -54,8 +54,9 @@ ship (defaults to `all`).
 ```
 
 Each entry supports:
-- `method` — one of `symlink`, `none` (the legacy `converter` / `compiler`
-  methods were retired by FR-153 along with their adapter scripts)
+- `method` — one of `symlink`, `command` (FR-171, OpenCode skill wrappers),
+  `none` (the legacy `converter` / `compiler` methods were retired by FR-153
+  along with their adapter scripts)
 - `target` — output path (tilde-expanded, relative paths resolve from project root at sync time)
 - `note` — human-readable intent, for maintainers
 
@@ -567,8 +568,9 @@ coexist:
 |------|------|
 | `scripts/cli-adapters/harness-manifest.json` | Declarative manifest: per agent, the canonical source (dir + glob/file + `versioned` flag) and the set of harness targets. Handles both canonical conventions. |
 | `cli/src/verbs/registry.ts::assembleCodexHarness` | Vendor-side α-assembler — writes `<brain>/registry/agents/<name>/harness.codex.toml` (3-key TOML: `description`, `developer_instructions`, `name`) from `frontmatter.claude.md` + body. FR-159 TS port replacing the retired `sync_codex_agents.sh`. |
-| `scripts/cli-adapters/compile_harnesses.sh` | Orchestrator — reads the manifest, projects per-harness registry-resident files (`harness.claude.md`, `harness.codex.toml`, `harness.gemini.md`) to each target. claude + codex emit via symlink; gemini emits via hard link (TD-208). For core agents without vendor-side α-assembly, `assemble_codex_harness_into_registry` provides byte-equivalent compile-side fallback. `--project-root`, `--filter`, `--target` flags. |
-| `scripts/cli-adapters/check_harness_drift.sh` | CI-style drift guard — exits non-zero if any claude/codex symlink target is non-registry-anchored, refuses-to-clobber a real-file target, or any gemini hard-link target has diverged (TD-208). All 3 agent harnesses use per-harness registry-resident files as verdict basis (FR-159 retired the codex body-sha verdict). |
+| `cli/src/verbs/registry.ts::assembleOpencodeHarness` | Vendor-side α-assembler — writes `<brain>/registry/agents/<name>/harness.opencode.md` (OpenCode-shaped frontmatter: `mode: subagent`, boolean `tools:` map via `CLAUDE_TO_OPENCODE_TOOLS`, `permission:` MCP grant) from `frontmatter.claude.md` + body, OR honors an operator-authored `frontmatter.opencode.md` verbatim. FR-171. Byte-identical to the compile-side bash inline-python3 translator (§18.1 golden-fixture parity). |
+| `scripts/cli-adapters/compile_harnesses.sh` | Orchestrator — reads the manifest, projects per-harness registry-resident files (`harness.claude.md`, `harness.codex.toml`, `harness.gemini.md`, `harness.opencode.md`) to each target. claude + codex + opencode emit via symlink (FR-171: OpenCode's agent loader follows symlinks); gemini emits via hard link (TD-208). For core agents without vendor-side α-assembly, `assemble_*_harness_into_registry` provides byte-equivalent compile-side fallback. `--project-root`, `--filter`, `--target` flags. |
+| `scripts/cli-adapters/check_harness_drift.sh` | CI-style drift guard — exits non-zero if any claude/codex/opencode symlink target is non-registry-anchored, refuses-to-clobber a real-file target, or any gemini hard-link target has diverged (TD-208). All 4 agent harnesses use per-harness registry-resident files as verdict basis (FR-159 retired the codex body-sha verdict; FR-171 added opencode). |
 | `scripts/cli-adapters/body-exceptions/*.json` | Documented intentional body divergences (see below). |
 
 ### Manifest schema
@@ -1011,17 +1013,18 @@ To add a new per-CLI subagent target type (say `cursor`):
 
 1. **Manifest schema** — add the new type to the `targets[].type` enum in
    `core/scripts/cli-adapters/manifest.schema.json` (currently
-   `["claude", "codex", "gemini"]`). If the surface is also a skills surface,
-   add it to `surfaces.skills.targets[].type` too (currently
-   `["codex", "gemini", "claude"]`), and add the new `(type, method)` pair
-   to the `oneOf` constraint on the skills target item. Post-FR-153 only
-   `symlink` participates in valid pairs; the method enum still includes
-   `["compiler", "converter", "symlink"]` solely for clearer
-   pair-allowlist error messages — for any new harness, the chosen method
-   should usually be `symlink` (and a new value would need adding to both
-   the enum AND the pair allowlist). Mirror the same pair in `valid_pairs`
-   inside `_common.sh validate_manifest` and in `VALID_SKILL_TYPE_METHOD_PAIRS`
-   inside `cli/src/verbs/registry.ts`.
+   `["claude", "codex", "gemini", "opencode"]`). If the surface is also a skills
+   surface, add it to `surfaces.skills.targets[].type` too (currently
+   `["codex", "gemini", "claude", "agents", "opencode"]`), and add the new
+   `(type, method)` pair to the `oneOf` constraint on the skills target item.
+   `symlink` is the canonical skills method (claude/codex/gemini/agents);
+   **FR-171** added `command` for OpenCode (a thin `@file` wrapper into the
+   harness's native command surface, not a symlink). The method enum is
+   `["compiler", "converter", "symlink", "command"]` — pick `symlink` unless the
+   harness reads skills from a native command/prompt surface (then `command`),
+   and add any new value to both the enum AND the pair allowlist. Mirror the
+   same pair in `valid_pairs` inside `_common.sh validate_manifest` and in
+   `VALID_SKILL_TYPE_METHOD_PAIRS` inside `cli/src/verbs/registry.ts`.
 2. **Per-agent adapter** — write `sync_cursor.sh` with the contract
    `sync_cursor.sh <canonical-md> <output> [agent-name]`. Exit `0` success /
    `1` error / `2` usage. Source `_common.sh`. Emit the output file

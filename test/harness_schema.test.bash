@@ -112,14 +112,31 @@ EOF
     {
       "name": "sample",
       "canonical": { "dir": "canon", "file": "sample.md", "versioned": false },
-      "targets": [ { "type": "opencode", "path": ".x/sample.md" } ]
+      "targets": [ { "type": "bogus", "path": ".x/sample.md" } ]
     }
   ]
 }
 EOF
   run bash -c "source '$COMMON' && validate_manifest '$PROJ/bad.json' '$SCHEMA'"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"opencode"* || "$output" == *"type"* ]]
+  [[ "$output" == *"bogus"* || "$output" == *"type"* ]]
+}
+
+@test "FR-171: schema accepts an opencode agent target 'type' enum value" {
+  cat > "$PROJ/ok.json" <<'EOF'
+{
+  "version": 1,
+  "agents": [
+    {
+      "name": "sample",
+      "canonical": { "dir": "canon", "file": "sample.md", "versioned": false },
+      "targets": [ { "type": "opencode", "path": "~/.config/opencode/agent/sample.md" } ]
+    }
+  ]
+}
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/ok.json' '$SCHEMA'"
+  [ "$status" -eq 0 ]
 }
 
 # --- Scenario 3a: versioned=true without glob -------------------------------

@@ -5,51 +5,128 @@
   "agents": [
     {
       "name": "architect",
-      "canonical": { "dir": "core/agents", "file": "architect.md", "versioned": false },
+      "canonical": {
+        "dir": "core/agents",
+        "file": "architect.md",
+        "versioned": false
+      },
       "targets": [
-        { "type": "codex", "path": ".codex/agents/architect.toml" }
+        {
+          "type": "codex",
+          "path": ".codex/agents/architect.toml"
+        },
+        {
+          "type": "opencode",
+          "path": "~/.config/opencode/agent/architect.md"
+        }
       ]
     },
     {
       "name": "forger",
-      "canonical": { "dir": "core/agents", "file": "forger.md", "versioned": false },
+      "canonical": {
+        "dir": "core/agents",
+        "file": "forger.md",
+        "versioned": false
+      },
       "targets": [
-        { "type": "codex", "path": ".codex/agents/forger.toml" }
+        {
+          "type": "codex",
+          "path": ".codex/agents/forger.toml"
+        },
+        {
+          "type": "opencode",
+          "path": "~/.config/opencode/agent/forger.md"
+        }
       ]
     },
     {
       "name": "mender",
-      "canonical": { "dir": "core/agents", "file": "mender.md", "versioned": false },
+      "canonical": {
+        "dir": "core/agents",
+        "file": "mender.md",
+        "versioned": false
+      },
       "targets": [
-        { "type": "codex", "path": ".codex/agents/mender.toml" }
+        {
+          "type": "codex",
+          "path": ".codex/agents/mender.toml"
+        },
+        {
+          "type": "opencode",
+          "path": "~/.config/opencode/agent/mender.md"
+        }
       ]
     },
     {
       "name": "sage",
-      "canonical": { "dir": "core/agents", "file": "sage.md", "versioned": false },
+      "canonical": {
+        "dir": "core/agents",
+        "file": "sage.md",
+        "versioned": false
+      },
       "targets": [
-        { "type": "codex", "path": ".codex/agents/sage.toml" }
+        {
+          "type": "codex",
+          "path": ".codex/agents/sage.toml"
+        },
+        {
+          "type": "opencode",
+          "path": "~/.config/opencode/agent/sage.md"
+        }
       ]
     },
     {
       "name": "seeker",
-      "canonical": { "dir": "core/agents", "file": "seeker.md", "versioned": false },
+      "canonical": {
+        "dir": "core/agents",
+        "file": "seeker.md",
+        "versioned": false
+      },
       "targets": [
-        { "type": "codex", "path": ".codex/agents/seeker.toml" }
+        {
+          "type": "codex",
+          "path": ".codex/agents/seeker.toml"
+        },
+        {
+          "type": "opencode",
+          "path": "~/.config/opencode/agent/seeker.md"
+        }
       ]
     },
     {
       "name": "sentinel",
-      "canonical": { "dir": "core/agents", "file": "sentinel.md", "versioned": false },
+      "canonical": {
+        "dir": "core/agents",
+        "file": "sentinel.md",
+        "versioned": false
+      },
       "targets": [
-        { "type": "codex", "path": ".codex/agents/sentinel.toml" }
+        {
+          "type": "codex",
+          "path": ".codex/agents/sentinel.toml"
+        },
+        {
+          "type": "opencode",
+          "path": "~/.config/opencode/agent/sentinel.md"
+        }
       ]
     },
     {
       "name": "warden",
-      "canonical": { "dir": "core/agents", "file": "warden.md", "versioned": false },
+      "canonical": {
+        "dir": "core/agents",
+        "file": "warden.md",
+        "versioned": false
+      },
       "targets": [
-        { "type": "codex", "path": ".codex/agents/warden.toml" }
+        {
+          "type": "codex",
+          "path": ".codex/agents/warden.toml"
+        },
+        {
+          "type": "opencode",
+          "path": "~/.config/opencode/agent/warden.md"
+        }
       ]
     }
   ]

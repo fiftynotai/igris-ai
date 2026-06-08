@@ -1,6 +1,6 @@
 {
   "$schema": "./manifest.schema.json",
-  "_comment": "FR-137 / TD-191 / FR-153 / FR-157: core-owned Layer-1 surface declaration. `surfaces.skills` is an ARRAY of blocks (multi-source model). This file contributes the CORE block; personal blocks land in the overlay (~/.igris/registry/harness-manifest.personal.json) under ~/.igris/registry/skills/<name>/ per L-516 (universal copy-vendor) + L-517 (typed-subfolder layout). The compiler reads BOTH this file and the merged agent manifest, concatenating every block: core blocks first, then personal. MIRRORED under ~/.igris/core/scripts/ (TD-096). FR-153: codex + gemini skill targets unified onto the FR-149 claude/symlink primitive. AGENTS.md aggregation + per-skill TOML conversion both RETIRED. FR-157: codex + gemini direct skill targets retired in favor of the cross-CLI shared `~/.agents/skills/` standard that both CLIs read natively; the `agents` target serves both via one projection. os_context is reserved for FR-140 and intentionally omitted here.",
+  "_comment": "FR-137 / TD-191 / FR-153 / FR-157 / FR-171: core-owned Layer-1 surface declaration. `surfaces.skills` is an ARRAY of blocks (multi-source model). This file contributes the CORE block; personal blocks land in the overlay (~/.igris/registry/harness-manifest.personal.json) under ~/.igris/registry/skills/<name>/ per L-516 (universal copy-vendor) + L-517 (typed-subfolder layout). The compiler reads BOTH this file and the merged agent manifest, concatenating every block: core blocks first, then personal. MIRRORED under ~/.igris/core/scripts/ (TD-096). FR-153: codex + gemini skill targets unified onto the FR-149 claude/symlink primitive. AGENTS.md aggregation + per-skill TOML conversion both RETIRED. FR-157: codex + gemini direct skill targets retired in favor of the cross-CLI shared `~/.agents/skills/` standard that both CLIs read natively; the `agents` target serves both via one projection. FR-171: opencode/command target writes thin `@file` command wrappers into ~/.config/opencode/command (OpenCode's command surface). os_context is reserved for FR-140 and intentionally omitted here.",
   "version": 1,
   "agents": [],
   "surfaces": {
@@ -10,7 +10,8 @@
         "layer": "core",
         "targets": [
           { "type": "claude", "method": "symlink", "path": "~/.claude/skills" },
-          { "type": "agents", "method": "symlink", "path": "~/.agents/skills" }
+          { "type": "agents", "method": "symlink", "path": "~/.agents/skills" },
+          { "type": "opencode", "method": "command", "path": "~/.config/opencode/command" }
         ]
       }
     ]

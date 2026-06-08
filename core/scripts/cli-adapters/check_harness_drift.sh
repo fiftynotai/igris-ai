@@ -249,17 +249,21 @@ resolve_skill_link_path() {
 # ---------------------------------------------------------------------------
 # verify_md_agent_symlink_drift <name> <harness_label> <target_abs>
 #
-# FR-152 / FR-158 / FR-159 / TD-208 per-harness drift verdict for claude +
-# codex + gemini AGENT targets. Each harness has its own registry-resident
-# expected file (`<BRAIN_DIR>/registry/agents/<name>/harness.<label>.<ext>`,
-# where ext = `md` for claude/gemini and `toml` for codex) — the assembly
-# happens at compile time. The verdict primitive is PER-HARNESS:
+# FR-152 / FR-158 / FR-159 / FR-171 / TD-208 per-harness drift verdict for
+# claude + codex + gemini + opencode AGENT targets. Each harness has its own
+# registry-resident expected file
+# (`<BRAIN_DIR>/registry/agents/<name>/harness.<label>.<ext>`, where ext = `md`
+# for claude/gemini/opencode and `toml` for codex) — the assembly happens at
+# compile time. The verdict primitive is PER-HARNESS:
 #
-#   claude → symbolic-link verdict (readlink/realpath flow); see below.
-#   codex  → symbolic-link verdict (FR-159: codex shares claude's primitive;
-#            expected file is harness.codex.toml).
-#   gemini → hard-link verdict (inode equality); delegates to
-#            verify_gemini_agent_hardlink_drift.
+#   claude   → symbolic-link verdict (readlink/realpath flow); see below.
+#   codex    → symbolic-link verdict (FR-159: codex shares claude's primitive;
+#              expected file is harness.codex.toml).
+#   opencode → symbolic-link verdict (FR-171: OpenCode's agent loader follows
+#              symlinks, verified live; shares claude's primitive; expected
+#              file is harness.opencode.md).
+#   gemini   → hard-link verdict (inode equality); delegates to
+#              verify_gemini_agent_hardlink_drift.
 #
 # Common precondition: MISSING when target absent (no -L, no -e).
 #
@@ -898,7 +902,7 @@ def walk(tree):
             # `harness.codex.toml` from the tree-diff basis (top-level
             # only — a nested file by either name would be legitimate
             # operator content).
-            if rel in ("harness.claude.md", "harness.gemini.md", "harness.codex.toml"):
+            if rel in ("harness.claude.md", "harness.gemini.md", "harness.codex.toml", "harness.opencode.md"):
                 continue
             try:
                 with open(abs_p, "rb") as fh:
@@ -949,15 +953,17 @@ PY
     *)     target_abs="$PROJECT_ROOT/$target_path" ;;
   esac
 
-  # FR-152 / FR-158 / FR-159: claude + codex + gemini AGENT verdicts are by
-  # target-path realpath against the per-harness registry-resident assembled
-  # file (`harness.claude.md`, `harness.codex.toml`, `harness.gemini.md`
-  # respectively — NOT body sha). Pair line-for-line with
-  # `compile_md_agent_target` (L-519 §18.1 compile/drift-verify pairing).
-  # Both sides of the containment check are realpath'd so macOS `/var` →
-  # `/private/var` (and similar symlink-resolved TMPDIR prefixes) do not
-  # produce false "not registry-anchored" verdicts.
-  if [ "$ttype" = "claude" ] || [ "$ttype" = "gemini" ] || [ "$ttype" = "codex" ]; then
+  # FR-152 / FR-158 / FR-159 / FR-171: claude + codex + gemini + opencode AGENT
+  # verdicts are by target-path realpath against the per-harness
+  # registry-resident assembled file (`harness.claude.md`, `harness.codex.toml`,
+  # `harness.gemini.md`, `harness.opencode.md` respectively — NOT body sha).
+  # Pair line-for-line with `compile_md_agent_target` (L-519 §18.1
+  # compile/drift-verify pairing). opencode follows symlinks (verified live) so
+  # it shares the claude symlink-verdict branch (harness_ext=md). Both sides of
+  # the containment check are realpath'd so macOS `/var` → `/private/var` (and
+  # similar symlink-resolved TMPDIR prefixes) do not produce false
+  # "not registry-anchored" verdicts.
+  if [ "$ttype" = "claude" ] || [ "$ttype" = "gemini" ] || [ "$ttype" = "codex" ] || [ "$ttype" = "opencode" ]; then
     verify_md_agent_symlink_drift "$name" "$ttype" "$target_abs"
     continue
   fi
@@ -1215,7 +1221,7 @@ def walk(tree):
             # FR-158 / FR-159: per-harness α-assembly output exclusion is
             # moot for skills (no α-assembly output) but kept for parity
             # with hash_agent_tree — see TD-201 plan §2 + FR-158 + FR-159.
-            if rel in ("harness.claude.md", "harness.gemini.md", "harness.codex.toml"):
+            if rel in ("harness.claude.md", "harness.gemini.md", "harness.codex.toml", "harness.opencode.md"):
                 continue
             try:
                 with open(abs_p, "rb") as fh:
@@ -1582,6 +1588,75 @@ PY
         echo "  [skills/$s_type] $verdict"
         echo "      source     : $conv_root"
         echo "      artifact dir: $out_abs ($checked skills checked)"
+        ;;
+      opencode/command)
+        # FR-171: thin command wrappers (Option A). For each <name>/SKILL.md
+        # under the source root, a `<out_abs>/<name>.md` wrapper must exist,
+        # carry our generated-marker (line 1), and load the canonical SKILL.md
+        # via the expected `@~/.igris/core/skills/<name>/SKILL.md` directive.
+        # Verdicts (pair line-for-line with the compile branch, L-519 §18.1):
+        #   MISSING  — one or more wrapper files absent (or roster count ≠
+        #              wrapper count → count-parity failure, same signal).
+        #   DRIFTED  — a wrapper is a symlink (foreign shape), OR lacks the
+        #              generated-marker (hand-authored — would be refused at
+        #              compile), OR its `@`-target points at the wrong skill.
+        #   MATCH    — every roster skill has a marked wrapper with the correct
+        #              `@`-target.
+        conv_root="${src_abs:-$HOME/.igris/core/skills}"
+        if [ ! -d "$conv_root" ]; then
+          echo "  [skills/$s_type] MISSING — skills root absent: $conv_root"
+          DRIFT=$((DRIFT + 1))
+          continue
+        fi
+        any_missing=0
+        any_symlink=0
+        any_unmarked=0
+        any_wrong_target=0
+        checked=0
+        # FR-171 marker — MUST byte-match OPENCODE_COMMAND_MARKER in
+        # compile_harnesses.sh (§18.1 compile/drift pairing).
+        oc_marker="<!-- Generated by igris harness compile (FR-171 opencode/command) — edit the canonical SKILL.md, not this wrapper -->"
+        while IFS= read -r -d '' skill_md; do
+          skill_name="$(basename "$(dirname "$skill_md")")"
+          link_path="$out_abs/$skill_name.md"
+          # FR-171: expected `@`-target is the ACTUAL canonical SKILL.md the
+          # compile walked (~`-prefixed when under $HOME), computed identically
+          # to compile's opencode_at_target (L-519 §18.1 — same source walk).
+          case "$skill_md" in
+            "$HOME"/*) expected_at="@~/${skill_md#"$HOME"/}" ;;
+            *)         expected_at="@$skill_md" ;;
+          esac
+          if [ -L "$link_path" ]; then
+            any_symlink=1
+          elif [ ! -e "$link_path" ]; then
+            any_missing=1
+          else
+            first_line="$(head -n 1 "$link_path" 2>/dev/null || true)"
+            if [ "$first_line" != "$oc_marker" ]; then
+              any_unmarked=1
+            elif ! grep -qF -- "$expected_at" "$link_path" 2>/dev/null; then
+              any_wrong_target=1
+            fi
+          fi
+          checked=$((checked + 1))
+        done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
+                   -name 'SKILL.md' -print0 | sort -z)
+        if [ "$any_missing" -eq 1 ]; then
+          verdict="MISSING"
+          reason="one or more opencode command wrappers absent (run \`igris harness compile\`)"
+        elif [ "$any_symlink" -eq 1 ]; then
+          verdict="DRIFTED"
+          reason="one or more opencode command targets are symlinks (a command wrapper is a real file — remove manually, then run \`igris harness compile\`)"
+        elif [ "$any_unmarked" -eq 1 ]; then
+          verdict="DRIFTED"
+          reason="one or more opencode command wrappers lack the FR-171 generated-marker (hand-authored file at a generated path — remove manually if it should be a generated wrapper)"
+        elif [ "$any_wrong_target" -eq 1 ]; then
+          verdict="DRIFTED"
+          reason="one or more opencode command wrappers do not load the expected canonical SKILL.md via @file (run \`igris harness compile\`)"
+        fi
+        echo "  [skills/$s_type] $verdict"
+        echo "      source     : $conv_root"
+        echo "      artifact dir: $out_abs ($checked wrappers checked)"
         ;;
       *)
         verdict="DRIFTED"

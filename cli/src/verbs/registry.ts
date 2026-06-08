@@ -94,41 +94,49 @@ export type RegistryAction =
   | "remove"
   | "update";
 
-/** Allowed harness target types (mirrors manifest.schema.json target enum). */
-const VALID_TARGET_TYPES = ["claude", "codex", "gemini"] as const;
+/** Allowed harness target types (mirrors manifest.schema.json target enum).
+ * FR-171: `opencode` added as a first-class agent target (OpenCode's agent
+ * loader follows symlinks — projects a registry-anchored symlink to
+ * harness.opencode.md, same primitive as claude). */
+const VALID_TARGET_TYPES = ["claude", "codex", "gemini", "opencode"] as const;
 type TargetType = (typeof VALID_TARGET_TYPES)[number];
 
 /**
- * FR-143/FR-149/FR-157: allowed SKILL target types. Mirrors
- * `$defs.skills_surface.targets.type` (codex / gemini / claude / agents).
- * The per-type method allowlist is enforced by VALID_SKILL_TYPE_METHOD_PAIRS
- * below. `agents` is the FR-157 cross-CLI shared `~/.agents/skills/` target.
+ * FR-143/FR-149/FR-157/FR-171: allowed SKILL target types. Mirrors
+ * `$defs.skills_surface.targets.type` (codex / gemini / claude / agents /
+ * opencode). The per-type method allowlist is enforced by
+ * VALID_SKILL_TYPE_METHOD_PAIRS below. `agents` is the FR-157 cross-CLI shared
+ * `~/.agents/skills/` target; `opencode` (FR-171) is the OpenCode command
+ * surface (thin `@file` wrappers, NOT symlinks).
  */
-const VALID_SKILL_TARGET_TYPES = ["codex", "gemini", "claude", "agents"] as const;
+const VALID_SKILL_TARGET_TYPES = ["codex", "gemini", "claude", "agents", "opencode"] as const;
 type SkillTargetType = (typeof VALID_SKILL_TARGET_TYPES)[number];
 
 /**
- * FR-143/FR-149: allowed SKILL target methods. `compiler` = the codex
- * AGENTS.md compiler; `converter` = the gemini per-skill TOML converter;
- * `symlink` = the claude registry-anchored per-skill symlink. Mirrors
+ * FR-143/FR-149/FR-171: allowed SKILL target methods. `compiler` = the codex
+ * AGENTS.md compiler (retired); `converter` = the gemini per-skill TOML
+ * converter (retired); `symlink` = the registry-anchored per-skill symlink;
+ * `command` = the FR-171 OpenCode thin command wrapper. Mirrors
  * `$defs.skills_surface.targets.method`.
  */
-const VALID_SKILL_METHODS = ["compiler", "converter", "symlink"] as const;
+const VALID_SKILL_METHODS = ["compiler", "converter", "symlink", "command"] as const;
 type SkillMethod = (typeof VALID_SKILL_METHODS)[number];
 
 /**
- * FR-149/FR-151/FR-153/FR-157: allowed (type, method) pairs for skill targets.
- * Mirrors the `oneOf` constraint in `manifest.schema.json` and the
+ * FR-149/FR-151/FR-153/FR-157/FR-171: allowed (type, method) pairs for skill
+ * targets. Mirrors the `oneOf` constraint in `manifest.schema.json` and the
  * `valid_pairs` check in `_common.sh validate_manifest`. The legacy
  * codex/compiler + gemini/converter pairs were retired by FR-153.
  * `agents/symlink` (FR-157) is the cross-CLI shared `~/.agents/skills/`
- * target that codex+gemini both read natively. See L-519, FR-153, FR-157.
+ * target that codex+gemini both read natively. `opencode/command` (FR-171) is
+ * the OpenCode command-wrapper pair. See L-519, FR-153, FR-157, FR-171.
  */
 const VALID_SKILL_TYPE_METHOD_PAIRS = new Set<string>([
   "claude/symlink",
   "codex/symlink",
   "gemini/symlink",
   "agents/symlink",
+  "opencode/command",
 ]);
 
 /**
@@ -720,7 +728,7 @@ export function validateSkillsSurface(skills: unknown): string | null {
     if (!VALID_SKILL_TYPE_METHOD_PAIRS.has(pair)) {
       return (
         `surfaces.skills.targets[${i}]: type/method pair '${pair}' is not allowed; ` +
-        "valid pairs: claude/symlink, codex/symlink, gemini/symlink, agents/symlink"
+        "valid pairs: claude/symlink, codex/symlink, gemini/symlink, agents/symlink, opencode/command"
       );
     }
   }
@@ -1213,7 +1221,7 @@ function resolveSource(
     // (when no `frontmatter.gemini.md` exists) `assembleGeminiHarness` via
     // auto-translate. `frontmatter.gemini.md` is the operator-authored
     // Gemini override.
-    for (const fmName of ["frontmatter.claude.md", "frontmatter.gemini.md"]) {
+    for (const fmName of ["frontmatter.claude.md", "frontmatter.gemini.md", "frontmatter.opencode.md"]) {
       if (
         existsSync(join(srcDir, fmName)) &&
         !entries.includes(fmName)
@@ -1234,7 +1242,7 @@ function resolveSource(
   // FR-151 / FR-158: include the per-harness frontmatter sidecars if
   // co-located.
   const files = [file];
-  for (const fmName of ["frontmatter.claude.md", "frontmatter.gemini.md"]) {
+  for (const fmName of ["frontmatter.claude.md", "frontmatter.gemini.md", "frontmatter.opencode.md"]) {
     if (existsSync(join(srcDir, fmName)) && file !== fmName) {
       files.push(fmName);
     }
@@ -1331,7 +1339,10 @@ export function assembleClaudeHarness(
     bodyFile = pickLatestVersionedFile(versioned);
   } else {
     const nonSidecar = files.filter(
-      (f) => f !== "frontmatter.claude.md" && f !== "frontmatter.gemini.md",
+      (f) =>
+        f !== "frontmatter.claude.md" &&
+        f !== "frontmatter.gemini.md" &&
+        f !== "frontmatter.opencode.md",
     );
     if (nonSidecar.length !== 1) {
       // No deterministic body: skip rather than guess (the operator can re-add
@@ -1549,7 +1560,10 @@ export function assembleGeminiHarness(
     bodyFile = pickLatestVersionedFile(versioned);
   } else {
     const nonSidecar = files.filter(
-      (f) => f !== "frontmatter.claude.md" && f !== "frontmatter.gemini.md",
+      (f) =>
+        f !== "frontmatter.claude.md" &&
+        f !== "frontmatter.gemini.md" &&
+        f !== "frontmatter.opencode.md",
     );
     if (nonSidecar.length !== 1) {
       return;
@@ -1573,6 +1587,192 @@ export function assembleGeminiHarness(
     text += "\n";
   }
   const out = join(vendoredDir, "harness.gemini.md");
+  const tmp = `${out}.tmp-${process.pid}`;
+  writeFileSync(tmp, text, "utf-8");
+  renameSync(tmp, out);
+}
+
+/**
+ * FR-171: Claude → OpenCode tool-name translation map. OpenCode's 9 native
+ * tools are `bash, read, write, edit, glob, grep, webfetch, task, todowrite`
+ * (confirmed live via `opencode agent create --help`, opencode 1.14.22). The
+ * agent frontmatter `tools:` field is a BOOLEAN MAP (not a flow-list, unlike
+ * Gemini). 8 of Claude's tools map directly; OpenCode has a native `glob`
+ * (cleaner than Gemini's imperfect `list_directory`). `WebSearch` has NO
+ * native equivalent and is OMITTED from the map (do NOT invent a `websearch`
+ * key — the operator override path via a `frontmatter.opencode.md` sidecar is
+ * the escape hatch). `todowrite` is native-only (not mapped FROM any Claude
+ * tool). Unknown tool names pass through verbatim so OpenCode surfaces an
+ * explicit error. See FR-171 §5.
+ *
+ * MIRRORED byte-for-byte in compile_harnesses.sh's inline python3
+ * `CLAUDE_TO_OPENCODE_TOOLS` (§18.1 dual-impl — golden-fixture parity test
+ * pins them; L-554).
+ */
+const CLAUDE_TO_OPENCODE_TOOLS: Record<string, string> = {
+  Read: "read",
+  Write: "write",
+  Edit: "edit",
+  Bash: "bash",
+  Grep: "grep",
+  Glob: "glob",
+  Task: "task",
+  WebFetch: "webfetch",
+  // WebSearch: intentionally omitted — no native OpenCode equivalent.
+};
+
+/**
+ * FR-171: the MCP-server permission grant emitted into every OpenCode agent
+ * harness's `permission:` block. OpenCode reaches MCP tools via the
+ * `permission` map (NOT the `tools` boolean enum). The key shape
+ * `mcp__<server>__*` was confirmed live (opencode 1.14.22): it survives
+ * frontmatter parse and normalizes to `{permission:"mcp__igris-brain__*",
+ * action:"allow", pattern:"*"}`. This grants ARCHITECT/SEEKER/etc. access to
+ * the igris-brain MCP server already merged into opencode.json (FR-166).
+ *
+ * MIRRORED byte-for-byte in compile_harnesses.sh's inline python3
+ * OPENCODE_MCP_PERMISSIONS (§18.1 dual-impl; L-554).
+ */
+const OPENCODE_MCP_PERMISSIONS: ReadonlyArray<string> = ["mcp__igris-brain__*"];
+
+/**
+ * FR-171: translate Claude-shape frontmatter fields into OpenCode-shape.
+ * Emission order is FIXED (deterministic-write mandate, byte-parity with the
+ * bash inline-python3 mirror):
+ *   1. `mode: subagent` (always first, unless an operator `mode:` is present —
+ *      then that value is honored and emitted in passthrough position).
+ *   2. passthrough fields in source order (`name`, `description`, any custom),
+ *      EXCEPT `tools`, `model`, `temperature`, `max_turns`, `mode`, `kind`.
+ *      `model`/`temperature`/`max_turns` are DROPPED (OpenCode uses defaults;
+ *      operator override via `frontmatter.opencode.md`). `kind` is Gemini-only
+ *      and dropped.
+ *   3. `tools:` as a BOOLEAN MAP (allow-list mirroring the agent's declared
+ *      toolset): each mapped native → `true`, on its own indented line. Omitted
+ *      entirely when the source declares no `tools:` (agent accepts OpenCode's
+ *      default tool set).
+ *   4. `permission:` map granting the igris-brain MCP server (always emitted —
+ *      the brain grant is what lets agents reach brain tools on OpenCode).
+ *
+ * Returns the serialized fields block (no `---` delimiters; caller wraps).
+ * MIRRORED byte-for-byte by the compile_harnesses.sh inline python3 block.
+ */
+function translateClaudeToOpencodeFrontmatter(claudeFields: string): string {
+  const parsed = parseSimpleFrontmatterFields(claudeFields);
+  const out: string[] = [];
+  let modeEmitted = false;
+  let toolsValue: string | undefined;
+  // First pass: detect an operator-authored `mode:` so we don't double-emit.
+  for (const { key } of parsed) {
+    if (key === "mode") {
+      modeEmitted = true;
+    }
+  }
+  // Always lead with `mode: subagent` unless the source carries its own mode.
+  if (!modeEmitted) {
+    out.push("mode: subagent");
+  }
+  for (const { key, value } of parsed) {
+    if (key === "tools") {
+      toolsValue = value; // deferred — emitted as a boolean map below
+      continue;
+    }
+    if (key === "model" || key === "temperature" || key === "max_turns") {
+      continue; // dropped — OpenCode defaults; operator override via sidecar
+    }
+    if (key === "kind") {
+      continue; // Gemini-only field — not meaningful to OpenCode
+    }
+    out.push(`${key}: ${value}`);
+  }
+  // tools: boolean map (allow-list of the declared toolset's mapped natives).
+  if (toolsValue !== undefined) {
+    const tokens = parseToolsField(toolsValue);
+    const natives: string[] = [];
+    for (const t of tokens) {
+      const mapped = CLAUDE_TO_OPENCODE_TOOLS[t];
+      if (mapped === undefined) continue; // WebSearch / unknown → skip (no native)
+      if (!natives.includes(mapped)) natives.push(mapped);
+    }
+    if (natives.length > 0) {
+      out.push("tools:");
+      for (const n of natives) {
+        out.push(`  ${n}: true`);
+      }
+    }
+  }
+  // permission: MCP grant (always — the brain MCP reachability contract).
+  out.push("permission:");
+  for (const p of OPENCODE_MCP_PERMISSIONS) {
+    out.push(`  "${p}": allow`);
+  }
+  return out.join("\n");
+}
+
+/**
+ * FR-171 α-assembly (OpenCode branch): derive
+ * `<vendoredDir>/harness.opencode.md` so OpenCode's agent loader resolves to
+ * an OpenCode-shaped harness (boolean tools map + `mode: subagent` +
+ * `permission:` MCP grant) rather than the Claude-shape one.
+ *
+ * Frontmatter source preference (parity with `assembleGeminiHarness`):
+ *   1. `<vendoredDir>/frontmatter.opencode.md` (operator-authored override
+ *      — honored verbatim; no field-by-field merge).
+ *   2. `<vendoredDir>/frontmatter.claude.md` (auto-translated via
+ *      `translateClaudeToOpencodeFrontmatter`).
+ *   3. Neither present → early-return (parity with `assembleClaudeHarness`).
+ *
+ * Body picking, body-exception application, atomic temp+rename match
+ * `assembleClaudeHarness`/`assembleGeminiHarness` exactly. See L-519, FR-171.
+ */
+export function assembleOpencodeHarness(
+  vendoredDir: string,
+  files: string[],
+  bodyExceptionPath?: string,
+): void {
+  const opencodeFmPath = join(vendoredDir, "frontmatter.opencode.md");
+  const claudeFmPath = join(vendoredDir, "frontmatter.claude.md");
+  let fmRaw: string;
+  if (existsSync(opencodeFmPath)) {
+    fmRaw = stripLeadingFrontmatterBlockToFields(
+      readFileSync(opencodeFmPath, "utf-8"),
+    ).trim();
+  } else if (existsSync(claudeFmPath)) {
+    const claudeFields = stripLeadingFrontmatterBlockToFields(
+      readFileSync(claudeFmPath, "utf-8"),
+    ).trim();
+    fmRaw = translateClaudeToOpencodeFrontmatter(claudeFields).trim();
+  } else {
+    return; // assembly is opt-in via FR-151/FR-158/FR-171 sidecar presence
+  }
+  const versioned = files.filter((f) => /^system-prompt-v[0-9]/.test(f));
+  let bodyFile: string | undefined;
+  if (versioned.length > 0) {
+    bodyFile = pickLatestVersionedFile(versioned);
+  } else {
+    const nonSidecar = files.filter(
+      (f) =>
+        f !== "frontmatter.claude.md" &&
+        f !== "frontmatter.gemini.md" &&
+        f !== "frontmatter.opencode.md",
+    );
+    if (nonSidecar.length !== 1) {
+      return;
+    }
+    bodyFile = nonSidecar[0];
+  }
+  if (bodyFile === undefined) {
+    return;
+  }
+  let body = readFileSync(join(vendoredDir, bodyFile), "utf-8");
+  body = stripLeadingFrontmatter(body);
+  if (bodyExceptionPath !== undefined && bodyExceptionPath.length > 0) {
+    body = applyBodyException(body, bodyExceptionPath);
+  }
+  let text = `---\n${fmRaw}\n---\n\n${body}`;
+  if (!text.endsWith("\n")) {
+    text += "\n";
+  }
+  const out = join(vendoredDir, "harness.opencode.md");
   const tmp = `${out}.tmp-${process.pid}`;
   writeFileSync(tmp, text, "utf-8");
   renameSync(tmp, out);
@@ -1684,7 +1884,10 @@ export function assembleCodexHarness(
     bodyFile = pickLatestVersionedFile(versioned);
   } else {
     const nonSidecar = files.filter(
-      (f) => f !== "frontmatter.claude.md" && f !== "frontmatter.gemini.md",
+      (f) =>
+        f !== "frontmatter.claude.md" &&
+        f !== "frontmatter.gemini.md" &&
+        f !== "frontmatter.opencode.md",
     );
     if (nonSidecar.length !== 1) {
       return;
@@ -2081,7 +2284,8 @@ function hashSkillTree(treeDir: string): string {
           rel === "" &&
           (e.name === "harness.claude.md" ||
             e.name === "harness.gemini.md" ||
-            e.name === "harness.codex.toml")
+            e.name === "harness.codex.toml" ||
+            e.name === "harness.opencode.md")
         ) {
           continue;
         }
@@ -2317,7 +2521,8 @@ function hashAgentTree(treeDir: string): string {
           rel === "" &&
           (e.name === "harness.claude.md" ||
             e.name === "harness.gemini.md" ||
-            e.name === "harness.codex.toml")
+            e.name === "harness.codex.toml" ||
+            e.name === "harness.opencode.md")
         ) {
           continue;
         }
@@ -2397,7 +2602,7 @@ function parseSkillTarget(spec: string): SkillTargetSpec | string {
   if (!VALID_SKILL_TYPE_METHOD_PAIRS.has(pair)) {
     return (
       `--target '${spec}': type/method pair '${pair}' is not allowed; ` +
-      "valid pairs: claude/symlink, codex/symlink, gemini/symlink, agents/symlink"
+      "valid pairs: claude/symlink, codex/symlink, gemini/symlink, agents/symlink, opencode/command"
     );
   }
   return { type: type as SkillTargetType, method: method as SkillMethod, path };
@@ -2736,6 +2941,7 @@ async function runAdd(
     assembleClaudeHarness(vendoredDir, assemblyFiles, bxPath);
     assembleGeminiHarness(vendoredDir, assemblyFiles, bxPath);
     assembleCodexHarness(vendoredDir, assemblyFiles, bxPath);
+    assembleOpencodeHarness(vendoredDir, assemblyFiles, bxPath);
   } catch (err) {
     rmSync(vendoredDir, { recursive: true, force: true });
     logError(`registry add: failed to vendor canonical files: ${(err as Error).message}`);
@@ -2933,6 +3139,7 @@ async function runAddGithub(
       assembleClaudeHarness(vendoredDir, assemblyFiles, bxPath);
       assembleGeminiHarness(vendoredDir, assemblyFiles, bxPath);
       assembleCodexHarness(vendoredDir, assemblyFiles, bxPath);
+      assembleOpencodeHarness(vendoredDir, assemblyFiles, bxPath);
     } catch (err) {
       rmSync(vendoredDir, { recursive: true, force: true });
       logError(
@@ -4043,6 +4250,7 @@ function reVendorPath(
     assembleClaudeHarness(vendoredDir, assemblyFiles, bxPath);
     assembleGeminiHarness(vendoredDir, assemblyFiles, bxPath);
     assembleCodexHarness(vendoredDir, assemblyFiles, bxPath);
+    assembleOpencodeHarness(vendoredDir, assemblyFiles, bxPath);
   } catch (err) {
     return `error: failed to re-vendor: ${(err as Error).message}`;
   }
@@ -4136,6 +4344,7 @@ async function reVendorGithub(
       assembleClaudeHarness(vendoredDir, assemblyFiles, bxPath);
       assembleGeminiHarness(vendoredDir, assemblyFiles, bxPath);
       assembleCodexHarness(vendoredDir, assemblyFiles, bxPath);
+      assembleOpencodeHarness(vendoredDir, assemblyFiles, bxPath);
     } catch (err) {
       return `error: failed to re-vendor: ${(err as Error).message}`;
     }

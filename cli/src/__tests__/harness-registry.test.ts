@@ -1148,6 +1148,183 @@ describe("registry add", () => {
 });
 
 // ---------------------------------------------------------------------------
+// FR-171: per-harness α-assembly — `assembleOpencodeHarness`. Emits
+// `harness.opencode.md` (OpenCode-shaped: `mode: subagent`, boolean `tools:`
+// map via CLAUDE_TO_OPENCODE_TOOLS, `permission:` MCP grant). The
+// dual-implemented translator (TS + bash inline python3) MUST be byte-identical
+// (§18.1 / L-554) — the golden-parity test is the regression guard.
+// ---------------------------------------------------------------------------
+
+describe("registry add — FR-171 assembleOpencodeHarness", () => {
+  it("runAdd assembles harness.opencode.md by auto-translating frontmatter.claude.md (boolean tools map)", async () => {
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, "vcanon", "system-prompt-v1.md"),
+      "# OC\n\nopencode body line one\n",
+    );
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
+      "---\nname: ocagent\ndescription: opencode assembler\ntools: Read, Grep, Bash\n---\n",
+    );
+    const code = await runRegistry(
+      addOpts({
+        name: "ocagent",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["opencode:~/.config/opencode/agent/ocagent.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    const harnessPath = join(vendorDir("ocagent"), "harness.opencode.md");
+    expect(existsSync(harnessPath)).toBe(true);
+    const content = readFileSync(harnessPath, "utf-8");
+    expect(content).toContain("mode: subagent");
+    expect(content).toContain("name: ocagent");
+    expect(content).toContain("description: opencode assembler");
+    // Boolean tools map (NOT a flow-list).
+    expect(content).toContain("tools:\n  read: true\n  grep: true\n  bash: true");
+    // permission MCP grant.
+    expect(content).toContain('permission:\n  "mcp__igris-brain__*": allow');
+    expect(content).toContain("opencode body line one");
+  });
+
+  it("WebSearch is OMITTED from the tools map (no native OpenCode equivalent)", async () => {
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.md"), "body\n");
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
+      "---\nname: ocws\ntools: [Read, WebSearch, Glob]\n---\n",
+    );
+    await runRegistry(
+      addOpts({
+        name: "ocws",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["opencode:~/.config/opencode/agent/ocws.md"],
+      }),
+    );
+    const content = readFileSync(join(vendorDir("ocws"), "harness.opencode.md"), "utf-8");
+    expect(content).toContain("read: true");
+    expect(content).toContain("glob: true");
+    expect(content).not.toContain("websearch");
+    expect(content).not.toContain("web_search");
+  });
+
+  it("operator-authored frontmatter.opencode.md sidecar is honored verbatim (no translation)", async () => {
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.md"), "body\n");
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
+      "---\nname: ocov\ntools: Read\n---\n",
+    );
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.opencode.md"),
+      "---\nmode: primary\nname: ocov-overridden\ntools:\n  bash: true\ncustom_field: special\n---\n",
+    );
+    await runRegistry(
+      addOpts({
+        name: "ocov",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["opencode:~/.config/opencode/agent/ocov.md"],
+      }),
+    );
+    const content = readFileSync(join(vendorDir("ocov"), "harness.opencode.md"), "utf-8");
+    expect(content).toContain("name: ocov-overridden");
+    expect(content).toContain("mode: primary");
+    expect(content).toContain("custom_field: special");
+    // The Claude-shape (name: ocov + tools: Read) must NOT leak in.
+    expect(content).not.toContain("name: ocov\n");
+    expect(content).not.toContain("tools: Read");
+  });
+
+  it("assembleOpencodeHarness no-ops when neither frontmatter sidecar is present (back-compat)", async () => {
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(join(projectRoot, "vcanon", "x.md"), "body without any sidecar\n");
+    await runRegistry(
+      addOpts({
+        name: "ocnone",
+        from: "vcanon/x.md",
+        targets: ["claude:.claude/agents/ocnone.md"],
+      }),
+    );
+    expect(existsSync(join(vendorDir("ocnone"), "harness.opencode.md"))).toBe(false);
+  });
+
+  it("FR-171 GOLDEN PARITY (§18.1 / L-554): TS assembleOpencodeHarness byte-equals the bash inline-python3 translator", () => {
+    // The primary regression guard for the dual-implemented translator. The TS
+    // `assembleOpencodeHarness` and the bash `assemble_agent_harness_into_registry
+    // opencode` inline python3 block MUST produce byte-identical
+    // `harness.opencode.md` for the same canonical input. We synthesize ONE
+    // vendored agent dir, run the bash compiler against it (which writes the
+    // bash-side harness.opencode.md INTO the registry dir), capture those bytes,
+    // delete the harness, then re-run the TS assembler via runRegistry against
+    // the same inputs and compare.
+    if (!toolingAvailable()) {
+      return;
+    }
+    const fm = "---\nname: parity\ndescription: parity input\ntools: Read, Grep, Bash, WebSearch\n---\n";
+    const body = "# parity\n\nparity body line one\nparity body line two\n";
+
+    // --- bash side ---------------------------------------------------------
+    // Synthesize a vendored registry agent dir + a manifest, run COMPILE_SH.
+    const brainDir = join(tmpRoot, "brain-bash");
+    const bashRegAgent = join(brainDir, "registry", "agents", "parity");
+    mkdirSync(bashRegAgent, { recursive: true });
+    writeFileSync(join(bashRegAgent, "frontmatter.claude.md"), fm);
+    writeFileSync(join(bashRegAgent, "system-prompt-v1.md"), body);
+    const bashProj = join(tmpRoot, "proj-bash");
+    mkdirSync(bashProj, { recursive: true });
+    writeFileSync(
+      join(bashProj, "harness-manifest.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [
+          {
+            name: "parity",
+            layer: "personal",
+            canonical: { dir: bashRegAgent, versioned: true, glob: "system-prompt-v*.md" },
+            targets: [{ type: "opencode", path: join(bashProj, ".opencode/agent/parity.md") }],
+          },
+        ],
+      }),
+    );
+    execFileSync(
+      "bash",
+      [COMPILE_SH, "--project-root", bashProj, "--manifest", join(bashProj, "harness-manifest.json"), "--target", "opencode"],
+      { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
+    );
+    const bashHarness = readFileSync(join(bashRegAgent, "harness.opencode.md"), "utf-8");
+
+    // --- TS side -----------------------------------------------------------
+    mkdirSync(join(projectRoot, "pcanon"), { recursive: true });
+    writeFileSync(join(projectRoot, "pcanon", "frontmatter.claude.md"), fm);
+    writeFileSync(join(projectRoot, "pcanon", "system-prompt-v1.md"), body);
+    // Disable IGRIS_BRAIN_DIR for the TS path so it uses the injected vendorDir.
+    const savedBrain = process.env.IGRIS_BRAIN_DIR;
+    delete process.env.IGRIS_BRAIN_DIR;
+    return runRegistry(
+      addOpts({
+        name: "parity",
+        from: "pcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["opencode:~/.config/opencode/agent/parity.md"],
+      }),
+    ).then((code) => {
+      if (savedBrain !== undefined) process.env.IGRIS_BRAIN_DIR = savedBrain;
+      expect(code).toBe(0);
+      const tsHarness = readFileSync(join(vendorDir("parity"), "harness.opencode.md"), "utf-8");
+      // BYTE-IDENTICAL — the dual-impl translator parity guarantee (L-554).
+      expect(tsHarness).toBe(bashHarness);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // --target parsing (still pure parse — must fail fast BEFORE copy on bad input)
 // ---------------------------------------------------------------------------
 
@@ -1194,12 +1371,29 @@ describe("registry add — --target parsing", () => {
       addOpts({
         name: "bad",
         from: "canon/x.md",
-        targets: ["opencode:.opencode/bad.md"],
+        targets: ["bogus:.bogus/bad.md"],
       }),
     );
     expect(code).toBe(2);
     expect(existsSync(overlayPath)).toBe(false);
     expect(existsSync(vendorDir("bad"))).toBe(false);
+  });
+
+  it("FR-171: accepts an opencode agent target (now first-class)", async () => {
+    const code = await runRegistry(
+      addOpts({
+        name: "oc-agent",
+        from: "canon/x.md",
+        targets: ["opencode:~/.config/opencode/agent/oc-agent.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    expect(existsSync(join(vendorDir("oc-agent"), "x.md"))).toBe(true);
+    const overlay = readOverlayFile() as {
+      agents: { name: string; targets: { type: string; path: string }[] }[];
+    };
+    const entry = overlay.agents.find((a) => a.name === "oc-agent");
+    expect(entry?.targets[0].type).toBe("opencode");
   });
 
   it("rejects a target with no colon (exit 2), no vendor dir", async () => {
@@ -1260,9 +1454,18 @@ describe("validateAgentEntry / validateOverlayShape", () => {
     expect(
       validateAgentEntry({
         ...valid,
-        targets: [{ type: "opencode", path: "x" }],
+        targets: [{ type: "bogus", path: "x" }],
       }),
     ).toMatch(/not one of/);
+  });
+
+  it("FR-171: accepts an opencode agent target type", () => {
+    expect(
+      validateAgentEntry({
+        ...valid,
+        targets: [{ type: "opencode", path: "~/.config/opencode/agent/ok.md" }],
+      }),
+    ).toBeNull();
   });
 
   it("rejects versioned-without-glob", () => {
