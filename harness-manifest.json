@@ -16,6 +16,10 @@
           "path": ".codex/agents/architect.toml"
         },
         {
+          "type": "gemini",
+          "path": "~/.gemini/agents/architect.md"
+        },
+        {
           "type": "opencode",
           "path": "~/.config/opencode/agent/architect.md"
         }
@@ -32,6 +36,10 @@
         {
           "type": "codex",
           "path": ".codex/agents/forger.toml"
+        },
+        {
+          "type": "gemini",
+          "path": "~/.gemini/agents/forger.md"
         },
         {
           "type": "opencode",
@@ -52,6 +60,10 @@
           "path": ".codex/agents/mender.toml"
         },
         {
+          "type": "gemini",
+          "path": "~/.gemini/agents/mender.md"
+        },
+        {
           "type": "opencode",
           "path": "~/.config/opencode/agent/mender.md"
         }
@@ -68,6 +80,10 @@
         {
           "type": "codex",
           "path": ".codex/agents/sage.toml"
+        },
+        {
+          "type": "gemini",
+          "path": "~/.gemini/agents/sage.md"
         },
         {
           "type": "opencode",
@@ -88,6 +104,10 @@
           "path": ".codex/agents/seeker.toml"
         },
         {
+          "type": "gemini",
+          "path": "~/.gemini/agents/seeker.md"
+        },
+        {
           "type": "opencode",
           "path": "~/.config/opencode/agent/seeker.md"
         }
@@ -106,6 +126,10 @@
           "path": ".codex/agents/sentinel.toml"
         },
         {
+          "type": "gemini",
+          "path": "~/.gemini/agents/sentinel.md"
+        },
+        {
           "type": "opencode",
           "path": "~/.config/opencode/agent/sentinel.md"
         }
@@ -122,6 +146,10 @@
         {
           "type": "codex",
           "path": ".codex/agents/warden.toml"
+        },
+        {
+          "type": "gemini",
+          "path": "~/.gemini/agents/warden.md"
         },
         {
           "type": "opencode",
