@@ -696,14 +696,19 @@ inline frontmatter (TD-195 / FR-158 compatible mode).
 
 The auto-translate path (used when only `frontmatter.claude.md` exists) applies
 this 1:1 map to the `tools:` field, ALWAYS adds `kind: local`, and drops
-`model:` / `temperature:` / `max_turns:` (operators override via
-`frontmatter.gemini.md`). Other fields pass through verbatim.
+`model:` / `temperature:` / `max_turns:` / `memory:` (operators override via
+`frontmatter.gemini.md`). `memory:` is dropped because Gemini's strict subagent
+schema rejects it (`Unrecognized key(s) in object: 'memory'`). `mcp__`-prefixed
+tool tokens are also filtered out of the Gemini `tools:` list — Claude's
+`mcp__srv__tool` double-underscore grammar is invalid in Gemini's `mcp_srv_tool`
+form, and Gemini agents reach the brain MCP via session-level `mcpServers` in
+`settings.json`, not the per-agent tools array. Other fields pass through verbatim.
 
 | Claude tool | Gemini tool | Notes |
 |---|---|---|
 | `Read` | `read_file` | direct match |
 | `Write` | `write_file` | direct match |
-| `Edit` | `edit_file` | direct match |
+| `Edit` | `replace` | Gemini's built-in edit tool (`edit_file` is not valid) |
 | `Bash` | `run_shell_command` | direct match |
 | `Grep` | `grep_search` | direct match |
 | `Glob` | `list_directory` | **imperfect** — Glob is recursive pattern matching; `list_directory` is single-dir listing. Use a `frontmatter.gemini.md` override if semantics matter. |

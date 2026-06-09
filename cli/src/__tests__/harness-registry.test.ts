@@ -629,6 +629,62 @@ describe("registry add", () => {
     expect(content).toContain("body line 1");
   });
 
+  it("TD-229: auto-translate DROPS the Claude-only `memory` key (Gemini schema rejects it)", async () => {
+    // The 7 core agents carry `memory: project` in their canonical
+    // frontmatter. Gemini's strict subagent schema rejects unknown keys with
+    // "Unrecognized key(s) in object: 'memory'" → the agent fails to load
+    // entirely. The translator must drop `memory` alongside model/temperature/
+    // max_turns. Kept byte-for-byte in parity with the bash DROPS set.
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.md"), "body\n");
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
+      "---\nname: gemmem\ndescription: gemini memory-drop test\ntools: Read\nmemory: project\n---\n",
+    );
+    await runRegistry(
+      addOpts({
+        name: "gemmem",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["gemini:.gemini/agents/gemmem.md"],
+      }),
+    );
+    const content = readFileSync(join(vendorDir("gemmem"), "harness.gemini.md"), "utf-8");
+    // `memory:` MUST NOT survive translation.
+    expect(content).not.toMatch(/^memory:/m);
+    // The rest of the frontmatter still translates correctly.
+    expect(content).toContain("name: gemmem");
+    expect(content).toContain("description: gemini memory-drop test");
+    expect(content).toContain("tools: [read_file]");
+    expect(content).toContain("kind: local");
+  });
+
+  it("TD-229: auto-translate maps Edit→replace and DROPS mcp__ tool tokens", async () => {
+    // Gemini's edit tool is `replace` (not `edit_file`), and Claude's
+    // `mcp__<server>__<tool>` token shape is rejected by Gemini's agent schema.
+    // Both blocked core agents (forger/sage via Edit, mender via the mcp token).
+    mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
+    writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.md"), "body\n");
+    writeFileSync(
+      join(projectRoot, "vcanon", "frontmatter.claude.md"),
+      "---\nname: gemedit\ntools: Read, Edit, Bash, mcp__igris-brain__igris_error_lookup\n---\n",
+    );
+    await runRegistry(
+      addOpts({
+        name: "gemedit",
+        from: "vcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["gemini:.gemini/agents/gemedit.md"],
+      }),
+    );
+    const content = readFileSync(join(vendorDir("gemedit"), "harness.gemini.md"), "utf-8");
+    expect(content).toContain("tools: [read_file, replace, run_shell_command]");
+    expect(content).not.toContain("edit_file");
+    expect(content).not.toContain("mcp__");
+  });
+
   it("FR-158: auto-translate handles CSV tools (Read, Grep, Bash) and unknown passthrough", async () => {
     mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
     writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.md"), "body\n");

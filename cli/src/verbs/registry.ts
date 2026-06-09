@@ -1403,7 +1403,11 @@ export function assembleClaudeHarness(
 const CLAUDE_TO_GEMINI_TOOLS: Record<string, string> = {
   Read: "read_file",
   Write: "write_file",
-  Edit: "edit_file",
+  // TD-229: Gemini's edit tool is `replace` (EDIT_TOOL_NAME), NOT `edit_file`.
+  // `edit_file` is not in ALL_BUILTIN_TOOL_NAMES → the agent fails to load with
+  // "tools.N: Invalid tool name". Verified against the gemini-cli bundle's
+  // localAgentSchema → isValidToolName → ALL_BUILTIN_TOOL_NAMES.
+  Edit: "replace",
   Bash: "run_shell_command",
   Grep: "grep_search",
   Glob: "list_directory", // imperfect — operator override is the escape hatch
@@ -1463,9 +1467,16 @@ function translateClaudeToGeminiFrontmatter(claudeFields: string): string {
   for (const { key, value } of parsed) {
     if (key === "tools") {
       const tokens = parseToolsField(value);
-      const translated = tokens.map(
-        (t) => CLAUDE_TO_GEMINI_TOOLS[t] ?? t, // unknown → pass through verbatim
-      );
+      const translated = tokens
+        // TD-229: drop Claude MCP-tool tokens (`mcp__<server>__<tool>`). Gemini's
+        // agent schema rejects the double-underscore Claude shape ("Invalid tool
+        // name" — the `mcp__` prefix fails parseMcpToolName's `mcp_<server>_<tool>`
+        // grammar). MCP tools reach Gemini agents via the `mcp_servers` field and
+        // the harness-level MCP registration, NOT the `tools` array.
+        .filter((t) => !t.startsWith("mcp__"))
+        .map(
+          (t) => CLAUDE_TO_GEMINI_TOOLS[t] ?? t, // unknown → pass through verbatim
+        );
       out.push(`tools: [${translated.join(", ")}]`);
       toolsEmitted = true;
       continue;
@@ -1478,9 +1489,16 @@ function translateClaudeToGeminiFrontmatter(claudeFields: string): string {
       kindEmitted = true;
       continue;
     }
-    if (key === "model" || key === "temperature" || key === "max_turns") {
+    if (
+      key === "model" ||
+      key === "temperature" ||
+      key === "max_turns" ||
+      key === "memory"
+    ) {
       // Drop per Decision 2 — Gemini uses defaults; operators override via
-      // `frontmatter.gemini.md`.
+      // `frontmatter.gemini.md`. `memory` (TD-229) is a Claude-only key:
+      // Gemini's strict subagent schema rejects it with "Unrecognized
+      // key(s) in object: 'memory'" → the agent fails to load entirely.
       continue;
     }
     out.push(`${key}: ${value}`);

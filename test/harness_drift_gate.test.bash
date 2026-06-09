@@ -1234,6 +1234,7 @@ name: xlate
 description: FR-158 retry 1 — bash auto-translate guard
 tools: Read, Grep, Bash
 model: sonnet
+memory: project
 ---
 EOF
   cat > "$registry_dir/system-prompt-v1.0.md" <<'EOF'
@@ -1263,6 +1264,10 @@ EOF
   grep -q "tools: \[read_file, grep_search, run_shell_command\]" "$gemini_harness"
   # 3. model: dropped (Gemini uses defaults).
   ! grep -q "^model:" "$gemini_harness"
+  # 3b. memory: dropped (TD-229 — Claude-only key; Gemini's strict subagent
+  #     schema rejects it with "Unrecognized key(s) in object: 'memory'",
+  #     which made the 7 core agents fail to load entirely on Gemini).
+  ! grep -q "^memory:" "$gemini_harness"
   # 4. description: + name: pass through verbatim.
   grep -q "^name: xlate$" "$gemini_harness"
   grep -q "^description: " "$gemini_harness"
@@ -1275,6 +1280,48 @@ EOF
   [ "$status" -eq 0 ]
   grep -q "^kind: local$" "$gemini_harness"
   grep -q "tools: \[read_file, grep_search, run_shell_command\]" "$gemini_harness"
+}
+
+@test "TD-229: bash compile maps Edit→replace and DROPS mcp__ tool tokens (Gemini schema)" {
+  # TD-229 regression guard. The 7 core agents declare Claude tools that the
+  # FR-158 map either mis-translated or passed through verbatim, both of which
+  # Gemini rejects with "tools.N: Invalid tool name":
+  #   - `Edit` mapped to `edit_file` (not a Gemini built-in; the real tool is
+  #     `replace`). Blocked forger + sage from loading.
+  #   - `mcp__igris-brain__igris_error_lookup` passed through verbatim; Gemini's
+  #     schema rejects the double-underscore Claude MCP shape. Blocked mender.
+  # Post-fix: Edit → replace, and mcp__ tokens are dropped (MCP tools reach
+  # Gemini agents via mcp_servers, not the tools array).
+  local root="$TEST_TEMP_DIR/td229_xlate_$BATS_TEST_NUMBER"
+  local registry_dir="$IGRIS_BRAIN_DIR/registry/agents/td229"
+  mkdir -p "$root/.gemini/agents" "$registry_dir"
+  cat > "$registry_dir/frontmatter.claude.md" <<'EOF'
+---
+name: td229
+description: TD-229 Edit-map + mcp-drop guard
+tools: Read, Edit, Bash, mcp__igris-brain__igris_error_lookup
+---
+EOF
+  cat > "$registry_dir/system-prompt-v1.0.md" <<'EOF'
+# TD229
+Body for the TD-229 guard.
+EOF
+  cat > "$root/harness-manifest.json" <<EOF
+{ "version": 1, "agents": [ {
+  "name": "td229", "layer": "personal",
+  "canonical": { "dir": "$registry_dir", "versioned": true, "glob": "system-prompt-v*.md" },
+  "targets": [ { "type": "gemini", "path": ".gemini/agents/td229.md" } ] } ] }
+EOF
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 0 ]
+  local gemini_harness="$IGRIS_BRAIN_DIR/registry/agents/td229/harness.gemini.md"
+  [ -f "$gemini_harness" ]
+  # Edit → replace (NOT edit_file); Read → read_file; Bash → run_shell_command;
+  # the mcp__ token is dropped entirely.
+  grep -q "tools: \[read_file, replace, run_shell_command\]" "$gemini_harness"
+  ! grep -q "edit_file" "$gemini_harness"
+  ! grep -q "mcp__" "$gemini_harness"
 }
 
 @test "FR-158 retry 1: bash compile respects operator-provided kind: in claude sidecar (no double-inject)" {

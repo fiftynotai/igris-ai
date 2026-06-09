@@ -462,7 +462,9 @@ import sys
 TOOL_MAP = {
     "Read": "read_file",
     "Write": "write_file",
-    "Edit": "edit_file",
+    # TD-229: Gemini's edit tool is `replace` (EDIT_TOOL_NAME), NOT `edit_file`.
+    # `edit_file` fails isValidToolName → "tools.N: Invalid tool name".
+    "Edit": "replace",
     "Bash": "run_shell_command",
     "Grep": "grep_search",
     "Glob": "list_directory",  # imperfect — operator override is the escape hatch
@@ -472,8 +474,11 @@ TOOL_MAP = {
 }
 
 # Drop set — Gemini uses defaults; operator override via
-# `frontmatter.gemini.md` is the escape hatch.
-DROPS = {"model", "temperature", "max_turns"}
+# `frontmatter.gemini.md` is the escape hatch. `memory` (TD-229) is a
+# Claude-only key: Gemini's strict subagent schema rejects it with
+# "Unrecognized key(s) in object: 'memory'" → the agent fails to load.
+# Keep byte-for-byte in sync with the TS DROPS condition in registry.ts.
+DROPS = {"model", "temperature", "max_turns", "memory"}
 
 
 def parse_tools_field(value):
@@ -523,6 +528,12 @@ for entry in parsed:
     value = entry["value"]
     if key == "tools":
         tokens = parse_tools_field(value)
+        # TD-229: drop Claude MCP-tool tokens (`mcp__<server>__<tool>`). Gemini's
+        # agent schema rejects the double-underscore Claude shape ("Invalid tool
+        # name"). MCP tools reach Gemini agents via `mcp_servers` + harness-level
+        # MCP registration, NOT the `tools` array. Keep byte-for-byte in sync
+        # with the TS translateClaudeToGeminiFrontmatter filter.
+        tokens = [t for t in tokens if not t.startswith("mcp__")]
         translated = [TOOL_MAP.get(t, t) for t in tokens]
         out_lines.append("tools: [" + ", ".join(translated) + "]")
         continue
