@@ -6,11 +6,17 @@
  * (relocated from `scripts/templates/CLAUDE.md.template` in M2.1) so it
  * ships with the M1 brain tarball.
  *
- * Substitutions (only two — Phase 1 dropped {{PERSONA_INJECTION}} since it
- * wasn't present in the relocated template):
+ * Substitutions (Phase 1 dropped {{PERSONA_INJECTION}} since it wasn't
+ * present in the relocated template):
  *
- *   - `{{IGRIS_VERSION}}` → cliVersion (e.g. "7.0.0")
- *   - `{{INSTALL_DATE}}`  → installDate (ISO date, e.g. "2026-05-07")
+ *   - `{{IGRIS_IDENTITY}}`  → the canonical identity block inlined from the
+ *                             sibling `identity.tmpl` with
+ *                             {{HARNESS_SELF_NAME}} → "Claude" (TD-233 — the
+ *                             same canonical the `os_identity` harness surface
+ *                             projects to GEMINI.md / AGENTS.md). Legacy
+ *                             templates without the token pass through.
+ *   - `{{IGRIS_VERSION}}`   → cliVersion (e.g. "7.0.0")
+ *   - `{{INSTALL_DATE}}`    → installDate (ISO date, e.g. "2026-05-07")
  *
  * Determinism contract (L-254 mitigation): same input always produces same
  * content. INSTALL_DATE is intentionally per-call (it IS supposed to bump on
@@ -19,8 +25,9 @@
  */
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { brainDir } from "./paths.js";
+import { HARNESS_SELF_NAMES } from "./identity-shape.js";
 
 export class ClaudeMdTemplateError extends Error {
   constructor(message: string) {
@@ -44,6 +51,46 @@ export function claudeMdTemplatePath(): string {
 }
 
 /**
+ * Compute the runtime canonical-identity template path
+ * (~/.igris/core/templates/identity.tmpl) — the TD-233 single authored copy of
+ * the orchestrator identity block, shared with the `os_identity` harness
+ * surface (see `identity-shape.ts`).
+ */
+export function identityTemplatePath(): string {
+  return join(brainDir(), "core", "templates", "identity.tmpl");
+}
+
+/**
+ * Inline the canonical identity block into a raw CLAUDE.md template (TD-233).
+ *
+ * `CLAUDE.md.tmpl` carries an `{{IGRIS_IDENTITY}}` include token where its
+ * `## Identity` block used to live; the identity text itself is authored ONCE
+ * in the sibling `identity.tmpl` (the same canonical the `os_identity` harness
+ * surface projects to GEMINI.md / AGENTS.md). This inlines that template with
+ * `{{HARNESS_SELF_NAME}}` → "Claude" and leaves `{{IGRIS_VERSION}}` /
+ * `{{INSTALL_DATE}}` for the caller's existing substitutions, so the rendered
+ * CLAUDE.md stays byte-identical to the pre-TD-233 output.
+ *
+ * A legacy template WITHOUT the token passes through untouched (back-compat
+ * for runtime brains whose templates predate TD-233).
+ */
+function inlineIdentityBlock(raw: string, tmplPath: string): string {
+  if (!raw.includes("{{IGRIS_IDENTITY}}")) {
+    return raw;
+  }
+  const identityPath = join(dirname(tmplPath), "identity.tmpl");
+  if (!existsSync(identityPath)) {
+    throw new ClaudeMdTemplateError(
+      `CLAUDE.md template at ${tmplPath} references {{IGRIS_IDENTITY}} but the canonical identity template is missing at ${identityPath}. Run 'igris init' or 'igris refresh' first.`,
+    );
+  }
+  const identityRaw = readFileSync(identityPath, "utf-8")
+    .replace(/\n+$/, "")
+    .replace(/\{\{HARNESS_SELF_NAME\}\}/g, () => HARNESS_SELF_NAMES.claude);
+  return raw.replace(/\{\{IGRIS_IDENTITY\}\}/g, () => identityRaw);
+}
+
+/**
  * Render the CLAUDE.md content for a given CLI version and date.
  * Pure function: no filesystem writes; throws when the template is missing.
  */
@@ -55,7 +102,9 @@ export function renderClaudeMd(opts: RegenerateClaudeMdOptions): string {
     );
   }
   const installDate = opts.installDate ?? new Date().toISOString().slice(0, 10);
-  const raw = readFileSync(tmplPath, "utf-8");
+  // TD-233: inline the canonical identity block FIRST (it carries
+  // {{IGRIS_VERSION}}, resolved by the substitutions below).
+  const raw = inlineIdentityBlock(readFileSync(tmplPath, "utf-8"), tmplPath);
   return raw
     .replace(/\{\{IGRIS_VERSION\}\}/g, opts.cliVersion)
     .replace(/\{\{INSTALL_DATE\}\}/g, installDate);

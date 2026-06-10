@@ -310,7 +310,7 @@ async function main(argv: string[]): Promise<void> {
     .option("--manifest <path>", "base manifest override (default: <project-root>/harness-manifest.json)")
     .option("--overlay <path>", "personal-overlay manifest override (default: auto-discover)")
     .option("--target <kind>", "restrict to one target type: claude | codex | gemini | opencode | all (compile only)")
-    .option("--surface <kind>", "restrict to one projection surface: agents | skills | mcp | all (compile only)")
+    .option("--surface <kind>", "restrict to one projection surface: agents | skills | mcp | identity | all (compile only)")
     .option("--filter <glob>", "only process agents whose name matches the glob")
     .action(
       async (

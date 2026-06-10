@@ -1,6 +1,6 @@
 {
   "$schema": "core/scripts/cli-adapters/manifest.schema.json",
-  "_comment": "Igris-ai PROJECT harness manifest (FR-136). Declares the 7 core agents whose codex harnesses are mechanically regenerated from their canonical core/agents/<name>.md prompts (TD-021). Core ships only the SCHEMA (core/scripts/cli-adapters/manifest.schema.json); each project ships its own data manifest at its repo root. Canonical is the SOLE source of truth; every target listed here is a GENERATED artifact - editing a target file directly is a process error. Personal/Layer-2 customizations are NOT declared here - they live in an optional gitignored overlay at ~/.igris/registry/harness-manifest.personal.json (FR-139).",
+  "_comment": "Igris-ai PROJECT harness manifest (FR-136). Declares the 7 core agents whose codex harnesses are mechanically regenerated from their canonical core/agents/<name>.md prompts (TD-021). Core ships only the SCHEMA (core/scripts/cli-adapters/manifest.schema.json); each project ships its own data manifest at its repo root. Canonical is the SOLE source of truth; every target listed here is a GENERATED artifact - editing a target file directly is a process error. Personal/Layer-2 customizations are NOT declared here - they live in an optional gitignored overlay at ~/.igris/registry/harness-manifest.personal.json (FR-139). TD-233: `surfaces.os_identity` declares the orchestrator-identity surface (GAP-3) — the canonical identity block (core/templates/identity.tmpl) region-merged into each harness's natively auto-read PROJECT-ROOT context file (empirically confirmed 2026-06-10: gemini reads GEMINI.md, codex reads AGENTS.md; claude+opencode read CLAUDE.md, which `igris install` already renders whole-file, so they carry no target here). The block lives in THIS project manifest (not surfaces-manifest.json) because its targets are project-root-relative: `igris harness compile`/`check` run from this checkout see it, other projects never do. `version_source` points at the repo-committed cli/package.json so CI and every contributor checkout re-derive identical bytes without a brain install. GEMINI.md/AGENTS.md are GENERATED artifacts (region-merged; user content outside the markers is preserved) - edit core/templates/identity.tmpl, then recompile.",
   "version": 1,
   "agents": [
     {
@@ -157,5 +157,19 @@
         }
       ]
     }
-  ]
+  ],
+  "surfaces": {
+    "os_identity": [
+      {
+        "source": "core/templates/identity.tmpl",
+        "version_source": "cli/package.json",
+        "layer": "core",
+        "scope": { "type": "project", "paths": ["."] },
+        "targets": [
+          { "type": "gemini", "method": "file", "filename": "GEMINI.md" },
+          { "type": "codex", "method": "file", "filename": "AGENTS.md" }
+        ]
+      }
+    ]
+  }
 }

@@ -27,9 +27,13 @@
 #                            Default: all. Applies to agent targets, skills-
 #                            surface targets (FR-137), and MCP targets (FR-164).
 #                            opencode is first-class for agents + skills (FR-171).
-#   --surface agents|skills|all - Restrict to one projection surface (FR-137).
-#                            Default: all. `agents` = the per-agent harnesses;
-#                            `skills` = the surfaces.skills projection.
+#   --surface agents|skills|mcp|identity|all - Restrict to one projection
+#                            surface (FR-137). Default: all. `agents` = the
+#                            per-agent harnesses; `skills` = the
+#                            surfaces.skills projection; `mcp` = the
+#                            surfaces.mcp_servers config-merge (FR-164);
+#                            `identity` = the surfaces.os_identity
+#                            orchestrator-identity region merge (TD-233).
 # Dependencies: python3, _common.sh (auto-located from script dir)
 # Exit codes:
 #   0 - All selected agent/target syncs succeeded (or were cleanly skipped)
@@ -1021,7 +1025,7 @@ compile_md_agent_target() {
 usage() {
   echo "Usage: $0 --project-root <dir> [--manifest <path>] [--overlay <path>]" >&2
   echo "                          [--filter <name-glob>] [--target claude|codex|gemini|opencode|all]" >&2
-  echo "                          [--surface agents|skills|mcp|all]" >&2
+  echo "                          [--surface agents|skills|mcp|identity|all]" >&2
   echo "" >&2
   echo "Regenerates harness files declared in the manifest from canonical prompts." >&2
   exit 2
@@ -1111,10 +1115,11 @@ case "$TARGET_KIND" in
 esac
 
 # FR-164: --surface accepts `mcp` (the MCP projection pass).
+# TD-233: --surface accepts `identity` (the orchestrator-identity pass).
 case "$SURFACE_KIND" in
-  agents|skills|mcp|all) : ;;
+  agents|skills|mcp|identity|all) : ;;
   *)
-    echo "Error: --surface must be agents, skills, mcp, or all (got '$SURFACE_KIND')" >&2
+    echo "Error: --surface must be agents, skills, mcp, identity, or all (got '$SURFACE_KIND')" >&2
     usage
     ;;
 esac
@@ -1187,8 +1192,9 @@ fi
 #   body-exception-or-empty <TAB> target-type <TAB> target-path
 # One row per agent/target. python3 (no jq) per the _common.sh convention.
 # ---------------------------------------------------------------------------
-# FR-164: the agent pass runs only for agents/all (skipped for skills and mcp).
-if [ "$SURFACE_KIND" = "skills" ] || [ "$SURFACE_KIND" = "mcp" ]; then
+# FR-164/TD-233: the agent pass runs only for agents/all (skipped for skills,
+# mcp and identity).
+if [ "$SURFACE_KIND" = "skills" ] || [ "$SURFACE_KIND" = "mcp" ] || [ "$SURFACE_KIND" = "identity" ]; then
   WORK_ROWS=""
 else
   WORK_ROWS=$(python3 - "$MERGED_MANIFEST" "$FILTER" "$TARGET_KIND" <<'PY'
@@ -1824,8 +1830,127 @@ if [ "$SURFACE_KIND" = "mcp" ] || [ "$SURFACE_KIND" = "all" ]; then
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# TD-233 (GAP-3): orchestrator-identity projection pass. For each
+# (identity-block, target) row, render the canonical identity template via the
+# SHARED normalize_identity_shape (the §18.1 helper drift re-derives with —
+# byte-identical to the TS buildHarnessIdentityFile) and MERGE the delimited
+# region into the harness's natively auto-read identity file
+# (gemini → GEMINI.md, codex → AGENTS.md; project-root-relative, confirmed
+# empirically 2026-06-10). Pre-existing user content is preserved — Igris owns
+# only the marker-delimited region (the locked clobber posture). Each row
+# feeds the shared $TOTAL/$OK/$FAIL/$SUMMARY accumulators.
+# ---------------------------------------------------------------------------
+if [ "$SURFACE_KIND" = "identity" ] || [ "$SURFACE_KIND" = "all" ]; then
+  IDENTITY_ROWS=$(flatten_identity_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "$TARGET_KIND" "$PROJECT_ROOT")
+  if [ -n "$IDENTITY_ROWS" ]; then
+    while IFS=$'\t' read -r i_source i_vsource i_type i_filename i_scope_type i_scope_paths; do
+      [ -z "$i_type" ] && continue
+      [ -z "$i_filename" ] && continue
+
+      # FR-155: identity-surface project-scope filter. Identical posture to
+      # the skills-loop filter — silent skip (no verdict, no TOTAL++) when
+      # scope.type=project and the current --project-root realpath is not in
+      # scope.paths[]. Both sides realpath'd (macOS /tmp ↔ /private/tmp).
+      if [ "$i_scope_type" = "project" ]; then
+        project_root_real="$(realpath "$PROJECT_ROOT" 2>/dev/null || echo "$PROJECT_ROOT")"
+        i_matched=0
+        if [ -n "$i_scope_paths" ] && [ "$i_scope_paths" != "-" ]; then
+          IFS=',' read -ra i_scope_paths_arr <<< "$i_scope_paths"
+          for sp in "${i_scope_paths_arr[@]}"; do
+            [ -z "$sp" ] && continue
+            case "$sp" in
+              "~"/*) sp_abs="$HOME/${sp#"~/"}" ;;
+              /*)    sp_abs="$sp" ;;
+              *)     sp_abs="$PROJECT_ROOT/$sp" ;;
+            esac
+            sp_real="$(realpath "$sp_abs" 2>/dev/null || echo "$sp_abs")"
+            if [ "$sp_real" = "$project_root_real" ]; then
+              i_matched=1
+              break
+            fi
+          done
+        fi
+        if [ "$i_matched" -eq 0 ]; then
+          continue
+        fi
+      fi
+
+      TOTAL=$((TOTAL + 1))
+
+      # Resolve the canonical identity template (FR-154 3-case shape; `-`
+      # falls back to the brain-mirrored canonical).
+      if [ -n "$i_source" ] && [ "$i_source" != "-" ]; then
+        case "$i_source" in
+          "~"/*) tmpl_abs="$HOME/${i_source#"~/"}" ;;
+          /*)    tmpl_abs="$i_source" ;;
+          *)     tmpl_abs="$PROJECT_ROOT/$i_source" ;;
+        esac
+      else
+        tmpl_abs="$BRAIN_DIR/core/templates/identity.tmpl"
+      fi
+      if [ ! -f "$tmpl_abs" ]; then
+        SUMMARY+=("FAIL  identity/$i_type — canonical identity template missing: $tmpl_abs")
+        FAIL=$((FAIL + 1))
+        continue
+      fi
+
+      # Resolve {{IGRIS_VERSION}}. `-` → read_identity_version's default
+      # (<brain>/config.json); a declared version_source resolves 3-case.
+      vsrc_abs=""
+      if [ -n "$i_vsource" ] && [ "$i_vsource" != "-" ]; then
+        case "$i_vsource" in
+          "~"/*) vsrc_abs="$HOME/${i_vsource#"~/"}" ;;
+          /*)    vsrc_abs="$i_vsource" ;;
+          *)     vsrc_abs="$PROJECT_ROOT/$i_vsource" ;;
+        esac
+      fi
+      id_version=$(read_identity_version "$vsrc_abs")
+      if [ -z "$id_version" ]; then
+        SUMMARY+=("FAIL  identity/$i_type — cannot resolve {{IGRIS_VERSION}} from '${vsrc_abs:-$BRAIN_DIR/config.json}' (file missing, unparseable, or no top-level \"version\" key)")
+        FAIL=$((FAIL + 1))
+        continue
+      fi
+
+      # Resolve the output identity file (FR-154 3-case shape; project-root-
+      # relative in the confirmed v1 map).
+      case "$i_filename" in
+        "~"/*) out_abs="$HOME/${i_filename#"~/"}" ;;
+        /*)    out_abs="$i_filename" ;;
+        *)     out_abs="$PROJECT_ROOT/$i_filename" ;;
+      esac
+
+      # Render the expected region to a temp file (a $(...) capture would eat
+      # the trailing newline) and merge it into the target atomically.
+      tmp_region="$(mktemp "${TMPDIR:-/tmp}/igris-identity-region.XXXXXX")"
+      TMPFILES_TO_CLEAN+=("$tmp_region")
+      rc=0
+      normalize_identity_shape "$tmpl_abs" "$i_type" "$id_version" > "$tmp_region" || rc=$?
+      if [ "$rc" -ne 0 ]; then
+        SUMMARY+=("FAIL  identity/$i_type — normalize_identity_shape exited $rc")
+        FAIL=$((FAIL + 1))
+        continue
+      fi
+
+      mkdir -p "$(dirname "$out_abs")"
+      merge_action=""
+      merge_action=$(merge_identity_region "$out_abs" "$tmp_region") || rc=$?
+      if [ "$rc" -eq 0 ]; then
+        SUMMARY+=("OK    identity/$i_type -> $i_filename ($merge_action)")
+        OK=$((OK + 1))
+      elif [ "$rc" -eq 3 ]; then
+        SUMMARY+=("FAIL  identity/$i_type — corrupt Igris identity region (BEGIN without END) at $out_abs; fix manually, then recompile")
+        FAIL=$((FAIL + 1))
+      else
+        SUMMARY+=("FAIL  identity/$i_type — merge exited $rc")
+        FAIL=$((FAIL + 1))
+      fi
+    done <<< "$IDENTITY_ROWS"
+  fi
+fi
+
 if [ "$TOTAL" -eq 0 ]; then
-  echo "No agent/skills/mcp targets matched (filter='$FILTER', target='$TARGET_KIND', surface='$SURFACE_KIND')." >&2
+  echo "No agent/skills/mcp/identity targets matched (filter='$FILTER', target='$TARGET_KIND', surface='$SURFACE_KIND')." >&2
   exit 0
 fi
 

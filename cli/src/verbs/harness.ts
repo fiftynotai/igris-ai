@@ -37,7 +37,7 @@ export interface HarnessOptions {
   overlay?: string;
   /** Restrict to one target type (compile only): claude | codex | gemini | opencode | all. */
   target?: string;
-  /** Restrict to one projection surface (compile only): agents | skills | mcp | all. */
+  /** Restrict to one projection surface (compile only): agents | skills | mcp | identity | all. */
   surface?: string;
   /** Only process agents whose name matches this glob. */
   filter?: string;

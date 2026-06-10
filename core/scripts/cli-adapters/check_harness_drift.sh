@@ -649,6 +649,109 @@ PY
 }
 
 # ---------------------------------------------------------------------------
+# verify_identity_file_drift <harness> <target_path> <template_path> <version>
+#
+# TD-233 (GAP-3): per-(identity,harness) drift verdict, line-paired with the
+# compile identity pass (§18.1). Re-derives the EXPECTED delimited region via
+# the SHARED normalize_identity_shape (the same helper compile writes with —
+# no second normalizer), extracts the ON-DISK region via
+# extract_identity_region, and byte-compares.
+#
+# Verdicts (updates caller-scoped MATCH/DRIFT, same as the other verdict fns):
+#   MISSING — identity file absent (extract rc 10) OR file present but with NO
+#             Igris identity region (rc 11). Both mean the projection was
+#             never run / was stripped → run `igris harness compile`. DRIFT++.
+#   DRIFTED — corrupt region (BEGIN without END, rc 12), template missing,
+#             unresolvable {{IGRIS_VERSION}}, or region bytes diverge from
+#             canonical. DRIFT++.
+#   MATCH   — on-disk region byte-equals the expected region. MATCH++.
+#
+# The path line uses the `artifact` label so the pre-commit wrapper's
+# classifier (scripts/validate_harness_drift.sh) resolves it and treats a
+# MISSING project-relative identity file as FATAL (you forgot to compile).
+# NEVER throws under set -e.
+# ---------------------------------------------------------------------------
+verify_identity_file_drift() {
+  local harness="$1"
+  local target_path="$2"
+  local template_path="$3"
+  local version="$4"
+
+  if [ ! -f "$template_path" ]; then
+    echo "  [identity/$harness] DRIFTED"
+    echo "      artifact  : $target_path"
+    echo "      reason    : canonical identity template missing: $template_path — restore it, then run \`igris harness compile\`"
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+  if [ -z "$version" ]; then
+    echo "  [identity/$harness] DRIFTED"
+    echo "      artifact  : $target_path"
+    echo "      reason    : cannot resolve {{IGRIS_VERSION}} (version_source/config.json missing, unparseable, or key-less) — cannot re-derive the expected region"
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+
+  # Expected region via the SHARED shape helper (what compile writes).
+  local expected norm_rc=0
+  expected=$(normalize_identity_shape "$template_path" "$harness" "$version") || norm_rc=$?
+  if [ "$norm_rc" -ne 0 ]; then
+    echo "  [identity/$harness] DRIFTED"
+    echo "      artifact  : $target_path"
+    echo "      reason    : normalize_identity_shape exited $norm_rc"
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+
+  # On-disk region. rc 0 = present; 10 = file absent; 11 = no region; 12 =
+  # corrupt (BEGIN without END). $(...) strips trailing newlines on BOTH
+  # sides identically, so the byte-compare stays faithful.
+  local on_disk extract_rc=0
+  on_disk=$(extract_identity_region "$target_path") || extract_rc=$?
+
+  if [ "$extract_rc" -eq 10 ]; then
+    echo "  [identity/$harness] MISSING"
+    echo "      artifact  : $target_path"
+    echo "      reason    : identity file absent — run \`igris harness compile\` to project it"
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+  if [ "$extract_rc" -eq 11 ]; then
+    echo "  [identity/$harness] MISSING"
+    echo "      artifact  : $target_path"
+    echo "      reason    : file exists but carries no Igris identity region — run \`igris harness compile\` to inject it (user content is preserved)"
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+  if [ "$extract_rc" -eq 12 ]; then
+    echo "  [identity/$harness] DRIFTED"
+    echo "      artifact  : $target_path"
+    echo "      reason    : corrupt Igris identity region (BEGIN marker without END) — fix the file manually, then run \`igris harness compile\`"
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+  if [ "$extract_rc" -ne 0 ]; then
+    echo "  [identity/$harness] DRIFTED"
+    echo "      artifact  : $target_path"
+    echo "      reason    : could not read the identity region (extract rc $extract_rc)"
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+
+  if [ "$on_disk" = "$expected" ]; then
+    echo "  [identity/$harness] MATCH"
+    echo "      artifact  : $target_path"
+    MATCH=$((MATCH + 1))
+  else
+    echo "  [identity/$harness] DRIFTED"
+    echo "      artifact  : $target_path"
+    echo "      reason    : identity region diverges from canonical (edited in place, or the canonical/version moved) — run \`igris harness compile\` to re-project"
+    DRIFT=$((DRIFT + 1))
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Flatten the manifest into work rows (same column layout as
 # compile_harnesses.sh; `-` is the empty-body-exception sentinel).
 # ---------------------------------------------------------------------------
@@ -1732,8 +1835,90 @@ if [ -n "$MCP_DRIFT_ROWS" ]; then
   done <<< "$MCP_DRIFT_ROWS"
 fi
 
+# ---------------------------------------------------------------------------
+# TD-233 (GAP-3): orchestrator-identity drift pass, line-paired with the
+# compile identity pass (§18.1). Flattens the SAME (identity,target) rows via
+# `flatten_identity_rows` (target_kind="all" — drift checks every harness
+# target, consistent with drift's "check everything" posture; drift has no
+# --surface flag). Per row it resolves the canonical template, the
+# {{IGRIS_VERSION}} source and the output file (all FR-154 3-case, mirroring
+# compile) and calls `verify_identity_file_drift`, which re-derives the
+# expected delimited region via the SHARED normalize_identity_shape and
+# byte-compares ONLY the Igris-managed region (user content around it is
+# theirs and is never inspected).
+# ---------------------------------------------------------------------------
+IDENTITY_DRIFT_ROWS=$(flatten_identity_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "all" "$PROJECT_ROOT")
+if [ -n "$IDENTITY_DRIFT_ROWS" ]; then
+  while IFS=$'\t' read -r i_source i_vsource i_type i_filename i_scope_type i_scope_paths; do
+    [ -z "$i_type" ] && continue
+    [ -z "$i_filename" ] && continue
+
+    # FR-155: identity-surface project-scope filter (mirrors the skills drift
+    # filter and the compile identity-loop filter). Silent skip — a scoped
+    # entry that does not apply to the current root is NOT drift; gates
+    # TOTAL++ so the summary count is filter-aware.
+    if [ "$i_scope_type" = "project" ]; then
+      project_root_real="$(realpath "$PROJECT_ROOT" 2>/dev/null || echo "$PROJECT_ROOT")"
+      i_matched=0
+      if [ -n "$i_scope_paths" ] && [ "$i_scope_paths" != "-" ]; then
+        IFS=',' read -ra i_scope_paths_arr <<< "$i_scope_paths"
+        for sp in "${i_scope_paths_arr[@]}"; do
+          [ -z "$sp" ] && continue
+          case "$sp" in
+            "~"/*) sp_abs="$HOME/${sp#"~/"}" ;;
+            /*)    sp_abs="$sp" ;;
+            *)     sp_abs="$PROJECT_ROOT/$sp" ;;
+          esac
+          sp_real="$(realpath "$sp_abs" 2>/dev/null || echo "$sp_abs")"
+          if [ "$sp_real" = "$project_root_real" ]; then
+            i_matched=1
+            break
+          fi
+        done
+      fi
+      if [ "$i_matched" -eq 0 ]; then
+        continue
+      fi
+    fi
+
+    TOTAL=$((TOTAL + 1))
+
+    # Canonical template (3-case; `-` → brain-mirrored default) — mirrors
+    # compile_harnesses.sh identity pass byte-for-byte.
+    if [ -n "$i_source" ] && [ "$i_source" != "-" ]; then
+      case "$i_source" in
+        "~"/*) tmpl_abs="$HOME/${i_source#"~/"}" ;;
+        /*)    tmpl_abs="$i_source" ;;
+        *)     tmpl_abs="$PROJECT_ROOT/$i_source" ;;
+      esac
+    else
+      tmpl_abs="$BRAIN_DIR/core/templates/identity.tmpl"
+    fi
+
+    # {{IGRIS_VERSION}} source (3-case; `-` → read_identity_version default).
+    vsrc_abs=""
+    if [ -n "$i_vsource" ] && [ "$i_vsource" != "-" ]; then
+      case "$i_vsource" in
+        "~"/*) vsrc_abs="$HOME/${i_vsource#"~/"}" ;;
+        /*)    vsrc_abs="$i_vsource" ;;
+        *)     vsrc_abs="$PROJECT_ROOT/$i_vsource" ;;
+      esac
+    fi
+    id_version=$(read_identity_version "$vsrc_abs")
+
+    # Output identity file (3-case).
+    case "$i_filename" in
+      "~"/*) out_abs="$HOME/${i_filename#"~/"}" ;;
+      /*)    out_abs="$i_filename" ;;
+      *)     out_abs="$PROJECT_ROOT/$i_filename" ;;
+    esac
+
+    verify_identity_file_drift "$i_type" "$out_abs" "$tmpl_abs" "$id_version"
+  done <<< "$IDENTITY_DRIFT_ROWS"
+fi
+
 if [ "$TOTAL" -eq 0 ]; then
-  echo "No agent/skills/mcp targets matched (filter='$FILTER')." >&2
+  echo "No agent/skills/mcp/identity targets matched (filter='$FILTER')." >&2
   exit 0
 fi
 

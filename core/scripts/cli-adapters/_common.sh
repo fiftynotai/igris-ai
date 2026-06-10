@@ -656,7 +656,7 @@ surfaces = manifest.get("surfaces")
 if surfaces is not None:
     if not isinstance(surfaces, dict):
         fail("'surfaces' must be an object")
-    allowed_surface_keys = {"skills", "mcp_servers", "os_context"}
+    allowed_surface_keys = {"skills", "mcp_servers", "os_identity", "os_context"}
     for key in surfaces:
         if key not in allowed_surface_keys:
             fail(f"surfaces: unknown key '{key}' (additionalProperties:false)")
@@ -798,6 +798,55 @@ if surfaces is not None:
             # treat every block as global). Same structural shape as agents.
             if "scope" in mcp_block:
                 validate_scope_shape(mcp_block["scope"], mwhere)
+
+    # ---- TD-233: structural validation of surfaces.os_identity --------------
+    # ARRAY of identity_surface blocks. Mirrors $defs.identity_surface so the
+    # structural fallback AGREES with the jsonschema path. Targets carry the
+    # 4-harness enum, the const method "file", and a required `filename` (the
+    # harness's natively auto-read identity file, e.g. GEMINI.md / AGENTS.md).
+    os_identity = surfaces.get("os_identity")
+    if os_identity is not None:
+        if not isinstance(os_identity, list) or len(os_identity) < 1:
+            fail("surfaces.os_identity must be a non-empty array")
+        valid_identity_target_types = {"claude", "codex", "gemini", "opencode"}
+        allowed_identity_keys = {"source", "version_source", "layer", "scope",
+                                 "targets"}
+        allowed_identity_target_keys = {"type", "method", "filename"}
+        for i_idx, id_block in enumerate(os_identity):
+            iwhere = f"surfaces.os_identity[{i_idx}]"
+            if not isinstance(id_block, dict):
+                fail(f"{iwhere} must be an object")
+            for key in id_block:
+                if key not in allowed_identity_keys:
+                    fail(f"{iwhere}: unknown key '{key}' "
+                         "(additionalProperties:false)")
+            if "targets" not in id_block:
+                fail(f"{iwhere} missing required key 'targets'")
+            i_targets = id_block["targets"]
+            if not isinstance(i_targets, list) or len(i_targets) < 1:
+                fail(f"{iwhere}.targets must be a non-empty array")
+            for k, it in enumerate(i_targets):
+                itwhere = f"{iwhere}.targets[{k}]"
+                if not isinstance(it, dict):
+                    fail(f"{itwhere} must be an object")
+                for req in ("type", "method", "filename"):
+                    if req not in it:
+                        fail(f"{itwhere} missing required key '{req}'")
+                for key in it:
+                    if key not in allowed_identity_target_keys:
+                        fail(f"{itwhere}: unknown key '{key}' "
+                             "(additionalProperties:false)")
+                if it["type"] not in valid_identity_target_types:
+                    fail(f"{itwhere}.type '{it['type']}' is not one of "
+                         f"{sorted(valid_identity_target_types)}")
+                if it["method"] != "file":
+                    fail(f"{itwhere}.method '{it['method']}' must be 'file'")
+                if not isinstance(it["filename"], str) or not it["filename"]:
+                    fail(f"{itwhere}.filename must be a non-empty string")
+
+            # FR-155: optional scope on the identity block.
+            if "scope" in id_block:
+                validate_scope_shape(id_block["scope"], iwhere)
 
 sys.exit(0)
 PY
@@ -1261,6 +1310,355 @@ sys.stdout.write(json.dumps(entry, separators=(",", ":"), sort_keys=True))
 PY
 }
 
+# ---------------------------------------------------------------------------
+# TD-233 (GAP-3): orchestrator-identity projection helpers (shared by compile
+# + drift). The identity surface projects ONE canonical identity template
+# (core/templates/identity.tmpl) into each harness's natively auto-read
+# project-root context file (gemini → GEMINI.md, codex → AGENTS.md), wrapped
+# in an Igris-managed delimited region so pre-existing user content survives.
+# ---------------------------------------------------------------------------
+
+# Region markers. Detection matches on the BEGIN PREFIX (an edited BEGIN
+# comment still locates the region → DRIFTED, never a duplicate region) and on
+# the exact END line. MUST stay byte-identical to IDENTITY_BEGIN_PREFIX /
+# IDENTITY_BEGIN_LINE / IDENTITY_END_LINE in cli/src/lib/identity-shape.ts
+# (§18.1 — the golden-fixture parity tests pin the pairing).
+IGRIS_IDENTITY_BEGIN_PREFIX='<!-- IGRIS:OS_IDENTITY:BEGIN'
+IGRIS_IDENTITY_BEGIN_LINE="$IGRIS_IDENTITY_BEGIN_PREFIX (Igris-managed identity region — edit core/templates/identity.tmpl, then run 'igris harness compile'; see TD-233) -->"
+IGRIS_IDENTITY_END_LINE='<!-- IGRIS:OS_IDENTITY:END -->'
+
+# ---------------------------------------------------------------------------
+# flatten_identity_rows <merged-manifest> <core-surfaces> <target-kind> <project-root>
+#
+# Emits one TAB-separated row per (identity-block, target). Mirrors
+# flatten_mcp_rows: the core surfaces-manifest.json is only unioned when the
+# project being compiled OWNS it (its realpath is under --project-root). Rows
+# are filtered by <target-kind>; "all" emits every target.
+#
+# Row columns (TAB-separated, fixed order):
+#   source <TAB> version_source <TAB> target_type <TAB> filename <TAB>
+#   scope_type <TAB> scope_paths_csv
+#
+# `-` is the empty sentinel for source (→ caller defaults to
+# <brain>/core/templates/identity.tmpl), version_source (→ caller defaults to
+# <brain>/config.json) and scope_paths (mirrors the skills flatten).
+# ---------------------------------------------------------------------------
+flatten_identity_rows() {
+  local merged="$1"
+  local core_surfaces="$2"
+  local target_kind="$3"
+  local project_root="$4"
+  python3 - "$core_surfaces" "$merged" "$target_kind" "$project_root" <<'PY'
+import json
+import os
+import sys
+
+core_surfaces_path = sys.argv[1]
+merged_manifest_path = sys.argv[2]
+target_kind = sys.argv[3]
+project_root = sys.argv[4]
+
+
+def load_identity(path):
+    # Returns a LIST of os_identity blocks. Legacy single-object normalized to
+    # `[object]`; missing/absent → []. Mirrors the mcp/skills loader shape.
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except OSError:
+        return []
+    value = (data.get("surfaces") or {}).get("os_identity")
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return value
+    return []
+
+
+# The core surfaces-manifest.json declares GLOBAL Layer-1 surfaces. It is only
+# unioned when the project being compiled OWNS it (its realpath is under
+# --project-root) — identical posture to the skills + MCP flattens. The merged
+# agent manifest (incl. the FR-139 personal overlay) is always read.
+sources = [merged_manifest_path]
+try:
+    cs_real = os.path.realpath(core_surfaces_path)
+    pr_real = os.path.realpath(project_root)
+    if os.path.commonpath([cs_real, pr_real]) == pr_real:
+        sources.insert(0, core_surfaces_path)
+except (OSError, ValueError):
+    pass
+
+for src in sources:
+    for block in load_identity(src):
+        if not isinstance(block, dict):
+            continue
+        source = block.get("source", "") or "-"
+        version_source = block.get("version_source", "") or "-"
+        # FR-155 scope columns (absent → global; `-` empty-paths sentinel).
+        scope = block.get("scope") or {}
+        scope_type = scope.get("type") or "global"
+        scope_paths_list = scope.get("paths") or []
+        scope_paths_csv = ",".join(scope_paths_list) if scope_paths_list else "-"
+        for t in block.get("targets", []) or []:
+            ttype = (t or {}).get("type", "")
+            filename = (t or {}).get("filename", "")
+            if not ttype or not filename:
+                continue
+            if target_kind != "all" and ttype != target_kind:
+                continue
+            print("\t".join([
+                source,
+                version_source,
+                ttype,
+                filename,
+                scope_type,
+                scope_paths_csv,
+            ]))
+PY
+}
+
+# ---------------------------------------------------------------------------
+# read_identity_version <version-source-abs-or-empty>
+#
+# Resolves the {{IGRIS_VERSION}} token for the identity surface. Reads the
+# top-level `version` key of the given JSON file; an empty argument falls back
+# to <brain>/config.json (IGRIS_BRAIN_DIR-honoring, like the MCP secrets
+# resolution). Emits the bare version string, or EMPTY when the file is
+# absent/unparseable/key-less — the caller turns empty into an observable
+# FAIL/DRIFTED row (L-232), never a silent skip. Returns 0 always.
+#
+# A project whose identity files are committed-as-canonical should declare a
+# repo-committed `version_source` (the igris-ai repo uses cli/package.json) so
+# CI and every contributor checkout re-derive identical bytes without a brain.
+# ---------------------------------------------------------------------------
+read_identity_version() {
+  local version_source="${1:-}"
+  if [ -z "$version_source" ]; then
+    version_source="${IGRIS_BRAIN_DIR:-$HOME/.igris}/config.json"
+  fi
+  python3 - "$version_source" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except (OSError, ValueError):
+    print("")
+    sys.exit(0)
+
+version = data.get("version") if isinstance(data, dict) else None
+print(version if isinstance(version, str) and version else "")
+PY
+}
+
+# ---------------------------------------------------------------------------
+# normalize_identity_shape <template-path> <harness> <version>
+#
+# The §18.1 / L-554 SHARED SHAPE HELPER for the identity surface. Renders the
+# canonical identity template for one harness and emits the FULL delimited
+# region (BEGIN marker + rendered body + END marker, trailing newline) on
+# stdout — byte-identical to the TS `buildHarnessIdentityFile`
+# (cli/src/lib/identity-shape.ts; the golden-fixture + bats parity tests pin
+# the two together). Used by BOTH the compile pass (what gets written) and the
+# drift pass (what is expected) — there is no second normalizer.
+#
+# Substitutions: {{IGRIS_VERSION}} → <version>; {{HARNESS_SELF_NAME}} → the
+# Model-A self-name reword (claude → "Claude", codex → "Codex", gemini →
+# "Gemini CLI", opencode → "OpenCode") so a non-Claude output never says
+# "Claude" ("Not Gemini CLI using Igris AI."). Model B is parked — do NOT add
+# it here. The body is normalized to end with exactly one newline.
+#
+# Returns 2 on an unknown harness or unreadable template (observable, L-232).
+# ---------------------------------------------------------------------------
+normalize_identity_shape() {
+  local template_path="$1"
+  local harness="$2"
+  local version="$3"
+  python3 - "$template_path" "$harness" "$version" \
+    "$IGRIS_IDENTITY_BEGIN_LINE" "$IGRIS_IDENTITY_END_LINE" <<'PY'
+import sys
+
+template_path = sys.argv[1]
+harness = sys.argv[2]
+version = sys.argv[3]
+begin_line = sys.argv[4]
+end_line = sys.argv[5]
+
+# MUST stay byte-identical to HARNESS_SELF_NAMES in identity-shape.ts.
+SELF_NAMES = {
+    "claude": "Claude",
+    "codex": "Codex",
+    "gemini": "Gemini CLI",
+    "opencode": "OpenCode",
+}
+
+self_name = SELF_NAMES.get(harness)
+if self_name is None:
+    sys.stderr.write(f"normalize_identity_shape: unknown harness '{harness}'\n")
+    sys.exit(2)
+
+try:
+    with open(template_path, "r", encoding="utf-8") as fh:
+        body = fh.read()
+except OSError as exc:
+    sys.stderr.write(
+        f"normalize_identity_shape: cannot read template '{template_path}': {exc}\n"
+    )
+    sys.exit(2)
+
+body = body.replace("{{IGRIS_VERSION}}", version)
+body = body.replace("{{HARNESS_SELF_NAME}}", self_name)
+body = body.rstrip("\n") + "\n"
+
+sys.stdout.write(f"{begin_line}\n{body}{end_line}\n")
+PY
+}
+
+# ---------------------------------------------------------------------------
+# extract_identity_region <file-path>
+#
+# Drift-side reader: extracts the Igris-managed identity region (BEGIN..END
+# lines inclusive) from a harness identity file and emits it on stdout.
+#
+# Status is signaled via the EXIT CODE:
+#   0  → region present; the region bytes are on stdout.
+#   10 → file absent (MISSING — run compile).
+#   11 → file present but carries NO Igris identity region (MISSING region).
+#   12 → BEGIN marker without a closing END (corrupt region → DRIFTED).
+#
+# NEVER throws under `set -euo pipefail` — every outcome is an explicit rc.
+# ---------------------------------------------------------------------------
+extract_identity_region() {
+  local file_path="$1"
+  python3 - "$file_path" "$IGRIS_IDENTITY_BEGIN_PREFIX" "$IGRIS_IDENTITY_END_LINE" <<'PY'
+import os
+import sys
+
+file_path = sys.argv[1]
+begin_prefix = sys.argv[2]
+end_line_text = sys.argv[3]
+
+if not os.path.exists(file_path):
+    sys.exit(10)
+
+try:
+    with open(file_path, "r", encoding="utf-8") as fh:
+        lines = fh.read().splitlines(keepends=True)
+except OSError:
+    sys.exit(10)
+
+begin_idx = None
+end_idx = None
+for i, line in enumerate(lines):
+    stripped = line.rstrip("\n")
+    if begin_idx is None and stripped.startswith(begin_prefix):
+        begin_idx = i
+    elif begin_idx is not None and stripped == end_line_text:
+        end_idx = i
+        break
+
+if begin_idx is None:
+    sys.exit(11)
+if end_idx is None:
+    sys.exit(12)
+
+region = "".join(lines[begin_idx:end_idx + 1])
+if not region.endswith("\n"):
+    region += "\n"
+sys.stdout.write(region)
+sys.exit(0)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# merge_identity_region <target-path> <region-file>
+#
+# Compile-side writer: merges the rendered identity region (read from
+# <region-file> — a file, not an argument, so multi-line bytes survive shell
+# quoting) into <target-path> under the LOCKED merge-into-region clobber
+# posture: pre-existing user content in GEMINI.md / AGENTS.md is preserved
+# byte-for-byte; only the Igris-managed region is owned by Igris.
+#
+#   - target absent             → create it containing exactly the region.
+#   - target has BEGIN..END     → replace the region lines in place.
+#   - target has no markers     → APPEND the region after a separating blank
+#                                 line (user content untouched).
+#   - target region byte-equals → NO write (idempotent; mtime preserved).
+#   - BEGIN without END         → rc 3, file untouched (refuse to guess at a
+#                                 corrupt region; fix manually, recompile).
+#
+# Writes are atomic (temp + os.replace on the same filesystem). Emits one of
+# created|updated|appended|unchanged on stdout for the compile summary.
+# ---------------------------------------------------------------------------
+merge_identity_region() {
+  local target_path="$1"
+  local region_file="$2"
+  python3 - "$target_path" "$region_file" "$IGRIS_IDENTITY_BEGIN_PREFIX" "$IGRIS_IDENTITY_END_LINE" <<'PY'
+import os
+import sys
+
+target_path = sys.argv[1]
+region_file = sys.argv[2]
+begin_prefix = sys.argv[3]
+end_line_text = sys.argv[4]
+
+with open(region_file, "r", encoding="utf-8") as fh:
+    region = fh.read()
+if not region.endswith("\n"):
+    region += "\n"
+
+if not os.path.exists(target_path):
+    action = "created"
+    new_content = region
+else:
+    with open(target_path, "r", encoding="utf-8") as fh:
+        existing = fh.read()
+    lines = existing.splitlines(keepends=True)
+    begin_idx = None
+    end_idx = None
+    for i, line in enumerate(lines):
+        stripped = line.rstrip("\n")
+        if begin_idx is None and stripped.startswith(begin_prefix):
+            begin_idx = i
+        elif begin_idx is not None and stripped == end_line_text:
+            end_idx = i
+            break
+    if begin_idx is None:
+        # No Igris region — append it, preserving user content byte-for-byte.
+        base = existing
+        if base and not base.endswith("\n"):
+            base += "\n"
+        sep = "\n" if base else ""
+        new_content = base + sep + region
+        action = "appended"
+    elif end_idx is None:
+        sys.stderr.write(
+            f"merge_identity_region: corrupt Igris identity region in "
+            f"{target_path} (BEGIN marker without END) — fix the file "
+            "manually, then re-run `igris harness compile`\n"
+        )
+        sys.exit(3)
+    else:
+        current = "".join(lines[begin_idx:end_idx + 1])
+        if not current.endswith("\n"):
+            current += "\n"
+        if current == region:
+            print("unchanged")
+            sys.exit(0)
+        new_content = "".join(lines[:begin_idx]) + region + "".join(lines[end_idx + 1:])
+        action = "updated"
+
+tmp = f"{target_path}.tmp-{os.getpid()}"
+with open(tmp, "w", encoding="utf-8") as fh:
+    fh.write(new_content)
+os.replace(tmp, target_path)
+print(action)
+PY
+}
+
 # Export functions for subshell use (bats tests spawn subshells).
 export -f parse_frontmatter
 export -f get_skill_field
@@ -1276,3 +1674,10 @@ export -f merge_overlay_manifest
 export -f flatten_mcp_rows
 export -f extract_mcp_entry
 export -f normalize_mcp_shape
+# TD-233: identity-surface helpers + the marker constants their bodies expand.
+export IGRIS_IDENTITY_BEGIN_PREFIX IGRIS_IDENTITY_BEGIN_LINE IGRIS_IDENTITY_END_LINE
+export -f flatten_identity_rows
+export -f read_identity_version
+export -f normalize_identity_shape
+export -f extract_identity_region
+export -f merge_identity_region

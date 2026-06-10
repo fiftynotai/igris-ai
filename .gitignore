@@ -78,8 +78,10 @@ CLAUDE.local.md
 
 # Generated harness projections (FR-137) — mechanically derived from canonical
 # sources by `igris harness compile`; never committed (regenerated on demand,
-# drift-checked against canonical). Codex skills aggregate + gemini commands.
-/AGENTS.md
+# drift-checked against canonical). NB: the FR-153 codex AGENTS.md skills
+# aggregator was retired; project-root AGENTS.md (and GEMINI.md) are now the
+# TD-233 orchestrator-identity files — COMMITTED-as-canonical (the pre-commit
+# drift gate requires them on fresh checkouts), so they are NOT ignored.
 .codex/
 .gemini/
 

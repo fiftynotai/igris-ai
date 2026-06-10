@@ -145,6 +145,35 @@ a git-tracked file — Codex `config.toml` lives at `~/.codex/`, outside the rep
 and the registry overlay stays `${VAR}`-only. The `.gitignore` entry for
 `secrets.env` is defense-in-depth against a stray in-repo copy.
 
+## Orchestrator-identity surface (os_identity — TD-233)
+
+The fifth projected surface (after agents, skills, MCP, hooks): the
+orchestrator-identity file each harness auto-reads at launch. Declared as
+`surfaces.os_identity[]` in the repo-root `harness-manifest.json` (NOT
+`surfaces-manifest.json`), with `method:"file"`, a per-target `filename`
+(Gemini → `GEMINI.md`, Codex → `AGENTS.md`; Claude/OpenCode ride the rendered
+`CLAUDE.md` and need no target), `version_source: cli/package.json`, and
+project-root scope `{type:"project", paths:["."]}` (FR-155 — silent scope-skip
+outside the igris-ai checkout).
+
+- **Compile** (`compile_harnesses.sh`, narrows via `--surface identity`):
+  renders the canonical `core/templates/identity.tmpl` (tokens
+  `{{IGRIS_VERSION}}` + `{{HARNESS_SELF_NAME}}`, Model A) and **region-merges**
+  it between the `IGRIS:OS_IDENTITY` BEGIN/END markers in the target file —
+  user content outside the region is preserved; never a whole-file overwrite.
+- **Drift** (`check_harness_drift.sh`): re-derives the expected region from the
+  SAME shared shape helper (`_common.sh::normalize_identity_shape` — §18.1
+  pair, byte-identical with the TS twin `cli/src/lib/identity-shape.ts`) and
+  reports `MATCH` / `DRIFTED` / `MISSING` per `(harness, identity-file)`.
+- The per-harness self-name map (`SELF_NAMES` in `_common.sh` /
+  `HARNESS_SELF_NAMES` in `identity-shape.ts`) MUST stay byte-identical —
+  golden-fixture parity tests pin the pair.
+
+The repo-root `GEMINI.md` + `AGENTS.md` are committed-as-canonical derived
+artifacts: edit `identity.tmpl`, then recompile. Filename map + mechanism:
+`docs/multi-cli.md` § "Orchestrator identity as a `surfaces.os_identity`
+manifest declaration".
+
 ## Mirror obligation (TD-096)
 
 Every file in this directory lives under `core/` and is part of the runtime

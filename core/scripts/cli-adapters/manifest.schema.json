@@ -37,6 +37,12 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/mcp_surface" }
         },
+        "os_identity": {
+          "description": "TD-233 (GAP-3 remediation): orchestrator-identity projection blocks — the 5th first-class surface. An ARRAY of blocks mirroring `mcp_servers`. Each block declares ONE canonical identity template (default <brain>/core/templates/identity.tmpl) projected into each target harness's natively auto-read project-root context file (gemini→GEMINI.md, codex→AGENTS.md; empirically confirmed 2026-06-10). Projection is a MERGE into an Igris-managed delimited region (markers), preserving pre-existing user content; drift checks ONLY the region. v1: declared by a project's own manifest (or core surfaces-manifest.json); personal-overlay blocks are accepted by the schema but NOT merged (no add-identity verb yet).",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/identity_surface" }
+        },
         "os_context": {
           "description": "RESERVED for FR-140 (rules+prompts OS-context projection). Permissive until FR-140 fleshes it out; an absent block is the normal case in FR-137.",
           "type": "object",
@@ -155,6 +161,45 @@
               "type":    { "enum": ["claude", "codex", "gemini", "opencode"] },
               "method":  { "const": "merge" },
               "enabled": { "type": "boolean", "default": true }
+            }
+          }
+        }
+      }
+    },
+    "identity_surface": {
+      "description": "TD-233: ONE orchestrator-identity projection block. `source` is the canonical identity template (tokens {{IGRIS_VERSION}} + {{HARNESS_SELF_NAME}}; Model A — 'the agent IS Igris AI'; Model B is parked). `version_source` optionally names a JSON file whose top-level `version` key resolves {{IGRIS_VERSION}} (the igris-ai repo points it at cli/package.json so compile/drift/CI all re-derive from the checkout); absent → <brain>/config.json. `targets[].filename` is the harness's natively auto-read identity file, resolved per the FR-154 3-case shape (`~/` → $HOME, absolute → verbatim, else → --project-root). `method` is always the const `file` (atomic region-merge file write). `scope` reuses $defs/scope (FR-155).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["targets"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "Canonical identity template path (3-case resolution). Default: <brain>/core/templates/identity.tmpl."
+        },
+        "version_source": {
+          "type": "string",
+          "description": "JSON file (3-case resolution) whose top-level `version` resolves {{IGRIS_VERSION}}. Default: <brain>/config.json. Declare a repo-committed file (e.g. cli/package.json) when the projected files are committed-as-canonical, so CI and every contributor re-derive identical bytes."
+        },
+        "layer": {
+          "type": "string",
+          "default": "core",
+          "description": "FR-139 provenance seam: 'core' (declared in a base manifest) or 'personal' (overlay; NOT merged in v1)."
+        },
+        "scope": { "$ref": "#/$defs/scope" },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "method", "filename"],
+            "properties": {
+              "type":     { "enum": ["claude", "codex", "gemini", "opencode"] },
+              "method":   { "const": "file" },
+              "filename": {
+                "type": "string",
+                "description": "The harness's natively auto-read identity file (GEMINI.md / AGENTS.md), resolved per the 3-case shape — project-root-relative in the confirmed v1 map."
+              }
             }
           }
         }

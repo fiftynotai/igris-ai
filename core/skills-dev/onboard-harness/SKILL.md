@@ -1,6 +1,6 @@
 ---
 name: onboard-harness
-description: "Onboard a new CLI harness to Igris across all four surfaces (agents, skills, MCP, hooks) - walks the FR-171 contract step by step with self-verification"
+description: "Onboard a new CLI harness to Igris across all five surfaces (agents, skills, MCP, hooks, identity) - walks the FR-171 contract step by step with self-verification"
 disable-model-invocation: false
 allowed-tools:
   - Read
@@ -19,9 +19,9 @@ triggers:
 # ONBOARD-HARNESS - Add a new CLI harness to Igris
 
 Onboard a new CLI harness (`<NEW>`) as a first-class Igris target across the
-**four surfaces** — agents, skills, MCP, hooks. This is the executable companion
-to the docs runbook at `docs/multi-cli.md` § "Add a New Harness (the four-surface
-runbook)" — the doc is the *why*, this skill is the *do*.
+**five surfaces** — agents, skills, MCP, hooks, orchestrator-identity. This is
+the executable companion to the docs runbook at `docs/multi-cli.md` § "Add a New
+Harness (the five-surface runbook)" — the doc is the *why*, this skill is the *do*.
 
 Work top-to-bottom. Each step names the **authoritative file** (and a symbol or
 section anchor — line numbers shift, so they are `(currently ~L…)` hints only)
@@ -49,6 +49,11 @@ assumed:
   lowercase tool names?
 - **MCP-permission key shape** — how does the harness reference an MCP server in
   agent frontmatter (e.g. `mcp__<server>__*`)?
+- **Identity filename** — which context file does the harness **auto-read for
+  orchestrator identity**, and is it project-root or home-level? Drop a unique
+  marker into a candidate file (`CLAUDE.md`? `GEMINI.md`? `AGENTS.md`? a
+  home-level path?), run a fresh headless `"who are you?"`, confirm the marker
+  surfaces, then tear the temp file down (the TD-233 A/B method).
 
 Probe by writing sentinel files under `HOME=$(mktemp -d)` and running the
 harness's `agent list` / command-enumerate against it. See **FR-171 plan §1**
@@ -61,8 +66,9 @@ Record each finding — the table below shows which step consumes it.
 | Honored command/skill dir | Step 4 surfaces target + Step 7 config + Step 8 drift path |
 | Frontmatter + tools-map shape | Step 5 α-assembler / tool translator |
 | MCP-permission key shape | Step 2 + Step 5 permission-block emission |
+| Honored identity filename (project-root vs home-level) | Step 9 `os_identity` target (`filename`) + drift path |
 
-## The 9-step checklist
+## The 10-step checklist
 
 Each step: **authoritative file**, the **per-harness branch point** (what you add
 for `<NEW>`), and a **cheap self-verify** that fails loudly if the touchpoint was
@@ -176,15 +182,47 @@ dropped. Run the verify after each edit; do NOT batch-skip them.
   immediately after a `compile` — the definitive "no touchpoint dropped"
   assertion.
 
-### Step 9 — Tests + docs
+### Step 9 — Orchestrator-identity surface (os_identity — TD-233)
 
-- **Authoritative files:** `test/harness_*.test.bash`,
+- **Authoritative files:** `harness-manifest.json` → `surfaces.os_identity[]`
+  (the repo-root manifest, NOT `surfaces-manifest.json` — the identity block is
+  gated on the runtime-mirror commonpath like agents), canonical template
+  `core/templates/identity.tmpl`, and the §18.1 shape pair
+  `_common.sh::normalize_identity_shape` ↔ `cli/src/lib/identity-shape.ts`.
+- **Add:**
+  - (a) the Phase-0-confirmed identity filename as a target:
+    `{type:"<NEW>", method:"file", filename:"<probed>.md"}` in the
+    `surfaces.os_identity[].targets` array. **If the probe shows the harness
+    already auto-reads `CLAUDE.md`** (like OpenCode — A/B-proven by TD-233's
+    Phase 0), add NO target: it rides the existing CLAUDE.md identity region.
+    Record that finding instead.
+  - (b) the harness's **Model-A self-name** (`{{HARNESS_SELF_NAME}}` token, e.g.
+    `"opencode": "OpenCode"`) to **BOTH** the `SELF_NAMES` map in
+    `_common.sh::normalize_identity_shape` AND `HARNESS_SELF_NAMES` in
+    `cli/src/lib/identity-shape.ts` — they MUST stay byte-identical (§18.1;
+    the golden-fixture parity test pins them).
+  - The compile pass **region-merges** the rendered block between the
+    `IGRIS:OS_IDENTITY` markers — user content outside the region is preserved;
+    never whole-file-overwrite an identity file.
+- **Self-verify:** `igris harness compile --surface identity` emits an
+  `OK identity/<NEW>` row; `igris harness check` reports the identity artifact
+  as MATCH; then prove it loads **LIVE in a fresh process** (L-256):
+  `<NEW> -p "who are you?"` (or the harness's headless equivalent) answers as
+  **Igris AI** — the GAP-3 probe. A harness that greets as itself means the
+  filename or the self-name mapping is wrong; recheck the Phase-0 probe.
+
+### Step 10 — Tests + docs
+
+- **Authoritative files:** `test/harness_*.test.bash` (incl.
+  `test/harness_identity.test.bash`),
   `cli/src/__tests__/harness-registry.test.ts`, `docs/multi-cli.md`.
 - **Add:**
   - `<NEW>` to the 4→N-harness bats matrix (agent projection, skill/command
     projection, drift-clean-after-compile, tool-mapping bytes, count parity,
-    refuse-to-clobber, schema validation).
-  - the vitest `assemble<New>Harness` + golden-fixture parity tests.
+    refuse-to-clobber, schema validation, identity region-merge if Step 9
+    added a target).
+  - the vitest `assemble<New>Harness` + golden-fixture parity tests (and an
+    identity-shape golden fixture if Step 9 added a self-name).
   - `<NEW>` to the `docs/multi-cli.md` Supported-CLIs + Subagent-Distribution
     tables + the per-harness method matrix in the "Add a New Harness" runbook.
 - **Self-verify:** `npm --prefix cli test` + `bats test/harness_*.test.bash` green.
@@ -199,6 +237,9 @@ igris harness compile && igris harness check   # must be drift-CLEAN
 
 # Then prove the harness actually LOADS (fresh process — L-256):
 <NEW> agent list   # or the harness's equivalent enumerate command
+
+# And that the orchestrator identity landed (Step 9 — the GAP-3 probe):
+<NEW> -p "who are you?"   # must greet as "Igris AI" (Model A)
 ```
 
 - If `igris harness check` reports **DRIFTED / MISSING** after a clean compile,
@@ -218,6 +259,6 @@ where it is meaningful (the framework repo itself) and is a silent scope-skip
 everywhere else.
 
 **Cross-link:** `docs/multi-cli.md` § "Add a New Harness" is the canonical *why*
-(the harness abstraction + the four-surface model). **FR-171** (OpenCode
+(the harness abstraction + the five-surface model). **FR-171** (OpenCode
 agents+skills) is the worked reference — the most recent harness to walk this
 exact contract end-to-end.

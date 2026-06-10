@@ -147,7 +147,9 @@ export const RSYNC_EXCLUDES: readonly string[] = [
   // sources by `igris harness compile`; never committed (regenerated on demand,
   // drift-checked against canonical). Mirror the .gitignore entries so the
   // TD-140 bidirectional contract stays green. These MUST NOT ship to the VPS.
-  "/AGENTS.md",
+  // NB: `/AGENTS.md` was removed from this list by TD-233 — the FR-153 codex
+  // skills aggregator it ignored was retired, and project-root AGENTS.md is
+  // now the COMMITTED orchestrator-identity file (mirrors .gitignore).
   ".codex/",
   ".gemini/",
 ] as const;
