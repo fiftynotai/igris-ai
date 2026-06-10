@@ -168,6 +168,14 @@ outside the igris-ai checkout).
 - The per-harness self-name map (`SELF_NAMES` in `_common.sh` /
   `HARNESS_SELF_NAMES` in `identity-shape.ts`) MUST stay byte-identical —
   golden-fixture parity tests pin the pair.
+- **Adding an identity block (`igris add identity`, FR-180 D6):** the one-step
+  add verb writes a `surfaces.os_identity[]` block (personal → the registry
+  overlay; core → the repo-root `harness-manifest.json`) then projects + verifies
+  it. FR-180 (D6) lifted the v1 "personal os_identity accepted but NOT merged"
+  gate — `merge_overlay_manifest` now unions os_identity blocks (base ++ overlay)
+  the same way it unions skills + mcp_servers, with a (type, filename) cross-block
+  collision guard. The projection mechanics (`normalize_identity_shape`) are
+  UNCHANGED, so the §18.1 golden parity is preserved.
 
 The repo-root `GEMINI.md` + `AGENTS.md` are committed-as-canonical derived
 artifacts: edit `identity.tmpl`, then recompile. Filename map + mechanism:

@@ -415,6 +415,18 @@ block must land in that file:
   **committed-as-canonical** derived artifacts: edit
   `core/templates/identity.tmpl` and recompile; never hand-edit inside the
   managed region.
+- **Adding an identity block — `igris add identity` (FR-180 D6):** the one-step
+  add verb materializes a `surfaces.os_identity[]` block (personal → the registry
+  overlay, project-scoped; core → the repo-root `harness-manifest.json`) then
+  projects + verifies it. `igris add identity <name> --target <type:file:filename>`
+  (`--core` for the source tree). FR-180 (D6) lifted the v1 "personal os_identity
+  accepted but NOT merged" restriction — `merge_overlay_manifest` now unions
+  os_identity blocks (base ++ overlay), so a personal identity projects exactly
+  like a core one; a personal (type, filename) target that shadows a core one is a
+  hard reject. The projection mechanics (`normalize_identity_shape`) are
+  UNCHANGED, so the §18.1 golden parity holds. The low-level
+  `igris registry add-identity` + `igris harness compile --surface identity`
+  two-step survives as the repair primitive.
 
 Onboarding a new harness wires this surface via the `/onboard-harness` skill's
 identity step (probe the auto-read filename, add the `os_identity` target, add

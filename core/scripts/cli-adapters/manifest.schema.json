@@ -183,7 +183,7 @@
         "layer": {
           "type": "string",
           "default": "core",
-          "description": "FR-139 provenance seam: 'core' (declared in a base manifest) or 'personal' (overlay; NOT merged in v1)."
+          "description": "FR-139 provenance seam: 'core' (declared in a base manifest) or 'personal' (overlay). FR-180 (D6) lifted the v1 'overlay accepted but NOT merged' restriction — personal os_identity blocks now merge base++overlay (in merge_overlay_manifest) and project like core; a personal (type, filename) target that collides with a core one is a hard error."
         },
         "scope": { "$ref": "#/$defs/scope" },
         "targets": {

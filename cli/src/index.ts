@@ -341,11 +341,13 @@ async function main(argv: string[]): Promise<void> {
   program
     .command("registry <action>")
     .description(
-      "Register Layer-2 personal customizations into the overlay (FR-141/FR-142/FR-143/FR-148/FR-162). " +
-        "Actions: add (copy-vendors the canonical files), add-skill (references a skills source dir into surfaces.skills), add-mcp (registers a global MCP server into surfaces.mcp_servers), list, remove, update (re-vendors from origin). " +
+      "Register Layer-2 personal customizations into the overlay (FR-141/FR-142/FR-143/FR-148/FR-162/FR-180). " +
+        "Actions: add (copy-vendors the canonical files), add-skill (references a skills source dir into surfaces.skills), add-mcp (registers a global MCP server into surfaces.mcp_servers), add-identity (registers a project-scoped os_identity block into surfaces.os_identity), list, remove, update (re-vendors from origin). " +
         "--from accepts a local path OR github:owner/repo@<ref>[#subdir]. " +
         "For add-skill, the positional <source-dir> (or --from) is the live skills root and --target is type:method:path. " +
-        "For add-mcp, --command + --target type:merge[:enabled] register a global MCP; --env values must be ${VAR} indirection refs (inline secrets rejected).",
+        "For add-mcp, --command + --target type:merge[:enabled] register a global MCP; --env values must be ${VAR} indirection refs (inline secrets rejected). " +
+        "For add-identity, --target type:file:filename registers a region-merge identity block (--source / --version-source override the canonical template / version source). " +
+        "These add-* actions are WRITE-ONLY (no project/verify) — the one-step front door is 'igris add <surface>'.",
     )
     .argument("[name]", "agent name (add/remove/update) OR skills source-dir (add-skill)")
     .option(
@@ -389,6 +391,14 @@ async function main(argv: string[]): Promise<void> {
       "MCP startup timeout in seconds (add-mcp; Codex-only passthrough)",
     )
     .option(
+      "--source <path>",
+      "identity canonical-template path (add-identity; default <brain>/core/templates/identity.tmpl)",
+    )
+    .option(
+      "--version-source <path>",
+      "identity {{IGRIS_VERSION}} source path (add-identity; default <brain>/config.json)",
+    )
+    .option(
       "--harness <type>",
       "INTERNAL (project-mcp): which harness to project ONE MCP into: claude | codex | gemini | opencode",
     )
@@ -424,6 +434,8 @@ async function main(argv: string[]): Promise<void> {
           arg?: string[];
           env?: string[];
           startupTimeoutSec?: string;
+          source?: string;
+          versionSource?: string;
           harness?: string;
           overlay?: string;
           configPath?: string;
@@ -466,6 +478,16 @@ async function main(argv: string[]): Promise<void> {
               "(register + project + verify) flow use 'igris add mcp <name> --command <bin> --target type:merge'.",
           );
         }
+        // FR-180 (Phase 4): same write-only deprecation for the identity write
+        // primitive `registry add-identity` — `igris add identity` is the one-step
+        // front door.
+        if (action === "add-identity") {
+          info(
+            "registry add-identity is write-only (it registers the os_identity block but " +
+              "does NOT project or verify) — it is the low-level primitive. For the one-step " +
+              "(register + project + verify) flow use 'igris add identity <name> --target type:file:filename'.",
+          );
+        }
         // FR-143: `add-skill` takes its skills source-dir as the positional
         // arg (`igris registry add-skill <source-dir> --target ...`); coalesce
         // it into `from` when --from was not given explicitly. The positional
@@ -479,6 +501,9 @@ async function main(argv: string[]): Promise<void> {
         // `--name <slug>` (preferred, parallels add-skill) OR the positional
         // `[name]` arg, so both forms work.
         const isAddMcp = action === "add-mcp";
+        // FR-180 (Phase 4): add-identity uses the positional/`--name` as a LABEL
+        // (the os_identity block has no name field). Accept either form, like add-mcp.
+        const isAddIdentity = action === "add-identity";
         // FR-164 project-mcp also keys on `--name` (the bash driver passes it
         // explicitly). Accept `--name <slug>` OR the positional, like add-mcp.
         const isProjectMcp = action === "project-mcp";
@@ -537,7 +562,10 @@ async function main(argv: string[]): Promise<void> {
         }
         const code = await runRegistry({
           action: action as RegistryAction,
-          name: isAddSkill || isAddMcp || isProjectMcp ? (opts.name ?? name) : name,
+          name:
+            isAddSkill || isAddMcp || isAddIdentity || isProjectMcp
+              ? (opts.name ?? name)
+              : name,
           from,
           versioned: opts.versioned === true,
           glob: opts.glob,
@@ -551,6 +579,9 @@ async function main(argv: string[]): Promise<void> {
           args: opts.arg,
           env: opts.env,
           startupTimeoutSec,
+          // FR-180 (Phase 4): add-identity template / version-source overrides.
+          identitySource: opts.source,
+          identityVersionSource: opts.versionSource,
           harness: harnessArg,
           // FR-164 project-mcp: --overlay maps to the overlayPath seam
           // (the bash compile/drift driver passes the resolved overlay).
@@ -570,15 +601,17 @@ async function main(argv: string[]): Promise<void> {
         "to all four harnesses (claude/gemini/codex/opencode), AND verifies drift-clean. " +
         "Never silently no-ops (TD-235). Core-vs-personal is auto-detected (igris-ai " +
         "checkout = core) and overridable with --core / --no-core; the resolved mode is " +
-        "always printed. 'skill', 'agent' and 'mcp' ship end-to-end; hook/identity are " +
+        "always printed. 'skill', 'agent', 'mcp' and 'identity' ship end-to-end; hook is " +
         "in-progress. For mcp use --command + --target type:merge[:enabled] (--env values " +
-        "must be ${VAR} indirection refs — inline secrets are rejected). The low-level " +
-        "'igris registry add-* + igris harness compile' two-step survives as the repair primitive.",
+        "must be ${VAR} indirection refs — inline secrets are rejected). For identity use " +
+        "--target type:file:filename (a region-merge into the harness's auto-read identity " +
+        "file). The low-level 'igris registry add-* + igris harness compile' two-step " +
+        "survives as the repair primitive.",
     )
     .option("--from <path-or-github>", "source dir / github ref (skill/agent/mcp)")
     .option(
       "--target <type:...>",
-      "output target (skill: type:method:path; agent: type:path; mcp: type:merge[:enabled]; repeatable)",
+      "output target (skill: type:method:path; agent: type:path; mcp: type:merge[:enabled]; identity: type:file:filename; repeatable)",
       collect,
       [],
     )
@@ -610,6 +643,16 @@ async function main(argv: string[]): Promise<void> {
       "--startup-timeout-sec <n>",
       "MCP startup timeout in seconds (add mcp; Codex-only passthrough)",
     )
+    // FR-180 Phase 4: identity options (the `identity` arm). Targets reuse the
+    // shared --target flag with the type:file:filename grammar.
+    .option(
+      "--source <path>",
+      "identity canonical-template path (add identity; default <brain>/core/templates/identity.tmpl)",
+    )
+    .option(
+      "--version-source <path>",
+      "identity {{IGRIS_VERSION}} source path (add identity; default <brain>/config.json)",
+    )
     .action(
       async (
         surface: string,
@@ -625,6 +668,8 @@ async function main(argv: string[]): Promise<void> {
           arg?: string[];
           env?: string[];
           startupTimeoutSec?: string;
+          source?: string;
+          versionSource?: string;
         },
       ): Promise<void> => {
         // FR-180 Phase 3: --startup-timeout-sec is a STRING from Commander.
@@ -659,6 +704,9 @@ async function main(argv: string[]): Promise<void> {
           args: opts.arg,
           env: opts.env,
           startupTimeoutSec,
+          // FR-180 Phase 4: identity options.
+          identitySource: opts.source,
+          identityVersionSource: opts.versionSource,
         });
         process.exitCode = code;
       },

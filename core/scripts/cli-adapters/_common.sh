@@ -940,10 +940,10 @@ overlay_surfaces = overlay.get("surfaces", {}) or {}
 base_blocks = _normalize_skills(base_surfaces.get("skills"))
 overlay_blocks = _normalize_skills(overlay_surfaces.get("skills"))
 
-# `merged_surfaces` accumulates BOTH the skills and the FR-164 mcp_servers
-# merges, so the two are independent (an overlay carrying only mcp_servers, or
-# only skills, both reach the merged manifest). Start from the base surfaces and
-# overlay each block family in turn.
+# `merged_surfaces` accumulates the skills, the FR-164 mcp_servers, and the
+# FR-180 (D6) os_identity merges, so the three are independent (an overlay
+# carrying only one of them still reaches the merged manifest). Start from the
+# base surfaces and overlay each block family in turn.
 merged_surfaces = None
 
 if base_blocks or overlay_blocks:
@@ -1010,6 +1010,69 @@ if base_mcp or overlay_mcp:
     if merged_surfaces is None:
         merged_surfaces = dict(base_surfaces)
     merged_surfaces["mcp_servers"] = list(base_mcp) + list(overlay_mcp)
+
+# FR-180 (D6): merge surfaces.os_identity as a MULTI-BLOCK ARRAY (base ++
+# overlay), mirroring the skills + mcp_servers concat. This LIFTS the TD-233
+# v1 "personal os_identity accepted but NOT merged" restriction (schema:186):
+# without this, a personal os_identity block written by `igris add identity`
+# into the overlay would never reach the compile/drift flatten — the SAME
+# finding-#2 gap MCP had. The projection MECHANICS are identical to core
+# (normalize_identity_shape is untouched → §18.1 golden parity is preserved by
+# construction); only this manifest-merge step was the gate. An os_identity
+# block has NO `name` (the schema keys it only on `targets`), so identity is
+# the (type, filename) PAIR — a personal (overlay) target whose (type, filename)
+# collides with ANY other block's (the analogue of the skill target-path
+# collision guard) is a HARD error: a personal identity must not silently
+# overwrite the same Igris-managed region a core block already owns, nor a
+# sibling personal one. Always normalizes missing/single/list shapes; an absent
+# os_identity surface contributes [].
+def _normalize_identity(value):
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return list(value)
+    sys.stderr.write(
+        "Error: surfaces.os_identity must be an array of blocks (or a single "
+        "object — both normalize)\n"
+    )
+    sys.exit(1)
+
+
+base_identity = _normalize_identity(base_surfaces.get("os_identity"))
+overlay_identity = _normalize_identity(overlay_surfaces.get("os_identity"))
+
+if base_identity or overlay_identity:
+    merged_identity_blocks = list(base_identity) + list(overlay_identity)
+    # Cross-block (type, filename) collision guard. Mirrors the skill
+    # target-path guard above: every (block, target) row's (type, filename)
+    # must be unique across ALL blocks so two blocks never own the same
+    # Igris-managed region in the same harness file. base index 0..len-1 are
+    # core; overlay blocks follow.
+    seen_identity = {}
+    for b_idx, block in enumerate(merged_identity_blocks):
+        for t in (block or {}).get("targets", []) or []:
+            ttype = (t or {}).get("type")
+            fname = (t or {}).get("filename")
+            if ttype is None or fname is None:
+                continue
+            pair = (ttype, fname)
+            if pair in seen_identity:
+                prev = seen_identity[pair]
+                sys.stderr.write(
+                    f"Error: os_identity target ({ttype}, {fname}) collides "
+                    f"between surfaces.os_identity[{prev}] and "
+                    f"surfaces.os_identity[{b_idx}]; every (type, filename) "
+                    "identity target must be unique across all blocks (a "
+                    "personal identity must not shadow a core one, nor a "
+                    "sibling personal one).\n"
+                )
+                sys.exit(1)
+            seen_identity[pair] = b_idx
+    if merged_surfaces is None:
+        merged_surfaces = dict(base_surfaces)
+    merged_surfaces["os_identity"] = merged_identity_blocks
 
 if merged_surfaces is not None:
     merged["surfaces"] = merged_surfaces

@@ -332,6 +332,106 @@ EOF
   [[ "$output" == *"[identity/gemini] MATCH"* ]]
 }
 
+# --- 6b. FR-180 (D6): personal overlay os_identity blocks MERGE + project -----
+
+@test "FR-180 D6: a personal overlay os_identity block projects alongside the core block" {
+  # The base manifest carries the core identity (gemini→GEMINI.md). A personal
+  # OVERLAY adds a SECOND identity block (codex→AGENTS.md). Before D6 the overlay
+  # block was 'accepted but NOT merged'; after D6 merge_overlay_manifest unions
+  # it, so BOTH project. (The base manifest already targets codex/AGENTS.md, so
+  # the overlay uses a DISTINCT (type, filename) to avoid the collision guard.)
+  cat > "$PROJ/harness-manifest.json" <<'EOF'
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "os_identity": [
+      {
+        "source": "tmpl/identity.tmpl",
+        "version_source": "version.json",
+        "targets": [
+          { "type": "gemini", "method": "file", "filename": "GEMINI.md" }
+        ]
+      }
+    ]
+  }
+}
+EOF
+  OVERLAY="$ISOLATED_BRAIN/registry/harness-manifest.personal.json"
+  cat > "$OVERLAY" <<EOF
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "os_identity": [
+      {
+        "layer": "personal",
+        "source": "tmpl/identity.tmpl",
+        "version_source": "version.json",
+        "scope": { "type": "project", "paths": ["."] },
+        "targets": [
+          { "type": "codex", "method": "file", "filename": "AGENTS.md" }
+        ]
+      }
+    ]
+  }
+}
+EOF
+  run run_compile --surface identity --overlay "$OVERLAY"
+  [ "$status" -eq 0 ]
+  # BOTH the core (gemini) and the personal (codex) regions are projected.
+  [ -f "$PROJ/GEMINI.md" ]
+  [ -f "$PROJ/AGENTS.md" ]
+  grep -qF 'You ARE Igris AI. Not Gemini CLI using Igris AI.' "$PROJ/GEMINI.md"
+  grep -qF 'You ARE Igris AI. Not Codex using Igris AI.' "$PROJ/AGENTS.md"
+  # Drift-clean for both after compile.
+  run run_drift --overlay "$OVERLAY"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[identity/gemini] MATCH"* ]]
+  [[ "$output" == *"[identity/codex] MATCH"* ]]
+}
+
+@test "FR-180 D6: a personal identity target colliding with a core one is a HARD merge error" {
+  cat > "$PROJ/harness-manifest.json" <<'EOF'
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "os_identity": [
+      {
+        "source": "tmpl/identity.tmpl",
+        "version_source": "version.json",
+        "targets": [
+          { "type": "gemini", "method": "file", "filename": "GEMINI.md" }
+        ]
+      }
+    ]
+  }
+}
+EOF
+  OVERLAY="$ISOLATED_BRAIN/registry/harness-manifest.personal.json"
+  # The overlay reuses the SAME (gemini, GEMINI.md) pair → must hard-fail.
+  cat > "$OVERLAY" <<EOF
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "os_identity": [
+      {
+        "layer": "personal",
+        "targets": [
+          { "type": "gemini", "method": "file", "filename": "GEMINI.md" }
+        ]
+      }
+    ]
+  }
+}
+EOF
+  run run_compile --surface identity --overlay "$OVERLAY"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"collides between surfaces.os_identity"* ]]
+}
+
 # --- 7. version resolution -----------------------------------------------------
 
 @test "missing version_source file → observable compile FAIL + drift DRIFTED (never silent)" {

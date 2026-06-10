@@ -366,3 +366,93 @@ EOF
   [[ "$output" == *"Added core MCP 'zzprobemcp'"* ]]
   [[ "$output" == *"drift-clean"* ]]
 }
+
+# --- FR-180 Phase 4: igris add identity (D6 — the v1 not-merged gate lifted) --
+
+@test "add identity (personal): projects the GEMINI.md region against the project + verifies, exit 0" {
+  # The personal identity arm writes a project-scoped os_identity overlay block;
+  # the D6 merge-gate lift makes it actually project. The version source defaults
+  # to <brain>/config.json — seed it so {{IGRIS_VERSION}} resolves.
+  printf '{ "version": "7.7.7" }\n' > "$ISOLATED_BRAIN/config.json"
+  mkdir -p "$ISOLATED_BRAIN/core/templates"
+  cat > "$ISOLATED_BRAIN/core/templates/identity.tmpl" <<'EOF'
+## Identity
+Igris AI v{{IGRIS_VERSION}} — AI-powered engineering OS, developed by fifty.dev.
+You ARE Igris AI. Not {{HARNESS_SELF_NAME}} using Igris AI.
+EOF
+
+  run "${IGRIS_BIN[@]}" add identity myid \
+    --no-core \
+    --target "gemini:file:GEMINI.md" \
+    --project-root "$PROJ"
+  echo "status=$status output=$output" >&2
+  [ "$status" -eq 0 ]
+
+  # The mode line is printed (D1, never silent).
+  [[ "$output" == *"PERSONAL mode"* ]]
+
+  # The overlay block was written.
+  [ -f "$ISOLATED_BRAIN/registry/harness-manifest.personal.json" ]
+  grep -q "os_identity" "$ISOLATED_BRAIN/registry/harness-manifest.personal.json"
+
+  # The identity region ACTUALLY LANDED in the project's GEMINI.md (real effect,
+  # not just the overlay write) — proving the D6 personal-merge gate lift works.
+  [ -f "$PROJ/GEMINI.md" ]
+  grep -q '^<!-- IGRIS:OS_IDENTITY:BEGIN' "$PROJ/GEMINI.md"
+  grep -qF 'You ARE Igris AI. Not Gemini CLI using Igris AI.' "$PROJ/GEMINI.md"
+  grep -qF 'Igris AI v7.7.7' "$PROJ/GEMINI.md"
+
+  [[ "$output" == *"Added personal identity 'myid'"* ]]
+  [[ "$output" == *"drift-clean"* ]]
+}
+
+@test "add identity (personal): a target colliding with a core os_identity target is REJECTED" {
+  # Give the project a base manifest with a CORE identity target on gemini/GEMINI.md.
+  cat > "$PROJ/harness-manifest.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "os_identity": [
+    { "source": "core/templates/identity.tmpl",
+      "targets": [ { "type": "gemini", "method": "file", "filename": "GEMINI.md" } ] } ] } }
+EOF
+  run "${IGRIS_BIN[@]}" add identity myid \
+    --no-core \
+    --target "gemini:file:GEMINI.md" \
+    --project-root "$PROJ"
+  echo "status=$status output=$output" >&2
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"collides with a base (core) os_identity target"* ]]
+}
+
+@test "add --core identity: PROJECTS the region against the brain root + verifies, exit 0" {
+  build_core_checkout
+  # Core projection runs against the brain root; seed config.json (the default
+  # version source) + ensure the canonical template mirror is present.
+  printf '{ "version": "8.8.8" }\n' > "$CORE_BRAIN/config.json"
+  mkdir -p "$CORE_BRAIN/core/templates" "$CORE_REPO/core/templates"
+  cat > "$CORE_REPO/core/templates/identity.tmpl" <<'EOF'
+## Identity
+Igris AI v{{IGRIS_VERSION}} — AI-powered engineering OS, developed by fifty.dev.
+You ARE Igris AI. Not {{HARNESS_SELF_NAME}} using Igris AI.
+EOF
+  cp "$CORE_REPO/core/templates/identity.tmpl" "$CORE_BRAIN/core/templates/identity.tmpl"
+
+  # Use a DISTINCT filename so the core add doesn't collide with the existing
+  # core block's GEMINI.md/AGENTS.md regions; the region lands under the brain.
+  run "${IGRIS_BIN[@]}" add --core identity zzprobeid \
+    --target "gemini:file:ZZID.md" --project-root "$CORE_REPO"
+  echo "status=$status output=$output" >&2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"CORE mode"* ]]
+
+  # MATERIALIZE: the os_identity block landed in the checkout's repo manifest.
+  grep -q "ZZID.md" "$CORE_REPO/harness-manifest.json"
+
+  # PROJECTION ACTUALLY LANDS (against the brain root): the identity region was
+  # written into <brain>/ZZID.md (project-root-relative under the brain root).
+  [ -f "$CORE_BRAIN/ZZID.md" ]
+  grep -q '^<!-- IGRIS:OS_IDENTITY:BEGIN' "$CORE_BRAIN/ZZID.md"
+  grep -qF 'Igris AI v8.8.8' "$CORE_BRAIN/ZZID.md"
+
+  [[ "$output" == *"Added core identity 'zzprobeid'"* ]]
+  [[ "$output" == *"drift-clean"* ]]
+}
