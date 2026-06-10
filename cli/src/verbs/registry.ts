@@ -3641,6 +3641,56 @@ export function materializeSkill(
   };
 }
 
+/**
+ * FR-180 (Phase 2): structured result of the personal-AGENT materialize half.
+ * Mirrors {@link SkillMaterializeResult} so `add.ts`'s agent arm can chain
+ * project+verify off a structured outcome. `runAdd` (agent) is async (it may
+ * fetch a `github:` source), so {@link materializeAgent} is async too — the only
+ * shape difference from the skill wrapper.
+ */
+export interface AgentMaterializeResult {
+  /** True iff the write path returned 0 (vendor tree + overlay + origin landed). */
+  ok: boolean;
+  /** The exit code `runAdd` (agent) produced (0 on success, 1/2 on reject). */
+  code: number;
+  /** The registry vendored-tree dir (`~/.igris/registry/agents/<name>/`). */
+  vendoredDir: string;
+  /** The overlay manifest path the block was written to. */
+  overlayWritten: string;
+}
+
+/**
+ * FR-180 (Phase 2): thin structured-return wrapper over the EXISTING agent
+ * writer `runAdd` (the exit-code entry point at the top of this file). Calls it
+ * verbatim — every FR-142/148/155/156/158 guard + the atomic vendor-tree /
+ * α-assembly / overlay / origin path runs unchanged (R7: no logic moved out of
+ * the heavily-tested write path) — and re-shapes the result into an
+ * {@link AgentMaterializeResult} so `verbs/add.ts` can decide whether to proceed
+ * to `projectAndVerify("agents", …)`. `vendoredDir` is derived from the same
+ * `vendorDir` seam `runAdd` vendors into (`registryAgentDirPath` default), so it
+ * is valid regardless of write outcome (the caller only consumes it on success).
+ *
+ * See R7 (registry write-path regression guard) + D9 (materialize/project
+ * boundary) in FR-180-plan.
+ */
+export async function materializeAgent(
+  opts: RegistryOptions,
+  overlayPath: string,
+): Promise<AgentMaterializeResult> {
+  const code = await runAdd(opts, overlayPath);
+  const vendorDirFor = opts.vendorDir ?? registryAgentDirPath;
+  const vendoredDir =
+    opts.name !== undefined && opts.name.length > 0
+      ? vendorDirFor(opts.name)
+      : "";
+  return {
+    ok: code === 0,
+    code,
+    vendoredDir,
+    overlayWritten: overlayPath,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // FR-162 (FR-160 epic): add-mcp helpers + verb
 // ---------------------------------------------------------------------------

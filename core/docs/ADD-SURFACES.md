@@ -5,10 +5,10 @@ skill, agent, MCP server, hook, or orchestrator identity. It is routed into
 context via `core/igris_tree.json` (`context_files.surface_management`) and
 paired with the `surface_management` section in `core/prompts/igris_os.md`.
 
-> **Phase status.** FR-180 ships the `skill` arm end-to-end (personal + core).
-> The `agent`, `mcp`, `hook`, and `identity` arms are wired in the dispatcher
-> but land in later phases; until then, use the low-level path (below) for those
-> surfaces.
+> **Phase status.** FR-180 ships the `skill` and `agent` arms end-to-end
+> (personal + core). The `mcp`, `hook`, and `identity` arms are wired in the
+> dispatcher but land in later phases; until then, use the low-level path
+> (below) for those surfaces.
 
 ---
 
@@ -58,7 +58,7 @@ when the ownership gate skipped a surface; `igris add` closes that hole.
 | Surface | Command | Notes |
 |---|---|---|
 | **Skill** | `igris add skill <name> --from <skills-dir> --target <type:method:path>` | `<skills-dir>/<name>/SKILL.md` is vendored; target is e.g. `agents:symlink:~/.agents/skills`. Core skills auto-discover — `--core` writes `core/skills/<name>/SKILL.md` only (no manifest edit). |
-| **Agent** | `igris add agent <name> --from <dir> --target <type:path>` | _(later phase)_ all-four-harness α-assembly at vendor time. |
+| **Agent** | `igris add agent <name> --from <dir> --target <type:path>` | all-four-harness α-assembly at vendor time. `--core` writes `core/agents/<name>.md` + the repo-root `harness-manifest.json` entry + the §13 agent enumeration surfaces (igris_tree.json, CLAUDE.md template + root). |
 | **MCP** | `igris add mcp <name> --command <bin> [--arg …] [--env KEY=${VAR}] --target <type:merge>` | _(later phase)_ config-merge into each harness's native MCP config. `--env` values must be `${VAR}` indirection refs. |
 | **Hook** | `igris add hook <name> …` | _(later phase)_ net-new surface design. |
 | **Identity** | `igris add identity <name> …` | _(later phase)_ region-merge into the harness auto-read identity file. |
@@ -74,6 +74,17 @@ when the ownership gate skipped a surface; `igris add` closes that hole.
   TD-219).
 - **Core mode mirror** — every `core/` write is mirrored to `~/.igris/core/…`
   and byte-verified with `verify_mirror.sh` (TD-096). A non-MATCH fails the add.
+  Note: the repo-root `harness-manifest.json` and the root `CLAUDE.md` are NOT
+  runtime-mirrored — the manifest is read from the checkout when `harness
+  compile` runs, and the root `CLAUDE.md` is the working copy. Only `core/…`
+  files (the agent prompt, `igris_tree.json`, `CLAUDE.md.tmpl`) get the mirror.
+- **Core agent enumeration (§13)** — `igris add --core agent` updates ALL agent
+  enumeration surfaces in one pass: `core/agents/<name>.md` (the canonical
+  prompt), the repo-root `harness-manifest.json` entry (codex/gemini/opencode
+  targets; claude rides the whole-file CLAUDE.md render), `core/igris_tree.json`
+  `agents` map, and the "Available Agents" line in both `core/templates/
+  CLAUDE.md.tmpl` and the root `CLAUDE.md`. The scaffold preloads no context;
+  fill in the prompt body + the `igris_tree.json` `load` list afterward.
 - **Run core adds from the igris-ai checkout** — or pass `--core`. Otherwise the
   ownership gate skips the core surface and `igris add` reports the loud
   `FAIL  core <surface> — not owned by --project-root …` message.

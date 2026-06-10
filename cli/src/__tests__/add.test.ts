@@ -3,11 +3,12 @@
  *
  * Covers: 5-arm routing + unknown-surface usage error, the D1 core-vs-personal
  * resolver (flags + auto-detect + the printed mode), the notImplementedYet
- * stubs for the 4 non-skill arms, and the `skill` arm end-to-end (personal +
- * core) via the test seams (materialize/addCore/detect/capture injected, so no
- * real disk/shell). The TD-235 no-silent-no-op regression is asserted at the
- * arm level: a core-skill projection that the ownership gate skips → non-zero
- * + message; an incidental personal compile → visible SKIPPED line + exit-0.
+ * stubs for the 3 not-yet-shipped arms, and the `skill` + `agent` arms
+ * end-to-end (personal + core) via the test seams (materialize/addCore/detect/
+ * capture injected, so no real disk/shell). The TD-235 no-silent-no-op
+ * regression is asserted at the arm level (skill + agent): a core projection
+ * that the ownership gate skips → non-zero + message; an incidental personal
+ * compile → visible SKIPPED line + exit-0.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -24,7 +25,10 @@ import { join } from "node:path";
 import { runAdd, resolveAddMode, detectCoreRepo } from "../verbs/add.js";
 import { runRegistry } from "../verbs/registry.js";
 import type { AdapterCaptureFn } from "../verbs/harness.js";
-import type { SkillMaterializeResult } from "../verbs/registry.js";
+import type {
+  SkillMaterializeResult,
+  AgentMaterializeResult,
+} from "../verbs/registry.js";
 import type { AddCoreResult } from "../verbs/add-core.js";
 
 const BRAIN = "/tmp/igris-test-brain-add";
@@ -94,6 +98,22 @@ const okAddCore = (): AddCoreResult => ({
   verifyOutput: "SUMMARY: 1 pairs — 1 MATCH, …",
 });
 
+const okMaterializeAgent = (): AgentMaterializeResult => ({
+  ok: true,
+  code: 0,
+  vendoredDir: "/reg/agents/bot",
+  overlayWritten: "/overlay.json",
+});
+
+const okAddCoreAgent = (): AddCoreResult => ({
+  ok: true,
+  code: 0,
+  reason: "",
+  sourcePath: "/repo/core/agents/bot.md",
+  mirrorPath: "/brain/core/agents/bot.md",
+  verifyOutput: "SUMMARY: 3 pairs — 3 MATCH, 0 MISMATCH",
+});
+
 describe("runAdd — dispatcher routing", () => {
   it("unknown surface → exit 2 + actionable message", async () => {
     const code = await runAdd({ surface: "bogus", name: "x" });
@@ -101,8 +121,8 @@ describe("runAdd — dispatcher routing", () => {
     expect(cap.err.join("")).toContain("unknown surface 'bogus'");
   });
 
-  it("agent/mcp/hook/identity arms are not-implemented stubs (exit 2)", async () => {
-    for (const surface of ["agent", "mcp", "hook", "identity"]) {
+  it("mcp/hook/identity arms are not-implemented stubs (exit 2)", async () => {
+    for (const surface of ["mcp", "hook", "identity"]) {
       const code = await runAdd({
         surface,
         name: "x",
@@ -271,6 +291,126 @@ describe("runAdd skill — core happy path", () => {
     expect(code).toBe(1);
     expect(projected).toBe(false);
     expect(cap.err.join("")).toContain("already exists");
+  });
+});
+
+describe("runAdd agent — personal happy path", () => {
+  it("materializes via materializeAgent then projects + verifies → exit 0", async () => {
+    let materializeCalled = false;
+    const code = await runAdd({
+      surface: "agent",
+      name: "bot",
+      noCore: true,
+      from: "/src",
+      targets: ["codex:.codex/agents/bot.toml"],
+      brainRoot: BRAIN,
+      materializeAgentFn: async (opts, overlay) => {
+        materializeCalled = true;
+        // The agent arm routes through the registry "add" action (R7 reuse).
+        expect(opts.action).toBe("add");
+        expect(opts.name).toBe("bot");
+        expect(overlay).toBeDefined();
+        return okMaterializeAgent();
+      },
+      captureAdapter: cleanAdapter(),
+    });
+    expect(code).toBe(0);
+    expect(materializeCalled).toBe(true);
+    expect(cap.out.join("")).toContain("Added personal agent 'bot'");
+  });
+
+  it("returns the materialize reject code without projecting", async () => {
+    let projected = false;
+    const code = await runAdd({
+      surface: "agent",
+      name: "bot",
+      noCore: true,
+      brainRoot: BRAIN,
+      materializeAgentFn: async () => ({
+        ok: false,
+        code: 2,
+        vendoredDir: "",
+        overlayWritten: "/o.json",
+      }),
+      captureAdapter: () => {
+        projected = true;
+        return { code: 0, output: "" };
+      },
+    });
+    expect(code).toBe(2);
+    expect(projected).toBe(false);
+  });
+});
+
+describe("runAdd agent — core happy path", () => {
+  it("writes core agent (mirrored) then projects + verifies → exit 0", async () => {
+    let addCoreCalled = false;
+    const code = await runAdd({
+      surface: "agent",
+      name: "bot",
+      core: true,
+      projectRoot: "/repo",
+      brainRoot: BRAIN,
+      addCoreAgentFn: (opts) => {
+        addCoreCalled = true;
+        expect(opts.name).toBe("bot");
+        expect(opts.projectRoot).toBe("/repo");
+        return okAddCoreAgent();
+      },
+      captureAdapter: cleanAdapter(),
+    });
+    expect(code).toBe(0);
+    expect(addCoreCalled).toBe(true);
+    expect(cap.out.join("")).toContain("Added core agent 'bot'");
+  });
+
+  it("returns the add-core reject code without projecting", async () => {
+    let projected = false;
+    const code = await runAdd({
+      surface: "agent",
+      name: "bot",
+      core: true,
+      projectRoot: "/repo",
+      brainRoot: BRAIN,
+      addCoreAgentFn: () => ({
+        ok: false,
+        code: 1,
+        reason: "core agent prompt already exists",
+        sourcePath: "/repo/core/agents/bot.md",
+        mirrorPath: "/brain/core/agents/bot.md",
+        verifyOutput: "",
+      }),
+      captureAdapter: () => {
+        projected = true;
+        return { code: 0, output: "" };
+      },
+    });
+    expect(code).toBe(1);
+    expect(projected).toBe(false);
+    expect(cap.err.join("")).toContain("already exists");
+  });
+
+  it("TD-235: core agent projection skipped by the gate → non-zero + message", async () => {
+    const code = await runAdd({
+      surface: "agent",
+      name: "bot",
+      core: true,
+      projectRoot: "/unowned",
+      brainRoot: BRAIN,
+      addCoreAgentFn: okAddCoreAgent,
+      captureAdapter: (scriptPath) => {
+        if (scriptPath.includes("compile_harnesses.sh")) {
+          return {
+            code: 1,
+            output:
+              "FAIL  core agents — not owned by --project-root /unowned; run from the igris-ai repo or pass --core\n",
+          };
+        }
+        return { code: 0, output: "" };
+      },
+    });
+    expect(code).not.toBe(0);
+    expect(cap.err.join("")).toContain("not owned by --project-root /unowned");
   });
 });
 

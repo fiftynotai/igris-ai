@@ -72,7 +72,7 @@ OpenCode), AND **verifies** the projection is drift-clean — in one step. If
 nothing actually projected, it fails LOUDLY with an actionable message; it can
 never report a phantom success (TD-235).
 
-**Per-surface (Phase 1 ships `skill` end-to-end; the rest are in progress):**
+**Per-surface (`skill` + `agent` ship end-to-end; the rest are in progress):**
 
 | Surface | Command |
 |---|---|

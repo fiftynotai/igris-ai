@@ -18,8 +18,9 @@
  * Do NOT confuse with `verbs/install.ts:runInstall` (project bootstrap) or
  * `verbs/registry.ts:runRegistry` (the low-level write verb this wraps).
  *
- * Phase 0 + Phase 1 of FR-180 ship the dispatcher + the `skill` arm end-to-end;
- * the other 4 arms are wired with `notImplementedYet` stubs.
+ * Phase 0 + Phase 1 of FR-180 ship the dispatcher + the `skill` arm; Phase 2
+ * adds the `agent` arm end-to-end (personal + core). The remaining 3 arms
+ * (mcp/hook/identity) are wired with `notImplementedYet` stubs.
  */
 
 import { existsSync } from "node:fs";
@@ -28,11 +29,12 @@ import { registryOverlayPath } from "../lib/paths.js";
 import { info, error as logError } from "../lib/log.js";
 import {
   materializeSkill,
+  materializeAgent,
   realpathStrict,
   type RegistryOptions,
 } from "./registry.js";
 import { projectAndVerify } from "../lib/add-orchestrate.js";
-import { addCoreSkill } from "./add-core.js";
+import { addCoreSkill, addCoreAgent } from "./add-core.js";
 
 /** The five surfaces `igris add` dispatches over. */
 export type AddSurface = "skill" | "agent" | "mcp" | "hook" | "identity";
@@ -90,6 +92,13 @@ export interface AddOptions {
   addCoreSkillFn?: typeof addCoreSkill;
   /** Test seam: personal materialize override (defaults to materializeSkill). */
   materializeSkillFn?: typeof materializeSkill;
+  /**
+   * Test seam: core AGENT materialize override (defaults to addCoreAgent). Lets
+   * the agent arm be tested without writing real `core/` files / manifest.
+   */
+  addCoreAgentFn?: typeof addCoreAgent;
+  /** Test seam: personal AGENT materialize override (defaults to materializeAgent). */
+  materializeAgentFn?: typeof materializeAgent;
 }
 
 /**
@@ -152,8 +161,8 @@ export function resolveAddMode(
  */
 function notImplementedYet(surface: AddSurface, mode: AddMode): number {
   logError(
-    `add ${surface}: not implemented yet (FR-180 Phase 1 ships 'skill' end-to-end; ` +
-      `agent/mcp/hook/identity land in later phases). Resolved mode would be: ${mode}. ` +
+    `add ${surface}: not implemented yet (FR-180 ships 'skill' + 'agent' end-to-end; ` +
+      `mcp/hook/identity land in later phases). Resolved mode would be: ${mode}. ` +
       `For now use the low-level path: 'igris registry add-* …' then 'igris harness compile'.`,
   );
   return 2;
@@ -249,6 +258,99 @@ async function runAddSkillArm(opts: AddOptions, mode: AddMode): Promise<number> 
 }
 
 /**
+ * The `agent` arm — Phase 2. Mirrors the skill arm's shape (the proven pattern):
+ * resolve mode → materialize (personal via the structured-return `materializeAgent`
+ * wrapper over the existing agent writer; core via `addCoreAgent`) →
+ * `projectAndVerify("agents", …)`. The verify is NAME-SCOPED via `--filter`
+ * (S1), which is already wired for the AGENTS surface (fnmatch on agent name) in
+ * both compile + check — so agent verify scoping works natively (unlike skills,
+ * which the Phase-1 slice had to wire).
+ */
+async function runAddAgentArm(opts: AddOptions, mode: AddMode): Promise<number> {
+  const projectRoot = opts.projectRoot ?? process.cwd();
+
+  if (mode === "core") {
+    const addCore = opts.addCoreAgentFn ?? addCoreAgent;
+    const coreResult = addCore({
+      name: opts.name,
+      projectRoot,
+      brainRoot: opts.brainRoot,
+    });
+    if (!coreResult.ok) {
+      logError(`add agent (core): ${coreResult.reason}`);
+      return coreResult.code;
+    }
+    // Project + verify from the repo root; --expect-core makes an ownership-
+    // gate skip a LOUD failure (D5) rather than a silent no-op.
+    const verify = await projectAndVerify({
+      surface: "agents",
+      projectRoot,
+      expectCore: true,
+      target: opts.target,
+      // S1: scope the verify (check) pass to the just-added agent name so
+      // pre-existing unrelated drift doesn't false-fail this add.
+      filter: opts.name,
+      brainRoot: opts.brainRoot,
+      captureAdapter: opts.captureAdapter,
+    });
+    if (!verify.ok) {
+      logError(`add agent (core): projection/verify failed — ${verify.reason}`);
+      return 1;
+    }
+    for (const line of verify.coreSkipped) {
+      info(line);
+    }
+    info(
+      `Added core agent '${opts.name}': wrote core/agents/${opts.name}.md, ` +
+        `appended the harness-manifest.json entry, updated the §13 agent surfaces, ` +
+        `mirrored to runtime, projected ${verify.projected.length} target(s), drift-clean.`,
+    );
+    return 0;
+  }
+
+  // ----- Personal mode. -----
+  const overlayPath = opts.overlayPath ?? registryOverlayPath();
+  const materialize = opts.materializeAgentFn ?? materializeAgent;
+  const regOpts: RegistryOptions = {
+    action: "add",
+    name: opts.name,
+    from: opts.from,
+    targets: opts.targets,
+    projectRoot,
+    overlayPath,
+  };
+  const mat = await materialize(regOpts, overlayPath);
+  if (!mat.ok) {
+    // runAdd already logged the specific reject; surface the code.
+    return mat.code;
+  }
+  const verify = await projectAndVerify({
+    surface: "agents",
+    projectRoot,
+    expectCore: false,
+    target: opts.target,
+    // S1: scope the verify (check) pass to the just-added agent name so
+    // pre-existing unrelated drift doesn't false-fail this add.
+    filter: opts.name,
+    overlay: overlayPath,
+    brainRoot: opts.brainRoot,
+    captureAdapter: opts.captureAdapter,
+  });
+  if (!verify.ok) {
+    logError(`add agent: projection/verify failed — ${verify.reason}`);
+    return 1;
+  }
+  for (const line of verify.coreSkipped) {
+    info(line);
+  }
+  info(
+    `Added personal agent '${opts.name}': vendored + projected ` +
+      `${verify.projected.length} target(s), drift-clean.`,
+  );
+  return 0;
+}
+
+/**
  * Dispatch `igris add <surface> <name>`. Returns the exit code. A bad surface
  * is a usage error (exit 2). Mode resolution (D1) runs once up front and is
  * PRINTED so it is never silent.
@@ -284,6 +386,7 @@ export async function runAdd(opts: AddOptions): Promise<number> {
     case "skill":
       return runAddSkillArm(opts, mode);
     case "agent":
+      return runAddAgentArm(opts, mode);
     case "mcp":
     case "hook":
     case "identity":

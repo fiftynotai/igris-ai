@@ -448,6 +448,15 @@ async function main(argv: string[]): Promise<void> {
               "(vendor + project + verify) flow use 'igris add skill <name> --from <dir> --target …'.",
           );
         }
+        // FR-180 (Phase 2): same write-only deprecation for the agent write
+        // primitive `registry add` — `igris add agent` is the one-step front door.
+        if (action === "add") {
+          info(
+            "registry add is write-only (it vendors/registers an agent but does NOT " +
+              "project or verify) — it is the low-level primitive. For the one-step " +
+              "(vendor + project + verify) flow use 'igris add agent <name> --from <dir> --target …'.",
+          );
+        }
         // FR-143: `add-skill` takes its skills source-dir as the positional
         // arg (`igris registry add-skill <source-dir> --target ...`); coalesce
         // it into `from` when --from was not given explicitly. The positional
@@ -552,7 +561,7 @@ async function main(argv: string[]): Promise<void> {
         "to all four harnesses (claude/gemini/codex/opencode), AND verifies drift-clean. " +
         "Never silently no-ops (TD-235). Core-vs-personal is auto-detected (igris-ai " +
         "checkout = core) and overridable with --core / --no-core; the resolved mode is " +
-        "always printed. Phase 1 ships 'skill' end-to-end; the other surfaces are " +
+        "always printed. 'skill' and 'agent' ship end-to-end; mcp/hook/identity are " +
         "in-progress. The low-level 'igris registry add-* + igris harness compile' two-step " +
         "survives as the repair primitive.",
     )

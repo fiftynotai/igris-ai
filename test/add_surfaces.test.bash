@@ -1,8 +1,10 @@
 #!/usr/bin/env bats
 
-# add_surfaces.test.bash — FR-180 `igris add` end-to-end (Phase 1: skill).
+# add_surfaces.test.bash — FR-180 `igris add` end-to-end (Phase 1: skill,
+# Phase 2: agent).
 #
-# Exercises the one-step `igris add skill` verb against a sandbox brain:
+# Exercises the one-step `igris add skill`/`igris add agent` verbs against a
+# sandbox brain:
 #   - PERSONAL round-trip: materialize (vendor + overlay) → project → verify,
 #     asserting the projection symlink actually lands on disk (not just an
 #     overlay write).
@@ -65,6 +67,21 @@ description: "A test skill - usage: /mytool"
 ---
 body
 EOF
+
+  # A source AGENT body file (unversioned `--from <file>`). The α-assembly emits
+  # the per-harness outputs at vendor time; the opencode target projects a
+  # registry-anchored symlink into the sandbox HOME.
+  AGENT_SRC_DIR="$TEST_TEMP_DIR/agentsrc_$BATS_TEST_NUMBER"
+  mkdir -p "$AGENT_SRC_DIR" "$SANDBOX_HOME/.config/opencode/agent"
+  AGENT_SRC="$AGENT_SRC_DIR/mybot.md"
+  cat > "$AGENT_SRC" <<'EOF'
+---
+name: mybot
+description: "A test agent"
+tools: Read, Grep
+---
+You are MYBOT, a test agent.
+EOF
 }
 
 teardown() {
@@ -101,6 +118,45 @@ teardown() {
   echo "status=$status output=$output" >&2
   [ "$status" -eq 0 ]
   [ -L "$HOME/.claude/skills/mytool" ]
+}
+
+@test "add agent (personal): vendors + projects the opencode symlink + verifies, exit 0" {
+  run "${IGRIS_BIN[@]}" add agent mybot \
+    --no-core \
+    --from "$AGENT_SRC" \
+    --target "opencode:$HOME/.config/opencode/agent/mybot.md" \
+    --project-root "$PROJ"
+  echo "status=$status output=$output" >&2
+  [ "$status" -eq 0 ]
+
+  # The mode line is printed (D1, never silent).
+  [[ "$output" == *"PERSONAL mode"* ]]
+
+  # The opencode projection symlink actually landed (real on-disk effect).
+  [ -L "$HOME/.config/opencode/agent/mybot.md" ]
+
+  # The overlay block was written.
+  [ -f "$ISOLATED_BRAIN/registry/harness-manifest.personal.json" ]
+  grep -q "mybot" "$ISOLATED_BRAIN/registry/harness-manifest.personal.json"
+}
+
+# DIVERGENCE FROM SKILLS (flagged): the agent writer (`runAdd`) hard-REJECTS a
+# re-add of an existing same-name overlay agent ("already exists; remove it
+# first"), whereas `runAddSkill` treats a same-source re-add as an idempotent
+# no-op. `igris add agent` faithfully reuses that pre-existing write-path
+# behavior (R7 — no logic moved). So a personal-agent re-add is a LOUD reject
+# (exit != 0), not a silent success. The materialize reject short-circuits
+# BEFORE projection, so the prior symlink is left intact.
+@test "add agent (personal): re-add rejects the duplicate overlay name (exit != 0)" {
+  "${IGRIS_BIN[@]}" add agent mybot --no-core --from "$AGENT_SRC" \
+    --target "opencode:$HOME/.config/opencode/agent/mybot.md" --project-root "$PROJ"
+  run "${IGRIS_BIN[@]}" add agent mybot --no-core --from "$AGENT_SRC" \
+    --target "opencode:$HOME/.config/opencode/agent/mybot.md" --project-root "$PROJ"
+  echo "status=$status output=$output" >&2
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"already exists"* ]]
+  # The first add's projection symlink is left intact (reject short-circuits).
+  [ -L "$HOME/.config/opencode/agent/mybot.md" ]
 }
 
 @test "S1: scoped verify ignores a pre-existing UNRELATED skill's drift" {
