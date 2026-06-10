@@ -62,6 +62,45 @@ PROJECT_DIR=$(resolve_project_dir)
 [ -d "$PROJECT_DIR" ] && cd "$PROJECT_DIR"
 
 # ---------------------------------------------------------------------------
+# Set the terminal tab title to the Igris project slug (FR-178).
+# Slug = registered-project lookup in the brain DB by longest path-prefix
+# match on PROJECT_DIR, falling back to basename (same posture as the
+# statusline script). Best-effort: silent no-op when no writable tty is
+# present (headless, CI, worker daemons, Codex/Gemini bridges).
+# NEVER writes to stdout — hook stdout is the additionalContext JSON contract.
+# ---------------------------------------------------------------------------
+set_terminal_title() {
+  # Guard: only attempt when /dev/tty looks writable. Note: on macOS the
+  # device node is world-writable, so this can pass headless — the actual
+  # open below is the authoritative (silenced) check.
+  [ -w /dev/tty ] || return 0
+
+  local slug=""
+  local db="$HOME/.igris/memory/knowledge.db"
+  if command -v sqlite3 > /dev/null 2>&1 && [ -f "$db" ]; then
+    # Single-quote-escape the path for the SQL literal. Deliberately
+    # UNQUOTED expansion: double-quoting keeps the \ escapes literal
+    # (\'\') and corrupts the SQL. Assignments don't word-split, so this
+    # is safe (same form as the statusline script).
+    local esc
+    esc=${PROJECT_DIR//\'/\'\'}
+    slug=$(sqlite3 "$db" \
+      "SELECT slug FROM projects WHERE '$esc' = path OR '$esc' LIKE path || '/%' ORDER BY length(path) DESC LIMIT 1;" 2>/dev/null) || slug=""
+  fi
+  [ -n "$slug" ] || slug=$(basename "$PROJECT_DIR" 2>/dev/null) || slug=""
+  [ -n "$slug" ] || return 0
+
+  # OSC 0 sets the icon name + window/tab title. Direct to the tty, never
+  # stdout. Group redirection so a failed /dev/tty open is silenced too.
+  { printf '\033]0;%s\007' "$slug" > /dev/tty; } 2>/dev/null || true
+  return 0
+}
+
+# Fire on ALL session-start paths (startup/resume/clear/compact, every bridge).
+# Must never fail the hook (set -e): the trailing '|| true' guarantees it.
+set_terminal_title || true
+
+# ---------------------------------------------------------------------------
 # Parse 'source' field. Unified shape: top-level 'source'. Native Claude: top-level
 # 'source' too. Native Claude sources: startup|resume|clear|compact.
 # Bridges pass: "claude" | "opencode" | "codex".
