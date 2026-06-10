@@ -1,6 +1,6 @@
 {
   "$schema": "./manifest.schema.json",
-  "_comment": "FR-137 / TD-191 / FR-153 / FR-157 / FR-171 / TD-224: core-owned Layer-1 surface declaration. `surfaces.skills` is an ARRAY of blocks (multi-source model). Block[0] = the GLOBAL core block (every skill under ~/.igris/core/skills) — contributed by this file; personal blocks land in the overlay (~/.igris/registry/harness-manifest.personal.json) under ~/.igris/registry/skills/<name>/ per L-516 (universal copy-vendor) + L-517 (typed-subfolder layout). Block[1] (TD-224) = the FRAMEWORK-DEV category: skills only meaningful inside the igris-ai repo itself, sourced from ~/.igris/core/skills-dev and project-scoped via `scope.paths:[\".\"]` (FR-155). `.` resolves against --project-root at READ time (the relative arm of the 3-case scope resolver) so the block emits ONLY when --project-root IS the igris-ai repo, and is a SILENT scope-skip (not drift) in every other project. `.` is repo-relative and therefore portable across contributor checkouts — NEVER hardcode an absolute path here. The compiler reads BOTH this file and the merged agent manifest, concatenating every block: core blocks first, then personal. MIRRORED under ~/.igris/core/scripts/ (TD-096). FR-153: codex + gemini skill targets unified onto the FR-149 claude/symlink primitive. AGENTS.md aggregation + per-skill TOML conversion both RETIRED. FR-157: codex + gemini direct skill targets retired in favor of the cross-CLI shared `~/.agents/skills/` standard that both CLIs read natively; the `agents` target serves both via one projection. FR-171: opencode/command target writes thin `@file` command wrappers into ~/.config/opencode/command (OpenCode's command surface). os_context is reserved for FR-140 and intentionally omitted here.",
+  "_comment": "FR-137 / TD-191 / FR-153 / FR-157 / FR-171: core-owned Layer-1 surface declaration. `surfaces.skills` is an ARRAY of blocks (multi-source model). The single core block = the GLOBAL core block (every skill under ~/.igris/core/skills) — contributed by this file; personal blocks land in the overlay (~/.igris/registry/harness-manifest.personal.json) under ~/.igris/registry/skills/<name>/ per L-516 (universal copy-vendor) + L-517 (typed-subfolder layout). The compiler reads BOTH this file and the merged agent manifest, concatenating every block: core blocks first, then personal. MIRRORED under ~/.igris/core/scripts/ (TD-096). TD-224 framework-dev category retired (FR-179); onboard-harness is now a standard core skill. FR-153: codex + gemini skill targets unified onto the FR-149 claude/symlink primitive. AGENTS.md aggregation + per-skill TOML conversion both RETIRED. FR-157: codex + gemini direct skill targets retired in favor of the cross-CLI shared `~/.agents/skills/` standard that both CLIs read natively; the `agents` target serves both via one projection. FR-171: opencode/command target writes thin `@file` command wrappers into ~/.config/opencode/command (OpenCode's command surface). os_context is reserved for FR-140 and intentionally omitted here.",
   "version": 1,
   "agents": [],
   "surfaces": {
@@ -8,16 +8,6 @@
       {
         "source": "~/.igris/core/skills",
         "layer": "core",
-        "targets": [
-          { "type": "claude", "method": "symlink", "path": "~/.claude/skills" },
-          { "type": "agents", "method": "symlink", "path": "~/.agents/skills" },
-          { "type": "opencode", "method": "command", "path": "~/.config/opencode/command" }
-        ]
-      },
-      {
-        "source": "~/.igris/core/skills-dev",
-        "layer": "core",
-        "scope": { "type": "project", "paths": ["."] },
         "targets": [
           { "type": "claude", "method": "symlink", "path": "~/.claude/skills" },
           { "type": "agents", "method": "symlink", "path": "~/.agents/skills" },

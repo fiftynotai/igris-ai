@@ -172,28 +172,11 @@ customization must not silently shadow a core skill (and the writer-side
 topology — each per-harness compiler inside Igris OS reads every block's
 canonical content from the registry, regardless of which block it came from).
 
-**Framework-dev skills (TD-224).** Skills that are only meaningful while
-developing Igris itself (not in consumer projects) live in `core/skills-dev/`
-and are declared in a **second** `surfaces.skills[]` block in
-`surfaces-manifest.json` carrying `scope: {type:"project", paths:["."]}`
-(FR-155). The `.` token resolves against `--project-root` at compile/drift time
-(the relative arm of the 3-case scope resolver), so the skill emits to all
-harnesses **only** when you compile from inside the igris-ai checkout, and is a
-**silent scope-skip (NOT drift)** in every other project. `["."]` is
-repo-relative and therefore portable across contributor checkouts — never
-hardcode an absolute path here. The two core blocks share the same
-`target.path` (`~/.claude/skills`, etc.) but emit **distinct skill names** into
-those dirs, so the cross-block target-path collision guard does not fire (a
-collision is keyed on the per-skill link path, not the block's parent dir).
-`/onboard-harness` is the first member of this category — it is the executable
-companion to the "Add a New Harness (the five-surface runbook)" below.
-
-Because the runtime `igris harness compile` runs the `~/.igris/` mirror of the
-adapters, the core `surfaces-manifest.json` (and therefore this framework-dev
-block) is only unioned when you compile from inside the in-repo checkout via
-`core/scripts/cli-adapters/compile_harnesses.sh --project-root <igris-ai-repo>`.
-A maintainer who wants `/onboard-harness` projected on their machine runs that
-in-repo compile from the repo root.
+`/onboard-harness` is a standard core skill (under `core/skills/`, projected to
+every harness like any other core skill). It is the executable companion to the
+"Add a New Harness (the five-surface runbook)" below — run it to walk that same
+checklist step-by-step. (FR-179 retired the short-lived TD-224 "framework-dev"
+project-scoped skill category; `/onboard-harness` is now shipped globally.)
 
 ---
 
@@ -1281,7 +1264,7 @@ above.
 #### Procedure: the `/onboard-harness` skill
 
 The doc above is the **why** (the harness abstraction + the five-surface model).
-The **do** is the executable [`/onboard-harness`](../core/skills-dev/onboard-harness/SKILL.md)
+The **do** is the executable [`/onboard-harness`](../core/skills/onboard-harness/SKILL.md)
 skill — run it to walk this same checklist step-by-step with a cheap self-verify
 after each touchpoint (so a dropped step is CAUGHT, not assumed). The skill
 treats `opencode` (FR-171) as its worked example throughout.

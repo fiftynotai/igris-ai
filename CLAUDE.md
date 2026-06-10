@@ -25,7 +25,8 @@ architect, forger, sentinel, warden, mender, seeker, sage
 ## Available Skills
 /awaken, /hunt, /scan, /register, /archive, /rest, /digivolve, /team,
 /standardize, /document, /release, /audit, /ideate, /migrate-analyze,
-/projects, /portfolio, /dashboard, /sync, /fifty-kit, /ui-design, /visualize
+/projects, /portfolio, /dashboard, /sync, /fifty-kit, /ui-design, /visualize,
+/onboard-harness
 
 ## Key Paths
 | What | Location |

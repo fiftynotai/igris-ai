@@ -9,12 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Orchestrator-identity surface (TD-233)** -- New `os_identity` projected harness surface closing GAP-3 from the TD-227 parity audit: Gemini and Codex now greet as Igris AI at the bare CLI. One canonical identity block (`core/templates/identity.tmpl`, Model A) is projected to each harness's empirically-confirmed native identity file (Gemini→`GEMINI.md`, Codex→`AGENTS.md`, project root) via a merge-into-Igris-managed-region posture that preserves user content, compiled and drift-gated by `igris harness compile/check` (§18.1 bash↔TS byte-parity twin `buildHarnessIdentityFile`). Onboarding skill, docs, and §13 enumerations updated to the five-surface model. (TD-233)
+- **OpenCode first-class agents+skills (FR-171)** -- OpenCode is now a first-class harness supporting both agents and skills. Agent prompts are projected via symlinks (following the Claude/Codex model) to `~/.config/opencode/agent/<name>.md`. Skills are distributed via thin `@file` wrappers at `~/.config/opencode/command/<name>.md`, ensuring the canonical `SKILL.md` remains the single source of truth. (FR-171)
+- **onboard-harness skill and runbook (FR-172)** -- Captured the harness-onboarding contract as a 9-step self-verifying checklist in `core/skills/onboard-harness/SKILL.md`. Updated `docs/multi-cli.md` with a comprehensive "four-surface runbook" and harness method matrix. (FR-172)
+- **onboard-harness promoted to a standard core skill (FR-179)** -- The short-lived `skills-dev` framework-dev skill category is RETIRED; `/onboard-harness` is promoted to a standard consumer skill under `core/skills/`, shipped + projected to all harnesses. **Supersedes TD-224.** (FR-179)
+- **Content-pipeline brand/format gate (TD-225)** -- Introduced a deterministic process-boundary gate for brand and format validation in the content pipeline, accessible via the `igris content` verb (render/validate). (TD-225)
+
 ### Changed
 
+- **Gemini core agents loadable (TD-229)** -- Fixed load errors for Gemini core agents by dropping the Claude-only `memory:` key, switching from the invalid `Edit` tool to `replace`, and filtering out `mcp__` double-underscore tokens to match Gemini's grammar. Verified zero load errors for architect and forger on Gemini. (TD-229)
+- **Restore core agents to Gemini harness (TD-228)** -- Restored all 7 core agents to the Gemini harness manifest, resolving an omission where Gemini previously only carried content-related agents. (TD-228)
+- **Content-gate relocation (TD-226)** -- Relocated the content-pipeline gate logic from the shippable CLI into the content-pipeline skill bundle as plain ESM modules, removing it from the core CLI binary. (TD-226)
+- **Surface-root migration re-scoped (TD-223)** -- Corrected a misdiagnosis of "skills pollution"; confirmed that `~/.claude/{skills,agents}` are whole-dir symlinks to `~/.igris/core/`. Rewrote the doctor module to properly detect and migrate these roots without loss. (TD-223)
 - **Codex agent converter ported from bash to TS (FR-159)** -- retired `core/scripts/cli-adapters/sync_codex_agents.sh` outright (FR-153 retirement posture) and replaced it with `assembleCodexHarness` in `cli/src/verbs/registry.ts` (vendor-side α-assembler, parity with `assembleClaudeHarness` + `assembleGeminiHarness`) + `assemble_codex_harness_into_registry` in `compile_harnesses.sh` (compile-side fallback for core agents). The 3-key codex TOML (`description`, `developer_instructions`, `name`) is now emitted into the registry at `<brain>/registry/agents/<name>/harness.codex.toml`; the consumer-side target at `.codex/agents/<name>.toml` becomes a SYMLINK to that file (parity with claude — codex follows symlinks for both its skill loader per FR-157 and its agent .toml loader). Drift verdict shifts from body-sha comparison to symlink-realpath verdict (per FR-152 §18.1 compile/drift-verify pairing). 5 skip-list parity sites updated to exclude the new `harness.codex.toml` from origin hashing (TS `hashAgentTree` + `hashSkillTree`, bash `hash_agent_tree`, drift agent + skill walkers). Body-exception is deliberately NOT applied to codex output (parity with the retired bash script + L-519 §18.1 contract). Golden-fixture byte-parity test guards regression against the retired bash output (modulo marker line). `resolve_or_extract_frontmatter` helper retired with its sole caller. (FR-159)
 
 ### Fixed
 
+- **Bundled Brain MCP helper scripts** -- `cli/scripts/copy-templates.sh` now stages `brain-mcp-server/scripts/` alongside the bundled MCP server so shipped CLI installs retain helper assets such as visualization templates and maintenance CLIs referenced by the server and docs.
 - Brain MCP: BR-067 polish — schedules `last_run_at` parity with the daemon's claim-instant semantics (manual fire-now path was writing the finish instant), malformed pidfile pruning on read so unparseable entries don't accumulate across sweeps, stdio teardown comments clarified (`stdin.resume()` defensive-only intent, PID-recycling caveat documented above the reaper's parent-liveness check). (TD-184)
 
 ---

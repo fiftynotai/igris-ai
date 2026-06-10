@@ -251,12 +251,13 @@ igris harness compile && igris harness check   # must be drift-CLEAN
 
 ## Why this works
 
-This skill is a **framework-dev skill** — project-scoped to the igris-ai repo via
-a `scope.paths:["."]` block in `surfaces-manifest.json` (TD-224, FR-155), and it
-projects to all four harnesses by the exact mechanism it documents WHEN compiled
-from inside the igris-ai checkout. A self-demonstrating artifact: it emits only
-where it is meaningful (the framework repo itself) and is a silent scope-skip
-everywhere else.
+This skill is a **standard core skill** — it lives under `core/skills/` and is
+projected to all four harnesses via the single core skills block in
+`surfaces-manifest.json`, like every other core skill. A self-demonstrating
+artifact: it projects to each harness by the exact mechanism it documents.
+(FR-179 retired the short-lived TD-224 "framework-dev" project-scoped category;
+`/onboard-harness` is now shipped globally rather than scoped to the igris-ai
+repo via `scope.paths:["."]`.)
 
 **Cross-link:** `docs/multi-cli.md` § "Add a New Harness" is the canonical *why*
 (the harness abstraction + the five-surface model). **FR-171** (OpenCode

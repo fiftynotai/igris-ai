@@ -462,7 +462,7 @@ Orchestrator:
 - ❌ No quality gates
 - ❌ Monolithic complexity
 
-**We built 7 specialized agents + 20 core skills. USE THEM.**
+**We built 7 specialized agents + a full suite of core skills. USE THEM.**
 
 <!-- /SECTION: agent_delegation -->
 

@@ -16,7 +16,6 @@ making it a faithful proxy.
 
 Discovers:
   - repo `core/skills/*/SKILL.md` (canonical sources, ALWAYS).
-  - repo `core/skills-dev/*/SKILL.md` (TD-224 framework-dev skills, ALWAYS).
   - `~/.igris/registry/skills/*/*/SKILL.md` (vendored) IF that dir exists —
     best-effort, gated on existence so CI stays hermetic.
   - SKILL_GLOB env override (one or more glob patterns, `:`-separated) to
@@ -42,10 +41,6 @@ import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 CORE_SKILLS_GLOB = str(REPO_ROOT / "core" / "skills" / "*" / "SKILL.md")
-# TD-224: framework-dev skills (project-scoped to the igris-ai repo) live in
-# core/skills-dev/ — they MUST stay covered by the strict-YAML gate too, or a
-# relocated skill silently escapes the validator (a regression).
-DEV_SKILLS_GLOB = str(REPO_ROOT / "core" / "skills-dev" / "*" / "SKILL.md")
 REGISTRY_SKILLS_GLOB = str(
     pathlib.Path.home() / ".igris" / "registry" / "skills" / "*" / "*" / "SKILL.md"
 )
@@ -57,7 +52,7 @@ def discover() -> list[pathlib.Path]:
     if override:
         patterns = [p for p in override.split(":") if p]
     else:
-        patterns = [CORE_SKILLS_GLOB, DEV_SKILLS_GLOB]
+        patterns = [CORE_SKILLS_GLOB]
         # Best-effort vendored scan only when the machine-local dir exists,
         # so CI never depends on a path outside the repo.
         if pathlib.Path(REGISTRY_SKILLS_GLOB).parent.parent.exists():
