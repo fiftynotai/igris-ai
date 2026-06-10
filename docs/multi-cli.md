@@ -172,6 +172,17 @@ customization must not silently shadow a core skill (and the writer-side
 topology — each per-harness compiler inside Igris OS reads every block's
 canonical content from the registry, regardless of which block it came from).
 
+**Adding a skill — `igris add skill` (one-step) / `igris registry add-skill`
+(write-only, FR-180):** for the common case, prefer the one-step `igris add skill
+<name> --from <skills-dir> --target <type:method:path>` — it vendors the skill AND
+projects it to all four harnesses (per-skill symlink) AND verifies drift-clean in
+one command, failing loudly if nothing projected (TD-235). `--core` writes
+`core/skills/<name>/SKILL.md` (auto-discovered — no manifest edit) instead of the
+personal overlay. `igris registry add-skill` (above) is the **write-only**
+low-level primitive (copy-vendor into `~/.igris/registry/skills/<name>/` + the
+overlay block, no project/verify), kept as the repair primitive alongside the
+`igris harness compile --surface skills` two-step. See `core/docs/ADD-SURFACES.md`.
+
 `/onboard-harness` is a standard core skill (under `core/skills/`, projected to
 every harness like any other core skill). It is the executable companion to the
 "Add a New Harness (the five-surface runbook)" below — run it to walk that same
@@ -532,6 +543,17 @@ will vendor the entire source dir alongside the body. This closes the L-516
 violation where pre-FR-156 only the frontmatter + chosen body file were
 copied — supporting files lived in the operator's source dir only, so the
 registry copy was not self-sufficient.
+
+**Adding an agent — `igris add agent` (one-step) / `igris registry add` (write-only,
+FR-180):** for the common case, prefer the one-step `igris add agent <name> --from
+<dir> --target <type:path>` — it α-assembles the agent into all four harness shapes
+at vendor time AND projects it (per-harness symlink/hard-link) AND verifies
+drift-clean in one command, failing loudly if nothing projected (TD-235). `--core`
+writes `core/agents/<name>.md` + the repo-root `harness-manifest.json` entry + the
+§13 agent enumeration surfaces (igris_tree.json, CLAUDE.md template + root) in one
+pass. `igris registry add` (above) is the **write-only** low-level primitive
+(vendor only, no project/verify), kept as the repair primitive alongside the
+`igris harness compile` two-step. See `core/docs/ADD-SURFACES.md`.
 
 **Reference convention** — bodies SHOULD cite siblings via the absolute
 registry path:
