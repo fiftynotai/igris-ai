@@ -59,9 +59,12 @@ readonly DEFAULT_OVERLAY="$BRAIN_DIR/registry/harness-manifest.personal.json"
 # usage — prints usage and exits with code 2.
 # ---------------------------------------------------------------------------
 usage() {
-  echo "Usage: $0 --project-root <dir> [--manifest <path>] [--overlay <path>] [--filter <name-glob>] [--expect-core]" >&2
+  echo "Usage: $0 --project-root <dir> [--manifest <path>] [--overlay <path>] [--filter <name-glob>] [--surface agents|skills|mcp|identity|all] [--expect-core]" >&2
   echo "" >&2
   echo "Fails (exit 1) if any harness file has drifted from its canonical prompt." >&2
+  echo "--surface: restrict the drift check to ONE projection surface (default: all)." >&2
+  echo "           Mirrors compile_harnesses.sh --surface; lets 'igris add's scoped" >&2
+  echo "           verify re-check ONLY the surface it just projected (FR-180)." >&2
   echo "--expect-core: also fail LOUDLY if a declared core surface is skipped by the" >&2
   echo "               ownership gate or 0 targets match (FR-180/TD-235)." >&2
   exit 2
@@ -75,6 +78,14 @@ MANIFEST=""
 OVERLAY=""
 OVERLAY_SET=0
 FILTER='*'
+# FR-180 cross-phase: restrict the drift check to ONE projection surface
+# (agents|skills|mcp|identity), mirroring compile_harnesses.sh --surface.
+# Default `all` preserves the whole-project drift-guard posture (CI / `harness
+# check`). `igris add`'s scoped verify passes the surface it just projected so a
+# pre-existing UNRELATED drift in another surface (e.g. the os_identity surface
+# drifting under a brain-root project-root because {{IGRIS_VERSION}} can't
+# resolve there) cannot false-fail a clean add.
+SURFACE_KIND="all"
 # FR-180 (TD-235 / D5): mirror of compile's --expect-core. When set, a declared
 # core surface skipped by the ownership gate (or a 0-target run) is a LOUD FAIL
 # instead of a silent / merely-visible skip. §18.1 deliver+drift pairing: the
@@ -104,6 +115,10 @@ while [ "$#" -gt 0 ]; do
       FILTER="${2:-}"
       shift 2 || usage
       ;;
+    --surface)
+      SURFACE_KIND="${2:-}"
+      shift 2 || usage
+      ;;
     --help|-h)
       usage
       ;;
@@ -124,6 +139,15 @@ if [ ! -d "$PROJECT_ROOT" ]; then
 fi
 
 PROJECT_ROOT="$( cd "$PROJECT_ROOT" && pwd )"
+
+# FR-180: validate --surface (mirrors compile_harnesses.sh's identical gate).
+case "$SURFACE_KIND" in
+  agents|skills|mcp|identity|all) : ;;
+  *)
+    echo "Error: --surface must be agents, skills, mcp, identity, or all (got '$SURFACE_KIND')" >&2
+    usage
+    ;;
+esac
 
 # FR-136 manifest resolution: default to <project-root>/harness-manifest.json,
 # NO fallback to the old next-to-script location. Fail clearly if absent.
@@ -825,7 +849,9 @@ SKILL_TREE_CHECKED=":"
 echo "Harness drift check (project root: $PROJECT_ROOT):"
 echo ""
 
-if [ -n "$WORK_ROWS" ]; then
+# FR-180: agents drift pass — gated on --surface (default `all`). When `igris
+# add` scopes the verify to a non-agents surface this loop is skipped entirely.
+if { [ "$SURFACE_KIND" = "agents" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n "$WORK_ROWS" ]; then
 while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target_path layer scope_type scope_paths; do
   [ -z "$name" ] && continue
 
@@ -1093,8 +1119,11 @@ fi
 # The flatten gate below keeps its own in-Python commonpath check verbatim
 # (verdict bytes unchanged); this block only adds the diagnostic + exit
 # decision. Same three cases as compile_harnesses.sh's skills pass.
+# FR-180: gated on --surface (skills) so a non-skills scoped verify doesn't emit
+# this skills-specific diagnostic.
 # ---------------------------------------------------------------------------
-if core_skills_declared "$CORE_SURFACES" \
+if { [ "$SURFACE_KIND" = "skills" ] || [ "$SURFACE_KIND" = "all" ]; } \
+   && core_skills_declared "$CORE_SURFACES" \
    && ! core_surfaces_owned "$CORE_SURFACES" "$PROJECT_ROOT"; then
   if [ "$EXPECT_CORE" -eq 1 ]; then
     echo "FAIL  core skills — not owned by --project-root $PROJECT_ROOT; run from the igris-ai repo or pass --core" >&2
@@ -1182,7 +1211,7 @@ for src in sources:
 PY
 )
 
-if [ -n "$SKILL_ROWS" ]; then
+if { [ "$SURFACE_KIND" = "skills" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n "$SKILL_ROWS" ]; then
   while IFS=$'\t' read -r s_source s_type s_method s_path s_scope_type s_scope_paths s_layer; do
     [ -z "$s_type" ] && continue
     # TD-201: legacy IFS-read default for the trailing `layer` column when an
@@ -1439,16 +1468,36 @@ PY
             if [ -z "$resolved" ]; then
               any_drift=1
             else
-              case "$resolved" in
-                "$registry_real"/*|"$registry_real")
-                  if [ "$resolved" != "$skill_dir_real" ]; then
+              # FR-180 cross-phase: the COMPILE side (the §18.1 source of truth)
+              # creates the per-skill symlink pointing at <conv_root>/<name>
+              # (`skill_dir`). For a CORE skill conv_root is `~/.igris/core/skills`
+              # (the surfaces-manifest `~`-prefixed source), so the canonical
+              # symlink target is NOT under the registry — it points straight at
+              # core. The MATCH condition is therefore "resolves to the canonical
+              # source compile linked" (`resolved == skill_dir_real`), which holds
+              # for BOTH a registry-vendored personal skill (skill_dir under the
+              # registry) AND a core skill (skill_dir under core/skills). The
+              # registry-containment check is retained ONLY to distinguish a
+              # registry-anchored-but-WRONG-file drift from a genuinely unanchored
+              # (points-nowhere-canonical) symlink. Without this, every core skill
+              # false-DRIFTED as "not registry-anchored" whenever the check was
+              # scoped to a root that OWNS the core surfaces (e.g. `igris add
+              # --core`'s brain-root verify) — a pre-existing check/compile
+              # divergence masked while core skills were never checked from an
+              # owning root.
+              if [ "$resolved" = "$skill_dir_real" ]; then
+                : # MATCH — symlink points at the canonical source compile linked.
+              else
+                case "$resolved" in
+                  "$registry_real"/*|"$registry_real")
+                    # Registry-anchored but NOT the expected canonical file.
                     any_drift=1
-                  fi
-                  ;;
-                *)
-                  any_unanchored=1
-                  ;;
-              esac
+                    ;;
+                  *)
+                    any_unanchored=1
+                    ;;
+                esac
+              fi
             fi
             # TD-218: depth-1 discoverability — SKILL.md MUST be at
             # <link_path>/SKILL.md. A registry-anchored-but-too-deep symlink
@@ -1528,16 +1577,36 @@ PY
             if [ -z "$resolved" ]; then
               any_drift=1
             else
-              case "$resolved" in
-                "$registry_real"/*|"$registry_real")
-                  if [ "$resolved" != "$skill_dir_real" ]; then
+              # FR-180 cross-phase: the COMPILE side (the §18.1 source of truth)
+              # creates the per-skill symlink pointing at <conv_root>/<name>
+              # (`skill_dir`). For a CORE skill conv_root is `~/.igris/core/skills`
+              # (the surfaces-manifest `~`-prefixed source), so the canonical
+              # symlink target is NOT under the registry — it points straight at
+              # core. The MATCH condition is therefore "resolves to the canonical
+              # source compile linked" (`resolved == skill_dir_real`), which holds
+              # for BOTH a registry-vendored personal skill (skill_dir under the
+              # registry) AND a core skill (skill_dir under core/skills). The
+              # registry-containment check is retained ONLY to distinguish a
+              # registry-anchored-but-WRONG-file drift from a genuinely unanchored
+              # (points-nowhere-canonical) symlink. Without this, every core skill
+              # false-DRIFTED as "not registry-anchored" whenever the check was
+              # scoped to a root that OWNS the core surfaces (e.g. `igris add
+              # --core`'s brain-root verify) — a pre-existing check/compile
+              # divergence masked while core skills were never checked from an
+              # owning root.
+              if [ "$resolved" = "$skill_dir_real" ]; then
+                : # MATCH — symlink points at the canonical source compile linked.
+              else
+                case "$resolved" in
+                  "$registry_real"/*|"$registry_real")
+                    # Registry-anchored but NOT the expected canonical file.
                     any_drift=1
-                  fi
-                  ;;
-                *)
-                  any_unanchored=1
-                  ;;
-              esac
+                    ;;
+                  *)
+                    any_unanchored=1
+                    ;;
+                esac
+              fi
             fi
             # TD-218: depth-1 discoverability — SKILL.md MUST be at
             # <link_path>/SKILL.md. A registry-anchored-but-too-deep symlink
@@ -1607,16 +1676,36 @@ PY
             if [ -z "$resolved" ]; then
               any_drift=1
             else
-              case "$resolved" in
-                "$registry_real"/*|"$registry_real")
-                  if [ "$resolved" != "$skill_dir_real" ]; then
+              # FR-180 cross-phase: the COMPILE side (the §18.1 source of truth)
+              # creates the per-skill symlink pointing at <conv_root>/<name>
+              # (`skill_dir`). For a CORE skill conv_root is `~/.igris/core/skills`
+              # (the surfaces-manifest `~`-prefixed source), so the canonical
+              # symlink target is NOT under the registry — it points straight at
+              # core. The MATCH condition is therefore "resolves to the canonical
+              # source compile linked" (`resolved == skill_dir_real`), which holds
+              # for BOTH a registry-vendored personal skill (skill_dir under the
+              # registry) AND a core skill (skill_dir under core/skills). The
+              # registry-containment check is retained ONLY to distinguish a
+              # registry-anchored-but-WRONG-file drift from a genuinely unanchored
+              # (points-nowhere-canonical) symlink. Without this, every core skill
+              # false-DRIFTED as "not registry-anchored" whenever the check was
+              # scoped to a root that OWNS the core surfaces (e.g. `igris add
+              # --core`'s brain-root verify) — a pre-existing check/compile
+              # divergence masked while core skills were never checked from an
+              # owning root.
+              if [ "$resolved" = "$skill_dir_real" ]; then
+                : # MATCH — symlink points at the canonical source compile linked.
+              else
+                case "$resolved" in
+                  "$registry_real"/*|"$registry_real")
+                    # Registry-anchored but NOT the expected canonical file.
                     any_drift=1
-                  fi
-                  ;;
-                *)
-                  any_unanchored=1
-                  ;;
-              esac
+                    ;;
+                  *)
+                    any_unanchored=1
+                    ;;
+                esac
+              fi
             fi
             # TD-218: depth-1 discoverability — SKILL.md MUST be at
             # <link_path>/SKILL.md. A registry-anchored-but-too-deep symlink
@@ -1694,16 +1783,36 @@ PY
             if [ -z "$resolved" ]; then
               any_drift=1
             else
-              case "$resolved" in
-                "$registry_real"/*|"$registry_real")
-                  if [ "$resolved" != "$skill_dir_real" ]; then
+              # FR-180 cross-phase: the COMPILE side (the §18.1 source of truth)
+              # creates the per-skill symlink pointing at <conv_root>/<name>
+              # (`skill_dir`). For a CORE skill conv_root is `~/.igris/core/skills`
+              # (the surfaces-manifest `~`-prefixed source), so the canonical
+              # symlink target is NOT under the registry — it points straight at
+              # core. The MATCH condition is therefore "resolves to the canonical
+              # source compile linked" (`resolved == skill_dir_real`), which holds
+              # for BOTH a registry-vendored personal skill (skill_dir under the
+              # registry) AND a core skill (skill_dir under core/skills). The
+              # registry-containment check is retained ONLY to distinguish a
+              # registry-anchored-but-WRONG-file drift from a genuinely unanchored
+              # (points-nowhere-canonical) symlink. Without this, every core skill
+              # false-DRIFTED as "not registry-anchored" whenever the check was
+              # scoped to a root that OWNS the core surfaces (e.g. `igris add
+              # --core`'s brain-root verify) — a pre-existing check/compile
+              # divergence masked while core skills were never checked from an
+              # owning root.
+              if [ "$resolved" = "$skill_dir_real" ]; then
+                : # MATCH — symlink points at the canonical source compile linked.
+              else
+                case "$resolved" in
+                  "$registry_real"/*|"$registry_real")
+                    # Registry-anchored but NOT the expected canonical file.
                     any_drift=1
-                  fi
-                  ;;
-                *)
-                  any_unanchored=1
-                  ;;
-              esac
+                    ;;
+                  *)
+                    any_unanchored=1
+                    ;;
+                esac
+              fi
             fi
             # TD-218: depth-1 discoverability — SKILL.md MUST be at
             # <link_path>/SKILL.md. A registry-anchored-but-too-deep symlink
@@ -1845,7 +1954,7 @@ fi
 # re-resolve) with an IGRIS_SECRETS_PATH override for tests.
 # ---------------------------------------------------------------------------
 MCP_DRIFT_ROWS=$(flatten_mcp_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "all" "$PROJECT_ROOT")
-if [ -n "$MCP_DRIFT_ROWS" ]; then
+if { [ "$SURFACE_KIND" = "mcp" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n "$MCP_DRIFT_ROWS" ]; then
   mcp_secrets_path="${IGRIS_SECRETS_PATH:-$BRAIN_DIR/secrets.env}"
   while IFS=$'\t' read -r d_name d_canon d_type d_enabled d_scope_type d_scope_paths; do
     [ -z "$d_name" ] && continue
@@ -1899,16 +2008,18 @@ fi
 # TD-233 (GAP-3): orchestrator-identity drift pass, line-paired with the
 # compile identity pass (§18.1). Flattens the SAME (identity,target) rows via
 # `flatten_identity_rows` (target_kind="all" — drift checks every harness
-# target, consistent with drift's "check everything" posture; drift has no
-# --surface flag). Per row it resolves the canonical template, the
-# {{IGRIS_VERSION}} source and the output file (all FR-154 3-case, mirroring
-# compile) and calls `verify_identity_file_drift`, which re-derives the
-# expected delimited region via the SHARED normalize_identity_shape and
-# byte-compares ONLY the Igris-managed region (user content around it is
-# theirs and is never inspected).
+# target, consistent with drift's "check everything" posture). Per row it
+# resolves the canonical template, the {{IGRIS_VERSION}} source and the output
+# file (all FR-154 3-case, mirroring compile) and calls
+# `verify_identity_file_drift`, which re-derives the expected delimited region
+# via the SHARED normalize_identity_shape and byte-compares ONLY the
+# Igris-managed region (user content around it is theirs and is never
+# inspected). FR-180: gated on --surface (identity) so a scoped verify of
+# another surface doesn't re-check the os_identity region (whose
+# {{IGRIS_VERSION}} cannot resolve under a brain-root project-root).
 # ---------------------------------------------------------------------------
 IDENTITY_DRIFT_ROWS=$(flatten_identity_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "all" "$PROJECT_ROOT")
-if [ -n "$IDENTITY_DRIFT_ROWS" ]; then
+if { [ "$SURFACE_KIND" = "identity" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n "$IDENTITY_DRIFT_ROWS" ]; then
   while IFS=$'\t' read -r i_source i_vsource i_type i_filename i_scope_type i_scope_paths; do
     [ -z "$i_type" ] && continue
     [ -z "$i_filename" ] && continue

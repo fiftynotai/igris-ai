@@ -22,7 +22,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runAdd, resolveAddMode, detectCoreRepo } from "../verbs/add.js";
+import {
+  runAdd,
+  resolveAddMode,
+  detectCoreRepo,
+  coreProjectionParams,
+} from "../verbs/add.js";
 import { runRegistry } from "../verbs/registry.js";
 import type { AdapterCaptureFn } from "../verbs/harness.js";
 import type {
@@ -307,6 +312,71 @@ describe("runAdd skill — core happy path", () => {
     expect(code).toBe(1);
     expect(projected).toBe(false);
     expect(cap.err.join("")).toContain("already exists");
+  });
+
+  // FR-180 cross-phase: core projection MUST run against the runtime BRAIN ROOT
+  // (so the ownership gate passes), NOT the repo checkout — and pass the repo's
+  // harness-manifest.json as --manifest (the brain has none). Materialize still
+  // uses the repo root.
+  it("projects against the BRAIN ROOT with the repo manifest (--project-root + --manifest)", async () => {
+    const seen: { script: string; args: string[] }[] = [];
+    const code = await runAdd({
+      surface: "skill",
+      name: "foo",
+      core: true,
+      projectRoot: "/repo",
+      brainRoot: BRAIN,
+      addCoreSkillFn: (opts) => {
+        // Materialize uses the REPO root (where core/ is written).
+        expect(opts.projectRoot).toBe("/repo");
+        return okAddCore();
+      },
+      captureAdapter: (scriptPath, args) => {
+        seen.push({ script: scriptPath, args });
+        if (scriptPath.includes("compile_harnesses.sh")) {
+          return {
+            code: 0,
+            output: "  OK    skills/claude -> x\n  1 targets — 1 ok, 0 failed\n",
+          };
+        }
+        return { code: 0, output: "  1 targets — 1 in sync, 0 drifted/missing\n" };
+      },
+    });
+    expect(code).toBe(0);
+    // Both the compile and the check pass run against the brain root + repo
+    // manifest (NOT /repo as --project-root).
+    expect(seen.length).toBe(2);
+    for (const call of seen) {
+      const pr = call.args[call.args.indexOf("--project-root") + 1];
+      const mf = call.args[call.args.indexOf("--manifest") + 1];
+      expect(pr).toBe(BRAIN);
+      expect(mf).toBe("/repo/harness-manifest.json");
+      // It must NOT pass the repo checkout as the projection project-root.
+      expect(pr).not.toBe("/repo");
+    }
+  });
+});
+
+describe("coreProjectionParams — FR-180 cross-phase projection root", () => {
+  it("returns the brain root as project-root and <repo>/harness-manifest.json", () => {
+    const p = coreProjectionParams("/repo", "/my/brain");
+    expect(p.projectRoot).toBe("/my/brain");
+    expect(p.manifest).toBe("/repo/harness-manifest.json");
+  });
+
+  it("defaults the project-root to brainDir() when brainRoot omitted", () => {
+    // No brainRoot → falls back to brainDir() (which honors IGRIS_BRAIN_DIR);
+    // the manifest is always derived from the materialize (repo) root.
+    const saved = process.env.IGRIS_BRAIN_DIR;
+    process.env.IGRIS_BRAIN_DIR = "/env/brain";
+    try {
+      const p = coreProjectionParams("/checkout");
+      expect(p.projectRoot).toBe("/env/brain");
+      expect(p.manifest).toBe("/checkout/harness-manifest.json");
+    } finally {
+      if (saved === undefined) delete process.env.IGRIS_BRAIN_DIR;
+      else process.env.IGRIS_BRAIN_DIR = saved;
+    }
   });
 });
 

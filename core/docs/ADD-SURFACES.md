@@ -85,14 +85,29 @@ when the ownership gate skipped a surface; `igris add` closes that hole.
   `agents` map, and the "Available Agents" line in both `core/templates/
   CLAUDE.md.tmpl` and the root `CLAUDE.md`. The scaffold preloads no context;
   fill in the prompt body + the `igris_tree.json` `load` list afterward.
-- **Run core adds from the igris-ai checkout** — or pass `--core`. Otherwise the
-  ownership gate skips the core surface and `igris add` reports the loud
-  `FAIL  core <surface> — not owned by --project-root …` message.
+- **Core adds are one-step — they materialize AND project AND verify.** Run an
+  `igris add --core <surface>` from the igris-ai checkout (auto-detected) or pass
+  `--core`. It writes the source + TD-096 mirror, then **projects to all four
+  harnesses and drift-verifies** — atomically. The projection half runs against
+  the RUNTIME BRAIN ROOT (`~/.igris`), not the checkout, because (a) the
+  ownership gate that admits the core surfaces keys on the runtime
+  `surfaces-manifest.json` (only a root that OWNS it — the brain — passes), and
+  (b) the repo manifest's agent `canonical.dir` is the project-relative
+  `core/agents`, which resolves to the runtime mirror `~/.igris/core/agents/…`
+  under the brain root. `igris add` computes this projection root for you; you
+  just run the one command. (Earlier builds wrote the source only and then
+  loud-failed `FAIL core <surface> — not owned by --project-root <repo>`; that is
+  FIXED — core adds now land in the harnesses.)
+- **The loud `FAIL  core <surface> — not owned …` is still reserved** for a
+  genuinely mis-routed `--expect-core` compile — e.g. someone runs `harness
+  compile --surface skills --expect-core` with a `--project-root` that owns no
+  core surfaces. The gate is intact; `igris add --core` simply passes the
+  CORRECT project-root so it never trips on a legitimate core add.
 - **Personal vs incidental skip** — when you compile an unrelated personal
-  project, the core surfaces are intentionally skipped with a single visible
-  `SKIPPED core surfaces (personal-project compile)` line (exit 0). That is not
-  an error — it is the gate doing its job (core surfaces don't leak into
-  unrelated projects).
+  project (WITHOUT `--expect-core`), the core surfaces are intentionally skipped
+  with a single visible `SKIPPED core surfaces (personal-project compile)` line
+  (exit 0). That is not an error — it is the gate doing its job (core surfaces
+  don't leak into unrelated projects).
 - **MCP secrets (§14)** — `igris add mcp --env KEY=${VAR}` stores only the
   `${VAR}` indirection ref; an inline secret value is REJECTED. The harness
   resolves the real value from the environment at launch time, so no secret ever

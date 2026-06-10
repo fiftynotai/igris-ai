@@ -283,3 +283,86 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"Added personal MCP 'other'"* ]]
 }
+
+# --- FR-180 cross-phase: `add --core` PROJECTS (not just source-writes) -------
+#
+# Build a sandbox igris-ai "checkout" (a project root that detectCoreRepo
+# recognises) AND point IGRIS_BRAIN_DIR at a runtime brain rooted under the
+# sandbox HOME, so the surfaces-manifest's `~`-prefixed source/targets
+# (~/.igris/core/skills, ~/.claude/skills, …) resolve into the sandbox. The
+# CORE projection runs against the BRAIN ROOT (the fix), so the core skill
+# materialized into the checkout + mirrored to the runtime brain is actually
+# PROJECTED to the harnesses — asserting the symlink lands proves one-step.
+build_core_checkout() {
+  # Runtime brain UNDER the sandbox HOME so `~/.igris/...` == the brain.
+  CORE_BRAIN="$HOME/.igris"
+  mkdir -p "$CORE_BRAIN/core/scripts" "$CORE_BRAIN/core/skills" \
+           "$CORE_BRAIN/core/agents" "$CORE_BRAIN/registry"
+  cp -R "$ADAPTERS" "$CORE_BRAIN/core/scripts/cli-adapters"
+  cp "$IGRIS_ROOT/core/scripts/verify_mirror.sh" "$CORE_BRAIN/core/scripts/verify_mirror.sh"
+  export IGRIS_BRAIN_DIR="$CORE_BRAIN"
+
+  # A sandbox igris-ai checkout: detectCoreRepo needs BOTH a
+  # core/scripts/cli-adapters/surfaces-manifest.json AND a repo-root
+  # harness-manifest.json. The checkout's surfaces-manifest is the one the
+  # MATERIALIZE half reads (it gets the new block written into it); projection
+  # reads the RUNTIME brain's copy (mirrored from the checkout).
+  CORE_REPO="$TEST_TEMP_DIR/corerepo_$BATS_TEST_NUMBER"
+  mkdir -p "$CORE_REPO/core/scripts/cli-adapters" "$CORE_REPO/core/skills" \
+           "$CORE_REPO/core/agents"
+  cp "$CORE_BRAIN/core/scripts/cli-adapters/surfaces-manifest.json" \
+     "$CORE_REPO/core/scripts/cli-adapters/surfaces-manifest.json"
+  # A repo-root harness-manifest with NO agents (skill/mcp arms don't read it;
+  # the agent arm appends to it).
+  cat > "$CORE_REPO/harness-manifest.json" <<'EOF'
+{ "version": 1, "agents": [] }
+EOF
+}
+
+@test "add --core skill: PROJECTS the symlink against the brain root + verifies, exit 0" {
+  build_core_checkout
+
+  run "${IGRIS_BIN[@]}" add --core skill zzprobeskill --project-root "$CORE_REPO"
+  echo "status=$status output=$output" >&2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"CORE mode"* ]]
+
+  # MATERIALIZE: source written into the checkout + mirrored to the runtime brain.
+  [ -f "$CORE_REPO/core/skills/zzprobeskill/SKILL.md" ]
+  [ -f "$CORE_BRAIN/core/skills/zzprobeskill/SKILL.md" ]
+
+  # PROJECTION ACTUALLY LANDS (the fix): the claude skill symlink exists AND
+  # resolves to the runtime-brain canonical source (NOT a phantom success).
+  [ -L "$HOME/.claude/skills/zzprobeskill" ]
+  [ -f "$HOME/.claude/skills/zzprobeskill/SKILL.md" ]
+  local resolved
+  resolved="$(cd "$HOME/.claude/skills/zzprobeskill" && pwd -P)"
+  [ "$resolved" = "$(cd "$CORE_BRAIN/core/skills/zzprobeskill" && pwd -P)" ]
+
+  # The one-step success line is printed and reports a drift-clean projection.
+  [[ "$output" == *"Added core skill 'zzprobeskill'"* ]]
+  [[ "$output" == *"drift-clean"* ]]
+}
+
+@test "add --core mcp: PROJECTS the entry into the live config against the brain root, exit 0" {
+  build_core_checkout
+
+  run "${IGRIS_BIN[@]}" add --core mcp zzprobemcp \
+    --command echo --arg hi --target claude:merge --project-root "$CORE_REPO"
+  echo "status=$status output=$output" >&2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"CORE mode"* ]]
+
+  # MATERIALIZE: the surfaces.mcp_servers block landed in BOTH the checkout
+  # surfaces-manifest and the runtime-brain mirror.
+  grep -q "zzprobemcp" "$CORE_REPO/core/scripts/cli-adapters/surfaces-manifest.json"
+  grep -q "zzprobemcp" "$CORE_BRAIN/core/scripts/cli-adapters/surfaces-manifest.json"
+
+  # PROJECTION ACTUALLY LANDS (the fix + the projector core-surfaces union): the
+  # MCP entry merged into the live claude config.
+  [ -f "$HOME/.claude.json" ]
+  python3 -c "import json; d=json.load(open('$HOME/.claude.json')); assert 'zzprobemcp' in d['mcpServers']; assert d['mcpServers']['zzprobemcp']['command']=='echo'"
+
+  [[ "$output" == *"Added core MCP 'zzprobemcp'"* ]]
+  [[ "$output" == *"drift-clean"* ]]
+}

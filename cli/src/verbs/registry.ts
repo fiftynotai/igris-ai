@@ -50,7 +50,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import {
   registryAgentDirPath,
@@ -58,6 +58,7 @@ import {
   registryOriginsPath,
   registryOverlayPath,
   registrySkillDirPath,
+  coreSurfacesManifestPath,
   claudeJsonPath,
   geminiSettingsPath,
   codexConfigTomlPath,
@@ -4089,19 +4090,58 @@ function mcpConfigPathFor(harness: McpHarness): string {
 }
 
 /**
- * FR-164: read the base manifest + auto-discovered/explicit personal overlay
- * and return the CONCATENATED `surfaces.mcp_servers[]` blocks (base ++ overlay),
- * so a personal MCP block written by `add-mcp` is visible to the projector.
- * This is the TS analogue of `_common.sh merge_overlay_manifest`'s mcp_servers
- * concat (finding #2). A name-collision between base and overlay is a HARD error
- * (matches the bash guard) — returned as a string for the caller to log.
+ * FR-180 cross-phase: does <project-root> OWN the core surfaces manifest? Mirrors
+ * the bash `core_surfaces_owned` / `flatten_mcp_rows` ownership gate
+ * (`commonpath(realpath(core-surfaces), realpath(project-root)) ==
+ * realpath(project-root)`). True iff the core surfaces file resolves to a path
+ * UNDER the project root — i.e. the project being compiled is (or contains) the
+ * brain that ships the manifest. Safe default `false` on any realpath failure
+ * (an unrelated project must not pull in core surfaces). Pure path logic via
+ * `relative()` (`..`-free and non-absolute ⇒ contained).
+ */
+function coreSurfacesOwned(
+  coreSurfacesPath: string,
+  projectRoot: string,
+): boolean {
+  let csReal: string;
+  let prReal: string;
+  try {
+    csReal = realpathSync(coreSurfacesPath);
+    prReal = realpathSync(projectRoot);
+  } catch {
+    return false;
+  }
+  if (csReal === prReal) {
+    return true;
+  }
+  const rel = relative(prReal, csReal);
+  return rel.length > 0 && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+/**
+ * FR-164 / FR-180: read the core surfaces manifest (when owned) + the base agent
+ * manifest + the auto-discovered/explicit personal overlay and return the
+ * CONCATENATED `surfaces.mcp_servers[]` blocks. This is the TS analogue of the
+ * bash `flatten_mcp_rows` union: the GLOBAL core `surfaces-manifest.json` is
+ * unioned FIRST (core declares the canonical blocks) but ONLY when the project
+ * being compiled OWNS it (its realpath is under `--project-root`) — identical
+ * ownership posture to the bash flatten, so a core MCP added via
+ * `igris add --core mcp` (which lands in `surfaces.mcp_servers[]`) is visible to
+ * the projector when the compile runs against the brain root, and an unrelated
+ * personal project never pulls core MCP servers in. The base agent manifest +
+ * personal overlay (`merge_overlay_manifest`'s mcp_servers concat, finding #2)
+ * follow.
  *
- * Absent base/overlay → that side contributes []. Malformed → throw (the caller
- * maps to exit 1). The order is base-first, overlay-second (same as bash).
+ * A name-collision between the core/base blocks and the overlay is a HARD error
+ * (matches the bash guard) — returned as a string for the caller to log. Absent
+ * source → contributes []. Malformed → throw (caller maps to exit 1). Order:
+ * core-first, base-second, overlay-last (mirrors bash `sources.insert(0, …)`).
  */
 function loadMergedMcpBlocks(
   manifestPath: string,
   overlayPath: string | undefined,
+  coreSurfacesPath?: string,
+  projectRoot?: string,
 ): McpServersSurface[] | string {
   const readMcp = (path: string): McpServersSurface[] => {
     if (!existsSync(path)) {
@@ -4114,6 +4154,17 @@ function loadMergedMcpBlocks(
     return Array.isArray(blocks) ? blocks : [];
   };
 
+  // Core surfaces — unioned ONLY when owned (mirrors flatten_mcp_rows). The
+  // ownership decision is made here so the projector finds a core-added MCP
+  // server when (and only when) compiling against a root that owns the manifest.
+  const coreBlocks =
+    coreSurfacesPath !== undefined &&
+    coreSurfacesPath.length > 0 &&
+    projectRoot !== undefined &&
+    coreSurfacesOwned(coreSurfacesPath, projectRoot)
+      ? readMcp(coreSurfacesPath)
+      : [];
+
   const baseBlocks = readMcp(manifestPath);
   const overlayBlocks =
     overlayPath !== undefined && overlayPath.length > 0
@@ -4121,8 +4172,10 @@ function loadMergedMcpBlocks(
       : [];
 
   // Name-collision hard error (mirrors merge_overlay_manifest): a personal MCP
-  // must not shadow a core one.
-  const baseNames = new Set(baseBlocks.map((b) => b?.name));
+  // must not shadow a core one (core OR base).
+  const baseNames = new Set(
+    [...coreBlocks, ...baseBlocks].map((b) => b?.name),
+  );
   for (const ob of overlayBlocks) {
     if (baseNames.has(ob?.name)) {
       return (
@@ -4131,7 +4184,7 @@ function loadMergedMcpBlocks(
       );
     }
   }
-  return [...baseBlocks, ...overlayBlocks];
+  return [...coreBlocks, ...baseBlocks, ...overlayBlocks];
 }
 
 /**
@@ -4174,14 +4227,23 @@ function runProjectMcp(opts: RegistryOptions): number {
   }
   const harness = opts.harness;
 
-  // Resolve the merged manifest blocks (base ++ overlay; collision = hard error).
+  // Resolve the merged manifest blocks (core ++ base ++ overlay; collision =
+  // hard error). The core surfaces manifest is unioned ONLY when the project
+  // root OWNS it (mirrors the bash flatten) — so a core MCP server added via
+  // `igris add --core mcp` is found when compiling against the brain root.
   const projectRoot = opts.projectRoot ?? process.cwd();
   const manifestPath = join(projectRoot, "harness-manifest.json");
   const overlayPath = opts.overlayPath ?? registryOverlayPath();
+  const coreSurfacesPath = coreSurfacesManifestPath();
 
   let blocks: McpServersSurface[];
   try {
-    const merged = loadMergedMcpBlocks(manifestPath, overlayPath);
+    const merged = loadMergedMcpBlocks(
+      manifestPath,
+      overlayPath,
+      coreSurfacesPath,
+      projectRoot,
+    );
     if (typeof merged === "string") {
       logError(`registry project-mcp: ${merged}`);
       return 1;

@@ -386,3 +386,95 @@ describe("runProjectMcp — usage guards", () => {
     expect(code).toBe(2);
   });
 });
+
+/**
+ * FR-180 cross-phase: a CORE MCP server lives ONLY in the core surfaces manifest
+ * (`<brain>/core/scripts/cli-adapters/surfaces-manifest.json`, written by
+ * `igris add --core mcp`), NOT in the project's `harness-manifest.json`. The
+ * projector must union the core surfaces manifest WHEN the project root OWNS it
+ * (its realpath under --project-root) — so `add --core mcp`'s projection (run
+ * against the brain root) finds the block. An unrelated project must NOT pull
+ * the core MCP server in.
+ */
+describe("runProjectMcp — FR-180 core surfaces union (ownership-gated)", () => {
+  let savedBrain: string | undefined;
+  let brainRoot: string;
+
+  beforeEach(() => {
+    savedBrain = process.env.IGRIS_BRAIN_DIR;
+    // A sandbox brain that OWNS the core surfaces manifest. The projector reads
+    // it via coreSurfacesManifestPath() = <brain>/core/scripts/cli-adapters/.
+    brainRoot = join(work, "brain");
+    const adaptersDir = join(brainRoot, "core", "scripts", "cli-adapters");
+    mkdirSync(adaptersDir, { recursive: true });
+    process.env.IGRIS_BRAIN_DIR = brainRoot;
+    const surfaces = {
+      version: 1,
+      surfaces: {
+        mcp_servers: [
+          {
+            name: "core-mcp",
+            canonical: { command: "echo", args: ["hi"] },
+            targets: [{ type: "claude", method: "merge" }],
+          },
+        ],
+      },
+    };
+    writeFileSync(
+      join(adaptersDir, "surfaces-manifest.json"),
+      JSON.stringify(surfaces, null, 2),
+    );
+  });
+
+  afterEach(() => {
+    if (savedBrain === undefined) {
+      delete process.env.IGRIS_BRAIN_DIR;
+    } else {
+      process.env.IGRIS_BRAIN_DIR = savedBrain;
+    }
+  });
+
+  it("projects a core-only MCP block when the project root OWNS the surfaces manifest", async () => {
+    // project-root == the brain root → ownership gate passes → core unioned.
+    // (No harness-manifest.json at brainRoot → base contributes []; the block
+    // comes purely from the core surfaces manifest.)
+    const cfg = join(work, "claude-core.json");
+    const code = await runRegistry({
+      action: "project-mcp",
+      name: "core-mcp",
+      harness: "claude",
+      projectRoot: brainRoot,
+      overlayPath,
+      configPath: cfg,
+    });
+    expect(code).toBe(0);
+    const servers = readJson(cfg).mcpServers as Record<string, unknown>;
+    expect(servers["core-mcp"]).toEqual({
+      type: "stdio",
+      command: "echo",
+      args: ["hi"],
+      env: {},
+    });
+  });
+
+  it("does NOT find a core block when the project root does NOT own the surfaces manifest", async () => {
+    // project-root is an UNRELATED dir (not an ancestor of the brain) → the
+    // ownership gate refuses → the core block is invisible → block-not-found.
+    const unrelated = join(work, "unrelated");
+    mkdirSync(unrelated, { recursive: true });
+    const cfg = join(work, "claude-unrelated.json");
+    const { code, out } = await capture(() =>
+      runRegistry({
+        action: "project-mcp",
+        name: "core-mcp",
+        harness: "claude",
+        projectRoot: unrelated,
+        overlayPath,
+        configPath: cfg,
+      }),
+    );
+    expect(code).toBe(1);
+    expect(out).toContain("no mcp_servers block named 'core-mcp'");
+    expect(existsSync(cfg)).toBe(false);
+  });
+});

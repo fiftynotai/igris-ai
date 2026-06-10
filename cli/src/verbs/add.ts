@@ -27,7 +27,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { registryOverlayPath } from "../lib/paths.js";
+import { brainDir, registryOverlayPath } from "../lib/paths.js";
 import { info, error as logError } from "../lib/log.js";
 import {
   materializeSkill,
@@ -180,6 +180,66 @@ export function resolveAddMode(
   return { ok: true, mode: detect(projectRoot) ? "core" : "personal" };
 }
 
+/** The PROJECTION project-root + agent manifest a core `add` projects against. */
+export interface CoreProjectionParams {
+  /** The `--project-root` the compile/check passes resolve against. */
+  projectRoot: string;
+  /** The `--manifest` (base agent manifest) the compile/check passes read. */
+  manifest: string;
+}
+
+/**
+ * FR-180 cross-phase fix: compute the PROJECTION params for a core `add`.
+ *
+ * The materialize half writes the source (`core/skills|agents/…`, the repo
+ * `harness-manifest.json` entry, the runtime `surfaces-manifest.json` block) +
+ * TD-096 mirror, anchored at the igris-ai CHECKOUT (`materializeRoot`). But the
+ * projection half MUST run against the RUNTIME BRAIN ROOT (`~/.igris`), NOT the
+ * checkout, for two empirically-verified reasons:
+ *
+ *   1. OWNERSHIP GATE (skills + mcp). The compile/check ownership gate keys on
+ *      `commonpath(realpath(<runtime surfaces-manifest.json>), realpath(<project-
+ *      root>)) == realpath(<project-root>)`. The runtime manifest lives under
+ *      `~/.igris/core/scripts/cli-adapters/`, so only a project-root that is an
+ *      ANCESTOR of it (i.e. `~/.igris`, or `~/.igris/core`) is "owner". The
+ *      checkout is NOT an ancestor → the gate refuses (the exact LOUD
+ *      `FAIL core <surface> — not owned by --project-root <repo>` this fix
+ *      removes for the add path). `~/.igris` (= `brainDir()`) satisfies it.
+ *
+ *   2. CANONICAL RESOLUTION (agents + identity). The repo `harness-manifest.json`
+ *      stores agent `canonical.dir` as the PROJECT-RELATIVE `core/agents` (and
+ *      os_identity `source` as `core/templates/identity.tmpl`). Those resolve as
+ *      `<project-root>/core/agents/<name>.md`. Under `~/.igris` that is exactly
+ *      `~/.igris/core/agents/<name>.md` — the runtime mirror the materialize step
+ *      just wrote. (Under the checkout it would also resolve, but the checkout
+ *      fails reason #1; under `~/.igris/core` it would DOUBLE to
+ *      `~/.igris/core/core/agents` and miss. `~/.igris` is the unique root that
+ *      satisfies BOTH constraints for ALL three surfaces.)
+ *
+ * Because `~/.igris` carries no `harness-manifest.json` of its own (the brain
+ * ships the schema, not the data manifest — agents + os_identity live in the
+ * CHECKOUT's manifest), the agent manifest must be passed explicitly as
+ * `<materializeRoot>/harness-manifest.json`.
+ *
+ * One helper → one fix for skill + agent + mcp core adds (and the not-yet-built
+ * identity/hook arms inherit it). PERSONAL projection is UNCHANGED — its
+ * surfaces project from the overlay under the user's own project root, which the
+ * ownership gate never skips.
+ *
+ * D5/TD-235 is PRESERVED: this only changes the project-root the `add` path
+ * passes; the loud-FAIL still fires for a genuinely mis-routed `--expect-core`
+ * compile whose project-root owns nothing.
+ */
+export function coreProjectionParams(
+  materializeRoot: string,
+  brainRoot?: string,
+): CoreProjectionParams {
+  return {
+    projectRoot: brainRoot ?? brainDir(),
+    manifest: join(materializeRoot, "harness-manifest.json"),
+  };
+}
+
 /**
  * Stub for the surfaces not yet implemented (hook/identity). Prints an
  * actionable not-yet message and returns exit 2.
@@ -213,11 +273,15 @@ async function runAddSkillArm(opts: AddOptions, mode: AddMode): Promise<number> 
       logError(`add skill (core): ${coreResult.reason}`);
       return coreResult.code;
     }
-    // Project + verify from the repo root; --expect-core makes an ownership-
-    // gate skip a LOUD failure (D5) rather than a silent no-op.
+    // Project + verify against the RUNTIME BRAIN ROOT (NOT the checkout) so the
+    // ownership gate PASSES and the runtime-mirrored core skill is the one
+    // projected; --expect-core keeps a genuine mis-route a LOUD failure (D5).
+    // See coreProjectionParams for the full empirically-derived rationale.
+    const proj = coreProjectionParams(projectRoot, opts.brainRoot);
     const verify = await projectAndVerify({
       surface: "skills",
-      projectRoot,
+      projectRoot: proj.projectRoot,
+      manifest: proj.manifest,
       expectCore: true,
       target: opts.target,
       // S1: scope the verify (check) pass to the just-added skill name so
@@ -305,11 +369,16 @@ async function runAddAgentArm(opts: AddOptions, mode: AddMode): Promise<number> 
       logError(`add agent (core): ${coreResult.reason}`);
       return coreResult.code;
     }
-    // Project + verify from the repo root; --expect-core makes an ownership-
-    // gate skip a LOUD failure (D5) rather than a silent no-op.
+    // Project + verify against the RUNTIME BRAIN ROOT (NOT the checkout). The
+    // repo manifest's agent canonical.dir is the project-relative `core/agents`,
+    // which under `~/.igris` resolves to `~/.igris/core/agents/<name>.md` (the
+    // runtime mirror the materialize step wrote); --expect-core keeps a genuine
+    // mis-route a LOUD failure (D5). See coreProjectionParams for the rationale.
+    const proj = coreProjectionParams(projectRoot, opts.brainRoot);
     const verify = await projectAndVerify({
       surface: "agents",
-      projectRoot,
+      projectRoot: proj.projectRoot,
+      manifest: proj.manifest,
       expectCore: true,
       target: opts.target,
       // S1: scope the verify (check) pass to the just-added agent name so
@@ -412,11 +481,15 @@ async function runAddMcpArm(opts: AddOptions, mode: AddMode): Promise<number> {
       logError(`add mcp (core): ${coreResult.reason}`);
       return coreResult.code;
     }
-    // Project + verify from the repo root; --expect-core makes an ownership-
-    // gate skip a LOUD failure (D5) rather than a silent no-op.
+    // Project + verify against the RUNTIME BRAIN ROOT (NOT the checkout) so the
+    // ownership gate PASSES and the runtime-mirrored surfaces.mcp_servers block
+    // is the one projected; --expect-core keeps a genuine mis-route a LOUD
+    // failure (D5). See coreProjectionParams for the full rationale.
+    const proj = coreProjectionParams(projectRoot, opts.brainRoot);
     const verify = await projectAndVerify({
       surface: "mcp",
-      projectRoot,
+      projectRoot: proj.projectRoot,
+      manifest: proj.manifest,
       expectCore: true,
       target: opts.target,
       // S1: scope the verify (check) pass to the just-added MCP name so

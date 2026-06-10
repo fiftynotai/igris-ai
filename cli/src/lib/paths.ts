@@ -44,6 +44,23 @@ export function skillsDirPath(): string {
   return join(brainDir(), "core", "skills");
 }
 
+/**
+ * Absolute path to the core surfaces manifest in the runtime brain
+ * (`<brain>/core/scripts/cli-adapters/surfaces-manifest.json`). This is the
+ * GLOBAL Layer-1 surfaces file declaring core skills + mcp_servers + os_identity
+ * — the same file the bash adapters resolve as `CORE_SURFACES` (next to the
+ * adapter scripts). Honors IGRIS_BRAIN_DIR via brainDir().
+ */
+export function coreSurfacesManifestPath(): string {
+  return join(
+    brainDir(),
+    "core",
+    "scripts",
+    "cli-adapters",
+    "surfaces-manifest.json",
+  );
+}
+
 /** Absolute path to the universal rules file in the runtime brain. */
 export function rulesFilePath(): string {
   return join(brainDir(), "core", "rules", "00-igris-universal.md");

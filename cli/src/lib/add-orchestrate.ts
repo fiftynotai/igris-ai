@@ -165,13 +165,21 @@ export async function projectAndVerify(
   }
 
   // --- 2. Verify: drift-check the same surface. ----------------------------
-  // S1: the check adapter has NO --surface flag — it would otherwise drift-check
-  // the ENTIRE project, so any pre-existing unrelated drift would false-fail a
-  // clean `add`. We thread the NAME filter (`opts.filter`, set by the add arm to
-  // the just-added surface name) into `--filter` so the verify is scoped to the
-  // surface we just added.
+  // S1: scope BOTH the SURFACE and the NAME of the verify.
+  //   - `--surface opts.surface` (FR-180 cross-phase) restricts the drift check
+  //     to the ONE surface we just projected. Without it, the check re-checks
+  //     EVERY surface — and a core `add` projects against the runtime BRAIN ROOT
+  //     (so the ownership gate passes), under which the os_identity surface
+  //     drifts (its {{IGRIS_VERSION}} resolves from `cli/package.json`, absent
+  //     there). That unrelated drift would false-fail a clean skill/agent/mcp
+  //     add. The compile half already projects only `opts.surface`; the check
+  //     now matches.
+  //   - `--filter opts.filter` (the just-added surface NAME) scopes WITHIN the
+  //     surface so a pre-existing unrelated drift in the SAME surface can't
+  //     false-fail either.
   const check = await runHarnessStructured({
     action: "check",
+    surface: opts.surface,
     projectRoot: opts.projectRoot,
     expectCore: opts.expectCore,
     filter: opts.filter,
