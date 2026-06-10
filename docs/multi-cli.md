@@ -921,6 +921,37 @@ across all three supported CLIs (Claude, OpenCode, Codex):
 | Codex CLI | `session_end` only | `notify` program wrapper at `~/.igris/core/hooks/bridges/codex-notify.sh` | Codex exposes only post-turn notification. The user's original `notify` program is backed up to `~/.igris/config.json → cli_targets.codex.user_notify_backup` and invoked first. |
 | Gemini CLI | None | Not supported | Gemini CLI has no hook API. Igris hook layer is a no-op for Gemini. |
 
+### Adding a hook — `igris add hook` (FR-180 D7)
+
+The six events above are the **canonical** Igris hooks shipped in the brain-core
+tarball. To add your OWN event-hook, use the one-step verb (Phase 5 promoted
+hooks to a first-class `surfaces.hooks[]` manifest surface — they now ride the
+same flatten → compile → drift scaffold as skills/agents/mcp/identity):
+
+```
+igris add hook <name> --event <Event> [--matcher <glob>] [--timeout <n>] [--target <type:merge[:enabled]>]
+```
+
+- `<Event>` is one of `SessionStart`, `SessionEnd`, `PreToolUse`, `PostToolUse`,
+  `PreCompact`, `PostCompact`. `--matcher` (tool-glob) applies only to the two
+  tool events. Targets default to `claude:merge`.
+- **Personal** writes the hook script to `~/.igris/registry/hooks/<name>/<Event>.sh`
+  + a `surfaces.hooks[]` overlay block, then config-merges the hook GROUP into the
+  project's `.claude/settings.json` `hooks.<Event>[]` array (idempotent —
+  re-projecting replaces in place, never a duplicate; pre-existing user groups +
+  every other settings key are preserved).
+- **R2 — a personal hook survives `igris update` / `doctor --fix`.** The canonical
+  re-merge (which drops-then-re-applies every group with the CORE prefix
+  `$HOME/.igris/core/hooks/`) treats the personal hook's REGISTRY-prefix command
+  (`$HOME/.igris/registry/hooks/…`) as user-owned and PRESERVES it. The refresh
+  cannot clobber a personal hook.
+- **opencode** hooks are covered by the FR-104 plugin (a `claude:merge` writes the
+  settings.json group; an `opencode:merge` target verifies the plugin exists — no
+  config write). codex (session_end-only) + gemini (no hook API) are not hook
+  projection targets.
+- `--core` writes `core/hooks/shared/<Event>.sh` + a `surfaces.hooks[]` block in
+  `core/scripts/cli-adapters/surfaces-manifest.json` + TD-096 mirrors both.
+
 ### Shared Script Input Contract
 
 Every shared script accepts two input shapes. Bridges translate native events to the

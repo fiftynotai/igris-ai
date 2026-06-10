@@ -35,6 +35,7 @@ import type {
   AgentMaterializeResult,
   McpMaterializeResult,
   IdentityMaterializeResult,
+  HookMaterializeResult,
 } from "../verbs/registry.js";
 import type { AddCoreResult } from "../verbs/add-core.js";
 
@@ -151,6 +152,37 @@ const okAddCoreIdentity = (): AddCoreResult => ({
   verifyOutput: "SUMMARY: 1 pairs — 1 MATCH, 0 MISMATCH",
 });
 
+const okMaterializeHook = (): HookMaterializeResult => ({
+  ok: true,
+  code: 0,
+  overlayWritten: "/overlay.json",
+});
+
+const okAddCoreHook = (): AddCoreResult => ({
+  ok: true,
+  code: 0,
+  reason: "",
+  sourcePath: "/repo/core/scripts/cli-adapters/surfaces-manifest.json",
+  mirrorPath: "/brain/core/scripts/cli-adapters/surfaces-manifest.json",
+  verifyOutput: "SUMMARY: 2 pairs — 2 MATCH, 0 MISMATCH",
+});
+
+// A clean hook compile+check capture fake (1 hook target, drift-clean).
+function cleanHookAdapter(): AdapterCaptureFn {
+  return (scriptPath) => {
+    if (scriptPath.includes("compile_harnesses.sh")) {
+      return {
+        code: 0,
+        output: "  OK    hook/my-guard/claude\n  1 targets — 1 ok, 0 failed\n",
+      };
+    }
+    return {
+      code: 0,
+      output: "  [hook/my-guard/claude] MATCH\n  1 targets — 1 in sync, 0 drifted/missing\n",
+    };
+  };
+}
+
 // A clean identity compile+check capture fake (1 identity target, drift-clean).
 function cleanIdentityAdapter(): AdapterCaptureFn {
   return (scriptPath) => {
@@ -175,15 +207,21 @@ describe("runAdd — dispatcher routing", () => {
     expect(cap.err.join("")).toContain("unknown surface 'bogus'");
   });
 
-  it("hook arm is a not-implemented stub (exit 2)", async () => {
+  it("all five arms are wired (no not-implemented stub remains)", async () => {
+    // FR-180 Phase 5: hook is the final arm — dispatching it must NOT hit a
+    // stub. With injected seams it routes to the hook arm and reaches projection.
     const code = await runAdd({
       surface: "hook",
       name: "x",
+      event: "PreToolUse",
       noCore: true,
       detectCore: () => false,
+      brainRoot: BRAIN,
+      materializeHookFn: okMaterializeHook,
+      captureAdapter: cleanAdapter(),
     });
-    expect(code).toBe(2);
-    expect(cap.err.join("")).toContain("not implemented yet");
+    expect(code).toBe(0);
+    expect(cap.err.join("")).not.toContain("not implemented yet");
   });
 });
 
@@ -800,6 +838,126 @@ describe("runAdd identity — core happy path (D6)", () => {
     });
     expect(code).not.toBe(0);
     expect(cap.err.join("")).toContain("not owned by --project-root /unowned");
+  });
+});
+
+describe("runAdd hook — personal happy path (D7, Phase 5)", () => {
+  it("materializes via materializeHook then projects + verifies → exit 0", async () => {
+    let materializeCalled = false;
+    const code = await runAdd({
+      surface: "hook",
+      name: "my-guard",
+      noCore: true,
+      event: "PreToolUse",
+      matcher: "Write|Edit",
+      brainRoot: BRAIN,
+      materializeHookFn: (opts, overlay) => {
+        materializeCalled = true;
+        // The hook arm routes through the registry "add-hook" action (R7 reuse).
+        expect(opts.action).toBe("add-hook");
+        expect(opts.name).toBe("my-guard");
+        expect(opts.event).toBe("PreToolUse");
+        expect(opts.matcher).toBe("Write|Edit");
+        expect(overlay).toBeDefined();
+        return okMaterializeHook();
+      },
+      captureAdapter: cleanHookAdapter(),
+    });
+    expect(code).toBe(0);
+    expect(materializeCalled).toBe(true);
+    expect(cap.out.join("")).toContain("Added personal hook 'my-guard'");
+    // R2: the success message names the update/doctor preservation contract.
+    expect(cap.out.join("")).toContain("survives");
+  });
+
+  it("passes the just-added name as the verify --filter (S1 scoping)", async () => {
+    let checkFilter: string | undefined;
+    await runAdd({
+      surface: "hook",
+      name: "my-guard",
+      noCore: true,
+      event: "SessionStart",
+      brainRoot: BRAIN,
+      materializeHookFn: okMaterializeHook,
+      captureAdapter: (scriptPath, args) => {
+        if (scriptPath.includes("check_harness_drift.sh")) {
+          const i = args.indexOf("--filter");
+          checkFilter = i >= 0 ? args[i + 1] : undefined;
+          return { code: 0, output: "  1 targets — 1 in sync, 0 drifted/missing\n" };
+        }
+        return { code: 0, output: "  OK    hook/my-guard/claude\n  1 targets — 1 ok, 0 failed\n" };
+      },
+    });
+    expect(checkFilter).toBe("my-guard");
+  });
+
+  it("returns the materialize reject code without projecting", async () => {
+    let projected = false;
+    const code = await runAdd({
+      surface: "hook",
+      name: "my-guard",
+      noCore: true,
+      event: "PreToolUse",
+      brainRoot: BRAIN,
+      materializeHookFn: () => ({ ok: false, code: 1, overlayWritten: "/o.json" }),
+      captureAdapter: () => {
+        projected = true;
+        return { code: 0, output: "" };
+      },
+    });
+    expect(code).toBe(1);
+    expect(projected).toBe(false);
+  });
+});
+
+describe("runAdd hook — core happy path (D7, Phase 5)", () => {
+  it("writes the shared script + surfaces block then projects + verifies → exit 0", async () => {
+    let addCoreCalled = false;
+    const code = await runAdd({
+      surface: "hook",
+      name: "core-guard",
+      core: true,
+      projectRoot: "/repo",
+      event: "PostToolUse",
+      brainRoot: BRAIN,
+      addCoreHookFn: (opts) => {
+        addCoreCalled = true;
+        expect(opts.name).toBe("core-guard");
+        expect(opts.projectRoot).toBe("/repo");
+        expect(opts.event).toBe("PostToolUse");
+        return okAddCoreHook();
+      },
+      captureAdapter: cleanHookAdapter(),
+    });
+    expect(code).toBe(0);
+    expect(addCoreCalled).toBe(true);
+    expect(cap.out.join("")).toContain("Added core hook 'core-guard'");
+  });
+
+  it("TD-235: core hook projection skipped by the gate → non-zero + message", async () => {
+    const code = await runAdd({
+      surface: "hook",
+      name: "core-guard",
+      core: true,
+      projectRoot: "/unowned",
+      event: "PreToolUse",
+      brainRoot: BRAIN,
+      addCoreHookFn: okAddCoreHook,
+      captureAdapter: (scriptPath) => {
+        if (scriptPath.includes("compile_harnesses.sh")) {
+          return {
+            code: 1,
+            output:
+              "FAIL  core surfaces — 0 targets matched under --expect-core for --project-root /unowned; run from the igris-ai repo or pass --core\n",
+          };
+        }
+        return { code: 0, output: "" };
+      },
+    });
+    expect(code).not.toBe(0);
+    // The loud-fail FAIL row is surfaced verbatim in the add-orchestrate reason.
+    expect(cap.err.join("")).toContain("0 targets matched under --expect-core");
+    expect(cap.err.join("")).toContain("/unowned");
   });
 });
 

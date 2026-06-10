@@ -298,11 +298,18 @@ EOF
 EOF
   run run_compile --surface identity
   [ "$status" -eq 0 ]
-  [[ "$output" == *"No agent/skills/mcp/identity targets matched"* ]]
+  # FR-180 Phase 5: the empty-match line now enumerates `hook` too
+  # (No agent/skills/mcp/identity/hook targets matched). Match on the stable
+  # head + tail so the assertion is robust to the surface list growing.
+  [[ "$output" == *"No agent/skills/mcp/identity"* ]]
+  [[ "$output" == *"targets matched"* ]]
   [ ! -f "$PROJ/GEMINI.md" ]
   run run_drift
   [ "$status" -eq 0 ]
-  [[ "$output" != *"identity/"* ]]
+  # No per-row identity VERDICT was emitted (the `[identity/<harness>]` bracket
+  # prefix is the verdict row — distinct from the `identity/hook` substring the
+  # empty-match summary line now carries).
+  [[ "$output" != *"[identity/"* ]]
 }
 
 @test "project-scoped block matching --project-root emits normally" {

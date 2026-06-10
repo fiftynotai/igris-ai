@@ -59,7 +59,7 @@ readonly DEFAULT_OVERLAY="$BRAIN_DIR/registry/harness-manifest.personal.json"
 # usage — prints usage and exits with code 2.
 # ---------------------------------------------------------------------------
 usage() {
-  echo "Usage: $0 --project-root <dir> [--manifest <path>] [--overlay <path>] [--filter <name-glob>] [--surface agents|skills|mcp|identity|all] [--expect-core]" >&2
+  echo "Usage: $0 --project-root <dir> [--manifest <path>] [--overlay <path>] [--filter <name-glob>] [--surface agents|skills|mcp|identity|hook|all] [--expect-core]" >&2
   echo "" >&2
   echo "Fails (exit 1) if any harness file has drifted from its canonical prompt." >&2
   echo "--surface: restrict the drift check to ONE projection surface (default: all)." >&2
@@ -142,9 +142,9 @@ PROJECT_ROOT="$( cd "$PROJECT_ROOT" && pwd )"
 
 # FR-180: validate --surface (mirrors compile_harnesses.sh's identical gate).
 case "$SURFACE_KIND" in
-  agents|skills|mcp|identity|all) : ;;
+  agents|skills|mcp|identity|hook|all) : ;;
   *)
-    echo "Error: --surface must be agents, skills, mcp, identity, or all (got '$SURFACE_KIND')" >&2
+    echo "Error: --surface must be agents, skills, mcp, identity, hook, or all (got '$SURFACE_KIND')" >&2
     usage
     ;;
 esac
@@ -2088,8 +2088,67 @@ if { [ "$SURFACE_KIND" = "identity" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n 
   done <<< "$IDENTITY_DRIFT_ROWS"
 fi
 
+# ---------------------------------------------------------------------------
+# FR-180 (D7 - Option B): event-hook drift pass, line-paired with the compile
+# hook pass (§18.1 compile/drift PAIRING — same flattened rows, not a shape
+# parity). Flattens the SAME (hook,target) rows via flatten_hook_rows
+# (target_kind="all" — drift checks both harness targets per block). Hook drift
+# is PRESENCE-BASED, NOT a byte-shape comparison: for claude it reads the
+# project's .claude/settings.json and asserts the hook command PATH is present
+# under its event array (MATCH) or absent (MISSING) via verify_hook_entry_present
+# — there is no bash hook-shaper twin (unlike identity's normalize_identity_shape)
+# because the hook is identified by its command path, not its full byte-shape.
+# For opencode it asserts the FR-104 plugin exists (covered → MATCH; absent →
+# MISSING). Honors --filter (S1) so the scoped verify checks only the added hook.
+# ---------------------------------------------------------------------------
+HOOK_DRIFT_ROWS=$(flatten_hook_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "all" "$PROJECT_ROOT")
+if { [ "$SURFACE_KIND" = "hook" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n "$HOOK_DRIFT_ROWS" ]; then
+  while IFS=$'\t' read -r h_name h_event h_command h_matcher h_timeout h_type h_enabled h_layer h_scope_type h_scope_paths; do
+    [ -z "$h_name" ] && continue
+    [ -z "$h_type" ] && continue
+    : "$h_matcher" "$h_timeout" "$h_enabled" "$h_layer" "$h_scope_type" "$h_scope_paths"
+
+    skill_name_matches_filter "$h_name" "$FILTER" || continue
+
+    TOTAL=$((TOTAL + 1))
+
+    if [ "$h_type" = "opencode" ]; then
+      plugin_path="$HOME/.config/opencode/plugins/igris-bridge.ts"
+      if [ -f "$plugin_path" ]; then
+        echo "  [hook/$h_name/opencode] MATCH (covered by the FR-104 plugin)"
+        MATCH=$((MATCH + 1))
+      else
+        echo "  [hook/$h_name/opencode] MISSING"
+        echo "      reason    : FR-104 plugin absent at $plugin_path (run \`igris install\`)"
+        DRIFT=$((DRIFT + 1))
+      fi
+      continue
+    fi
+
+    # claude: read .claude/settings.json + assert the command path is present.
+    h_settings="${IGRIS_HOOK_CLAUDE_SETTINGS:-$PROJECT_ROOT/.claude/settings.json}"
+    hook_verdict=$(verify_hook_entry_present "$h_settings" "$h_event" "$h_command")
+    case "$hook_verdict" in
+      MATCH)
+        echo "  [hook/$h_name/claude] MATCH"
+        MATCH=$((MATCH + 1))
+        ;;
+      MISSING)
+        echo "  [hook/$h_name/claude] MISSING"
+        echo "      reason    : no '$h_event' hook with command '$h_command' in $h_settings (run \`igris harness compile\`)"
+        DRIFT=$((DRIFT + 1))
+        ;;
+      *)
+        echo "  [hook/$h_name/claude] DRIFTED"
+        echo "      reason    : settings.json unparseable or unexpected shape ($h_settings)"
+        DRIFT=$((DRIFT + 1))
+        ;;
+    esac
+  done <<< "$HOOK_DRIFT_ROWS"
+fi
+
 if [ "$TOTAL" -eq 0 ]; then
-  echo "No agent/skills/mcp/identity targets matched (filter='$FILTER')." >&2
+  echo "No agent/skills/mcp/identity/hook targets matched (filter='$FILTER')." >&2
   # FR-180 (TD-235 / D5): under --expect-core a 0-target drift run is the silent
   # no-op the brief forbids (the verify half of `igris add` got nothing to
   # check). Fail LOUDLY; without the flag the historical exit-0 is preserved.

@@ -43,6 +43,12 @@
           "minItems": 1,
           "items": { "$ref": "#/$defs/identity_surface" }
         },
+        "hooks": {
+          "description": "FR-180 (D7 — Option B): event-hook projection blocks — promoting hooks to a first-class surface so they ride the SAME flatten→compile→drift scaffold as skills/agents/mcp/identity. An ARRAY of blocks mirroring `mcp_servers`. Each block declares ONE event (SessionStart/SessionEnd/PreToolUse/PostToolUse/PreCompact/PostCompact) + the canonical hook command (the shared script the harness runs) + per-harness `targets[{type, method:'merge'}]`. Projection is a config-MERGE into each harness's native hook surface (claude→.claude/settings.json hooks array, opencode→the FR-104 plugin events; codex→session_end only; gemini→N/A). Core-owned blocks land in surfaces-manifest.json; personal blocks via the FR-139 overlay — a personal block's command lives under ~/.igris/registry/hooks/ so the canonical re-merge (install/update/doctor) treats it as a DISTINCT-provenance Igris entry and PRESERVES it (the R2 refresh-overwrite hazard fix). v1 GLOBAL-ONLY: `scope` is accepted for forward-compat but consumers treat every block as global.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/hook_surface" }
+        },
         "os_context": {
           "description": "RESERVED for FR-140 (rules+prompts OS-context projection). Permissive until FR-140 fleshes it out; an absent block is the normal case in FR-137.",
           "type": "object",
@@ -200,6 +206,56 @@
                 "type": "string",
                 "description": "The harness's natively auto-read identity file (GEMINI.md / AGENTS.md), resolved per the 3-case shape — project-root-relative in the confirmed v1 map."
               }
+            }
+          }
+        }
+      }
+    },
+    "hook_surface": {
+      "description": "FR-180 (D7 - Option B): ONE event-hook projection block. Multiple coexist as elements of `surfaces.hooks[]`. `event` is the canonical Igris event name; `canonical.command` is the shared hook script the harness runs (a personal block's command lives under ~/.igris/registry/hooks/<name>/ - a distinct provenance prefix the canonical re-merge preserves, fixing the R2 refresh-overwrite hazard; a core block's lives under $HOME/.igris/core/hooks/shared/). Optional `canonical.matcher` (tool-glob for PreToolUse/PostToolUse) + `canonical.timeout` (seconds). `targets` carries a SEPARATE enum - claude (settings.json hooks array) + opencode (the FR-104 plugin); codex supports only session_end and gemini has no hook API (so those are documented, not projected). `method` is always the const `merge`. v1 is GLOBAL-ONLY: `scope` is accepted (reuses $defs/scope for forward-compat) but consumers treat every block as global.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "event", "canonical", "targets"],
+      "properties": {
+        "name":  { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "event": {
+          "enum": [
+            "SessionStart",
+            "SessionEnd",
+            "PreToolUse",
+            "PostToolUse",
+            "PreCompact",
+            "PostCompact"
+          ],
+          "description": "The Igris portable event this hook fires on (the same six PORTABLE_EVENTS the canonical-settings.json hooks block declares)."
+        },
+        "layer": {
+          "type": "string",
+          "default": "core",
+          "description": "FR-139 provenance seam: 'core' (declared in surfaces-manifest.json) or 'personal' (contributed by the FR-139 overlay). A 'personal' block's command lives under ~/.igris/registry/hooks/ so the canonical re-merge preserves it (R2)."
+        },
+        "scope": { "$ref": "#/$defs/scope" },
+        "canonical": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["command"],
+          "properties": {
+            "command": { "type": "string", "description": "The hook command the harness runs (a shell script path). Personal blocks: ~/.igris/registry/hooks/<name>/<event>.sh; core blocks: $HOME/.igris/core/hooks/shared/<event>.sh." },
+            "matcher": { "type": "string", "description": "Tool-name glob (PreToolUse/PostToolUse only), e.g. 'Write|Edit'. Omitted - fires for all tools / non-tool events." },
+            "timeout": { "type": "integer", "description": "Per-hook timeout in seconds (optional; passthrough to the harness hook entry)." }
+          }
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "method"],
+            "properties": {
+              "type":    { "enum": ["claude", "opencode"] },
+              "method":  { "const": "merge" },
+              "enabled": { "type": "boolean", "default": true }
             }
           }
         }

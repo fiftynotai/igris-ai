@@ -1025,7 +1025,7 @@ compile_md_agent_target() {
 usage() {
   echo "Usage: $0 --project-root <dir> [--manifest <path>] [--overlay <path>]" >&2
   echo "                          [--filter <name-glob>] [--target claude|codex|gemini|opencode|all]" >&2
-  echo "                          [--surface agents|skills|mcp|identity|all] [--expect-core]" >&2
+  echo "                          [--surface agents|skills|mcp|identity|hook|all] [--expect-core]" >&2
   echo "" >&2
   echo "Regenerates harness files declared in the manifest from canonical prompts." >&2
   echo "--expect-core: fail LOUDLY (non-zero) if a declared core surface is skipped" >&2
@@ -1130,10 +1130,11 @@ esac
 
 # FR-164: --surface accepts `mcp` (the MCP projection pass).
 # TD-233: --surface accepts `identity` (the orchestrator-identity pass).
+# FR-180 (D7): --surface accepts `hook` (the event-hook projection pass).
 case "$SURFACE_KIND" in
-  agents|skills|mcp|identity|all) : ;;
+  agents|skills|mcp|identity|hook|all) : ;;
   *)
-    echo "Error: --surface must be agents, skills, mcp, identity, or all (got '$SURFACE_KIND')" >&2
+    echo "Error: --surface must be agents, skills, mcp, identity, hook, or all (got '$SURFACE_KIND')" >&2
     usage
     ;;
 esac
@@ -1206,9 +1207,9 @@ fi
 #   body-exception-or-empty <TAB> target-type <TAB> target-path
 # One row per agent/target. python3 (no jq) per the _common.sh convention.
 # ---------------------------------------------------------------------------
-# FR-164/TD-233: the agent pass runs only for agents/all (skipped for skills,
-# mcp and identity).
-if [ "$SURFACE_KIND" = "skills" ] || [ "$SURFACE_KIND" = "mcp" ] || [ "$SURFACE_KIND" = "identity" ]; then
+# FR-164/TD-233/FR-180: the agent pass runs only for agents/all (skipped for
+# skills, mcp, identity and hook).
+if [ "$SURFACE_KIND" = "skills" ] || [ "$SURFACE_KIND" = "mcp" ] || [ "$SURFACE_KIND" = "identity" ] || [ "$SURFACE_KIND" = "hook" ]; then
   WORK_ROWS=""
 else
   WORK_ROWS=$(python3 - "$MERGED_MANIFEST" "$FILTER" "$TARGET_KIND" <<'PY'
@@ -2016,8 +2017,55 @@ if [ "$SURFACE_KIND" = "identity" ] || [ "$SURFACE_KIND" = "all" ]; then
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# FR-180 (D7 - Option B): event-hook projection pass. For each (hook-block,
+# target) row, dispatch to the TS projector (`igris registry project-hook`),
+# which MERGES the hook GROUP into the harness's native hook surface
+# (claude → .claude/settings.json hooks array; opencode → covered by the FR-104
+# plugin). §18.1: bash NEVER re-implements the merge — this pass is a thin
+# driver + accounting. ONE config per call; OK/FAIL counted per (hook,target)
+# into the shared accumulators. The command path is a SCRIPT path the harness
+# runs (never a secret) — the personal registry-prefix path is what the
+# canonical re-merge preserves (R2). Honors --filter (S1) for the scoped verify.
+# ---------------------------------------------------------------------------
+if [ "$SURFACE_KIND" = "hook" ] || [ "$SURFACE_KIND" = "all" ]; then
+  HOOK_ROWS=$(flatten_hook_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "$TARGET_KIND" "$PROJECT_ROOT")
+  if [ -n "$HOOK_ROWS" ]; then
+    while IFS=$'\t' read -r h_name h_event h_command h_matcher h_timeout h_type h_enabled h_layer h_scope_type h_scope_paths; do
+      [ -z "$h_name" ] && continue
+      [ -z "$h_type" ] && continue
+
+      # FR-180 (S1): honor --filter (parity with the mcp/skills surfaces) so the
+      # scoped verify re-checks only the just-added hook. Runs BEFORE TOTAL++.
+      skill_name_matches_filter "$h_name" "$FILTER" || continue
+
+      # v1 GLOBAL-ONLY; scope/layer/matcher/timeout carried by the row but the
+      # projector reads them from the merged manifest, not echoed here.
+      : "$h_event" "$h_command" "$h_matcher" "$h_timeout" "$h_enabled" \
+        "$h_layer" "$h_scope_type" "$h_scope_paths"
+
+      TOTAL=$((TOTAL + 1))
+
+      rc=0
+      "${IGRIS_CLI_CMD[@]}" registry project-hook \
+        --name "$h_name" \
+        --harness "$h_type" \
+        --project-root "$PROJECT_ROOT" \
+        ${OVERLAY:+--overlay "$OVERLAY"} || rc=$?
+
+      if [ "$rc" -eq 0 ]; then
+        SUMMARY+=("OK    hook/$h_name/$h_type")
+        OK=$((OK + 1))
+      else
+        SUMMARY+=("FAIL  hook/$h_name/$h_type — projector exited $rc")
+        FAIL=$((FAIL + 1))
+      fi
+    done <<< "$HOOK_ROWS"
+  fi
+fi
+
 if [ "$TOTAL" -eq 0 ]; then
-  echo "No agent/skills/mcp/identity targets matched (filter='$FILTER', target='$TARGET_KIND', surface='$SURFACE_KIND')." >&2
+  echo "No agent/skills/mcp/identity/hook targets matched (filter='$FILTER', target='$TARGET_KIND', surface='$SURFACE_KIND')." >&2
   # FR-180 (TD-235 / D5): a 0-target run under --expect-core is the silent
   # no-op the brief forbids — the caller (igris add) routed this expecting core
   # surfaces and got nothing. Fail LOUDLY so add can surface an actionable

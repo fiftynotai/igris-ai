@@ -5,10 +5,10 @@ skill, agent, MCP server, hook, or orchestrator identity. It is routed into
 context via `core/igris_tree.json` (`context_files.surface_management`) and
 paired with the `surface_management` section in `core/prompts/igris_os.md`.
 
-> **Phase status.** FR-180 ships the `skill`, `agent`, `mcp`, and `identity`
-> arms end-to-end (personal + core). The `hook` arm is wired in the dispatcher
-> but lands in a later phase; until then, use the low-level path (below) for
-> that surface.
+> **Phase status.** FR-180 ships ALL FIVE surfaces — `skill`, `agent`, `mcp`,
+> `identity`, and `hook` — end-to-end (personal + core). Hooks were the
+> net-new first-class surface (Phase 5, D7 Option B): they now ride the same
+> `surfaces.hooks[]` flatten → compile → drift scaffold as the other four.
 
 ---
 
@@ -60,7 +60,7 @@ when the ownership gate skipped a surface; `igris add` closes that hole.
 | **Skill** | `igris add skill <name> --from <skills-dir> --target <type:method:path>` | `<skills-dir>/<name>/SKILL.md` is vendored; target is e.g. `agents:symlink:~/.agents/skills`. Core skills auto-discover — `--core` writes `core/skills/<name>/SKILL.md` only (no manifest edit). |
 | **Agent** | `igris add agent <name> --from <dir> --target <type:path>` | all-four-harness α-assembly at vendor time. `--core` writes `core/agents/<name>.md` + the repo-root `harness-manifest.json` entry + the §13 agent enumeration surfaces (igris_tree.json, CLAUDE.md template + root). |
 | **MCP** | `igris add mcp <name> --command <bin> [--arg …] [--env KEY=${VAR}] [--startup-timeout-sec <n>] --target <type:merge[:enabled]>` | config-merge into each harness's native MCP config (claude/gemini `mcpServers`, opencode `mcp`, codex `[mcp_servers.<name>]`). **`--env` values MUST be `${VAR}` indirection refs — inline secrets are REJECTED** at the writer boundary (the real secret is resolved from the environment by the harness at launch, never stored). `--core` appends a `surfaces.mcp_servers[]` block to `core/scripts/cli-adapters/surfaces-manifest.json` (the global Layer-1 surfaces file the MCP flatten reads) + TD-096 mirror. |
-| **Hook** | `igris add hook <name> …` | _(later phase)_ net-new surface design. |
+| **Hook** | `igris add hook <name> --event <Event> [--matcher <glob>] [--timeout <n>] [--target <type:merge[:enabled]>]` | config-merge of an event-hook GROUP into each harness's native hook surface. `<Event>` is one of `SessionStart`, `SessionEnd`, `PreToolUse`, `PostToolUse`, `PreCompact`, `PostCompact`. Targets default to `claude:merge`; the two hook harnesses are **claude** (the `.claude/settings.json` `hooks.<Event>[]` array) and **opencode** (covered by the FR-104 plugin — codex supports only session_end and gemini has no hook API, so those are documented, not projected). **Personal** writes the hook SCRIPT to `~/.igris/registry/hooks/<name>/<Event>.sh` + a `surfaces.hooks[]` overlay block; the registry-prefix command path is what the canonical re-merge **preserves** (see the R2 gotcha). `--core` writes `core/hooks/shared/<Event>.sh` + a `surfaces.hooks[]` block in `core/scripts/cli-adapters/surfaces-manifest.json` + TD-096 mirrors both. `--matcher` only applies to `Pre/PostToolUse`. |
 | **Identity** | `igris add identity <name> --target <type:file:filename>` | region-merge of the Igris-managed identity block into the harness's natively auto-read identity file (e.g. `gemini:file:GEMINI.md`, `codex:file:AGENTS.md`). **Personal** writes a project-scoped `surfaces.os_identity[]` block to the overlay — FR-180 (D6) lifted the v1 "personal os_identity accepted but NOT merged" gate so it now projects like core. A personal (type, filename) target that collides with a core one is REJECTED. `--source` / `--version-source` override the canonical template / `{{IGRIS_VERSION}}` source (defaults: `<brain>/core/templates/identity.tmpl`, `<brain>/config.json`). `--core` appends an os_identity block to the repo-root `harness-manifest.json` (the SAME file the TD-233 core block lives in) using the canonical mirrored template. |
 
 ---
@@ -134,6 +134,33 @@ when the ownership gate skipped a surface; `igris add` closes that hole.
   `harness compile` runs from the igris-ai CHECKOUT (where `cli/package.json`
   resolves), the normal full-repo compile path; `igris add --core identity` is
   the one-step path that projects against the brain.
+- **Hooks survive `igris update` / `doctor --fix` (R2 — the central hazard)** —
+  `install` / `update` / `doctor --fix` re-merge the canonical hooks from
+  `~/.igris/core/hooks/canonical-settings.json` into `.claude/settings.json`,
+  dropping-then-re-applying every group whose command starts with the CORE
+  prefix `$HOME/.igris/core/hooks/`. A **personal**-added hook lives under a
+  DIFFERENT prefix — `$HOME/.igris/registry/hooks/<name>/` — which the
+  re-merge classifies as user-owned and **preserves**. That is the merge gate:
+  a personal hook is never clobbered by a refresh. (A core hook IS re-applied
+  by the canonical re-merge because it carries the core prefix — that is also
+  correct; the core hook is part of the canonical set.) The
+  refresh-no-clobber behavior is regression-tested (the R2 merge gate for
+  Phase 5).
+- **Hooks are a config-MERGE surface (like MCP), not a symlink** — the hook
+  compile pass invokes `igris registry project-hook`, which appends the hook
+  GROUP into the `hooks.<Event>[]` array idempotently (a re-project of the same
+  command path replaces in place — never a duplicate) and preserves every
+  pre-existing user group + every other top-level settings key. The drift pass
+  asserts the command path is PRESENT under its event (MATCH) or absent
+  (MISSING). The verify is name-scoped via `--filter <name>` (S1), so a
+  pre-existing unrelated hook drift can't false-fail a clean add.
+- **opencode hooks are covered by the FR-104 plugin** — a `claude:merge` target
+  writes the settings.json group; an `opencode:merge` target does NOT write a
+  config (the FR-104 `igris-bridge.ts` plugin already routes all six events to
+  the shared scripts). The projector/drift verify the plugin EXISTS at
+  `~/.config/opencode/plugins/igris-bridge.ts` (covered → OK/MATCH; absent →
+  loud failure pointing at `igris install`). codex (session_end-only) and gemini
+  (no hook API) are not hook projection targets.
 
 ---
 

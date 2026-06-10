@@ -72,14 +72,14 @@ OpenCode), AND **verifies** the projection is drift-clean — in one step. If
 nothing actually projected, it fails LOUDLY with an actionable message; it can
 never report a phantom success (TD-235).
 
-**Per-surface (`skill`, `agent`, `mcp` + `identity` ship end-to-end; hook in progress):**
+**Per-surface (ALL FIVE — skill, agent, mcp, identity + hook — ship end-to-end):**
 
 | Surface | Command |
 |---|---|
 | Skill | `igris add skill <name> --from <skills-dir> --target <type:method:path>` |
 | Agent | `igris add agent <name> --from <dir> --target <type:path>` |
 | MCP | `igris add mcp <name> --command <bin> --arg … --env KEY=${VAR} --target <type:merge>` |
-| Hook | `igris add hook <name> …` |
+| Hook | `igris add hook <name> --event <Event> [--matcher <glob>] [--timeout <n>]` |
 | Identity | `igris add identity <name> --target <type:file:filename>` |
 
 **Core vs personal (always announced, never silent):**

@@ -182,6 +182,46 @@ artifacts: edit `identity.tmpl`, then recompile. Filename map + mechanism:
 `docs/multi-cli.md` § "Orchestrator identity as a `surfaces.os_identity`
 manifest declaration".
 
+## Event-hook surface (hooks — FR-180 D7)
+
+The sixth projected surface: event-hooks. FR-180 (D7, Option B) promoted hooks
+to a first-class `surfaces.hooks[]` manifest surface so they ride the SAME
+flatten → compile → drift scaffold as the other five. Each block declares a
+`name`, an `event` (one of the six portable events), a `canonical.command` (the
+hook script the harness runs, optionally `matcher`/`timeout`), and
+per-harness `targets[{type ∈ {claude, opencode}, method:"merge"}]`.
+
+- **Compile** (`compile_harnesses.sh`, narrows via `--surface hook`): for each
+  `(hook, target)` row it dispatches to `igris registry project-hook`, which
+  config-**merges** the hook GROUP (built by the TS projector `cli/src/lib/
+  hook-shape.ts`) into the target. claude → the project's `.claude/settings.json`
+  `hooks.<Event>[]` array (idempotent — re-projecting replaces in place; user
+  groups + other keys preserved). opencode → covered by the FR-104 plugin (verify
+  it exists; no config write). codex/gemini are not hook projection targets.
+- **Drift** (`check_harness_drift.sh`): hook drift is **presence-based**, NOT a
+  byte-shape comparison. It asserts the hook command path is present under its
+  event (`MATCH`) or absent (`MISSING`) via `_common.sh::verify_hook_entry_present`;
+  for opencode it verifies the plugin. Honors `--filter <name>` (S1) so a scoped
+  verify checks only the added hook. Because the hook is identified by its command
+  PATH in the merged JSON (not its full byte-shape), there is **no §18.1 bash↔TS
+  shape-parity contract** here the way identity/agents have (no bash hook-shaper
+  twin) — `hook-shape.ts` shapes the projector's output and is pinned by a TS-only
+  golden in `hook-shape.test.ts`.
+- **R2 — refresh-overwrite safety.** A core hook's command lives under
+  `$HOME/.igris/core/hooks/shared/`; a personal hook's under
+  `$HOME/.igris/registry/hooks/`. `install`/`update`/`doctor --fix` re-merge the
+  canonical hooks (`mergeCanonicalHooks` in `cli/src/lib/json-merge.ts`), which
+  drops-then-re-applies CORE-prefix groups but PRESERVES the registry-prefix
+  personal ones — so a personal hook is never clobbered by a refresh. The
+  `IGRIS_PERSONAL_HOOK_CMD_PREFIX` carve-out in `isIgrisEntry` makes this an
+  explicit, regression-tested contract (the R2 merge gate).
+- **Adding a hook (`igris add hook`, FR-180 D7):** the one-step add verb writes
+  the hook script + a `surfaces.hooks[]` block (personal → the registry overlay
+  + `~/.igris/registry/hooks/<name>/`; core → `surfaces-manifest.json` +
+  `core/hooks/shared/`) then projects + verifies it. `merge_overlay_manifest`
+  unions hook blocks (base ++ overlay) with a `name` + `(event, target)` cell
+  collision guard.
+
 ## Mirror obligation (TD-096)
 
 Every file in this directory lives under `core/` and is part of the runtime

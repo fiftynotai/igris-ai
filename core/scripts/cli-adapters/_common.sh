@@ -656,7 +656,7 @@ surfaces = manifest.get("surfaces")
 if surfaces is not None:
     if not isinstance(surfaces, dict):
         fail("'surfaces' must be an object")
-    allowed_surface_keys = {"skills", "mcp_servers", "os_identity", "os_context"}
+    allowed_surface_keys = {"skills", "mcp_servers", "os_identity", "hooks", "os_context"}
     for key in surfaces:
         if key not in allowed_surface_keys:
             fail(f"surfaces: unknown key '{key}' (additionalProperties:false)")
@@ -847,6 +847,74 @@ if surfaces is not None:
             # FR-155: optional scope on the identity block.
             if "scope" in id_block:
                 validate_scope_shape(id_block["scope"], iwhere)
+
+    # ---- FR-180 (D7): structural validation of surfaces.hooks ----------------
+    # ARRAY of hook_surface blocks. Mirrors $defs.hook_surface so the structural
+    # fallback AGREES with the jsonschema path (parity loop integration test).
+    # Targets carry the 2-harness enum (claude + opencode — the two with a
+    # native hook MERGE surface), the const method "merge", and `event` is one
+    # of the six portable events the canonical-settings.json block declares.
+    hooks = surfaces.get("hooks")
+    if hooks is not None:
+        if not isinstance(hooks, list) or len(hooks) < 1:
+            fail("surfaces.hooks must be a non-empty array")
+        valid_hook_events = {"SessionStart", "SessionEnd", "PreToolUse",
+                             "PostToolUse", "PreCompact", "PostCompact"}
+        valid_hook_target_types = {"claude", "opencode"}
+        allowed_hook_keys = {"name", "event", "layer", "scope", "canonical",
+                             "targets"}
+        allowed_hook_canon_keys = {"command", "matcher", "timeout"}
+        allowed_hook_target_keys = {"type", "method", "enabled"}
+        for h_idx, hook_block in enumerate(hooks):
+            hwhere = f"surfaces.hooks[{h_idx}]"
+            if not isinstance(hook_block, dict):
+                fail(f"{hwhere} must be an object")
+            for key in hook_block:
+                if key not in allowed_hook_keys:
+                    fail(f"{hwhere}: unknown key '{key}' "
+                         "(additionalProperties:false)")
+            for req in ("name", "event", "canonical", "targets"):
+                if req not in hook_block:
+                    fail(f"{hwhere} missing required key '{req}'")
+            if hook_block["event"] not in valid_hook_events:
+                fail(f"{hwhere}.event '{hook_block['event']}' is not one of "
+                     f"{sorted(valid_hook_events)}")
+
+            canon = hook_block["canonical"]
+            if not isinstance(canon, dict):
+                fail(f"{hwhere}.canonical must be an object")
+            for key in canon:
+                if key not in allowed_hook_canon_keys:
+                    fail(f"{hwhere}.canonical: unknown key '{key}' "
+                         "(additionalProperties:false)")
+            if "command" not in canon or not isinstance(canon["command"], str) \
+                    or not canon["command"]:
+                fail(f"{hwhere}.canonical.command is required and must be a "
+                     "non-empty string")
+
+            h_targets = hook_block["targets"]
+            if not isinstance(h_targets, list) or len(h_targets) < 1:
+                fail(f"{hwhere}.targets must be a non-empty array")
+            for k, ht in enumerate(h_targets):
+                htwhere = f"{hwhere}.targets[{k}]"
+                if not isinstance(ht, dict):
+                    fail(f"{htwhere} must be an object")
+                for req in ("type", "method"):
+                    if req not in ht:
+                        fail(f"{htwhere} missing required key '{req}'")
+                for key in ht:
+                    if key not in allowed_hook_target_keys:
+                        fail(f"{htwhere}: unknown key '{key}' "
+                             "(additionalProperties:false)")
+                if ht["type"] not in valid_hook_target_types:
+                    fail(f"{htwhere}.type '{ht['type']}' is not one of "
+                         f"{sorted(valid_hook_target_types)}")
+                if ht["method"] != "merge":
+                    fail(f"{htwhere}.method '{ht['method']}' must be 'merge'")
+
+            # v1 GLOBAL-ONLY: scope accepted for forward-compat.
+            if "scope" in hook_block:
+                validate_scope_shape(hook_block["scope"], hwhere)
 
 sys.exit(0)
 PY
@@ -1073,6 +1141,68 @@ if base_identity or overlay_identity:
     if merged_surfaces is None:
         merged_surfaces = dict(base_surfaces)
     merged_surfaces["os_identity"] = merged_identity_blocks
+
+# FR-180 (D7): merge surfaces.hooks as a MULTI-BLOCK ARRAY (base ++ overlay),
+# mirroring the skills + mcp_servers + os_identity concat. WITHOUT this a
+# personal hook block written by `igris add hook` into the overlay would never
+# reach the compile/drift flatten (the same finding-#2 gap). A hook block IS
+# keyed on its `name`, so a personal (overlay) block whose `name` collides with
+# a base (core) block is a HARD error (the analogue of the agent / mcp name
+# guard). SEPARATELY, two blocks must never both own the same (event, target
+# type) cell — that would mean two Igris hooks fighting for the same harness
+# event slot — so an (event, type) cross-block collision is ALSO a hard error.
+def _normalize_hooks(value):
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return list(value)
+    sys.stderr.write(
+        "Error: surfaces.hooks must be an array of blocks (or a single "
+        "object - both normalize)\n"
+    )
+    sys.exit(1)
+
+
+base_hooks = _normalize_hooks(base_surfaces.get("hooks"))
+overlay_hooks = _normalize_hooks(overlay_surfaces.get("hooks"))
+
+if base_hooks or overlay_hooks:
+    base_hook_names = {h.get("name") for h in base_hooks}
+    for block in overlay_hooks:
+        nm = (block or {}).get("name")
+        if nm in base_hook_names:
+            sys.stderr.write(
+                f"Error: overlay hooks block '{nm}' collides with a base "
+                "(core) block name; a personal customization must not shadow a "
+                "core hook.\n"
+            )
+            sys.exit(1)
+    merged_hook_blocks = list(base_hooks) + list(overlay_hooks)
+    # Cross-block (event, target type) collision guard.
+    seen_hook_cells = {}
+    for b_idx, block in enumerate(merged_hook_blocks):
+        ev = (block or {}).get("event")
+        for t in (block or {}).get("targets", []) or []:
+            ttype = (t or {}).get("type")
+            if ev is None or ttype is None:
+                continue
+            cell = (ev, ttype)
+            if cell in seen_hook_cells:
+                prev = seen_hook_cells[cell]
+                sys.stderr.write(
+                    f"Error: hook cell ({ev}, {ttype}) collides between "
+                    f"surfaces.hooks[{prev}] and surfaces.hooks[{b_idx}]; two "
+                    "hooks must not both own the same event in the same harness "
+                    "(a personal hook must not shadow a core one, nor a sibling "
+                    "personal one).\n"
+                )
+                sys.exit(1)
+            seen_hook_cells[cell] = b_idx
+    if merged_surfaces is None:
+        merged_surfaces = dict(base_surfaces)
+    merged_surfaces["hooks"] = merged_hook_blocks
 
 if merged_surfaces is not None:
     merged["surfaces"] = merged_surfaces
@@ -1622,6 +1752,188 @@ PY
 }
 
 # ---------------------------------------------------------------------------
+# FR-180 (D7 - Option B): event-hook projection helpers (shared by compile +
+# drift). The hook surface projects ONE event-hook block per (block, target)
+# into each harness's native hook surface — claude → .claude/settings.json
+# `hooks.<Event>` array (config-MERGE, like MCP), opencode → the FR-104 plugin
+# (documented; the plugin already routes the six events to the shared scripts).
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# flatten_hook_rows <merged-manifest> <core-surfaces> <target-kind> <project-root>
+#
+# Emits one TAB-separated row per (hook-block, target). Mirrors flatten_mcp_rows:
+# the core surfaces-manifest.json is only unioned when the project being compiled
+# OWNS it (its realpath is under --project-root). Rows are filtered by
+# <target-kind>; "all" emits every target.
+#
+# Row columns (TAB-separated, fixed order):
+#   name <TAB> event <TAB> command <TAB> matcher <TAB> timeout <TAB>
+#   target_type <TAB> enabled <TAB> layer <TAB> scope_type <TAB> scope_paths_csv
+#
+# `-` is the empty sentinel for matcher (→ no matcher), timeout (→ none),
+# scope_paths. `enabled` is true/false/- (sentinel for absent). `layer` defaults
+# to non-empty "core" (no tab-collapse risk). The command NEVER carries a
+# secret — it is a script path the harness runs.
+# ---------------------------------------------------------------------------
+flatten_hook_rows() {
+  local merged="$1"
+  local core_surfaces="$2"
+  local target_kind="$3"
+  local project_root="$4"
+  python3 - "$core_surfaces" "$merged" "$target_kind" "$project_root" <<'PY'
+import json
+import os
+import sys
+
+core_surfaces_path = sys.argv[1]
+merged_manifest_path = sys.argv[2]
+target_kind = sys.argv[3]
+project_root = sys.argv[4]
+
+
+def load_hooks(path):
+    # Returns a LIST of hooks blocks. Legacy single-object normalized to
+    # `[object]`; missing/absent → []. Mirrors the mcp/identity loader shape.
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except OSError:
+        return []
+    value = (data.get("surfaces") or {}).get("hooks")
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return value
+    return []
+
+
+# The core surfaces-manifest.json declares GLOBAL Layer-1 surfaces. It is only
+# unioned when the project being compiled OWNS it (its realpath is under
+# --project-root) — identical posture to the skills + MCP + identity flattens.
+# The merged agent manifest (incl. the FR-139 personal overlay) is always read.
+sources = [merged_manifest_path]
+try:
+    cs_real = os.path.realpath(core_surfaces_path)
+    pr_real = os.path.realpath(project_root)
+    if os.path.commonpath([cs_real, pr_real]) == pr_real:
+        sources.insert(0, core_surfaces_path)
+except (OSError, ValueError):
+    pass
+
+for src in sources:
+    for block in load_hooks(src):
+        if not isinstance(block, dict):
+            continue
+        name = block.get("name", "")
+        event = block.get("event", "")
+        if not name or not event:
+            continue
+        canonical = block.get("canonical") or {}
+        command = canonical.get("command", "")
+        if not command:
+            continue
+        matcher = canonical.get("matcher") or "-"
+        timeout = canonical.get("timeout")
+        timeout_col = str(timeout) if isinstance(timeout, int) else "-"
+        layer = block.get("layer", "") or "core"
+        # FR-155-style scope columns (absent → global; `-` empty-paths sentinel).
+        scope = block.get("scope") or {}
+        scope_type = scope.get("type") or "global"
+        scope_paths_list = scope.get("paths") or []
+        scope_paths_csv = ",".join(scope_paths_list) if scope_paths_list else "-"
+        for t in block.get("targets", []) or []:
+            ttype = (t or {}).get("type", "")
+            if not ttype:
+                continue
+            if target_kind != "all" and ttype != target_kind:
+                continue
+            enabled = (t or {}).get("enabled")
+            if enabled is True:
+                enabled_col = "true"
+            elif enabled is False:
+                enabled_col = "false"
+            else:
+                enabled_col = "-"
+            print("\t".join([
+                name,
+                event,
+                command,
+                matcher,
+                timeout_col,
+                ttype,
+                enabled_col,
+                layer,
+                scope_type,
+                scope_paths_csv,
+            ]))
+PY
+}
+
+# ---------------------------------------------------------------------------
+# verify_hook_entry_present <settings-path> <event> <command>
+#
+# Drift-side reader for the claude hook surface. Reads .claude/settings.json and
+# emits a one-word VERDICT on stdout (NEVER a secret — the command is a path):
+#   MATCH   → hooks.<Event>[] contains a group whose first command == <command>.
+#   MISSING → file/hooks/event absent, OR no group with that command.
+#   ERROR   → settings.json present but UNPARSEABLE / unexpected shape.
+# Returns 0 always (the verdict is the signal). Mirrors extract_mcp_entry's
+# rc-as-status discipline, but as a verdict string (the drift loop reads it).
+# ---------------------------------------------------------------------------
+verify_hook_entry_present() {
+  local settings_path="$1"
+  local event="$2"
+  local command="$3"
+  python3 - "$settings_path" "$event" "$command" <<'PY'
+import json
+import os
+import sys
+
+settings_path = sys.argv[1]
+event = sys.argv[2]
+command = sys.argv[3]
+
+if not os.path.exists(settings_path):
+    print("MISSING")
+    sys.exit(0)
+
+try:
+    with open(settings_path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except (OSError, ValueError):
+    print("ERROR")
+    sys.exit(0)
+
+if not isinstance(data, dict):
+    print("ERROR")
+    sys.exit(0)
+
+hooks = data.get("hooks")
+if not isinstance(hooks, dict):
+    print("MISSING")
+    sys.exit(0)
+
+arr = hooks.get(event)
+if not isinstance(arr, list):
+    print("MISSING")
+    sys.exit(0)
+
+for group in arr:
+    if not isinstance(group, dict):
+        continue
+    for h in group.get("hooks", []) or []:
+        if isinstance(h, dict) and h.get("command") == command:
+            print("MATCH")
+            sys.exit(0)
+
+print("MISSING")
+PY
+}
+
+# ---------------------------------------------------------------------------
 # normalize_identity_shape <template-path> <harness> <version>
 #
 # The §18.1 / L-554 SHARED SHAPE HELPER for the identity surface. Renders the
@@ -1848,3 +2160,11 @@ export -f read_identity_version
 export -f normalize_identity_shape
 export -f extract_identity_region
 export -f merge_identity_region
+# FR-180 (D7): hook-surface helpers. Hook drift is PRESENCE-BASED (the hook is
+# identified by its command path in the merged settings.json, NOT a byte-shape
+# comparison), so there is NO bash hook shaper twin the way identity/agents have
+# normalize_identity_shape / the α-assemblers — `verify_hook_entry_present` is
+# the whole drift contract. The TS `hook-shape.ts` shapes the PROJECTOR's output
+# and is pinned by a TS-only golden; it has no bash counterpart by design.
+export -f flatten_hook_rows
+export -f verify_hook_entry_present

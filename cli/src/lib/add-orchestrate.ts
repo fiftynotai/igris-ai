@@ -35,10 +35,11 @@ import {
  * 1:1. The add arm is responsible for that singular→adapter mapping before
  * calling `projectAndVerify`.
  *
- * `"hook"` is intentionally absent — hooks are not a `--surface` projection
- * target; see FR-180 D7 (Phase 5).
+ * FR-180 Phase 5 (D7 — Option B): `"hook"` is now a real `--surface` projection
+ * target — hooks ride the same flatten→compile→drift scaffold as the other four
+ * surfaces. The hook arm maps `hook → "hook"` (1:1, like mcp/identity).
  */
-export type ProjectionSurface = "skills" | "agents" | "mcp" | "identity";
+export type ProjectionSurface = "skills" | "agents" | "mcp" | "identity" | "hook";
 
 /** Structured outcome of a one-surface project+verify run. */
 export interface ProjectAndVerifyResult {

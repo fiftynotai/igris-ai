@@ -63,9 +63,17 @@ import {
   geminiSettingsPath,
   codexConfigTomlPath,
   opencodeConfigPath,
+  brainDir,
+  projectSettingsPath,
 } from "../lib/paths.js";
 import { info, error as logError } from "../lib/log.js";
 import { buildHarnessMcpEntry, type McpHarness } from "../lib/mcp-shape.js";
+import { buildClaudeHookGroup } from "../lib/hook-shape.js";
+import {
+  mergeHookIntoSettings,
+  HookMergeShapeError,
+  resolveHookCommandPath,
+} from "../lib/hook-merge.js";
 import { parseSecretsEnv } from "../lib/secrets.js";
 import {
   mergeJsonConfig,
@@ -91,7 +99,9 @@ export type RegistryAction =
   | "add-skill"
   | "add-mcp"
   | "add-identity"
+  | "add-hook"
   | "project-mcp"
+  | "project-hook"
   | "list"
   | "remove"
   | "update";
@@ -172,6 +182,35 @@ type IdentityTargetType = (typeof VALID_IDENTITY_TARGET_TYPES)[number];
  */
 const VALID_IDENTITY_METHODS = ["file"] as const;
 type IdentityMethod = (typeof VALID_IDENTITY_METHODS)[number];
+
+/**
+ * FR-180 (D7): allowed hook target types. SEPARATE enum — the hook surface
+ * carries only the TWO harnesses with a native hook MERGE surface (claude →
+ * settings.json hooks array; opencode → the FR-104 plugin). codex (session_end
+ * only) + gemini (no hook API) are documented, not projection targets. Mirrors
+ * `$defs.hook_surface.targets.type`.
+ */
+const VALID_HOOK_TARGET_TYPES = ["claude", "opencode"] as const;
+type HookTargetType = (typeof VALID_HOOK_TARGET_TYPES)[number];
+
+/** FR-180 (D7): hook projection is always a config-merge. Mirrors the schema const. */
+const VALID_HOOK_METHODS = ["merge"] as const;
+type HookMethod = (typeof VALID_HOOK_METHODS)[number];
+
+/**
+ * FR-180 (D7): the six PORTABLE_EVENTS a hook can fire on — byte-identical to
+ * PORTABLE_EVENTS in cli/src/lib/json-merge.ts and the
+ * canonical-settings.json block. Mirrors `$defs.hook_surface.event`.
+ */
+const VALID_HOOK_EVENTS = [
+  "SessionStart",
+  "SessionEnd",
+  "PreToolUse",
+  "PostToolUse",
+  "PreCompact",
+  "PostCompact",
+] as const;
+type HookEvent = (typeof VALID_HOOK_EVENTS)[number];
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
@@ -310,6 +349,40 @@ interface IdentitySurface {
   targets: IdentityTarget[];
 }
 
+/**
+ * FR-180 (D7): one hook target — a `type` + `method:"merge"` + optional
+ * `enabled`. Mirrors one item of `$defs.hook_surface.targets`.
+ */
+interface HookTarget {
+  type: HookTargetType;
+  method: HookMethod;
+  enabled?: boolean;
+}
+
+/** FR-180 (D7): the canonical hook launch spec. Mirrors `$defs.hook_surface.canonical`. */
+interface HookCanonical {
+  command: string;
+  matcher?: string;
+  timeout?: number;
+}
+
+/**
+ * FR-180 (D7): ONE event-hook projection block. Multiple coexist as elements of
+ * `surfaces.hooks[]` (multi-block, like `mcp_servers`). A hook block IS keyed on
+ * its `name`; `event` is one of the six PORTABLE_EVENTS; `canonical.command` is
+ * the shared hook script the harness runs (a personal block's command lives
+ * under ~/.igris/registry/hooks/<name>/ — the distinct provenance the canonical
+ * re-merge preserves, fixing R2). Mirrors `$defs.hook_surface`.
+ */
+interface HookSurface {
+  name: string;
+  event: HookEvent;
+  layer?: string;
+  scope?: Scope;
+  canonical: HookCanonical;
+  targets: HookTarget[];
+}
+
 /** The overlay file shape. TD-191: `surfaces.skills` is now an array of blocks. */
 interface Overlay {
   $schema?: string;
@@ -322,6 +395,8 @@ interface Overlay {
     mcp_servers?: McpServersSurface[];
     /** FR-180 (D6): personal os_identity blocks (the v1 not-merged gate is lifted). */
     os_identity?: IdentitySurface[];
+    /** FR-180 (D7): personal hook blocks (first-class surfaces.hooks[]). */
+    hooks?: HookSurface[];
     os_context?: Record<string, unknown>;
   } & Record<string, unknown>;
 }
@@ -527,6 +602,28 @@ export interface RegistryOptions {
    * a fixture secrets file. Never read for claude/gemini/opencode.
    */
   secretsPath?: string;
+  /**
+   * FR-180 (D7) add-hook / project-hook: the event the hook fires on (one of the
+   * six PORTABLE_EVENTS). Required for `add-hook`; carried per-row by the bash
+   * driver for `project-hook`.
+   */
+  event?: string;
+  /** FR-180 (D7) add-hook: tool-name glob for Pre/PostToolUse (optional). */
+  matcher?: string;
+  /** FR-180 (D7) add-hook: per-hook timeout in seconds (optional). */
+  timeout?: number;
+  /**
+   * FR-180 (D7) project-hook test seam: the project's `.claude/settings.json`
+   * path. When absent the verb resolves it from `projectRoot`
+   * (`<projectRoot>/.claude/settings.json`). Tests sandbox the file via this seam.
+   */
+  hookSettingsPath?: string;
+  /**
+   * FR-180 (D7) project-hook test seam: the registry hooks-script root the
+   * personal `command` resolves against for the existence check. Defaults to
+   * `<brain>/registry/hooks`. Tests point it at a fixture dir.
+   */
+  hookScriptRoot?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -1070,6 +1167,133 @@ export function validateIdentitySurfaceArray(identity: unknown): string | null {
   return null;
 }
 
+/**
+ * FR-180 (D7): validate ONE `surfaces.hooks` block. Port of `$defs.hook_surface`
+ * in manifest.schema.json + the `validate_manifest` structural fallback in
+ * `_common.sh`. A hook block requires `name` (lower-kebab), `event` (one of the
+ * six PORTABLE_EVENTS), `canonical.command` (non-empty string), and a non-empty
+ * `targets` array where each target is `{type ∈ {claude,opencode}, method:
+ * "merge", enabled?:bool}`. `layer` is optional; `canonical.matcher`/`timeout`
+ * optional; `scope` is the shared FR-155 shape. Keep in lockstep with the schema
+ * + bash fallback (integration test #11 reds the build on drift). Returns an
+ * error message, or null when valid.
+ */
+export function validateHookSurface(hook: unknown): string | null {
+  if (typeof hook !== "object" || hook === null || Array.isArray(hook)) {
+    return "surfaces.hooks must be an object";
+  }
+  const h = hook as Record<string, unknown>;
+  const allowedKeys = new Set([
+    "name",
+    "event",
+    "layer",
+    "scope",
+    "canonical",
+    "targets",
+  ]);
+  for (const key of Object.keys(h)) {
+    if (!allowedKeys.has(key)) {
+      return `surfaces.hooks: unknown key '${key}' (additionalProperties:false)`;
+    }
+  }
+  for (const req of ["name", "event", "canonical", "targets"]) {
+    if (!(req in h)) {
+      return `surfaces.hooks missing required key '${req}'`;
+    }
+  }
+  if (typeof h.name !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(h.name)) {
+    return `surfaces.hooks.name '${String(h.name)}' must match /^[a-z0-9][a-z0-9-]*$/`;
+  }
+  if (!(VALID_HOOK_EVENTS as readonly string[]).includes(h.event as string)) {
+    return `surfaces.hooks.event '${String(h.event)}' is not one of ${JSON.stringify(VALID_HOOK_EVENTS)}`;
+  }
+  if (h.layer !== undefined && typeof h.layer !== "string") {
+    return "surfaces.hooks.layer must be a string";
+  }
+
+  const canon = h.canonical;
+  if (typeof canon !== "object" || canon === null || Array.isArray(canon)) {
+    return "surfaces.hooks.canonical must be an object";
+  }
+  const cRec = canon as Record<string, unknown>;
+  const allowedCanonKeys = new Set(["command", "matcher", "timeout"]);
+  for (const key of Object.keys(cRec)) {
+    if (!allowedCanonKeys.has(key)) {
+      return `surfaces.hooks.canonical: unknown key '${key}' (additionalProperties:false)`;
+    }
+  }
+  if (typeof cRec.command !== "string" || cRec.command.length === 0) {
+    return "surfaces.hooks.canonical.command must be a non-empty string";
+  }
+  if (cRec.matcher !== undefined && typeof cRec.matcher !== "string") {
+    return "surfaces.hooks.canonical.matcher must be a string";
+  }
+  if (cRec.timeout !== undefined && !Number.isInteger(cRec.timeout)) {
+    return "surfaces.hooks.canonical.timeout must be an integer";
+  }
+
+  const targets = h.targets;
+  if (!Array.isArray(targets) || targets.length < 1) {
+    return "surfaces.hooks.targets must be a non-empty array";
+  }
+  const allowedTargetKeys = new Set(["type", "method", "enabled"]);
+  for (let idx = 0; idx < targets.length; idx++) {
+    const t = targets[idx];
+    if (typeof t !== "object" || t === null || Array.isArray(t)) {
+      return `surfaces.hooks.targets[${idx}] must be an object`;
+    }
+    const tRec = t as Record<string, unknown>;
+    for (const key of Object.keys(tRec)) {
+      if (!allowedTargetKeys.has(key)) {
+        return `surfaces.hooks.targets[${idx}]: unknown key '${key}' (additionalProperties:false)`;
+      }
+    }
+    for (const req of ["type", "method"]) {
+      if (!(req in tRec)) {
+        return `surfaces.hooks.targets[${idx}] missing required key '${req}'`;
+      }
+    }
+    if (!(VALID_HOOK_TARGET_TYPES as readonly string[]).includes(tRec.type as string)) {
+      return `surfaces.hooks.targets[${idx}].type '${String(tRec.type)}' is not one of ${JSON.stringify(VALID_HOOK_TARGET_TYPES)}`;
+    }
+    if (!(VALID_HOOK_METHODS as readonly string[]).includes(tRec.method as string)) {
+      return `surfaces.hooks.targets[${idx}].method '${String(tRec.method)}' must be 'merge'`;
+    }
+    if (tRec.enabled !== undefined && typeof tRec.enabled !== "boolean") {
+      return `surfaces.hooks.targets[${idx}].enabled must be a boolean`;
+    }
+  }
+
+  if (h.scope !== undefined) {
+    const scopeErr = validateScope(h.scope, "surfaces.hooks");
+    if (scopeErr !== null) {
+      return scopeErr;
+    }
+  }
+  return null;
+}
+
+/**
+ * FR-180 (D7): validate `surfaces.hooks` as an ARRAY of hook blocks (mirrors
+ * `validateMcpServersSurfaceArray`). Rejects non-array + empty array; delegates
+ * per-block validation with a `surfaces.hooks[i]:` prefix.
+ */
+export function validateHookSurfaceArray(hooks: unknown): string | null {
+  if (!Array.isArray(hooks)) {
+    return "surfaces.hooks must be a non-empty array";
+  }
+  if (hooks.length < 1) {
+    return "surfaces.hooks must be a non-empty array";
+  }
+  for (let i = 0; i < hooks.length; i++) {
+    const err = validateHookSurface(hooks[i]);
+    if (err !== null) {
+      return `surfaces.hooks[${i}]: ${err}`;
+    }
+  }
+  return null;
+}
+
 /** Validate the whole overlay shape. Returns an error message, or null. */
 export function validateOverlayShape(overlay: unknown): string | null {
   if (typeof overlay !== "object" || overlay === null || Array.isArray(overlay)) {
@@ -1119,6 +1343,7 @@ export function validateOverlayShape(overlay: unknown): string | null {
       "skills",
       "mcp_servers",
       "os_identity",
+      "hooks",
       "os_context",
     ]);
     for (const key of Object.keys(surfaces)) {
@@ -1144,6 +1369,14 @@ export function validateOverlayShape(overlay: unknown): string | null {
       const identityErr = validateIdentitySurfaceArray(surfaces.os_identity);
       if (identityErr !== null) {
         return identityErr;
+      }
+    }
+    // FR-180 (D7): personal hook blocks are first-class in the overlay
+    // (merged base++overlay in merge_overlay_manifest).
+    if (surfaces.hooks !== undefined) {
+      const hooksErr = validateHookSurfaceArray(surfaces.hooks);
+      if (hooksErr !== null) {
+        return hooksErr;
       }
     }
   }
@@ -3976,6 +4209,40 @@ export function materializeIdentity(
   };
 }
 
+/**
+ * FR-180 (D7): structured-return result for the personal hook materialize.
+ * Mirrors {@link IdentityMaterializeResult} — a personal hook write produces an
+ * overlay block + the registry hook SCRIPT, so beyond ok/code it surfaces the
+ * overlay it was written to.
+ */
+export interface HookMaterializeResult {
+  /** True iff the write path returned 0 (overlay hook block + script landed). */
+  ok: boolean;
+  /** The exit code `runAddHook` produced (0 on success, 1/2 on reject). */
+  code: number;
+  /** The overlay manifest path the block was written to. */
+  overlayWritten: string;
+}
+
+/**
+ * FR-180 (D7): thin structured-return wrapper over the hook overlay writer
+ * `runAddHook` so `verbs/add.ts`'s hook arm can chain `projectAndVerify` off a
+ * structured outcome (R7: no logic in the wrapper — every guard runs in
+ * `runAddHook`). Synchronous (a hook block is an inline overlay write + a local
+ * script scaffold, no `github:` fetch — same shape as the MCP/identity wrappers).
+ */
+export function materializeHook(
+  opts: RegistryOptions,
+  overlayPath: string,
+): HookMaterializeResult {
+  const code = runAddHook(opts, overlayPath);
+  return {
+    ok: code === 0,
+    code,
+    overlayWritten: overlayPath,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // FR-162 (FR-160 epic): add-mcp helpers + verb
 // ---------------------------------------------------------------------------
@@ -5249,6 +5516,512 @@ function runAddIdentity(opts: RegistryOptions, overlayPath: string): number {
   return 0;
 }
 
+// ---------------------------------------------------------------------------
+// FR-180 (D7): add-hook + project-hook
+// ---------------------------------------------------------------------------
+
+/** Parse one hook `--target` spec: `type:merge[:enabled]` (mirrors parseMcpTarget). */
+function parseHookTarget(spec: string): HookTarget | string {
+  const parts = spec.split(":");
+  if (parts.length < 2 || parts.length > 3) {
+    return `--target '${spec}' must be of the form type:merge[:enabled]`;
+  }
+  const [type, method, enabledRaw] = parts;
+  if (!(VALID_HOOK_TARGET_TYPES as readonly string[]).includes(type)) {
+    return `--target type '${type}' is not one of ${JSON.stringify(VALID_HOOK_TARGET_TYPES)}`;
+  }
+  if (method !== "merge") {
+    return `--target method '${method}' must be 'merge'`;
+  }
+  const t: HookTarget = { type: type as HookTargetType, method: "merge" };
+  if (enabledRaw !== undefined) {
+    if (enabledRaw !== "true" && enabledRaw !== "false") {
+      return `--target '${spec}' enabled flag must be 'true' or 'false'`;
+    }
+    t.enabled = enabledRaw === "true";
+  }
+  return t;
+}
+
+/**
+ * Read the BASE (core) hook block names from the project's base manifest +
+ * the core surfaces manifest (when owned) so the personal collision guard can
+ * reject a personal hook that would shadow a core one (the analogue of
+ * `readBaseMcpNames`). Returns a Set of (event, target-type) CELLS too, so a
+ * personal block can't quietly claim a core block's event slot in a harness.
+ */
+function readBaseHookCells(projectRoot: string): {
+  names: Set<string>;
+  cells: Set<string>;
+} {
+  const names = new Set<string>();
+  const cells = new Set<string>();
+  const readBlocks = (path: string): HookSurface[] => {
+    try {
+      if (!existsSync(path)) return [];
+      const parsed = JSON.parse(readFileSync(path, "utf-8")) as {
+        surfaces?: { hooks?: HookSurface[] };
+      };
+      const blocks = parsed.surfaces?.hooks;
+      return Array.isArray(blocks) ? blocks : [];
+    } catch {
+      return [];
+    }
+  };
+  const sources = [join(projectRoot, "harness-manifest.json")];
+  const coreSurfaces = coreSurfacesManifestPath();
+  if (coreSurfaces.length > 0 && coreSurfacesOwned(coreSurfaces, projectRoot)) {
+    sources.unshift(coreSurfaces);
+  }
+  for (const src of sources) {
+    for (const b of readBlocks(src)) {
+      if (typeof b?.name === "string") names.add(b.name);
+      const ev = b?.event;
+      for (const t of b?.targets ?? []) {
+        if (typeof ev === "string" && typeof t?.type === "string") {
+          cells.add(`${ev} ${t.type}`);
+        }
+      }
+    }
+  }
+  return { names, cells };
+}
+
+/**
+ * FR-180 (D7): `igris registry add-hook` — the WRITE-ONLY personal hook
+ * registrar (the low-level primitive `igris add hook` wraps). Writes the hook
+ * SCRIPT scaffold to `~/.igris/registry/hooks/<name>/<event>.sh` (the distinct
+ * provenance prefix the canonical re-merge preserves — R2) AND a personal
+ * `surfaces.hooks[]` block to the overlay. Does NOT project (that is `igris add
+ * hook` / `project-hook`).
+ *
+ * Identity is the block NAME (+ the (event, target-type) cells). Guards (all
+ * pre-write): name + pattern, valid `event`, ≥1 target, core-name + core-cell
+ * collision, intra-overlay collision. Exit codes: 0 ok; 1 reject; 2 usage.
+ */
+function runAddHook(opts: RegistryOptions, overlayPath: string): number {
+  // Guard 1 — name + pattern.
+  if (opts.name === undefined || opts.name.length === 0) {
+    logError("registry add-hook: <name> is required");
+    return 2;
+  }
+  if (!NAME_PATTERN.test(opts.name)) {
+    logError(
+      `registry add-hook: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
+    );
+    return 2;
+  }
+  const name = opts.name;
+
+  // Guard 2 — event required + valid.
+  if (opts.event === undefined || opts.event.length === 0) {
+    logError(
+      `registry add-hook: --event <${VALID_HOOK_EVENTS.join("|")}> is required`,
+    );
+    return 2;
+  }
+  if (!(VALID_HOOK_EVENTS as readonly string[]).includes(opts.event)) {
+    logError(
+      `registry add-hook: --event '${opts.event}' is not one of ${JSON.stringify(VALID_HOOK_EVENTS)}`,
+    );
+    return 2;
+  }
+  const event = opts.event as HookEvent;
+
+  // Guard 3 — at least one target (default to claude:merge when none given so
+  // the common case is one flag less; an explicit --target overrides).
+  const targetSpecs =
+    opts.targets !== undefined && opts.targets.length > 0
+      ? opts.targets
+      : ["claude:merge"];
+  const newTargets: HookTarget[] = [];
+  const seenTypes = new Set<string>();
+  for (const spec of targetSpecs) {
+    const parsed = parseHookTarget(spec);
+    if (typeof parsed === "string") {
+      logError(`registry add-hook: ${parsed}`);
+      return 2;
+    }
+    if (seenTypes.has(parsed.type)) {
+      logError(`registry add-hook: duplicate --target type '${parsed.type}'`);
+      return 2;
+    }
+    seenTypes.add(parsed.type);
+    newTargets.push(parsed);
+  }
+
+  const projectRoot = opts.projectRoot ?? process.cwd();
+
+  // Guard 4 — core-name + core-cell collision (a personal hook must not shadow a
+  // core one). Runs BEFORE any disk write.
+  const base = readBaseHookCells(projectRoot);
+  if (base.names.has(name)) {
+    logError(
+      `registry add-hook: hook name '${name}' collides with a base (core) hook; ` +
+        "a personal customization must not shadow a core hook. Overlay unchanged.",
+    );
+    return 1;
+  }
+  for (const t of newTargets) {
+    const cell = `${event} ${t.type}`;
+    if (base.cells.has(cell)) {
+      logError(
+        `registry add-hook: hook cell (${event}, ${t.type}) collides with a base ` +
+          "(core) hook; two hooks must not both own the same event in the same " +
+          "harness. Overlay unchanged.",
+      );
+      return 1;
+    }
+  }
+
+  // Read the overlay (unchanged on any reject below).
+  let overlay: Overlay;
+  try {
+    overlay = readOverlay(overlayPath);
+  } catch (err) {
+    logError((err as Error).message);
+    return 1;
+  }
+
+  const existingBlocks = overlay.surfaces?.hooks ?? [];
+  // Intra-overlay collisions (name + cell).
+  const existingNames = new Set(existingBlocks.map((b) => b.name));
+  if (existingNames.has(name)) {
+    logError(
+      `registry add-hook: hook '${name}' already declared in the personal overlay; ` +
+        "edit it or remove the existing block first. Overlay unchanged.",
+    );
+    return 1;
+  }
+  const existingCells = new Set<string>();
+  for (const b of existingBlocks) {
+    for (const t of b.targets ?? []) {
+      existingCells.add(`${b.event} ${t.type}`);
+    }
+  }
+  for (const t of newTargets) {
+    const cell = `${event} ${t.type}`;
+    if (existingCells.has(cell)) {
+      logError(
+        `registry add-hook: hook cell (${event}, ${t.type}) already declared in ` +
+          "the personal overlay; edit or remove the existing block first. " +
+          "Overlay unchanged.",
+      );
+      return 1;
+    }
+  }
+
+  // Build the block. The personal command lives under the REGISTRY prefix so the
+  // canonical re-merge preserves it (R2). The literal `$HOME` form matches the
+  // canonical-settings.json convention (Claude expands $HOME at runtime).
+  const command = `$HOME/.igris/registry/hooks/${name}/${event}.sh`;
+  const canonical: HookCanonical = { command };
+  if (opts.matcher !== undefined && opts.matcher.length > 0) {
+    canonical.matcher = opts.matcher;
+  }
+  if (opts.timeout !== undefined) {
+    canonical.timeout = opts.timeout;
+  }
+  const block: HookSurface = {
+    name,
+    event,
+    layer: "personal",
+    canonical,
+    targets: newTargets,
+  };
+
+  const blockErr = validateHookSurface(block);
+  if (blockErr !== null) {
+    logError(`registry add-hook: invalid hook block: ${blockErr}`);
+    return 1;
+  }
+
+  // --- Write the hook SCRIPT scaffold (the materialize half). ----------------
+  const scriptRoot =
+    opts.hookScriptRoot ?? join(brainDir(), "registry", "hooks");
+  const scriptDir = join(scriptRoot, name);
+  const scriptPath = join(scriptDir, `${event}.sh`);
+  if (!existsSync(scriptPath)) {
+    try {
+      mkdirSync(scriptDir, { recursive: true });
+      writeFileSync(scriptPath, hookScriptScaffold(name, event), {
+        encoding: "utf-8",
+        mode: 0o755,
+      });
+    } catch (err) {
+      logError(
+        `registry add-hook: failed to write hook script ${scriptPath}: ${(err as Error).message}`,
+      );
+      return 1;
+    }
+  }
+
+  const surfaces = { ...(overlay.surfaces ?? {}) };
+  surfaces.hooks = [...existingBlocks, block];
+  overlay.surfaces = surfaces;
+
+  const overlayErr = validateOverlayShape(overlay);
+  if (overlayErr !== null) {
+    logError(`registry add-hook: resulting overlay invalid: ${overlayErr}`);
+    return 1;
+  }
+
+  try {
+    writeOverlayAtomic(overlayPath, overlay);
+  } catch (err) {
+    logError(
+      `registry add-hook: failed to write overlay: ${(err as Error).message}`,
+    );
+    return 1;
+  }
+
+  info(
+    `Registered personal hook '${name}' on ${event} (${newTargets.length} target(s)) ` +
+      `in ${overlayPath}; script: ${scriptPath}`,
+  );
+  return 0;
+}
+
+/** Scaffold body for a personal hook script. Executable; a no-op pass-through. */
+function hookScriptScaffold(name: string, event: string): string {
+  return `#!/usr/bin/env bash
+# Personal Igris hook '${name}' for the ${event} event.
+# Generated by \`igris add hook ${name} --event ${event}\`. Replace the body
+# below with the hook's real behavior. This script is preserved across
+# \`igris update\` / \`igris doctor --fix\` (registry-provenance — see FR-180 R2).
+set -euo pipefail
+
+# TODO: implement the ${event} hook for '${name}'.
+exit 0
+`;
+}
+
+/**
+ * FR-180 (D7): merge the core ++ base ++ overlay hook blocks (collision = hard
+ * error), mirroring `loadMergedMcpBlocks`. The core surfaces manifest is
+ * unioned ONLY when the project root OWNS it. Returns the merged block list or
+ * an error string.
+ */
+function loadMergedHookBlocks(
+  manifestPath: string,
+  overlayPath: string | undefined,
+  coreSurfacesPath?: string,
+  projectRoot?: string,
+): HookSurface[] | string {
+  const readHooks = (path: string): HookSurface[] => {
+    if (!existsSync(path)) return [];
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as {
+      surfaces?: { hooks?: HookSurface[] };
+    };
+    const blocks = parsed.surfaces?.hooks;
+    return Array.isArray(blocks) ? blocks : [];
+  };
+
+  const coreBlocks =
+    coreSurfacesPath !== undefined &&
+    coreSurfacesPath.length > 0 &&
+    projectRoot !== undefined &&
+    coreSurfacesOwned(coreSurfacesPath, projectRoot)
+      ? readHooks(coreSurfacesPath)
+      : [];
+  const baseBlocks = readHooks(manifestPath);
+  const overlayBlocks =
+    overlayPath !== undefined && overlayPath.length > 0
+      ? readHooks(overlayPath)
+      : [];
+
+  const baseNames = new Set([...coreBlocks, ...baseBlocks].map((b) => b?.name));
+  for (const ob of overlayBlocks) {
+    if (baseNames.has(ob?.name)) {
+      return (
+        `overlay hooks block '${String(ob?.name)}' collides with a base (core) ` +
+        "block name; a personal customization must not shadow a core one"
+      );
+    }
+  }
+  return [...coreBlocks, ...baseBlocks, ...overlayBlocks];
+}
+
+/**
+ * FR-180 (D7): resolve a hook command's literal `$HOME/.igris/...` convention to
+ * the ACTUAL on-disk path. The command stores `$HOME/.igris/...` (the
+ * canonical-settings.json convention Claude expands at runtime), but the real
+ * brain dir may be relocated via IGRIS_BRAIN_DIR (sandbox/tests). Map the
+ * `$HOME/.igris/` prefix to `brainDir()`; otherwise fall back to the literal
+ * `$HOME` expansion (resolveHookCommandPath). In production brainDir() ===
+ * $HOME/.igris so the two coincide.
+ */
+function resolveHookScriptPath(command: string): string {
+  const literal = "$HOME/.igris/";
+  if (command.startsWith(literal)) {
+    return join(brainDir(), command.slice(literal.length));
+  }
+  return resolveHookCommandPath(command, homedir());
+}
+
+/**
+ * FR-180 (D7): `igris registry project-hook` — the INTERNAL compile-time hook
+ * projector. Reads the merged manifest (core ++ base ++ overlay), finds the
+ * `hooks` block whose `name === --name`, and projects ONE harness:
+ *
+ *   claude   → merge the hook GROUP into `<projectRoot>/.claude/settings.json`
+ *              `hooks.<Event>[]` (idempotent; preserves user groups + other
+ *              top-level keys). The R2-safe registry-prefix command is what the
+ *              canonical re-merge later preserves.
+ *   opencode → the FR-104 plugin already routes the six events to the shared
+ *              scripts. A personal opencode hook is COVERED by the plugin, not a
+ *              config write — the projector verifies the plugin exists and emits
+ *              a covered/OK outcome (no config mutation). A MISSING plugin is a
+ *              loud failure (the user must `igris install` to deposit it).
+ *
+ * NOT a user-facing verb — invoked only by the bash harness compile pass.
+ * Exit codes: 0 = projected/covered/unchanged; 1 = block-not-found / shape /
+ * write failure; 2 = usage.
+ */
+function runProjectHook(opts: RegistryOptions): number {
+  if (opts.name === undefined || opts.name.length === 0) {
+    logError("registry project-hook: --name is required");
+    return 2;
+  }
+  const name = opts.name;
+  if (opts.harness === undefined) {
+    logError("registry project-hook: --harness <claude|opencode> is required");
+    return 2;
+  }
+  if (!(VALID_HOOK_TARGET_TYPES as readonly string[]).includes(opts.harness)) {
+    logError(
+      `registry project-hook: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_HOOK_TARGET_TYPES)}`,
+    );
+    return 2;
+  }
+  const harness = opts.harness as HookTargetType;
+
+  const projectRoot = opts.projectRoot ?? process.cwd();
+  const manifestPath = join(projectRoot, "harness-manifest.json");
+  const overlayPath = opts.overlayPath ?? registryOverlayPath();
+  const coreSurfacesPath = coreSurfacesManifestPath();
+
+  let blocks: HookSurface[];
+  try {
+    const merged = loadMergedHookBlocks(
+      manifestPath,
+      overlayPath,
+      coreSurfacesPath,
+      projectRoot,
+    );
+    if (typeof merged === "string") {
+      logError(`registry project-hook: ${merged}`);
+      return 1;
+    }
+    blocks = merged;
+  } catch (err) {
+    logError(
+      `registry project-hook: cannot read manifest/overlay: ${(err as Error).message}`,
+    );
+    return 1;
+  }
+
+  const block = blocks.find((b) => b?.name === name);
+  if (block === undefined) {
+    logError(
+      `registry project-hook: no hooks block named '${name}' in the merged manifest`,
+    );
+    return 1;
+  }
+  if (!block.targets.some((t) => t.type === harness)) {
+    // The bash driver only emits rows for declared targets; defend a direct call.
+    logError(
+      `registry project-hook: hook '${name}' has no '${harness}' target`,
+    );
+    return 1;
+  }
+
+  // --- opencode: covered by the FR-104 plugin. -----------------------------
+  if (harness === "opencode") {
+    const pluginPath = join(
+      homedir(),
+      ".config",
+      "opencode",
+      "plugins",
+      "igris-bridge.ts",
+    );
+    if (!existsSync(pluginPath)) {
+      logError(
+        `registry project-hook: opencode hook '${name}' requires the FR-104 plugin ` +
+          `at ${pluginPath}; run 'igris install' to deposit it`,
+      );
+      return 1;
+    }
+    info(
+      `project-hook: ${name} → opencode (covered by the FR-104 plugin; ${block.event})`,
+    );
+    return 0;
+  }
+
+  // --- claude: config-merge into .claude/settings.json. --------------------
+  const settingsPath =
+    opts.hookSettingsPath ?? projectSettingsPath(projectRoot);
+  const group = buildClaudeHookGroup(block.event, block.canonical);
+
+  let existing: Record<string, unknown> | undefined;
+  if (existsSync(settingsPath)) {
+    try {
+      existing = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<
+        string,
+        unknown
+      >;
+    } catch (err) {
+      logError(
+        `registry project-hook: refusing to clobber unreadable ${settingsPath}: ${(err as Error).message}`,
+      );
+      return 1;
+    }
+  }
+
+  let merged: Record<string, unknown>;
+  try {
+    merged = mergeHookIntoSettings(existing, block.event, group);
+  } catch (err) {
+    if (err instanceof HookMergeShapeError) {
+      logError(
+        `registry project-hook: settings.json merge failed (refusing to clobber): ${err.message}`,
+      );
+      return 1;
+    }
+    throw err;
+  }
+
+  try {
+    mkdirSync(dirname(settingsPath), { recursive: true });
+    const tmp = `${settingsPath}.tmp.${process.pid}.${Date.now()}`;
+    writeFileSync(tmp, `${JSON.stringify(merged, null, 2)}\n`);
+    renameSync(tmp, settingsPath);
+  } catch (err) {
+    logError(
+      `registry project-hook: failed to write ${settingsPath}: ${(err as Error).message}`,
+    );
+    return 1;
+  }
+
+  // Belt-and-suspenders: a personal hook's script must exist (it is a path the
+  // harness will run). Resolve + check; a missing script is a loud failure
+  // (never a phantom-OK projection). Core scripts live under core/hooks/shared,
+  // personal under registry/hooks. The command stores the literal `$HOME/.igris`
+  // convention; resolve it against the ACTUAL brain dir (`brainDir()`, honoring
+  // IGRIS_BRAIN_DIR) — NOT `$HOME` — so a sandboxed/relocated brain resolves to
+  // the real script location (in production brainDir() === $HOME/.igris).
+  const resolved = resolveHookScriptPath(block.canonical.command);
+  if (!existsSync(resolved)) {
+    logError(
+      `registry project-hook: hook '${name}' command script not found at ${resolved}`,
+    );
+    return 1;
+  }
+
+  info(`project-hook: ${name} → claude (${block.event})`);
+  return 0;
+}
+
 /**
  * Run the registry verb. Returns an exit code:
  *   0 = success, 1 = enforcement reject, 2 = usage error (bad action/args).
@@ -5264,8 +6037,12 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runAddMcp(opts, overlayPath);
     case "add-identity":
       return runAddIdentity(opts, overlayPath);
+    case "add-hook":
+      return runAddHook(opts, overlayPath);
     case "project-mcp":
       return runProjectMcp(opts);
+    case "project-hook":
+      return runProjectHook(opts);
     case "list":
       return runList(overlayPath);
     case "remove":
@@ -5274,7 +6051,7 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runUpdate(opts, overlayPath);
     default:
       logError(
-        `unknown registry action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, add-identity, project-mcp, list, remove, update.`,
+        `unknown registry action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, add-identity, add-hook, project-mcp, project-hook, list, remove, update.`,
       );
       return 2;
   }

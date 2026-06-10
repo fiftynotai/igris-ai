@@ -41,6 +41,8 @@ import {
   validateIdentitySurfaceArray,
   validateMcpServersSurface,
   validateMcpServersSurfaceArray,
+  validateHookSurface,
+  validateHookSurfaceArray,
   validateOverlayShape,
   validateSkillsSurface,
   validateSkillsSurfaceArray,
@@ -1912,6 +1914,214 @@ describe("validateIdentitySurface — FR-180 (D6)", () => {
         },
       }),
     ).toBeNull();
+  });
+});
+
+describe("validateHookSurface — FR-180 (D7)", () => {
+  const validBlock = {
+    name: "my-guard",
+    event: "PreToolUse",
+    layer: "personal",
+    canonical: {
+      command: "$HOME/.igris/registry/hooks/my-guard/PreToolUse.sh",
+      matcher: "Write|Edit",
+      timeout: 10,
+    },
+    targets: [{ type: "claude", method: "merge" }],
+  };
+
+  const overlayWith = (block: unknown) => ({
+    version: 1,
+    agents: [],
+    surfaces: { hooks: [block] },
+  });
+
+  it("accepts a well-formed hooks array", () => {
+    expect(validateOverlayShape(overlayWith(validBlock))).toBeNull();
+    expect(validateHookSurface(validBlock)).toBeNull();
+    expect(validateHookSurfaceArray([validBlock])).toBeNull();
+  });
+
+  it("accepts a minimal block (no matcher/timeout/layer)", () => {
+    expect(
+      validateHookSurface({
+        name: "g",
+        event: "SessionStart",
+        canonical: { command: "$HOME/x.sh" },
+        targets: [{ type: "claude", method: "merge" }],
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects a bad name pattern", () => {
+    expect(
+      validateHookSurface({ ...validBlock, name: "Bad_Name" }),
+    ).toMatch(/must match/);
+  });
+
+  it("rejects an event not in the portable six", () => {
+    expect(
+      validateHookSurface({ ...validBlock, event: "OnError" }),
+    ).toMatch(/is not one of/);
+  });
+
+  it("requires a non-empty canonical.command", () => {
+    expect(
+      validateHookSurface({ ...validBlock, canonical: { command: "" } }),
+    ).toMatch(/command must be a non-empty string/);
+  });
+
+  it("rejects an unknown block key (additionalProperties:false)", () => {
+    expect(
+      validateOverlayShape(overlayWith({ ...validBlock, extra: 1 })),
+    ).toMatch(/unknown key 'extra'/);
+  });
+
+  it("rejects a non-hook target type (codex/gemini are not hook targets)", () => {
+    expect(
+      validateHookSurface({
+        ...validBlock,
+        targets: [{ type: "codex", method: "merge" }],
+      }),
+    ).toMatch(/is not one of/);
+  });
+
+  it("rejects a non-'merge' method", () => {
+    expect(
+      validateHookSurface({
+        ...validBlock,
+        targets: [{ type: "claude", method: "symlink" }],
+      }),
+    ).toMatch(/must be 'merge'/);
+  });
+
+  it("rejects a non-array hooks at the array gate", () => {
+    expect(
+      validateOverlayShape({ version: 1, agents: [], surfaces: { hooks: {} } }),
+    ).toMatch(/non-empty array/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-180 (D7): runAddHook (registry add-hook) — the personal hook overlay
+// writer + registry-script materializer. Pins the write-path guards (name/
+// event/target, core+intra-overlay collision, the registry-prefix command, the
+// script scaffold). Sandboxed via explicit overlayPath + hookScriptRoot.
+// ---------------------------------------------------------------------------
+describe("runAddHook — FR-180 (D7) personal write path", () => {
+  let tmp: string;
+  let overlayPath: string;
+  let projectRoot: string;
+  let scriptRoot: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "igris-add-hook-"));
+    overlayPath = join(tmp, "overlay.json");
+    projectRoot = join(tmp, "proj");
+    scriptRoot = join(tmp, "registry-hooks");
+    mkdirSync(projectRoot, { recursive: true });
+    writeFileSync(
+      join(projectRoot, "harness-manifest.json"),
+      JSON.stringify({ version: 1, agents: [] }),
+    );
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("writes a hooks block (registry-prefix command) + the script scaffold (exit 0)", async () => {
+    const code = await runRegistry({
+      action: "add-hook",
+      name: "my-guard",
+      event: "PreToolUse",
+      matcher: "Write|Edit",
+      projectRoot,
+      overlayPath,
+      hookScriptRoot: scriptRoot,
+    });
+    expect(code).toBe(0);
+    const overlay = JSON.parse(readFileSync(overlayPath, "utf-8"));
+    const blocks = overlay.surfaces.hooks;
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].name).toBe("my-guard");
+    expect(blocks[0].event).toBe("PreToolUse");
+    // R2: the command MUST use the registry prefix so the canonical re-merge
+    // preserves it.
+    expect(blocks[0].canonical.command).toBe(
+      "$HOME/.igris/registry/hooks/my-guard/PreToolUse.sh",
+    );
+    expect(blocks[0].canonical.matcher).toBe("Write|Edit");
+    // default target is claude:merge.
+    expect(blocks[0].targets).toEqual([{ type: "claude", method: "merge" }]);
+    // the script scaffold was written + is executable.
+    const scriptPath = join(scriptRoot, "my-guard", "PreToolUse.sh");
+    expect(existsSync(scriptPath)).toBe(true);
+    expect(readFileSync(scriptPath, "utf-8")).toContain("#!/usr/bin/env bash");
+  });
+
+  it("requires --event", async () => {
+    const code = await runRegistry({
+      action: "add-hook",
+      name: "g",
+      projectRoot,
+      overlayPath,
+      hookScriptRoot: scriptRoot,
+    });
+    expect(code).toBe(2);
+  });
+
+  it("rejects an event not in the portable six", async () => {
+    const code = await runRegistry({
+      action: "add-hook",
+      name: "g",
+      event: "OnError",
+      projectRoot,
+      overlayPath,
+      hookScriptRoot: scriptRoot,
+    });
+    expect(code).toBe(2);
+  });
+
+  it("rejects an intra-overlay (event, target) cell collision", async () => {
+    const first = await runRegistry({
+      action: "add-hook",
+      name: "g1",
+      event: "PreToolUse",
+      projectRoot,
+      overlayPath,
+      hookScriptRoot: scriptRoot,
+    });
+    expect(first).toBe(0);
+    // A second hook claiming the SAME (PreToolUse, claude) cell is rejected.
+    const second = await runRegistry({
+      action: "add-hook",
+      name: "g2",
+      event: "PreToolUse",
+      projectRoot,
+      overlayPath,
+      hookScriptRoot: scriptRoot,
+    });
+    expect(second).toBe(1);
+  });
+
+  it("rejects a duplicate hook name in the overlay", async () => {
+    await runRegistry({
+      action: "add-hook",
+      name: "dup",
+      event: "PreToolUse",
+      projectRoot,
+      overlayPath,
+      hookScriptRoot: scriptRoot,
+    });
+    const again = await runRegistry({
+      action: "add-hook",
+      name: "dup",
+      event: "PostToolUse",
+      projectRoot,
+      overlayPath,
+      hookScriptRoot: scriptRoot,
+    });
+    expect(again).toBe(1);
   });
 });
 

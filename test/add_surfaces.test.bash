@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 
 # add_surfaces.test.bash — FR-180 `igris add` end-to-end (Phase 1: skill,
-# Phase 2: agent).
+# Phase 2: agent, Phase 3: mcp, Phase 4: identity, Phase 5: hook + the R2
+# refresh-no-clobber merge gate).
 #
 # Exercises the one-step `igris add skill`/`igris add agent` verbs against a
 # sandbox brain:
@@ -284,6 +285,82 @@ EOF
   [[ "$output" == *"Added personal MCP 'other'"* ]]
 }
 
+# --- FR-180 Phase 5: igris add hook (D7 — the net-new first-class surface) ----
+
+@test "add hook (personal): registers + merges the claude settings.json hook + verifies, exit 0" {
+  run "${IGRIS_BIN[@]}" add hook my-guard \
+    --no-core \
+    --event PreToolUse \
+    --matcher "Write|Edit" \
+    --project-root "$PROJ"
+  echo "status=$status output=$output" >&2
+  [ "$status" -eq 0 ]
+
+  # The mode line is printed (D1, never silent).
+  [[ "$output" == *"PERSONAL mode"* ]]
+
+  # The overlay block + the registry hook SCRIPT were written.
+  [ -f "$ISOLATED_BRAIN/registry/harness-manifest.personal.json" ]
+  grep -q "my-guard" "$ISOLATED_BRAIN/registry/harness-manifest.personal.json"
+  [ -x "$ISOLATED_BRAIN/registry/hooks/my-guard/PreToolUse.sh" ]
+
+  # The projection MERGED the hook GROUP into the project settings.json (real effect).
+  [ -f "$PROJ/.claude/settings.json" ]
+  python3 -c "import json; d=json.load(open('$PROJ/.claude/settings.json')); cmds=[h['command'] for g in d['hooks']['PreToolUse'] for h in g['hooks']]; assert '\$HOME/.igris/registry/hooks/my-guard/PreToolUse.sh' in cmds, cmds"
+  # The success line names the R2 preservation contract.
+  [[ "$output" == *"survives"* ]]
+}
+
+@test "R2 MERGE GATE: the canonical hooks re-merge PRESERVES a personal-added hook" {
+  # Add a personal hook, then run the SAME canonical re-merge install/update/
+  # doctor --fix use (mergeCanonicalHooks). The personal hook MUST survive — its
+  # registry-prefix command is classified user-owned and is never clobbered.
+  "${IGRIS_BIN[@]}" add hook my-guard --no-core --event PreToolUse \
+    --matcher "Write|Edit" --project-root "$PROJ"
+  [ -f "$PROJ/.claude/settings.json" ]
+
+  # Provide a canonical-settings.json in the sandbox brain to re-merge from.
+  mkdir -p "$ISOLATED_BRAIN/core/hooks"
+  cp "$IGRIS_ROOT/core/hooks/canonical-settings.json" \
+     "$ISOLATED_BRAIN/core/hooks/canonical-settings.json"
+
+  # Run the EXACT canonical re-merge path (the dist libs install/update/doctor use).
+  node -e '
+    const { readFileSync, writeFileSync } = require("node:fs");
+    const { loadCanonicalHooks } = require(process.argv[1] + "/lib/canonical-hooks.js");
+    const { mergeCanonicalHooks } = require(process.argv[1] + "/lib/json-merge.js");
+    const sp = process.argv[2];
+    const merged = mergeCanonicalHooks(JSON.parse(readFileSync(sp, "utf-8")), loadCanonicalHooks());
+    writeFileSync(sp, JSON.stringify(merged, null, 2) + "\n");
+  ' "$IGRIS_ROOT/cli/dist" "$PROJ/.claude/settings.json" 2>/dev/null \
+    || node --input-type=module -e '
+    import { readFileSync, writeFileSync } from "node:fs";
+    import { loadCanonicalHooks } from "'"$IGRIS_ROOT"'/cli/dist/lib/canonical-hooks.js";
+    import { mergeCanonicalHooks } from "'"$IGRIS_ROOT"'/cli/dist/lib/json-merge.js";
+    const sp = "'"$PROJ"'/.claude/settings.json";
+    const merged = mergeCanonicalHooks(JSON.parse(readFileSync(sp, "utf-8")), loadCanonicalHooks());
+    writeFileSync(sp, JSON.stringify(merged, null, 2) + "\n");
+  '
+
+  # ASSERT: personal hook SURVIVED + the canonical core hook was (re)applied.
+  python3 -c "import json; d=json.load(open('$PROJ/.claude/settings.json')); cmds=[h['command'] for g in d['hooks']['PreToolUse'] for h in g['hooks']]; assert '\$HOME/.igris/registry/hooks/my-guard/PreToolUse.sh' in cmds, ('personal clobbered', cmds); assert any(c.startswith('\$HOME/.igris/core/hooks/') for c in cmds), ('core not applied', cmds)"
+}
+
+@test "S1: hook scoped verify ignores a pre-existing UNRELATED hook's drift" {
+  # Add `my-guard`, then add a SECOND hook on a DIFFERENT event; corrupting the
+  # first must not false-fail the second (the verify is --filter-scoped, S1).
+  "${IGRIS_BIN[@]}" add hook my-guard --no-core --event PreToolUse \
+    --project-root "$PROJ"
+  # Corrupt my-guard's projected entry (remove it) → unrelated hook drift.
+  python3 -c "import json; p='$PROJ/.claude/settings.json'; d=json.load(open(p)); d['hooks']['PreToolUse']=[]; json.dump(d, open(p,'w'))"
+
+  run "${IGRIS_BIN[@]}" add hook other-guard --no-core --event SessionStart \
+    --project-root "$PROJ"
+  echo "status=$status output=$output" >&2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Added personal hook 'other-guard'"* ]]
+}
+
 # --- FR-180 cross-phase: `add --core` PROJECTS (not just source-writes) -------
 #
 # Build a sandbox igris-ai "checkout" (a project root that detectCoreRepo
@@ -364,6 +441,33 @@ EOF
   python3 -c "import json; d=json.load(open('$HOME/.claude.json')); assert 'zzprobemcp' in d['mcpServers']; assert d['mcpServers']['zzprobemcp']['command']=='echo'"
 
   [[ "$output" == *"Added core MCP 'zzprobemcp'"* ]]
+  [[ "$output" == *"drift-clean"* ]]
+}
+
+@test "add --core hook: writes the shared script + surfaces block + PROJECTS against the brain root, exit 0" {
+  build_core_checkout
+  # The core hook needs a core/hooks/shared dir in BOTH the checkout + the brain.
+  mkdir -p "$CORE_REPO/core/hooks/shared" "$CORE_BRAIN/core/hooks/shared"
+
+  run "${IGRIS_BIN[@]}" add --core hook zzprobehook \
+    --event PostToolUse --project-root "$CORE_REPO"
+  echo "status=$status output=$output" >&2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"CORE mode"* ]]
+
+  # MATERIALIZE: the shared script + the surfaces.hooks block landed in BOTH the
+  # checkout and the runtime-brain mirror.
+  [ -x "$CORE_REPO/core/hooks/shared/PostToolUse.sh" ]
+  [ -x "$CORE_BRAIN/core/hooks/shared/PostToolUse.sh" ]
+  grep -q "zzprobehook" "$CORE_REPO/core/scripts/cli-adapters/surfaces-manifest.json"
+  grep -q "zzprobehook" "$CORE_BRAIN/core/scripts/cli-adapters/surfaces-manifest.json"
+
+  # PROJECTION ACTUALLY LANDS: the core hook command merged into the brain
+  # project's settings.json (projection runs against the BRAIN ROOT).
+  [ -f "$CORE_BRAIN/.claude/settings.json" ]
+  python3 -c "import json; d=json.load(open('$CORE_BRAIN/.claude/settings.json')); cmds=[h['command'] for g in d['hooks']['PostToolUse'] for h in g['hooks']]; assert '\$HOME/.igris/core/hooks/shared/PostToolUse.sh' in cmds, cmds"
+
+  [[ "$output" == *"Added core hook 'zzprobehook'"* ]]
   [[ "$output" == *"drift-clean"* ]]
 }
 

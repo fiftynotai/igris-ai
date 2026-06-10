@@ -24,7 +24,11 @@
  * writer; core via `addCoreMcp`); Phase 4 adds the `identity` arm (personal via
  * `materializeIdentity` over `runAddIdentity` — after the D6 merge-gate lift that
  * makes personal os_identity overlay blocks project; core via `addCoreIdentity`).
- * The remaining arm (hook) is wired with a `notImplementedYet` stub.
+ * Phase 5 adds the `hook` arm — the net-new first-class surface (D7, Option B):
+ * personal via the `materializeHook` wrapper over `runAddHook` (which writes the
+ * registry hook script + a `surfaces.hooks[]` overlay block; the registry-prefix
+ * command is what the canonical re-merge preserves — R2); core via `addCoreHook`.
+ * All five arms are now implemented end-to-end.
  */
 
 import { existsSync } from "node:fs";
@@ -36,6 +40,7 @@ import {
   materializeAgent,
   materializeMcp,
   materializeIdentity,
+  materializeHook,
   realpathStrict,
   type RegistryOptions,
 } from "./registry.js";
@@ -45,6 +50,7 @@ import {
   addCoreAgent,
   addCoreMcp,
   addCoreIdentity,
+  addCoreHook,
 } from "./add-core.js";
 
 /** The five surfaces `igris add` dispatches over. */
@@ -101,6 +107,15 @@ export interface AddOptions {
    */
   identityVersionSource?: string;
   /**
+   * Hook event (hook arm; `--event`). One of the six PORTABLE_EVENTS. Required
+   * for the hook arm.
+   */
+  event?: string;
+  /** Hook tool-name glob for Pre/PostToolUse (hook arm; `--matcher`). */
+  matcher?: string;
+  /** Hook per-hook timeout in seconds (hook arm; `--timeout`). */
+  timeout?: number;
+  /**
    * Root the auto-detect + project+verify resolve against. Defaults to cwd.
    * In core mode this is also the `--project-root` passed to compile/check.
    */
@@ -149,6 +164,13 @@ export interface AddOptions {
   addCoreIdentityFn?: typeof addCoreIdentity;
   /** Test seam: personal IDENTITY materialize override (defaults to materializeIdentity). */
   materializeIdentityFn?: typeof materializeIdentity;
+  /**
+   * Test seam: core HOOK materialize override (defaults to addCoreHook). Lets
+   * the hook arm be tested without writing the real core script/manifest.
+   */
+  addCoreHookFn?: typeof addCoreHook;
+  /** Test seam: personal HOOK materialize override (defaults to materializeHook). */
+  materializeHookFn?: typeof materializeHook;
 }
 
 /**
@@ -266,16 +288,106 @@ export function coreProjectionParams(
 }
 
 /**
- * Stub for the surfaces not yet implemented (hook). Prints an actionable
- * not-yet message and returns exit 2.
+ * The `hook` arm — Phase 5 (D7 — Option B, the NET-NEW first-class surface).
+ * Mirrors the mcp arm's shape: resolve mode → materialize → `projectAndVerify(
+ * "hook", …)`. Personal uses the structured-return `materializeHook` wrapper
+ * over `runAddHook` (R7 — every guard runs in the writer; the personal hook's
+ * command lives under the REGISTRY prefix so the canonical re-merge preserves it
+ * — R2). Core uses `addCoreHook` (write the shared script + a `surfaces.hooks[]`
+ * block + TD-096 mirror).
+ *
+ * The projection is a config-MERGE into each harness's native hook surface
+ * (claude → .claude/settings.json hooks array; opencode → covered by the FR-104
+ * plugin). S1: scoped to the just-added hook NAME via `--filter`.
  */
-function notImplementedYet(surface: AddSurface, mode: AddMode): number {
-  logError(
-    `add ${surface}: not implemented yet (FR-180 ships 'skill', 'agent', 'mcp' + ` +
-      `'identity' end-to-end; hook lands in a later phase). Resolved mode would be: ${mode}. ` +
-      `For now use the low-level path: 'igris registry add-* …' then 'igris harness compile'.`,
+async function runAddHookArm(opts: AddOptions, mode: AddMode): Promise<number> {
+  const projectRoot = opts.projectRoot ?? process.cwd();
+
+  if (mode === "core") {
+    const addCore = opts.addCoreHookFn ?? addCoreHook;
+    const coreResult = addCore({
+      name: opts.name,
+      projectRoot,
+      event: opts.event,
+      matcher: opts.matcher,
+      timeout: opts.timeout,
+      targets: opts.targets,
+      brainRoot: opts.brainRoot,
+    });
+    if (!coreResult.ok) {
+      logError(`add hook (core): ${coreResult.reason}`);
+      return coreResult.code;
+    }
+    // Project + verify against the RUNTIME BRAIN ROOT (NOT the checkout) so the
+    // ownership gate PASSES and the runtime-mirrored surfaces.hooks block is the
+    // one projected; --expect-core keeps a genuine mis-route a LOUD failure (D5).
+    const proj = coreProjectionParams(projectRoot, opts.brainRoot);
+    const verify = await projectAndVerify({
+      surface: "hook",
+      projectRoot: proj.projectRoot,
+      manifest: proj.manifest,
+      expectCore: true,
+      target: opts.target,
+      filter: opts.name,
+      brainRoot: opts.brainRoot,
+      captureAdapter: opts.captureAdapter,
+    });
+    if (!verify.ok) {
+      logError(`add hook (core): projection/verify failed — ${verify.reason}`);
+      return 1;
+    }
+    for (const line of verify.coreSkipped) {
+      info(line);
+    }
+    info(
+      `Added core hook '${opts.name}' on ${opts.event}: wrote the shared script + the ` +
+        `surfaces.hooks block, mirrored to runtime, projected ${verify.projected.length} ` +
+        `target(s), drift-clean.`,
+    );
+    return 0;
+  }
+
+  // ----- Personal mode. -----
+  const overlayPath = opts.overlayPath ?? registryOverlayPath();
+  const materialize = opts.materializeHookFn ?? materializeHook;
+  const regOpts: RegistryOptions = {
+    action: "add-hook",
+    name: opts.name,
+    event: opts.event,
+    matcher: opts.matcher,
+    timeout: opts.timeout,
+    targets: opts.targets,
+    projectRoot,
+    overlayPath,
+  };
+  const mat = materialize(regOpts, overlayPath);
+  if (!mat.ok) {
+    // runAddHook already logged the specific reject; surface the code.
+    return mat.code;
+  }
+  const verify = await projectAndVerify({
+    surface: "hook",
+    projectRoot,
+    expectCore: false,
+    target: opts.target,
+    filter: opts.name,
+    overlay: overlayPath,
+    brainRoot: opts.brainRoot,
+    captureAdapter: opts.captureAdapter,
+  });
+  if (!verify.ok) {
+    logError(`add hook: projection/verify failed — ${verify.reason}`);
+    return 1;
+  }
+  for (const line of verify.coreSkipped) {
+    info(line);
+  }
+  info(
+    `Added personal hook '${opts.name}' on ${opts.event}: registered + projected ` +
+      `${verify.projected.length} target(s), drift-clean. The hook survives ` +
+      `'igris update' / 'igris doctor --fix' (registry-provenance — R2).`,
   );
-  return 2;
+  return 0;
 }
 
 /**
@@ -724,7 +836,7 @@ export async function runAdd(opts: AddOptions): Promise<number> {
     case "identity":
       return runAddIdentityArm(opts, mode);
     case "hook":
-      return notImplementedYet(surface, mode);
+      return runAddHookArm(opts, mode);
     default:
       // Exhaustiveness — unreachable given the ADD_SURFACES guard above.
       logError(`add: unhandled surface '${String(surface)}'`);
