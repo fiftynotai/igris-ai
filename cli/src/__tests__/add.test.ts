@@ -28,6 +28,7 @@ import type { AdapterCaptureFn } from "../verbs/harness.js";
 import type {
   SkillMaterializeResult,
   AgentMaterializeResult,
+  McpMaterializeResult,
 } from "../verbs/registry.js";
 import type { AddCoreResult } from "../verbs/add-core.js";
 
@@ -114,6 +115,21 @@ const okAddCoreAgent = (): AddCoreResult => ({
   verifyOutput: "SUMMARY: 3 pairs — 3 MATCH, 0 MISMATCH",
 });
 
+const okMaterializeMcp = (): McpMaterializeResult => ({
+  ok: true,
+  code: 0,
+  overlayWritten: "/overlay.json",
+});
+
+const okAddCoreMcp = (): AddCoreResult => ({
+  ok: true,
+  code: 0,
+  reason: "",
+  sourcePath: "/repo/core/scripts/cli-adapters/surfaces-manifest.json",
+  mirrorPath: "/brain/core/scripts/cli-adapters/surfaces-manifest.json",
+  verifyOutput: "SUMMARY: 1 pairs — 1 MATCH, 0 MISMATCH",
+});
+
 describe("runAdd — dispatcher routing", () => {
   it("unknown surface → exit 2 + actionable message", async () => {
     const code = await runAdd({ surface: "bogus", name: "x" });
@@ -121,8 +137,8 @@ describe("runAdd — dispatcher routing", () => {
     expect(cap.err.join("")).toContain("unknown surface 'bogus'");
   });
 
-  it("mcp/hook/identity arms are not-implemented stubs (exit 2)", async () => {
-    for (const surface of ["mcp", "hook", "identity"]) {
+  it("hook/identity arms are not-implemented stubs (exit 2)", async () => {
+    for (const surface of ["hook", "identity"]) {
       const code = await runAdd({
         surface,
         name: "x",
@@ -404,6 +420,128 @@ describe("runAdd agent — core happy path", () => {
             code: 1,
             output:
               "FAIL  core agents — not owned by --project-root /unowned; run from the igris-ai repo or pass --core\n",
+          };
+        }
+        return { code: 0, output: "" };
+      },
+    });
+    expect(code).not.toBe(0);
+    expect(cap.err.join("")).toContain("not owned by --project-root /unowned");
+  });
+});
+
+describe("runAdd mcp — personal happy path", () => {
+  it("materializes via materializeMcp then projects + verifies → exit 0", async () => {
+    let materializeCalled = false;
+    const code = await runAdd({
+      surface: "mcp",
+      name: "myserver",
+      noCore: true,
+      command: "node",
+      args: ["server.js"],
+      env: ["API_KEY=${MY_TOKEN}"],
+      targets: ["claude:merge"],
+      brainRoot: BRAIN,
+      materializeMcpFn: (opts, overlay) => {
+        materializeCalled = true;
+        // The mcp arm routes through the registry "add-mcp" action (R7 reuse).
+        expect(opts.action).toBe("add-mcp");
+        expect(opts.name).toBe("myserver");
+        expect(opts.command).toBe("node");
+        expect(opts.env).toEqual(["API_KEY=${MY_TOKEN}"]);
+        expect(overlay).toBeDefined();
+        return okMaterializeMcp();
+      },
+      captureAdapter: cleanAdapter(),
+    });
+    expect(code).toBe(0);
+    expect(materializeCalled).toBe(true);
+    expect(cap.out.join("")).toContain("Added personal MCP 'myserver'");
+  });
+
+  it("passes the just-added name as the verify --filter (S1 scoping)", async () => {
+    let checkFilter: string | undefined;
+    await runAdd({
+      surface: "mcp",
+      name: "myserver",
+      noCore: true,
+      command: "node",
+      targets: ["claude:merge"],
+      brainRoot: BRAIN,
+      materializeMcpFn: okMaterializeMcp,
+      captureAdapter: (scriptPath, args) => {
+        if (scriptPath.includes("check_harness_drift.sh")) {
+          const i = args.indexOf("--filter");
+          checkFilter = i >= 0 ? args[i + 1] : undefined;
+          return { code: 0, output: "  1 targets — 1 in sync, 0 drifted/missing\n" };
+        }
+        return { code: 0, output: "  OK    mcp/myserver/claude\n  1 targets — 1 ok, 0 failed\n" };
+      },
+    });
+    // The verify (drift check) is scoped to the just-added MCP name (S1) so a
+    // pre-existing UNRELATED MCP drift can't false-fail this add.
+    expect(checkFilter).toBe("myserver");
+  });
+
+  it("returns the materialize reject code without projecting (incl. §14 secret reject)", async () => {
+    let projected = false;
+    const code = await runAdd({
+      surface: "mcp",
+      name: "myserver",
+      noCore: true,
+      brainRoot: BRAIN,
+      materializeMcpFn: () => ({ ok: false, code: 2, overlayWritten: "/o.json" }),
+      captureAdapter: () => {
+        projected = true;
+        return { code: 0, output: "" };
+      },
+    });
+    expect(code).toBe(2);
+    expect(projected).toBe(false);
+  });
+});
+
+describe("runAdd mcp — core happy path", () => {
+  it("appends the surfaces block (mirrored) then projects + verifies → exit 0", async () => {
+    let addCoreCalled = false;
+    const code = await runAdd({
+      surface: "mcp",
+      name: "myserver",
+      core: true,
+      projectRoot: "/repo",
+      command: "node",
+      targets: ["claude:merge"],
+      brainRoot: BRAIN,
+      addCoreMcpFn: (opts) => {
+        addCoreCalled = true;
+        expect(opts.name).toBe("myserver");
+        expect(opts.projectRoot).toBe("/repo");
+        expect(opts.command).toBe("node");
+        return okAddCoreMcp();
+      },
+      captureAdapter: cleanAdapter(),
+    });
+    expect(code).toBe(0);
+    expect(addCoreCalled).toBe(true);
+    expect(cap.out.join("")).toContain("Added core MCP 'myserver'");
+  });
+
+  it("TD-235: core mcp projection skipped by the gate → non-zero + message", async () => {
+    const code = await runAdd({
+      surface: "mcp",
+      name: "myserver",
+      core: true,
+      projectRoot: "/unowned",
+      command: "node",
+      targets: ["claude:merge"],
+      brainRoot: BRAIN,
+      addCoreMcpFn: okAddCoreMcp,
+      captureAdapter: (scriptPath) => {
+        if (scriptPath.includes("compile_harnesses.sh")) {
+          return {
+            code: 1,
+            output:
+              "FAIL  core mcp — not owned by --project-root /unowned; run from the igris-ai repo or pass --core\n",
           };
         }
         return { code: 0, output: "" };

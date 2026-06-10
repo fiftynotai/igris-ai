@@ -14,7 +14,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, cpSync, ex
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { addCoreSkill, addCoreAgent } from "../verbs/add-core.js";
+import { addCoreSkill, addCoreAgent, addCoreMcp } from "../verbs/add-core.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -269,5 +269,207 @@ describe("addCoreAgent — idempotent re-add of an enumeration name", () => {
     const tmpl = readFileSync(join(repo, "core", "templates", "CLAUDE.md.tmpl"), "utf-8");
     // Exactly one occurrence — no duplicate.
     expect(tmpl.match(/scribe/g)?.length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-180 Phase 3: addCoreMcp.
+// ---------------------------------------------------------------------------
+
+/** Seed the core surfaces-manifest.json a core MCP add appends into. */
+function seedSurfacesManifest(repoRoot: string): string {
+  const dir = join(repoRoot, "core", "scripts", "cli-adapters");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, "surfaces-manifest.json");
+  writeFileSync(
+    path,
+    `${JSON.stringify(
+      {
+        $schema: "./manifest.schema.json",
+        version: 1,
+        agents: [],
+        surfaces: {
+          skills: [
+            {
+              source: "~/.igris/core/skills",
+              layer: "core",
+              targets: [
+                { type: "claude", method: "symlink", path: "~/.claude/skills" },
+              ],
+            },
+          ],
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return path;
+}
+
+describe("addCoreMcp — happy path", () => {
+  it("appends the mcp_servers block + mirrors + verifies MATCH", () => {
+    const manifestPath = seedSurfacesManifest(repo);
+    const r = addCoreMcp({
+      name: "myserver",
+      projectRoot: repo,
+      command: "node",
+      args: ["server.js"],
+      env: ["API_KEY=${MY_TOKEN}"],
+      targets: ["claude:merge", "codex:merge:false"],
+      startupTimeoutSec: 30,
+      brainRoot: brain,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.code).toBe(0);
+
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
+      surfaces: {
+        mcp_servers: Array<{
+          name: string;
+          layer: string;
+          canonical: {
+            command: string;
+            args?: string[];
+            env?: Record<string, string>;
+            startup_timeout_sec?: number;
+          };
+          targets: Array<{ type: string; method: string; enabled?: boolean }>;
+        }>;
+      };
+    };
+    const block = manifest.surfaces.mcp_servers.find((m) => m.name === "myserver");
+    expect(block).toBeDefined();
+    expect(block!.layer).toBe("core");
+    expect(block!.canonical.command).toBe("node");
+    expect(block!.canonical.args).toEqual(["server.js"]);
+    // §14: the ${VAR} indirection ref is stored verbatim (NOT a resolved secret).
+    expect(block!.canonical.env).toEqual({ API_KEY: "${MY_TOKEN}" });
+    expect(block!.canonical.startup_timeout_sec).toBe(30);
+    expect(block!.targets.map((t) => t.type).sort()).toEqual(["claude", "codex"]);
+    const codexTarget = block!.targets.find((t) => t.type === "codex");
+    expect(codexTarget!.enabled).toBe(false);
+
+    // The skills block is preserved (we appended, not clobbered).
+    expect(manifest.surfaces).toHaveProperty("skills");
+
+    // Runtime mirror is byte-identical + verify_mirror MATCH.
+    const mirror = join(brain, "core", "scripts", "cli-adapters", "surfaces-manifest.json");
+    expect(readFileSync(mirror, "utf-8")).toBe(readFileSync(manifestPath, "utf-8"));
+    expect(r.verifyOutput).toContain("MATCH");
+    expect(r.verifyOutput).toContain("0 MISMATCH");
+  });
+});
+
+describe("addCoreMcp — §14 inline-secret rejection", () => {
+  it("REJECTS an --env value that is not a single ${VAR} reference", () => {
+    seedSurfacesManifest(repo);
+    const r = addCoreMcp({
+      name: "myserver",
+      projectRoot: repo,
+      command: "node",
+      env: ["API_KEY=sk-live-abc123"],
+      targets: ["claude:merge"],
+      brainRoot: brain,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe(2);
+    expect(r.reason).toContain("must be a single ${VAR}");
+    // Nothing was written — the reject is BEFORE the disk write.
+    const manifest = JSON.parse(
+      readFileSync(join(repo, "core", "scripts", "cli-adapters", "surfaces-manifest.json"), "utf-8"),
+    ) as { surfaces: Record<string, unknown> };
+    expect(manifest.surfaces).not.toHaveProperty("mcp_servers");
+  });
+});
+
+describe("addCoreMcp — guards", () => {
+  beforeEach(() => {
+    seedSurfacesManifest(repo);
+  });
+
+  it("refuses to clobber a name already declared", () => {
+    addCoreMcp({
+      name: "dupe",
+      projectRoot: repo,
+      command: "node",
+      targets: ["claude:merge"],
+      skipMirror: true,
+    });
+    const r = addCoreMcp({
+      name: "dupe",
+      projectRoot: repo,
+      command: "other",
+      targets: ["gemini:merge"],
+      skipMirror: true,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe(1);
+    expect(r.reason).toContain("already declared");
+  });
+
+  it("rejects a missing name (exit 2)", () => {
+    const r = addCoreMcp({
+      name: undefined,
+      projectRoot: repo,
+      command: "node",
+      targets: ["claude:merge"],
+      brainRoot: brain,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe(2);
+  });
+
+  it("rejects a missing --command for a new server (exit 2)", () => {
+    const r = addCoreMcp({
+      name: "myserver",
+      projectRoot: repo,
+      targets: ["claude:merge"],
+      brainRoot: brain,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe(2);
+    expect(r.reason).toContain("--command");
+  });
+
+  it("rejects zero targets (exit 2)", () => {
+    const r = addCoreMcp({
+      name: "myserver",
+      projectRoot: repo,
+      command: "node",
+      targets: [],
+      brainRoot: brain,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe(2);
+    expect(r.reason).toContain("at least one --target");
+  });
+
+  it("rejects an invalid target type (exit 2)", () => {
+    const r = addCoreMcp({
+      name: "myserver",
+      projectRoot: repo,
+      command: "node",
+      targets: ["bogus:merge"],
+      brainRoot: brain,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe(2);
+    expect(r.reason).toContain("is not one of");
+  });
+
+  it("fails when not an igris-ai checkout (no surfaces-manifest.json)", () => {
+    const bare = join(sandbox, "bare-mcp");
+    mkdirSync(bare, { recursive: true });
+    const r = addCoreMcp({
+      name: "myserver",
+      projectRoot: bare,
+      command: "node",
+      targets: ["claude:merge"],
+      brainRoot: brain,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe(1);
+    expect(r.reason).toContain("not an igris-ai checkout");
   });
 });

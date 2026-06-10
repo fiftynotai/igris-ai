@@ -190,7 +190,14 @@ server is upserted into the four CLIs' native MCP config files, leaving every
 other entry and top-level key in those (hot, user-owned) files byte-for-byte
 untouched.
 
-### Registering an MCP server — `igris registry add-mcp`
+### Registering an MCP server — `igris add mcp` (one-step) / `igris registry add-mcp` (write-only)
+
+> **FR-180:** for the common case, prefer the one-step `igris add mcp <name>
+> --command <bin> --target type:merge` — it registers the server AND projects it
+> to all four harness configs AND verifies drift-clean in one command (and fails
+> loudly if nothing projected). `igris registry add-mcp` below is the
+> **write-only** low-level primitive (register only, no project/verify), kept as
+> the repair primitive. See `core/docs/ADD-SURFACES.md`.
 
 `add-mcp` registers a **global** MCP server into the personal overlay's
 `surfaces.mcp_servers[]` (it writes only the overlay + an inline origin — it

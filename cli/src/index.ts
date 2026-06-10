@@ -457,6 +457,15 @@ async function main(argv: string[]): Promise<void> {
               "(vendor + project + verify) flow use 'igris add agent <name> --from <dir> --target …'.",
           );
         }
+        // FR-180 (Phase 3): same write-only deprecation for the MCP write
+        // primitive `registry add-mcp` — `igris add mcp` is the one-step front door.
+        if (action === "add-mcp") {
+          info(
+            "registry add-mcp is write-only (it registers the MCP block but does NOT " +
+              "project or verify) — it is the low-level primitive. For the one-step " +
+              "(register + project + verify) flow use 'igris add mcp <name> --command <bin> --target type:merge'.",
+          );
+        }
         // FR-143: `add-skill` takes its skills source-dir as the positional
         // arg (`igris registry add-skill <source-dir> --target ...`); coalesce
         // it into `from` when --from was not given explicitly. The positional
@@ -561,14 +570,15 @@ async function main(argv: string[]): Promise<void> {
         "to all four harnesses (claude/gemini/codex/opencode), AND verifies drift-clean. " +
         "Never silently no-ops (TD-235). Core-vs-personal is auto-detected (igris-ai " +
         "checkout = core) and overridable with --core / --no-core; the resolved mode is " +
-        "always printed. 'skill' and 'agent' ship end-to-end; mcp/hook/identity are " +
-        "in-progress. The low-level 'igris registry add-* + igris harness compile' two-step " +
-        "survives as the repair primitive.",
+        "always printed. 'skill', 'agent' and 'mcp' ship end-to-end; hook/identity are " +
+        "in-progress. For mcp use --command + --target type:merge[:enabled] (--env values " +
+        "must be ${VAR} indirection refs — inline secrets are rejected). The low-level " +
+        "'igris registry add-* + igris harness compile' two-step survives as the repair primitive.",
     )
     .option("--from <path-or-github>", "source dir / github ref (skill/agent/mcp)")
     .option(
       "--target <type:...>",
-      "output target (skill: type:method:path; agent: type:path; repeatable)",
+      "output target (skill: type:method:path; agent: type:path; mcp: type:merge[:enabled]; repeatable)",
       collect,
       [],
     )
@@ -586,6 +596,20 @@ async function main(argv: string[]): Promise<void> {
       "--harness <type>",
       "restrict projection to one harness: claude | codex | gemini | opencode",
     )
+    // FR-180 Phase 3: MCP launch options (the `mcp` arm — same surface as
+    // `registry add-mcp`). --env values MUST be ${VAR} indirection refs.
+    .option("--command <bin>", "MCP launch command (add mcp); REQUIRED for a new MCP")
+    .option("--arg <value>", "MCP launch arg (add mcp; repeatable)", collect, [])
+    .option(
+      "--env <KEY=${VAR}>",
+      "MCP env var as an indirection ref (add mcp; repeatable). VALUE must be a single ${VAR} reference — inline secrets are rejected.",
+      collect,
+      [],
+    )
+    .option(
+      "--startup-timeout-sec <n>",
+      "MCP startup timeout in seconds (add mcp; Codex-only passthrough)",
+    )
     .action(
       async (
         surface: string,
@@ -597,8 +621,27 @@ async function main(argv: string[]): Promise<void> {
           core?: boolean;
           projectRoot?: string;
           harness?: string;
+          command?: string;
+          arg?: string[];
+          env?: string[];
+          startupTimeoutSec?: string;
         },
       ): Promise<void> => {
+        // FR-180 Phase 3: --startup-timeout-sec is a STRING from Commander.
+        // Validate the numeric parse at the CLI boundary (mirror the
+        // `registry add-mcp` check) so AddOptions.startupTimeoutSec stays typed.
+        let startupTimeoutSec: number | undefined;
+        if (opts.startupTimeoutSec !== undefined) {
+          const n = Number(opts.startupTimeoutSec);
+          if (!Number.isInteger(n)) {
+            process.stderr.write(
+              `add: --startup-timeout-sec value '${opts.startupTimeoutSec}' must be an integer\n`,
+            );
+            process.exitCode = 2;
+            return;
+          }
+          startupTimeoutSec = n;
+        }
         const code = await runAdd({
           surface,
           name: opts.name ?? name,
@@ -611,6 +654,11 @@ async function main(argv: string[]): Promise<void> {
           noCore: opts.core === false ? true : undefined,
           projectRoot: opts.projectRoot,
           target: opts.harness,
+          // FR-180 Phase 3: MCP launch options.
+          command: opts.command,
+          args: opts.arg,
+          env: opts.env,
+          startupTimeoutSec,
         });
         process.exitCode = code;
       },

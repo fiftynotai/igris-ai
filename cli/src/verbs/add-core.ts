@@ -12,7 +12,11 @@
  * see FR-180-plan grounding #5). Phase 2 implements `addCoreAgent` (agents
  * live in the repo-root `harness-manifest.json` + a canonical
  * `core/agents/<name>.md`, mirrored to the runtime brain; plus the §13 agent
- * enumeration surfaces). The mcp/identity core writers land in later phases.
+ * enumeration surfaces). Phase 3 implements `addCoreMcp` (a core MCP server
+ * is a `surfaces.mcp_servers[]` block in `core/scripts/cli-adapters/
+ * surfaces-manifest.json` — the GLOBAL Layer-1 surfaces file the MCP flatten
+ * reads when the project owns it; mirrored to the runtime brain, TD-096). The
+ * identity core writer lands in a later phase.
  */
 
 import {
@@ -597,4 +601,256 @@ function updateAgentEnumerationSurfaces(
   }
 
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// FR-180 Phase 3: core MCP add path.
+// ---------------------------------------------------------------------------
+
+/** MCP name must be lower-kebab (parallels the registry NAME_PATTERN). */
+const MCP_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
+/** The 4 MCP harness target types (mirrors VALID_MCP_TARGET_TYPES in registry.ts). */
+const MCP_TARGET_TYPES = ["claude", "codex", "gemini", "opencode"] as const;
+type McpCoreTargetType = (typeof MCP_TARGET_TYPES)[number];
+
+/**
+ * §14 SECURITY: the env-var-indirection WRITE GUARD on the CORE path (FR-160
+ * decision #1; identical rule to `parseEnvPair` in registry.ts). A `--env`
+ * VALUE must be a single `${VAR}` reference — inline secrets are REJECTED so no
+ * secret ever lands in the core surfaces manifest (which is committed + mirrored
+ * to every install). The real secret is resolved from the environment by the
+ * harness at launch time; the manifest only stores the indirection ref.
+ */
+const CORE_ENV_VAR_REF = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
+
+/** A parsed MCP target spec for the core block. */
+interface CoreMcpTarget {
+  type: McpCoreTargetType;
+  method: "merge";
+  enabled?: boolean;
+}
+
+/** Parse one `type:merge[:enabled]` target spec (mirrors parseMcpTarget). */
+function parseCoreMcpTarget(spec: string): CoreMcpTarget | string {
+  const parts = spec.split(":");
+  if (parts.length < 2 || parts.length > 3) {
+    return `--target '${spec}' must be of the form type:merge[:enabled]`;
+  }
+  const [type, method, enabledRaw] = parts;
+  if (!(MCP_TARGET_TYPES as readonly string[]).includes(type)) {
+    return `--target type '${type}' is not one of ${JSON.stringify(MCP_TARGET_TYPES)}`;
+  }
+  if (method !== "merge") {
+    return `--target method '${method}' must be 'merge'`;
+  }
+  const t: CoreMcpTarget = { type: type as McpCoreTargetType, method: "merge" };
+  if (enabledRaw !== undefined) {
+    if (enabledRaw !== "true" && enabledRaw !== "false") {
+      return `--target '${spec}' enabled flag must be 'true' or 'false'`;
+    }
+    t.enabled = enabledRaw === "true";
+  }
+  return t;
+}
+
+/** The core MCP block shape written into surfaces.mcp_servers[]. */
+interface CoreMcpCanonical {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  startup_timeout_sec?: number;
+}
+interface CoreMcpBlock {
+  name: string;
+  layer: "core";
+  canonical: CoreMcpCanonical;
+  targets: CoreMcpTarget[];
+}
+
+/** Options for {@link addCoreMcp}. */
+export interface AddCoreMcpOptions {
+  /** MCP server name (lower-kebab). */
+  name?: string;
+  /** Repo root (the igris-ai checkout). */
+  projectRoot: string;
+  /** MCP launch command (required for a NEW core block). */
+  command?: string;
+  /** MCP launch args. */
+  args?: string[];
+  /** MCP env indirection refs as "KEY=${VAR}" strings (§14: inline secrets rejected). */
+  env?: string[];
+  /** MCP target specs, each `type:merge[:enabled]` (≥1 required). */
+  targets?: string[];
+  /** Codex-only startup-timeout passthrough (seconds). */
+  startupTimeoutSec?: number;
+  /** Test seam: brain root override (defaults to brainDir()). */
+  brainRoot?: string;
+  /** Test seam: skip the runtime mirror + verify_mirror step. Default false. */
+  skipMirror?: boolean;
+}
+
+/**
+ * FR-180 (Phase 3): materialize a new CORE MCP server. A core MCP server is a
+ * `surfaces.mcp_servers[]` block in the GLOBAL Layer-1 surfaces file
+ * (`core/scripts/cli-adapters/surfaces-manifest.json`) — the file the
+ * `flatten_mcp_rows` flatten reads (and unions) when the project being compiled
+ * OWNS it. This is the MCP analogue of where core SKILLS auto-discover from and
+ * where the core skills block already lives; unlike skills (which glob a dir),
+ * MCP needs an explicit block, so we append one.
+ *
+ * The block carries the §14 `${VAR}`-indirected `canonical.env` (inline secrets
+ * are REJECTED at the boundary — `parseCoreMcpEnv`), `command`/`args`, optional
+ * `startup_timeout_sec`, and `targets[type:merge[:enabled]]`. After the source
+ * write the file is mirrored to `~/.igris/core/scripts/cli-adapters/
+ * surfaces-manifest.json` and byte-verified (TD-096).
+ *
+ * Refuses to clobber a `mcp_servers` block of the same name (a re-add to core
+ * should be an explicit edit, not a silent overwrite — parity with the skill +
+ * agent core writers).
+ */
+export function addCoreMcp(opts: AddCoreMcpOptions): AddCoreResult {
+  const sourcePath = join(
+    opts.projectRoot,
+    "core",
+    "scripts",
+    "cli-adapters",
+    "surfaces-manifest.json",
+  );
+  const root = opts.brainRoot ?? brainDir();
+  const mirrorPath = join(
+    root,
+    "core",
+    "scripts",
+    "cli-adapters",
+    "surfaces-manifest.json",
+  );
+
+  const fail = (code: number, reason: string, verifyOutput = ""): AddCoreResult => ({
+    ok: false,
+    code,
+    reason,
+    sourcePath,
+    mirrorPath,
+    verifyOutput,
+  });
+
+  // --- Guards (all BEFORE any disk write). ----------------------------------
+  if (opts.name === undefined || opts.name.length === 0) {
+    return fail(2, "mcp <name> is required");
+  }
+  if (!MCP_NAME_PATTERN.test(opts.name)) {
+    return fail(2, `name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`);
+  }
+  const name = opts.name;
+
+  if (opts.command === undefined || opts.command.length === 0) {
+    return fail(2, `mcp '${name}': --command <bin> is required for a new core MCP server`);
+  }
+
+  if (opts.targets === undefined || opts.targets.length === 0) {
+    return fail(2, `mcp '${name}': at least one --target <type:merge[:enabled]> is required`);
+  }
+  const targets: CoreMcpTarget[] = [];
+  for (const spec of opts.targets) {
+    const parsed = parseCoreMcpTarget(spec);
+    if (typeof parsed === "string") {
+      return fail(2, `mcp '${name}': ${parsed}`);
+    }
+    targets.push(parsed);
+  }
+
+  // §14 SECURITY: every --env VALUE must be a single ${VAR} reference.
+  const envMap: Record<string, string> = {};
+  for (const spec of opts.env ?? []) {
+    const eq = spec.indexOf("=");
+    if (eq <= 0) {
+      return fail(2, `mcp '${name}': --env '${spec}' must be of the form KEY=\${VAR}`);
+    }
+    const key = spec.slice(0, eq);
+    const value = spec.slice(eq + 1);
+    if (!CORE_ENV_VAR_REF.test(value)) {
+      return fail(
+        2,
+        `mcp '${name}': --env '${spec}': value '${value}' must be a single \${VAR} ` +
+          "reference (e.g. ${MY_TOKEN}), NOT an inline secret. Core MCP env values are " +
+          "stored as indirection refs; the real secret never enters the surfaces manifest.",
+      );
+    }
+    envMap[key] = value;
+  }
+
+  if (!existsSync(sourcePath)) {
+    return fail(
+      1,
+      `core surfaces manifest not found at ${sourcePath}; not an igris-ai checkout`,
+    );
+  }
+
+  // --- Parse the manifest + collision-check BEFORE the write. ---------------
+  let manifest: {
+    surfaces?: { mcp_servers?: Array<{ name?: string }> } & Record<string, unknown>;
+  } & Record<string, unknown>;
+  try {
+    manifest = JSON.parse(readFileSync(sourcePath, "utf-8"));
+  } catch (err) {
+    return fail(1, `failed to parse ${sourcePath}: ${(err as Error).message}`);
+  }
+  const surfaces = (manifest.surfaces ?? {}) as {
+    mcp_servers?: CoreMcpBlock[];
+  } & Record<string, unknown>;
+  const existing = Array.isArray(surfaces.mcp_servers) ? surfaces.mcp_servers : [];
+  if (existing.some((m) => m.name === name)) {
+    return fail(
+      1,
+      `core MCP server '${name}' already declared in ${sourcePath}; edit it directly (no clobber)`,
+    );
+  }
+
+  // --- Build + append the block. --------------------------------------------
+  const canonical: CoreMcpCanonical = { command: opts.command };
+  if (opts.args !== undefined && opts.args.length > 0) {
+    canonical.args = opts.args;
+  }
+  if (Object.keys(envMap).length > 0) {
+    canonical.env = envMap;
+  }
+  if (opts.startupTimeoutSec !== undefined) {
+    canonical.startup_timeout_sec = opts.startupTimeoutSec;
+  }
+  const block: CoreMcpBlock = { name, layer: "core", canonical, targets };
+
+  surfaces.mcp_servers = [...existing, block];
+  manifest.surfaces = surfaces;
+  try {
+    writeFileSync(sourcePath, `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
+  } catch (err) {
+    return fail(1, `failed to update ${sourcePath}: ${(err as Error).message}`);
+  }
+
+  if (opts.skipMirror === true) {
+    return {
+      ok: true,
+      code: 0,
+      reason: "",
+      sourcePath,
+      mirrorPath,
+      verifyOutput: "(mirror skipped)",
+    };
+  }
+
+  // --- TD-096 mirror + verify the surfaces manifest. ------------------------
+  const mv = mirrorAndVerify(sourcePath, mirrorPath, root);
+  if (!mv.ok) {
+    return fail(1, mv.reason, mv.output);
+  }
+  info(`Mirror verified (${sourcePath} <-> ${mirrorPath}): MATCH`);
+  return {
+    ok: true,
+    code: 0,
+    reason: "",
+    sourcePath,
+    mirrorPath,
+    verifyOutput: mv.output,
+  };
 }

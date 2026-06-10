@@ -1852,6 +1852,14 @@ if [ -n "$MCP_DRIFT_ROWS" ]; then
     [ -z "$d_type" ] && continue
     : "$d_scope_type" "$d_scope_paths"  # v1 global-only; carried, not filtered.
 
+    # FR-180 (S1): honor --filter on the MCP drift surface (parity with the
+    # compile MCP pass + the skills drift loop). `igris add mcp`'s verify half
+    # passes --filter <name> so the drift check is SCOPED to the just-added MCP
+    # server, not the whole project — a pre-existing UNRELATED MCP drift can't
+    # false-fail a clean add. Default FILTER='*' checks every block. Gated
+    # BEFORE TOTAL++ so the summary count stays filter-aware (compile parity).
+    skill_name_matches_filter "$d_name" "$FILTER" || continue
+
     TOTAL=$((TOTAL + 1))
 
     # Resolve config path + map key per harness. Per-harness env overrides

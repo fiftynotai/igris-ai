@@ -1855,6 +1855,15 @@ if [ "$SURFACE_KIND" = "mcp" ] || [ "$SURFACE_KIND" = "all" ]; then
       [ -z "$m_name" ] && continue
       [ -z "$m_type" ] && continue
 
+      # FR-180 (S1): honor --filter on the MCP surface (parity with the skills +
+      # agent surfaces). `igris add mcp` passes --filter <name> so the verify
+      # half (drift check, which has no --surface flag) is scoped to the
+      # just-added MCP server — a pre-existing UNRELATED MCP drift can't false-
+      # fail a clean add. Default FILTER='*' keeps the full-compile behavior.
+      # Runs BEFORE TOTAL++ so the summary count is filter-aware (parity with
+      # the skills loop). The drift side (check_harness_drift.sh) mirrors this.
+      skill_name_matches_filter "$m_name" "$FILTER" || continue
+
       # v1 is GLOBAL-ONLY; scope columns are carried for forward-compat but
       # every block is treated as global (no project-scope filter here, unlike
       # skills). m_canon/m_scope_* are intentionally NOT echoed (m_canon holds

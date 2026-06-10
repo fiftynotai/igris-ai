@@ -3691,6 +3691,50 @@ export async function materializeAgent(
   };
 }
 
+/**
+ * FR-180 (Phase 3): structured result of the personal-MCP materialize half.
+ * Mirrors {@link SkillMaterializeResult}/{@link AgentMaterializeResult} so
+ * `add.ts`'s mcp arm can chain project+verify off a structured outcome. An MCP
+ * block has NO vendor tree (it carries an inline `${VAR}`-indirected command
+ * ref, not a copied source dir — see `runAddMcp`), so there is no `vendoredDir`
+ * field; the only on-disk write is the overlay block + the inline origin.
+ */
+export interface McpMaterializeResult {
+  /** True iff the write path returned 0 (overlay block + origin landed). */
+  ok: boolean;
+  /** The exit code `runAddMcp` produced (0 on success, 1/2 on reject). */
+  code: number;
+  /** The overlay manifest path the block was written to. */
+  overlayWritten: string;
+}
+
+/**
+ * FR-180 (Phase 3): thin structured-return wrapper over the EXISTING MCP writer
+ * `runAddMcp`. Calls it VERBATIM — every FR-162 guard (name/pattern, ≥1 target,
+ * global-only scope reject, the §14 `--env` `${VAR}`-indirection WRITE GUARD
+ * that REJECTS inline secrets, the `--command`-required / re-add-inherit logic,
+ * the core-collision reject, the atomic overlay+origin write) runs unchanged
+ * (R7: no logic moved out of the heavily-tested write path) — and re-shapes the
+ * result into an {@link McpMaterializeResult} so `verbs/add.ts` can decide
+ * whether to proceed to `projectAndVerify("mcp", …)`.
+ *
+ * `runAddMcp` is synchronous (an inline MCP ref has no `github:` fetch), so this
+ * wrapper is synchronous too — the shape difference from the (async) agent
+ * wrapper. See R7 (registry write-path regression guard) + D9 (materialize/
+ * project boundary) in FR-180-plan.
+ */
+export function materializeMcp(
+  opts: RegistryOptions,
+  overlayPath: string,
+): McpMaterializeResult {
+  const code = runAddMcp(opts, overlayPath);
+  return {
+    ok: code === 0,
+    code,
+    overlayWritten: overlayPath,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // FR-162 (FR-160 epic): add-mcp helpers + verb
 // ---------------------------------------------------------------------------

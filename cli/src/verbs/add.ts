@@ -19,8 +19,10 @@
  * `verbs/registry.ts:runRegistry` (the low-level write verb this wraps).
  *
  * Phase 0 + Phase 1 of FR-180 ship the dispatcher + the `skill` arm; Phase 2
- * adds the `agent` arm end-to-end (personal + core). The remaining 3 arms
- * (mcp/hook/identity) are wired with `notImplementedYet` stubs.
+ * adds the `agent` arm end-to-end (personal + core); Phase 3 adds the `mcp` arm
+ * (personal via the structured `materializeMcp` wrapper over the existing MCP
+ * writer; core via `addCoreMcp`). The remaining 2 arms (hook/identity) are wired
+ * with `notImplementedYet` stubs.
  */
 
 import { existsSync } from "node:fs";
@@ -30,11 +32,12 @@ import { info, error as logError } from "../lib/log.js";
 import {
   materializeSkill,
   materializeAgent,
+  materializeMcp,
   realpathStrict,
   type RegistryOptions,
 } from "./registry.js";
 import { projectAndVerify } from "../lib/add-orchestrate.js";
-import { addCoreSkill, addCoreAgent } from "./add-core.js";
+import { addCoreSkill, addCoreAgent, addCoreMcp } from "./add-core.js";
 
 /** The five surfaces `igris add` dispatches over. */
 export type AddSurface = "skill" | "agent" | "mcp" | "hook" | "identity";
@@ -64,6 +67,21 @@ export interface AddOptions {
   core?: boolean;
   /** Force PERSONAL mode. Wins over auto-detect. */
   noCore?: boolean;
+  /**
+   * MCP launch command (mcp arm). Required for a NEW MCP server; optional on a
+   * same-name personal re-add (inherits the existing block's canonical command).
+   */
+  command?: string;
+  /** MCP launch args (mcp arm; repeatable --arg → args[]). */
+  args?: string[];
+  /**
+   * MCP env indirection refs as "KEY=${VAR}" strings (mcp arm; repeatable
+   * --env). §14 SECURITY: each VALUE must be a single ${VAR} reference — inline
+   * secrets are REJECTED at the writer boundary (FR-160 decision #1).
+   */
+  env?: string[];
+  /** MCP Codex-only startup-timeout passthrough in seconds (mcp arm). */
+  startupTimeoutSec?: number;
   /**
    * Root the auto-detect + project+verify resolve against. Defaults to cwd.
    * In core mode this is also the `--project-root` passed to compile/check.
@@ -99,6 +117,13 @@ export interface AddOptions {
   addCoreAgentFn?: typeof addCoreAgent;
   /** Test seam: personal AGENT materialize override (defaults to materializeAgent). */
   materializeAgentFn?: typeof materializeAgent;
+  /**
+   * Test seam: core MCP materialize override (defaults to addCoreMcp). Lets the
+   * mcp arm be tested without writing the real `core/` surfaces manifest.
+   */
+  addCoreMcpFn?: typeof addCoreMcp;
+  /** Test seam: personal MCP materialize override (defaults to materializeMcp). */
+  materializeMcpFn?: typeof materializeMcp;
 }
 
 /**
@@ -156,13 +181,13 @@ export function resolveAddMode(
 }
 
 /**
- * Stub for the 4 surfaces not yet implemented in this slice (agent/mcp/hook/
- * identity). Prints an actionable not-yet message and returns exit 2.
+ * Stub for the surfaces not yet implemented (hook/identity). Prints an
+ * actionable not-yet message and returns exit 2.
  */
 function notImplementedYet(surface: AddSurface, mode: AddMode): number {
   logError(
-    `add ${surface}: not implemented yet (FR-180 ships 'skill' + 'agent' end-to-end; ` +
-      `mcp/hook/identity land in later phases). Resolved mode would be: ${mode}. ` +
+    `add ${surface}: not implemented yet (FR-180 ships 'skill', 'agent' + 'mcp' ` +
+      `end-to-end; hook/identity land in later phases). Resolved mode would be: ${mode}. ` +
       `For now use the low-level path: 'igris registry add-* …' then 'igris harness compile'.`,
   );
   return 2;
@@ -351,6 +376,116 @@ async function runAddAgentArm(opts: AddOptions, mode: AddMode): Promise<number> 
 }
 
 /**
+ * The `mcp` arm — Phase 3. Mirrors the skill/agent arms' shape (the proven
+ * pattern): resolve mode → materialize → `projectAndVerify("mcp", …)`. Personal
+ * uses the structured-return `materializeMcp` wrapper over the EXISTING MCP
+ * writer (R7 — no logic moved; the §14 `--env` `${VAR}`-indirection WRITE GUARD
+ * that rejects inline secrets is inherited verbatim from `runAddMcp`); core uses
+ * `addCoreMcp` (append a `surfaces.mcp_servers[]` block to the core surfaces
+ * manifest + TD-096 mirror).
+ *
+ * S1 (the flagged MCP-scoping discovery — see the FLAG in the completion
+ * summary): unlike skills/agents, the MCP compile + drift passes did NOT honor
+ * `--filter` by name (the MCP drift pass checks ALL mcp blocks across all 4
+ * harness configs). Phase 3 WIRES `--filter` into the MCP passes (byte-identical
+ * across compile + check, §18.1) reusing the generic name-glob matcher; the arm
+ * passes `filter: opts.name` so the verify (drift check, which has no `--surface`
+ * flag) is scoped to the just-added MCP server — preventing a pre-existing
+ * UNRELATED MCP drift from false-failing a clean add (parity with skills S1).
+ */
+async function runAddMcpArm(opts: AddOptions, mode: AddMode): Promise<number> {
+  const projectRoot = opts.projectRoot ?? process.cwd();
+
+  if (mode === "core") {
+    const addCore = opts.addCoreMcpFn ?? addCoreMcp;
+    const coreResult = addCore({
+      name: opts.name,
+      projectRoot,
+      command: opts.command,
+      args: opts.args,
+      env: opts.env,
+      targets: opts.targets,
+      startupTimeoutSec: opts.startupTimeoutSec,
+      brainRoot: opts.brainRoot,
+    });
+    if (!coreResult.ok) {
+      logError(`add mcp (core): ${coreResult.reason}`);
+      return coreResult.code;
+    }
+    // Project + verify from the repo root; --expect-core makes an ownership-
+    // gate skip a LOUD failure (D5) rather than a silent no-op.
+    const verify = await projectAndVerify({
+      surface: "mcp",
+      projectRoot,
+      expectCore: true,
+      target: opts.target,
+      // S1: scope the verify (check) pass to the just-added MCP name so
+      // pre-existing unrelated MCP drift doesn't false-fail this add.
+      filter: opts.name,
+      brainRoot: opts.brainRoot,
+      captureAdapter: opts.captureAdapter,
+    });
+    if (!verify.ok) {
+      logError(`add mcp (core): projection/verify failed — ${verify.reason}`);
+      return 1;
+    }
+    for (const line of verify.coreSkipped) {
+      info(line);
+    }
+    info(
+      `Added core MCP '${opts.name}': appended the surfaces.mcp_servers block, ` +
+        `mirrored to runtime, projected ${verify.projected.length} target(s), drift-clean.`,
+    );
+    return 0;
+  }
+
+  // ----- Personal mode. -----
+  const overlayPath = opts.overlayPath ?? registryOverlayPath();
+  const materialize = opts.materializeMcpFn ?? materializeMcp;
+  const regOpts: RegistryOptions = {
+    action: "add-mcp",
+    name: opts.name,
+    command: opts.command,
+    args: opts.args,
+    env: opts.env,
+    targets: opts.targets,
+    startupTimeoutSec: opts.startupTimeoutSec,
+    projectRoot,
+    overlayPath,
+  };
+  const mat = materialize(regOpts, overlayPath);
+  if (!mat.ok) {
+    // runAddMcp already logged the specific reject (incl. the §14 inline-secret
+    // rejection); surface the code.
+    return mat.code;
+  }
+  const verify = await projectAndVerify({
+    surface: "mcp",
+    projectRoot,
+    expectCore: false,
+    target: opts.target,
+    // S1: scope the verify (check) pass to the just-added MCP name so
+    // pre-existing unrelated MCP drift doesn't false-fail this add.
+    filter: opts.name,
+    overlay: overlayPath,
+    brainRoot: opts.brainRoot,
+    captureAdapter: opts.captureAdapter,
+  });
+  if (!verify.ok) {
+    logError(`add mcp: projection/verify failed — ${verify.reason}`);
+    return 1;
+  }
+  for (const line of verify.coreSkipped) {
+    info(line);
+  }
+  info(
+    `Added personal MCP '${opts.name}': registered + projected ` +
+      `${verify.projected.length} target(s), drift-clean.`,
+  );
+  return 0;
+}
+
+/**
  * Dispatch `igris add <surface> <name>`. Returns the exit code. A bad surface
  * is a usage error (exit 2). Mode resolution (D1) runs once up front and is
  * PRINTED so it is never silent.
@@ -388,6 +523,7 @@ export async function runAdd(opts: AddOptions): Promise<number> {
     case "agent":
       return runAddAgentArm(opts, mode);
     case "mcp":
+      return runAddMcpArm(opts, mode);
     case "hook":
     case "identity":
       return notImplementedYet(surface, mode);

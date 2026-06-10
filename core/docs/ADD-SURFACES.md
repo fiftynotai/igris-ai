@@ -5,8 +5,8 @@ skill, agent, MCP server, hook, or orchestrator identity. It is routed into
 context via `core/igris_tree.json` (`context_files.surface_management`) and
 paired with the `surface_management` section in `core/prompts/igris_os.md`.
 
-> **Phase status.** FR-180 ships the `skill` and `agent` arms end-to-end
-> (personal + core). The `mcp`, `hook`, and `identity` arms are wired in the
+> **Phase status.** FR-180 ships the `skill`, `agent`, and `mcp` arms
+> end-to-end (personal + core). The `hook` and `identity` arms are wired in the
 > dispatcher but land in later phases; until then, use the low-level path
 > (below) for those surfaces.
 
@@ -59,7 +59,7 @@ when the ownership gate skipped a surface; `igris add` closes that hole.
 |---|---|---|
 | **Skill** | `igris add skill <name> --from <skills-dir> --target <type:method:path>` | `<skills-dir>/<name>/SKILL.md` is vendored; target is e.g. `agents:symlink:~/.agents/skills`. Core skills auto-discover — `--core` writes `core/skills/<name>/SKILL.md` only (no manifest edit). |
 | **Agent** | `igris add agent <name> --from <dir> --target <type:path>` | all-four-harness α-assembly at vendor time. `--core` writes `core/agents/<name>.md` + the repo-root `harness-manifest.json` entry + the §13 agent enumeration surfaces (igris_tree.json, CLAUDE.md template + root). |
-| **MCP** | `igris add mcp <name> --command <bin> [--arg …] [--env KEY=${VAR}] --target <type:merge>` | _(later phase)_ config-merge into each harness's native MCP config. `--env` values must be `${VAR}` indirection refs. |
+| **MCP** | `igris add mcp <name> --command <bin> [--arg …] [--env KEY=${VAR}] [--startup-timeout-sec <n>] --target <type:merge[:enabled]>` | config-merge into each harness's native MCP config (claude/gemini `mcpServers`, opencode `mcp`, codex `[mcp_servers.<name>]`). **`--env` values MUST be `${VAR}` indirection refs — inline secrets are REJECTED** at the writer boundary (the real secret is resolved from the environment by the harness at launch, never stored). `--core` appends a `surfaces.mcp_servers[]` block to `core/scripts/cli-adapters/surfaces-manifest.json` (the global Layer-1 surfaces file the MCP flatten reads) + TD-096 mirror. |
 | **Hook** | `igris add hook <name> …` | _(later phase)_ net-new surface design. |
 | **Identity** | `igris add identity <name> …` | _(later phase)_ region-merge into the harness auto-read identity file. |
 
@@ -93,6 +93,15 @@ when the ownership gate skipped a surface; `igris add` closes that hole.
   `SKIPPED core surfaces (personal-project compile)` line (exit 0). That is not
   an error — it is the gate doing its job (core surfaces don't leak into
   unrelated projects).
+- **MCP secrets (§14)** — `igris add mcp --env KEY=${VAR}` stores only the
+  `${VAR}` indirection ref; an inline secret value is REJECTED. The harness
+  resolves the real value from the environment at launch time, so no secret ever
+  enters the registry overlay or the core surfaces manifest.
+- **MCP verify scoping (S1)** — unlike a per-item symlink (skills/agents), an MCP
+  add is a config-MERGE into each harness's native MCP config. The MCP compile +
+  drift passes honor `--filter <name>` (wired in Phase 3 for parity with skills/
+  agents), so `igris add mcp <name>` scopes its drift verify to just the added
+  server — a pre-existing UNRELATED MCP drift can't false-fail a clean add.
 
 ---
 

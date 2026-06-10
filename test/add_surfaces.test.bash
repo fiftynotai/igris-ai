@@ -34,6 +34,9 @@ setup() {
   [ -f "$CLI_ENTRY" ] || skip "cli/dist/index.js missing — run 'npm run build' in cli/ first (L-552)"
   command -v node >/dev/null 2>&1 || skip "node not available"
   IGRIS_BIN=(node "$CLI_ENTRY")
+  # The MCP compile pass shells out to `igris registry project-mcp`; point it at
+  # the freshly-built CLI (Phase 3 mcp arm).
+  export IGRIS_CLI="node $CLI_ENTRY"
 
   # Sandbox HOME so projection symlinks land in temp, not the live machine.
   SANDBOX_HOME="$TEST_TEMP_DIR/home_$BATS_TEST_NUMBER"
@@ -217,4 +220,66 @@ EOF
   echo "status=$status output=$output" >&2
   [ "$status" -ne 0 ]
   [[ "$output" == *"FAIL  core skills"* ]]
+}
+
+# --- Phase 3: igris add mcp -------------------------------------------------
+
+@test "add mcp (personal): registers + projects the claude config entry + verifies, exit 0" {
+  run "${IGRIS_BIN[@]}" add mcp myserver \
+    --no-core \
+    --command node \
+    --arg /srv/x.js \
+    --env "API=\${API_TOKEN}" \
+    --target claude:merge \
+    --project-root "$PROJ"
+  echo "status=$status output=$output" >&2
+  [ "$status" -eq 0 ]
+
+  # The mode line is printed (D1, never silent).
+  [[ "$output" == *"PERSONAL mode"* ]]
+
+  # The overlay block was written.
+  [ -f "$ISOLATED_BRAIN/registry/harness-manifest.personal.json" ]
+  grep -q "myserver" "$ISOLATED_BRAIN/registry/harness-manifest.personal.json"
+
+  # The projection MERGED the entry into the live claude config (real effect).
+  [ -f "$HOME/.claude.json" ]
+  python3 -c "import json; d=json.load(open('$HOME/.claude.json')); assert 'myserver' in d['mcpServers']; assert d['mcpServers']['myserver']['command']=='node'"
+  # §14: the ${VAR} indirection ref is stored, NOT a resolved secret.
+  python3 -c "import json; d=json.load(open('$HOME/.claude.json')); assert d['mcpServers']['myserver']['env']['API']=='\${API_TOKEN}'"
+}
+
+@test "add mcp (personal): inline secret in --env is REJECTED (§14), no projection" {
+  run "${IGRIS_BIN[@]}" add mcp myserver \
+    --no-core \
+    --command node \
+    --env "API=sk-live-do-not-leak" \
+    --target claude:merge \
+    --project-root "$PROJ"
+  echo "status=$status output=$output" >&2
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"must be a single"* ]]
+  # No entry projected — the reject short-circuits before projection.
+  if [ -f "$HOME/.claude.json" ]; then
+    run python3 -c "import json; d=json.load(open('$HOME/.claude.json')); print('myserver' in d.get('mcpServers', {}))"
+    [ "$output" = "False" ]
+  fi
+}
+
+@test "S1: MCP scoped verify ignores a pre-existing UNRELATED MCP's drift" {
+  # Add `myserver`, then DRIFT its projected claude entry. Adding a SECOND MCP
+  # (`other`) must still succeed because the verify (harness check) is scoped via
+  # --filter to the just-added MCP — a pre-existing unrelated MCP drift does NOT
+  # false-fail a clean add (S1; Phase 3 wired --filter into the MCP passes).
+  "${IGRIS_BIN[@]}" add mcp myserver --no-core --command node \
+    --target claude:merge --project-root "$PROJ"
+
+  # CORRUPT myserver's projected claude entry → unrelated MCP drift.
+  python3 -c "import json; p='$HOME/.claude.json'; d=json.load(open(p)); d['mcpServers']['myserver']['args']=['/tampered.js']; json.dump(d, open(p,'w'))"
+
+  run "${IGRIS_BIN[@]}" add mcp other --no-core --command python \
+    --target claude:merge --project-root "$PROJ"
+  echo "status=$status output=$output" >&2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Added personal MCP 'other'"* ]]
 }
