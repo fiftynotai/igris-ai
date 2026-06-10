@@ -3593,6 +3593,54 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
   return 0;
 }
 
+/**
+ * FR-180: structured result of the personal-skill materialize half. `add.ts`
+ * uses this to chain project+verify after a successful write; the exit-code
+ * entry point (`runAddSkill`) is untouched (R7 guard — no logic moved out of
+ * the heavily-tested write path).
+ */
+export interface SkillMaterializeResult {
+  /** True iff the write path returned 0 (vendor + overlay + origin all landed). */
+  ok: boolean;
+  /** The exit code `runAddSkill` produced (0 on success, 1/2 on reject). */
+  code: number;
+  /** The registry vendored-tree dir (`~/.igris/registry/skills/<name>/`). */
+  vendoredDir: string;
+  /** The overlay manifest path the block was written to. */
+  overlayWritten: string;
+}
+
+/**
+ * FR-180: thin structured-return wrapper over `runAddSkill`. Calls the existing
+ * exit-code writer verbatim (so every FR-142/148/155/162 guard + the atomic
+ * vendor/overlay/origin path runs unchanged) and re-shapes the success/failure
+ * into a `SkillMaterializeResult` so `verbs/add.ts` can decide whether to
+ * proceed to `projectAndVerify`. `vendoredDir` is derived deterministically
+ * from the same seam `runAddSkill` vendors into (`skillVendorDir` override or
+ * `registrySkillDirPath`), so it is valid whether or not the write succeeded
+ * (the caller only consumes it when `ok` is true).
+ *
+ * See R7 (registry write-path regression guard) + D9 (materialize/project
+ * boundary) in FR-180-plan.
+ */
+export function materializeSkill(
+  opts: RegistryOptions,
+  overlayPath: string,
+): SkillMaterializeResult {
+  const code = runAddSkill(opts, overlayPath);
+  const skillVendorDirFor = opts.skillVendorDir ?? registrySkillDirPath;
+  const vendoredDir =
+    opts.name !== undefined && opts.name.length > 0
+      ? skillVendorDirFor(opts.name)
+      : "";
+  return {
+    ok: code === 0,
+    code,
+    vendoredDir,
+    overlayWritten: overlayPath,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // FR-162 (FR-160 epic): add-mcp helpers + verb
 // ---------------------------------------------------------------------------

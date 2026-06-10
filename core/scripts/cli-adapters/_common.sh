@@ -1019,6 +1019,110 @@ PY
 }
 
 # ---------------------------------------------------------------------------
+# FR-180 (S1): shared skill-name filter predicate.
+#
+# skill_name_matches_filter <skill-name> <name-glob>
+#
+# Returns 0 (keep) iff <name-glob> is the wildcard `*` (no filter) OR <skill-
+# name> matches the glob. Returns 1 (skip) otherwise. Used by the per-skill
+# walk in BOTH compile_harnesses.sh and check_harness_drift.sh so `--filter`
+# scopes the SKILLS surface the same way it already scopes the AGENTS surface
+# (the agent flatten applies `fnmatch` to the agent name). This is what makes
+# `igris add`'s scoped verify (S1) real: the check pass re-checks ONLY the
+# just-added skill, so pre-existing unrelated skill drift can't false-fail a
+# clean add. §18.1: ONE helper, identical application on both sides.
+# ---------------------------------------------------------------------------
+skill_name_matches_filter() {
+  local skill_name="$1"
+  local name_glob="$2"
+  # `*` (or empty) → no filter → always keep. Otherwise shell case-glob match
+  # (same matcher class as the agent flatten's python fnmatch — case-glob is
+  # the bash-native equivalent for the simple globs --filter accepts).
+  if [ -z "$name_glob" ] || [ "$name_glob" = "*" ]; then
+    return 0
+  fi
+  case "$skill_name" in
+    $name_glob) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# FR-180 (TD-235 / D5): shared core-ownership predicate.
+#
+# core_surfaces_owned <core-surfaces-path> <project-root>
+#
+# Returns 0 (owned) iff the realpath of <core-surfaces-path> is contained under
+# the realpath of <project-root> — the SAME `os.path.commonpath` ownership
+# signal the skills / mcp / identity flatten gates use to decide whether to
+# union the core surfaces-manifest.json. Returns 1 (not owned) otherwise, and
+# also on any realpath/commonpath failure (safe default → core surfaces are
+# NOT unioned for an unrelated project).
+#
+# This is a DIAGNOSTIC predicate only — it does NOT change what the flatten
+# gates project (those keep their own in-Python commonpath check verbatim, so
+# the projected bytes are unchanged). compile/drift use it to decide between a
+# LOUD core-skip FAIL (the run EXPECTED core surfaces) and a visible-but-exit-0
+# SKIPPED line (an incidental personal-project compile). §18.1: ONE shared
+# helper used by BOTH compile_harnesses.sh and check_harness_drift.sh.
+# ---------------------------------------------------------------------------
+core_surfaces_owned() {
+  local core_surfaces="$1"
+  local project_root="$2"
+  python3 - "$core_surfaces" "$project_root" <<'PY'
+import os
+import sys
+
+core_surfaces_path = sys.argv[1]
+project_root = sys.argv[2]
+
+try:
+    cs_real = os.path.realpath(core_surfaces_path)
+    pr_real = os.path.realpath(project_root)
+    if os.path.commonpath([cs_real, pr_real]) == pr_real:
+        sys.exit(0)
+except (OSError, ValueError):
+    pass
+sys.exit(1)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# FR-180 (TD-235 / D5): does the (merged + core) manifest set DECLARE any core
+# skills block at all? Used to decide whether a core-skip diagnostic is even
+# relevant — if the core surfaces-manifest.json declares no skills targets,
+# there is nothing to skip and no diagnostic is emitted. Reads the core
+# surfaces file only (the personal overlay is always unioned regardless of
+# ownership, so it is never the thing being skipped).
+#
+# core_skills_declared <core-surfaces-path>
+#   Returns 0 if the core surfaces-manifest.json declares ≥1 skills block with
+#   ≥1 target; 1 otherwise (or on read error).
+# ---------------------------------------------------------------------------
+core_skills_declared() {
+  local core_surfaces="$1"
+  python3 - "$core_surfaces" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except OSError:
+    sys.exit(1)
+
+value = (data.get("surfaces") or {}).get("skills")
+if value is None:
+    sys.exit(1)
+blocks = [value] if isinstance(value, dict) else (value if isinstance(value, list) else [])
+for block in blocks:
+    if isinstance(block, dict) and (block.get("targets") or []):
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+
+# ---------------------------------------------------------------------------
 # FR-164 (FR-160 epic): MCP projection helpers (shared by compile + drift).
 # ---------------------------------------------------------------------------
 

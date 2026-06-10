@@ -35,6 +35,7 @@ import { runRegisterProject } from "./verbs/register-project.js";
 import { runSync, type SyncSubVerb } from "./verbs/sync.js";
 import { runHarness, type HarnessAction } from "./verbs/harness.js";
 import { runRegistry, type RegistryAction } from "./verbs/registry.js";
+import { runAdd } from "./verbs/add.js";
 import type { McpHarness } from "./lib/mcp-env-normalize.js";
 import { setVerbosity, info, error as logError } from "./lib/log.js";
 
@@ -435,6 +436,18 @@ async function main(argv: string[]): Promise<void> {
         if (opts.canonical !== undefined && opts.from === undefined) {
           info("registry: --canonical is deprecated; use --from <path> instead.");
         }
+        // FR-180: `registry add-skill` survives as the low-level write-only
+        // primitive (it does NOT project/verify), but `igris add skill` is now
+        // the one-step front door. Steer the operator toward it. The deprecation
+        // fires only at the CLI boundary — `runRegistry` stays clean for the
+        // verb-level test suites (R7).
+        if (action === "add-skill") {
+          info(
+            "registry add-skill is write-only (it vendors/registers but does NOT " +
+              "project or verify) — it is the low-level primitive. For the one-step " +
+              "(vendor + project + verify) flow use 'igris add skill <name> --from <dir> --target …'.",
+          );
+        }
         // FR-143: `add-skill` takes its skills source-dir as the positional
         // arg (`igris registry add-skill <source-dir> --target ...`); coalesce
         // it into `from` when --from was not given explicitly. The positional
@@ -526,6 +539,69 @@ async function main(argv: string[]): Promise<void> {
           overlayPath: opts.overlay,
           configPath: opts.configPath,
           secretsPath: opts.secretsPath,
+        });
+        process.exitCode = code;
+      },
+    );
+
+  program
+    .command("add <surface> [name]")
+    .description(
+      "FR-180: one-step add of a surface (skill | agent | mcp | hook | identity) — " +
+        "materializes (vendor/register for personal, write core/ for core), projects " +
+        "to all four harnesses (claude/gemini/codex/opencode), AND verifies drift-clean. " +
+        "Never silently no-ops (TD-235). Core-vs-personal is auto-detected (igris-ai " +
+        "checkout = core) and overridable with --core / --no-core; the resolved mode is " +
+        "always printed. Phase 1 ships 'skill' end-to-end; the other surfaces are " +
+        "in-progress. The low-level 'igris registry add-* + igris harness compile' two-step " +
+        "survives as the repair primitive.",
+    )
+    .option("--from <path-or-github>", "source dir / github ref (skill/agent/mcp)")
+    .option(
+      "--target <type:...>",
+      "output target (skill: type:method:path; agent: type:path; repeatable)",
+      collect,
+      [],
+    )
+    .option("--name <slug>", "surface name (alternative to the positional [name])")
+    // Commander pairs `--core` with `--no-core`: opts.core is `undefined` (no
+    // flag → auto-detect), `true` (--core), or `false` (--no-core). NO default
+    // is set so the three-state distinction survives.
+    .option("--core", "force CORE mode — edit the igris-ai checkout (wins over auto-detect)")
+    .option("--no-core", "force PERSONAL mode (wins over auto-detect)")
+    .option(
+      "--project-root <dir>",
+      "root for core auto-detect + project+verify (default: cwd)",
+    )
+    .option(
+      "--harness <type>",
+      "restrict projection to one harness: claude | codex | gemini | opencode",
+    )
+    .action(
+      async (
+        surface: string,
+        name: string | undefined,
+        opts: {
+          from?: string;
+          target?: string[];
+          name?: string;
+          core?: boolean;
+          projectRoot?: string;
+          harness?: string;
+        },
+      ): Promise<void> => {
+        const code = await runAdd({
+          surface,
+          name: opts.name ?? name,
+          from: opts.from,
+          targets: opts.target,
+          // Commander maps `--no-core` to `core: false`; `--core` to `core: true`;
+          // neither flag → `core: undefined`. Distinguish the three states so
+          // auto-detect runs only when the operator passed no flag.
+          core: opts.core === true ? true : undefined,
+          noCore: opts.core === false ? true : undefined,
+          projectRoot: opts.projectRoot,
+          target: opts.harness,
         });
         process.exitCode = code;
       },

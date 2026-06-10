@@ -59,9 +59,11 @@ readonly DEFAULT_OVERLAY="$BRAIN_DIR/registry/harness-manifest.personal.json"
 # usage — prints usage and exits with code 2.
 # ---------------------------------------------------------------------------
 usage() {
-  echo "Usage: $0 --project-root <dir> [--manifest <path>] [--overlay <path>] [--filter <name-glob>]" >&2
+  echo "Usage: $0 --project-root <dir> [--manifest <path>] [--overlay <path>] [--filter <name-glob>] [--expect-core]" >&2
   echo "" >&2
   echo "Fails (exit 1) if any harness file has drifted from its canonical prompt." >&2
+  echo "--expect-core: also fail LOUDLY if a declared core surface is skipped by the" >&2
+  echo "               ownership gate or 0 targets match (FR-180/TD-235)." >&2
   exit 2
 }
 
@@ -73,12 +75,21 @@ MANIFEST=""
 OVERLAY=""
 OVERLAY_SET=0
 FILTER='*'
+# FR-180 (TD-235 / D5): mirror of compile's --expect-core. When set, a declared
+# core surface skipped by the ownership gate (or a 0-target run) is a LOUD FAIL
+# instead of a silent / merely-visible skip. §18.1 deliver+drift pairing: the
+# drift side carries the same loud-vs-silent distinction as the compile side.
+EXPECT_CORE=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --project-root)
       PROJECT_ROOT="${2:-}"
       shift 2 || usage
+      ;;
+    --expect-core)
+      EXPECT_CORE=1
+      shift
       ;;
     --manifest)
       MANIFEST="${2:-}"
@@ -1078,6 +1089,23 @@ done <<< "$WORK_ROWS"
 fi
 
 # ---------------------------------------------------------------------------
+# FR-180 (TD-235 / D5): mirror of compile's loud-vs-silent core-skip diagnostic.
+# The flatten gate below keeps its own in-Python commonpath check verbatim
+# (verdict bytes unchanged); this block only adds the diagnostic + exit
+# decision. Same three cases as compile_harnesses.sh's skills pass.
+# ---------------------------------------------------------------------------
+if core_skills_declared "$CORE_SURFACES" \
+   && ! core_surfaces_owned "$CORE_SURFACES" "$PROJECT_ROOT"; then
+  if [ "$EXPECT_CORE" -eq 1 ]; then
+    echo "FAIL  core skills — not owned by --project-root $PROJECT_ROOT; run from the igris-ai repo or pass --core" >&2
+    DRIFT=$((DRIFT + 1))
+    TOTAL=$((TOTAL + 1))
+  else
+    echo "SKIPPED core surfaces (personal-project compile)" >&2
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # FR-137: skills-surface drift pass. For each skills target (unioned from the
 # core surfaces-manifest.json and the merged agent manifest), re-derive the
 # projected artifact to a temp file via the md_to_* compiler and compare
@@ -1230,6 +1258,10 @@ if [ -n "$SKILL_ROWS" ]; then
     # the registry side is hashed one level DOWN at `<src_abs>/<name>`.
     if [ "$s_layer" = "personal" ] && [ -n "$src_abs" ]; then
       skill_name="$(basename "$src_abs")"
+      # FR-180 (S1): honor --filter on the per-skill tree drift pre-check too,
+      # so `igris add`'s scoped verify doesn't surface a pre-existing UNRELATED
+      # personal skill's tree drift as this add's failure.
+      if skill_name_matches_filter "$skill_name" "$FILTER"; then
       skill_registry_dir="$src_abs/$skill_name"
       skill_dedup_already=0
       case "$SKILL_TREE_CHECKED" in
@@ -1364,6 +1396,7 @@ PY
           fi
         fi
       fi
+      fi  # FR-180 (S1): close skill_name_matches_filter guard
     fi
 
     verdict="MATCH"
@@ -1392,6 +1425,10 @@ PY
         checked=0
         while IFS= read -r -d '' skill_md; do
           skill_name="$(basename "$(dirname "$skill_md")")"
+          # FR-180 (S1): honor --filter on the skills surface (parity with the
+          # agent flatten + compile_harnesses.sh skills branches). Scopes
+          # `igris add`'s verify to the just-added skill. §18.1 paired change.
+          skill_name_matches_filter "$skill_name" "$FILTER" || continue
           skill_dir="$(dirname "$skill_md")"
           skill_dir_real=$(realpath "$skill_dir" 2>/dev/null || echo "$skill_dir")
           link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
@@ -1470,6 +1507,10 @@ PY
         checked=0
         while IFS= read -r -d '' skill_md; do
           skill_name="$(basename "$(dirname "$skill_md")")"
+          # FR-180 (S1): honor --filter on the skills surface (parity with the
+          # agent flatten + compile_harnesses.sh skills branches). Scopes
+          # `igris add`'s verify to the just-added skill. §18.1 paired change.
+          skill_name_matches_filter "$skill_name" "$FILTER" || continue
           skill_dir="$(dirname "$skill_md")"
           skill_dir_real=$(realpath "$skill_dir" 2>/dev/null || echo "$skill_dir")
           link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
@@ -1552,6 +1593,10 @@ PY
         checked=0
         while IFS= read -r -d '' skill_md; do
           skill_name="$(basename "$(dirname "$skill_md")")"
+          # FR-180 (S1): honor --filter on the skills surface (parity with the
+          # agent flatten + compile_harnesses.sh skills branches). Scopes
+          # `igris add`'s verify to the just-added skill. §18.1 paired change.
+          skill_name_matches_filter "$skill_name" "$FILTER" || continue
           skill_dir="$(dirname "$skill_md")"
           skill_dir_real=$(realpath "$skill_dir" 2>/dev/null || echo "$skill_dir")
           link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
@@ -1628,6 +1673,10 @@ PY
         checked=0
         while IFS= read -r -d '' skill_md; do
           skill_name="$(basename "$(dirname "$skill_md")")"
+          # FR-180 (S1): honor --filter on the skills surface (parity with the
+          # agent flatten + compile_harnesses.sh skills branches). Scopes
+          # `igris add`'s verify to the just-added skill. §18.1 paired change.
+          skill_name_matches_filter "$skill_name" "$FILTER" || continue
           skill_dir="$(dirname "$skill_md")"
           skill_dir_real=$(realpath "$skill_dir" 2>/dev/null || echo "$skill_dir")
           link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
@@ -1721,6 +1770,9 @@ PY
         oc_marker="<!-- Generated by igris harness compile (FR-171 opencode/command) — edit the canonical SKILL.md, not this wrapper -->"
         while IFS= read -r -d '' skill_md; do
           skill_name="$(basename "$(dirname "$skill_md")")"
+          # FR-180 (S1): honor --filter on the skills surface (parity with the
+          # other 4 check branches + compile). Scopes `igris add`'s verify.
+          skill_name_matches_filter "$skill_name" "$FILTER" || continue
           link_path="$out_abs/$skill_name.md"
           # FR-171: expected `@`-target is the ACTUAL canonical SKILL.md the
           # compile walked (~`-prefixed when under $HOME), computed identically
@@ -1919,6 +1971,13 @@ fi
 
 if [ "$TOTAL" -eq 0 ]; then
   echo "No agent/skills/mcp/identity targets matched (filter='$FILTER')." >&2
+  # FR-180 (TD-235 / D5): under --expect-core a 0-target drift run is the silent
+  # no-op the brief forbids (the verify half of `igris add` got nothing to
+  # check). Fail LOUDLY; without the flag the historical exit-0 is preserved.
+  if [ "$EXPECT_CORE" -eq 1 ]; then
+    echo "FAIL  core surfaces — 0 targets matched under --expect-core for --project-root $PROJECT_ROOT; run from the igris-ai repo or pass --core" >&2
+    exit 1
+  fi
   exit 0
 fi
 

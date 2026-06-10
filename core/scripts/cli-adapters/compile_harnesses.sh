@@ -1025,9 +1025,12 @@ compile_md_agent_target() {
 usage() {
   echo "Usage: $0 --project-root <dir> [--manifest <path>] [--overlay <path>]" >&2
   echo "                          [--filter <name-glob>] [--target claude|codex|gemini|opencode|all]" >&2
-  echo "                          [--surface agents|skills|mcp|identity|all]" >&2
+  echo "                          [--surface agents|skills|mcp|identity|all] [--expect-core]" >&2
   echo "" >&2
   echo "Regenerates harness files declared in the manifest from canonical prompts." >&2
+  echo "--expect-core: fail LOUDLY (non-zero) if a declared core surface is skipped" >&2
+  echo "               by the ownership gate (FR-180/TD-235); else an incidental" >&2
+  echo "               personal-project compile emits a visible SKIPPED line, exit 0." >&2
   exit 2
 }
 
@@ -1041,12 +1044,23 @@ OVERLAY_SET=0
 FILTER='*'
 TARGET_KIND="all"
 SURFACE_KIND="all"
+# FR-180 (TD-235 / D5): when set, the run EXPECTS core surfaces (it was routed
+# from `igris add` in core mode, or via an explicit --surface request). An
+# ownership-gate skip of a declared core surface then becomes a LOUD FAIL +
+# non-zero exit instead of a silent no-op. Default 0 → incidental-compile
+# posture (an unrelated personal-project compile emits a single visible
+# SKIPPED line and stays exit-0).
+EXPECT_CORE=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --project-root)
       PROJECT_ROOT="${2:-}"
       shift 2 || usage
+      ;;
+    --expect-core)
+      EXPECT_CORE=1
+      shift
       ;;
     --manifest)
       MANIFEST="${2:-}"
@@ -1434,6 +1448,30 @@ fi
 # Skipped entirely when --surface agents or --surface mcp (FR-164).
 # ---------------------------------------------------------------------------
 if [ "$SURFACE_KIND" = "skills" ] || [ "$SURFACE_KIND" = "all" ]; then
+  # FR-180 (TD-235 / D5): make the ownership-gate skip of declared CORE skills
+  # LOUD or VISIBLE — never silent. The flatten gate below keeps its own
+  # in-Python commonpath check verbatim (projected BYTES unchanged); this block
+  # only adds a diagnostic + exit decision around it. Three cases:
+  #   - core skills declared AND not owned AND --expect-core → LOUD FAIL +
+  #     non-zero exit (the run EXPECTED core surfaces; a misroute must not
+  #     silently no-op).
+  #   - core skills declared AND not owned AND NOT --expect-core → a single
+  #     VISIBLE "SKIPPED core surfaces (personal-project compile)" line, exit 0
+  #     (the legitimate "don't leak core into unrelated projects" path).
+  #   - core skills owned (igris-ai checkout) OR not declared → no diagnostic;
+  #     the gate unions/ignores exactly as before.
+  if core_skills_declared "$CORE_SURFACES" \
+     && ! core_surfaces_owned "$CORE_SURFACES" "$PROJECT_ROOT"; then
+    if [ "$EXPECT_CORE" -eq 1 ]; then
+      echo "FAIL  core skills — not owned by --project-root $PROJECT_ROOT; run from the igris-ai repo or pass --core" >&2
+      SUMMARY+=("FAIL  core skills — not owned by --project-root $PROJECT_ROOT; run from the igris-ai repo or pass --core")
+      FAIL=$((FAIL + 1))
+      TOTAL=$((TOTAL + 1))
+    else
+      echo "SKIPPED core surfaces (personal-project compile)" >&2
+    fi
+  fi
+
   # Flatten skills targets from both sources into rows:
   #   source <TAB> type <TAB> method <TAB> path <TAB> scope_type <TAB> scope_paths
   # `-` is the empty-source / empty-paths sentinel (caller falls back to md_to_*'s
@@ -1590,6 +1628,10 @@ PY
           fi
           while IFS= read -r -d '' skill_md; do
             skill_name="$(basename "$(dirname "$skill_md")")"
+            # FR-180 (S1): honor --filter on the skills surface (parity with the
+            # agent flatten, which fnmatches the agent name). Lets `igris add`'s
+            # scoped verify re-check only the just-added skill.
+            skill_name_matches_filter "$skill_name" "$FILTER" || continue
             skill_dir="$(dirname "$skill_md")"
             link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
             # TD-218: create the LINK's parent dir (not out_abs). For a parent
@@ -1618,6 +1660,10 @@ PY
           fi
           while IFS= read -r -d '' skill_md; do
             skill_name="$(basename "$(dirname "$skill_md")")"
+            # FR-180 (S1): honor --filter on the skills surface (parity with the
+            # agent flatten, which fnmatches the agent name). Lets `igris add`'s
+            # scoped verify re-check only the just-added skill.
+            skill_name_matches_filter "$skill_name" "$FILTER" || continue
             skill_dir="$(dirname "$skill_md")"
             link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
             # TD-218: create the LINK's parent dir (not out_abs). For a parent
@@ -1654,6 +1700,10 @@ PY
           fi
           while IFS= read -r -d '' skill_md; do
             skill_name="$(basename "$(dirname "$skill_md")")"
+            # FR-180 (S1): honor --filter on the skills surface (parity with the
+            # agent flatten, which fnmatches the agent name). Lets `igris add`'s
+            # scoped verify re-check only the just-added skill.
+            skill_name_matches_filter "$skill_name" "$FILTER" || continue
             skill_dir="$(dirname "$skill_md")"
             link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
             # TD-218: create the LINK's parent dir (not out_abs). For a parent
@@ -1684,6 +1734,10 @@ PY
           fi
           while IFS= read -r -d '' skill_md; do
             skill_name="$(basename "$(dirname "$skill_md")")"
+            # FR-180 (S1): honor --filter on the skills surface (parity with the
+            # agent flatten, which fnmatches the agent name). Lets `igris add`'s
+            # scoped verify re-check only the just-added skill.
+            skill_name_matches_filter "$skill_name" "$FILTER" || continue
             skill_dir="$(dirname "$skill_md")"
             link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
             # TD-218: create the LINK's parent dir (not out_abs). For a parent
@@ -1733,6 +1787,10 @@ PY
           out_parent_real=$(realpath "$(dirname "$out_abs")" 2>/dev/null || echo "")
           while IFS= read -r -d '' skill_md; do
             skill_name="$(basename "$(dirname "$skill_md")")"
+            # FR-180 (S1): honor --filter on the skills surface (parity with the
+            # other 4 skill branches + the agent flatten). Lets `igris add`'s
+            # scoped verify re-check only the just-added skill.
+            skill_name_matches_filter "$skill_name" "$FILTER" || continue
             # Command wrapper file is <out_abs>/<name>.md (depth-1; OpenCode
             # scans the command dir non-recursively). resolve_skill_link_path's
             # de-dup guard does not apply (commands are files, not dirs); the
@@ -1951,11 +2009,27 @@ fi
 
 if [ "$TOTAL" -eq 0 ]; then
   echo "No agent/skills/mcp/identity targets matched (filter='$FILTER', target='$TARGET_KIND', surface='$SURFACE_KIND')." >&2
+  # FR-180 (TD-235 / D5): a 0-target run under --expect-core is the silent
+  # no-op the brief forbids — the caller (igris add) routed this expecting core
+  # surfaces and got nothing. Fail LOUDLY so add can surface an actionable
+  # message instead of reporting a phantom success. Without --expect-core
+  # (incidental compile / legacy callers) the historical exit-0 is preserved.
+  if [ "$EXPECT_CORE" -eq 1 ]; then
+    echo "FAIL  core surfaces — 0 targets matched under --expect-core for --project-root $PROJECT_ROOT; run from the igris-ai repo or pass --core" >&2
+    exit 1
+  fi
   exit 0
 fi
 
 # ---------------------------------------------------------------------------
 # Summary report.
+#
+# PARSER↔ADAPTER COUPLING (FR-180): the per-row `OK …` / `FAIL …` prefixes
+# emitted here — plus the "… targets matched" empty-match line and the
+# "SKIPPED core surfaces …" diagnostic above — are parsed by
+# `parseHarnessOutput` in cli/src/verbs/harness.ts (the structured path that
+# `igris add` relies on). If you change these literals, update that parser in
+# the SAME change (there is a matching breadcrumb comment there).
 # ---------------------------------------------------------------------------
 echo ""
 echo "Harness compile summary (project root: $PROJECT_ROOT):"

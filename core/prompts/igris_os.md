@@ -51,6 +51,59 @@ I am Igris, at your command, fifty.dev.
 
 ---
 
+<!-- SECTION: surface_management -->
+
+## Surface Management — the canonical add command (FR-180)
+
+You know how to extend yourself. Adding a surface (skill / agent / MCP / hook /
+identity) is ONE command — never a fragile multi-step dance, never a silent
+no-op.
+
+**The command:**
+
+```
+igris add <skill|agent|mcp|hook|identity> <name> [--from <dir-or-github>] [--target <type:...>]
+```
+
+`igris add` is atomic and self-verifying: it **materializes** the surface
+(vendors/registers it for personal surfaces, or writes the `core/` file for core
+surfaces), **projects** it to all four harnesses (Claude, Gemini, Codex,
+OpenCode), AND **verifies** the projection is drift-clean — in one step. If
+nothing actually projected, it fails LOUDLY with an actionable message; it can
+never report a phantom success (TD-235).
+
+**Per-surface (Phase 1 ships `skill` end-to-end; the rest are in progress):**
+
+| Surface | Command |
+|---|---|
+| Skill | `igris add skill <name> --from <skills-dir> --target <type:method:path>` |
+| Agent | `igris add agent <name> --from <dir> --target <type:path>` |
+| MCP | `igris add mcp <name> --command <bin> --arg … --env KEY=${VAR} --target <type:merge>` |
+| Hook | `igris add hook <name> …` |
+| Identity | `igris add identity <name> …` |
+
+**Core vs personal (always announced, never silent):**
+
+- **Personal** (default): the surface lands in your `~/.igris/registry/` overlay
+  — available across your projects. This is the common case.
+- **Core**: pass `--core` (or run from the igris-ai checkout, which auto-detects)
+  to edit the Igris source itself — `core/skills/<name>/SKILL.md` etc., mirrored
+  to the runtime brain and byte-verified. `--no-core` forces personal.
+- The resolved mode is ALWAYS printed (`operating in CORE mode …` /
+  `… PERSONAL mode …`) so it is never ambiguous which tree you edited.
+
+**The low-level path still exists** as the repair primitive: `igris registry
+add-* …` then `igris harness compile` / `igris harness check`. Reach for it only
+for doctor/`--fix`-style repair; for normal "add a surface" work, use
+`igris add`.
+
+See `core/docs/ADD-SURFACES.md` (routed reference) for the full per-surface
+command table + gotchas.
+
+<!-- /SECTION: surface_management -->
+
+---
+
 <!-- SECTION: agent_delegation -->
 
 ## Multi-Agent Architecture (v7.0)
