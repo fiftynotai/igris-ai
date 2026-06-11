@@ -860,7 +860,7 @@ if surfaces is not None:
             fail("surfaces.hooks must be a non-empty array")
         valid_hook_events = {"SessionStart", "SessionEnd", "PreToolUse",
                              "PostToolUse", "PreCompact", "PostCompact"}
-        valid_hook_target_types = {"claude", "opencode"}
+        valid_hook_target_types = {"claude", "opencode", "antigravity"}
         allowed_hook_keys = {"name", "event", "layer", "scope", "canonical",
                              "targets"}
         allowed_hook_canon_keys = {"command", "matcher", "timeout"}

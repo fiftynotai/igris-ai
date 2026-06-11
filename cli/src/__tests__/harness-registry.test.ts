@@ -1986,6 +1986,15 @@ describe("validateHookSurface — FR-180 (D7)", () => {
     ).toMatch(/is not one of/);
   });
 
+  it("FR-181: accepts an antigravity hook target", () => {
+    expect(
+      validateHookSurface({
+        ...validBlock,
+        targets: [{ type: "antigravity", method: "merge" }],
+      }),
+    ).toBeNull();
+  });
+
   it("rejects a non-'merge' method", () => {
     expect(
       validateHookSurface({

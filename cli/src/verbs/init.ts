@@ -77,7 +77,11 @@ import {
 } from "../lib/paths.js";
 import { registerBrainAcrossHarnesses } from "../lib/mcp-register.js";
 import { linkAntigravitySkills } from "../lib/antigravity-skills.js";
-import { antigravitySkillsLinkPath } from "../lib/paths.js";
+import { installAntigravityHooks } from "../lib/antigravity-hooks.js";
+import {
+  antigravitySkillsLinkPath,
+  antigravityHooksConfigPath,
+} from "../lib/paths.js";
 import { chmodSecretFile } from "../lib/secret-perms.js";
 import {
   checkNetwork,
@@ -657,6 +661,11 @@ export async function runInit(opts: InitOptions): Promise<number> {
         antigravitySkillsLinkPath(),
         "link antigravity skills -> ~/.agents/skills",
       );
+      // FR-181: the antigravity brief-first hooks (PreToolUse + PostToolUse).
+      dry.wouldWriteFile(
+        antigravityHooksConfigPath(),
+        "register Igris hooks (Antigravity)",
+      );
     }
   } else {
     const results = registerBrainAcrossHarnesses(
@@ -697,6 +706,19 @@ export async function runInit(opts: InitOptions): Promise<number> {
         info(
           `Linked antigravity skills (${link.outcome}): ${link.linkPath} -> ${link.target}`,
         );
+      }
+
+      // --- 13c. Antigravity brief-first hooks (FR-181) ------------------
+      // Config-merge the PreToolUse + PostToolUse groups into
+      // ~/.gemini/config/hooks.json (the gemini-cli trigger path) → the
+      // bridge scripts. Preserves any pre-existing hooks; never throws.
+      const hooks = installAntigravityHooks();
+      if (hooks.outcome === "failed") {
+        warn(`antigravity hooks registration skipped: ${hooks.error}`);
+      } else if (hooks.outcome === "unchanged") {
+        debug(`antigravity hooks already registered -> ${hooks.path}`);
+      } else {
+        info(`Registered Igris hooks for antigravity (${hooks.outcome}): ${hooks.path}`);
       }
     }
   }

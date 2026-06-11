@@ -1110,8 +1110,8 @@ const HOOK_EVENTS = [
 ] as const;
 type HookCoreEvent = (typeof HOOK_EVENTS)[number];
 
-/** The 2 hook harness target types (mirrors VALID_HOOK_TARGET_TYPES). */
-const HOOK_TARGET_TYPES = ["claude", "opencode"] as const;
+/** The hook harness target types (mirrors VALID_HOOK_TARGET_TYPES). */
+const HOOK_TARGET_TYPES = ["claude", "opencode", "antigravity"] as const;
 type HookCoreTargetType = (typeof HOOK_TARGET_TYPES)[number];
 
 interface CoreHookTarget {

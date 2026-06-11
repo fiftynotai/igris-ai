@@ -212,7 +212,7 @@
       }
     },
     "hook_surface": {
-      "description": "FR-180 (D7 - Option B): ONE event-hook projection block. Multiple coexist as elements of `surfaces.hooks[]`. `event` is the canonical Igris event name; `canonical.command` is the shared hook script the harness runs (a personal block's command lives under ~/.igris/registry/hooks/<name>/ - a distinct provenance prefix the canonical re-merge preserves, fixing the R2 refresh-overwrite hazard; a core block's lives under $HOME/.igris/core/hooks/shared/). Optional `canonical.matcher` (tool-glob for PreToolUse/PostToolUse) + `canonical.timeout` (seconds). `targets` carries a SEPARATE enum - claude (settings.json hooks array) + opencode (the FR-104 plugin); codex supports only session_end and gemini has no hook API (so those are documented, not projected). `method` is always the const `merge`. v1 is GLOBAL-ONLY: `scope` is accepted (reuses $defs/scope for forward-compat) but consumers treat every block as global.",
+      "description": "FR-180 (D7 - Option B): ONE event-hook projection block. Multiple coexist as elements of `surfaces.hooks[]`. `event` is the canonical Igris event name; `canonical.command` is the shared hook script the harness runs (a personal block's command lives under ~/.igris/registry/hooks/<name>/ - a distinct provenance prefix the canonical re-merge preserves, fixing the R2 refresh-overwrite hazard; a core block's lives under $HOME/.igris/core/hooks/shared/). Optional `canonical.matcher` (tool-glob for PreToolUse/PostToolUse) + `canonical.timeout` (seconds). `targets` carries a SEPARATE enum - claude (settings.json hooks array), opencode (the FR-104 plugin), and antigravity (FR-181: config-merge into ~/.gemini/config/hooks.json, gemini-cli hook format, via the antigravity bridge); codex supports only session_end and gemini-cli 0.45.0 has a `gemini hooks` subcommand (full onboarding tracked under FR-182, so gemini is documented, not yet projected). `method` is always the const `merge`. v1 is GLOBAL-ONLY: `scope` is accepted (reuses $defs/scope for forward-compat) but consumers treat every block as global.",
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "event", "canonical", "targets"],
@@ -253,7 +253,7 @@
             "additionalProperties": false,
             "required": ["type", "method"],
             "properties": {
-              "type":    { "enum": ["claude", "opencode"] },
+              "type":    { "enum": ["claude", "opencode", "antigravity"] },
               "method":  { "const": "merge" },
               "enabled": { "type": "boolean", "default": true }
             }

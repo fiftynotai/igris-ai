@@ -62,6 +62,7 @@ import {
   claudeJsonPath,
   geminiSettingsPath,
   antigravityMcpConfigPath,
+  antigravityHooksConfigPath,
   codexConfigTomlPath,
   opencodeConfigPath,
   brainDir,
@@ -193,11 +194,13 @@ type IdentityMethod = (typeof VALID_IDENTITY_METHODS)[number];
 /**
  * FR-180 (D7): allowed hook target types. SEPARATE enum — the hook surface
  * carries only the TWO harnesses with a native hook MERGE surface (claude →
- * settings.json hooks array; opencode → the FR-104 plugin). codex (session_end
- * only) + gemini (no hook API) are documented, not projection targets. Mirrors
- * `$defs.hook_surface.targets.type`.
+ * settings.json hooks array; opencode → the FR-104 plugin; antigravity →
+ * config-merge into ~/.gemini/config/hooks.json via the FR-181 bridge). codex
+ * (session_end only) + gemini (gemini-cli 0.45.0 has a `gemini hooks` subcommand
+ * — full onboarding tracked under FR-182) are documented, not projection
+ * targets. Mirrors `$defs.hook_surface.targets.type`.
  */
-const VALID_HOOK_TARGET_TYPES = ["claude", "opencode"] as const;
+const VALID_HOOK_TARGET_TYPES = ["claude", "opencode", "antigravity"] as const;
 type HookTargetType = (typeof VALID_HOOK_TARGET_TYPES)[number];
 
 /** FR-180 (D7): hook projection is always a config-merge. Mirrors the schema const. */
@@ -5912,7 +5915,9 @@ function runProjectHook(opts: RegistryOptions): number {
   }
   const name = opts.name;
   if (opts.harness === undefined) {
-    logError("registry project-hook: --harness <claude|opencode> is required");
+    logError(
+      "registry project-hook: --harness <claude|opencode|antigravity> is required",
+    );
     return 2;
   }
   if (!(VALID_HOOK_TARGET_TYPES as readonly string[]).includes(opts.harness)) {
@@ -5985,9 +5990,36 @@ function runProjectHook(opts: RegistryOptions): number {
     return 0;
   }
 
+  // --- antigravity (FR-181): config-merge into ~/.gemini/config/hooks.json. --
+  // Same group/file structure as claude (gemini-cli hook format is
+  // `{hooks:{<Event>:[group]}}`), only the FILE differs. Reuses the shared
+  // merge helper below. The bridge command path must exist (belt-and-suspenders).
+  if (harness === "antigravity") {
+    const hooksPath = opts.hookSettingsPath ?? antigravityHooksConfigPath();
+    const rc = mergeHookGroupIntoFile(name, hooksPath, block, "antigravity");
+    return rc;
+  }
+
   // --- claude: config-merge into .claude/settings.json. --------------------
   const settingsPath =
     opts.hookSettingsPath ?? projectSettingsPath(projectRoot);
+  return mergeHookGroupIntoFile(name, settingsPath, block, "claude");
+}
+
+/**
+ * FR-180/FR-181: merge ONE hook block's group into a `{hooks:{<Event>:[...]}}`
+ * JSON config file (claude `.claude/settings.json` OR antigravity
+ * `~/.gemini/config/hooks.json` — same structure, different file). Idempotent,
+ * preserve-existing, malformed-never-clobber, atomic temp+rename. Also verifies
+ * the hook's command script exists (a missing script is a loud failure, never a
+ * phantom-OK projection). Returns 0 on success, 1 on shape/write/missing-script.
+ */
+function mergeHookGroupIntoFile(
+  name: string,
+  settingsPath: string,
+  block: HookSurface,
+  label: string,
+): number {
   const group = buildClaudeHookGroup(block.event, block.canonical);
 
   let existing: Record<string, unknown> | undefined;
@@ -6011,7 +6043,7 @@ function runProjectHook(opts: RegistryOptions): number {
   } catch (err) {
     if (err instanceof HookMergeShapeError) {
       logError(
-        `registry project-hook: settings.json merge failed (refusing to clobber): ${err.message}`,
+        `registry project-hook: ${label} hooks merge failed (refusing to clobber): ${err.message}`,
       );
       return 1;
     }
@@ -6030,9 +6062,9 @@ function runProjectHook(opts: RegistryOptions): number {
     return 1;
   }
 
-  // Belt-and-suspenders: a personal hook's script must exist (it is a path the
-  // harness will run). Resolve + check; a missing script is a loud failure
-  // (never a phantom-OK projection). Core scripts live under core/hooks/shared,
+  // Belt-and-suspenders: a hook's script must exist (it is a path the harness
+  // will run). Resolve + check; a missing script is a loud failure (never a
+  // phantom-OK projection). Core scripts live under core/hooks/{shared,bridges},
   // personal under registry/hooks. The command stores the literal `$HOME/.igris`
   // convention; resolve it against the ACTUAL brain dir (`brainDir()`, honoring
   // IGRIS_BRAIN_DIR) — NOT `$HOME` — so a sandboxed/relocated brain resolves to
@@ -6045,7 +6077,7 @@ function runProjectHook(opts: RegistryOptions): number {
     return 1;
   }
 
-  info(`project-hook: ${name} → claude (${block.event})`);
+  info(`project-hook: ${name} → ${label} (${block.event})`);
   return 0;
 }
 

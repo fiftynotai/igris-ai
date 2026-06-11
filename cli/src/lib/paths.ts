@@ -219,6 +219,20 @@ export function antigravityMcpConfigPath(): string {
 }
 
 /**
+ * FR-181: absolute path to Antigravity's hook config:
+ * `~/.gemini/config/hooks.json` (gemini-cli hook format
+ * `{hooks:{<Event>:[{matcher,hooks:[{type:"command",command}]}]}}`). This is the
+ * TRIGGER path antigravity reads at launch — a DISTINCT file from the
+ * `~/.gemini/config/mcp_config.json` MCP config in the same dir (both
+ * benign-create the shared `~/.gemini/config/` dir). NOTE: antigravity's own UI
+ * writes to `~/.gemini/antigravity-cli/hooks.json`, but triggers fire from THIS
+ * config file (antigravity-cli#49) — so Igris writes here.
+ */
+export function antigravityHooksConfigPath(): string {
+  return join(homedir(), ".gemini", "config", "hooks.json");
+}
+
+/**
  * FR-179 (R2): the native skills-loader directory Antigravity reads —
  * `~/.gemini/antigravity-cli/skills`. R2 RESOLVED (2026-06-11, live test):
  * antigravity loads skills from this exact path but does NOT self-create the

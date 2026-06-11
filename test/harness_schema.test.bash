@@ -601,3 +601,34 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"antigravity"* || "$output" == *"enum"* || "$output" == *"type"* || "$output" == *"oneOf"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# FR-181: antigravity JOINS the HOOK target enum (config-merge into
+# ~/.gemini/config/hooks.json via the bridge). It must be ACCEPTED as a hook
+# target — while still REJECTED as skill/agent/identity (FR-179 non-widening,
+# above). codex/gemini remain non-hook-targets.
+# ---------------------------------------------------------------------------
+@test "FR-181: schema ACCEPTS an antigravity HOOK target" {
+  cat > "$PROJ/ok-ag-hook.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "hooks": [
+    { "name": "test-gate", "event": "PreToolUse",
+      "canonical": { "command": "$HOME/.igris/core/hooks/bridges/antigravity/pre_tool_use.sh", "matcher": "*" },
+      "targets": [ { "type": "antigravity", "method": "merge" } ] } ] } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/ok-ag-hook.json' '$SCHEMA'"
+  [ "$status" -eq 0 ]
+}
+
+@test "FR-181: schema REJECTS codex as a HOOK target (hook enum stays claude/opencode/antigravity)" {
+  cat > "$PROJ/bad-codex-hook.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "hooks": [
+    { "name": "test-gate", "event": "PreToolUse",
+      "canonical": { "command": "$HOME/x.sh", "matcher": "*" },
+      "targets": [ { "type": "codex", "method": "merge" } ] } ] } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/bad-codex-hook.json' '$SCHEMA'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"codex"* || "$output" == *"enum"* || "$output" == *"oneOf"* ]]
+}

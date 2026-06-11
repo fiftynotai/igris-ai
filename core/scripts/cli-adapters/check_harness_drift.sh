@@ -2132,6 +2132,33 @@ if { [ "$SURFACE_KIND" = "hook" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n "$HO
       continue
     fi
 
+    if [ "$h_type" = "antigravity" ]; then
+      # FR-181: presence-check the command path under the hook's event array in
+      # ~/.gemini/config/hooks.json (gemini-cli hook format — same structure as
+      # claude settings.json, so verify_hook_entry_present is file-agnostic).
+      # IGRIS_HOOK_ANTIGRAVITY_CONFIG is the test-sandbox seam (mirrors the MCP
+      # antigravity drift arm's IGRIS_MCP_ANTIGRAVITY_CONFIG).
+      ag_hooks="${IGRIS_HOOK_ANTIGRAVITY_CONFIG:-$HOME/.gemini/config/hooks.json}"
+      ag_verdict=$(verify_hook_entry_present "$ag_hooks" "$h_event" "$h_command")
+      case "$ag_verdict" in
+        MATCH)
+          echo "  [hook/$h_name/antigravity] MATCH"
+          MATCH=$((MATCH + 1))
+          ;;
+        MISSING)
+          echo "  [hook/$h_name/antigravity] MISSING"
+          echo "      reason    : no '$h_event' hook with command '$h_command' in $ag_hooks (run \`igris install\`)"
+          DRIFT=$((DRIFT + 1))
+          ;;
+        *)
+          echo "  [hook/$h_name/antigravity] DRIFTED"
+          echo "      reason    : hooks.json unparseable or unexpected shape ($ag_hooks)"
+          DRIFT=$((DRIFT + 1))
+          ;;
+      esac
+      continue
+    fi
+
     # claude: read .claude/settings.json + assert the command path is present.
     h_settings="${IGRIS_HOOK_CLAUDE_SETTINGS:-$PROJECT_ROOT/.claude/settings.json}"
     hook_verdict=$(verify_hook_entry_present "$h_settings" "$h_event" "$h_command")
