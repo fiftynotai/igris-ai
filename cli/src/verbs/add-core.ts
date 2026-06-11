@@ -610,8 +610,14 @@ function updateAgentEnumerationSurfaces(
 /** MCP name must be lower-kebab (parallels the registry NAME_PATTERN). */
 const MCP_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
-/** The 4 MCP harness target types (mirrors VALID_MCP_TARGET_TYPES in registry.ts). */
-const MCP_TARGET_TYPES = ["claude", "codex", "gemini", "opencode"] as const;
+/** The MCP harness target types (mirrors VALID_MCP_TARGET_TYPES in registry.ts). */
+const MCP_TARGET_TYPES = [
+  "claude",
+  "codex",
+  "gemini",
+  "opencode",
+  "antigravity",
+] as const;
 type McpCoreTargetType = (typeof MCP_TARGET_TYPES)[number];
 
 /**

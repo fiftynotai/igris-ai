@@ -42,6 +42,7 @@ import {
 import { dirname } from "node:path";
 import * as TOML from "@iarna/toml"; // FR-163: PARSE-ONLY (idempotency + malformed gate); never re-emit.
 import {
+  antigravityMcpConfigPath,
   bundledMcpEntryPath,
   claudeJsonPath,
   codexConfigTomlPath,
@@ -795,14 +796,27 @@ const HARNESS_CONFIG: Record<
   gemini: { path: geminiSettingsPath, mapKey: "mcpServers", isToml: false },
   opencode: { path: opencodeConfigPath, mapKey: "mcp", isToml: false },
   codex: { path: codexConfigTomlPath, mapKey: "mcp_servers", isToml: true },
+  // FR-179: antigravity rides gemini's JSON `mcpServers` shape but writes a
+  // DISTINCT file (R1) — `~/.gemini/config/mcp_config.json`.
+  antigravity: {
+    path: antigravityMcpConfigPath,
+    mapKey: "mcpServers",
+    isToml: false,
+  },
 };
 
 /** The default harness ordering for a full brain registration. */
-const ALL_HARNESSES: McpHarness[] = ["claude", "gemini", "codex", "opencode"];
+const ALL_HARNESSES: McpHarness[] = [
+  "claude",
+  "gemini",
+  "codex",
+  "opencode",
+  "antigravity",
+];
 
 /** Per-harness registration outcome for the multi-harness wire-up. */
 export interface BrainHarnessResult {
-  harness: McpHarness; // "claude" | "gemini" | "codex" | "opencode"
+  harness: McpHarness; // "claude" | "gemini" | "codex" | "opencode" | "antigravity"
   result: McpRegisterResult; // reuses the existing union verbatim
   /** Reserved: true when a harness was not targeted / skipped by choice. */
   skipped?: boolean;
@@ -824,7 +838,7 @@ export interface BrainHarnessResult {
  *
  * @param opts.mcpEntryPath  Override the bundled path (`--dev` clone / tests).
  *                           Defaults to `bundledMcpEntryPath()`.
- * @param opts.harnesses     Subset to target. Defaults to all 4.
+ * @param opts.harnesses     Subset to target. Defaults to all 5.
  * @param opts.configPaths   Per-harness config-path overrides (test sandbox seam).
  */
 export function registerBrainAcrossHarnesses(opts?: {

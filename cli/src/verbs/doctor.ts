@@ -108,6 +108,8 @@ import { detectBrainCoreMissing } from "../lib/drift/brain-core-missing.js";
 import { detectBrainCoreStale } from "../lib/drift/brain-core-stale.js";
 import { detectChannelMismatch } from "../lib/drift/channel-mismatch.js";
 import { detectBridgeMissing } from "../lib/drift/bridge-missing.js";
+import { detectAntigravitySkillsLink } from "../lib/drift/antigravity-skills-link.js";
+import { linkAntigravitySkills } from "../lib/antigravity-skills.js";
 import { info, warn, error as logError } from "../lib/log.js";
 import type { DriftRow, RegistryRow } from "../types.js";
 
@@ -251,6 +253,22 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
             info(`  igris-brain MCP ${result.outcome} for ${harness} -> ${result.mcpEntryPath}`);
           }
         }
+      } else if (row.driftClass === "antigravity-skills-link") {
+        // FR-179 Phase C (R2): create-or-repoint the antigravity skills parent
+        // symlink directly (the same idempotent-repair install runs — cheap, no
+        // need to re-run init). linkAntigravitySkills never throws; a refused
+        // (real non-empty dir) or failed outcome counts into `errored` and the
+        // row stays non-clean for manual resolution.
+        info(
+          "fix: antigravity-skills-link — linking ~/.gemini/antigravity-cli/skills -> ~/.agents/skills",
+        );
+        const link = linkAntigravitySkills();
+        if (link.outcome === "refused" || link.outcome === "failed") {
+          errored++;
+          logError(`antigravity-skills-link fix: ${link.error}`);
+        } else {
+          info(`  antigravity skills link ${link.outcome} -> ${link.target}`);
+        }
       } else if (row.driftClass === "secret-perms") {
         // TD-220: the actual chmod runs in the FINAL re-harden pass below
         // (after the fix loop) — NOT here. Rationale: an mcp-unregistered /
@@ -365,6 +383,12 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
           post.strays.length > 0
         );
       }
+      // FR-179 Phase C: an antigravity-skills-link row resolves ONLY if a LIVE
+      // re-probe finds the link now correct. A refused real-non-empty-dir stays
+      // flagged (--fix never clobbered it) → keeps the row non-clean (exit 1).
+      if (r.driftClass === "antigravity-skills-link") {
+        return detectAntigravitySkillsLink() !== null;
+      }
     }
     return true;
   });
@@ -430,6 +454,13 @@ export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]>
   // symlink leaked into that canonical source.
   const sp = detectSkillsPollution();
   if (sp !== null) out.push(sp);
+
+  // antigravity-skills-link (FR-179 Phase C, R2): brain-level, CLI-detection-
+  // driven, sits next to bridge-missing. Fires when `agy` is detected but
+  // ~/.gemini/antigravity-cli/skills does NOT resolve to ~/.agents/skills, so
+  // antigravity loads zero Igris skills (the R2 silent gap).
+  const agSkills = detectAntigravitySkillsLink();
+  if (agSkills !== null) out.push(agSkills);
 
   // Per-project: channel-mismatch + the existing classifyDrift output.
   // channel-mismatch sits BEFORE the existing per-project chain in

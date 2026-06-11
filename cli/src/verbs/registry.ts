@@ -61,6 +61,7 @@ import {
   coreSurfacesManifestPath,
   claudeJsonPath,
   geminiSettingsPath,
+  antigravityMcpConfigPath,
   codexConfigTomlPath,
   opencodeConfigPath,
   brainDir,
@@ -157,7 +158,13 @@ const VALID_SKILL_TYPE_METHOD_PAIRS = new Set<string>([
  * adds a 4th harness, `opencode`, and MUST NOT widen those surfaces. Mirrors
  * `$defs.mcp_surface.targets.type` in manifest.schema.json.
  */
-const VALID_MCP_TARGET_TYPES = ["claude", "codex", "gemini", "opencode"] as const;
+const VALID_MCP_TARGET_TYPES = [
+  "claude",
+  "codex",
+  "gemini",
+  "opencode",
+  "antigravity",
+] as const;
 type McpTargetType = (typeof VALID_MCP_TARGET_TYPES)[number];
 
 /**
@@ -4570,6 +4577,7 @@ function mcpMapKeyFor(harness: McpHarness): string {
   switch (harness) {
     case "claude":
     case "gemini":
+    case "antigravity":
       return "mcpServers";
     case "opencode":
       return "mcp";
@@ -4589,6 +4597,9 @@ function mcpConfigPathFor(harness: McpHarness): string {
       return claudeJsonPath();
     case "gemini":
       return geminiSettingsPath();
+    case "antigravity":
+      // FR-179 (R1): DISTINCT file from gemini's settings.json.
+      return antigravityMcpConfigPath();
     case "opencode":
       return opencodeConfigPath();
     case "codex":
@@ -4800,6 +4811,22 @@ function runProjectMcp(opts: RegistryOptions): number {
   // Resolve the config path + map key, then dispatch to the proven merger.
   const targetPath = opts.configPath ?? mcpConfigPathFor(harness);
   const mapKey = mcpMapKeyFor(harness);
+
+  // Benign-create the target's parent dir so a harness whose config lives in a
+  // not-yet-existing NESTED dir does not turn a clean compile into a write
+  // failure. FR-179: antigravity's ~/.gemini/config/ is such a dir (the other
+  // harness configs sit in dirs that already exist or are pre-created by
+  // registerBrainAcrossHarnesses at install). Harness-agnostic + idempotent;
+  // mirrors mcp-register.ts's mkdirSync(dirname(targetPath), {recursive:true}).
+  try {
+    mkdirSync(dirname(targetPath), { recursive: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logError(
+      `registry project-mcp: could not create parent dir for ${targetPath}: ${msg}`,
+    );
+    return 1;
+  }
 
   const result =
     harness === "codex"

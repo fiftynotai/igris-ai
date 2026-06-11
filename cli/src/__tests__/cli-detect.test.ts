@@ -162,12 +162,45 @@ describe("cli-detect — applyBridgeOverride", () => {
 });
 
 describe("cli-detect — utility surface", () => {
-  it("knownCLITargets returns all 4 catalog entries", () => {
+  it("knownCLITargets returns all 5 catalog entries", () => {
     const known = knownCLITargets();
-    expect(known.length).toBe(4);
+    expect(known.length).toBe(5);
     expect(known).toContain("claude");
     expect(known).toContain("codex");
     expect(known).toContain("gemini");
     expect(known).toContain("opencode");
+    expect(known).toContain("antigravity");
+  });
+});
+
+describe("cli-detect — antigravity (FR-179)", () => {
+  it("detects antigravity when `agy` binary AND ~/.gemini exist", () => {
+    stagePathBinary("agy");
+    stageConfigDir(".gemini");
+    const r = detectInstalledCLIs();
+    expect(r.detected.has("antigravity")).toBe(true);
+    expect(r.detail.antigravity.onPath).toBe(true);
+    expect(r.detail.antigravity.configDir).toBe(true);
+  });
+
+  it("does NOT detect antigravity when only `agy` on PATH (no ~/.gemini)", () => {
+    stagePathBinary("agy");
+    const r = detectInstalledCLIs();
+    expect(r.detected.has("antigravity")).toBe(false);
+    expect(r.detail.antigravity.onPath).toBe(true);
+    expect(r.detail.antigravity.configDir).toBe(false);
+  });
+
+  it("antigravity shares ~/.gemini config dir but needs its own `agy` binary", () => {
+    // `~/.gemini` present (gemini config) + `gemini` binary but NO `agy`:
+    // gemini detects, antigravity does NOT (the two-signal requirement keys
+    // antigravity off the `agy` binary, not the shared config dir).
+    stagePathBinary("gemini");
+    stageConfigDir(".gemini");
+    const r = detectInstalledCLIs();
+    expect(r.detected.has("gemini")).toBe(true);
+    expect(r.detected.has("antigravity")).toBe(false);
+    expect(r.detail.antigravity.configDir).toBe(true);
+    expect(r.detail.antigravity.onPath).toBe(false);
   });
 });

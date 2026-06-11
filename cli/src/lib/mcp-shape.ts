@@ -57,6 +57,8 @@ export interface HarnessMcpEntryResult {
  * `normalize_mcp_shape` + the golden fixture):
  *   - claude   → { type:"stdio", command, args, env }            (carries `type`)
  *   - gemini   → { command, args, env }                          (NO `type`)
+ *   - antigravity → { command, args, env }                       (NO `type`;
+ *                  gemini-identical bytes — only the config PATH differs)
  *   - opencode → { type:"local", command:[cmd, ...args],
  *                  enabled, environment }                        (cmd+args FUSED;
  *                  env KEY is `environment`; values are `{env:VAR}`)
@@ -122,6 +124,18 @@ export function buildHarnessMcpEntry(
       return { entry };
     }
     case "gemini": {
+      const entry: Record<string, unknown> = {
+        command,
+        args,
+        env: normalizedEnv,
+      };
+      return { entry };
+    }
+    case "antigravity": {
+      // FR-179: gemini-identical shape (NO `type` key — gemini lineage). The
+      // entry is byte-for-byte the same as the gemini branch; only the config
+      // PATH differs (~/.gemini/config/mcp_config.json — antigravityMcpConfigPath).
+      // Pinned against bash `normalize_mcp_shape` + the golden fixture (§18.1).
       const entry: Record<string, unknown> = {
         command,
         args,

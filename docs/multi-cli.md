@@ -32,7 +32,7 @@ ship (defaults to `all`).
 |-----|--------|--------|-------|
 | Claude Code | `symlink` | `~/.claude/skills/` | Each registry-vendored skill (`~/.igris/registry/skills/<name>/`) becomes a symlink at `~/.claude/skills/<name>/`. The compiler emits the symlink from `<target_path>` to the registry-vendored copy — first-class projection on par with codex/gemini (FR-149, see L-519). Core skills live at `~/.igris/core/skills/` and follow the same mechanism. Full directory linked so nested assets (`scripts/`, `workflow-template.md`, `templates/*.md`) are available. |
 | OpenCode | `command` | `~/.config/opencode/command/` | **FR-171:** First-class skills distribution via thin command wrappers. Each registry-vendored / core skill gets a `<command-dir>/<name>.md` wrapper whose body loads the canonical `SKILL.md` via OpenCode's `@file` directive (`@~/.igris/core/skills/<name>/SKILL.md`) plus `$ARGUMENTS`. The canonical SKILL.md stays the single source of truth — the wrapper is a pointer, not a copy (no edit-drift; only ADD/REMOVE drift). Supersedes the prior `none`/soft-fallback posture that relied on OpenCode reading `~/.claude/skills/`. OpenCode is ALSO first-class for agents — see [Subagent Distribution](#subagent-distribution). |
-| Codex CLI + Gemini CLI (cross-CLI shared) | `symlink` | `~/.agents/skills/` | **FR-157:** Codex AND Gemini both natively discover `~/.agents/skills/` as the cross-CLI shared skill location (Codex's `core-skills/src/loader.rs` walks it; Gemini docs at `docs/cli/skills.md` reference it explicitly). Per-skill symlink at `~/.agents/skills/<name>/` → registry-vendored canonical OR `~/.igris/core/skills/<name>/` for core skills. Symlink target MUST be absolute (codex resolves relative-path symlinks from cwd — same D2 enforcement as the legacy `codex/symlink` target). Antigravity CLI (Gemini's successor, post 2026-06-18) is expected to standardize on this path. |
+| Codex CLI + Gemini CLI (cross-CLI shared) | `symlink` | `~/.agents/skills/` | **FR-157:** Codex AND Gemini both natively discover `~/.agents/skills/` as the cross-CLI shared skill location (Codex's `core-skills/src/loader.rs` walks it; Gemini docs at `docs/cli/skills.md` reference it explicitly). Per-skill symlink at `~/.agents/skills/<name>/` → registry-vendored canonical OR `~/.igris/core/skills/<name>/` for core skills. Symlink target MUST be absolute (codex resolves relative-path symlinks from cwd — same D2 enforcement as the legacy `codex/symlink` target). Antigravity CLI natively loads skills from `~/.gemini/antigravity-cli/skills/` (confirmed `agy` v1.0.7, 2026-06-11) — a dir antigravity does NOT self-create, so `igris install` symlinks it → `~/.agents/skills` (`linkAntigravitySkills`, idempotent-repair; `igris doctor` drift class `antigravity-skills-link` repairs it). Skill items ride the `agents/symlink` target into `~/.agents/skills`, so a future `igris add skill` reaches antigravity for free (FR-179). |
 | Codex CLI (legacy per-CLI) | `symlink` | `~/.codex/skills/` | **Retained for back-compat**. Pre-FR-157 personal overlays may still declare `codex/symlink` targets at `~/.codex/skills/`. New manifests should use the cross-CLI `agents/symlink` target instead. Drift-verify enforces the same D2 absolute-path guard. |
 | Gemini CLI (legacy per-CLI) | `symlink` | `~/.gemini/skills/` | **Retained for back-compat**. Pre-FR-157 personal overlays may still declare `gemini/symlink` targets at `~/.gemini/skills/`. New manifests should use the cross-CLI `agents/symlink` target instead. |
 
@@ -197,9 +197,9 @@ MCP servers are a **third** first-class manifest surface, alongside agents and
 skills — projected and drift-checked by `igris harness compile` /
 `igris harness check`, exactly the way skills are. Unlike skills (symlinks) and
 agents (symlinks/hardlinks), **MCP projection is a config MERGE**: each declared
-server is upserted into the four CLIs' native MCP config files, leaving every
-other entry and top-level key in those (hot, user-owned) files byte-for-byte
-untouched.
+server is upserted into the five harnesses' native MCP config files (FR-179
+added Antigravity as a 5th MCP target), leaving every other entry and top-level
+key in those (hot, user-owned) files byte-for-byte untouched.
 
 ### Registering an MCP server — `igris add mcp` (one-step) / `igris registry add-mcp` (write-only)
 
@@ -272,26 +272,27 @@ symlinks from the source (never a real dir), realpath-contains every mutation,
 refuses a root symlink pointing anywhere other than the canonical source, and is
 idempotent (a migrated real dir is a no-op on re-run). On Windows it is a no-op.
 
-### The four native per-harness shapes (the projection)
+### The five native per-harness shapes (the projection)
 
 `igris harness compile --surface mcp` (or `--surface all`) flattens every
 `surfaces.mcp_servers[]` block into one `(server, target)` row per declared
 harness and merges the native entry into that harness's config. The bash pass is
 a thin driver; the JSON/TOML merge (atomic, idempotent, malformed-never-clobber,
 single rolling `.igris.bak`) lives in **one** place in the CLI — bash never
-re-implements it (L-519 §18.1). The four shapes:
+re-implements it (L-519 §18.1). The five shapes:
 
 | Harness | Config file | Map | Native entry shape |
 |---------|-------------|-----|--------------------|
 | Claude | `~/.claude.json` | `mcpServers.<name>` | `{ type:"stdio", command, args[], env{} }` — env values are `${VAR}` |
 | Gemini | `~/.gemini/settings.json` | `mcpServers.<name>` | `{ command, args[], env{} }` (no `type`) — env values are `${VAR}` |
+| Antigravity | `~/.gemini/config/mcp_config.json` | `mcpServers.<name>` | `{ command, args[], env{} }` (no `type`) — gemini-identical shape, but a **DISTINCT file** from gemini's `settings.json` (antigravity does not read `settings.json`; confirmed 2026-06-11) — env values are `${VAR}` (FR-179) |
 | OpenCode | `~/.config/opencode/opencode.json` | `mcp.<name>` | `{ type:"local", command:[cmd, ...args], enabled, environment{} }` — command+args **fused** into one array; env KEY is `environment`; env values are `{env:VAR}` |
 | Codex | `~/.codex/config.toml` | `[mcp_servers.<name>]` | `{ command, args[], startup_timeout_sec?, [.env] }` — env values are **resolved literals** |
 
-**The `${VAR}` indirection rule (FR-160e).** Claude, Gemini and OpenCode resolve
-the env reference + inherit exported env at launch, so the registry's `${VAR}`
-(translated to `{env:VAR}` for OpenCode) is written verbatim — **no secret ever
-lands in those configs**. Codex's sandbox (`inherit="core"`) resolves neither
+**The `${VAR}` indirection rule (FR-160e).** Claude, Gemini, Antigravity and
+OpenCode resolve the env reference + inherit exported env at launch, so the
+registry's `${VAR}` (translated to `{env:VAR}` for OpenCode) is written
+verbatim — **no secret ever lands in those configs**. Codex's sandbox (`inherit="core"`) resolves neither
 refs nor inherited env, so its env values are the **resolved literal** read from
 `~/.igris/secrets.env` at compile time. When a Codex `${VAR}` has no entry in
 `secrets.env`, the projection **fails for that row** naming the missing VAR (never
@@ -321,14 +322,16 @@ verdict `MATCH` / `DRIFTED` (naming the differing **key names**, never values) /
 ### Shipped default: `igris-brain`
 
 The Igris brain MCP server is itself a **registry-distributed default** — it
-rides the very mechanism described above to reach all four harnesses. It is
+rides the very mechanism described above to reach all five harnesses (FR-169
+wires it into every harness at `igris init`; FR-179 added Antigravity). It is
 registered and projected exactly like any other server:
 
 ```
 igris registry add-mcp igris-brain \
   --command node --arg <bundled-path> \
   --target claude:merge --target gemini:merge \
-  --target opencode:merge --target codex:merge
+  --target opencode:merge --target codex:merge \
+  --target antigravity:merge
 igris harness compile --surface mcp
 ```
 
@@ -350,8 +353,9 @@ translate for OpenCode and nothing to resolve from `secrets.env` for Codex).
 
 **Per-harness native shapes apply unchanged.** `igris-brain` lands in each
 harness in that harness's native shape per the matrix above — Claude's
-`type:"stdio"` + `env`, Gemini's no-`type` form, OpenCode's `type:"local"` +
-fused `command[]` + `enabled` + `environment`, and Codex's
+`type:"stdio"` + `env`, Gemini's no-`type` form, Antigravity's gemini-identical
+no-`type` form (in the DISTINCT `~/.gemini/config/mcp_config.json`), OpenCode's
+`type:"local"` + fused `command[]` + `enabled` + `environment`, and Codex's
 `[mcp_servers.igris-brain]` table.
 
 **Verifying a rollout (fresh process, not the running one).** An MCP config
@@ -360,7 +364,7 @@ holds its config from start-up (L-256: verify MCP changes in a fresh process).
 The rollout was confirmed by running `gemini mcp list` in a **fresh** Gemini
 process, which reported `✓ igris-brain ... - Connected`; checking the
 already-running session would have shown stale state. `igris harness check`
-returned **MATCH** for the `igris-brain` entry on all four harness targets.
+returned **MATCH** for the `igris-brain` entry on all five harness targets.
 
 ---
 
@@ -390,6 +394,7 @@ block must land in that file:
 | **OpenCode** | `CLAUDE.md` | Reads Claude's file (A/B-proven: removing `CLAUDE.md` reverts OpenCode's greeting) — no separate target needed |
 | **Gemini** | `GEMINI.md` | `os_identity` projection — Igris-managed region-merge (TD-233) |
 | **Codex** | `AGENTS.md` | `os_identity` projection — Igris-managed region-merge (TD-233) |
+| **Antigravity** | `AGENTS.md` + `GEMINI.md` (project root) | RIDES the codex+gemini identity targets — auto-reads BOTH project-root files; no separate projection (confirmed `agy` v1.0.7, 2026-06-11) |
 
 > **`AGENTS.md` naming collision — do not conflate.** `AGENTS.md` was *also*
 > the filename of the retired FR-153 Codex **skills-aggregator** (the pre-FR-153
@@ -911,6 +916,19 @@ bash ~/.igris/core/scripts/cli-adapters/check_harness_drift.sh \
 The content-pipeline wires this into its `install.sh` via a
 `compile-harnesses.sh` step (see that project's `agents/MAINTAINING.md`).
 
+### Antigravity — documented N/A for static agent projection (FR-179)
+
+Antigravity exposes **built-in dynamic subagents** (`research` / `self` + a
+runtime `invoke_subagent`) but has **no persistent static-subagent install
+path**. Both candidate paths were proven non-loading by marker test (`agy`
+v1.0.7, 2026-06-11): the legacy `~/.gemini/agents/*.md` AND the
+`~/.gemini/antigravity-cli/agents/<name>/agent.json` shape. Igris agent
+behaviour reaches antigravity via skills + the orchestrator identity (the
+shared `~/.agents/skills` link + the `AGENTS.md`/`GEMINI.md` identity region).
+So antigravity is **documented N/A** for static agent projection — it is not an
+agent target in `harness-manifest.json`, and no per-agent harness file is
+emitted for it.
+
 ---
 
 ## Hook Coverage
@@ -942,6 +960,7 @@ across all three supported CLIs (Claude, OpenCode, Codex):
 | OpenCode | All 6 portable | TypeScript plugin at `~/.config/opencode/plugins/igris-bridge.ts` | Auto-loaded by Bun at startup; raw `.ts` — no build step. |
 | Codex CLI | `session_end` only | `notify` program wrapper at `~/.igris/core/hooks/bridges/codex-notify.sh` | Codex exposes only post-turn notification. The user's original `notify` program is backed up to `~/.igris/config.json → cli_targets.codex.user_notify_backup` and invoked first. |
 | Gemini CLI | None | Not supported | Gemini CLI has no hook API. Igris hook layer is a no-op for Gemini. |
+| Antigravity | None (NOT projected — FR-181) | Has a gemini-cli-style hook API (`~/.gemini/config/hooks.json`; events incl. PreToolUse/PostToolUse/SessionStart/SessionEnd) | Marker-tested 2026-06-11: `PreToolUse` fires in headless `agy -p`, but `SessionStart`/`SessionEnd` did NOT, and a v1.0.7 path-misalignment bug exists (antigravity-cli#49). NOT projected in FR-179 — tracked under FR-181. (Note: gemini-cli now has hooks too, so the "Gemini CLI has no hook API" row above may be stale — FR-181.) |
 
 ### Adding a hook — `igris add hook` (FR-180 D7)
 
@@ -1218,7 +1237,7 @@ projection primitive:
 | **Hooks** | `~/.igris/core/hooks/shared/*.sh` | per-harness **bridge** (plugin / notify-wrapper) |
 | **Identity** | `core/templates/identity.tmpl` (Model-A block) via `surfaces.os_identity[]` | **region-merge** of the rendered block into the harness's auto-read project-root context file (TD-233) |
 
-#### Per-harness method matrix (the four harnesses today)
+#### Per-harness method matrix (the five harnesses today)
 
 This consolidates the per-surface facts; the authoritative tables it draws from
 are linked so a reader chases the single source of truth, not a copy:
@@ -1228,11 +1247,12 @@ are linked so a reader chases the single source of truth, not a copy:
 | **Claude** | Symlink (`atomic_symlink`) → `~/.claude/agents/<name>.md` | `symlink` → `~/.claude/skills/` | `mcpServers.<name>` / `{type:"stdio",…}` | All 6 portable + Claude-only events | `CLAUDE.md` (project root — carries the canonical identity block natively) |
 | **Codex** | Symlink (`atomic_symlink`) → `~/.codex/agents/<name>.toml` (FR-159) | `symlink` → `~/.agents/skills/` (FR-157 cross-CLI) | `[mcp_servers.<name>]` / resolved-literal env | `session_end` only (notify wrapper) | `AGENTS.md` (project root — `os_identity` region-merge, TD-233) |
 | **Gemini** | **Hard link** (`emit_md_hardlink`) → `~/.gemini/agents/<name>.md` — loader does NOT follow symlinks (TD-208) | `symlink` → `~/.agents/skills/` (FR-157 cross-CLI) | `mcpServers.<name>` / no-`type` env | **None** (no hook API) | `GEMINI.md` (project root — `os_identity` region-merge, TD-233) |
+| **Antigravity** | **N/A** — documented (no static-subagent path; built-in dynamic subagents only — FR-179) | install-time parent symlink `~/.gemini/antigravity-cli/skills` → `~/.agents/skills` (`linkAntigravitySkills`; items ride the `agents/symlink` target, FR-179) | `mcpServers.<name>` / no-`type` env — DISTINCT file `~/.gemini/config/mcp_config.json` (FR-179) | **None** projected (gemini-style hook API exists but not wired — FR-181) | `AGENTS.md` + `GEMINI.md` (rides codex+gemini targets — auto-reads both) |
 | **OpenCode** | Symlink → `~/.config/opencode/agent/<name>.md` — loader **does** follow symlinks (FR-171, verified live 1.14.22) | `command` → `~/.config/opencode/command/<name>.md` thin `@file` wrapper (FR-171) | `mcp.<name>` / `{type:"local", command:[…fused…], environment{}}` | All 6 portable (TS plugin) | `CLAUDE.md` (reads Claude's file — A/B-proven; no separate target) |
 
 - Agent primitive details: see the **TD-208 subagent-distribution primitive
   table** (above, "The consumer-side agent target …").
-- MCP entry shapes: see the **FR-160 four-native-shapes table** (above, "The four
+- MCP entry shapes: see the **FR-160 native-shapes table** (above, "The five
   shapes").
 - Hook coverage: see the **FR-104 per-CLI coverage table** (above, "Per-CLI
   Coverage").

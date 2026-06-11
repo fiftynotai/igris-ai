@@ -63,6 +63,7 @@ import {
 import { DryRunCollector } from "../lib/dry-run.js";
 import { copyFromSource, FromSourceError } from "../lib/from-source.js";
 import {
+  antigravityMcpConfigPath,
   brainDir,
   cacheDir,
   claudeJsonPath,
@@ -75,6 +76,8 @@ import {
   userMdPath,
 } from "../lib/paths.js";
 import { registerBrainAcrossHarnesses } from "../lib/mcp-register.js";
+import { linkAntigravitySkills } from "../lib/antigravity-skills.js";
+import { antigravitySkillsLinkPath } from "../lib/paths.js";
 import { chmodSecretFile } from "../lib/secret-perms.js";
 import {
   checkNetwork,
@@ -643,6 +646,18 @@ export async function runInit(opts: InitOptions): Promise<number> {
     dry.wouldWriteFile(geminiSettingsPath(), "register igris-brain MCP (Gemini)");
     dry.wouldWriteFile(codexConfigTomlPath(), "register igris-brain MCP (Codex)");
     dry.wouldWriteFile(opencodeConfigPath(), "register igris-brain MCP (OpenCode)");
+    dry.wouldWriteFile(
+      antigravityMcpConfigPath(),
+      "register igris-brain MCP (Antigravity)",
+    );
+    // FR-179 Phase C: the antigravity skills parent symlink (R2). Only when
+    // antigravity is an effective bridge target (matches the live gate below).
+    if (bridgeTargets.has("antigravity")) {
+      dry.wouldWriteFile(
+        antigravitySkillsLinkPath(),
+        "link antigravity skills -> ~/.agents/skills",
+      );
+    }
   } else {
     const results = registerBrainAcrossHarnesses(
       devMcpPath !== undefined ? { mcpEntryPath: devMcpPath } : undefined,
@@ -664,6 +679,25 @@ export async function runInit(opts: InitOptions): Promise<number> {
     }
     if (anyWired) {
       info("  Restart your harness(es) to pick up the new MCP server.");
+    }
+
+    // --- 13b. Antigravity skills parent symlink (FR-179 Phase C, R2) -----
+    // Antigravity loads skills from ~/.gemini/antigravity-cli/skills but does
+    // NOT self-create the symlink to the shared ~/.agents/skills (R2). Create
+    // it when antigravity is an effective bridge target so its native loader
+    // resolves through the link to the populated shared dir. Non-fatal +
+    // idempotent-repair (never throws); a refuse/failed outcome WARNs.
+    if (bridgeTargets.has("antigravity")) {
+      const link = linkAntigravitySkills();
+      if (link.outcome === "refused" || link.outcome === "failed") {
+        warn(`antigravity skills link skipped: ${link.error}`);
+      } else if (link.outcome === "unchanged") {
+        debug(`antigravity skills link already in place -> ${link.target}`);
+      } else {
+        info(
+          `Linked antigravity skills (${link.outcome}): ${link.linkPath} -> ${link.target}`,
+        );
+      }
     }
   }
 

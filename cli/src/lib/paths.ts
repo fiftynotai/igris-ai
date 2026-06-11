@@ -207,6 +207,41 @@ export function geminiSettingsPath(): string {
 }
 
 /**
+ * FR-179: absolute path to Antigravity's MCP config:
+ * `~/.gemini/config/mcp_config.json` (carries the `mcpServers` map). R1 RESOLVED
+ * (2026-06-11, live `agy` marker test): antigravity reads MCP EXCLUSIVELY from
+ * this file — a DISTINCT file from the `~/.gemini/settings.json` gemini writes
+ * (`geminiSettingsPath`). The entry SHAPE is byte-identical to gemini's
+ * (no `type`, `{command,args,env}`, map key `mcpServers`); only the path differs.
+ */
+export function antigravityMcpConfigPath(): string {
+  return join(homedir(), ".gemini", "config", "mcp_config.json");
+}
+
+/**
+ * FR-179 (R2): the native skills-loader directory Antigravity reads —
+ * `~/.gemini/antigravity-cli/skills`. R2 RESOLVED (2026-06-11, live test):
+ * antigravity loads skills from this exact path but does NOT self-create the
+ * `skills → ~/.agents/skills` symlink (removing it + relaunch did not recreate
+ * it). So `igris install` MUST create this as a PARENT-dir symlink pointing at
+ * `agentsSkillsDirPath()` (FR-179 Phase C / `linkAntigravitySkills`).
+ */
+export function antigravitySkillsLinkPath(): string {
+  return join(homedir(), ".gemini", "antigravity-cli", "skills");
+}
+
+/**
+ * FR-179 (R2): the cross-CLI shared skills directory `~/.agents/skills` — the
+ * target the antigravity skills parent symlink points at. Skill ITEMS are
+ * projected here by the existing `agents/symlink` surface target (rides
+ * gemini/codex), so the one parent symlink covers every current + future skill
+ * with zero per-item work.
+ */
+export function agentsSkillsDirPath(): string {
+  return join(homedir(), ".agents", "skills");
+}
+
+/**
  * FR-162: absolute path to Codex's config: `~/.codex/config.toml` (carries
  * `[mcp_servers.*]` tables). Staged for FR-164; unused by `add-mcp`.
  */

@@ -169,8 +169,9 @@ describe("init — fresh install via --from-source", () => {
     expect(Object.keys(cfg.cli_targets).length).toBe(0);
   });
 
-  // FR-169: init wires igris-brain into ALL 4 harness configs (not just Claude).
-  it("registers igris-brain into all 4 harness configs (FR-169)", async () => {
+  // FR-169: init wires igris-brain into ALL harness configs (not just Claude).
+  // FR-179 added antigravity as the 5th (~/.gemini/config/mcp_config.json).
+  it("registers igris-brain into all 5 harness configs (FR-169 + FR-179)", async () => {
     const { runInit } = await import("../verbs/init.js");
     const { bundledMcpEntryPath } = await import("../lib/paths.js");
     const code = await runInit({ fromSource: sourceRepo });
@@ -214,6 +215,21 @@ describe("init — fresh install via --from-source", () => {
     );
     expect(codexText).toContain("[mcp_servers.igris-brain]");
     expect(codexText).toContain(bundled);
+
+    // FR-179: Antigravity — ~/.gemini/config/mcp_config.json mcpServers.igris-brain.
+    // DISTINCT file from gemini's settings.json; gemini-IDENTICAL entry shape.
+    const antigravity = JSON.parse(
+      readFileSync(
+        join(homeOverride, ".gemini", "config", "mcp_config.json"),
+        "utf-8",
+      ),
+    ) as { mcpServers: Record<string, { args: string[] }> };
+    expect(antigravity.mcpServers["igris-brain"]).toBeDefined();
+    expect(antigravity.mcpServers["igris-brain"].args[0]).toBe(bundled);
+    // Same bytes as gemini's entry (only the file differs).
+    expect(antigravity.mcpServers["igris-brain"]).toEqual(
+      gemini.mcpServers["igris-brain"],
+    );
   });
 });
 
@@ -629,5 +645,111 @@ describe("init — --dry-run", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  // FR-179: the dry-run MCP-write list now has 5 entries (antigravity added).
+  // The antigravity skills-symlink line appears ONLY when `agy` is detected as
+  // a bridge target.
+  it("FR-179: --dry-run lists the antigravity MCP write + skills symlink when agy is detected", async () => {
+    // Stage `agy` on PATH + ~/.gemini so antigravity is an effective bridge.
+    const agy = join(pathOverride, "agy");
+    writeFileSync(agy, "#!/bin/sh\necho fake\n");
+    chmodSync(agy, 0o755);
+    mkdirSync(join(homeOverride, ".gemini"), { recursive: true });
+
+    const stdoutBuf: string[] = [];
+    const spy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: unknown) => {
+        stdoutBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+    try {
+      const { runInit } = await import("../verbs/init.js");
+      const code = await runInit({ fromSource: sourceRepo, dryRun: true });
+      expect(code).toBe(0);
+      const stdout = stdoutBuf.join("");
+      // 5th MCP write — antigravity's distinct config file.
+      expect(stdout).toContain("register igris-brain MCP (Antigravity)");
+      expect(stdout).toContain(
+        join(".gemini", "config", "mcp_config.json"),
+      );
+      // The skills parent-symlink create line (gated on antigravity detection).
+      expect(stdout).toContain("link antigravity skills -> ~/.agents/skills");
+      expect(stdout).toContain(
+        join(".gemini", "antigravity-cli", "skills"),
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("FR-179: --dry-run does NOT list the skills symlink when agy is absent", async () => {
+    // Default sandbox PATH is empty → antigravity not detected → no skills line.
+    const stdoutBuf: string[] = [];
+    const spy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: unknown) => {
+        stdoutBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+    try {
+      const { runInit } = await import("../verbs/init.js");
+      const code = await runInit({ fromSource: sourceRepo, dryRun: true });
+      expect(code).toBe(0);
+      const stdout = stdoutBuf.join("");
+      // The MCP write is UNCONDITIONAL (igris-brain is a core default).
+      expect(stdout).toContain("register igris-brain MCP (Antigravity)");
+      // The skills symlink line is gated on detection — absent here.
+      expect(stdout).not.toContain("link antigravity skills");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+// FR-179 Phase C: a real install where `agy` is detected lands the skills
+// parent symlink ~/.gemini/antigravity-cli/skills -> ~/.agents/skills.
+describe("init — antigravity skills symlink (FR-179 Phase C)", () => {
+  it("creates the skills parent symlink when agy is a bridge target", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const { lstatSync, readlinkSync } = await import("node:fs");
+
+    // Stage `agy` on PATH + ~/.gemini so antigravity is detected.
+    const agy = join(pathOverride, "agy");
+    writeFileSync(agy, "#!/bin/sh\necho fake\n");
+    chmodSync(agy, 0o755);
+    mkdirSync(join(homeOverride, ".gemini"), { recursive: true });
+
+    const code = await runInit({ fromSource: sourceRepo });
+    expect(code).toBe(0);
+
+    const linkPath = join(
+      homeOverride,
+      ".gemini",
+      "antigravity-cli",
+      "skills",
+    );
+    const target = join(homeOverride, ".agents", "skills");
+    // The link exists, is a symlink, and points at the shared dir.
+    const lst = lstatSync(linkPath);
+    expect(lst.isSymbolicLink()).toBe(true);
+    expect(readlinkSync(linkPath)).toBe(target);
+    // The target dir was created (mkdir -p) so the link is not dangling.
+    expect(existsSync(target)).toBe(true);
+  });
+
+  it("does NOT create the skills symlink when agy is not detected", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    // Default empty PATH → antigravity not a bridge target.
+    const code = await runInit({ fromSource: sourceRepo });
+    expect(code).toBe(0);
+    const linkPath = join(
+      homeOverride,
+      ".gemini",
+      "antigravity-cli",
+      "skills",
+    );
+    expect(existsSync(linkPath)).toBe(false);
   });
 });

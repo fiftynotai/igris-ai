@@ -42,6 +42,7 @@ const CLI_CATALOG: ReadonlyArray<CLISpec> = [
   { target: "codex", binary: "codex", configDirRel: ".codex" },
   { target: "gemini", binary: "gemini", configDirRel: ".gemini" },
   { target: "opencode", binary: "opencode", configDirRel: ".config/opencode" },
+  { target: "antigravity", binary: "agy", configDirRel: ".gemini" },
 ];
 
 /** Test seam — re-export for adapter scripts that want to enumerate. */
@@ -70,6 +71,7 @@ export function detectInstalledCLIs(): DetectionResult {
     codex: { onPath: false, configDir: false, pathHit: null },
     gemini: { onPath: false, configDir: false, pathHit: null },
     opencode: { onPath: false, configDir: false, pathHit: null },
+    antigravity: { onPath: false, configDir: false, pathHit: null },
   };
 
   const home = homedir();

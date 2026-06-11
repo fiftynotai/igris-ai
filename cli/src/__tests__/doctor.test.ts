@@ -1221,3 +1221,120 @@ describe("doctor — skills-pollution drift class (TD-223 RE-SCOPED)", () => {
     expect(out).toContain("beta");
   });
 });
+
+// ---------------------------------------------------------------------------
+// FR-179 Phase C: antigravity-skills-link drift class. The detector is pure +
+// CLI-detection-driven (mirrors bridge-missing): it fires when `agy` is detected
+// but ~/.gemini/antigravity-cli/skills does NOT resolve to ~/.agents/skills.
+// We test the detector directly via its detectFn + path seams (fully hermetic —
+// the real machine's link is never touched), and test the runDoctor --fix path
+// by spying on the detector (synthetic row) + linkAntigravitySkills (the repair).
+// ---------------------------------------------------------------------------
+describe("doctor — antigravity-skills-link drift class (FR-179)", () => {
+  it("no row when antigravity is NOT detected", async () => {
+    const { detectAntigravitySkillsLink } = await import(
+      "../lib/drift/antigravity-skills-link.js"
+    );
+    const row = detectAntigravitySkillsLink({
+      detectFn: () => ({ detected: new Set() }),
+    });
+    expect(row).toBeNull();
+  });
+
+  it("no row when detected AND the link already resolves to the target", async () => {
+    const { detectAntigravitySkillsLink } = await import(
+      "../lib/drift/antigravity-skills-link.js"
+    );
+    const w = mkdtempSync(join(tmpdir(), "igris-ag-doctor-ok-"));
+    projectDirs.push(w);
+    const target = join(w, "agents", "skills");
+    const linkPath = join(w, "gemini", "antigravity-cli", "skills");
+    mkdirSync(target, { recursive: true });
+    mkdirSync(join(w, "gemini", "antigravity-cli"), { recursive: true });
+    symlinkSync(target, linkPath);
+
+    const row = detectAntigravitySkillsLink({
+      detectFn: () => ({ detected: new Set(["antigravity" as const]) }),
+      linkPath,
+      target,
+    });
+    expect(row).toBeNull();
+  });
+
+  it("yields a row when detected but the link is MISSING", async () => {
+    const { detectAntigravitySkillsLink } = await import(
+      "../lib/drift/antigravity-skills-link.js"
+    );
+    const w = mkdtempSync(join(tmpdir(), "igris-ag-doctor-miss-"));
+    projectDirs.push(w);
+    const target = join(w, "agents", "skills");
+    const linkPath = join(w, "gemini", "antigravity-cli", "skills");
+
+    const row = detectAntigravitySkillsLink({
+      detectFn: () => ({ detected: new Set(["antigravity" as const]) }),
+      linkPath,
+      target,
+    });
+    expect(row).not.toBeNull();
+    expect(row!.driftClass).toBe("antigravity-skills-link");
+    expect(row!.path).toBe(linkPath);
+  });
+
+  it("yields a row when the link points at the WRONG target", async () => {
+    const { detectAntigravitySkillsLink } = await import(
+      "../lib/drift/antigravity-skills-link.js"
+    );
+    const w = mkdtempSync(join(tmpdir(), "igris-ag-doctor-wrong-"));
+    projectDirs.push(w);
+    const target = join(w, "agents", "skills");
+    const elsewhere = join(w, "elsewhere");
+    const linkPath = join(w, "gemini", "antigravity-cli", "skills");
+    mkdirSync(target, { recursive: true });
+    mkdirSync(elsewhere, { recursive: true });
+    mkdirSync(join(w, "gemini", "antigravity-cli"), { recursive: true });
+    symlinkSync(elsewhere, linkPath);
+
+    const row = detectAntigravitySkillsLink({
+      detectFn: () => ({ detected: new Set(["antigravity" as const]) }),
+      linkPath,
+      target,
+    });
+    expect(row).not.toBeNull();
+    expect(row!.driftClass).toBe("antigravity-skills-link");
+  });
+
+  it("--fix invokes linkAntigravitySkills to repair the link", async () => {
+    const driftMod = await import(
+      "../lib/drift/antigravity-skills-link.js"
+    );
+    const agMod = await import("../lib/antigravity-skills.js");
+    const { runDoctor } = await import("../verbs/doctor.js");
+
+    // Inject a synthetic antigravity-skills-link drift row (pure detector;
+    // spying isolates the doctor loop from the brittle PATH/configDir probe).
+    const detectSpy = vi
+      .spyOn(driftMod, "detectAntigravitySkillsLink")
+      .mockReturnValue({
+        slug: "(brain)",
+        path: "/fake/.gemini/antigravity-cli/skills",
+        driftClass: "antigravity-skills-link",
+        recommendedFix: "synthetic — FR-179 test",
+      });
+    // Stub the repair so we don't mutate the real machine; report success.
+    const linkSpy = vi
+      .spyOn(agMod, "linkAntigravitySkills")
+      .mockReturnValue({
+        outcome: "created",
+        linkPath: "/fake/.gemini/antigravity-cli/skills",
+        target: "/fake/.agents/skills",
+      });
+
+    try {
+      await runDoctor({ fix: true, removeOrphans: false, yes: false });
+      expect(linkSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      detectSpy.mockRestore();
+      linkSpy.mockRestore();
+    }
+  });
+});

@@ -748,7 +748,7 @@ if surfaces is not None:
             fail("surfaces.mcp_servers must be a non-empty array")
         if len(mcp_servers) < 1:
             fail("surfaces.mcp_servers must be a non-empty array")
-        valid_mcp_target_types = {"claude", "codex", "gemini", "opencode"}
+        valid_mcp_target_types = {"claude", "codex", "gemini", "opencode", "antigravity"}
         allowed_mcp_keys = {"name", "layer", "scope", "canonical", "targets"}
         allowed_mcp_canon_keys = {"command", "args", "env", "startup_timeout_sec"}
         allowed_mcp_target_keys = {"type", "method", "enabled"}
@@ -1576,8 +1576,8 @@ def env_for(value):
     if harness == "opencode":
         nm = var_name(value)
         return f"{{env:{nm}}}" if nm is not None else value
-    # claude / gemini / codex → emit the ${VAR} reference verbatim (codex's
-    # literal re-resolve is the drift compare's job, never this helper's).
+    # claude / gemini / antigravity / codex → emit the ${VAR} reference verbatim
+    # (codex's literal re-resolve is the drift compare's job, not this helper's).
     return value
 
 
@@ -1586,6 +1586,11 @@ norm_env = {k: env_for(env[k]) for k in env}
 if harness == "claude":
     entry = {"type": "stdio", "command": command, "args": args, "env": norm_env}
 elif harness == "gemini":
+    entry = {"command": command, "args": args, "env": norm_env}
+elif harness == "antigravity":
+    # FR-179: gemini-identical shape (no "type"; gemini lineage). Byte-for-byte
+    # the same JSON as the gemini branch — only the config PATH differs (drift
+    # side: ~/.gemini/config/mcp_config.json). Pinned by the §18.1 parity test.
     entry = {"command": command, "args": args, "env": norm_env}
 elif harness == "opencode":
     en = True if enabled_col == "true" else (False if enabled_col == "false" else True)

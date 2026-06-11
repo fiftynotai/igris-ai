@@ -556,3 +556,48 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"pair"* || "$output" == *"agents"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# FR-179: antigravity joins the MCP target enum ONLY. It must be ACCEPTED as an
+# mcp_servers target, but REJECTED on every other surface (skills/agents/
+# identity/hooks) — proving the deliberate non-widening of those enums.
+# ---------------------------------------------------------------------------
+
+@test "FR-179: schema ACCEPTS an antigravity MCP target" {
+  cat > "$PROJ/ok-ag-mcp.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "mcp_servers": [
+    { "name": "demo-mcp",
+      "canonical": { "command": "node", "args": ["/x/y.js"], "env": {} },
+      "targets": [ { "type": "antigravity", "method": "merge" } ] } ] } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/ok-ag-mcp.json' '$SCHEMA'"
+  [ "$status" -eq 0 ]
+}
+
+@test "FR-179: schema REJECTS antigravity as a SKILL target (non-widening)" {
+  cat > "$PROJ/bad-ag-skill.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": { "source": "skills", "layer": "core",
+    "targets": [ { "type": "antigravity", "method": "symlink", "path": "~/.agents/skills" } ] } } }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/bad-ag-skill.json' '$SCHEMA'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"antigravity"* || "$output" == *"enum"* || "$output" == *"pair"* || "$output" == *"oneOf"* ]]
+}
+
+@test "FR-179: schema REJECTS antigravity as an AGENT target (non-widening)" {
+  # The agent block is otherwise STRUCTURALLY VALID (name + canonical{dir,
+  # versioned:false,file} + a targets array) — so the rejection isolates on the
+  # antigravity target `type`, not a missing-field artifact.
+  cat > "$PROJ/bad-ag-agent.json" <<'EOF'
+{ "version": 1,
+  "agents": [ { "name": "demo",
+    "canonical": { "dir": "agents", "versioned": false, "file": "demo.md" },
+    "targets": [ { "type": "antigravity", "path": "~/x/demo.md" } ] } ],
+  "surfaces": {} }
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/bad-ag-agent.json' '$SCHEMA'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"antigravity"* || "$output" == *"enum"* || "$output" == *"type"* || "$output" == *"oneOf"* ]]
+}

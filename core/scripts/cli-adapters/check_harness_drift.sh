@@ -1983,6 +1983,13 @@ if { [ "$SURFACE_KIND" = "mcp" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n "$MCP
         d_map_key="mcpServers"
         d_config="${IGRIS_MCP_GEMINI_CONFIG:-$HOME/.gemini/settings.json}"
         ;;
+      antigravity)
+        # FR-179 (R1): gemini map key (mcpServers) but a DISTINCT config file
+        # ~/.gemini/config/mcp_config.json. IGRIS_MCP_ANTIGRAVITY_CONFIG is the
+        # test-sandbox seam (mirrors the per-harness seams above).
+        d_map_key="mcpServers"
+        d_config="${IGRIS_MCP_ANTIGRAVITY_CONFIG:-$HOME/.gemini/config/mcp_config.json}"
+        ;;
       opencode)
         d_map_key="mcp"
         d_config="${IGRIS_MCP_OPENCODE_CONFIG:-$HOME/.config/opencode/opencode.json}"

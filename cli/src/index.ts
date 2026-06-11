@@ -594,12 +594,13 @@ async function main(argv: string[]): Promise<void> {
             opts.harness === "claude" ||
             opts.harness === "codex" ||
             opts.harness === "gemini" ||
-            opts.harness === "opencode"
+            opts.harness === "opencode" ||
+            opts.harness === "antigravity"
           ) {
             harnessArg = opts.harness;
           } else {
             process.stderr.write(
-              `registry: --harness value '${opts.harness}' is not one of 'claude' | 'codex' | 'gemini' | 'opencode'\n`,
+              `registry: --harness value '${opts.harness}' is not one of 'claude' | 'codex' | 'gemini' | 'opencode' | 'antigravity'\n`,
             );
             process.exitCode = 2;
             return;

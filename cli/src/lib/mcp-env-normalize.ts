@@ -14,15 +14,21 @@
 
 import { extractVarName, resolveRef, type SecretsMap } from "./secrets.js";
 
-/** The four MCP harnesses (mirrors VALID_MCP_TARGET_TYPES in registry.ts). */
-export type McpHarness = "claude" | "gemini" | "opencode" | "codex";
+/** The MCP harnesses (mirrors VALID_MCP_TARGET_TYPES in registry.ts). */
+export type McpHarness =
+  | "claude"
+  | "gemini"
+  | "opencode"
+  | "codex"
+  | "antigravity";
 
 /**
  * Canonical→per-harness env-VALUE emit rule.
  * INPUT: a canonical `${VAR}` ref (or, defensively, an already-literal value).
  * OUTPUT per harness:
- *   claude  → `${VAR}` verbatim   (harness resolves + inherits exported env)
- *   gemini  → `${VAR}` verbatim   (harness resolves + inherits exported env)
+ *   claude      → `${VAR}` verbatim (harness resolves + inherits exported env)
+ *   gemini      → `${VAR}` verbatim (harness resolves + inherits exported env)
+ *   antigravity → `${VAR}` verbatim (gemini lineage — resolves its own refs)
  *   opencode→ `{env:VAR}`         (token translation; harness resolves)
  *   codex   → the RESOLVED LITERAL from `secrets` (Codex resolves neither refs
  *             nor inherited env — sandbox `inherit="core"`; secrets MUST be
@@ -48,8 +54,10 @@ export function normalizeEnvForHarness(
 ): { value: string | null; missing?: string } {
   switch (harness) {
     case "claude":
-    case "gemini": {
+    case "gemini":
+    case "antigravity": {
       // Emit the canonical ref verbatim — the harness resolves it itself.
+      // antigravity is gemini lineage: it resolves its own ${VAR} refs.
       return { value: canonicalValue };
     }
     case "opencode": {

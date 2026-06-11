@@ -326,18 +326,20 @@ golden_shape_for() {
   # The TS golden REFERENCE shapes (normalize_mcp_shape's stand-in for codex env
   # is the ${VAR} ref, matching the bash helper). bash 3.2-safe (no assoc array).
   case "$1" in
-    claude)   echo '{"type":"stdio","command":"node","args":["/x/y.js"],"env":{"API":"${API_TOKEN}"}}' ;;
-    gemini)   echo '{"command":"node","args":["/x/y.js"],"env":{"API":"${API_TOKEN}"}}' ;;
-    opencode) echo '{"type":"local","command":["node","/x/y.js"],"enabled":true,"environment":{"API":"{env:API_TOKEN}"}}' ;;
-    codex)    echo '{"command":"node","args":["/x/y.js"],"env":{"API":"${API_TOKEN}"},"startup_timeout_sec":30}' ;;
+    claude)      echo '{"type":"stdio","command":"node","args":["/x/y.js"],"env":{"API":"${API_TOKEN}"}}' ;;
+    gemini)      echo '{"command":"node","args":["/x/y.js"],"env":{"API":"${API_TOKEN}"}}' ;;
+    # FR-179: antigravity is byte-identical to gemini (only the config-PATH differs).
+    antigravity) echo '{"command":"node","args":["/x/y.js"],"env":{"API":"${API_TOKEN}"}}' ;;
+    opencode)    echo '{"type":"local","command":["node","/x/y.js"],"enabled":true,"environment":{"API":"{env:API_TOKEN}"}}' ;;
+    codex)       echo '{"command":"node","args":["/x/y.js"],"env":{"API":"${API_TOKEN}"},"startup_timeout_sec":30}' ;;
   esac
 }
 
-@test "normalize_mcp_shape matches the TS golden fixture for all 4 harnesses" {
+@test "normalize_mcp_shape matches the TS golden fixture for all 5 harnesses" {
   # The FIXED canonical — byte-identical to CANONICAL in mcp-shape.test.ts.
   local canon='{"command":"node","args":["/x/y.js"],"env":{"API":"${API_TOKEN}"},"startup_timeout_sec":30}'
 
-  for h in claude gemini opencode codex; do
+  for h in claude gemini antigravity opencode codex; do
     actual=$(bash -c "source '$COMMON' >/dev/null 2>&1; normalize_mcp_shape '$canon' '$h' true")
     # Canonicalize BOTH sides with sort_keys so key order does not matter.
     a=$(python3 -c "import json,sys; print(json.dumps(json.loads(sys.argv[1]), sort_keys=True))" "$actual")
@@ -349,6 +351,70 @@ golden_shape_for() {
       return 1
     fi
   done
+}
+
+# --- 9b. FR-179 antigravity: distinct config file + drift arm --------------
+
+# Write a manifest with an antigravity MCP target (gemini-identical shape, but a
+# DISTINCT file: ~/.gemini/config/mcp_config.json). Drift's `antigravity)` arm
+# (B8) must resolve that path via IGRIS_MCP_ANTIGRAVITY_CONFIG.
+write_antigravity_manifest() {
+  cat > "$PROJ/harness-manifest.json" <<'EOF'
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "mcp_servers": [
+      {
+        "name": "demo-mcp",
+        "canonical": {
+          "command": "node",
+          "args": ["/x/y.js"],
+          "env": { "API": "${API_TOKEN}" }
+        },
+        "targets": [
+          { "type": "antigravity", "method": "merge" }
+        ]
+      }
+    ]
+  }
+}
+EOF
+}
+
+@test "FR-179: compile writes antigravity to ~/.gemini/config/mcp_config.json (gemini shape) + drift MATCH" {
+  write_antigravity_manifest
+  local AG_CFG="$HOME/.gemini/config/mcp_config.json"
+
+  run run_compile
+  [ "$status" -eq 0 ]
+
+  # The DISTINCT file exists (NOT ~/.gemini/settings.json).
+  [ -f "$AG_CFG" ]
+  # gemini-identical shape: NO `type` + the ${VAR} reference verbatim.
+  run python3 -c "import json; d=json.load(open('$AG_CFG')); print('type' in d['mcpServers']['demo-mcp'])"
+  [ "$output" = "False" ]
+  [ "$(json_get "$AG_CFG" 'mcpServers.demo-mcp.env.API')" = '"${API_TOKEN}"' ]
+
+  # Drift sees the freshly-written entry → MATCH (no drift). This exercises the
+  # B8 antigravity) arm resolving the R1 path.
+  run run_drift
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"DRIFTED"* ]]
+  [[ "$output" != *"MISSING"* ]]
+}
+
+@test "FR-179: drift honors IGRIS_MCP_ANTIGRAVITY_CONFIG seam (MISSING when pointed at an empty file)" {
+  write_antigravity_manifest
+  # Point the seam at a DIFFERENT, entry-less config — drift must report MISSING
+  # (proves the arm reads the env seam, not a hardcoded path).
+  local ALT="$HOME/.gemini/config/alt_mcp_config.json"
+  mkdir -p "$(dirname "$ALT")"
+  printf '{"mcpServers":{}}\n' > "$ALT"
+
+  IGRIS_MCP_ANTIGRAVITY_CONFIG="$ALT" run run_drift
+  [[ "$output" == *"MISSING"* ]]
+  [[ "$output" == *"antigravity"* ]]
 }
 
 # --- 10. core surfaces unaffected ------------------------------------------

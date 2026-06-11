@@ -25,7 +25,14 @@ igris add <skill|agent|mcp|hook|identity> <name> [--from <dir-or-github>] \
    `~/.igris/registry/` overlay (personal), or writes the `core/` source file +
    mirrors it to the runtime brain (core).
 2. **Projects** it to all four harnesses (Claude, Gemini, Codex, OpenCode) via
-   `harness compile --surface <s>`.
+   `harness compile --surface <s>`. The **MCP** surface additionally projects to
+   **Antigravity** (`~/.gemini/config/mcp_config.json`, gemini-identical no-`type`
+   shape) — a 5th MCP target (FR-179). Antigravity also rides the skills
+   `agents/symlink` target (skill items reach it via the install-created
+   `~/.gemini/antigravity-cli/skills` → `~/.agents/skills` symlink) and the
+   codex/gemini identity files (`AGENTS.md` + `GEMINI.md`); it is **documented
+   N/A** for agents + hooks (no static-subagent path; gemini-style hook API not
+   wired — FR-181).
 3. **Verifies** the projection is drift-clean via `harness check`.
 
 If the projection produced **zero targets**, or the ownership gate skipped a

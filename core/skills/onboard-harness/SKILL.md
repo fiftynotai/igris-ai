@@ -34,11 +34,16 @@ and verify each is live.**
 >    a path from another harness, from docs, or from "it shares a config root."
 > 2. **Global scope ≠ project scope.** A surface may be read from one path
 >    globally and a *different* path per-project. Determine BOTH for every surface.
-> 3. **A shared config root does NOT mean a shared subpath.** (Antigravity shares
->    `~/.gemini/` with Gemini, yet reads skills from `~/.gemini/antigravity-cli/skills/`,
->    not Gemini's path; and `~/.agents/skills` is project-scoped there, not global.)
->    If you skip the marker test and reason "shared root ⇒ it transfers," you will
->    ship a wrong read-path that looks right. Don't.
+> 3. **A shared config root does NOT mean a shared subpath — but Igris can bridge
+>    the gap with an install-time symlink.** (Antigravity shares `~/.gemini/` with
+>    Gemini, yet reads skills from `~/.gemini/antigravity-cli/skills/`, NOT Gemini's
+>    path. Marker-proven (`agy` v1.0.7, 2026-06-11): that dir is NOT antigravity-
+>    created, so `igris install` symlinks it → the **global** `~/.agents/skills`
+>    (`linkAntigravitySkills`); global skills then DO resolve through the link —
+>    FR-179.) The lesson: prove the read-path FIRST, then — if it differs from
+>    where Igris already projects — bridge it with an install-time symlink rather
+>    than assuming "shared root ⇒ it transfers." Skipping the marker test ships a
+>    wrong-but-plausible read-path. Don't.
 >
 > A wrong-but-plausible read-path is the single most likely failure of this skill.
 > The Phase-1 marker protocol exists to make it impossible.

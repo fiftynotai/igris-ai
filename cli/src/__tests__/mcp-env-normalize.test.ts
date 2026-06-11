@@ -26,6 +26,12 @@ describe("normalizeEnvForHarness — per-harness env-VALUE emit rule", () => {
     });
   });
 
+  it("FR-179: antigravity: `${TOK}` → { value: '${TOK}' } verbatim (gemini lineage)", () => {
+    expect(normalizeEnvForHarness("${TOK}", "antigravity")).toEqual({
+      value: "${TOK}",
+    });
+  });
+
   it("opencode: `${TOK}` → { value: '{env:TOK}' }", () => {
     expect(normalizeEnvForHarness("${TOK}", "opencode")).toEqual({
       value: "{env:TOK}",
@@ -61,6 +67,12 @@ describe("normalizeEnvForHarness — per-harness env-VALUE emit rule", () => {
 
     it("gemini: literal passes through", () => {
       expect(normalizeEnvForHarness("plain", "gemini")).toEqual({
+        value: "plain",
+      });
+    });
+
+    it("antigravity: literal passes through (FR-179)", () => {
+      expect(normalizeEnvForHarness("plain", "antigravity")).toEqual({
         value: "plain",
       });
     });

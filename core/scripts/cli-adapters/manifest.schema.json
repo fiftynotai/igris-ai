@@ -164,7 +164,7 @@
             "additionalProperties": false,
             "required": ["type", "method"],
             "properties": {
-              "type":    { "enum": ["claude", "codex", "gemini", "opencode"] },
+              "type":    { "enum": ["claude", "codex", "gemini", "opencode", "antigravity"] },
               "method":  { "const": "merge" },
               "enabled": { "type": "boolean", "default": true }
             }

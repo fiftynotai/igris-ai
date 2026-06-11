@@ -76,7 +76,8 @@ export interface DriftRow {
     | "bridge-missing"
     | "mcp-unregistered"
     | "secret-perms"
-    | "skills-pollution";
+    | "skills-pollution"
+    | "antigravity-skills-link";
   recommendedFix: string;
   /** Resolved realpath when row.path is itself a symlink. */
   resolvedPath?: string;
@@ -105,7 +106,12 @@ export type Channel = "release" | "main" | "tag";
  * are emitted for any subset. Auto-detection (cli-detect.ts) returns
  * a Set of these values.
  */
-export type CLITarget = "claude" | "codex" | "gemini" | "opencode";
+export type CLITarget =
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "opencode"
+  | "antigravity";
 
 /**
  * Persisted shape of `~/.igris/.install-source.json`.

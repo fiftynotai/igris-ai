@@ -61,6 +61,25 @@ describe("buildHarnessMcpEntry — golden per-harness shapes (L-554 parity)", ()
     expect((entry as Record<string, unknown>).type).toBeUndefined();
   });
 
+  it("FR-179: antigravity is BYTE-IDENTICAL to gemini (no type, ${VAR} verbatim)", () => {
+    const { entry, missing } = buildHarnessMcpEntry(
+      CANONICAL,
+      "antigravity",
+      undefined,
+    );
+    expect(missing).toBeUndefined();
+    expect(entry).toEqual({
+      command: "node",
+      args: ["/x/y.js"],
+      env: { API: "${API_TOKEN}" },
+    });
+    expect((entry as Record<string, unknown>).type).toBeUndefined();
+    // The proof antigravity rides gemini's MCP shape: same canonical → same
+    // entry bytes (only the config-PATH differs; that is asserted elsewhere).
+    const gem = buildHarnessMcpEntry(CANONICAL, "gemini", undefined).entry;
+    expect(JSON.stringify(entry)).toBe(JSON.stringify(gem));
+  });
+
   it("opencode fuses command+args, carries enabled, uses environment + {env:VAR}", () => {
     const { entry, missing } = buildHarnessMcpEntry(CANONICAL, "opencode", true);
     expect(missing).toBeUndefined();
@@ -122,7 +141,7 @@ describe("buildHarnessMcpEntry — golden per-harness shapes (L-554 parity)", ()
 
   it("empty args/env default to []/{} for every harness", () => {
     const bare: McpShapeCanonical = { command: "srv" };
-    for (const h of ["claude", "gemini", "codex"] as const) {
+    for (const h of ["claude", "gemini", "antigravity", "codex"] as const) {
       const { entry } = buildHarnessMcpEntry(bare, h, undefined, {});
       expect((entry as Record<string, unknown>).args).toEqual([]);
       expect((entry as Record<string, unknown>).env).toEqual({});
@@ -164,7 +183,7 @@ describe("buildHarnessMcpEntry — golden per-harness shapes (L-554 parity)", ()
  * on BOTH sides (key-order-independent structural equality).
  */
 describe("golden JSON the bash normalize_mcp_shape must match", () => {
-  it("documents the 4 reference shapes (drift-compare stand-in for env)", () => {
+  it("documents the 5 reference shapes (drift-compare stand-in for env)", () => {
     // NOTE: this mirrors normalize_mcp_shape's REFERENCE-stand-in posture for
     // codex env (it emits ${VAR}, not the literal — the literal re-resolve is
     // the drift compare's job). So the codex golden here uses the ref, matching
@@ -173,6 +192,8 @@ describe("golden JSON the bash normalize_mcp_shape must match", () => {
     const refShapes = {
       claude: { type: "stdio", command: "node", args: ["/x/y.js"], env: { API: "${API_TOKEN}" } },
       gemini: { command: "node", args: ["/x/y.js"], env: { API: "${API_TOKEN}" } },
+      // FR-179: antigravity is byte-identical to gemini (only the path differs).
+      antigravity: { command: "node", args: ["/x/y.js"], env: { API: "${API_TOKEN}" } },
       opencode: {
         type: "local",
         command: ["node", "/x/y.js"],
@@ -188,10 +209,15 @@ describe("golden JSON the bash normalize_mcp_shape must match", () => {
     };
     // This object is the single source the bats #parity test compares against.
     expect(Object.keys(refShapes).sort()).toEqual([
+      "antigravity",
       "claude",
       "codex",
       "gemini",
       "opencode",
     ]);
+    // antigravity's golden is byte-identical to gemini's.
+    expect(JSON.stringify(refShapes.antigravity)).toBe(
+      JSON.stringify(refShapes.gemini),
+    );
   });
 });
