@@ -165,6 +165,28 @@ Proceed to PLANNING phase.
 
 **Heartbeat:** If Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call `igris_instance_heartbeat` with current_brief and current_phase="INIT". See "Instance Heartbeat" section below.
 
+<!-- FR-183: harness-agnostic delegation -->
+### Delegation Mechanism (harness-agnostic)
+
+Phases 2-5 each delegate to a named Igris agent (architect, forger, sentinel, warden). **Resolve the delegation mechanism per harness before each delegation:**
+
+- **Native-agent harness** (Claude `.claude/agents/`, or any harness that loads Igris agents statically): delegate to the named agent directly via your subagent/Task tool (`subagent_type: <agent>`). This is the default path; the per-phase steps below assume it.
+- **Dynamic-agent-only harness** (the harness cannot load static Igris agents but CAN define subagents at runtime — e.g. Antigravity `define_subagent`/`invoke_subagent`): do NOT improvise the role. **Read the canonical agent prompt at `~/.igris/core/agents/<agent>.md`** and define the subagent with:
+  - **system prompt** = that file's markdown BODY (everything after the frontmatter), verbatim;
+  - **tool scope** = the frontmatter `tools:` line of that file (which is AUTHORITATIVE — the table below is only a summary). Map those tools to your harness's native equivalents and honor the scope precisely: only **forger** and **sage** get Write/Edit; **architect** and **warden** are pure read (Read/Grep/Glob, no Bash); **sentinel, seeker, mender** get read + Bash but NEVER Write/Edit (they run tests / investigate / diagnose — they never modify files).
+
+  This makes the delegated subagent a faithful Igris agent (correct expertise + guardrails), not a generic improvisation.
+
+| Agent | Canonical prompt | Scope |
+|---|---|---|
+| architect | `~/.igris/core/agents/architect.md` | READ-ONLY — Read, Grep, Glob |
+| forger | `~/.igris/core/agents/forger.md` | read+write — Read, Write, Edit, Bash, Grep, Glob |
+| sentinel | `~/.igris/core/agents/sentinel.md` | read + Bash, runs tests (NO Write/Edit) — Read, Bash, Grep |
+| warden | `~/.igris/core/agents/warden.md` | READ-ONLY — Read, Grep, Glob |
+| mender | `~/.igris/core/agents/mender.md` | read + Bash, diagnose (NO Write/Edit) — Read, Grep, Glob, Bash, error_lookup |
+| seeker | `~/.igris/core/agents/seeker.md` | read + Bash, investigate (NO Write/Edit) — Read, Grep, Glob, Bash |
+| sage | `~/.igris/core/agents/sage.md` | read+write — Read, Write, Edit, Bash, Glob, Grep |
+
 ### Phase 2: PLANNING
 
 1. Update brief: Phase = PLANNING, Active Agent = architect
@@ -199,6 +221,7 @@ Proceed to PLANNING phase.
    sub-steps and the implementation touches core/ files, the orchestrator
    annotates the prompt with a reminder before passing to forger in step 4.
 4. **Delegate to architect agent** using Agent tool:
+   (On a dynamic-agent-only harness, resolve the subagent via the Delegation Mechanism above — define it from `~/.igris/core/agents/architect.md`.)
 
 ```
 Agent tool parameters:
@@ -265,6 +288,7 @@ Agent tool parameters:
    content] inclusion or annotate it with "(orchestrator-owned, not
    forger's responsibility)".
 4. **Delegate to forger agent** using Agent tool:
+   (On a dynamic-agent-only harness, resolve the subagent via the Delegation Mechanism above — define it from `~/.igris/core/agents/forger.md`.)
 
 ```
 Agent tool parameters:
@@ -314,6 +338,7 @@ Agent tool parameters:
    - phase: "TESTING"
    Skip silently if MCP unavailable.
 4. **Delegate to sentinel agent** using Agent tool:
+   (On a dynamic-agent-only harness, resolve the subagent via the Delegation Mechanism above — define it from `~/.igris/core/agents/sentinel.md`.)
 
 ```
 Agent tool parameters:
@@ -376,6 +401,7 @@ Agent tool parameters:
    - phase: "REVIEWING"
    Skip silently if MCP unavailable.
 4. **Delegate to warden agent** using Agent tool:
+   (On a dynamic-agent-only harness, resolve the subagent via the Delegation Mechanism above — define it from `~/.igris/core/agents/warden.md`.)
 
 ```
 Agent tool parameters:

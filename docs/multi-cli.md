@@ -929,6 +929,20 @@ So antigravity is **documented N/A** for static agent projection — it is not a
 agent target in `harness-manifest.json`, and no per-agent harness file is
 emitted for it.
 
+**But dynamic-agent harnesses still run faithful Igris agents at runtime (FR-183).**
+The N/A-static finding does NOT mean antigravity improvises its subagents. The
+`/hunt` skill carries a harness-agnostic **"Delegation Mechanism"** fallback
+(`core/skills/hunt/SKILL.md`): on a dynamic-agent-only harness, each phase's
+delegation (architect / forger / sentinel / warden) seeds a runtime
+`define_subagent` from the canonical agent prompt at
+`~/.igris/core/agents/<agent>.md` — the file's markdown body becomes the
+subagent's system prompt verbatim, and its frontmatter `tools:` list maps to the
+harness's native tool scope (honoring each role's scope: architect / warden get
+NO write/edit/run tools; sentinel / seeker / mender get read + Bash but never
+write/edit; only forger / sage get write/edit). So antigravity
+gets a faithful Igris agent (correct expertise + guardrails) despite the
+N/A-static finding — the agent prompt is canonical, only the *delivery* differs.
+
 ---
 
 ## Hook Coverage
