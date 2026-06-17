@@ -27,6 +27,12 @@ set -e
 #                    manifest. NOT triggered on generated harness paths —
 #                    those are gitignored and never staged (OD-4); the guard
 #                    validates the ON-DISK generated copies, not the index.
+#   - check_contract_consumers.sh  (FR-186)
+#       Triggers if: MAINTAINING.md is staged, OR the staged diff
+#                    deletes/renames any path (where a mapped `file` contract
+#                    would surface). Surfaces the consumer list (WARN, does not
+#                    block); hard-fails only on a STALE MAP (a consumer
+#                    citation whose file no longer exists).
 #
 # (TD-110 canonical-hooks lockstep validator was retired in MG-014 M5;
 #  the legacy `install_claude_hooks.sh` shell emitter is gone, so the
@@ -52,46 +58,99 @@ cd "$REPO_ROOT"
 # Phase source: brain DB (brief_status.phase) — the canonical live phase
 # tracker. CURRENT_SESSION.md and brief cache files lag.
 #
-# Failure mode: if any input is missing (no session file, no Active Brief,
-# no brain DB, sqlite3 absent), the guard skips silently — fail-open so we
-# don't break commits in projects that don't use the hunt workflow.
+# Active-Brief source (FR-186 / G-01R): the brief is discovered from the brain
+# `instances` registry — the machine-disambiguated live source kept fresh by
+# heartbeats — NOT the retired CURRENT_SESSION.md. FR-133 archived that file, so
+# the old grep returned empty and the guard went silently inert. Discovery order:
+#   1. instances registry  (machine-scoped, freshest active heartbeat)
+#   2. newest per-instance session file carrying an **Active Brief:** line
+#   3. legacy CURRENT_SESSION.md (un-migrated consumer projects only)
+#
+# Failure mode: if any input is missing (no brain DB, no active instance, no
+# session file, sqlite3 absent), the guard skips silently — fail-open at every
+# tier so we don't break commits in projects that don't use the hunt workflow.
 
 if [ "${IGRIS_BYPASS_PHASE_GUARD:-0}" != "1" ]; then
   PROJECT="$(basename "$REPO_ROOT")"
-  SESSION_FILE="$HOME/.igris/projects/$PROJECT/session/CURRENT_SESSION.md"
+  HOSTNAME_LOCAL="$(hostname)"
   BRAIN_DB="$HOME/.igris/memory/knowledge.db"
+  INSTANCES_DIR="$HOME/.igris/projects/$PROJECT/session/instances"
+  LEGACY_SESSION_FILE="$HOME/.igris/projects/$PROJECT/session/CURRENT_SESSION.md"
+  ACTIVE_BRIEF=""
 
-  if [ -f "$SESSION_FILE" ] && [ -f "$BRAIN_DB" ] && command -v sqlite3 >/dev/null 2>&1; then
-    # Extract the brief ID from the **Active Brief:** line in CURRENT_SESSION.md.
-    # Format: **Active Brief:** PI-004 (some annotations)
-    ACTIVE_BRIEF="$(grep -m1 -E '^\*\*Active Brief:\*\*' "$SESSION_FILE" \
+  # extract_brief_from_file <path> -> echoes the brief ID on the **Active Brief:**
+  # line, or empty. Reuses the exact grep/sed shape the legacy guard used, so the
+  # `**Active Brief:** None ...` literal resolves to empty -> guard skips (correct:
+  # a planning session with no claim must not gate commits).
+  extract_brief_from_file() {
+    local f="$1"
+    [ -f "$f" ] || return 0
+    grep -m1 -E '^\*\*Active Brief:\*\*' "$f" 2>/dev/null \
       | sed -E 's/^\*\*Active Brief:\*\*[[:space:]]+([A-Z]+-[0-9]+).*/\1/' \
-      | tr -d '[:space:]')"
+      | tr -d '[:space:]'
+  }
 
-    if [ -n "$ACTIVE_BRIEF" ]; then
-      # Live phase comes from brain DB (canonical source per /hunt sync flow).
-      # The igris_brief_sync MCP tool writes brief_status.phase on every
-      # phase transition; brief cache files are NOT updated.
-      ACTIVE_PHASE="$(sqlite3 "$BRAIN_DB" \
-        "SELECT phase FROM brief_status WHERE project='$PROJECT' AND brief_id='$ACTIVE_BRIEF' AND status='In Progress' LIMIT 1;" \
-        2>/dev/null)"
+  # Tier 1 — instances registry (authoritative live source, machine-scoped).
+  # $PROJECT is basename(repo) and $HOSTNAME_LOCAL is `hostname` — neither is
+  # user-controlled free text. They are still single-quote-escaped (doubling any
+  # embedded quote) before interpolation so a stray quote cannot break the SQL.
+  if [ -f "$BRAIN_DB" ] && command -v sqlite3 >/dev/null 2>&1; then
+    PROJECT_SQL="${PROJECT//\'/\'\'}"
+    HOSTNAME_SQL="${HOSTNAME_LOCAL//\'/\'\'}"
+    ACTIVE_BRIEF="$(sqlite3 "$BRAIN_DB" \
+      "SELECT current_brief FROM instances
+         WHERE project_slug='$PROJECT_SQL'
+           AND machine_hostname='$HOSTNAME_SQL'
+           AND status='active'
+           AND current_brief IS NOT NULL
+         ORDER BY last_heartbeat_at DESC LIMIT 1;" \
+      2>/dev/null | tr -d '[:space:]')"
+  fi
 
-      case "$ACTIVE_PHASE" in
-        BUILDING|TESTING)
-          echo ""
-          echo "[pre-commit] PI-004 phase guard: refusing commit"
-          echo "  active brief: $ACTIVE_BRIEF"
-          echo "  active phase: $ACTIVE_PHASE"
-          echo "  the orchestrator owns COMMITTING — sentinel + warden must run first"
-          echo ""
-          echo "  if you ARE the orchestrator running the post-warden commit:"
-          echo "    IGRIS_BYPASS_PHASE_GUARD=1 git commit ..."
-          echo ""
-          echo "  this guard exists per PI-004 / L-248. see brief for context."
-          exit 1
-          ;;
-      esac
+  # Tier 2 — newest per-instance session file (when the brain/sqlite3 is absent).
+  if [ -z "$ACTIVE_BRIEF" ] && [ -d "$INSTANCES_DIR" ]; then
+    # Instance filenames are <instance_id>.md UUIDs — no whitespace/newlines —
+    # so `ls -t` (newest by mtime) is safe here; `find` has no portable mtime
+    # sort without GNU -printf. shellcheck SC2012 does not apply.
+    # shellcheck disable=SC2012
+    NEWEST_INSTANCE_FILE="$(ls -t "$INSTANCES_DIR"/*.md 2>/dev/null | head -1)"
+    if [ -n "$NEWEST_INSTANCE_FILE" ]; then
+      ACTIVE_BRIEF="$(extract_brief_from_file "$NEWEST_INSTANCE_FILE")"
     fi
+  fi
+
+  # Tier 3 — legacy CURRENT_SESSION.md (un-migrated consumer projects only).
+  if [ -z "$ACTIVE_BRIEF" ]; then
+    ACTIVE_BRIEF="$(extract_brief_from_file "$LEGACY_SESSION_FILE")"
+  fi
+
+  if [ -n "$ACTIVE_BRIEF" ] && [ -f "$BRAIN_DB" ] && command -v sqlite3 >/dev/null 2>&1; then
+    # Live phase comes from brain DB (canonical source per /hunt sync flow).
+    # The igris_brief_sync MCP tool writes brief_status.phase on every
+    # phase transition; brief cache files are NOT updated. The guard's
+    # enforcement logic (refuse on BUILDING|TESTING) is unchanged — only the
+    # brief-discovery source above changed (FR-186 / G-01R).
+    BRIEF_SQL="${ACTIVE_BRIEF//\'/\'\'}"
+    PROJECT_SQL="${PROJECT//\'/\'\'}"
+    ACTIVE_PHASE="$(sqlite3 "$BRAIN_DB" \
+      "SELECT phase FROM brief_status WHERE project='$PROJECT_SQL' AND brief_id='$BRIEF_SQL' AND status='In Progress' LIMIT 1;" \
+      2>/dev/null)"
+
+    case "$ACTIVE_PHASE" in
+      BUILDING|TESTING)
+        echo ""
+        echo "[pre-commit] PI-004 phase guard: refusing commit"
+        echo "  active brief: $ACTIVE_BRIEF"
+        echo "  active phase: $ACTIVE_PHASE"
+        echo "  the orchestrator owns COMMITTING — sentinel + warden must run first"
+        echo ""
+        echo "  if you ARE the orchestrator running the post-warden commit:"
+        echo "    IGRIS_BYPASS_PHASE_GUARD=1 git commit ..."
+        echo ""
+        echo "  this guard exists per PI-004 / L-248. see brief for context."
+        exit 1
+        ;;
+    esac
   fi
 fi
 
@@ -103,6 +162,7 @@ needs_lineranges_check=0
 needs_lockfile_check=0
 needs_harness_check=0
 needs_skill_yaml_check=0
+needs_contract_check=0
 
 if echo "$staged" | grep -qE '^(core/prompts/igris_os\.md|core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
   needs_enum_check=1
@@ -129,6 +189,21 @@ fi
 # decides whether to run at all.
 if echo "$staged" | grep -qE '^core/skills/.*/SKILL\.md$'; then
   needs_skill_yaml_check=1
+fi
+
+# FR-186: trigger the contract-consumer checker when MAINTAINING.md is staged
+# (self-consistency hard-fail) OR the staged diff deletes/renames any path
+# (where a mapped `file` token would surface). Removed identifier lines are
+# self-scoped by the checker over `git diff --cached`. Normal commits with no
+# MAINTAINING.md change and no deletions/renames skip it entirely (stays off
+# the hot path). The checker exists only if FR-186 is adopted in this repo.
+if [ -f "$REPO_ROOT/MAINTAINING.md" ] \
+   && [ -f "$REPO_ROOT/scripts/check_contract_consumers.sh" ]; then
+  if echo "$staged" | grep -qxF 'MAINTAINING.md'; then
+    needs_contract_check=1
+  elif [ -n "$(git diff --cached --name-only --diff-filter=DR)" ]; then
+    needs_contract_check=1
+  fi
 fi
 
 failed=0
@@ -182,6 +257,21 @@ if [ "$needs_harness_check" = "1" ]; then
     echo "[pre-commit] Harness drift detected (or a generated harness is missing)."
     echo "[pre-commit]   Run: bash core/scripts/cli-adapters/compile_harnesses.sh --project-root ."
     echo "[pre-commit]   (or 'igris harness compile' once FR-136 lands), then re-stage."
+    failed=1
+  fi
+fi
+
+if [ "$needs_contract_check" = "1" ]; then
+  echo "[pre-commit] Checking MAINTAINING.md contract consumers (FR-186)..."
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed and reported
+  # together at the end, rather than aborting on the first failure.
+  # The checker DEFAULTS TO WARN (exit 0) for the rename/deletion case — it
+  # surfaces the consumer list without vetoing a legitimate refactor. It only
+  # exits non-zero on a STALE MAP (a consumer citation whose file is gone),
+  # which IS a hard-fail aggregated here.
+  if ! bash "$REPO_ROOT/scripts/check_contract_consumers.sh"; then
+    echo "[pre-commit] MAINTAINING.md is stale — fix the consumer citation(s) above."
     failed=1
   fi
 fi

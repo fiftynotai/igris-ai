@@ -146,7 +146,7 @@ Agents per phase: `PLANNING` → architect; `BUILDING` → forger; `TESTING` →
 
 **Escape hatches** (one-shot, never `export`, loud + event-logged):
 - `IGRIS_BYPASS_BRIEF_GATE=1` — bypass the brief-gate hook for one command.
-- `IGRIS_BYPASS_PHASE_GUARD=1` — bypass the phase-guard pre-commit hook for one commit.
+- `IGRIS_BYPASS_PHASE_GUARD=1` — bypass the phase-guard pre-commit hook for one commit. The guard discovers the Active Brief from the brain `instances` registry (machine-scoped, freshest heartbeat), with a per-instance session-file fallback — not the retired `CURRENT_SESSION.md` (re-pointed under FR-186 / G-01R).
 
 ---
 

@@ -116,6 +116,12 @@ const SAMPLE_TREE = {
       tier: 'task',
       optional: true,
     },
+    maintaining_map: {
+      path: '{repo_root}/MAINTAINING.md',
+      brain_key: 'maintaining_map',
+      scope: 'project',
+      tier: 'task',
+    },
   },
   tasks: {
     '/awaken': {
@@ -134,7 +140,7 @@ const SAMPLE_TREE = {
       note: 'Implementation agent',
     },
     architect: {
-      load: ['coding_guidelines', 'architecture_map'],
+      load: ['coding_guidelines', 'architecture_map', 'maintaining_map'],
       note: 'Planning agent',
     },
   },
@@ -147,16 +153,22 @@ const SAMPLE_GUIDELINES = `# Coding Guidelines\n\nFollow the standards.\n`;
 // Helpers
 // ---------------------------------------------------------------------------
 
-function setupTreeMocks(): void {
+const SAMPLE_MAINTAINING = `# MAINTAINING\n\n## The Map\n\n| Contract | Type | Consumers | Owner | Change |\n`;
+
+// repoRoot, when provided, registers a {repo_root}/MAINTAINING.md fixture so the
+// FR-186 wire can be exercised end-to-end.
+function setupTreeMocks(repoRoot?: string): void {
   const treePath = join('/mock-home', '.igris', 'core', 'igris_tree.json');
   const igrisOsPath = join('/mock-home', '.igris', 'core', 'prompts', 'igris_os.md');
   const soulPath = join('/mock-home', '.igris', 'core', 'SOUL.md');
   const guidelinesPath = join('/mock-home', '.igris', 'projects', 'my-project', 'context', 'coding_guidelines.md');
   const archMapPath = join('/mock-home', '.igris', 'projects', 'my-project', 'context', 'architecture_map.md');
+  const maintainingPath = repoRoot ? `${repoRoot}/MAINTAINING.md` : undefined;
 
   vi.mocked(existsSync).mockImplementation((p: unknown) => {
     const pathStr = String(p);
     const existingPaths = [treePath, igrisOsPath, soulPath, guidelinesPath];
+    if (maintainingPath) existingPaths.push(maintainingPath);
     return existingPaths.includes(pathStr);
   });
 
@@ -166,9 +178,33 @@ function setupTreeMocks(): void {
     if (pathStr === igrisOsPath) return SAMPLE_IGRIS_OS;
     if (pathStr === soulPath) return SAMPLE_SOUL;
     if (pathStr === guidelinesPath) return SAMPLE_GUIDELINES;
+    if (maintainingPath && pathStr === maintainingPath) return SAMPLE_MAINTAINING;
     if (pathStr === archMapPath) throw new Error(`ENOENT: no such file: ${pathStr}`);
     throw new Error(`ENOENT: no such file: ${pathStr}`);
   });
+}
+
+// Build a context component that has been init()'d with a mock _ctx whose
+// storage returns the given project repo path from the projects registry.
+// Returns the igris_context_load handler. This exercises the FR-186 registry
+// lookup ({repo_root} resolution) that the un-init'd helper cannot.
+function getInitedContextLoadHandler(projectPath: string | null): (args: Record<string, unknown>) => { content: { type: string; text: string }[]; isError?: boolean } {
+  const component = createContextComponent();
+  const storage = {
+    prepare: (_sql: string) => ({
+      get: (_slug: string) => (projectPath === null ? undefined : { path: projectPath }),
+    }),
+  };
+  // Minimal ComponentContext — only storage/log/bus are touched by this handler.
+  const ctx = {
+    storage,
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+    bus: { emit: () => {} },
+  } as unknown as Parameters<NonNullable<typeof component.init>>[0];
+  component.init?.(ctx);
+  const tool = component.tools().find((t) => t.name === 'igris_context_load');
+  if (!tool) throw new Error('igris_context_load tool not found');
+  return tool.handler as (args: Record<string, unknown>) => { content: { type: string; text: string }[]; isError?: boolean };
 }
 
 function getContextLoadHandler(): (args: Record<string, unknown>) => { content: { type: string; text: string }[]; isError?: boolean } {
@@ -263,6 +299,32 @@ describe('Context Component', () => {
       expect(result).toBe('slug/a/slug/b');
     });
 
+    it('replaces {repo_root} with the registry repo path (FR-186)', () => {
+      const result = resolveContextPath(
+        '{repo_root}/MAINTAINING.md',
+        'igris-ai',
+        '/Users/m.elamin/StudioProjects/igris-ai'
+      );
+      expect(result).toBe('/Users/m.elamin/StudioProjects/igris-ai/MAINTAINING.md');
+    });
+
+    it('strips a trailing slash from {repo_root} before joining (FR-186)', () => {
+      const result = resolveContextPath('{repo_root}/MAINTAINING.md', 'slug', '/repo/path/');
+      expect(result).toBe('/repo/path/MAINTAINING.md');
+    });
+
+    it('leaves {repo_root} unresolved when no repoRoot is provided (FR-186)', () => {
+      // Graceful degradation: absent project path → token stays → caller's
+      // existsSync() treats the file as missing rather than crashing.
+      const result = resolveContextPath('{repo_root}/MAINTAINING.md', 'slug');
+      expect(result).toBe('{repo_root}/MAINTAINING.md');
+    });
+
+    it('resolves {repo_root} alongside ~ and {project} in one path (FR-186)', () => {
+      const result = resolveContextPath('{repo_root}/x/{project}/y', 'slug', '/repo');
+      expect(result).toBe('/repo/x/slug/y');
+    });
+
     it('handles paths without tilde', () => {
       const result = resolveContextPath('/absolute/path/file.md', 'test');
       expect(result).toBe('/absolute/path/file.md');
@@ -346,6 +408,37 @@ describe('Context Component', () => {
       const foundKeys = parsed.files.map((f: { key: string }) => f.key);
       expect(foundKeys).toContain('coding_guidelines');
       expect(parsed.missing).toContain('architecture_map');
+    });
+
+    it('architect load resolves {repo_root}/MAINTAINING.md via the registry path (FR-186 C1)', () => {
+      const repoRoot = '/Users/m.elamin/StudioProjects/igris-ai';
+      setupTreeMocks(repoRoot);
+      const handler = getInitedContextLoadHandler(repoRoot);
+
+      const result = handler({ actor: 'architect', project: 'igris-ai' });
+      expect(result.isError).toBeUndefined();
+
+      const parsed = JSON.parse(result.content[0].text);
+
+      // The map must be RECEIVED, not listed missing — the wire is live.
+      const mapFile = parsed.files.find((f: { key: string }) => f.key === 'maintaining_map');
+      expect(mapFile).toBeDefined();
+      expect(mapFile.path).toBe(`${repoRoot}/MAINTAINING.md`);
+      expect(mapFile.content).toContain('## The Map');
+      expect(parsed.missing).not.toContain('maintaining_map');
+    });
+
+    it('architect load degrades gracefully when the project has no registry path (FR-186 C1)', () => {
+      // No projects row → repoRoot undefined → {repo_root} unresolved →
+      // existsSync false → map joins missing[] with NO crash.
+      setupTreeMocks(); // no repo-root fixture
+      const handler = getInitedContextLoadHandler(null);
+
+      const result = handler({ actor: 'architect', project: 'igris-ai' });
+      expect(result.isError).toBeUndefined();
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.missing).toContain('maintaining_map');
     });
 
     it('returns error when actor not found', () => {

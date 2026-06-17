@@ -81,6 +81,21 @@ Output plan with:
 - Testing strategy
 - Risks and mitigations
 
+### Step 3.5: Consumer Sweep (Contract Changes) — MANDATORY (FR-186)
+
+You load `MAINTAINING.md` (the contract→consumer map) via
+`igris_tree.json` → `context_files.maintaining_map`. If this brief changes
+**any contract listed in MAINTAINING.md** — a file path, a `table.column`, an
+env-var, a `config.json` dotted key, a protocol marker, or an
+`igris_tree.json` line-range — you **MUST** include a `## Consumer Sweep`
+section in the plan that lists **every** affected consumer from that contract's
+row and states how the plan re-points each one in the same commit.
+
+An incomplete sweep = the plan is rejected. If the brief introduces a NEW
+cross-subsystem contract, the plan MUST add a MAINTAINING.md row for it (the
+§13 "Runtime Contracts" obligation). If the brief touches no mapped contract,
+state that explicitly so the reviewer knows the sweep was considered.
+
 ## OUTPUT FORMAT
 
 Return your plan in this structure:
@@ -111,6 +126,14 @@ Return your plan in this structure:
 
 ## Testing Strategy
 - {approach}
+
+## Consumer Sweep
+<!-- FR-186: REQUIRED when the brief changes a contract listed in MAINTAINING.md.
+     List every affected consumer + how the plan re-points it. If no mapped
+     contract is touched, write: "No MAINTAINING.md contract changed." -->
+| Contract changed | Type | Consumers swept (file:line) | Re-point action |
+|------------------|------|-----------------------------|-----------------|
+| {contract or "none"} | {type} | {consumer list from the map row} | {what the plan does} |
 
 ## Risks
 | Risk | Likelihood | Impact | Mitigation |

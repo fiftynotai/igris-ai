@@ -1,0 +1,67 @@
+# MAINTAINING — Contract → Consumer Map (FR-186)
+
+This is the **maintained contract→consumer map** for Igris AI. A *contract* is any
+token one subsystem produces that another subsystem reads: a file path, a
+`table.column`, an env-var name, a `config.json` dotted key, a protocol marker, or
+an `igris_tree.json` section line-range. When a brief changes a contract, every
+listed **consumer** must be re-pointed *in the same commit* — otherwise the
+consumer silently breaks (the exact failure class G-01R fell through: the phase
+guard kept reading the retired `CURRENT_SESSION.md` long after FR-133 moved the
+Active-Brief source elsewhere, going silently inert).
+
+## Protocol
+
+Three layers enforce this map, each the right primitive at its layer (memory #400):
+
+1. **Planning (architect).** The architect loads this map via
+   `igris_tree.json` → `context_files.maintaining_map`. Any plan that changes a
+   contract listed here MUST include a `## Consumer Sweep` section naming every
+   affected consumer. An incomplete sweep is a rejected plan.
+2. **Mechanical (pre-commit).** `scripts/check_contract_consumers.sh` parses this
+   map, scans `git diff --cached` for deletions/renames of mapped tokens, and
+   surfaces the consumer list. It defaults to **WARN** (it informs, it does not
+   veto a legitimate refactor); a *stale map* (a consumer citation whose file does
+   not exist) is a **hard-fail**.
+3. **Review (warden).** The §17 warden checklist row verifies each consumer in the
+   changed contract's row was actually swept *correctly* in the diff — a
+   reasoning judgment, not a regex.
+
+## How to add a row
+
+Any brief that creates a new cross-subsystem contract (a new token another
+subsystem will read) **adds its row to this table in the same commit** — this is a
+§13 obligation ("Runtime Contracts (Consumer-Sweep Rule)"). Keep every cell
+**positive-polarity**: list what *consumes* the contract. Never phrase a cell as
+"X does not consume Y" (negative-polarity cells get inverted by downstream
+agents — memory #372).
+
+The mechanical net is `scripts/check_contract_consumers.sh`. Run it standalone to
+preview the consumers of a changed path:
+
+```bash
+scripts/check_contract_consumers.sh --paths path/one path/two
+```
+
+## Schema
+
+| Column | Meaning |
+|---|---|
+| **Contract** | The exact token a brief might change: a file path, `table.column`, env-var name, `config.json` dotted key, protocol marker, or `igris_tree.json` line-range. This is the string the checker matches against staged diffs. |
+| **Type** | One of `file` \| `column` \| `env-var` \| `config-key` \| `protocol` \| `line-range`. Drives how the checker greps (path-literal vs anchored identifier). |
+| **Consumers (file:line)** | `<br>`-separated `path:line` citations of every reader of this contract. These are the sweep targets. |
+| **Owner brief** | The brief that introduced/owns the contract (provenance). |
+| **Change procedure** | One line: what a brief changing this contract MUST do. |
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `session/CURRENT_SESSION.md` | `file` | `core/skills/awaken/SKILL.md:231` (§3.8 H0 legacy retirement) | FR-133 | Retired as the phase-guard source — the guard was re-pointed to the `instances` registry under FR-186. The only remaining reader is the `/awaken` legacy-retirement step. |
+| `~/.igris/projects/{project}/session/instances/<instance_id>.md` + the `**Active Brief:**` line format | `file` | `scripts/git-hooks/pre-commit` (phase-guard per-instance fallback tier)<br>`core/skills/awaken/SKILL.md:67` (per-instance session model)<br>`core/skills/hunt/SKILL.md:571` (heartbeat read)<br>`brain-mcp-server/src/tools/sessions.ts` (session-file read/write) | FR-133 / FR-126 | The `**Active Brief:** <ID>` line format and the `instances/<id>.md` path are a contract — the phase-guard fallback tier and the `/awaken` + `/hunt` skills parse them. Keep the line shape `^\*\*Active Brief:\*\* <ID>`. |
+| `instances.current_brief` / `instances.machine_hostname` / `instances.status` / `instances.last_heartbeat_at` | `column` | `scripts/git-hooks/pre-commit` (phase-guard primary brief-discovery query)<br>`brain-mcp-server/src/db.ts:328` (instances DDL)<br>`brain-mcp-server/src/tools/instances.ts:160` (heartbeat upsert + list)<br>`brain-mcp-server/src/tools/sync.ts:145` (replication column set) | FR-126 / FR-186 | The phase guard discovers the active brief via `SELECT current_brief FROM instances WHERE machine_hostname=… AND status='active' ORDER BY last_heartbeat_at DESC`. A rename/CHECK-constraint change on any of these columns breaks the guard's brief discovery — re-point the guard SQL and the sync column set. |
+| `brief_status.phase` / `brief_status.status` / `brief_status.claimed_by` | `column` | `scripts/git-hooks/pre-commit` (phase-guard gate query: `SELECT phase … status='In Progress'`)<br>`brain-mcp-server/src/db.ts:289` (DDL: status :289, phase :292)<br>`brain-mcp-server/src/tools/briefs.ts` (phase writes on every transition)<br>`coding_guidelines.md` §17.2 (pre-tag audit query) | FR-127 / brief lifecycle | A rename or CHECK-constraint change here breaks the phase-guard SQL and the pre-tag audit query — sweep both. The guard gates on `phase IN (BUILDING, TESTING)`. |
+| `IGRIS_BYPASS_BRIEF_GATE` / `IGRIS_BYPASS_PHASE_GUARD` | `env-var` | `core/hooks/shared/pre_tool_use.sh:254` (BRIEF_GATE escape read)<br>`scripts/git-hooks/pre-commit:73` (PHASE_GUARD escape read)<br>`core/prompts/igris_os.md:715` (escape-hatch doc)<br>`docs/architecture/SYSTEM.md:148` (escape-hatch doc)<br>`CONTRIBUTING.md:151` (contributor doc)<br>`test/brief_gate.test.bash` (gate tests)<br>`test/phase_guard.test.bash` (guard tests) | TD-150 (brief gate) / PI-004 (phase guard) | Renaming a bypass var silently disables an escape hatch — sweep the hook + hook-doc + both test suites. These are one-shot env vars; never `export` them. |
+| `config.json` `remote_brain.url` / `remote_brain.api_key` | `config-key` | `cli/src/lib/sync/` (VPS sync code)<br>`brain-mcp-server/src/tools/sync.ts` (replication read) | VPS sync | Config keys are read with defaults across `cli/` + brain — grep the dotted key before renaming. |
+| `config.json` `cli_targets.<harness>.*` | `config-key` | harness adapters under `cli/src/` + `core/scripts/cli-adapters/` | FR-124 / multi-harness | `cli_targets.<h>.target` and `cli_targets.<h>.method` are **DESCRIPTIVE-only** — the harness machinery does not read them as behavior switches (their `note` fields say so). Editing them changes documentation, not behavior; a brief expecting a behavior change from these fields is mistaken. |
+| `config.json` `subconscious.enabled` | `config-key` | subconscious detector pipeline (disabled in v7, preserved for FR-118) | FR-118 | Read with a default across the pipeline; the v7 value is `false`. Grep the dotted key before renaming. |
+| `igris_tree.json` `context_files.igris_os.sections.<name>.lines` | `line-range` | `scripts/validate_igris_tree_lineranges.py` (DRIFT-3 validator reads the ranges)<br>`core/skills/awaken/SKILL.md` + `core/skills/hunt/SKILL.md` (section-selective loading via `tasks.*.sections`) | BR-065 / TD-070 | Any `igris_os.md` edit crossing a `<!-- SECTION: -->` boundary MUST bump `.lines` in BOTH `core/igris_tree.json` (repo) AND `~/.igris/core/igris_tree.json` (runtime mirror) in the same commit; pre-commit DRIFT-3 is the safety net. |

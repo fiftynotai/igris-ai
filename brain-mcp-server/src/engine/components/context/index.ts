@@ -73,16 +73,26 @@ export function extractSections(fileContent: string, sectionNames: string[]): st
 }
 
 /**
- * Resolve a context file path, replacing `~` with homedir
- * and `{project}` with the project slug.
+ * Resolve a context file path, replacing `~` with homedir,
+ * `{project}` with the project slug, and `{repo_root}` with the project's
+ * absolute repo path from the registry (when provided).
+ *
+ * `repoRoot` is the project's `path` column from the projects registry. When
+ * it is absent (project not registered, or path empty), a `{repo_root}` token
+ * is left unresolved — the caller's existsSync() then treats the file as
+ * missing rather than crashing (FR-186: graceful degradation).
  */
-export function resolveContextPath(rawPath: string, project: string): string {
+export function resolveContextPath(rawPath: string, project: string, repoRoot?: string): string {
   if (/[\/\\]|\.\./.test(project)) {
     throw new Error(`Invalid project slug: "${project}" contains path traversal characters`);
   }
-  return rawPath
+  let resolved = rawPath
     .replace(/^~/, homedir())
     .replace(/\{project\}/g, project);
+  if (repoRoot) {
+    resolved = resolved.replace(/\{repo_root\}/g, repoRoot.replace(/\/+$/, ''));
+  }
+  return resolved;
 }
 
 // ---------------------------------------------------------------------------
@@ -349,6 +359,22 @@ export function createContextComponent(): BrainComponent {
               const missing: string[] = [];
               const sectionsLoaded: Record<string, string[]> = {};
 
+              // FR-186: look up the project's absolute repo path from the
+              // registry so `{repo_root}` tokens (e.g. maintaining_map) resolve.
+              // Absent project/path → repoRoot undefined → the token stays
+              // unresolved → existsSync() false → key joins missing[] (no crash).
+              let repoRoot: string | undefined;
+              try {
+                const projRow = _ctx!.storage
+                  .prepare('SELECT path FROM projects WHERE slug = ?')
+                  .get(project) as { path?: string } | undefined;
+                if (projRow && typeof projRow.path === 'string' && projRow.path.length > 0) {
+                  repoRoot = projRow.path;
+                }
+              } catch {
+                // Registry unreadable — leave repoRoot undefined (graceful).
+              }
+
               const keysToLoad = new Set(actorConfig.load || []);
               if (actorConfig.sections) {
                 for (const key of Object.keys(actorConfig.sections)) {
@@ -363,7 +389,7 @@ export function createContextComponent(): BrainComponent {
                   continue;
                 }
 
-                const resolvedPath = resolveContextPath(fileEntry.path, project);
+                const resolvedPath = resolveContextPath(fileEntry.path, project, repoRoot);
 
                 if (!existsSync(resolvedPath)) {
                   // Optional files are expected to be absent sometimes

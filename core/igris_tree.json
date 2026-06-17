@@ -71,6 +71,13 @@
       "scope": "core",
       "tier": "reference",
       "note": "FR-180: canonical `igris add <surface>` per-surface command table + gotchas. Paired with the igris_os.md surface_management section."
+    },
+    "maintaining_map": {
+      "path": "{repo_root}/MAINTAINING.md",
+      "brain_key": "maintaining_map",
+      "scope": "project",
+      "tier": "task",
+      "note": "FR-186: contract→consumer map at the project repo root. Architect MUST consult for any contract-changing brief and add a `## Consumer Sweep` section. The grep net is scripts/check_contract_consumers.sh."
     }
   },
 
@@ -104,8 +111,8 @@
 
   "agents": {
     "architect": {
-      "load": ["coding_guidelines", "architecture_map"],
-      "note": "Brief content passed via orchestrator prompt"
+      "load": ["coding_guidelines", "architecture_map", "maintaining_map"],
+      "note": "Brief content passed via orchestrator prompt. maintaining_map (FR-186) routes the contract→consumer map for the mandatory Consumer Sweep."
     },
     "forger": {
       "load": ["coding_guidelines", "architecture_map", "api_pattern"],
