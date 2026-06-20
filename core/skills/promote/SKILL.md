@@ -89,19 +89,22 @@ confidence, access_count, scope, and the proposed target doc (next step).
 ## P2 — Propose a target doc per candidate
 
 Map each candidate to the right authored doc under
-`~/.igris/projects/{slug}/context/`:
+`~/.igris/projects/{slug}/context/` by **reading the doc-type catalog** — the
+self-describing source of truth for which doc-type owns which kind of standard
+(do NOT hardcode the mapping):
 
-| Candidate kind | Target doc |
-|---|---|
-| code **decision** or reusable code **pattern** | `coding_guidelines.md` |
-| **structural** / architecture (layers, module boundaries, folder org) | `architecture_map.md` |
-| **UI** / design-token / component standard | `design_system.md` |
-| **API** shape / endpoint convention | `api_pattern.md` |
-| **test** standard | `test_standards.md` |
+1. **Glob** `~/.igris/core/context-doc-types/*.md` and **Read** each definition.
+   Each declares its `target` (the on-disk doc name), its `applies_when`, and a
+   `kind_affinity` (the candidate kinds it owns — e.g. `decision, pattern` →
+   `coding_guidelines.md`; `structural` → `architecture_map.md`; `UI, design` →
+   `design_system.md`; `API` → `api_pattern.md`; `test` → `test_standards.md`).
+2. **Match** the candidate's `category`/topic to the best-fit definition's
+   `kind_affinity`, and propose that definition's `target` as the doc.
 
-Read whatever target docs already exist (Glob the context dir). If the right
-doc-type is **absent**, offer the operator to **create it** (a new, minimal,
-well-headed doc) or to **skip** this candidate — do not force a standard into a
+Read whatever target docs already exist (Glob the context dir). If the matched
+doc-type is **absent** on disk, offer the operator to **create it** — hand off to
+`/standardize <type>`, which authors a new, well-headed doc from that type's
+catalog skeleton — or to **skip** this candidate. Do not force a standard into a
 mismatched doc.
 
 ## P3 — Operator approves each promotion

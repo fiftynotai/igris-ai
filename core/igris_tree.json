@@ -29,35 +29,40 @@
       "path": "~/.igris/projects/{project}/context/coding_guidelines.md",
       "brain_key": "coding_guidelines",
       "scope": "project",
-      "tier": "task"
+      "tier": "task",
+      "note": "Loader entry only (path/scope/tier/brain_key). Doc-type SEMANTICS — applies_when/consult_when/maintain_when — live in the self-describing catalog at core/context-doc-types/<type>.md (FR-197)."
     },
     "architecture_map": {
       "path": "~/.igris/projects/{project}/context/architecture_map.md",
       "brain_key": "architecture_map",
       "scope": "project",
       "tier": "task",
-      "optional": true
+      "optional": true,
+      "note": "Loader entry only (path/scope/tier/brain_key). Doc-type SEMANTICS — applies_when/consult_when/maintain_when — live in the self-describing catalog at core/context-doc-types/<type>.md (FR-197)."
     },
     "api_pattern": {
       "path": "~/.igris/projects/{project}/context/api_pattern.md",
       "brain_key": "api_pattern",
       "scope": "project",
       "tier": "task",
-      "optional": true
+      "optional": true,
+      "note": "Loader entry only (path/scope/tier/brain_key). Doc-type SEMANTICS — applies_when/consult_when/maintain_when — live in the self-describing catalog at core/context-doc-types/<type>.md (FR-197)."
     },
     "design_system": {
       "path": "~/.igris/projects/{project}/context/design_system.md",
       "brain_key": "design_system",
       "scope": "project",
       "tier": "task",
-      "optional": true
+      "optional": true,
+      "note": "Loader entry only (path/scope/tier/brain_key). Doc-type SEMANTICS — applies_when/consult_when/maintain_when — live in the self-describing catalog at core/context-doc-types/<type>.md (FR-197)."
     },
     "test_standards": {
       "path": "~/.igris/projects/{project}/context/test_standards.md",
       "brain_key": "test_standards",
       "scope": "project",
       "tier": "task",
-      "optional": true
+      "optional": true,
+      "note": "Loader entry only (path/scope/tier/brain_key). Doc-type SEMANTICS — applies_when/consult_when/maintain_when — live in the self-describing catalog at core/context-doc-types/<type>.md (FR-197)."
     },
     "soul": {
       "path": "~/.igris/core/SOUL.md",
