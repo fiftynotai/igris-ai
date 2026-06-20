@@ -282,8 +282,8 @@ INTERNAL_TOOL_ALLOWLIST = {
     'igris_error_backfill_embeddings',
     'igris_memory_backfill_embeddings',
 
-    # memory promotion mechanics — the /distill promote pass marks a learning
-    # promoted-to-doc; not an actor decision-trigger (operator invokes /distill)
+    # memory promotion mechanics — the /promote pass marks a learning
+    # promoted-to-doc; not an actor decision-trigger (operator invokes /promote)
     'igris_memory_mark_promoted',
 
     # file / session sync mechanics — sync layer, not tool-choice surface

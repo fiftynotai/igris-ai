@@ -72,7 +72,7 @@ inference is permanent. The forensic trail is preserved across the lifecycle:
 
 - `provenance='inferred'` → derived by LLM, not directly observed.
 - `learnings.source_extractor` → which extractor produced it.
-  - Post-TD-066: `'llm'`, `'manual'` (direct memory_store), or `'distill'` (/distill skill).
+  - Post-TD-066: `'llm'`, `'manual'` (direct memory_store), or `'distill'` (the `/harvest` skill — the enum value stays `'distill'` after the `/distill` → `/harvest` rename; it is a channel-tag, not the skill name).
   - Pre-TD-066 historical rows may carry `'rule:learned_marker'`,
     `'rule:retry_chain'`, `'rule:blocker_resolution'`, or
     `'rule:error_fingerprint'` — read-compatible, no migration needed.

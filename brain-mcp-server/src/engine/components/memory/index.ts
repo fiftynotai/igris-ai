@@ -115,7 +115,7 @@ export function createMemoryComponent(): BrainComponent {
               },
               source_extractor: {
                 type: 'string',
-                description: 'Which extractor produced this row (FR-109 + TD-066). Default "manual" for direct tool calls; perception passes "llm"; /distill passes "distill". Validated against VALID_SOURCE_EXTRACTOR.',
+                description: 'Which extractor produced this row (FR-109 + TD-066). Default "manual" for direct tool calls; perception passes "llm"; /harvest passes "distill" (the enum value stays "distill" after the /distill → /harvest rename — it is a persisted channel-tag, not the skill name). Validated against VALID_SOURCE_EXTRACTOR.',
               },
             },
             required: ['project', 'category', 'title', 'content'],
@@ -201,7 +201,7 @@ export function createMemoryComponent(): BrainComponent {
         },
         {
           name: 'igris_memory_mark_promoted',
-          description: 'Mark a learning as promoted into a project-context doc (FR-200 M2). Sets promoted_to_doc (path[#anchor]) so igris_memory_recall surfaces a "Promoted → <doc>" pointer instead of re-printing the now-doc-owned content (one-fact-one-source). Called by /distill promote AFTER merging the standard into the doc and recording a derived_from lineage edge. The learning row is never deleted — it becomes a lineage stub. Separate axis from review_status.',
+          description: 'Mark a learning as promoted into a project-context doc (FR-200 M2). Sets promoted_to_doc (path[#anchor]) so igris_memory_recall surfaces a "Promoted → <doc>" pointer instead of re-printing the now-doc-owned content (one-fact-one-source). Called by /promote AFTER merging the standard into the doc and recording a derived_from lineage edge. The learning row is never deleted — it becomes a lineage stub. Separate axis from review_status.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,

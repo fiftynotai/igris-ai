@@ -116,7 +116,7 @@ const VALID_CATEGORIES = new Set<PerceptionCategory>([
  * Confidence ceiling for LLM-extracted candidates.
  *
  * Capped at 0.85 so an over-confident LLM cannot outrank human-asserted or
- * observed entries inserted via `igris_memory_store` or `/distill`, which
+ * observed entries inserted via `igris_memory_store` or `/harvest`, which
  * carry `provenance='human_asserted'` or `'observed'`. Tie-break in dedupe
  * favours `human_asserted` / `observed` provenance over `inferred`
  * provenance (the value perception writes for LLM-sourced rows).

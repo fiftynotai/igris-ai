@@ -1331,7 +1331,7 @@ describe('Memory Tools (FR-092)', () => {
 
   // -------------------------------------------------------------------------
   // FR-200 M2: sibling content-returning tools must ALSO suppress raw content
-  // for a promoted row (warden C1/C2 — these are what /distill promote P1
+  // for a promoted row (warden C1/C2 — these are what /promote P1
   // calls; the recall-only fix left these leaking).
   // -------------------------------------------------------------------------
 

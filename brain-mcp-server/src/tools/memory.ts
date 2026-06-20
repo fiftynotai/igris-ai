@@ -79,8 +79,10 @@ interface MemoryStoreInput {
   /**
    * Which extractor produced this row (FR-109 + TD-066). Default `'manual'`
    * covers the conscious-channel use case where a human or agent calls the
-   * tool directly. Perception extractors pass `'llm'`; the /distill skill
-   * passes `'distill'`.
+   * tool directly. Perception extractors pass `'llm'`; the /harvest skill
+   * passes `'distill'` (the enum value intentionally stays `'distill'` after
+   * the /distill → /harvest rename — it is a persisted channel-tag, not the
+   * skill name; renaming it would orphan stored rows).
    *
    * The TD-061 brief originally proposed a wider vocabulary including
    * `rule:learned_marker`, `rule:retry_chain`, `rule:blocker_resolution`,
@@ -737,7 +739,7 @@ function handleMemoryGet(args: MemoryGetInput): { content: { type: string; text:
 /**
  * Mark a learning as promoted into a project-context doc (FR-200 M2).
  *
- * The memory→doc promotion pass (the `/distill promote` skill) calls this after
+ * The memory→doc promotion pass (the `/promote` skill) calls this after
  * it has merged a hardened learning's standard into a `~/.igris/projects/{name}/
  * context/` doc and recorded a `derived_from` lineage edge. Setting
  * `promoted_to_doc` makes `handleMemoryRecall` surface a "Promoted → <doc>"

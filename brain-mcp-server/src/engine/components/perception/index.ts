@@ -229,7 +229,7 @@ export function createPerceptionComponent(): BrainComponent {
         {
           name: 'igris_perception_extract_now',
           description:
-            'Manual perception extraction with optional force_llm bypass of the bytes-floor cost gate. Useful for /distill integration and operator triage. Watermark advance is opt-in (defaults false) so manual runs do not shadow the next session_end.',
+            'Manual perception extraction with optional force_llm bypass of the bytes-floor cost gate. Useful for /harvest integration and operator triage. Watermark advance is opt-in (defaults false) so manual runs do not shadow the next session_end.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
