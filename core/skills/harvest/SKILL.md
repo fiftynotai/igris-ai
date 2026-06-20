@@ -103,30 +103,21 @@ Catalog reusable, **standalone** modules so future projects can reuse them
 instead of rebuilding (the dark-theme-incident lesson; this is the FR-198 lego
 catalog seed).
 
-1. Propose an **interactive checklist** of candidate standalone modules found in
-   the scan (self-contained packages/libraries/components with a clear boundary —
-   a design-kit package, an auth module, a reusable service, etc.).
-2. For each candidate, **before** registering, dedup against the existing catalog:
-   call `igris_registry_search` (`query` = the module name/keywords,
-   `type: 'module'`). If a strong match already exists, offer to **skip** or
-   **update** (`igris_registry_update`) rather than create a duplicate row.
-3. For each module the operator confirms as new, register it:
-   ```
-   igris_registry_add({
-     name:              "<module name>",
-     type:              "module",
-     github_repo:       "<owner/repo>",          # REQUIRED — ask the operator if not derivable
-     github_path:       "<path within repo>",     # optional
-     description:       "<what it is / when to reuse it>",
-     tags:              "<comma-separated>",
-     source_project:    "<project-slug>",
-     standalone:        true,
-     rebrand_checklist: "<optional — usually set in Phase 5 for templates>"
-   })
-   ```
-   **`github_repo` is required** by the registry — if the module's repo is not
-   derivable from the scan, ask the operator for it (or skip the module rather
-   than inventing a value).
+The mechanics — what counts as a standalone module, dedup-before-register, and
+the exact `igris_registry_add` shape (including the `source`/`source_ref`/
+`when_to_use` asset-reference fields) — live in the **shared catalog recipe**.
+**Read it and follow it:** `~/.igris/core/docs/catalog-recipe.md`. This is the
+same recipe `/reuse` follows, so the catalog has one home.
+
+Harvest-specific framing on top of the recipe:
+
+1. From the Phase-1 scan, propose an **interactive checklist** of candidate
+   standalone modules (the recipe's "what is a standalone module" test decides
+   what qualifies). The operator confirms which to catalog — never auto-register.
+2. For each confirmed candidate, follow the recipe: **dedup** via
+   `igris_registry_search` (offer skip/update on a strong match), then
+   **register** new ones via `igris_registry_add` — set `source_project` to this
+   project's slug and capture `when_to_use` while the context is fresh.
 
 ## Phase 4 — Knowledge extraction (3–8 curated learnings)
 

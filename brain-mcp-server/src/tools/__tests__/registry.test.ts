@@ -67,6 +67,9 @@ function makeTestDb(): Database.Database {
       rebrand_checklist TEXT,
       source_project TEXT,
       status TEXT DEFAULT 'available' CHECK(status IN ('available', 'deprecated', 'draft')),
+      when_to_use TEXT,
+      source TEXT,
+      source_ref TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     );
@@ -569,6 +572,92 @@ describe('Registry Tools (FR-099)', () => {
 
       const row = db.prepare('SELECT standalone FROM registry WHERE id = ?').get('update-test') as { standalone: number };
       expect(row.standalone).toBe(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // 7. FR-198 asset-reference columns (when_to_use, source, source_ref)
+  // -------------------------------------------------------------------------
+
+  describe('FR-198 asset-reference columns', () => {
+    it('should round-trip when_to_use / source / source_ref through add → get', () => {
+      handleRegistryAdd({
+        id: 'fr198-pkg',
+        name: 'fifty_buttons',
+        type: 'module',
+        framework: 'flutter',
+        github_repo: 'github.com/fiftynotai/fifty_flutter_kit',
+        description: 'Branded button component set',
+        when_to_use: 'when a Flutter project needs the fifty.dev branded button system',
+        source: 'pub.dev',
+        source_ref: 'fifty_buttons',
+      });
+
+      // DB-level round-trip (the columns actually persisted)
+      const row = db
+        .prepare('SELECT when_to_use, source, source_ref FROM registry WHERE id = ?')
+        .get('fr198-pkg') as { when_to_use: string; source: string; source_ref: string };
+      expect(row.when_to_use).toBe('when a Flutter project needs the fifty.dev branded button system');
+      expect(row.source).toBe('pub.dev');
+      expect(row.source_ref).toBe('fifty_buttons');
+
+      // formatEntry renders them
+      const result = handleRegistryGet({ id: 'fr198-pkg' });
+      const text = result.content[0].text;
+      expect(text).toContain('When to use: when a Flutter project needs the fifty.dev branded button system');
+      expect(text).toContain('Source: pub.dev (fifty_buttons)');
+    });
+
+    it('should update only when_to_use and preserve other fields', () => {
+      handleRegistryAdd({
+        id: 'fr198-update',
+        name: 'auth_module',
+        type: 'module',
+        github_repo: 'github.com/org/repo',
+        source: 'github',
+        when_to_use: 'original cue',
+      });
+
+      handleRegistryUpdate({
+        id: 'fr198-update',
+        when_to_use: 'updated cue — reach for this when you need OAuth',
+      });
+
+      const row = db
+        .prepare('SELECT when_to_use, source FROM registry WHERE id = ?')
+        .get('fr198-update') as { when_to_use: string; source: string };
+      expect(row.when_to_use).toBe('updated cue — reach for this when you need OAuth');
+      // source preserved (partial-update invariant)
+      expect(row.source).toBe('github');
+    });
+
+    it('should leave new columns NULL for back-compat adds (old required fields only)', () => {
+      handleRegistryAdd({
+        name: 'legacy-module',
+        type: 'module',
+        github_repo: 'github.com/org/legacy',
+      });
+
+      const row = db
+        .prepare("SELECT when_to_use, source, source_ref FROM registry WHERE name = 'legacy-module'")
+        .get() as { when_to_use: string | null; source: string | null; source_ref: string | null };
+      expect(row.when_to_use).toBeNull();
+      expect(row.source).toBeNull();
+      expect(row.source_ref).toBeNull();
+    });
+
+    it('formatEntry shows (none) for unset asset-reference fields', () => {
+      handleRegistryAdd({
+        id: 'fr198-none',
+        name: 'bare-module',
+        type: 'module',
+        github_repo: 'github.com/org/bare',
+      });
+
+      const result = handleRegistryGet({ id: 'fr198-none' });
+      const text = result.content[0].text;
+      expect(text).toContain('When to use: (none)');
+      expect(text).toContain('Source: (none)');
     });
   });
 });

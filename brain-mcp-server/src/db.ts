@@ -885,6 +885,75 @@ function migrateSchema(db: Database.Database): void {
     })();
     console.error('[brain] Schema migrated to version 16 (learnings.promoted_to_doc)');
   }
+
+  // v17: registry asset-reference columns (FR-198 — the "lego" catalog)
+  //
+  // Generalizes the registry table into the reusable-assets catalog shape by
+  // adding three nullable columns:
+  //   - when_to_use   TEXT — "reach for this lego block when ..." (today this
+  //                          is folded into `description`; a dedicated column
+  //                          makes the reuse-fit queryable/renderable).
+  //   - source        TEXT — where the asset lives: "pub.dev" | "github" |
+  //                          "npm" | etc. fifty_flutter_kit packages live on
+  //                          pub.dev, not github — `github_repo` alone could not
+  //                          express that. (D-2 Option A: NO `type` CHECK widen;
+  //                          `source` distinguishes pub.dev packages from repos,
+  //                          so `template|module` stays expressive enough.)
+  //   - source_ref    TEXT — the source-specific locator (package name, npm
+  //                          spec, etc.) — generic companion to `github_repo`/
+  //                          `github_path` for non-github sources.
+  // All three are NULL on every pre-FR-198 row (back-compat preserved).
+  //
+  // PLACEMENT (FR-198 verification, L-53 / L-142): the L-142 convention is
+  // "per-component migrations own ALTERs even on globally-shared tables" — BUT
+  // the registry component explicitly does NOT own its migrations: its
+  // `schema()` returns [] and is annotated "Migrations handled by legacy db.ts
+  // migrateSchema()" (engine/components/registry/index.ts:44-47). The registry
+  // TABLE itself was created here in v12. So the established home for a registry
+  // ALTER is this legacy registry — exactly where v12 created the table. Putting
+  // it here matches the registry's existing migration ownership.
+  //
+  // Why no CHECK constraint: SQLite's ALTER TABLE cannot add a CHECK without
+  // rewriting the table; `source` is a free-form locator-kind validated (if at
+  // all) in the handler. Nullable ADD COLUMN is O(1) metadata-only — NULL-safe
+  // for all existing rows, the same pattern v14/v15/v16 used.
+  //
+  // The new columns are NOT added to registry_fts (R-2): FTS coverage of
+  // when_to_use is a deliberate follow-on (rebuilding the FTS table + 3 triggers
+  // is its own risk surface). Search still hits name/description/tags/framework.
+  //
+  // Gate behind v16's actual completion (re-read schema_version, L-209) so a
+  // partial migration that stopped before v16 cannot leap-frog these columns.
+  let postV16Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV16Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+  if (postV16Version >= 16 && postV16Version < 17) {
+    db.transaction(() => {
+      // Defensive PRAGMA check: tolerate partial migrations / hot reloads where
+      // a column already landed. Mirror v16's per-column guard.
+      const cols = db.prepare(`PRAGMA table_info(registry)`).all() as Array<{ name: string }>;
+      const has = (name: string): boolean => cols.some((c) => c.name === name);
+      if (!has('when_to_use')) {
+        db.exec(`ALTER TABLE registry ADD COLUMN when_to_use TEXT`);
+      }
+      if (!has('source')) {
+        db.exec(`ALTER TABLE registry ADD COLUMN source TEXT`);
+      }
+      if (!has('source_ref')) {
+        db.exec(`ALTER TABLE registry ADD COLUMN source_ref TEXT`);
+      }
+      db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (17)').run();
+    })();
+    console.error(
+      '[brain] Schema migrated to version 17 (registry asset-reference columns: when_to_use, source, source_ref)',
+    );
+  }
 }
 
 /**

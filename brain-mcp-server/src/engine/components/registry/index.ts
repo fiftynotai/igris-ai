@@ -50,7 +50,7 @@ export function createRegistryComponent(): BrainComponent {
       return [
         {
           name: 'igris_registry_add',
-          description: 'Register a reusable template or module in the Igris registry. Templates are full project scaffolds; modules are standalone cherry-pickable components. Uses GitHub URLs as primary paths.',
+          description: 'Register a reusable asset in the Igris reusable-assets catalog (the "lego" store): a template (full project scaffold) or module (standalone cherry-pickable component, incl. pub.dev/npm packages). Records what it is, where it lives (github_repo/path or source/source_ref), and when to reach for it (when_to_use) so future work reuses instead of rebuilding.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -120,6 +120,18 @@ export function createRegistryComponent(): BrainComponent {
                 type: 'string',
                 enum: ['available', 'deprecated', 'draft'],
                 description: 'Entry status (default: "available")',
+              },
+              when_to_use: {
+                type: 'string',
+                description: 'When to reach for this asset — the reuse-fit cue (e.g., "needs a Flutter scroll-driven hero header"). Makes "grab a lego block if one fits" actionable.',
+              },
+              source: {
+                type: 'string',
+                description: 'Where the asset lives, when not a github repo: "pub.dev", "npm", "github", etc. fifty_flutter_kit packages live on pub.dev.',
+              },
+              source_ref: {
+                type: 'string',
+                description: 'Source-specific locator paired with `source` (e.g., the pub.dev package name, the npm spec).',
               },
             },
             required: ['name', 'type', 'github_repo'],
@@ -311,6 +323,18 @@ export function createRegistryComponent(): BrainComponent {
                 type: 'string',
                 enum: ['available', 'deprecated', 'draft'],
                 description: 'Updated status',
+              },
+              when_to_use: {
+                type: 'string',
+                description: 'Updated reuse-fit cue (when to reach for this asset)',
+              },
+              source: {
+                type: 'string',
+                description: 'Updated source ("pub.dev", "npm", "github", etc.)',
+              },
+              source_ref: {
+                type: 'string',
+                description: 'Updated source-specific locator (package name, npm spec, etc.)',
               },
             },
             required: ['id'],

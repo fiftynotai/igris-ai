@@ -291,7 +291,11 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'id', 'name', 'type', 'archetype', 'framework', 'github_repo',
       'github_path', 'github_branch', 'description', 'install_command',
       'standalone', 'parent_template', 'tags', 'rebrand_checklist',
-      'source_project', 'status', 'created_at', 'updated_at',
+      'source_project', 'status',
+      // FR-198 asset-reference columns — MUST be listed here or they silently
+      // don't replicate to/from VPS (R-4).
+      'when_to_use', 'source', 'source_ref',
+      'created_at', 'updated_at',
     ],
   },
   {

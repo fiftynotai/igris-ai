@@ -42,6 +42,10 @@ export interface RegistryAddInput {
   rebrand_checklist?: string;
   source_project?: string;
   status?: 'available' | 'deprecated' | 'draft';
+  // FR-198 asset-reference columns (the "lego" catalog generalization)
+  when_to_use?: string;
+  source?: string;
+  source_ref?: string;
 }
 
 /** Input shape for igris_registry_search */
@@ -91,6 +95,10 @@ export interface RegistryUpdateInput {
   rebrand_checklist?: string;
   source_project?: string;
   status?: 'available' | 'deprecated' | 'draft';
+  // FR-198 asset-reference columns
+  when_to_use?: string;
+  source?: string;
+  source_ref?: string;
 }
 
 /** Row shape from registry table */
@@ -111,6 +119,10 @@ interface RegistryRow {
   rebrand_checklist: string | null;
   source_project: string | null;
   status: string;
+  // FR-198 asset-reference columns (nullable on all pre-FR-198 rows)
+  when_to_use: string | null;
+  source: string | null;
+  source_ref: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -131,7 +143,9 @@ function formatEntry(row: RegistryRow): string {
     `Framework: ${row.framework ?? '(none)'}`,
     `GitHub: ${row.github_repo}${row.github_path ? `/${row.github_path}` : ''}`,
     `Branch: ${row.github_branch}`,
+    `Source: ${row.source ?? '(none)'}${row.source_ref ? ` (${row.source_ref})` : ''}`,
     `Description: ${row.description ?? '(none)'}`,
+    `When to use: ${row.when_to_use ?? '(none)'}`,
     `Install: ${row.install_command ?? '(none)'}`,
     `Standalone: ${row.standalone ? 'yes' : 'no'}`,
     `Parent Template: ${row.parent_template ?? '(none)'}`,
@@ -175,8 +189,9 @@ function handleRegistryAdd(args: RegistryAddInput): { content: { type: string; t
   db.prepare(`
     INSERT INTO registry (id, name, type, archetype, framework, github_repo, github_path,
       github_branch, description, install_command, standalone, parent_template,
-      tags, rebrand_checklist, source_project, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      tags, rebrand_checklist, source_project, status,
+      when_to_use, source, source_ref)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     args.name,
@@ -194,6 +209,9 @@ function handleRegistryAdd(args: RegistryAddInput): { content: { type: string; t
     args.rebrand_checklist ?? null,
     args.source_project ?? null,
     args.status ?? 'available',
+    args.when_to_use ?? null,
+    args.source ?? null,
+    args.source_ref ?? null,
   );
 
   const row = db.prepare('SELECT * FROM registry WHERE id = ?').get(id) as RegistryRow;
@@ -455,6 +473,9 @@ function handleRegistryUpdate(args: RegistryUpdateInput): { content: { type: str
   if (args.rebrand_checklist !== undefined) { updates.push('rebrand_checklist = ?'); params.push(args.rebrand_checklist); }
   if (args.source_project !== undefined) { updates.push('source_project = ?'); params.push(args.source_project); }
   if (args.status !== undefined) { updates.push('status = ?'); params.push(args.status); }
+  if (args.when_to_use !== undefined) { updates.push('when_to_use = ?'); params.push(args.when_to_use); }
+  if (args.source !== undefined) { updates.push('source = ?'); params.push(args.source); }
+  if (args.source_ref !== undefined) { updates.push('source_ref = ?'); params.push(args.source_ref); }
 
   if (updates.length === 0) {
     return {

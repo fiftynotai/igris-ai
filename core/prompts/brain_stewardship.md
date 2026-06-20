@@ -322,7 +322,12 @@ igris_error_lookup({
 igris_error_dashboard({ project: "igris-ai", summary_only: true })
 ```
 
-## 5. Registry (`igris_project_*`)
+## 5. Project registry (`igris_project_*`)
+
+> **Naming note:** this is the **project** registry (registered Igris
+> projects). Do not confuse it with the **reusable-assets catalog** in §5b
+> (`igris_registry_*`), which is a different store (cataloged templates/modules,
+> the "lego" store).
 
 **Tools:** `igris_project_register`, `igris_project_list`,
 `igris_project_status`, `igris_project_update`, `igris_project_dashboard`.
@@ -355,6 +360,44 @@ archetype, status, last session. Drives the affinity boosts in recall.
 igris_project_status({ slug: "fifty-flutter-kit" })
 igris_project_update({ slug: "old-prototype", status: "archived" })
 igris_project_dashboard({ archetype: "ai-agent-system", summary_only: true })
+```
+
+## 5b. Reusable-assets catalog (`igris_registry_*`)
+
+> **Distinct from §5.** This is the **reusable-assets catalog** (the "lego"
+> store) — cataloged templates and modules, NOT the project registry. The tool
+> prefix is `igris_registry_*`, not `igris_project_*`.
+
+**Tools:** `igris_registry_search`, `igris_registry_get`, `igris_registry_list`
+(read), `igris_registry_add`, `igris_registry_update`, `igris_registry_remove`
+(write — driven by `/harvest`, not free-form reasoning).
+
+**What's there:** reference rows for reusable assets — templates (full project
+scaffolds) and modules (standalone components, incl. pub.dev/npm packages and
+SDKs). Each row records *what it is* (name/type/description), *where it lives*
+(`github_repo`/`github_path` or `source`/`source_ref`), *when to reach for it*
+(`when_to_use`/`tags`), and *how to integrate* (`install_command`,
+`rebrand_checklist`). The shared mechanics are in
+`~/.igris/core/docs/catalog-recipe.md`.
+
+### When to call
+
+- **Reuse before rewrite — before building something new**, search the catalog:
+  `igris_registry_search({ query: "<what you're about to build>" })`. If a lego
+  block fits, reach for it (the `/reuse` skill drives scaffold-from-template and
+  add-a-package). This is the live obligation behind the conduct "Reuse before
+  rewrite" rule.
+- Before cataloging a module during `/harvest` Phase 3: `igris_registry_search`
+  to dedup against the existing catalog (offer skip/update on a strong match).
+- To inspect a chosen asset's full detail (incl. `rebrand_checklist`):
+  `igris_registry_get({ id })`. To browse the shelf: `igris_registry_list`.
+
+### Example invocation
+
+```jsonc
+igris_registry_search({ query: "flutter branded buttons", type: "module" })
+igris_registry_list({ type: "template", archetype: "enterprise-mvvm-mobile" })
+igris_registry_get({ id: "tmpl-enterprise-mobile" })
 ```
 
 ## 6. Subconscious (`igris_perception_*`)

@@ -58,7 +58,7 @@ flowchart TB
 | 16 | `subconscious` | Rule-based anomaly detection (**DISABLED in v7**; see §3.1) |
 | 17 | `perception` | Observation & pattern extraction from sessions |
 | 18 | `monitoring` | Agent & system observability (heartbeats, SLA) |
-| 19 | `registry` | MCP tool registry (introspection, schema validation) |
+| 19 | `registry` | Reusable-assets catalog (templates/modules — the "lego" store; FR-099/FR-198) |
 
 **Tool count:** 120+ brain tools distributed across the 19 components (the `igris-brain` MCP server is the single gateway). Every tool's `inputSchema` declares `additionalProperties: false` (TD-128 strict-input contract; enforced at `brain-mcp-server/src/engine/gateway.ts:47-138`). Callers must use allowlists when forwarding queue entries or external payloads (see `cli/src/lib/sync/data.ts:224`).
 
@@ -247,19 +247,20 @@ The table below lists each agent's `tools:` from its YAML frontmatter (`core/age
 
 Each agent reads `~/.igris/core/igris_tree.json` to determine which context files to load (e.g., architect loads `coding_guidelines` + `architecture_map`; forger adds `api_pattern`, plus `design_system` if the task is UI-flagged). The `/document` skill in `/hunt` DOCUMENTING is an orchestrator-level operation (not delegated to an agent).
 
-### 7.2 The 21 skills (grouped by purpose)
+### 7.2 The skills (grouped by purpose)
 
 | Group | Skills |
 |-------|--------|
 | **Lifecycle** | `/awaken`, `/rest`, `/hunt` |
 | **Brief management** | `/register`, `/archive`, `/scan` |
 | **Documentation & quality** | `/document`, `/audit`, `/standardize` |
+| **Knowledge & reuse** | `/harvest`, `/promote`, `/reuse` |
 | **Collaboration & visibility** | `/team`, `/dashboard`, `/portfolio` |
 | **Utilities** | `/sync`, `/release`, `/digivolve`, `/projects`, `/ideate` |
 | **Brand & design** | `/fifty-kit`, `/ui-design`, `/visualize` |
-| **Migrations** | `/migrate-analyze` |
+| **Migrations & harness** | `/migrate-analyze`, `/onboard-harness` |
 
-Each skill is `core/skills/<name>/SKILL.md` with YAML frontmatter (allowed tools, triggers, etc.). The full skill table with one-line taglines lives in `README.md` "21 Skills" section.
+Each skill is `core/skills/<name>/SKILL.md` with YAML frontmatter (allowed tools, triggers, etc.).
 
 ### 7.3 Orchestrator-delegates principle
 
@@ -307,9 +308,10 @@ triggers: ["trigger phrase", "alt phrase"]
 ```
 
 1. Body: explanation, usage examples, state machine (if multi-phase).
-2. Register the name in `CLAUDE.md` "Available Skills" + `scripts/templates/CLAUDE.md.template`.
-3. Add a row to `README.md` "21 Skills" table.
-4. If the skill needs context routing, add an entry to `core/igris_tree.json:tasks`.
+2. Register the name in `CLAUDE.md` "Available Skills" + `core/templates/CLAUDE.md.tmpl` (the root `CLAUDE.md` is regenerated from this template).
+3. Add the skill to the §7.2 grouped table above.
+4. Mirror the skill to `~/.igris/core/skills/<name>/SKILL.md` (TD-096) and verify with `core/scripts/verify_mirror.sh`.
+5. If the skill needs context routing, add an entry to `core/igris_tree.json:tasks`.
 
 ### 8.4 Add an agent
 
