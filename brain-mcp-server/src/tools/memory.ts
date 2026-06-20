@@ -116,6 +116,13 @@ interface MemoryGetInput {
   id: number;
 }
 
+/** Input shape for igris_memory_mark_promoted (FR-200 M2) */
+interface MemoryMarkPromotedInput {
+  id: number;
+  doc_path: string;
+  doc_anchor?: string;
+}
+
 /** A BM25 result row from FTS5 */
 interface Bm25Row {
   id: number;
@@ -132,6 +139,13 @@ interface Bm25Row {
   access_count: number;
   rank: number;
   provenance: string;
+  /**
+   * FR-200 M2: the project-context doc (path[#anchor]) a learning's standard
+   * was promoted into, or null/undefined when not promoted. Populated only on
+   * the recall hydration paths that SELECT it (recall's BM25 + hybrid
+   * `fullRows`); other Bm25Row producers leave it undefined.
+   */
+  promoted_to_doc?: string | null;
 }
 
 /**
@@ -321,7 +335,7 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
   let sql = `
     SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
            l.tech_stack, l.scope, l.source_brief, l.confidence,
-           l.created_at, l.access_count, l.provenance,
+           l.created_at, l.access_count, l.provenance, l.promoted_to_doc,
            rank
     FROM learnings_fts fts
     JOIN learnings l ON l.id = fts.rowid
@@ -355,13 +369,26 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
   }
 
   const results = rows.map((row, i) => {
-    return [
+    // FR-200 M2 (one-fact-one-source): a promoted learning's standard now lives
+    // in a project-context doc. Search must NOT re-emit the raw content (here it
+    // would be the FULL untruncated body) — surface the doc pointer instead.
+    // Gate matches handleMemoryRecall exactly: non-empty string => promoted.
+    const promotedTo = typeof row.promoted_to_doc === 'string' && (row.promoted_to_doc as string).length > 0
+      ? (row.promoted_to_doc as string)
+      : null;
+    const lines = [
       `--- Result ${i + 1} ---`,
       `ID: ${row.id}`,
       `Project: ${row.project}`,
       `Category: ${row.category}`,
       `Title: ${row.title}`,
-      `Content: ${row.content}`,
+    ];
+    if (promotedTo) {
+      lines.push(`Promoted: → ${promotedTo} (this standard now lives in the doc; see it there)`);
+    } else {
+      lines.push(`Content: ${row.content}`);
+    }
+    lines.push(
       `Tags: ${row.tags || '(none)'}`,
       `Tech Stack: ${row.tech_stack || '(none)'}`,
       `Scope: ${row.scope}`,
@@ -371,7 +398,8 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
       `Created: ${row.created_at}`,
       `Access Count: ${row.access_count}`,
       `Rank: ${row.rank}`,
-    ].join('\n');
+    );
+    return lines.join('\n');
   });
 
   return {
@@ -412,7 +440,7 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
   const bm25Sql = `
     SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
            l.tech_stack, l.scope, l.source_brief, l.confidence,
-           l.created_at, l.access_count, l.provenance,
+           l.created_at, l.access_count, l.provenance, l.promoted_to_doc,
            rank,
            (rank * 0.6 - l.confidence * 0.2 - MIN(l.access_count, 100) / 100.0 * 0.2) AS composite_score
     FROM learnings_fts fts
@@ -501,7 +529,8 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
     // hybrid_search hydration query below.
     const fullRows = db.prepare(
       `SELECT id, project, category, title, content, tags, tech_stack, scope,
-              source_brief, confidence, created_at, access_count, provenance
+              source_brief, confidence, created_at, access_count, provenance,
+              promoted_to_doc
        FROM learnings
        WHERE id IN (${placeholders})
          AND review_status = 'approved'`,
@@ -592,18 +621,33 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
     const truncated = fullContent.length > 200
       ? fullContent.substring(0, 200) + '...'
       : fullContent;
+    // FR-200 M2 (one-fact-one-source): when a learning has been promoted into a
+    // project-context doc, that doc now OWNS the standard. Recall must stop
+    // double-surfacing the raw learning content — instead point the reader at
+    // the doc. We replace the Content line with a Promoted pointer (and keep a
+    // short stub so the row still reads), rather than printing the now-stale
+    // full text. The learning row is never deleted; it remains a lineage stub.
+    const promotedTo = typeof row.promoted_to_doc === 'string' && row.promoted_to_doc.length > 0
+      ? row.promoted_to_doc
+      : null;
     const lines = [
       `--- Recall ${i + 1} ---`,
       `ID: ${row.id}`,
       `Project: ${row.project}`,
       `Category: ${row.category}`,
       `Title: ${row.title}`,
-      `Content: ${truncated}`,
+    ];
+    if (promotedTo) {
+      lines.push(`Promoted: → ${promotedTo} (this standard now lives in the doc; see it there)`);
+    } else {
+      lines.push(`Content: ${truncated}`);
+    }
+    lines.push(
       `Tags: ${row.tags || '(none)'}`,
       `Scope: ${row.scope}`,
       `Confidence: ${row.confidence}`,
       `Provenance: ${row.provenance}`,
-    ];
+    );
     if (row.rrf_score !== undefined) {
       lines.push(`Score: ${(row.rrf_score as number).toFixed(6)}`);
     } else if (row.composite_score !== undefined) {
@@ -686,6 +730,91 @@ function handleMemoryGet(args: MemoryGetInput): { content: { type: string; text:
     content: [{
       type: 'text',
       text: result,
+    }],
+  };
+}
+
+/**
+ * Mark a learning as promoted into a project-context doc (FR-200 M2).
+ *
+ * The memory→doc promotion pass (the `/distill promote` skill) calls this after
+ * it has merged a hardened learning's standard into a `~/.igris/projects/{name}/
+ * context/` doc and recorded a `derived_from` lineage edge. Setting
+ * `promoted_to_doc` makes `handleMemoryRecall` surface a "Promoted → <doc>"
+ * pointer instead of re-printing the now-doc-owned raw content
+ * (one-fact-one-source — FR-196).
+ *
+ * This is a SEPARATE axis from `review_status` (a learning can be `approved`
+ * AND promoted) — which is exactly why FR-200 added a dedicated column rather
+ * than overloading the perception-channel review gate (see the FR-200 plan
+ * Q3b). The learning row is NEVER deleted by promotion; it becomes a lineage
+ * stub whose `promoted_to_doc` points readers at the doc.
+ *
+ * Parameterized throughout. Verifies the row exists first (mirrors
+ * `handleMemoryUpdate`) so the caller gets a clear "not found" rather than a
+ * silent zero-rows-changed. Idempotent: re-marking with a new doc path simply
+ * overwrites the pointer and re-bumps `updated_at`.
+ *
+ * Returns `{ id, promoted_to_doc, updated_at }` JSON.
+ *
+ * @param args - The learning ID + target doc path + optional anchor
+ * @returns MCP-formatted response with the promotion record
+ */
+function handleMemoryMarkPromoted(args: MemoryMarkPromotedInput): { content: { type: string; text: string }[] } {
+  // Validate id (mirror handleMemoryUpdate's positive-int guard).
+  if (typeof args.id !== 'number' || !Number.isInteger(args.id) || args.id <= 0) {
+    return { content: [{ type: 'text', text: 'Validation error: id must be a positive integer.' }] };
+  }
+
+  // Validate doc_path: required, non-empty, bounded.
+  if (typeof args.doc_path !== 'string' || args.doc_path.length === 0 || args.doc_path.length > MAX_TITLE_LENGTH) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Validation error: doc_path must be a non-empty string of at most ${MAX_TITLE_LENGTH} characters.`,
+      }],
+    };
+  }
+
+  // Validate doc_anchor when present (optional; bounded; no leading '#' needed —
+  // we add the separator ourselves so callers pass the bare anchor).
+  if (args.doc_anchor !== undefined) {
+    if (typeof args.doc_anchor !== 'string' || args.doc_anchor.length === 0 || args.doc_anchor.length > MAX_TITLE_LENGTH) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Validation error: doc_anchor, when provided, must be a non-empty string of at most ${MAX_TITLE_LENGTH} characters.`,
+        }],
+      };
+    }
+  }
+
+  const db = getDb();
+
+  // Verify the row exists before the UPDATE (clear not-found vs silent no-op).
+  const existing = db
+    .prepare('SELECT id FROM learnings WHERE id = ?')
+    .get(args.id) as { id: number } | undefined;
+  if (!existing) {
+    return { content: [{ type: 'text', text: `Learning with ID ${args.id} not found.` }] };
+  }
+
+  // Compose the pointer: doc_path, plus '#'+anchor when an anchor is given.
+  // Strip a leading '#' the caller may have included so we never double it.
+  const anchor = args.doc_anchor !== undefined ? args.doc_anchor.replace(/^#/, '') : '';
+  const promotedToDoc = anchor.length > 0 ? `${args.doc_path}#${anchor}` : args.doc_path;
+
+  // Bump updated_at to a fresh ISO timestamp (mirror handleMemoryUpdate — keeps
+  // LWW sync resolution comparable with created_at's UTC datetime('now')).
+  const updatedAt = new Date().toISOString();
+
+  db.prepare('UPDATE learnings SET promoted_to_doc = ?, updated_at = ? WHERE id = ?')
+    .run(promotedToDoc, updatedAt, args.id);
+
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({ id: args.id, promoted_to_doc: promotedToDoc, updated_at: updatedAt }, null, 2),
     }],
   };
 }
@@ -877,7 +1006,7 @@ async function handleMemoryHybridSearch(args: HybridSearchInput): Promise<{ cont
     let bm25Sql = `
       SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
              l.tech_stack, l.scope, l.source_brief, l.confidence,
-             l.created_at, l.access_count, l.provenance, rank
+             l.created_at, l.access_count, l.provenance, l.promoted_to_doc, rank
       FROM learnings_fts fts
       JOIN learnings l ON l.id = fts.rowid
       WHERE learnings_fts MATCH ?
@@ -976,7 +1105,8 @@ async function handleMemoryHybridSearch(args: HybridSearchInput): Promise<{ cont
   // with the same filter on the recall hydration query above.
   const fullRows = db.prepare(
     `SELECT id, project, category, title, content, tags, tech_stack, scope,
-            source_brief, confidence, created_at, access_count, provenance
+            source_brief, confidence, created_at, access_count, provenance,
+            promoted_to_doc
      FROM learnings
      WHERE id IN (${placeholders})
        AND review_status = 'approved'`,
@@ -1018,18 +1148,32 @@ function formatHybridResult(
     ? fullContent.substring(0, 300) + '...'
     : fullContent;
 
+  // FR-200 M2 (one-fact-one-source): when the learning has been promoted into a
+  // project-context doc, surface the doc pointer instead of re-emitting the raw
+  // content. Covers BOTH hybrid_search code paths — this formatter is the sole
+  // result renderer for the RRF-merged path AND the BM25-only fallback. Gate
+  // matches handleMemoryRecall exactly: non-empty string => promoted.
+  const promotedTo = typeof row.promoted_to_doc === 'string' && row.promoted_to_doc.length > 0
+    ? row.promoted_to_doc
+    : null;
   const lines = [
     `--- Result ${index + 1} ---`,
     `ID: ${row.id}`,
     `Project: ${row.project}`,
     `Category: ${row.category}`,
     `Title: ${row.title}`,
-    `Content: ${truncated}`,
+  ];
+  if (promotedTo) {
+    lines.push(`Promoted: → ${promotedTo} (this standard now lives in the doc; see it there)`);
+  } else {
+    lines.push(`Content: ${truncated}`);
+  }
+  lines.push(
     `Tags: ${row.tags || '(none)'}`,
     `Scope: ${row.scope}`,
     `Confidence: ${row.confidence}`,
     `Provenance: ${row.provenance}`,
-  ];
+  );
 
   if (rrfScore !== null) {
     lines.push(`RRF Score: ${rrfScore.toFixed(6)}`);
@@ -1673,6 +1817,7 @@ export {
   handleMemorySearch,
   handleMemoryRecall,
   handleMemoryGet,
+  handleMemoryMarkPromoted,
   handleMemoryHybridSearch,
   handleMemoryBackfillEmbeddings,
   handleMemoryUpdate,
@@ -1688,6 +1833,7 @@ export type {
   MemorySearchInput,
   MemoryRecallInput,
   MemoryGetInput,
+  MemoryMarkPromotedInput,
   HybridSearchInput,
   BackfillInput,
   MemoryUpdateInput,

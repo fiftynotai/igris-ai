@@ -834,6 +834,57 @@ function migrateSchema(db: Database.Database): void {
       '[brain] Schema migrated to version 15 (learnings.review_status + source_extractor)',
     );
   }
+
+  // v16: learnings.promoted_to_doc (FR-200 M2 — memory→doc promotion pipeline)
+  //
+  // Adds one nullable column recording the project-context doc (path[#anchor])
+  // that a learning's standard was promoted into. NULL = not promoted (every
+  // pre-FR-200 row). Set by `igris_memory_mark_promoted`; read by
+  // `handleMemoryRecall` to surface a "Promoted → <doc>" pointer and stop
+  // double-surfacing the now-doc-owned standard (one-fact-one-source, FR-196).
+  //
+  // PLACEMENT (FR-200 verification, L-142): this is a CONSCIOUS-channel column
+  // — it gates the same recall path `review_status` gates and replicates via
+  // SYNC_TABLES, exactly like v15's review_status. It is the closest sibling to
+  // review_status of anything in the schema. The memory component owns NO
+  // migrations (`memory/index.ts` schema() returns []; the TD-171 comment in
+  // memory.ts is explicit that `memory/schema.ts` is intentionally absent), so
+  // the established home for a conscious-channel learnings ALTER is this legacy
+  // registry — exactly where v14 (provenance) and v15 (review_status +
+  // source_extractor) live. Perception's `seen_again_count`/`last_seen_at` ALTERs
+  // live in perception/schema.ts because they are perception-CHANNEL-specific
+  // (excluded from sync); promoted_to_doc is not, so it belongs here.
+  //
+  // Why no CHECK constraint: SQLite's ALTER TABLE cannot add a CHECK without
+  // rewriting the table; the value is a free-form doc path validated in the
+  // handler. Nullable ADD COLUMN is O(1) metadata-only.
+  //
+  // Gate behind v15's actual completion (re-read schema_version) so a partial
+  // migration that stopped before v15 does not leap-frog the missing column.
+  let postV15Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV15Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+  if (postV15Version >= 15 && postV15Version < 16) {
+    db.transaction(() => {
+      // Defensive PRAGMA check: tolerate partial migrations / hot reloads where
+      // the column already landed. Mirror v15's `cols.some(...)` guard.
+      const cols = db.prepare(`PRAGMA table_info(learnings)`).all() as Array<{ name: string }>;
+      const hasPromotedToDoc = cols.some((c) => c.name === 'promoted_to_doc');
+      if (!hasPromotedToDoc) {
+        db.exec(`
+          ALTER TABLE learnings ADD COLUMN promoted_to_doc TEXT
+        `);
+      }
+      db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (16)').run();
+    })();
+    console.error('[brain] Schema migrated to version 16 (learnings.promoted_to_doc)');
+  }
 }
 
 /**

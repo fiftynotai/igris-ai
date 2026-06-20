@@ -73,7 +73,9 @@ function makeMinimalSyncDb(): Database.Database {
       last_accessed_at TEXT,
       provenance TEXT NOT NULL DEFAULT 'observed',
       review_status TEXT NOT NULL DEFAULT 'approved',
-      source_extractor TEXT NOT NULL DEFAULT 'manual'
+      source_extractor TEXT NOT NULL DEFAULT 'manual',
+      -- FR-200 M2: nullable promotion pointer (db.ts v16); now in SYNC_TABLES.
+      promoted_to_doc TEXT
     );
 
     CREATE TABLE sync_state (
@@ -158,6 +160,12 @@ describe('Sync — FR-109 review_status / source_extractor regression', () => {
       const config = SYNC_TABLES.find((t) => t.table === 'learnings');
       expect(config).toBeDefined();
       expect(config!.columns).toContain('source_extractor');
+    });
+
+    it('includes promoted_to_doc (FR-200 M2 doc-promotion pointer)', () => {
+      const config = SYNC_TABLES.find((t) => t.table === 'learnings');
+      expect(config).toBeDefined();
+      expect(config!.columns).toContain('promoted_to_doc');
     });
   });
 
@@ -371,6 +379,9 @@ describe('Sync — FR-109 review_status / source_extractor regression', () => {
       expect(row.review_status).toBe('approved');
       expect(row.provenance).toBe('human_asserted');
       expect(row.source_extractor).toBe('manual');
+      // FR-200 M2: promoted_to_doc replicates (null for this unpromoted row).
+      expect(row).toHaveProperty('promoted_to_doc');
+      expect(row.promoted_to_doc).toBeNull();
     });
   });
 });

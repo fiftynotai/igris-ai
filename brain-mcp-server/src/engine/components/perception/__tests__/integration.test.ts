@@ -88,7 +88,9 @@ function makeFullSchemaDb(): Database.Database {
       provenance TEXT NOT NULL DEFAULT 'observed'
         CHECK(provenance IN ('observed','inferred','synthesized','ambiguous','human_asserted')),
       review_status TEXT NOT NULL DEFAULT 'approved',
-      source_extractor TEXT NOT NULL DEFAULT 'manual'
+      source_extractor TEXT NOT NULL DEFAULT 'manual',
+      -- FR-200 M2: nullable promotion pointer (db.ts v16); recall/search SELECT it.
+      promoted_to_doc TEXT
     );
 
     CREATE VIRTUAL TABLE learnings_fts USING fts5(

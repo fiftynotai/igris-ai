@@ -24,6 +24,7 @@ import {
   handleMemorySearch,
   handleMemoryRecall,
   handleMemoryGet,
+  handleMemoryMarkPromoted,
   handleMemoryHybridSearch,
   handleMemoryBackfillEmbeddings,
   handleMemoryUpdate,
@@ -36,6 +37,7 @@ import type {
   MemorySearchInput,
   MemoryRecallInput,
   MemoryGetInput,
+  MemoryMarkPromotedInput,
   HybridSearchInput,
   BackfillInput,
   MemoryUpdateInput,
@@ -196,6 +198,44 @@ export function createMemoryComponent(): BrainComponent {
             required: ['id'],
           },
           handler: (args) => handleMemoryGet(args as unknown as MemoryGetInput),
+        },
+        {
+          name: 'igris_memory_mark_promoted',
+          description: 'Mark a learning as promoted into a project-context doc (FR-200 M2). Sets promoted_to_doc (path[#anchor]) so igris_memory_recall surfaces a "Promoted → <doc>" pointer instead of re-printing the now-doc-owned content (one-fact-one-source). Called by /distill promote AFTER merging the standard into the doc and recording a derived_from lineage edge. The learning row is never deleted — it becomes a lineage stub. Separate axis from review_status.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              id: {
+                type: 'number',
+                description: 'Learning ID to mark as promoted',
+              },
+              doc_path: {
+                type: 'string',
+                description: 'Target doc path the standard was merged into (e.g. "igris-ai:context/coding_guidelines.md" or the on-disk path under ~/.igris/projects/{name}/context/)',
+              },
+              doc_anchor: {
+                type: 'string',
+                description: 'Optional heading anchor within the doc (bare slug; a leading "#" is stripped). Appended as "#<anchor>" to the pointer.',
+              },
+            },
+            required: ['id', 'doc_path'],
+          },
+          handler: (args) => {
+            const result = handleMemoryMarkPromoted(args as unknown as MemoryMarkPromotedInput);
+            // Emit only when the handler actually marked a row (avoid emitting on
+            // validation errors / not-found). The success payload is JSON
+            // carrying "promoted_to_doc"; errors are plain "Validation error:" /
+            // "not found." text, so the marker is unambiguous.
+            const text = result.content[0]?.text ?? '';
+            if (text.includes('"promoted_to_doc"')) {
+              _ctx?.bus.emit('memory.promoted', {
+                id: (args as Record<string, unknown>).id,
+                doc_path: (args as Record<string, unknown>).doc_path,
+              });
+            }
+            return result;
+          },
         },
         {
           name: 'igris_memory_hybrid_search',
@@ -393,6 +433,11 @@ export function createMemoryComponent(): BrainComponent {
           // Payload: { id: number, reason: string }. Currently no in-process
           // listener — same orphan extension-point pattern as memory.stored.
           { name: 'memory.deleted', description: 'A learning was hard-deleted via igris_memory_delete' },
+          // FR-200 M2: emitted by igris_memory_mark_promoted after a learning's
+          // standard was promoted into a project-context doc. Payload:
+          // { id: number, doc_path: string }. Orphan extension-point (no
+          // in-process listener yet) — same pattern as memory.stored/deleted.
+          { name: 'memory.promoted', description: 'A learning was promoted to a doc via igris_memory_mark_promoted' },
           // Note: promoteToGlobal() runs inline in handleMemoryStore and results are included in the response text. No separate event needed.
         ],
         listens: [],

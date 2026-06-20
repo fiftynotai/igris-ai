@@ -91,6 +91,13 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       // stay LOCAL until a human approves them. Listed last to minimize diff
       // churn against the original column ordering.
       'review_status', 'provenance', 'source_extractor',
+      // FR-200 M2: promoted_to_doc records the project-context doc a learning's
+      // standard was promoted into (NULL = not promoted). It MUST replicate so
+      // a recall on any synced machine surfaces the same "Promoted → <doc>"
+      // pointer (one-fact-one-source). LWW on the row carries it; unlike the
+      // perception-only seen_again_count counters (deliberately excluded), this
+      // is conscious-channel state shared across machines.
+      'promoted_to_doc',
     ],
   },
   {
