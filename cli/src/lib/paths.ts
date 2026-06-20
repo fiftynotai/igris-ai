@@ -130,6 +130,47 @@ export function projectSettingsPath(projectPath: string): string {
   return join(projectPath, ".claude", "settings.json");
 }
 
+/**
+ * FR-195 (M2): absolute path to a project's session directory
+ * `~/.igris/projects/<slug>/session/`. This is the on-disk home of the
+ * per-instance LIVE files (`instances/<id>.md`), the legacy
+ * `CURRENT_SESSION.md`, the `archive/` rollups, and `BLOCKERS.md`. Honors
+ * IGRIS_BRAIN_DIR via brainDir() — the same sandbox seam the bash awaken
+ * steps use (`~/.igris/projects/{project}/session/`).
+ */
+export function projectSessionDir(slug: string): string {
+  return join(brainDir(), "projects", slug, "session");
+}
+
+/**
+ * FR-195 (M2): absolute path to a project's session/instances directory —
+ * `~/.igris/projects/<slug>/session/instances/`. `session register` writes
+ * the LIVE per-instance file `instances/<instance_id>.md` here (SKILL.md
+ * §3.7 step 2).
+ */
+export function projectSessionInstancesDir(slug: string): string {
+  return join(projectSessionDir(slug), "instances");
+}
+
+/**
+ * FR-195 (M2): absolute path to a project's session/archive directory —
+ * `~/.igris/projects/<slug>/session/archive/`. The housekeeping sweep (H0–H3)
+ * moves retired/superseded files here and rolls the >30d individual files into
+ * `<YYYY-MM>.md` month digests (SKILL.md §3.8).
+ */
+export function projectSessionArchiveDir(slug: string): string {
+  return join(projectSessionDir(slug), "archive");
+}
+
+/**
+ * FR-195 (M2): absolute path to a project's BLOCKERS.md —
+ * `~/.igris/projects/<slug>/session/BLOCKERS.md`. The `assess` verb reads this
+ * for the active-blockers line of its digest (SKILL.md §4).
+ */
+export function projectBlockersPath(slug: string): string {
+  return join(projectSessionDir(slug), "BLOCKERS.md");
+}
+
 /** Absolute path to `~/.igris/.install-source.json`. */
 export function installSourcePath(): string {
   return join(brainDir(), ".install-source.json");

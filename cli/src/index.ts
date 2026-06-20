@@ -36,6 +36,11 @@ import { runSync, type SyncSubVerb } from "./verbs/sync.js";
 import { runHarness, type HarnessAction } from "./verbs/harness.js";
 import { runRegistry, type RegistryAction } from "./verbs/registry.js";
 import { runAdd } from "./verbs/add.js";
+import { runDetect } from "./verbs/detect.js";
+import { runBootSync } from "./verbs/boot-sync.js";
+import { runSession, type SessionAction } from "./verbs/session.js";
+import { runHousekeeping } from "./verbs/housekeeping.js";
+import { runAssess } from "./verbs/assess.js";
 import type { McpHarness } from "./lib/mcp-env-normalize.js";
 import { setVerbosity, info, error as logError } from "./lib/log.js";
 
@@ -801,6 +806,161 @@ async function main(argv: string[]): Promise<void> {
         process.exitCode = code;
       },
     );
+
+  program
+    .command("detect")
+    .description(
+      "FR-195: L0 capability detection. Prints a JSON digest (harness, brain_db, sqlite3, remote_brain, mode) the awaken skill reads. Exit 0 even when degraded.",
+    )
+    .option("--json", "emit the digest as JSON to stdout (default; on for the awaken path)", true)
+    .action((opts: { json?: boolean }): void => {
+      const code = runDetect({ json: opts.json !== false });
+      process.exitCode = code;
+    });
+
+  program
+    .command("boot-sync")
+    .description(
+      "FR-195: the REMOTE channel (SKILL.md §3.6). Drains the local sync queue (reusing the `sync data` primitive) AND pulls VPS→local rows over GET /sync/pull, merging them last-write-wins into the LOCAL brain DB (the directionally-correct reproduction of igris_brain_pull). Each part is independent + skip-on-fail. Prints a JSON digest. Exit 0 even when degraded (remote unconfigured/unreachable = local-only run, never blocks).",
+    )
+    .option(
+      "--project <slug>",
+      "project slug for the queue path (default: basename of cwd)",
+    )
+    .option("--json", "emit the digest as JSON to stdout (default; on for the awaken path)", true)
+    .action(
+      async (opts: { project?: string; json?: boolean }): Promise<void> => {
+        const code = await runBootSync({
+          project: opts.project,
+          json: opts.json !== false,
+        });
+        process.exitCode = code;
+      },
+    );
+
+  program
+    .command("session <action>")
+    .description(
+      "FR-195: session-lifecycle verbs. Actions: gather (the Lock-2/3 classifier — enumerate + classify session files against the live instance registry, pick THE handoff); register (heartbeat upsert + write the LIVE per-instance file, seeded from the handoff). Prints a JSON digest to stdout. Unknown action → exit 2.",
+    )
+    .option(
+      "--project <slug>",
+      "project slug (default: basename of cwd)",
+    )
+    .option(
+      "--self-instance-id <id>",
+      "gather: this harness's recovered prior instance id (G4); register: the id to refresh (recover) — omit to mint a fresh UUID",
+    )
+    .option(
+      "--project-path <path>",
+      "register: absolute path to the project directory (heartbeat's project_path)",
+    )
+    .option(
+      "--seed-next-steps <text>",
+      "register: the chosen handoff's resume content to seed the LIVE file's Next Steps (the resume carry-forward)",
+    )
+    .option("--json", "emit the digest as JSON to stdout (default; on for the awaken path)", true)
+    .action(
+      (
+        action: string,
+        opts: {
+          project?: string;
+          selfInstanceId?: string;
+          projectPath?: string;
+          seedNextSteps?: string;
+          json?: boolean;
+        },
+      ): void => {
+        const code = runSession({
+          action: action as SessionAction,
+          project: opts.project,
+          selfInstanceId: opts.selfInstanceId,
+          projectPath: opts.projectPath,
+          seedNextSteps: opts.seedNextSteps,
+          json: opts.json !== false,
+        });
+        process.exitCode = code;
+      },
+    );
+
+  program
+    .command("housekeeping")
+    .description(
+      "FR-195: the crash-robust, idempotent archive sweep (SKILL.md §3.8 H0–H3). Retires the legacy CURRENT_SESSION.md, archives superseded RESTED files, rolls >30d archive files into month digests, and applies the 150-file ceiling. Touches only session/archive/ + the RESTED set — never LIVE files, never the brief DB. Prints a JSON digest. Exit 0 even when degraded.",
+    )
+    .option(
+      "--project <slug>",
+      "project slug (default: basename of cwd)",
+    )
+    .option(
+      "--roll-days <n>",
+      "30-day digest-roll window override (tunable knob; default 30)",
+    )
+    .option(
+      "--ceiling <n>",
+      "individual-file ceiling before the H3 burst valve fires (default 150)",
+    )
+    .option("--json", "emit the digest as JSON to stdout (default; on for the awaken path)", true)
+    .action(
+      (opts: {
+        project?: string;
+        rollDays?: string;
+        ceiling?: string;
+        json?: boolean;
+      }): void => {
+        // --roll-days / --ceiling are STRINGS from Commander; parse + validate
+        // at the CLI boundary (mirror the registry numeric-arg checks).
+        let rollDays: number | undefined;
+        if (opts.rollDays !== undefined) {
+          const n = Number(opts.rollDays);
+          if (!Number.isInteger(n) || n < 0) {
+            process.stderr.write(
+              `housekeeping: --roll-days value '${opts.rollDays}' must be a non-negative integer\n`,
+            );
+            process.exitCode = 2;
+            return;
+          }
+          rollDays = n;
+        }
+        let ceiling: number | undefined;
+        if (opts.ceiling !== undefined) {
+          const n = Number(opts.ceiling);
+          if (!Number.isInteger(n) || n < 0) {
+            process.stderr.write(
+              `housekeeping: --ceiling value '${opts.ceiling}' must be a non-negative integer\n`,
+            );
+            process.exitCode = 2;
+            return;
+          }
+          ceiling = n;
+        }
+        const code = runHousekeeping({
+          project: opts.project,
+          rollDays,
+          ceiling,
+          json: opts.json !== false,
+        });
+        process.exitCode = code;
+      },
+    );
+
+  program
+    .command("assess")
+    .description(
+      "FR-195: the MINIMAL system-assessment digest (D-A). Brief-status summary counts + active blockers (session/BLOCKERS.md) + git snapshot + active-instance count + upcoming goals (14d). Deliberately omits the task queue, perception pending, and cross-project recall. Prints a JSON digest. Exit 0 even when degraded.",
+    )
+    .option(
+      "--project <slug>",
+      "project slug (default: basename of cwd)",
+    )
+    .option("--json", "emit the digest as JSON to stdout (default; on for the awaken path)", true)
+    .action((opts: { project?: string; json?: boolean }): void => {
+      const code = runAssess({
+        project: opts.project,
+        json: opts.json !== false,
+      });
+      process.exitCode = code;
+    });
 
   program
     .command("doctor")

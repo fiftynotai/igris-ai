@@ -137,6 +137,255 @@ export interface InstallSource {
 }
 
 /**
+ * FR-195 (M1) — a `session_files` row as enumerated by `igris session gather`.
+ *
+ * Mirrors the SELECT projection of `handleSessionFileList`
+ * (`brain-mcp-server/src/tools/sessions.ts:330-349`): metadata only, no
+ * `content` (gather fetches content for the chosen handoff alone). `state`
+ * is the 3-state lifecycle column added by the sessions component schema
+ * v2 (`brain-mcp-server/src/engine/components/sessions/schema.ts:59-61`).
+ */
+export interface SessionFileRow {
+  filename: string;
+  instance_id: string | null;
+  state: string;
+  content_hash: string;
+  updated_at: string;
+}
+
+/**
+ * FR-195 (M1) — an `instances` registry row as listed by `igris session
+ * gather`.
+ *
+ * Mirrors the SELECT projection of `handleInstanceList`
+ * (`brain-mcp-server/src/tools/instances.ts:159-165`).
+ */
+export interface InstanceRow {
+  id: string;
+  machine_hostname: string;
+  machine_os: string | null;
+  project_slug: string | null;
+  current_brief: string | null;
+  current_phase: string | null;
+  current_task: string | null;
+  status: string;
+  last_heartbeat_at: string;
+}
+
+/**
+ * FR-195 (M1) — capability-detection digest emitted by `igris detect`.
+ *
+ * The L0 pass the awaken skill runs first. `mode` collapses the individual
+ * capability booleans into the single degradation verdict each downstream
+ * verb branches on (see the Detect consumption section of the FR-195 plan).
+ * `full` requires the local brain DB present; `degraded-no-db` is a
+ * fresh-start (never an error); `degraded-no-remote` means the VPS pulls
+ * (`boot-sync`, M3) are skipped but local verbs still run.
+ */
+export interface DetectResult {
+  harness: "claude" | "codex" | "gemini" | "opencode" | "antigravity" | "unknown";
+  /** `existsSync(brainDbPath())` — the local channel is available. */
+  brain_db: boolean;
+  /** `command -v sqlite3` — only matters for the skill's own remaining shell-outs (the verbs use in-process better-sqlite3). */
+  sqlite3: boolean;
+  /** `readRemoteBrainConfig() !== null` — the VPS sync channel is configured. */
+  remote_brain: boolean;
+  mode: "full" | "degraded-no-db" | "degraded-no-remote";
+}
+
+/**
+ * FR-195 (M1) — the chosen handoff inside the `session gather` digest, or a
+ * null-island when this is a fresh start (no genuine handoff found).
+ *
+ * Field names mirror the resume fields the awaken skill §5 renders. `mode`
+ * is the handoff file's `**Mode:**` value (e.g. "REST MODE") parsed from
+ * its content; `is_legacy` flags the FR-133 `CURRENT_SESSION.md` adoption
+ * path.
+ */
+export interface GatherHandoff {
+  /** Owning instance UUID of the chosen handoff, or null for a legacy CURRENT_SESSION.md row. */
+  instance_id: string | null;
+  filename: string;
+  /** The handoff's declared mode (e.g. "REST MODE"), or null when unparseable. */
+  mode: string | null;
+  resume_point: string;
+  next_steps: string;
+  /** FR-133: true when the handoff is a pre-per-instance CURRENT_SESSION.md row. */
+  is_legacy: boolean;
+}
+
+/** FR-195 (M1) — a LIVE-SIBLING entry in the `session gather` digest. */
+export interface GatherSibling {
+  instance_id: string;
+  current_brief: string | null;
+  last_active: string;
+}
+
+/** FR-195 (M1) — an ABANDONED-LIVE (crashed) entry in the `session gather` digest. */
+export interface GatherCrashed {
+  instance_id: string;
+  last_active: string;
+  /** On-disk scratchpad path for the crashed instance's session file. */
+  scratchpad: string;
+}
+
+/**
+ * FR-195 (M1) — the `igris session gather` digest (the Lock-2/3 classifier
+ * output). Read by the rewritten awaken SKILL.md (M4).
+ *
+ * `degraded` is true when the brain DB was absent (fresh start, exit 0 —
+ * never blocks session start). `handoff` is null when no genuine handoff
+ * exists. `self_instance_id` is recovered-if-possible else null (minting
+ * is deferred to `session register`, M2).
+ */
+export interface GatherDigest {
+  degraded: boolean;
+  handoff: GatherHandoff | null;
+  self_instance_id: string | null;
+  siblings: GatherSibling[];
+  crashed: GatherCrashed[];
+  fresh_start: boolean;
+}
+
+/**
+ * FR-195 (M2) — the `session register` digest.
+ *
+ * Emitted after the heartbeat upsert + LIVE per-instance file write
+ * (SKILL.md §3.7). `minted` is true when no prior id was supplied (a fresh
+ * UUID was generated); false when an existing id was recovered+refreshed.
+ * `seeded_from_handoff` is true when gather selected a genuine handoff whose
+ * Next Steps were carried into the new LIVE file (the resume context).
+ */
+export interface RegisterDigest {
+  degraded: boolean;
+  instance_id: string;
+  minted: boolean;
+  /** On-disk path of the LIVE per-instance file, relative to the project session dir. */
+  live_file: string;
+  seeded_from_handoff: boolean;
+}
+
+/**
+ * FR-195 (M2) — the `housekeeping` digest (H0–H3).
+ *
+ * Each field maps to one sweep step (SKILL.md §3.8): `h0_legacy_retired` is
+ * true when the legacy CURRENT_SESSION.md row was retired this run;
+ * `h1_archived` lists the `<id>-<rested_at>.md` archive filenames produced by
+ * the supersession step; `h2_rolled` / `h3_ceiling_rolled` are the counts of
+ * individual files folded into month digests by the 30-day roll / 150-ceiling
+ * valve. `noop` is true when nothing was touched (the common single-instance
+ * fresh-archive case).
+ */
+export interface HousekeepingDigest {
+  degraded: boolean;
+  h0_legacy_retired: boolean;
+  h1_archived: string[];
+  h2_rolled: number;
+  h3_ceiling_rolled: number;
+  noop: boolean;
+}
+
+/**
+ * FR-195 (M2) — a brief-status summary inside the `assess` digest. Mirrors
+ * the summary-only projection of `handleBriefDashboard`
+ * (`brain-mcp-server/src/tools/briefs.ts:205-234`): a total plus
+ * counts-by-status and counts-by-priority. NOT the full brief table.
+ */
+export interface AssessBriefs {
+  total: number;
+  by_status: Record<string, number>;
+  by_priority: Record<string, number>;
+}
+
+/**
+ * FR-195 (M2) — the git working-tree snapshot inside the `assess` digest.
+ * `branch` is null when not on a branch (detached HEAD) or git is unavailable;
+ * `dirty` reflects `git status --porcelain` having any output; `ahead` is the
+ * commit count ahead of the upstream (0 when no upstream / unavailable).
+ */
+export interface AssessGit {
+  branch: string | null;
+  dirty: boolean;
+  ahead: number;
+}
+
+/**
+ * FR-195 (M2) — an upcoming-goal entry inside the `assess` digest. Mirrors the
+ * `upcoming_days` projection of `handleGoalList`
+ * (`brain-mcp-server/src/engine/components/goals/handlers.ts:382-440`):
+ * active goals with a deadline within N days (14 in /awaken).
+ */
+export interface AssessGoal {
+  goal_id: string;
+  title: string;
+  deadline: string | null;
+  priority: string;
+}
+
+/**
+ * FR-195 (M2) — the `assess` digest (the MINIMAL D-A scope).
+ *
+ * Briefs summary + active blockers + git snapshot + active-instance count +
+ * upcoming goals (14d). DELIBERATELY OMITS the task queue, perception pending,
+ * and cross-project recall (D-A in the FR-195 plan — those re-introduce the
+ * noise the ceremony-teardown flagged). `degraded` is true when the brain DB
+ * was absent (empty briefs/goals, exit 0 — never blocks).
+ */
+export interface AssessDigest {
+  degraded: boolean;
+  briefs: AssessBriefs;
+  blockers: string[];
+  git: AssessGit;
+  active_instances: number;
+  goals_upcoming: AssessGoal[];
+}
+
+/**
+ * FR-195 (M3) — the per-pull result inside the `boot-sync` digest. `ok` is
+ * false when that pull failed (network error, non-200, or a local merge
+ * error); the verb continues to the next pull regardless (skip-on-fail).
+ * `summary` is a short human line (e.g. "5 learnings, 2 errors") on success,
+ * or the failure reason on `ok:false`.
+ */
+export interface BootSyncPull {
+  ok: boolean;
+  summary: string;
+}
+
+/** FR-195 (M3) — the queue-drain result inside the `boot-sync` digest. */
+export interface BootSyncQueueDrain {
+  ok: boolean;
+  /** Count of local queue entries drained this run. */
+  drained: number;
+}
+
+/**
+ * FR-195 (M3) — the `boot-sync` digest (the REMOTE channel; never blocks).
+ *
+ * Emitted after the queue drain + the VPS→local row pull (SKILL.md §3.6).
+ * `degraded` is true when `remote_brain` is unconfigured — the pulls are
+ * skipped and `skipped` lists the reason(s); exit is still 0 (a missing remote
+ * is a local-only run, not an error). Each part is independent: a failed pull
+ * records `ok:false` in `brain_pull` but does not abort the drain or vice
+ * versa. `session_files_pulled` / `definitions_updated` are surfaced
+ * counts from the single `/sync/pull` (those tables ride the same pull — there
+ * is no separate remote endpoint for them; see the boot-sync module header).
+ */
+export interface BootSyncDigest {
+  degraded: boolean;
+  /** The VPS→local row pull (learnings/errors/instances/brief_status/… via GET /sync/pull). */
+  brain_pull: BootSyncPull;
+  /** The local sync_queue.jsonl drain (reuses the `sync data` primitive). */
+  queue_drain: BootSyncQueueDrain;
+  /** Count of session_files rows merged from the pull (inserted + updated). */
+  session_files_pulled: number;
+  /** Definition rows merged from the pull, split by definition type. */
+  definitions_updated: { agents: number; skills: number; rules: number; prompts: number };
+  /** One-line reasons any part was skipped (e.g. "remote unconfigured"). */
+  skipped: string[];
+}
+
+/**
  * Lightweight manifest describing what a brain-core tarball delivers.
  * Currently a stub used by dry-run reporting and doctor's stale check;
  * may grow in M5 for delta-fetch optimization (currently out of scope).

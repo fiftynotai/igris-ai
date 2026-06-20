@@ -49,7 +49,7 @@ import {
   inspectQueueDepth,
   type DrainSnapshot,
 } from "./queue.js";
-import { info, error as logError } from "../log.js";
+import { info, error as logError, getVerbosity, setVerbosity } from "../log.js";
 
 export interface SyncDataOptions {
   /** When true, enumerate plan without invoking MCP. */
@@ -230,6 +230,71 @@ export async function runSyncData(opts: SyncDataOptions = {}): Promise<number> {
   info(`sync data: drained ${snapshot.entries.length} entries; local queue cleared.`);
 
   return 0;
+}
+
+/** Structured result of {@link drainSyncQueueOnly}. */
+export interface QueueDrainResult {
+  /** True when the local replay + brain-side drain both succeeded (or there was nothing to do). */
+  ok: boolean;
+  /** Count of local queue entries replayed this drain (0 for an empty queue). */
+  drained: number;
+}
+
+/**
+ * FR-195 (M3) — the queue-drain half of `sync data`, exposed as a structured
+ * seam for `boot-sync` so the awaken remote channel reuses the SAME drain code
+ * path (#253 / L-253: keep the drain logic in ONE place — never fork it).
+ *
+ * Delegates straight to `runSyncData()` (no behavior change to `sync data`
+ * itself) and maps its exit code to `{ok}`, capturing the entry count via a
+ * read-only `inspectQueueDepth` snapshot taken BEFORE the drain (the drain
+ * removes the file, so depth must be read first). This is intentionally a thin
+ * adapter — it does NOT re-implement the rename/replay/unlink; `runSyncData`
+ * remains the single owner of the atomicity contract.
+ *
+ * NEVER throws: a thrown error from the underlying drain is caught and mapped
+ * to `{ok:false, drained:0}` so boot-sync records a skip and continues (the
+ * never-block-session-start contract). The `remote_brain`-unconfigured case is
+ * handled by `runSyncData` returning exit 1 → `{ok:false}` here; boot-sync's
+ * own degraded-mode check short-circuits before calling this, so this path is
+ * the belt-and-braces fallback.
+ *
+ * stdout discipline: `runSyncData` narrates progress via `info()`, which writes
+ * to STDOUT. boot-sync emits a JSON digest to stdout, so that chatter would
+ * corrupt the digest. This seam (which exists SOLELY to adapt `sync data` for
+ * the digest-emitting boot-sync path) flips verbosity to `quiet` around the
+ * drain — silencing `info`/`warn` (stdout/stderr noise) while preserving
+ * `error` (stderr) — then restores the prior verbosity. This does NOT change
+ * `runSyncData` or `sync data`'s own behavior; it only quiets the reused call.
+ */
+export async function drainSyncQueueOnly(
+  opts: SyncDataOptions = {},
+): Promise<QueueDrainResult> {
+  const slug = opts.projectSlug ?? basenameOfCwd();
+  // Read depth BEFORE the drain — runSyncData renames/removes the queue file,
+  // so a post-drain inspection would always report zero. Counts live lines in
+  // the canonical queue plus any in-flight `.draining-*` temps from a prior
+  // crash (those get recovered + replayed by this drain).
+  let drained = 0;
+  try {
+    const depth = inspectQueueDepth(slug);
+    drained = depth.liveLines + depth.drainingLines;
+  } catch {
+    drained = 0;
+  }
+
+  // Quiet the reused drain's stdout chatter so the caller's digest stays clean.
+  const priorVerbosity = getVerbosity();
+  setVerbosity("quiet");
+  try {
+    const code = await runSyncData(opts);
+    // On failure the queue is preserved (not drained) → report 0 drained.
+    return { ok: code === 0, drained: code === 0 ? drained : 0 };
+  } catch {
+    return { ok: false, drained: 0 };
+  } finally {
+    setVerbosity(priorVerbosity);
+  }
 }
 
 /**

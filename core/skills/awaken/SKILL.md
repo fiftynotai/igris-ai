@@ -8,22 +8,16 @@ allowed-tools:
   - Edit
   - Glob
   - Grep
-  - mcp__igris-brain__igris_brief_dashboard
-  - mcp__igris-brain__igris_session_file_get
+  - Bash
   - mcp__igris-brain__igris_session_file_update
-  - mcp__igris-brain__igris_session_file_list
   - mcp__igris-brain__igris_coordination_config_get
   - mcp__igris-brain__igris_task_next
   - mcp__igris-brain__igris_agent_capability_list
   - mcp__igris-brain__igris_coordination_audit
-  - mcp__igris-brain__igris_instance_heartbeat
   - mcp__igris-brain__igris_instance_remove
-  - mcp__igris-brain__igris_instance_list
   - mcp__igris-brain__igris_brief_sync
   - mcp__igris-brain__igris_brief_create
-  - mcp__igris-brain__igris_goal_list
   - mcp__igris-brain__igris_suggestion_list
-  - mcp__igris-brain__igris_event_log
   - mcp__igris-brain__igris_perception_review_pending
 triggers:
   - "AWAKEN"
@@ -64,38 +58,42 @@ Do NOT hardcode context file paths — always derive them from the tree.
 
 ### 2. Load Session State — Gather
 
-The session model is **per-instance** (see `session_protocol.md`): every instance owns one `session/instances/<instance_id>.md` file, keyed by its `instance_id`. There is no shared `CURRENT_SESSION.md`. `/awaken` does NOT read a single fixed file — it *gathers*: it enumerates the project's session files + the live instance registry, classifies each file, and picks THE handoff.
+The session model is **per-instance** (see `session_protocol.md`): every instance owns one `session/instances/<instance_id>.md` file, keyed by its `instance_id`. There is no shared `CURRENT_SESSION.md`. `/awaken` does NOT read a single fixed file — it *gathers*: it enumerates the project's session files + the live instance registry, classifies each file (the Lock-2/3 truth table), and picks THE handoff. As of FR-195 the entire enumerate→classify→pick algorithm is OWNED by the `igris session gather` verb — the skill does not re-derive it.
 
-At gather time the current harness has NOT yet minted its own `instance_id` (that happens in §3.7). Gather runs as an *observer* against the registry + file list first; §3.7 mints the id afterward.
+Run the gather verb and read its JSON digest:
+```bash
+igris session gather --project <slug> [--self-instance-id <recovered-id>]
+```
+- `--self-instance-id` is OPTIONAL — pass it only if THIS harness can locate its own prior per-instance file (an `instance_id` persisted in the harness's working dir / `$CLAUDE_PROJECT_DIR` heuristics, the G4 chicken-and-egg). The common case omits it; the verb leaves `self_instance_id: null` and §3.7's heartbeat mints a fresh id. Gather is an *observer* — it never mints, never writes a session file (Lock-2 "nothing destructive in gather").
+- The verb does ALL the classification: it enumerates `session_files` + the live `instances` registry, applies the Lock-2/3 truth table (LIVE SIBLING / ABANDONED LIVE / GENUINE HANDOFF), handles the FR-133 legacy `CURRENT_SESSION.md`-adoption fall-through, picks the newest GENUINE HANDOFF, and fetches content for THAT one only.
 
-**Step G1 — enumerate.** If the `igris-brain` MCP server is available:
-- Call `igris_session_file_list` with `project=<slug>` and NO `state` filter (we want all files). Returns `filename` / `instance_id` / `state` / `content_hash` / `updated_at` per file — metadata only, no content.
-- Call `igris_instance_list` with `status='active'` and `project=<slug>`. Returns the live registry rows (`instance_id`, `current_brief`, `last_active`, staleness).
+**The gather digest** (stdout JSON — read these fields):
+```jsonc
+{ "degraded": false,
+  "handoff": {                  // null when fresh_start (no genuine handoff)
+    "instance_id": "…|null",    // null for a legacy CURRENT_SESSION.md row
+    "filename": "instances/<id>.md|CURRENT_SESSION.md",
+    "mode": "REST MODE|null",   // the handoff file's **Mode:** line
+    "resume_point": "…",        // feeds §5's resume display
+    "next_steps": "…",          // seeds §3.7's LIVE file (resume carry-forward)
+    "is_legacy": false },       // FR-133 legacy-adoption flag
+  "self_instance_id": "…|null", // recovered (G4) else null → §3.7 mints
+  "siblings":  [{ "instance_id": "…", "current_brief": "…|null", "last_active": "…" }],
+  "crashed":   [{ "instance_id": "…", "last_active": "…", "scratchpad": "session/…" }],
+  "fresh_start": false }        // true ⟺ handoff is null
+```
 
-If brain MCP is unavailable, skip gather and treat this as a fresh start (no resume) — do NOT block session start.
+**What the digest means for display (G5):**
+- `handoff.resume_point` / `handoff.next_steps` → feed §5's resume display (only when `handoff.mode == "REST MODE"`; see §5).
+- `siblings[]` → render a one-line-per-entry "Active siblings" list ("instance {short_id} on {current_brief}, last active {last_active}").
+- `crashed[]` → render a one-line-per-entry "Crashed scratchpads" list ("instance {short_id} crashed mid-session — scratchpad at {scratchpad}"). This is the ABANDONED LIVE surface (§3.6.4 below is the same set — display only, NEVER destructive: no auto-archive, no ownership clear; Lock 1).
+- `self_instance_id` → carry to §3.7 (recovered id to reuse, or null to mint).
 
-**Step G2 — classify each session file row.** For each row from `igris_session_file_list`, classify it against the live registry:
+All gather output is **display-only** — nothing destructive happens (the verb writes nothing to `session_files`; its only DB side-effect is the registry's own staleness maintenance, the same as the old `igris_instance_list` call).
 
-| `state` | Owning `instance_id` is in the active registry, non-stale, and NOT self | Owning instance is absent OR stale |
-|---------|------------------------------------------------------------------------|------------------------------------|
-| `live`  | **LIVE SIBLING** — belongs to a running sibling. Do NOT read as a handoff. Display "instance X is on BR-Y, last active T." | **ABANDONED LIVE** — instance crashed before `/rest`. Surface it ("instance X crashed mid-session — scratchpad at <path>"). NEVER consume as a handoff. NEVER auto-archive. NEVER auto-clear ownership. |
-| `rested`| A still-live instance with a rested file is unusual — treat as a completed handoff its author has not yet re-awakened over. Eligible as a handoff. | **GENUINE HANDOFF** — eligible to be read as the resume context. |
-| `archived`| ignore — already consumed and superseded | ignore |
+**Degradation:** when the brain DB is absent the verb emits `{ "degraded": true, "fresh_start": true, "handoff": null, … }` and exits 0 — treat it as a fresh start (no resume). NEVER block session start on a degraded gather.
 
-**Legacy adoption (FR-133).** A `session_files` row with `filename='CURRENT_SESSION.md'` **AND** `instance_id IS NULL` is a pre-FR-126 (legacy) project's session file — it predates the per-instance model and survived migration v2 with the `state='live'`, `instance_id=NULL` column defaults. Such a row has no owning instance in the live registry, so it is never a LIVE SIBLING or ABANDONED LIVE — it falls through the table above to **GENUINE HANDOFF**. Gather classifies it exactly that way and reads it normally in G3 via `igris_session_file_get`; §5 displays its resume point. The resume is invisible to the user — identical to the way pre-FR-126 `/awaken` read `CURRENT_SESSION.md` directly. No special resume code exists or is needed: the migration is mechanical — §3.7 writes the awakening instance's own fresh per-instance LIVE file (already seeding its context from this handoff), and §3.8 Step H0 retires the legacy `CURRENT_SESSION.md` row. This is the live adoption contract — a legacy project resumes on its first post-FR-133 `/awaken` and is migrated cleanly with zero data loss.
-
-**Step G3 — pick the handoff.** Among rows classified GENUINE HANDOFF, select the one with the most-recent `updated_at` — that is THE handoff. Call `igris_session_file_get` on it (only now do we fetch content). If zero genuine-handoff rows → this is a fresh start (no resume). If exactly one → this is the sequential-degeneration common case, byte-equivalent to today's "read CURRENT_SESSION.md."
-
-**Step G4 — recover or mint the instance_id (the chicken-and-egg).** If the current harness can locate its own prior per-instance file (an `instance_id` persisted in the harness's working dir / `$CLAUDE_PROJECT_DIR` heuristics), recover that id and read `session/instances/<that-id>.md` as its own LIVE scratchpad — this is a resume of an existing instance. Otherwise — the common case — leave the id pending: §3.7 will let `igris_instance_heartbeat` mint a fresh one. Gather does not depend on knowing self's id: G2 classifies by "is this row's instance in the live registry," and self is not yet registered, so every row is correctly a sibling/handoff/abandoned relative to a not-yet-registered self.
-
-**Step G5 — display.** Render:
-- the chosen handoff's resume point (feeds §5);
-- a one-line-per-sibling "Active siblings" list;
-- a one-line-per-abandoned-LIVE "Crashed scratchpads" list (if any).
-
-All G5 output is display-only. Nothing destructive happens in gather.
-
-**Gather output:** (a) the handoff file's content for §5's resume display, (b) the sibling/abandoned lists for display, (c) the recovered-or-pending `instance_id` decision for §3.7. If the gather found a genuine handoff with `Mode: REST MODE` → this is a resume. If zero handoffs → fresh start.
+**Ordering contract:** gather MUST run BEFORE §3.7 register and BEFORE §3.8 housekeeping. The verbs are separate processes and do NOT enforce cross-process order — the skill's call sequence (gather → register → housekeeping) is the contract. H0's Lock-2 "the legacy row was provably read before it is archived" holds ONLY because this skill ran gather first.
 
 ### 3. Display Persona Greeting
 
@@ -127,66 +125,34 @@ If the `igris-brain` MCP server is available:
 
 If brain MCP is not available, skip this step silently. No errors, no warnings.
 
-### 3.6. Pull from Remote Brain (Mandatory)
+### 3.6. Sync with Remote Brain (boot-sync)
 
-You MUST call `igris_brain_pull` when remote brain is configured. This is NOT optional — the VPS brain depends on receiving data.
+The entire VPS↔local sync — the brain row pull, the sync-queue drain, the session-file restore, and the definition refresh — is OWNED by the `igris boot-sync` verb (FR-195). It is the REMOTE channel: it drains the local `sync_queue.jsonl` (reusing the canonical atomic `sync data` primitive — FR-128 rename-then-process, crash recovery from stale `.draining-*` temps, per-entry strict-allow-list, `cache_path → content` resolution) AND pulls VPS→local rows over `GET /sync/pull`, merging them last-write-wins into the LOCAL brain DB. `session_files` and `definition_files` ride that same pull — there is no separate endpoint for them. Do NOT inline any of this in markdown — the atomicity + directionality contracts cannot be enforced from a skill recipe; the single CLI code path is the contract.
 
-If the `igris-brain` MCP server is available AND a remote brain URL is configured:
-- Read `~/.igris/config.json` to check for `remote_brain.url` and `remote_brain.api_key`
-- If both are present, call `igris_brain_pull` with:
-  - remote_url = the configured URL
-  - api_key = the configured API key
-- Display sync result summary (e.g., "Pulled 5 learnings, 2 errors from remote brain")
+Run the boot-sync verb and read its JSON digest:
+```bash
+igris boot-sync --project <slug>
+```
 
-If remote brain is not configured or pull fails, skip with one-line notice: "Brain pull skipped ([reason])." Do NOT block session start.
+**The boot-sync digest** (stdout JSON — read these fields):
+```jsonc
+{ "degraded": false,                              // true ⟺ remote unconfigured
+  "brain_pull":  { "ok": true, "summary": "5 learnings, 2 errors" },
+  "queue_drain": { "ok": true, "drained": 3 },
+  "session_files_pulled": 2,                       // session_files rows merged from the pull
+  "definitions_updated": { "agents": 1, "skills": 0, "rules": 2, "prompts": 0 },
+  "skipped": [] }                                  // one-line reasons any part was skipped
+```
 
-### 3.6.1. Drain Sync Queue (Mandatory)
+**Display from the digest:**
+- `brain_pull.summary` → "Pulled {summary} from remote brain" (when `brain_pull.ok`).
+- `queue_drain.drained` → "Drained {n} queued sync op(s)" (when `> 0`).
+- `session_files_pulled` / `definitions_updated` → optional one-line restore/refresh summary.
+- `skipped[]` → surface each as a one-line notice (e.g. "Brain pull skipped (remote unconfigured)").
 
-You MUST drain the sync queue when remote brain is configured. This is NOT optional.
+**Degradation:** the verb ALWAYS exits 0 and NEVER blocks session start. When `degraded: true` (remote unconfigured) or any part fails (`ok: false`, recorded in `skipped[]`), display the one-line notice and continue — a missing/unreachable remote is a local-only run, not an error. Each part is independent: a failed pull does not abort the drain or vice-versa.
 
-If the `igris-brain` MCP server is available:
-1. Call `igris_sync_queue_drain` to process any queued operations from previous failed pushes
-2. Display count of drained operations if any were processed
-
-If brain MCP is NOT available or drain fails, skip silently. Do NOT block session start.
-
-### 3.6.1.1. Drain Local Sync Queue (Mandatory)
-
-You MUST drain the local sync queue file when brain MCP is available. This is NOT optional — briefs queued during previous MCP outages depend on this.
-
-If the `igris-brain` MCP server is available:
-- Invoke the canonical atomic drain via the CLI: `igris sync data` (defined in `cli/src/lib/sync/data.ts`, delegating to the atomic primitive in `cli/src/lib/sync/queue.ts`). The CLI handles rename-then-process atomicity (FR-128), crash recovery from stale `sync_queue.jsonl.draining-*` files, per-entry strict-allow-list enforcement under TD-128 M3, and the `cache_path → content` resolution for `brief_create` entries. Do NOT inline the read-then-truncate algorithm in markdown — the atomicity contract cannot be enforced from a skill recipe; the single CLI code path is the contract.
-- Exit code 0 means success (drained N or empty queue). Non-zero means the local queue (or its `.draining-*` recovery temp) is preserved for the next attempt; surface the CLI's stderr to the operator and continue session start.
-
-If brain MCP is NOT available:
-- Check `~/.igris/projects/{project}/sync_queue.jsonl` line count AND any `sync_queue.jsonl.draining-*` line counts via `igris sync status` (read-only, no rename).
-- If the combined depth is > 0, display: `WARNING: {N} brief sync(s) are queued locally — brain MCP unavailable. Will retry on next /awaken or /sync data.`
-- Do NOT block session start.
-
-### 3.6.2. Pull Session Files (Mandatory)
-
-You MUST pull session files when remote brain is configured. This is NOT optional.
-
-If the `igris-brain` MCP server is available:
-1. Call `igris_session_file_pull` to restore session files from VPS if local is empty or stale
-2. Compare local file hashes with remote — only pull if remote is newer
-3. Session files to sync: `session/instances/*.md` (per-instance session files), LEARNINGS.md, DECISIONS.md, BLOCKERS.md
-4. Display summary of files pulled (e.g., "Pulled 2 session files from remote brain")
-
-> **`_pull` vs `_list`:** `igris_session_file_pull` is the **sync-component** tool — a VPS→local bulk restore that returns file *content*, used here when local is empty or stale. It is NOT the per-instance, state-aware gather tool. The §2 gather step uses `igris_session_file_list` — a local, state-aware enumeration that returns *metadata only* and classifies files by `state`. They are complementary: `_pull` restores, `_list` classifies. Do not conflate them.
-
-If brain MCP is NOT available or pull fails, skip silently. Do NOT block session start.
-
-### 3.6.3. Pull Latest Definitions (Mandatory)
-
-You MUST pull latest definitions when remote brain is configured. This is NOT optional.
-
-If the `igris-brain` MCP server is available:
-1. Call `igris_definition_pull` to check for newer agent, skill, rule, and prompt definitions
-2. Only update local files if remote content hash differs
-3. Display summary of definitions updated (e.g., "Updated 1 agent, 2 rules from remote brain")
-
-If brain MCP is NOT available or pull fails, skip silently. Do NOT block session start.
+> **What replaced what (FR-195):** boot-sync subsumes the former §3.6 (`igris_brain_pull`), §3.6.1 (`igris_sync_queue_drain`), §3.6.1.1 (`igris sync data` local drain), §3.6.2 (`igris_session_file_pull`), and §3.6.3 (`igris_definition_pull`) — five separate MCP/CLI calls collapsed into one verb. The `_pull` (VPS→local restore) vs `_list` (state-aware local enumerate) distinction that mattered when the skill called both is now internal: §2 gather owns the `_list` side (classification); §3.6 boot-sync owns the `_pull` side (restore). They no longer share a call site to conflate.
 
 ### 3.6.4. Surface Stale Previous Instances (Mandatory)
 
@@ -194,80 +160,103 @@ Per Lock 1, heartbeat is **display-only** and NOTHING auto-destroys a stale inst
 
 A clean `/rest` → `/awaken` cycle leaves nothing stale: `/rest` already calls `igris_instance_remove` in its §2.5 "Close Instance Ownership" step, so the prior instance is gone from the registry by the time `/awaken` runs. What this section surfaces is the *genuine crash* case — an instance that exited without `/rest`.
 
-If the `igris-brain` MCP server is available:
-1. From the §2 gather step, you already have the `igris_instance_list` rows and the classified session-file rows.
-2. For any prior instance owned by *this* harness (or any instance classified ABANDONED LIVE in G2), surface it: "stale, unconfirmed — instance {short_id}, last active {last_active}; scratchpad at session/instances/{instance_id}.md".
-3. Do NOT call `igris_instance_remove`. Do NOT auto-archive its file. Do NOT clear its `current_brief`. Reclaim is an explicit operator action — never automatic.
+This is purely a display of the `crashed[]` list the §2 `igris session gather` digest ALREADY computed (the ABANDONED LIVE set — `state='live'` with an absent/stale owner). No new tool call is needed; the verb did the classification.
 
-If brain MCP is NOT available, skip silently. Do NOT block session start.
+- For each entry in `gather.crashed[]`, surface it: "stale, unconfirmed — instance {short_id}, last active {last_active}; scratchpad at {scratchpad}".
+- Do NOT call `igris_instance_remove`. Do NOT auto-archive its file. Do NOT clear its `current_brief`. Reclaim is an explicit operator action — never automatic.
 
-This is a registry-visible read of genuine crashes, not a destructive sweep. Multi-instance is valid; a live sibling is left alone (it shows in the §2 "Active siblings" list, not here).
+If `gather` was degraded (empty `crashed[]`), render nothing. Do NOT block session start.
+
+This is a read of genuine crashes, not a destructive sweep. Multi-instance is valid; a live sibling is left alone (it shows in the §2 "Active siblings" list from `gather.siblings[]`, not here).
 
 ### 3.7. Register Instance (Mandatory)
 
-You MUST call `igris_instance_heartbeat` to register this session as a live instance. This is NOT optional — the VPS dashboard depends on it.
+Registration — the heartbeat upsert + the LIVE per-instance file write — is OWNED by the `igris session register` verb (FR-195). It mints-or-recovers the `instance_id`, writes the heartbeat row, and writes `session/instances/<id>.md` at `state='live'` with the contract line shape (`**Instance ID:**`, `**Mode:** Active`, `**Active Brief:**`) that the phase-guard fallback and `/hunt` parse. It seeds the LIVE file's "Next Steps" from gather's chosen handoff so the resume context carries forward.
 
-If the `igris-brain` MCP server is available:
-1. If gather (§2 step G4) recovered an existing `instance_id` for this harness, reuse it — pass it as `instance_id` to `igris_instance_heartbeat` to refresh the existing row. Otherwise call `igris_instance_heartbeat` WITHOUT an `instance_id` to mint a fresh one. In both cases pass:
-   - machine_hostname = system hostname
-   - machine_os = platform (e.g., "darwin", "linux")
-   - project_slug = current project slug
-   - project_path = absolute path to project directory
-2. Take the resulting `instance_id` (recovered or freshly minted). Write the new LIVE per-instance session file `~/.igris/projects/{project}/session/instances/<instance_id>.md` at `state='live'`:
-   a. Create the file on disk with the Status section carrying `**Instance ID:** {instance_id}` and `**Mode:** Active` (or `HUNT MODE` once a hunt starts — see §7).
-   b. Call `igris_session_file_update` with `project` = current project slug, `filename` = `instances/<instance_id>.md`, `content` = the file content, `instance_id` = `<instance_id>`, `state` = `'live'`.
-   c. If gather selected a genuine handoff (§2 G3), seed this LIVE file's "Next Steps" / context from that handoff's content so the resume context carries forward.
-3. Display: "Instance registered: {instance_id}"
-4. This ID is used for subsequent heartbeats (`/hunt`) and the ownership-close on `/rest`.
+Run the register verb AFTER §2 gather (the ordering contract — gather's outputs feed register):
+```bash
+igris session register --project <slug> \
+  [--self-instance-id <gather.self_instance_id>] \
+  [--project-path <abs-project-dir>] \
+  [--seed-next-steps "<gather.handoff.next_steps>"]
+```
+- `--self-instance-id` — pass `gather.self_instance_id` when it was recovered (non-null); OMIT it to mint a fresh UUID. (This is the G4 recover-or-mint decision, now resolved by gather + register together.)
+- `--seed-next-steps` — pass `gather.handoff.next_steps` when gather selected a genuine handoff (the resume carry-forward, §3.7 step 2c). Omit on a fresh start.
+- `--project-path` — the absolute project directory (the heartbeat's `project_path` field).
 
-If brain MCP is NOT available (tool call fails or MCP server not registered), skip gracefully with a one-line notice: "Instance registration skipped (brain MCP unavailable)." Do NOT block session start.
+**The register digest** (stdout JSON — read these fields):
+```jsonc
+{ "degraded": false,
+  "instance_id": "…",                  // recovered or freshly minted
+  "minted": true,                       // false ⟺ an existing id was recovered+refreshed
+  "live_file": "instances/<id>.md",     // relative to the project session dir
+  "seeded_from_handoff": true }         // true ⟺ Next Steps were carried from gather's handoff
+```
+
+- Display: "Instance registered: {instance_id}".
+- Carry `instance_id` forward — it is used for subsequent heartbeats (`/hunt`) and the ownership-close on `/rest`, and it is the `<instance_id>` §7 confirms the LIVE file for.
+- The register verb is non-destructive (#230): a re-run of a recovered instance PRESERVES the existing on-disk LIVE file (it does not clobber the running instance's scratchpad back to a skeleton).
+
+**Degradation:** when the brain DB is absent the verb emits `{ "degraded": true, … }` and exits 0 — display "Instance registration skipped (brain unavailable)" and continue. NEVER block session start.
 
 ### 3.8. Housekeeping Sweep (Mandatory)
 
-A crash-robust, idempotent archive sweep folded into `/awaken` — NOT a daemon, NOT scheduled. It runs once per `/awaken`, after gather (§2) and after registration (§3.7), before the assessment surfaces (§4). Running it twice is harmless; a crash mid-sweep leaves a consistent state. (Lock 4 — `session_protocol.md` §5.)
+The crash-robust, idempotent archive sweep (H0–H3) is OWNED by the `igris housekeeping` verb (FR-195). It is NOT a daemon, NOT scheduled — it runs once per `/awaken`, AFTER gather (§2) and AFTER registration (§3.7), BEFORE the assessment surfaces (§4). The verb's H0–H3 are individually crash-robust and idempotent; running it twice is harmless and a crash mid-sweep leaves a consistent state (Lock 4 — `session_protocol.md` §5). The header-presence guard (idempotency) and per-file append-then-delete (crash-robustness) are the exact atomicity contracts that "cannot be enforced from a skill recipe" — which is why this is CODE, not inline markdown.
 
-If the `igris-brain` MCP server is unavailable, skip this section silently. Do NOT block session start.
+Run the housekeeping verb (the ordering contract requires it AFTER gather + register):
+```bash
+igris housekeeping --project <slug>
+```
 
-**Step H0 — Legacy `CURRENT_SESSION.md` retirement (FR-133, one-time per project).** Using the `igris_session_file_list` rows already gathered in §2, look for a *legacy* row: `filename='CURRENT_SESSION.md'` **AND** `instance_id IS NULL`. This is a pre-FR-126 project's session file — it survived migration v2 with the `state='live'`, `instance_id=NULL` column defaults.
+What the verb does (faithful to the prior inline H0–H3):
+- **H0** — retire the legacy `CURRENT_SESSION.md` row (`instance_id IS NULL`) that gather provably read this `/awaken`: flip its DB state to `archived` (content carried through unchanged, instance_id untouched) and move `session/CURRENT_SESSION.md` → `session/archive/CURRENT_SESSION-<updated_at>.md`. The Lock-2 "read-before-archive" invariant holds because the skill ran gather FIRST (the ordering contract).
+- **H1** — RESTED → ARCHIVED supersession (the ONLY steady-state archiving): a `rested` file is archived only when a *newer* `rested` file from a *different* instance proves it was consumed. An ABANDONED LIVE file is NEVER archived here.
+- **H2** — roll individual `session/archive/*.md` files older than 30 days into `session/archive/<YYYY-MM>.md` month digests (header-guarded, append-then-delete).
+- **H3** — 150-file ceiling burst valve: if >150 individual files remain after H2, roll oldest-first into month digests until ≤150.
 
-- If no such row exists, or it is already `state='archived'`, H0 is a no-op — skip to H1. (Once retired, this project is migrated; H0 never acts again. A project that was always on the per-instance model has no such row and H0 is a clean no-op for it.)
-- If such a row exists with `state IN ('live','rested')`: it has already been classified GENUINE HANDOFF in G2 and read as the resume context by this `/awaken`'s gather (§2 G3), and §3.7 has registered this instance's own fresh per-instance LIVE file (seeded from that handoff). The legacy file is therefore provably consumed and superseded. Retire it: call `igris_session_file_update` with `project`, `filename='CURRENT_SESSION.md'`, and `state='archived'` — carry the existing `content` through unchanged (this is a state flip, not a content edit) and leave `instance_id` unchanged (omitted/null). Then move the on-disk file `session/CURRENT_SESSION.md` → `session/archive/CURRENT_SESSION-<updated_at>.md`, where `<updated_at>` is the legacy row's `updated_at` timestamp (mirroring H1's `<rested_at>` archive-filename convention). Move-not-delete — the legacy content stays readable and greppable forever, and it also survives in the new instance's §3.7-seeded LIVE file, so retirement is zero data loss.
+**The housekeeping digest** (stdout JSON — read these fields):
+```jsonc
+{ "degraded": false,
+  "h0_legacy_retired": false,           // true ⟺ the legacy CURRENT_SESSION.md was retired this run
+  "h1_archived": ["<id>-<ts>.md"],      // archive filenames produced by the supersession step
+  "h2_rolled": 4,                        // individual files folded by the 30-day roll
+  "h3_ceiling_rolled": 0,                // individual files folded by the 150-ceiling valve
+  "noop": false }                        // true ⟺ nothing was touched (the common fresh-archive case)
+```
 
-This is the explicit, deliberate completion of the FR-126 adoption path: the legacy file is read on the first resume (invisible to the user) and retired in that same `/awaken`, with no flag day. The Lock-2 invariant "a file is ALWAYS read before it is archived" holds — gather provably read the row in G3 earlier in this same `/awaken`. H0 is idempotent — a re-run finds the row already `archived` (or the on-disk file already moved) and does nothing.
+- Display only when something happened: e.g. "Archived {h1_archived.length} superseded session(s); rolled {h2_rolled} into month digests." When `noop: true`, render nothing.
 
-**Step H1 — RESTED → ARCHIVED supersession.** This is the ONLY place steady-state archiving happens. Per Lock 2, a RESTED file is archived by *whoever superseded it*, after the superseding instance has produced its own RESTED file. Using the `igris_session_file_list` rows from §2 gather:
-- For each `state='rested'` file R, check whether a *newer* `state='rested'` file exists from a *different* `instance_id`. If so, R has been provably consumed (a newer RESTED file only exists because some instance awoke — read R — and then rested).
-- For each such superseded R: call `igris_session_file_update` with R's `filename`, `instance_id`, and `state='archived'`; then move the on-disk file from `session/instances/<instance_id>.md` to `session/archive/<instance_id>-<rested_at>.md` (where `<rested_at>` is R's rest timestamp, from `updated_at`).
-- This guarantees the Lock-2 invariant "a file is ALWAYS read before it is archived."
-- An ABANDONED LIVE file is NEVER archived by this step — it has no superseding RESTED file. It is compacted only by the H2 30-day roll.
+**Cost guard (preserved):** the verb touches ONLY `session/archive/` + the RESTED set + the one legacy row — NEVER LIVE files, NEVER the brief DB, NEVER the VPS. A fresh install with an empty archive is one list query + an empty dir read; `noop: true`.
 
-**Step H2 — 30-day digest roll.** Enumerate the *individual* files in `session/archive/*.md` (NOT the `YYYY-MM.md` digests). For any individual file whose timestamp (`<rested_at>` from the filename suffix, or `updated_at`) is older than 30 days:
-- Append its content — preceded by a `\n\n## <filename>\n` separator header — to `session/archive/<YYYY-MM>.md`, where `<YYYY-MM>` is the calendar month of that file's timestamp.
-- **Guard (idempotency):** before appending, check whether the digest already contains a `## <filename>` header line; if it does, skip the append (the file was rolled by an earlier crashed sweep — do not duplicate it).
-- After a successful append, delete the now-rolled individual file.
-- The digest file itself is never re-rolled. Concatenation, never content deletion.
-- The 30-day window is a tunable knob, not a hard constant.
-
-**Step H3 — 150-file ceiling (burst safety valve).** After H2, if `session/archive/` still holds more than ~150 individual files (a burst that out-paced the 30-day window), roll the OLDEST individual files into their month digests — same concatenation + header-guard mechanism as H2 — until the individual-file count is at or below 150. 150 is a tunable knob.
-
-**Crash-robustness:** each file's roll is per-file (append-then-delete); a crash between two files leaves earlier files rolled, later files untouched — a re-run completes the rest. The header-presence guard makes the append idempotent: a crash before the delete means the next sweep finds the header already present and skips, so no duplicate section.
-
-**Cost guard:** H1–H3 touch only `session/archive/` and the RESTED set — never LIVE files, never the brief DB. On a fresh install with an empty archive dir the whole sweep is one `igris_session_file_list` call (already made in §2) plus a dir read that returns nothing. Zero cost in the common single-instance case.
+**Degradation:** when the brain DB is absent the verb emits `{ "degraded": true, "noop": true, … }` and exits 0 — there are no session files to sweep on a fresh start. NEVER block session start.
 
 ### 4. Perform System Assessment
 
-Call `igris_brief_dashboard` with `project` and `summary_only=true`, fallback to cache glob at `~/.igris/projects/{project}/briefs/` for inventory:
-- The dashboard returns aggregate counts by status and priority — no need to fetch individual briefs
-- Use the counts to identify if there are Ready briefs to work on
+The MINIMAL system-assessment surface — brief-status summary + active blockers + git snapshot + active-instance count + upcoming goals — is OWNED by the `igris assess` verb (FR-195, decision D-A). It does the brief-dashboard summary SQL, reads `session/BLOCKERS.md`, runs `git status`, counts live instances, and lists goals due within 14 days. It DELIBERATELY OMITS the task queue (§4.5), suggestions (§4.8), and perception pending (§4.9) — those re-introduce ceremony noise and stay as the skill's own surfaces below; assess does not cover them.
 
-Check `~/.igris/projects/{project}/session/BLOCKERS.md` for active blockers.
+Run the assess verb and render from its JSON digest:
+```bash
+igris assess --project <slug>
+```
 
-Check git status.
+**The assess digest** (stdout JSON — read these fields):
+```jsonc
+{ "degraded": false,
+  "briefs": { "total": 42, "by_status": { "Ready": 8, … }, "by_priority": { "P0": 1, … } },
+  "blockers": ["…"],                          // active blockers from session/BLOCKERS.md
+  "git": { "branch": "develop", "dirty": true, "ahead": 0 },
+  "active_instances": 3,
+  "goals_upcoming": [{ "goal_id": "GL-003", "title": "…", "deadline": "2026-05-01", "priority": "P1" }] }
+```
 
-If brain is connected (from step 3.5), include brain stats in assessment:
-- Brain: Connected (X learnings, Y errors cataloged) | Not available
-- Active Instances: X (from `igris_instance_list` with status="active")
-- Cross-project insights if relevant
+Render the assessment from the digest:
+- `briefs.by_status` / `briefs.by_priority` → identify Ready briefs to work on (feeds §6 recommendations); show the aggregate counts.
+- `blockers[]` → surface active blockers (if any).
+- `git` → "On {branch}{, dirty}{, ahead N}".
+- `active_instances` → "Active Instances: {n}".
+- `goals_upcoming[]` → see §4.7 (the goals surface is now part of this digest).
+
+**Degradation:** when the brain DB is absent the verb emits `{ "degraded": true, "briefs": {total:0,…}, "goals_upcoming": [], "active_instances": 0, … }` and exits 0 — it STILL reads `blockers` + `git` (those do not need the DB). NEVER block session start.
 
 ### 4.5. Show Work Queue and Coordination Status (Optional)
 
@@ -293,29 +282,19 @@ If brain MCP is NOT available or calls fail, skip silently. Do NOT block session
 
 ### 4.7. Goals Approaching Deadline (FR-110)
 
-If `igris-brain` MCP is available, call `igris_goal_list` with:
-- `project` = current project slug
-- `status` = `'active'`
-- `upcoming_days` = `14`
-- `limit` = `3`
+The upcoming-goals surface is now part of the §4 `igris assess` digest (`goals_upcoming[]` — active goals with a deadline within 14 days). Do NOT make a separate goal call; render from the digest.
 
-Token budget: this surface is bounded to ≤3 rows by the `limit` parameter. Render at most ~120 tokens.
-
-If results are returned, render:
+For each entry in `assess.goals_upcoming[]`, render:
 
 ```
 ## Goals approaching deadline
-- GL-003 "Ship v6.1" — due 2026-05-01 (3 days), 4/7 briefs done
-- GL-001 "Compliance audit" — due 2026-05-12 (14 days), 1/5 briefs done
+- GL-003 "Ship v6.1" — due 2026-05-01 (P1)
+- GL-001 "Compliance audit" — due 2026-05-12 (P1)
 ```
 
-The "X/Y briefs done" comes from each goal's `serving_briefs_count` field plus a per-goal call (only if the count is non-zero) — but for the awaken surface, prefer using just `serving_briefs_count` from the list response and rendering "N briefs serving" rather than calling `igris_goal_progress` per goal (token budget).
+Each entry carries `goal_id` / `title` / `deadline` / `priority`. (The prior "N briefs serving" sub-line is dropped — the assess digest is the MINIMAL D-A surface and does not carry `serving_briefs_count`; run `/scan` for full goal progress.)
 
-If zero results, render nothing — no "No goals" line. Do NOT call any further goal tools when zero rows are returned.
-
-If `>3` active goals exist beyond the 14-day window, append a single trailing line: `(+N other active goals — run /scan for full list)`. Only display this trailing line if you happen to have called `igris_goal_list` without `upcoming_days` separately; if you only called the bounded version, omit the trailing line.
-
-If the goal tools are unavailable (older brain), skip silently.
+If `goals_upcoming[]` is empty, render nothing — no "No goals" line. Token budget: ~120 tokens.
 
 ### 4.8. Subconscious Suggestions (FR-106)
 
@@ -496,16 +475,16 @@ without operator review. Default is opt-in (off).
 
 ### 5. Display Resume Point (if resuming)
 
-If the §2 gather selected a genuine handoff with `Mode: REST MODE`, display its resume point — read the `Resume Point` / `Next Session Instructions` fields from the classified RESTED handoff file (the content fetched in §2 step G3), NOT from any fixed `CURRENT_SESSION.md`:
+If the §2 `igris session gather` digest selected a genuine handoff with `handoff.mode == "REST MODE"`, display its resume point from the digest fields — `handoff.resume_point` and `handoff.next_steps` (the verb parsed these from the chosen handoff file's content), NOT from any fixed `CURRENT_SESSION.md`:
 ```
 ## Resuming Session
 
-**Last Active:** [brief ID]
-**Phase:** [phase]
-**Next Steps:** [from the gathered handoff file]
+**Last Active:** [brief ID — from handoff.resume_point]
+**Phase:** [phase — from handoff.resume_point]
+**Next Steps:** [handoff.next_steps]
 ```
 
-If gather found zero genuine handoffs, this is a fresh start — skip the resume display.
+If `gather.fresh_start` is true (`handoff` is null), this is a fresh start — skip the resume display. (A legacy `CURRENT_SESSION.md` handoff with `is_legacy: true` is displayed identically — the resume is invisible to the user, exactly as pre-FR-126 `/awaken` read it.)
 
 ### 6. Display Recommendations
 
@@ -519,8 +498,8 @@ If gather found zero genuine handoffs, this is a fresh start — skip the resume
 
 ### 7. Update Session
 
-Write this instance's LIVE per-instance file `~/.igris/projects/{project}/session/instances/<instance_id>.md` at `state='live'` — `<instance_id>` is the id from §3.7. Set `**Mode:** Active` (or `HUNT MODE` once a hunt starts). Call `igris_session_file_update` with `project`, `filename=instances/<instance_id>.md`, `content`, `instance_id=<instance_id>`, `state='live'`.
+`igris session register` (§3.7) already wrote this instance's LIVE per-instance file `~/.igris/projects/{project}/session/instances/<instance_id>.md` at `state='live'` (where `<instance_id>` is `register.instance_id` from the §3.7 digest), seeded from the handoff. §7 is the end-of-awaken confirm/refresh of THAT file — if the awakening surfaced anything that should land in the LIVE scratchpad (or once a hunt starts and `**Mode:**` flips to `HUNT MODE`), update it directly via `igris_session_file_update` with `project`, `filename=instances/<instance_id>.md`, `content`, `instance_id=<instance_id>`, `state='live'`. On a plain awaken with no further edits the register write already stands — no extra write is required.
 
-This is the §3.7 file's LIVE state confirmed/refreshed — the per-instance file replaces the old single `CURRENT_SESSION.md`. There is no Mode flip on a shared file; each instance owns and writes its own file freely.
+The per-instance file replaces the old single `CURRENT_SESSION.md`. There is no Mode flip on a shared file; each instance owns and writes its own file freely.
 
 Display: "Igris AI initialized. System ready."
