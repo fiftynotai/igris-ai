@@ -25,10 +25,28 @@
  * resolve paths, and does NOT write files — the compile-side merge is bash-only
  * (`merge_identity_region`), per the locked direct-bash-write +
  * TS-parity-twin form.
+ *
+ * TD-244 (BI-3): the identity region ALSO carries the delegation recipe when the
+ * target harness's `delegation_model` is `dynamic-define` (the boot-injection
+ * surface). `buildHarnessIdentityFile` takes an optional `recipeRaw` + a
+ * `delegationModel`; when `dynamic-define` it appends the recipe (one blank line
+ * separator, one trailing newline) — byte-identical to the bash
+ * `normalize_identity_shape` dynamic-define branch (the golden + bats parity
+ * tests pin the two). `native-static` (the default) is identity-only — the
+ * pre-TD-244 shape, so existing fixtures and the CLAUDE.md inline path are
+ * unchanged.
  */
 
 /** Harnesses that can carry an identity-file target (mirrors the schema enum). */
 export type IdentityHarness = "claude" | "codex" | "gemini" | "opencode";
+
+/**
+ * Per-harness delegation mechanism (the TD-244 sixth-surface descriptor).
+ * `native-static`: statically-loaded agents; `subagent_type:<agent>` resolves
+ * directly (identity-only region). `dynamic-define`: runtime subagent definition
+ * → the region carries the delegation recipe.
+ */
+export type DelegationModel = "native-static" | "dynamic-define";
 
 /**
  * The Model-A self-name reword map. Substituted for `{{HARNESS_SELF_NAME}}`
@@ -78,17 +96,54 @@ export function renderIdentityBody(
 }
 
 /**
+ * Append the delegation recipe to an identity body for a dynamic-define harness.
+ *
+ * The recipe template carries no `{{...}}` tokens — it is rendered verbatim,
+ * normalized to exactly one trailing newline, separated from the identity body
+ * by exactly one blank line. MUST stay byte-identical to the dynamic-define
+ * branch of the bash `normalize_identity_shape` (the golden + bats parity tests
+ * pin the two together; L-554).
+ *
+ * `body` is assumed to already end with exactly one `\n` (the
+ * `renderIdentityBody` contract). Throws when `recipeRaw` is undefined — a
+ * dynamic-define harness with no recipe is an observable error (never a silent
+ * identity-only fallback that would strand the harness).
+ */
+export function appendDelegationRecipe(
+  body: string,
+  recipeRaw: string | undefined,
+): string {
+  if (recipeRaw === undefined) {
+    throw new Error(
+      "appendDelegationRecipe: delegation_model=dynamic-define requires a recipe template",
+    );
+  }
+  const recipe = `${recipeRaw.replace(/\n+$/, "")}\n`;
+  return `${body}\n${recipe}`;
+}
+
+/**
  * Build the FULL delimited identity region for one harness — BEGIN marker +
  * rendered body + END marker, trailing newline included. This is the byte
  * payload the bash compile pass writes between the markers and the bash drift
  * pass re-derives for comparison; byte-identical to
- * `normalize_identity_shape <tmpl> <harness> <version>` (§18.1 / L-554).
+ * `normalize_identity_shape <tmpl> <harness> <version> [model] [recipe]`
+ * (§18.1 / L-554).
+ *
+ * TD-244 (BI-3): pass `delegationModel="dynamic-define"` + the recipe template
+ * raw to append the boot-injection delegation recipe inside the region. The
+ * default (`native-static`, no recipe) is the pre-TD-244 identity-only shape.
  */
 export function buildHarnessIdentityFile(
   templateRaw: string,
   harness: IdentityHarness,
   version: string,
+  delegationModel: DelegationModel = "native-static",
+  recipeRaw?: string,
 ): string {
-  const body = renderIdentityBody(templateRaw, harness, version);
+  let body = renderIdentityBody(templateRaw, harness, version);
+  if (delegationModel === "dynamic-define") {
+    body = appendDelegationRecipe(body, recipeRaw);
+  }
   return `${IDENTITY_BEGIN_LINE}\n${body}${IDENTITY_END_LINE}\n`;
 }

@@ -30,6 +30,7 @@ import {
   IDENTITY_BEGIN_LINE,
   IDENTITY_BEGIN_PREFIX,
   IDENTITY_END_LINE,
+  appendDelegationRecipe,
   buildHarnessIdentityFile,
   renderIdentityBody,
   type IdentityHarness,
@@ -39,6 +40,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 /** Repo root — cli/src/__tests__ → ../../.. */
 const REPO_ROOT = join(HERE, "..", "..", "..");
 const CANONICAL_TMPL = join(REPO_ROOT, "core", "templates", "identity.tmpl");
+const RECIPE_TMPL = join(REPO_ROOT, "core", "templates", "delegation-recipe.tmpl");
 const FIXTURES = join(HERE, "fixtures");
 
 const ALL_HARNESSES: IdentityHarness[] = ["claude", "codex", "gemini", "opencode"];
@@ -131,6 +133,75 @@ describe("bash↔TS golden-fixture byte-parity (§18.1 / L-554)", () => {
       "utf-8",
     );
     expect(buildHarnessIdentityFile(templateRaw, "codex", "9.9.9")).toBe(golden);
+  });
+
+  it("native-static is identity-only — the pre-TD-244 shape (back-compat)", () => {
+    // Passing delegation_model=native-static (or omitting it) MUST byte-equal
+    // the original identity-only golden — no recipe, no behavior change for the
+    // CLAUDE.md inline path / Codex / native gemini.
+    const templateRaw = readFileSync(CANONICAL_TMPL, "utf-8");
+    const golden = readFileSync(
+      join(FIXTURES, "td233-identity-golden-gemini.md"),
+      "utf-8",
+    );
+    expect(buildHarnessIdentityFile(templateRaw, "gemini", "9.9.9", "native-static")).toBe(
+      golden,
+    );
+    expect(buildHarnessIdentityFile(templateRaw, "gemini", "9.9.9")).toBe(golden);
+  });
+});
+
+describe("TD-244 (BI-3) delegation-recipe region — bash↔TS golden-fixture byte-parity (§18.1 / L-554)", () => {
+  it("gemini dynamic-define: TS render of canonical+recipe equals the bash-emitted golden", () => {
+    // The golden (td244-identity-golden-gemini-dynamic.md) was emitted by the
+    // bash `normalize_identity_shape <tmpl> gemini 9.9.9 dynamic-define <recipe>`.
+    // The TS twin MUST reproduce it byte-for-byte (L-554 hash-stable-parity) —
+    // a drift here is the exact regression this guard exists for.
+    const templateRaw = readFileSync(CANONICAL_TMPL, "utf-8");
+    const recipeRaw = readFileSync(RECIPE_TMPL, "utf-8");
+    const golden = readFileSync(
+      join(FIXTURES, "td244-identity-golden-gemini-dynamic.md"),
+      "utf-8",
+    );
+    expect(
+      buildHarnessIdentityFile(templateRaw, "gemini", "9.9.9", "dynamic-define", recipeRaw),
+    ).toBe(golden);
+  });
+
+  it("the dynamic-define region carries BOTH the identity body and the recipe", () => {
+    const templateRaw = readFileSync(CANONICAL_TMPL, "utf-8");
+    const recipeRaw = readFileSync(RECIPE_TMPL, "utf-8");
+    const out = buildHarnessIdentityFile(
+      templateRaw,
+      "gemini",
+      "9.9.9",
+      "dynamic-define",
+      recipeRaw,
+    );
+    expect(out).toContain("You ARE Igris AI. Not Gemini CLI using Igris AI.");
+    expect(out).toContain("## Delegation Mechanism (dynamic-define harness)");
+    expect(out).toContain("define_subagent");
+    // Identity body and recipe are separated by exactly one blank line.
+    expect(out).toContain(
+      "You ARE Igris AI. Not Gemini CLI using Igris AI.\n\n## Delegation Mechanism",
+    );
+    // Region still ends with the END marker + one trailing newline.
+    expect(out.endsWith(`${IDENTITY_END_LINE}\n`)).toBe(true);
+  });
+
+  it("appendDelegationRecipe separates body from recipe by one blank line, one trailing newline", () => {
+    const body = "IDENTITY\n";
+    expect(appendDelegationRecipe(body, "RECIPE")).toBe("IDENTITY\n\nRECIPE\n");
+    // Extra trailing newlines in the recipe are normalized to exactly one.
+    expect(appendDelegationRecipe(body, "RECIPE\n\n\n")).toBe("IDENTITY\n\nRECIPE\n");
+  });
+
+  it("throws when dynamic-define is requested but no recipe is supplied (never silent strand)", () => {
+    const templateRaw = readFileSync(CANONICAL_TMPL, "utf-8");
+    expect(() =>
+      buildHarnessIdentityFile(templateRaw, "gemini", "9.9.9", "dynamic-define"),
+    ).toThrow(/requires a recipe/);
+    expect(() => appendDelegationRecipe("X\n", undefined)).toThrow(/requires a recipe/);
   });
 });
 

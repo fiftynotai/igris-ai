@@ -185,7 +185,7 @@ overlay block, no project/verify), kept as the repair primitive alongside the
 
 `/onboard-harness` is a standard core skill (under `core/skills/`, projected to
 every harness like any other core skill). It is the executable companion to the
-"Add a New Harness (the five-surface runbook)" below — run it to walk that same
+"Add a New Harness (the six-surface runbook)" below — run it to walk that same
 checklist step-by-step. (FR-179 retired the short-lived TD-224 "framework-dev"
 project-scoped skill category; `/onboard-harness` is now shipped globally.)
 
@@ -929,10 +929,13 @@ So antigravity is **documented N/A** for static agent projection — it is not a
 agent target in `harness-manifest.json`, and no per-agent harness file is
 emitted for it.
 
-**But dynamic-agent harnesses still run faithful Igris agents at runtime (FR-183).**
+**But dynamic-agent harnesses still run faithful Igris agents at runtime (FR-183 → TD-244).**
 The N/A-static finding does NOT mean antigravity improvises its subagents. The
-`/hunt` skill carries a harness-agnostic **"Delegation Mechanism"** fallback
-(`core/skills/hunt/SKILL.md`): on a dynamic-agent-only harness, each phase's
+harness-agnostic **delegation recipe** lives in `core/templates/delegation-recipe.tmpl`
+and is region-merged into the harness's boot-read identity file (`GEMINI.md`) by the
+identity compile pass, gated on `harnesses.<type>.delegation_model = dynamic-define`
+(TD-244 relocated it OUT of the `/hunt` skill so every delegating skill stays
+harness-agnostic). On a dynamic-agent-only harness, each
 delegation (architect / forger / sentinel / warden) seeds a runtime
 `define_subagent` from the canonical agent prompt at
 `~/.igris/core/agents/<agent>.md` — the file's markdown body becomes the
@@ -1239,7 +1242,7 @@ third families have live disposition today:
 | `md_to_<surface>.sh` (`md_to_agents_md.sh`, `md_to_gemini_toml.sh`) | **Skills surfaces** (FR-103 / FR-137). The `~/.igris/core/skills/` tree → per-CLI skill artifacts. | **RETIRED by FR-153** — superseded by the symlink-based registry-anchored skill projection (`compile_harnesses.sh` skills pass + `_common.sh`'s pair allowlist). Both scripts deleted. |
 | `<target>.sh` (e.g. `codex.sh`, `gemini.sh`) | The dormant FR-104-era bridge contract: `<target>.sh <project-path>`, invoked by `materializeBridges()` in `cli/src/lib/bridges.ts` during `igris init`. | **Superseded by the `igris harness` verb.** No `<target>.sh` script exists, so `materializeBridges` skips every target today (a silent no-op). The harness verb (`cli/src/verbs/harness.ts`) is the live seam — it shells out to `compile_harnesses.sh` / `check_harness_drift.sh` directly and deliberately never touches `bridges.ts`. The inert `bridges.ts` contract is left in place for a follow-up cleanup brief (no code change in FR-138); do not build `<target>.sh` scripts against it. |
 
-### Add a New Harness (the five-surface runbook)
+### Add a New Harness (the six-surface runbook)
 
 > **The harness abstraction.** Igris keeps **one canonical source** per surface
 > and derives **N per-harness artifacts** from it deterministically. Editing a
@@ -1248,10 +1251,10 @@ third families have live disposition today:
 > error** — the compiler regenerates it from the canonical source on the next
 > run. To change a harness's behavior, edit the canonical source (the agent
 > prompt, the SKILL.md, the manifest) and recompile. A new harness is "onboarded"
-> by teaching the five surfaces how to project to it, never by hand-writing its
+> by teaching the six surfaces how to project to it, never by hand-writing its
 > artifacts.
 
-A harness becomes first-class across **five surfaces**, each with its own
+A harness becomes first-class across **six surfaces**, each with its own
 projection primitive:
 
 | Surface | Canonical source | Projection primitive |
@@ -1261,19 +1264,20 @@ projection primitive:
 | **MCP** | `surfaces.mcp_servers[]` canonical block | config-**merge** into the harness's native MCP config |
 | **Hooks** | `~/.igris/core/hooks/shared/*.sh` | per-harness **bridge** (plugin / notify-wrapper) |
 | **Identity** | `core/templates/identity.tmpl` (Model-A block) via `surfaces.os_identity[]` | **region-merge** of the rendered block into the harness's auto-read project-root context file (TD-233) |
+| **Delegation mechanism** (boot-injection, TD-244) | `harnesses.<type>.delegation_model` descriptor + `core/templates/delegation-recipe.tmpl` | `native-static` → nothing (skill delegates via `subagent_type:<agent>`); `dynamic-define` → region-merge of the delegation recipe into the harness's boot-read identity file (rides the identity surface, gated on `delegation_model`) so the orchestrator is taught read→define_subagent→invoke once per session |
 
-#### Per-harness method matrix (the five harnesses today)
+#### Per-harness method matrix (the six harnesses today)
 
 This consolidates the per-surface facts; the authoritative tables it draws from
 are linked so a reader chases the single source of truth, not a copy:
 
-| Harness | Agent primitive | Skills method | MCP map key + entry shape | Hooks | Identity file |
-|---------|-----------------|---------------|---------------------------|-------|---------------|
-| **Claude** | Symlink (`atomic_symlink`) → `~/.claude/agents/<name>.md` | `symlink` → `~/.claude/skills/` | `mcpServers.<name>` / `{type:"stdio",…}` | All 6 portable + Claude-only events | `CLAUDE.md` (project root — carries the canonical identity block natively) |
-| **Codex** | Symlink (`atomic_symlink`) → `~/.codex/agents/<name>.toml` (FR-159) | `symlink` → `~/.agents/skills/` (FR-157 cross-CLI) | `[mcp_servers.<name>]` / resolved-literal env | `session_end` only (notify wrapper) | `AGENTS.md` (project root — `os_identity` region-merge, TD-233) |
-| **Gemini** | **Hard link** (`emit_md_hardlink`) → `~/.gemini/agents/<name>.md` — loader does NOT follow symlinks (TD-208) | `symlink` → `~/.agents/skills/` (FR-157 cross-CLI) | `mcpServers.<name>` / no-`type` env | **None** projected (gemini-cli 0.45.0 has `gemini hooks` — FR-182) | `GEMINI.md` (project root — `os_identity` region-merge, TD-233) |
-| **Antigravity** | **N/A** — documented (no static-subagent path; built-in dynamic subagents only — FR-179) | install-time parent symlink `~/.gemini/antigravity-cli/skills` → `~/.agents/skills` (`linkAntigravitySkills`; items ride the `agents/symlink` target, FR-179) | `mcpServers.<name>` / no-`type` env — DISTINCT file `~/.gemini/config/mcp_config.json` (FR-179) | `PreToolUse` + `PostToolUse` — BASH bridge → `~/.gemini/config/hooks.json` → `core/hooks/bridges/antigravity/<event>.sh` (FR-181); session via `/awaken`+`/rest` | `AGENTS.md` + `GEMINI.md` (rides codex+gemini targets — auto-reads both) |
-| **OpenCode** | Symlink → `~/.config/opencode/agent/<name>.md` — loader **does** follow symlinks (FR-171, verified live 1.14.22) | `command` → `~/.config/opencode/command/<name>.md` thin `@file` wrapper (FR-171) | `mcp.<name>` / `{type:"local", command:[…fused…], environment{}}` | All 6 portable (TS plugin) | `CLAUDE.md` (reads Claude's file — A/B-proven; no separate target) |
+| Harness | Agent primitive | Skills method | MCP map key + entry shape | Hooks | Identity file | Delegation model (TD-244) |
+|---------|-----------------|---------------|---------------------------|-------|---------------|---------------------------|
+| **Claude** | Symlink (`atomic_symlink`) → `~/.claude/agents/<name>.md` | `symlink` → `~/.claude/skills/` | `mcpServers.<name>` / `{type:"stdio",…}` | All 6 portable + Claude-only events | `CLAUDE.md` (project root — carries the canonical identity block natively) | `native-static` (loads agents; `subagent_type:<agent>` resolves directly) |
+| **Codex** | Symlink (`atomic_symlink`) → `~/.codex/agents/<name>.toml` (FR-159) | `symlink` → `~/.agents/skills/` (FR-157 cross-CLI) | `[mcp_servers.<name>]` / resolved-literal env | `session_end` only (notify wrapper) | `AGENTS.md` (project root — `os_identity` region-merge, TD-233) | `native-static` (`AGENTS.md` stays recipe-free) |
+| **Gemini** | **Hard link** (`emit_md_hardlink`) → `~/.gemini/agents/<name>.md` — loader does NOT follow symlinks (TD-208) | `symlink` → `~/.agents/skills/` (FR-157 cross-CLI) | `mcpServers.<name>` / no-`type` env | **None** projected (gemini-cli 0.45.0 has `gemini hooks` — FR-182) | `GEMINI.md` (project root — `os_identity` region-merge, TD-233) | `dynamic-define` (the `GEMINI.md` target carries the delegation recipe; read by Antigravity at boot) |
+| **Antigravity** | **N/A** — documented (no static-subagent path; built-in dynamic subagents only — FR-179) | install-time parent symlink `~/.gemini/antigravity-cli/skills` → `~/.agents/skills` (`linkAntigravitySkills`; items ride the `agents/symlink` target, FR-179) | `mcpServers.<name>` / no-`type` env — DISTINCT file `~/.gemini/config/mcp_config.json` (FR-179) | `PreToolUse` + `PostToolUse` — BASH bridge → `~/.gemini/config/hooks.json` → `core/hooks/bridges/antigravity/<event>.sh` (FR-181); session via `/awaken`+`/rest` | `AGENTS.md` + `GEMINI.md` (rides codex+gemini targets — auto-reads both) | `dynamic-define` (rides the gemini `GEMINI.md` recipe — `define_subagent`/`invoke_subagent`; live-proven `agy` v1.0.10, 2026-06-21) |
+| **OpenCode** | Symlink → `~/.config/opencode/agent/<name>.md` — loader **does** follow symlinks (FR-171, verified live 1.14.22) | `command` → `~/.config/opencode/command/<name>.md` thin `@file` wrapper (FR-171) | `mcp.<name>` / `{type:"local", command:[…fused…], environment{}}` | All 6 portable (TS plugin) | `CLAUDE.md` (reads Claude's file — A/B-proven; no separate target) | `native-static` |
 
 - Agent primitive details: see the **TD-208 subagent-distribution primitive
   table** (above, "The consumer-side agent target …").
@@ -1284,6 +1288,14 @@ are linked so a reader chases the single source of truth, not a copy:
 - Identity filename map + mechanism: see the **TD-233 orchestrator-identity
   section** (above, "Orchestrator identity as a `surfaces.os_identity` manifest
   declaration").
+- Delegation model: the **TD-244 sixth surface** — `harnesses.<type>.delegation_model`
+  (`native-static` | `dynamic-define`) in `harness-manifest.json`. A `dynamic-define`
+  harness's identity region (the os_identity surface, keyed by `type`) carries the
+  canonical `core/templates/delegation-recipe.tmpl` so skills delegate abstractly
+  ("delegate to role X") and the adapter resolves the per-harness *how* — zero
+  per-skill branching. Gated strictly on `delegation_model`, so a native-static
+  harness's identity file (e.g. Codex's `AGENTS.md`) stays recipe-free. A harness
+  absent from the map defaults to `native-static` (back-compat).
 
 #### OpenCode-native-location facts (FR-171, verified live `opencode 1.14.22`)
 
@@ -1364,6 +1376,20 @@ are linked so a reader chases the single source of truth, not a copy:
     `cli/src/lib/identity-shape.ts` `HARNESS_SELF_NAMES` — byte-identical).
     Verify: `igris harness compile --surface identity` → OK row, then a fresh
     `<NEW> -p "who are you?"` greets as **Igris AI**.
+10b. **Delegation mechanism (boot-injection — TD-244)** — set
+    `harnesses.<NEW>.delegation_model` (`native-static` | `dynamic-define`, from
+    the Phase-0 delegation probe) in `harness-manifest.json` (+ the schema
+    `harnesses` enum + `_common.sh validate_manifest`'s `valid_harness_types`).
+    `native-static` (loads agents statically) needs nothing more — skills delegate
+    via `subagent_type:<agent>`. `dynamic-define` (runtime subagent definition
+    only) rides the identity surface (step 10, keyed by `type`): the compile
+    identity pass region-merges `core/templates/delegation-recipe.tmpl` into the
+    harness's boot-read identity file, gated strictly on `delegation_model` so a
+    native-static identity file stays recipe-free. The recipe threads through the
+    SAME §18.1 shape pair (`normalize_identity_shape` ↔ `buildHarnessIdentityFile`)
+    + its matching drift branch. Verify: `igris harness compile --surface identity`
+    → OK row, `check` → MATCH, then live `<NEW> -p "what is your delegation
+    procedure?"` → the read→define_subagent→invoke recipe (L-711 marker proof).
 11. **Mirror + test** — every touched `core/scripts/cli-adapters/*` file is in the
     TD-096 runtime mirror set: `cp` to `~/.igris/core/scripts/cli-adapters/` and
     verify with `verify_mirror.sh`. Add `<NEW>` to the bats matrix
@@ -1380,7 +1406,7 @@ above.
 
 #### Procedure: the `/onboard-harness` skill
 
-The doc above is the **why** (the harness abstraction + the five-surface model).
+The doc above is the **why** (the harness abstraction + the six-surface model).
 The **do** is the executable [`/onboard-harness`](../core/skills/onboard-harness/SKILL.md)
 skill — run it to walk this same checklist step-by-step with a cheap self-verify
 after each touchpoint (so a dropped step is CAUGHT, not assumed). The skill

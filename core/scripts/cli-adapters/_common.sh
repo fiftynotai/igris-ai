@@ -542,10 +542,37 @@ for required_key in ("version", "agents"):
 if manifest["version"] != 1:
     fail(f"'version' must be 1 (got {manifest['version']!r})")
 
-allowed_top = {"$schema", "_comment", "_schema", "version", "agents", "surfaces"}
+allowed_top = {"$schema", "_comment", "_schema", "_harnesses_comment",
+               "version", "harnesses", "agents", "surfaces"}
 for key in manifest:
     if key not in allowed_top:
         fail(f"unknown top-level key '{key}' (additionalProperties:false)")
+
+# TD-244 (BI-3): structural validation of the per-harness `delegation_model`
+# descriptor map. Mirrors the `harnesses` $def in manifest.schema.json so the
+# structural fallback AGREES with the jsonschema path. Absent → identity-only
+# projection (back-compat). Each key must be a known harness type; each value an
+# object with only an optional `delegation_model` ∈ {native-static, dynamic-define}.
+harnesses = manifest.get("harnesses")
+if harnesses is not None:
+    if not isinstance(harnesses, dict):
+        fail("'harnesses' must be an object")
+    valid_harness_types = {"claude", "codex", "gemini", "opencode", "antigravity"}
+    valid_delegation_models = {"native-static", "dynamic-define"}
+    for hkey, hval in harnesses.items():
+        if hkey not in valid_harness_types:
+            fail(f"harnesses: unknown harness type '{hkey}' "
+                 f"(must be one of {sorted(valid_harness_types)})")
+        if not isinstance(hval, dict):
+            fail(f"harnesses['{hkey}'] must be an object")
+        for key in hval:
+            if key != "delegation_model":
+                fail(f"harnesses['{hkey}']: unknown key '{key}' "
+                     "(additionalProperties:false; only 'delegation_model' allowed)")
+        dm = hval.get("delegation_model")
+        if dm is not None and dm not in valid_delegation_models:
+            fail(f"harnesses['{hkey}'].delegation_model '{dm}' is not one of "
+                 f"{sorted(valid_delegation_models)}")
 
 agents = manifest["agents"]
 if not isinstance(agents, list):
@@ -1639,11 +1666,17 @@ IGRIS_IDENTITY_END_LINE='<!-- IGRIS:OS_IDENTITY:END -->'
 #
 # Row columns (TAB-separated, fixed order):
 #   source <TAB> version_source <TAB> target_type <TAB> filename <TAB>
-#   scope_type <TAB> scope_paths_csv
+#   scope_type <TAB> scope_paths_csv <TAB> delegation_model
 #
 # `-` is the empty sentinel for source (→ caller defaults to
 # <brain>/core/templates/identity.tmpl), version_source (→ caller defaults to
 # <brain>/config.json) and scope_paths (mirrors the skills flatten).
+#
+# TD-244 (BI-3): `delegation_model` is resolved per target `type` from the
+# top-level `harnesses` map (native-static | dynamic-define); a type absent from
+# the map → `native-static` (back-compat: identity-only projection). The caller
+# (compile + drift) appends the delegation recipe to the rendered region ONLY
+# when delegation_model=dynamic-define.
 # ---------------------------------------------------------------------------
 flatten_identity_rows() {
   local merged="$1"
@@ -1659,6 +1692,28 @@ core_surfaces_path = sys.argv[1]
 merged_manifest_path = sys.argv[2]
 target_kind = sys.argv[3]
 project_root = sys.argv[4]
+
+
+def load_harnesses(path):
+    # TD-244 (BI-3): returns {harness_type: delegation_model} from the merged
+    # manifest's top-level `harnesses` map. A type absent from the map (or a map
+    # absent entirely) yields native-static at lookup time. Mirrors the loader
+    # tolerance of load_identity (missing/malformed → {}).
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except OSError:
+        return {}
+    value = data.get("harnesses")
+    if not isinstance(value, dict):
+        return {}
+    out = {}
+    for htype, hval in value.items():
+        if isinstance(hval, dict):
+            dm = hval.get("delegation_model")
+            if isinstance(dm, str) and dm:
+                out[htype] = dm
+    return out
 
 
 def load_identity(path):
@@ -1692,6 +1747,11 @@ try:
 except (OSError, ValueError):
     pass
 
+# TD-244 (BI-3): the `harnesses` delegation-model map lives on the merged agent
+# manifest (the same file the os_identity blocks ride on in this project). A type
+# absent from the map → native-static (.get default below).
+harness_models = load_harnesses(merged_manifest_path)
+
 for src in sources:
     for block in load_identity(src):
         if not isinstance(block, dict):
@@ -1710,6 +1770,9 @@ for src in sources:
                 continue
             if target_kind != "all" and ttype != target_kind:
                 continue
+            # TD-244 (BI-3): resolve the target type's delegation_model; absent
+            # → native-static (identity-only, back-compat).
+            delegation_model = harness_models.get(ttype, "native-static")
             print("\t".join([
                 source,
                 version_source,
@@ -1717,6 +1780,7 @@ for src in sources:
                 filename,
                 scope_type,
                 scope_paths_csv,
+                delegation_model,
             ]))
 PY
 }
@@ -1939,7 +2003,8 @@ PY
 }
 
 # ---------------------------------------------------------------------------
-# normalize_identity_shape <template-path> <harness> <version>
+# normalize_identity_shape <template-path> <harness> <version> \
+#                          [delegation-model] [recipe-template-path]
 #
 # The §18.1 / L-554 SHARED SHAPE HELPER for the identity surface. Renders the
 # canonical identity template for one harness and emits the FULL delimited
@@ -1955,14 +2020,27 @@ PY
 # "Claude" ("Not Gemini CLI using Igris AI."). Model B is parked — do NOT add
 # it here. The body is normalized to end with exactly one newline.
 #
+# TD-244 (BI-3): when <delegation-model> = "dynamic-define" AND a
+# <recipe-template-path> is given, the rendered region ALSO carries the
+# delegation recipe (the dynamic-define harness boot-injection), separated from
+# the identity body by exactly one blank line and terminated by exactly one
+# newline. <delegation-model> defaults to "native-static" (identity-only, the
+# pre-TD-244 shape — existing golden fixtures unchanged). The recipe template is
+# rendered verbatim (it carries no {{...}} tokens). A dynamic-define model with a
+# MISSING/unreadable recipe template returns 2 (observable FAIL, L-232) — never a
+# silent identity-only fallback (that would strand the dynamic-define harness).
+#
 # Returns 2 on an unknown harness or unreadable template (observable, L-232).
 # ---------------------------------------------------------------------------
 normalize_identity_shape() {
   local template_path="$1"
   local harness="$2"
   local version="$3"
+  local delegation_model="${4:-native-static}"
+  local recipe_template_path="${5:-}"
   python3 - "$template_path" "$harness" "$version" \
-    "$IGRIS_IDENTITY_BEGIN_LINE" "$IGRIS_IDENTITY_END_LINE" <<'PY'
+    "$IGRIS_IDENTITY_BEGIN_LINE" "$IGRIS_IDENTITY_END_LINE" \
+    "$delegation_model" "$recipe_template_path" <<'PY'
 import sys
 
 template_path = sys.argv[1]
@@ -1970,6 +2048,8 @@ harness = sys.argv[2]
 version = sys.argv[3]
 begin_line = sys.argv[4]
 end_line = sys.argv[5]
+delegation_model = sys.argv[6] if len(sys.argv) > 6 else "native-static"
+recipe_template_path = sys.argv[7] if len(sys.argv) > 7 else ""
 
 # MUST stay byte-identical to HARNESS_SELF_NAMES in identity-shape.ts.
 SELF_NAMES = {
@@ -1996,6 +2076,29 @@ except OSError as exc:
 body = body.replace("{{IGRIS_VERSION}}", version)
 body = body.replace("{{HARNESS_SELF_NAME}}", self_name)
 body = body.rstrip("\n") + "\n"
+
+# TD-244 (BI-3): dynamic-define harnesses also carry the delegation recipe in
+# the region. MUST stay byte-identical to appendDelegationRecipe in
+# identity-shape.ts (the golden-fixture + bats parity tests pin the two).
+if delegation_model == "dynamic-define":
+    if not recipe_template_path:
+        sys.stderr.write(
+            "normalize_identity_shape: delegation_model=dynamic-define requires a "
+            "recipe template path\n"
+        )
+        sys.exit(2)
+    try:
+        with open(recipe_template_path, "r", encoding="utf-8") as fh:
+            recipe = fh.read()
+    except OSError as exc:
+        sys.stderr.write(
+            "normalize_identity_shape: cannot read delegation recipe template "
+            f"'{recipe_template_path}': {exc}\n"
+        )
+        sys.exit(2)
+    recipe = recipe.rstrip("\n") + "\n"
+    # body already ends with exactly one "\n"; one blank line then the recipe.
+    body = f"{body}\n{recipe}"
 
 sys.stdout.write(f"{begin_line}\n{body}{end_line}\n")
 PY

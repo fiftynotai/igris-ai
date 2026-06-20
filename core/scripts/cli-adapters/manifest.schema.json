@@ -10,10 +10,30 @@
     "$schema":  { "type": "string" },
     "_comment": { "type": "string" },
     "_schema":  { "type": "object", "description": "free-form human field-doc block; ignored by tooling" },
+    "_harnesses_comment": { "type": "string", "description": "free-form human doc for the `harnesses` map; ignored by tooling" },
 
     "version": {
       "description": "Manifest format version. Bump only on a breaking schema change; FR-136 ships v1.",
       "const": 1
+    },
+
+    "harnesses": {
+      "description": "TD-244 (BI-3): per-harness adapter descriptors for the SIXTH surface — the delegation mechanism / boot-injection. Maps a harness `type` to its `delegation_model`: `native-static` (the harness loads Igris agents statically → a skill delegates via `subagent_type:<agent>` directly, no recipe) or `dynamic-define` (the harness defines subagents at runtime → the per-session delegation recipe is appended to the harness's identity region by the compile identity pass, gated strictly on this value). A harness absent from this map defaults to `native-static` (back-compat: pre-TD-244 manifests project identity-only). Additive — still v1, no version bump. The identity compile/drift passes read `delegation_model` for each os_identity target's `type` to decide whether to append the recipe; absent/`native-static` → identity-only (existing golden fixtures unchanged).",
+      "type": "object",
+      "additionalProperties": false,
+      "propertyNames": { "enum": ["claude", "codex", "gemini", "opencode", "antigravity"] },
+      "patternProperties": {
+        "^(claude|codex|gemini|opencode|antigravity)$": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "delegation_model": {
+              "enum": ["native-static", "dynamic-define"],
+              "description": "native-static: statically-loaded Igris agents; the skill delegates abstractly and the adapter resolves to `subagent_type:<agent>`. dynamic-define: runtime subagent definition; the adapter region-merges the delegation recipe into the harness identity region at compile so the orchestrator is taught the read→define_subagent→invoke recipe once per session."
+            }
+          }
+        }
+      }
     },
 
     "agents": {

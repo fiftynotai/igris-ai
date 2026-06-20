@@ -1912,9 +1912,12 @@ fi
 if [ "$SURFACE_KIND" = "identity" ] || [ "$SURFACE_KIND" = "all" ]; then
   IDENTITY_ROWS=$(flatten_identity_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "$TARGET_KIND" "$PROJECT_ROOT")
   if [ -n "$IDENTITY_ROWS" ]; then
-    while IFS=$'\t' read -r i_source i_vsource i_type i_filename i_scope_type i_scope_paths; do
+    while IFS=$'\t' read -r i_source i_vsource i_type i_filename i_scope_type i_scope_paths i_delegation_model; do
       [ -z "$i_type" ] && continue
       [ -z "$i_filename" ] && continue
+      # TD-244 (BI-3): a flatten row from a pre-TD-244 manifest (no harnesses
+      # map) carries an empty delegation_model column → native-static default.
+      [ -z "$i_delegation_model" ] && i_delegation_model="native-static"
 
       # FR-155: identity-surface project-scope filter. Identical posture to
       # the skills-loop filter — silent skip (no verdict, no TOTAL++) when
@@ -1988,12 +1991,29 @@ if [ "$SURFACE_KIND" = "identity" ] || [ "$SURFACE_KIND" = "all" ]; then
         *)     out_abs="$PROJECT_ROOT/$i_filename" ;;
       esac
 
+      # TD-244 (BI-3): resolve the delegation recipe template for a
+      # dynamic-define target. The recipe is the canonical companion of the
+      # identity template — it lives alongside it (`<identity-tmpl-dir>/
+      # delegation-recipe.tmpl`), so it resolves correctly for BOTH the in-repo
+      # compile (PROJECT_ROOT/core/templates/) and the brain-default compile
+      # (BRAIN_DIR/core/templates/), with no separate manifest declaration.
+      recipe_abs=""
+      if [ "$i_delegation_model" = "dynamic-define" ]; then
+        recipe_abs="$(dirname "$tmpl_abs")/delegation-recipe.tmpl"
+        if [ ! -f "$recipe_abs" ]; then
+          SUMMARY+=("FAIL  identity/$i_type — delegation recipe template missing: $recipe_abs (dynamic-define harness needs the boot-injection recipe)")
+          FAIL=$((FAIL + 1))
+          continue
+        fi
+      fi
+
       # Render the expected region to a temp file (a $(...) capture would eat
       # the trailing newline) and merge it into the target atomically.
       tmp_region="$(mktemp "${TMPDIR:-/tmp}/igris-identity-region.XXXXXX")"
       TMPFILES_TO_CLEAN+=("$tmp_region")
       rc=0
-      normalize_identity_shape "$tmpl_abs" "$i_type" "$id_version" > "$tmp_region" || rc=$?
+      normalize_identity_shape "$tmpl_abs" "$i_type" "$id_version" \
+        "$i_delegation_model" "$recipe_abs" > "$tmp_region" || rc=$?
       if [ "$rc" -ne 0 ]; then
         SUMMARY+=("FAIL  identity/$i_type — normalize_identity_shape exited $rc")
         FAIL=$((FAIL + 1))

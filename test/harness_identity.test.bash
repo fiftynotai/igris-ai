@@ -561,3 +561,168 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"alidation failed"* ]] || [[ "$output" == *"must be 'file'"* ]]
 }
+
+# --- 10. TD-244 (BI-3): delegation-mechanism boot-injection surface ------------
+#
+# A per-harness `harnesses.<type>.delegation_model` (native-static |
+# dynamic-define) gates whether the compile identity pass appends the canonical
+# delegation recipe (the companion template alongside identity.tmpl) to a
+# harness's identity region. The drift pass re-derives the SAME recipe-carrying
+# region (§17 paired branch). The recipe is keyed by the identity target's
+# `type`, so a dynamic-define harness gets it while a native-static one stays
+# recipe-free — the §6 "no recipe leaks to Codex" guardrail.
+
+# Manifest with a harnesses map: gemini=dynamic-define, codex=native-static.
+write_manifest_with_delegation() {
+  cat > "$PROJ/harness-manifest.json" <<'EOF'
+{
+  "version": 1,
+  "harnesses": {
+    "gemini": { "delegation_model": "dynamic-define" },
+    "codex": { "delegation_model": "native-static" }
+  },
+  "agents": [],
+  "surfaces": {
+    "os_identity": [
+      {
+        "source": "tmpl/identity.tmpl",
+        "version_source": "version.json",
+        "targets": [
+          { "type": "gemini", "method": "file", "filename": "GEMINI.md" },
+          { "type": "codex",  "method": "file", "filename": "AGENTS.md" }
+        ]
+      }
+    ]
+  }
+}
+EOF
+  # The companion recipe template lives alongside the identity template.
+  cat > "$PROJ/tmpl/delegation-recipe.tmpl" <<'EOF'
+## Delegation Mechanism (dynamic-define harness)
+
+To delegate to role X: read ~/.igris/core/agents/<role>.md, define_subagent with
+its body + tool scope, then invoke_subagent.
+EOF
+}
+
+@test "TD-244: compile injects the delegation recipe into the dynamic-define harness only" {
+  write_manifest_with_delegation
+  run run_compile --surface identity
+  [ "$status" -eq 0 ]
+  # gemini (dynamic-define) carries the recipe inside its region.
+  grep -qF '## Delegation Mechanism (dynamic-define harness)' "$PROJ/GEMINI.md"
+  grep -qF 'define_subagent' "$PROJ/GEMINI.md"
+  # The recipe sits BETWEEN the identity body and the END marker.
+  grep -qF 'You ARE Igris AI. Not Gemini CLI using Igris AI.' "$PROJ/GEMINI.md"
+  # codex (native-static) stays recipe-free (the §6 no-leak guardrail).
+  ! grep -q 'Delegation Mechanism' "$PROJ/AGENTS.md"
+  ! grep -q 'define_subagent' "$PROJ/AGENTS.md"
+  grep -qF 'You ARE Igris AI. Not Codex using Igris AI.' "$PROJ/AGENTS.md"
+}
+
+@test "TD-244: compile && drift → recipe-carrying region MATCHes (paired drift branch)" {
+  write_manifest_with_delegation
+  run run_compile --surface identity
+  [ "$status" -eq 0 ]
+  run run_drift
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[identity/gemini] MATCH"* ]]
+  [[ "$output" == *"[identity/codex] MATCH"* ]]
+  [[ "$output" != *"DRIFTED"* ]]
+}
+
+@test "TD-244: stripping the recipe from a dynamic-define region surfaces as DRIFTED" {
+  write_manifest_with_delegation
+  run run_compile --surface identity
+  [ "$status" -eq 0 ]
+  # Hand-strip the recipe lines but keep the identity body + markers — a
+  # native-static-shaped region for a dynamic-define harness must DRIFT.
+  python3 - "$PROJ/GEMINI.md" <<'PY'
+import sys
+p = sys.argv[1]
+lines = open(p).read().splitlines(keepends=True)
+out = []
+for ln in lines:
+    if "Delegation Mechanism" in ln or "define_subagent" in ln or "delegate to role" in ln:
+        continue
+    out.append(ln)
+open(p, "w").write("".join(out))
+PY
+  run run_drift
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"[identity/gemini] DRIFTED"* ]]
+  # Recompile heals it.
+  run run_compile --surface identity
+  [ "$status" -eq 0 ]
+  run run_drift
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[identity/gemini] MATCH"* ]]
+}
+
+@test "TD-244: a dynamic-define harness with a MISSING recipe template FAILs (never silent)" {
+  write_manifest_with_delegation
+  rm "$PROJ/tmpl/delegation-recipe.tmpl"
+  run run_compile --surface identity
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"FAIL  identity/gemini"* ]]
+  [[ "$output" == *"delegation recipe template missing"* ]]
+}
+
+@test "TD-244: absent harnesses map → identity-only (back-compat, no recipe)" {
+  # The default setup() manifest has NO harnesses map. Both targets default to
+  # native-static → identity-only regions, byte-stable with pre-TD-244 output.
+  run run_compile --surface identity
+  [ "$status" -eq 0 ]
+  ! grep -q 'Delegation Mechanism' "$PROJ/GEMINI.md"
+  ! grep -q 'Delegation Mechanism' "$PROJ/AGENTS.md"
+  run run_drift
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[identity/gemini] MATCH"* ]]
+  [[ "$output" == *"[identity/codex] MATCH"* ]]
+}
+
+@test "TD-244: schema rejects an unknown delegation_model value" {
+  cat > "$PROJ/harness-manifest.json" <<'EOF'
+{
+  "version": 1,
+  "harnesses": {
+    "gemini": { "delegation_model": "bogus-model" }
+  },
+  "agents": [],
+  "surfaces": {
+    "os_identity": [
+      {
+        "source": "tmpl/identity.tmpl",
+        "version_source": "version.json",
+        "targets": [
+          { "type": "gemini", "method": "file", "filename": "GEMINI.md" }
+        ]
+      }
+    ]
+  }
+}
+EOF
+  run run_compile --surface identity
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"alidation failed"* ]] || [[ "$output" == *"delegation_model"* ]]
+}
+
+# --- 10b. TD-244 §18.1 bash↔TS golden parity (dynamic-define) -----------------
+
+@test "TD-244: normalize_identity_shape dynamic-define on the REAL canonical byte-equals the TS golden" {
+  real_tmpl="$IGRIS_ROOT/core/templates/identity.tmpl"
+  real_recipe="$IGRIS_ROOT/core/templates/delegation-recipe.tmpl"
+  golden="$IGRIS_ROOT/cli/src/__tests__/fixtures/td244-identity-golden-gemini-dynamic.md"
+  [ -f "$real_tmpl" ] || skip "repo canonical identity.tmpl missing"
+  [ -f "$real_recipe" ] || skip "repo canonical delegation-recipe.tmpl missing"
+  [ -f "$golden" ] || skip "golden fixture missing: $golden"
+  actual_file="$BATS_TEST_TMPDIR/td244-actual-gemini-dynamic.md"
+  bash -c "source '$COMMON' >/dev/null 2>&1; normalize_identity_shape '$real_tmpl' gemini 9.9.9 dynamic-define '$real_recipe'" > "$actual_file"
+  # byte-compare vs the committed golden — cmp catches a trailing-newline-only
+  # divergence that command substitution would silently strip (m1, TD-244 warden).
+  if ! cmp -s "$actual_file" "$golden"; then
+    echo "PARITY MISMATCH (dynamic-define gemini) — byte-compare vs golden" >&2
+    diff "$golden" "$actual_file" >&2 || true
+    return 1
+  fi
+}

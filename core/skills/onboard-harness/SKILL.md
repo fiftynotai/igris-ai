@@ -1,6 +1,6 @@
 ---
 name: onboard-harness
-description: "Onboard a new CLI/IDE harness to Igris across all five surfaces (identity, agents, skills, MCP, hooks) - research how the harness consumes each, wire every integration point, then verify each is live (including that future igris add reaches it)"
+description: "Onboard a new CLI/IDE harness to Igris across all six surfaces (identity, agents, skills, MCP, hooks, delegation) - research how the harness consumes each, wire every integration point, then verify each is live (including that future igris add reaches it)"
 disable-model-invocation: false
 allowed-tools:
   - Read
@@ -20,10 +20,10 @@ triggers:
 
 Make a new harness (`<NEW>`) a **first-class Igris target** so it can use Igris,
 and so that *everything Igris already has* — and everything added later via
-`igris add` — reaches it automatically. Igris projects **five surfaces**:
-**identity, agents, skills, MCP, hooks**. Your job is NOT to bend the harness to
-a preset mold — it is to **research how THIS harness wants each surface, wire it,
-and verify each is live.**
+`igris add` — reaches it automatically. Igris projects **six surfaces**:
+**identity, agents, skills, MCP, hooks, and the delegation mechanism**. Your job
+is NOT to bend the harness to a preset mold — it is to **research how THIS harness
+wants each surface, wire it, and verify each is live.**
 
 > ## The non-negotiable principle: research, prove, never assume
 >
@@ -86,7 +86,7 @@ invocation. Nothing is wired yet.
 
 ## Phase 1 — Per-surface empirical read-path discovery (the rigorous core)
 
-For **each** of the five surfaces, PROVE — by marker test — where `<NEW>` reads
+For **each** of the six surfaces, PROVE — by marker test — where `<NEW>` reads
 it from, **at both global and project scope**, and in what format. This is the
 table that drives every wiring decision in Phase 2. **Do not skip a surface
 because you "know" the answer from another harness.**
@@ -106,7 +106,7 @@ because you "know" the answer from another harness.**
 4. **Record the winning path + format. Tear the marker down.**
 5. **Repeat at the other scope** — never assume global and project share a path.
 
-### The five surfaces to resolve
+### The six surfaces to resolve
 
 | Surface | What you must prove (global AND project) | Format to capture |
 |---|---|---|
@@ -115,8 +115,9 @@ because you "know" the answer from another harness.**
 | **Skills** | the native command/skill dir it loads from (often differs global vs project) | dir + format (file? command wrapper? plugin?) |
 | **MCP** | the MCP config file it reads + the native entry shape | path + entry shape (see Phase-2 #5 for the 4 known shapes) |
 | **Hooks** | is there an event/hook API at all? (some harnesses have none — that's a documented N/A, not a gap) | event names + bridge mechanism, or "none" |
+| **Delegation mechanism** (TD-244) | does it load Igris agents **statically** (→ `native-static`: a skill delegates via `subagent_type:<agent>` directly) or can it only **define subagents at runtime** (→ `dynamic-define`: e.g. `define_subagent`/`invoke_subagent`)? **Marker test:** put the recipe token in the Phase-1-proven identity file and `-p "what is your delegation procedure?"` — if a `dynamic-define` harness echoes the read→define→invoke recipe, the identity boot-injection channel is live. | `native-static` \| `dynamic-define` + (if dynamic-define) the boot-read identity file the recipe rides |
 
-Phase 1 output: a **proven read-path + format table** for all five surfaces, at
+Phase 1 output: a **proven read-path + format table** for all six surfaces, at
 both scopes. If a surface is genuinely unsupported, record it as a deliberate
 **documented N/A** (the Gemini-has-no-hooks precedent), not a silent gap.
 
@@ -216,6 +217,32 @@ permissions.allow` (`mcp__igris-brain__*`, `mcp__igris-ai__*`); others have
 `igris install` write it *as part of the install the user consents to*, or
 (b) **emit the exact change for the operator to apply** (`/permissions`, or the
 file edit). Verify: an Igris MCP call on `<NEW>` does not prompt.
+
+### 11 — Delegation mechanism (boot-injection — TD-244)
+`harness-manifest.json` → `harnesses.<NEW>.delegation_model` (`native-static` |
+`dynamic-define`, from the Phase-1 delegation finding) + the schema enum
+(`manifest.schema.json` `harnesses` $def + `_common.sh validate_manifest`'s
+`valid_harness_types`). This is the **sixth surface** — the harness adapter owns
+HOW "delegate to role X" resolves, so skills stay harness-agnostic (they write
+only the abstract intent, never a per-harness branch). Two cases:
+- **`native-static`** (the harness loads Igris agents statically — Claude/Codex/
+  OpenCode): nothing more to do. A skill's `subagent_type:<agent>` resolves
+  directly; the identity region stays recipe-free.
+- **`dynamic-define`** (the harness can only define subagents at runtime —
+  Antigravity, and gemini-cli's `GEMINI.md` read-path): the compile identity pass
+  region-merges the canonical delegation recipe (`core/templates/
+  delegation-recipe.tmpl`) into the harness's boot-read identity file, gated
+  strictly on `delegation_model=dynamic-define` (so a native-static harness's
+  identity file — e.g. Codex's `AGENTS.md` — never receives a recipe it doesn't
+  need). The recipe rides the **identity target keyed by `type`** (#9), so a
+  harness that reads another's identity file inherits the right recipe for free.
+  The §18.1 shape pair (`normalize_identity_shape` ↔ `buildHarnessIdentityFile`)
+  threads `delegation_model` + the recipe; the drift pass re-derives the same
+  bytes. Verify: `igris harness compile --surface identity` →
+  `OK identity/<NEW>`; `check` → MATCH; **live**: `<NEW> -p "what is your
+  delegation procedure?"` → the read→define_subagent→invoke recipe (L-711 marker
+  proof, not self-report). A harness absent from the `harnesses` map defaults to
+  `native-static` (identity-only — back-compat).
 
 ### Tests + docs (spans the above)
 `test/harness_*.test.bash`, `cli/src/__tests__/harness-registry.test.ts`,

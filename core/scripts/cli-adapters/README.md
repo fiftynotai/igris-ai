@@ -222,6 +222,71 @@ per-harness `targets[{type ∈ {claude, opencode}, method:"merge"}]`.
   unions hook blocks (base ++ overlay) with a `name` + `(event, target)` cell
   collision guard.
 
+## Delegation-mechanism surface (boot-injection — TD-244)
+
+The **sixth** adapter surface: the **delegation mechanism**. This is the one
+piece of harness-specific behavior that previously had no surface, so it leaked
+into a skill (the FR-183 dynamic-define recipe embedded in `/hunt`). TD-244
+relocated it here, so skills delegate **abstractly** and the adapter owns the
+*how*.
+
+### The adapter boundary (what the adapter owns vs what skills/OS see)
+
+The harness adapter owns every behavior that differs by harness; the OS core and
+skills name only **abstract intents**, resolved to a harness-specific mechanism
+via **declared manifest config**, never per-skill branching:
+
+| Adapter-owned behavior | Declared in (config) | Compiled/drift-checked by | Abstract intent the skill/OS sees |
+|---|---|---|---|
+| projection (agents) | `harness-manifest.json` `agents[]` | agents pass | "the named agent's prompt is loadable" |
+| skills | `surfaces.skills[]` | skills pass | "the skill is invocable" |
+| MCP | `surfaces.mcp_servers[]` | mcp pass | "the brain MCP tools are callable" |
+| identity | `surfaces.os_identity[]` | identity pass | "the harness greets as Igris AI" |
+| hooks | `surfaces.hooks[]` | hook pass | "the portable event fires the shared script" |
+| **delegation mechanism** | `harnesses.<type>.delegation_model` | identity pass (recipe rides the identity region) | **"delegate to role X" resolves on BOTH a native-static and a dynamic-define harness, ZERO per-skill branching** |
+
+### The `delegation_model` descriptor + BI-3 mechanism
+
+`harness-manifest.json` carries a top-level `harnesses` map keyed by harness
+`type`, each with a `delegation_model` (`native-static` | `dynamic-define`):
+
+- **`native-static`** (Claude/Codex/OpenCode) — the harness loads Igris agents
+  statically; a skill's `subagent_type:<agent>` resolves directly. Nothing extra
+  is projected; the identity region stays recipe-free.
+- **`dynamic-define`** (Antigravity, and gemini-cli's `GEMINI.md` read-path) —
+  the harness can only define subagents at runtime. The compile **identity pass**
+  region-merges the canonical delegation recipe
+  (`core/templates/delegation-recipe.tmpl`, the companion of `identity.tmpl`,
+  living alongside it) into the harness's boot-read identity file, **gated
+  strictly on `delegation_model=dynamic-define`**. So the orchestrator is taught
+  the read→`define_subagent`→invoke recipe once per session, and a native-static
+  harness's identity file (e.g. Codex's `AGENTS.md`) never receives a recipe it
+  does not need.
+
+The recipe rides the identity target keyed by `type`, so a harness that reads
+another's identity file (Antigravity reads `GEMINI.md`, gemini's target) inherits
+the right recipe for free. The mechanism (BI-3) was chosen by a live `agy` marker
+probe (L-711): the recipe in `GEMINI.md` is honored at boot, so it rides the
+existing identity projection rather than a new SessionStart channel.
+
+- **Compile** (`compile_harnesses.sh`, identity pass): `flatten_identity_rows`
+  resolves `delegation_model` per identity-target `type` and emits it as a column;
+  `normalize_identity_shape <tmpl> <harness> <version> <delegation_model>
+  <recipe>` appends the recipe when `dynamic-define`. A missing recipe template
+  for a dynamic-define target is an observable FAIL (L-232), never a silent
+  identity-only fallback (that would strand the harness).
+- **Drift** (`check_harness_drift.sh`): the SAME identity drift branch re-derives
+  the recipe-carrying region via `normalize_identity_shape` and byte-compares — a
+  stripped or diverged recipe surfaces as DRIFTED (§17 paired branch).
+- **§18.1 parity:** the bash `normalize_identity_shape` dynamic-define branch ↔
+  the TS `buildHarnessIdentityFile(..., "dynamic-define", recipeRaw)` /
+  `appendDelegationRecipe` (`cli/src/lib/identity-shape.ts`) MUST stay
+  byte-identical — the golden `cli/src/__tests__/fixtures/
+  td244-identity-golden-gemini-dynamic.md` + the bats `#parity` test pin the two
+  (L-554).
+- A harness absent from the `harnesses` map defaults to `native-static`
+  (identity-only — pre-TD-244 back-compat; existing golden fixtures unchanged).
+
 ## Mirror obligation (TD-096)
 
 Every file in this directory lives under `core/` and is part of the runtime

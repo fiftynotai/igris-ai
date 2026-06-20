@@ -684,13 +684,22 @@ PY
 }
 
 # ---------------------------------------------------------------------------
-# verify_identity_file_drift <harness> <target_path> <template_path> <version>
+# verify_identity_file_drift <harness> <target_path> <template_path> <version> \
+#                            [delegation-model] [recipe-template-path]
 #
 # TD-233 (GAP-3): per-(identity,harness) drift verdict, line-paired with the
 # compile identity pass (§18.1). Re-derives the EXPECTED delimited region via
 # the SHARED normalize_identity_shape (the same helper compile writes with —
 # no second normalizer), extracts the ON-DISK region via
 # extract_identity_region, and byte-compares.
+#
+# TD-244 (BI-3): when <delegation-model>=dynamic-define the EXPECTED region also
+# carries the delegation recipe (the same boot-injection bytes compile writes),
+# so a dynamic-define identity file whose region is identity-only (recipe
+# stripped) — or whose recipe diverged — surfaces as DRIFTED. <delegation-model>
+# defaults to native-static (identity-only). A dynamic-define model with a
+# missing recipe template surfaces as DRIFTED (normalize exits 2) — never a
+# silent pass.
 #
 # Verdicts (updates caller-scoped MATCH/DRIFT, same as the other verdict fns):
 #   MISSING — identity file absent (extract rc 10) OR file present but with NO
@@ -711,6 +720,8 @@ verify_identity_file_drift() {
   local target_path="$2"
   local template_path="$3"
   local version="$4"
+  local delegation_model="${5:-native-static}"
+  local recipe_template_path="${6:-}"
 
   if [ ! -f "$template_path" ]; then
     echo "  [identity/$harness] DRIFTED"
@@ -726,10 +737,21 @@ verify_identity_file_drift() {
     DRIFT=$((DRIFT + 1))
     return 0
   fi
+  # TD-244 (BI-3): a dynamic-define target needs the recipe template to
+  # re-derive the expected (identity + recipe) region — a missing one is DRIFTED,
+  # not a silent identity-only compare.
+  if [ "$delegation_model" = "dynamic-define" ] && [ ! -f "$recipe_template_path" ]; then
+    echo "  [identity/$harness] DRIFTED"
+    echo "      artifact  : $target_path"
+    echo "      reason    : delegation recipe template missing: $recipe_template_path — restore it, then run \`igris harness compile\` (dynamic-define harness needs the boot-injection recipe)"
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
 
   # Expected region via the SHARED shape helper (what compile writes).
   local expected norm_rc=0
-  expected=$(normalize_identity_shape "$template_path" "$harness" "$version") || norm_rc=$?
+  expected=$(normalize_identity_shape "$template_path" "$harness" "$version" \
+    "$delegation_model" "$recipe_template_path") || norm_rc=$?
   if [ "$norm_rc" -ne 0 ]; then
     echo "  [identity/$harness] DRIFTED"
     echo "      artifact  : $target_path"
@@ -2027,9 +2049,11 @@ fi
 # ---------------------------------------------------------------------------
 IDENTITY_DRIFT_ROWS=$(flatten_identity_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "all" "$PROJECT_ROOT")
 if { [ "$SURFACE_KIND" = "identity" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n "$IDENTITY_DRIFT_ROWS" ]; then
-  while IFS=$'\t' read -r i_source i_vsource i_type i_filename i_scope_type i_scope_paths; do
+  while IFS=$'\t' read -r i_source i_vsource i_type i_filename i_scope_type i_scope_paths i_delegation_model; do
     [ -z "$i_type" ] && continue
     [ -z "$i_filename" ] && continue
+    # TD-244 (BI-3): pre-TD-244 flatten rows carry no delegation_model column.
+    [ -z "$i_delegation_model" ] && i_delegation_model="native-static"
 
     # FR-155: identity-surface project-scope filter (mirrors the skills drift
     # filter and the compile identity-loop filter). Silent skip — a scoped
@@ -2091,7 +2115,16 @@ if { [ "$SURFACE_KIND" = "identity" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n 
       *)     out_abs="$PROJECT_ROOT/$i_filename" ;;
     esac
 
-    verify_identity_file_drift "$i_type" "$out_abs" "$tmpl_abs" "$id_version"
+    # TD-244 (BI-3): resolve the delegation recipe template for a dynamic-define
+    # target — the canonical companion of the identity template, living
+    # alongside it (mirroring the compile pass resolution).
+    recipe_abs=""
+    if [ "$i_delegation_model" = "dynamic-define" ]; then
+      recipe_abs="$(dirname "$tmpl_abs")/delegation-recipe.tmpl"
+    fi
+
+    verify_identity_file_drift "$i_type" "$out_abs" "$tmpl_abs" "$id_version" \
+      "$i_delegation_model" "$recipe_abs"
   done <<< "$IDENTITY_DRIFT_ROWS"
 fi
 
