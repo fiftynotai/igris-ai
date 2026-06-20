@@ -9,6 +9,7 @@ allowed-tools:
   - mcp__igris-brain__igris_brief_sync
   - mcp__igris-brain__igris_brief_create
   - mcp__igris-brain__igris_brief_list
+  - mcp__igris-brain__igris_brief_similar
 triggers:
   - "REGISTER"
   - "register a bug"
@@ -87,6 +88,28 @@ Map type to brief prefix:
 Call `igris_brief_list` to find next available number, fallback to cache glob at `~/.igris/projects/{project}/briefs/`.
 Find highest number, add 1.
 Example: If BR-007 exists, next is BR-008.
+
+### 3.5 Dup-check (enforcement gate)
+
+Before creating the brief, run the dup-check — the enforced form of brain
+obligation #3 ("Dup-check before creating a brief"), tracked in
+`core/enforcement/INDEX.md`.
+
+Call `igris_brief_similar` with:
+- **query:** `"{title}. {problem}"` (the title plus the one-line problem, if known)
+- **project:** the current project slug
+- **threshold:** `0.85`
+
+Then branch:
+- **A hit at or above the threshold** → STOP. Display the near-duplicate brief(s)
+  (ID, title, similarity) and ask the operator to confirm they want a new brief
+  anyway, or to abort / amend the existing one. Do NOT proceed to step 4 without
+  operator confirmation.
+- **No hit** → proceed to step 4.
+- **Tool unavailable** (`igris_brief_similar` returns a capability message —
+  sqlite-vec extension or embeddings backend not loaded — rather than results) →
+  proceed to step 4 (fail-open, matching every other Igris gate's posture). Do not
+  treat the capability message as an error.
 
 ### 4. Build Brief Content
 
