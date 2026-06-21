@@ -110,7 +110,7 @@ Read `~/.igris/projects/{project}/session/BLOCKERS.md`:
 
 ### 4. Agent Count
 
-Count `.claude/agents/*.md` files to get current agent count.
+Read the agent roster from `~/.igris/core/igris_tree.json` (`agents` map) — or, as a fallback, count the canonical agent definitions in `~/.igris/core/agents/*.md`. The roster is discovered from these harness-agnostic sources; the per-harness agent directory is adapter-owned, so never count it directly.
 
 ### 5. Git Status
 

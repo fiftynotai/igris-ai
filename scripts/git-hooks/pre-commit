@@ -17,6 +17,14 @@ set -e
 #       Triggers if: any core/skills/*/SKILL.md is staged.
 #       Strict YAML parse of SKILL.md frontmatter — catches an unquoted
 #       mid-scalar `: ` that strict parsers (Codex) silently skip.
+#   - validate_skill_os_harness_leak.py  (TD-248)
+#       Triggers if: any core/skills/*/SKILL.md OR core/os/*.md OR
+#                    core/prompts/*.md is staged.
+#       Scans the skill/OS core for known harness-leak token classes
+#       (CLAUDE_CODE_* flags, per-harness config-path targets,
+#       define_subagent/invoke_subagent) and hard-fails on a genuine
+#       instruction-level leak. Conservative recurrence net (L-400) with an
+#       explicit allowlist for the adapter-authoring/by-design files.
 #   - validate_lockfile_in_sync.sh  (TD-134)
 #       Triggers if: package.json (root) OR package-lock.json OR
 #                    cli/package.json OR brain-mcp-server/package.json
@@ -162,6 +170,7 @@ needs_lineranges_check=0
 needs_lockfile_check=0
 needs_harness_check=0
 needs_skill_yaml_check=0
+needs_skill_os_leak_check=0
 needs_contract_check=0
 
 if echo "$staged" | grep -qE '^(core/prompts/igris_os\.md|core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
@@ -189,6 +198,13 @@ fi
 # decides whether to run at all.
 if echo "$staged" | grep -qE '^core/skills/.*/SKILL\.md$'; then
   needs_skill_yaml_check=1
+fi
+
+# TD-248: trigger the harness-leak guard on a staged skill or OS-core file.
+# The validator scans the whole tree regardless of which file changed (cheap),
+# so the trigger only decides whether to run at all.
+if echo "$staged" | grep -qE '^(core/skills/.*/SKILL\.md|core/os/.*\.md|core/prompts/.*\.md)$'; then
+  needs_skill_os_leak_check=1
 fi
 
 # FR-186: trigger the contract-consumer checker when MAINTAINING.md is staged
@@ -244,6 +260,16 @@ if [ "$needs_skill_yaml_check" = "1" ]; then
   # so multiple validator failures are aggregated into $failed and reported
   # together at the end, rather than aborting on the first failure.
   if ! python3 "$REPO_ROOT/scripts/validate_skill_frontmatter_yaml.py"; then
+    failed=1
+  fi
+fi
+
+if [ "$needs_skill_os_leak_check" = "1" ]; then
+  echo "[pre-commit] Validating skill/OS harness-leak guard (TD-248)..."
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed and reported
+  # together at the end, rather than aborting on the first failure.
+  if ! python3 "$REPO_ROOT/scripts/validate_skill_os_harness_leak.py"; then
     failed=1
   fi
 fi
