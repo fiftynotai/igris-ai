@@ -1041,6 +1041,147 @@ function migrateSchema(db: Database.Database): void {
       '[brain] Schema migrated to version 18 (brief field normalization + C1 phase reconciliation)',
     );
   }
+
+  // v19: rename the reusable-assets store `registry` → `catalog` (TD-259).
+  //
+  // The lego store was named `registry`, colliding with the personal surface
+  // overlay (`igris registry …`, `~/.igris/registry/…`) and the project
+  // registry (`igris_project_*`). TD-259 reclaims "registry" exclusively for the
+  // surface overlay; the reusable-assets store becomes `catalog` (table, FTS5
+  // virtual table, triggers, indexes — and the `igris_catalog_*` MCP tools).
+  //
+  // Strategy (D-3): `ALTER TABLE registry RENAME TO catalog` is an O(1)
+  // metadata-only op that preserves rows, the PK, CHECK constraints, the three
+  // FR-198 columns (when_to_use/source/source_ref), and rowids — no copy, no
+  // rowid drift. The FTS5 external-content table + its 3 triggers hard-reference
+  // the old name (`content=registry`, trigger bodies write `registry_fts`), so
+  // they must be dropped + recreated against `catalog` regardless of strategy,
+  // then the FTS index is REBUILT from the renamed content table so the
+  // pre-existing rows stay searchable. The 4 indexes auto-follow the RENAME but
+  // keep their `idx_registry_*` names — rename them too for vocabulary coherence
+  // (index names are not a contract; renaming is cosmetic + idempotent).
+  //
+  // Backup (rollback artifact): before the transaction, snapshot the DB file via
+  // `VACUUM INTO '<dbpath>.pre-v19.bak'`. VACUUM cannot run inside a transaction,
+  // so it sits outside the db.transaction() block. It runs once — only when the
+  // backup does not already exist AND `registry` still exists (i.e. the rename is
+  // about to happen) — and only for real on-disk DBs (skipped for `:memory:`
+  // test DBs, which have nothing to snapshot to a sibling file).
+  //
+  // Idempotency: probe-guarded (haveOld && !haveNew gates the ALTER) +
+  // IF EXISTS / IF NOT EXISTS on the FTS/trigger/index DDL + the schema_version
+  // gate blocks re-entry once 19 is recorded. A re-run sees catalog present and
+  // registry absent → every step is a no-op.
+  //
+  // Gate behind v18's actual completion (re-read schema_version, L-209) so this
+  // rename applies even on a vec-less machine where the v13 vec backfill stopped
+  // the module-level chain. The db-migration-v19.test.ts runs WITHOUT loading
+  // vec to prove this gate dodge.
+  let postV18Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV18Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+  if (postV18Version >= 18 && postV18Version < 19) {
+    const tableExists = (name: string): boolean =>
+      db
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name = ?`,
+        )
+        .get(name) !== undefined;
+
+    const haveOldPre = tableExists('registry');
+    const haveNewPre = tableExists('catalog');
+
+    // Backup snapshot (outside the transaction — VACUUM cannot run in one).
+    // Only when the rename is actually about to happen, on a real file DB.
+    const dbFile = db.name;
+    const isFileDb = dbFile !== '' && dbFile !== ':memory:' && !dbFile.startsWith('file::memory:');
+    if (isFileDb && haveOldPre && !haveNewPre) {
+      const backupPath = `${dbFile}.pre-v19.bak`;
+      const fs = requireCjs('node:fs') as typeof import('node:fs');
+      if (!fs.existsSync(backupPath)) {
+        try {
+          // VACUUM INTO requires a literal/bound string; bind to avoid quoting.
+          db.prepare('VACUUM INTO ?').run(backupPath);
+          console.error(`[brain] v19 backup snapshot written: ${backupPath}`);
+        } catch (err) {
+          // Non-fatal: the rename below is itself non-destructive (no data
+          // dropped), so a failed snapshot does not block the migration.
+          console.error('[brain] v19 backup snapshot failed (continuing):', err);
+        }
+      }
+    }
+
+    db.transaction(() => {
+      const haveOld = tableExists('registry');
+      const haveNew = tableExists('catalog');
+
+      // 1. Rename the base table (carries rows, PK, CHECKs, FR-198 columns).
+      if (haveOld && !haveNew) {
+        db.exec(`ALTER TABLE registry RENAME TO catalog`);
+      }
+
+      // 2. Rename the 4 indexes for vocabulary coherence (idempotent).
+      db.exec(`DROP INDEX IF EXISTS idx_registry_type`);
+      db.exec(`DROP INDEX IF EXISTS idx_registry_archetype`);
+      db.exec(`DROP INDEX IF EXISTS idx_registry_framework`);
+      db.exec(`DROP INDEX IF EXISTS idx_registry_status`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_catalog_type ON catalog(type)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_catalog_archetype ON catalog(archetype)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_catalog_framework ON catalog(framework)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_catalog_status ON catalog(status)`);
+
+      // 3. Drop the old FTS triggers + FTS table (external-content — dropping
+      //    does NOT lose source rows; they live in `catalog` now).
+      db.exec(`DROP TRIGGER IF EXISTS registry_ai`);
+      db.exec(`DROP TRIGGER IF EXISTS registry_au`);
+      db.exec(`DROP TRIGGER IF EXISTS registry_ad`);
+      db.exec(`DROP TABLE IF EXISTS registry_fts`);
+
+      // 4. Recreate the FTS5 external-content table against `catalog`.
+      db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS catalog_fts USING fts5(
+          name, description, tags, framework,
+          content=catalog,
+          content_rowid=rowid
+        );
+      `);
+
+      // 5. Recreate the 3 FTS triggers writing into `catalog_fts`.
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS catalog_ai AFTER INSERT ON catalog BEGIN
+          INSERT INTO catalog_fts(rowid, name, description, tags, framework)
+          VALUES (new.rowid, new.name, new.description, new.tags, new.framework);
+        END;
+      `);
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS catalog_au AFTER UPDATE ON catalog BEGIN
+          INSERT INTO catalog_fts(catalog_fts, rowid, name, description, tags, framework)
+          VALUES ('delete', old.rowid, old.name, old.description, old.tags, old.framework);
+          INSERT INTO catalog_fts(rowid, name, description, tags, framework)
+          VALUES (new.rowid, new.name, new.description, new.tags, new.framework);
+        END;
+      `);
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS catalog_ad AFTER DELETE ON catalog BEGIN
+          INSERT INTO catalog_fts(catalog_fts, rowid, name, description, tags, framework)
+          VALUES ('delete', old.rowid, old.name, old.description, old.tags, old.framework);
+        END;
+      `);
+
+      // 6. Rebuild the FTS index from the renamed content table so pre-existing
+      //    rows remain searchable (the dropped/recreated FTS table is empty).
+      db.exec(`INSERT INTO catalog_fts(catalog_fts) VALUES('rebuild')`);
+
+      db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (19)').run();
+    })();
+    console.error('[brain] Schema migrated to version 19 (registry → catalog rename)');
+  }
 }
 
 /**

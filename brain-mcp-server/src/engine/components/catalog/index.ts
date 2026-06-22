@@ -1,11 +1,11 @@
 /**
- * Brain Engine v7.0 — Registry Component
+ * Brain Engine v7.0 — Catalog Component
  *
- * Wraps the registry tool handlers as a BrainComponent.
- * Provides: igris_registry_add, igris_registry_search, igris_registry_get,
- *           igris_registry_list, igris_registry_remove, igris_registry_update
+ * Wraps the catalog tool handlers as a BrainComponent.
+ * Provides: igris_catalog_add, igris_catalog_search, igris_catalog_get,
+ *           igris_catalog_list, igris_catalog_remove, igris_catalog_update
  *
- * @module engine/components/registry
+ * @module engine/components/catalog
  * @author fifty.dev
  */
 
@@ -17,27 +17,27 @@ import type {
   EventDef,
 } from '../../types.js';
 import {
-  handleRegistryAdd,
-  handleRegistrySearch,
-  handleRegistryGet,
-  handleRegistryList,
-  handleRegistryRemove,
-  handleRegistryUpdate,
-} from '../../../tools/registry.js';
+  handleCatalogAdd,
+  handleCatalogSearch,
+  handleCatalogGet,
+  handleCatalogList,
+  handleCatalogRemove,
+  handleCatalogUpdate,
+} from '../../../tools/catalog.js';
 import type {
-  RegistryAddInput,
-  RegistrySearchInput,
-  RegistryGetInput,
-  RegistryListInput,
-  RegistryRemoveInput,
-  RegistryUpdateInput,
-} from '../../../tools/registry.js';
+  CatalogAddInput,
+  CatalogSearchInput,
+  CatalogGetInput,
+  CatalogListInput,
+  CatalogRemoveInput,
+  CatalogUpdateInput,
+} from '../../../tools/catalog.js';
 
-export function createRegistryComponent(): BrainComponent {
+export function createCatalogComponent(): BrainComponent {
   let _ctx: ComponentContext | null = null;
 
   return {
-    name: 'registry',
+    name: 'catalog',
     version: '1.0.0',
     depends: [],
 
@@ -49,7 +49,7 @@ export function createRegistryComponent(): BrainComponent {
     tools(): ToolDefinition[] {
       return [
         {
-          name: 'igris_registry_add',
+          name: 'igris_catalog_add',
           description: 'Register a reusable asset in the Igris reusable-assets catalog (the "lego" store): a template (full project scaffold) or module (standalone cherry-pickable component, incl. pub.dev/npm packages). Records what it is, where it lives (github_repo/path or source/source_ref), and when to reach for it (when_to_use) so future work reuses instead of rebuilding.',
           inputSchema: {
             type: 'object' as const,
@@ -137,17 +137,17 @@ export function createRegistryComponent(): BrainComponent {
             required: ['name', 'type', 'github_repo'],
           },
           handler: (args) => {
-            const result = handleRegistryAdd(args as unknown as RegistryAddInput);
+            const result = handleCatalogAdd(args as unknown as CatalogAddInput);
             const text = result.content[0]?.text ?? '';
             if (!text.startsWith('Error:')) {
-              _ctx?.bus.emit('registry.added', { id: (args as Record<string, unknown>).id, name: (args as Record<string, unknown>).name });
+              _ctx?.bus.emit('catalog.added', { id: (args as Record<string, unknown>).id, name: (args as Record<string, unknown>).name });
             }
             return result;
           },
         },
         {
-          name: 'igris_registry_search',
-          description: 'Search the Igris registry for templates and modules by keyword. Supports filtering by type, framework, and archetype. Uses FTS5 for relevance-ranked results.',
+          name: 'igris_catalog_search',
+          description: 'Search the Igris reusable-assets catalog for templates and modules by keyword. Supports filtering by type, framework, and archetype. Uses FTS5 for relevance-ranked results.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -176,27 +176,27 @@ export function createRegistryComponent(): BrainComponent {
             },
             required: ['query'],
           },
-          handler: (args) => handleRegistrySearch(args as unknown as RegistrySearchInput),
+          handler: (args) => handleCatalogSearch(args as unknown as CatalogSearchInput),
         },
         {
-          name: 'igris_registry_get',
-          description: 'Get full details of a single registry entry by ID. Returns all fields including rebrand_checklist.',
+          name: 'igris_catalog_get',
+          description: 'Get full details of a single catalog entry by ID. Returns all fields including rebrand_checklist.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
             properties: {
               id: {
                 type: 'string',
-                description: 'Registry entry ID',
+                description: 'Catalog entry ID',
               },
             },
             required: ['id'],
           },
-          handler: (args) => handleRegistryGet(args as unknown as RegistryGetInput),
+          handler: (args) => handleCatalogGet(args as unknown as CatalogGetInput),
         },
         {
-          name: 'igris_registry_list',
-          description: 'List registry entries with optional filters. Defaults to showing only "available" entries.',
+          name: 'igris_catalog_list',
+          description: 'List catalog entries with optional filters. Defaults to showing only "available" entries.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -225,18 +225,18 @@ export function createRegistryComponent(): BrainComponent {
               },
             },
           },
-          handler: (args) => handleRegistryList(args as unknown as RegistryListInput),
+          handler: (args) => handleCatalogList(args as unknown as CatalogListInput),
         },
         {
-          name: 'igris_registry_remove',
-          description: 'Remove a registry entry. Default is soft-delete (sets status to "deprecated"). Pass hard_delete=true to permanently remove.',
+          name: 'igris_catalog_remove',
+          description: 'Remove a catalog entry. Default is soft-delete (sets status to "deprecated"). Pass hard_delete=true to permanently remove.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
             properties: {
               id: {
                 type: 'string',
-                description: 'Registry entry ID to remove',
+                description: 'Catalog entry ID to remove',
               },
               hard_delete: {
                 type: 'boolean',
@@ -246,21 +246,21 @@ export function createRegistryComponent(): BrainComponent {
             required: ['id'],
           },
           handler: (args) => {
-            const result = handleRegistryRemove(args as unknown as RegistryRemoveInput);
-            _ctx?.bus.emit('registry.removed', { id: (args as Record<string, unknown>).id });
+            const result = handleCatalogRemove(args as unknown as CatalogRemoveInput);
+            _ctx?.bus.emit('catalog.removed', { id: (args as Record<string, unknown>).id });
             return result;
           },
         },
         {
-          name: 'igris_registry_update',
-          description: 'Update an existing registry entry. Only provided fields are modified; others are preserved. Use this to update descriptions, tags, install commands, rebrand checklists, etc.',
+          name: 'igris_catalog_update',
+          description: 'Update an existing catalog entry. Only provided fields are modified; others are preserved. Use this to update descriptions, tags, install commands, rebrand checklists, etc.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
             properties: {
               id: {
                 type: 'string',
-                description: 'Registry entry ID to update',
+                description: 'Catalog entry ID to update',
               },
               name: {
                 type: 'string',
@@ -340,10 +340,10 @@ export function createRegistryComponent(): BrainComponent {
             required: ['id'],
           },
           handler: (args) => {
-            const result = handleRegistryUpdate(args as unknown as RegistryUpdateInput);
+            const result = handleCatalogUpdate(args as unknown as CatalogUpdateInput);
             const text = result.content[0]?.text ?? '';
             if (!text.startsWith('Error:') && text !== 'No fields to update.') {
-              _ctx?.bus.emit('registry.updated', { id: (args as Record<string, unknown>).id });
+              _ctx?.bus.emit('catalog.updated', { id: (args as Record<string, unknown>).id });
             }
             return result;
           },
@@ -354,9 +354,9 @@ export function createRegistryComponent(): BrainComponent {
     events(): { emits: EventDef[]; listens: EventDef[] } {
       return {
         emits: [
-          { name: 'registry.added', description: 'A new template or module was registered' },
-          { name: 'registry.removed', description: 'A registry entry was removed or deprecated' },
-          { name: 'registry.updated', description: 'A registry entry was updated' },
+          { name: 'catalog.added', description: 'A new template or module was registered' },
+          { name: 'catalog.removed', description: 'A catalog entry was removed or deprecated' },
+          { name: 'catalog.updated', description: 'A catalog entry was updated' },
         ],
         listens: [],
       };
@@ -364,7 +364,7 @@ export function createRegistryComponent(): BrainComponent {
 
     init(ctx: ComponentContext): void {
       _ctx = ctx;
-      ctx.log.info('Registry component initialized');
+      ctx.log.info('Catalog component initialized');
     },
 
     destroy(): void {

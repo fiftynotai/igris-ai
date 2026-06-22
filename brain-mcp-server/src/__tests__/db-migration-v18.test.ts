@@ -191,10 +191,16 @@ describe('migration v18 — brief metadata normalization + C1 (TD-238)', () => {
     expect(status.phase).toBe('COMPLETE');
   });
 
-  it('advances schema_version to exactly 18', () => {
+  it('records v18 and advances the chain past it (now to 19 — TD-259)', () => {
     expect(getSchemaVersion(db)).toBe(17);
     migrateSchema(db);
-    expect(getSchemaVersion(db)).toBe(18);
+    // v18 is recorded in the ladder...
+    const has18 = db
+      .prepare('SELECT 1 FROM schema_version WHERE version = 18')
+      .get();
+    expect(has18).toBeDefined();
+    // ...and migrateSchema runs to completion (v19 registry→catalog follows v18).
+    expect(getSchemaVersion(db)).toBe(19);
   });
 
   it('is idempotent — a second migration changes zero rows', () => {
@@ -205,14 +211,15 @@ describe('migration v18 — brief metadata normalization + C1 (TD-238)', () => {
     const after1 = db
       .prepare(`SELECT brief_id, brief_type, status, priority, phase FROM brief_status ORDER BY brief_id`)
       .all();
-    expect(getSchemaVersion(db)).toBe(18);
+    // migrateSchema runs to completion (v18 then v19); the chain terminal is 19.
+    expect(getSchemaVersion(db)).toBe(19);
 
     // Second run: no version bump, no row change.
     expect(() => migrateSchema(db)).not.toThrow();
     const after2 = db
       .prepare(`SELECT brief_id, brief_type, status, priority, phase FROM brief_status ORDER BY brief_id`)
       .all();
-    expect(getSchemaVersion(db)).toBe(18);
+    expect(getSchemaVersion(db)).toBe(19);
     expect(after2).toEqual(after1);
   });
 
@@ -239,7 +246,8 @@ describe('migration v18 — brief metadata normalization + C1 (TD-238)', () => {
     expect(row.priority).toBe('P1-High');
     expect(row.brief_type).toBe('Technical Debt');
     expect(row.phase).toBe('COMPLETE');
-    expect(getSchemaVersion(fresh)).toBe(18);
+    // v18 applied via the re-read gate; chain runs through v19 to completion.
+    expect(getSchemaVersion(fresh)).toBe(19);
     fresh.close();
   });
 });

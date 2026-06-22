@@ -1,15 +1,15 @@
 /**
- * Registry Tool Handler Tests (FR-099)
+ * Catalog Tool Handler Tests (FR-099)
  *
- * Tests the 6 registry CRUD tools:
- * 1. igris_registry_add — register a template or module
- * 2. igris_registry_search — full-text + filter search
- * 3. igris_registry_get — get single entry by ID
- * 4. igris_registry_list — list with filters
- * 5. igris_registry_remove — soft-delete and hard-delete
- * 6. igris_registry_update — partial update of an existing entry
+ * Tests the 6 catalog CRUD tools:
+ * 1. igris_catalog_add — register a template or module
+ * 2. igris_catalog_search — full-text + filter search
+ * 3. igris_catalog_get — get single entry by ID
+ * 4. igris_catalog_list — list with filters
+ * 5. igris_catalog_remove — soft-delete and hard-delete
+ * 6. igris_catalog_update — partial update of an existing entry
  *
- * @module tools/__tests__/registry.test
+ * @module tools/__tests__/catalog.test
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -30,13 +30,13 @@ vi.mock('../../db.js', () => ({
 
 import { getDb } from '../../db.js';
 import {
-  handleRegistryAdd,
-  handleRegistrySearch,
-  handleRegistryGet,
-  handleRegistryList,
-  handleRegistryRemove,
-  handleRegistryUpdate,
-} from '../registry.js';
+  handleCatalogAdd,
+  handleCatalogSearch,
+  handleCatalogGet,
+  handleCatalogList,
+  handleCatalogRemove,
+  handleCatalogUpdate,
+} from '../catalog.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -44,13 +44,13 @@ import {
 
 const mockedGetDb = vi.mocked(getDb);
 
-/** Create an in-memory database with the registry tables and FTS5. */
+/** Create an in-memory database with the catalog tables and FTS5. */
 function makeTestDb(): Database.Database {
   const db = new Database(':memory:');
   db.pragma('journal_mode = WAL');
 
   db.exec(`
-    CREATE TABLE registry (
+    CREATE TABLE catalog (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       type TEXT NOT NULL CHECK(type IN ('template', 'module')),
@@ -74,26 +74,26 @@ function makeTestDb(): Database.Database {
       updated_at TEXT DEFAULT (datetime('now'))
     );
 
-    CREATE VIRTUAL TABLE registry_fts USING fts5(
+    CREATE VIRTUAL TABLE catalog_fts USING fts5(
       name, description, tags, framework,
-      content=registry,
+      content=catalog,
       content_rowid=rowid
     );
 
-    CREATE TRIGGER registry_ai AFTER INSERT ON registry BEGIN
-      INSERT INTO registry_fts(rowid, name, description, tags, framework)
+    CREATE TRIGGER catalog_ai AFTER INSERT ON catalog BEGIN
+      INSERT INTO catalog_fts(rowid, name, description, tags, framework)
       VALUES (new.rowid, new.name, new.description, new.tags, new.framework);
     END;
 
-    CREATE TRIGGER registry_au AFTER UPDATE ON registry BEGIN
-      INSERT INTO registry_fts(registry_fts, rowid, name, description, tags, framework)
+    CREATE TRIGGER catalog_au AFTER UPDATE ON catalog BEGIN
+      INSERT INTO catalog_fts(catalog_fts, rowid, name, description, tags, framework)
       VALUES ('delete', old.rowid, old.name, old.description, old.tags, old.framework);
-      INSERT INTO registry_fts(rowid, name, description, tags, framework)
+      INSERT INTO catalog_fts(rowid, name, description, tags, framework)
       VALUES (new.rowid, new.name, new.description, new.tags, new.framework);
     END;
 
-    CREATE TRIGGER registry_ad AFTER DELETE ON registry BEGIN
-      INSERT INTO registry_fts(registry_fts, rowid, name, description, tags, framework)
+    CREATE TRIGGER catalog_ad AFTER DELETE ON catalog BEGIN
+      INSERT INTO catalog_fts(catalog_fts, rowid, name, description, tags, framework)
       VALUES ('delete', old.rowid, old.name, old.description, old.tags, old.framework);
     END;
   `);
@@ -105,7 +105,7 @@ function makeTestDb(): Database.Database {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('Registry Tools (FR-099)', () => {
+describe('Catalog Tools (FR-099)', () => {
   let db: Database.Database;
 
   beforeEach(() => {
@@ -119,12 +119,12 @@ describe('Registry Tools (FR-099)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 1. handleRegistryAdd
+  // 1. handleCatalogAdd
   // -------------------------------------------------------------------------
 
-  describe('handleRegistryAdd', () => {
+  describe('handleCatalogAdd', () => {
     it('should add a template entry with all fields', () => {
-      const result = handleRegistryAdd({
+      const result = handleCatalogAdd({
         id: 'tmpl-brand-flutter',
         name: 'brand-website-flutter',
         type: 'template',
@@ -142,7 +142,7 @@ describe('Registry Tools (FR-099)', () => {
       });
 
       const text = result.content[0].text;
-      expect(text).toContain('Registry entry added successfully');
+      expect(text).toContain('Catalog entry added successfully');
       expect(text).toContain('brand-website-flutter');
       expect(text).toContain('template');
       expect(text).toContain('brand-website');
@@ -151,7 +151,7 @@ describe('Registry Tools (FR-099)', () => {
     });
 
     it('should add a module entry', () => {
-      const result = handleRegistryAdd({
+      const result = handleCatalogAdd({
         name: 'hero_scroll_module',
         type: 'module',
         archetype: 'brand-website',
@@ -164,32 +164,32 @@ describe('Registry Tools (FR-099)', () => {
       });
 
       const text = result.content[0].text;
-      expect(text).toContain('Registry entry added successfully');
+      expect(text).toContain('Catalog entry added successfully');
       expect(text).toContain('hero_scroll_module');
       expect(text).toContain('module');
     });
 
     it('should auto-generate UUID when id is not provided', () => {
-      const result = handleRegistryAdd({
+      const result = handleCatalogAdd({
         name: 'auto-id-module',
         type: 'module',
         github_repo: 'github.com/org/repo',
       });
 
       const text = result.content[0].text;
-      expect(text).toContain('Registry entry added successfully');
+      expect(text).toContain('Catalog entry added successfully');
       expect(text).toContain('ID:');
     });
 
     it('should reject duplicate ID', () => {
-      handleRegistryAdd({
+      handleCatalogAdd({
         id: 'duplicate-id',
         name: 'First Entry',
         type: 'template',
         github_repo: 'github.com/org/repo',
       });
 
-      const result = handleRegistryAdd({
+      const result = handleCatalogAdd({
         id: 'duplicate-id',
         name: 'Second Entry',
         type: 'module',
@@ -201,19 +201,19 @@ describe('Registry Tools (FR-099)', () => {
     });
 
     it('should default standalone to true (1)', () => {
-      handleRegistryAdd({
+      handleCatalogAdd({
         id: 'standalone-test',
         name: 'Standalone Module',
         type: 'module',
         github_repo: 'github.com/org/repo',
       });
 
-      const row = db.prepare('SELECT standalone FROM registry WHERE id = ?').get('standalone-test') as { standalone: number };
+      const row = db.prepare('SELECT standalone FROM catalog WHERE id = ?').get('standalone-test') as { standalone: number };
       expect(row.standalone).toBe(1);
     });
 
     it('should set standalone to false (0) when explicitly false', () => {
-      handleRegistryAdd({
+      handleCatalogAdd({
         id: 'not-standalone',
         name: 'Dependent Module',
         type: 'module',
@@ -221,31 +221,31 @@ describe('Registry Tools (FR-099)', () => {
         standalone: false,
       });
 
-      const row = db.prepare('SELECT standalone FROM registry WHERE id = ?').get('not-standalone') as { standalone: number };
+      const row = db.prepare('SELECT standalone FROM catalog WHERE id = ?').get('not-standalone') as { standalone: number };
       expect(row.standalone).toBe(0);
     });
 
     it('should default status to available', () => {
-      handleRegistryAdd({
+      handleCatalogAdd({
         id: 'status-default',
         name: 'Default Status',
         type: 'module',
         github_repo: 'github.com/org/repo',
       });
 
-      const row = db.prepare('SELECT status FROM registry WHERE id = ?').get('status-default') as { status: string };
+      const row = db.prepare('SELECT status FROM catalog WHERE id = ?').get('status-default') as { status: string };
       expect(row.status).toBe('available');
     });
   });
 
   // -------------------------------------------------------------------------
-  // 2. handleRegistrySearch
+  // 2. handleCatalogSearch
   // -------------------------------------------------------------------------
 
-  describe('handleRegistrySearch', () => {
+  describe('handleCatalogSearch', () => {
     beforeEach(() => {
       // Seed with test data
-      handleRegistryAdd({
+      handleCatalogAdd({
         id: 'tmpl-brand-flutter',
         name: 'brand-website-flutter',
         type: 'template',
@@ -255,7 +255,7 @@ describe('Registry Tools (FR-099)', () => {
         description: 'Flutter brand website template',
         tags: '["brand", "website", "flutter"]',
       });
-      handleRegistryAdd({
+      handleCatalogAdd({
         id: 'mod-hero-scroll',
         name: 'hero_scroll_module',
         type: 'module',
@@ -266,7 +266,7 @@ describe('Registry Tools (FR-099)', () => {
         description: 'Hero scroll animation module for brand websites',
         tags: '["animation", "scroll", "hero"]',
       });
-      handleRegistryAdd({
+      handleCatalogAdd({
         id: 'tmpl-saas-react',
         name: 'saas-dashboard-react',
         type: 'template',
@@ -279,52 +279,52 @@ describe('Registry Tools (FR-099)', () => {
     });
 
     it('should find entries by keyword', () => {
-      const result = handleRegistrySearch({ query: 'hero scroll' });
+      const result = handleCatalogSearch({ query: 'hero scroll' });
       const text = result.content[0].text;
       expect(text).toContain('hero_scroll_module');
     });
 
     it('should filter by type=module', () => {
-      const result = handleRegistrySearch({ query: 'brand', type: 'module' });
+      const result = handleCatalogSearch({ query: 'brand', type: 'module' });
       const text = result.content[0].text;
       expect(text).toContain('hero_scroll_module');
       expect(text).not.toContain('brand-website-flutter');
     });
 
     it('should filter by framework', () => {
-      const result = handleRegistrySearch({ query: 'template', framework: 'react' });
+      const result = handleCatalogSearch({ query: 'template', framework: 'react' });
       const text = result.content[0].text;
       expect(text).toContain('saas-dashboard-react');
       expect(text).not.toContain('brand-website-flutter');
     });
 
     it('should filter by archetype', () => {
-      const result = handleRegistrySearch({ query: 'template', archetype: 'brand-website' });
+      const result = handleCatalogSearch({ query: 'template', archetype: 'brand-website' });
       const text = result.content[0].text;
       expect(text).toContain('brand-website-flutter');
       expect(text).not.toContain('saas-dashboard-react');
     });
 
     it('should return no results for non-matching query', () => {
-      const result = handleRegistrySearch({ query: 'nonexistent-xyz-query' });
+      const result = handleCatalogSearch({ query: 'nonexistent-xyz-query' });
       const text = result.content[0].text;
-      expect(text).toContain('No registry entries found');
+      expect(text).toContain('No catalog entries found');
     });
 
     it('should respect limit parameter', () => {
-      const result = handleRegistrySearch({ query: 'brand', limit: 1 });
+      const result = handleCatalogSearch({ query: 'brand', limit: 1 });
       const text = result.content[0].text;
       expect(text).toContain('Found 1 entries');
     });
   });
 
   // -------------------------------------------------------------------------
-  // 3. handleRegistryGet
+  // 3. handleCatalogGet
   // -------------------------------------------------------------------------
 
-  describe('handleRegistryGet', () => {
+  describe('handleCatalogGet', () => {
     it('should return full entry details', () => {
-      handleRegistryAdd({
+      handleCatalogAdd({
         id: 'get-test',
         name: 'Get Test Module',
         type: 'module',
@@ -335,7 +335,7 @@ describe('Registry Tools (FR-099)', () => {
         rebrand_checklist: '- [ ] Replace colors\n- [ ] Update fonts',
       });
 
-      const result = handleRegistryGet({ id: 'get-test' });
+      const result = handleCatalogGet({ id: 'get-test' });
       const text = result.content[0].text;
       expect(text).toContain('Get Test Module');
       expect(text).toContain('brand-website');
@@ -344,19 +344,19 @@ describe('Registry Tools (FR-099)', () => {
     });
 
     it('should return not found for missing ID', () => {
-      const result = handleRegistryGet({ id: 'nonexistent' });
+      const result = handleCatalogGet({ id: 'nonexistent' });
       const text = result.content[0].text;
       expect(text).toContain('not found');
     });
   });
 
   // -------------------------------------------------------------------------
-  // 4. handleRegistryList
+  // 4. handleCatalogList
   // -------------------------------------------------------------------------
 
-  describe('handleRegistryList', () => {
+  describe('handleCatalogList', () => {
     beforeEach(() => {
-      handleRegistryAdd({
+      handleCatalogAdd({
         id: 'list-tmpl-1',
         name: 'Template 1',
         type: 'template',
@@ -364,7 +364,7 @@ describe('Registry Tools (FR-099)', () => {
         framework: 'flutter',
         github_repo: 'github.com/org/repo1',
       });
-      handleRegistryAdd({
+      handleCatalogAdd({
         id: 'list-mod-1',
         name: 'Module 1',
         type: 'module',
@@ -372,7 +372,7 @@ describe('Registry Tools (FR-099)', () => {
         framework: 'flutter',
         github_repo: 'github.com/org/repo2',
       });
-      handleRegistryAdd({
+      handleCatalogAdd({
         id: 'list-tmpl-2',
         name: 'Template 2',
         type: 'template',
@@ -383,13 +383,13 @@ describe('Registry Tools (FR-099)', () => {
     });
 
     it('should list all available entries', () => {
-      const result = handleRegistryList({});
+      const result = handleCatalogList({});
       const text = result.content[0].text;
       expect(text).toContain('Found 3 entries');
     });
 
     it('should filter by type=template', () => {
-      const result = handleRegistryList({ type: 'template' });
+      const result = handleCatalogList({ type: 'template' });
       const text = result.content[0].text;
       expect(text).toContain('Found 2 entries');
       expect(text).toContain('Template 1');
@@ -397,51 +397,51 @@ describe('Registry Tools (FR-099)', () => {
     });
 
     it('should filter by type=module', () => {
-      const result = handleRegistryList({ type: 'module' });
+      const result = handleCatalogList({ type: 'module' });
       const text = result.content[0].text;
       expect(text).toContain('Found 1 entries');
       expect(text).toContain('Module 1');
     });
 
     it('should filter by archetype', () => {
-      const result = handleRegistryList({ archetype: 'brand-website' });
+      const result = handleCatalogList({ archetype: 'brand-website' });
       const text = result.content[0].text;
       expect(text).toContain('Found 2 entries');
     });
 
     it('should filter by framework', () => {
-      const result = handleRegistryList({ framework: 'react' });
+      const result = handleCatalogList({ framework: 'react' });
       const text = result.content[0].text;
       expect(text).toContain('Found 1 entries');
       expect(text).toContain('Template 2');
     });
 
     it('should show empty message when no entries match', () => {
-      const result = handleRegistryList({ framework: 'python' });
+      const result = handleCatalogList({ framework: 'python' });
       const text = result.content[0].text;
-      expect(text).toContain('No registry entries found');
+      expect(text).toContain('No catalog entries found');
     });
 
     it('should respect limit parameter', () => {
-      const result = handleRegistryList({ limit: 2 });
+      const result = handleCatalogList({ limit: 2 });
       const text = result.content[0].text;
       expect(text).toContain('Found 2 entries');
     });
 
     it('should filter by status=deprecated', () => {
       // Deprecate one entry
-      handleRegistryRemove({ id: 'list-tmpl-1' });
+      handleCatalogRemove({ id: 'list-tmpl-1' });
 
-      const result = handleRegistryList({ status: 'deprecated' });
+      const result = handleCatalogList({ status: 'deprecated' });
       const text = result.content[0].text;
       expect(text).toContain('Found 1 entries');
       expect(text).toContain('Template 1');
     });
 
     it('should default to status=available (excludes deprecated)', () => {
-      handleRegistryRemove({ id: 'list-tmpl-1' });
+      handleCatalogRemove({ id: 'list-tmpl-1' });
 
-      const result = handleRegistryList({});
+      const result = handleCatalogList({});
       const text = result.content[0].text;
       expect(text).toContain('Found 2 entries');
       expect(text).not.toContain('Template 1');
@@ -449,12 +449,12 @@ describe('Registry Tools (FR-099)', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 5. handleRegistryRemove
+  // 5. handleCatalogRemove
   // -------------------------------------------------------------------------
 
-  describe('handleRegistryRemove', () => {
+  describe('handleCatalogRemove', () => {
     beforeEach(() => {
-      handleRegistryAdd({
+      handleCatalogAdd({
         id: 'remove-test',
         name: 'Remove Test',
         type: 'module',
@@ -463,37 +463,37 @@ describe('Registry Tools (FR-099)', () => {
     });
 
     it('should soft-delete by default (set status to deprecated)', () => {
-      const result = handleRegistryRemove({ id: 'remove-test' });
+      const result = handleCatalogRemove({ id: 'remove-test' });
       const text = result.content[0].text;
       expect(text).toContain('deprecated');
 
-      const row = db.prepare('SELECT status FROM registry WHERE id = ?').get('remove-test') as { status: string };
+      const row = db.prepare('SELECT status FROM catalog WHERE id = ?').get('remove-test') as { status: string };
       expect(row.status).toBe('deprecated');
     });
 
     it('should hard-delete when hard_delete=true', () => {
-      const result = handleRegistryRemove({ id: 'remove-test', hard_delete: true });
+      const result = handleCatalogRemove({ id: 'remove-test', hard_delete: true });
       const text = result.content[0].text;
       expect(text).toContain('permanently deleted');
 
-      const row = db.prepare('SELECT id FROM registry WHERE id = ?').get('remove-test');
+      const row = db.prepare('SELECT id FROM catalog WHERE id = ?').get('remove-test');
       expect(row).toBeUndefined();
     });
 
     it('should return not found for missing ID', () => {
-      const result = handleRegistryRemove({ id: 'nonexistent' });
+      const result = handleCatalogRemove({ id: 'nonexistent' });
       const text = result.content[0].text;
       expect(text).toContain('not found');
     });
   });
 
   // -------------------------------------------------------------------------
-  // 6. handleRegistryUpdate
+  // 6. handleCatalogUpdate
   // -------------------------------------------------------------------------
 
-  describe('handleRegistryUpdate', () => {
+  describe('handleCatalogUpdate', () => {
     beforeEach(() => {
-      handleRegistryAdd({
+      handleCatalogAdd({
         id: 'update-test',
         name: 'Update Test Module',
         type: 'module',
@@ -507,20 +507,20 @@ describe('Registry Tools (FR-099)', () => {
     });
 
     it('should update a single field and preserve others', () => {
-      const result = handleRegistryUpdate({
+      const result = handleCatalogUpdate({
         id: 'update-test',
         description: 'Updated description',
       });
 
       const text = result.content[0].text;
-      expect(text).toContain('Registry entry updated successfully');
+      expect(text).toContain('Catalog entry updated successfully');
       expect(text).toContain('Updated description');
       // Name should be preserved
       expect(text).toContain('Update Test Module');
     });
 
     it('should update multiple fields at once', () => {
-      const result = handleRegistryUpdate({
+      const result = handleCatalogUpdate({
         id: 'update-test',
         name: 'Renamed Module',
         tags: '["updated", "new-tag"]',
@@ -528,14 +528,14 @@ describe('Registry Tools (FR-099)', () => {
       });
 
       const text = result.content[0].text;
-      expect(text).toContain('Registry entry updated successfully');
+      expect(text).toContain('Catalog entry updated successfully');
       expect(text).toContain('Renamed Module');
       expect(text).toContain('updated');
       expect(text).toContain('Multi-field update');
     });
 
     it('should reject non-existent ID', () => {
-      const result = handleRegistryUpdate({
+      const result = handleCatalogUpdate({
         id: 'nonexistent-id',
         name: 'Ghost Entry',
       });
@@ -545,7 +545,7 @@ describe('Registry Tools (FR-099)', () => {
     });
 
     it('should return message when no fields provided', () => {
-      const result = handleRegistryUpdate({
+      const result = handleCatalogUpdate({
         id: 'update-test',
       });
 
@@ -554,23 +554,23 @@ describe('Registry Tools (FR-099)', () => {
     });
 
     it('should update FTS5 index after update', () => {
-      handleRegistryUpdate({
+      handleCatalogUpdate({
         id: 'update-test',
         description: 'Completely unique searchable phrase xyz123',
       });
 
-      const result = handleRegistrySearch({ query: 'xyz123' });
+      const result = handleCatalogSearch({ query: 'xyz123' });
       const text = result.content[0].text;
       expect(text).toContain('Update Test Module');
     });
 
     it('should map standalone boolean to integer correctly', () => {
-      handleRegistryUpdate({
+      handleCatalogUpdate({
         id: 'update-test',
         standalone: false,
       });
 
-      const row = db.prepare('SELECT standalone FROM registry WHERE id = ?').get('update-test') as { standalone: number };
+      const row = db.prepare('SELECT standalone FROM catalog WHERE id = ?').get('update-test') as { standalone: number };
       expect(row.standalone).toBe(0);
     });
   });
@@ -581,7 +581,7 @@ describe('Registry Tools (FR-099)', () => {
 
   describe('FR-198 asset-reference columns', () => {
     it('should round-trip when_to_use / source / source_ref through add → get', () => {
-      handleRegistryAdd({
+      handleCatalogAdd({
         id: 'fr198-pkg',
         name: 'fifty_buttons',
         type: 'module',
@@ -595,21 +595,21 @@ describe('Registry Tools (FR-099)', () => {
 
       // DB-level round-trip (the columns actually persisted)
       const row = db
-        .prepare('SELECT when_to_use, source, source_ref FROM registry WHERE id = ?')
+        .prepare('SELECT when_to_use, source, source_ref FROM catalog WHERE id = ?')
         .get('fr198-pkg') as { when_to_use: string; source: string; source_ref: string };
       expect(row.when_to_use).toBe('when a Flutter project needs the fifty.dev branded button system');
       expect(row.source).toBe('pub.dev');
       expect(row.source_ref).toBe('fifty_buttons');
 
       // formatEntry renders them
-      const result = handleRegistryGet({ id: 'fr198-pkg' });
+      const result = handleCatalogGet({ id: 'fr198-pkg' });
       const text = result.content[0].text;
       expect(text).toContain('When to use: when a Flutter project needs the fifty.dev branded button system');
       expect(text).toContain('Source: pub.dev (fifty_buttons)');
     });
 
     it('should update only when_to_use and preserve other fields', () => {
-      handleRegistryAdd({
+      handleCatalogAdd({
         id: 'fr198-update',
         name: 'auth_module',
         type: 'module',
@@ -618,13 +618,13 @@ describe('Registry Tools (FR-099)', () => {
         when_to_use: 'original cue',
       });
 
-      handleRegistryUpdate({
+      handleCatalogUpdate({
         id: 'fr198-update',
         when_to_use: 'updated cue — reach for this when you need OAuth',
       });
 
       const row = db
-        .prepare('SELECT when_to_use, source FROM registry WHERE id = ?')
+        .prepare('SELECT when_to_use, source FROM catalog WHERE id = ?')
         .get('fr198-update') as { when_to_use: string; source: string };
       expect(row.when_to_use).toBe('updated cue — reach for this when you need OAuth');
       // source preserved (partial-update invariant)
@@ -632,14 +632,14 @@ describe('Registry Tools (FR-099)', () => {
     });
 
     it('should leave new columns NULL for back-compat adds (old required fields only)', () => {
-      handleRegistryAdd({
+      handleCatalogAdd({
         name: 'legacy-module',
         type: 'module',
         github_repo: 'github.com/org/legacy',
       });
 
       const row = db
-        .prepare("SELECT when_to_use, source, source_ref FROM registry WHERE name = 'legacy-module'")
+        .prepare("SELECT when_to_use, source, source_ref FROM catalog WHERE name = 'legacy-module'")
         .get() as { when_to_use: string | null; source: string | null; source_ref: string | null };
       expect(row.when_to_use).toBeNull();
       expect(row.source).toBeNull();
@@ -647,14 +647,14 @@ describe('Registry Tools (FR-099)', () => {
     });
 
     it('formatEntry shows (none) for unset asset-reference fields', () => {
-      handleRegistryAdd({
+      handleCatalogAdd({
         id: 'fr198-none',
         name: 'bare-module',
         type: 'module',
         github_repo: 'github.com/org/bare',
       });
 
-      const result = handleRegistryGet({ id: 'fr198-none' });
+      const result = handleCatalogGet({ id: 'fr198-none' });
       const text = result.content[0].text;
       expect(text).toContain('When to use: (none)');
       expect(text).toContain('Source: (none)');

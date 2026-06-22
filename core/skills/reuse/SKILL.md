@@ -9,10 +9,10 @@ allowed-tools:
   - Glob
   - Grep
   - Bash
-  - mcp__igris-brain__igris_registry_search        # find a matching asset
-  - mcp__igris-brain__igris_registry_get           # full detail of a match
-  - mcp__igris-brain__igris_registry_list          # browse the catalog
-  - mcp__igris-brain__igris_registry_update        # correct a stale row found mid-flow
+  - mcp__igris-brain__igris_catalog_search         # find a matching asset
+  - mcp__igris-brain__igris_catalog_get            # full detail of a match
+  - mcp__igris-brain__igris_catalog_list           # browse the catalog
+  - mcp__igris-brain__igris_catalog_update         # correct a stale row found mid-flow
 triggers:
   - "REUSE"
   - "reuse"
@@ -29,7 +29,7 @@ The catalog mechanics live in the **shared catalog recipe** —
 **Read it first:** `~/.igris/core/docs/catalog-recipe.md`. This skill drives the
 *consume* side of that recipe (`/harvest` drives the *capture* side); both follow
 the same recipe so the catalog has one home. The tools are the existing
-`igris_registry_*` MCP surface — there is no separate catalog tool.
+`igris_catalog_*` MCP surface — there is no separate catalog tool.
 
 ## 0. Track invocation
 
@@ -66,27 +66,27 @@ Per the recipe's "consume an asset" step, search for what the operator is about
 to build **before** building it:
 
 ```
-igris_registry_search({ query: "<what they want>", type: "<template|module per mode>" })
+igris_catalog_search({ query: "<what they want>", type: "<template|module per mode>" })
 ```
 
 - For `scaffold-template`: `type: "template"`.
 - For `add-package`: `type: "module"`.
 - Widen the query / drop the `type` filter if the first pass is empty;
-  `igris_registry_list` to browse if the operator wants to see the shelf.
+  `igris_catalog_list` to browse if the operator wants to see the shelf.
 
 ## 2. Present matches
 
 Show the operator the top matches with the reuse-fit cue front and center:
 name, `when_to_use`, `description`, where it lives (`github_repo`/`github_path`
 or `source`/`source_ref`), `framework`/`archetype`, `install_command`. Pull full
-detail with `igris_registry_get({ id })` for the chosen match (includes the
+detail with `igris_catalog_get({ id })` for the chosen match (includes the
 `rebrand_checklist`).
 
 - **No match** → say so plainly. Offer to build it fresh AND remind the operator
   that `/harvest` Phase 3 can catalog the result afterward so the next project
   reuses it. Do not invent a catalog row here — capture is `/harvest`'s job.
 - **A near-match with stale/missing detail** → offer to enrich the row via
-  `igris_registry_update` (e.g. fill `when_to_use`, fix `install_command`) so the
+  `igris_catalog_update` (e.g. fill `when_to_use`, fix `install_command`) so the
   catalog improves as it's used.
 
 ## 3a. Scaffold from a template (mode: scaffold-template)
@@ -131,7 +131,7 @@ just `/harvest` it afterward to seed the catalog for next time.
    canonical procedure; do not re-invent the dedup/register/consume mechanics.
 3. **Consume, don't capture** — `/reuse` reads the catalog and integrates assets;
    it does NOT create catalog rows. Cataloging new assets is `/harvest` Phase 3.
-   (Enriching a stale existing row via `igris_registry_update` mid-flow is fine.)
+   (Enriching a stale existing row via `igris_catalog_update` mid-flow is fine.)
 4. **Operator-confirmed** — never scaffold or add a dependency without the
    operator confirming the asset and the target.
 5. **Graceful degradation** — brain absent → warn once, offer to proceed

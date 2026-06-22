@@ -283,7 +283,7 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     ],
   },
   {
-    table: 'registry',
+    table: 'catalog',
     syncKey: ['id'],
     timestampCol: 'updated_at',
     strategy: 'lww',

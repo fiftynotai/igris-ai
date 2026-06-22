@@ -10,9 +10,9 @@ allowed-tools:
   - Grep
   - Bash
   - mcp__igris-brain__igris_project_register      # Phase 2 archetype
-  - mcp__igris-brain__igris_registry_add          # Phase 3 module register
-  - mcp__igris-brain__igris_registry_search       # Phase 3 dedup against catalog
-  - mcp__igris-brain__igris_registry_update       # Phase 5 rebrand_checklist
+  - mcp__igris-brain__igris_catalog_add           # Phase 3 module register
+  - mcp__igris-brain__igris_catalog_search        # Phase 3 dedup against catalog
+  - mcp__igris-brain__igris_catalog_update        # Phase 5 rebrand_checklist
   - mcp__igris-brain__igris_memory_recall         # Phase 4 dedup pre-check
   - mcp__igris-brain__igris_memory_search         # Phase 4 dedup (FTS)
   - mcp__igris-brain__igris_memory_store          # Phase 4 store (source_extractor:'distill')
@@ -29,7 +29,7 @@ triggers:
 # HARVEST — Knowledge Capture Skill
 
 Deliberately harvest reusable knowledge from a project into the brain: curated
-**learnings** (memory), reusable **modules** (registry / the lego catalog), and
+**learnings** (memory), reusable **modules** (the reusable-assets catalog / lego store), and
 the project **archetype**. Every step is **operator-guided, never automatic** —
 this is the proven principle from the original capture design (revived FR-100):
 the model proposes, the operator decides what is worth keeping.
@@ -104,7 +104,7 @@ instead of rebuilding (the dark-theme-incident lesson; this is the FR-198 lego
 catalog seed).
 
 The mechanics — what counts as a standalone module, dedup-before-register, and
-the exact `igris_registry_add` shape (including the `source`/`source_ref`/
+the exact `igris_catalog_add` shape (including the `source`/`source_ref`/
 `when_to_use` asset-reference fields) — live in the **shared catalog recipe**.
 **Read it and follow it:** `~/.igris/core/docs/catalog-recipe.md`. This is the
 same recipe `/reuse` follows, so the catalog has one home.
@@ -115,8 +115,8 @@ Harvest-specific framing on top of the recipe:
    standalone modules (the recipe's "what is a standalone module" test decides
    what qualifies). The operator confirms which to catalog — never auto-register.
 2. For each confirmed candidate, follow the recipe: **dedup** via
-   `igris_registry_search` (offer skip/update on a strong match), then
-   **register** new ones via `igris_registry_add` — set `source_project` to this
+   `igris_catalog_search` (offer skip/update on a strong match), then
+   **register** new ones via `igris_catalog_add` — set `source_project` to this
    project's slug and capture `when_to_use` while the context is fresh.
 
 ## Phase 4 — Knowledge extraction (3–8 curated learnings)
@@ -188,9 +188,9 @@ projects clone-and-rebrand):
 1. Produce the rebrand checklist — the concrete steps to white-label this
    template for a new brand (app name, bundle id, color tokens, logo assets,
    API endpoints, store metadata, etc.).
-2. Store it on the relevant registry **module** row via `igris_registry_update`
+2. Store it on the relevant catalog **module** row via `igris_catalog_update`
    (the `rebrand_checklist` field), or pass it inline as `rebrand_checklist` in
-   the Phase-3 `igris_registry_add` call for that module.
+   the Phase-3 `igris_catalog_add` call for that module.
 
 Skip this phase entirely for non-template projects.
 
@@ -216,7 +216,7 @@ note that was written and remind them to re-run when the brain is reachable.
 
 1. **GUIDED, never automatic** — the operator chooses every archetype, module,
    and learning. The model proposes; it never silently stores a learning.
-2. **DEDUP before writing** — `igris_memory_recall` / `igris_registry_search` a
+2. **DEDUP before writing** — `igris_memory_recall` / `igris_catalog_search` a
    candidate before creating a new row (offer skip/merge/update). This is the
    load-bearing guard against duplicate-knowledge drift.
 3. **`source_extractor: "distill"`** on every Phase-4 `igris_memory_store` (the

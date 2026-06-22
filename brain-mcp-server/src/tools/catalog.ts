@@ -1,18 +1,19 @@
 /**
- * Igris Brain — Registry Tools
+ * Igris Brain — Catalog Tools
  *
- * Provides CRUD for reusable templates and modules in the brain's registry.
+ * Provides CRUD for reusable templates and modules in the brain's
+ * reusable-assets catalog (the "lego" store).
  * Entries use GitHub URLs as primary paths, with optional local fallback.
  *
  * Tools:
- * - igris_registry_add: Register a template or module
- * - igris_registry_search: Search registry by keyword, type, framework, archetype
- * - igris_registry_get: Get full details of a registry entry
- * - igris_registry_list: List entries with optional filters
- * - igris_registry_remove: Soft-delete or hard-delete an entry
- * - igris_registry_update: Partial update of an existing entry
+ * - igris_catalog_add: Register a template or module
+ * - igris_catalog_search: Search the catalog by keyword, type, framework, archetype
+ * - igris_catalog_get: Get full details of a catalog entry
+ * - igris_catalog_list: List entries with optional filters
+ * - igris_catalog_remove: Soft-delete or hard-delete an entry
+ * - igris_catalog_update: Partial update of an existing entry
  *
- * @module tools/registry
+ * @module tools/catalog
  * @author fifty.dev
  */
 
@@ -24,8 +25,8 @@ import { sanitizeFts5Query } from '../utils/fts5.js';
 // Types
 // ---------------------------------------------------------------------------
 
-/** Input shape for igris_registry_add */
-export interface RegistryAddInput {
+/** Input shape for igris_catalog_add */
+export interface CatalogAddInput {
   id?: string;
   name: string;
   type: 'template' | 'module';
@@ -48,8 +49,8 @@ export interface RegistryAddInput {
   source_ref?: string;
 }
 
-/** Input shape for igris_registry_search */
-export interface RegistrySearchInput {
+/** Input shape for igris_catalog_search */
+export interface CatalogSearchInput {
   query: string;
   type?: 'template' | 'module';
   framework?: string;
@@ -57,13 +58,13 @@ export interface RegistrySearchInput {
   limit?: number;
 }
 
-/** Input shape for igris_registry_get */
-export interface RegistryGetInput {
+/** Input shape for igris_catalog_get */
+export interface CatalogGetInput {
   id: string;
 }
 
-/** Input shape for igris_registry_list */
-export interface RegistryListInput {
+/** Input shape for igris_catalog_list */
+export interface CatalogListInput {
   type?: 'template' | 'module';
   archetype?: string;
   framework?: string;
@@ -71,14 +72,14 @@ export interface RegistryListInput {
   limit?: number;
 }
 
-/** Input shape for igris_registry_remove */
-export interface RegistryRemoveInput {
+/** Input shape for igris_catalog_remove */
+export interface CatalogRemoveInput {
   id: string;
   hard_delete?: boolean;
 }
 
-/** Input shape for igris_registry_update */
-export interface RegistryUpdateInput {
+/** Input shape for igris_catalog_update */
+export interface CatalogUpdateInput {
   id: string;
   name?: string;
   type?: 'template' | 'module';
@@ -101,8 +102,8 @@ export interface RegistryUpdateInput {
   source_ref?: string;
 }
 
-/** Row shape from registry table */
-interface RegistryRow {
+/** Row shape from catalog table */
+interface CatalogRow {
   id: string;
   name: string;
   type: string;
@@ -132,9 +133,9 @@ interface RegistryRow {
 // ---------------------------------------------------------------------------
 
 /**
- * Format a registry entry for MCP output.
+ * Format a catalog entry for MCP output.
  */
-function formatEntry(row: RegistryRow): string {
+function formatEntry(row: CatalogRow): string {
   const lines = [
     `ID: ${row.id}`,
     `Name: ${row.name}`,
@@ -166,28 +167,28 @@ function formatEntry(row: RegistryRow): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Register a template or module in the registry.
+ * Register a template or module in the catalog.
  *
- * @param args - Registry entry data
+ * @param args - Catalog entry data
  * @returns MCP-formatted response with the created entry
  */
-function handleRegistryAdd(args: RegistryAddInput): { content: { type: string; text: string }[] } {
+function handleCatalogAdd(args: CatalogAddInput): { content: { type: string; text: string }[] } {
   const db = getDb();
   const id = args.id ?? randomUUID();
 
   // Check for duplicate ID
-  const existing = db.prepare('SELECT id FROM registry WHERE id = ?').get(id) as { id: string } | undefined;
+  const existing = db.prepare('SELECT id FROM catalog WHERE id = ?').get(id) as { id: string } | undefined;
   if (existing) {
     return {
       content: [{
         type: 'text',
-        text: `Error: Registry entry with ID "${id}" already exists. Use a different ID or remove the existing entry first.`,
+        text: `Error: Catalog entry with ID "${id}" already exists. Use a different ID or remove the existing entry first.`,
       }],
     };
   }
 
   db.prepare(`
-    INSERT INTO registry (id, name, type, archetype, framework, github_repo, github_path,
+    INSERT INTO catalog (id, name, type, archetype, framework, github_repo, github_path,
       github_branch, description, install_command, standalone, parent_template,
       tags, rebrand_checklist, source_project, status,
       when_to_use, source, source_ref)
@@ -214,18 +215,18 @@ function handleRegistryAdd(args: RegistryAddInput): { content: { type: string; t
     args.source_ref ?? null,
   );
 
-  const row = db.prepare('SELECT * FROM registry WHERE id = ?').get(id) as RegistryRow;
+  const row = db.prepare('SELECT * FROM catalog WHERE id = ?').get(id) as CatalogRow;
 
   return {
     content: [{
       type: 'text',
-      text: `Registry entry added successfully.\n\n${formatEntry(row)}`,
+      text: `Catalog entry added successfully.\n\n${formatEntry(row)}`,
     }],
   };
 }
 
 /**
- * Search the registry by keyword with optional filters.
+ * Search the catalog by keyword with optional filters.
  *
  * Uses FTS5 for keyword matching on name, description, tags, and framework.
  * Additional filters narrow results by type, framework, and archetype.
@@ -233,7 +234,7 @@ function handleRegistryAdd(args: RegistryAddInput): { content: { type: string; t
  * @param args - Search parameters
  * @returns MCP-formatted response with matching entries
  */
-function handleRegistrySearch(args: RegistrySearchInput): { content: { type: string; text: string }[] } {
+function handleCatalogSearch(args: CatalogSearchInput): { content: { type: string; text: string }[] } {
   const db = getDb();
   const limit = args.limit ?? 10;
 
@@ -242,17 +243,17 @@ function handleRegistrySearch(args: RegistrySearchInput): { content: { type: str
     return {
       content: [{
         type: 'text',
-        text: `No registry entries found for query "${args.query}".`,
+        text: `No catalog entries found for query "${args.query}".`,
       }],
     };
   }
 
-  // FTS5 search joined with registry table for filtering
+  // FTS5 search joined with catalog table for filtering
   let sql = `
     SELECT r.*
-    FROM registry_fts fts
-    JOIN registry r ON r.rowid = fts.rowid
-    WHERE registry_fts MATCH ?
+    FROM catalog_fts fts
+    JOIN catalog r ON r.rowid = fts.rowid
+    WHERE catalog_fts MATCH ?
       AND r.status = 'available'
   `;
   const params: (string | number)[] = [sanitized];
@@ -273,11 +274,11 @@ function handleRegistrySearch(args: RegistrySearchInput): { content: { type: str
   sql += ' ORDER BY rank LIMIT ?';
   params.push(limit);
 
-  let rows: RegistryRow[];
+  let rows: CatalogRow[];
   try {
-    rows = db.prepare(sql).all(...params) as RegistryRow[];
+    rows = db.prepare(sql).all(...params) as CatalogRow[];
   } catch (err) {
-    console.error('[registry] FTS5 search error:', err);
+    console.error('[catalog] FTS5 search error:', err);
     rows = [];
   }
 
@@ -285,7 +286,7 @@ function handleRegistrySearch(args: RegistrySearchInput): { content: { type: str
     return {
       content: [{
         type: 'text',
-        text: `No registry entries found for query "${args.query}".`,
+        text: `No catalog entries found for query "${args.query}".`,
       }],
     };
   }
@@ -295,27 +296,27 @@ function handleRegistrySearch(args: RegistrySearchInput): { content: { type: str
   return {
     content: [{
       type: 'text',
-      text: `# Registry Search Results\n\nFound ${rows.length} entries for "${args.query}"\n\n${entries.join('\n\n---\n\n')}`,
+      text: `# Catalog Search Results\n\nFound ${rows.length} entries for "${args.query}"\n\n${entries.join('\n\n---\n\n')}`,
     }],
   };
 }
 
 /**
- * Get full details of a single registry entry.
+ * Get full details of a single catalog entry.
  *
  * @param args - Entry ID
  * @returns MCP-formatted response with entry details
  */
-function handleRegistryGet(args: RegistryGetInput): { content: { type: string; text: string }[] } {
+function handleCatalogGet(args: CatalogGetInput): { content: { type: string; text: string }[] } {
   const db = getDb();
 
-  const row = db.prepare('SELECT * FROM registry WHERE id = ?').get(args.id) as RegistryRow | undefined;
+  const row = db.prepare('SELECT * FROM catalog WHERE id = ?').get(args.id) as CatalogRow | undefined;
 
   if (!row) {
     return {
       content: [{
         type: 'text',
-        text: `Registry entry "${args.id}" not found.`,
+        text: `Catalog entry "${args.id}" not found.`,
       }],
     };
   }
@@ -323,23 +324,23 @@ function handleRegistryGet(args: RegistryGetInput): { content: { type: string; t
   return {
     content: [{
       type: 'text',
-      text: `# Registry Entry: ${row.name}\n\n${formatEntry(row)}`,
+      text: `# Catalog Entry: ${row.name}\n\n${formatEntry(row)}`,
     }],
   };
 }
 
 /**
- * List registry entries with optional filters.
+ * List catalog entries with optional filters.
  *
  * @param args - Filter parameters
  * @returns MCP-formatted response with entry list
  */
-function handleRegistryList(args: RegistryListInput): { content: { type: string; text: string }[] } {
+function handleCatalogList(args: CatalogListInput): { content: { type: string; text: string }[] } {
   const db = getDb();
   const limit = args.limit ?? 25;
   const status = args.status ?? 'available';
 
-  let sql = 'SELECT * FROM registry WHERE status = ?';
+  let sql = 'SELECT * FROM catalog WHERE status = ?';
   const params: (string | number)[] = [status];
 
   if (args.type) {
@@ -358,7 +359,7 @@ function handleRegistryList(args: RegistryListInput): { content: { type: string;
   sql += ' ORDER BY updated_at DESC LIMIT ?';
   params.push(limit);
 
-  const rows = db.prepare(sql).all(...params) as RegistryRow[];
+  const rows = db.prepare(sql).all(...params) as CatalogRow[];
 
   if (rows.length === 0) {
     const filters = [
@@ -370,7 +371,7 @@ function handleRegistryList(args: RegistryListInput): { content: { type: string;
     return {
       content: [{
         type: 'text',
-        text: `No registry entries found (filters: ${filters}).`,
+        text: `No catalog entries found (filters: ${filters}).`,
       }],
     };
   }
@@ -384,13 +385,13 @@ function handleRegistryList(args: RegistryListInput): { content: { type: string;
   return {
     content: [{
       type: 'text',
-      text: `# Registry\n\nFound ${rows.length} entries\n\n${header}\n${separator}\n${tableRows.join('\n')}`,
+      text: `# Catalog\n\nFound ${rows.length} entries\n\n${header}\n${separator}\n${tableRows.join('\n')}`,
     }],
   };
 }
 
 /**
- * Remove a registry entry.
+ * Remove a catalog entry.
  *
  * By default, performs a soft delete (sets status to 'deprecated').
  * Pass hard_delete=true to permanently remove the entry.
@@ -398,43 +399,43 @@ function handleRegistryList(args: RegistryListInput): { content: { type: string;
  * @param args - Entry ID and deletion mode
  * @returns MCP-formatted response with result
  */
-function handleRegistryRemove(args: RegistryRemoveInput): { content: { type: string; text: string }[] } {
+function handleCatalogRemove(args: CatalogRemoveInput): { content: { type: string; text: string }[] } {
   const db = getDb();
 
-  const existing = db.prepare('SELECT id, name FROM registry WHERE id = ?').get(args.id) as { id: string; name: string } | undefined;
+  const existing = db.prepare('SELECT id, name FROM catalog WHERE id = ?').get(args.id) as { id: string; name: string } | undefined;
   if (!existing) {
     return {
       content: [{
         type: 'text',
-        text: `Registry entry "${args.id}" not found.`,
+        text: `Catalog entry "${args.id}" not found.`,
       }],
     };
   }
 
   if (args.hard_delete) {
-    db.prepare('DELETE FROM registry WHERE id = ?').run(args.id);
+    db.prepare('DELETE FROM catalog WHERE id = ?').run(args.id);
     return {
       content: [{
         type: 'text',
-        text: `Registry entry "${existing.name}" (${args.id}) permanently deleted.`,
+        text: `Catalog entry "${existing.name}" (${args.id}) permanently deleted.`,
       }],
     };
   }
 
   db.prepare(
-    "UPDATE registry SET status = 'deprecated', updated_at = datetime('now') WHERE id = ?"
+    "UPDATE catalog SET status = 'deprecated', updated_at = datetime('now') WHERE id = ?"
   ).run(args.id);
 
   return {
     content: [{
       type: 'text',
-      text: `Registry entry "${existing.name}" (${args.id}) marked as deprecated.`,
+      text: `Catalog entry "${existing.name}" (${args.id}) marked as deprecated.`,
     }],
   };
 }
 
 /**
- * Update an existing registry entry.
+ * Update an existing catalog entry.
  *
  * Only fields provided in the input are modified; others are preserved.
  * The updated_at timestamp is always refreshed.
@@ -442,15 +443,15 @@ function handleRegistryRemove(args: RegistryRemoveInput): { content: { type: str
  * @param args - Entry ID and fields to update
  * @returns MCP-formatted response with the updated entry
  */
-function handleRegistryUpdate(args: RegistryUpdateInput): { content: { type: string; text: string }[] } {
+function handleCatalogUpdate(args: CatalogUpdateInput): { content: { type: string; text: string }[] } {
   const db = getDb();
 
-  const existing = db.prepare('SELECT * FROM registry WHERE id = ?').get(args.id) as RegistryRow | undefined;
+  const existing = db.prepare('SELECT * FROM catalog WHERE id = ?').get(args.id) as CatalogRow | undefined;
   if (!existing) {
     return {
       content: [{
         type: 'text',
-        text: `Registry entry "${args.id}" not found.`,
+        text: `Catalog entry "${args.id}" not found.`,
       }],
     };
   }
@@ -490,23 +491,23 @@ function handleRegistryUpdate(args: RegistryUpdateInput): { content: { type: str
   updates.push("updated_at = datetime('now')");
   params.push(args.id);
 
-  db.prepare(`UPDATE registry SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+  db.prepare(`UPDATE catalog SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
-  const row = db.prepare('SELECT * FROM registry WHERE id = ?').get(args.id) as RegistryRow;
+  const row = db.prepare('SELECT * FROM catalog WHERE id = ?').get(args.id) as CatalogRow;
 
   return {
     content: [{
       type: 'text',
-      text: `Registry entry updated successfully.\n\n${formatEntry(row)}`,
+      text: `Catalog entry updated successfully.\n\n${formatEntry(row)}`,
     }],
   };
 }
 
 export {
-  handleRegistryAdd,
-  handleRegistrySearch,
-  handleRegistryGet,
-  handleRegistryList,
-  handleRegistryRemove,
-  handleRegistryUpdate,
+  handleCatalogAdd,
+  handleCatalogSearch,
+  handleCatalogGet,
+  handleCatalogList,
+  handleCatalogRemove,
+  handleCatalogUpdate,
 };

@@ -42,7 +42,7 @@ import { createSubconsciousComponent } from '../components/subconscious/index.js
 import { createPerceptionComponent } from '../components/perception/index.js';
 import { createMonitoringComponent } from '../components/monitoring/index.js';
 import { createContextComponent } from '../components/context/index.js';
-import { createRegistryComponent } from '../components/registry/index.js';
+import { createCatalogComponent } from '../components/catalog/index.js';
 
 function makeOkResult(text = 'ok'): ToolResult {
   return { content: [{ type: 'text', text }] };
@@ -181,7 +181,7 @@ const COMPONENT_FACTORIES = [
   createSubconsciousComponent,
   createPerceptionComponent,
   createMonitoringComponent,
-  createRegistryComponent,
+  createCatalogComponent,
 ];
 
 function collectAllTools(): ToolDefinition[] {

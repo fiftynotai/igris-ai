@@ -3,18 +3,16 @@
  *
  * Verifies the additive registry generalization:
  *   1. v17 adds the three asset-reference columns (when_to_use, source,
- *      source_ref) to the registry table.
- *   2. Existing registry rows survive the migration with NULL new fields
+ *      source_ref) to the reusable-assets store table.
+ *   2. Existing rows survive the migration with NULL new fields
  *      (pure ALTER TABLE ADD COLUMN is metadata-only, NULL-safe).
  *   3. Re-running migrations is idempotent (the PRAGMA table_info guard).
  *
- * The registry table is created in v12, which has no vec dependency, so these
+ * The store table is created in v12, which has no vec dependency, so these
  * tests run without the optional sqlite-vec binary. When vec IS available the
- * migration chain advances all the way to v18 (TD-238 added v18 after v17);
- * when it is NOT, v13 skips
- * without recording and the chain stalls at v12 — so we drive the registry
- * forward independently of the vec-gated steps by asserting on the registry
- * columns directly rather than on MAX(schema_version).
+ * migration chain advances all the way to v19 (TD-259 renamed the table
+ * registry→catalog after v18) — so once a full migrateSchema() runs vec-on,
+ * the columns + rows live on the `catalog` table (the post-v19 name).
  *
  * @module __tests__/db-migration-v17
  */
@@ -54,8 +52,10 @@ function loadVec(db: Database.Database): void {
   sqliteVec.load(db);
 }
 
-function registryColumns(db: Database.Database): string[] {
-  const cols = db.prepare('PRAGMA table_info(registry)').all() as Array<{ name: string }>;
+// After a full vec-on migrateSchema(), v19 renames registry→catalog, so the
+// asset-reference columns live on `catalog`.
+function catalogColumns(db: Database.Database): string[] {
+  const cols = db.prepare('PRAGMA table_info(catalog)').all() as Array<{ name: string }>;
   return cols.map((c) => c.name);
 }
 
@@ -88,32 +88,32 @@ describe('migration v17 — registry asset-reference columns (FR-198)', () => {
       loadVec(db);
       migrateSchema(db);
 
-      const cols = registryColumns(db);
+      const cols = catalogColumns(db);
       expect(cols).toContain('when_to_use');
       expect(cols).toContain('source');
       expect(cols).toContain('source_ref');
 
-      // With vec available the whole chain runs through v18 (TD-238 added the
-      // v18 brief-normalization data migration after v17).
-      expect(getSchemaVersion(db)).toBe(18);
+      // With vec available the whole chain runs through v19 (TD-259 renamed the
+      // store registry→catalog after the v18 brief-normalization data migration).
+      expect(getSchemaVersion(db)).toBe(19);
     },
   );
 
   it.skipIf(!HAS_VEC_BINARY)(
-    'preserves existing registry rows with NULL new fields (vec available)',
+    'preserves existing store rows with NULL new fields (vec available)',
     () => {
-      // First boot: build the schema, then seed registry rows as a pre-v17 DB
-      // would have (without the new columns set).
+      // First boot: build the schema (full chain renames the store → catalog),
+      // then seed rows as a pre-FR-198 DB would have (without the new columns).
       loadVec(db);
       migrateSchema(db);
 
       // Simulate a pre-FR-198 row by inserting only the old columns.
       db.prepare(
-        `INSERT INTO registry (id, name, type, github_repo)
+        `INSERT INTO catalog (id, name, type, github_repo)
          VALUES ('legacy-1', 'legacy-template', 'template', 'github.com/org/legacy')`,
       ).run();
       db.prepare(
-        `INSERT INTO registry (id, name, type, github_repo, description)
+        `INSERT INTO catalog (id, name, type, github_repo, description)
          VALUES ('legacy-2', 'legacy-module', 'module', 'github.com/org/legacy2', 'a module')`,
       ).run();
 
@@ -121,7 +121,7 @@ describe('migration v17 — registry asset-reference columns (FR-198)', () => {
       migrateSchema(db);
 
       const rows = db
-        .prepare('SELECT id, name, when_to_use, source, source_ref FROM registry ORDER BY id')
+        .prepare('SELECT id, name, when_to_use, source, source_ref FROM catalog ORDER BY id')
         .all() as Array<{
         id: string;
         name: string;
@@ -148,13 +148,13 @@ describe('migration v17 — registry asset-reference columns (FR-198)', () => {
       migrateSchema(db);
       expect(() => migrateSchema(db)).not.toThrow();
 
-      const cols = registryColumns(db).filter(
+      const cols = catalogColumns(db).filter(
         (c) => c === 'when_to_use' || c === 'source' || c === 'source_ref',
       );
       // Exactly one of each — no duplicate ADD COLUMN.
       expect(cols.sort()).toEqual(['source', 'source_ref', 'when_to_use']);
-      // Chain runs through v18 once vec is available (TD-238 added v18).
-      expect(getSchemaVersion(db)).toBe(18);
+      // Chain runs through v19 once vec is available (TD-259 added v19).
+      expect(getSchemaVersion(db)).toBe(19);
     },
   );
 
@@ -165,13 +165,13 @@ describe('migration v17 — registry asset-reference columns (FR-198)', () => {
       migrateSchema(db);
 
       db.prepare(
-        `INSERT INTO registry (id, name, type, github_repo, when_to_use, source, source_ref)
+        `INSERT INTO catalog (id, name, type, github_repo, when_to_use, source, source_ref)
          VALUES ('pkg-1', 'fifty_buttons', 'module', 'github.com/fiftynotai/kit',
                  'when a flutter app needs branded buttons', 'pub.dev', 'fifty_buttons')`,
       ).run();
 
       const row = db
-        .prepare('SELECT when_to_use, source, source_ref FROM registry WHERE id = ?')
+        .prepare('SELECT when_to_use, source, source_ref FROM catalog WHERE id = ?')
         .get('pkg-1') as { when_to_use: string; source: string; source_ref: string };
       expect(row.when_to_use).toBe('when a flutter app needs branded buttons');
       expect(row.source).toBe('pub.dev');

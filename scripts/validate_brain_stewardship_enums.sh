@@ -328,9 +328,9 @@ INTERNAL_TOOL_ALLOWLIST = {
     'igris_perception_expire_stale', 'igris_perception_extract_now',
     'igris_perception_submit',
 
-    # registry CRUD — managed via /register skill, not actor-chosen
-    'igris_registry_add', 'igris_registry_get', 'igris_registry_list',
-    'igris_registry_remove', 'igris_registry_search', 'igris_registry_update',
+    # catalog CRUD — managed via /harvest skill, not actor-chosen
+    'igris_catalog_add', 'igris_catalog_get', 'igris_catalog_list',
+    'igris_catalog_remove', 'igris_catalog_search', 'igris_catalog_update',
 
     # subconscious + suggestion surface — paused per v7 (subconscious.enabled=false)
     'igris_subconscious_run',

@@ -2,12 +2,12 @@
 
 The canonical procedure for cataloging and reusing assets. Both `/harvest`
 (Phase 3 — capture) and `/reuse` (consume) point here instead of re-prosing it,
-so the recipe has one home. The tools are the existing `igris_registry_*` MCP
+so the recipe has one home. The tools are the existing `igris_catalog_*` MCP
 surface — there is no separate catalog tool.
 
 ## What lives in the catalog
 
-The catalog is the brain `registry` table — **reference-shaped rows**, not the
+The catalog is the brain `catalog` table — **reference-shaped rows**, not the
 code itself. Each row records:
 
 - **What it is** — `name`, `type` (`template` = full project scaffold;
@@ -35,11 +35,11 @@ catalog it.
 exists to prevent.
 
 ```
-igris_registry_search({ query: "<name + keywords>", type: "module" })
+igris_catalog_search({ query: "<name + keywords>", type: "module" })
 ```
 
 - **Strong match exists** → offer to **skip** (already cataloged) or
-  **update** (`igris_registry_update` — enrich `when_to_use`/`source`/tags or
+  **update** (`igris_catalog_update` — enrich `when_to_use`/`source`/tags or
   refresh a stale `install_command`/`rebrand_checklist`). Never create a second
   row for the same asset.
 - **No match** → register it.
@@ -47,10 +47,10 @@ igris_registry_search({ query: "<name + keywords>", type: "module" })
 ## Register an asset
 
 ```
-igris_registry_add({
+igris_catalog_add({
   name:           "<asset name>",
   type:           "template" | "module",
-  github_repo:    "<owner/repo>",        # REQUIRED by the registry — ask the
+  github_repo:    "<owner/repo>",        # REQUIRED by the catalog — ask the
                                           # operator if not derivable, or skip
                                           # rather than inventing a value
   github_path:    "<path within repo>",   # optional
@@ -74,8 +74,8 @@ Before building something new, search the catalog. If a lego block fits, reach
 for it:
 
 ```
-igris_registry_search({ query: "<what you're about to build>" })
-igris_registry_get({ id: "<match id>" })   # full detail incl. rebrand_checklist
+igris_catalog_search({ query: "<what you're about to build>" })
+igris_catalog_get({ id: "<match id>" })   # full detail incl. rebrand_checklist
 ```
 
 Then scaffold from the template (`install_command`, then work the

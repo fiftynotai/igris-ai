@@ -326,7 +326,7 @@ igris_error_dashboard({ project: "igris-ai", summary_only: true })
 
 > **Naming note:** this is the **project** registry (registered Igris
 > projects). Do not confuse it with the **reusable-assets catalog** in §5b
-> (`igris_registry_*`), which is a different store (cataloged templates/modules,
+> (`igris_catalog_*`), which is a different store (cataloged templates/modules,
 > the "lego" store).
 
 **Tools:** `igris_project_register`, `igris_project_list`,
@@ -362,14 +362,14 @@ igris_project_update({ slug: "old-prototype", status: "archived" })
 igris_project_dashboard({ archetype: "ai-agent-system", summary_only: true })
 ```
 
-## 5b. Reusable-assets catalog (`igris_registry_*`)
+## 5b. Reusable-assets catalog (`igris_catalog_*`)
 
 > **Distinct from §5.** This is the **reusable-assets catalog** (the "lego"
 > store) — cataloged templates and modules, NOT the project registry. The tool
-> prefix is `igris_registry_*`, not `igris_project_*`.
+> prefix is `igris_catalog_*`, not `igris_project_*`.
 
-**Tools:** `igris_registry_search`, `igris_registry_get`, `igris_registry_list`
-(read), `igris_registry_add`, `igris_registry_update`, `igris_registry_remove`
+**Tools:** `igris_catalog_search`, `igris_catalog_get`, `igris_catalog_list`
+(read), `igris_catalog_add`, `igris_catalog_update`, `igris_catalog_remove`
 (write — driven by `/harvest`, not free-form reasoning).
 
 **What's there:** reference rows for reusable assets — templates (full project
@@ -383,21 +383,21 @@ SDKs). Each row records *what it is* (name/type/description), *where it lives*
 ### When to call
 
 - **Reuse before rewrite — before building something new**, search the catalog:
-  `igris_registry_search({ query: "<what you're about to build>" })`. If a lego
+  `igris_catalog_search({ query: "<what you're about to build>" })`. If a lego
   block fits, reach for it (the `/reuse` skill drives scaffold-from-template and
   add-a-package). This is the live obligation behind the conduct "Reuse before
   rewrite" rule.
-- Before cataloging a module during `/harvest` Phase 3: `igris_registry_search`
+- Before cataloging a module during `/harvest` Phase 3: `igris_catalog_search`
   to dedup against the existing catalog (offer skip/update on a strong match).
 - To inspect a chosen asset's full detail (incl. `rebrand_checklist`):
-  `igris_registry_get({ id })`. To browse the shelf: `igris_registry_list`.
+  `igris_catalog_get({ id })`. To browse the shelf: `igris_catalog_list`.
 
 ### Example invocation
 
 ```jsonc
-igris_registry_search({ query: "flutter branded buttons", type: "module" })
-igris_registry_list({ type: "template", archetype: "enterprise-mvvm-mobile" })
-igris_registry_get({ id: "tmpl-enterprise-mobile" })
+igris_catalog_search({ query: "flutter branded buttons", type: "module" })
+igris_catalog_list({ type: "template", archetype: "enterprise-mvvm-mobile" })
+igris_catalog_get({ id: "tmpl-enterprise-mobile" })
 ```
 
 ## 6. Subconscious (`igris_perception_*`)
