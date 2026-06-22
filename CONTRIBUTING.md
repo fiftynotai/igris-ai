@@ -166,6 +166,29 @@ spawns (forger, sentinel) during a `/hunt` — and would silently disable
 the brief gate across the whole session. Always pass it one-shot, prefixed
 to the single command that needs it.
 
+### 3.2 Insecure-sync override (trusted-LAN only)
+
+Remote VPS sync sends the brain `api_key` as a Bearer header on every
+request. The transport classifier in `cli/src/lib/sync-transport.ts`
+therefore **refuses** sync over plain `http://` to a non-local host — the
+key would travel in cleartext. `https://` and `http://` to localhost
+(`127.0.0.1`/`::1`) are always allowed (the latter is what the test
+fixtures use).
+
+If you knowingly run a permanent `http://` VPS on a trusted LAN, the
+classifier honours **`IGRIS_ALLOW_INSECURE_SYNC=1`** — sync proceeds with
+a loud per-sync warning:
+
+```bash
+# One-shot per command — DO NOT `export` this variable (TD-252).
+IGRIS_ALLOW_INSECURE_SYNC=1 igris sync data
+```
+
+It can also be set persistently as `config.json` `remote_brain.allow_insecure: true`.
+Same `export`-discipline as `IGRIS_BYPASS_*`: never `export` the env var —
+it would inherit into subagent spawns and silently weaken transport for the
+whole session.
+
 ### 4. Commit Your Changes
 
 Follow conventional commits format:

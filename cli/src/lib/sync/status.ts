@@ -29,6 +29,7 @@ import { DryRunCollector } from "../dry-run.js";
 import { brainDir } from "../paths.js";
 import { basenameOfCwd } from "./util.js";
 import { inspectQueueDepth } from "./queue.js";
+import { classifySyncTransport } from "../sync-transport.js";
 import { info, warn, error as logError } from "../log.js";
 
 export interface SyncStatusOptions {
@@ -128,10 +129,21 @@ export async function runSyncStatus(
     if (newest > 0) lastPushAt = new Date(newest).toISOString();
   }
 
+  // TD-252: surface the transport-security state. An insecure-http URL means
+  // the api_key travels in cleartext; flag it whether or not the override is
+  // active (without the override, healthCheck already refused above).
+  const transport = classifySyncTransport(remote.url);
+
   // Print report.
   info("");
   info("Igris sync status:");
   info(`  remote_brain:    ${remote.url}`);
+  if (transport === "insecure-http") {
+    info(
+      "  transport:       INSECURE http:// (api_key sent in cleartext) — " +
+        "use https:// or set IGRIS_ALLOW_INSECURE_SYNC=1",
+    );
+  }
   info(
     `  reachable:       ${vpsReachable ? "yes" : "no"} (HTTP ${health.statusCode ?? "unreachable"})`,
   );
@@ -145,6 +157,13 @@ export async function runSyncStatus(
   info(`  queue path:      ${queuePath}`);
   info(`  last push:       ${lastPushAt ?? "never"}`);
   info("");
+
+  if (transport === "insecure-http") {
+    warn(
+      "remote_brain.url uses insecure http:// to a non-local host — the " +
+        "api_key is sent in cleartext. Switch to https://.",
+    );
+  }
 
   if (!vpsReachable) {
     warn("VPS unreachable — check 'remote_brain.url' or network connectivity.");

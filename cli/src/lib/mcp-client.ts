@@ -22,6 +22,7 @@ import { request as httpsRequest } from "node:https";
 import { request as httpRequest } from "node:http";
 import { URL as NodeURL } from "node:url";
 import { configJsonPath } from "./paths.js";
+import { assertSyncTransportAllowed } from "./sync-transport.js";
 
 export interface RemoteBrainConfig {
   url: string;
@@ -124,6 +125,12 @@ export async function healthCheck(
   remoteUrl: string,
   timeoutMs = 5_000,
 ): Promise<{ statusCode: number | null; body: string }> {
+  // TD-252: refuse non-local http:// before the api_key path is exercised.
+  const gate = assertSyncTransportAllowed(remoteUrl);
+  if (!gate.ok) {
+    return { statusCode: null, body: gate.reason };
+  }
+
   let parsed: NodeURL;
   try {
     parsed = new NodeURL(`${remoteUrl.replace(/\/$/, "")}/health`);
@@ -219,6 +226,12 @@ export async function syncPull(
   sinceByTable: Record<string, string>,
   timeoutMs = 30_000,
 ): Promise<SyncPullResult> {
+  // TD-252: refuse non-local http:// before the Bearer header is sent.
+  const gate = assertSyncTransportAllowed(remote.url);
+  if (!gate.ok) {
+    return { statusCode: 0, tables: {}, body: gate.reason };
+  }
+
   const params = new URLSearchParams();
   for (const [table, since] of Object.entries(sinceByTable)) {
     params.set(`since_${table}`, since);
@@ -326,6 +339,12 @@ export async function mcpCall(
   toolArgs: Record<string, unknown>,
   timeoutMs = 30_000,
 ): Promise<McpToolCallResult> {
+  // TD-252: refuse non-local http:// before the Bearer header is sent.
+  const gate = assertSyncTransportAllowed(remote.url);
+  if (!gate.ok) {
+    return { statusCode: 0, body: gate.reason, json: null };
+  }
+
   let parsed: NodeURL;
   try {
     parsed = new NodeURL(`${remote.url.replace(/\/$/, "")}/mcp`);

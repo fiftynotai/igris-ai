@@ -147,6 +147,7 @@ Agents per phase: `PLANNING` → architect; `BUILDING` → forger; `TESTING` →
 **Escape hatches** (one-shot, never `export`, loud + event-logged):
 - `IGRIS_BYPASS_BRIEF_GATE=1` — bypass the brief-gate hook for one command.
 - `IGRIS_BYPASS_PHASE_GUARD=1` — bypass the phase-guard pre-commit hook for one commit. The guard discovers the Active Brief from the brain `instances` registry (machine-scoped, freshest heartbeat), with a per-instance session-file fallback — not the retired `CURRENT_SESSION.md` (re-pointed under FR-186 / G-01R).
+- `IGRIS_ALLOW_INSECURE_SYNC=1` — allow remote VPS sync over plain `http://` to a non-local host (TD-252). By default the transport classifier (`cli/src/lib/sync-transport.ts`) REFUSES non-local `http://` because the `api_key` would travel in cleartext; this override allows it with a loud per-sync warning. `https://` and `http://` to localhost (`127.0.0.1`/`::1`) are always allowed. Also settable persistently as `config.json` `remote_brain.allow_insecure: true`.
 
 ---
 

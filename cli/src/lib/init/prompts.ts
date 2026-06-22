@@ -21,6 +21,10 @@
 
 import { createInterface } from "node:readline";
 import { info, warn } from "../log.js";
+import {
+  classifySyncTransport,
+  isInsecureSyncAllowed,
+} from "../sync-transport.js";
 
 /**
  * Async prompt function — accepts a question string, resolves with the
@@ -137,6 +141,23 @@ export async function gatherInitInputs(opts: GatherOpts): Promise<InitInputs> {
       await ask("Remote brain URL (blank to skip) []: ")
     ).trim();
     if (urlRaw === "") {
+      return { userName, userEmail, remoteBrain: null };
+    }
+
+    // TD-252: fail-fast at configure time — never persist a non-local http://
+    // URL (the api_key would later travel in cleartext), unless the override
+    // is active. https:// and localhost http:// pass silently.
+    if (
+      classifySyncTransport(urlRaw) === "insecure-http" &&
+      !isInsecureSyncAllowed()
+    ) {
+      warn(
+        `refusing to save remote brain URL '${urlRaw}' — http:// to a ` +
+          `non-local host sends your api_key in cleartext. Use an https:// ` +
+          `URL, or set IGRIS_ALLOW_INSECURE_SYNC=1 to override (NOT ` +
+          `recommended). Remote brain left unconfigured; edit ` +
+          `~/.igris/config.json later to set it.`,
+      );
       return { userName, userEmail, remoteBrain: null };
     }
 

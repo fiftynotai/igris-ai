@@ -25,6 +25,7 @@ import { request as httpRequest } from "node:http";
 import { URL as NodeURL } from "node:url";
 import { configJsonPath } from "./paths.js";
 import { warn } from "./log.js";
+import { assertSyncTransportAllowed } from "./sync-transport.js";
 
 export interface RemotePushArgs {
   slug: string;
@@ -38,7 +39,9 @@ export type RemotePushOutcome =
   | "pushed"
   | "http_error"
   | "network_error"
-  | "config_malformed";
+  | "config_malformed"
+  /** TD-252: non-local http:// refused (no override) — install stays non-fatal. */
+  | "insecure_refused";
 
 interface RemoteBrainConfig {
   url: string;
@@ -76,6 +79,15 @@ export async function pushProjectToRemote(
 ): Promise<RemotePushOutcome> {
   const cfg = readRemoteConfig();
   if (cfg === null) return "not_configured";
+
+  // TD-252: refuse non-local http:// before the api_key is POSTed. Non-fatal —
+  // the install pipeline is best-effort about remote-brain availability, so a
+  // refusal is logged and returned, never thrown.
+  const gate = assertSyncTransportAllowed(cfg.url);
+  if (!gate.ok) {
+    warn(`remote brain push skipped: ${gate.reason}`);
+    return "insecure_refused";
+  }
 
   const now = new Date().toISOString();
   const body = JSON.stringify({

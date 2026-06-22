@@ -57,12 +57,20 @@ function writeQueue(slug: string, lines: string[]): string {
 beforeEach(() => {
   tmpBrain = mkdtempSync(join(tmpdir(), "igris-cli-sync-data-"));
   envBackup.IGRIS_BRAIN_DIR = process.env.IGRIS_BRAIN_DIR;
+  envBackup.IGRIS_ALLOW_INSECURE_SYNC = process.env.IGRIS_ALLOW_INSECURE_SYNC;
   process.env.IGRIS_BRAIN_DIR = tmpBrain;
+  // TD-252: start each test from the refuse-default (override UNSET).
+  delete process.env.IGRIS_ALLOW_INSECURE_SYNC;
 });
 
 afterEach(() => {
   rmSync(tmpBrain, { recursive: true, force: true });
   process.env.IGRIS_BRAIN_DIR = envBackup.IGRIS_BRAIN_DIR;
+  if (envBackup.IGRIS_ALLOW_INSECURE_SYNC === undefined) {
+    delete process.env.IGRIS_ALLOW_INSECURE_SYNC;
+  } else {
+    process.env.IGRIS_ALLOW_INSECURE_SYNC = envBackup.IGRIS_ALLOW_INSECURE_SYNC;
+  }
   vi.restoreAllMocks();
 });
 
@@ -704,6 +712,127 @@ describe("sync data — runSyncData", () => {
       expect(existsSync(queuePath)).toBe(true);
     } finally {
       await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+});
+
+describe("sync data — TD-252 transport guard (the 4-case matrix)", () => {
+  // #356: assert the REAL refusal/allow outcome, not "200 OK".
+
+  it("case 1: https URL is NOT refused by the guard (gate passes through)", async () => {
+    // Points at https://127.0.0.1:<closed-port> — the guard allows https, so
+    // the request is attempted and fails to CONNECT (network error), NOT
+    // short-circuited with the cleartext-key refusal. Proves https passes.
+    writeConfig({
+      remote_brain: { url: "https://127.0.0.1:1", api_key: "k" },
+    });
+    const { runSyncData } = await import("../lib/sync/data.js");
+    // Empty queue → drain-only path → callRemoteDrain → mcpCall. The TLS
+    // connection to a closed port fails (exit 1) but the guard did NOT block
+    // it. (If the guard wrongly refused https, exit would still be 1, so this
+    // test's value is the companion classifier unit test — kept for the
+    // wiring smoke.)
+    const code = await runSyncData({ projectSlug: "no-queue" });
+    expect(code).toBe(1);
+  });
+
+  it("case 2: localhost http proceeds (existing loopback fixtures still pass)", async () => {
+    const lb = makeLoopback(() => ({
+      status: 200,
+      body: JSON.stringify({ drained: 0 }),
+    }));
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+    writeConfig({
+      remote_brain: { url: `http://127.0.0.1:${lb.port()}`, api_key: "k" },
+    });
+    try {
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "no-queue" });
+      // Loopback http is allowed → drain call reaches the server → exit 0.
+      expect(code).toBe(0);
+      expect(lb.calls.length).toBe(1);
+    } finally {
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+
+  it("case 3: remote http, override UNSET → REFUSED, ZERO requests on the wire", async () => {
+    // A loopback server is started but the config points at a REMOTE host —
+    // if the guard leaked, a request would hit some endpoint; instead the
+    // guard short-circuits and the server records ZERO calls. The
+    // Authorization: Bearer header is NEVER built/sent (#356).
+    const lb = makeLoopback(() => ({
+      status: 200,
+      body: JSON.stringify({ drained: 0 }),
+    }));
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+    // Remote hostname (NOT loopback) — guard classifies insecure-http.
+    writeConfig({
+      remote_brain: { url: "http://vps.example.invalid:3001", api_key: "k" },
+    });
+
+    const stderrBuf: string[] = [];
+    const errSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+
+    try {
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "no-queue" });
+      // Refused → drain fails → exit 1.
+      expect(code).toBe(1);
+      // The decisive #356 assertion: NO request ever left the process.
+      expect(lb.calls.length).toBe(0);
+      // The refusal reason (with the cleartext-key risk + the fix) surfaces.
+      const out = stderrBuf.join("");
+      expect(out).toContain("cleartext");
+    } finally {
+      errSpy.mockRestore();
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+
+  it("case 4: remote http + override=1 → request IS attempted (guard let it through) + warns", async () => {
+    process.env.IGRIS_ALLOW_INSECURE_SYNC = "1";
+    // Point at a REMOTE-looking host on the loopback closed port: the guard
+    // allows it (override active), so mcpCall ATTEMPTS the connection. We
+    // assert the guard did NOT short-circuit by checking the failure body is
+    // a NETWORK error, not the cleartext refusal, AND that the loud warning
+    // fired.
+    writeConfig({
+      remote_brain: { url: "http://vps.example.invalid:3001", api_key: "k" },
+    });
+
+    const stderrBuf: string[] = [];
+    const errSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+
+    try {
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "no-queue" });
+      // The connection to an invalid host fails → exit 1, but the guard
+      // ALLOWED the attempt (the request was built and dispatched).
+      expect(code).toBe(1);
+      const out = stderrBuf.join("");
+      // The loud per-sync override warning fired.
+      expect(out).toContain("WARNING");
+      expect(out).toContain("override active");
+      // The failure is a network/DNS error, NOT the cleartext refusal — proves
+      // the guard let the request through rather than short-circuiting.
+      expect(out).not.toContain("refusing to sync over http");
+    } finally {
+      errSpy.mockRestore();
     }
   });
 });

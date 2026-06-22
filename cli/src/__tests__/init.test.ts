@@ -43,8 +43,11 @@ beforeEach(async () => {
   envBackup.IGRIS_BRAIN_DIR = process.env.IGRIS_BRAIN_DIR;
   envBackup.HOME = process.env.HOME;
   envBackup.PATH = process.env.PATH;
+  envBackup.IGRIS_ALLOW_INSECURE_SYNC = process.env.IGRIS_ALLOW_INSECURE_SYNC;
   process.env.IGRIS_BRAIN_DIR = brainRoot;
   process.env.HOME = homeOverride;
+  // TD-252: start from the refuse-default so a host-env override can't leak in.
+  delete process.env.IGRIS_ALLOW_INSECURE_SYNC;
   // Empty PATH so cli-detect finds nothing (no bridges to materialize).
   process.env.PATH = pathOverride;
   // Stage a from-source repo with a minimal core/.
@@ -61,6 +64,11 @@ afterEach(async () => {
   process.env.IGRIS_BRAIN_DIR = envBackup.IGRIS_BRAIN_DIR;
   process.env.HOME = envBackup.HOME;
   process.env.PATH = envBackup.PATH;
+  if (envBackup.IGRIS_ALLOW_INSECURE_SYNC === undefined) {
+    delete process.env.IGRIS_ALLOW_INSECURE_SYNC;
+  } else {
+    process.env.IGRIS_ALLOW_INSECURE_SYNC = envBackup.IGRIS_ALLOW_INSECURE_SYNC;
+  }
 });
 
 function stageSourceRepo(root: string): void {
@@ -465,6 +473,81 @@ describe("init — interactive prompts (TD-144)", () => {
     ) as { remote_brain: { url: string; api_key: string } | null };
     expect(cfg.remote_brain).toEqual({
       url: "https://brain.example/",
+      api_key: "secret-key",
+    });
+  });
+
+  it("TD-252: remote-http URL, no override → NOT persisted (remote_brain: null), api_key never asked", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    // name, email, remote-http URL. The api_key prompt must NEVER fire because
+    // the URL is rejected before it is reached (the queue has only 3 answers,
+    // so a 4th prompt would throw "queuedPrompt exhausted").
+    const { ask, calls } = queuedPrompt([
+      "Dan",
+      "dan@example.com",
+      "http://vps.example.invalid:3001",
+    ]);
+    const code = await runInit({
+      fromSource: sourceRepo,
+      isTTY: true,
+      prompt: ask,
+    });
+    expect(code).toBe(0);
+    // Exactly 3 prompts: name, email, URL. No api_key prompt.
+    expect(calls.length).toBe(3);
+    const cfg = JSON.parse(
+      readFileSync(join(brainRoot, "config.json"), "utf-8"),
+    ) as { remote_brain: unknown };
+    // The insecure URL was NOT saved.
+    expect(cfg.remote_brain).toBe(null);
+  });
+
+  it("TD-252: remote-http URL WITH override → persisted (api_key asked)", async () => {
+    process.env.IGRIS_ALLOW_INSECURE_SYNC = "1";
+    const { runInit } = await import("../verbs/init.js");
+    const { ask, calls } = queuedPrompt([
+      "Eve",
+      "eve@example.com",
+      "http://vps.example.invalid:3001",
+      "secret-key",
+    ]);
+    const code = await runInit({
+      fromSource: sourceRepo,
+      isTTY: true,
+      prompt: ask,
+    });
+    expect(code).toBe(0);
+    // 4 prompts: the override allows the insecure URL → api_key is asked.
+    expect(calls.length).toBe(4);
+    const cfg = JSON.parse(
+      readFileSync(join(brainRoot, "config.json"), "utf-8"),
+    ) as { remote_brain: { url: string; api_key: string } | null };
+    expect(cfg.remote_brain).toEqual({
+      url: "http://vps.example.invalid:3001",
+      api_key: "secret-key",
+    });
+  });
+
+  it("TD-252: localhost-http URL is accepted (saved) with no override", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const { ask, calls } = queuedPrompt([
+      "Fay",
+      "fay@example.com",
+      "http://127.0.0.1:3001",
+      "secret-key",
+    ]);
+    const code = await runInit({
+      fromSource: sourceRepo,
+      isTTY: true,
+      prompt: ask,
+    });
+    expect(code).toBe(0);
+    expect(calls.length).toBe(4);
+    const cfg = JSON.parse(
+      readFileSync(join(brainRoot, "config.json"), "utf-8"),
+    ) as { remote_brain: { url: string; api_key: string } | null };
+    expect(cfg.remote_brain).toEqual({
+      url: "http://127.0.0.1:3001",
       api_key: "secret-key",
     });
   });
