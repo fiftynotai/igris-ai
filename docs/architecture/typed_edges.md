@@ -67,7 +67,7 @@ Edge types are stored as plain strings — extending the catalog is a code chang
 | Value | Meaning |
 |-------|---------|
 | `observed` | Captured live (auto-hooks, MCP tool calls in normal use) |
-| `backfill` | Reconstructed by the `scripts/archive/backfill_entity_edges.py` script from existing brief markdown |
+| `backfill` | Reconstructed by a one-shot backfill (now retired) from existing brief markdown |
 | `inferred` | Derived by a heuristic (similarity, co-occurrence) — confidence < 1.0 expected |
 | `user` | Manually authored by a human via tooling |
 
@@ -114,40 +114,26 @@ The hook is silently a no-op when:
 - The payload has no `parent_brief_id`.
 - The brief id equals the parent brief id (defensive — prevents degenerate self-edges).
 
-## Backfill
+## Backfill (retired one-shot)
 
-`scripts/archive/backfill_entity_edges.py` scans `brief_files.content` and produces edges for the structural marker patterns in the table above. By default it is a dry run that prints a summary and the first 20 candidates; pass `--apply` to commit. The script uses `INSERT OR IGNORE` so re-runs never duplicate.
+The initial `entity_edges` population was reconstructed by a one-shot backfill (FR-105) that scanned `brief_files.content` for the structural marker patterns in the table above. It ran once against the live brain DB (idempotent `INSERT OR IGNORE`, so re-runs were no-ops) and has since been retired — there is no live caller.
 
-```bash
-# Dry run: list candidates, no DB writes
-python3 scripts/archive/backfill_entity_edges.py
-
-# Commit
-python3 scripts/archive/backfill_entity_edges.py --apply
-
-# Restrict to a single project
-python3 scripts/archive/backfill_entity_edges.py --project igris-ai --apply
-
-# Acceptance gate (CI)
-python3 scripts/archive/backfill_entity_edges.py --apply --min-edges 30
-```
-
-All script-derived edges are tagged `provenance='backfill'`, which makes a clean rollback trivial:
+All edges it produced are tagged `provenance='backfill'`, which makes a clean rollback trivial:
 
 ```sql
 DELETE FROM entity_edges WHERE provenance = 'backfill';
 ```
 
-### Realistic yield
+### Realistic yield (historical)
 
-A pre-flight dry run on 2026-04-28 against the live brain DB produced:
+The pre-flight dry run on 2026-04-28 against the live brain DB produced:
 
 | Scope | parent_of | depends_on | supersedes | blocks | related_to | total |
 |-------|----------:|-----------:|-----------:|-------:|-----------:|------:|
 | `igris-ai` only | 9 | 9 | 0 | 0 | 0 | 18 |
 | All projects | 14 | 15 | 1 | 4 | 2 | 36 |
 
-The brief acceptance criterion of "≥ 50 edges" was written assuming an older brief style (`Parent: FR-XXX` rather than the modern markdown-bold `**Parent Brief:** FR-XXX` header). The implementation plan flagged this and recommended scoping the gate to "≥ 30 edges or all detectable markers covered" — 36 > 30 and the script extracts every detectable structural marker, so the criterion is satisfied in spirit. The `--min-edges` flag is parameterized rather than hard-coded so callers (CI / `igris sync code`) can tune the gate.
+The brief acceptance criterion of "≥ 50 edges" was written assuming an older brief style (`Parent: FR-XXX` rather than the modern markdown-bold `**Parent Brief:** FR-XXX` header). It was scoped down to "≥ 30 edges or all detectable markers covered" — 36 > 30 and every detectable structural marker was extracted, so the criterion was satisfied in spirit.
 
 ## Query recipes
 

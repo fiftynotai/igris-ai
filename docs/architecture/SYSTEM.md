@@ -202,15 +202,14 @@ Adapters under `core/hooks/bridges/` let non-Claude CLIs (OpenCode, Codex, Gemin
 
 **Principle:** the local brain DB is always authoritative. The VPS is the **always-on peer** that local brains sync to and offload long-running work to — not a backup, not the source of truth. If the VPS is unavailable, the engineer's work continues uninterrupted; on the next connectivity, `/awaken` pulls any VPS changes and merges them locally.
 
-**VPS roles (6):**
+**VPS roles (5):**
 1. Cross-machine sync hub — machine A's push is visible to machine B on next `/awaken` pull. Local CLIs push deltas via `brain_push_async.sh` on session end.
 2. Dashboard backend — serves the web UI at `/dashboard`.
-3. Worker daemon — executes queued tasks (`igris_task_*`) outside any operator session.
-4. Scheduler — owns cron-style routines (`igris_schedule_*`) that fire without local presence.
-5. Hook event sink — local CLI POSTs hook events to `/api/hooks/event` for cross-machine observability.
-6. Code repo mirror — `igris sync code` rsyncs the repo to VPS (separate from brain sync).
+3. Scheduler — owns cron-style routines (`igris_schedule_*`) that fire without local presence.
+4. Hook event sink — local CLI POSTs hook events to `/api/hooks/event` for cross-machine observability.
+5. Code repo mirror — `igris sync code` rsyncs the repo to VPS (separate from brain sync).
 
-**Mental model:** local brains are the active drivers (low-latency stdio MCP, offline-tolerant). The VPS is the persistent peer they sync deltas to and hand long-running work off to when the operator's session ends. Wiping the VPS does not lose the local brain — but it does lose the worker queue, scheduler state, dashboard history, and cross-machine merge point. Treat it as a peer node, not a copy.
+**Mental model:** local brains are the active drivers (low-latency stdio MCP, offline-tolerant). The VPS is the persistent peer they sync deltas to when the operator's session ends. Wiping the VPS does not lose the local brain — but it does lose the scheduler state, dashboard history, and cross-machine merge point. Treat it as a peer node, not a copy.
 
 **Sync queue mechanism:** `sync_queue.jsonl` per project holds rows that failed to push. On the next `/awaken`, `/rest`, or `/sync data`, the `igris_sync_queue_drain` tool retries each row. Callers must use `ALLOWED_KEYS_PER_OP` (in `cli/src/lib/sync/data.ts:224`) to build tool args — never spread arbitrary JSON from queue entries (TD-128 strict-input contract).
 

@@ -290,7 +290,6 @@ bats test/
 **Run specific test file:**
 
 ```bash
-bats test/igris_worker.test.bash
 bats test/verify_mirror.test.bash
 ```
 
@@ -425,14 +424,12 @@ igris-ai/
 │   ├── skills/              # Skills
 │   ├── scripts/             # Mirrored helpers (verify_mirror.sh, cli-adapters/)
 │   ├── templates/           # PR/brief templates
-│   ├── task-handlers/       # Worker daemon handlers
 │   ├── SOUL.md              # Persona identity
 │   └── igris_tree.json      # Context routing tree (v7)
 ├── brain-mcp-server/        # Brain MCP server (TypeScript)
 ├── cli/                     # The `igris` npm CLI (TypeScript)
 ├── docs/                    # Documentation
 ├── scripts/                 # Repo-only scripts (validators, brain ops; see "scripts/ inventory")
-│   └── archive/             # Completed one-shots (see scripts/archive/README.md)
 ├── test/                    # Tests (bats framework)
 └── CLAUDE.md                # Slim context pointer (v7)
 ```
@@ -443,9 +440,8 @@ Project version lives in `package.json` (`node -p "require('./package.json').ver
 
 ## 🧰 scripts/ inventory
 
-Every script under `scripts/` (excluding `scripts/archive/`, covered by its own
-README) and `core/scripts/`, and how each is invoked. If you add or remove a
-script here, update this table in the same PR.
+Every script under `scripts/` and `core/scripts/`, and how each is invoked. If
+you add or remove a script here, update this table in the same PR.
 
 | Script | Invoked by | Purpose |
 |--------|-----------|---------|
@@ -456,9 +452,8 @@ script here, update this table in the same PR.
 | `scripts/validate_lockfile_in_sync.sh` | `scripts/git-hooks/pre-commit` (and standalone) | Asserts `npm ci --dry-run --ignore-scripts` from repo root succeeds — the workspace lockfile is in sync with all `package.json` files. |
 | `scripts/validate_agent.sh` | manual / docs (`docs/archive/MIGRATION_GUIDE-v5-to-v6.md`) | Validates an agent-definition `.md`'s frontmatter and structure. Not yet CI-wired. |
 | `scripts/emit_skill_event.sh` | `core/skills/*/SKILL.md` (21 skills, on invoke) | Emits a `SkillInvoke` event to the brain REST API. |
-| `scripts/igris_worker.sh` + `scripts/igris_worker_config.sh` | manual (`igris_worker.sh start`) | Autonomous-worker daemon: polls the brain REST API for tasks and spawns Claude Code sessions. (Not orchestrated in v7; see arch-review §2.2.) |
 | `scripts/igris_brain_backup.sh` / `scripts/igris_brain_restore.sh` | manual | Backup / restore `~/.igris/memory/knowledge.db` (`sqlite3 .backup`; backup rotates the last 5; restore safety-backs-up before overwriting). |
-| `scripts/igris_brain_switch.sh` | manual | Switch `~/.claude.json` brain mode: local / remote / dual. (Configures the MCP server deployed to `~/.igris/mcp-server/` runtime dir; `igris_brain_deploy.sh` populates that dir from `brain-mcp-server/`.) |
+| `scripts/igris_brain_switch.sh` | manual | Switch `~/.claude.json` brain mode: local / remote / dual. Local mode re-points at the bundled brain MCP that `igris install` registered (resolved from the existing `mcpServers["igris-brain"]` entry). Remote/dual refuses a non-local `http://` URL unless `IGRIS_ALLOW_INSECURE_SYNC=1` / `remote_brain.allow_insecure` (TD-256, mirrors the TD-252 sync-transport guard). The VPS half is populated by `igris_brain_deploy.sh`. |
 | `scripts/igris_brain_deploy.sh` | manual (on a VPS) | Deploy the brain MCP server with PM2 + nginx reverse-proxy config + API-key generation; copies `brain-mcp-server/` source into `~/.igris/mcp-server/`. |
 | `core/scripts/verify_mirror.sh` | forger MIRROR_SYNC protocol, sentinel MIRROR_CHECK contract, `/hunt` skill, architect plan template | Byte-equality check between repo `core/*` files and their `~/.igris/core/*` runtime mirrors (realpath-resolved, exit-code-checked, verdict-per-pair output). |
 | `core/scripts/cli_smoke.sh` | manual diagnostic | CLI smoke test. |
@@ -496,13 +491,13 @@ form of this contract).
      source for which context files the agent loads).
    - `core/agents/manifest.yaml` (DEPRECATED registry, but kept for
      reference until removed).
-   - `CLAUDE.md` "Available Agents" line + `scripts/templates/CLAUDE.md.template`.
+   - `CLAUDE.md` "Available Agents" line + `core/templates/CLAUDE.md.tmpl`.
    - `docs/architecture/SYSTEM.md`'s agent roster table.
    - `README.md` if agent count or list appears.
 
 4. **When you add or remove a skill** → register it in:
    - `core/skills/<name>/SKILL.md` (the skill itself).
-   - `CLAUDE.md` "Available Skills" list + `scripts/templates/CLAUDE.md.template`.
+   - `CLAUDE.md` "Available Skills" list + `core/templates/CLAUDE.md.tmpl`.
    - `docs/architecture/SYSTEM.md`'s skill inventory table.
    - `README.md` slash-command tables (both the Workflow section and the
      Skills section).

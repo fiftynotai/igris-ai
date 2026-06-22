@@ -12,8 +12,6 @@ test/
 ├── test_helper.bash                       # Shared test utilities
 ├── fixtures/                              # Test data (mock projects, etc.)
 │   └── mock_project/                      # Sample project for testing
-├── igris_worker.test.bash                 # Tests for the worker daemon
-├── igris_worker_config_gen.test.bash      # Tests for worker config generation
 ├── validate_brain_stewardship_enums.test.bash  # Tests for the enum-drift validator
 ├── verify_mirror.test.bash                # Tests for core/scripts/verify_mirror.sh
 ├── edge_cases.test.bash                   # Edge-case tests
@@ -62,12 +60,12 @@ bats test/
 
 ### Run Specific Test File
 ```bash
-bats test/igris_worker.test.bash
+bats test/verify_mirror.test.bash
 ```
 
 ### Run with Verbose Output
 ```bash
-bats test/igris_worker.test.bash --tap
+bats test/verify_mirror.test.bash --tap
 ```
 
 ---

@@ -66,7 +66,7 @@ PROJECT_DIR=$(resolve_project_dir)
 # Slug = registered-project lookup in the brain DB by longest path-prefix
 # match on PROJECT_DIR, falling back to basename (same posture as the
 # statusline script). Best-effort: silent no-op when no writable tty is
-# present (headless, CI, worker daemons, Codex/Gemini bridges).
+# present (headless, CI, Codex/Gemini bridges).
 # NEVER writes to stdout — hook stdout is the additionalContext JSON contract.
 # ---------------------------------------------------------------------------
 set_terminal_title() {

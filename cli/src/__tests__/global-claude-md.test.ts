@@ -8,7 +8,7 @@
  *   1. parseInstalledVersion — well-formed, placeholder, missing line.
  *   2. needsRewrite — drift / no-op / null / downgrade / patch boundary.
  *   3. renderGlobalClaudeMd — substitution, preserved date, stamped date,
- *      no leftover placeholders, Worker Mode section present.
+ *      no leftover placeholders.
  *   4. regenerateGlobalClaudeMd — writes when stale, no-op when current,
  *      creates ~/.claude/ dir, atomic (no .tmp.* straggler), idempotent.
  */
@@ -38,10 +38,6 @@ const TEMPLATE = `# Igris AI — Centralized Brain
 - **Version:** {{IGRIS_VERSION}}
 - **Installed:** {{INSTALL_DATE}}
 - **Source Repo:** {{SOURCE_REPO}}
-
-## Worker Mode
-
-When running as a worker daemon, sessions are spawned with handler skills.
 
 ## Note
 
@@ -169,15 +165,6 @@ describe("global-claude-md — renderGlobalClaudeMd", () => {
     expect(out).not.toContain("{{");
   });
 
-  it("includes the Worker Mode section", async () => {
-    const m = await import("../lib/global-claude-md.js");
-    const out = m.renderGlobalClaudeMd({
-      cliVersion: "7.0.0",
-      templatePath: tmplPath,
-    });
-    expect(out).toContain("## Worker Mode");
-  });
-
   it("raises GlobalClaudeMdTemplateError when the template is missing", async () => {
     const m = await import("../lib/global-claude-md.js");
     const { GlobalClaudeMdTemplateError } = m;
@@ -212,7 +199,6 @@ describe("global-claude-md — regenerateGlobalClaudeMd", () => {
     expect(out).toContain(
       "- **Source Repo:** /Users/me/StudioProjects/igris-ai",
     );
-    expect(out).toContain("## Worker Mode");
   });
 
   it("is a no-op when the file is already current (written: false)", async () => {

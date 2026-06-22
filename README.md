@@ -75,7 +75,6 @@ the `igris-brain` mcp server is bundled inside the `igris-ai` npm package — `i
 
 ## the unfinished edges.
 
-- worker daemon runs as a background process. end-to-end verification is pending under FR-121. it ships when it ships.
 - agent teams (`/team hunt`) requires an experimental claude code flag. parallel works. quality gates work. the ergonomics are still rough.
 - cross-cli adapters are on the roadmap. today, IGRIS is built for claude code.
 - the comparison table got cut from this readme on purpose. a v2 pass is parked.
