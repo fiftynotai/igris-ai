@@ -41,6 +41,14 @@ set -e
 #                    would surface). Surfaces the consumer list (WARN, does not
 #                    block); hard-fails only on a STALE MAP (a consumer
 #                    citation whose file no longer exists).
+#   - validate_brief_state_reconciliation.sh  (TD-257)
+#       Triggers if: core/skills/hunt/SKILL.md OR
+#                    brain-mcp-server/src/tools/briefs.ts OR MAINTAINING.md
+#                    is staged.
+#       Flags status<->phase<->git contradictions (Done-but-not-COMPLETE,
+#       Done-but-no-commit, committed-but-open) against the canonical
+#       brief_status.status source. WARN only — surfaces the report, does
+#       NOT block the commit (matches check_contract_consumers' posture).
 #
 # (TD-110 canonical-hooks lockstep validator was retired in MG-014 M5;
 #  the legacy `install_claude_hooks.sh` shell emitter is gone, so the
@@ -172,6 +180,7 @@ needs_harness_check=0
 needs_skill_yaml_check=0
 needs_skill_os_leak_check=0
 needs_contract_check=0
+needs_reconciliation_check=0
 
 if echo "$staged" | grep -qE '^(core/prompts/igris_os\.md|core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
   needs_enum_check=1
@@ -219,6 +228,18 @@ if [ -f "$REPO_ROOT/MAINTAINING.md" ] \
     needs_contract_check=1
   elif [ -n "$(git diff --cached --name-only --diff-filter=DR)" ]; then
     needs_contract_check=1
+  fi
+fi
+
+# TD-257: trigger the brief-state reconciliation validator when a brief-state
+# surface is staged — the hunt skill (the producer of the phase->COMPLETE flip),
+# the brief tools (the write path), or MAINTAINING.md (the contract home). Keeps
+# it off the hot path; the validator scans the whole DB regardless of which file
+# changed, so the trigger only decides whether to run at all. The validator
+# exists only if TD-257 is adopted in this repo.
+if [ -f "$REPO_ROOT/scripts/validate_brief_state_reconciliation.sh" ]; then
+  if echo "$staged" | grep -qE '^(core/skills/hunt/SKILL\.md|brain-mcp-server/src/tools/briefs\.ts|MAINTAINING\.md)$'; then
+    needs_reconciliation_check=1
   fi
 fi
 
@@ -299,6 +320,20 @@ if [ "$needs_contract_check" = "1" ]; then
   if ! bash "$REPO_ROOT/scripts/check_contract_consumers.sh"; then
     echo "[pre-commit] MAINTAINING.md is stale — fix the consumer citation(s) above."
     failed=1
+  fi
+fi
+
+if [ "$needs_reconciliation_check" = "1" ]; then
+  echo "[pre-commit] Checking brief-state reconciliation (TD-257)..."
+  # WARN-ONLY (operator-confirmed posture — matches check_contract_consumers).
+  # The validator returns non-zero internally when it finds status<->phase<->git
+  # contradictions, but the hook DOWNGRADES that to a WARN: it prints the report
+  # and does NOT set failed=1, so a brain-DB lag (the same lag the phase guard
+  # fail-opens on) or an un-synced COMPLETE flip cannot veto a legitimate commit.
+  # To flip to hard-fail once the data is proven clean, change the next line's
+  # body to `failed=1` (one-line change — the run block is otherwise unchanged).
+  if ! bash "$REPO_ROOT/scripts/validate_brief_state_reconciliation.sh"; then
+    echo "[pre-commit] Brief-state contradictions surfaced above (WARN only — not blocking)."
   fi
 fi
 

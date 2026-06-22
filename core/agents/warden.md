@@ -133,6 +133,16 @@ When invoked for auditing (via `/audit` skill), warden operates in Audit Mode in
 | PERFORMANCE_ANALYSIS | PF-XXX | Bottleneck identification |
 | ARCHITECTURE_REVIEW | AC-XXX | Redundancy/dead code detection |
 
+### Build-state from the canonical source, NEVER plan docs (#811)
+
+When an audit reasons about build-state — especially ARCHITECTURE_REVIEW /
+gap-review ("is X built?", "is this dead code or just unfinished?") — read the
+canonical `brief_status.status` (via `igris_brief_dashboard`/`igris_brief_list`)
+and verify against git log + on-disk artifacts. NEVER infer build-state from
+plan docs: plans describe pre-build INTENT and read as "unbuilt" forever, so an
+audit that treats them as state perpetually reports completed work as missing
+(the #811 failure). See `docs/architecture/brief-state-source-of-truth.md`.
+
 ### Audit Output Format
 
 ```markdown

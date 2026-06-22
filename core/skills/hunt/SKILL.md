@@ -521,11 +521,24 @@ EOF
 ### Phase 8: COMPLETE
 
 1. Update brief: Phase = COMPLETE
-2. Update `~/.igris/projects/{project}/session/instances/<instance_id>.md`:
+2. Call `igris_brief_sync` with status="Done" (unchanged) and phase="COMPLETE".
+   This is the terminal-phase flip — Phase 7 synced phase="COMMITTING"; this
+   step lands the canonical phase=COMPLETE in the brain DB so the
+   status↔phase↔git invariant holds (TD-257: the C1 contradiction the
+   reconciliation validator flags exists because this sync was previously
+   missing).
+   **If brain MCP is NOT available or the call fails:**
+   - Display: `WARNING: Brain sync skipped for {BRIEF_ID} (phase=COMPLETE) — MCP unavailable. Queued locally for next /awaken or /sync data.`
+   - Append a JSON line to `~/.igris/projects/{project}/sync_queue.jsonl`:
+     ```json
+     {"timestamp":"{ISO-8601 now}","operation":"brief_sync","project":"{project}","brief_id":"{BRIEF_ID}","title":"{title}","status":"Done","phase":"COMPLETE"}
+     ```
+   - Do NOT block the hunt workflow — continue.
+3. Update `~/.igris/projects/{project}/session/instances/<instance_id>.md`:
    - Add to Last Session Summary
    - Clear Active Brief (or set to next)
 
-3. Display completion message:
+4. Display completion message:
 ```
 HUNT Complete: {BRIEF_ID}
 

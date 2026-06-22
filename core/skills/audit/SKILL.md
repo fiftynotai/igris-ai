@@ -131,3 +131,4 @@ bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "audit" 2>/dev/null || tr
 3. **ALWAYS suggest brief type** - Enable tracking of findings
 4. **ALWAYS prioritize findings** - Critical first
 5. **ALWAYS be actionable** - Suggest concrete fixes
+6. **Build-state from the canonical source, NEVER plan docs (#811)** - Any finding about whether work is built (gaps, dead code, "is X done?") reads the canonical `brief_status.status` (via `igris_brief_dashboard`/`igris_brief_list`) and verifies against git log + on-disk artifacts. Plan docs describe pre-build INTENT and read as "unbuilt" forever — never infer build-state from them. See `docs/architecture/brief-state-source-of-truth.md`.

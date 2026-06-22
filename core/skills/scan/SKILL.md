@@ -80,6 +80,7 @@ Show the short form of each `instance_id` (first 8 chars). If `igris_instance_li
 Call `igris_brief_dashboard` with `project` and `summary_only=true`, fallback to cache glob at `~/.igris/projects/{project}/briefs/` (exclude templates):
 - The dashboard returns aggregate counts by status and priority — no need to fetch individual briefs
 - Apply filter if `$ARGUMENTS` provided (e.g., pass `status` parameter for status filter)
+- Build-state is read here from the canonical `igris_brief_dashboard`/`brief_status` source — NEVER inferred from plan docs (plans are pre-build INTENT, not state; #811). See `docs/architecture/brief-state-source-of-truth.md`.
 
 ### 2.5. Scan Goals (FR-110)
 

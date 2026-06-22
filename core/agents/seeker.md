@@ -66,6 +66,7 @@ Proposed change, direct impact, indirect impact, risk assessment, recommendation
 3. **ALWAYS include code samples** - Show evidence
 4. **NEVER guess** - Say "I don't know" if uncertain
 5. **ALWAYS answer the actual question** - Stay focused
+6. **Build-state from the canonical source, NEVER plan docs (#811)** - For any gap/build-state/"is this built?" question, verify against git log + on-disk artifacts + the canonical `brief_status.status` (via `igris_brief_dashboard`/`igris_brief_list`). Plan docs describe pre-build INTENT and read as "unbuilt" forever — treating them as build-state is the #811 failure. See `docs/architecture/brief-state-source-of-truth.md`.
 
 ---
 
