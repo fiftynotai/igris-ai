@@ -13,6 +13,92 @@ if [ "${IGRIS_ADAPTER_COMMON_SOURCED:-0}" = "1" ]; then
 fi
 export IGRIS_ADAPTER_COMMON_SOURCED=1
 
+# ===========================================================================
+# Surface registry (FR-202 M0) — the ONE source of truth for the wiring
+# surfaces the orchestrator (compile_harnesses.sh) projects and the drift
+# engine (check_harness_drift.sh) verifies.
+#
+# A wiring SURFACE is a declarative plugin filling the 3-concern lifecycle the
+# core owns: declare → distribute → project → verify. Adding a surface =
+#   1. a `$defs/<x>_surface` block + `_contract` metadata in manifest.schema.json
+#   2. ONE entry here (the id + its empty-match noun fragment)
+#   3. a `project_<x>` plugin in compile_harnesses.sh
+#   4. a `verify_<x>` plugin in check_harness_drift.sh
+# …and NOTHING in the two top-level scripts' dispatch loops. A concept that
+# cannot fill declare→distribute→project→verify is NOT a wiring surface (it
+# belongs in core/os, a skill, or the brain). See README.md "Surface-plugin
+# contract" and MAINTAINING.md.
+#
+# bash 3.2 (macOS /bin/bash) constraint: NO associative arrays / namerefs.
+# The registry is two positionally-aligned space-delimited strings (the same
+# colon/space-delimited idiom the codebase already relies on, e.g.
+# TREE_CHECKED). Dispatch is function-name composition: "project_$surface" /
+# "verify_$surface". Accumulators stay GLOBAL (no namerefs in 3.2).
+#
+# IGRIS_SURFACE_IDS   — ordered surface ids (projection order). Used for the
+#                       `--surface` enum AND the `project_<id>`/`verify_<id>`
+#                       dispatch fn names. `--surface <id>` accepts these + `all`.
+# IGRIS_SURFACE_LABELS — positionally-aligned noun fragments for the empty-match
+#                       message ("No <labels joined by /> targets matched …").
+#                       Kept SEPARATE from the ids because the historical message
+#                       uses the singular "agent" while the id is plural "agents"
+#                       — a parser-coupled literal (parseHarnessOutput) that must
+#                       stay byte-identical. Both arrays MUST stay aligned.
+# ---------------------------------------------------------------------------
+IGRIS_SURFACE_IDS="agents skills mcp identity hook"
+IGRIS_SURFACE_LABELS="agent skills mcp identity hook"
+
+# igris_surface_is_valid <value>
+#   Returns 0 if <value> is a known surface id OR the literal `all`; 1 otherwise.
+#   Replaces the hard-coded `case "$SURFACE_KIND" in agents|skills|…|all)` enum
+#   in BOTH top scripts so the accepted set lives ONLY in IGRIS_SURFACE_IDS.
+igris_surface_is_valid() {
+  local want="$1"
+  if [ "$want" = "all" ]; then
+    return 0
+  fi
+  local s
+  for s in $IGRIS_SURFACE_IDS; do
+    if [ "$s" = "$want" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# igris_surface_selected <surface-id> <surface-kind>
+#   Returns 0 when the surface should run for the given --surface selection:
+#   either the selection is `all` or it exactly names this surface. The
+#   registry-driven dispatch loop in each top script uses this to decide
+#   whether to call the surface's plugin — replacing the inline
+#   `if [ "$SURFACE_KIND" = "X" ] || [ "$SURFACE_KIND" = "all" ]` pass-gates.
+igris_surface_selected() {
+  local surface="$1"
+  local kind="$2"
+  if [ "$kind" = "all" ] || [ "$kind" = "$surface" ]; then
+    return 0
+  fi
+  return 1
+}
+
+# igris_surface_empty_match_nouns
+#   Echoes the surface noun fragments joined by `/` (e.g.
+#   "agent/skills/mcp/identity/hook") for the shared empty-match message. The
+#   list is derived from IGRIS_SURFACE_LABELS so a new surface extends the
+#   message by adding its registry entry — no edit to the message site itself.
+igris_surface_empty_match_nouns() {
+  local out=""
+  local label
+  for label in $IGRIS_SURFACE_LABELS; do
+    if [ -z "$out" ]; then
+      out="$label"
+    else
+      out="$out/$label"
+    fi
+  done
+  printf '%s' "$out"
+}
+
 # ---------------------------------------------------------------------------
 # parse_frontmatter <skill-md-path>
 #

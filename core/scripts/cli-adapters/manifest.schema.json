@@ -29,7 +29,13 @@
           "properties": {
             "delegation_model": {
               "enum": ["native-static", "dynamic-define"],
-              "description": "native-static: statically-loaded Igris agents; the skill delegates abstractly and the adapter resolves to `subagent_type:<agent>`. dynamic-define: runtime subagent definition; the adapter region-merges the delegation recipe into the harness identity region at compile so the orchestrator is taught the read→define_subagent→invoke recipe once per session."
+              "description": "native-static: statically-loaded Igris agents; the skill delegates abstractly and the adapter resolves to `subagent_type:<agent>`. dynamic-define: runtime subagent definition; the adapter region-merges the delegation recipe into the harness identity region at compile so the orchestrator is taught the read→define_subagent→invoke recipe once per session.",
+              "_contract": {
+                "kind": "behavioral",
+                "distribution": "n-a",
+                "projection": "inject-at-boot",
+                "verification": "re-derive via normalize_identity_shape + byte-compare the identity region (the identity drift branch in verify_identity); this is the BEHAVIORAL surface kind — no content is distributed, a per-harness behavior is injected at boot. Proves the 'two surface kinds' requirement against real code."
+              }
             }
           }
         }
@@ -79,6 +85,29 @@
   },
 
   "$defs": {
+    "surface_contract": {
+      "description": "FR-202 (M0): the surface-plugin contract. DOC BLOCK ONLY — this $def is never $ref'd for validation; it formalizes the 3-concern lifecycle the core (compile_harnesses.sh + check_harness_drift.sh) owns for every wiring surface: declare -> distribute -> project -> verify. Each surface $def below (agent, skills_surface, mcp_surface, identity_surface, hook_surface) and the `harnesses` delegation descriptor carries a `_contract` object whose shape is described here. The contract GATES MEMBERSHIP: a thing is a wiring surface IFF it can fill all four fields — it has content DECLARED once (a canonical/source), DISTRIBUTED to the machine, PROJECTED into a per-harness native shape (a targets[] array), and VERIFIED by a drift verdict. A concept that cannot (no per-harness projection, no canonical declaration, or no drift-checkable artifact) is NOT a wiring surface — it belongs in core/os, a skill, or the brain. The schema enforces the membership gate structurally by requiring every surface block to carry `targets[]` (the projection points) and a `source`/`canonical` (the declaration). Adding a surface = a new `$defs/<x>_surface` + a registry entry in _common.sh (IGRIS_SURFACE_IDS) + project_<x>/verify_<x> plugins, with ZERO change to the two top scripts' dispatch loops. See README.md 'Surface-plugin contract' and MAINTAINING.md.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": ["material", "behavioral"],
+          "description": "material = content projected INTO a per-harness config/file (agents, skills, mcp, hooks). behavioral = a per-harness BEHAVIOR injected at boot rather than distributed content (delegation_model). The 'two surface kinds' requirement, proven against real code: agents/skills/mcp/hooks are material; the harnesses.delegation_model descriptor is the behavioral case."
+        },
+        "distribution": {
+          "enum": ["npx", "native-add", "portable-format", "n-a"],
+          "description": "How the surface's content reaches the machine. portable-format = a canonical .md/.toml the harness reads. native-add = a shared artifact already on disk merged in. npx = fetched/run via npx. n-a = no content distributed (behavioral surfaces — the behavior is injected, not shipped)."
+        },
+        "projection": {
+          "enum": ["shape-emit", "place-in-standard-dir", "inject-at-boot", "merge-region"],
+          "description": "How the declared content becomes a per-harness native shape. shape-emit = formats genuinely diverge so a translator emits each harness shape (agents: Claude MD / Gemini MD / OpenCode MD / Codex TOML). place-in-standard-dir = drop into a dir the harness reads natively. inject-at-boot = region-merge a recipe into the harness identity file (behavioral). merge-region = config-merge a delimited region/group into a native config (hooks, identity, mcp)."
+        },
+        "verification": {
+          "type": "string",
+          "description": "The drift verdict the surface's verify_<x> plugin returns (MATCH / DRIFTED / MISSING). Names the existing verdict function/branch (e.g. agent-tree + symlink-realpath verdict; verify_hook_entry_present; verify_mcp_entry_drift secret-safe compare; verify_identity_file_drift region byte-compare)."
+        }
+      }
+    },
     "scope": {
       "description": "FR-155: scope-aware overlay. Absent → global (default, back-compat). `{type:'global'}` is also accepted; the compiler/drift treat both as 'emit unconditionally'. `{type:'project', paths:[...]}` emits ONLY when --project-root realpath ∈ realpath'd paths[]. CLI realpath's `--project` at WRITE time so paths[] entries are canonical; compile/drift realpath both PROJECT_ROOT and each entry at READ time (handles macOS /tmp ↔ /private/tmp).",
       "oneOf": [
@@ -107,6 +136,12 @@
     },
     "skills_surface": {
       "description": "FR-137/TD-191/FR-149/FR-151/FR-153/FR-155/FR-157/FR-171: ONE skills projection block. Multiple coexist as elements of `surfaces.skills[]`; each carries its OWN source/layer/targets so personal blocks compile ALONGSIDE the core block. For personal blocks `source` points at a registry-vendored path (L-516 universal copy-vendor). Valid (type, method) pairs: claude/symlink, codex/symlink, gemini/symlink, agents/symlink (registry-anchored per-skill symlinks), opencode/command (FR-171 thin command wrappers). The four symlink targets vendor identically — the per-harness compiler walks the registry-vendored skill tree. The `agents` target projects into the cross-CLI shared `~/.agents/skills/` standard that codex+gemini both read natively (FR-157). FR-171: `opencode/command` writes a thin `<command-dir>/<name>.md` wrapper whose body loads the canonical SKILL.md via OpenCode's `@file` directive (single source of truth stays the canonical SKILL.md). The legacy codex/compiler (AGENTS.md aggregator) + gemini/converter (per-skill TOML) pairs were retired by FR-153. `scope` (FR-155) is optional; absent → global. See L-519.",
+      "_contract": {
+        "kind": "material",
+        "distribution": "portable-format",
+        "projection": "place-in-standard-dir",
+        "verification": "per-skill tree-hash + per-target symlink-realpath / command-wrapper presence verdict (verify_skills)"
+      },
       "type": "object",
       "additionalProperties": false,
       "required": ["targets"],
@@ -149,6 +184,12 @@
     },
     "mcp_surface": {
       "description": "FR-161 (FR-160 epic): ONE MCP-server projection block. Multiple coexist as elements of `surfaces.mcp_servers[]`. `canonical` declares the command/args/env ONCE (env values are ${VAR} references, never inline secrets); the FR-164 compile pass merges this into each target harness config (config-MERGE, not symlink). `targets` carries a SEPARATE enum from agents/skills — MCP adds a 4th harness (`opencode`) and its `method` is always the const `merge`. v1 is GLOBAL-ONLY: `scope` is accepted (reuses $defs/scope for forward-compat) but consumers treat every block as global. `startup_timeout_sec` is a Codex-only passthrough. See FR-160 plan §FR-160a.",
+      "_contract": {
+        "kind": "material",
+        "distribution": "npx",
+        "projection": "merge-region",
+        "verification": "secret-safe per-(mcp,target) entry compare via verify_mcp_entry_drift (MATCH/DRIFTED/MISSING; codex literals re-resolved inside the compare, never printed)"
+      },
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "canonical", "targets"],
@@ -194,6 +235,12 @@
     },
     "identity_surface": {
       "description": "TD-233: ONE orchestrator-identity projection block. `source` is the canonical identity template (tokens {{IGRIS_VERSION}} + {{HARNESS_SELF_NAME}}; Model A — 'the agent IS Igris AI'; Model B is parked). `version_source` optionally names a JSON file whose top-level `version` key resolves {{IGRIS_VERSION}} (the igris-ai repo points it at cli/package.json so compile/drift/CI all re-derive from the checkout); absent → <brain>/config.json. `targets[].filename` is the harness's natively auto-read identity file, resolved per the FR-154 3-case shape (`~/` → $HOME, absolute → verbatim, else → --project-root). `method` is always the const `file` (atomic region-merge file write). `scope` reuses $defs/scope (FR-155).",
+      "_contract": {
+        "kind": "material",
+        "distribution": "portable-format",
+        "projection": "merge-region",
+        "verification": "verify_identity_file_drift — re-derive the expected delimited region via the shared normalize_identity_shape and byte-compare ONLY the Igris-managed region (MATCH/DRIFTED). NOTE: the harnesses.delegation_model descriptor (see its _contract) is the BEHAVIORAL surface kind that rides this same identity pass via inject-at-boot."
+      },
       "type": "object",
       "additionalProperties": false,
       "required": ["targets"],
@@ -233,6 +280,12 @@
     },
     "hook_surface": {
       "description": "FR-180 (D7 - Option B): ONE event-hook projection block. Multiple coexist as elements of `surfaces.hooks[]`. `event` is the canonical Igris event name; `canonical.command` is the shared hook script the harness runs (a personal block's command lives under ~/.igris/registry/hooks/<name>/ - a distinct provenance prefix the canonical re-merge preserves, fixing the R2 refresh-overwrite hazard; a core block's lives under $HOME/.igris/core/hooks/shared/). Optional `canonical.matcher` (tool-glob for PreToolUse/PostToolUse) + `canonical.timeout` (seconds). `targets` carries a SEPARATE enum - claude (settings.json hooks array), opencode (the FR-104 plugin), and antigravity (FR-181: config-merge into ~/.gemini/config/hooks.json, gemini-cli hook format, via the antigravity bridge); codex supports only session_end and gemini-cli 0.45.0 has a `gemini hooks` subcommand (full onboarding tracked under FR-182, so gemini is documented, not yet projected). `method` is always the const `merge`. v1 is GLOBAL-ONLY: `scope` is accepted (reuses $defs/scope for forward-compat) but consumers treat every block as global.",
+      "_contract": {
+        "kind": "material",
+        "distribution": "native-add",
+        "projection": "merge-region",
+        "verification": "verify_hook_entry_present — presence-based MATCH/MISSING (the hook is identified by its command path, not a full byte-shape; opencode asserts the FR-104 plugin exists)"
+      },
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "event", "canonical", "targets"],
@@ -282,6 +335,12 @@
       }
     },
     "agent": {
+      "_contract": {
+        "kind": "material",
+        "distribution": "portable-format",
+        "projection": "shape-emit",
+        "verification": "per-agent tree-hash + per-target symlink/hardlink-realpath verdict (verify_agents); formats genuinely diverge (Claude MD / Gemini MD / OpenCode MD / Codex TOML) so compile_md_agent_target translates each per-harness shape"
+      },
       "type": "object",
       "required": ["name", "canonical", "targets"],
       "additionalProperties": false,

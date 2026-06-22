@@ -287,6 +287,79 @@ existing identity projection rather than a new SessionStart channel.
 - A harness absent from the `harnesses` map defaults to `native-static`
   (identity-only — pre-TD-244 back-compat; existing golden fixtures unchanged).
 
+## Surface-plugin contract (FR-202 M0)
+
+The orchestrator (`compile_harnesses.sh`) and the drift engine
+(`check_harness_drift.sh`) are **surface-agnostic dispatchers**. Each wiring
+surface is a declarative plugin filling a **3-concern lifecycle** the core owns:
+
+```
+declare → distribute → project → verify
+```
+
+A surface declaration has four contract fields (formalized in
+`manifest.schema.json` → `$defs/surface_contract`, annotated as `_contract` on
+each surface `$def`):
+
+| Field | Values | Meaning |
+|-------|--------|---------|
+| `kind` | `material` \| `behavioral` | **material** = content projected INTO a per-harness config/file. **behavioral** = a per-harness behavior injected at boot (no content distributed). |
+| `distribution` | `npx` \| `native-add` \| `portable-format` \| `n-a` | How the content reaches the machine. |
+| `projection` | `shape-emit` \| `place-in-standard-dir` \| `inject-at-boot` \| `merge-region` | How the declared content becomes a per-harness native shape. |
+| `verification` | _(drift verdict fn)_ | The surface's drift verdict (MATCH / DRIFTED / MISSING). |
+
+### The two surface kinds (proven against real code)
+
+| Surface | kind | distribution | projection | verification (existing fn) |
+|---------|------|--------------|------------|----------------------------|
+| **agents** | material | portable-format | **shape-emit** — formats genuinely diverge (Claude MD / Gemini MD / OpenCode MD / Codex TOML); `compile_md_agent_target` translates each | `verify_agents` — per-agent tree-hash + symlink/hardlink-realpath verdict |
+| **skills** | material | portable-format | place-in-standard-dir | `verify_skills` — per-skill tree-hash + symlink/wrapper presence |
+| **mcp** | material | npx | merge-region | `verify_mcp` — secret-safe per-(mcp,target) compare (`verify_mcp_entry_drift`) |
+| **hooks** | material | native-add | merge-region | `verify_hook` — `verify_hook_entry_present` (presence-based MATCH/MISSING) |
+| **identity** | material | portable-format | merge-region | `verify_identity` — re-derive via `normalize_identity_shape` + byte-compare the Igris-managed identity region |
+| **delegation_model** | **behavioral** | n-a | **inject-at-boot** — the recipe region-merged into the identity file when `dynamic-define` | re-derive via `normalize_identity_shape` + byte-compare (the identity drift branch in `verify_identity`) |
+
+The first five are the **material** shapes (content projected into a per-harness
+config/file); the `delegation_model` descriptor is the **behavioral** kind — no
+content is distributed, a per-harness behavior is injected at boot. It rides the
+same identity pass but is a distinct descriptor — it proves the "two surface
+kinds" requirement is real and already in the code, not aspirational.
+
+### The membership gate (the rule, stated concretely)
+
+A thing is a wiring surface **iff it can fill all four fields** — it has content
+that is *declared once* (a `canonical`/`source`), *distributed* to the machine,
+*projected* into a per-harness native shape (a `targets[]` array), and *verified*
+by a drift verdict. If it cannot (no per-harness projection, no canonical
+declaration, or no drift-checkable artifact) it is **NOT a wiring surface** — it
+belongs in OS-core (`core/os/`), a skill (`core/skills/`), or the brain. The
+schema enforces this structurally: every `surfaces.<x>[]` block requires a
+`targets[]` array and a `source`/`canonical`, so a non-projectable concept
+cannot be declared as a surface.
+
+### The surface registry (single source of truth)
+
+The ordered surface list lives in **ONE place** — `_common.sh`'s
+`IGRIS_SURFACE_IDS` (the ids: `agents skills mcp identity hook`) plus the
+positionally-aligned `IGRIS_SURFACE_LABELS` (the empty-match noun fragments).
+Both top scripts source it. The `--surface` enum and the empty-match message are
+*derived* from the registry; the dispatch loops iterate it, calling
+`project_<surface>` / `verify_<surface>` by function-name composition (bash 3.2:
+no associative arrays / namerefs — accumulators stay global).
+
+### The extensibility test (the construction-time guarantee)
+
+Adding a new wiring surface is, by construction:
+
+1. a `$defs/<x>_surface` block + `_contract` metadata in `manifest.schema.json`
+2. ONE entry in `IGRIS_SURFACE_IDS` / `IGRIS_SURFACE_LABELS` in `_common.sh`
+3. a `project_<x>` plugin in `compile_harnesses.sh`
+4. a `verify_<x>` plugin in `check_harness_drift.sh`
+
+…and **ZERO change to the two top scripts' dispatch loops**. `--surface <x>`
+then compiles and drift-checks the new surface with no core edit. (FR-202 M0
+proved this with a throwaway `demo` surface, then reverted it.)
+
 ## Mirror obligation (TD-096)
 
 Every file in this directory lives under `core/` and is part of the runtime

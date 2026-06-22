@@ -140,14 +140,14 @@ fi
 
 PROJECT_ROOT="$( cd "$PROJECT_ROOT" && pwd )"
 
-# FR-180: validate --surface (mirrors compile_harnesses.sh's identical gate).
-case "$SURFACE_KIND" in
-  agents|skills|mcp|identity|hook|all) : ;;
-  *)
-    echo "Error: --surface must be agents, skills, mcp, identity, hook, or all (got '$SURFACE_KIND')" >&2
-    usage
-    ;;
-esac
+# FR-202 (M0): validate --surface from the surface registry (IGRIS_SURFACE_IDS
+# in _common.sh) — the SAME membership-gate enforcement point compile uses, so
+# the accepted set lives in ONE place. Byte-identical error message to the
+# former hard-coded gate (mirrors compile_harnesses.sh).
+if ! igris_surface_is_valid "$SURFACE_KIND"; then
+  echo "Error: --surface must be ${IGRIS_SURFACE_IDS// /, }, or all (got '$SURFACE_KIND')" >&2
+  usage
+fi
 
 # FR-136 manifest resolution: default to <project-root>/harness-manifest.json,
 # NO fallback to the old next-to-script location. Fail clearly if absent.
@@ -871,9 +871,17 @@ SKILL_TREE_CHECKED=":"
 echo "Harness drift check (project root: $PROJECT_ROOT):"
 echo ""
 
-# FR-180: agents drift pass — gated on --surface (default `all`). When `igris
-# add` scopes the verify to a non-agents surface this loop is skipped entirely.
-if { [ "$SURFACE_KIND" = "agents" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n "$WORK_ROWS" ]; then
+# ---------------------------------------------------------------------------
+# verify_agents — the agents drift-verification surface plugin (FR-202 M0).
+# The per-agent tree-hash + per-target symlink/hardlink-realpath MATCH/DRIFTED/
+# MISSING verdict logic is moved VERBATIM from the former inline agents drift
+# pass; the outer `if SURFACE_KIND = agents|all` gate is now the registry
+# dispatch loop (this fn runs only for the agents/all selection). The
+# `[ -n "$WORK_ROWS" ]` guard stays here. Reads the top-level-computed WORK_ROWS
+# and the shared global accumulators (TOTAL/MATCH/DRIFT/TREE_CHECKED).
+# ---------------------------------------------------------------------------
+verify_agents() {
+if [ -n "$WORK_ROWS" ]; then
 while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target_path layer scope_type scope_paths; do
   [ -z "$name" ] && continue
 
@@ -1135,17 +1143,25 @@ PY
   DRIFT=$((DRIFT + 1))
 done <<< "$WORK_ROWS"
 fi
+}
 
+# ---------------------------------------------------------------------------
+# verify_skills — the skills drift-verification surface plugin (FR-202 M0).
+# Contains the FR-180 loud-vs-silent core-skip diagnostic, the SKILL_ROWS
+# flatten, and the per-skill tree-hash + per-target drift verdict loop — all
+# moved VERBATIM from the former inline skills drift pass. The outer
+# `if SURFACE_KIND = skills|all` gates are now the registry dispatch loop (this
+# fn runs only for the skills/all selection). Reads/writes the shared global
+# accumulators (TOTAL/MATCH/DRIFT/SKILL_TREE_CHECKED).
+# ---------------------------------------------------------------------------
+verify_skills() {
 # ---------------------------------------------------------------------------
 # FR-180 (TD-235 / D5): mirror of compile's loud-vs-silent core-skip diagnostic.
 # The flatten gate below keeps its own in-Python commonpath check verbatim
 # (verdict bytes unchanged); this block only adds the diagnostic + exit
 # decision. Same three cases as compile_harnesses.sh's skills pass.
-# FR-180: gated on --surface (skills) so a non-skills scoped verify doesn't emit
-# this skills-specific diagnostic.
 # ---------------------------------------------------------------------------
-if { [ "$SURFACE_KIND" = "skills" ] || [ "$SURFACE_KIND" = "all" ]; } \
-   && core_skills_declared "$CORE_SURFACES" \
+if core_skills_declared "$CORE_SURFACES" \
    && ! core_surfaces_owned "$CORE_SURFACES" "$PROJECT_ROOT"; then
   if [ "$EXPECT_CORE" -eq 1 ]; then
     echo "FAIL  core skills — not owned by --project-root $PROJECT_ROOT; run from the igris-ai repo or pass --core" >&2
@@ -1233,7 +1249,7 @@ for src in sources:
 PY
 )
 
-if { [ "$SURFACE_KIND" = "skills" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n "$SKILL_ROWS" ]; then
+if [ -n "$SKILL_ROWS" ]; then
   while IFS=$'\t' read -r s_source s_type s_method s_path s_scope_type s_scope_paths s_layer; do
     [ -z "$s_type" ] && continue
     # TD-201: legacy IFS-read default for the trailing `layer` column when an
@@ -1959,24 +1975,30 @@ PY
     fi
   done <<< "$SKILL_ROWS"
 fi
+}
 
 # ---------------------------------------------------------------------------
-# FR-164 (FR-160 epic): MCP-server drift pass, line-paired with the compile MCP
-# pass (§18.1). Flattens the SAME (mcp,target) rows via `flatten_mcp_rows`
-# (target_kind="all" — drift checks all 4 harness targets per block, consistent
-# with drift's "check everything" posture). For each row it resolves the harness
-# config path + map key and calls `verify_mcp_entry_drift` (which reads the
-# on-disk entry, derives the expected shape via the SHARED normalize_mcp_shape,
-# and compares — re-resolving codex literals inside the compare WITHOUT printing
-# any value).
+# verify_mcp — the MCP-server drift-verification surface plugin (FR-202 M0).
+# FR-164 (FR-160 epic): line-paired with the compile MCP pass (§18.1). Flattens
+# the SAME (mcp,target) rows via `flatten_mcp_rows` (target_kind="all" — drift
+# checks all 4 harness targets per block, consistent with drift's "check
+# everything" posture). For each row it resolves the harness config path + map
+# key and calls `verify_mcp_entry_drift` (which reads the on-disk entry, derives
+# the expected shape via the SHARED normalize_mcp_shape, and compares —
+# re-resolving codex literals inside the compare WITHOUT printing any value).
 #
 # Config-path resolution honors per-harness env overrides (test sandbox seam)
 # then falls back to the native default ($HOME-anchored, matching paths.ts).
 # secrets.env is resolved from <brain>/secrets.env (honored by the codex
 # re-resolve) with an IGRIS_SECRETS_PATH override for tests.
+#
+# The secret-safe compare + MATCH/DRIFTED/MISSING verdict logic is moved
+# VERBATIM; the outer `if SURFACE_KIND = mcp|all` gate is now the registry
+# dispatch loop. The `[ -n "$MCP_DRIFT_ROWS" ]` guard stays here.
 # ---------------------------------------------------------------------------
+verify_mcp() {
 MCP_DRIFT_ROWS=$(flatten_mcp_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "all" "$PROJECT_ROOT")
-if { [ "$SURFACE_KIND" = "mcp" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n "$MCP_DRIFT_ROWS" ]; then
+if [ -n "$MCP_DRIFT_ROWS" ]; then
   mcp_secrets_path="${IGRIS_SECRETS_PATH:-$BRAIN_DIR/secrets.env}"
   while IFS=$'\t' read -r d_name d_canon d_type d_enabled d_scope_type d_scope_paths; do
     [ -z "$d_name" ] && continue
@@ -2032,23 +2054,31 @@ if { [ "$SURFACE_KIND" = "mcp" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n "$MCP
       "$d_canon" "$d_enabled" "$mcp_secrets_path"
   done <<< "$MCP_DRIFT_ROWS"
 fi
+}
 
 # ---------------------------------------------------------------------------
-# TD-233 (GAP-3): orchestrator-identity drift pass, line-paired with the
-# compile identity pass (§18.1). Flattens the SAME (identity,target) rows via
-# `flatten_identity_rows` (target_kind="all" — drift checks every harness
-# target, consistent with drift's "check everything" posture). Per row it
-# resolves the canonical template, the {{IGRIS_VERSION}} source and the output
-# file (all FR-154 3-case, mirroring compile) and calls
-# `verify_identity_file_drift`, which re-derives the expected delimited region
-# via the SHARED normalize_identity_shape and byte-compares ONLY the
-# Igris-managed region (user content around it is theirs and is never
-# inspected). FR-180: gated on --surface (identity) so a scoped verify of
-# another surface doesn't re-check the os_identity region (whose
-# {{IGRIS_VERSION}} cannot resolve under a brain-root project-root).
+# verify_identity — the orchestrator-identity drift-verification surface plugin
+# (FR-202 M0; kind:behavioral — delegation_model is re-derived + byte-compared).
+# TD-233 (GAP-3): line-paired with the compile identity pass (§18.1). Flattens
+# the SAME (identity,target) rows via `flatten_identity_rows` (target_kind="all"
+# — drift checks every harness target, consistent with drift's "check
+# everything" posture). Per row it resolves the canonical template, the
+# {{IGRIS_VERSION}} source and the output file (all FR-154 3-case, mirroring
+# compile) and calls `verify_identity_file_drift`, which re-derives the expected
+# delimited region via the SHARED normalize_identity_shape and byte-compares
+# ONLY the Igris-managed region (user content around it is theirs and is never
+# inspected).
+#
+# The identity-region byte-compare verdict logic is moved VERBATIM; the outer
+# `if SURFACE_KIND = identity|all` gate is now the registry dispatch loop (this
+# fn runs only for the identity/all selection — a scoped verify of another
+# surface doesn't re-check the os_identity region, whose {{IGRIS_VERSION}}
+# cannot resolve under a brain-root project-root). The
+# `[ -n "$IDENTITY_DRIFT_ROWS" ]` guard stays here.
 # ---------------------------------------------------------------------------
+verify_identity() {
 IDENTITY_DRIFT_ROWS=$(flatten_identity_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "all" "$PROJECT_ROOT")
-if { [ "$SURFACE_KIND" = "identity" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n "$IDENTITY_DRIFT_ROWS" ]; then
+if [ -n "$IDENTITY_DRIFT_ROWS" ]; then
   while IFS=$'\t' read -r i_source i_vsource i_type i_filename i_scope_type i_scope_paths i_delegation_model; do
     [ -z "$i_type" ] && continue
     [ -z "$i_filename" ] && continue
@@ -2127,22 +2157,29 @@ if { [ "$SURFACE_KIND" = "identity" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n 
       "$i_delegation_model" "$recipe_abs"
   done <<< "$IDENTITY_DRIFT_ROWS"
 fi
+}
 
 # ---------------------------------------------------------------------------
-# FR-180 (D7 - Option B): event-hook drift pass, line-paired with the compile
-# hook pass (§18.1 compile/drift PAIRING — same flattened rows, not a shape
-# parity). Flattens the SAME (hook,target) rows via flatten_hook_rows
-# (target_kind="all" — drift checks both harness targets per block). Hook drift
-# is PRESENCE-BASED, NOT a byte-shape comparison: for claude it reads the
-# project's .claude/settings.json and asserts the hook command PATH is present
-# under its event array (MATCH) or absent (MISSING) via verify_hook_entry_present
-# — there is no bash hook-shaper twin (unlike identity's normalize_identity_shape)
-# because the hook is identified by its command path, not its full byte-shape.
-# For opencode it asserts the FR-104 plugin exists (covered → MATCH; absent →
-# MISSING). Honors --filter (S1) so the scoped verify checks only the added hook.
+# verify_hook — the event-hook drift-verification surface plugin (FR-202 M0).
+# FR-180 (D7 - Option B): line-paired with the compile hook pass (§18.1
+# compile/drift PAIRING — same flattened rows, not a shape parity). Flattens the
+# SAME (hook,target) rows via flatten_hook_rows (target_kind="all" — drift checks
+# both harness targets per block). Hook drift is PRESENCE-BASED, NOT a byte-shape
+# comparison: for claude it reads the project's .claude/settings.json and asserts
+# the hook command PATH is present under its event array (MATCH) or absent
+# (MISSING) via verify_hook_entry_present — there is no bash hook-shaper twin
+# (unlike identity's normalize_identity_shape) because the hook is identified by
+# its command path, not its full byte-shape. For opencode it asserts the FR-104
+# plugin exists (covered → MATCH; absent → MISSING). Honors --filter (S1) so the
+# scoped verify checks only the added hook.
+#
+# The presence-based MATCH/MISSING/DRIFTED verdict logic is moved VERBATIM; the
+# outer `if SURFACE_KIND = hook|all` gate is now the registry dispatch loop. The
+# `[ -n "$HOOK_DRIFT_ROWS" ]` guard stays here.
 # ---------------------------------------------------------------------------
+verify_hook() {
 HOOK_DRIFT_ROWS=$(flatten_hook_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "all" "$PROJECT_ROOT")
-if { [ "$SURFACE_KIND" = "hook" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n "$HOOK_DRIFT_ROWS" ]; then
+if [ -n "$HOOK_DRIFT_ROWS" ]; then
   while IFS=$'\t' read -r h_name h_event h_command h_matcher h_timeout h_type h_enabled h_layer h_scope_type h_scope_paths; do
     [ -z "$h_name" ] && continue
     [ -z "$h_type" ] && continue
@@ -2213,9 +2250,32 @@ if { [ "$SURFACE_KIND" = "hook" ] || [ "$SURFACE_KIND" = "all" ]; } && [ -n "$HO
     esac
   done <<< "$HOOK_DRIFT_ROWS"
 fi
+}
+
+# ---------------------------------------------------------------------------
+# FR-202 (M0): surface-agnostic dispatch — the crown-jewel mirror of compile's
+# loop. Iterate the surface registry (IGRIS_SURFACE_IDS in _common.sh, in
+# verification order) and run each surface's verify_<surface> plugin when the
+# --surface selection includes it (or `all`). This SINGLE loop replaces the five
+# former inline `if SURFACE_KIND = X` drift-gates — adding a surface is a
+# registry entry + a verify_<surface> plugin, ZERO edit here. Plugins are called
+# as PLAIN statements (never in a condition) so `set -e` stays active inside them
+# exactly as in the former top-level passes. Accumulators (TOTAL/MATCH/DRIFT and
+# the TREE_CHECKED/SKILL_TREE_CHECKED dedup strings) are global, shared across
+# plugins (bash 3.2 has no namerefs). Verdict bytes are held INVARIANT — the
+# Phase-0 byte-identical baseline is the acceptance oracle.
+# ---------------------------------------------------------------------------
+for _surface in $IGRIS_SURFACE_IDS; do
+  if igris_surface_selected "$_surface" "$SURFACE_KIND"; then
+    "verify_$_surface"
+  fi
+done
 
 if [ "$TOTAL" -eq 0 ]; then
-  echo "No agent/skills/mcp/identity/hook targets matched (filter='$FILTER')." >&2
+  # FR-202 (M0): surface noun list derived from the registry
+  # (IGRIS_SURFACE_LABELS) — byte-identical to the historical literal
+  # "No agent/skills/mcp/identity/hook targets matched …".
+  echo "No $(igris_surface_empty_match_nouns) targets matched (filter='$FILTER')." >&2
   # FR-180 (TD-235 / D5): under --expect-core a 0-target drift run is the silent
   # no-op the brief forbids (the verify half of `igris add` got nothing to
   # check). Fail LOUDLY; without the flag the historical exit-0 is preserved.

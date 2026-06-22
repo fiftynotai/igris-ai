@@ -1128,16 +1128,15 @@ case "$TARGET_KIND" in
     ;;
 esac
 
-# FR-164: --surface accepts `mcp` (the MCP projection pass).
-# TD-233: --surface accepts `identity` (the orchestrator-identity pass).
-# FR-180 (D7): --surface accepts `hook` (the event-hook projection pass).
-case "$SURFACE_KIND" in
-  agents|skills|mcp|identity|hook|all) : ;;
-  *)
-    echo "Error: --surface must be agents, skills, mcp, identity, hook, or all (got '$SURFACE_KIND')" >&2
-    usage
-    ;;
-esac
+# FR-202 (M0): the accepted --surface set is derived from the surface registry
+# (IGRIS_SURFACE_IDS in _common.sh) — the ONE membership-gate enforcement point.
+# Adding a surface to the registry extends this enum with no edit here. The
+# error message lists the registry ids + `all` so it stays in sync automatically.
+# (FR-164 mcp, TD-233 identity, FR-180/D7 hook are all registry entries now.)
+if ! igris_surface_is_valid "$SURFACE_KIND"; then
+  echo "Error: --surface must be ${IGRIS_SURFACE_IDS// /, }, or all (got '$SURFACE_KIND')" >&2
+  usage
+fi
 
 # FR-136 overlay resolution: an explicit --overlay wins; otherwise auto-discover
 # the personal overlay in the runtime registry (OPTIONAL - absent is normal).
@@ -1207,11 +1206,38 @@ fi
 #   body-exception-or-empty <TAB> target-type <TAB> target-path
 # One row per agent/target. python3 (no jq) per the _common.sh convention.
 # ---------------------------------------------------------------------------
-# FR-164/TD-233/FR-180: the agent pass runs only for agents/all (skipped for
-# skills, mcp, identity and hook).
-if [ "$SURFACE_KIND" = "skills" ] || [ "$SURFACE_KIND" = "mcp" ] || [ "$SURFACE_KIND" = "identity" ] || [ "$SURFACE_KIND" = "hook" ]; then
-  WORK_ROWS=""
-else
+# Process each work row. Accumulators span ALL surface passes (the agents loop
+# below and the skills/mcp/identity/hook passes). They are GLOBAL (no bash-3.2
+# namerefs) and initialized HERE, before the registry-driven dispatch loop, so
+# every project_<surface> plugin shares one set.
+# TD-209: REFUSE_TARGETS is the batched refuse-to-clobber collector. Per-target
+# functions (emit_skill_symlink + compile_md_agent_target Cases C and
+# "other-shape") append the offending path here; the post-loop summary emits ONE
+# block instead of N per-file ERROR lines. Global namespace (no `local -n`
+# nameref) — required for bash 3.2 (/bin/bash on macOS). Writers MUST avoid
+# `local REFUSE_TARGETS` shadowing.
+# FR-152: TMPFILES_TO_CLEAN was initialized above the merge step; the EXIT trap
+# already references it (loop-pushed inline tempfiles get cleaned on exit).
+TOTAL=0
+OK=0
+FAIL=0
+SUMMARY=()
+REFUSE_TARGETS=()
+
+# ---------------------------------------------------------------------------
+# project_agents — the agents projection surface plugin (FR-202 M0).
+# Flattens the manifest into tab-separated work rows via python3:
+#   name <TAB> versioned <TAB> canon-dir <TAB> canon-glob-or-file <TAB>
+#   body-exception-or-empty <TAB> target-type <TAB> target-path
+# One row per agent/target. python3 (no jq) per the _common.sh convention. Then
+# dispatches each row to the matching per-target adapter (the inner
+# `case "$ttype"` is THIS plugin's projection logic — formats genuinely diverge:
+# Claude MD / Gemini MD / OpenCode MD / Codex TOML). Body moved VERBATIM from the
+# former inline agents pass; the outer `if SURFACE_KIND = X` gate is now the
+# registry dispatch loop (this fn is only called for the agents/all selection).
+# Writes the shared global accumulators (TOTAL/OK/FAIL/SUMMARY/REFUSE_TARGETS).
+# ---------------------------------------------------------------------------
+project_agents() {
   WORK_ROWS=$(python3 - "$MERGED_MANIFEST" "$FILTER" "$TARGET_KIND" <<'PY'
 import fnmatch
 import json
@@ -1265,25 +1291,6 @@ for agent in manifest.get("agents", []):
         print(row)
 PY
 )
-fi
-
-# ---------------------------------------------------------------------------
-# Process each work row. Accumulators span BOTH the agents surface (this loop)
-# and the skills surface (the FR-137 pass below).
-# ---------------------------------------------------------------------------
-TOTAL=0
-OK=0
-FAIL=0
-SUMMARY=()
-# TD-209: batched refuse-to-clobber collector. Per-target functions
-# (emit_skill_symlink + compile_md_agent_target Cases C and "other-shape")
-# append the offending path here; the post-loop summary emits ONE block
-# instead of N per-file ERROR lines. Global namespace (no `local -n`
-# nameref) — required for bash 3.2 (/bin/bash on macOS). Writers MUST
-# avoid `local REFUSE_TARGETS` shadowing.
-REFUSE_TARGETS=()
-# FR-152: TMPFILES_TO_CLEAN was initialized above the merge step; the EXIT trap
-# already references it (loop-pushed inline tempfiles get cleaned on exit).
 
 if [ -n "$WORK_ROWS" ]; then
 while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target_path layer scope_type scope_paths; do
@@ -1440,15 +1447,18 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
   fi
 done <<< "$WORK_ROWS"
 fi
+}
 
 # ---------------------------------------------------------------------------
-# FR-137: skills-surface pass. Union the skills targets declared in the core
-# surfaces-manifest.json with any the merged agent manifest carries, then for
-# each target invoke the matching md_to_* compiler/converter (D-4:
-# invoke-from-compiler — the emit logic lives in those scripts, unchanged).
-# Skipped entirely when --surface agents or --surface mcp (FR-164).
+# project_skills — the skills projection surface plugin (FR-202 M0).
+# FR-137: union the skills targets declared in the core surfaces-manifest.json
+# with any the merged agent manifest carries, then for each target invoke the
+# matching md_to_* compiler/converter (D-4: invoke-from-compiler — the emit
+# logic lives in those scripts, unchanged). Body moved VERBATIM from the former
+# inline skills pass; the outer `if SURFACE_KIND = skills|all` gate is now the
+# registry dispatch loop (this fn is only called for the skills/all selection).
 # ---------------------------------------------------------------------------
-if [ "$SURFACE_KIND" = "skills" ] || [ "$SURFACE_KIND" = "all" ]; then
+project_skills() {
   # FR-180 (TD-235 / D5): make the ownership-gate skip of declared CORE skills
   # LOUD or VISIBLE — never silent. The flatten gate below keeps its own
   # in-Python commonpath check verbatim (projected BYTES unchanged); this block
@@ -1833,23 +1843,27 @@ PY
       fi
     done <<< "$SKILL_ROWS"
   fi
-fi
+}
 
 # ---------------------------------------------------------------------------
-# FR-164 (FR-160 epic): MCP-server projection pass. For each (mcp-block,target)
-# row, dispatch to the TS projector (`igris registry project-mcp`) which builds
-# the native per-harness entry and MERGES it into the live harness config via
-# the proven mergeJsonConfig/mergeTomlConfig (§18.1: bash NEVER re-implements
-# the merge — this pass is a thin driver + accounting). Each invocation writes
-# ONE config; we count OK/FAIL per (mcp,target) into the shared accumulators.
+# project_mcp — the MCP-server projection surface plugin (FR-202 M0).
+# FR-164 (FR-160 epic): for each (mcp-block,target) row, dispatch to the TS
+# projector (`igris registry project-mcp`) which builds the native per-harness
+# entry and MERGES it into the live harness config via the proven
+# mergeJsonConfig/mergeTomlConfig (§18.1: bash NEVER re-implements the merge —
+# this pass is a thin driver + accounting). Each invocation writes ONE config; we
+# count OK/FAIL per (mcp,target) into the shared accumulators.
 #
 # SECRET HYGIENE: the row carries the ${VAR} REFERENCE in `canonical_json`, NOT
 # a resolved literal. The codex literal is resolved only INSIDE the projector
 # (from secrets.env), never in a bash variable that could be `set -x`'d. We
 # NEVER echo `canonical_json`. The projector itself prints only the outcome +
 # name + harness (no env values).
+#
+# Body moved VERBATIM from the former inline MCP pass; the outer
+# `if SURFACE_KIND = mcp|all` gate is now the registry dispatch loop.
 # ---------------------------------------------------------------------------
-if [ "$SURFACE_KIND" = "mcp" ] || [ "$SURFACE_KIND" = "all" ]; then
+project_mcp() {
   MCP_ROWS=$(flatten_mcp_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "$TARGET_KIND" "$PROJECT_ROOT")
   if [ -n "$MCP_ROWS" ]; then
     while IFS=$'\t' read -r m_name m_canon m_type m_enabled m_scope_type m_scope_paths; do
@@ -1896,20 +1910,24 @@ if [ "$SURFACE_KIND" = "mcp" ] || [ "$SURFACE_KIND" = "all" ]; then
       fi
     done <<< "$MCP_ROWS"
   fi
-fi
+}
 
 # ---------------------------------------------------------------------------
-# TD-233 (GAP-3): orchestrator-identity projection pass. For each
-# (identity-block, target) row, render the canonical identity template via the
-# SHARED normalize_identity_shape (the §18.1 helper drift re-derives with —
-# byte-identical to the TS buildHarnessIdentityFile) and MERGE the delimited
-# region into the harness's natively auto-read identity file
+# project_identity — the orchestrator-identity projection surface plugin
+# (FR-202 M0; kind:behavioral — delegation_model is injected at boot).
+# TD-233 (GAP-3): for each (identity-block, target) row, render the canonical
+# identity template via the SHARED normalize_identity_shape (the §18.1 helper
+# drift re-derives with — byte-identical to the TS buildHarnessIdentityFile) and
+# MERGE the delimited region into the harness's natively auto-read identity file
 # (gemini → GEMINI.md, codex → AGENTS.md; project-root-relative, confirmed
 # empirically 2026-06-10). Pre-existing user content is preserved — Igris owns
 # only the marker-delimited region (the locked clobber posture). Each row
 # feeds the shared $TOTAL/$OK/$FAIL/$SUMMARY accumulators.
+#
+# Body moved VERBATIM from the former inline identity pass; the outer
+# `if SURFACE_KIND = identity|all` gate is now the registry dispatch loop.
 # ---------------------------------------------------------------------------
-if [ "$SURFACE_KIND" = "identity" ] || [ "$SURFACE_KIND" = "all" ]; then
+project_identity() {
   IDENTITY_ROWS=$(flatten_identity_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "$TARGET_KIND" "$PROJECT_ROOT")
   if [ -n "$IDENTITY_ROWS" ]; then
     while IFS=$'\t' read -r i_source i_vsource i_type i_filename i_scope_type i_scope_paths i_delegation_model; do
@@ -2035,20 +2053,24 @@ if [ "$SURFACE_KIND" = "identity" ] || [ "$SURFACE_KIND" = "all" ]; then
       fi
     done <<< "$IDENTITY_ROWS"
   fi
-fi
+}
 
 # ---------------------------------------------------------------------------
-# FR-180 (D7 - Option B): event-hook projection pass. For each (hook-block,
-# target) row, dispatch to the TS projector (`igris registry project-hook`),
-# which MERGES the hook GROUP into the harness's native hook surface
-# (claude → .claude/settings.json hooks array; opencode → covered by the FR-104
-# plugin). §18.1: bash NEVER re-implements the merge — this pass is a thin
-# driver + accounting. ONE config per call; OK/FAIL counted per (hook,target)
-# into the shared accumulators. The command path is a SCRIPT path the harness
-# runs (never a secret) — the personal registry-prefix path is what the
-# canonical re-merge preserves (R2). Honors --filter (S1) for the scoped verify.
+# project_hook — the event-hook projection surface plugin (FR-202 M0).
+# FR-180 (D7 - Option B): for each (hook-block, target) row, dispatch to the TS
+# projector (`igris registry project-hook`), which MERGES the hook GROUP into the
+# harness's native hook surface (claude → .claude/settings.json hooks array;
+# opencode → covered by the FR-104 plugin). §18.1: bash NEVER re-implements the
+# merge — this pass is a thin driver + accounting. ONE config per call; OK/FAIL
+# counted per (hook,target) into the shared accumulators. The command path is a
+# SCRIPT path the harness runs (never a secret) — the personal registry-prefix
+# path is what the canonical re-merge preserves (R2). Honors --filter (S1) for
+# the scoped verify.
+#
+# Body moved VERBATIM from the former inline hook pass; the outer
+# `if SURFACE_KIND = hook|all` gate is now the registry dispatch loop.
 # ---------------------------------------------------------------------------
-if [ "$SURFACE_KIND" = "hook" ] || [ "$SURFACE_KIND" = "all" ]; then
+project_hook() {
   HOOK_ROWS=$(flatten_hook_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "$TARGET_KIND" "$PROJECT_ROOT")
   if [ -n "$HOOK_ROWS" ]; then
     while IFS=$'\t' read -r h_name h_event h_command h_matcher h_timeout h_type h_enabled h_layer h_scope_type h_scope_paths; do
@@ -2082,10 +2104,32 @@ if [ "$SURFACE_KIND" = "hook" ] || [ "$SURFACE_KIND" = "all" ]; then
       fi
     done <<< "$HOOK_ROWS"
   fi
-fi
+}
+
+# ---------------------------------------------------------------------------
+# FR-202 (M0): surface-agnostic dispatch. Iterate the surface registry
+# (IGRIS_SURFACE_IDS in _common.sh, in projection order) and run each surface's
+# project_<surface> plugin when the --surface selection includes it (or `all`).
+# This SINGLE loop replaces the five former inline `if SURFACE_KIND = X` pass-
+# gates — adding a surface is a registry entry + a project_<surface> plugin,
+# ZERO edit here. Plugins are called as PLAIN statements (never in a condition)
+# so `set -e` stays active inside them exactly as in the former top-level passes.
+# Accumulators (TOTAL/OK/FAIL/SUMMARY/REFUSE_TARGETS) are global, shared across
+# plugins (bash 3.2 has no namerefs).
+# ---------------------------------------------------------------------------
+for _surface in $IGRIS_SURFACE_IDS; do
+  if igris_surface_selected "$_surface" "$SURFACE_KIND"; then
+    "project_$_surface"
+  fi
+done
 
 if [ "$TOTAL" -eq 0 ]; then
-  echo "No agent/skills/mcp/identity/hook targets matched (filter='$FILTER', target='$TARGET_KIND', surface='$SURFACE_KIND')." >&2
+  # FR-202 (M0): the surface noun list is derived from the registry
+  # (IGRIS_SURFACE_LABELS) so a new surface extends it automatically. The
+  # rendered string is byte-identical to the historical literal
+  # "No agent/skills/mcp/identity/hook targets matched …" (parser-coupled —
+  # parseHarnessOutput reads "… targets matched").
+  echo "No $(igris_surface_empty_match_nouns) targets matched (filter='$FILTER', target='$TARGET_KIND', surface='$SURFACE_KIND')." >&2
   # FR-180 (TD-235 / D5): a 0-target run under --expect-core is the silent
   # no-op the brief forbids — the caller (igris add) routed this expecting core
   # surfaces and got nothing. Fail LOUDLY so add can surface an actionable
