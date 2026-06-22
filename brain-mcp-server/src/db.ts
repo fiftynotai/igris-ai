@@ -954,6 +954,93 @@ function migrateSchema(db: Database.Database): void {
       '[brain] Schema migrated to version 17 (registry asset-reference columns: when_to_use, source, source_ref)',
     );
   }
+
+  // v18: brief metadata normalization + C1 phase reconciliation (TD-238)
+  //
+  // A one-time, idempotent DATA migration that folds existing brief_status rows
+  // to the canonical metadata form the TD-238 write boundary now enforces, and
+  // applies the C1 reconciliation from the build-state invariant (#811 / TD-257).
+  // It rewrites ONLY the metadata columns (priority, brief_type, phase) — NEVER
+  // content, title, status, claimed_by, updated_at, or embedding (#230).
+  //
+  //   - Priority fold: bare/spaced legacy forms → canonical P{N}-{Word}; the
+  //     "unset" family (literal 'Unset' / empty / whitespace) → NULL (the
+  //     dashboard renders NULL as "Unset"; this collapses the split buckets the
+  //     dashboard was double-counting — the G-05 bug TD-238 fixes).
+  //   - brief_type fold: 'Tech Debt' → 'Technical Debt', 'Bug Fix' → 'Bug'.
+  //     Unknown types are left untouched (read-widen — never drop operator data).
+  //   - C1 reconciliation: status IN ('Done','Archived') ⇒ phase='COMPLETE'.
+  //     status is the authoritative build-state source; the invariant pivots on
+  //     COMPLETE. Only C1 is migrated here — C2 (Done-but-no-commit) and C3
+  //     (committed-but-open) are human-disposition judgment calls left for the
+  //     TD-257 read-side validator to keep WARNing (git stays out of this
+  //     migration entirely).
+  //
+  // Idempotency: every UPDATE is WHERE-guarded to a canonical target, so a
+  // second run matches zero rows. The schema_version gate also blocks re-entry
+  // once v18 is recorded. All values are fixed literals (§14 — no interpolation).
+  //
+  // Gate behind v17's actual completion (re-read schema_version, L-209) so this
+  // DATA-only migration — which has NO vec dependency — applies even on a vec-
+  // less machine where the v13 vec backfill stopped the chain. The
+  // db-migration-v18.test.ts runs WITHOUT loading vec to prove this gate dodge.
+  let postV17Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV17Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+  if (postV17Version >= 17 && postV17Version < 18) {
+    db.transaction(() => {
+      // Priority fold — one WHERE-guarded UPDATE per alias → canonical pair.
+      db.prepare(
+        `UPDATE brief_status SET priority = 'P0-Critical'
+           WHERE priority IN ('P0', 'P0 - Critical')`,
+      ).run();
+      db.prepare(
+        `UPDATE brief_status SET priority = 'P1-High'
+           WHERE priority IN ('P1', 'P1 - High')`,
+      ).run();
+      db.prepare(
+        `UPDATE brief_status SET priority = 'P2-Medium'
+           WHERE priority IN ('P2', 'P2 - Medium')`,
+      ).run();
+      db.prepare(
+        `UPDATE brief_status SET priority = 'P3-Low'
+           WHERE priority IN ('P3', 'P3 - Low')`,
+      ).run();
+      // Unset family (literal 'Unset' / empty / whitespace-only) → NULL.
+      db.prepare(
+        `UPDATE brief_status SET priority = NULL
+           WHERE priority = 'Unset' OR TRIM(COALESCE(priority, '')) = ''`,
+      ).run();
+
+      // brief_type fold — known aliases only; unknown types untouched.
+      db.prepare(
+        `UPDATE brief_status SET brief_type = 'Technical Debt'
+           WHERE brief_type = 'Tech Debt'`,
+      ).run();
+      db.prepare(
+        `UPDATE brief_status SET brief_type = 'Bug'
+           WHERE brief_type = 'Bug Fix'`,
+      ).run();
+
+      // C1 reconciliation — terminal status ⇒ terminal phase. C2/C3 deferred.
+      db.prepare(
+        `UPDATE brief_status SET phase = 'COMPLETE'
+           WHERE status IN ('Done', 'Archived')
+             AND COALESCE(phase, '') != 'COMPLETE'`,
+      ).run();
+
+      db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (18)').run();
+    })();
+    console.error(
+      '[brain] Schema migrated to version 18 (brief field normalization + C1 phase reconciliation)',
+    );
+  }
 }
 
 /**

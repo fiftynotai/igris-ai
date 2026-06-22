@@ -10,7 +10,8 @@
  *
  * The registry table is created in v12, which has no vec dependency, so these
  * tests run without the optional sqlite-vec binary. When vec IS available the
- * migration chain advances all the way to v17; when it is NOT, v13 skips
+ * migration chain advances all the way to v18 (TD-238 added v18 after v17);
+ * when it is NOT, v13 skips
  * without recording and the chain stalls at v12 — so we drive the registry
  * forward independently of the vec-gated steps by asserting on the registry
  * columns directly rather than on MAX(schema_version).
@@ -92,8 +93,9 @@ describe('migration v17 — registry asset-reference columns (FR-198)', () => {
       expect(cols).toContain('source');
       expect(cols).toContain('source_ref');
 
-      // With vec available the whole chain runs through v17.
-      expect(getSchemaVersion(db)).toBe(17);
+      // With vec available the whole chain runs through v18 (TD-238 added the
+      // v18 brief-normalization data migration after v17).
+      expect(getSchemaVersion(db)).toBe(18);
     },
   );
 
@@ -151,7 +153,8 @@ describe('migration v17 — registry asset-reference columns (FR-198)', () => {
       );
       // Exactly one of each — no duplicate ADD COLUMN.
       expect(cols.sort()).toEqual(['source', 'source_ref', 'when_to_use']);
-      expect(getSchemaVersion(db)).toBe(17);
+      // Chain runs through v18 once vec is available (TD-238 added v18).
+      expect(getSchemaVersion(db)).toBe(18);
     },
   );
 
