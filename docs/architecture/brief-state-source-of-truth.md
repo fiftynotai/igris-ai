@@ -28,6 +28,12 @@ brief / build-state.** Every consumer reads it — via `igris_brief_dashboard`,
 `igris_brief_list`, or a direct `brief_status` query — and NEVER infers
 build-state from plan docs or brief content.
 
+Scope: this governs only the SOURCE OF TRUTH for build-state. It does NOT
+discourage reading plan docs — plans remain a valid input for design, intent,
+approach, and rationale; read them freely for their content. The rule forbids
+only inferring *whether* a brief is built from a plan (since a plan describes
+pre-build intent).
+
 `phase` is a supporting field and `git log` is physical ground truth; both must
 agree with `status`. When they disagree, that is a contradiction the
 reconciliation validator surfaces (see below) — and `status` is what the

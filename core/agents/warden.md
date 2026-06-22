@@ -141,7 +141,11 @@ canonical `brief_status.status` (via `igris_brief_dashboard`/`igris_brief_list`)
 and verify against git log + on-disk artifacts. NEVER infer build-state from
 plan docs: plans describe pre-build INTENT and read as "unbuilt" forever, so an
 audit that treats them as state perpetually reports completed work as missing
-(the #811 failure). See `docs/architecture/brief-state-source-of-truth.md`.
+(the #811 failure). Scope: this governs only the SOURCE OF TRUTH for build-state;
+it does NOT discourage reading plan docs — plans remain a valid input for design,
+intent, approach, and rationale, so read them freely for their content. The rule
+forbids only inferring *whether* a brief is built from a plan.
+See `docs/architecture/brief-state-source-of-truth.md`.
 
 ### Audit Output Format
 
