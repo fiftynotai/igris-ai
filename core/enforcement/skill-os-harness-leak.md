@@ -37,12 +37,14 @@ CONTRACT, not a branch.
 ## Allowlist
 
 An explicit, commented constant in the validator exempts the files where
-harness-specific tokens are by design or a known-deferred leak tracked
-elsewhere: `onboard-harness/SKILL.md` (the adapter-authoring guide),
-`core/os/surfaces-detail.md` (documents the adapter boundary), and the three
-deferred leaks (`igris_os.md` → TD-247, `team/SKILL.md` → TD-247,
-`digivolve/SKILL.md` → its own brief). The allowlist must never be broadened to
-launder a real leak — a new entry is questioned in review (L-448).
+harness-specific tokens are by design, a declared single-harness capability, or
+a known-deferred leak tracked elsewhere: `onboard-harness/SKILL.md` (the
+adapter-authoring guide), `core/os/surfaces-detail.md` (documents the adapter
+boundary), `team/SKILL.md` (declared single-harness — Claude-native Agent-Teams,
+FR-202 M6; intentional, not a leak to remove), and the two deferred leaks
+(`igris_os.md` → TD-247, `digivolve/SKILL.md` → its own brief). The allowlist
+must never be broadened to launder a real leak — a new entry is questioned in
+review (L-448).
 
 ## Scope honesty (L-400)
 

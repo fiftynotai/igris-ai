@@ -50,9 +50,10 @@ Allowlist (explicit, commented constant — L-448):
     leak is DEFERRED (tracked in TD-247, not fixed here); its go-forward home
     is `core/os/` which IS scanned. Allowlisting it keeps this gate from
     blocking its own commit on a known-deferred leak.
-  - core/skills/team/SKILL.md — Claude-only Agent-Teams parallelism leak.
-    GENUINE but already-tracked (TD-247) and out of scope to touch here.
-    Allowlisted so the gate lands; TD-247 removes both the leak and this entry.
+  - core/skills/team/SKILL.md — declared single-harness: Agent-Teams is a
+    Claude-Code-native capability, so /team is intentionally Claude-only — NOT
+    a leak to remove (FR-202 M6). Permanently allowlisted by design; this is a
+    declared-single-harness exemption, not a deferral awaiting TD-247.
   - core/skills/digivolve/SKILL.md — hardcodes `.claude/agents/` for agent-file
     CRUD. GENUINE but non-trivial (the correct fix routes through the agents
     adapter verbs); deferred to its own brief (TD-248 L4). Allowlisted so the
@@ -102,7 +103,7 @@ ALLOWLIST_SUFFIXES = (
     "core/skills/onboard-harness/SKILL.md",   # adapter-authoring guide (OK2)
     "core/os/surfaces-detail.md",             # documents the adapter boundary (OK3)
     "core/prompts/igris_os.md",               # FR-187-doomed monolith; L1 -> TD-247
-    "core/skills/team/SKILL.md",              # Agent-Teams leak -> TD-247
+    "core/skills/team/SKILL.md",              # declared single-harness: Claude-native Agent-Teams (FR-202 M6) — intentional, not a leak
     "core/skills/digivolve/SKILL.md",         # agent-CRUD .claude/ path -> L4 brief
 )
 
