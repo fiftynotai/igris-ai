@@ -30,6 +30,9 @@
  */
 
 import { getDb } from '../../../db.js';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type {
   BrainComponent,
   ComponentContext,
@@ -47,20 +50,82 @@ import {
   handleSubconsciousRun,
   setHandlerContext,
   VALID_PRIORITIES,
-  VALID_SOURCE_MODULES,
+  LEGACY_SOURCE_MODULE_HINTS,
   VALID_STATUSES,
 } from './handlers.js';
-import { DEFAULT_DETECTOR_CONFIG } from './types.js';
 import {
-  isClaudeCliAvailable,
-  makeClaudeHeadlessVerifier,
-  noopVerifier,
-} from './verifier.js';
+  DEFAULT_DETECTOR_CONFIG,
+  DEFAULT_SUBCONSCIOUS_CONFIG,
+  type SubconsciousConfig,
+} from './types.js';
+import type { LlmExtractorGlobalConfig } from '../cognition/engine/index.js';
 
 /** The well-known name used to detect an existing schedule on init. */
 const SCHEDULE_NAME = 'subconscious_engine';
 /** Every six hours: minute=0 every 6th hour every day. */
 const SCHEDULE_CRON_EXPR = '0 */6 * * *';
+
+// ---------------------------------------------------------------------------
+// Config resolution (FR-118 M2)
+// ---------------------------------------------------------------------------
+
+/** Read + parse `~/.igris/config.json`, or `{}` on any error. */
+function readIgrisConfig(): Record<string, unknown> {
+  try {
+    const configPath = path.join(os.homedir(), '.igris', 'config.json');
+    const raw = fs.readFileSync(configPath, 'utf-8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+  } catch {
+    /* absent / malformed — defaults apply */
+  }
+  return {};
+}
+
+function asObject(v: unknown): Record<string, unknown> | undefined {
+  return v && typeof v === 'object' && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * Resolve the subconscious instance config (FR-118 M2). Reads BOTH the new
+ * `cognition.subconscious` path and the legacy top-level `subconscious` block
+ * (back-compat — the `subconscious.enabled` dotted key stays grep-able for
+ * MAINTAINING.md:67). The new path wins where both set a key; absent keys fall
+ * back to `DEFAULT_SUBCONSCIOUS_CONFIG`.
+ */
+export function resolveSubconsciousConfig(
+  config: Record<string, unknown> = readIgrisConfig(),
+): SubconsciousConfig {
+  const legacy = asObject(config.subconscious) ?? {};
+  const cognition = asObject(config.cognition);
+  const nested = (cognition && asObject(cognition.subconscious)) ?? {};
+  const pick = <T>(key: string, fallback: T): T => {
+    if (nested[key] !== undefined) return nested[key] as T;
+    if (legacy[key] !== undefined) return legacy[key] as T;
+    return fallback;
+  };
+  return {
+    enabled: pick('enabled', DEFAULT_SUBCONSCIOUS_CONFIG.enabled),
+    llm_timeout_ms: pick('llm_timeout_ms', DEFAULT_SUBCONSCIOUS_CONFIG.llm_timeout_ms),
+    llm_daily_budget: pick('llm_daily_budget', DEFAULT_SUBCONSCIOUS_CONFIG.llm_daily_budget),
+    min_digest_bytes: pick('min_digest_bytes', DEFAULT_SUBCONSCIOUS_CONFIG.min_digest_bytes),
+    harness: pick('harness', DEFAULT_SUBCONSCIOUS_CONFIG.harness),
+  };
+}
+
+/**
+ * Resolve the global `llm_extractor` config section (FR-118) — the shared
+ * cognition-backend harness default + fallback order. Absent/malformed yields
+ * `{}` (the backend defaults the harness to `'claude'`). Mirrors perception's
+ * `resolveLlmExtractorGlobalConfig`.
+ */
+export function resolveLlmExtractorGlobalConfig(
+  config: Record<string, unknown> = readIgrisConfig(),
+): LlmExtractorGlobalConfig {
+  return (asObject(config.llm_extractor) as LlmExtractorGlobalConfig) ?? {};
+}
 
 export function createSubconsciousComponent(): BrainComponent {
   let _ctx: ComponentContext | null = null;
@@ -164,8 +229,10 @@ export function createSubconsciousComponent(): BrainComponent {
               },
               source_module: {
                 type: 'string',
-                enum: [...VALID_SOURCE_MODULES],
-                description: 'Filter by detector module (stalled, conflict, gap, pattern)',
+                description:
+                  'Filter by suggestion kind (OPEN — the LLM names it). Legacy rule kinds: ' +
+                  LEGACY_SOURCE_MODULE_HINTS.join(', ') +
+                  '. Any non-empty string is accepted.',
               },
               priority: {
                 type: 'string',
@@ -257,11 +324,21 @@ export function createSubconsciousComponent(): BrainComponent {
         {
           name: 'igris_subconscious_run',
           description:
-            'Run the subconscious detector pipeline once. Invoked by the cron schedule "subconscious_engine" every 6 hours; also fireable manually for debugging or immediate sweep. Returns counts of emitted/suppressed suggestions broken down by module.',
+            'Run the subconscious LLM extractor once (FR-118). Reads a deterministic brain digest, runs an isolated LLM call on the resolved harness, and queues open-typed suggestions for review. Invoked by the cron schedule "subconscious_engine" every 6 hours; also fireable manually. Returns the run outcome (succeeded/skipped/failed), the persisted count, and the skip/fail reason. Scope with project; force bypasses the cold-start + digest-size gate.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
-            properties: {},
+            properties: {
+              project: {
+                type: 'string',
+                description: "Project slug to scope the digest to (default: whole brain).",
+              },
+              force: {
+                type: 'boolean',
+                description:
+                  'Bypass the cold-start + minimum-digest-size gate for an immediate sweep (does NOT bypass the daily budget or the disabled switch).',
+              },
+            },
           },
           handler: async (args) => handleSubconsciousRun(args),
         },
@@ -269,34 +346,16 @@ export function createSubconsciousComponent(): BrainComponent {
     },
 
     events(): { emits: EventDef[]; listens: EventDef[] } {
+      // FR-118 M2: the run-lifecycle + per-suggestion + verifier events are no
+      // longer emitted on the bus. The live path is the cognition engine, which
+      // writes `cognition.subconscious.{run_started,run_succeeded,run_failed,
+      // run_skipped}` DIRECTLY to `event_log` (observable via
+      // `igris_event_log component='cognition.subconscious'`), NOT via bus.emit.
+      // So the only surviving bus emit is the schedule-bootstrap failure. Every
+      // declared emit below still has a literal `bus.emit` in this file (the
+      // event-bus integrity invariant).
       return {
         emits: [
-          {
-            name: 'subconscious.run_start',
-            description: 'A subconscious detector run started',
-          },
-          {
-            name: 'subconscious.run_complete',
-            description: 'A subconscious detector run completed (with counts)',
-          },
-          {
-            name: 'subconscious.suggestion_emitted',
-            description: 'A new suggestion was persisted',
-          },
-          {
-            name: 'subconscious.suggestion_suppressed',
-            description: 'A candidate suggestion was suppressed by the dismiss-reason learning loop',
-          },
-          {
-            name: 'subconscious.suggestion_verified',
-            description:
-              'A conflict-class suggestion survived the LLM verifier gate (FR-108). Carries verifier_status so dashboards can distinguish verified-true from defensive-default cases.',
-          },
-          {
-            name: 'subconscious.suggestion_rejected_by_verifier',
-            description:
-              'The LLM verifier rejected a heuristic conflict candidate (FR-108). Distinct from dismiss-loop suppression — counts model-driven false-positive filtering.',
-          },
           {
             name: 'subconscious.bootstrap_failed',
             description:
@@ -316,18 +375,24 @@ export function createSubconsciousComponent(): BrainComponent {
       _ctx = ctx;
       ctx.bus.on('engine.ready', onEngineReady);
 
-      // FR-108: probe the `claude` CLI once at init time. On VPS (CLI
-      // absent) we fall back to noopVerifier and log the disabled state
-      // so deploy logs make the degraded mode observable.
-      const cliPresent = isClaudeCliAvailable();
-      const verifier = cliPresent ? makeClaudeHeadlessVerifier() : noopVerifier;
+      // FR-118 M2: resolve the subconscious instance config (timeout/budget/
+      // min-digest/enabled/harness) + the global llm_extractor config (harness
+      // default + fallback order). These drive the live LLM run path
+      // (`igris_subconscious_run` → runSubconscious → the cognition engine). The
+      // FR-108 verifier wiring is GONE (the rule path it served is no longer
+      // live; the detector files stay uncalled until M4).
+      const subconsciousConfig = resolveSubconsciousConfig();
+      const globalConfig = resolveLlmExtractorGlobalConfig();
       setHandlerContext({
         bus: ctx.bus,
         config: DEFAULT_DETECTOR_CONFIG,
-        verifier,
+        subconsciousConfig,
+        globalConfig,
       });
       ctx.log.info(
-        `Subconscious component initialized (verifier=${cliPresent ? 'claude-headless' : 'disabled'})`,
+        `Subconscious component initialized (LLM extractor: enabled=${subconsciousConfig.enabled}, ` +
+          `harness=${subconsciousConfig.harness ?? globalConfig.harness ?? 'claude'}, ` +
+          `budget=${subconsciousConfig.llm_daily_budget}/day, min_digest=${subconsciousConfig.min_digest_bytes}B)`,
       );
     },
 

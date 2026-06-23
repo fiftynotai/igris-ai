@@ -17,6 +17,7 @@
 
 import type { CognitionInstance } from '../types.js';
 import { perceptionInstance } from './perception.js';
+import { subconsciousInstance } from './subconscious.js';
 
 /**
  * Every bundled cognition instance, in boot order. A new instance is added by
@@ -29,7 +30,8 @@ import { perceptionInstance } from './perception.js';
  */
 export const EXTRACTOR_INSTANCES: readonly CognitionInstance[] = [
   perceptionInstance,
-  // M2: subconsciousInstance,
+  subconsciousInstance,
 ];
 
 export { perceptionInstance, createPerceptionInstance } from './perception.js';
+export { subconsciousInstance, createSubconsciousInstance } from './subconscious.js';

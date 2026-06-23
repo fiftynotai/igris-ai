@@ -363,10 +363,15 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     syncKey: ['source_module', 'project_slug', 'title'],
     timestampCol: 'created_at',
     strategy: 'lww',
+    // FR-118 M2: confidence/suggested_action/type_inferred ADDED. The LLM
+    // extractor writes them; without them here they would replicate as silent
+    // NULLs on the remote brain (the loader/schema/writer-must-agree trap —
+    // memory #133/#213). New cols are nullable, so older rows replicate clean.
     columns: [
       'source_module', 'project_slug', 'title', 'evidence', 'priority',
       'status', 'created_at', 'expires_at', 'dismissed_at',
       'dismissed_reason', 'acted_at', 'acted_brief_id',
+      'confidence', 'suggested_action', 'type_inferred',
     ],
   },
   {

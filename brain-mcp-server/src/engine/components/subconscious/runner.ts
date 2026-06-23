@@ -34,6 +34,8 @@ import { makeReadOnlyDb } from './readonly-db.js';
 import {
   type DetectorConfig,
   DEFAULT_DETECTOR_CONFIG,
+  DEFAULT_SUBCONSCIOUS_CONFIG,
+  type SubconsciousConfig,
   type SuggestionCandidate,
   type SuggestionSourceModule,
 } from './types.js';
@@ -46,6 +48,9 @@ import {
   type VerifierLearning,
   noopVerifier,
 } from './verifier.js';
+import { runExtractor, type LlmExtractorGlobalConfig } from '../cognition/engine/index.js';
+import type { ExtractorResult } from '../cognition/types.js';
+import { createSubconsciousInstance } from '../cognition/extractors/subconscious.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -246,6 +251,74 @@ export async function runAllDetectors(
   }
 
   return summary;
+}
+
+// ---------------------------------------------------------------------------
+// The LIVE runner (FR-118 M2) — the LLM subconscious instance on the engine
+// ---------------------------------------------------------------------------
+
+/** Options for `runSubconscious`. */
+export interface RunSubconsciousOptions {
+  /** The resolved subconscious instance config (timeout/budget/min-bytes/enabled/harness). */
+  config?: SubconsciousConfig;
+  /** The global `llm_extractor` config (harness default + fallback order). */
+  globalConfig?: LlmExtractorGlobalConfig;
+  /** Bypass the cold-start + bytes cost gate (manual `*_run` forces a run). */
+  force?: boolean;
+  /** What triggered this run ('cron' | 'manual' | a test tag) — observability. */
+  trigger?: string;
+  /**
+   * Injectable engine seams (for tests: a mocked backend, a stubbed
+   * cold-start probe, a fixed digest). Forwarded verbatim to `runExtractor`'s
+   * `deps`. The default (omitted) runs the real brain-isolated backend.
+   */
+  deps?: Parameters<typeof runExtractor>[3];
+}
+
+/**
+ * Run the subconscious LLM extractor ONCE through the agnostic cognition engine
+ * (FR-118 M2 — REPLACES the rule-detector pipeline as the live path). Builds a
+ * fresh subconscious instance from the resolved config and drives it through
+ * `runExtractor`, which owns the cold-start / budget / timeout / brain-isolated
+ * LLM call / one-terminal-event-per-run lifecycle. The schedule
+ * (`subconscious_engine`, every 6h) now hits THIS via `igris_subconscious_run`.
+ *
+ * The lifecycle events are written by the engine under the per-instance
+ * `cognition.subconscious.*` namespace (event_log directly — observable via
+ * `igris_event_log component='cognition.subconscious'`). The legacy
+ * `subconscious.*` bus events are no longer emitted by the live path.
+ *
+ * NOTE: the rule detectors (`runAllDetectors`, `detectStalled`, …) + the
+ * verifier still EXIST in this file/dir for the M4 deletion window — they are
+ * simply no longer CALLED by the live runner. `computeEvidenceSignature` +
+ * `recordDismissPattern` are still active (the dismiss-loop, and the instance's
+ * dedupe key, both use them).
+ *
+ * @param db      the brain DB
+ * @param project the project scope ('all' = whole brain)
+ * @param options config + global config + force/trigger + injectable engine deps
+ */
+export async function runSubconscious(
+  db: Database.Database,
+  project = 'all',
+  options: RunSubconsciousOptions = {},
+): Promise<ExtractorResult> {
+  const config = options.config ?? DEFAULT_SUBCONSCIOUS_CONFIG;
+  const instance = createSubconsciousInstance(config);
+  const deps = {
+    ...(options.globalConfig ? { globalConfig: options.globalConfig } : {}),
+    ...(options.deps ?? {}),
+  };
+  return runExtractor(
+    db,
+    instance,
+    {
+      project,
+      trigger: options.trigger ?? 'manual',
+      ...(options.force ? { force: true } : {}),
+    },
+    deps,
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -18,11 +18,6 @@
  *          brief.completed, session.synced, session.file.updated,
  *          instance.heartbeat, memory.stored, error.stored,
  *          project.registered, metrics.recorded,
- *          subconscious.run_start, subconscious.run_complete,
- *          subconscious.suggestion_emitted,
- *          subconscious.suggestion_suppressed,
- *          subconscious.suggestion_verified,
- *          subconscious.suggestion_rejected_by_verifier,
  *          subconscious.bootstrap_failed,
  *          perception.run_started, perception.run_succeeded,
  *          perception.run_failed, perception.run_skipped
@@ -78,12 +73,10 @@ const EVENT_COMPONENT_MAP: Record<string, string> = {
   'error.stored': 'errors',
   'project.registered': 'projects',
   'metrics.recorded': 'metrics',
-  'subconscious.run_start': 'subconscious',
-  'subconscious.run_complete': 'subconscious',
-  'subconscious.suggestion_emitted': 'subconscious',
-  'subconscious.suggestion_suppressed': 'subconscious',
-  'subconscious.suggestion_verified': 'subconscious',
-  'subconscious.suggestion_rejected_by_verifier': 'subconscious',
+  // FR-118 M2: the subconscious run-lifecycle + per-suggestion + verifier
+  // events are no longer bus-emitted (the live path is the cognition engine,
+  // which writes `cognition.subconscious.*` directly to event_log). Only the
+  // schedule-bootstrap-failure event still rides the bus.
   'subconscious.bootstrap_failed': 'subconscious',
   'perception.run_started': 'perception',
   'perception.run_succeeded': 'perception',
@@ -242,12 +235,6 @@ export function createMonitoringComponent(): BrainComponent {
           { name: 'error.stored', description: 'Log error storage events' },
           { name: 'project.registered', description: 'Log project registration events' },
           { name: 'metrics.recorded', description: 'Log metrics recording events' },
-          { name: 'subconscious.run_start', description: 'Log subconscious detector run start events' },
-          { name: 'subconscious.run_complete', description: 'Log subconscious detector run completion events' },
-          { name: 'subconscious.suggestion_emitted', description: 'Log subconscious suggestion emission events' },
-          { name: 'subconscious.suggestion_suppressed', description: 'Log subconscious suggestion suppression events (dismiss-loop)' },
-          { name: 'subconscious.suggestion_verified', description: 'Log subconscious LLM-verified conflict suggestion events (FR-108)' },
-          { name: 'subconscious.suggestion_rejected_by_verifier', description: 'Log subconscious LLM-rejected heuristic conflict events (FR-108)' },
           { name: 'subconscious.bootstrap_failed', description: 'Log subconscious schedule bootstrap failures (TD-053)' },
           { name: 'perception.run_started', description: 'Log perception extraction run start events (TD-074)' },
           { name: 'perception.run_succeeded', description: 'Log perception extraction run success events (TD-074)' },
@@ -291,12 +278,6 @@ export function createMonitoringComponent(): BrainComponent {
       ctx.bus.on('error.stored', onEventReceived);
       ctx.bus.on('project.registered', onEventReceived);
       ctx.bus.on('metrics.recorded', onEventReceived);
-      ctx.bus.on('subconscious.run_start', onEventReceived);
-      ctx.bus.on('subconscious.run_complete', onEventReceived);
-      ctx.bus.on('subconscious.suggestion_emitted', onEventReceived);
-      ctx.bus.on('subconscious.suggestion_suppressed', onEventReceived);
-      ctx.bus.on('subconscious.suggestion_verified', onEventReceived);
-      ctx.bus.on('subconscious.suggestion_rejected_by_verifier', onEventReceived);
       ctx.bus.on('subconscious.bootstrap_failed', onEventReceived);
       ctx.bus.on('perception.run_started', onEventReceived);
       ctx.bus.on('perception.run_succeeded', onEventReceived);
@@ -348,12 +329,6 @@ export function createMonitoringComponent(): BrainComponent {
         _ctx.bus.off('error.stored', onEventReceived);
         _ctx.bus.off('project.registered', onEventReceived);
         _ctx.bus.off('metrics.recorded', onEventReceived);
-        _ctx.bus.off('subconscious.run_start', onEventReceived);
-        _ctx.bus.off('subconscious.run_complete', onEventReceived);
-        _ctx.bus.off('subconscious.suggestion_emitted', onEventReceived);
-        _ctx.bus.off('subconscious.suggestion_suppressed', onEventReceived);
-        _ctx.bus.off('subconscious.suggestion_verified', onEventReceived);
-        _ctx.bus.off('subconscious.suggestion_rejected_by_verifier', onEventReceived);
         _ctx.bus.off('subconscious.bootstrap_failed', onEventReceived);
         _ctx.bus.off('perception.run_started', onEventReceived);
         _ctx.bus.off('perception.run_succeeded', onEventReceived);
