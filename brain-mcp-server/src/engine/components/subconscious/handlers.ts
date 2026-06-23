@@ -34,7 +34,6 @@ import {
   type SuggestionPriority,
   type SuggestionStatus,
 } from './types.js';
-import { type ConflictVerifier } from './verifier.js';
 import { handleEdgeCreate } from '../edges/handlers.js';
 import { applyAction } from './actions/index.js';
 import type { LlmExtractorGlobalConfig } from '../cognition/engine/index.js';
@@ -80,12 +79,6 @@ interface HandlerContext {
   subconsciousConfig?: SubconsciousConfig;
   /** FR-118 M2 — the global `llm_extractor` config (harness default + fallback). */
   globalConfig?: LlmExtractorGlobalConfig;
-  /**
-   * Legacy FR-108 verifier — retained on the context shape for back-compat
-   * (the rule path that consumed it is no longer live). Optional; unused by the
-   * M2 live path. Removed with the detector files in M4.
-   */
-  verifier?: ConflictVerifier;
 }
 
 let _handlerCtx: HandlerContext | null = null;

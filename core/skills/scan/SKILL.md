@@ -201,10 +201,12 @@ X agents registered (Y skills available)
 
 ### 6.5. Subconscious Suggestions (FR-106)
 
-> **TD-102 (V7):** This entire section is gated behind the `subconscious.enabled`
-> config flag (default `false` for V7). FR-118 will replace the rule-based
-> engine in V7.1 with an LLM-driven design; until then the section is silent
-> regardless of the `--suggestions` flag.
+> **TD-102 / FR-118 (V7.1):** This entire section is gated behind the
+> `subconscious.enabled` config flag (default `false`). FR-118 SHIPPED the
+> LLM-driven replacement: the subconscious is now a cognition instance
+> (digest → isolated LLM call → open-typed suggestions); the old rule engine
+> (`stalled`/`gap`/`conflict`/`pattern` detectors) was deleted. The section
+> stays silent until `subconscious.enabled` is flipped to `true`.
 
 This section is rendered ONLY when ALL of the following are true:
 1. `subconscious.enabled` is `true` in `~/.igris/config.json` (key absent = `false`).
@@ -219,13 +221,18 @@ If both gates pass and the `igris-brain` MCP is available:
    - `status` = `'pending'`
    - `project_slug` = current project slug
    - `limit` = `1000` (handler caps at this value; >1000 pending is a degenerate state)
-2. Group the returned suggestions by `source_module` in the order:
-   `stalled`, `gap`, `conflict`, `pattern`. Within each group, the
-   handler already returns rows ordered by `priority` (high > medium > low)
-   then `created_at` DESC, so client-side iteration preserves that order.
-3. Render each non-empty group as its own subsection. Empty groups are
-   omitted entirely. If the global `total` is `0`, render the single line
-   `No pending suggestions.` and skip every subsection.
+2. Group the returned suggestions by `source_module`. Post-FR-118 the
+   `source_module` is OPEN — the LLM names the kind (`type_inferred=1`), so the
+   group set is dynamic, not the fixed `stalled`/`gap`/`conflict`/`pattern`
+   rule modules (those still label any surviving pre-FR-118 rows). Sort the
+   groups by their highest-priority member, then alphabetically by kind. Within
+   each group, the handler already returns rows ordered by `priority`
+   (high > medium > low) then `created_at` DESC, so client-side iteration
+   preserves that order.
+3. Render each non-empty group as its own subsection (heading = the
+   `source_module` string, title-cased). Empty groups are omitted entirely. If
+   the global `total` is `0`, render the single line `No pending suggestions.`
+   and skip every subsection.
 
 #### Render template
 
@@ -261,6 +268,62 @@ End the section with the action hint:
 
 If `igris-brain` MCP is unavailable, render this single line instead:
 `Subconscious suggestions unavailable (brain MCP offline).`
+
+#### Subconscious health line (FR-118)
+
+Independent of the gated suggestions table above, surface a single health line
+for the LLM subconscious engine — when it last fired, the outcome, how many
+suggestions it produced today, and the remaining daily budget. This is the
+subconscious analogue of §6.6's Perception health line and is ALSO gated behind
+`subconscious.enabled` (skip silently when the flag is absent/`false` — the
+engine does not run, so there is nothing to report).
+
+Query the NEW `cognition.subconscious.*` lifecycle namespace (the engine writes
+these to `event_log` directly under `component = 'cognition.subconscious'` — the
+legacy `subconscious.*` bus events are gone). Prefer the local-DB `sqlite3` read
+(same TD-080 rationale as §6.6 — the local DB is the merged superset):
+
+```bash
+# Latest run of the day for the lifecycle line + today's run/persist tallies.
+sqlite3 "$HOME/.igris/memory/knowledge.db" \
+  "SELECT event_name, payload, created_at FROM event_log
+   WHERE component = 'cognition.subconscious'
+   ORDER BY created_at DESC LIMIT 1;"
+
+# suggested_today = sum of payload.persisted across today's run_succeeded rows.
+sqlite3 "$HOME/.igris/memory/knowledge.db" \
+  "SELECT COALESCE(SUM(json_extract(payload,'\$.persisted')),0)
+   FROM event_log
+   WHERE component = 'cognition.subconscious'
+     AND event_name = 'cognition.subconscious.run_succeeded'
+     AND date(created_at) = date('now');"
+```
+
+Fallback (only when `sqlite3` is absent): call `igris_event_log` with
+`component = 'cognition.subconscious'`, `limit = 1` (it inherits the §6.6
+remote-only blind spot — acceptable degradation).
+
+Render one line under a `### Subconscious Engine` heading. Map the latest event
+suffix to an uppercase status (`run_succeeded`→`SUCCEEDED`,
+`run_failed`→`FAILED`, `run_skipped`→`SKIPPED`, `run_started`→`RUNNING`).
+`budget_remaining` = the run's `payload.budget − payload.used_today` when the
+latest event is a `run_skipped` with `reason='budget'`; otherwise derive it from
+the resolved `cognition.subconscious.llm_daily_budget` minus the count of
+today's `run_started` rows.
+
+```
+### Subconscious Engine
+Last run: 2026-06-24 06:00 — SUCCEEDED · suggested_today=3 · budget_remaining=2
+```
+
+When no `cognition.subconscious.*` rows exist (never run, or gate off):
+```
+### Subconscious Engine
+No subconscious runs yet.
+```
+
+If `sqlite3` is absent AND the MCP fallback also fails, omit the line entirely.
+Do NOT block /scan.
 
 ### 6.6. Perception Engine (TD-074, TD-080)
 

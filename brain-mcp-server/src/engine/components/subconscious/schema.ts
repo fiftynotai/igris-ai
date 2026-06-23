@@ -7,8 +7,10 @@
  *   - `dismissed_patterns` — UPSERT-target for the dismiss-reason learning
  *     loop (Q3=B in the FR-106 plan answers).
  *
- * Phase 2 adds `pattern_observations` for multi-run smoothing of the
- * pattern detector (v2).
+ * Phase 2 added `pattern_observations` for multi-run smoothing of the
+ * pattern detector (v2). FR-118 M4b DROPS it again (v4) — the rule-detector
+ * pipeline that wrote/read it is gone (the LLM subconscious instance replaced
+ * it), so the table is dead.
  *
  * FR-118 M2 adds v3: the `suggestions` table is REBUILT to OPEN the
  * `source_module` CHECK (the LLM extractor emits open-typed kinds) and to add
@@ -18,6 +20,11 @@
  * drop + rename, recreate the 3 indexes). Pulled FORWARD from M3 into M2
  * because the M2 engine cannot persist (open `source_module` + new columns)
  * without it.
+ *
+ * FR-118 M4b adds v4: `DROP TABLE IF EXISTS pattern_observations`. The rule
+ * detectors + smoothing gate that owned it were deleted; the table is dead and
+ * was never in SYNC_TABLES (nothing to migrate cross-machine). `suggestions`
+ * and `dismissed_patterns` are untouched by the drop.
  *
  * Per-component migration registry (memory #53): these are applied by
  * `storage.runMigrations('subconscious', subconsciousMigrations)` keyed on
@@ -44,12 +51,14 @@ import type { Migration } from '../../types.js';
  *   sentinel before persisting to avoid that quirk (see runner.ts).
  *
  * Version 2 (FR-106 Phase 2): pattern_observations + 2 indexes.
- *   The pattern detector's 3-run smoothing gate reads
+ *   The pattern detector's 3-run smoothing gate read
  *   `COUNT(DISTINCT run_id) WHERE pattern_key = ? AND observed_at within
- *   pattern_smoothing_window_days`. Working table — auto-pruned in
- *   `runner.ts:expireStaleRows` based on `pattern_observation_ttl_days`.
- *   Not added to SYNC_TABLES (re-derivable from raw aggregations on the
- *   next run; no cross-machine merge value).
+ *   pattern_smoothing_window_days`. Working table — never in SYNC_TABLES.
+ *   DROPPED by v4 (FR-118 M4b): the smoothing gate and its readers are gone.
+ *
+ * Version 4 (FR-118 M4b): `DROP TABLE IF EXISTS pattern_observations`.
+ *   Idempotent; safe on a brain that never applied v2 (the table is simply
+ *   absent). `suggestions` / `dismissed_patterns` are not touched.
  */
 export const subconsciousMigrations: Migration[] = [
   {
@@ -170,6 +179,20 @@ export const subconsciousMigrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_suggestions_status ON suggestions(status);
       CREATE INDEX IF NOT EXISTS idx_suggestions_project ON suggestions(project_slug);
       CREATE INDEX IF NOT EXISTS idx_suggestions_priority ON suggestions(priority);
+    `,
+  },
+  {
+    version: 4,
+    description:
+      'Drop the dead pattern_observations table — the rule-detector smoothing gate that owned it is gone (FR-118 M4b)',
+    // The FR-106 pattern detector + its `runner.ts:smoothPatterns` smoothing gate
+    // and `expireStaleRows` pruner were DELETED in FR-118 M4b. Nothing reads or
+    // writes `pattern_observations` any more. DROP IF EXISTS so this is safe on a
+    // brain that applied v2 (table present) AND on one that never did (absent).
+    // `suggestions` / `dismissed_patterns` are untouched. The table was never in
+    // SYNC_TABLES, so there is no cross-machine merge state to preserve.
+    sql: `
+      DROP TABLE IF EXISTS pattern_observations;
     `,
   },
 ];

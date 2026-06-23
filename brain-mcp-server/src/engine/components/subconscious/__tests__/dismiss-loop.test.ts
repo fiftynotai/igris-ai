@@ -1,13 +1,19 @@
 /**
  * Dismiss-Reason Learning Loop — unit tests
  *
- * Covers the FR-106 Phase 1 (Q3=B) suppression mechanic:
+ * Covers the FR-106 (Q3=B) dismiss-loop bookkeeping that survives FR-118 M4b
+ * (the rule-detector pipeline `runAllDetectors` is gone; the dismiss-loop
+ * record/signature helpers stay live — the LLM subconscious instance reuses
+ * `computeEvidenceSignature` for its pre-insert suppression check):
  *   (a) Dismiss with reason -> dismissed_patterns row, dismiss_count=1.
  *   (b) Dismiss same signature again -> dismiss_count=2, reasons appended.
  *   (c) >5 dismisses -> reasons array capped at the last 5.
- *   (d) New candidate, dismiss_count >= 2 -> suppressed.
- *   (e) New candidate, dismiss_count=1, last_dismissed >7d -> emitted.
- *   (f) New candidate, dismiss_count=1, last_dismissed <7d -> suppressed.
+ *
+ * The detector-pipeline-driven suppression scenarios (new candidate suppressed
+ * when dismiss_count >= 2 / cooldown windows / end-to-end re-run) were deleted
+ * with `runAllDetectors` in M4b — the rule path that generated those candidates
+ * no longer exists. The suppression DECISION itself is now exercised through the
+ * subconscious instance's persist path (see cognition/extractors/subconscious).
  *
  * @module engine/components/subconscious/__tests__/dismiss-loop.test
  */
@@ -24,16 +30,11 @@ import { handleSuggestionDismiss, setHandlerContext } from '../handlers.js';
 import {
   computeEvidenceSignature,
   recordDismissPattern,
-  runAllDetectors,
 } from '../runner.js';
 import { subconsciousMigrations } from '../schema.js';
-import { DEFAULT_DETECTOR_CONFIG, type Suggestion } from '../types.js';
+import { DEFAULT_DETECTOR_CONFIG } from '../types.js';
 import { createEventBus } from '../../../bus.js';
-import {
-  applyMinimalSchema,
-  seedBrief,
-  seedProject,
-} from './fixtures/minimal-schema.js';
+import { applyMinimalSchema } from './fixtures/minimal-schema.js';
 
 interface DismissedPatternRow {
   id: number;
@@ -165,99 +166,6 @@ describe('dismiss-reason learning loop', () => {
   });
 
   // -----------------------------------------------------------------------
-  // (d) Suppression after dismiss_count >= dismiss_suppress_count
-  // -----------------------------------------------------------------------
-
-  it('suppresses new suggestions when dismiss_count >= 2', async () => {
-    seedProject(db, { slug: 'p1' });
-    seedBrief(db, {
-      project: 'p1',
-      brief_id: 'BR-9',
-      status: 'In Progress',
-      updated_days_ago: 35,
-    });
-    const sig = computeEvidenceSignature('stalled', { brief_id: 'BR-9' });
-    // Pre-load dismissed_patterns with dismiss_count = 2 so the runner
-    // sees the signature as already-suppressed before generating.
-    db.prepare(
-      `INSERT INTO dismissed_patterns
-         (source_module, project_slug, evidence_signature, dismiss_count, last_dismissed_at, reasons)
-       VALUES ('stalled', 'p1', ?, 2, datetime('now'), '["a","b"]')`,
-    ).run(sig);
-
-    const summary = await runAllDetectors(db);
-    // Stalled detector saw the brief but the suppression filter killed it.
-    expect(summary.suppressed).toBeGreaterThanOrEqual(1);
-    // No suggestions row because suppression skipped insertion.
-    const inserted = db
-      .prepare(
-        `SELECT COUNT(*) AS n FROM suggestions WHERE source_module = 'stalled' AND project_slug = 'p1'`,
-      )
-      .get() as { n: number };
-    expect(inserted.n).toBe(0);
-  });
-
-  // -----------------------------------------------------------------------
-  // (e) After cooldown elapses (>7d), single-dismiss signature re-emits
-  // -----------------------------------------------------------------------
-
-  it('re-emits when single-dismiss cooldown has elapsed', async () => {
-    seedProject(db, { slug: 'p1' });
-    seedBrief(db, {
-      project: 'p1',
-      brief_id: 'BR-10',
-      status: 'In Progress',
-      updated_days_ago: 35,
-    });
-    const sig = computeEvidenceSignature('stalled', { brief_id: 'BR-10' });
-    // Single dismiss, last_dismissed_at = 8 days ago (cooldown is 7).
-    db.prepare(
-      `INSERT INTO dismissed_patterns
-         (source_module, project_slug, evidence_signature, dismiss_count, last_dismissed_at, reasons)
-       VALUES ('stalled', 'p1', ?, 1, datetime('now', '-8 days'), '["test"]')`,
-    ).run(sig);
-
-    const summary = await runAllDetectors(db);
-    expect(summary.emitted).toBeGreaterThanOrEqual(1);
-    const inserted = db
-      .prepare(
-        `SELECT COUNT(*) AS n FROM suggestions WHERE source_module = 'stalled' AND project_slug = 'p1'`,
-      )
-      .get() as { n: number };
-    expect(inserted.n).toBeGreaterThanOrEqual(1);
-  });
-
-  // -----------------------------------------------------------------------
-  // (f) Within cooldown window (<7d), single-dismiss signature suppressed
-  // -----------------------------------------------------------------------
-
-  it('suppresses within cooldown window for single-dismiss signature', async () => {
-    seedProject(db, { slug: 'p1' });
-    seedBrief(db, {
-      project: 'p1',
-      brief_id: 'BR-11',
-      status: 'In Progress',
-      updated_days_ago: 35,
-    });
-    const sig = computeEvidenceSignature('stalled', { brief_id: 'BR-11' });
-    // Single dismiss, last_dismissed_at = 3 days ago (within 7-day cooldown).
-    db.prepare(
-      `INSERT INTO dismissed_patterns
-         (source_module, project_slug, evidence_signature, dismiss_count, last_dismissed_at, reasons)
-       VALUES ('stalled', 'p1', ?, 1, datetime('now', '-3 days'), '["test"]')`,
-    ).run(sig);
-
-    const summary = await runAllDetectors(db);
-    expect(summary.suppressed).toBeGreaterThanOrEqual(1);
-    const inserted = db
-      .prepare(
-        `SELECT COUNT(*) AS n FROM suggestions WHERE source_module = 'stalled' AND project_slug = 'p1'`,
-      )
-      .get() as { n: number };
-    expect(inserted.n).toBe(0);
-  });
-
-  // -----------------------------------------------------------------------
   // computeEvidenceSignature contracts
   // -----------------------------------------------------------------------
 
@@ -322,40 +230,6 @@ describe('dismiss-reason learning loop', () => {
         'conflict:3:7',
       );
     });
-  });
-
-  // -----------------------------------------------------------------------
-  // Sanity: dismiss-loop flow against the suggestion lifecycle
-  // -----------------------------------------------------------------------
-
-  it('end-to-end: dismiss twice then run -> next run suppresses', async () => {
-    seedProject(db, { slug: 'p1' });
-    seedBrief(db, {
-      project: 'p1',
-      brief_id: 'BR-99',
-      status: 'In Progress',
-      updated_days_ago: 35,
-    });
-
-    // Cycle 1: detector creates the suggestion, user dismisses it.
-    await runAllDetectors(db);
-    const cycle1 = db
-      .prepare(
-        `SELECT id FROM suggestions WHERE source_module = 'stalled' AND project_slug = 'p1'`,
-      )
-      .all() as { id: number }[];
-    expect(cycle1.length).toBeGreaterThan(0);
-    handleSuggestionDismiss({ id: cycle1[0].id, reason: 'cycle-1' });
-
-    // Cycle 2: detector tries again, but signature suppressed via cooldown.
-    await runAllDetectors(db);
-    const cycle2New = db
-      .prepare(
-        `SELECT COUNT(*) AS n FROM suggestions
-         WHERE source_module = 'stalled' AND project_slug = 'p1' AND status = 'pending'`,
-      )
-      .get() as { n: number };
-    expect(cycle2New.n).toBe(0);
   });
 
   // -----------------------------------------------------------------------

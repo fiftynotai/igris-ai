@@ -1,22 +1,25 @@
 /**
- * Brain Engine v7.0 — Subconscious Component
+ * Brain Engine v7.1 — Subconscious Component
  *
- * Passive observer (FR-106). Phase 1 shipped two deterministic detectors
- * (`stalled`, `gap`), four MCP tools, and a self-bootstrapping cron
- * schedule (`subconscious_engine`) that fires the pipeline every six
- * hours. Phase 2 adds `conflict` and `pattern` detectors plus
- * `pattern_observations` for 3-run smoothing — same component surface,
- * no new MCP tools, no new event names.
+ * Passive observer. The original FR-106 rule detectors (`stalled`/`gap`/
+ * `conflict`/`pattern`) + the `pattern_observations` smoothing table were
+ * REPLACED in FR-118 by an LLM subconscious instance on the agnostic cognition
+ * engine (digest → isolated LLM call → open-typed suggestions) and then DELETED
+ * in M4b. The component now owns the suggestion surface (list/dismiss/acted/
+ * apply_action) + the `igris_subconscious_run` LLM-run tool + the
+ * self-bootstrapping `subconscious_engine` cron schedule (every 6h).
  *
  * Component contract:
- *   - schema()   : suggestions + dismissed_patterns (v1) +
- *                  pattern_observations (v2).
- *   - tools()    : 4 MCP tools — list/dismiss/acted/run.
- *   - events()   : emits run_start, run_complete, suggestion_emitted,
- *                  suggestion_suppressed; listens engine.ready.
- *   - init()     : sets handler context; on engine.ready, dispatches
- *                  `igris_schedule_create` if the schedule isn't already
- *                  present (idempotent).
+ *   - schema()   : suggestions + dismissed_patterns (v1), suggestions v3
+ *                  rebuild (open source_module + LLM columns), v4 drops the
+ *                  dead pattern_observations table.
+ *   - tools()    : 5 MCP tools — list / dismiss / acted / run / apply_action.
+ *   - events()   : emits subconscious.bootstrap_failed; listens engine.ready.
+ *                  The run lifecycle is written by the cognition engine under
+ *                  `cognition.subconscious.*` (event_log directly, NOT the bus).
+ *   - init()     : resolves the instance config, sets handler context; on
+ *                  engine.ready, dispatches `igris_schedule_create` if the
+ *                  schedule isn't already present (idempotent).
  *
  * Scheduler bootstrap (FR-106 plan, Concern 3):
  *   The schedules component supports `handler_type: 'mcp-tool'` with
@@ -402,7 +405,7 @@ export function createSubconsciousComponent(): BrainComponent {
       // default + fallback order). These drive the live LLM run path
       // (`igris_subconscious_run` → runSubconscious → the cognition engine). The
       // FR-108 verifier wiring is GONE (the rule path it served is no longer
-      // live; the detector files stay uncalled until M4).
+      // live; the detector files were deleted in FR-118 M4b).
       const subconsciousConfig = resolveSubconsciousConfig();
       const globalConfig = resolveLlmExtractorGlobalConfig();
       setHandlerContext({

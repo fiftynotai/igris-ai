@@ -4,6 +4,22 @@
   "subconscious": {
     "enabled": false
   },
+  "llm_extractor": {
+    "harness": "claude",
+    "fallback_order": ["claude", "codex", "gemini"]
+  },
+  "cognition": {
+    "perception": {
+      "enabled": true
+    },
+    "subconscious": {
+      "enabled": false,
+      "llm_timeout_ms": 300000,
+      "llm_daily_budget": 8,
+      "min_digest_bytes": 10240,
+      "harness": null
+    }
+  },
   "cli_targets": {{CLI_TARGETS_JSON}},
   "remote_brain": {{REMOTE_BRAIN_JSON}}
 }

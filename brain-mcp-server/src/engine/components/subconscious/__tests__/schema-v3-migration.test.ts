@@ -29,6 +29,15 @@ vi.mock('../../../../db.js', () => ({ getDb: vi.fn() }));
 const V1 = subconsciousMigrations.find((m) => m.version === 1)!;
 const V2 = subconsciousMigrations.find((m) => m.version === 2)!;
 const V3 = subconsciousMigrations.find((m) => m.version === 3)!;
+const V4 = subconsciousMigrations.find((m) => m.version === 4)!;
+
+function tableExists(db: Database.Database, name: string): boolean {
+  return (
+    db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+      .all(name).length > 0
+  );
+}
 
 /** Apply ONLY v1 + v2 (the pre-FR-118 schema). */
 function applyPreV3(db: Database.Database): void {
@@ -167,5 +176,77 @@ describe('subconscious schema v3 rebuild (FR-118 M2)', () => {
     expect(() =>
       db.prepare(`INSERT INTO suggestions (source_module, title, status) VALUES ('k','t','weird')`).run(),
     ).toThrow(/CHECK constraint/i);
+  });
+});
+
+describe('subconscious schema v4 drop (FR-118 M4b)', () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  /** Apply the full pre-v4 chain (v1 → v2 → v3). */
+  function applyThroughV3(db: Database.Database): void {
+    db.exec(V1.sql);
+    db.exec(V2.sql);
+    db.exec(V3.sql);
+  }
+
+  it('drops pattern_observations while leaving suggestions + dismissed_patterns intact', () => {
+    applyThroughV3(db);
+    // Sanity: the table the drop targets is present after v2.
+    expect(tableExists(db, 'pattern_observations')).toBe(true);
+
+    // Seed a row in each of the two tables that MUST survive the drop.
+    db.prepare(
+      `INSERT INTO suggestions (source_module, project_slug, title, evidence, priority, status)
+       VALUES ('scope_drift', 'p1', 'survives the drop', '{"k":1}', 'high', 'pending')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO dismissed_patterns
+         (source_module, project_slug, evidence_signature, dismiss_count, last_dismissed_at, reasons)
+       VALUES ('stalled', 'p1', 'brief:BR-1', 2, datetime('now'), '["noise"]')`,
+    ).run();
+
+    // Apply v4 (the drop).
+    db.exec(V4.sql);
+
+    // pattern_observations is gone.
+    expect(tableExists(db, 'pattern_observations')).toBe(false);
+
+    // suggestions + dismissed_patterns are untouched (table present + row intact).
+    expect(tableExists(db, 'suggestions')).toBe(true);
+    expect(tableExists(db, 'dismissed_patterns')).toBe(true);
+
+    const sug = db
+      .prepare(`SELECT title, priority, status FROM suggestions WHERE source_module = 'scope_drift'`)
+      .get() as { title: string; priority: string; status: string };
+    expect(sug.title).toBe('survives the drop');
+    expect(sug.priority).toBe('high');
+    expect(sug.status).toBe('pending');
+
+    const dp = db
+      .prepare(`SELECT dismiss_count, reasons FROM dismissed_patterns WHERE evidence_signature = 'brief:BR-1'`)
+      .get() as { dismiss_count: number; reasons: string };
+    expect(dp.dismiss_count).toBe(2);
+    expect(JSON.parse(dp.reasons)).toEqual(['noise']);
+  });
+
+  it('is idempotent on a brain that never applied v2 (table already absent)', () => {
+    // v1 + v3 only — never created pattern_observations.
+    db.exec(V1.sql);
+    db.exec(V3.sql);
+    expect(tableExists(db, 'pattern_observations')).toBe(false);
+
+    // DROP TABLE IF EXISTS must NOT throw on the absent table.
+    expect(() => db.exec(V4.sql)).not.toThrow();
+    expect(tableExists(db, 'pattern_observations')).toBe(false);
+    // suggestions still present.
+    expect(tableExists(db, 'suggestions')).toBe(true);
   });
 });

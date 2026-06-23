@@ -159,6 +159,38 @@ describe("init — fresh install via --from-source", () => {
     expect(cfg.remote_brain).toBe(null);
   });
 
+  it("config.json renders the FR-118 llm_extractor + cognition.{perception,subconscious} sections", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    await runInit({ fromSource: sourceRepo, cliVersion: "9.9.9", yes: true });
+    const cfg = JSON.parse(
+      readFileSync(join(brainRoot, "config.json"), "utf-8"),
+    ) as {
+      subconscious: { enabled: boolean };
+      llm_extractor: { harness: string; fallback_order: string[] };
+      cognition: {
+        perception: { enabled: boolean };
+        subconscious: {
+          enabled: boolean;
+          llm_timeout_ms: number;
+          llm_daily_budget: number;
+          min_digest_bytes: number;
+          harness: string | null;
+        };
+      };
+    };
+    // Legacy top-level key preserved + grep-able (MAINTAINING.md:67) — the
+    // subconscious resolver still reads it as a fallback.
+    expect(cfg.subconscious.enabled).toBe(false);
+    // Global llm_extractor harness default + fallback order.
+    expect(cfg.llm_extractor.harness).toBe("claude");
+    expect(cfg.llm_extractor.fallback_order).toEqual(["claude", "codex", "gemini"]);
+    // cognition.subconscious mirrors the resolver's pick() keys; stays disabled.
+    expect(cfg.cognition.subconscious.enabled).toBe(false);
+    expect(cfg.cognition.subconscious.llm_daily_budget).toBe(8);
+    expect(cfg.cognition.subconscious.harness).toBe(null);
+    expect(cfg.cognition.perception.enabled).toBe(true);
+  });
+
   it("--skip-remote sets config.remote_brain to null", async () => {
     const { runInit } = await import("../verbs/init.js");
     await runInit({ fromSource: sourceRepo, skipRemote: true });

@@ -42,18 +42,18 @@ export interface ReadOnlyDb {
  * FR-118 M2 OPENED this type from the closed `'stalled' | 'conflict' | 'gap' |
  * 'pattern'` enum to a free-form `string`. The subconscious is now an LLM
  * extractor that emits OPEN-typed suggestions (`type_inferred=1`) — the model
- * names the kind, not a fixed detector set. The legacy rule detectors still
- * exist (uncalled until M4) and emit the four legacy values, which remain
- * valid strings; the schema CHECK constraint that pinned them was dropped in
- * the v3 table-rebuild. Readers (`/scan`, `/awaken`) render the string
- * verbatim, so an open value is non-breaking.
+ * names the kind, not a fixed detector set. FR-118 M4b DELETED the rule
+ * detectors; the four legacy values remain valid strings (the schema CHECK that
+ * pinned them was dropped in the v3 table-rebuild), so historical rows that
+ * carry them still list/dismiss normally. Readers (`/scan`, `/awaken`) render
+ * the string verbatim, so an open value is non-breaking.
  *
- * The four legacy names are exported as `LEGACY_SOURCE_MODULES` for the
- * rule-detector code paths + tests that still reference them concretely.
+ * The four legacy names are kept as `LEGACY_SOURCE_MODULES` — used as the
+ * `igris_suggestion_list` schema `enum` HINT and to recognise pre-FR-118 rows.
  */
 export type SuggestionSourceModule = string;
 
-/** The four legacy rule-detector source modules (uncalled in the live path until M4). */
+/** The four legacy rule-detector source modules (the rule engine was deleted in M4b; these label pre-FR-118 rows). */
 export const LEGACY_SOURCE_MODULES = [
   'stalled',
   'conflict',
@@ -61,7 +61,7 @@ export const LEGACY_SOURCE_MODULES = [
   'pattern',
 ] as const;
 
-/** The legacy rule-detector union (still emitted by the uncalled detector tests). */
+/** The legacy rule-detector union (labels historical rows; the detectors that emitted them are gone). */
 export type LegacySourceModule = (typeof LEGACY_SOURCE_MODULES)[number];
 
 /** Lifecycle states for a suggestion row. */

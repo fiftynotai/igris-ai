@@ -292,15 +292,72 @@ If `goals_upcoming[]` is empty, render nothing — no "No goals" line. Token bud
 
 ### 4.8. Subconscious Suggestions (FR-106)
 
-> **TD-102 (V7):** This entire section is gated behind the `subconscious.enabled`
-> config flag, which defaults to `false` for V7. The rule-based engine had a
-> 2% true-positive rate; the redesign is tracked under FR-118 (V7.1 headline).
-> Re-enable is just a flag flip — no schedule re-bootstrap needed.
+> **TD-102 / FR-118 (V7.1):** This entire section is gated behind the
+> `subconscious.enabled` config flag, which defaults to `false`. The old
+> rule-based engine had a 2% true-positive rate; FR-118 SHIPPED the redesign —
+> the subconscious is now a cognition instance (digest → isolated LLM call →
+> open-typed suggestions), and the rule detectors were deleted. Re-enable is
+> just a flag flip — no schedule re-bootstrap needed.
 
 Read `~/.igris/config.json` and check `subconscious.enabled`. If the key is
 absent, treat as `false`. If `false`, skip this section silently — render
-nothing, do not call any suggestion MCP tools, do not surface a "disabled"
-notice. Resume reading at §4.9.
+nothing (no suggestion MCP tools, no failure WARNING, no "disabled" notice).
+Resume reading at §4.9.
+
+#### Pre-step (FR-118): subconscious failure WARNING
+
+Mirroring §4.9's perception failure pre-step. Before rendering the pending
+suggestions, query the latest subconscious run so a recent LLM-run failure
+surfaces prominently. The engine writes its lifecycle to `event_log` directly
+under the `cognition.subconscious` component (NOT the legacy `subconscious.*`
+bus events). Read the local DB via `sqlite3` (same TD-080 rationale: the local
+DB is the merged superset post-§3.6 pull; the `igris_event_log` MCP routes to
+the remote and would miss this machine's local-only runs). The subconscious
+runs whole-brain (no per-project slug), so this query is NOT slug-scoped:
+
+```bash
+command -v sqlite3 >/dev/null 2>&1 || return 0  # skip WARNING silently if absent
+sqlite3 "$HOME/.igris/memory/knowledge.db" \
+  "SELECT created_at, event_name, json_extract(payload, '\$.reason') AS reason
+   FROM event_log
+   WHERE component = 'cognition.subconscious'
+   ORDER BY created_at DESC LIMIT 1;" 2>/dev/null || true
+```
+
+If the latest row's `event_name` is `'cognition.subconscious.run_failed'` AND no
+later `'cognition.subconscious.run_succeeded'` row exists (defensive follow-up
+to confirm the failure has not self-recovered), prepend a single WARNING block.
+The "no later success" check (substitute the failed row's `created_at`):
+
+```bash
+command -v sqlite3 >/dev/null 2>&1 || return 0
+sqlite3 "$HOME/.igris/memory/knowledge.db" \
+  "SELECT COUNT(*) FROM event_log
+   WHERE component = 'cognition.subconscious'
+     AND event_name = 'cognition.subconscious.run_succeeded'
+     AND created_at > '<failed_row_created_at>';" 2>/dev/null || true
+```
+
+A return of `0` confirms the failure is the latest terminal state.
+
+```
+## Subconscious WARNING
+Latest subconscious run FAILED at 2026-06-24 06:00 (reason: timeout).
+No new suggestions were produced on the last sweep.
+Investigate: igris_event_log component='cognition.subconscious' limit=5
+```
+
+Suppression rules (do NOT render the WARNING when):
+- Latest event is `'cognition.subconscious.run_skipped'` — skipping is normal
+  (disabled gate, cold-start grace, daily budget, min-digest-bytes).
+- Latest event is `'cognition.subconscious.run_started'` with no terminal event
+  yet (in-flight run; /scan surfaces the stuck-RUNNING case).
+- A `'cognition.subconscious.run_succeeded'` row exists with `created_at` newer
+  than the failed row.
+
+If `sqlite3` is unavailable, the DB is missing, or the query errors, skip the
+WARNING silently (`2>/dev/null || true` absorbs all three). Token budget: ~80
+tokens.
 
 If `igris-brain` MCP is available, call `igris_suggestion_list` with:
 - `status` = `'pending'`
