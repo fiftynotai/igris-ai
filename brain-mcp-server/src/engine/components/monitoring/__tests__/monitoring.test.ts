@@ -402,10 +402,15 @@ describe('Monitoring Component', () => {
 
     it('events() declares 38 listened events', () => {
       // 34 base + 4 perception lifecycle events added in TD-074
-      // (perception.run_started/succeeded/failed/skipped).
+      // (perception.run_started/succeeded/failed/skipped). FR-118 M2 removed 6
+      // dead subconscious bus listeners (run_start/run_complete/
+      // suggestion_emitted/suggestion_suppressed/suggestion_verified/
+      // suggestion_rejected_by_verifier) — the subconscious now writes
+      // `cognition.subconscious.*` directly to event_log, NOT via the bus. Only
+      // `subconscious.bootstrap_failed` still rides the bus. 38 - 6 = 32.
       const comp = createMonitoringComponent();
       const { listens } = comp.events();
-      expect(listens).toHaveLength(38);
+      expect(listens).toHaveLength(32);
     });
 
     it('events() declares 0 emitted events', () => {

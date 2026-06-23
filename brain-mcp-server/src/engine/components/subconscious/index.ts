@@ -47,6 +47,7 @@ import {
   handleSuggestionList,
   handleSuggestionDismiss,
   handleSuggestionActed,
+  handleSuggestionApplyAction,
   handleSubconsciousRun,
   setHandlerContext,
   VALID_PRIORITIES,
@@ -341,6 +342,27 @@ export function createSubconsciousComponent(): BrainComponent {
             },
           },
           handler: async (args) => handleSubconsciousRun(args),
+        },
+
+        // -----------------------------------------------------------------
+        // igris_suggestion_apply_action (FR-118 M3)
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_suggestion_apply_action',
+          description:
+            "OPERATOR-INVOKED: apply the suggested_action of a reviewed suggestion (one-click apply). NEVER auto-fires — creating a suggestion does not execute its action. Validates the target resolves, dispatches the action kind (tick_ac / dismiss_existing / create_brief / flag_for_review / add_edge; an unknown kind falls back to flag_for_review), and marks the suggestion 'acted' on success / leaves it 'pending' on failure. create_brief DRAFTS a brief for approval — it does NOT create one (the operator creates it via /register).",
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              id: {
+                type: 'integer',
+                description: 'Suggestion id (positive integer) to apply the action of',
+              },
+            },
+            required: ['id'],
+          },
+          handler: (args) => handleSuggestionApplyAction(args),
         },
       ];
     },

@@ -36,6 +36,7 @@ import {
 } from './types.js';
 import { type ConflictVerifier } from './verifier.js';
 import { handleEdgeCreate } from '../edges/handlers.js';
+import { applyAction } from './actions/index.js';
 import type { LlmExtractorGlobalConfig } from '../cognition/engine/index.js';
 
 // ---------------------------------------------------------------------------
@@ -517,5 +518,39 @@ export async function handleSubconsciousRun(args: Record<string, unknown>): Prom
     );
   } catch (err) {
     return errorResult(`Subconscious run failed: ${errMsg(err)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// igris_suggestion_apply_action (FR-118 M3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply the `suggested_action` of a reviewed suggestion (FR-118 M3).
+ *
+ * OPERATOR-INVOKED: the operator one-clicks to apply a suggestion they have
+ * reviewed. This NEVER auto-fires — creating a suggestion does not execute its
+ * action. Delegates to the apply layer (`actions/index.ts:applyAction`), which
+ * validates the target resolves, dispatches the action kind (unknown kind →
+ * `flag_for_review` fallback, never a throw), and marks the suggestion `acted`
+ * on success / leaves it `pending` on failure.
+ *
+ * The most consequential kind, `create_brief`, DRAFTS only — it returns a brief
+ * draft for operator approval and does NOT insert anything (the operator
+ * creates the real brief via /register).
+ */
+export function handleSuggestionApplyAction(args: Record<string, unknown>): ToolResult {
+  const idRaw = args.id;
+  if (idRaw === undefined || idRaw === null) {
+    return errorResult('Missing required field: id');
+  }
+  const id = Number(idRaw);
+  if (!Number.isInteger(id) || id <= 0) {
+    return errorResult('id must be a positive integer');
+  }
+  try {
+    return applyAction(getDb(), id);
+  } catch (err) {
+    return errorResult(`apply_action failed: ${errMsg(err)}`);
   }
 }
