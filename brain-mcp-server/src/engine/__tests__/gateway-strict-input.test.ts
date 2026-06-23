@@ -38,8 +38,7 @@ import { createSyncComponent } from '../components/sync/index.js';
 import { createCacheComponent } from '../components/cache/index.js';
 import { createSchedulesComponent } from '../components/schedules/index.js';
 import { createCoordinationComponent } from '../components/coordination/index.js';
-import { createSubconsciousComponent } from '../components/subconscious/index.js';
-import { createPerceptionComponent } from '../components/perception/index.js';
+import { createCognitionComponent } from '../components/cognition/index.js';
 import { createMonitoringComponent } from '../components/monitoring/index.js';
 import { createContextComponent } from '../components/context/index.js';
 import { createCatalogComponent } from '../components/catalog/index.js';
@@ -178,8 +177,10 @@ const COMPONENT_FACTORIES = [
   createCacheComponent,
   createSchedulesComponent,
   createCoordinationComponent,
-  createSubconsciousComponent,
-  createPerceptionComponent,
+  // FR-118 M4a: perception + subconscious collapsed into one cognition factory.
+  // The strict-input contract test is parameterised over listTools(), so the
+  // merged factory's tools auto-cover (no per-tool edit needed).
+  createCognitionComponent,
   createMonitoringComponent,
   createCatalogComponent,
 ];

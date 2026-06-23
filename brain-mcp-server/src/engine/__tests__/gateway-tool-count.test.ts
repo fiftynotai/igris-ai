@@ -45,8 +45,7 @@ import { createSyncComponent } from '../components/sync/index.js';
 import { createCacheComponent } from '../components/cache/index.js';
 import { createSchedulesComponent } from '../components/schedules/index.js';
 import { createCoordinationComponent } from '../components/coordination/index.js';
-import { createSubconsciousComponent } from '../components/subconscious/index.js';
-import { createPerceptionComponent } from '../components/perception/index.js';
+import { createCognitionComponent } from '../components/cognition/index.js';
 import { createMonitoringComponent } from '../components/monitoring/index.js';
 import { createContextComponent } from '../components/context/index.js';
 import { createCatalogComponent } from '../components/catalog/index.js';
@@ -67,8 +66,10 @@ const COMPONENT_FACTORIES = [
   createCacheComponent,
   createSchedulesComponent,
   createCoordinationComponent,
-  createSubconsciousComponent,
-  createPerceptionComponent,
+  // FR-118 M4a: perception + subconscious collapsed into one cognition factory.
+  // The registered tool SET is unchanged (8 perception + 5 subconscious = 13
+  // tools, one factory), so the total tool count is unchanged at 126.
+  createCognitionComponent,
   createMonitoringComponent,
   createCatalogComponent,
 ];

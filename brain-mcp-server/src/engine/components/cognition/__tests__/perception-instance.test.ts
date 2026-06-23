@@ -31,14 +31,28 @@ vi.mock('../../../../utils/vector-search.js', () => ({
 }));
 
 import {
-  createPerceptionInstance,
+  createPerceptionInstance as createPerceptionInstanceBundle,
   perceptionInstance,
   perceptionInstanceConfig,
   type PerceptionContext,
 } from '../extractors/perception.js';
+import type { CognitionInstance } from '../types.js';
+import type { PerceptionExtractorConfig, PerceptionCandidate } from '../../perception/types.js';
 import { createCognitionRegistry, discoverInstances } from '../registry.js';
 import { DEFAULT_PERCEPTION_CONFIG } from '../../perception/types.js';
 import { LLM_CONFIDENCE_CAP } from '../../perception/extractors/llm_via_claude_code.js';
+
+// FR-118 M4a: createPerceptionInstance now returns a {instance, takeOutcomes,
+// takeSuppressed} bundle (the instance owns persistence + dedup; the
+// accumulator surfaces inserted/deduped counts to runPerception). These slot-
+// wiring tests only need the CognitionInstance — unwrap `.instance`. This is a
+// STRUCTURAL adaptation (how the instance is constructed), not a behavioral
+// assertion change.
+function createPerceptionInstance(
+  config?: PerceptionExtractorConfig,
+): CognitionInstance<PerceptionContext, PerceptionCandidate> {
+  return createPerceptionInstanceBundle(config).instance;
+}
 
 function makeTestDb(): Database.Database {
   const db = new Database(':memory:');

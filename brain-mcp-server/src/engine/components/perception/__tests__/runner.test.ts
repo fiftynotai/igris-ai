@@ -536,8 +536,15 @@ describe('runPerception', () => {
           })),
         };
       });
-      // Re-import so the runner picks up the stubbed module.
-      const { runPerception: runPerceptionStubbed } = await import('../runner.js?t=r1');
+      // FR-118 M4a: the cosine dedup pre-filter moved into the perception
+      // INSTANCE's persistCandidate (the runner delegates persistence). The
+      // instance module imports ../dedup.js, so the doMock must reach it —
+      // reset the module graph so the re-imported runner re-evaluates the
+      // instance (and its dedup import) under the stub. This is a STRUCTURAL
+      // change (how the stub is injected); the result/event assertions below
+      // are unchanged.
+      vi.resetModules();
+      const { runPerception: runPerceptionStubbed } = await import('../runner.js');
 
       const events: TranscriptEvent[] = [
         { role: 'user', content: 'X'.repeat(2000), timestamp: '' },
@@ -588,7 +595,8 @@ describe('runPerception', () => {
           findNearestMatch: vi.fn(async () => null),
         };
       });
-      const { runPerception: runPerceptionStubbed } = await import('../runner.js?t=r2');
+      vi.resetModules();
+      const { runPerception: runPerceptionStubbed } = await import('../runner.js');
 
       const events: TranscriptEvent[] = [
         { role: 'user', content: 'X'.repeat(2000), timestamp: '' },
@@ -625,7 +633,8 @@ describe('runPerception', () => {
           findNearestMatch: findNearestMatchStub,
         };
       });
-      const { runPerception: runPerceptionStubbed } = await import('../runner.js?t=r3');
+      vi.resetModules();
+      const { runPerception: runPerceptionStubbed } = await import('../runner.js');
 
       const events: TranscriptEvent[] = [
         { role: 'user', content: 'X'.repeat(2000), timestamp: '' },
@@ -675,7 +684,10 @@ describe('runPerception', () => {
           })),
         };
       });
-      const { runPerception: runPerceptionStubbed } = await import('../runner.js?t=r4');
+      // FR-118 M4a: reset modules so the doMock reaches the instance's dedup
+      // import (cosine pre-filter now lives in the instance). Structural only.
+      vi.resetModules();
+      const { runPerception: runPerceptionStubbed } = await import('../runner.js');
 
       const events: TranscriptEvent[] = [
         { role: 'user', content: 'X'.repeat(2000), timestamp: '' },
@@ -728,7 +740,10 @@ describe('runPerception', () => {
           ),
         };
       });
-      const { runPerception: runPerceptionStubbed } = await import('../runner.js?t=r5');
+      // FR-118 M4a: reset modules so the doMock reaches the instance's dedup
+      // import (cosine pre-filter now lives in the instance). Structural only.
+      vi.resetModules();
+      const { runPerception: runPerceptionStubbed } = await import('../runner.js');
 
       const events: TranscriptEvent[] = [
         { role: 'user', content: 'X'.repeat(2000), timestamp: '' },
@@ -769,7 +784,8 @@ describe('runPerception', () => {
           findNearestMatch: vi.fn(async () => null),
         };
       });
-      const { runPerception: runPerceptionStubbed } = await import('../runner.js?t=r6');
+      vi.resetModules();
+      const { runPerception: runPerceptionStubbed } = await import('../runner.js');
 
       const events: TranscriptEvent[] = [
         { role: 'user', content: 'X'.repeat(2000), timestamp: '' },
