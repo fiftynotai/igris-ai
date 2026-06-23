@@ -23,7 +23,7 @@ If igris_tree.json is missing:
 architect, forger, sentinel, warden, mender, seeker, sage
 
 ## Available Skills
-/awaken, /hunt, /scan, /register, /archive, /rest, /digivolve, /team,
+/awaken, /hunt, /scan, /register, /archive, /rest, /team,
 /standardize, /document, /release, /audit, /ideate, /migrate-analyze,
 /projects, /portfolio, /dashboard, /sync, /fifty-kit, /ui-design, /visualize,
 /onboard-harness, /harvest, /promote, /reuse

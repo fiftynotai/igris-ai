@@ -256,7 +256,7 @@ Each agent reads `~/.igris/core/igris_tree.json` to determine which context file
 | **Documentation & quality** | `/document`, `/audit`, `/standardize` |
 | **Knowledge & reuse** | `/harvest`, `/promote`, `/reuse` |
 | **Collaboration & visibility** | `/team`, `/dashboard`, `/portfolio` |
-| **Utilities** | `/sync`, `/release`, `/digivolve`, `/projects`, `/ideate` |
+| **Utilities** | `/sync`, `/release`, `/projects`, `/ideate` |
 | **Brand & design** | `/fifty-kit`, `/ui-design`, `/visualize` |
 | **Migrations & harness** | `/migrate-analyze`, `/onboard-harness` |
 

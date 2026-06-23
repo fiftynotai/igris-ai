@@ -280,7 +280,6 @@ This archives the current session to `~/.igris/projects/{project}/session/archiv
 | `/register` | Create new brief |
 | `/hunt` | Implement brief (full workflow) |
 | `/archive` | Archive completed brief |
-| `/digivolve` | Agent management |
 | `/document` | Documentation workflow |
 | `/standardize` | Generate coding guidelines |
 | `/release` | Release preparation |

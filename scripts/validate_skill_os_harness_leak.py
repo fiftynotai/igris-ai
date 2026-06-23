@@ -55,10 +55,6 @@ Allowlist (explicit, commented constant — L-448):
     Claude-Code-native capability, so /team is intentionally Claude-only — NOT
     a leak to remove (FR-202 M6). Permanently allowlisted by design; this is a
     declared-single-harness exemption, not a deferral awaiting TD-247.
-  - core/skills/digivolve/SKILL.md — hardcodes `.claude/agents/` for agent-file
-    CRUD. GENUINE but non-trivial (the correct fix routes through the agents
-    adapter verbs); deferred to its own brief (TD-248 L4). Allowlisted so the
-    gate lands; that brief removes both the leak and this entry.
 
 Discovers:
   - repo `core/skills/*/SKILL.md` + `core/os/*.md` + `core/prompts/*.md`.
@@ -105,7 +101,6 @@ ALLOWLIST_SUFFIXES = (
     "core/os/surfaces-detail.md",             # documents the adapter boundary (OK3)
     "core/prompts/igris_os.md",               # FR-187-doomed monolith; L1 -> TD-247
     "core/skills/team/SKILL.md",              # declared single-harness: Claude-native Agent-Teams (FR-202 M6) — intentional, not a leak
-    "core/skills/digivolve/SKILL.md",         # agent-CRUD .claude/ path -> L4 brief
 )
 
 # --- Leak token classes (the known high-confidence set) ----------------------

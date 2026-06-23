@@ -103,9 +103,23 @@ Read `~/.igris/projects/{project}/session/BLOCKERS.md`:
 - Count active blockers (not in Resolved section)
 - Flag critical blockers
 
-### 4. Agent Count
+### 4. Agent Roster
 
-Read the agent roster from `~/.igris/core/igris_tree.json` (`agents` map) — or, as a fallback, count the canonical agent definitions in `~/.igris/core/agents/*.md`. The roster is discovered from these harness-agnostic sources; the per-harness agent directory is adapter-owned, so never count it directly.
+Discover the agent roster from the harness-agnostic canonical sources — never hand-list the agents, and never count the per-harness agent directory (it is adapter-owned, so reading it would couple the report to one harness's projection).
+
+Two discovered sources, used together:
+
+1. **Roster membership** — the `agents` map in `~/.igris/core/igris_tree.json` is the live set of registered agents (the same source the report has always used for the agent *count*). It is maintained by `igris add agent` / `igris remove agent`.
+2. **Role + tier per agent** — `~/.igris/core/agents/manifest.yaml` carries a `tier` and a `role` for each agent under its `agents:` list. This is the canonical agent registry; render `role`/`tier` straight from it (do NOT infer or invent them).
+
+Build the roster by reading the `manifest.yaml` `agents:` entries (each has `name`, `tier`, `role`) and rendering one row per agent. The tree `agents` map confirms membership/count; the manifest supplies the role + tier columns. Order rows by ascending `tier`, then by manifest order within a tier.
+
+Do NOT add a "status", "state", or "invocation" column — there is no per-agent status field anywhere in the system (a disabled/enabled marker is not read by the compiler, drift engine, or delegation), so a status column would be fabricated. The roster shows only what is genuinely discoverable: agent → role → tier.
+
+**Fallbacks (degrade gracefully, in order):**
+- If `manifest.yaml` is unreadable but the tree `agents` map exists, render a name-only roster (one column) from the map plus the total count — omit the role/tier columns rather than invent them.
+- If neither source exists, glob `~/.igris/core/agents/*.md` and render a name-only roster from the filenames, or render the `### Agents` count line alone.
+- This section must NEVER error or block `/scan`.
 
 ### 5. Git Status
 
@@ -152,6 +166,18 @@ Format as:
 
 ### Agents
 X agents registered (Y skills available)
+
+| Agent | Role | Tier |
+|-------|------|------|
+| architect | Implementation planning | 1 |
+| forger | Code implementation | 1 |
+| sentinel | Test execution | 1 |
+| warden | Code review + auditing | 1 |
+| mender | Error recovery | 3 |
+| seeker | Codebase research | 4 |
+| sage | Flutter MVVM + Actions architecture | 5 |
+
+(The table is DISCOVERED from `core/agents/manifest.yaml` per §4 — the rows above are an illustration of the current registry, not a hand-maintained list. If the manifest is unreadable, render a name-only roster from the `igris_tree.json` `agents` map; if neither exists, render only the count line above.)
 
 ### Blockers
 [None | X active (Y critical)]

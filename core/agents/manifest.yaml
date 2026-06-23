@@ -135,7 +135,7 @@ agents:
       - "find"
       - "seeker"
 
-  # Tier 5: Custom (Dynamic via Digivolve)
+  # Tier 5: Custom (user-defined; via 'igris add agent')
   # User-defined agents registered here
 
   - name: sage
