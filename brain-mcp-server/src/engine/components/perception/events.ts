@@ -23,7 +23,7 @@
  */
 
 import type Database from 'better-sqlite3';
-import * as os from 'node:os';
+import { insertEventLogRow } from '../cognition/lifecycle.js';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -84,35 +84,28 @@ export type RunSkippedReason =
  * Insert a single perception lifecycle row into `event_log`. Mirrors the
  * column shape `monitoring.onEventReceived` writes for bus-driven events.
  *
+ * FR-118 M1: this is now a thin WRAPPER over the cognition lifecycle's shared
+ * `insertEventLogRow` — the INSERT logic + the defensive try/catch are
+ * single-sourced in `cognition/lifecycle.ts`. Perception keeps its LEGACY
+ * `component='perception'` + `perception.run_*` event names (back-compat:
+ * byte-identical observable rows — every `/scan`, `/awaken`, dashboard, and
+ * test read path filters on `component='perception'`). The cognition
+ * subsystem's per-instance namespace (`cognition.<id>.*`) is the NEW naming
+ * used by `writeExtractorEvent`; perception's legacy surface is preserved here
+ * so M1 is a zero-behavior-change wiring (the de-risk gate).
+ *
  * `payload.project` is hoisted into the dedicated `project_slug` column so
  * the existing `igris_event_log` MCP filter and the `/scan` query path
  * both work without parsing the JSON blob.
  *
  * Failure mode: any thrown error is caught and surfaced as a single stderr
- * line. The pipeline continues — perception observability must never gate
- * the actual extraction work.
+ * line under the `[perception.events]` tag. The pipeline continues —
+ * perception observability must never gate the actual extraction work.
  */
 export function writePerceptionEvent(
   db: Database.Database,
   name: PerceptionEventName,
   payload: Record<string, unknown>,
 ): void {
-  try {
-    const projectSlug =
-      typeof payload.project === 'string' ? payload.project : null;
-    db.prepare(
-      `INSERT INTO event_log
-         (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
-       VALUES (?, 'perception', ?, ?, ?, NULL, datetime('now'))`,
-    ).run(name, JSON.stringify(payload), os.hostname(), projectSlug);
-  } catch (err) {
-    // Defensive fallback. Format matches the `[perception_extract_cli]`
-    // log lines the wrapper script captures, so the failure is grep-able
-    // even though the structured event was lost.
-    process.stderr.write(
-      `[perception.events] write failed for ${name}: ${
-        err instanceof Error ? err.message : String(err)
-      } payload=${JSON.stringify(payload)}\n`,
-    );
-  }
+  insertEventLogRow(db, name, 'perception', payload, '[perception.events]');
 }

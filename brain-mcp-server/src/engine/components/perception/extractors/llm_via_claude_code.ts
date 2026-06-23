@@ -1,35 +1,42 @@
 /**
- * Brain Engine v7.0 — Perception LLM Extractor (FR-109 Phase 2)
+ * Brain Engine v7.1 — Perception LLM extractor config + pure helpers (FR-118 M1).
  *
- * Headless Claude extractor for the perception channel — the sole extractor
- * in the LLM-only pipeline (TD-066). Mirrors FR-108's `verifier.ts` pattern:
- * spawn `claude -p`, stream the prompt to stdin, parse JSON stdout, fall
- * back defensively on every error path.
+ * Post-FR-118 this file is the perception INSTANCE's pure-helper home: the
+ * prompt builders, the JSON validator, the confidence cap, and the transcript
+ * sanitiser — everything the cognition perception instance
+ * (`cognition/extractors/perception.ts`) composes into its slots.
  *
- * VPS-safe: when `claude` CLI is absent (cached probe at component init,
- * reused from FR-108's `isClaudeCliAvailable`), the factory returns the
- * `noopLlmExtractor` which yields an empty array. The runner's cost gate
- * is bytes-only (skips invocation when the transcript falls below the
- * configured floor) and is bypassable via `force_llm`.
+ * The OLD inline spawn loop (`makeClaudeLlmExtractor` + the `claude -p` child /
+ * EPIPE / timeout machinery) was DELETED in FR-118 M1 — the shared
+ * brain-isolated harness backend (`cognition/backend`) supersedes it. The CLI
+ * probe was re-pointed from `subconscious/verifier.ts:isClaudeCliAvailable` to
+ * `cognition/backend/env.ts:isHarnessCliAvailable` so M4 can delete
+ * `verifier.ts` without dangling perception (the CRITICAL ordering, FR-118 §6).
  *
- * Output contract: array of PerceptionCandidate. The LLM is asked to
- * self-rate confidence; we cap to [0.0, 0.85] post-parse so an over-
- * confident model cannot outrank a human-reviewed approval.
+ * `selectLlmExtractor` still returns an `LlmExtractor` for `runPerception` (the
+ * behavioral ORACLE) — but it now runs the real call through the cognition
+ * backend (`runBackend`) instead of the deleted inline spawn loop. Perception's
+ * default harness stays `claude` (back-compat — no behavior change).
  *
- * Prompt-injection mitigations (4 layers):
- *   1. `--system-prompt` flag delivers the extractor instructions on a separate
- *      channel from user content.
- *   2. Transcript wrapped in `<transcript>...</transcript>` delimiters.
- *   3. Control characters stripped via `sanitizeTranscript`.
- *   4. Output is JSON-only (validated, never executed); approval is
- *      gated by human review.
+ * Output contract (unchanged): array of PerceptionCandidate. The LLM self-rates
+ * confidence; we cap to [0.0, 0.85] post-parse (LLM_CONFIDENCE_CAP) so an
+ * over-confident model cannot outrank a human-reviewed approval.
+ *
+ * Prompt-injection mitigations (unchanged, now belt-and-braces with the engine
+ * wrap): `--system-prompt` channel separation + `<transcript>` delimiters +
+ * control-char sanitisation + JSON-only validated output.
  *
  * @module engine/components/perception/extractors/llm_via_claude_code
  * @author fifty.dev
  */
 
-import { spawn } from 'node:child_process';
-import { isClaudeCliAvailable } from '../../subconscious/verifier.js';
+import {
+  isHarnessCliAvailable,
+  resolveHarness,
+  type LlmExtractorGlobalConfig,
+} from '../../cognition/backend/env.js';
+import { runBackend } from '../../cognition/backend/index.js';
+import type { ExtractorHarness, ExtractorPrompt } from '../../cognition/types.js';
 import type {
   PerceptionCandidate,
   PerceptionCategory,
@@ -50,13 +57,11 @@ export interface LlmExtractorContext {
 }
 
 /**
- * Async signature — the real one shells out to `claude -p`.
+ * Async signature — the real one runs through the cognition backend.
  *
- * The optional `log` parameter (TD-074) lets the runner inject a
- * per-call logger that knows how to translate extractor failures into
- * `perception.run_failed` events. The factory's bound logger is used
- * when the runner does not pass one (back-compat for direct callers
- * and the noop extractor).
+ * The optional `log` parameter (TD-074) lets the runner inject a per-call
+ * logger that translates extractor failures into `perception.run_failed`
+ * events. The bound logger is used when the runner does not pass one.
  */
 export type LlmExtractor = (
   events: TranscriptEvent[],
@@ -71,17 +76,14 @@ export type LlmExtractor = (
  * The optional `onEvent` callback (TD-074) lets the extractor surface a
  * structured lifecycle event (typically `perception.run_failed`) without
  * holding a DB handle directly. The runner injects a closure that calls
- * `writePerceptionEvent(db, name, payload)`; absence of the callback is
- * safe — the extractor still settles its promise normally.
+ * `writePerceptionEvent(db, name, payload)`.
  */
 export interface ExtractorLogger {
   info: (msg: string) => void;
   warn: (msg: string) => void;
   /**
    * Optional structured event sink. The runner threads this in so the
-   * extractor can record EPIPE / spawn / timeout / non-zero-exit failures
-   * as `perception.run_failed` rows. Keeps the extractor free of DB
-   * dependencies for testability.
+   * extractor can record backend failures as `perception.run_failed` rows.
    */
   onEvent?: (name: PerceptionEventName, payload: Record<string, unknown>) => void;
 }
@@ -93,9 +95,8 @@ const NULL_LOGGER: ExtractorLogger = { info: () => {}, warn: () => {} };
 // ---------------------------------------------------------------------------
 
 /**
- * Default LLM extractor used when the `claude` CLI is absent or
- * `extractor_llm_enabled=false`. Returns an empty array — the runner
- * records `llm_status='skipped:disabled'` or `'skipped:cli_missing'`
+ * Default LLM extractor used when the master flag is off or no harness CLI is
+ * present. Returns an empty array — the runner records the matching skip status
  * and persists nothing.
  */
 export const noopLlmExtractor: LlmExtractor = async () => [];
@@ -138,7 +139,7 @@ interface RawLlmCandidate {
 
 /**
  * Coerce a raw LLM JSON object into a PerceptionCandidate.
- * Returns null when validation fails — the runner silently drops invalid
+ * Returns null when validation fails — the caller silently drops invalid
  * candidates rather than aborting the extraction.
  */
 export function validateAndCoerce(raw: unknown): PerceptionCandidate | null {
@@ -204,7 +205,7 @@ export function sanitizeTranscript(text: string): string {
 
 /**
  * Build the system prompt. Static — does not include user content. Delivered
- * via `--system-prompt` flag to `claude -p` so it never mixes with the transcript.
+ * via `--system-prompt` flag to the harness so it never mixes with the transcript.
  */
 export function buildSystemPrompt(): string {
   return [
@@ -260,12 +261,12 @@ export function buildUserPrompt(events: TranscriptEvent[], ctx: LlmExtractorCont
 // ---------------------------------------------------------------------------
 
 /**
- * Robust extraction of a JSON array from the LLM's stdout.
+ * Robust extraction of a JSON array from the LLM's text blob.
  *
  * Tries (in order):
- *   1. Parse the whole stdout as a JSON array.
+ *   1. Parse the whole blob as a JSON array.
  *   2. Strip Markdown code fences and retry.
- *   3. Treat stdout as an `--output-format json` envelope (`{"result": "..."}`)
+ *   3. Treat the blob as an `--output-format json` envelope (`{"result": "..."}`)
  *      and recurse on the `result` field.
  *
  * On unrecoverable failure: returns `[]` so the runner proceeds without
@@ -311,17 +312,16 @@ function tryParseArray(text: string): unknown[] | null {
 // ---------------------------------------------------------------------------
 
 /**
- * Hard byte cap on the user prompt body sent to `claude -p`.
+ * Hard byte cap on the user prompt body sent to the harness.
  *
- * TD-073: prevents EPIPE crashes from oversize transcripts overflowing
- * `claude -p`'s stdin buffer (the 2026-04-30 incident was a single-line
- * 3.4 MB transcript that closed the model's stdin mid-write). Strategy:
- * **tail-slice on byte boundary** — recent content wins because it is the
- * most likely to be the relevant retrospective material the model needs
- * to reason about. A mid-codepoint slice at the leading edge can produce
- * a few U+FFFD replacement chars; this is acceptable since the LLM
- * tolerates leading-edge garbage and the cap targets logical size, not
- * character cleanliness.
+ * TD-073: prevents EPIPE crashes from oversize transcripts overflowing the
+ * harness stdin buffer (the 2026-04-30 incident was a single-line 3.4 MB
+ * transcript that closed the model's stdin mid-write). Strategy: **tail-slice
+ * on byte boundary** — recent content wins because it is the most likely to be
+ * the relevant retrospective material the model needs to reason about. A
+ * mid-codepoint slice at the leading edge can produce a few U+FFFD replacement
+ * chars; acceptable since the LLM tolerates leading-edge garbage and the cap
+ * targets logical size, not character cleanliness.
  */
 export const DEFAULT_MAX_PROMPT_BYTES = 256 * 1024;
 
@@ -342,11 +342,9 @@ export function capPromptBytes(prompt: string, maxBytes: number): string {
 /**
  * Resolve the effective prompt byte cap from the environment.
  *
- * `IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES`, when set to a positive
- * integer, overrides `DEFAULT_MAX_PROMPT_BYTES`. Anything else
- * (unset, blank, non-numeric, zero, negative) falls back to the
- * default. Operators can raise this without a code change if the
- * default proves too aggressive for a given project's transcripts.
+ * `IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES`, when set to a positive integer,
+ * overrides `DEFAULT_MAX_PROMPT_BYTES`. Anything else (unset, blank,
+ * non-numeric, zero, negative) falls back to the default.
  */
 export function resolveMaxPromptBytes(): number {
   const raw = process.env.IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES;
@@ -357,249 +355,132 @@ export function resolveMaxPromptBytes(): number {
 }
 
 // ---------------------------------------------------------------------------
-// Headless Claude factory
+// Backend-backed extractor (FR-118 M1 — supersedes the inline spawn loop)
 // ---------------------------------------------------------------------------
 
-export interface ClaudeExtractorOptions {
-  /** Hard wall-clock budget. Default 300_000 (300s — perception is heavier than verifier; real transcripts ~2MB). */
+/** Map a cognition backend `fail_reason` onto the perception run_failed reason. */
+function backendFailReasonToPerception(reason: string | undefined): string {
+  switch (reason) {
+    case 'timeout':
+      return 'timeout';
+    case 'non_zero_exit':
+      return 'non_zero_exit';
+    case 'spawn_error':
+      return 'spawn_error';
+    case 'empty_response':
+      // An empty text blob is not a hard failure for perception — the runner
+      // treats "no candidates" as a clean run. But surface it as a parse-ish
+      // signal so the read surface can show the call returned nothing.
+      return 'non_zero_exit';
+    default:
+      return 'unknown';
+  }
+}
+
+export interface BackendExtractorOptions {
+  /** Hard wall-clock budget. Default 300_000 (300s). */
   timeoutMs?: number;
   /** Max candidates the LLM is permitted to emit per call. Default 10. */
   maxCandidates?: number;
-  /**
-   * Maximum bytes of the user prompt piped to `claude -p`. Tail-sliced
-   * on overflow. Default {@link DEFAULT_MAX_PROMPT_BYTES} (256 KB).
-   * Production callers should pass {@link resolveMaxPromptBytes}().
-   */
+  /** Maximum bytes of the user prompt sent to the harness. Default 256 KB. */
   maxPromptBytes?: number;
-  /** Override subprocess command. @internal — tests inject `node` stub. */
-  command?: string;
-  /** Override subprocess argv (BEFORE the `--system-prompt` flag the factory appends). @internal — tests inject. */
-  args?: string[];
+  /** The harness CLI to run (default 'claude' — perception back-compat). */
+  harness?: ExtractorHarness;
   /** Logger for diagnostic warnings (timeout, parse-fail). */
   log?: ExtractorLogger;
 }
 
 /**
- * Build an LLM extractor that shells out to `claude -p`. Streams the user
- * prompt to stdin, reads stdout, parses JSON, validates each candidate.
+ * Build an `LlmExtractor` that runs the extraction through the shared
+ * brain-isolated cognition backend (`runBackend`). This replaces the deleted
+ * inline `claude -p` spawn loop — the backend owns spawn/isolation/timeout/
+ * parse-to-text, and this wrapper owns the perception payload extraction
+ * (`extractJsonArrayReply` + `validateAndCoerce`) and the `run_failed` event
+ * mapping.
  *
- * Failure handling (mirrors `subconscious/verifier.ts:makeClaudeHeadlessVerifier`):
- *   - SIGTERM at `timeoutMs`, hard SIGKILL 5s later.
- *   - Spawn error / non-zero exit → empty array, warn logged.
- *   - Empty / malformed stdout → empty array, warn logged.
- *   - Bad-shape candidates dropped silently.
- *
- * The factory uses `--system-prompt` flag for instructions and wraps user content
- * inside `<transcript>...</transcript>` delimiters so a malicious
- * transcript cannot break out and rewrite the system prompt.
+ * Prompt construction + the TD-073 byte cap are unchanged — the system prompt
+ * goes on the harness's `--system-prompt` channel (built inside the backend's
+ * spawn-map for claude), and the user body is the `<transcript>`-wrapped,
+ * sanitised, byte-capped text.
  */
-export function makeClaudeLlmExtractor(opts: ClaudeExtractorOptions = {}): LlmExtractor {
+export function makeBackendLlmExtractor(opts: BackendExtractorOptions = {}): LlmExtractor {
   const timeoutMs = opts.timeoutMs ?? 300_000;
   const maxCandidates = opts.maxCandidates ?? 10;
   const maxPromptBytes = opts.maxPromptBytes ?? DEFAULT_MAX_PROMPT_BYTES;
-  const command = opts.command ?? 'claude';
-  const baseArgs = opts.args ?? ['-p', '--output-format', 'json'];
+  const harness: ExtractorHarness = opts.harness ?? 'claude';
   const boundLog = opts.log ?? NULL_LOGGER;
 
   return async (events, ctx, perCallLog) => {
     if (events.length === 0) return [];
-
-    // Per-call log overrides the factory-bound log (TD-074). The runner
-    // injects a wrapper that routes onEvent into `writePerceptionEvent`;
-    // direct factory callers without a per-call log still get the bound
-    // logger's `info`/`warn` channels.
     const log: ExtractorLogger = perCallLog ?? boundLog;
 
     const systemPrompt = buildSystemPrompt();
     const userPrompt = buildUserPrompt(events, ctx);
-    // TD-073: cap the prompt body BEFORE spawn so a too-large transcript
-    // cannot saturate `claude -p`'s stdin buffer and provoke EPIPE.
-    const cappedPrompt = capPromptBytes(userPrompt, maxPromptBytes);
-    const promptBytes = Buffer.byteLength(cappedPrompt, 'utf-8');
+    // TD-073: cap the prompt body BEFORE the call so a too-large transcript
+    // cannot saturate the harness stdin buffer.
+    const cappedUser = capPromptBytes(userPrompt, maxPromptBytes);
+    const prompt: ExtractorPrompt = { system: systemPrompt, user: cappedUser };
 
-    return new Promise<PerceptionCandidate[]>((resolve) => {
-      let settled = false;
-      const settle = (r: PerceptionCandidate[]): void => {
-        if (settled) return;
-        settled = true;
-        resolve(r);
-      };
+    const result = await runBackend(harness, prompt, timeoutMs);
 
-      // `--system-prompt` keeps instructions out of the user-content channel.
-      const fullArgs = [...baseArgs, '--system-prompt', systemPrompt];
-
-      let child;
-      try {
-        child = spawn(command, fullArgs, {
-          stdio: ['pipe', 'pipe', 'pipe'],
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log.warn(`llm_extractor spawn failed: ${msg}`);
-        // TD-074: surface the spawn failure as a structured lifecycle event
-        // so /scan and /awaken can show it. The runner will skip its own
-        // `run_succeeded` once any terminal event has been written.
+    if (!result.ok) {
+      const reason = backendFailReasonToPerception(result.fail_reason);
+      log.warn(`llm_extractor backend failed (${reason}): ${result.detail ?? ''}`);
+      // empty_response is a clean "no candidates" for perception, not a failure.
+      if (result.fail_reason !== 'empty_response') {
         log.onEvent?.('perception.run_failed', {
-          reason: 'spawn_error',
-          error_message: msg.slice(0, 500),
-          prompt_bytes: promptBytes,
+          reason,
+          error_message: (result.detail ?? '').slice(0, 500),
+          harness,
         });
-        settle([]);
-        return;
       }
+      return [];
+    }
 
-      let stdout = '';
-      let stderr = '';
-      child.stdout?.on('data', (chunk: Buffer | string) => {
-        stdout += typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
-      });
-      child.stderr?.on('data', (chunk: Buffer | string) => {
-        stderr += typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
-      });
-
-      const softTimer = setTimeout(() => {
-        try {
-          child.kill('SIGTERM');
-        } catch {
-          /* already dead */
-        }
-        const hardTimer = setTimeout(() => {
-          try {
-            child.kill('SIGKILL');
-          } catch {
-            /* already dead */
-          }
-        }, 5_000);
-        child.once('close', () => clearTimeout(hardTimer));
-        log.warn(`llm_extractor timeout after ${timeoutMs}ms`);
-        // TD-074: structured timeout event. timeout_ms in the payload so
-        // operators can see the configured budget that elapsed.
-        log.onEvent?.('perception.run_failed', {
-          reason: 'timeout',
-          timeout_ms: timeoutMs,
-          prompt_bytes: promptBytes,
-        });
-        settle([]);
-      }, timeoutMs);
-
-      child.on('error', (err) => {
-        clearTimeout(softTimer);
-        log.warn(`llm_extractor spawn error: ${err.message}`);
-        // TD-074: emit structured event for async spawn failure (distinct
-        // from the synchronous spawn() throw above — both bucket under
-        // `spawn_error` since the operator can't act differently).
-        log.onEvent?.('perception.run_failed', {
-          reason: 'spawn_error',
-          error_message: err.message.slice(0, 500),
-          prompt_bytes: promptBytes,
-        });
-        settle([]);
-      });
-
-      // TD-073: EPIPE on child.stdin arrives as an asynchronous 'error'
-      // event. Without this listener Node treats it as unhandled and
-      // crashes the entire process — exactly the 2026-04-30T21:10:40
-      // incident (3.4MB single-line transcript, perception silenced for
-      // 7+ hours). The listener MUST be attached before the synchronous
-      // `child.stdin?.end(cappedPrompt)` call below so a fast EPIPE in
-      // the same tick is not missed.
-      //
-      // TD-074: the listener now also surfaces a structured
-      // `perception.run_failed` event via `log.onEvent` so /scan and
-      // /awaken can detect the failure. The `log.warn` line is kept —
-      // it remains useful for local debugging when the structured
-      // emission path is unavailable.
-      child.stdin?.on('error', (err: NodeJS.ErrnoException) => {
-        clearTimeout(softTimer);
-        log.warn(
-          `llm_extractor stdin ${err.code ?? 'error'}: child closed stdin during write ` +
-            `(prompt_bytes=${promptBytes} msg=${err.message})`,
-        );
-        log.onEvent?.('perception.run_failed', {
-          reason: 'epipe_on_llm_stdin',
-          error_message: err.message.slice(0, 500),
-          error_code: err.code ?? null,
-          prompt_bytes: promptBytes,
-        });
-        settle([]);
-      });
-
-      child.on('close', (code) => {
-        clearTimeout(softTimer);
-        if (code !== 0) {
-          const stderrTail = stderr.trim().slice(0, 200);
-          log.warn(`llm_extractor non-zero exit (${String(code)}): ${stderrTail}`);
-          // TD-074: structured event for non-zero exit. Encode the exit
-          // code in the payload so operators can distinguish OOM (137),
-          // signalled (>128), and standard error exits.
-          log.onEvent?.('perception.run_failed', {
-            reason: 'non_zero_exit',
-            exit_code: typeof code === 'number' ? code : null,
-            error_message: stderrTail,
-            prompt_bytes: promptBytes,
-          });
-          settle([]);
-          return;
-        }
-        const raw = extractJsonArrayReply(stdout);
-        const validated = raw
-          .map(validateAndCoerce)
-          .filter((c): c is PerceptionCandidate => c !== null)
-          .slice(0, maxCandidates);
-        if (validated.length < raw.length) {
-          log.info(
-            `llm_extractor dropped ${raw.length - validated.length} invalid candidates`,
-          );
-        }
-        settle(validated);
-      });
-
-      // The async EPIPE listener above handles a child-side stdin close.
-      // The try/catch here only catches synchronous throws from .end()
-      // (e.g. stdin already destroyed before this tick).
-      try {
-        child.stdin?.end(cappedPrompt);
-      } catch (err) {
-        clearTimeout(softTimer);
-        const msg = err instanceof Error ? err.message : String(err);
-        log.warn(`llm_extractor stdin write failed (sync): ${msg}`);
-        // TD-074: bucket sync write throws under the same EPIPE reason —
-        // operators don't need to distinguish "stdin destroyed in same
-        // tick" from "stdin closed during write" at the read surface.
-        log.onEvent?.('perception.run_failed', {
-          reason: 'epipe_on_llm_stdin',
-          error_message: msg.slice(0, 500),
-          prompt_bytes: promptBytes,
-          sync: true,
-        });
-        settle([]);
-      }
-    });
+    const raw = extractJsonArrayReply(result.text);
+    const validated = raw
+      .map(validateAndCoerce)
+      .filter((c): c is PerceptionCandidate => c !== null)
+      .slice(0, maxCandidates);
+    if (validated.length < raw.length) {
+      log.info(`llm_extractor dropped ${raw.length - validated.length} invalid candidates`);
+    }
+    return validated;
   };
 }
 
 /**
  * Resolve the LLM extractor used by the runner. Returns `noopLlmExtractor`
- * when (a) the master flag is off, or (b) the `claude` CLI is absent on
- * this host. Otherwise returns a factory bound to the configured timeout
- * and max-candidates knobs.
+ * when (a) the master flag is off, or (b) no harness CLI is present on this
+ * host. Otherwise returns a backend-backed extractor bound to the configured
+ * timeout / max-candidates knobs and the resolved harness.
+ *
+ * Perception's default harness stays `claude` (back-compat). The harness is
+ * resolved via the shared 4-layer chain (`resolveHarness`) so a global
+ * `llm_extractor.harness` / env override is honoured; absence of any usable CLI
+ * yields the noop (the runner records the skip).
  */
 export function selectLlmExtractor(
   config: PerceptionExtractorConfig,
   log: ExtractorLogger = NULL_LOGGER,
+  globalConfig: LlmExtractorGlobalConfig = {},
 ): LlmExtractor {
   if (!config.extractor_llm_enabled) {
     log.info('llm_extractor: disabled by config');
     return noopLlmExtractor;
   }
-  if (!isClaudeCliAvailable()) {
-    log.info('llm_extractor: claude CLI not on PATH — using noop');
+  // Resolve the harness via the shared chain (default 'claude'); perception's
+  // own instance config carries no harness pin, so the global default wins.
+  const harness = resolveHarness(globalConfig, 'perception', null);
+  if (!isHarnessCliAvailable(harness)) {
+    log.info(`llm_extractor: ${harness} CLI not on PATH — using noop`);
     return noopLlmExtractor;
   }
-  return makeClaudeLlmExtractor({
+  return makeBackendLlmExtractor({
     timeoutMs: config.llm_timeout_ms,
     maxCandidates: config.llm_max_candidates,
     maxPromptBytes: resolveMaxPromptBytes(),
+    harness,
     log,
   });
 }

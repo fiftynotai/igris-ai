@@ -69,6 +69,61 @@ export function eventName(instanceId: string, stage: CognitionStage): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Low-level INSERT of ONE `event_log` row with explicit `event_name` +
+ * `component`. The single place the cognition subsystem writes the
+ * `monitoring.onEventReceived` column shape. Both the cognition-namespaced
+ * writer (`writeExtractorEvent`, `component='cognition.<id>'`) and the
+ * legacy-named perception writer (`writePerceptionEvent`, `component='perception'`
+ * — back-compat byte-identical rows for the perception read surfaces) route
+ * through here so the INSERT logic + the defensive try/catch live in ONE place.
+ *
+ * `payload.project` is hoisted into the dedicated `project_slug` column so the
+ * `igris_event_log` MCP filter and the `/scan` query path both work without
+ * parsing the JSON blob.
+ *
+ * Failure mode (TD-074 defensive contract): any thrown error is caught and
+ * surfaced as a single stderr line — the pipeline continues; observability must
+ * never gate the actual extraction work. The `errorTag` prefixes the fallback
+ * line so each caller's failures stay grep-able under its own marker.
+ *
+ * @param db         the brain DB
+ * @param evtName    the `event_log.event_name` value
+ * @param component  the `event_log.component` value
+ * @param payload    arbitrary JSON payload (a `project` field is hoisted)
+ * @param errorTag   the stderr fallback prefix (e.g. '[cognition.lifecycle]')
+ */
+export function insertEventLogRow(
+  db: Database.Database,
+  evtName: string,
+  component: string,
+  payload: Record<string, unknown>,
+  errorTag: string,
+): void {
+  try {
+    const projectSlug =
+      typeof payload.project === 'string' ? payload.project : null;
+    db.prepare(
+      `INSERT INTO event_log
+         (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
+       VALUES (?, ?, ?, ?, ?, NULL, datetime('now'))`,
+    ).run(
+      evtName,
+      component,
+      JSON.stringify(payload),
+      os.hostname(),
+      projectSlug,
+    );
+  } catch (err) {
+    // Defensive fallback. Grep-able even though the structured event was lost.
+    process.stderr.write(
+      `${errorTag} write failed for ${evtName}: ${
+        err instanceof Error ? err.message : String(err)
+      } payload=${JSON.stringify(payload)}\n`,
+    );
+  }
+}
+
+/**
  * Insert a single cognition lifecycle row into `event_log`. Mirrors the column
  * shape `monitoring.onEventReceived` writes for bus-driven events.
  *
@@ -92,28 +147,13 @@ export function writeExtractorEvent(
   stage: CognitionStage,
   payload: Record<string, unknown>,
 ): void {
-  try {
-    const projectSlug =
-      typeof payload.project === 'string' ? payload.project : null;
-    db.prepare(
-      `INSERT INTO event_log
-         (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
-       VALUES (?, ?, ?, ?, ?, NULL, datetime('now'))`,
-    ).run(
-      eventName(instanceId, stage),
-      componentName(instanceId),
-      JSON.stringify(payload),
-      os.hostname(),
-      projectSlug,
-    );
-  } catch (err) {
-    // Defensive fallback. Grep-able even though the structured event was lost.
-    process.stderr.write(
-      `[cognition.lifecycle] write failed for ${eventName(instanceId, stage)}: ${
-        err instanceof Error ? err.message : String(err)
-      } payload=${JSON.stringify(payload)}\n`,
-    );
-  }
+  insertEventLogRow(
+    db,
+    eventName(instanceId, stage),
+    componentName(instanceId),
+    payload,
+    '[cognition.lifecycle]',
+  );
 }
 
 // ---------------------------------------------------------------------------

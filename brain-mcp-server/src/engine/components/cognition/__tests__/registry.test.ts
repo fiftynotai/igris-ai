@@ -69,10 +69,15 @@ describe('createCognitionRegistry', () => {
 });
 
 describe('discoverInstances', () => {
-  it('M0: the extractors barrel is empty (ships dormant)', () => {
+  it('M1: the extractors barrel exposes the perception instance', () => {
+    // FR-118 M1 landed perception as the first real instance — the barrel is
+    // no longer empty (the M0 "ships dormant / empty barrel" assertion was a
+    // placeholder for the dormant host). Discovery registers it with ZERO
+    // engine/registry edit (the FR-202 zero-host-change extensibility property).
     const r = createCognitionRegistry();
     discoverInstances(r);
-    expect(r.all()).toEqual([]);
+    expect(r.has('perception')).toBe(true);
+    expect(r.get('perception')?.id).toBe('perception');
   });
 
   it('registers an injected instance list (the discovery contract)', () => {

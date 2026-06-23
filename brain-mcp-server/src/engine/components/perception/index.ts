@@ -43,6 +43,7 @@ import {
   setHandlerContext,
 } from './handlers.js';
 import { selectLlmExtractor } from './extractors/llm_via_claude_code.js';
+import type { LlmExtractorGlobalConfig } from '../cognition/backend/env.js';
 
 // ---------------------------------------------------------------------------
 // Config resolution
@@ -103,6 +104,29 @@ export function resolvePerceptionConfig(log?: { info: (m: string) => void; warn:
     );
   }
   return cfg;
+}
+
+/**
+ * Resolve the global `llm_extractor` config section (FR-118) — the shared
+ * cognition-backend harness default + fallback order. Read from
+ * `~/.igris/config.json`'s `llm_extractor` block; absent/malformed yields `{}`
+ * (the backend defaults the harness to `'claude'`, preserving perception's
+ * back-compat behavior). This is the section `resolveHarness` reads so a
+ * non-claude install can re-point the extraction harness globally.
+ */
+export function resolveLlmExtractorGlobalConfig(): LlmExtractorGlobalConfig {
+  try {
+    const configPath = path.join(os.homedir(), '.igris', 'config.json');
+    const raw = fs.readFileSync(configPath, 'utf-8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const section = parsed.llm_extractor;
+    if (section && typeof section === 'object' && !Array.isArray(section)) {
+      return section as LlmExtractorGlobalConfig;
+    }
+  } catch {
+    // file absent or malformed — default harness ('claude') applies downstream
+  }
+  return {};
 }
 
 // ---------------------------------------------------------------------------
@@ -389,7 +413,12 @@ export function createPerceptionComponent(): BrainComponent {
 
     init(ctx: ComponentContext): void {
       const config = resolvePerceptionConfig(ctx.log);
-      const llmExtractor = selectLlmExtractor(config, ctx.log);
+      // FR-118 M1: the production extractor now rides the shared brain-isolated
+      // cognition backend (selectLlmExtractor → makeBackendLlmExtractor →
+      // runBackend). The harness is resolved via the shared 4-layer chain from
+      // the global `llm_extractor` config; perception's default stays 'claude'.
+      const globalConfig = resolveLlmExtractorGlobalConfig();
+      const llmExtractor = selectLlmExtractor(config, ctx.log, globalConfig);
       setHandlerContext({
         bus: ctx.bus,
         config,

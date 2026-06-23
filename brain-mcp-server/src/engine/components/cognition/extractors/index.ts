@@ -7,25 +7,29 @@
  * the engine never branches on instance identity (the FR-202 zero-host-change
  * extensibility property).
  *
- * M0 ships DORMANT — no real instances yet. Perception (M1) and subconscious
- * (M2) are added here as `extractors/perception.ts` / `extractors/subconscious.ts`
- * land; they appear in the registry + engine automatically.
+ * M1 lands the perception instance (`extractors/perception.ts`); subconscious
+ * (M2) is added the same way. They appear in the registry + engine
+ * automatically — ONE re-export line is the whole cost of a new instance.
  *
  * @module engine/components/cognition/extractors
  * @author fifty.dev
  */
 
 import type { CognitionInstance } from '../types.js';
+import { perceptionInstance } from './perception.js';
 
 /**
- * Every bundled cognition instance, in boot order. M0: empty. A new instance is
- * added by importing it and appending it here (one line) — discovery
- * (`registry.ts:discoverInstances`) registers them all with no engine change.
+ * Every bundled cognition instance, in boot order. A new instance is added by
+ * importing it and appending it here (one line) — discovery
+ * (`registry.ts:discoverInstances`) registers them all with no engine change
+ * (the FR-202 zero-host-change extensibility property).
  *
- * M1: import { perceptionInstance } from './perception.js';
+ * M1: perceptionInstance (the proving instance + correctness oracle).
  * M2: import { subconsciousInstance } from './subconscious.js';
  */
 export const EXTRACTOR_INSTANCES: readonly CognitionInstance[] = [
-  // M1: perceptionInstance,
+  perceptionInstance,
   // M2: subconsciousInstance,
 ];
+
+export { perceptionInstance, createPerceptionInstance } from './perception.js';
