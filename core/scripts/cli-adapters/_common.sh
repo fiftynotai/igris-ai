@@ -791,18 +791,21 @@ if surfaces is not None:
                  "(or a single legacy object — both normalize)")
         if len(skills_blocks) < 1:
             fail("surfaces.skills must be a non-empty array")
-        # FR-149/FR-151/FR-153/FR-171: the per-type method allowlist
-        # (claude/symlink, codex/symlink, gemini/symlink, agents/symlink,
-        # opencode/command) is enforced via `valid_pairs` below — mirrors the
-        # `oneOf` constraint in manifest.schema.json so both validation paths
-        # agree. The legacy codex/compiler + gemini/converter pairs were retired
-        # by FR-153. `valid_skill_methods` retains the legacy method strings so
-        # a recognized-but-disallowed pair produces the clearer pair-allowlist
-        # error message (not "method unknown"). See L-519.
-        valid_skill_types = {"codex", "gemini", "claude", "agents", "opencode"}
-        valid_skill_methods = {"compiler", "converter", "symlink", "command"}
-        valid_pairs = {("claude", "symlink"), ("codex", "symlink"),
-                       ("gemini", "symlink"), ("agents", "symlink"),
+        # FR-149/FR-151/FR-153/FR-171/FR-202: the per-type method allowlist
+        # (claude/symlink, agents/symlink, opencode/command) is enforced via
+        # `valid_pairs` below — mirrors the `oneOf` constraint in
+        # manifest.schema.json so both validation paths agree. FR-202 (M1):
+        # the dead codex/symlink + gemini/symlink standalone pairs (superseded
+        # by agents/symlink under FR-157 — codex+gemini read the `~/.agents/
+        # skills/` projection natively) and the long-retired codex/compiler
+        # (AGENTS.md aggregator) + gemini/converter (per-skill TOML) methods
+        # were dropped here in lockstep with the schema. No live manifest
+        # declared any removed value, so every live validate_manifest call still
+        # passes identically; only the rejected set narrows. See L-519.
+        valid_skill_types = {"claude", "agents", "opencode"}
+        valid_skill_methods = {"symlink", "command"}
+        valid_pairs = {("claude", "symlink"),
+                       ("agents", "symlink"),
                        ("opencode", "command")}
         allowed_skill_target_keys = {"type", "method", "path"}
         # FR-155: `scope` is allowed on a skills_surface block (same shape as
@@ -843,8 +846,8 @@ if surfaces is not None:
                 if pair not in valid_pairs:
                     fail(f"{stwhere}: type/method pair "
                          f"'{st['type']}/{st['method']}' is not allowed; "
-                         "valid pairs: claude/symlink, codex/symlink, "
-                         "gemini/symlink, agents/symlink, opencode/command")
+                         "valid pairs: claude/symlink, agents/symlink, "
+                         "opencode/command")
             # FR-155: optional scope on the skills_surface block.
             if "scope" in skills_block:
                 validate_scope_shape(skills_block["scope"], bwhere)

@@ -64,7 +64,7 @@ teardown() {
 #   $1 name             — skill name (e.g. demo, multi)
 #   $2 source_dir       — operator's source dir holding the SKILL.md (and
 #                          optional siblings). NOT under the registry.
-#   $3 target_kind      — claude | codex | gemini (single-target shorthand)
+#   $3 target_kind      — claude | agents | opencode (single-target shorthand)
 build_personal_skill_tree() {
   local name="$1"
   local source_dir="$2"
@@ -110,9 +110,9 @@ PY
   local target_path target_method
   target_method="symlink"
   case "$target_kind" in
-    claude) target_path=".claude/skills" ;;
-    codex)  target_path=".codex/skills" ;;
-    gemini) target_path=".gemini/skills" ;;
+    claude)   target_path=".claude/skills" ;;
+    agents)   target_path=".agents/skills" ;;
+    opencode) target_path=".config/opencode/command"; target_method="command" ;;
   esac
   cat > "$PROJ/harness-manifest.json" <<EOF
 {
@@ -343,8 +343,9 @@ EOF
 }
 
 @test "TD-201 case 8: tree verdict fires ONCE per skill across multi-target rows (dedup sanity)" {
-  # A single personal skill block with 3 targets (claude+codex+gemini). The
-  # tree pre-check is keyed on the skill name (basename of the registry-
+  # A single personal skill block with the 3 live targets (claude+agents+
+  # opencode — FR-202 M1 retired the standalone codex/gemini skill targets).
+  # The tree pre-check is keyed on the skill name (basename of the registry-
   # vendored source dir) so the verdict must fire exactly once across all
   # three rows.
   local src="$PROJ/src_multi"
@@ -388,18 +389,19 @@ PY
         "source": "$block_source",
         "layer": "personal",
         "targets": [
-          { "type": "claude", "method": "symlink", "path": ".claude/skills" },
-          { "type": "codex",  "method": "symlink", "path": ".codex/skills" },
-          { "type": "gemini", "method": "symlink", "path": ".gemini/skills" }
+          { "type": "claude",   "method": "symlink", "path": ".claude/skills" },
+          { "type": "agents",   "method": "symlink", "path": ".agents/skills" },
+          { "type": "opencode", "method": "command", "path": ".config/opencode/command" }
         ]
       }
     ]
   }
 }
 EOF
-  bash "$COMPILE" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json" --target claude >/dev/null
-  bash "$COMPILE" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json" --target codex  >/dev/null
-  bash "$COMPILE" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json" --target gemini >/dev/null
+  # Compile the whole skills surface in one pass (the `--target` flag selects an
+  # AGENT-harness name, not a skill target type, so it cannot scope to the
+  # agents/opencode skill targets — recompile all of them together).
+  bash "$COMPILE" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json" --surface skills >/dev/null
 
   run bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
   [ "$status" -eq 0 ]
@@ -407,8 +409,8 @@ EOF
   local tree_count
   tree_count=$(printf '%s\n' "$output" | grep -c '\[multi/tree\] MATCH' || true)
   [ "$tree_count" -eq 1 ]
-  # Each per-target FR-153 verdict still fires (orthogonal).
+  # Each per-target verdict still fires (orthogonal to the tree pre-check).
   [[ "$output" == *"[skills/claude]"* ]]
-  [[ "$output" == *"[skills/codex]"* ]]
-  [[ "$output" == *"[skills/gemini]"* ]]
+  [[ "$output" == *"[skills/agents]"* ]]
+  [[ "$output" == *"[skills/opencode]"* ]]
 }

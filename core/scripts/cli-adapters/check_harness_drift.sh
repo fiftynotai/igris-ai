@@ -1469,14 +1469,28 @@ PY
     verdict="MATCH"
     reason=""
     case "$s_type/$s_method" in
-      claude/symlink)
-        # FR-149/FR-153: per-skill symlinks under <out_abs>/<name> pointing at
-        # <src_abs>/<name>. Verdict by target-path realpath + L-515 registry
-        # containment. Pairs line-for-line with the compile-side branch
-        # (L-519 §18.1) — every <name>/SKILL.md walked at compile time must
-        # have a registry-anchored symlink under out_abs at drift time.
-        # Both sides of the containment check are realpath'd so macOS `/var`
-        # → `/private/var` does not produce false "not registry-anchored".
+      claude/symlink|agents/symlink)
+        # FR-149/FR-153/FR-157/FR-202 (M1): per-skill symlinks under
+        # <out_abs>/<name> pointing at <src_abs>/<name>. Verdict by target-path
+        # realpath + L-515 registry containment. ONE parameterized branch serves
+        # the live symlink targets (pairs line-for-line with the collapsed
+        # compile-side branch, L-519 §18.1):
+        #   claude → no absolute-literal guard (Claude resolves symlinks from
+        #            their location).
+        #   agents → keeps the FR-157 D2 absolute-literal verdict (codex
+        #            re-resolves relative symlinks from cwd regardless of where
+        #            the symlink LIVES; the `~/.agents/skills/` standard is read
+        #            natively by codex AND gemini, so they need no standalone
+        #            target).
+        # Every <name>/SKILL.md walked at compile time must have a registry-
+        # anchored symlink under out_abs at drift time. Both sides of the
+        # containment check are realpath'd so macOS `/var` → `/private/var` does
+        # not produce false "not registry-anchored". The dead standalone
+        # codex/symlink + gemini/symlink verdict branches were removed in FR-202
+        # M1 (no manifest declared them). The collapse preserves the exact
+        # verdict bytes each live branch emitted: every reason string keys on
+        # $s_type (== the literal "claude"/"agents" the old branches printed),
+        # and the relative-target verdict fires for `agents` only.
         conv_root="${src_abs:-$HOME/.igris/core/skills}"
         if [ ! -d "$conv_root" ]; then
           echo "  [skills/$s_type] MISSING — skills root absent: $conv_root"
@@ -1489,6 +1503,7 @@ PY
         any_unanchored=0
         any_realfile=0
         any_too_deep=0
+        any_relative=0
         checked=0
         while IFS= read -r -d '' skill_md; do
           skill_name="$(basename "$(dirname "$skill_md")")"
@@ -1502,6 +1517,16 @@ PY
           if [ ! -e "$link_path" ] && [ ! -L "$link_path" ]; then
             any_missing=1
           elif [ -L "$link_path" ]; then
+            # FR-157 D2: for the agents target, the literal target must be
+            # absolute (codex re-resolves relative symlinks from cwd). Check
+            # readlink BEFORE realpath. Claude has no such guard.
+            if [ "$s_type" = "agents" ]; then
+              literal=$(readlink "$link_path" 2>/dev/null || true)
+              case "$literal" in
+                /*) : ;;
+                *) any_relative=1 ;;
+              esac
+            fi
             resolved=$(realpath "$link_path" 2>/dev/null || true)
             if [ -z "$resolved" ]; then
               any_drift=1
@@ -1554,333 +1579,20 @@ PY
                    -name 'SKILL.md' -print0 | sort -z)
         if [ "$any_missing" -eq 1 ]; then
           verdict="MISSING"
-          reason="one or more claude skill symlinks absent"
+          reason="one or more $s_type skill symlinks absent"
         elif [ "$any_realfile" -eq 1 ]; then
           verdict="DRIFTED"
           reason="one or more target paths are regular files/dirs, not symlinks (legacy reference-mode state — remove manually, then run \`igris harness compile\`)"
         elif [ "$any_unanchored" -eq 1 ]; then
           verdict="DRIFTED"
-          reason="one or more claude skill symlinks not registry-anchored (legacy reference-mode state — run \`igris harness compile\` to migrate)"
+          reason="one or more $s_type skill symlinks not registry-anchored (legacy reference-mode state — run \`igris harness compile\` to migrate)"
         elif [ "$any_drift" -eq 1 ]; then
           verdict="DRIFTED"
-          reason="one or more claude skill symlinks point at the wrong canonical (registry-anchored but mismatched)"
+          reason="one or more $s_type skill symlinks point at the wrong canonical (registry-anchored but mismatched)"
         elif [ "$any_too_deep" -eq 1 ]; then
           verdict="DRIFTED"
-          reason="one or more claude skill symlinks resolve but SKILL.md is not at depth-1 (<link_path>/SKILL.md missing) — native loaders scan depth-1; repair target.path to the PARENT skills dir, then run \`igris harness compile\`"
-        fi
-        echo "  [skills/$s_type] $verdict"
-        echo "      source     : $conv_root"
-        echo "      artifact dir: $out_abs ($checked skills checked)"
-        ;;
-      codex/symlink)
-        # FR-153: per-skill symlinks (codex). Mirror of claude/symlink + one
-        # additional codex-only verdict: literal symlink target must be
-        # ABSOLUTE (D2). Codex resolves relative-path symlinks from cwd —
-        # POSIX-incorrect — so a realpath-resolves-correctly relative symlink
-        # is still a drift hazard. See L-519 §18.1.
-        conv_root="${src_abs:-$HOME/.igris/core/skills}"
-        if [ ! -d "$conv_root" ]; then
-          echo "  [skills/$s_type] MISSING — skills root absent: $conv_root"
-          DRIFT=$((DRIFT + 1))
-          continue
-        fi
-        registry_real=$(realpath "$BRAIN_DIR/registry" 2>/dev/null || echo "$BRAIN_DIR/registry")
-        any_missing=0
-        any_drift=0
-        any_unanchored=0
-        any_realfile=0
-        any_too_deep=0
-        any_relative_codex=0
-        checked=0
-        while IFS= read -r -d '' skill_md; do
-          skill_name="$(basename "$(dirname "$skill_md")")"
-          # FR-180 (S1): honor --filter on the skills surface (parity with the
-          # agent flatten + compile_harnesses.sh skills branches). Scopes
-          # `igris add`'s verify to the just-added skill. §18.1 paired change.
-          skill_name_matches_filter "$skill_name" "$FILTER" || continue
-          skill_dir="$(dirname "$skill_md")"
-          skill_dir_real=$(realpath "$skill_dir" 2>/dev/null || echo "$skill_dir")
-          link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
-          if [ ! -e "$link_path" ] && [ ! -L "$link_path" ]; then
-            any_missing=1
-          elif [ -L "$link_path" ]; then
-            # FR-153 D2: literal target must be absolute (codex re-resolves
-            # relative symlinks from cwd). Check readlink BEFORE realpath.
-            literal=$(readlink "$link_path" 2>/dev/null || true)
-            case "$literal" in
-              /*) : ;;
-              *) any_relative_codex=1 ;;
-            esac
-            resolved=$(realpath "$link_path" 2>/dev/null || true)
-            if [ -z "$resolved" ]; then
-              any_drift=1
-            else
-              # FR-180 cross-phase: the COMPILE side (the §18.1 source of truth)
-              # creates the per-skill symlink pointing at <conv_root>/<name>
-              # (`skill_dir`). For a CORE skill conv_root is `~/.igris/core/skills`
-              # (the surfaces-manifest `~`-prefixed source), so the canonical
-              # symlink target is NOT under the registry — it points straight at
-              # core. The MATCH condition is therefore "resolves to the canonical
-              # source compile linked" (`resolved == skill_dir_real`), which holds
-              # for BOTH a registry-vendored personal skill (skill_dir under the
-              # registry) AND a core skill (skill_dir under core/skills). The
-              # registry-containment check is retained ONLY to distinguish a
-              # registry-anchored-but-WRONG-file drift from a genuinely unanchored
-              # (points-nowhere-canonical) symlink. Without this, every core skill
-              # false-DRIFTED as "not registry-anchored" whenever the check was
-              # scoped to a root that OWNS the core surfaces (e.g. `igris add
-              # --core`'s brain-root verify) — a pre-existing check/compile
-              # divergence masked while core skills were never checked from an
-              # owning root.
-              if [ "$resolved" = "$skill_dir_real" ]; then
-                : # MATCH — symlink points at the canonical source compile linked.
-              else
-                case "$resolved" in
-                  "$registry_real"/*|"$registry_real")
-                    # Registry-anchored but NOT the expected canonical file.
-                    any_drift=1
-                    ;;
-                  *)
-                    any_unanchored=1
-                    ;;
-                esac
-              fi
-            fi
-            # TD-218: depth-1 discoverability — SKILL.md MUST be at
-            # <link_path>/SKILL.md. A registry-anchored-but-too-deep symlink
-            # (legacy per-skill target.path) leaves SKILL.md one level deeper,
-            # invisible to native loaders that scan depth-1.
-            if [ ! -f "$link_path/SKILL.md" ]; then
-              any_too_deep=1
-            fi
-          else
-            any_realfile=1
-          fi
-          checked=$((checked + 1))
-        done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
-                   -name 'SKILL.md' -print0 | sort -z)
-        if [ "$any_missing" -eq 1 ]; then
-          verdict="MISSING"
-          reason="one or more codex skill symlinks absent"
-        elif [ "$any_realfile" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more target paths are regular files/dirs, not symlinks (legacy reference-mode state — remove manually, then run \`igris harness compile\`)"
-        elif [ "$any_unanchored" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more codex skill symlinks not registry-anchored (legacy reference-mode state — run \`igris harness compile\` to migrate)"
-        elif [ "$any_drift" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more codex skill symlinks point at the wrong canonical (registry-anchored but mismatched)"
-        elif [ "$any_too_deep" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more codex skill symlinks resolve but SKILL.md is not at depth-1 (<link_path>/SKILL.md missing) — native loaders scan depth-1; repair target.path to the PARENT skills dir, then run \`igris harness compile\`"
-        elif [ "$any_relative_codex" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more codex skill symlinks have a relative target (codex resolves these from cwd, not symlink location — FR-153 D2)"
-        fi
-        echo "  [skills/$s_type] $verdict"
-        echo "      source     : $conv_root"
-        echo "      artifact dir: $out_abs ($checked skills checked)"
-        ;;
-      gemini/symlink)
-        # FR-153: per-skill symlinks (gemini). Exact mirror of claude/symlink
-        # (no codex absolute-path guard). See L-519 §18.1.
-        conv_root="${src_abs:-$HOME/.igris/core/skills}"
-        if [ ! -d "$conv_root" ]; then
-          echo "  [skills/$s_type] MISSING — skills root absent: $conv_root"
-          DRIFT=$((DRIFT + 1))
-          continue
-        fi
-        registry_real=$(realpath "$BRAIN_DIR/registry" 2>/dev/null || echo "$BRAIN_DIR/registry")
-        any_missing=0
-        any_drift=0
-        any_unanchored=0
-        any_realfile=0
-        any_too_deep=0
-        checked=0
-        while IFS= read -r -d '' skill_md; do
-          skill_name="$(basename "$(dirname "$skill_md")")"
-          # FR-180 (S1): honor --filter on the skills surface (parity with the
-          # agent flatten + compile_harnesses.sh skills branches). Scopes
-          # `igris add`'s verify to the just-added skill. §18.1 paired change.
-          skill_name_matches_filter "$skill_name" "$FILTER" || continue
-          skill_dir="$(dirname "$skill_md")"
-          skill_dir_real=$(realpath "$skill_dir" 2>/dev/null || echo "$skill_dir")
-          link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
-          if [ ! -e "$link_path" ] && [ ! -L "$link_path" ]; then
-            any_missing=1
-          elif [ -L "$link_path" ]; then
-            resolved=$(realpath "$link_path" 2>/dev/null || true)
-            if [ -z "$resolved" ]; then
-              any_drift=1
-            else
-              # FR-180 cross-phase: the COMPILE side (the §18.1 source of truth)
-              # creates the per-skill symlink pointing at <conv_root>/<name>
-              # (`skill_dir`). For a CORE skill conv_root is `~/.igris/core/skills`
-              # (the surfaces-manifest `~`-prefixed source), so the canonical
-              # symlink target is NOT under the registry — it points straight at
-              # core. The MATCH condition is therefore "resolves to the canonical
-              # source compile linked" (`resolved == skill_dir_real`), which holds
-              # for BOTH a registry-vendored personal skill (skill_dir under the
-              # registry) AND a core skill (skill_dir under core/skills). The
-              # registry-containment check is retained ONLY to distinguish a
-              # registry-anchored-but-WRONG-file drift from a genuinely unanchored
-              # (points-nowhere-canonical) symlink. Without this, every core skill
-              # false-DRIFTED as "not registry-anchored" whenever the check was
-              # scoped to a root that OWNS the core surfaces (e.g. `igris add
-              # --core`'s brain-root verify) — a pre-existing check/compile
-              # divergence masked while core skills were never checked from an
-              # owning root.
-              if [ "$resolved" = "$skill_dir_real" ]; then
-                : # MATCH — symlink points at the canonical source compile linked.
-              else
-                case "$resolved" in
-                  "$registry_real"/*|"$registry_real")
-                    # Registry-anchored but NOT the expected canonical file.
-                    any_drift=1
-                    ;;
-                  *)
-                    any_unanchored=1
-                    ;;
-                esac
-              fi
-            fi
-            # TD-218: depth-1 discoverability — SKILL.md MUST be at
-            # <link_path>/SKILL.md. A registry-anchored-but-too-deep symlink
-            # (legacy per-skill target.path) leaves SKILL.md one level deeper,
-            # invisible to native loaders that scan depth-1.
-            if [ ! -f "$link_path/SKILL.md" ]; then
-              any_too_deep=1
-            fi
-          else
-            any_realfile=1
-          fi
-          checked=$((checked + 1))
-        done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
-                   -name 'SKILL.md' -print0 | sort -z)
-        if [ "$any_missing" -eq 1 ]; then
-          verdict="MISSING"
-          reason="one or more gemini skill symlinks absent"
-        elif [ "$any_realfile" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more target paths are regular files/dirs, not symlinks (legacy reference-mode state — remove manually, then run \`igris harness compile\`)"
-        elif [ "$any_unanchored" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more gemini skill symlinks not registry-anchored (legacy reference-mode state — run \`igris harness compile\` to migrate)"
-        elif [ "$any_drift" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more gemini skill symlinks point at the wrong canonical (registry-anchored but mismatched)"
-        elif [ "$any_too_deep" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more gemini skill symlinks resolve but SKILL.md is not at depth-1 (<link_path>/SKILL.md missing) — native loaders scan depth-1; repair target.path to the PARENT skills dir, then run \`igris harness compile\`"
-        fi
-        echo "  [skills/$s_type] $verdict"
-        echo "      source     : $conv_root"
-        echo "      artifact dir: $out_abs ($checked skills checked)"
-        ;;
-      agents/symlink)
-        # FR-157: per-skill symlinks at the cross-CLI shared `~/.agents/skills/`
-        # standard. Byte-for-byte mirror of codex/symlink including the D2
-        # absolute-literal-target verdict — codex resolves relative symlinks
-        # from cwd regardless of where the symlink LIVES, so the hazard
-        # applies to `~/.agents/skills/` too. See L-519 §18.1, FR-157.
-        conv_root="${src_abs:-$HOME/.igris/core/skills}"
-        if [ ! -d "$conv_root" ]; then
-          echo "  [skills/$s_type] MISSING — skills root absent: $conv_root"
-          DRIFT=$((DRIFT + 1))
-          continue
-        fi
-        registry_real=$(realpath "$BRAIN_DIR/registry" 2>/dev/null || echo "$BRAIN_DIR/registry")
-        any_missing=0
-        any_drift=0
-        any_unanchored=0
-        any_realfile=0
-        any_too_deep=0
-        any_relative_agents=0
-        checked=0
-        while IFS= read -r -d '' skill_md; do
-          skill_name="$(basename "$(dirname "$skill_md")")"
-          # FR-180 (S1): honor --filter on the skills surface (parity with the
-          # agent flatten + compile_harnesses.sh skills branches). Scopes
-          # `igris add`'s verify to the just-added skill. §18.1 paired change.
-          skill_name_matches_filter "$skill_name" "$FILTER" || continue
-          skill_dir="$(dirname "$skill_md")"
-          skill_dir_real=$(realpath "$skill_dir" 2>/dev/null || echo "$skill_dir")
-          link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
-          if [ ! -e "$link_path" ] && [ ! -L "$link_path" ]; then
-            any_missing=1
-          elif [ -L "$link_path" ]; then
-            # FR-157 D2: literal target must be absolute (codex re-resolves
-            # relative symlinks from cwd). Check readlink BEFORE realpath.
-            literal=$(readlink "$link_path" 2>/dev/null || true)
-            case "$literal" in
-              /*) : ;;
-              *) any_relative_agents=1 ;;
-            esac
-            resolved=$(realpath "$link_path" 2>/dev/null || true)
-            if [ -z "$resolved" ]; then
-              any_drift=1
-            else
-              # FR-180 cross-phase: the COMPILE side (the §18.1 source of truth)
-              # creates the per-skill symlink pointing at <conv_root>/<name>
-              # (`skill_dir`). For a CORE skill conv_root is `~/.igris/core/skills`
-              # (the surfaces-manifest `~`-prefixed source), so the canonical
-              # symlink target is NOT under the registry — it points straight at
-              # core. The MATCH condition is therefore "resolves to the canonical
-              # source compile linked" (`resolved == skill_dir_real`), which holds
-              # for BOTH a registry-vendored personal skill (skill_dir under the
-              # registry) AND a core skill (skill_dir under core/skills). The
-              # registry-containment check is retained ONLY to distinguish a
-              # registry-anchored-but-WRONG-file drift from a genuinely unanchored
-              # (points-nowhere-canonical) symlink. Without this, every core skill
-              # false-DRIFTED as "not registry-anchored" whenever the check was
-              # scoped to a root that OWNS the core surfaces (e.g. `igris add
-              # --core`'s brain-root verify) — a pre-existing check/compile
-              # divergence masked while core skills were never checked from an
-              # owning root.
-              if [ "$resolved" = "$skill_dir_real" ]; then
-                : # MATCH — symlink points at the canonical source compile linked.
-              else
-                case "$resolved" in
-                  "$registry_real"/*|"$registry_real")
-                    # Registry-anchored but NOT the expected canonical file.
-                    any_drift=1
-                    ;;
-                  *)
-                    any_unanchored=1
-                    ;;
-                esac
-              fi
-            fi
-            # TD-218: depth-1 discoverability — SKILL.md MUST be at
-            # <link_path>/SKILL.md. A registry-anchored-but-too-deep symlink
-            # (legacy per-skill target.path) leaves SKILL.md one level deeper,
-            # invisible to native loaders that scan depth-1.
-            if [ ! -f "$link_path/SKILL.md" ]; then
-              any_too_deep=1
-            fi
-          else
-            any_realfile=1
-          fi
-          checked=$((checked + 1))
-        done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
-                   -name 'SKILL.md' -print0 | sort -z)
-        if [ "$any_missing" -eq 1 ]; then
-          verdict="MISSING"
-          reason="one or more agents skill symlinks absent"
-        elif [ "$any_realfile" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more target paths are regular files/dirs, not symlinks (legacy reference-mode state — remove manually, then run \`igris harness compile\`)"
-        elif [ "$any_unanchored" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more agents skill symlinks not registry-anchored (legacy reference-mode state — run \`igris harness compile\` to migrate)"
-        elif [ "$any_drift" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more agents skill symlinks point at the wrong canonical (registry-anchored but mismatched)"
-        elif [ "$any_too_deep" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more agents skill symlinks resolve but SKILL.md is not at depth-1 (<link_path>/SKILL.md missing) — native loaders scan depth-1; repair target.path to the PARENT skills dir, then run \`igris harness compile\`"
-        elif [ "$any_relative_agents" -eq 1 ]; then
+          reason="one or more $s_type skill symlinks resolve but SKILL.md is not at depth-1 (<link_path>/SKILL.md missing) — native loaders scan depth-1; repair target.path to the PARENT skills dir, then run \`igris harness compile\`"
+        elif [ "$s_type" = "agents" ] && [ "$any_relative" -eq 1 ]; then
           verdict="DRIFTED"
           reason="one or more agents skill symlinks have a relative target (codex resolves these from cwd, not symlink location — FR-157 D2)"
         fi

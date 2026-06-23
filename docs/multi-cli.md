@@ -32,9 +32,9 @@ ship (defaults to `all`).
 |-----|--------|--------|-------|
 | Claude Code | `symlink` | `~/.claude/skills/` | Each registry-vendored skill (`~/.igris/registry/skills/<name>/`) becomes a symlink at `~/.claude/skills/<name>/`. The compiler emits the symlink from `<target_path>` to the registry-vendored copy — first-class projection on par with codex/gemini (FR-149, see L-519). Core skills live at `~/.igris/core/skills/` and follow the same mechanism. Full directory linked so nested assets (`scripts/`, `workflow-template.md`, `templates/*.md`) are available. |
 | OpenCode | `command` | `~/.config/opencode/command/` | **FR-171:** First-class skills distribution via thin command wrappers. Each registry-vendored / core skill gets a `<command-dir>/<name>.md` wrapper whose body loads the canonical `SKILL.md` via OpenCode's `@file` directive (`@~/.igris/core/skills/<name>/SKILL.md`) plus `$ARGUMENTS`. The canonical SKILL.md stays the single source of truth — the wrapper is a pointer, not a copy (no edit-drift; only ADD/REMOVE drift). Supersedes the prior `none`/soft-fallback posture that relied on OpenCode reading `~/.claude/skills/`. OpenCode is ALSO first-class for agents — see [Subagent Distribution](#subagent-distribution). |
-| Codex CLI + Gemini CLI (cross-CLI shared) | `symlink` | `~/.agents/skills/` | **FR-157:** Codex AND Gemini both natively discover `~/.agents/skills/` as the cross-CLI shared skill location (Codex's `core-skills/src/loader.rs` walks it; Gemini docs at `docs/cli/skills.md` reference it explicitly). Per-skill symlink at `~/.agents/skills/<name>/` → registry-vendored canonical OR `~/.igris/core/skills/<name>/` for core skills. Symlink target MUST be absolute (codex resolves relative-path symlinks from cwd — same D2 enforcement as the legacy `codex/symlink` target). Antigravity CLI natively loads skills from `~/.gemini/antigravity-cli/skills/` (confirmed `agy` v1.0.7, 2026-06-11) — a dir antigravity does NOT self-create, so `igris install` symlinks it → `~/.agents/skills` (`linkAntigravitySkills`, idempotent-repair; `igris doctor` drift class `antigravity-skills-link` repairs it). Skill items ride the `agents/symlink` target into `~/.agents/skills`, so a future `igris add skill` reaches antigravity for free (FR-179). |
-| Codex CLI (legacy per-CLI) | `symlink` | `~/.codex/skills/` | **Retained for back-compat**. Pre-FR-157 personal overlays may still declare `codex/symlink` targets at `~/.codex/skills/`. New manifests should use the cross-CLI `agents/symlink` target instead. Drift-verify enforces the same D2 absolute-path guard. |
-| Gemini CLI (legacy per-CLI) | `symlink` | `~/.gemini/skills/` | **Retained for back-compat**. Pre-FR-157 personal overlays may still declare `gemini/symlink` targets at `~/.gemini/skills/`. New manifests should use the cross-CLI `agents/symlink` target instead. |
+| Codex CLI + Gemini CLI (cross-CLI shared) | `symlink` | `~/.agents/skills/` | **FR-157:** Codex AND Gemini both natively discover `~/.agents/skills/` as the cross-CLI shared skill location (Codex's `core-skills/src/loader.rs` walks it; Gemini docs at `docs/cli/skills.md` reference it explicitly). Per-skill symlink at `~/.agents/skills/<name>/` → registry-vendored canonical OR `~/.igris/core/skills/<name>/` for core skills. Symlink target MUST be absolute (codex resolves relative-path symlinks from cwd — the FR-153 D2 guard, now carried by this `agents/symlink` branch since FR-202 M1 deleted the standalone `codex/symlink` target). Antigravity CLI natively loads skills from `~/.gemini/antigravity-cli/skills/` (confirmed `agy` v1.0.7, 2026-06-11) — a dir antigravity does NOT self-create, so `igris install` symlinks it → `~/.agents/skills` (`linkAntigravitySkills`, idempotent-repair; `igris doctor` drift class `antigravity-skills-link` repairs it). Skill items ride the `agents/symlink` target into `~/.agents/skills`, so a future `igris add skill` reaches antigravity for free (FR-179). |
+| ~~Codex CLI (legacy per-CLI)~~ | ~~`symlink`~~ | ~~`~/.codex/skills/`~~ | **REMOVED (FR-202 M1).** The standalone `codex/symlink` target was deleted — the schema now REJECTS it. Codex reads the cross-CLI `agents/symlink` projection (`~/.agents/skills/`) natively (FR-157); use that instead. |
+| ~~Gemini CLI (legacy per-CLI)~~ | ~~`symlink`~~ | ~~`~/.gemini/skills/`~~ | **REMOVED (FR-202 M1).** The standalone `gemini/symlink` target was deleted — the schema now REJECTS it. Gemini reads the cross-CLI `agents/symlink` projection (`~/.agents/skills/`) natively (FR-157); use that instead. |
 
 ---
 
@@ -46,12 +46,16 @@ ship (defaults to `all`).
 {
   "cli_targets": {
     "claude":   { "method": "symlink", "target": "~/.claude/skills/" },
-    "opencode": { "method": "command", "target": "~/.config/opencode/command/" },
-    "gemini":   { "method": "symlink", "target": "~/.gemini/skills/" },
-    "codex":    { "method": "symlink", "target": "~/.codex/skills/" }
+    "agents":   { "method": "symlink", "target": "~/.agents/skills/" },
+    "opencode": { "method": "command", "target": "~/.config/opencode/command/" }
   }
 }
 ```
+
+> Codex and Gemini have **no standalone skills target** — they read the
+> `agents/symlink` projection (`~/.agents/skills/`) natively (FR-157). The
+> deleted `codex/symlink` + `gemini/symlink` skills targets are REJECTED as of
+> FR-202 (M1).
 
 Each entry supports:
 - `method` — one of `symlink`, `command` (FR-171, OpenCode skill wrappers),
@@ -127,22 +131,24 @@ block to its own targets) and the array schema at
 
 - `source` — skills root (`{name}/SKILL.md` entries). `~`/absolute paths are
   used verbatim; a relative path resolves from `--project-root`.
-- `targets[].method` — post-**FR-157** the valid `(type, method)` pairs are
-  `claude/symlink`, `agents/symlink`, `codex/symlink`, `gemini/symlink`. All
-  four are first-class projection targets — the symlink IS the projection,
-  anchored at the registry-vendored copy (FR-149/FR-153/FR-157). An invalid
-  pair (e.g. `claude/compiler`, `agents/compiler`, `codex/converter`) is
-  rejected at schema validation. **FR-157** introduces `agents/symlink` as the
-  cross-CLI shared target that Codex and Gemini both natively discover. The
-  legacy per-CLI pairs (`codex/symlink`, `gemini/symlink`) remain in the enum
-  for back-compat with pre-FR-157 personal overlays — new manifests should
-  prefer `agents/symlink`.
+- `targets[].method` — post-**FR-202 (M1)** the valid `(type, method)` pairs are
+  `claude/symlink`, `agents/symlink`, `opencode/command`. The symlink IS the
+  projection, anchored at the registry-vendored copy (FR-149/FR-153/FR-157);
+  `opencode/command` is the FR-171 thin `@file` command wrapper. An invalid pair
+  (e.g. `claude/compiler`, `agents/compiler`, `codex/symlink`, `gemini/symlink`)
+  is REJECTED at schema validation. **FR-157** introduced `agents/symlink` as the
+  cross-CLI shared target that Codex and Gemini both read NATIVELY
+  (`~/.agents/skills/`), so they need no standalone target. **FR-202 (M1)**
+  deleted the now-dead standalone `codex/symlink` + `gemini/symlink` pairs
+  (superseded by `agents/symlink`) and the long-retired `compiler`/`converter`
+  methods — no live manifest declared any of them.
 - **Codex absolute-path enforcement (FR-153 D2, inherited by FR-157):** codex
   resolves relative-path symlinks from cwd (POSIX-incorrect — observed
-  behavior). The compiler hard-fails when a `codex/symlink` OR `agents/symlink`
-  target would be relative; drift-verify flags any literal-relative symlink at
-  either path as DRIFTED. (The `agents/symlink` branch inherits this guard
-  because Codex reads `~/.agents/skills/` too, not just `~/.codex/skills/`.)
+  behavior). The compiler hard-fails when an `agents/symlink` target would be
+  relative; drift-verify flags any literal-relative symlink at that path as
+  DRIFTED. The guard lives on the surviving `agents/symlink` branch (FR-202 M1
+  deleted the standalone `codex/symlink` branch that originally carried it),
+  and it matters because Codex reads `~/.agents/skills/` natively.
 - The drift guard verdicts each per-skill symlink by realpath against the
   registry-vendored canonical (L-515 containment), pairing line-for-line
   with the compile-side branch (L-519 §18.1). No more date-stamped marker
@@ -1333,9 +1339,9 @@ are linked so a reader chases the single source of truth, not a copy:
 4. **Manifest schema** — add `"<NEW>"` to the agent `targets[].type` enum and the
    `surfaces.skills.targets[].type` enum in `manifest.schema.json`, plus a new
    `(type, method)` `oneOf` branch on the skills target item. The skills method
-   enum is `["compiler", "converter", "symlink", "command"]` (`compiler`/`converter`
-   are retired-but-retained for back-compat) — pick `symlink` unless the harness
-   reads skills from a native command/prompt surface (then `command`). Mirror the
+   enum is `["symlink", "command"]` (FR-202 M1 dropped the long-retired
+   `compiler`/`converter` methods) — pick `symlink` unless the harness reads
+   skills from a native command/prompt surface (then `command`). Mirror the
    same pair in `valid_pairs` inside `_common.sh validate_manifest` and
    `VALID_SKILL_TYPE_METHOD_PAIRS` in `cli/src/verbs/registry.ts`.
 5. **Compiler passes (dual-impl — §18.1 parity MANDATORY)** — add the agent

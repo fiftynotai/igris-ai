@@ -5,9 +5,12 @@
 #
 # FR-153 unifies all three skill harnesses (claude/codex/gemini) onto the
 # FR-149 claude/symlink primitive. The legacy AGENTS.md aggregator + per-skill
-# TOML converter are deleted from the repo + runtime mirror, and the schema's
-# pair allowlist is tightened to {claude/symlink, codex/symlink,
-# gemini/symlink}. This test pins that retirement:
+# TOML converter are deleted from the repo + runtime mirror. FR-157 then
+# converged codex+gemini onto agents/symlink (~/.agents/skills/, read
+# natively), and FR-202 (M1) deleted the now-dead standalone codex/symlink +
+# gemini/symlink pairs, narrowing the schema's pair allowlist to the live triad
+# {claude/symlink, agents/symlink, opencode/command}. This test pins the FR-153
+# script retirement:
 #
 #   1. Both script files are absent from the repo's core/scripts/cli-adapters/.
 #   2. The runtime mirror at ~/.igris/core/scripts/cli-adapters/ is also absent.

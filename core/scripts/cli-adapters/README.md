@@ -3,14 +3,28 @@
 Scripts that distribute Igris surfaces to non-Claude CLIs. Two distinct
 families live here — do not conflate them.
 
-## Skills adapters (FR-103 → FR-153)
+## Skills adapters (FR-103 → FR-153 → FR-157 → FR-202)
 
 Skill harness projection lives in `compile_harnesses.sh` (skills pass) — for
-each `<name>/SKILL.md` under the source root, every consumer (claude/codex/
-gemini) projects ONE per-skill registry-anchored symlink at `<target>/<name>`
-→ `<source>/<name>` (FR-153). The legacy AGENTS.md aggregator + per-skill
-TOML converter scripts (`md_to_agents_md.sh`, `md_to_gemini_toml.sh`) were
-retired by FR-153 in favor of the unified symlink projection.
+each `<name>/SKILL.md` under the source root, each live target projects ONE
+per-skill registry-anchored symlink at `<target>/<name>` → `<source>/<name>`
+(FR-153). The live skills triad is:
+
+- `claude/symlink` → `~/.claude/skills` (Claude's native skills loader follows
+  the symlink).
+- `agents/symlink` → `~/.agents/skills`, the cross-CLI shared standard that
+  **codex AND gemini both read natively** (FR-157) — so they need no standalone
+  skill target. Keeps the FR-157 D2 absolute-target guard (codex re-resolves
+  relative symlinks from cwd).
+- `opencode/command` → `~/.config/opencode/command` (FR-171 thin `@file`
+  command wrapper; OpenCode has no native skills dir).
+
+The legacy AGENTS.md aggregator + per-skill TOML converter scripts
+(`md_to_agents_md.sh`, `md_to_gemini_toml.sh`) were retired by FR-153. FR-202
+(M1) deleted the now-dead standalone `codex/symlink` + `gemini/symlink` skill
+targets (superseded by `agents/symlink`) and the long-retired
+`compiler`/`converter` method enum values — no live manifest declared any of
+them, and the live triad's projected bytes + drift verdicts are unchanged.
 
 ## Subagent adapters (TD-021 + FR-152 — unified harness projection)
 

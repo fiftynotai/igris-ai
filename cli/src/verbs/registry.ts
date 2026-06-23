@@ -116,39 +116,43 @@ const VALID_TARGET_TYPES = ["claude", "codex", "gemini", "opencode"] as const;
 type TargetType = (typeof VALID_TARGET_TYPES)[number];
 
 /**
- * FR-143/FR-149/FR-157/FR-171: allowed SKILL target types. Mirrors
- * `$defs.skills_surface.targets.type` (codex / gemini / claude / agents /
- * opencode). The per-type method allowlist is enforced by
- * VALID_SKILL_TYPE_METHOD_PAIRS below. `agents` is the FR-157 cross-CLI shared
- * `~/.agents/skills/` target; `opencode` (FR-171) is the OpenCode command
- * surface (thin `@file` wrappers, NOT symlinks).
+ * FR-143/FR-149/FR-157/FR-171/FR-202: allowed SKILL target types. Mirrors
+ * `$defs.skills_surface.targets.type` (claude / agents / opencode). The
+ * per-type method allowlist is enforced by VALID_SKILL_TYPE_METHOD_PAIRS
+ * below. `agents` is the FR-157 cross-CLI shared `~/.agents/skills/` target
+ * that codex+gemini both read natively (so they need no standalone target);
+ * `opencode` (FR-171) is the OpenCode command surface (thin `@file` wrappers,
+ * NOT symlinks). FR-202 (M1): the dead standalone `codex` + `gemini` skill
+ * target types (superseded by `agents`) were dropped here in lockstep with the
+ * schema + `_common.sh validate_manifest`.
  */
-const VALID_SKILL_TARGET_TYPES = ["codex", "gemini", "claude", "agents", "opencode"] as const;
+const VALID_SKILL_TARGET_TYPES = ["claude", "agents", "opencode"] as const;
 type SkillTargetType = (typeof VALID_SKILL_TARGET_TYPES)[number];
 
 /**
- * FR-143/FR-149/FR-171: allowed SKILL target methods. `compiler` = the codex
- * AGENTS.md compiler (retired); `converter` = the gemini per-skill TOML
- * converter (retired); `symlink` = the registry-anchored per-skill symlink;
- * `command` = the FR-171 OpenCode thin command wrapper. Mirrors
- * `$defs.skills_surface.targets.method`.
+ * FR-143/FR-149/FR-171/FR-202: allowed SKILL target methods. `symlink` = the
+ * registry-anchored per-skill symlink; `command` = the FR-171 OpenCode thin
+ * command wrapper. Mirrors `$defs.skills_surface.targets.method`. FR-202 (M1):
+ * the long-retired `compiler` (codex AGENTS.md aggregator) + `converter`
+ * (gemini per-skill TOML) methods were dropped here in lockstep with the
+ * schema.
  */
-const VALID_SKILL_METHODS = ["compiler", "converter", "symlink", "command"] as const;
+const VALID_SKILL_METHODS = ["symlink", "command"] as const;
 type SkillMethod = (typeof VALID_SKILL_METHODS)[number];
 
 /**
- * FR-149/FR-151/FR-153/FR-157/FR-171: allowed (type, method) pairs for skill
- * targets. Mirrors the `oneOf` constraint in `manifest.schema.json` and the
- * `valid_pairs` check in `_common.sh validate_manifest`. The legacy
- * codex/compiler + gemini/converter pairs were retired by FR-153.
- * `agents/symlink` (FR-157) is the cross-CLI shared `~/.agents/skills/`
- * target that codex+gemini both read natively. `opencode/command` (FR-171) is
- * the OpenCode command-wrapper pair. See L-519, FR-153, FR-157, FR-171.
+ * FR-149/FR-151/FR-153/FR-157/FR-171/FR-202: allowed (type, method) pairs for
+ * skill targets. Mirrors the `oneOf` constraint in `manifest.schema.json` and
+ * the `valid_pairs` check in `_common.sh validate_manifest`. `agents/symlink`
+ * (FR-157) is the cross-CLI shared `~/.agents/skills/` target that codex+gemini
+ * both read natively. `opencode/command` (FR-171) is the OpenCode
+ * command-wrapper pair. FR-202 (M1): the dead `codex/symlink` + `gemini/symlink`
+ * standalone pairs (superseded by `agents/symlink`) and the long-retired
+ * codex/compiler + gemini/converter pairs were dropped — no live manifest
+ * declared any of them. See L-519, FR-153, FR-157, FR-171, FR-202.
  */
 const VALID_SKILL_TYPE_METHOD_PAIRS = new Set<string>([
   "claude/symlink",
-  "codex/symlink",
-  "gemini/symlink",
   "agents/symlink",
   "opencode/command",
 ]);
@@ -895,7 +899,7 @@ export function validateSkillsSurface(skills: unknown): string | null {
     if (!VALID_SKILL_TYPE_METHOD_PAIRS.has(pair)) {
       return (
         `surfaces.skills.targets[${i}]: type/method pair '${pair}' is not allowed; ` +
-        "valid pairs: claude/symlink, codex/symlink, gemini/symlink, agents/symlink, opencode/command"
+        "valid pairs: claude/symlink, agents/symlink, opencode/command"
       );
     }
   }
@@ -3069,7 +3073,7 @@ function parseSkillTarget(spec: string): SkillTargetSpec | string {
   if (!VALID_SKILL_TYPE_METHOD_PAIRS.has(pair)) {
     return (
       `--target '${spec}': type/method pair '${pair}' is not allowed; ` +
-      "valid pairs: claude/symlink, codex/symlink, gemini/symlink, agents/symlink, opencode/command"
+      "valid pairs: claude/symlink, agents/symlink, opencode/command"
     );
   }
   return { type: type as SkillTargetType, method: method as SkillMethod, path };

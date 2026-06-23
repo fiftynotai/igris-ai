@@ -135,7 +135,7 @@
       ]
     },
     "skills_surface": {
-      "description": "FR-137/TD-191/FR-149/FR-151/FR-153/FR-155/FR-157/FR-171: ONE skills projection block. Multiple coexist as elements of `surfaces.skills[]`; each carries its OWN source/layer/targets so personal blocks compile ALONGSIDE the core block. For personal blocks `source` points at a registry-vendored path (L-516 universal copy-vendor). Valid (type, method) pairs: claude/symlink, codex/symlink, gemini/symlink, agents/symlink (registry-anchored per-skill symlinks), opencode/command (FR-171 thin command wrappers). The four symlink targets vendor identically — the per-harness compiler walks the registry-vendored skill tree. The `agents` target projects into the cross-CLI shared `~/.agents/skills/` standard that codex+gemini both read natively (FR-157). FR-171: `opencode/command` writes a thin `<command-dir>/<name>.md` wrapper whose body loads the canonical SKILL.md via OpenCode's `@file` directive (single source of truth stays the canonical SKILL.md). The legacy codex/compiler (AGENTS.md aggregator) + gemini/converter (per-skill TOML) pairs were retired by FR-153. `scope` (FR-155) is optional; absent → global. See L-519.",
+      "description": "FR-137/TD-191/FR-149/FR-151/FR-153/FR-155/FR-157/FR-171/FR-202: ONE skills projection block. Multiple coexist as elements of `surfaces.skills[]`; each carries its OWN source/layer/targets so personal blocks compile ALONGSIDE the core block. For personal blocks `source` points at a registry-vendored path (L-516 universal copy-vendor). Valid (type, method) pairs: claude/symlink, agents/symlink (registry-anchored per-skill symlinks), opencode/command (FR-171 thin command wrappers). The two symlink targets vendor identically — the per-harness compiler walks the registry-vendored skill tree. The `agents` target projects into the cross-CLI shared `~/.agents/skills/` standard that codex+gemini both read natively (FR-157), so they need no standalone target. FR-171: `opencode/command` writes a thin `<command-dir>/<name>.md` wrapper whose body loads the canonical SKILL.md via OpenCode's `@file` directive (single source of truth stays the canonical SKILL.md). FR-202 (M1): the dead standalone codex/symlink + gemini/symlink target pairs (superseded by agents/symlink under FR-157) and the long-retired codex/compiler (AGENTS.md aggregator) + gemini/converter (per-skill TOML) methods were dropped from this schema — no live manifest declared them. `scope` (FR-155) is optional; absent → global. See L-519.",
       "_contract": {
         "kind": "material",
         "distribution": "portable-format",
@@ -164,17 +164,15 @@
             "required": ["type", "method", "path"],
             "additionalProperties": false,
             "properties": {
-              "type":   { "enum": ["codex", "gemini", "claude", "agents", "opencode"] },
-              "method": { "enum": ["compiler", "converter", "symlink", "command"] },
+              "type":   { "enum": ["claude", "agents", "opencode"] },
+              "method": { "enum": ["symlink", "command"] },
               "path":   {
                 "type": "string",
-                "description": "symlink (claude/codex/gemini/agents): output dir under which each <skill>/ becomes a symlink to its registry-vendored canonical (FR-149/FR-151/FR-153). command (opencode, FR-171): the OpenCode command dir under which each <name>.md thin wrapper is written. The legacy compiler/converter methods were retired by FR-153."
+                "description": "symlink (claude/agents): output dir under which each <skill>/ becomes a symlink to its registry-vendored canonical (FR-149/FR-151/FR-153/FR-157). command (opencode, FR-171): the OpenCode command dir under which each <name>.md thin wrapper is written. FR-202 (M1): the dead codex/gemini standalone symlink targets + the long-retired compiler/converter methods were dropped — codex+gemini read the agents/symlink projection natively (FR-157)."
               }
             },
             "oneOf": [
               { "properties": { "type": { "const": "claude" }, "method": { "const": "symlink" } } },
-              { "properties": { "type": { "const": "codex"  }, "method": { "const": "symlink" } } },
-              { "properties": { "type": { "const": "gemini" }, "method": { "const": "symlink" } } },
               { "properties": { "type": { "const": "agents" }, "method": { "const": "symlink" } } },
               { "properties": { "type": { "const": "opencode" }, "method": { "const": "command" } } }
             ]
