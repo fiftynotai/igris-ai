@@ -36,12 +36,6 @@ Documentation workflow for writing and maintaining project documentation.
 
 ## Workflow
 
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "document" 2>/dev/null || true
-```
-
 ### Step 1: Identify Documentation Scope
 
 - What changed? (read git diff or brief)

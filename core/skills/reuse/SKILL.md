@@ -31,13 +31,6 @@ The catalog mechanics live in the **shared catalog recipe** —
 the same recipe so the catalog has one home. The tools are the existing
 `igris_catalog_*` MCP surface — there is no separate catalog tool.
 
-## 0. Track invocation
-
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "reuse" 2>/dev/null || true
-```
-
 ## Arguments
 
 `$ARGUMENTS` = **`[mode] [query]`**.

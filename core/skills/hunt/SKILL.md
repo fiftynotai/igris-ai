@@ -73,12 +73,6 @@ Execute the complete implementation workflow for a brief, from planning through 
 
 ## Execution
 
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "hunt" 2>/dev/null || true
-```
-
 ### Phase 1: INIT
 
 1. Load brief via `igris_brief_get` (MCP), fallback to cache at `~/.igris/projects/{project}/briefs/` matching `$ARGUMENTS`

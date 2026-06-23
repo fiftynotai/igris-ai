@@ -27,13 +27,6 @@ Cross-project rendering of multiple projects in one call is out of scope (see FR
 
 ## Execution
 
-### 0. Track Invocation
-
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "visualize" 2>/dev/null || true
-```
-
 ### 1. Resolve Project
 
 If `$ARGUMENTS` is non-empty, use its first token as `$PROJECT`. Otherwise:

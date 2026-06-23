@@ -26,12 +26,6 @@ Display a focused dashboard of active briefs and recent sessions across all proj
 
 ## Execution
 
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "dashboard" 2>/dev/null || true
-```
-
 ### 1. Query Sessions
 
 If the `igris-brain` MCP server is available:

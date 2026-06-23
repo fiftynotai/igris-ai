@@ -56,12 +56,6 @@ Agents are defined as individual files in `.claude/agents/*.md`:
 
 ## Subcommands
 
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "digivolve" 2>/dev/null || true
-```
-
 ### status (default)
 
 Display all agents with their status and usage metrics.

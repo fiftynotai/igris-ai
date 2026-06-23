@@ -34,13 +34,6 @@ the project **archetype**. Every step is **operator-guided, never automatic** â€
 this is the proven principle from the original capture design (revived FR-100):
 the model proposes, the operator decides what is worth keeping.
 
-## 0. Track Invocation
-
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "harvest" 2>/dev/null || true
-```
-
 ---
 
 Guided harvest in six phases. Determine the current project slug, name, and

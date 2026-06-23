@@ -67,12 +67,6 @@ Subcommands: `hunt`, `review`, `investigate`, `refactor`, `status`, `message`, `
 
 ## Pre-Flight Check
 
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "team" 2>/dev/null || true
-```
-
 Before every team spawn, execute these checks in order:
 
 1. **Verify experimental flag:**

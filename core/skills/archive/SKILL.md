@@ -35,12 +35,6 @@ Move a completed brief to the archive directory.
 
 ## Execution
 
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "archive" 2>/dev/null || true
-```
-
 ### 1. Find Brief File
 
 Call `igris_brief_get` with project and brief_id, fallback to cache at `~/.igris/projects/{project}/briefs/*{$ARGUMENTS}*.md`.

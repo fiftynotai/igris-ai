@@ -32,12 +32,6 @@ Initialize Igris AI and resume any pending work.
 
 ## Execution
 
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "awaken" 2>/dev/null || true
-```
-
 ### 1. Load Context via Tree
 
 Read `~/.igris/core/igris_tree.json` first — this is the **sole router** for what context to load.

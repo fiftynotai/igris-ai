@@ -24,12 +24,6 @@ Safely pause or end the current session, saving state for later resumption.
 
 ## Execution
 
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "rest" 2>/dev/null || true
-```
-
 ### 1. Read Current Session
 
 Read this instance's own LIVE scratchpad: `~/.igris/projects/{project}/session/instances/<instance_id>.md`. The `<instance_id>` is the Instance ID already stored in the session file body from `/awaken` §3.7 (the `**Instance ID:**` field). This per-instance file is where `/awaken` wrote the LIVE state for this instance; it has no shared `CURRENT_SESSION.md`.

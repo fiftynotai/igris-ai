@@ -28,13 +28,6 @@ You are an expert in the **Fifty Flutter Kit** ecosystem — a comprehensive Flu
 
 **Kit Location:** `/Users/m.elamin/StudioProjects/fifty_eco_system`
 
-## 0. Track Invocation
-
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "fifty-kit" 2>/dev/null || true
-```
-
 ## 1. Before Writing Any Code
 
 **MANDATORY:** Before implementing anything with the kit, read the relevant package source files to confirm APIs, exports, and current versions. The knowledge below is your foundation — but always verify against the actual code.

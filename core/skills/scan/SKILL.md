@@ -40,12 +40,6 @@ Display comprehensive status of the Igris AI system.
 
 ## Execution
 
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "scan" 2>/dev/null || true
-```
-
 ### 1. Load Session State
 
 Read the per-instance session file for:

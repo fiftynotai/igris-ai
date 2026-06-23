@@ -33,13 +33,6 @@ becomes a lineage stub (`promoted_to_doc` points readers at the doc), and recall
 stops double-surfacing the raw content. The operator approves **every** promotion
 — the model proposes, never silently writes a doc.
 
-## 0. Track Invocation
-
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "promote" 2>/dev/null || true
-```
-
 > **Degradation — promote CANNOT run with the brain absent.** Unlike capture,
 > this pass *requires* the brain: it queries candidates, records a
 > `derived_from` lineage edge, and marks the source learning promoted — none of

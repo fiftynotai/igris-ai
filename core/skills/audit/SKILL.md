@@ -53,12 +53,6 @@ Comprehensive codebase audit workflow. Supports 7 audit types to detect quality,
 
 ## Workflow
 
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "audit" 2>/dev/null || true
-```
-
 ### Step 1: Select Audit Scope
 - Parse `$ARGUMENTS` for audit type
 - If `full`, run all 7 types sequentially

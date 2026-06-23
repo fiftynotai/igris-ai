@@ -25,12 +25,6 @@ Display a comprehensive dashboard of all managed projects with analytics.
 
 ## Execution
 
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "portfolio" 2>/dev/null || true
-```
-
 ### 1. Check Brain Exists
 
 Check `~/.igris/memory/knowledge.db`. Error if not found.

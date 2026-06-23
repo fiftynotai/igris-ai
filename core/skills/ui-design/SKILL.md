@@ -31,12 +31,6 @@ Visual design workflow for creating intuitive, accessible user interfaces.
 
 ## Workflow
 
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "ui-design" 2>/dev/null || true
-```
-
 ### Step 1: Gather Design Context
 
 Before designing, gather:

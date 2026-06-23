@@ -30,12 +30,6 @@ Release preparation workflow for generating changelogs, determining version bump
 
 ## Workflow
 
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "release" 2>/dev/null || true
-```
-
 ### Step 1: Gather Changes
 
 Parse commits since last tag:

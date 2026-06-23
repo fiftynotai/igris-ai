@@ -30,10 +30,11 @@ and trains `--no-verify` habits.
 What it deliberately does NOT flag:
   - `subagent_type` — the harness-AGNOSTIC delegation CONTRACT (the Agent-tool
     interface every harness resolves; OK1). Never a leak.
-  - `CLAUDE_PROJECT_DIR` — the systemic per-skill `### 0. Track Invocation`
-    invocation lives in 23 skills and degrades gracefully (the target script
-    falls back to cwd). Its retirement is its own brief (TD-248 L7); flagging
-    it here would block every commit. Out of scope for this gate.
+  - `CLAUDE_PROJECT_DIR` — formerly carried the per-skill `### 0. Track
+    Invocation` telemetry block (removed in FR-202 M7; portable restore tracked
+    in TD-260). The token may still appear in skills for legitimate
+    project-slug resolution (e.g. `visualize/SKILL.md`) — a graceful-degradation
+    env read, not a harness branch, so it stays exempted here.
   - bare doc MENTIONS in prose — a token in a sentence describing the adapter
     mechanism (e.g. "the MCP server is registered in ~/.claude.json") is not a
     branch. Only EXECUTABLE / INSTRUCTION lines count (a fenced ```bash block,
