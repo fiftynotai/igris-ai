@@ -388,6 +388,25 @@ content is distributed, a per-harness behavior is injected at boot. It rides the
 same identity pass but is a distinct descriptor — it proves the "two surface
 kinds" requirement is real and already in the code, not aspirational.
 
+> **FR-202 M3 — agents surface: KEEP confirmed, no centralization needed.** The
+> per-harness agent frontmatter field-maps are **already single-sourced**, NOT
+> scattered. They live in exactly ONE compile-side assembler,
+> `assemble_agent_harness_into_registry` (which holds `CLAUDE_TO_GEMINI_TOOLS`
+> and `CLAUDE_TO_OPENCODE_TOOLS` inline); the `compile_md_agent_target` dispatch
+> wrapper named in the agents row above carries no field-map of its own — it just
+> routes to that assembler (or to `assemble_codex_harness_into_registry`, which
+> emits TOML and translates no tools). The ONLY "copy" of these maps is the
+> deliberate, test-pinned §18.1 bash↔TS dual-impl (the TS twins
+> `CLAUDE_TO_GEMINI_TOOLS` / `CLAUDE_TO_OPENCODE_TOOLS` in
+> `cli/src/verbs/registry.ts` serve the personal-agent vendor path; golden-fixture
+> parity tests pin them byte-for-byte). The drift side carries **no frontmatter
+> field-map at all** — `verify_agents` verdicts by symlink/hardlink-realpath +
+> per-agent tree-hash, never by re-translating frontmatter. So the brief's
+> "centralize the field-map tables" target does not exist (the post-FR-158/159/171
+> code single-sourced each map the first time it was written) — KEEP the
+> translator, the gemini hard-link (TD-208), and the §18.1 dual-impl verbatim. Do
+> not re-chase a scatter that is not here.
+
 ### The membership gate (the rule, stated concretely)
 
 A thing is a wiring surface **iff it can fill all four fields** — it has content
