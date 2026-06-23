@@ -72,7 +72,7 @@ describe("projectAndVerify — TD-235 loud-failure conversion", () => {
         compile: {
           code: 0,
           output:
-            "No agent/skills/mcp/identity targets matched (filter='*', target='all', surface='skills').\n",
+            "No agent/skills/mcp/hook targets matched (filter='*', target='all', surface='skills').\n",
         },
       }),
     });

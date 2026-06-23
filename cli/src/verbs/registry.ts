@@ -100,7 +100,6 @@ export type RegistryAction =
   | "add"
   | "add-skill"
   | "add-mcp"
-  | "add-identity"
   | "add-hook"
   | "project-mcp"
   | "project-hook"
@@ -178,22 +177,6 @@ type McpTargetType = (typeof VALID_MCP_TARGET_TYPES)[number];
  */
 const VALID_MCP_METHODS = ["merge"] as const;
 type McpMethod = (typeof VALID_MCP_METHODS)[number];
-
-/**
- * FR-180 (D6): allowed os_identity target types. SEPARATE enum (parity with the
- * MCP one) — the identity surface carries the 4-harness enum. Mirrors
- * `$defs.identity_surface.targets.type` in manifest.schema.json.
- */
-const VALID_IDENTITY_TARGET_TYPES = ["claude", "codex", "gemini", "opencode"] as const;
-type IdentityTargetType = (typeof VALID_IDENTITY_TARGET_TYPES)[number];
-
-/**
- * FR-180 (D6): identity projection is always a region-merge `file` write (the
- * Igris-managed delimited region in the harness's natively auto-read identity
- * file). Mirrors `$defs.identity_surface.targets.method` (`const "file"`).
- */
-const VALID_IDENTITY_METHODS = ["file"] as const;
-type IdentityMethod = (typeof VALID_IDENTITY_METHODS)[number];
 
 /**
  * FR-180 (D7): allowed hook target types. SEPARATE enum — the hook surface
@@ -335,35 +318,6 @@ interface McpServersSurface {
 }
 
 /**
- * FR-180 (D6): one os_identity target — a `type` + `method:"file"` +
- * `filename` (the harness's natively auto-read identity file the Igris-managed
- * region merges into, e.g. GEMINI.md / AGENTS.md). Mirrors one item of
- * `$defs.identity_surface.targets`.
- */
-interface IdentityTarget {
-  type: IdentityTargetType;
-  method: IdentityMethod;
-  filename: string;
-}
-
-/**
- * FR-180 (D6): ONE os_identity projection block. Multiple coexist as elements
- * of `surfaces.os_identity[]` (multi-block, like `skills`/`mcp_servers`). An
- * identity block has NO `name` (it is keyed by its (type, filename) target
- * pairs). `source` is the canonical identity template; `version_source`
- * resolves {{IGRIS_VERSION}}; both default per the schema when absent. v1
- * projects every block (scope-filtered); the FR-180 personal write path emits
- * a project-scoped block. Mirrors `$defs.identity_surface`.
- */
-interface IdentitySurface {
-  source?: string;
-  version_source?: string;
-  layer?: string;
-  scope?: Scope;
-  targets: IdentityTarget[];
-}
-
-/**
  * FR-180 (D7): one hook target — a `type` + `method:"merge"` + optional
  * `enabled`. Mirrors one item of `$defs.hook_surface.targets`.
  */
@@ -407,8 +361,6 @@ interface Overlay {
   surfaces?: {
     skills?: SkillsSurface[];
     mcp_servers?: McpServersSurface[];
-    /** FR-180 (D6): personal os_identity blocks (the v1 not-merged gate is lifted). */
-    os_identity?: IdentitySurface[];
     /** FR-180 (D7): personal hook blocks (first-class surfaces.hooks[]). */
     hooks?: HookSurface[];
     os_context?: Record<string, unknown>;
@@ -563,17 +515,6 @@ export interface RegistryOptions {
    * a number at the CLI boundary so the verb can trust the type.
    */
   startupTimeoutSec?: number;
-  /**
-   * FR-180 (D6) add-identity: canonical identity template path override
-   * (`--source`). Absent → the schema default (<brain>/core/templates/
-   * identity.tmpl) — the on-disk block omits the field for minimal diff.
-   */
-  identitySource?: string;
-  /**
-   * FR-180 (D6) add-identity: `{{IGRIS_VERSION}}` source path override
-   * (`--version-source`). Absent → the schema default (<brain>/config.json).
-   */
-  identityVersionSource?: string;
   /** Test seam: overlay path override (defaults to registryOverlayPath()). */
   overlayPath?: string;
   /** Test seam: origins.json path override (defaults to registryOriginsPath()). */
@@ -1082,106 +1023,6 @@ export function validateMcpServersSurfaceArray(mcp: unknown): string | null {
 }
 
 /**
- * FR-180 (D6): validate ONE `surfaces.os_identity` block. Port of
- * `$defs.identity_surface` in manifest.schema.json + the `validate_manifest`
- * structural fallback (`_common.sh:802-849`). An identity block has NO `name`
- * (it is keyed by its (type, filename) targets); `targets` is required and each
- * target is `{type ∈ 4-harness enum, method:"file", filename:non-empty}`.
- * `source`/`version_source`/`layer` are optional strings; `scope` is the shared
- * FR-155 shape. Keep in lockstep with the schema + the bash fallback —
- * integration test #11 reds the build on drift. Returns an error message, or
- * null when valid.
- */
-export function validateIdentitySurface(identity: unknown): string | null {
-  if (typeof identity !== "object" || identity === null || Array.isArray(identity)) {
-    return "surfaces.os_identity must be an object";
-  }
-  const i = identity as Record<string, unknown>;
-  const allowedKeys = new Set([
-    "source",
-    "version_source",
-    "layer",
-    "scope",
-    "targets",
-  ]);
-  for (const key of Object.keys(i)) {
-    if (!allowedKeys.has(key)) {
-      return `surfaces.os_identity: unknown key '${key}' (additionalProperties:false)`;
-    }
-  }
-  if (!("targets" in i)) {
-    return "surfaces.os_identity missing required key 'targets'";
-  }
-  for (const k of ["source", "version_source", "layer"] as const) {
-    if (i[k] !== undefined && typeof i[k] !== "string") {
-      return `surfaces.os_identity.${k} must be a string`;
-    }
-  }
-
-  const targets = i.targets;
-  if (!Array.isArray(targets) || targets.length < 1) {
-    return "surfaces.os_identity.targets must be a non-empty array";
-  }
-  const allowedTargetKeys = new Set(["type", "method", "filename"]);
-  for (let idx = 0; idx < targets.length; idx++) {
-    const t = targets[idx];
-    if (typeof t !== "object" || t === null || Array.isArray(t)) {
-      return `surfaces.os_identity.targets[${idx}] must be an object`;
-    }
-    const tRec = t as Record<string, unknown>;
-    for (const key of Object.keys(tRec)) {
-      if (!allowedTargetKeys.has(key)) {
-        return `surfaces.os_identity.targets[${idx}]: unknown key '${key}' (additionalProperties:false)`;
-      }
-    }
-    for (const req of ["type", "method", "filename"]) {
-      if (!(req in tRec)) {
-        return `surfaces.os_identity.targets[${idx}] missing required key '${req}'`;
-      }
-    }
-    if (!(VALID_IDENTITY_TARGET_TYPES as readonly string[]).includes(tRec.type as string)) {
-      return `surfaces.os_identity.targets[${idx}].type '${String(tRec.type)}' is not one of ${JSON.stringify(VALID_IDENTITY_TARGET_TYPES)}`;
-    }
-    if (!(VALID_IDENTITY_METHODS as readonly string[]).includes(tRec.method as string)) {
-      return `surfaces.os_identity.targets[${idx}].method '${String(tRec.method)}' must be 'file'`;
-    }
-    if (typeof tRec.filename !== "string" || tRec.filename.length === 0) {
-      return `surfaces.os_identity.targets[${idx}].filename must be a non-empty string`;
-    }
-  }
-
-  if (i.scope !== undefined) {
-    const scopeErr = validateScope(i.scope, "surfaces.os_identity");
-    if (scopeErr !== null) {
-      return scopeErr;
-    }
-  }
-  return null;
-}
-
-/**
- * FR-180 (D6): validate `surfaces.os_identity` as an ARRAY of identity blocks
- * (mirrors `validateMcpServersSurfaceArray`). Rejects non-array + empty array;
- * delegates per-block validation. Error messages get a
- * `surfaces.os_identity[i]:` prefix so the offending block is named.
- */
-export function validateIdentitySurfaceArray(identity: unknown): string | null {
-  if (!Array.isArray(identity)) {
-    return "surfaces.os_identity must be a non-empty array";
-  }
-  if (identity.length < 1) {
-    return "surfaces.os_identity must be a non-empty array";
-  }
-  for (let i = 0; i < identity.length; i++) {
-    const err = validateIdentitySurface(identity[i]);
-    if (err !== null) {
-      return `surfaces.os_identity[${i}]: ${err}`;
-    }
-  }
-  return null;
-}
-
-/**
  * FR-180 (D7): validate ONE `surfaces.hooks` block. Port of `$defs.hook_surface`
  * in manifest.schema.json + the `validate_manifest` structural fallback in
  * `_common.sh`. A hook block requires `name` (lower-kebab), `event` (one of the
@@ -1356,7 +1197,6 @@ export function validateOverlayShape(overlay: unknown): string | null {
     const allowedSurfaceKeys = new Set([
       "skills",
       "mcp_servers",
-      "os_identity",
       "hooks",
       "os_context",
     ]);
@@ -1375,14 +1215,6 @@ export function validateOverlayShape(overlay: unknown): string | null {
       const mcpErr = validateMcpServersSurfaceArray(surfaces.mcp_servers);
       if (mcpErr !== null) {
         return mcpErr;
-      }
-    }
-    // FR-180 (D6): personal os_identity blocks are now first-class in the
-    // overlay (the v1 not-merged gate is lifted in merge_overlay_manifest).
-    if (surfaces.os_identity !== undefined) {
-      const identityErr = validateIdentitySurfaceArray(surfaces.os_identity);
-      if (identityErr !== null) {
-        return identityErr;
       }
     }
     // FR-180 (D7): personal hook blocks are first-class in the overlay
@@ -1531,39 +1363,6 @@ function readBaseMcpNames(projectRoot: string): Set<string> {
       }
     }
     return names;
-  } catch {
-    return new Set();
-  }
-}
-
-/**
- * FR-180 (D6): read the (type, filename) identity-target PAIRS declared by the
- * base (core) manifest. Identity blocks have no `name`, so the collision unit is
- * the (type, filename) pair — a personal `add identity` target that collides
- * with a core one is rejected at write-time (mirrors `readBaseMcpNames` for MCP
- * + the bash `merge_overlay_manifest` (type, filename) guard). Each pair is
- * encoded `"<type> <filename>"`. Absent/malformed base → empty set.
- */
-function readBaseIdentityTargets(projectRoot: string): Set<string> {
-  const basePath = join(projectRoot, "harness-manifest.json");
-  if (!existsSync(basePath)) {
-    return new Set();
-  }
-  try {
-    const base = JSON.parse(readFileSync(basePath, "utf-8")) as {
-      surfaces?: {
-        os_identity?: { targets?: { type?: unknown; filename?: unknown }[] }[];
-      };
-    };
-    const pairs = new Set<string>();
-    for (const block of base.surfaces?.os_identity ?? []) {
-      for (const t of block?.targets ?? []) {
-        if (typeof t?.type === "string" && typeof t?.filename === "string") {
-          pairs.add(`${t.type} ${t.filename}`);
-        }
-      }
-    }
-    return pairs;
   } catch {
     return new Set();
   }
@@ -4189,43 +3988,8 @@ export function materializeMcp(
 }
 
 /**
- * FR-180 (D6): structured-return shape for the identity materialize wrapper.
- * Mirrors {@link McpMaterializeResult} — a personal identity block is an overlay
- * write ONLY (no vendor tree, no inline origin), so the only field beyond
- * ok/code is the overlay it was written to.
- */
-export interface IdentityMaterializeResult {
-  /** True iff the write path returned 0 (overlay os_identity block landed). */
-  ok: boolean;
-  /** The exit code `runAddIdentity` produced (0 on success, 1/2 on reject). */
-  code: number;
-  /** The overlay manifest path the block was written to. */
-  overlayWritten: string;
-}
-
-/**
- * FR-180 (D6): thin structured-return wrapper over the identity overlay writer
- * `runAddIdentity` so `verbs/add.ts`'s identity arm can chain
- * `projectAndVerify("identity", …)` off a structured outcome (R7: no logic in
- * the wrapper — every guard runs in `runAddIdentity`). Synchronous (an identity
- * block is an inline overlay write, no `github:` fetch — same shape as the MCP
- * wrapper).
- */
-export function materializeIdentity(
-  opts: RegistryOptions,
-  overlayPath: string,
-): IdentityMaterializeResult {
-  const code = runAddIdentity(opts, overlayPath);
-  return {
-    ok: code === 0,
-    code,
-    overlayWritten: overlayPath,
-  };
-}
-
-/**
  * FR-180 (D7): structured-return result for the personal hook materialize.
- * Mirrors {@link IdentityMaterializeResult} — a personal hook write produces an
+ * Mirrors {@link McpMaterializeResult} — a personal hook write produces an
  * overlay block + the registry hook SCRIPT, so beyond ok/code it surfaces the
  * overlay it was written to.
  */
@@ -4243,7 +4007,7 @@ export interface HookMaterializeResult {
  * `runAddHook` so `verbs/add.ts`'s hook arm can chain `projectAndVerify` off a
  * structured outcome (R7: no logic in the wrapper — every guard runs in
  * `runAddHook`). Synchronous (a hook block is an inline overlay write + a local
- * script scaffold, no `github:` fetch — same shape as the MCP/identity wrappers).
+ * script scaffold, no `github:` fetch — same shape as the MCP wrapper).
  */
 export function materializeHook(
   opts: RegistryOptions,
@@ -5335,222 +5099,6 @@ async function runUpdate(
 }
 
 // ---------------------------------------------------------------------------
-// FR-180 (D6): add-identity helpers + verb
-// ---------------------------------------------------------------------------
-
-/**
- * FR-180 (D6): parse one identity `--target` spec. Grammar is
- * `type:file:filename` — DIFFERENT from the agent (`type:path`), skill
- * (`type:method:path`) and MCP (`type:merge[:enabled]`) forms. `type` ∈ the
- * 4-harness enum; `method` is the const `file`; `filename` is the harness's
- * natively auto-read identity file (split-limited so a filename containing `:`
- * survives). Returns the `IdentityTarget` or an error string for the verb to log
- * + reject.
- */
-function parseIdentityTarget(spec: string): IdentityTarget | string {
-  const first = spec.indexOf(":");
-  if (first <= 0) {
-    return `--target '${spec}' must be of the form type:file:filename`;
-  }
-  const type = spec.slice(0, first);
-  const second = spec.indexOf(":", first + 1);
-  if (second < 0) {
-    return `--target '${spec}' must be of the form type:file:filename`;
-  }
-  const method = spec.slice(first + 1, second);
-  const filename = spec.slice(second + 1);
-  if (!(VALID_IDENTITY_TARGET_TYPES as readonly string[]).includes(type)) {
-    return `--target type '${type}' is not one of ${JSON.stringify(VALID_IDENTITY_TARGET_TYPES)}`;
-  }
-  if (method !== "file") {
-    return `--target method '${method}' must be 'file'`;
-  }
-  if (filename.length === 0) {
-    return `--target '${spec}': filename must be non-empty`;
-  }
-  return { type: type as IdentityTargetType, method: "file", filename };
-}
-
-/**
- * FR-180 (D6): `igris registry add-identity` — append a personal os_identity
- * projection block to `surfaces.os_identity[]` of the personal overlay. This is
- * the write half of `igris add identity` (personal); the projection (the
- * region-merge into GEMINI.md / AGENTS.md / …) is done by `harness compile`
- * after the D6 merge-gate lift, the SAME way core identity projects.
- *
- * An identity block has NO `name` (the schema keys it only on its targets); the
- * positional `<name>` is a LABEL for logging only. Identity is the (type,
- * filename) PAIR, so:
- *   - a target whose (type, filename) collides with a CORE block's is a HARD
- *     reject (a personal identity must not shadow a core one — readBaseIdentity-
- *     Targets), and
- *   - the block is written PROJECT-SCOPED (`scope:{type:"project",
- *     paths:[realpath(projectRoot)]}`) so it only projects into THIS project's
- *     identity files, never leaking the personal identity into other projects.
- *
- * Writes ONLY the overlay (via `writeOverlayAtomic`) — it does NOT touch a live
- * identity file (that is `harness compile`). Every guard returns BEFORE the
- * first disk write, so the overlay stays UNCHANGED on any reject.
- *
- * Returns an exit code: 0 = success, 1 = enforcement reject, 2 = usage error.
- */
-function runAddIdentity(opts: RegistryOptions, overlayPath: string): number {
-  // Guard 1 — name (label) required + pattern (parity with the other verbs;
-  // keeps the overlay/log identity stable even though the block has no `name`).
-  if (opts.name === undefined || opts.name.length === 0) {
-    logError("registry add-identity: <name> is required");
-    return 2;
-  }
-  if (!NAME_PATTERN.test(opts.name)) {
-    logError(
-      `registry add-identity: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
-    );
-    return 2;
-  }
-  const name = opts.name;
-
-  // Guard 2 — at least one target, parsed via the identity grammar.
-  if (opts.targets === undefined || opts.targets.length === 0) {
-    logError(
-      "registry add-identity: at least one --target <type:file:filename> is required",
-    );
-    return 2;
-  }
-  const newTargets: IdentityTarget[] = [];
-  const seenPairs = new Set<string>();
-  for (const spec of opts.targets) {
-    const parsed = parseIdentityTarget(spec);
-    if (typeof parsed === "string") {
-      logError(`registry add-identity: ${parsed}`);
-      return 2;
-    }
-    const pair = `${parsed.type} ${parsed.filename}`;
-    if (seenPairs.has(pair)) {
-      logError(
-        `registry add-identity: duplicate --target (${parsed.type}, ${parsed.filename})`,
-      );
-      return 2;
-    }
-    seenPairs.add(pair);
-    newTargets.push(parsed);
-  }
-
-  const projectRoot = opts.projectRoot ?? process.cwd();
-
-  // Core-collision reject — a personal identity target must not shadow a core
-  // one (the identity analogue of the MCP name-collision / skill path-collision
-  // guards; the unit is the (type, filename) pair). Runs BEFORE any disk write.
-  const baseIdentityTargets = readBaseIdentityTargets(projectRoot);
-  for (const t of newTargets) {
-    const pair = `${t.type} ${t.filename}`;
-    if (baseIdentityTargets.has(pair)) {
-      logError(
-        `registry add-identity: identity target (${t.type}, ${t.filename}) ` +
-          "collides with a base (core) os_identity target; a personal identity " +
-          "must not shadow a core one. Overlay unchanged.",
-      );
-      return 1;
-    }
-  }
-
-  // Read current overlay (unchanged on any reject below).
-  let overlay: Overlay;
-  try {
-    overlay = readOverlay(overlayPath);
-  } catch (err) {
-    logError((err as Error).message);
-    return 1;
-  }
-
-  // Project-scope the block so the personal identity only projects into THIS
-  // project's identity files. realpath the project root at write time so the
-  // paths[] entry is canonical (macOS /tmp ↔ /private/tmp), matching the
-  // compile/drift READ-time realpath.
-  let scopedPath = projectRoot;
-  try {
-    scopedPath = realpathSync(projectRoot);
-  } catch {
-    // Non-existent root → store as-given; compile will realpath both sides.
-  }
-
-  const block: IdentitySurface = {
-    layer: "personal",
-    scope: { type: "project", paths: [scopedPath] },
-    targets: newTargets,
-  };
-  if (opts.identitySource !== undefined && opts.identitySource.length > 0) {
-    block.source = opts.identitySource;
-  }
-  if (
-    opts.identityVersionSource !== undefined &&
-    opts.identityVersionSource.length > 0
-  ) {
-    block.version_source = opts.identityVersionSource;
-  }
-
-  // Per-block validation (names the offender; the array gate runs in
-  // validateOverlayShape below).
-  const blockErr = validateIdentitySurface(block);
-  if (blockErr !== null) {
-    logError(`registry add-identity: invalid identity block: ${blockErr}`);
-    return 1;
-  }
-
-  // Append the block (identity has no name → no in-place dedupe; a same-label
-  // re-add appends a NEW block, but the (type, filename) cross-block guard in
-  // merge_overlay_manifest + validateOverlayShape rejects a colliding target,
-  // so a true duplicate target can never silently double-write a region).
-  const existingBlocks = overlay.surfaces?.os_identity ?? [];
-
-  // Intra-overlay collision reject (the bash merge guards this too, but a
-  // write-time reject names the offender clearly before any side effect).
-  const existingPairs = new Set<string>();
-  for (const b of existingBlocks) {
-    for (const t of b.targets ?? []) {
-      existingPairs.add(`${t.type} ${t.filename}`);
-    }
-  }
-  for (const t of newTargets) {
-    const pair = `${t.type} ${t.filename}`;
-    if (existingPairs.has(pair)) {
-      logError(
-        `registry add-identity: identity target (${t.type}, ${t.filename}) ` +
-          "already declared in the personal overlay; edit it or remove the " +
-          "existing block first. Overlay unchanged.",
-      );
-      return 1;
-    }
-  }
-
-  const surfaces = { ...(overlay.surfaces ?? {}) };
-  surfaces.os_identity = [...existingBlocks, block];
-  overlay.surfaces = surfaces;
-
-  // Validate the WHOLE overlay (defense-in-depth) before any side effect.
-  const overlayErr = validateOverlayShape(overlay);
-  if (overlayErr !== null) {
-    logError(`registry add-identity: resulting overlay invalid: ${overlayErr}`);
-    return 1;
-  }
-
-  // All guards passed → atomic overlay write (the only disk write; identity has
-  // no vendor tree and no origin sidecar).
-  try {
-    writeOverlayAtomic(overlayPath, overlay);
-  } catch (err) {
-    logError(
-      `registry add-identity: failed to write overlay: ${(err as Error).message}`,
-    );
-    return 1;
-  }
-
-  info(
-    `Registered personal identity '${name}' (${newTargets.length} target(s)) in ${overlayPath}`,
-  );
-  return 0;
-}
-
-// ---------------------------------------------------------------------------
 // FR-180 (D7): add-hook + project-hook
 // ---------------------------------------------------------------------------
 
@@ -6098,8 +5646,6 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runAddSkill(opts, overlayPath);
     case "add-mcp":
       return runAddMcp(opts, overlayPath);
-    case "add-identity":
-      return runAddIdentity(opts, overlayPath);
     case "add-hook":
       return runAddHook(opts, overlayPath);
     case "project-mcp":
@@ -6114,7 +5660,7 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runUpdate(opts, overlayPath);
     default:
       logError(
-        `unknown registry action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, add-identity, add-hook, project-mcp, project-hook, list, remove, update.`,
+        `unknown registry action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, add-hook, project-mcp, project-hook, list, remove, update.`,
       );
       return 2;
   }

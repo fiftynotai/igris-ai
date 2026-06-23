@@ -194,6 +194,26 @@ EOF
   [[ "$output" == *"agentz"* || "$output" == *"unknown"* || "$output" == *"additional"* ]]
 }
 
+# FR-202 M4: the os_identity SURFACE was retired (no plugin, no $defs). A stray
+# surfaces.os_identity block must FAIL validation (additionalProperties:false on
+# `surfaces`), NOT silently pass-then-no-op — the §13 phantom-surface guard.
+@test "schema rejects a stray surfaces.os_identity block (FR-202 M4 retired the surface)" {
+  cat > "$PROJ/bad.json" <<'EOF'
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "os_identity": [
+      { "targets": [ { "type": "gemini", "method": "file", "filename": "GEMINI.md" } ] }
+    ]
+  }
+}
+EOF
+  run bash -c "source '$COMMON' && validate_manifest '$PROJ/bad.json' '$SCHEMA'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"os_identity"* || "$output" == *"unknown"* || "$output" == *"additional"* ]]
+}
+
 # --- version != 1 -----------------------------------------------------------
 
 @test "schema rejects version != 1" {

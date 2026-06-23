@@ -143,7 +143,7 @@ describe("parseHarnessOutput (FR-180)", () => {
       "SKIPPED core surfaces (personal-project compile)\n" +
       "  OK    skills/claude -> ~/.claude/skills/foo\n" +
       "  FAIL  skills/gemini — refuse to clobber\n" +
-      "  No agent/skills/mcp/identity targets matched (filter='*').\n";
+      "  No agent/skills/mcp/hook targets matched (filter='*').\n";
     const r = parseHarnessOutput(0, out);
     expect(r.code).toBe(0);
     expect(r.okRows).toEqual(["OK    skills/claude -> ~/.claude/skills/foo"]);

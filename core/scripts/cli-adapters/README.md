@@ -208,48 +208,25 @@ or leaking a value while "documenting" it — is a regression. The 5 emitters +
 this drift compare ARE the thin MCP surface; there is nothing to delete and
 nothing to rewrite for distribution (npx is already a verbatim `command`).
 
-## Orchestrator-identity surface (os_identity — TD-233)
+## Orchestrator-identity surface — RETIRED (FR-202 M4)
 
-The fifth projected surface (after agents, skills, MCP, hooks): the
-orchestrator-identity file each harness auto-reads at launch. Declared as
-`surfaces.os_identity[]` in the repo-root `harness-manifest.json` (NOT
-`surfaces-manifest.json`), with `method:"file"`, a per-target `filename`
-(Gemini → `GEMINI.md`, Codex → `AGENTS.md`; Claude/OpenCode ride the rendered
-`CLAUDE.md` and need no target), `version_source: cli/package.json`, and
-project-root scope `{type:"project", paths:["."]}` (FR-155 — silent scope-skip
-outside the igris-ai checkout).
+The `os_identity` projection surface (TD-233) was **removed**. Igris no longer
+region-merges an identity block into a harness's auto-read file. There is no
+`surfaces.os_identity[]`, no `project_identity`/`verify_identity` plugin, no
+`normalize_identity_shape` helper, no `identity` entry in `IGRIS_SURFACE_IDS`,
+and no `igris add identity` arm. The surface registry is back to four:
+`agents skills mcp hook`.
 
-- **Compile** (`compile_harnesses.sh`, narrows via `--surface identity`):
-  renders the canonical `core/templates/identity.tmpl` (tokens
-  `{{IGRIS_VERSION}}` + `{{HARNESS_SELF_NAME}}`, Model A) and **region-merges**
-  it between the `IGRIS:OS_IDENTITY` BEGIN/END markers in the target file —
-  user content outside the region is preserved; never a whole-file overwrite.
-- **Drift** (`check_harness_drift.sh`): re-derives the expected region from the
-  SAME shared shape helper (`_common.sh::normalize_identity_shape` — §18.1
-  pair, byte-identical with the TS twin `cli/src/lib/identity-shape.ts`) and
-  reports `MATCH` / `DRIFTED` / `MISSING` per `(harness, identity-file)`.
-- The per-harness self-name map (`SELF_NAMES` in `_common.sh` /
-  `HARNESS_SELF_NAMES` in `identity-shape.ts`) MUST stay byte-identical —
-  golden-fixture parity tests pin the pair.
-- **Adding an identity block (`igris add identity`, FR-180 D6):** the one-step
-  add verb writes a `surfaces.os_identity[]` block (personal → the registry
-  overlay; core → the repo-root `harness-manifest.json`) then projects + verifies
-  it. FR-180 (D6) lifted the v1 "personal os_identity accepted but NOT merged"
-  gate — `merge_overlay_manifest` now unions os_identity blocks (base ++ overlay)
-  the same way it unions skills + mcp_servers, with a (type, filename) cross-block
-  collision guard. The projection mechanics (`normalize_identity_shape`) are
-  UNCHANGED, so the §18.1 golden parity is preserved.
-
-The repo-root `GEMINI.md` + `AGENTS.md` are committed-as-canonical derived
-artifacts: edit `identity.tmpl`, then recompile. Filename map + mechanism:
-`docs/multi-cli.md` § "Orchestrator identity as a `surfaces.os_identity`
-manifest declaration".
+The CLAUDE.md identity block is a separate mechanism (the whole-file `CLAUDE.md`
+render from `core/templates/CLAUDE.md.tmpl`); its identity-denial sweep rides the
+FR-187 cutover, not this surface. The per-harness delegation mechanism that used
+to ride the identity region is now the harness-specific context layer (below).
 
 ## Event-hook surface (hooks — FR-180 D7)
 
-The sixth projected surface: event-hooks. FR-180 (D7, Option B) promoted hooks
-to a first-class `surfaces.hooks[]` manifest surface so they ride the SAME
-flatten → compile → drift scaffold as the other five. Each block declares a
+Event-hooks: a first-class `surfaces.hooks[]` manifest surface (FR-180 D7,
+Option B) so they ride the SAME flatten → compile → drift scaffold as the other
+material surfaces. Each block declares a
 `name`, an `event` (one of the six portable events), a `canonical.command` (the
 hook script the harness runs, optionally `matcher`/`timeout`), and
 per-harness `targets[{type ∈ {claude, opencode}, method:"merge"}]`.
@@ -267,7 +244,7 @@ per-harness `targets[{type ∈ {claude, opencode}, method:"merge"}]`.
   for opencode it verifies the plugin. Honors `--filter <name>` (S1) so a scoped
   verify checks only the added hook. Because the hook is identified by its command
   PATH in the merged JSON (not its full byte-shape), there is **no §18.1 bash↔TS
-  shape-parity contract** here the way identity/agents have (no bash hook-shaper
+  shape-parity contract** here the way agents have (no bash hook-shaper
   twin) — `hook-shape.ts` shapes the projector's output and is pinned by a TS-only
   golden in `hook-shape.test.ts`.
 - **R2 — refresh-overwrite safety.** A core hook's command lives under
@@ -285,70 +262,51 @@ per-harness `targets[{type ∈ {claude, opencode}, method:"merge"}]`.
   unions hook blocks (base ++ overlay) with a `name` + `(event, target)` cell
   collision guard.
 
-## Delegation-mechanism surface (boot-injection — TD-244)
+## Delegation mechanism — a context layer, NOT an adapter surface (FR-202 M4)
 
-The **sixth** adapter surface: the **delegation mechanism**. This is the one
-piece of harness-specific behavior that previously had no surface, so it leaked
-into a skill (the FR-183 dynamic-define recipe embedded in `/hunt`). TD-244
-relocated it here, so skills delegate **abstractly** and the adapter owns the
-*how*.
+The **delegation mechanism** is the one piece of harness-specific behavior that
+previously had no home, so it leaked into a skill (the FR-183 dynamic-define
+recipe embedded in `/hunt`). It was briefly carried on the identity region
+(TD-244), then re-homed by FR-202 M4 into a **context layer** —
+`core/os/harness-specific/<harness>.md`. It is **NOT an adapter surface**: the
+compile/drift engine no longer touches it. Skills delegate **abstractly** and the
+model reads the per-harness *how* from its own harness-specific file at Boot.
 
 ### The adapter boundary (what the adapter owns vs what skills/OS see)
 
-The harness adapter owns every behavior that differs by harness; the OS core and
-skills name only **abstract intents**, resolved to a harness-specific mechanism
-via **declared manifest config**, never per-skill branching:
+The harness adapter owns every MATERIAL surface that differs by harness; the OS
+core and skills name only **abstract intents**, resolved to a harness-specific
+mechanism via **declared config**, never per-skill branching:
 
 | Adapter-owned behavior | Declared in (config) | Compiled/drift-checked by | Abstract intent the skill/OS sees |
 |---|---|---|---|
 | projection (agents) | `harness-manifest.json` `agents[]` | agents pass | "the named agent's prompt is loadable" |
 | skills | `surfaces.skills[]` | skills pass | "the skill is invocable" |
 | MCP | `surfaces.mcp_servers[]` | mcp pass | "the brain MCP tools are callable" |
-| identity | `surfaces.os_identity[]` | identity pass | "the harness greets as Igris AI" |
 | hooks | `surfaces.hooks[]` | hook pass | "the portable event fires the shared script" |
-| **delegation mechanism** | `harnesses.<type>.delegation_model` | identity pass (recipe rides the identity region) | **"delegate to role X" resolves on BOTH a native-static and a dynamic-define harness, ZERO per-skill branching** |
+| **delegation mechanism** (context layer, NOT a projected surface) | `harnesses.<type>.delegation_model` predicate + `core/os/harness-specific/<harness>.md` | NOT the engine — Boot loads the Detect-selected file; `gen_os_index.sh` rosters it | **"delegate to role X" resolves on BOTH a native-static and a dynamic-define harness, ZERO per-skill branching** |
 
-### The `delegation_model` descriptor + BI-3 mechanism
+### The `delegation_model` predicate + the harness-specific layer
 
 `harness-manifest.json` carries a top-level `harnesses` map keyed by harness
-`type`, each with a `delegation_model` (`native-static` | `dynamic-define`):
+`type`, each with a `delegation_model` (`native-static` | `dynamic-define`). The
+map is the **applicability predicate** — it selects which harness-specific file
+applies; it no longer feeds a projection surface.
 
 - **`native-static`** (Claude/Codex/OpenCode) — the harness loads Igris agents
-  statically; a skill's `subagent_type:<agent>` resolves directly. Nothing extra
-  is projected; the identity region stays recipe-free.
-- **`dynamic-define`** (Antigravity, and gemini-cli's `GEMINI.md` read-path) —
-  the harness can only define subagents at runtime. The compile **identity pass**
-  region-merges the canonical delegation recipe
-  (`core/templates/delegation-recipe.tmpl`, the companion of `identity.tmpl`,
-  living alongside it) into the harness's boot-read identity file, **gated
-  strictly on `delegation_model=dynamic-define`**. So the orchestrator is taught
-  the read→`define_subagent`→invoke recipe once per session, and a native-static
-  harness's identity file (e.g. Codex's `AGENTS.md`) never receives a recipe it
-  does not need.
+  statically; a skill's `subagent_type:<agent>` resolves directly. No
+  harness-specific file is needed.
+- **`dynamic-define`** (Antigravity, gemini-cli) — the harness can only define
+  subagents at runtime. It has a `core/os/harness-specific/<harness>.md` file
+  whose body points at the shared `core/os/harness-specific/_delegation-recipe.md`
+  (one canonical recipe, DRY). The **Boot** stage loads ONLY the file whose
+  `harness:` frontmatter matches the Detect-resolved harness, teaching the
+  orchestrator the read→`define_subagent`→invoke recipe once per session.
 
-The recipe rides the identity target keyed by `type`, so a harness that reads
-another's identity file (Antigravity reads `GEMINI.md`, gemini's target) inherits
-the right recipe for free. The mechanism (BI-3) was chosen by a live `agy` marker
-probe (L-711): the recipe in `GEMINI.md` is honored at boot, so it rides the
-existing identity projection rather than a new SessionStart channel.
-
-- **Compile** (`compile_harnesses.sh`, identity pass): `flatten_identity_rows`
-  resolves `delegation_model` per identity-target `type` and emits it as a column;
-  `normalize_identity_shape <tmpl> <harness> <version> <delegation_model>
-  <recipe>` appends the recipe when `dynamic-define`. A missing recipe template
-  for a dynamic-define target is an observable FAIL (L-232), never a silent
-  identity-only fallback (that would strand the harness).
-- **Drift** (`check_harness_drift.sh`): the SAME identity drift branch re-derives
-  the recipe-carrying region via `normalize_identity_shape` and byte-compares — a
-  stripped or diverged recipe surfaces as DRIFTED (§17 paired branch).
-- **§18.1 parity:** the bash `normalize_identity_shape` dynamic-define branch ↔
-  the TS `buildHarnessIdentityFile(..., "dynamic-define", recipeRaw)` /
-  `appendDelegationRecipe` (`cli/src/lib/identity-shape.ts`) MUST stay
-  byte-identical — the golden `cli/src/__tests__/fixtures/
-  td244-identity-golden-gemini-dynamic.md` + the bats `#parity` test pin the two
-  (L-554).
-- A harness absent from the `harnesses` map defaults to `native-static`
-  (identity-only — pre-TD-244 back-compat; existing golden fixtures unchanged).
+The roster (harness → file) is discovered by `core/scripts/gen_os_index.sh` into
+`core/os/INDEX.md`; the Detect→Boot routing hop lives in `core/igris_tree.json`
+(`harness_specific`). A harness absent from the `harnesses` map defaults to
+`native-static` (no file needed).
 
 ## Surface-plugin contract (FR-202 M0)
 
@@ -371,7 +329,7 @@ each surface `$def`):
 | `projection` | `shape-emit` \| `place-in-standard-dir` \| `inject-at-boot` \| `merge-region` | How the declared content becomes a per-harness native shape. |
 | `verification` | _(drift verdict fn)_ | The surface's drift verdict (MATCH / DRIFTED / MISSING). |
 
-### The two surface kinds (proven against real code)
+### The material surfaces (proven against real code)
 
 | Surface | kind | distribution | projection | verification (existing fn) |
 |---------|------|--------------|------------|----------------------------|
@@ -379,14 +337,13 @@ each surface `$def`):
 | **skills** | material | portable-format | place-in-standard-dir | `verify_skills` — per-skill tree-hash + symlink/wrapper presence |
 | **mcp** | material | npx | merge-region | `verify_mcp` — secret-safe per-(mcp,target) compare (`verify_mcp_entry_drift`) |
 | **hooks** | material | native-add | merge-region | `verify_hook` — `verify_hook_entry_present` (presence-based MATCH/MISSING) |
-| **identity** | material | portable-format | merge-region | `verify_identity` — re-derive via `normalize_identity_shape` + byte-compare the Igris-managed identity region |
-| **delegation_model** | **behavioral** | n-a | **inject-at-boot** — the recipe region-merged into the identity file when `dynamic-define` | re-derive via `normalize_identity_shape` + byte-compare (the identity drift branch in `verify_identity`) |
 
-The first five are the **material** shapes (content projected into a per-harness
-config/file); the `delegation_model` descriptor is the **behavioral** kind — no
-content is distributed, a per-harness behavior is injected at boot. It rides the
-same identity pass but is a distinct descriptor — it proves the "two surface
-kinds" requirement is real and already in the code, not aspirational.
+All four projected surfaces are **material** (content projected into a per-harness
+config/file). The single **behavioral** descriptor that used to exist
+(`delegation_model`, which rode the now-retired identity surface) is no longer a
+projected surface — FR-202 M4 re-homed the delegation mechanism into the
+harness-specific context layer (`core/os/harness-specific/<harness>.md`), which
+the Boot stage loads and the compile/drift engine never touches.
 
 > **FR-202 M3 — agents surface: KEEP confirmed, no centralization needed.** The
 > per-harness agent frontmatter field-maps are **already single-sourced**, NOT
@@ -422,7 +379,7 @@ cannot be declared as a surface.
 ### The surface registry (single source of truth)
 
 The ordered surface list lives in **ONE place** — `_common.sh`'s
-`IGRIS_SURFACE_IDS` (the ids: `agents skills mcp identity hook`) plus the
+`IGRIS_SURFACE_IDS` (the ids: `agents skills mcp hook`) plus the
 positionally-aligned `IGRIS_SURFACE_LABELS` (the empty-match noun fragments).
 Both top scripts source it. The `--surface` enum and the empty-match message are
 *derived* from the registry; the dispatch loops iterate it, calling

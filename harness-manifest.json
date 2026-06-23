@@ -1,8 +1,8 @@
 {
   "$schema": "core/scripts/cli-adapters/manifest.schema.json",
-  "_comment": "Igris-ai PROJECT harness manifest (FR-136). Declares the 7 core agents whose codex harnesses are mechanically regenerated from their canonical core/agents/<name>.md prompts (TD-021). Core ships only the SCHEMA (core/scripts/cli-adapters/manifest.schema.json); each project ships its own data manifest at its repo root. Canonical is the SOLE source of truth; every target listed here is a GENERATED artifact - editing a target file directly is a process error. Personal/Layer-2 customizations are NOT declared here - they live in an optional gitignored overlay at ~/.igris/registry/harness-manifest.personal.json (FR-139). TD-233: `surfaces.os_identity` declares the orchestrator-identity surface (GAP-3) — the canonical identity block (core/templates/identity.tmpl) region-merged into each harness's natively auto-read PROJECT-ROOT context file (empirically confirmed 2026-06-10: gemini reads GEMINI.md, codex reads AGENTS.md; claude+opencode read CLAUDE.md, which `igris install` already renders whole-file, so they carry no target here). The block lives in THIS project manifest (not surfaces-manifest.json) because its targets are project-root-relative: `igris harness compile`/`check` run from this checkout see it, other projects never do. `version_source` points at the repo-committed cli/package.json so CI and every contributor checkout re-derive identical bytes without a brain install. GEMINI.md/AGENTS.md are GENERATED artifacts (region-merged; user content outside the markers is preserved) - edit core/templates/identity.tmpl, then recompile.",
+  "_comment": "Igris-ai PROJECT harness manifest (FR-136). Declares the 7 core agents whose codex harnesses are mechanically regenerated from their canonical core/agents/<name>.md prompts (TD-021). Core ships only the SCHEMA (core/scripts/cli-adapters/manifest.schema.json); each project ships its own data manifest at its repo root. Canonical is the SOLE source of truth; every target listed here is a GENERATED artifact - editing a target file directly is a process error. Personal/Layer-2 customizations are NOT declared here - they live in an optional gitignored overlay at ~/.igris/registry/harness-manifest.personal.json (FR-139). FR-202 M4: the os_identity surface (TD-233) was retired — the orchestrator no longer projects an identity region into any harness's auto-read file. The per-harness delegation mechanism is now a CONTEXT LAYER (core/os/harness-specific/<harness>.md, loaded at Boot for the Detect-resolved harness), not a projected surface.",
   "version": 1,
-  "_harnesses_comment": "TD-244 (BI-3): per-harness `delegation_model` — the harness-adapter descriptor for the SIXTH surface (delegation mechanism / boot-injection). `native-static` = the harness loads Igris agents statically and a skill delegating via `subagent_type:<agent>` resolves directly (the skill writes only the abstract intent, no recipe needed). `dynamic-define` = the harness cannot load static Igris agents but defines subagents at runtime (e.g. Antigravity `define_subagent`/`invoke_subagent`) → the per-session delegation RECIPE (core/templates/delegation-recipe.tmpl) is region-merged into the harness's natively auto-read identity file (the os_identity surface) so the orchestrator is taught 'read ~/.igris/core/agents/<X>.md → define_subagent → invoke' ONCE at boot, with ZERO per-skill branching. The recipe rides the identity target keyed by `type`: the `gemini` target writes GEMINI.md which Antigravity reads at boot (empirically confirmed 2026-06-21 via the L-711 marker probe) → gemini=dynamic-define so GEMINI.md carries the recipe; the `codex` target writes AGENTS.md (Codex = native-static) so AGENTS.md stays recipe-free. A harness absent from this map defaults to native-static (back-compat: pre-TD-244 manifests project identity-only). This descriptor IS the L-749 native-static/dynamic-define tiering expressed as adapter config.",
+  "_harnesses_comment": "Per-harness `delegation_model` — the applicability predicate for the harness-specific context layer (FR-202 M4). `native-static` = the harness loads Igris agents statically and a skill delegating via `subagent_type:<agent>` resolves directly (no harness-specific file needed). `dynamic-define` = the harness cannot load static Igris agents but defines subagents at runtime (e.g. Antigravity `define_subagent`/`invoke_subagent`); it has a `core/os/harness-specific/<harness>.md` file pointing at the shared delegation recipe, so the orchestrator is taught 'read ~/.igris/core/agents/<X>.md → define_subagent → invoke' ONCE at Boot, with ZERO per-skill branching. A harness absent from this map defaults to native-static. This is no longer a projected surface (the recipe was re-homed off the identity region into the harness-specific layer); the map survives only to select which harness-specific file applies.",
   "harnesses": {
     "claude": { "delegation_model": "native-static" },
     "codex": { "delegation_model": "native-static" },
@@ -165,19 +165,5 @@
         }
       ]
     }
-  ],
-  "surfaces": {
-    "os_identity": [
-      {
-        "source": "core/templates/identity.tmpl",
-        "version_source": "cli/package.json",
-        "layer": "core",
-        "scope": { "type": "project", "paths": ["."] },
-        "targets": [
-          { "type": "gemini", "method": "file", "filename": "GEMINI.md" },
-          { "type": "codex", "method": "file", "filename": "AGENTS.md" }
-        ]
-      }
-    ]
-  }
+  ]
 }

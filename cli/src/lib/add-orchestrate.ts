@@ -2,9 +2,9 @@
  * FR-180: the shared "project + verify" engine for `igris add <surface>`.
  *
  * This is the TD-235 chokepoint. Every surface arm of `add` (skill/agent/mcp/
- * hook/identity), after materializing into the registry/overlay (personal) or
- * `core/` (core), funnels its projection through `projectAndVerify`. That
- * function:
+ * hook — the four material surfaces), after materializing into the registry/
+ * overlay (personal) or `core/` (core), funnels its projection through
+ * `projectAndVerify`. That function:
  *
  *   1. runs `harness compile --surface <s>` (the deliver half), then
  *   2. runs `harness check   --surface <s>` (the drift-verify half),
@@ -28,18 +28,17 @@ import {
 } from "../verbs/harness.js";
 
 /**
- * The `--surface` values the harness adapters project. NOTE for the Phase-2
- * implementer: these are the COMPILE/CHECK surface names, which differ from the
- * `AddSurface` arm names in `verbs/add.ts` — the skill arm maps `skill →
- * "skills"`, the agent arm maps `agent → "agents"`; `mcp` and `identity` are
- * 1:1. The add arm is responsible for that singular→adapter mapping before
- * calling `projectAndVerify`.
+ * The `--surface` values the harness adapters project. NOTE: these are the
+ * COMPILE/CHECK surface names, which differ from the `AddSurface` arm names in
+ * `verbs/add.ts` — the skill arm maps `skill → "skills"`, the agent arm maps
+ * `agent → "agents"`; `mcp` is 1:1. The add arm is responsible for that
+ * singular→adapter mapping before calling `projectAndVerify`.
  *
  * FR-180 Phase 5 (D7 — Option B): `"hook"` is now a real `--surface` projection
- * target — hooks ride the same flatten→compile→drift scaffold as the other four
- * surfaces. The hook arm maps `hook → "hook"` (1:1, like mcp/identity).
+ * target — hooks ride the same flatten→compile→drift scaffold as the other
+ * surfaces. The hook arm maps `hook → "hook"` (1:1, like mcp).
  */
-export type ProjectionSurface = "skills" | "agents" | "mcp" | "identity" | "hook";
+export type ProjectionSurface = "skills" | "agents" | "mcp" | "hook";
 
 /** Structured outcome of a one-surface project+verify run. */
 export interface ProjectAndVerifyResult {
@@ -169,12 +168,9 @@ export async function projectAndVerify(
   // S1: scope BOTH the SURFACE and the NAME of the verify.
   //   - `--surface opts.surface` (FR-180 cross-phase) restricts the drift check
   //     to the ONE surface we just projected. Without it, the check re-checks
-  //     EVERY surface — and a core `add` projects against the runtime BRAIN ROOT
-  //     (so the ownership gate passes), under which the os_identity surface
-  //     drifts (its {{IGRIS_VERSION}} resolves from `cli/package.json`, absent
-  //     there). That unrelated drift would false-fail a clean skill/agent/mcp
-  //     add. The compile half already projects only `opts.surface`; the check
-  //     now matches.
+  //     EVERY surface — and a pre-existing UNRELATED drift in another surface
+  //     would false-fail a clean skill/agent/mcp add. The compile half already
+  //     projects only `opts.surface`; the check now matches.
   //   - `--filter opts.filter` (the just-added surface NAME) scopes WITHIN the
   //     surface so a pre-existing unrelated drift in the SAME surface can't
   //     false-fail either.

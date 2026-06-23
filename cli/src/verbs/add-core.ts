@@ -15,8 +15,9 @@
  * enumeration surfaces). Phase 3 implements `addCoreMcp` (a core MCP server
  * is a `surfaces.mcp_servers[]` block in `core/scripts/cli-adapters/
  * surfaces-manifest.json` — the GLOBAL Layer-1 surfaces file the MCP flatten
- * reads when the project owns it; mirrored to the runtime brain, TD-096). The
- * identity core writer lands in a later phase.
+ * reads when the project owns it; mirrored to the runtime brain, TD-096). Phase 5
+ * implements `addCoreHook`. (FR-202 M4 retired the os_identity surface, so there
+ * is no identity core writer.)
  */
 
 import {
@@ -862,241 +863,10 @@ export function addCoreMcp(opts: AddCoreMcpOptions): AddCoreResult {
 }
 
 // ---------------------------------------------------------------------------
-// FR-180 Phase 4: core IDENTITY add path.
-// ---------------------------------------------------------------------------
-
-/** Identity label must be lower-kebab (parallels SKILL/AGENT/MCP patterns). */
-const IDENTITY_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
-
-/** The 4 identity harness target types (mirrors VALID_IDENTITY_TARGET_TYPES). */
-const IDENTITY_TARGET_TYPES = ["claude", "codex", "gemini", "opencode"] as const;
-type IdentityCoreTargetType = (typeof IDENTITY_TARGET_TYPES)[number];
-
-/** A parsed identity target spec for the core block. */
-interface CoreIdentityTarget {
-  type: IdentityCoreTargetType;
-  method: "file";
-  filename: string;
-}
-
-/** Parse one `type:file:filename` target spec (mirrors parseIdentityTarget). */
-function parseCoreIdentityTarget(spec: string): CoreIdentityTarget | string {
-  const first = spec.indexOf(":");
-  if (first <= 0) {
-    return `--target '${spec}' must be of the form type:file:filename`;
-  }
-  const type = spec.slice(0, first);
-  const second = spec.indexOf(":", first + 1);
-  if (second < 0) {
-    return `--target '${spec}' must be of the form type:file:filename`;
-  }
-  const method = spec.slice(first + 1, second);
-  const filename = spec.slice(second + 1);
-  if (!(IDENTITY_TARGET_TYPES as readonly string[]).includes(type)) {
-    return `--target type '${type}' is not one of ${JSON.stringify(IDENTITY_TARGET_TYPES)}`;
-  }
-  if (method !== "file") {
-    return `--target method '${method}' must be 'file'`;
-  }
-  if (filename.length === 0) {
-    return `--target '${spec}': filename must be non-empty`;
-  }
-  return { type: type as IdentityCoreTargetType, method: "file", filename };
-}
-
-/** The core os_identity block shape appended to surfaces.os_identity[]. */
-interface CoreIdentityBlock {
-  source: string;
-  layer: "core";
-  scope: { type: "project"; paths: string[] };
-  targets: CoreIdentityTarget[];
-}
-
-/** Options for {@link addCoreIdentity}. */
-export interface AddCoreIdentityOptions {
-  /** Identity label (lower-kebab; the os_identity block has no name field). */
-  name?: string;
-  /** Repo root (the igris-ai checkout). */
-  projectRoot: string;
-  /** Identity target specs, each `type:file:filename` (≥1 required). */
-  targets?: string[];
-  /** Test seam: brain root override (defaults to brainDir()). */
-  brainRoot?: string;
-  /** Test seam: skip the runtime mirror + verify_mirror step. Default false. */
-  skipMirror?: boolean;
-}
-
-/**
- * FR-180 (Phase 4): materialize a new CORE os_identity projection block. A core
- * identity block is a `surfaces.os_identity[]` entry in the REPO-ROOT
- * `harness-manifest.json` — the SAME file the existing core identity block
- * (TD-233) lives in, and the manifest the core projection reads (passed as
- * `--manifest <checkout>/harness-manifest.json` by `coreProjectionParams`).
- *
- * The block uses the canonical identity template `core/templates/identity.tmpl`
- * (the SINGLE authored copy per the §13 os_identity row, already mirrored to the
- * runtime brain) as its `source`, and OMITS `version_source` so it defaults to
- * `<brain>/config.json` — because the core projection runs against the RUNTIME
- * BRAIN ROOT (`~/.igris`), where `core/templates/identity.tmpl` and `config.json`
- * resolve, but a repo-relative `cli/package.json` would NOT (it has no runtime
- * mirror). It is `scope:{type:"project", paths:["."]}` (project-root-relative,
- * matching the existing core block).
- *
- * TD-096: `harness-manifest.json` lives at the REPO ROOT, NOT under `core/`, and
- * has NO runtime mirror (it is read directly from the checkout when `harness
- * compile` runs). `core/templates/identity.tmpl` is the only `core/` file this
- * path could touch, and a NAMED add does NOT edit the singleton template — so
- * there is no NEW mirror obligation here. The writer re-verifies the template
- * mirror is in sync (TD-096 belt-and-suspenders) so a stale runtime template
- * can't make the projection drift.
- *
- * Refuses to clobber an os_identity target whose (type, filename) pair already
- * exists in the manifest (a re-add to core should be an explicit edit, not a
- * silent double-write of the same Igris-managed region — parity with the skill +
- * agent + mcp core writers).
- */
-export function addCoreIdentity(opts: AddCoreIdentityOptions): AddCoreResult {
-  const manifestPath = join(opts.projectRoot, "harness-manifest.json");
-  const root = opts.brainRoot ?? brainDir();
-  // The canonical identity template is the only core/ file involved; report it
-  // as the source/mirror pair so the caller can quote the TD-096 verdict.
-  const sourcePath = join(opts.projectRoot, "core", "templates", "identity.tmpl");
-  const mirrorPath = join(root, "core", "templates", "identity.tmpl");
-
-  const fail = (code: number, reason: string, verifyOutput = ""): AddCoreResult => ({
-    ok: false,
-    code,
-    reason,
-    sourcePath,
-    mirrorPath,
-    verifyOutput,
-  });
-
-  // --- Guards (all BEFORE any disk write). ----------------------------------
-  if (opts.name === undefined || opts.name.length === 0) {
-    return fail(2, "identity <name> is required");
-  }
-  if (!IDENTITY_NAME_PATTERN.test(opts.name)) {
-    return fail(2, `name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`);
-  }
-
-  if (opts.targets === undefined || opts.targets.length === 0) {
-    return fail(
-      2,
-      `identity '${opts.name}': at least one --target <type:file:filename> is required`,
-    );
-  }
-  const targets: CoreIdentityTarget[] = [];
-  const seen = new Set<string>();
-  for (const spec of opts.targets) {
-    const parsed = parseCoreIdentityTarget(spec);
-    if (typeof parsed === "string") {
-      return fail(2, `identity '${opts.name}': ${parsed}`);
-    }
-    const pair = `${parsed.type} ${parsed.filename}`;
-    if (seen.has(pair)) {
-      return fail(2, `identity '${opts.name}': duplicate --target (${parsed.type}, ${parsed.filename})`);
-    }
-    seen.add(pair);
-    targets.push(parsed);
-  }
-
-  if (!existsSync(manifestPath)) {
-    return fail(
-      1,
-      `repo-root harness-manifest.json not found at ${manifestPath}; not an igris-ai checkout`,
-    );
-  }
-  if (!existsSync(sourcePath)) {
-    return fail(
-      1,
-      `canonical identity template not found at ${sourcePath}; not an igris-ai checkout`,
-    );
-  }
-
-  // --- Parse the manifest + (type, filename) collision-check BEFORE write. --
-  let manifest: {
-    surfaces?: {
-      os_identity?: { targets?: { type?: unknown; filename?: unknown }[] }[];
-    } & Record<string, unknown>;
-  } & Record<string, unknown>;
-  try {
-    manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
-  } catch (err) {
-    return fail(1, `failed to parse ${manifestPath}: ${(err as Error).message}`);
-  }
-  const surfaces = (manifest.surfaces ?? {}) as {
-    os_identity?: CoreIdentityBlock[];
-  } & Record<string, unknown>;
-  const existing = Array.isArray(surfaces.os_identity) ? surfaces.os_identity : [];
-  const existingPairs = new Set<string>();
-  for (const b of existing) {
-    for (const t of (b as { targets?: { type?: unknown; filename?: unknown }[] }).targets ?? []) {
-      if (typeof t?.type === "string" && typeof t?.filename === "string") {
-        existingPairs.add(`${t.type} ${t.filename}`);
-      }
-    }
-  }
-  for (const t of targets) {
-    const pair = `${t.type} ${t.filename}`;
-    if (existingPairs.has(pair)) {
-      return fail(
-        1,
-        `core os_identity target (${t.type}, ${t.filename}) already declared in ` +
-          `${manifestPath}; edit it directly (no clobber)`,
-      );
-    }
-  }
-
-  // --- Build + append the block. --------------------------------------------
-  const block: CoreIdentityBlock = {
-    source: "core/templates/identity.tmpl",
-    layer: "core",
-    scope: { type: "project", paths: ["."] },
-    targets,
-  };
-  surfaces.os_identity = [...(existing as CoreIdentityBlock[]), block];
-  manifest.surfaces = surfaces;
-  try {
-    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf-8");
-  } catch (err) {
-    return fail(1, `failed to update ${manifestPath}: ${(err as Error).message}`);
-  }
-
-  if (opts.skipMirror === true) {
-    return {
-      ok: true,
-      code: 0,
-      reason: "",
-      sourcePath,
-      mirrorPath,
-      verifyOutput: "(mirror skipped)",
-    };
-  }
-
-  // --- TD-096: re-verify the canonical template mirror is in sync (no NEW
-  // core/ write — the template is unchanged; this is the belt-and-suspenders
-  // check so a stale runtime template can't make the projection drift). ------
-  const mv = mirrorAndVerify(sourcePath, mirrorPath, root);
-  if (!mv.ok) {
-    return fail(1, mv.reason, mv.output);
-  }
-  info(`Mirror verified (${sourcePath} <-> ${mirrorPath}): MATCH`);
-  return {
-    ok: true,
-    code: 0,
-    reason: "",
-    sourcePath,
-    mirrorPath,
-    verifyOutput: mv.output,
-  };
-}
-
-// ---------------------------------------------------------------------------
 // FR-180 Phase 5 (D7): core HOOK add path.
 // ---------------------------------------------------------------------------
 
-/** Hook name must be lower-kebab (parallels SKILL/AGENT/MCP/IDENTITY patterns). */
+/** Hook name must be lower-kebab (parallels SKILL/AGENT/MCP patterns). */
 const HOOK_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
 /** The six portable events a hook can fire on (mirrors VALID_HOOK_EVENTS). */
@@ -1208,7 +978,7 @@ exit 0
  * we REUSE it (no clobber) and only add the surfaces block.
  *
  * Refuses to clobber a `hooks` block of the same name (a re-add to core should
- * be an explicit edit — parity with the skill/agent/mcp/identity core writers).
+ * be an explicit edit — parity with the skill/agent/mcp core writers).
  *
  * TD-096: the shared script + the surfaces manifest are both `core/` files with
  * a runtime mirror → both are cp'd + verify_mirror.sh'd.

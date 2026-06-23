@@ -114,6 +114,15 @@
     }
   },
 
+  "harness_specific": {
+    "dir": "~/.igris/core/os/harness-specific",
+    "select_by": "detect.harness",
+    "load": "harness-specific/{harness}.md",
+    "tier": "boot",
+    "scope": "orchestrator",
+    "note": "FR-202 M4: the per-harness context layer. The environment Detect (cli/src/lib/detect.ts inferHarness) resolves the harness id (claude|codex|gemini|opencode|antigravity); Boot loads ONLY the file whose `harness:` key matches — `harness-specific/<detected>.md` — the same way it loads SOUL.md, no branching in the loader. A native-static harness with no file is a clean no-op (NOT an error). The roster (harness -> file) is discovered by gen_os_index.sh into the os/ INDEX. This routing rides the FR-187 cutover (which re-points the awaken resolver from igris_os → the os/ INDEX); the harness-specific files are repo-only until that mirror."
+  },
+
   "agents": {
     "architect": {
       "load": ["coding_guidelines", "architecture_map", "maintaining_map"],

@@ -1,21 +1,24 @@
 # Adding Surfaces — the `igris add` reference (FR-180)
 
 This is the canonical reference for extending Igris with a new **surface**: a
-skill, agent, MCP server, hook, or orchestrator identity. It is routed into
-context via `core/igris_tree.json` (`context_files.surface_management`) and
-paired with the `surface_management` section in `core/prompts/igris_os.md`.
+skill, agent, MCP server, or hook. It is routed into context via
+`core/igris_tree.json` (`context_files.surface_management`) and paired with the
+`surface_management` section in `core/prompts/igris_os.md`.
 
-> **Phase status.** FR-180 ships ALL FIVE surfaces — `skill`, `agent`, `mcp`,
-> `identity`, and `hook` — end-to-end (personal + core). Hooks were the
-> net-new first-class surface (Phase 5, D7 Option B): they now ride the same
-> `surfaces.hooks[]` flatten → compile → drift scaffold as the other four.
+> **Phase status.** `igris add` ships FOUR **material** surfaces — `skill`,
+> `agent`, `mcp`, and `hook` — end-to-end (personal + core): each projects
+> content into a per-harness native config or file. (FR-202 M4 retired the
+> `identity` surface — the per-harness delegation mechanism is now a context
+> layer, `core/os/harness-specific/<harness>.md`, loaded at Boot for the
+> Detect-resolved harness, not an `igris add` surface. See the harness-specific
+> point under "if dynamic-define" in the onboard-harness runbook.)
 
 ---
 
 ## The one command
 
 ```
-igris add <skill|agent|mcp|hook|identity> <name> [--from <dir-or-github>] \
+igris add <skill|agent|mcp|hook> <name> [--from <dir-or-github>] \
           [--target <type:...>] [--core | --no-core] [--harness <type>]
 ```
 
@@ -29,9 +32,9 @@ igris add <skill|agent|mcp|hook|identity> <name> [--from <dir-or-github>] \
    **Antigravity** (`~/.gemini/config/mcp_config.json`, gemini-identical no-`type`
    shape) — a 5th MCP target (FR-179). Antigravity also rides the skills
    `agents/symlink` target (skill items reach it via the install-created
-   `~/.gemini/antigravity-cli/skills` → `~/.agents/skills` symlink) and the
-   codex/gemini identity files (`AGENTS.md` + `GEMINI.md`); it is **documented
-   N/A** for agents (no static-subagent path); its **hooks ARE wired** (FR-181 —
+   `~/.gemini/antigravity-cli/skills` → `~/.agents/skills` symlink); it is
+   **documented N/A** for agents (no static-subagent path); its **hooks ARE
+   wired** (FR-181 —
    PreToolUse brief-gate + PostToolUse via the antigravity BASH bridge into
    `~/.gemini/config/hooks.json`).
 3. **Verifies** the projection is drift-clean via `harness check`.
@@ -69,7 +72,6 @@ when the ownership gate skipped a surface; `igris add` closes that hole.
 | **Agent** | `igris add agent <name> --from <dir> --target <type:path>` | all-four-harness α-assembly at vendor time. `--core` writes `core/agents/<name>.md` + the repo-root `harness-manifest.json` entry + the §13 agent enumeration surfaces (igris_tree.json, CLAUDE.md template + root). |
 | **MCP** | `igris add mcp <name> --command <bin> [--arg …] [--env KEY=${VAR}] [--startup-timeout-sec <n>] --target <type:merge[:enabled]>` | config-merge into each harness's native MCP config (claude/gemini `mcpServers`, opencode `mcp`, codex `[mcp_servers.<name>]`). **`--env` values MUST be `${VAR}` indirection refs — inline secrets are REJECTED** at the writer boundary (the real secret is resolved from the environment by the harness at launch, never stored). `--core` appends a `surfaces.mcp_servers[]` block to `core/scripts/cli-adapters/surfaces-manifest.json` (the global Layer-1 surfaces file the MCP flatten reads) + TD-096 mirror. |
 | **Hook** | `igris add hook <name> --event <Event> [--matcher <glob>] [--timeout <n>] [--target <type:merge[:enabled]>]` | config-merge of an event-hook GROUP into each harness's native hook surface. `<Event>` is one of `SessionStart`, `SessionEnd`, `PreToolUse`, `PostToolUse`, `PreCompact`, `PostCompact`. Targets default to `claude:merge`; the hook harnesses are **claude** (the `.claude/settings.json` `hooks.<Event>[]` array), **opencode** (covered by the FR-104 plugin), and **antigravity** (FR-181 — config-merge into `~/.gemini/config/hooks.json` via the BASH bridge `core/hooks/bridges/antigravity/<event>.sh`; PreToolUse brief-gate + PostToolUse, session lifecycle rides `/awaken`+`/rest`). codex supports only session_end; gemini-cli 0.45.0 DOES have a `gemini hooks` API (the prior "no hook API" note was stale — onboarding tracked under FR-182, not yet projected). **Personal** writes the hook SCRIPT to `~/.igris/registry/hooks/<name>/<Event>.sh` + a `surfaces.hooks[]` overlay block; the registry-prefix command path is what the canonical re-merge **preserves** (see the R2 gotcha). `--core` writes `core/hooks/shared/<Event>.sh` + a `surfaces.hooks[]` block in `core/scripts/cli-adapters/surfaces-manifest.json` + TD-096 mirrors both. `--matcher` only applies to `Pre/PostToolUse`. |
-| **Identity** | `igris add identity <name> --target <type:file:filename>` | region-merge of the Igris-managed identity block into the harness's natively auto-read identity file (e.g. `gemini:file:GEMINI.md`, `codex:file:AGENTS.md`). **Personal** writes a project-scoped `surfaces.os_identity[]` block to the overlay — FR-180 (D6) lifted the v1 "personal os_identity accepted but NOT merged" gate so it now projects like core. A personal (type, filename) target that collides with a core one is REJECTED. `--source` / `--version-source` override the canonical template / `{{IGRIS_VERSION}}` source (defaults: `<brain>/core/templates/identity.tmpl`, `<brain>/config.json`). `--core` appends an os_identity block to the repo-root `harness-manifest.json` (the SAME file the TD-233 core block lives in) using the canonical mirrored template. |
 
 ---
 
@@ -125,23 +127,6 @@ when the ownership gate skipped a surface; `igris add` closes that hole.
   drift passes honor `--filter <name>` (wired in Phase 3 for parity with skills/
   agents), so `igris add mcp <name>` scopes its drift verify to just the added
   server — a pre-existing UNRELATED MCP drift can't false-fail a clean add.
-- **Identity has no `name` (D6)** — an os_identity block is keyed by its (type,
-  filename) target pairs, not a name; the positional `<name>` is just a label for
-  logging. The verify is scoped by `--surface identity` (the surface) + the
-  block's project-scope, NOT by `--filter` (which is a name glob and does not
-  apply to identity). A personal `add identity` writes the block `scope:{type:
-  "project", paths:[realpath(--project-root)]}` so the personal identity only
-  projects into THIS project's identity files.
-- **Identity version source under the brain root (core)** — a core `add identity`
-  projects against the RUNTIME BRAIN ROOT (`~/.igris`), where a repo-relative
-  `version_source: cli/package.json` would NOT resolve (the brain has no
-  `cli/package.json`). So the core writer OMITS `version_source` (it defaults to
-  `<brain>/config.json`, which exists) and uses `source: core/templates/
-  identity.tmpl` (the mirrored canonical). The existing TD-233 core identity
-  block keeps its own `cli/package.json` source — that block is projected when
-  `harness compile` runs from the igris-ai CHECKOUT (where `cli/package.json`
-  resolves), the normal full-repo compile path; `igris add --core identity` is
-  the one-step path that projects against the brain.
 - **Hooks survive `igris update` / `doctor --fix` (R2 — the central hazard)** —
   `install` / `update` / `doctor --fix` re-merge the canonical hooks from
   `~/.igris/core/hooks/canonical-settings.json` into `.claude/settings.json`,

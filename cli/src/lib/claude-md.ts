@@ -11,10 +11,11 @@
  *
  *   - `{{IGRIS_IDENTITY}}`  → the canonical identity block inlined from the
  *                             sibling `identity.tmpl` with
- *                             {{HARNESS_SELF_NAME}} → "Claude" (TD-233 — the
- *                             same canonical the `os_identity` harness surface
- *                             projects to GEMINI.md / AGENTS.md). Legacy
- *                             templates without the token pass through.
+ *                             {{HARNESS_SELF_NAME}} → "Claude". (FR-202 M4 retired
+ *                             the `os_identity` projection surface that once shared
+ *                             this template; the CLAUDE.md render path survives
+ *                             until the FR-187 cutover's identity-denial sweep.)
+ *                             Legacy templates without the token pass through.
  *   - `{{IGRIS_VERSION}}`   → cliVersion (e.g. "7.0.0")
  *   - `{{INSTALL_DATE}}`    → installDate (ISO date, e.g. "2026-05-07")
  *
@@ -52,9 +53,10 @@ export function claudeMdTemplatePath(): string {
 
 /**
  * Compute the runtime canonical-identity template path
- * (~/.igris/core/templates/identity.tmpl) — the TD-233 single authored copy of
- * the orchestrator identity block, shared with the `os_identity` harness
- * surface (see `identity-shape.ts`).
+ * (~/.igris/core/templates/identity.tmpl) — the single authored copy of the
+ * orchestrator identity block used by the CLAUDE.md render. (FR-202 M4 retired
+ * the `os_identity` projection surface that once also consumed this template;
+ * this CLAUDE.md path survives until the FR-187 cutover.)
  */
 export function identityTemplatePath(): string {
   return join(brainDir(), "core", "templates", "identity.tmpl");
@@ -65,11 +67,12 @@ export function identityTemplatePath(): string {
  *
  * `CLAUDE.md.tmpl` carries an `{{IGRIS_IDENTITY}}` include token where its
  * `## Identity` block used to live; the identity text itself is authored ONCE
- * in the sibling `identity.tmpl` (the same canonical the `os_identity` harness
- * surface projects to GEMINI.md / AGENTS.md). This inlines that template with
+ * in the sibling `identity.tmpl`. (FR-202 M4 retired the `os_identity` projection
+ * surface that once also consumed this template; this CLAUDE.md render path
+ * survives until the FR-187 cutover.) This inlines that template with
  * `{{HARNESS_SELF_NAME}}` → "Claude" and leaves `{{IGRIS_VERSION}}` /
  * `{{INSTALL_DATE}}` for the caller's existing substitutions, so the rendered
- * CLAUDE.md stays byte-identical to the pre-TD-233 output.
+ * CLAUDE.md stays byte-identical to the pre-retirement output.
  *
  * A legacy template WITHOUT the token passes through untouched (back-compat
  * for runtime brains whose templates predate TD-233).

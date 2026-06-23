@@ -64,7 +64,7 @@ export interface HarnessOptions {
   overlay?: string;
   /** Restrict to one target type (compile only): claude | codex | gemini | opencode | all. */
   target?: string;
-  /** Restrict to one projection surface (compile only): agents | skills | mcp | identity | all. */
+  /** Restrict to one projection surface (compile only): agents | skills | mcp | hook | all. */
   surface?: string;
   /** Only process agents whose name matches this glob. */
   filter?: string;
@@ -249,7 +249,7 @@ export function parseHarnessOutput(
     } else if (line.startsWith("FAIL ") || line.startsWith("FAIL\t")) {
       failRows.push(line);
     } else if (line.includes("targets matched")) {
-      // "No agent/skills/mcp/identity targets matched (…)." (compile + check).
+      // "No agent/skills/mcp/hook targets matched (…)." (compile + check).
       noTargetsMatched = true;
     } else if (line.startsWith("SKIPPED core surfaces")) {
       skippedCoreLine = line;

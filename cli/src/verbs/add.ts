@@ -1,5 +1,5 @@
 /**
- * `igris add <skill|agent|mcp|hook|identity> <name> [--from …]` — FR-180.
+ * `igris add <skill|agent|mcp|hook> <name> [--from …]` — FR-180.
  *
  * The unified, one-step, self-verifying surface-add verb. Collapses the old
  * `registry add-* → harness compile` two-step into ONE atomic command that
@@ -21,14 +21,13 @@
  * Phase 0 + Phase 1 of FR-180 ship the dispatcher + the `skill` arm; Phase 2
  * adds the `agent` arm end-to-end (personal + core); Phase 3 adds the `mcp` arm
  * (personal via the structured `materializeMcp` wrapper over the existing MCP
- * writer; core via `addCoreMcp`); Phase 4 adds the `identity` arm (personal via
- * `materializeIdentity` over `runAddIdentity` — after the D6 merge-gate lift that
- * makes personal os_identity overlay blocks project; core via `addCoreIdentity`).
- * Phase 5 adds the `hook` arm — the net-new first-class surface (D7, Option B):
- * personal via the `materializeHook` wrapper over `runAddHook` (which writes the
- * registry hook script + a `surfaces.hooks[]` overlay block; the registry-prefix
- * command is what the canonical re-merge preserves — R2); core via `addCoreHook`.
- * All five arms are now implemented end-to-end.
+ * writer; core via `addCoreMcp`). Phase 5 adds the `hook` arm — the net-new
+ * first-class surface (D7, Option B): personal via the `materializeHook` wrapper
+ * over `runAddHook` (which writes the registry hook script + a `surfaces.hooks[]`
+ * overlay block; the registry-prefix command is what the canonical re-merge
+ * preserves — R2); core via `addCoreHook`. (FR-202 M4 retired the `identity` arm
+ * along with the os_identity surface — the delegation mechanism is now a context
+ * layer, core/os/harness-specific/<harness>.md, not an `igris add` surface.)
  */
 
 import { existsSync } from "node:fs";
@@ -39,7 +38,6 @@ import {
   materializeSkill,
   materializeAgent,
   materializeMcp,
-  materializeIdentity,
   materializeHook,
   realpathStrict,
   type RegistryOptions,
@@ -49,19 +47,17 @@ import {
   addCoreSkill,
   addCoreAgent,
   addCoreMcp,
-  addCoreIdentity,
   addCoreHook,
 } from "./add-core.js";
 
-/** The five surfaces `igris add` dispatches over. */
-export type AddSurface = "skill" | "agent" | "mcp" | "hook" | "identity";
+/** The four surfaces `igris add` dispatches over. */
+export type AddSurface = "skill" | "agent" | "mcp" | "hook";
 
 const ADD_SURFACES: readonly AddSurface[] = [
   "skill",
   "agent",
   "mcp",
   "hook",
-  "identity",
 ] as const;
 
 /** Resolved core-vs-personal mode (D1). */
@@ -69,9 +65,9 @@ export type AddMode = "core" | "personal";
 
 /** Options for `igris add`. */
 export interface AddOptions {
-  /** Which surface to add (skill/agent/mcp/hook/identity). */
+  /** Which surface to add (skill/agent/mcp/hook). */
   surface: string;
-  /** The surface name (skill/agent/mcp/identity) — positional or --name. */
+  /** The surface name (skill/agent/mcp) — positional or --name. */
   name?: string;
   /** Source dir / github ref (skill/agent/mcp --from). */
   from?: string;
@@ -96,16 +92,6 @@ export interface AddOptions {
   env?: string[];
   /** MCP Codex-only startup-timeout passthrough in seconds (mcp arm). */
   startupTimeoutSec?: number;
-  /**
-   * Identity canonical-template path override (identity arm; `--source`).
-   * Absent → the schema default (<brain>/core/templates/identity.tmpl).
-   */
-  identitySource?: string;
-  /**
-   * Identity `{{IGRIS_VERSION}}` source path override (identity arm;
-   * `--version-source`). Absent → the schema default (<brain>/config.json).
-   */
-  identityVersionSource?: string;
   /**
    * Hook event (hook arm; `--event`). One of the six PORTABLE_EVENTS. Required
    * for the hook arm.
@@ -157,13 +143,6 @@ export interface AddOptions {
   addCoreMcpFn?: typeof addCoreMcp;
   /** Test seam: personal MCP materialize override (defaults to materializeMcp). */
   materializeMcpFn?: typeof materializeMcp;
-  /**
-   * Test seam: core IDENTITY materialize override (defaults to addCoreIdentity).
-   * Lets the identity arm be tested without writing the real repo manifest.
-   */
-  addCoreIdentityFn?: typeof addCoreIdentity;
-  /** Test seam: personal IDENTITY materialize override (defaults to materializeIdentity). */
-  materializeIdentityFn?: typeof materializeIdentity;
   /**
    * Test seam: core HOOK materialize override (defaults to addCoreHook). Lets
    * the hook arm be tested without writing the real core script/manifest.
@@ -253,9 +232,9 @@ export interface CoreProjectionParams {
  *      `FAIL core <surface> — not owned by --project-root <repo>` this fix
  *      removes for the add path). `~/.igris` (= `brainDir()`) satisfies it.
  *
- *   2. CANONICAL RESOLUTION (agents + identity). The repo `harness-manifest.json`
- *      stores agent `canonical.dir` as the PROJECT-RELATIVE `core/agents` (and
- *      os_identity `source` as `core/templates/identity.tmpl`). Those resolve as
+ *   2. CANONICAL RESOLUTION (agents). The repo `harness-manifest.json`
+ *      stores agent `canonical.dir` as the PROJECT-RELATIVE `core/agents`. That
+ *      resolves as
  *      `<project-root>/core/agents/<name>.md`. Under `~/.igris` that is exactly
  *      `~/.igris/core/agents/<name>.md` — the runtime mirror the materialize step
  *      just wrote. (Under the checkout it would also resolve, but the checkout
@@ -264,12 +243,12 @@ export interface CoreProjectionParams {
  *      satisfies BOTH constraints for ALL three surfaces.)
  *
  * Because `~/.igris` carries no `harness-manifest.json` of its own (the brain
- * ships the schema, not the data manifest — agents + os_identity live in the
- * CHECKOUT's manifest), the agent manifest must be passed explicitly as
+ * ships the schema, not the data manifest — agents live in the CHECKOUT's
+ * manifest), the agent manifest must be passed explicitly as
  * `<materializeRoot>/harness-manifest.json`.
  *
- * One helper → one fix for skill + agent + mcp core adds (and the not-yet-built
- * identity/hook arms inherit it). PERSONAL projection is UNCHANGED — its
+ * One helper → one fix for skill + agent + mcp + hook core adds. PERSONAL
+ * projection is UNCHANGED — its
  * surfaces project from the overlay under the user's own project root, which the
  * ownership gate never skips.
  *
@@ -696,105 +675,6 @@ async function runAddMcpArm(opts: AddOptions, mode: AddMode): Promise<number> {
 }
 
 /**
- * The `identity` arm — Phase 4. Mirrors the skill/agent/mcp arms' shape: resolve
- * mode → materialize → `projectAndVerify("identity", …)`. Personal uses the
- * structured-return `materializeIdentity` wrapper over `runAddIdentity` (R7 — no
- * logic moved; the (type, filename) core-collision + project-scope guards run in
- * the writer); core uses `addCoreIdentity` (append a `surfaces.os_identity[]`
- * block to the repo-root `harness-manifest.json` using the canonical mirrored
- * template).
- *
- * The PROJECTION half is the SAME code as core identity (TD-233's compile pass)
- * — the only thing that was missing was the v1 manifest-merge gate, lifted in
- * `merge_overlay_manifest` (D6). An identity block has NO `name`, so the verify
- * is scoped by `--surface identity` (the surface) + the block's project-scope;
- * `--filter` (a name glob) does not apply to identity and is omitted.
- */
-async function runAddIdentityArm(opts: AddOptions, mode: AddMode): Promise<number> {
-  const projectRoot = opts.projectRoot ?? process.cwd();
-
-  if (mode === "core") {
-    const addCore = opts.addCoreIdentityFn ?? addCoreIdentity;
-    const coreResult = addCore({
-      name: opts.name,
-      projectRoot,
-      targets: opts.targets,
-      brainRoot: opts.brainRoot,
-    });
-    if (!coreResult.ok) {
-      logError(`add identity (core): ${coreResult.reason}`);
-      return coreResult.code;
-    }
-    // Project + verify against the RUNTIME BRAIN ROOT (NOT the checkout). The
-    // appended block's `source` is the project-relative core/templates/
-    // identity.tmpl, which under `~/.igris` resolves to the runtime-mirrored
-    // template; version_source defaults to <brain>/config.json. --expect-core
-    // keeps a genuine mis-route a LOUD failure (D5). See coreProjectionParams.
-    const proj = coreProjectionParams(projectRoot, opts.brainRoot);
-    const verify = await projectAndVerify({
-      surface: "identity",
-      projectRoot: proj.projectRoot,
-      manifest: proj.manifest,
-      expectCore: true,
-      target: opts.target,
-      brainRoot: opts.brainRoot,
-      captureAdapter: opts.captureAdapter,
-    });
-    if (!verify.ok) {
-      logError(`add identity (core): projection/verify failed — ${verify.reason}`);
-      return 1;
-    }
-    for (const line of verify.coreSkipped) {
-      info(line);
-    }
-    info(
-      `Added core identity '${opts.name}': appended the surfaces.os_identity block, ` +
-        `projected ${verify.projected.length} target(s), drift-clean.`,
-    );
-    return 0;
-  }
-
-  // ----- Personal mode. -----
-  const overlayPath = opts.overlayPath ?? registryOverlayPath();
-  const materialize = opts.materializeIdentityFn ?? materializeIdentity;
-  const regOpts: RegistryOptions = {
-    action: "add-identity",
-    name: opts.name,
-    targets: opts.targets,
-    identitySource: opts.identitySource,
-    identityVersionSource: opts.identityVersionSource,
-    projectRoot,
-    overlayPath,
-  };
-  const mat = materialize(regOpts, overlayPath);
-  if (!mat.ok) {
-    // runAddIdentity already logged the specific reject; surface the code.
-    return mat.code;
-  }
-  const verify = await projectAndVerify({
-    surface: "identity",
-    projectRoot,
-    expectCore: false,
-    target: opts.target,
-    overlay: overlayPath,
-    brainRoot: opts.brainRoot,
-    captureAdapter: opts.captureAdapter,
-  });
-  if (!verify.ok) {
-    logError(`add identity: projection/verify failed — ${verify.reason}`);
-    return 1;
-  }
-  for (const line of verify.coreSkipped) {
-    info(line);
-  }
-  info(
-    `Added personal identity '${opts.name}': registered + projected ` +
-      `${verify.projected.length} target(s), drift-clean.`,
-  );
-  return 0;
-}
-
-/**
  * Dispatch `igris add <surface> <name>`. Returns the exit code. A bad surface
  * is a usage error (exit 2). Mode resolution (D1) runs once up front and is
  * PRINTED so it is never silent.
@@ -833,8 +713,6 @@ export async function runAdd(opts: AddOptions): Promise<number> {
       return runAddAgentArm(opts, mode);
     case "mcp":
       return runAddMcpArm(opts, mode);
-    case "identity":
-      return runAddIdentityArm(opts, mode);
     case "hook":
       return runAddHookArm(opts, mode);
     default:

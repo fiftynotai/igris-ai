@@ -27,13 +27,12 @@
 #                            Default: all. Applies to agent targets, skills-
 #                            surface targets (FR-137), and MCP targets (FR-164).
 #                            opencode is first-class for agents + skills (FR-171).
-#   --surface agents|skills|mcp|identity|all - Restrict to one projection
+#   --surface agents|skills|mcp|hook|all - Restrict to one projection
 #                            surface (FR-137). Default: all. `agents` = the
 #                            per-agent harnesses; `skills` = the
 #                            surfaces.skills projection; `mcp` = the
 #                            surfaces.mcp_servers config-merge (FR-164);
-#                            `identity` = the surfaces.os_identity
-#                            orchestrator-identity region merge (TD-233).
+#                            `hook` = the surfaces.hooks config-merge (FR-180).
 # Dependencies: python3, _common.sh (auto-located from script dir)
 # Exit codes:
 #   0 - All selected agent/target syncs succeeded (or were cleanly skipped)
@@ -1025,7 +1024,7 @@ compile_md_agent_target() {
 usage() {
   echo "Usage: $0 --project-root <dir> [--manifest <path>] [--overlay <path>]" >&2
   echo "                          [--filter <name-glob>] [--target claude|codex|gemini|opencode|all]" >&2
-  echo "                          [--surface agents|skills|mcp|identity|hook|all] [--expect-core]" >&2
+  echo "                          [--surface agents|skills|mcp|hook|all] [--expect-core]" >&2
   echo "" >&2
   echo "Regenerates harness files declared in the manifest from canonical prompts." >&2
   echo "--expect-core: fail LOUDLY (non-zero) if a declared core surface is skipped" >&2
@@ -1132,7 +1131,7 @@ esac
 # (IGRIS_SURFACE_IDS in _common.sh) — the ONE membership-gate enforcement point.
 # Adding a surface to the registry extends this enum with no edit here. The
 # error message lists the registry ids + `all` so it stays in sync automatically.
-# (FR-164 mcp, TD-233 identity, FR-180/D7 hook are all registry entries now.)
+# (FR-164 mcp, FR-180/D7 hook are all registry entries now.)
 if ! igris_surface_is_valid "$SURFACE_KIND"; then
   echo "Error: --surface must be ${IGRIS_SURFACE_IDS// /, }, or all (got '$SURFACE_KIND')" >&2
   usage
@@ -1207,7 +1206,7 @@ fi
 # One row per agent/target. python3 (no jq) per the _common.sh convention.
 # ---------------------------------------------------------------------------
 # Process each work row. Accumulators span ALL surface passes (the agents loop
-# below and the skills/mcp/identity/hook passes). They are GLOBAL (no bash-3.2
+# below and the skills/mcp/hook passes). They are GLOBAL (no bash-3.2
 # namerefs) and initialized HERE, before the registry-driven dispatch loop, so
 # every project_<surface> plugin shares one set.
 # TD-209: REFUSE_TARGETS is the batched refuse-to-clobber collector. Per-target
@@ -1825,149 +1824,6 @@ project_mcp() {
 }
 
 # ---------------------------------------------------------------------------
-# project_identity — the orchestrator-identity projection surface plugin
-# (FR-202 M0; kind:behavioral — delegation_model is injected at boot).
-# TD-233 (GAP-3): for each (identity-block, target) row, render the canonical
-# identity template via the SHARED normalize_identity_shape (the §18.1 helper
-# drift re-derives with — byte-identical to the TS buildHarnessIdentityFile) and
-# MERGE the delimited region into the harness's natively auto-read identity file
-# (gemini → GEMINI.md, codex → AGENTS.md; project-root-relative, confirmed
-# empirically 2026-06-10). Pre-existing user content is preserved — Igris owns
-# only the marker-delimited region (the locked clobber posture). Each row
-# feeds the shared $TOTAL/$OK/$FAIL/$SUMMARY accumulators.
-#
-# Body moved VERBATIM from the former inline identity pass; the outer
-# `if SURFACE_KIND = identity|all` gate is now the registry dispatch loop.
-# ---------------------------------------------------------------------------
-project_identity() {
-  IDENTITY_ROWS=$(flatten_identity_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "$TARGET_KIND" "$PROJECT_ROOT")
-  if [ -n "$IDENTITY_ROWS" ]; then
-    while IFS=$'\t' read -r i_source i_vsource i_type i_filename i_scope_type i_scope_paths i_delegation_model; do
-      [ -z "$i_type" ] && continue
-      [ -z "$i_filename" ] && continue
-      # TD-244 (BI-3): a flatten row from a pre-TD-244 manifest (no harnesses
-      # map) carries an empty delegation_model column → native-static default.
-      [ -z "$i_delegation_model" ] && i_delegation_model="native-static"
-
-      # FR-155: identity-surface project-scope filter. Identical posture to
-      # the skills-loop filter — silent skip (no verdict, no TOTAL++) when
-      # scope.type=project and the current --project-root realpath is not in
-      # scope.paths[]. Both sides realpath'd (macOS /tmp ↔ /private/tmp).
-      if [ "$i_scope_type" = "project" ]; then
-        project_root_real="$(realpath "$PROJECT_ROOT" 2>/dev/null || echo "$PROJECT_ROOT")"
-        i_matched=0
-        if [ -n "$i_scope_paths" ] && [ "$i_scope_paths" != "-" ]; then
-          IFS=',' read -ra i_scope_paths_arr <<< "$i_scope_paths"
-          for sp in "${i_scope_paths_arr[@]}"; do
-            [ -z "$sp" ] && continue
-            case "$sp" in
-              "~"/*) sp_abs="$HOME/${sp#"~/"}" ;;
-              /*)    sp_abs="$sp" ;;
-              *)     sp_abs="$PROJECT_ROOT/$sp" ;;
-            esac
-            sp_real="$(realpath "$sp_abs" 2>/dev/null || echo "$sp_abs")"
-            if [ "$sp_real" = "$project_root_real" ]; then
-              i_matched=1
-              break
-            fi
-          done
-        fi
-        if [ "$i_matched" -eq 0 ]; then
-          continue
-        fi
-      fi
-
-      TOTAL=$((TOTAL + 1))
-
-      # Resolve the canonical identity template (FR-154 3-case shape; `-`
-      # falls back to the brain-mirrored canonical).
-      if [ -n "$i_source" ] && [ "$i_source" != "-" ]; then
-        case "$i_source" in
-          "~"/*) tmpl_abs="$HOME/${i_source#"~/"}" ;;
-          /*)    tmpl_abs="$i_source" ;;
-          *)     tmpl_abs="$PROJECT_ROOT/$i_source" ;;
-        esac
-      else
-        tmpl_abs="$BRAIN_DIR/core/templates/identity.tmpl"
-      fi
-      if [ ! -f "$tmpl_abs" ]; then
-        SUMMARY+=("FAIL  identity/$i_type — canonical identity template missing: $tmpl_abs")
-        FAIL=$((FAIL + 1))
-        continue
-      fi
-
-      # Resolve {{IGRIS_VERSION}}. `-` → read_identity_version's default
-      # (<brain>/config.json); a declared version_source resolves 3-case.
-      vsrc_abs=""
-      if [ -n "$i_vsource" ] && [ "$i_vsource" != "-" ]; then
-        case "$i_vsource" in
-          "~"/*) vsrc_abs="$HOME/${i_vsource#"~/"}" ;;
-          /*)    vsrc_abs="$i_vsource" ;;
-          *)     vsrc_abs="$PROJECT_ROOT/$i_vsource" ;;
-        esac
-      fi
-      id_version=$(read_identity_version "$vsrc_abs")
-      if [ -z "$id_version" ]; then
-        SUMMARY+=("FAIL  identity/$i_type — cannot resolve {{IGRIS_VERSION}} from '${vsrc_abs:-$BRAIN_DIR/config.json}' (file missing, unparseable, or no top-level \"version\" key)")
-        FAIL=$((FAIL + 1))
-        continue
-      fi
-
-      # Resolve the output identity file (FR-154 3-case shape; project-root-
-      # relative in the confirmed v1 map).
-      case "$i_filename" in
-        "~"/*) out_abs="$HOME/${i_filename#"~/"}" ;;
-        /*)    out_abs="$i_filename" ;;
-        *)     out_abs="$PROJECT_ROOT/$i_filename" ;;
-      esac
-
-      # TD-244 (BI-3): resolve the delegation recipe template for a
-      # dynamic-define target. The recipe is the canonical companion of the
-      # identity template — it lives alongside it (`<identity-tmpl-dir>/
-      # delegation-recipe.tmpl`), so it resolves correctly for BOTH the in-repo
-      # compile (PROJECT_ROOT/core/templates/) and the brain-default compile
-      # (BRAIN_DIR/core/templates/), with no separate manifest declaration.
-      recipe_abs=""
-      if [ "$i_delegation_model" = "dynamic-define" ]; then
-        recipe_abs="$(dirname "$tmpl_abs")/delegation-recipe.tmpl"
-        if [ ! -f "$recipe_abs" ]; then
-          SUMMARY+=("FAIL  identity/$i_type — delegation recipe template missing: $recipe_abs (dynamic-define harness needs the boot-injection recipe)")
-          FAIL=$((FAIL + 1))
-          continue
-        fi
-      fi
-
-      # Render the expected region to a temp file (a $(...) capture would eat
-      # the trailing newline) and merge it into the target atomically.
-      tmp_region="$(mktemp "${TMPDIR:-/tmp}/igris-identity-region.XXXXXX")"
-      TMPFILES_TO_CLEAN+=("$tmp_region")
-      rc=0
-      normalize_identity_shape "$tmpl_abs" "$i_type" "$id_version" \
-        "$i_delegation_model" "$recipe_abs" > "$tmp_region" || rc=$?
-      if [ "$rc" -ne 0 ]; then
-        SUMMARY+=("FAIL  identity/$i_type — normalize_identity_shape exited $rc")
-        FAIL=$((FAIL + 1))
-        continue
-      fi
-
-      mkdir -p "$(dirname "$out_abs")"
-      merge_action=""
-      merge_action=$(merge_identity_region "$out_abs" "$tmp_region") || rc=$?
-      if [ "$rc" -eq 0 ]; then
-        SUMMARY+=("OK    identity/$i_type -> $i_filename ($merge_action)")
-        OK=$((OK + 1))
-      elif [ "$rc" -eq 3 ]; then
-        SUMMARY+=("FAIL  identity/$i_type — corrupt Igris identity region (BEGIN without END) at $out_abs; fix manually, then recompile")
-        FAIL=$((FAIL + 1))
-      else
-        SUMMARY+=("FAIL  identity/$i_type — merge exited $rc")
-        FAIL=$((FAIL + 1))
-      fi
-    done <<< "$IDENTITY_ROWS"
-  fi
-}
-
-# ---------------------------------------------------------------------------
 # project_hook — the event-hook projection surface plugin (FR-202 M0).
 # FR-180 (D7 - Option B): for each (hook-block, target) row, dispatch to the TS
 # projector (`igris registry project-hook`), which MERGES the hook GROUP into the
@@ -2038,9 +1894,9 @@ done
 if [ "$TOTAL" -eq 0 ]; then
   # FR-202 (M0): the surface noun list is derived from the registry
   # (IGRIS_SURFACE_LABELS) so a new surface extends it automatically. The
-  # rendered string is byte-identical to the historical literal
-  # "No agent/skills/mcp/identity/hook targets matched …" (parser-coupled —
-  # parseHarnessOutput reads "… targets matched").
+  # rendered string is now "No agent/skills/mcp/hook targets matched …"
+  # (FR-202 M4 dropped the identity surface; parser-coupled — parseHarnessOutput
+  # reads "… targets matched").
   echo "No $(igris_surface_empty_match_nouns) targets matched (filter='$FILTER', target='$TARGET_KIND', surface='$SURFACE_KIND')." >&2
   # FR-180 (TD-235 / D5): a 0-target run under --expect-core is the silent
   # no-op the brief forbids — the caller (igris add) routed this expecting core

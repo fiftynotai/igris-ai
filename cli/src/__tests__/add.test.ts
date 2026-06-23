@@ -34,7 +34,6 @@ import type {
   SkillMaterializeResult,
   AgentMaterializeResult,
   McpMaterializeResult,
-  IdentityMaterializeResult,
   HookMaterializeResult,
 } from "../verbs/registry.js";
 import type { AddCoreResult } from "../verbs/add-core.js";
@@ -137,21 +136,6 @@ const okAddCoreMcp = (): AddCoreResult => ({
   verifyOutput: "SUMMARY: 1 pairs — 1 MATCH, 0 MISMATCH",
 });
 
-const okMaterializeIdentity = (): IdentityMaterializeResult => ({
-  ok: true,
-  code: 0,
-  overlayWritten: "/overlay.json",
-});
-
-const okAddCoreIdentity = (): AddCoreResult => ({
-  ok: true,
-  code: 0,
-  reason: "",
-  sourcePath: "/repo/core/templates/identity.tmpl",
-  mirrorPath: "/brain/core/templates/identity.tmpl",
-  verifyOutput: "SUMMARY: 1 pairs — 1 MATCH, 0 MISMATCH",
-});
-
 const okMaterializeHook = (): HookMaterializeResult => ({
   ok: true,
   code: 0,
@@ -183,23 +167,6 @@ function cleanHookAdapter(): AdapterCaptureFn {
   };
 }
 
-// A clean identity compile+check capture fake (1 identity target, drift-clean).
-function cleanIdentityAdapter(): AdapterCaptureFn {
-  return (scriptPath) => {
-    if (scriptPath.includes("compile_harnesses.sh")) {
-      return {
-        code: 0,
-        output:
-          "  OK    identity/gemini -> GEMINI.md (created)\n  1 targets — 1 ok, 0 failed\n",
-      };
-    }
-    return {
-      code: 0,
-      output: "  [identity/gemini] MATCH\n  1 targets — 1 in sync, 0 drifted/missing\n",
-    };
-  };
-}
-
 describe("runAdd — dispatcher routing", () => {
   it("unknown surface → exit 2 + actionable message", async () => {
     const code = await runAdd({ surface: "bogus", name: "x" });
@@ -207,7 +174,7 @@ describe("runAdd — dispatcher routing", () => {
     expect(cap.err.join("")).toContain("unknown surface 'bogus'");
   });
 
-  it("all five arms are wired (no not-implemented stub remains)", async () => {
+  it("all four arms are wired (no not-implemented stub remains)", async () => {
     // FR-180 Phase 5: hook is the final arm — dispatching it must NOT hit a
     // stub. With injected seams it routes to the hook arm and reaches projection.
     const code = await runAdd({
@@ -691,156 +658,6 @@ describe("runAdd mcp — core happy path", () => {
   });
 });
 
-describe("runAdd identity — personal happy path (D6)", () => {
-  it("materializes via materializeIdentity then projects + verifies → exit 0", async () => {
-    let materializeCalled = false;
-    const code = await runAdd({
-      surface: "identity",
-      name: "myid",
-      noCore: true,
-      targets: ["gemini:file:GEMINI.md"],
-      brainRoot: BRAIN,
-      materializeIdentityFn: (opts, overlay) => {
-        materializeCalled = true;
-        // The identity arm routes through the registry "add-identity" action.
-        expect(opts.action).toBe("add-identity");
-        expect(opts.name).toBe("myid");
-        expect(opts.targets).toEqual(["gemini:file:GEMINI.md"]);
-        expect(overlay).toBeDefined();
-        return okMaterializeIdentity();
-      },
-      captureAdapter: cleanIdentityAdapter(),
-    });
-    expect(code).toBe(0);
-    expect(materializeCalled).toBe(true);
-    expect(cap.out.join("")).toContain("Added personal identity 'myid'");
-  });
-
-  it("projects the identity surface (--surface identity), NOT skills", async () => {
-    let compileSurface: string | undefined;
-    await runAdd({
-      surface: "identity",
-      name: "myid",
-      noCore: true,
-      targets: ["gemini:file:GEMINI.md"],
-      brainRoot: BRAIN,
-      materializeIdentityFn: okMaterializeIdentity,
-      captureAdapter: (scriptPath, args) => {
-        if (scriptPath.includes("compile_harnesses.sh")) {
-          const i = args.indexOf("--surface");
-          compileSurface = i >= 0 ? args[i + 1] : undefined;
-          return {
-            code: 0,
-            output: "  OK    identity/gemini -> GEMINI.md (created)\n  1 targets — 1 ok\n",
-          };
-        }
-        return { code: 0, output: "  [identity/gemini] MATCH\n  1 targets — 1 in sync\n" };
-      },
-    });
-    expect(compileSurface).toBe("identity");
-  });
-
-  it("returns the materialize reject code without projecting (collision reject)", async () => {
-    let projected = false;
-    const code = await runAdd({
-      surface: "identity",
-      name: "myid",
-      noCore: true,
-      targets: ["gemini:file:GEMINI.md"],
-      brainRoot: BRAIN,
-      materializeIdentityFn: () => ({ ok: false, code: 1, overlayWritten: "/o.json" }),
-      captureAdapter: () => {
-        projected = true;
-        return { code: 0, output: "" };
-      },
-    });
-    expect(code).toBe(1);
-    expect(projected).toBe(false);
-  });
-});
-
-describe("runAdd identity — core happy path (D6)", () => {
-  it("appends the os_identity block then projects + verifies → exit 0", async () => {
-    let addCoreCalled = false;
-    const code = await runAdd({
-      surface: "identity",
-      name: "myid",
-      core: true,
-      projectRoot: "/repo",
-      targets: ["gemini:file:ZZID.md"],
-      brainRoot: BRAIN,
-      addCoreIdentityFn: (opts) => {
-        addCoreCalled = true;
-        expect(opts.name).toBe("myid");
-        expect(opts.projectRoot).toBe("/repo");
-        expect(opts.targets).toEqual(["gemini:file:ZZID.md"]);
-        return okAddCoreIdentity();
-      },
-      captureAdapter: cleanIdentityAdapter(),
-    });
-    expect(code).toBe(0);
-    expect(addCoreCalled).toBe(true);
-    expect(cap.out.join("")).toContain("Added core identity 'myid'");
-  });
-
-  it("projects against the BRAIN ROOT with --expect-core + --manifest (coreProjectionParams)", async () => {
-    let compileProjectRoot: string | undefined;
-    let sawExpectCore = false;
-    let sawManifest = false;
-    await runAdd({
-      surface: "identity",
-      name: "myid",
-      core: true,
-      projectRoot: "/repo",
-      targets: ["gemini:file:ZZID.md"],
-      brainRoot: BRAIN,
-      addCoreIdentityFn: okAddCoreIdentity,
-      captureAdapter: (scriptPath, args) => {
-        if (scriptPath.includes("compile_harnesses.sh")) {
-          const pr = args.indexOf("--project-root");
-          compileProjectRoot = pr >= 0 ? args[pr + 1] : undefined;
-          sawExpectCore = args.includes("--expect-core");
-          sawManifest = args.includes("--manifest");
-          return {
-            code: 0,
-            output: "  OK    identity/gemini -> ZZID.md (created)\n  1 targets — 1 ok\n",
-          };
-        }
-        return { code: 0, output: "  [identity/gemini] MATCH\n  1 targets — 1 in sync\n" };
-      },
-    });
-    // The CORE projection runs against the BRAIN ROOT (not the checkout) so the
-    // ownership gate passes, with --expect-core (D5) + the checkout manifest.
-    expect(compileProjectRoot).toBe(BRAIN);
-    expect(sawExpectCore).toBe(true);
-    expect(sawManifest).toBe(true);
-  });
-
-  it("TD-235: core identity projection skipped by the gate → non-zero + message", async () => {
-    const code = await runAdd({
-      surface: "identity",
-      name: "myid",
-      core: true,
-      projectRoot: "/unowned",
-      targets: ["gemini:file:ZZID.md"],
-      brainRoot: BRAIN,
-      addCoreIdentityFn: okAddCoreIdentity,
-      captureAdapter: (scriptPath) => {
-        if (scriptPath.includes("compile_harnesses.sh")) {
-          return {
-            code: 1,
-            output:
-              "FAIL  core identity — not owned by --project-root /unowned; run from the igris-ai repo or pass --core\n",
-          };
-        }
-        return { code: 0, output: "" };
-      },
-    });
-    expect(code).not.toBe(0);
-    expect(cap.err.join("")).toContain("not owned by --project-root /unowned");
-  });
-});
-
 describe("runAdd hook — personal happy path (D7, Phase 5)", () => {
   it("materializes via materializeHook then projects + verifies → exit 0", async () => {
     let materializeCalled = false;
@@ -1001,7 +818,7 @@ describe("runAdd skill — TD-235 no-silent-no-op regression (CRITICAL)", () => 
           return {
             code: 0,
             output:
-              "No agent/skills/mcp/identity targets matched (filter='*', target='all', surface='skills').\n",
+              "No agent/skills/mcp/hook targets matched (filter='*', target='all', surface='skills').\n",
           };
         }
         return { code: 0, output: "" };
