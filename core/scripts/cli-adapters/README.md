@@ -159,6 +159,55 @@ a git-tracked file — Codex `config.toml` lives at `~/.codex/`, outside the rep
 and the registry overlay stays `${VAR}`-only. The `.gitignore` entry for
 `secrets.env` is defense-in-depth against a stray in-repo copy.
 
+### The irreducible per-harness shape-emitters (FR-202 M2)
+
+MCP is the surface-plugin contract's **`projection = shape-emit`** case: every
+harness chose its own MCP config schema, so the canonical launch spec
+(`{command, args, env}`) cannot be placed in a shared standard dir — it must be
+*re-shaped* per harness. The thin core is **two plugins** (`project_mcp` /
+`verify_mcp`) over the SHARED shape helper `_common.sh::normalize_mcp_shape`
+(§18.1 / L-554 byte-paired with its TS twin `cli/src/lib/mcp-shape.ts#buildHarnessMcpEntry`).
+There is **no custom MCP runtime** — Igris contributes only *config*; the
+harness's own MCP client spawns the stdio server at launch. Distribution is
+`command`-passthrough: whatever the canonical declares as `command` (`npx`, an
+absolute path, a bundled binary) is emitted verbatim — the projector never
+rewrites or special-cases it.
+
+The per-harness divergence is **5 irreducible axes** (sourced from
+`normalize_mcp_shape` L1663-1729 + the `verify_mcp` case L1733-1763 + the env
+re-resolve L605-628). It is genuinely irreducible — collapsing any axis would
+require one of the harnesses to change its own config schema:
+
+| # | Axis | claude | gemini | antigravity | opencode | codex |
+|---|------|--------|--------|-------------|----------|-------|
+| 1 | **config map-key** | `mcpServers` | `mcpServers` | `mcpServers` | `mcp` | `mcp_servers` |
+| 2 | **config file + format** | `~/.claude.json` (JSON) | `~/.gemini/settings.json` (JSON) | `~/.gemini/config/mcp_config.json` (JSON — distinct file from gemini, FR-179 R1) | `~/.config/opencode/opencode.json` (JSON) | `~/.codex/config.toml` (**TOML** — `extract_mcp_entry` keys off the `.toml` suffix) |
+| 3 | **`type` discriminator** | `"type":"stdio"` | (none) | (none) | `"type":"local"` (+ `"enabled":bool` — the only harness reading the `enabled` column) | (none) |
+| 4 | **command shape** | `command` + `args` separate | `command` + `args` separate | `command` + `args` separate | `"command":[cmd, …args]` **FUSED** | `command` + `args` separate (+ optional `startup_timeout_sec`) |
+| 5 | **env key + `${VAR}` grammar** | key `env`, `${VAR}` verbatim | key `env`, `${VAR}` verbatim | key `env`, `${VAR}` verbatim | key `environment`, **`{env:VAR}`** token | key `env`, the **resolved LITERAL** on disk (FR-165 / memory #586 — codex resolves NEITHER `${VAR}` nor process-env under sandbox `inherit="core"`) |
+
+Notes that the bare-table approximation can mislead a future maintainer:
+
+- **antigravity is gemini-lineage but a 5th harness:** its emitted JSON is
+  byte-for-byte the gemini shape (no `type`); only axis #2 (the config FILE)
+  differs. It is **live** (FR-179/180) — do NOT drop it from
+  `VALID_MCP_TARGET_TYPES`.
+- **The codex env value is NEVER a literal in the projected shape.**
+  `normalize_mcp_shape` emits the `${VAR}` REFERENCE stand-in (it never reads
+  `secrets.env`, never emits a literal). The resolved literal is written ONLY by
+  the TS projector at compile time into `~/.codex/config.toml` (outside any
+  repo), and the drift compare re-resolves the reference to that literal **inside
+  its python compare** to deep-equal the on-disk value.
+
+**`verify_mcp_entry_drift` is the protected, secret-safe verdict — do NOT alter
+it.** It is the one path that touches a resolved secret, and it is engineered to
+NEVER print one: on a codex env divergence it emits only KEY names
+(`DRIFTED:env.<KEY>` / `MISSING_SECRET:<VAR>` / `MATCH`), never any value
+(resolved or on-disk). Changing even one `[mcp/<name>/<harness>]` verdict line —
+or leaking a value while "documenting" it — is a regression. The 5 emitters +
+this drift compare ARE the thin MCP surface; there is nothing to delete and
+nothing to rewrite for distribution (npx is already a verbatim `command`).
+
 ## Orchestrator-identity surface (os_identity — TD-233)
 
 The fifth projected surface (after agents, skills, MCP, hooks): the
