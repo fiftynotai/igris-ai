@@ -27,16 +27,25 @@ setup() {
   SANDBOX="$TEST_TEMP_DIR/session_start_$BATS_TEST_NUMBER"
   mkdir -p "$SANDBOX/home" "$SANDBOX/proj"
 
-  # Pinned pre-FR-178 baseline stdout (jq shape) for a fresh project with no
-  # session state. Byte-equality against this proves the FR-178 addition did
-  # not touch the stdout contract. NOTE: \\n below is literal — the hook
-  # builds the context string with literal backslash-n which jq escapes.
+  # Pinned baseline stdout (jq shape) for a FRESH project with no session state.
+  # Byte-equality against this proves the stdout contract: the FR-178 OSC title
+  # addition did not touch it, AND the FR-202 M4 Unit A auto-boot nudge is
+  # present for source=startup. NOTE: \\n below is literal — the hook builds the
+  # context string with literal backslash-n which jq escapes. The trailing
+  # [IGRIS AUTO-BOOT] line is the auto-boot nudge (startup/opencode only).
   BASELINE="$SANDBOX/baseline.json"
   cat > "$BASELINE" <<'EOF'
 {
-  "additionalContext": "[IGRIS SESSION STATE]\\nSource: startup\\nMode: NO SESSION\\nActive Brief: None\\nBlockers: None\\n[/IGRIS SESSION STATE]"
+  "additionalContext": "[IGRIS SESSION STATE]\\nSource: startup\\nMode: NO SESSION\\nActive Brief: None\\nBlockers: None\\n[/IGRIS SESSION STATE]\\n[IGRIS AUTO-BOOT] Run /awaken to ground this session."
 }
 EOF
+
+  # Pinned baseline for a NON-fresh session (resume/clear/compact): identical to
+  # the startup baseline EXCEPT the auto-boot nudge is ABSENT — re-awakening an
+  # already-grounded session would just churn. {SOURCE} is substituted per test.
+  NUDGELESS_TEMPLATE='{
+  "additionalContext": "[IGRIS SESSION STATE]\\nSource: {SOURCE}\\nMode: NO SESSION\\nActive Brief: None\\nBlockers: None\\n[/IGRIS SESSION STATE]"
+}'
 }
 
 teardown() {
@@ -93,6 +102,79 @@ PYEOF
   run run_hook_no_tty "$SANDBOX/home" "" "{\"source\":\"resume\",\"cwd\":\"$SANDBOX/proj\"}" "$SANDBOX/out.json"
   [ "$status" -eq 0 ]
   grep -q 'Source: resume' "$SANDBOX/out.json"
+}
+
+# --- FR-202 M4 Unit A: auto-boot nudge gating ------------------------------
+# The hook appends an [IGRIS AUTO-BOOT] /awaken cue to additionalContext on a
+# FRESH session only. Fresh = native-Claude "startup" OR the OpenCode bridge's
+# "opencode" source (which it dispatches only on session.created). A Claude
+# resume/clear/compact is already grounded → the cue must be ABSENT.
+
+@test "startup: auto-boot /awaken nudge present (jq shape == pinned baseline)" {
+  require_jq
+  require_python3
+  run run_hook_no_tty "$SANDBOX/home" "" "{\"source\":\"startup\",\"cwd\":\"$SANDBOX/proj\"}" "$SANDBOX/out.json"
+  [ "$status" -eq 0 ]
+  # Byte-equal to the baseline (which now carries the nudge) AND the cue is there.
+  cmp "$BASELINE" "$SANDBOX/out.json"
+  grep -q '\[IGRIS AUTO-BOOT\] Run /awaken to ground this session\.' "$SANDBOX/out.json"
+}
+
+@test "opencode source: auto-boot /awaken nudge present (OpenCode session.created)" {
+  require_jq
+  require_python3
+  # Unified bridge envelope: top-level source=opencode, payload is the raw event.
+  run run_hook_no_tty "$SANDBOX/home" "" \
+    "{\"source\":\"opencode\",\"event\":\"session_start\",\"project_dir\":\"$SANDBOX/proj\",\"payload\":{\"type\":\"session.created\"}}" \
+    "$SANDBOX/out.json"
+  [ "$status" -eq 0 ]
+  grep -q 'Source: opencode' "$SANDBOX/out.json"
+  grep -q '\[IGRIS AUTO-BOOT\] Run /awaken to ground this session\.' "$SANDBOX/out.json"
+}
+
+@test "resume/clear/compact: auto-boot nudge ABSENT (already grounded — no churn)" {
+  require_jq
+  require_python3
+  local src
+  for src in resume clear compact; do
+    run run_hook_no_tty "$SANDBOX/home" "" "{\"source\":\"$src\",\"cwd\":\"$SANDBOX/proj\"}" "$SANDBOX/out.json"
+    [ "$status" -eq 0 ]
+    # The cue must NOT appear for a non-fresh session.
+    ! grep -q 'IGRIS AUTO-BOOT' "$SANDBOX/out.json"
+    # And the full stdout must byte-match the nudgeless baseline for this source.
+    local expected="$SANDBOX/nudgeless_${src}.json"
+    printf '%s\n' "${NUDGELESS_TEMPLATE/\{SOURCE\}/$src}" > "$expected"
+    cmp "$expected" "$SANDBOX/out.json"
+  done
+}
+
+@test "auto-boot nudge: jq and python3-fallback serializers emit identical additionalContext" {
+  require_jq
+  require_python3
+  # Capture the jq-serialized output (jq present on PATH).
+  run run_hook_no_tty "$SANDBOX/home" "" "{\"source\":\"startup\",\"cwd\":\"$SANDBOX/proj\"}" "$SANDBOX/jq.json"
+  [ "$status" -eq 0 ]
+
+  # Build a PATH with python3 + the hook's other deps but NO jq, forcing the
+  # python3 serialization fallback, then re-run from the same input.
+  local nojq_bin="$SANDBOX/nojq_bin"
+  mkdir -p "$nojq_bin"
+  local t src
+  for t in bash python3 cat sqlite3 basename grep sed head dirname env printf; do
+    src=$(command -v "$t" 2>/dev/null) && ln -sf "$src" "$nojq_bin/$t"
+  done
+  [ -z "$(PATH="$nojq_bin" command -v jq 2>/dev/null)" ] || skip "could not isolate jq off PATH"
+
+  PATH="$nojq_bin" run_hook_no_tty "$SANDBOX/home" "" "{\"source\":\"startup\",\"cwd\":\"$SANDBOX/proj\"}" "$SANDBOX/py.json"
+
+  # The JSON envelope formatting differs (jq pretty-prints, python3 is compact) —
+  # that is a pre-existing FR-178 property. What MUST be byte-identical is the
+  # additionalContext VALUE, nudge included. Extract and compare it.
+  local jq_ctx py_ctx
+  jq_ctx=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['additionalContext'])" "$SANDBOX/jq.json")
+  py_ctx=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['additionalContext'])" "$SANDBOX/py.json")
+  [ "$jq_ctx" = "$py_ctx" ]
+  printf '%s' "$jq_ctx" | grep -q '\[IGRIS AUTO-BOOT\] Run /awaken to ground this session\.'
 }
 
 # --- tty-positive tests (allocate a pty via python) -------------------------

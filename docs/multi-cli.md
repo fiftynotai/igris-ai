@@ -968,7 +968,7 @@ across all three supported CLIs (Claude, OpenCode, Codex):
 
 | Igris event | Script | Purpose |
 |-------------|--------|---------|
-| `session_start` | `~/.igris/core/hooks/shared/session_start.sh` | Inject session state and active brief summary. |
+| `session_start` | `~/.igris/core/hooks/shared/session_start.sh` | Inject session state and active brief summary; on a FRESH session also nudge `/awaken` (FR-202 M4). |
 | `session_end` | `~/.igris/core/hooks/shared/session_end.sh` | Flip CURRENT_SESSION.md to REST MODE; deregister instance from brain. |
 | `pre_compact` | `~/.igris/core/hooks/shared/pre_compact.sh` | Emit recovery context before context compaction. |
 | `post_compact` | `~/.igris/core/hooks/shared/post_compact.sh` | Log compact completion; future hook point. |
@@ -984,6 +984,14 @@ across all three supported CLIs (Claude, OpenCode, Codex):
 | Codex CLI | `session_end` only | `notify` program wrapper at `~/.igris/core/hooks/bridges/codex-notify.sh` | Codex exposes only post-turn notification. The user's original `notify` program is backed up to `~/.igris/config.json → cli_targets.codex.user_notify_backup` and invoked first. |
 | Gemini CLI | None (NOT projected — FR-182) | Not yet wired | gemini-cli 0.45.0 NOW has a `gemini hooks` subcommand (the old "no hook API" claim is stale) — full onboarding is tracked under FR-182. Igris does not yet project gemini hooks. |
 | Antigravity | `PreToolUse` + `PostToolUse` | BASH bridge: `~/.gemini/config/hooks.json` (gemini-cli hook format) → `core/hooks/bridges/antigravity/<event>.sh` → the shared `pre_tool_use.sh`/`post_tool_use.sh`. The bridge translates antigravity's `{toolCall,workspacePaths}` stdin ↔ the unified shape, and the gate's deny-JSON ↔ antigravity's RESPECTED `{decision,reason}` stdout | FR-181. `PreToolUse` is the brief-first gate (deny BLOCKS the tool — proven `agy` v1.0.7); `PostToolUse` is the always-allow lint fan-out. Tool-name map: `write_to_file`→Write, `replace_file_content`→Edit (both carry the path at `args.TargetFile`). Session lifecycle (session_start/end) is NOT hooked (no firing events) — it rides the `/awaken` + `/rest` skills. `igris install` config-merges the groups into `~/.gemini/config/hooks.json` (preserving any pre-existing hooks). |
+
+**Auto-boot nudge (FR-202 M4).** On a FRESH session, `session_start.sh` appends an
+`[IGRIS AUTO-BOOT] Run /awaken to ground this session.` cue to `additionalContext`. This is a
+NUDGE the model is expected to *follow* — NOT a guaranteed system trigger; `/awaken` is a
+registered skill the model invokes in response. It fires on Claude (`source=startup`) and
+OpenCode (`session.created`) only; it is suppressed on a Claude resume/clear/compact (already
+grounded). Gemini (unwired — FR-182), Antigravity (no session hook), and Codex (`session_end`
+only) have no session-start path → ground those manually with `/awaken`.
 
 ### Adding a hook — `igris add hook` (FR-180 D7)
 

@@ -225,6 +225,27 @@ build_context() {
   context="${context}\n${blockers}"
   context="${context}\n[/IGRIS SESSION STATE]"
 
+  # FR-202 M4 Unit A — auto-boot nudge. Append a directive cue that prompts the
+  # model to run /awaken on a FRESH session only. A native-Claude resume, clear,
+  # or compact already carries grounding, so re-awakening just churns — those are
+  # excluded. Fresh-session sources:
+  #   - "startup"  : native Claude fresh session.
+  #   - "opencode" : the OpenCode bridge dispatches session_start ONLY on a fresh
+  #                  session (session.created / first-seen session.updated|status),
+  #                  so every value it passes here is a fresh session.
+  # Codex (session_end only) and Antigravity (no session hook) never reach this
+  # script, so Claude+OpenCode are the only harnesses that see the cue.
+  # This is a NUDGE the model is expected to follow — NOT a guaranteed system
+  # trigger; /awaken is a registered skill the model invokes in response.
+  # The cue rides the SAME $context string both serialization branches in main()
+  # consume, so jq and the python3 fallback emit it byte-identically by
+  # construction. The existing [IGRIS SESSION STATE] block is preserved verbatim.
+  case "$source" in
+    startup | opencode)
+      context="${context}\n[IGRIS AUTO-BOOT] Run /awaken to ground this session."
+      ;;
+  esac
+
   echo "$context"
 }
 
