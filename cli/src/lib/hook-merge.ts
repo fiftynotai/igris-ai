@@ -146,6 +146,78 @@ export function mergeHookIntoSettings(
 }
 
 /**
+ * FR-203: the inverse of {@link mergeHookIntoSettings} — REMOVE the hook group
+ * whose command path is exactly `command` from a `settings.json` object's
+ * `hooks.<Event>[]` array.
+ *
+ * - Deep-clones `existing` (never mutates the caller's input).
+ * - Splices out ONLY the group(s) whose command path matches `command`
+ *   (name-exact, never glob — a neighbor group is preserved byte-for-byte).
+ * - Drops the now-empty `hooks.<Event>` array, and the now-empty `hooks` object,
+ *   so a round-trip add→remove byte-restores a settings file that had no `hooks`
+ *   key before.
+ * - Idempotent: removing a command that is already absent is a no-op.
+ *
+ * Returns `{ settings, removed }` — `removed` counts the groups spliced (0 when
+ * the command was already absent). Throws `HookMergeShapeError` when the target
+ * `hooks` value or the event array is a non-object / non-array (refuse to
+ * clobber — same posture as the merger).
+ */
+export function unmergeHookGroupFromSettings(
+  existing: Record<string, unknown> | null | undefined,
+  event: string,
+  command: string,
+): { settings: Record<string, unknown>; removed: number } {
+  const base: Record<string, unknown> =
+    existing === null || existing === undefined ? {} : existing;
+  if (typeof base !== "object" || Array.isArray(base)) {
+    throw new HookMergeShapeError("settings.json root must be a JSON object");
+  }
+  const merged = structuredClone(base) as Record<string, unknown>;
+
+  const hooksVal = merged.hooks;
+  if (hooksVal === undefined) {
+    return { settings: merged, removed: 0 };
+  }
+  if (typeof hooksVal !== "object" || hooksVal === null || Array.isArray(hooksVal)) {
+    throw new HookMergeShapeError(
+      "settings.json `hooks` must be a JSON object when present",
+    );
+  }
+  const hooks = { ...(hooksVal as Record<string, unknown>) };
+
+  const eventVal = hooks[event];
+  if (eventVal === undefined) {
+    return { settings: merged, removed: 0 };
+  }
+  if (!Array.isArray(eventVal)) {
+    throw new HookMergeShapeError(
+      `settings.json hooks.${event} must be an array when present`,
+    );
+  }
+
+  const before = (eventVal as unknown[]).length;
+  const kept = (eventVal as unknown[]).filter((g) => groupCommand(g) !== command);
+  const removed = before - kept.length;
+
+  if (kept.length === 0) {
+    // The event array is now empty — drop the event key entirely.
+    delete hooks[event];
+  } else {
+    hooks[event] = kept;
+  }
+
+  if (Object.keys(hooks).length === 0) {
+    // No events remain — drop the `hooks` object so the file restores to its
+    // pre-add shape (byte-restored round-trip).
+    delete merged.hooks;
+  } else {
+    merged.hooks = hooks;
+  }
+  return { settings: merged, removed };
+}
+
+/**
  * Does `settings`'s `hooks.<Event>` array contain a group whose command path is
  * exactly `command`? The drift-side reader: a hook is "projected" iff its
  * command path is present under its event. Used by the hook drift pass to emit

@@ -764,6 +764,276 @@ export function mergeTomlConfig(opts: {
 }
 
 // ---------------------------------------------------------------------------
+// FR-203: the INVERSES of mergeJsonConfig / mergeTomlConfig — un-merge a single
+// named entry from a harness config, preserving every OTHER entry + top-level
+// key byte-for-byte (the no-clobber posture of the mergers, run in reverse).
+// `igris remove mcp` calls these to un-project an MCP block; the same 6-step
+// contract (malformed-never-clobber, idempotent, atomic temp+rename, single
+// rolling backup, never-throws) applies. An ABSENT entry is `unchanged` (a
+// no-op un-merge is success — removing a thing that is already gone is idempotent,
+// the symmetric flip of the merger's "already present + equal" idempotency).
+// ---------------------------------------------------------------------------
+
+/**
+ * FR-203: delete one named `entryKey` from a `mapKey` map in a JSON config FILE.
+ * The exact inverse of {@link mergeJsonConfig} — preserves every OTHER entry +
+ * top-level key, refuses to clobber a malformed/non-object file, idempotent
+ * (absent entry → `unchanged`, NO write), atomic temp+rename + single rolling
+ * backup, never throws. Reuses the `McpRegisterResult` union verbatim:
+ * `updated` = the key was present and removed; `unchanged` = the key (or the
+ * whole map) was already absent.
+ *
+ * @param opts.targetPath  The JSON config FILE to un-merge from.
+ * @param opts.mapKey      The top-level map key (`"mcpServers"` | `"mcp"`).
+ * @param opts.entryKey    The server name to delete under `mapKey`.
+ * @param opts.backup      Single rolling `<path>.igris.bak`. Defaults to true.
+ */
+export function unmergeJsonConfig(opts: {
+  targetPath: string;
+  mapKey: string;
+  entryKey: string;
+  backup?: boolean;
+}): McpRegisterResult {
+  const { targetPath, mapKey, entryKey } = opts;
+  const backup = opts.backup ?? true;
+
+  const fail = (error: string): McpRegisterResult => ({
+    outcome: "failed",
+    claudeJsonPath: targetPath,
+    mcpEntryPath: "",
+    error,
+  });
+
+  // --- 1. Read — an absent file is an idempotent no-op (nothing to remove). --
+  if (!existsSync(targetPath)) {
+    return { outcome: "unchanged", claudeJsonPath: targetPath, mcpEntryPath: "" };
+  }
+  let rawBytes: Buffer;
+  try {
+    rawBytes = readFileSync(targetPath);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return fail(`could not read ${targetPath}: ${msg}`);
+  }
+
+  // --- 2. Parse — fail loud on malformed JSON (do NOT clobber) --------------
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBytes.toString("utf-8"));
+  } catch {
+    return fail(
+      `malformed ${targetPath} — refusing to write; fix or remove the file manually`,
+    );
+  }
+  if (!isPlainObject(parsed)) {
+    return fail(
+      `${targetPath} is not a JSON object — refusing to write; fix or remove the file manually`,
+    );
+  }
+  const root = parsed;
+
+  // --- 3. Locate the mapKey map. An absent/empty map → nothing to remove. ---
+  const existingMap = root[mapKey];
+  if (existingMap === undefined) {
+    return { outcome: "unchanged", claudeJsonPath: targetPath, mcpEntryPath: "" };
+  }
+  if (!isPlainObject(existingMap)) {
+    return fail(
+      `${targetPath} has a non-object '${mapKey}' — refusing to write; fix or remove the file manually`,
+    );
+  }
+  if (!(entryKey in existingMap)) {
+    // The entry is already gone — an idempotent no-op (the symmetric flip of the
+    // merger's "already present + equal → unchanged").
+    return { outcome: "unchanged", claudeJsonPath: targetPath, mcpEntryPath: "" };
+  }
+
+  // --- 4. Delete the entry; drop the map entirely when it becomes empty so a
+  // round-trip add→remove byte-restores a file that had no `mapKey` before. ---
+  const serverMap = { ...existingMap };
+  delete serverMap[entryKey];
+  if (Object.keys(serverMap).length === 0) {
+    delete root[mapKey];
+  } else {
+    root[mapKey] = serverMap;
+  }
+
+  // --- 5. Backup-then-atomic-write. -----------------------------------------
+  const serialized = JSON.stringify(root, null, 2) + "\n";
+  const tmpPath = `${targetPath}.tmp.${process.pid}.${Date.now()}`;
+  try {
+    if (backup) {
+      writeFileSync(`${targetPath}${BACKUP_SUFFIX}`, rawBytes);
+    }
+    writeFileSync(tmpPath, serialized);
+    renameSync(tmpPath, targetPath);
+    chmodSecretFile(targetPath);
+  } catch (err) {
+    if (existsSync(tmpPath)) {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        /* ignore — cleanup is best-effort */
+      }
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    return fail(`could not write ${targetPath}: ${msg}`);
+  }
+
+  return { outcome: "updated", claudeJsonPath: targetPath, mcpEntryPath: "" };
+}
+
+/**
+ * FR-203: the TOML sibling of {@link unmergeJsonConfig} — delete a single
+ * `[<tablePrefix>.<entryKey>]` table (+ any `[<tablePrefix>.<entryKey>.env]`
+ * descendant) from a TOML config FILE via the SAME table-scoped STRING SPLICE
+ * the merger uses (reusing `locateTomlTableSpan`), so every other byte —
+ * comments, sibling tables, top-level keys — stays physically untouched.
+ * `@iarna/toml` is PARSE-ONLY (malformed gate + the post-condition guard). The
+ * exact inverse of {@link mergeTomlConfig}: idempotent (absent table →
+ * `unchanged`), atomic, single rolling backup, never throws.
+ *
+ * @param opts.targetPath   The TOML config FILE (`~/.codex/config.toml`).
+ * @param opts.tablePrefix  The table family (`"mcp_servers"`).
+ * @param opts.entryKey     The server name to delete.
+ * @param opts.backup       Single rolling `<path>.igris.bak`. Defaults to true.
+ */
+export function unmergeTomlConfig(opts: {
+  targetPath: string;
+  tablePrefix: string;
+  entryKey: string;
+  backup?: boolean;
+}): McpRegisterResult {
+  const { targetPath, tablePrefix, entryKey } = opts;
+  const backup = opts.backup ?? true;
+
+  const fail = (error: string): McpRegisterResult => ({
+    outcome: "failed",
+    claudeJsonPath: targetPath,
+    mcpEntryPath: "",
+    error,
+  });
+
+  // --- 1. Read — absent file is an idempotent no-op. ------------------------
+  if (!existsSync(targetPath)) {
+    return { outcome: "unchanged", claudeJsonPath: targetPath, mcpEntryPath: "" };
+  }
+  let rawBytes: Buffer;
+  try {
+    rawBytes = readFileSync(targetPath);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return fail(`could not read ${targetPath}: ${msg}`);
+  }
+  const existingText = rawBytes.toString("utf-8");
+
+  // --- 2. Parse for the malformed-safe gate (do NOT clobber). ---------------
+  let parsed: TOML.JsonMap;
+  try {
+    parsed = TOML.parse(existingText);
+  } catch {
+    return fail(
+      `malformed ${targetPath} — refusing to write; fix or remove the file manually`,
+    );
+  }
+
+  // --- 3. Refuse-to-write on a non-table conflict + detect absence. ---------
+  const existingPrefix = parsed[tablePrefix];
+  if (existingPrefix !== undefined && !isPlainObject(existingPrefix)) {
+    return fail(
+      `${targetPath} has a non-table '${tablePrefix}' — refusing to write; fix or remove the file manually`,
+    );
+  }
+  const existingTable = isPlainObject(existingPrefix)
+    ? existingPrefix[entryKey]
+    : undefined;
+  if (existingTable === undefined) {
+    // Already absent — idempotent no-op.
+    return { outcome: "unchanged", claudeJsonPath: targetPath, mcpEntryPath: "" };
+  }
+
+  // --- 4. Splice the located span OUT (never re-emit). ----------------------
+  const useCrlf = dominantLineEndingIsCrlf(existingText);
+  const eol = useCrlf ? "\r\n" : "\n";
+  const lines = existingText.split(eol);
+  const span = locateTomlTableSpan(lines, tablePrefix, entryKey);
+  if (span === null) {
+    // The parse found the table but the textual locator did not — refuse rather
+    // than guess (the merger's same belt-and-suspenders posture).
+    return fail(
+      `could not locate the '[${tablePrefix}.${entryKey}]' table text in ${targetPath} — refusing to write`,
+    );
+  }
+  // Drop the span. Also drop a single trailing blank line the table left behind
+  // (so a round-trip add→remove does not accumulate blank lines), then re-trim a
+  // doubled blank at the seam.
+  const before = lines.slice(0, span.start);
+  const after = lines.slice(span.end);
+  // Collapse a blank line immediately before the removed span that now abuts the
+  // following content (keeps the seam clean without touching unrelated blanks).
+  while (before.length > 0 && before[before.length - 1].trim() === "" &&
+         after.length > 0 && after[0].trim() === "") {
+    before.pop();
+  }
+  let serialized = [...before, ...after].join(eol);
+  // Normalize trailing whitespace to a single terminating newline when there is
+  // content; an entirely-emptied file becomes empty.
+  serialized = serialized.replace(/(\r?\n)+$/, "");
+  if (serialized.length > 0) {
+    serialized += eol;
+  }
+
+  // --- 4b. PARSE-VERIFY POST-CONDITION GUARD (the load-bearing safety net). --
+  // Re-parse the candidate (PARSE-ONLY) and assert: (a) it parses; (b) the
+  // target table is GONE; (c) every OTHER top-level key/table is unchanged.
+  let candidateParsed: TOML.JsonMap;
+  try {
+    candidateParsed = TOML.parse(serialized);
+  } catch {
+    return fail(
+      `splice verification failed (candidate did not parse) — refusing to write to avoid corrupting ${targetPath}`,
+    );
+  }
+  const candidatePrefix = candidateParsed[tablePrefix];
+  const candidateTable = isPlainObject(candidatePrefix)
+    ? candidatePrefix[entryKey]
+    : undefined;
+  if (candidateTable !== undefined) {
+    return fail(
+      `splice verification failed (target table still present) — refusing to write to avoid corrupting ${targetPath}`,
+    );
+  }
+  if (!othersUnchanged(parsed, candidateParsed, tablePrefix, entryKey)) {
+    return fail(
+      `splice verification failed (collateral change to other tables) — refusing to write to avoid corrupting ${targetPath}`,
+    );
+  }
+
+  // --- 5. Backup-then-atomic-write. -----------------------------------------
+  const tmpPath = `${targetPath}.tmp.${process.pid}.${Date.now()}`;
+  try {
+    if (backup) {
+      writeFileSync(`${targetPath}${BACKUP_SUFFIX}`, rawBytes);
+    }
+    writeFileSync(tmpPath, serialized);
+    renameSync(tmpPath, targetPath);
+    chmodSecretFile(targetPath);
+  } catch (err) {
+    if (existsSync(tmpPath)) {
+      try {
+        unlinkSync(tmpPath);
+      } catch {
+        /* ignore — cleanup is best-effort */
+      }
+    }
+    const msg = err instanceof Error ? err.message : String(err);
+    return fail(`could not write ${targetPath}: ${msg}`);
+  }
+
+  return { outcome: "updated", claudeJsonPath: targetPath, mcpEntryPath: "" };
+}
+
+// ---------------------------------------------------------------------------
 // FR-169: register the bundled igris-brain MCP into ALL 4 harnesses at init.
 //
 // igris-brain is a CORE OS default (L-504) — every install gets it in every

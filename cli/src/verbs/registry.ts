@@ -73,6 +73,8 @@ import { buildHarnessMcpEntry, type McpHarness } from "../lib/mcp-shape.js";
 import { buildClaudeHookGroup } from "../lib/hook-shape.js";
 import {
   mergeHookIntoSettings,
+  unmergeHookGroupFromSettings,
+  personalHookCommandPath,
   HookMergeShapeError,
   resolveHookCommandPath,
 } from "../lib/hook-merge.js";
@@ -80,6 +82,8 @@ import { parseSecretsEnv } from "../lib/secrets.js";
 import {
   mergeJsonConfig,
   mergeTomlConfig,
+  unmergeJsonConfig,
+  unmergeTomlConfig,
   type TomlMcpEntry,
 } from "../lib/mcp-register.js";
 import {
@@ -103,6 +107,11 @@ export type RegistryAction =
   | "add-hook"
   | "project-mcp"
   | "project-hook"
+  | "unproject-mcp"
+  | "unproject-hook"
+  | "remove-skill"
+  | "remove-mcp"
+  | "remove-hook"
   | "list"
   | "remove"
   | "update";
@@ -209,7 +218,14 @@ const VALID_HOOK_EVENTS = [
 ] as const;
 type HookEvent = (typeof VALID_HOOK_EVENTS)[number];
 
-const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+/**
+ * The canonical surface-name pattern (lower-kebab). The SINGLE source of truth
+ * for every add writer's name validation (add-skill/add-mcp/add-hook + the
+ * agent/mcp/hook schema validators) — exported so `verbs/remove.ts` reuses the
+ * IDENTICAL regex (FR-203 C1: a divergent copy would let a traversal name slip
+ * past `remove` and reach a recursive `rmSync`).
+ */
+export const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
 interface CanonicalSpec {
   dir: string;
@@ -4705,6 +4721,417 @@ function runRemove(opts: RegistryOptions, overlayPath: string): number {
   return 0;
 }
 
+// ---------------------------------------------------------------------------
+// FR-203: personal de-materialize helpers — the INVERSES of the `add-*` writers.
+// Each splices the named block out of the overlay, drops the typed origin
+// sidecar entry, and deletes the vendored dir / registry script (no orphans).
+// Returns a structured `RemoveMaterializeResult` so `verbs/remove.ts` can decide
+// whether the store actually changed (the inverted no-phantom-success gate keys
+// on `removed === false` AND nothing un-projected → LOUD fail).
+// ---------------------------------------------------------------------------
+
+/** FR-203: structured result of a personal de-materialize (skill/mcp/hook). */
+export interface RemoveMaterializeResult {
+  /** True iff the write path returned 0 (overlay/origin/vendor cleanup landed). */
+  ok: boolean;
+  /** The exit code (0 on success, 1 when the block was absent / write error). */
+  code: number;
+  /** True iff an overlay block / vendored dir / script actually existed + was removed. */
+  removed: boolean;
+  /** The overlay manifest path operated on. */
+  overlayWritten: string;
+}
+
+/**
+ * FR-203: remove a personal SKILL block — the inverse of `runAddSkill`. Splices
+ * `overlay.surfaces.skills[]` by `basename(source) === name`, drops the
+ * `skill:<name>` origin sidecar key, and deletes the vendored tree
+ * `registrySkillDirPath(name)`. Idempotent: an absent block returns
+ * `removed:false` (NOT an error here — the dispatcher decides whether
+ * already-absent is a loud fail, after also checking un-projection).
+ */
+export function removeSkillBlock(
+  opts: RegistryOptions,
+  overlayPath: string,
+): RemoveMaterializeResult {
+  const result: RemoveMaterializeResult = {
+    ok: false,
+    code: 2,
+    removed: false,
+    overlayWritten: overlayPath,
+  };
+  if (opts.name === undefined || opts.name.length === 0) {
+    logError("registry remove-skill: <name> is required");
+    return result;
+  }
+  // FR-203 C1 (defense-in-depth): reject a name that fails NAME_PATTERN BEFORE
+  // deriving any fs path — `registrySkillDirPath(name)` feeds a recursive
+  // `rmSync` below, so a traversal name (`../../../x`) must never reach it.
+  if (!NAME_PATTERN.test(opts.name)) {
+    logError(
+      `registry remove-skill: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
+    );
+    return result;
+  }
+  const name = opts.name;
+  let overlay: Overlay;
+  try {
+    overlay = readOverlay(overlayPath);
+  } catch (err) {
+    logError((err as Error).message);
+    return { ...result, code: 1 };
+  }
+
+  const idx = findSkillBlockIndex(overlay, name);
+  if (idx >= 0 && Array.isArray(overlay.surfaces?.skills)) {
+    overlay.surfaces!.skills!.splice(idx, 1);
+    if (overlay.surfaces!.skills!.length === 0) {
+      delete overlay.surfaces!.skills;
+    }
+    const overlayErr = validateOverlayShape(overlay);
+    if (overlayErr !== null) {
+      logError(`registry remove-skill: resulting overlay invalid: ${overlayErr}`);
+      return { ...result, code: 1 };
+    }
+    writeOverlayAtomic(overlayPath, overlay);
+    result.removed = true;
+  }
+
+  // Drop the typed origin sidecar entry (best-effort — a malformed sidecar
+  // must not block the overlay removal that already landed).
+  const originsPath = opts.originsPath ?? registryOriginsPath();
+  const key = originKey("skill", name);
+  try {
+    const origins = readOrigins(originsPath);
+    if (key in origins) {
+      delete origins[key];
+      writeOriginsAtomic(originsPath, origins);
+    }
+  } catch {
+    info(`registry remove-skill: could not update origins sidecar at ${originsPath}`);
+  }
+
+  // Delete the vendored tree (no orphan copies).
+  const skillVendorDirFor = opts.skillVendorDir ?? registrySkillDirPath;
+  const vendoredDir = skillVendorDirFor(name);
+  if (existsSync(vendoredDir)) {
+    rmSync(vendoredDir, { recursive: true, force: true });
+    result.removed = true;
+  }
+
+  if (result.removed) {
+    info(`Removed personal skill '${name}' from ${overlayPath}`);
+  }
+  return { ...result, ok: true, code: 0 };
+}
+
+/**
+ * FR-203: remove a personal MCP block — the inverse of `runAddMcp`. Splices
+ * `overlay.surfaces.mcp_servers[]` by `block.name === name` and drops the
+ * `mcp:<name>` origin sidecar key (an inline MCP has no vendored dir).
+ * Idempotent: an absent block returns `removed:false`.
+ */
+export function removeMcpBlock(
+  opts: RegistryOptions,
+  overlayPath: string,
+): RemoveMaterializeResult {
+  const result: RemoveMaterializeResult = {
+    ok: false,
+    code: 2,
+    removed: false,
+    overlayWritten: overlayPath,
+  };
+  if (opts.name === undefined || opts.name.length === 0) {
+    logError("registry remove-mcp: <name> is required");
+    return result;
+  }
+  // FR-203 C1 (uniformity — no fs path derived here, but the guard is
+  // structurally identical across the three de-materialize helpers).
+  if (!NAME_PATTERN.test(opts.name)) {
+    logError(
+      `registry remove-mcp: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
+    );
+    return result;
+  }
+  const name = opts.name;
+  let overlay: Overlay;
+  try {
+    overlay = readOverlay(overlayPath);
+  } catch (err) {
+    logError((err as Error).message);
+    return { ...result, code: 1 };
+  }
+
+  const idx = findMcpBlockIndex(overlay, name);
+  if (idx >= 0 && Array.isArray(overlay.surfaces?.mcp_servers)) {
+    overlay.surfaces!.mcp_servers!.splice(idx, 1);
+    if (overlay.surfaces!.mcp_servers!.length === 0) {
+      delete overlay.surfaces!.mcp_servers;
+    }
+    const overlayErr = validateOverlayShape(overlay);
+    if (overlayErr !== null) {
+      logError(`registry remove-mcp: resulting overlay invalid: ${overlayErr}`);
+      return { ...result, code: 1 };
+    }
+    writeOverlayAtomic(overlayPath, overlay);
+    result.removed = true;
+  }
+
+  const originsPath = opts.originsPath ?? registryOriginsPath();
+  const key = originKey("mcp", name);
+  try {
+    const origins = readOrigins(originsPath);
+    if (key in origins) {
+      delete origins[key];
+      writeOriginsAtomic(originsPath, origins);
+    }
+  } catch {
+    info(`registry remove-mcp: could not update origins sidecar at ${originsPath}`);
+  }
+
+  if (result.removed) {
+    info(`Removed personal MCP '${name}' from ${overlayPath}`);
+  }
+  return { ...result, ok: true, code: 0 };
+}
+
+/**
+ * FR-203: remove a personal HOOK block — the inverse of `runAddHook`. Splices
+ * `overlay.surfaces.hooks[]` by `block.name === name` and deletes the registry
+ * hook SCRIPT dir `~/.igris/registry/hooks/<name>/`. #828: this touches ONLY the
+ * hooks SURFACE (the script + the overlay block) — never a `core/enforcement/`
+ * def. Idempotent: an absent block returns `removed:false`.
+ */
+export function removeHookBlock(
+  opts: RegistryOptions,
+  overlayPath: string,
+): RemoveMaterializeResult {
+  const result: RemoveMaterializeResult = {
+    ok: false,
+    code: 2,
+    removed: false,
+    overlayWritten: overlayPath,
+  };
+  if (opts.name === undefined || opts.name.length === 0) {
+    logError("registry remove-hook: <name> is required");
+    return result;
+  }
+  // FR-203 C1 (defense-in-depth): reject a traversal name BEFORE deriving the
+  // script dir — `join(scriptRoot, name)` feeds a recursive `rmSync` below.
+  if (!NAME_PATTERN.test(opts.name)) {
+    logError(
+      `registry remove-hook: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
+    );
+    return result;
+  }
+  const name = opts.name;
+  let overlay: Overlay;
+  try {
+    overlay = readOverlay(overlayPath);
+  } catch (err) {
+    logError((err as Error).message);
+    return { ...result, code: 1 };
+  }
+
+  const blocks = overlay.surfaces?.hooks;
+  if (Array.isArray(blocks)) {
+    const idx = blocks.findIndex((b) => b?.name === name);
+    if (idx >= 0) {
+      blocks.splice(idx, 1);
+      if (blocks.length === 0) {
+        delete overlay.surfaces!.hooks;
+      }
+      const overlayErr = validateOverlayShape(overlay);
+      if (overlayErr !== null) {
+        logError(`registry remove-hook: resulting overlay invalid: ${overlayErr}`);
+        return { ...result, code: 1 };
+      }
+      writeOverlayAtomic(overlayPath, overlay);
+      result.removed = true;
+    }
+  }
+
+  // Delete the registry hook SCRIPT dir (the per-name provenance prefix).
+  const scriptRoot =
+    opts.hookScriptRoot ?? join(brainDir(), "registry", "hooks");
+  const scriptDir = join(scriptRoot, name);
+  if (existsSync(scriptDir)) {
+    rmSync(scriptDir, { recursive: true, force: true });
+    result.removed = true;
+  }
+
+  if (result.removed) {
+    info(`Removed personal hook '${name}' from ${overlayPath}`);
+  }
+  return { ...result, ok: true, code: 0 };
+}
+
+/**
+ * FR-203: `igris registry unproject-mcp` — the INVERSE of `project-mcp`. Removes
+ * ONE MCP block's native entry from ONE harness's config (the inverse of the
+ * `mergeJsonConfig`/`mergeTomlConfig` write), preserving every OTHER server +
+ * top-level key. Does NOT read the manifest/overlay (the block may already be
+ * gone from the store — un-projection is by NAME only). Idempotent: un-merging
+ * an absent block is a no-op success. NOT a user-facing verb — invoked by
+ * `verbs/remove.ts`.
+ *
+ * Exit codes: 0 = removed/unchanged; 1 = merge/write failure; 2 = usage.
+ */
+function runUnprojectMcp(opts: RegistryOptions): number {
+  if (opts.name === undefined || opts.name.length === 0) {
+    logError("registry unproject-mcp: --name is required");
+    return 2;
+  }
+  const name = opts.name;
+  if (opts.harness === undefined) {
+    logError(
+      "registry unproject-mcp: --harness <claude|codex|gemini|opencode|antigravity> is required",
+    );
+    return 2;
+  }
+  if (!(VALID_MCP_TARGET_TYPES as readonly string[]).includes(opts.harness)) {
+    logError(
+      `registry unproject-mcp: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_MCP_TARGET_TYPES)}`,
+    );
+    return 2;
+  }
+  const harness = opts.harness;
+
+  const targetPath = opts.configPath ?? mcpConfigPathFor(harness);
+  const result =
+    harness === "codex"
+      ? unmergeTomlConfig({
+          targetPath,
+          tablePrefix: mcpMapKeyFor(harness),
+          entryKey: name,
+        })
+      : unmergeJsonConfig({
+          targetPath,
+          mapKey: mcpMapKeyFor(harness),
+          entryKey: name,
+        });
+
+  if (result.outcome === "failed") {
+    logError(
+      `registry unproject-mcp: failed to un-project '${name}' from ${harness} ` +
+        `(${targetPath}): ${result.error ?? "unknown un-merge error"}`,
+    );
+    return 1;
+  }
+  info(`unproject-mcp: ${name} ✗ ${harness} (${result.outcome})`);
+  return 0;
+}
+
+/**
+ * FR-203: `igris registry unproject-hook` — the INVERSE of `project-hook`.
+ * Removes ONE hook block's GROUP from ONE harness's native hook surface:
+ *
+ *   claude     → splice the group whose command path matches from
+ *                `<projectRoot>/.claude/settings.json` `hooks.<Event>[]`.
+ *   antigravity→ same splice from `~/.gemini/config/hooks.json`.
+ *   opencode   → COVERED by the shared FR-104 plugin; nothing to un-merge (the
+ *                plugin is shared — we NEVER remove it). A no-op success.
+ *
+ * Un-projection is by NAME → command path (re-derived from the personal
+ * provenance prefix); it does NOT require the store block to still exist.
+ * Idempotent. NOT a user-facing verb — invoked by `verbs/remove.ts`.
+ *
+ * Exit codes: 0 = removed/covered/unchanged; 1 = shape/write failure; 2 = usage.
+ */
+function runUnprojectHook(opts: RegistryOptions): number {
+  if (opts.name === undefined || opts.name.length === 0) {
+    logError("registry unproject-hook: --name is required");
+    return 2;
+  }
+  const name = opts.name;
+  if (opts.harness === undefined) {
+    logError(
+      "registry unproject-hook: --harness <claude|opencode|antigravity> is required",
+    );
+    return 2;
+  }
+  if (!(VALID_HOOK_TARGET_TYPES as readonly string[]).includes(opts.harness)) {
+    logError(
+      `registry unproject-hook: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_HOOK_TARGET_TYPES)}`,
+    );
+    return 2;
+  }
+  const harness = opts.harness as HookTargetType;
+  if (opts.event === undefined || opts.event.length === 0) {
+    logError(
+      `registry unproject-hook: --event <${VALID_HOOK_EVENTS.join("|")}> is required`,
+    );
+    return 2;
+  }
+  const event = opts.event;
+
+  // opencode hooks ride the shared plugin — there is nothing per-name to remove,
+  // and the plugin is shared so we NEVER delete it. A no-op success.
+  if (harness === "opencode") {
+    info(`unproject-hook: ${name} ✗ opencode (covered by the FR-104 plugin; no-op)`);
+    return 0;
+  }
+
+  // The personal hook command path is provenance-derived from (name, event).
+  const command = personalHookCommandPath(name, event);
+  const settingsPath =
+    harness === "antigravity"
+      ? opts.hookSettingsPath ?? antigravityHooksConfigPath()
+      : opts.hookSettingsPath ?? projectSettingsPath(opts.projectRoot ?? process.cwd());
+
+  if (!existsSync(settingsPath)) {
+    // Nothing to un-merge — idempotent success.
+    info(`unproject-hook: ${name} ✗ ${harness} (unchanged — no settings file)`);
+    return 0;
+  }
+
+  let existing: Record<string, unknown>;
+  try {
+    existing = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<
+      string,
+      unknown
+    >;
+  } catch (err) {
+    logError(
+      `registry unproject-hook: refusing to clobber unreadable ${settingsPath}: ${(err as Error).message}`,
+    );
+    return 1;
+  }
+
+  let unmerged: { settings: Record<string, unknown>; removed: number };
+  try {
+    unmerged = unmergeHookGroupFromSettings(existing, event, command);
+  } catch (err) {
+    if (err instanceof HookMergeShapeError) {
+      logError(
+        `registry unproject-hook: ${harness} hooks un-merge failed (refusing to clobber): ${err.message}`,
+      );
+      return 1;
+    }
+    throw err;
+  }
+
+  if (unmerged.removed === 0) {
+    // Already absent — idempotent no-op (no write).
+    info(`unproject-hook: ${name} ✗ ${harness} (unchanged — ${event})`);
+    return 0;
+  }
+
+  try {
+    const tmp = `${settingsPath}.tmp.${process.pid}.${Date.now()}`;
+    writeFileSync(tmp, `${JSON.stringify(unmerged.settings, null, 2)}\n`);
+    renameSync(tmp, settingsPath);
+  } catch (err) {
+    logError(
+      `registry unproject-hook: failed to write ${settingsPath}: ${(err as Error).message}`,
+    );
+    return 1;
+  }
+
+  info(`unproject-hook: ${name} ✗ ${harness} (${event})`);
+  return 0;
+}
+
 /**
  * The outcome of re-vendoring one entry. `changed`/`unchanged`/`skipped`
  * mirror FR-142; `origin` (when present) is the FULL updated origin to persist
@@ -5652,6 +6079,16 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runProjectMcp(opts);
     case "project-hook":
       return runProjectHook(opts);
+    case "unproject-mcp":
+      return runUnprojectMcp(opts);
+    case "unproject-hook":
+      return runUnprojectHook(opts);
+    case "remove-skill":
+      return removeSkillBlock(opts, overlayPath).code;
+    case "remove-mcp":
+      return removeMcpBlock(opts, overlayPath).code;
+    case "remove-hook":
+      return removeHookBlock(opts, overlayPath).code;
     case "list":
       return runList(overlayPath);
     case "remove":
@@ -5660,7 +6097,7 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runUpdate(opts, overlayPath);
     default:
       logError(
-        `unknown registry action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, add-hook, project-mcp, project-hook, list, remove, update.`,
+        `unknown registry action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, add-hook, project-mcp, project-hook, unproject-mcp, unproject-hook, remove-skill, remove-mcp, remove-hook, list, remove, update.`,
       );
       return 2;
   }

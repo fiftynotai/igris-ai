@@ -966,6 +966,42 @@ igris add hook <name> --event <Event> [--matcher <glob>] [--timeout <n>] [--targ
 - `--core` writes `core/hooks/shared/<Event>.sh` + a `surfaces.hooks[]` block in
   `core/scripts/cli-adapters/surfaces-manifest.json` + TD-096 mirrors both.
 
+### Removing a surface — `igris remove` (FR-203)
+
+`igris remove` is the **symmetric inverse** of `igris add` — the same four
+surfaces (`skill | agent | mcp | hook`; NO `identity`, retired by M4), the same
+auto-detected + printed core-vs-personal mode, the same no-phantom-success
+discipline, run in reverse:
+
+```
+igris remove <skill|agent|mcp|hook> <name> [--core | --no-core] \
+             [--harness <type>] [--event <Event>] [--yes] [--force]
+```
+
+For one invocation it **un-projects** the surface from every harness (deletes the
+registry-anchored symlink/hardlink, un-merges the named native-config block —
+preserving every other server/hook-group/top-level key byte-for-byte),
+**de-materializes** it from the registry overlay (personal) / deletes the `core/`
+source + un-sweeps the §13 agent enumeration surfaces (core), then **verifies the
+surface is ABSENT** via `harness check` (a drift-clean / empty match is the
+SUCCESS verdict for remove — the one place the add/remove symmetry flips).
+
+- **The inverted no-phantom-success gate:** a removal that finds NOTHING to
+  de-project AND nothing in the store is a **LOUD FAIL** ("already absent? check
+  the name"), never a phantom success.
+- **The one intentional asymmetry — a destructive `--yes` confirm:** `remove`
+  prints exactly what will be de-projected and asks for confirmation unless
+  `--yes` is passed (`add` is additive and has none).
+- **Builtin-agent guard:** `igris remove agent <builtin>` refuses without
+  `--force` (the builtins are load-bearing in delegation).
+- **#828:** `igris remove hook` removes ONLY the hooks-SURFACE mechanism (script
+  + merged config group) — NEVER a `core/enforcement/*.md` def. opencode hooks
+  ride the shared FR-104 plugin (which is never removed — a covered no-op).
+- **Round-trip identity:** `igris add <surface> <name>` then `igris remove
+  <surface> <name>` is a true byte-restoring identity.
+
+See `core/docs/ADD-SURFACES.md` § "Removing surfaces" for the per-surface table.
+
 ### Shared Script Input Contract
 
 Every shared script accepts two input shapes. Bridges translate native events to the

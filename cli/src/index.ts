@@ -36,6 +36,7 @@ import { runSync, type SyncSubVerb } from "./verbs/sync.js";
 import { runHarness, type HarnessAction } from "./verbs/harness.js";
 import { runRegistry, type RegistryAction } from "./verbs/registry.js";
 import { runAdd } from "./verbs/add.js";
+import { runRemove } from "./verbs/remove.js";
 import { runDetect } from "./verbs/detect.js";
 import { runBootSync } from "./verbs/boot-sync.js";
 import { runSession, type SessionAction } from "./verbs/session.js";
@@ -762,6 +763,71 @@ async function main(argv: string[]): Promise<void> {
           event: opts.event,
           matcher: opts.matcher,
           timeout,
+        });
+        process.exitCode = code;
+      },
+    );
+
+  program
+    .command("remove <surface> [name]")
+    .description(
+      "FR-203: the symmetric inverse of `igris add` — one-step removal of a " +
+        "surface (skill | agent | mcp | hook). UN-PROJECTS from every harness " +
+        "(deletes the registry-anchored symlink/hardlink, un-merges the named " +
+        "native-config block), de-materializes from the registry (personal) / " +
+        "deletes the core/ source + un-sweeps the §13 enumeration surfaces (core), " +
+        "then VERIFIES the surface is ABSENT (drift-clean = removed). Core-vs-" +
+        "personal is auto-detected and overridable with --core / --no-core; the " +
+        "resolved mode is always printed. DESTRUCTIVE: prints exactly what will be " +
+        "de-projected and asks for confirmation unless --yes. A removal that finds " +
+        "nothing to remove is a LOUD FAIL (never a phantom success). For hook pass " +
+        "--event <Event> (recovered from the store when omitted). Refuses to remove " +
+        "a builtin agent without --force.",
+    )
+    .option("--name <slug>", "surface name (alternative to the positional [name])")
+    // Commander pairs `--core` with `--no-core` (three-state: undefined/true/false).
+    .option("--core", "force CORE mode — edit the igris-ai checkout (wins over auto-detect)")
+    .option("--no-core", "force PERSONAL mode (wins over auto-detect)")
+    .option(
+      "--project-root <dir>",
+      "root for core auto-detect + un-project + verify (default: cwd)",
+    )
+    .option(
+      "--harness <type>",
+      "restrict un-projection to one harness: claude | codex | gemini | opencode | antigravity",
+    )
+    .option(
+      "--event <event>",
+      "hook event (remove hook): SessionStart | SessionEnd | PreToolUse | PostToolUse | PreCompact | PostCompact (recovered from the store when omitted)",
+    )
+    .option("--yes", "skip the destructive confirmation prompt (scripted / round-trip use)")
+    .option("--force", "force-remove a builtin agent (load-bearing in delegation)")
+    .action(
+      async (
+        surface: string,
+        name: string | undefined,
+        opts: {
+          name?: string;
+          core?: boolean;
+          projectRoot?: string;
+          harness?: string;
+          event?: string;
+          yes?: boolean;
+          force?: boolean;
+        },
+      ): Promise<void> => {
+        const code = await runRemove({
+          surface,
+          name: opts.name ?? name,
+          // Commander maps `--no-core`→`core:false`, `--core`→`core:true`,
+          // neither→`undefined`. Distinguish the three states (mirror `add`).
+          core: opts.core === true ? true : undefined,
+          noCore: opts.core === false ? true : undefined,
+          projectRoot: opts.projectRoot,
+          target: opts.harness,
+          event: opts.event,
+          yes: opts.yes,
+          force: opts.force,
         });
         process.exitCode = code;
       },
