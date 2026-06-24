@@ -495,9 +495,10 @@ FR-180):** for the common case, prefer the one-step `igris add agent <name> --fr
 <dir> --target <type:path>` — it α-assembles the agent into all four harness shapes
 at vendor time AND projects it (per-harness symlink/hard-link) AND verifies
 drift-clean in one command, failing loudly if nothing projected (TD-235). `--core`
-writes `core/agents/<name>.md` + the repo-root `harness-manifest.json` entry + the
-§13 agent enumeration surfaces (igris_tree.json, CLAUDE.md template + root) in one
-pass. `igris registry add` (above) is the **write-only** low-level primitive
+writes `core/agents/<name>.md` + the repo-root `harness-manifest.json` entry, then
+re-runs `core/scripts/gen_os_index.sh` so the agent's own frontmatter is discovered
+into the `core/os/INDEX.md` roster (FR-187 Phase 2b — no `igris_tree.json` / CLAUDE.md
+enumeration writes). `igris registry add` (above) is the **write-only** low-level primitive
 (vendor only, no project/verify), kept as the repair primitive alongside the
 `igris harness compile` two-step. See `core/docs/ADD-SURFACES.md`.
 

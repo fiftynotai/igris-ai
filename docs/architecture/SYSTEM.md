@@ -6,7 +6,7 @@
 
 ## 1. The 30-Second Pitch
 
-Igris AI is an **open-source AI engineering OS** that orchestrates agent teams to implement software with human oversight. A local **brain** (SQLite + FTS5 + sqlite-vec) at `~/.igris/memory/knowledge.db` stores briefs, learnings, errors, tasks, perception events, and metrics. A unified `igris` CLI manages installation, sync, and lifecycle. The orchestrator (Claude Code with `igris_os.md` loaded) enforces a **brief-first protocol** and delegates work to **7 specialized agents** (architect, forger, sentinel, warden, mender, seeker, sage) within a single Claude Code session. An optional VPS acts as an **async backup hub + dashboard backend + cross-machine sync**; local is always authoritative.
+Igris AI is an **open-source AI engineering OS** that orchestrates agent teams to implement software with human oversight. A local **brain** (SQLite + FTS5 + sqlite-vec) at `~/.igris/memory/knowledge.db` stores briefs, learnings, errors, tasks, perception events, and metrics. A unified `igris` CLI manages installation, sync, and lifecycle. The orchestrator (Claude Code grounded via the `/awaken` ceremony, which loads the layered OS context from `core/os/INDEX.md`) enforces a **brief-first protocol** and delegates work to **7 specialized agents** (architect, forger, sentinel, warden, mender, seeker, sage) within a single Claude Code session. An optional VPS acts as an **async backup hub + dashboard backend + cross-machine sync**; local is always authoritative.
 
 ---
 
@@ -16,7 +16,7 @@ Igris AI is an **open-source AI engineering OS** that orchestrates agent teams t
 flowchart TB
     L3["Layer 3 — Agent Teams &amp; multi-session<br/>(experimental; brain DB is the shared state)"]
     L2["Layer 2 — Subagents &amp; Skills<br/>core/agents/*.md, core/skills/*/SKILL.md"]
-    L1["Layer 1 — Igris OS Orchestrator<br/>core/prompts/igris_os.md"]
+    L1["Layer 1 — Igris OS Orchestrator<br/>core/os/ (layered context modules)"]
     L0["Layer 0 — Brain DB + MCP server<br/>brain-mcp-server/src/, ~/.igris/memory/knowledge.db"]
     L3 --> L2
     L2 --> L1
@@ -26,7 +26,7 @@ flowchart TB
 | Layer | Role | Primary entry-point |
 |-------|------|---------------------|
 | **0 — Brain DB + MCP server** | Authoritative state: briefs, learnings, errors, tasks, events, perception. Tools served via the `igris-brain` MCP server with `additionalProperties: false` strict-input contract. | `brain-mcp-server/src/index.ts:1-250`; engine boot at `brain-mcp-server/src/engine/index.ts:71-144` |
-| **1 — Igris OS orchestrator** | Single Claude Code session that reads `igris_os.md`, enforces brief-first protocol, tracks session state, and delegates to agents via the `Agent` tool. | `~/.igris/core/prompts/igris_os.md` (also lives at `core/prompts/igris_os.md` in the repo) |
+| **1 — Igris OS orchestrator** | Single Claude Code session that loads the layered OS context (via the `core/os/INDEX.md` module map), enforces brief-first protocol, tracks session state, and delegates to agents via the `Agent` tool. | `~/.igris/core/os/INDEX.md` + the boot-tier modules it lists (also live at `core/os/` in the repo) |
 | **2 — Subagents + skills** | 7 specialized agents (read or write tools restricted at the definition level) and 21 slash-command skills that compose multi-step workflows. | `~/.igris/core/agents/*.md`, `~/.igris/core/skills/*/SKILL.md` |
 | **3 — Agent Teams / multi-session** | Experimental layer that spawns parallel Claude Code instances; coordination via the shared brain DB and the VPS replication hub. | `core/skills/team/SKILL.md`; status: experimental |
 
@@ -120,7 +120,7 @@ Five main statuses (`Draft`, `Ready`, `In Progress`, `Done`, `Archived`) plus th
 | Performance | **PF** | Latency, throughput, resource use | PF-018 — Index learnings table |
 | Architectural Change | **AC** | System-design shift | AC-005 — Refactor event bus |
 
-**Auto-numbering:** scan existing briefs (brain DB `brief_status` or `~/.igris/projects/{slug}/briefs/`), find the highest `{TYPE}-\d+` ID, increment. Documented in `core/prompts/igris_os.md` brief-protocol section.
+**Auto-numbering:** scan existing briefs (brain DB `brief_status` or `~/.igris/projects/{slug}/briefs/`), find the highest `{TYPE}-\d+` ID, increment. Documented in the `/register` skill (`core/skills/register/SKILL.md`).
 
 ### 4.3 The `/hunt` workflow phases
 
@@ -223,7 +223,7 @@ Adapters under `core/hooks/bridges/` let non-Claude CLIs (OpenCode, Codex, Gemin
 
 ```mermaid
 flowchart LR
-    O["Orchestrator<br/>(igris_os.md)"]
+    O["Orchestrator<br/>(core/os/ context)"]
     O --> A["architect<br/>plan, read-only"]
     O --> F["forger<br/>implement, write"]
     O --> S["sentinel<br/>test + execute, read-only writes"]
@@ -245,7 +245,7 @@ The table below lists each agent's `tools:` from its YAML frontmatter (`core/age
 | **seeker** | Codebase research & investigation | Read-only (EXPLORES, does not modify) | `Read, Grep, Glob, Bash` (model: `haiku`) | On-demand; `/audit`; research questions |
 | **sage** | Flutter MVVM + Actions domain expert | Read/Write (IMPLEMENTS Flutter code) | `Read, Write, Edit, Bash, Glob, Grep` | On-demand for Flutter MVVM work (custom Tier-5 agent; not part of `/hunt` by default) |
 
-Each agent reads `~/.igris/core/igris_tree.json` to determine which context files to load (e.g., architect loads `coding_guidelines` + `architecture_map`; forger adds `api_pattern`, plus `design_system` if the task is UI-flagged). The `/document` skill in `/hunt` DOCUMENTING is an orchestrator-level operation (not delegated to an agent).
+Each agent's own CONTEXT PROTOCOL (in `core/agents/<name>.md`) names the context files it loads directly — self-contained, no routing tree (FR-187: `igris_tree.json` retired). E.g. architect loads `coding_guidelines` + `architecture_map`; forger adds `api_pattern`, plus `design_system` if the task is UI-flagged. The `/document` skill in `/hunt` DOCUMENTING is an orchestrator-level operation (not delegated to an agent).
 
 ### 7.2 The skills (grouped by purpose)
 
@@ -264,7 +264,7 @@ Each skill is `core/skills/<name>/SKILL.md` with YAML frontmatter (allowed tools
 
 ### 7.3 Orchestrator-delegates principle
 
-The orchestrator does not implement; it routes. On a `/hunt`, the orchestrator parses intent, loads the skill, and calls each agent via the `Agent` tool with the brief content + context files. Each agent completes and returns a structured result; the orchestrator evaluates and routes to the next phase. The full Subagent Delegation Protocol is at `core/prompts/igris_os.md:54-522`.
+The orchestrator does not implement; it routes. On a `/hunt`, the orchestrator parses intent, loads the skill, and calls each agent via the `Agent` tool with the brief content + context files. Each agent completes and returns a structured result; the orchestrator evaluates and routes to the next phase. The full Subagent Delegation Protocol is the `delegation` module at `core/os/delegation.md`.
 
 ---
 
@@ -311,11 +311,10 @@ triggers: ["trigger phrase", "alt phrase"]
 2. Register the name in `CLAUDE.md` "Available Skills" + `core/templates/CLAUDE.md.tmpl` (the root `CLAUDE.md` is regenerated from this template).
 3. Add the skill to the §7.2 grouped table above.
 4. Mirror the skill to `~/.igris/core/skills/<name>/SKILL.md` (TD-096) and verify with `core/scripts/verify_mirror.sh`.
-5. If the skill needs context routing, add an entry to `core/igris_tree.json:tasks`.
 
 ### 8.4 Add an agent
 
-Files: `core/agents/<name>.md` (definition) + `core/igris_tree.json:agents` (routing) + `CLAUDE.md` "Available Agents".
+Files: `core/agents/<name>.md` (definition — the agent's own CONTEXT PROTOCOL names the docs it loads) + the repo-root `harness-manifest.json` entry. Re-run `core/scripts/gen_os_index.sh` so the agent's frontmatter is discovered into the `core/os/INDEX.md` roster (FR-187 Phase 2b — no `igris_tree.json` / CLAUDE.md enumeration writes). The `igris add agent --core` verb does all of this in one pass.
 
 ```yaml
 ---
@@ -353,19 +352,18 @@ Tree routing entry:
 }
 ```
 
-`core/agents/manifest.yaml` is the DEPRECATED registry retained for reference; `igris_tree.json:agents` is the **live** routing source.
+The **live** agent roster is discovered from each agent's own frontmatter (`name`/`description` in `core/agents/<name>.md`) into the `core/os/INDEX.md` "Agent roster" by `core/scripts/gen_os_index.sh` (FR-187 Phase 2b). `core/agents/manifest.yaml` supplies role/tier metadata and is retained for that; the retired `igris_tree.json:agents` map is gone.
 
 ### 8.5 Add a brief type
 
 1. Choose a 2-letter ASCII prefix not already taken (BR/FR/TD/MG/TS/PI/DU/PF/AC are reserved).
-2. Add the definition to `core/prompts/igris_os.md` brief-protocol section.
+2. Add the definition to the `/register` skill (`core/skills/register/SKILL.md`) brief-type list.
 3. Auto-numbering inherits — no code change needed.
 
 ### 8.6 Add a feature flag
 
-1. Add the default to `cli/src/lib/templates/config.json.tmpl`.
-2. Document the flag in `core/prompts/igris_os.md` feature-flag table.
-3. Scripts read via `jq -r '.features.<flag>' ~/.igris/config.json`.
+1. Add the default to `cli/src/lib/templates/config.json.tmpl` (the canonical default-flag source).
+2. Scripts read via `jq -r '.features.<flag>' ~/.igris/config.json`.
 
 ---
 
@@ -378,7 +376,7 @@ Tree routing entry:
 5. **Carried-but-not-committed drift** — `CLAUDE.md` install-date line, `.claude/agent-memory/*/MEMORY.md`, `brain-mcp-server/.claude/`, and `.igris_version` regenerate post-install and are gitignored or carried-not-committed. Do not "clean" them in a code-touching commit.
 6. **Igris-managed vs Claude-only hooks** — Igris hooks live only in `canonical-settings.json`; project-local Claude hooks go in a separate `.claude/settings.json` block and are preserved by the canonical merge.
 7. **Forger does NOT commit** — `/hunt`'s state machine owns `COMMITTING`; sentinel runs tests, warden reviews, orchestrator commits. Forger stops at the last code-touching step and reports `IMPLEMENTATION COMPLETE — UNCOMMITTED` (L-248 / PI-004).
-8. **Version sweep on bumps** — bumping the current-system version means sweeping every enumeration surface: `package.json`, `core/igris_tree.json`, `CLAUDE.md`, `core/prompts/igris_os.md`, `CONTRIBUTING.md` "Project structure", any README banner. TD-147 is the cautionary tale.
+8. **Version sweep on bumps** — bumping the current-system version means sweeping every enumeration surface: `package.json`, `CLAUDE.md`, `CONTRIBUTING.md` "Project structure", any README banner. TD-147 is the cautionary tale.
 
 ---
 
@@ -387,7 +385,7 @@ Tree routing entry:
 - **v4 (pre-2025):** briefs lived in a repo `ai/` folder; no persistent brain; fragmented prompts.
 - **v5 (early 2025):** SQLite brain introduced (FTS5); brain was a *cache* of VPS (VPS-first). Perception extraction added.
 - **v6 (Q1–Q2 2025):** VPS role flipped — local DB became authoritative, VPS became an async backup hub. Unified `igris` CLI introduced. `igris_tree.json` routing landed; CLAUDE.md slimmed from 93 KB → 5 KB. Mask system retired (single fixed voice in SOUL.md). 5 numbered rules consolidated into one universal rule.
-- **v7 (Q2–Q3 2025; current):** brain MCP server runs locally (no remote dependency for local work); brief-storage is brain-DB-first, filesystem cache is fallback; `igris_tree.json` is the canonical routing table; 19-component brain engine; subconscious detectors disabled pending FR-118; brief-gate hardened post-TD-150 (no 60 s caching, fresh DB query every time); v7 cleanup pass (TD-147 / TD-148) purged version-string drift and dead scripts.
+- **v7 (Q2–Q3 2025; current):** brain MCP server runs locally (no remote dependency for local work); brief-storage is brain-DB-first, filesystem cache is fallback; the OS context is the layered, self-describing `core/os/` module set with a generated `core/os/INDEX.md` routing map (FR-187 retired the `igris_os.md` monolith + the `igris_tree.json` routing tree); 19-component brain engine; subconscious detectors disabled pending FR-118; brief-gate hardened post-TD-150 (no 60 s caching, fresh DB query every time); v7 cleanup pass (TD-147 / TD-148) purged version-string drift and dead scripts.
 
 Migration: v4 → v5 was a one-time `ai/`-to-brain copy; v5 → v6 used `igris upgrade`; v6 → v7 is an in-place `igris init --upgrade` (preserves `knowledge.db`, `USER.md`, `config.json` byte-for-byte). Full archive: `docs/archive/`.
 

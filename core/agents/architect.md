@@ -88,8 +88,8 @@ Output plan with:
 You load `MAINTAINING.md` (the contract→consumer map) directly per the
 CONTEXT PROTOCOL above (`{repo_root}/MAINTAINING.md`). If this brief changes
 **any contract listed in MAINTAINING.md** — a file path, a `table.column`, an
-env-var, a `config.json` dotted key, a protocol marker, or an
-`igris_tree.json` line-range — you **MUST** include a `## Consumer Sweep`
+env-var, a `config.json` dotted key, or a protocol marker — you **MUST**
+include a `## Consumer Sweep`
 section in the plan that lists **every** affected consumer from that contract's
 row and states how the plan re-points each one in the same commit.
 

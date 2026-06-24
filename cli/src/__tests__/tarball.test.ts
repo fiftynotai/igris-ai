@@ -67,7 +67,9 @@ describe("tarball — clean fixture extraction", () => {
     expect(existsSync(join(dest, "core", "SOUL.md"))).toBe(true);
     expect(existsSync(join(dest, "core", "agents", "manifest.yaml"))).toBe(true);
     expect(existsSync(join(dest, "core", "skills", "demo", "SKILL.md"))).toBe(true);
-    expect(existsSync(join(dest, "core", "rules", "00-igris-universal.md"))).toBe(true);
+    // FR-187: the layered core/os/ set replaces the retired rule + monolith.
+    expect(existsSync(join(dest, "core", "os", "INDEX.md"))).toBe(true);
+    expect(existsSync(join(dest, "core", "os", "standards.md"))).toBe(true);
     expect(existsSync(join(dest, "core", "hooks", "canonical-settings.json"))).toBe(true);
     expect(existsSync(join(dest, "core", "scripts", "verify_mirror.sh"))).toBe(true);
     expect(existsSync(join(dest, "core", "templates", "CLAUDE.md.tmpl"))).toBe(true);

@@ -36,8 +36,6 @@ Initialize Igris AI and resume any pending work.
 
 Read `~/.igris/core/os/INDEX.md` first — this is the **module map** for what context to load. There is no monolith to slice: each row is a self-contained module, and the modules ARE the sections.
 
-<!-- FR-187 Phase 2a: this skill's RUNTIME mirror (~/.igris/core/skills/awaken/SKILL.md) is DEFERRED to the Phase-4 cutover. Do NOT mirror this edit now — the runtime still routes via igris_tree.json until cutover. -->
-
 1. Read `~/.igris/core/os/INDEX.md`
 2. From the module table, load every module whose `tier` is `boot` — read each from `~/.igris/core/os/<module>.md` (the `SOUL` row maps to `~/.igris/core/SOUL.md`).
 3. Read all resolved modules silently. `on-demand` / `reference` modules are NOT loaded here — pull them later when their `consult_when` fires.

@@ -1,6 +1,6 @@
 # Git Hooks
 
-Igris ships local git hooks that catch drift between the actor-facing prompt (`core/prompts/igris_os.md`), the brain MCP schema (`brain-mcp-server/src/engine/components/memory/index.ts`), and the workspace lockfile. Hooks run **only when relevant files are staged**, so unrelated commits stay fast.
+Igris ships local git hooks that catch drift between the brain stewardship doc (`core/prompts/brain_stewardship.md`), the brain MCP schema (`brain-mcp-server/src/engine/components/memory/index.ts`), and the workspace lockfile. Hooks run **only when relevant files are staged**, so unrelated commits stay fast.
 
 ## What's installed
 
@@ -26,7 +26,7 @@ The pre-commit dispatcher only runs validators whose tracked files are staged. V
 
 | Staged file | Enum validator | Lockfile validator |
 |---|---|---|
-| `core/prompts/igris_os.md` | yes | no |
+| `core/prompts/brain_stewardship.md` | yes | no |
 | `brain-mcp-server/src/engine/components/memory/index.ts` | yes | no |
 | `package.json` (root) | no | yes |
 | `package-lock.json` | no | yes |

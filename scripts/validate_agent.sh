@@ -1,8 +1,11 @@
 #!/bin/bash
 set -e
 
-# Description: Validates an Igris AI agent definition file against v6 standards.
-#              Checks required sections, prohibited patterns, tree references, and size.
+# Description: Validates an Igris AI agent definition file against v7 standards.
+#              Checks required sections, prohibited patterns, and size. Agent
+#              CONTEXT PROTOCOLs are self-contained (FR-187): they name the
+#              context docs they load directly — there is no igris_tree.json to
+#              reference (the routing tree was retired; the os/ INDEX replaced it).
 # Usage: validate_agent.sh <agent_file.md>
 # Exit codes:
 #   0 - Validation passed
@@ -53,11 +56,12 @@ for section in "CORE IDENTITY" "CONTEXT PROTOCOL" "CAPABILITIES" "WORKFLOW" "OUT
   fi
 done
 
-# 2. Context protocol references igris_tree.json
+# 2. Context protocol is self-contained (FR-187): it must NOT reference the
+#    retired routing tree. Agents name the context docs they load directly.
 if has_pattern "igris_tree.json"; then
-  pass "Context protocol references igris_tree.json"
+  fail "Context protocol references the retired igris_tree.json (FR-187: agents are self-contained — name the docs directly)"
 else
-  fail "Context protocol does not reference igris_tree.json"
+  pass "Context protocol does not reference the retired igris_tree.json"
 fi
 
 # 3. Prohibited patterns
@@ -110,7 +114,7 @@ fi
 if has_pattern "do NOT need\|do not need\|You do NOT need"; then
   pass "Explicit exclusion list present"
 else
-  warn "Consider adding 'You do NOT need: igris_os.md, SOUL.md, ...' directive"
+  warn "Consider adding 'You do NOT need: the os/ INDEX, SOUL.md, ...' directive"
 fi
 
 # Summary

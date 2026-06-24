@@ -10,7 +10,7 @@
  *     "hooks_version":  "<sha256 of canonical-settings.json>" | null,
  *     "agents_version": "<sha256 of brain agents/manifest.yaml>" | null,
  *     "skills_version": "<sha256 of recursive sort+hash of brain skills/>" | null,
- *     "rules_version":  "<sha256 of brain rules/00-igris-universal.md>" | null,
+ *     "rules_version":  null  (DEPRECATED — see note),
  *     "installed_at":   "<ISO-8601>",
  *     "updated_at":     "<ISO-8601>"
  *   }
@@ -22,6 +22,13 @@
  * Hash determinism note: `skills_version` walks the runtime skills/ dir
  * recursively, sorts paths lexicographically, and hashes
  * `<relative-path>:<file-sha256>` for each file. Same skills dir → same hash.
+ *
+ * `rules_version` deprecation (FR-187): the universal rule
+ * `core/rules/00-igris-universal.md` was retired under FR-187 — its baseline
+ * moved into `core/os/standards.md`. The field is kept (always `null`) so the
+ * v2 schema and its readers/writers stay stable without a forced v3 migration.
+ * It carries no install-integrity signal anymore; do not reintroduce a rule
+ * hash here.
  */
 
 import {
@@ -40,7 +47,6 @@ import { dirname, join, relative } from "node:path";
 import {
   agentsManifestPath,
   installedFeaturesPath,
-  rulesFilePath,
   skillsDirPath,
 } from "./paths.js";
 import { readCanonicalHooksRaw } from "./canonical-hooks.js";
@@ -135,7 +141,10 @@ export function computeFeatureHashes(opts: {
   const hooks_version = opts.includeHooks ? hashCanonicalHooks() : null;
   const agents_version = hashIfExists(agentsManifestPath());
   const skills_version = hashSkillsDir();
-  const rules_version = hashIfExists(rulesFilePath());
+  // FR-187: the universal rule retired (baseline → core/os/standards.md), so
+  // there is no rule file to hash. The field stays in the v2 schema as an
+  // always-null vestige; see the module-doc deprecation note.
+  const rules_version = null;
   return { hooks_version, agents_version, skills_version, rules_version };
 }
 

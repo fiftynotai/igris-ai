@@ -21,7 +21,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   discoverAgentEntries,
-  discoverRuleEntries,
   discoverSkillEntries,
 } from "../lib/install-discovery.js";
 
@@ -111,26 +110,9 @@ describe("install-discovery — discoverAgentEntries", () => {
   });
 });
 
-describe("install-discovery — discoverRuleEntries", () => {
-  it("file exists → 1 entry", () => {
-    const dir = join(tmpBrain, "core", "rules");
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "00-igris-universal.md"), "# universal\n");
-    const out = discoverRuleEntries(tmpBrain);
-    expect(out.length).toBe(1);
-    expect(out[0].basename).toBe("00-igris-universal.md");
-    expect(out[0].src).toBe(join(dir, "00-igris-universal.md"));
-  });
-
-  it("file missing → []", () => {
-    expect(discoverRuleEntries(tmpBrain)).toEqual([]);
-  });
-
-  it("rules dir exists but file missing → []", () => {
-    mkdirSync(join(tmpBrain, "core", "rules"), { recursive: true });
-    expect(discoverRuleEntries(tmpBrain)).toEqual([]);
-  });
-});
+// FR-187: discoverRuleEntries was removed with the universal rule (baseline
+// moved into core/os/standards.md). Installs no longer materialize a
+// .claude/rules/ symlink, so there is no rule-discovery helper to test.
 
 describe("install-discovery — discoverSkillEntries", () => {
   it("4 subdirs → 4 entries sorted by basename", () => {
@@ -158,21 +140,17 @@ describe("install-discovery — discoverSkillEntries", () => {
 });
 
 describe("install-discovery — integration: dry-run paths === real-run paths", () => {
-  it("the same set of source paths is emitted by all three discovery helpers", () => {
-    // Stage a brain fixture that exercises all three categories.
+  it("the same set of source paths is emitted by both discovery helpers", () => {
+    // Stage a brain fixture that exercises both categories.
     stageAgentsDir([
       { name: "architect.md" },
       { name: "warden.md" },
       { name: "manifest.yaml" },
     ]);
-    const rulesDir = join(tmpBrain, "core", "rules");
-    mkdirSync(rulesDir, { recursive: true });
-    writeFileSync(join(rulesDir, "00-igris-universal.md"), "# universal\n");
     stageSkillsDir(["awaken", "hunt", "rest", "scan"]);
 
-    // Dry-run-equivalent enumeration: ask discovery for all three categories.
+    // Dry-run-equivalent enumeration: ask discovery for both categories.
     const agents = discoverAgentEntries(tmpBrain);
-    const rules = discoverRuleEntries(tmpBrain);
     const skills = discoverSkillEntries(tmpBrain);
 
     // Real-run-equivalent enumeration: ask discovery again. Both passes
@@ -180,16 +158,13 @@ describe("install-discovery — integration: dry-run paths === real-run paths", 
     // same order. (This is what closes the drift window — applySymlinkLayer
     // and enumerateInstallPlan now share this single source of truth.)
     const agentsAgain = discoverAgentEntries(tmpBrain);
-    const rulesAgain = discoverRuleEntries(tmpBrain);
     const skillsAgain = discoverSkillEntries(tmpBrain);
 
     expect(agentsAgain).toEqual(agents);
-    expect(rulesAgain).toEqual(rules);
     expect(skillsAgain).toEqual(skills);
 
     // Counts match the fixture.
     expect(agents.length).toBe(3);
-    expect(rules.length).toBe(1);
     expect(skills.length).toBe(4);
   });
 });

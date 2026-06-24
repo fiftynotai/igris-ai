@@ -91,12 +91,14 @@ export async function runUpdate(opts: UpdateOptions): Promise<number> {
     const wantHooks = previouslyInstalledHooks || features === null;
 
     const currentHashes = computeFeatureHashes({ includeHooks: wantHooks });
+    // FR-187: rules_version is a deprecated always-null vestige (the universal
+    // rule retired; baseline → core/os/standards.md). It carries no
+    // install-integrity signal, so it is not part of the up-to-date check.
     const upToDate =
       features !== null &&
       features.hooks_version === currentHashes.hooks_version &&
       features.agents_version === currentHashes.agents_version &&
-      features.skills_version === currentHashes.skills_version &&
-      features.rules_version === currentHashes.rules_version;
+      features.skills_version === currentHashes.skills_version;
 
     if (upToDate) {
       results.push({ slug: row.slug, outcome: "skipped", reason: "up to date" });

@@ -70,7 +70,7 @@ when the ownership gate skipped a surface; `igris add` closes that hole.
 | Surface | Command | Notes |
 |---|---|---|
 | **Skill** | `igris add skill <name> --from <skills-dir> --target <type:method:path>` | `<skills-dir>/<name>/SKILL.md` is vendored; target is e.g. `agents:symlink:~/.agents/skills`. Core skills auto-discover — `--core` writes `core/skills/<name>/SKILL.md` only (no manifest edit). |
-| **Agent** | `igris add agent <name> --from <dir> --target <type:path>` | all-four-harness α-assembly at vendor time. `--core` writes `core/agents/<name>.md` + the repo-root `harness-manifest.json` entry + the §13 agent enumeration surfaces (igris_tree.json, CLAUDE.md template + root). |
+| **Agent** | `igris add agent <name> --from <dir> --target <type:path>` | all-four-harness α-assembly at vendor time. `--core` writes `core/agents/<name>.md` + the repo-root `harness-manifest.json` entry, then re-runs `core/scripts/gen_os_index.sh` to regenerate the agent roster in `core/os/INDEX.md` (FR-187 Phase 2b: the roster is discovered from each agent's own frontmatter — no `igris_tree.json` / CLAUDE.md enumeration writes). |
 | **MCP** | `igris add mcp <name> --command <bin> [--arg …] [--env KEY=${VAR}] [--startup-timeout-sec <n>] --target <type:merge[:enabled]>` | config-merge into each harness's native MCP config (claude/gemini `mcpServers`, opencode `mcp`, codex `[mcp_servers.<name>]`). **`--env` values MUST be `${VAR}` indirection refs — inline secrets are REJECTED** at the writer boundary (the real secret is resolved from the environment by the harness at launch, never stored). `--core` appends a `surfaces.mcp_servers[]` block to `core/scripts/cli-adapters/surfaces-manifest.json` (the global Layer-1 surfaces file the MCP flatten reads) + TD-096 mirror. |
 | **Hook** | `igris add hook <name> --event <Event> [--matcher <glob>] [--timeout <n>] [--target <type:merge[:enabled]>]` | config-merge of an event-hook GROUP into each harness's native hook surface. `<Event>` is one of `SessionStart`, `SessionEnd`, `PreToolUse`, `PostToolUse`, `PreCompact`, `PostCompact`. Targets default to `claude:merge`; the hook harnesses are **claude** (the `.claude/settings.json` `hooks.<Event>[]` array), **opencode** (covered by the FR-104 plugin), and **antigravity** (FR-181 — config-merge into `~/.gemini/config/hooks.json` via the BASH bridge `core/hooks/bridges/antigravity/<event>.sh`; PreToolUse brief-gate + PostToolUse, session lifecycle rides `/awaken`+`/rest`). codex supports only session_end; gemini-cli 0.45.0 DOES have a `gemini hooks` API (the prior "no hook API" note was stale — onboarding tracked under FR-182, not yet projected). **Personal** writes the hook SCRIPT to `~/.igris/registry/hooks/<name>/<Event>.sh` + a `surfaces.hooks[]` overlay block; the registry-prefix command path is what the canonical re-merge **preserves** (see the R2 gotcha). `--core` writes `core/hooks/shared/<Event>.sh` + a `surfaces.hooks[]` block in `core/scripts/cli-adapters/surfaces-manifest.json` + TD-096 mirrors both. `--matcher` only applies to `Pre/PostToolUse`. |
 
@@ -116,7 +116,7 @@ asks for confirmation unless `--yes` is passed (scripted / round-trip use).
 | Surface | Command | Notes |
 |---|---|---|
 | **Skill** | `igris remove skill <name>` | Deletes the per-harness symlink(s) the skill projected, splices the `surfaces.skills[]` overlay block (drops the `skill:<name>` origin sidecar key + the vendored tree). `--core` deletes `core/skills/<name>/` + the runtime mirror (skills auto-discover — no manifest edit, the inverse of the add). |
-| **Agent** | `igris remove agent <name>` | Deletes the per-harness compiled agent files (codex `.toml`, gemini hardlink, opencode `.md`), reuses the existing `registry remove` (overlay + origin + vendor dir). `--core` deletes `core/agents/<name>.md` + mirror, SPLICES the repo-root `harness-manifest.json` entry, and un-sweeps the §13 enumeration surfaces (igris_tree.json, both "Available Agents" CSV lines). **Refuses to remove a BUILTIN agent without `--force`** (architect/forger/sentinel/warden/mender/seeker/sage/aegis/scribe are load-bearing in delegation). |
+| **Agent** | `igris remove agent <name>` | Deletes the per-harness compiled agent files (codex `.toml`, gemini hardlink, opencode `.md`), reuses the existing `registry remove` (overlay + origin + vendor dir). `--core` deletes `core/agents/<name>.md` + mirror, SPLICES the repo-root `harness-manifest.json` entry, then re-runs `core/scripts/gen_os_index.sh` so the agent drops out of the regenerated `core/os/INDEX.md` roster (FR-187 Phase 2b: frontmatter-discovered, no enumeration surfaces to un-sweep). **Refuses to remove a BUILTIN agent without `--force`** (architect/forger/sentinel/warden/mender/seeker/sage/aegis/scribe are load-bearing in delegation). |
 | **MCP** | `igris remove mcp <name> [--harness <type>]` | Un-merges the `mcpServers.<name>` / `mcp.<name>` / `[mcp_servers.<name>]` block from each harness's native config (all 5 MCP targets incl. antigravity's distinct `~/.gemini/config/mcp_config.json`), splices the `surfaces.mcp_servers[]` block. `--harness` scopes to one harness. `--core` splices the core `surfaces.mcp_servers[]` block + TD-096 re-mirror. |
 | **Hook** | `igris remove hook <name> [--event <Event>]` | Un-merges the hook GROUP from each harness's `hooks.<Event>[]` array (matched by the registry-prefix command path; neighbor groups preserved; the now-empty `hooks` key is dropped). `--event` is required to locate the group (recovered from the store when omitted). Deletes the registry hook script `~/.igris/registry/hooks/<name>/`. **#828:** removes ONLY the hooks-SURFACE mechanism — NEVER a `core/enforcement/*.md` def. opencode hooks ride the shared FR-104 plugin (which is NEVER removed — a covered no-op). `--core` splices the core `surfaces.hooks[]` block + TD-096 re-mirror; deletes the shared `core/hooks/shared/<Event>.sh` only when no OTHER block references it (reuse-don't-clobber, in reverse). |
 
@@ -139,14 +139,16 @@ their pre-add state.
   Note: the repo-root `harness-manifest.json` and the root `CLAUDE.md` are NOT
   runtime-mirrored — the manifest is read from the checkout when `harness
   compile` runs, and the root `CLAUDE.md` is the working copy. Only `core/…`
-  files (the agent prompt, `igris_tree.json`, `CLAUDE.md.tmpl`) get the mirror.
-- **Core agent enumeration (§13)** — `igris add --core agent` updates ALL agent
-  enumeration surfaces in one pass: `core/agents/<name>.md` (the canonical
-  prompt), the repo-root `harness-manifest.json` entry (codex/gemini/opencode
-  targets; claude rides the whole-file CLAUDE.md render), `core/igris_tree.json`
-  `agents` map, and the "Available Agents" line in both `core/templates/
-  CLAUDE.md.tmpl` and the root `CLAUDE.md`. The scaffold preloads no context;
-  fill in the prompt body + the `igris_tree.json` `load` list afterward.
+  files (the agent prompt) get the mirror.
+- **Core agent roster (FR-187 Phase 2b)** — `igris add --core agent` writes
+  `core/agents/<name>.md` (the canonical prompt) + the repo-root
+  `harness-manifest.json` entry (codex/gemini/opencode targets; claude rides
+  the whole-file CLAUDE.md render), then re-runs `core/scripts/gen_os_index.sh`
+  so the agent's own frontmatter (`name`/`description`) is discovered into the
+  `core/os/INDEX.md` agent roster. There is no `igris_tree.json` agents map or
+  "Available Agents" CSV anymore — the roster is the single frontmatter-derived
+  source. The scaffold preloads no context; fill in the prompt body and the
+  agent's own CONTEXT PROTOCOL doc list afterward.
 - **Core adds are one-step — they materialize AND project AND verify.** Run an
   `igris add --core <surface>` from the igris-ai checkout (auto-detected) or pass
   `--core`. It writes the source + TD-096 mirror, then **projects to all four
@@ -230,5 +232,5 @@ a repair. For "add a new surface," prefer `igris add`.
 
 ---
 
-**See also:** `core/prompts/igris_os.md` (`surface_management` section),
+**See also:** `core/os/surfaces-detail.md` (the full `igris add` reference),
 `docs/multi-cli.md` (harness method matrix), FR-180.

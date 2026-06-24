@@ -8,10 +8,15 @@
  * implementation pre-empts that risk.
  *
  * The discovery layer is read-only: it walks `<brainRoot>/core/` and
- * returns the agent / rule / skill entries that an install pipeline
- * should materialize into `<projectPath>/.claude/`. The materialization
- * itself (linkFile / linkDir for real run, dry.wouldWriteFile for
- * dry run) lives in the caller.
+ * returns the agent / skill entries that an install pipeline should
+ * materialize into `<projectPath>/.claude/`. The materialization itself
+ * (linkFile / linkDir for real run, dry.wouldWriteFile for dry run) lives
+ * in the caller.
+ *
+ * FR-187: the rule discovery layer was removed when the universal rule
+ * `core/rules/00-igris-universal.md` was retired (its baseline moved into
+ * `core/os/standards.md`). Installs no longer materialize a `.claude/rules/`
+ * symlink — there is no rule file to link.
  *
  * Sort stability: each helper returns entries sorted by basename so that
  * dry-run plan output and real-run iteration order are deterministic
@@ -25,11 +30,6 @@ export interface AgentEntry {
   /** Absolute source path (under <brainRoot>/core/agents). */
   src: string;
   /** Basename of the source file (e.g. "architect.md"). */
-  basename: string;
-}
-
-export interface RuleEntry {
-  src: string;
   basename: string;
 }
 
@@ -82,27 +82,6 @@ export function discoverAgentEntries(brainRoot: string): AgentEntry[] {
   }
   out.sort((a, b) => a.basename.localeCompare(b.basename));
   return out;
-}
-
-/**
- * Discover the universal rule file at `<brainRoot>/core/rules/00-igris-universal.md`.
- *
- * Returns `[]` if the file is absent. The rule layer is hardcoded to a
- * single file (the v6 universal-rule consolidation); this helper exists
- * for consistency with the other discovery functions and to keep the
- * caller's signature symmetric.
- */
-export function discoverRuleEntries(brainRoot: string): RuleEntry[] {
-  const src = join(brainRoot, "core", "rules", "00-igris-universal.md");
-  if (!existsSync(src)) return [];
-  let s;
-  try {
-    s = statSync(src);
-  } catch {
-    return [];
-  }
-  if (!s.isFile()) return [];
-  return [{ src, basename: "00-igris-universal.md" }];
 }
 
 /**

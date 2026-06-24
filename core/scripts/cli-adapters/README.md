@@ -304,9 +304,10 @@ applies; it no longer feeds a projection surface.
   orchestrator the read→`define_subagent`→invoke recipe once per session.
 
 The roster (harness → file) is discovered by `core/scripts/gen_os_index.sh` into
-`core/os/INDEX.md`; the Detect→Boot routing hop lives in `core/igris_tree.json`
-(`harness_specific`). A harness absent from the `harnesses` map defaults to
-`native-static` (no file needed).
+`core/os/INDEX.md` — the "Harness-specific roster" section there is the
+Detect→Boot routing map (the Boot stage loads the file whose `harness:`
+frontmatter matches the Detect-resolved harness). A harness absent from the
+`harnesses` map defaults to `native-static` (no file needed).
 
 ## Surface-plugin contract (FR-202 M0)
 

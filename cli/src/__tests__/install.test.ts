@@ -121,10 +121,11 @@ function stageBrainWithCore(): void {
   writeFileSync(join(agentsDir, "forger.md"), "# forger\n");
   writeFileSync(join(agentsDir, "manifest.yaml"), "agents: []\n");
 
-  // Rules
-  const rulesDir = join(tmpRoot, "core", "rules");
-  mkdirSync(rulesDir, { recursive: true });
-  writeFileSync(join(rulesDir, "00-igris-universal.md"), "# universal\n");
+  // OS (FR-187: the layered core/os/ set replaces the retired universal rule).
+  const osDir = join(tmpRoot, "core", "os");
+  mkdirSync(osDir, { recursive: true });
+  writeFileSync(join(osDir, "INDEX.md"), "# Igris OS — Module Index\n");
+  writeFileSync(join(osDir, "standards.md"), "# Universal Standards\n");
 
   // Skills (each is a directory)
   const huntDir = join(tmpRoot, "core", "skills", "hunt");
@@ -543,7 +544,7 @@ describe("install verb — native symlink layer (M2.6)", () => {
     expect(lstatSync(manifestLink).isSymbolicLink()).toBe(true);
   });
 
-  it("creates .claude/rules/00-igris-universal.md symlink", async () => {
+  it("does NOT create a .claude/rules/ symlink layer (FR-187: universal rule retired)", async () => {
     const { runInstall } = await import("../verbs/install.js");
     const code = await runInstall({
       path: projectDir,
@@ -551,16 +552,10 @@ describe("install verb — native symlink layer (M2.6)", () => {
     });
     expect(code).toBe(0);
 
-    const rulesLink = join(
-      projectDir,
-      ".claude",
-      "rules",
-      "00-igris-universal.md",
-    );
-    expect(lstatSync(rulesLink).isSymbolicLink()).toBe(true);
-    expect(readlinkSync(rulesLink)).toBe(
-      join(tmpRoot, "core", "rules", "00-igris-universal.md"),
-    );
+    // The universal rule (and its symlink layer) was retired under FR-187;
+    // its baseline moved into core/os/standards.md. Install no longer
+    // materializes a .claude/rules/ directory.
+    expect(existsSync(join(projectDir, ".claude", "rules"))).toBe(false);
   });
 
   it("creates .claude/skills/<skill>/ symlinks for each skill dir", async () => {

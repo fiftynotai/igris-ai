@@ -61,11 +61,6 @@ export function coreSurfacesManifestPath(): string {
   );
 }
 
-/** Absolute path to the universal rules file in the runtime brain. */
-export function rulesFilePath(): string {
-  return join(brainDir(), "core", "rules", "00-igris-universal.md");
-}
-
 /**
  * Absolute path to the Layer-2 customization registry dir: `~/.igris/registry/`.
  *

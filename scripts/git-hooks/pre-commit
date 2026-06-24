@@ -6,10 +6,10 @@ set -e
 #
 # Validators:
 #   - validate_brain_stewardship_enums.sh  (DRIFT-1, TD-070, TD-092; renamed in TD-148)
-#       Triggers if: core/prompts/igris_os.md OR
-#                    core/prompts/brain_stewardship.md OR
+#       Triggers if: core/prompts/brain_stewardship.md OR
 #                    brain-mcp-server/src/engine/components/memory/index.ts
-#                    is staged.
+#                    is staged. (FR-187: the igris_os.md monolith was deleted;
+#                    the validator only ever read brain_stewardship.md.)
 #   - validate_skill_frontmatter_yaml.py  (TD-219, #587)
 #       Triggers if: any core/skills/*/SKILL.md is staged.
 #       Strict YAML parse of SKILL.md frontmatter — catches an unquoted
@@ -178,7 +178,7 @@ needs_skill_os_leak_check=0
 needs_contract_check=0
 needs_reconciliation_check=0
 
-if echo "$staged" | grep -qE '^(core/prompts/igris_os\.md|core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
+if echo "$staged" | grep -qE '^(core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
   needs_enum_check=1
 fi
 

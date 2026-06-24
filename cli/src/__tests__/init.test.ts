@@ -77,11 +77,10 @@ function stageSourceRepo(root: string): void {
   writeFileSync(join(core, "SOUL.md"), "# soul (from-source)\n");
   mkdirSync(join(core, "agents"), { recursive: true });
   writeFileSync(join(core, "agents", "manifest.yaml"), "agents: []\n");
-  mkdirSync(join(core, "rules"), { recursive: true });
-  writeFileSync(
-    join(core, "rules", "00-igris-universal.md"),
-    "# universal\n",
-  );
+  // FR-187: the layered core/os/ set replaces the retired universal rule.
+  mkdirSync(join(core, "os"), { recursive: true });
+  writeFileSync(join(core, "os", "INDEX.md"), "# Igris OS — Module Index\n");
+  writeFileSync(join(core, "os", "standards.md"), "# Universal Standards\n");
   mkdirSync(join(core, "skills", "demo"), { recursive: true });
   writeFileSync(join(core, "skills", "demo", "SKILL.md"), "# demo\n");
   mkdirSync(join(core, "hooks"), { recursive: true });

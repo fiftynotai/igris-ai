@@ -33,7 +33,13 @@ export interface InstalledFeatures {
   agents_version: string | null;
   /** sha256 of recursive sort+hash of `~/.igris/core/skills`, or null when not present. */
   skills_version: string | null;
-  /** sha256 of `~/.igris/core/rules/00-igris-universal.md`, or null when not present. */
+  /**
+   * DEPRECATED (FR-187): always `null`. The universal rule
+   * `core/rules/00-igris-universal.md` was retired; its baseline moved into
+   * `core/os/standards.md`. The field is retained in the v2 schema (as an
+   * always-null vestige) to avoid a forced schema migration; it no longer
+   * carries an install-integrity signal. Do not reintroduce a rule hash.
+   */
   rules_version: string | null;
   /** ISO-8601 timestamp of original install. Preserved across re-installs. */
   installed_at: string;

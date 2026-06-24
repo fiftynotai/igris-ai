@@ -53,7 +53,6 @@ import { registerMcpInClaudeJson } from "../lib/mcp-register.js";
 import { linkDir, linkFile, SymlinkConflictError } from "../lib/symlinks.js";
 import {
   discoverAgentEntries,
-  discoverRuleEntries,
   discoverSkillEntries,
 } from "../lib/install-discovery.js";
 import { validateSlug } from "../lib/slug.js";
@@ -346,8 +345,10 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
  *
  *   - Agents: each *.md file under brain agents/ is linked individually.
  *     manifest.yaml is also linked.
- *   - Rules: 00-igris-universal.md only.
  *   - Skills: each subdirectory under brain skills/ is linked as a dir.
+ *
+ * FR-187: the Rules symlink layer was removed when the universal rule retired
+ * (baseline → core/os/standards.md). No `.claude/rules/` symlink is created.
  *
  * Throws SymlinkConflictError if any pre-existing path collides with a
  * non-matching symlink target. The early throw is intentional — install
@@ -364,15 +365,6 @@ function applySymlinkLayer(projectPath: string, brainRoot: string): void {
     const agentsDest = join(claudeDir, "agents");
     for (const entry of agentEntries) {
       linkFile(entry.src, join(agentsDest, entry.basename));
-    }
-  }
-
-  // ---- Rules ----------------------------------------------------------
-  const ruleEntries = discoverRuleEntries(brainRoot);
-  if (ruleEntries.length > 0) {
-    const rulesDest = join(claudeDir, "rules");
-    for (const entry of ruleEntries) {
-      linkFile(entry.src, join(rulesDest, entry.basename));
     }
   }
 
@@ -413,19 +405,6 @@ function enumerateInstallPlan(
     for (const entry of agentEntries) {
       dry.wouldWriteFile(
         join(agentsDest, entry.basename),
-        `symlink to ${entry.src}`,
-      );
-    }
-  }
-
-  // Symlinks: rules
-  const ruleEntries = discoverRuleEntries(brainRoot);
-  if (ruleEntries.length > 0) {
-    const rulesDest = join(claudeDir, "rules");
-    dry.wouldCreateDir(rulesDest);
-    for (const entry of ruleEntries) {
-      dry.wouldWriteFile(
-        join(rulesDest, entry.basename),
         `symlink to ${entry.src}`,
       );
     }

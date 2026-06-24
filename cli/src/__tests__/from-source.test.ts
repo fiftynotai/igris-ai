@@ -47,7 +47,8 @@ describe("from-source — clean copy", () => {
     const source = stageRepo({
       "SOUL.md": "# soul\n",
       "agents/forger.md": "# forger\n",
-      "rules/00-igris-universal.md": "# universal\n",
+      // FR-187: the layered core/os/ set replaces the retired universal rule.
+      "os/standards.md": "# standards\n",
       "skills/demo/SKILL.md": "# skill\n",
     });
     const dest = join(workDir, "stage");

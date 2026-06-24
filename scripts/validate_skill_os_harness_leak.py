@@ -47,10 +47,6 @@ Allowlist (explicit, commented constant — L-448):
     harness-specific knowledge is its entire purpose (TD-248 OK2).
   - core/os/surfaces-detail.md — documents the adapter boundary itself;
     naming the harnesses is its job (TD-248 OK3).
-  - core/prompts/igris_os.md — the FR-187-doomed monolith. Its L1 Agent-Teams
-    leak is DEFERRED (tracked in TD-247, not fixed here); its go-forward home
-    is `core/os/` which IS scanned. Allowlisting it keeps this gate from
-    blocking its own commit on a known-deferred leak.
   - core/skills/team/SKILL.md — declared single-harness: Agent-Teams is a
     Claude-Code-native capability, so /team is intentionally Claude-only — NOT
     a leak to remove (FR-202 M6). Permanently allowlisted by design; this is a
@@ -99,9 +95,12 @@ DEFAULT_GLOBS = (
 ALLOWLIST_SUFFIXES = (
     "core/skills/onboard-harness/SKILL.md",   # adapter-authoring guide (OK2)
     "core/os/surfaces-detail.md",             # documents the adapter boundary (OK3)
-    "core/prompts/igris_os.md",               # FR-187-doomed monolith; L1 -> TD-247
     "core/skills/team/SKILL.md",              # declared single-harness: Claude-native Agent-Teams (FR-202 M6) — intentional, not a leak
 )
+# FR-187: core/prompts/igris_os.md was deleted (the monolith retired; its
+# go-forward home is the scanned core/os/ layer), so its former allowlist
+# entry + the L1 -> TD-247 deferral were removed — the file no longer exists
+# to scan or exempt.
 
 # --- Leak token classes (the known high-confidence set) ----------------------
 # Each entry: (compiled-pattern, human label). A line matches a leak only when
