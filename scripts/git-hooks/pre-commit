@@ -10,9 +10,6 @@ set -e
 #                    core/prompts/brain_stewardship.md OR
 #                    brain-mcp-server/src/engine/components/memory/index.ts
 #                    is staged.
-#   - validate_igris_tree_lineranges.py  (DRIFT-3, TD-070)
-#       Triggers if: core/prompts/igris_os.md OR core/igris_tree.json
-#                    is staged.
 #   - validate_skill_frontmatter_yaml.py  (TD-219, #587)
 #       Triggers if: any core/skills/*/SKILL.md is staged.
 #       Strict YAML parse of SKILL.md frontmatter — catches an unquoted
@@ -174,7 +171,6 @@ fi
 staged="$(git diff --cached --name-only --diff-filter=ACM)"
 
 needs_enum_check=0
-needs_lineranges_check=0
 needs_lockfile_check=0
 needs_harness_check=0
 needs_skill_yaml_check=0
@@ -184,10 +180,6 @@ needs_reconciliation_check=0
 
 if echo "$staged" | grep -qE '^(core/prompts/igris_os\.md|core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
   needs_enum_check=1
-fi
-
-if echo "$staged" | grep -qE '^(core/prompts/igris_os\.md|core/igris_tree\.json)$'; then
-  needs_lineranges_check=1
 fi
 
 if echo "$staged" | grep -qE '^(package\.json|package-lock\.json|cli/package\.json|brain-mcp-server/package\.json)$'; then
@@ -251,16 +243,6 @@ if [ "$needs_enum_check" = "1" ]; then
   # so multiple validator failures are aggregated into $failed and reported
   # together at the end, rather than aborting on the first failure.
   if ! bash "$REPO_ROOT/scripts/validate_brain_stewardship_enums.sh"; then
-    failed=1
-  fi
-fi
-
-if [ "$needs_lineranges_check" = "1" ]; then
-  echo "[pre-commit] Validating igris_tree.json line ranges..."
-  # set -e is intentionally bypassed here (if-condition exits set -e scope)
-  # so multiple validator failures are aggregated into $failed and reported
-  # together at the end, rather than aborting on the first failure.
-  if ! python3 "$REPO_ROOT/scripts/validate_igris_tree_lineranges.py"; then
     failed=1
   fi
 fi

@@ -1,22 +1,20 @@
 # Git Hooks
 
-Igris ships local git hooks that catch drift between the actor-facing prompt (`core/prompts/igris_os.md`), the routing tree (`core/igris_tree.json`), and the brain MCP schema (`brain-mcp-server/src/engine/components/memory/index.ts`). Hooks run **only when relevant files are staged**, so unrelated commits stay fast.
+Igris ships local git hooks that catch drift between the actor-facing prompt (`core/prompts/igris_os.md`), the brain MCP schema (`brain-mcp-server/src/engine/components/memory/index.ts`), and the workspace lockfile. Hooks run **only when relevant files are staged**, so unrelated commits stay fast.
 
 ## What's installed
 
-A single `pre-commit` dispatcher (`scripts/git-hooks/pre-commit`) that conditionally invokes two validators based on which files are in the staging area.
+A single `pre-commit` dispatcher (`scripts/git-hooks/pre-commit`) that conditionally invokes its validators based on which files are in the staging area.
 
 | Validator | What it asserts | Brief |
 |---|---|---|
 | `scripts/validate_brain_stewardship_enums.sh` | Every enum value declared on `memory_store` (`category`, `scope`, `provenance`) appears in backticks somewhere inside the `<!-- SECTION: brain_stewardship -->` region of `core/prompts/brain_stewardship.md`. Also asserts schema-shrinkage: enum-shaped backticked tokens in the docs must still exist in the schema. Overridable via `SCHEMA_FILE` / `PROMPT_FILE` env vars. | TD-070 / DRIFT-1, TD-072, TD-092 (renamed in TD-148) |
-| `scripts/validate_igris_tree_lineranges.py` | Every section declared in `igris_tree.json` has a matching `<!-- SECTION: <name> -->` marker at the declared start line and a `<!-- /SECTION: <name> -->` marker at the declared end line in `igris_os.md`. | TD-070 / DRIFT-3 |
 | `scripts/validate_lockfile_in_sync.sh` | `npm ci --dry-run --ignore-scripts` from repo root succeeds (workspace-aware lockfile is in sync with all `package.json` files). Catches the drift class where a workspace package was renamed or version-bumped without regenerating `package-lock.json`. | TD-134 |
 
-All three validators are also runnable standalone:
+Both validators are also runnable standalone:
 
 ```bash
 bash scripts/validate_brain_stewardship_enums.sh
-python3 scripts/validate_igris_tree_lineranges.py
 bash scripts/validate_lockfile_in_sync.sh
 ```
 
@@ -26,16 +24,15 @@ Each prints `OK: ...` on success or a precise drift report on failure.
 
 The pre-commit dispatcher only runs validators whose tracked files are staged. Validators not listed for a staged file do not run.
 
-| Staged file | Enum validator | Line-range validator | Lockfile validator |
-|---|---|---|---|
-| `core/prompts/igris_os.md` | yes | yes | no |
-| `core/igris_tree.json` | no | yes | no |
-| `brain-mcp-server/src/engine/components/memory/index.ts` | yes | no | no |
-| `package.json` (root) | no | no | yes |
-| `package-lock.json` | no | no | yes |
-| `cli/package.json` | no | no | yes |
-| `brain-mcp-server/package.json` | no | no | yes |
-| anything else | no | no | no |
+| Staged file | Enum validator | Lockfile validator |
+|---|---|---|
+| `core/prompts/igris_os.md` | yes | no |
+| `brain-mcp-server/src/engine/components/memory/index.ts` | yes | no |
+| `package.json` (root) | no | yes |
+| `package-lock.json` | no | yes |
+| `cli/package.json` | no | yes |
+| `brain-mcp-server/package.json` | no | yes |
+| anything else | no | no |
 
 If no validator triggers, the hook exits 0 silently — there is no per-commit overhead for unrelated work.
 
