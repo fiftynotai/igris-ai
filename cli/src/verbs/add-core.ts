@@ -11,8 +11,13 @@
  * is `core/skills/<name>/SKILL.md` + the runtime mirror — no manifest edit;
  * see FR-180-plan grounding #5). Phase 2 implements `addCoreAgent` (agents
  * live in the repo-root `harness-manifest.json` + a canonical
- * `core/agents/<name>.md`, mirrored to the runtime brain; plus the §13 agent
- * enumeration surfaces). Phase 3 implements `addCoreMcp` (a core MCP server
+ * `core/agents/<name>.md`, mirrored to the runtime brain). FR-187 Phase 2b
+ * (operator decision A1 + memory #872): agent ENUMERATION is no longer written
+ * into the three legacy surfaces (`core/igris_tree.json` agents map, the two
+ * "Available Agents" CSV lines). The SINGLE source of the agent roster is each
+ * agent's OWN frontmatter, discovered into `core/os/INDEX.md` by re-running
+ * `core/scripts/gen_os_index.sh`. So "enumerate" becomes "(vendor the agent .md)
+ * + (regenerate the INDEX)". Phase 3 implements `addCoreMcp` (a core MCP server
  * is a `surfaces.mcp_servers[]` block in `core/scripts/cli-adapters/
  * surfaces-manifest.json` — the GLOBAL Layer-1 surfaces file the MCP flatten
  * reads when the project owns it; mirrored to the runtime brain, TD-096). Phase 5
@@ -253,8 +258,8 @@ interface MirrorVerify {
  * TD-096: `cp <source> <mirror>` then run the `verify_mirror.sh` primitive,
  * returning a structured MATCH/non-MATCH verdict + the verbatim output. The
  * runtime `verify_mirror.sh` lives at `<brainRoot>/core/scripts/verify_mirror.sh`.
- * Shared by every `core/` file the agent add touches (the canonical agent
- * prompt + the 3 §13 enumeration surfaces that have a runtime mirror).
+ * Shared by every `core/` file with a runtime mirror that an add touches (the
+ * canonical agent prompt, the surfaces manifest, the shared hook script).
  */
 function mirrorAndVerify(
   sourcePath: string,
@@ -334,9 +339,15 @@ You are **${name.toUpperCase()}**, a specialist in the Igris AI system.
 
 ## CONTEXT PROTOCOL
 
-On activation:
-1. Read \`~/.igris/core/igris_tree.json\`
-2. Find \`agents.${name}\` → load listed context files
+On activation, load your own context directly (no registry lookup) — name the
+exact docs this agent needs, e.g.:
+- \`~/.igris/projects/{project}/context/coding_guidelines.md\`
+- {any other \`~/.igris/projects/{project}/context/<doc>.md\` this role consumes}
+
+If a file is missing, proceed without it. An investigate-on-demand agent
+preloads nothing — it states that here instead of a list.
+
+You do NOT need: the os/ INDEX, SOUL.md, session files, brief protocol.
 
 ## CAPABILITIES
 
@@ -378,26 +389,9 @@ function agentManifestEntry(name: string): Record<string, unknown> {
 }
 
 /**
- * Insert `name` into a comma+space-separated "Available Agents" line, keeping
- * it on the SAME single line (the enumeration-surface convention) and
- * idempotent (no-op if already present). Returns the new line.
- */
-function appendAgentToCsvLine(line: string, name: string): string {
-  const names = line
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-  if (names.includes(name)) {
-    return line;
-  }
-  names.push(name);
-  return names.join(", ");
-}
-
-/**
- * FR-180 (Phase 2): materialize a new CORE agent. Performs the full §13 agent
- * surface set in one atomic-ish pass (each write refuses to clobber, so a
- * partial re-run is safe to re-invoke after fixing the cause):
+ * FR-180 (Phase 2) + FR-187 (Phase 2b): materialize a new CORE agent. Performs
+ * the agent surface set in one atomic-ish pass (each write refuses to clobber,
+ * so a partial re-run is safe to re-invoke after fixing the cause):
  *
  *   1. write `core/agents/<name>.md` (the canonical prompt) + TD-096 mirror to
  *      `~/.igris/core/agents/<name>.md` (install symlinks core agents from the
@@ -405,9 +399,13 @@ function appendAgentToCsvLine(line: string, name: string): string {
  *   2. append the agent entry to the repo-root `harness-manifest.json` (the
  *      authoritative agent manifest, FR-136). This file has NO runtime mirror —
  *      it is read from the checkout when `harness compile` runs from the repo.
- *   3. §13 agent enumeration surfaces: `core/igris_tree.json` `agents` map
- *      (+ mirror), `core/templates/CLAUDE.md.tmpl` Available Agents line
- *      (+ mirror), root `CLAUDE.md` Available Agents line.
+ *   3. ENUMERATION (FR-187 Phase 2b): regenerate the agent roster by running
+ *      `core/scripts/gen_os_index.sh`. The new agent's OWN frontmatter (the
+ *      `name`/`description` we just wrote in step 1) is what makes it appear in
+ *      the regenerated `core/os/INDEX.md` roster — this is the single source of
+ *      enumeration (operator decision A1: the igris_tree.json agents map is
+ *      retired; memory #872: CLAUDE.md is not an enumeration surface). The regen
+ *      is SELF-VERIFYING: if the roster row did not appear, we fail loudly.
  *
  * Refuses to clobber an existing canonical prompt or an already-declared
  * manifest entry (a re-add to core should be an explicit edit, not a silent
@@ -481,8 +479,10 @@ export function addCoreAgent(opts: AddCoreAgentOptions): AddCoreResult {
     return fail(1, `failed to update ${manifestPath}: ${(err as Error).message}`);
   }
 
-  // --- 3. §13 agent enumeration surfaces. -----------------------------------
-  const enumErr = updateAgentEnumerationSurfaces(opts.projectRoot, name);
+  // --- 3. ENUMERATION (FR-187 Phase 2b): regenerate the roster from frontmatter.
+  // The agent's own frontmatter (step 1) is the source; gen_os_index.sh discovers
+  // it into core/os/INDEX.md. Self-verifying: confirm the roster row appeared.
+  const enumErr = regenerateAgentRoster(opts.projectRoot, name, true);
   if (enumErr !== null) {
     return fail(1, enumErr);
   }
@@ -498,31 +498,15 @@ export function addCoreAgent(opts: AddCoreAgentOptions): AddCoreResult {
     };
   }
 
-  // --- TD-096 mirror + verify every touched `core/` file with a runtime
-  // mirror: the canonical prompt, the routing tree, and the CLAUDE template.
-  // (harness-manifest.json + root CLAUDE.md have NO runtime mirror.)
-  const verifyParts: string[] = [];
-  const mirrors: Array<{ src: string; dst: string; label: string }> = [
-    { src: sourcePath, dst: mirrorPath, label: "core/agents prompt" },
-    {
-      src: join(opts.projectRoot, "core", "igris_tree.json"),
-      dst: join(root, "core", "igris_tree.json"),
-      label: "core/igris_tree.json",
-    },
-    {
-      src: join(opts.projectRoot, "core", "templates", "CLAUDE.md.tmpl"),
-      dst: join(root, "core", "templates", "CLAUDE.md.tmpl"),
-      label: "core/templates/CLAUDE.md.tmpl",
-    },
-  ];
-  for (const m of mirrors) {
-    const mv = mirrorAndVerify(m.src, m.dst, root);
-    verifyParts.push(`# ${m.label}\n${mv.output}`);
-    if (!mv.ok) {
-      return fail(1, mv.reason, verifyParts.join("\n"));
-    }
-    info(`Mirror verified (${m.src} <-> ${m.dst}): MATCH`);
+  // --- TD-096 mirror + verify the ONE touched `core/` file with a runtime
+  // mirror: the canonical agent prompt. (harness-manifest.json is repo-only; the
+  // regenerated core/os/INDEX.md is NOT mirrored here — its runtime cutover is a
+  // separate concern, and Phase 2b only restores the source roster.)
+  const mv = mirrorAndVerify(sourcePath, mirrorPath, root);
+  if (!mv.ok) {
+    return fail(1, mv.reason, mv.output);
   }
+  info(`Mirror verified (${sourcePath} <-> ${mirrorPath}): MATCH`);
 
   return {
     ok: true,
@@ -530,77 +514,68 @@ export function addCoreAgent(opts: AddCoreAgentOptions): AddCoreResult {
     reason: "",
     sourcePath,
     mirrorPath,
-    verifyOutput: verifyParts.join("\n"),
+    verifyOutput: mv.output,
   };
 }
 
 /**
- * §13 agent enumeration: register `name` into the three agent-list surfaces
- * that live in the repo `core/` tree + the root working copy:
- *   - `core/igris_tree.json` `agents` map (add an empty-load entry — a scaffold
- *     agent preloads no context until a maintainer fills it in).
- *   - `core/templates/CLAUDE.md.tmpl` "Available Agents" CSV line.
- *   - root `CLAUDE.md` "Available Agents" CSV line.
- * Idempotent per surface. Returns null on success, or a reason string on the
- * first failure (the caller maps it to exit 1).
+ * FR-187 (Phase 2b) agent enumeration: regenerate the agent roster by running
+ * the discovery generator `core/scripts/gen_os_index.sh` (cwd = projectRoot).
+ * The generator scans every `core/agents/*.md` frontmatter and rewrites
+ * `core/os/INDEX.md` — so an agent appears (add) / disappears (remove) purely as
+ * a function of whether its `.md` exists. This is the SINGLE source of agent
+ * enumeration (operator decision A1: igris_tree.json agents map retired; memory
+ * #872: CLAUDE.md is not an enumeration surface).
+ *
+ * Because the INDEX is regenerated WHOLESALE from the on-disk agent set, the
+ * operation is naturally idempotent — re-running it never duplicates a row.
+ *
+ * `expectPresent` makes the call self-verifying: when `true` (add) we confirm the
+ * regenerated roster now CONTAINS `| <name> |`; when `false` (remove) we confirm
+ * it no longer does. A mismatch means the regen reported phantom success — we
+ * surface a loud, actionable failure rather than claiming success.
+ *
+ * Returns null on success, or a reason string on the first failure (the caller
+ * maps it to exit 1).
  */
-function updateAgentEnumerationSurfaces(
+function regenerateAgentRoster(
   projectRoot: string,
   name: string,
+  expectPresent: boolean,
 ): string | null {
-  // (a) igris_tree.json agents map.
-  const treePath = join(projectRoot, "core", "igris_tree.json");
+  const script = join(projectRoot, "core", "scripts", "gen_os_index.sh");
+  if (!existsSync(script)) {
+    return `agent roster generator not found at ${script}; not an igris-ai checkout`;
+  }
   try {
-    const tree = JSON.parse(readFileSync(treePath, "utf-8")) as {
-      agents?: Record<string, unknown>;
-    } & Record<string, unknown>;
-    const agents = (tree.agents ?? {}) as Record<string, unknown>;
-    if (!(name in agents)) {
-      agents[name] = {
-        load: [],
-        note: "Scaffold agent (igris add --core agent) — preloads no context until configured",
-      };
-      tree.agents = agents;
-      writeFileSync(treePath, `${JSON.stringify(tree, null, 2)}\n`, "utf-8");
-    }
+    execFileSync("bash", [script], { cwd: projectRoot, stdio: "ignore" });
   } catch (err) {
-    return `failed to update ${treePath}: ${(err as Error).message}`;
+    const e = err as { stdout?: string; stderr?: string; message?: string };
+    const detail = `${e.stderr ?? ""}${e.stdout ?? ""}`.trim() || e.message || "unknown error";
+    return `gen_os_index.sh failed to regenerate the agent roster: ${detail}`;
   }
 
-  // (b) + (c) the two "Available Agents" CSV lines.
-  const csvSurfaces = [
-    join(projectRoot, "core", "templates", "CLAUDE.md.tmpl"),
-    join(projectRoot, "CLAUDE.md"),
-  ];
-  for (const file of csvSurfaces) {
-    if (!existsSync(file)) {
-      // The CLAUDE.md.tmpl + root CLAUDE.md are both expected in a checkout; a
-      // missing one is a structural error worth surfacing, not silently skipping.
-      return `expected enumeration surface not found: ${file}`;
-    }
-    try {
-      const lines = readFileSync(file, "utf-8").split("\n");
-      let updated = false;
-      for (let i = 0; i < lines.length; i++) {
-        if (
-          i > 0 &&
-          lines[i - 1].trim() === "## Available Agents" &&
-          lines[i].trim().length > 0
-        ) {
-          lines[i] = appendAgentToCsvLine(lines[i], name);
-          updated = true;
-          break;
-        }
-      }
-      if (!updated) {
-        return `could not find the "## Available Agents" line in ${file}`;
-      }
-      writeFileSync(file, lines.join("\n"), "utf-8");
-    } catch (err) {
-      return `failed to update ${file}: ${(err as Error).message}`;
-    }
+  // Self-verify: the roster row must (add) / must not (remove) be present.
+  const indexPath = join(projectRoot, "core", "os", "INDEX.md");
+  let index: string;
+  try {
+    index = readFileSync(indexPath, "utf-8");
+  } catch (err) {
+    return `could not read regenerated roster at ${indexPath}: ${(err as Error).message}`;
   }
-
+  const rowPresent = index.includes(`| ${name} |`);
+  if (expectPresent && !rowPresent) {
+    return (
+      `agent '${name}' did NOT appear in the regenerated roster (${indexPath}); ` +
+      "the agent .md frontmatter (name/description) may be malformed — refusing to report phantom success"
+    );
+  }
+  if (!expectPresent && rowPresent) {
+    return (
+      `agent '${name}' is STILL present in the regenerated roster (${indexPath}) ` +
+      "after removal — refusing to report phantom success"
+    );
+  }
   return null;
 }
 

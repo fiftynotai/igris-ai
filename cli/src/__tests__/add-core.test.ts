@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { addCoreSkill, addCoreAgent, addCoreMcp } from "../verbs/add-core.js";
+import { removeCoreAgent } from "../verbs/remove-core.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -108,7 +109,17 @@ describe("addCoreSkill — skipMirror seam", () => {
 // FR-180 Phase 2: addCoreAgent.
 // ---------------------------------------------------------------------------
 
-/** Seed the §13 agent enumeration surfaces a core agent add expects on disk. */
+/**
+ * Seed what a core agent add (FR-187 Phase 2b) expects on disk:
+ *   - the repo-root harness-manifest.json (with one pre-existing agent);
+ *   - the REAL gen_os_index.sh generator + a minimal core/os/ module + SOUL.md
+ *     + a pre-existing core/agents/architect.md, so running the generator
+ *     produces a real frontmatter-discovered roster in core/os/INDEX.md.
+ * The generator only needs core/os/*.md (with full frontmatter), core/SOUL.md,
+ * core/agents/*.md, and the script itself — it resolves all paths from its own
+ * location and writes core/os/INDEX.md. (Operator A1 + memory #872: the agent
+ * roster is discovered from frontmatter, NOT the retired tree/CLAUDE.md surfaces.)
+ */
 function seedAgentRepo(repoRoot: string): void {
   // Repo-root harness-manifest.json with one pre-existing agent.
   writeFileSync(
@@ -132,18 +143,32 @@ function seedAgentRepo(repoRoot: string): void {
       2,
     )}\n`,
   );
-  mkdirSync(join(repoRoot, "core", "templates"), { recursive: true });
+
+  // The REAL discovery generator (FR-187 Phase 2b enumeration source of truth).
+  mkdirSync(join(repoRoot, "core", "scripts"), { recursive: true });
+  cpSync(
+    join(REPO_ROOT, "core", "scripts", "gen_os_index.sh"),
+    join(repoRoot, "core", "scripts", "gen_os_index.sh"),
+  );
+
+  // A minimal core/os/ module + SOUL.md so the generator has a module table to
+  // emit (it hard-fails on incomplete frontmatter, so both carry full fields).
+  mkdirSync(join(repoRoot, "core", "os"), { recursive: true });
   writeFileSync(
-    join(repoRoot, "core", "igris_tree.json"),
-    `${JSON.stringify({ agents: { architect: { load: [] } } }, null, 2)}\n`,
+    join(repoRoot, "core", "os", "conduct.md"),
+    "---\nlayer: conduct\ntier: boot\nscope: orchestrator\nsummary: test module\n---\nbody\n",
   );
   writeFileSync(
-    join(repoRoot, "core", "templates", "CLAUDE.md.tmpl"),
-    "## Available Agents\narchitect, forger\n",
+    join(repoRoot, "core", "SOUL.md"),
+    "---\nlayer: identity\ntier: boot\nscope: orchestrator\nsummary: persona\n---\nsoul\n",
   );
+
+  // A pre-existing core agent .md so the roster starts non-empty (mirrors the
+  // architect manifest entry above).
+  mkdirSync(join(repoRoot, "core", "agents"), { recursive: true });
   writeFileSync(
-    join(repoRoot, "CLAUDE.md"),
-    "## Available Agents\narchitect, forger\n",
+    join(repoRoot, "core", "agents", "architect.md"),
+    '---\nname: architect\ndescription: "Strategic implementation planner."\n---\nbody\n',
   );
 }
 
@@ -152,7 +177,7 @@ describe("addCoreAgent — happy path", () => {
     seedAgentRepo(repo);
   });
 
-  it("writes the prompt, manifest entry, §13 surfaces + mirrors MATCH", () => {
+  it("writes the prompt, manifest entry, regenerates the roster + mirrors MATCH", () => {
     const r = addCoreAgent({ name: "scribe", projectRoot: repo, brainRoot: brain });
     expect(r.ok).toBe(true);
     expect(r.code).toBe(0);
@@ -181,21 +206,17 @@ describe("addCoreAgent — happy path", () => {
       "opencode",
     ]);
 
-    // (3a) igris_tree.json agents map gained the entry (+ mirror).
-    const tree = JSON.parse(
-      readFileSync(join(repo, "core", "igris_tree.json"), "utf-8"),
-    ) as { agents: Record<string, unknown> };
-    expect(tree.agents).toHaveProperty("scribe");
-    expect(readFileSync(join(brain, "core", "igris_tree.json"), "utf-8")).toBe(
-      readFileSync(join(repo, "core", "igris_tree.json"), "utf-8"),
-    );
+    // (3) ENUMERATION (FR-187 Phase 2b): the regenerated roster now contains the
+    // new agent, discovered from its frontmatter — NOT from a tree/CLAUDE.md CSV.
+    const index = readFileSync(join(repo, "core", "os", "INDEX.md"), "utf-8");
+    expect(index).toContain("## Agent roster");
+    expect(index).toContain("| scribe |");
+    // The pre-existing agent is still present (the INDEX is regenerated wholesale).
+    expect(index).toContain("| architect |");
 
-    // (3b) both Available Agents lines gained `scribe`, single-line, mirrored.
-    const tmpl = readFileSync(join(repo, "core", "templates", "CLAUDE.md.tmpl"), "utf-8");
-    expect(tmpl).toContain("architect, forger, scribe");
-    expect(readFileSync(join(brain, "core", "templates", "CLAUDE.md.tmpl"), "utf-8")).toBe(tmpl);
-    const rootClaude = readFileSync(join(repo, "CLAUDE.md"), "utf-8");
-    expect(rootClaude).toContain("architect, forger, scribe");
+    // (3-neg) The retired enumeration surfaces are NOT written by the add path.
+    expect(existsSync(join(repo, "core", "igris_tree.json"))).toBe(false);
+    expect(existsSync(join(repo, "CLAUDE.md"))).toBe(false);
   });
 });
 
@@ -216,6 +237,9 @@ describe("addCoreAgent — guards", () => {
   });
 
   it("refuses an agent name already declared in the manifest", () => {
+    // Remove the seeded architect prompt so the prompt-clobber guard is skipped
+    // and the manifest-collision guard (the one under test) is the one that fires.
+    rmSync(join(repo, "core", "agents", "architect.md"), { force: true });
     const r = addCoreAgent({ name: "architect", projectRoot: repo, brainRoot: brain });
     expect(r.ok).toBe(false);
     expect(r.code).toBe(1);
@@ -247,18 +271,16 @@ describe("addCoreAgent — guards", () => {
   });
 });
 
-describe("addCoreAgent — idempotent re-add of an enumeration name", () => {
+describe("addCoreAgent — wholesale-regen idempotency (no duplicate roster rows)", () => {
   beforeEach(() => {
     seedAgentRepo(repo);
   });
 
-  it("does not duplicate a name already in the Available Agents line", () => {
-    // Pre-seed the CSV lines with the target name (but NOT the manifest), so the
-    // enumeration step must be idempotent on the CSV while still adding the rest.
-    writeFileSync(
-      join(repo, "core", "templates", "CLAUDE.md.tmpl"),
-      "## Available Agents\narchitect, forger, scribe\n",
-    );
+  it("the regenerated roster lists the new agent exactly once", () => {
+    // FR-187 Phase 2b: enumeration is a WHOLESALE regen of core/os/INDEX.md from
+    // the on-disk agent frontmatter, so a name can never be double-listed — even
+    // if the generator runs over an already-rostered agent. We assert exactly one
+    // roster row for the freshly-added agent.
     const r = addCoreAgent({
       name: "scribe",
       projectRoot: repo,
@@ -266,9 +288,70 @@ describe("addCoreAgent — idempotent re-add of an enumeration name", () => {
       skipMirror: true,
     });
     expect(r.ok).toBe(true);
-    const tmpl = readFileSync(join(repo, "core", "templates", "CLAUDE.md.tmpl"), "utf-8");
-    // Exactly one occurrence — no duplicate.
-    expect(tmpl.match(/scribe/g)?.length).toBe(1);
+    const index = readFileSync(join(repo, "core", "os", "INDEX.md"), "utf-8");
+    // Exactly one roster row for scribe — the `| scribe |` cell appears once.
+    expect(index.match(/\| scribe \|/g)?.length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-187 Phase 2b: removeCoreAgent — the inverse enumeration (roster regen).
+// ---------------------------------------------------------------------------
+
+describe("removeCoreAgent — happy path (roster regen drops the agent)", () => {
+  beforeEach(() => {
+    seedAgentRepo(repo);
+  });
+
+  it("deletes the prompt + manifest entry + regenerates the roster WITHOUT the agent", () => {
+    // Add first so there is a real agent to remove (prompt + manifest + roster row).
+    const added = addCoreAgent({ name: "scribe", projectRoot: repo, brainRoot: brain });
+    expect(added.ok).toBe(true);
+    expect(readFileSync(join(repo, "core", "os", "INDEX.md"), "utf-8")).toContain(
+      "| scribe |",
+    );
+
+    const r = removeCoreAgent({ name: "scribe", projectRoot: repo, brainRoot: brain });
+    expect(r.ok).toBe(true);
+    expect(r.code).toBe(0);
+    expect(r.removed).toBe(true);
+
+    // (1) Canonical prompt + runtime mirror are gone (DELETE-BOTH).
+    expect(existsSync(join(repo, "core", "agents", "scribe.md"))).toBe(false);
+    expect(existsSync(join(brain, "core", "agents", "scribe.md"))).toBe(false);
+
+    // (2) Manifest entry spliced out; the pre-existing architect survives.
+    const manifest = JSON.parse(
+      readFileSync(join(repo, "harness-manifest.json"), "utf-8"),
+    ) as { agents: Array<{ name: string }> };
+    expect(manifest.agents.map((a) => a.name)).not.toContain("scribe");
+    expect(manifest.agents.map((a) => a.name)).toContain("architect");
+
+    // (3) ENUMERATION: the regenerated roster no longer contains the removed
+    // agent, but still lists the survivor (wholesale frontmatter discovery).
+    const index = readFileSync(join(repo, "core", "os", "INDEX.md"), "utf-8");
+    expect(index).not.toContain("| scribe |");
+    expect(index).toContain("| architect |");
+  });
+});
+
+describe("removeCoreAgent — idempotent remove of an already-absent agent", () => {
+  beforeEach(() => {
+    seedAgentRepo(repo);
+  });
+
+  it("tolerates removing an agent that was never added (no throw, roster clean)", () => {
+    // The agent 'ghost' was never added — remove must be a tolerant no-op that
+    // still leaves a clean, regenerated roster (the row stays absent).
+    const r = removeCoreAgent({ name: "ghost", projectRoot: repo, brainRoot: brain });
+    expect(r.ok).toBe(true);
+    expect(r.code).toBe(0);
+    // Nothing actually existed to remove → no-phantom: removed is false.
+    expect(r.removed).toBe(false);
+    const index = readFileSync(join(repo, "core", "os", "INDEX.md"), "utf-8");
+    expect(index).not.toContain("| ghost |");
+    // The survivor is intact.
+    expect(index).toContain("| architect |");
   });
 });
 

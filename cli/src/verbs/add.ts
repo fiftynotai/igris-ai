@@ -512,8 +512,9 @@ async function runAddAgentArm(opts: AddOptions, mode: AddMode): Promise<number> 
     }
     info(
       `Added core agent '${opts.name}': wrote core/agents/${opts.name}.md, ` +
-        `appended the harness-manifest.json entry, updated the §13 agent surfaces, ` +
-        `mirrored to runtime, projected ${verify.projected.length} target(s), drift-clean.`,
+        `appended the harness-manifest.json entry, regenerated the agent roster ` +
+        `(core/os/INDEX.md), mirrored to runtime, projected ${verify.projected.length} ` +
+        `target(s), drift-clean.`,
     );
     return 0;
   }

@@ -2,9 +2,10 @@
  * `igris remove --core <surface>` writers — FR-203.
  *
  * The core-path DE-materialization: the exact inverse of `verbs/add-core.ts`.
- * Deletes the surface from the igris-ai SOURCE checkout (`core/…`), un-sweeps the
- * §13 enumeration surfaces (agent), and re-mirrors / deletes the runtime brain
- * mirror (`~/.igris/core/…`) per the TD-096 mirror rule:
+ * Deletes the surface from the igris-ai SOURCE checkout (`core/…`), regenerates
+ * the agent roster from frontmatter (FR-187 Phase 2b — the deleted agent's
+ * frontmatter is gone, so it drops from `core/os/INDEX.md`), and re-mirrors /
+ * deletes the runtime brain mirror (`~/.igris/core/…`) per the TD-096 mirror rule:
  *   - a SOURCE FILE deletion (skill SKILL.md, agent prompt, shared hook script)
  *     is a DELETE-BOTH (rm source + rm mirror; nothing to verify_mirror — both
  *     are gone);
@@ -144,28 +145,17 @@ export function removeCoreSkill(opts: RemoveCoreOptions): RemoveCoreResult {
 }
 
 /**
- * Inverse of `appendAgentToCsvLine`: REMOVE `name` from a comma+space-separated
- * "Available Agents" line, keeping the remaining names on the SAME single line.
- * Idempotent (no-op if already absent). Returns the new line.
- */
-export function removeAgentFromCsvLine(line: string, name: string): string {
-  const names = line
-    .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0 && s !== name);
-  return names.join(", ");
-}
-
-/**
- * FR-203: remove a CORE agent — the precise inverse of `addCoreAgent`:
+ * FR-203 + FR-187 (Phase 2b): remove a CORE agent — the precise inverse of
+ * `addCoreAgent`:
  *   1. delete `core/agents/<name>.md` + its runtime mirror (DELETE-BOTH);
  *   2. SPLICE the `agents[]` entry out of repo-root `harness-manifest.json`
  *      (repo-only, no mirror — matches add);
- *   3. un-sweep the §13 enumeration surfaces (inverse of
- *      `updateAgentEnumerationSurfaces`): drop the `agents.<name>` key from
- *      `core/igris_tree.json` (+ re-mirror), and remove `<name>` from the
- *      "Available Agents" CSV in `core/templates/CLAUDE.md.tmpl` (+ re-mirror)
- *      AND root `CLAUDE.md` (no mirror).
+ *   3. ENUMERATION (FR-187 Phase 2b): regenerate the roster by running
+ *      `core/scripts/gen_os_index.sh`. With the agent's `.md` (and its
+ *      frontmatter) now deleted, the discovery generator drops it from
+ *      `core/os/INDEX.md`. Self-verifying: confirm the roster row is gone.
+ *      (operator decision A1: the igris_tree.json agents map is retired; memory
+ *      #872: CLAUDE.md is not an enumeration surface.)
  *
  * The builtin-agent guard lives in `verbs/remove.ts` (it needs `--force`); this
  * writer trusts the dispatcher gated it.
@@ -224,8 +214,11 @@ export function removeCoreAgent(opts: RemoveCoreOptions): RemoveCoreResult {
     return fail(1, `failed to update ${manifestPath}: ${(err as Error).message}`);
   }
 
-  // --- 3. §13 un-sweep. ------------------------------------------------------
-  const enumErr = unsweepAgentEnumerationSurfaces(opts.projectRoot, name);
+  // --- 3. ENUMERATION (FR-187 Phase 2b): regenerate the roster from frontmatter.
+  // With the agent .md deleted (step 1), gen_os_index.sh drops it from the roster.
+  // Tolerant of already-absent state: if the agent was never present (idempotent
+  // remove), the regen is still a clean no-op and the row stays absent.
+  const enumErr = regenerateAgentRoster(opts.projectRoot, name, false);
   if (enumErr !== null) {
     return fail(1, enumErr);
   }
@@ -234,88 +227,63 @@ export function removeCoreAgent(opts: RemoveCoreOptions): RemoveCoreResult {
     return { ok: true, code: 0, reason: "", removed, verifyOutput: "(mirror skipped)" };
   }
 
-  // --- TD-096 re-mirror the two EDITED mirrored files (tree + tmpl). The
-  // canonical prompt mirror was already deleted in step 1; harness-manifest.json
-  // + root CLAUDE.md have no runtime mirror.
-  const verifyParts: string[] = [];
-  const mirrors: Array<{ src: string; dst: string; label: string }> = [
-    {
-      src: join(opts.projectRoot, "core", "igris_tree.json"),
-      dst: join(root, "core", "igris_tree.json"),
-      label: "core/igris_tree.json",
-    },
-    {
-      src: join(opts.projectRoot, "core", "templates", "CLAUDE.md.tmpl"),
-      dst: join(root, "core", "templates", "CLAUDE.md.tmpl"),
-      label: "core/templates/CLAUDE.md.tmpl",
-    },
-  ];
-  for (const m of mirrors) {
-    if (!existsSync(m.src)) continue;
-    const mv = mirrorAndVerify(m.src, m.dst, root);
-    verifyParts.push(`# ${m.label}\n${mv.output}`);
-    if (!mv.ok) {
-      return fail(1, mv.reason, verifyParts.join("\n"));
-    }
-    info(`Mirror verified (${m.src} <-> ${m.dst}): MATCH`);
-  }
-
-  return { ok: true, code: 0, reason: "", removed, verifyOutput: verifyParts.join("\n") };
+  // The canonical prompt mirror was already deleted in step 1; harness-manifest.json
+  // has no runtime mirror; the regenerated core/os/INDEX.md is NOT mirrored here
+  // (its runtime cutover is a separate concern). Nothing left to re-mirror+verify.
+  return { ok: true, code: 0, reason: "", removed, verifyOutput: "" };
 }
 
 /**
- * §13 un-sweep (inverse of `updateAgentEnumerationSurfaces`): drop `name` from
- * the three agent-list surfaces. Idempotent per surface. Returns null on
- * success, or a reason string on the first failure.
+ * FR-187 (Phase 2b) agent enumeration (remove side): regenerate the agent roster
+ * by running `core/scripts/gen_os_index.sh` (cwd = projectRoot). With the agent's
+ * `.md` already deleted, the discovery generator no longer finds its frontmatter,
+ * so the agent drops from `core/os/INDEX.md`. The INDEX is regenerated WHOLESALE
+ * from the on-disk agent set, so this is naturally idempotent — a re-run after
+ * the agent is already gone leaves the roster unchanged.
+ *
+ * `expectPresent` is `false` on the remove path: self-verify that the roster row
+ * is GONE. A still-present row means the regen reported phantom success — we
+ * surface a loud, actionable failure. (operator decision A1: igris_tree.json
+ * agents map retired; memory #872: CLAUDE.md is not an enumeration surface.)
+ *
+ * Returns null on success, or a reason string on the first failure.
  */
-function unsweepAgentEnumerationSurfaces(
+function regenerateAgentRoster(
   projectRoot: string,
   name: string,
+  expectPresent: boolean,
 ): string | null {
-  // (a) igris_tree.json agents map.
-  const treePath = join(projectRoot, "core", "igris_tree.json");
+  const script = join(projectRoot, "core", "scripts", "gen_os_index.sh");
+  if (!existsSync(script)) {
+    return `agent roster generator not found at ${script}; not an igris-ai checkout`;
+  }
   try {
-    if (existsSync(treePath)) {
-      const tree = JSON.parse(readFileSync(treePath, "utf-8")) as {
-        agents?: Record<string, unknown>;
-      } & Record<string, unknown>;
-      if (tree.agents !== undefined && name in tree.agents) {
-        delete tree.agents[name];
-        writeFileSync(treePath, `${JSON.stringify(tree, null, 2)}\n`, "utf-8");
-      }
-    }
+    execFileSync("bash", [script], { cwd: projectRoot, stdio: "ignore" });
   } catch (err) {
-    return `failed to update ${treePath}: ${(err as Error).message}`;
+    const e = err as { stdout?: string; stderr?: string; message?: string };
+    const detail = `${e.stderr ?? ""}${e.stdout ?? ""}`.trim() || e.message || "unknown error";
+    return `gen_os_index.sh failed to regenerate the agent roster: ${detail}`;
   }
 
-  // (b) + (c) the two "Available Agents" CSV lines.
-  const csvSurfaces = [
-    join(projectRoot, "core", "templates", "CLAUDE.md.tmpl"),
-    join(projectRoot, "CLAUDE.md"),
-  ];
-  for (const file of csvSurfaces) {
-    if (!existsSync(file)) {
-      // Tolerate an absent enumeration surface on the remove path (the add path
-      // is what guarantees it exists; a re-run after partial state must not hard-
-      // fail on a file the user already cleaned).
-      continue;
-    }
-    try {
-      const lines = readFileSync(file, "utf-8").split("\n");
-      for (let i = 0; i < lines.length; i++) {
-        if (
-          i > 0 &&
-          lines[i - 1].trim() === "## Available Agents" &&
-          lines[i].trim().length > 0
-        ) {
-          lines[i] = removeAgentFromCsvLine(lines[i], name);
-          break;
-        }
-      }
-      writeFileSync(file, lines.join("\n"), "utf-8");
-    } catch (err) {
-      return `failed to update ${file}: ${(err as Error).message}`;
-    }
+  const indexPath = join(projectRoot, "core", "os", "INDEX.md");
+  let index: string;
+  try {
+    index = readFileSync(indexPath, "utf-8");
+  } catch (err) {
+    return `could not read regenerated roster at ${indexPath}: ${(err as Error).message}`;
+  }
+  const rowPresent = index.includes(`| ${name} |`);
+  if (expectPresent && !rowPresent) {
+    return (
+      `agent '${name}' did NOT appear in the regenerated roster (${indexPath}); ` +
+      "the agent .md frontmatter (name/description) may be malformed — refusing to report phantom success"
+    );
+  }
+  if (!expectPresent && rowPresent) {
+    return (
+      `agent '${name}' is STILL present in the regenerated roster (${indexPath}) ` +
+      "after removal — refusing to report phantom success"
+    );
   }
   return null;
 }
