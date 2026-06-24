@@ -273,7 +273,6 @@ DOC_ONLY_ALLOWLIST = set()
 # rationale string).
 INTERNAL_TOOL_ALLOWLIST = {
     # agent / instance internals — managed by orchestrator hooks, not advertised
-    'igris_agent_capability_list', 'igris_agent_capability_set',
     'igris_agent_event',
     'igris_instance_heartbeat', 'igris_instance_list', 'igris_instance_remove',
 
@@ -303,11 +302,8 @@ INTERNAL_TOOL_ALLOWLIST = {
     'igris_context_get', 'igris_context_load', 'igris_context_register',
     'igris_context_tree',
 
-    # coordination / scheduling subsystem — orchestrator / cron surface,
+    # scheduling subsystem — cron surface,
     # not part of actor decision triggers documented in brain_stewardship.md
-    'igris_coordination_adjust_priorities', 'igris_coordination_audit',
-    'igris_coordination_auto_route',
-    'igris_coordination_config_get', 'igris_coordination_config_set',
     'igris_schedule_create', 'igris_schedule_delete',
     'igris_schedule_disable', 'igris_schedule_enable',
     'igris_schedule_fire_now', 'igris_schedule_get', 'igris_schedule_list',
@@ -335,13 +331,6 @@ INTERNAL_TOOL_ALLOWLIST = {
     # subconscious + suggestion surface — paused per v7 (subconscious.enabled=false)
     'igris_subconscious_run',
     'igris_suggestion_acted', 'igris_suggestion_dismiss', 'igris_suggestion_list',
-
-    # task subsystem — orchestrator-only worker queue, not actor-chosen
-    'igris_task_assign', 'igris_task_block', 'igris_task_claim',
-    'igris_task_complete', 'igris_task_create', 'igris_task_fail',
-    'igris_task_get', 'igris_task_list', 'igris_task_next',
-    'igris_task_result_add', 'igris_task_result_get',
-    'igris_task_retry', 'igris_task_update',
 }
 
 forward_misses = doc_names - gateway_names - DOC_ONLY_ALLOWLIST

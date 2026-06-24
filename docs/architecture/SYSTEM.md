@@ -72,7 +72,6 @@ flowchart TB
 | `errors` | Error catalog & RCA |
 | `event_log` | Audit trail of all events (used for perception extraction) |
 | `projects` | Installed projects registry |
-| `tasks` + `agent_capabilities` | Autonomous task queue, gated by capability |
 | `entity_edges` | Typed relationships across briefs, learnings, errors, sessions, goals |
 | `sync_queue` | VPS replication backlog (JSONL-style queue, drained on `/awaken`/`/rest`/`/sync`) |
 

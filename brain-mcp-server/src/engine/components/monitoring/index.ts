@@ -1,7 +1,7 @@
 /**
  * Brain Engine v7.0 -- Monitoring Component
  *
- * Logs all orphan engine events (schedules, cache, coordination) into
+ * Logs all orphan engine events (schedules, cache, lifecycle) into
  * an event_log table for observability and audit purposes.
  *
  * Provides 2 MCP tools:
@@ -12,9 +12,7 @@
  * Listens: schedule.created, schedule.enabled, schedule.disabled,
  *          schedule.deleted, schedule.fire_now, schedule.run_start,
  *          schedule.run_complete, cache.rebuilt, cache.cleaned,
- *          coordination.self_heal, task.created, task.assigned,
- *          task.completed, task.blocked, task.unblocked,
- *          task.failed, task.claimed, brief.synced, brief.created,
+ *          brief.synced, brief.created,
  *          brief.completed, session.synced, session.file.updated,
  *          instance.heartbeat, memory.stored, error.stored,
  *          project.registered, metrics.recorded,
@@ -55,14 +53,6 @@ const EVENT_COMPONENT_MAP: Record<string, string> = {
   'schedule.run_complete': 'schedules',
   'cache.rebuilt': 'cache',
   'cache.cleaned': 'cache',
-  'coordination.self_heal': 'coordination',
-  'task.created': 'tasks',
-  'task.assigned': 'tasks',
-  'task.completed': 'tasks',
-  'task.blocked': 'tasks',
-  'task.unblocked': 'tasks',
-  'task.failed': 'tasks',
-  'task.claimed': 'tasks',
   'brief.synced': 'briefs',
   'brief.created': 'briefs',
   'brief.completed': 'briefs',
@@ -156,7 +146,7 @@ export function createMonitoringComponent(): BrainComponent {
               },
               component: {
                 type: 'string',
-                description: 'Filter by source component (e.g. "schedules", "cache", "coordination")',
+                description: 'Filter by source component (e.g. "schedules", "cache", "briefs")',
               },
               project_slug: {
                 type: 'string',
@@ -217,14 +207,6 @@ export function createMonitoringComponent(): BrainComponent {
           { name: 'schedule.run_complete', description: 'Log schedule run completion events' },
           { name: 'cache.rebuilt', description: 'Log cache rebuild events' },
           { name: 'cache.cleaned', description: 'Log cache clean events' },
-          { name: 'coordination.self_heal', description: 'Log coordination self-healing events' },
-          { name: 'task.created', description: 'Log task creation events' },
-          { name: 'task.assigned', description: 'Log task assignment events' },
-          { name: 'task.completed', description: 'Log task completion events' },
-          { name: 'task.blocked', description: 'Log task blocked events' },
-          { name: 'task.unblocked', description: 'Log task unblocked events' },
-          { name: 'task.failed', description: 'Log task failure events' },
-          { name: 'task.claimed', description: 'Log task claimed events' },
           { name: 'brief.synced', description: 'Log brief sync events' },
           { name: 'brief.created', description: 'Log brief creation events' },
           { name: 'brief.completed', description: 'Log brief completion events' },
@@ -260,14 +242,6 @@ export function createMonitoringComponent(): BrainComponent {
       ctx.bus.on('schedule.run_complete', onEventReceived);
       ctx.bus.on('cache.rebuilt', onEventReceived);
       ctx.bus.on('cache.cleaned', onEventReceived);
-      ctx.bus.on('coordination.self_heal', onEventReceived);
-      ctx.bus.on('task.created', onEventReceived);
-      ctx.bus.on('task.assigned', onEventReceived);
-      ctx.bus.on('task.completed', onEventReceived);
-      ctx.bus.on('task.blocked', onEventReceived);
-      ctx.bus.on('task.unblocked', onEventReceived);
-      ctx.bus.on('task.failed', onEventReceived);
-      ctx.bus.on('task.claimed', onEventReceived);
       ctx.bus.on('brief.synced', onEventReceived);
       ctx.bus.on('brief.created', onEventReceived);
       ctx.bus.on('brief.completed', onEventReceived);
@@ -311,14 +285,6 @@ export function createMonitoringComponent(): BrainComponent {
         _ctx.bus.off('schedule.run_complete', onEventReceived);
         _ctx.bus.off('cache.rebuilt', onEventReceived);
         _ctx.bus.off('cache.cleaned', onEventReceived);
-        _ctx.bus.off('coordination.self_heal', onEventReceived);
-        _ctx.bus.off('task.created', onEventReceived);
-        _ctx.bus.off('task.assigned', onEventReceived);
-        _ctx.bus.off('task.completed', onEventReceived);
-        _ctx.bus.off('task.blocked', onEventReceived);
-        _ctx.bus.off('task.unblocked', onEventReceived);
-        _ctx.bus.off('task.failed', onEventReceived);
-        _ctx.bus.off('task.claimed', onEventReceived);
         _ctx.bus.off('brief.synced', onEventReceived);
         _ctx.bus.off('brief.created', onEventReceived);
         _ctx.bus.off('brief.completed', onEventReceived);

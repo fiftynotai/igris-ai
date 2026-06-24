@@ -14,7 +14,6 @@
     "start:http": "node dist/index.js --http",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
     "test": "vitest run",
-    "sweep-tasks": "tsx scripts/sweep-stale-brief-tasks.ts",
     "backfill-edges": "tsx scripts/backfill_brief_edges.ts"
   },
   "author": "fifty.dev",

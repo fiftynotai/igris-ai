@@ -32,12 +32,10 @@ import { createSessionsComponent } from './components/sessions/index.js';
 import { createBriefsComponent } from './components/briefs/index.js';
 import { createEdgesComponent } from './components/edges/index.js';
 import { createGoalsComponent } from './components/goals/index.js';
-import { createTasksComponent } from './components/tasks/index.js';
 import { createInstancesComponent } from './components/instances/index.js';
 import { createSyncComponent } from './components/sync/index.js';
 import { createCacheComponent } from './components/cache/index.js';
 import { createSchedulesComponent } from './components/schedules/index.js';
-import { createCoordinationComponent } from './components/coordination/index.js';
 import { createCognitionComponent } from './components/cognition/index.js';
 import { createMonitoringComponent } from './components/monitoring/index.js';
 import { createContextComponent } from './components/context/index.js';
@@ -87,8 +85,9 @@ export function bootEngine(config: EngineConfig): Engine {
   // 5. Create registry
   const registry = createRegistry(storage, bus);
 
-  // 6. Register domain components (18 — perception + subconscious collapsed
-  //    into one cognition component in FR-118 M4a).
+  // 6. Register domain components (16 — perception + subconscious collapsed
+  //    into one cognition component in FR-118 M4a; tasks + coordination removed
+  //    in TD-265 full worker-subsystem teardown).
   // FR-109/FR-118: cognition is registered AFTER memory because the perception
   // instance depends on the memory schema (learnings.review_status, db.ts v15).
   const componentFactories = [
@@ -101,12 +100,10 @@ export function bootEngine(config: EngineConfig): Engine {
     createBriefsComponent,
     createEdgesComponent,
     createGoalsComponent,
-    createTasksComponent,
     createInstancesComponent,
     createSyncComponent,
     createCacheComponent,
     createSchedulesComponent,
-    createCoordinationComponent,
     // FR-118 M4a: perception + subconscious collapsed into ONE cognition
     // component (the unified LLM-extraction host). Registered after memory
     // (the dependency resolver orders it; perception reads learnings).

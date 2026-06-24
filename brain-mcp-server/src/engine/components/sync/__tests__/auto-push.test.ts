@@ -276,14 +276,14 @@ describe('Sync Auto-Push', () => {
   // -------------------------------------------------------------------------
 
   describe('SYNC_TABLES completeness', () => {
-    it('has exactly 27 entries', () => {
-      expect(SYNC_TABLES).toHaveLength(27);
+    it('has exactly 20 entries', () => {
+      // TD-265: −7 task/coordination tables (tasks, task_deps, task_results,
+      // task_assignments, agent_capabilities, autonomous_decisions,
+      // coordination_config) removed with the worker subsystem teardown.
+      expect(SYNC_TABLES).toHaveLength(20);
     });
 
     const newTables = [
-      { table: 'agent_capabilities', syncKey: ['agent', 'capability'], strategy: 'lww', timestampCol: 'created_at' },
-      { table: 'autonomous_decisions', syncKey: ['id'], strategy: 'append', timestampCol: 'created_at' },
-      { table: 'coordination_config', syncKey: ['key'], strategy: 'lww', timestampCol: 'updated_at' },
       { table: 'schedules', syncKey: ['id'], strategy: 'lww', timestampCol: 'updated_at' },
       { table: 'schedule_runs', syncKey: ['id'], strategy: 'append', timestampCol: 'started_at' },
       // FR-105: typed-edges graph layer

@@ -10,10 +10,6 @@ allowed-tools:
   - Grep
   - Bash
   - mcp__igris-brain__igris_session_file_update
-  - mcp__igris-brain__igris_coordination_config_get
-  - mcp__igris-brain__igris_task_next
-  - mcp__igris-brain__igris_agent_capability_list
-  - mcp__igris-brain__igris_coordination_audit
   - mcp__igris-brain__igris_instance_remove
   - mcp__igris-brain__igris_brief_sync
   - mcp__igris-brain__igris_brief_create
@@ -222,7 +218,7 @@ What the verb does (faithful to the prior inline H0–H3):
 
 ### 4. Perform System Assessment
 
-The MINIMAL system-assessment surface — brief-status summary + active blockers + git snapshot + active-instance count + upcoming goals — is OWNED by the `igris assess` verb (FR-195, decision D-A). It does the brief-dashboard summary SQL, reads `session/BLOCKERS.md`, runs `git status`, counts live instances, and lists goals due within 14 days. It DELIBERATELY OMITS the task queue (§4.5), suggestions (§4.8), and perception pending (§4.9) — those re-introduce ceremony noise and stay as the skill's own surfaces below; assess does not cover them.
+The MINIMAL system-assessment surface — brief-status summary + active blockers + git snapshot + active-instance count + upcoming goals — is OWNED by the `igris assess` verb (FR-195, decision D-A). It does the brief-dashboard summary SQL, reads `session/BLOCKERS.md`, runs `git status`, counts live instances, and lists goals due within 14 days. It DELIBERATELY OMITS suggestions (§4.8) and perception pending (§4.9) — those re-introduce ceremony noise and stay as the skill's own surfaces below; assess does not cover them.
 
 Run the assess verb and render from its JSON digest:
 ```bash
@@ -247,28 +243,6 @@ Render the assessment from the digest:
 - `goals_upcoming[]` → see §4.7 (the goals surface is now part of this digest).
 
 **Degradation:** when the brain DB is absent the verb emits `{ "degraded": true, "briefs": {total:0,…}, "goals_upcoming": [], "active_instances": 0, … }` and exits 0 — it STILL reads `blockers` + `git` (those do not need the DB). NEVER block session start.
-
-### 4.5. Show Work Queue and Coordination Status (Optional)
-
-If the `igris-brain` MCP server is available:
-
-1. Call `igris_coordination_config_get` to check autonomous mode status
-2. Call `igris_task_next` (no agent filter) to peek at the top pending task
-3. Call `igris_task_list` with status="pending" and limit=5 to show the work queue
-4. Display a work queue summary:
-
-```
-### Work Queue
-| Task | Priority | Type | Due |
-|------|----------|------|-----|
-| t-abc123: Fix auth flow | P1 | brief | 2026-02-26 |
-| t-def456: Update docs | P3 | operational | -- |
-
-Autonomous Mode: [Enabled/Disabled]
-Self-Healing: [Enabled/Disabled]
-```
-
-If brain MCP is NOT available or calls fail, skip silently. Do NOT block session start.
 
 ### 4.7. Goals Approaching Deadline (FR-110)
 

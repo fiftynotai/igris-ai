@@ -39,12 +39,10 @@ import { createSessionsComponent } from '../components/sessions/index.js';
 import { createBriefsComponent } from '../components/briefs/index.js';
 import { createEdgesComponent } from '../components/edges/index.js';
 import { createGoalsComponent } from '../components/goals/index.js';
-import { createTasksComponent } from '../components/tasks/index.js';
 import { createInstancesComponent } from '../components/instances/index.js';
 import { createSyncComponent } from '../components/sync/index.js';
 import { createCacheComponent } from '../components/cache/index.js';
 import { createSchedulesComponent } from '../components/schedules/index.js';
-import { createCoordinationComponent } from '../components/coordination/index.js';
 import { createCognitionComponent } from '../components/cognition/index.js';
 import { createMonitoringComponent } from '../components/monitoring/index.js';
 import { createContextComponent } from '../components/context/index.js';
@@ -60,15 +58,13 @@ const COMPONENT_FACTORIES = [
   createBriefsComponent,
   createEdgesComponent,
   createGoalsComponent,
-  createTasksComponent,
   createInstancesComponent,
   createSyncComponent,
   createCacheComponent,
   createSchedulesComponent,
-  createCoordinationComponent,
   // FR-118 M4a: perception + subconscious collapsed into one cognition factory.
   // The registered tool SET is unchanged (8 perception + 5 subconscious = 13
-  // tools, one factory), so the total tool count is unchanged at 126.
+  // tools, one factory).
   createCognitionComponent,
   createMonitoringComponent,
   createCatalogComponent,
@@ -88,12 +84,12 @@ describe('gateway tool count (TD-171 closeout)', () => {
   gateway.register(collectAllTools());
   const tools = gateway.listTools();
 
-  it('exposes exactly 126 tools (TD-171 closeout: 107 baseline + 14 net-new + 1 FR-130 igris_session_file_list + 2 FR-127 igris_brief_claim/release + 1 FR-200 igris_memory_mark_promoted + 1 FR-118 igris_suggestion_apply_action)', () => {
+  it('exposes exactly 106 tools (TD-171 closeout 126 − TD-265 worker-subsystem teardown: −13 task tools −7 coordination tools)', () => {
     // If this assertion fires, the registered surface drifted. Either a tool
     // was added/removed without bumping the count here, or the closeout
     // baseline shifted intentionally. In either case: open a brief, decide,
     // and update this literal in the same commit that moves the surface.
-    expect(tools.length).toBe(126);
+    expect(tools.length).toBe(106);
   });
 
   it('every component factory contributes at least one tool', () => {

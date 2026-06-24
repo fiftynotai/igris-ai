@@ -38,7 +38,7 @@ import { processSyncPush, SYNC_TABLES } from '../tools/sync.js';
  * Build an in-memory DB with the columns relevant to this test plus stub
  * tables for the rest of SYNC_TABLES so the iteration finds them. Mirrors
  * the schema from sync.test.ts but adds CHECK constraints we want to
- * trigger (notably tasks.task_type) and column types that catch the
+ * trigger (notably learnings.category) and column types that catch the
  * Buffer-binding failure mode (brief_files.content TEXT NOT NULL).
  */
 function makeBriefIsolationDb(): Database.Database {
@@ -70,30 +70,27 @@ function makeBriefIsolationDb(): Database.Database {
       UNIQUE(project, brief_id)
     );
 
-    CREATE TABLE tasks (
-      id TEXT PRIMARY KEY,
-      task_type TEXT NOT NULL CHECK (task_type IN
-        ('brief','operational','personal','system','dev','content',
-         'social-media','media-gen','research')),
-      scope TEXT NOT NULL DEFAULT 'project',
+    CREATE TABLE learnings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project TEXT NOT NULL,
+      category TEXT NOT NULL CHECK (category IN
+        ('pattern','decision','discovery','mistake','optimization')),
       title TEXT NOT NULL,
-      description TEXT,
-      brief_id TEXT,
-      project_slug TEXT,
-      parent_id TEXT,
-      status TEXT NOT NULL DEFAULT 'pending',
-      priority INTEGER NOT NULL DEFAULT 3,
-      assignee TEXT,
-      due_at TEXT,
-      defer_until TEXT,
-      created_by TEXT,
-      metadata TEXT DEFAULT '{}',
+      content TEXT NOT NULL DEFAULT '',
+      tags TEXT DEFAULT '',
+      tech_stack TEXT DEFAULT '',
+      scope TEXT DEFAULT 'local' CHECK (scope IN ('local','global')),
+      source_brief TEXT DEFAULT '',
+      confidence REAL DEFAULT 0.8,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      required_capabilities TEXT DEFAULT '[]',
-      retry_count INTEGER NOT NULL DEFAULT 0,
-      max_retries INTEGER NOT NULL DEFAULT 3,
-      fail_reason TEXT
+      access_count INTEGER DEFAULT 0,
+      last_accessed_at TEXT,
+      review_status TEXT DEFAULT 'approved',
+      provenance TEXT DEFAULT 'human_asserted',
+      source_extractor TEXT,
+      promoted_to_doc TEXT,
+      UNIQUE(project, category, title)
     );
 
     CREATE TABLE brief_status (
@@ -131,7 +128,7 @@ function makeBriefIsolationDb(): Database.Database {
 
   // Stub the rest of SYNC_TABLES so iteration finds them but they are
   // empty. Skip ones we already created above.
-  const created = new Set(['event_log','brief_files','tasks','brief_status','entity_edges']);
+  const created = new Set(['event_log','brief_files','learnings','brief_status','entity_edges']);
   for (const config of SYNC_TABLES) {
     if (created.has(config.table)) continue;
     const colDefs = config.columns.map((c) => `${c} TEXT`).join(', ');
@@ -161,19 +158,21 @@ describe('BR-066 /sync/push per-table isolation', () => {
   });
 
   // -------------------------------------------------------------------------
-  // The headline regression: bad row in tasks does not kill event_log.
+  // The headline regression: bad row in learnings does not kill event_log.
+  // (TD-265 retargeted this from the removed `tasks` table to `learnings` —
+  // another SYNC_TABLES entry with a CHECK constraint to violate.)
   // -------------------------------------------------------------------------
 
-  it('a bad row in tasks (CHECK violation) does NOT prevent event_log inserts', () => {
+  it('a bad row in learnings (CHECK violation) does NOT prevent event_log inserts', () => {
     const tables = {
       event_log: [
         { id: 1001, event_name: 'session.started', component: 'monitoring', payload: '{}', created_at: '2026-05-05T10:00:00Z' },
         { id: 1002, event_name: 'session.ended', component: 'monitoring', payload: '{}', created_at: '2026-05-05T10:00:01Z' },
         { id: 1003, event_name: 'brief.synced', component: 'briefs', payload: '{}', created_at: '2026-05-05T10:00:02Z' },
       ],
-      tasks: [
-        { id: 't-good', task_type: 'brief', scope: 'project', title: 'good task', updated_at: '2026-05-05T10:00:00Z' },
-        { id: 't-bad', task_type: 'garbage-not-in-check', scope: 'project', title: 'bad task', updated_at: '2026-05-05T10:00:00Z' },
+      learnings: [
+        { project: 'p', category: 'pattern', title: 'good learning', content: 'ok', created_at: '2026-05-05T10:00:00Z' },
+        { project: 'p', category: 'garbage-not-in-check', title: 'bad learning', content: 'bad', created_at: '2026-05-05T10:00:00Z' },
       ],
       brief_status: [
         { id: 'bs-1', project: 'p', brief_id: 'BR-066', status: 'In Progress', updated_at: '2026-05-05T10:00:00Z' },
@@ -182,28 +181,29 @@ describe('BR-066 /sync/push per-table isolation', () => {
 
     const result = processSyncPush(db, tables);
 
-    // event_log + brief_status merged cleanly; tasks had 1 row failure but
+    // event_log + brief_status merged cleanly; learnings had 1 row failure but
     // its transaction still committed (because mergeRows row-level catch
     // kept the txn alive).
     expect(result.results.event_log.inserted).toBe(3);
     expect(result.results.brief_status.inserted).toBe(1);
-    expect(result.results.tasks.inserted).toBe(1);  // good row inserted
-    expect(result.results.tasks.failed).toBe(1);    // bad row recorded
-    expect(result.results.tasks.failures).toBeDefined();
-    expect(result.results.tasks.failures![0].key).toBe('t-bad');
-    expect(result.results.tasks.failures![0].error).toMatch(/CHECK constraint/i);
+    expect(result.results.learnings.inserted).toBe(1);  // good row inserted
+    expect(result.results.learnings.failed).toBe(1);    // bad row recorded
+    expect(result.results.learnings.failures).toBeDefined();
+    // syncKey is [project, category, title] → composite key joined by '|'.
+    expect(result.results.learnings.failures![0].key).toBe('p|garbage-not-in-check|bad learning');
+    expect(result.results.learnings.failures![0].error).toMatch(/CHECK constraint/i);
 
     // No table-level errors — per-table txn isolation worked.
     expect(result.errors).toEqual({});
     expect(result.ok).toBe(true);
 
-    // DB state confirms: event_log rows are present, bad task is absent.
+    // DB state confirms: event_log rows are present, bad learning is absent.
     const elCount = db.prepare('SELECT COUNT(*) as c FROM event_log').get() as { c: number };
     expect(elCount.c).toBe(3);
-    const goodTask = db.prepare("SELECT id FROM tasks WHERE id='t-good'").get();
-    expect(goodTask).toBeDefined();
-    const badTask = db.prepare("SELECT id FROM tasks WHERE id='t-bad'").get();
-    expect(badTask).toBeUndefined();
+    const goodLearning = db.prepare("SELECT id FROM learnings WHERE title='good learning'").get();
+    expect(goodLearning).toBeDefined();
+    const badLearning = db.prepare("SELECT id FROM learnings WHERE title='bad learning'").get();
+    expect(badLearning).toBeUndefined();
   });
 
   // -------------------------------------------------------------------------
@@ -442,7 +442,7 @@ describe('BR-066 handleSyncQueueDrain — bisect-on-failure + 207 partial succes
       VALUES (?, ?, 'pending', 0, 5)
     `);
     insert.run('event_log', JSON.stringify({ id: 1, event_name: 'a', component: 'c', payload: '{}', created_at: '2026-05-05T00:00:00Z' }));
-    insert.run('tasks', JSON.stringify({ id: 't-bad', task_type: 'INVALID', scope: 'project', title: 't' }));
+    insert.run('learnings', JSON.stringify({ project: 'p', category: 'INVALID', title: 't', content: 'c' }));
 
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
@@ -450,7 +450,7 @@ describe('BR-066 handleSyncQueueDrain — bisect-on-failure + 207 partial succes
       json: async () => ({
         ok: false,
         results: { event_log: { inserted: 1, updated: 0, skipped: 0, failed: 0 } },
-        errors: { tasks: 'CHECK constraint failed: task_type' },
+        errors: { learnings: 'CHECK constraint failed: category' },
       }),
       text: async () => '',
     })) as unknown as typeof globalThis.fetch;
@@ -462,9 +462,9 @@ describe('BR-066 handleSyncQueueDrain — bisect-on-failure + 207 partial succes
     expect(sent).toHaveLength(1);
     expect(sent[0].table_name).toBe('event_log');
     expect(retrying).toHaveLength(1);
-    expect(retrying[0].table_name).toBe('tasks');
+    expect(retrying[0].table_name).toBe('learnings');
     expect(retrying[0].error_message).toMatch(/HTTP 207/);
-    expect(retrying[0].error_message).toMatch(/table=tasks/);
+    expect(retrying[0].error_message).toMatch(/table=learnings/);
     expect(retrying[0].error_message).toMatch(/CHECK constraint/);
   });
 
@@ -582,37 +582,39 @@ describe('BR-066 mergeRows row-level try/catch', () => {
   });
 
   it('a single bad row in a 5-row batch returns failed=1, inserted=4', () => {
-    const config = SYNC_TABLES.find((c) => c.table === 'tasks');
+    // TD-265: retargeted from the removed `tasks` table to `learnings`
+    // (syncKey [project, category, title]; category has a CHECK constraint).
+    const config = SYNC_TABLES.find((c) => c.table === 'learnings');
     expect(config).toBeDefined();
 
     const rows = [
-      { id: 't1', task_type: 'brief', scope: 'project', title: 't1', updated_at: '2026-05-05T00:00:00Z' },
-      { id: 't2', task_type: 'brief', scope: 'project', title: 't2', updated_at: '2026-05-05T00:00:00Z' },
-      { id: 't3', task_type: 'INVALID-TASK-TYPE', scope: 'project', title: 't3', updated_at: '2026-05-05T00:00:00Z' },
-      { id: 't4', task_type: 'brief', scope: 'project', title: 't4', updated_at: '2026-05-05T00:00:00Z' },
-      { id: 't5', task_type: 'brief', scope: 'project', title: 't5', updated_at: '2026-05-05T00:00:00Z' },
+      { project: 'p', category: 'pattern', title: 't1', content: 'c', created_at: '2026-05-05T00:00:00Z' },
+      { project: 'p', category: 'decision', title: 't2', content: 'c', created_at: '2026-05-05T00:00:00Z' },
+      { project: 'p', category: 'INVALID-CATEGORY', title: 't3', content: 'c', created_at: '2026-05-05T00:00:00Z' },
+      { project: 'p', category: 'discovery', title: 't4', content: 'c', created_at: '2026-05-05T00:00:00Z' },
+      { project: 'p', category: 'mistake', title: 't5', content: 'c', created_at: '2026-05-05T00:00:00Z' },
     ];
 
     const result = mergeRows(db, config!, rows);
     expect(result.inserted).toBe(4);
     expect(result.failed).toBe(1);
     expect(result.failures).toBeDefined();
-    expect(result.failures![0].key).toBe('t3');
+    expect(result.failures![0].key).toBe('p|INVALID-CATEGORY|t3');
   });
 
   it('an all-bad batch returns failed=N, inserted=0, with N failure entries', () => {
-    const config = SYNC_TABLES.find((c) => c.table === 'tasks');
+    const config = SYNC_TABLES.find((c) => c.table === 'learnings');
     const rows = [
-      { id: 'b1', task_type: 'INVALID', scope: 'project', title: 'b1', updated_at: '2026-05-05T00:00:00Z' },
-      { id: 'b2', task_type: 'ALSO-INVALID', scope: 'project', title: 'b2', updated_at: '2026-05-05T00:00:00Z' },
+      { project: 'p', category: 'INVALID', title: 'b1', content: 'c', created_at: '2026-05-05T00:00:00Z' },
+      { project: 'p', category: 'ALSO-INVALID', title: 'b2', content: 'c', created_at: '2026-05-05T00:00:00Z' },
     ];
 
     const result = mergeRows(db, config!, rows);
     expect(result.inserted).toBe(0);
     expect(result.failed).toBe(2);
     expect(result.failures).toHaveLength(2);
-    expect(result.failures![0].key).toBe('b1');
-    expect(result.failures![1].key).toBe('b2');
+    expect(result.failures![0].key).toBe('p|INVALID|b1');
+    expect(result.failures![1].key).toBe('p|ALSO-INVALID|b2');
   });
 
   it('an all-good batch returns failed=0 and omits the failures field', () => {

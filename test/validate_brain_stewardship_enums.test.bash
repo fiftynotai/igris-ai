@@ -291,12 +291,12 @@ write_component_fixture() {
 
 @test "tool_drift_internal_allowlist_works: live repo tools (allowlisted) skip the reverse check" {
   # Sanity: a tool in the seeded INTERNAL_TOOL_ALLOWLIST (e.g.,
-  # igris_task_create) registered in a fixture component must NOT
+  # igris_event_log) registered in a fixture component must NOT
   # trip reverse drift. This proves the allowlist mechanism wires
   # through and isn't bypassed.
   write_canonical_schema
   write_stewardship_with_tools ""  # docs do not mention it
-  write_component_fixture "tasks" "igris_task_create"
+  write_component_fixture "monitoring" "igris_event_log"
 
   SCHEMA_FILE="$SCRATCH/schema.ts" PROMPT_FILE="$SCRATCH/stewardship.md" \
     COMPONENTS_GLOB="$SCRATCH/components/*/index.ts" \

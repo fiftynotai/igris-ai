@@ -1182,6 +1182,75 @@ function migrateSchema(db: Database.Database): void {
     })();
     console.error('[brain] Schema migrated to version 19 (registry → catalog rename)');
   }
+
+  // v20: drop the autonomous-execution (worker) substrate tables (TD-265).
+  //
+  // TD-265 removed the `tasks` + `coordination` brain components entirely (the
+  // worker/task-queue + self-heal/auto-route autonomous-execution subsystem).
+  // Their 7 tables were created by the (now-deleted) tasks-component engine
+  // migrations, which are forward-only and per-component — once the component
+  // is gone, its schema.ts migrations never run again, so the DROP CANNOT live
+  // there (memory #53: two migration registries). It MUST live in this
+  // unconditional db.ts legacy chain so it runs on existing DBs that carry the
+  // tables (and is a clean no-op on fresh DBs that never had them).
+  //
+  // Idempotency: `DROP TABLE IF EXISTS` is a no-op on a DB without the tables.
+  // Child tables are dropped before `tasks` (FK order: task_deps/task_results/
+  // task_assignments reference tasks(id) ON DELETE CASCADE). Deleting the
+  // engine_migrations rows lets a future re-add (if ever) re-run cleanly. The
+  // orphaned `autonomous-priority-adjust` schedule row is deleted too — its
+  // handler tool (igris_coordination_adjust_priorities) is gone, so the
+  // schedules daemon would otherwise log a missing-tool warning on every fire.
+  //
+  // Gate behind v19's actual completion (re-read schema_version, L-209) so this
+  // applies even on a machine where an earlier gated migration stopped the
+  // module-level chain.
+  let postV19Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV19Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+  if (postV19Version >= 19 && postV19Version < 20) {
+    const tableExists = (name: string): boolean =>
+      db
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name = ?`,
+        )
+        .get(name) !== undefined;
+
+    db.transaction(() => {
+      // Child tables first (FK references to tasks(id)).
+      db.exec(`DROP TABLE IF EXISTS task_deps`);
+      db.exec(`DROP TABLE IF EXISTS task_assignments`);
+      db.exec(`DROP TABLE IF EXISTS task_results`);
+      db.exec(`DROP TABLE IF EXISTS autonomous_decisions`);
+      db.exec(`DROP TABLE IF EXISTS coordination_config`);
+      db.exec(`DROP TABLE IF EXISTS agent_capabilities`);
+      // Parent table last.
+      db.exec(`DROP TABLE IF EXISTS tasks`);
+
+      // Drop the per-component migration ledger rows for the removed components.
+      // `engine_migrations` is created by the engine storage adapter; in the
+      // standalone legacy getDb() path it may not exist yet — guard accordingly.
+      if (tableExists('engine_migrations')) {
+        db.exec(`DELETE FROM engine_migrations WHERE component IN ('tasks','coordination')`);
+      }
+
+      // Delete the orphaned autonomous-routing schedule row (handler tool gone).
+      // `schedules` is created by the schedules-component engine migration; guard
+      // for DBs where it does not exist yet.
+      if (tableExists('schedules')) {
+        db.exec(`DELETE FROM schedules WHERE name='autonomous-priority-adjust'`);
+      }
+
+      db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (20)').run();
+    })();
+    console.error('[brain] Schema migrated to version 20 (TD-265 worker-subsystem table teardown)');
+  }
 }
 
 /**
