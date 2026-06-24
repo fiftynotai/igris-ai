@@ -98,7 +98,7 @@ const REMOVE_SURFACES: readonly RemoveSurface[] = [
   "hook",
 ] as const;
 
-/** The builtin agents that are load-bearing in igris_tree.json delegation. */
+/** The builtin agents that are load-bearing in os/ INDEX-roster delegation. */
 const BUILTIN_AGENTS = new Set([
   "architect",
   "forger",
@@ -415,12 +415,12 @@ async function runRemoveAgentArm(
   const overlayPath = opts.overlayPath ?? registryOverlayPath();
   const name = opts.name!;
 
-  // Builtin-agent guard (load-bearing in igris_tree.json delegation).
+  // Builtin-agent guard (load-bearing core agents in the os/ INDEX roster).
   if (BUILTIN_AGENTS.has(name) && opts.force !== true) {
     logError(
-      `remove agent '${name}': '${name}' is a BUILTIN agent (load-bearing in ` +
-        `igris_tree.json delegation). Removing it silently breaks delegation. ` +
-        `Re-run with --force if you are certain.`,
+      `remove agent '${name}': '${name}' is a BUILTIN agent (a load-bearing ` +
+        `core role in the os/ INDEX delegation roster). Removing it silently ` +
+        `breaks delegation. Re-run with --force if you are certain.`,
     );
     return 1;
   }
