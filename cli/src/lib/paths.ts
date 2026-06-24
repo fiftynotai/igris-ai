@@ -187,6 +187,26 @@ export function configJsonPath(): string {
 }
 
 /**
+ * FR-122: absolute path to the runtime persona file `~/.igris/core/SOUL.md` —
+ * the consumer-facing copy `gen_os_index.sh` parses into the OS index. The
+ * persona applier writes the operator's chosen persona here. Honors
+ * IGRIS_BRAIN_DIR via brainDir() (the test-sandbox seam every helper uses).
+ */
+export function soulMdPath(): string {
+  return join(brainDir(), "core", "SOUL.md");
+}
+
+/**
+ * FR-122: absolute path to a persona TEMPLATE in the runtime core —
+ * `~/.igris/core/SOUL.<name>.md` (e.g. `SOUL.professional.md`). These are the
+ * shipped persona presets the applier copies over {@link soulMdPath}. Honors
+ * IGRIS_BRAIN_DIR.
+ */
+export function soulTemplatePath(name: string): string {
+  return join(brainDir(), "core", `SOUL.${name}.md`);
+}
+
+/**
  * FR-165 (FR-160 epic): absolute path to `~/.igris/secrets.env` — the SINGLE
  * source of real MCP secrets. chmod 600, gitignored (lives OUTSIDE the repo).
  * Honors IGRIS_BRAIN_DIR (the test-sandbox seam every other helper uses).

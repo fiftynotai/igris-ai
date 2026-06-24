@@ -46,6 +46,44 @@ igris install .
 
 Project state (sessions, briefs, plans, generated context docs) lives under `~/.igris/projects/<slug>/` — **not** in the project repo. The only files Igris writes into the project repo are `.claude/`, `CLAUDE.md`, and `.igris_version`.
 
+### Onboarding (`igris configure`)
+
+A fresh install is deliberately **zero-config**: no persona override, no VPS, and both LLM-extraction engines (perception + subconscious) **OFF**. `igris configure` is the opt-in onboarding verb — a re-runnable dial of an existing install. Run it any time after `igris init`:
+
+```bash
+igris configure
+```
+
+It walks you through four things, **seeding every prompt from your current state** (press Enter to keep the current value):
+
+1. **Identity** — your name + email (written to `~/.igris/USER.md`).
+2. **Persona** — pick a shipped SOUL preset:
+   - `character` — the battle-ready, evolution-style Igris voice (the shipped default).
+   - `professional` — a dry, neutral, matter-of-fact register.
+
+   The chosen preset is copied over `~/.igris/core/SOUL.md`. Every preset carries the required `layer/tier/scope/summary` frontmatter, so the OS-index generator stays valid.
+3. **Remote brain (VPS)** — **by address presence**: enter a URL to enable cross-machine sync, or leave it **blank to disable** it. A non-local `http://` URL is **refused** (your `api_key` would travel in cleartext) unless you set `IGRIS_ALLOW_INSECURE_SYNC=1`; use `https://` instead. The `api_key` is stored in `~/.igris/config.json`, which is always chmod-tightened to `600`.
+4. **Cognition toggles** — turn perception and/or subconscious ON or OFF. These write the nested `cognition.perception.enabled` / `cognition.subconscious.enabled` keys in `config.json`.
+
+**Flags:**
+
+| Flag | Effect |
+|------|--------|
+| `--persona <name>` | Apply a persona preset directly; skips the persona prompt. |
+| `--skip-remote` | Skip the VPS prompt; leave `remote_brain` unchanged. |
+| `--dry-run` | Print the plan of would-be writes and exit — writes nothing. |
+| `-y, --yes` | Keep the current values; skip all prompts. A `--yes` run is a **no-op on values** (nothing is reset to a default). |
+
+`igris configure` requires `igris init` to have run first (it dials an existing install — it does not create `config.json`).
+
+You can also pick a persona at install time:
+
+```bash
+igris init --persona professional
+```
+
+> **Note on `igris refresh`:** a refresh re-fetches `~/.igris/core/` (where `SOUL.md` lives) but preserves your `config.json` toggles. Because the active persona is written under `core/SOUL.md`, **re-run `igris configure --persona <name>`** after a refresh if you want to keep a non-default persona.
+
 ### Verify Installation
 
 ```bash

@@ -76,6 +76,7 @@ import {
   userMdPath,
 } from "../lib/paths.js";
 import { registerBrainAcrossHarnesses } from "../lib/mcp-register.js";
+import { applyPersona } from "../lib/persona.js";
 import { linkAntigravitySkills } from "../lib/antigravity-skills.js";
 import { installAntigravityHooks } from "../lib/antigravity-hooks.js";
 import {
@@ -115,6 +116,13 @@ export interface InitOptions {
   upgrade?: boolean;
   /** Skip the VPS prompt (no remote_brain config). */
   skipRemote?: boolean;
+  /**
+   * FR-122: apply a persona preset after the core swap (`--persona <name>`).
+   * When omitted the shipped `core/SOUL.md` is left as-is (the default
+   * character persona). An unknown name is a non-fatal WARN — init still
+   * completes (the install is otherwise valid).
+   */
+  persona?: string;
   /** Override auto-detected bridges. "none" or "claude,codex,..." */
   cliBridge?: string;
   /** Print plan only, no writes. */
@@ -571,6 +579,40 @@ export async function runInit(opts: InitOptions): Promise<number> {
   // global identity file. The harness discovers Igris via the slash menu +
   // the install/init success message.
 
+  // --- 9c. (FR-122) optional persona apply -----------------------------
+  // Runs AFTER the core swap (step 5) so the runtime SOUL templates exist.
+  // When --persona is set, copy the chosen SOUL.<name>.md over the runtime
+  // SOUL.md (+ canonical when in a checkout). Non-fatal: an unknown/invalid
+  // persona WARNs and lets init complete (the install is otherwise valid).
+  if (opts.persona !== undefined) {
+    if (dry !== null) {
+      dry.wouldWriteFile(
+        join(root, "core", "SOUL.md"),
+        `apply persona '${opts.persona}'`,
+      );
+    } else {
+      const personaResult = applyPersona(
+        opts.persona,
+        opts.fromSource !== undefined
+          ? pathResolve(opts.fromSource)
+          : process.cwd(),
+      );
+      if (personaResult.outcome === "template_missing") {
+        warn(
+          `persona '${opts.persona}' not found — leaving the shipped SOUL.md ` +
+            `(run \`igris configure\` to pick a persona later).`,
+        );
+      } else if (personaResult.outcome === "invalid_template") {
+        warn(
+          `persona '${opts.persona}' is missing required frontmatter — ` +
+            `leaving the shipped SOUL.md.`,
+        );
+      } else {
+        info(`Applied persona '${opts.persona}' (${personaResult.outcome}).`);
+      }
+    }
+  }
+
   // --- 10. Write .install-source.json ----------------------------------
   if (dry !== null) {
     dry.wouldWriteFile(installSourcePath(), "record install source");
@@ -781,7 +823,12 @@ function templateRoot(): string {
   return join(here, "..", "lib", "templates");
 }
 
-function renderUserTemplate(args: {
+/**
+ * Render the USER.md template with the given identity. Exported so the FR-122
+ * `configure` verb writes USER.md through the SAME template path as init (one
+ * source of truth for the USER.md shape).
+ */
+export function renderUserTemplate(args: {
   userName: string;
   userEmail: string;
 }): string {

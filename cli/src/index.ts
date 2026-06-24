@@ -31,6 +31,7 @@ import { runInstall } from "./verbs/install.js";
 import { runUpdate } from "./verbs/update.js";
 import { runDoctor } from "./verbs/doctor.js";
 import { runInit } from "./verbs/init.js";
+import { runConfigure } from "./verbs/configure.js";
 import { runRefresh } from "./verbs/refresh.js";
 import { runRegisterProject } from "./verbs/register-project.js";
 import { runSync, type SyncSubVerb } from "./verbs/sync.js";
@@ -102,6 +103,10 @@ async function main(argv: string[]): Promise<void> {
       false,
     )
     .option(
+      "--persona <name>",
+      "apply a SOUL persona preset after install (e.g. 'professional' | 'character')",
+    )
+    .option(
       "--cli-bridge <list>",
       "override auto-detected bridges: 'none' or 'claude,codex,gemini,opencode'",
     )
@@ -126,6 +131,7 @@ async function main(argv: string[]): Promise<void> {
         channel?: string;
         upgrade?: boolean;
         skipRemote?: boolean;
+        persona?: string;
         cliBridge?: string;
         dryRun?: boolean;
         yes?: boolean;
@@ -136,10 +142,57 @@ async function main(argv: string[]): Promise<void> {
           channel: opts.channel,
           upgrade: opts.upgrade === true,
           skipRemote: opts.skipRemote === true,
+          persona: opts.persona,
           cliBridge: opts.cliBridge,
           dryRun: opts.dryRun === true,
           yes: opts.yes === true,
           dev: opts.dev === true,
+        });
+        process.exitCode = code;
+      },
+    );
+
+  program
+    .command("configure")
+    .description(
+      "FR-122: the opt-in onboarding verb — re-runnable dial of an EXISTING " +
+        "install. Pick a SOUL persona, set identity, enable/disable the VPS by " +
+        "address presence, and toggle perception/subconscious (nested cognition.* " +
+        "keys). Seeds every prompt from live state so Enter keeps the current " +
+        "value; --yes / non-TTY keeps current values (a no-op). Every config " +
+        "write is atomic + chmod 600. Requires `igris init` to have run first.",
+    )
+    .option(
+      "--persona <name>",
+      "apply a SOUL persona preset (e.g. 'professional' | 'character'); skips the persona prompt",
+    )
+    .option(
+      "--skip-remote",
+      "skip the remote_brain (VPS) prompt; leave remote_brain unchanged",
+      false,
+    )
+    .option(
+      "--dry-run",
+      "print the plan without performing any writes",
+      false,
+    )
+    .option(
+      "-y, --yes",
+      "keep current values; skip prompts (a no-op on values)",
+      false,
+    )
+    .action(
+      async (opts: {
+        persona?: string;
+        skipRemote?: boolean;
+        dryRun?: boolean;
+        yes?: boolean;
+      }): Promise<void> => {
+        const code = await runConfigure({
+          persona: opts.persona,
+          skipRemote: opts.skipRemote === true,
+          dryRun: opts.dryRun === true,
+          yes: opts.yes === true,
         });
         process.exitCode = code;
       },

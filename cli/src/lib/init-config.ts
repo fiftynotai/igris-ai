@@ -26,6 +26,11 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { configJsonPath } from "./paths.js";
 import { chmodSecretFile } from "./secret-perms.js";
+import {
+  classifySyncTransport,
+  isInsecureSyncAllowed,
+} from "./sync-transport.js";
+import { warn } from "./log.js";
 
 export type CognitionDefaultOutcome =
   | "config_missing"   // config.json doesn't exist — no-op
@@ -37,6 +42,41 @@ export type CognitionDefaultOutcome =
 export type SubconsciousDefaultOutcome = CognitionDefaultOutcome;
 
 /**
+ * Atomically write the next config.json + re-tighten perms (TD-220).
+ *
+ * Extract-method factored out of {@link applyCognitionDefault} (FR-122) so the
+ * default writer, the explicit cognition toggle, and the remote_brain set/clear
+ * all share ONE atomic-write body: tmp file → rename → chmod 600.
+ *
+ * renameSync adopts the tmp file's umask-default mode (often 644), NOT the
+ * prior 600, so the chmod re-tighten is mandatory on every write of an
+ * Igris-owned secret-bearing file (config.json carries the api_key). Same
+ * rationale as the pre-FR-122 inline tail; no behavior change.
+ */
+function writeConfigAtomic(next: Record<string, unknown>): void {
+  const cfgPath = configJsonPath();
+  const tmp = `${cfgPath}.tmp.${process.pid}.${Date.now()}`;
+  writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n");
+  renameSync(tmp, cfgPath);
+  chmodSecretFile(cfgPath);
+}
+
+/**
+ * Read + parse config.json, returning `null` when it is absent or unreadable.
+ * Callers map `null` to the graceful `config_missing` / `config_malformed`
+ * outcomes — nothing throws.
+ */
+function readConfig(): Record<string, unknown> | null {
+  const cfgPath = configJsonPath();
+  if (!existsSync(cfgPath)) return null;
+  try {
+    return JSON.parse(readFileSync(cfgPath, "utf-8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Apply `cognition.<instance>.enabled=false` only-set-if-absent to the runtime
  * brain config.json. Atomic tmp+rename + TD-220 perm re-tightening. Returns the
  * outcome so callers can log or surface in dry-run plans.
@@ -44,16 +84,11 @@ export type SubconsciousDefaultOutcome = CognitionDefaultOutcome;
 function applyCognitionDefault(
   instance: "perception" | "subconscious",
 ): CognitionDefaultOutcome {
-  const cfgPath = configJsonPath();
-  if (!existsSync(cfgPath)) {
-    return "config_missing";
-  }
-
-  let cfg: Record<string, unknown>;
-  try {
-    cfg = JSON.parse(readFileSync(cfgPath, "utf-8")) as Record<string, unknown>;
-  } catch {
-    return "config_malformed";
+  const cfg = readConfig();
+  if (cfg === null) {
+    // Distinguish absent (config_missing) from unreadable (config_malformed):
+    // a present-but-unparseable file still exists on disk.
+    return existsSync(configJsonPath()) ? "config_malformed" : "config_missing";
   }
 
   const cognition = (cfg.cognition ?? null) as Record<string, unknown> | null;
@@ -83,14 +118,10 @@ function applyCognitionDefault(
     },
   };
 
-  const tmp = `${cfgPath}.tmp.${process.pid}.${Date.now()}`;
-  writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n");
-  renameSync(tmp, cfgPath);
-  // TD-220 (R2): renameSync adopts the tmp file's umask-default mode (often
-  // 644), NOT config.json's prior 600. Re-tighten so an `igris install`
-  // (which calls this) cannot silently re-loosen what `igris init` hardened.
-  // This is an Igris-OWNED file, so TD-220 must close the gap here.
-  chmodSecretFile(cfgPath);
+  // TD-220 (R2): atomic tmp+rename + re-tighten to 600 (renameSync adopts the
+  // tmp file's umask-default mode, not config.json's prior 600). Shared body —
+  // see writeConfigAtomic.
+  writeConfigAtomic(next);
   return "default_set";
 }
 
@@ -108,4 +139,123 @@ export function applySubconsciousDefault(): CognitionDefaultOutcome {
  */
 export function applyPerceptionDefault(): CognitionDefaultOutcome {
   return applyCognitionDefault("perception");
+}
+
+// --------------------------------------------------------------------
+// FR-122: explicit operator toggles (igris configure)
+// --------------------------------------------------------------------
+
+/**
+ * Outcome of an explicit config write (the FR-122 toggle/set writers). Distinct
+ * from {@link CognitionDefaultOutcome} — there is no "preserved"/"default_set"
+ * here because the operator is deliberately writing a chosen value.
+ */
+export type SetConfigOutcome =
+  | "config_missing"   // config.json doesn't exist — no-op
+  | "config_malformed" // config.json was unreadable — no-op (graceful)
+  | "written";          // the value was written
+
+/**
+ * Explicitly set `cognition.<instance>.enabled` to a chosen boolean (FR-122).
+ *
+ * Unlike {@link applyCognitionDefault} (set-if-absent-to-false), this is the
+ * operator's deliberate flip — it ALWAYS writes the chosen value. Writes the
+ * NESTED key only (never a top-level `perception`/`subconscious` block — FR-191
+ * door contract) and preserves sibling keys at both the cognition and the
+ * instance level (e.g. subconscious.llm_timeout_ms). Atomic + chmod 600.
+ */
+export function setCognitionEnabled(
+  instance: "perception" | "subconscious",
+  value: boolean,
+): SetConfigOutcome {
+  const cfg = readConfig();
+  if (cfg === null) {
+    return existsSync(configJsonPath()) ? "config_malformed" : "config_missing";
+  }
+
+  const cognition = (cfg.cognition ?? null) as Record<string, unknown> | null;
+  const section =
+    cognition !== null
+      ? ((cognition[instance] ?? null) as Record<string, unknown> | null)
+      : null;
+
+  const next: Record<string, unknown> = {
+    ...cfg,
+    cognition: {
+      ...(cognition ?? {}),
+      [instance]: {
+        ...(section ?? {}),
+        enabled: value,
+      },
+    },
+  };
+
+  writeConfigAtomic(next);
+  return "written";
+}
+
+/** Outcome of {@link setRemoteBrain} — adds the TD-252 cleartext refusal. */
+export type SetRemoteBrainOutcome =
+  | "config_missing"
+  | "config_malformed"
+  | "written"          // remote_brain set to {url, api_key}
+  | "cleared"          // remote_brain key deleted (VPS disabled by blank address)
+  | "refused-insecure"; // non-local http:// without override — left unchanged
+
+/**
+ * Set or clear `remote_brain` by address presence (FR-122 VPS-by-address).
+ *
+ * - `value` non-null → write `remote_brain = {url, api_key}` (api_key may be
+ *   null when the operator left it blank). Reuses the TD-252
+ *   `classifySyncTransport` guard FIRST — a non-local `http://` URL is REFUSED
+ *   before it is persisted (parity with prompts.ts), so the api_key can never
+ *   be configured to later travel in cleartext.
+ * - `value` null → DELETE the `remote_brain` key (VPS disabled by blank
+ *   address). Preserves every other config key.
+ *
+ * Atomic + chmod 600 (TD-220 — api_key is a secret). Never throws.
+ */
+export function setRemoteBrain(
+  value: { url: string; apiKey: string | null } | null,
+): SetRemoteBrainOutcome {
+  const cfg = readConfig();
+  if (cfg === null) {
+    return existsSync(configJsonPath()) ? "config_malformed" : "config_missing";
+  }
+
+  if (value === null) {
+    // VPS-disable by blank address: delete the key, preserve everything else.
+    const next = { ...cfg };
+    delete next.remote_brain;
+    writeConfigAtomic(next);
+    return "cleared";
+  }
+
+  // TD-252: refuse a non-local http:// URL before persisting the api_key.
+  if (
+    classifySyncTransport(value.url) === "insecure-http" &&
+    !isInsecureSyncAllowed()
+  ) {
+    warn(
+      `refusing to save remote brain URL '${value.url}' — http:// to a ` +
+        `non-local host sends your api_key in cleartext. Use an https:// ` +
+        `URL, or set IGRIS_ALLOW_INSECURE_SYNC=1 to override (NOT ` +
+        `recommended). Remote brain left unchanged.`,
+    );
+    return "refused-insecure";
+  }
+
+  // Preserve a pre-existing remote_brain.allow_insecure flag (the optional
+  // persistent override the operator may have set) by spreading the old block.
+  const prior = (cfg.remote_brain ?? null) as Record<string, unknown> | null;
+  const next: Record<string, unknown> = {
+    ...cfg,
+    remote_brain: {
+      ...(prior ?? {}),
+      url: value.url,
+      api_key: value.apiKey,
+    },
+  };
+  writeConfigAtomic(next);
+  return "written";
 }
