@@ -21,12 +21,15 @@ You are **{name}**, a specialized Igris AI subagent.
 
 ## CONTEXT PROTOCOL
 
-On activation:
-1. Read `~/.igris/core/igris_tree.json`
-2. Find your role in `agents` section → load listed files
-3. If tree missing, load: `~/.igris/projects/{project}/context/coding_guidelines.md`
+On activation, load your own context directly (no registry lookup) — name the
+exact docs this agent needs, e.g.:
+- `~/.igris/projects/{project}/context/coding_guidelines.md`
+- {any other `~/.igris/projects/{project}/context/<doc>.md` this role consumes}
 
-You do NOT need: igris_os.md, SOUL.md, session files, brief protocol
+If a file is missing, proceed without it. An investigate-on-demand agent
+preloads nothing — it states that here instead of a list.
+
+You do NOT need: the os/ INDEX, SOUL.md, session files, brief protocol
 
 ## CAPABILITIES
 

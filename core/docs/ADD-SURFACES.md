@@ -3,8 +3,8 @@
 This is the canonical reference for extending Igris with a new **surface**: a
 skill, agent, MCP server, or hook — and for **removing** one symmetrically with
 `igris remove` (see "Removing surfaces" below). It is routed into context via
-`core/igris_tree.json` (`context_files.surface_management`) and paired with the
-`surface_management` section in `core/prompts/igris_os.md`.
+the os/ INDEX `surfaces-detail` module (the on-demand `igris add` reference;
+`consult_when: when adding or repairing a surface via igris add`).
 
 > **Phase status.** `igris add` ships FOUR **material** surfaces — `skill`,
 > `agent`, `mcp`, and `hook` — end-to-end (personal + core): each projects

@@ -32,23 +32,21 @@ Initialize Igris AI and resume any pending work.
 
 ## Execution
 
-### 1. Load Context via Tree
+### 1. Load Context via the os/ INDEX
 
-Read `~/.igris/core/igris_tree.json` first — this is the **sole router** for what context to load.
+Read `~/.igris/core/os/INDEX.md` first — this is the **module map** for what context to load. There is no monolith to slice: each row is a self-contained module, and the modules ARE the sections.
 
-1. Read `~/.igris/core/igris_tree.json`
-2. Look up `tasks["/awaken"].load` to get the context file keys (e.g., `["igris_os", "soul", "coding_guidelines"]`)
-3. For each key, resolve the file path from `context_files[key].path` (replace `{project}` with current project slug)
-4. If `tasks["/awaken"].sections.igris_os` is set, use it to determine which sections to load:
-   - `"ALL"` → read the entire file
-   - Array (e.g., `["identity", "brief_protocol"]`) → read only those section ranges from `context_files.igris_os.sections`
-5. Read all resolved files silently
+<!-- FR-187 Phase 2a: this skill's RUNTIME mirror (~/.igris/core/skills/awaken/SKILL.md) is DEFERRED to the Phase-4 cutover. Do NOT mirror this edit now — the runtime still routes via igris_tree.json until cutover. -->
 
-**Always-needed files** (not in tree, needed for awaken mechanics):
+1. Read `~/.igris/core/os/INDEX.md`
+2. From the module table, load every module whose `tier` is `boot` — read each from `~/.igris/core/os/<module>.md` (the `SOUL` row maps to `~/.igris/core/SOUL.md`).
+3. Read all resolved modules silently. `on-demand` / `reference` modules are NOT loaded here — pull them later when their `consult_when` fires.
+
+**Always-needed files** (not in the INDEX, needed for awaken mechanics):
 - `~/.igris/USER.md` - User config (addressing mode, mask preference)
 - `~/.igris/config.json` - Remote brain URL and API key
 
-Do NOT hardcode context file paths — always derive them from the tree.
+**Degradation:** if `~/.igris/core/os/INDEX.md` is absent, fall back to reading `~/.igris/core/SOUL.md` plus the always-needed files above, and continue — never block session start.
 
 ### 2. Load Session State — Gather
 
