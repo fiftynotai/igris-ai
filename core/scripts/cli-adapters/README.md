@@ -217,10 +217,12 @@ region-merges an identity block into a harness's auto-read file. There is no
 and no `igris add identity` arm. The surface registry is back to four:
 `agents skills mcp hook`.
 
-The CLAUDE.md identity block is a separate mechanism (the whole-file `CLAUDE.md`
-render from `core/templates/CLAUDE.md.tmpl`); its identity-denial sweep rides the
-FR-187 cutover, not this surface. The per-harness delegation mechanism that used
-to ride the identity region is now the harness-specific context layer (below).
+The whole-file `CLAUDE.md` render (and its `core/templates/CLAUDE.md.tmpl` +
+`identity.tmpl`) was **removed in FR-191** (the zero-config "door"): `igris install`
+no longer writes any identity file — project or global. Igris stays unaware of a
+cold harness by default; OS identity is delivered only via the `/awaken` boot
+ceremony (decision #872). The per-harness delegation mechanism that used to ride
+the identity region is now the harness-specific context layer (below).
 
 ## Event-hook surface (hooks — FR-180 D7)
 

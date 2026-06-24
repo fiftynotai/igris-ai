@@ -4,7 +4,7 @@
  * Real `node:fs` against `mkdtempSync` tmp dirs — no mocks (L-159: spy at
  * dependency boundaries, but here there is no boundary to spy; the module
  * IS a thin fs wrapper, so we exercise it directly against a sandboxed
- * `~/.claude.json` path). Models `tarball.test.ts` / `claude-md.test.ts`.
+ * `~/.claude.json` path). Models `tarball.test.ts`.
  *
  * The malformed-file byte-equality test is the #1 correctness AC for
  * TD-168 — `~/.claude.json` is hot machine state and must never be

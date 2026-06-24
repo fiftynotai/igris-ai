@@ -7,11 +7,11 @@
  *
  * Pipeline (in order):
  *
- *   1. Symlink layer: <path>/.claude/{agents,rules,skills} → ~/.igris/core/...
+ *   1. Symlink layer: <path>/.claude/{agents,skills} → ~/.igris/core/...
  *      via linkDir/linkFile. Skipped when `skipSymlinkLayer: true`
  *      (test seam) or when ~/.igris/core/ is absent.
- *   2. CLAUDE.md: render template from ~/.igris/core/templates/CLAUDE.md.tmpl
- *      and atomic-write to <path>/CLAUDE.md.
+ *   2. (FR-191: the CLAUDE.md render step was retired — install writes no
+ *      identity file; the install is zero-config.)
  *   3. .igris_version: write JSON marker at <path>/.igris_version.
  *   4. Hooks (default ON, --no-hooks opts out): merge canonical hooks into
  *      <path>/.claude/settings.json using `mergeCanonicalHooks`. Backs up
@@ -19,7 +19,8 @@
  *   5. Registry: upsert the explicit slug (NOT basename) — D-3/D-4 default.
  *   6. installed_features.json: write content hashes for hooks/agents/skills/rules.
  *      Schema v2: brain_channel + brain_ref read from .install-source.json.
- *   7. subconscious.enabled=false default (TD-102; A3 — only if absent).
+ *   7. cognition.{perception,subconscious}.enabled=false defaults (FR-191;
+ *      TD-102; A3 — only if absent).
  *   8. Remote-brain push (A4 — best-effort; failure does not fail install).
  *
  * Flag semantics:
@@ -56,9 +57,8 @@ import {
   discoverSkillEntries,
 } from "../lib/install-discovery.js";
 import { validateSlug } from "../lib/slug.js";
-import { regenerateClaudeMd, ClaudeMdTemplateError } from "../lib/claude-md.js";
 import { writeIgrisVersion } from "../lib/igris-version.js";
-import { applySubconsciousDefault } from "../lib/init-config.js";
+import { applyPerceptionDefault, applySubconsciousDefault } from "../lib/init-config.js";
 import { pushProjectToRemote } from "../lib/remote-push.js";
 import { readInstallSource } from "../lib/install-source.js";
 import { DryRunCollector } from "../lib/dry-run.js";
@@ -73,12 +73,13 @@ export interface InstallOptions {
   /** Internal: CLI version string, defaults to package.json's version. */
   cliVersion?: string;
   /**
-   * Internal: override the install date stamped into CLAUDE.md. Mostly for
-   * tests asserting deterministic content; production calls always use today.
+   * Internal: vestigial since FR-191 retired the CLAUDE.md render that
+   * consumed it. Retained so existing callers/tests still type-check; no
+   * pipeline step reads it.
    */
   installDate?: string;
   /**
-   * When true, preview the would-be writes (symlinks, CLAUDE.md, hooks merge,
+   * When true, preview the would-be writes (symlinks, hooks merge,
    * registry upsert, installed_features.json) without performing any. The
    * verb returns 0 after printing the plan; `runUpdate --dry-run` does NOT
    * delegate here — it has its own enumeration path.
@@ -132,7 +133,7 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
 
   // M3 — dry-run short-circuit. Enumerate would-be writes via DryRunCollector
   // and exit 0 without touching disk or the registry. We intentionally do NOT
-  // run the symlink/CLAUDE.md/hooks-merge code paths in preview mode — the
+  // run the symlink/hooks-merge code paths in preview mode — the
   // collector enumerates the planned operations from the same input as the
   // real run (project path + slug + install-source).
   if (opts.dryRun === true) {
@@ -155,23 +156,9 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
     }
   }
 
-  // 4. CLAUDE.md regeneration from runtime template.
-  if (opts.skipSymlinkLayer !== true) {
-    try {
-      regenerateClaudeMd(absPath, {
-        cliVersion,
-        installDate: opts.installDate,
-      });
-      info(`Wrote ${absPath}/CLAUDE.md`);
-    } catch (err) {
-      if (err instanceof ClaudeMdTemplateError) {
-        // Non-fatal: a fresh from-source install may not have run init yet.
-        warn(err.message);
-      } else {
-        throw err;
-      }
-    }
-  }
+  // 4. FR-191: the CLAUDE.md render step was retired. `igris install` is
+  // zero-config and writes no identity file — the harness discovers Igris via
+  // the slash menu + the install success message (R-1 / AC #4).
 
   // 5. .igris_version write.
   if (opts.skipSymlinkLayer !== true) {
@@ -275,12 +262,21 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
     updated_at: now,
   });
 
-  // 9. Subconscious default (A3, TD-102).
+  // 9. Cognition defaults (FR-191; A3, TD-102) — both instances default OFF
+  // under the `cognition.*` namespace, only-set-if-absent so an operator who
+  // re-enabled a flag is never silently reverted.
   const subOutcome = applySubconsciousDefault();
   if (subOutcome === "default_set") {
-    info("subconscious.enabled defaulted to false (TD-102; FR-118 redesign pending)");
+    info("cognition.subconscious.enabled defaulted to false (TD-102; FR-191 zero-config door)");
   } else if (subOutcome === "preserved") {
-    debug("subconscious.enabled preserved (operator override)");
+    debug("cognition.subconscious.enabled preserved (operator override)");
+  }
+
+  const percOutcome = applyPerceptionDefault();
+  if (percOutcome === "default_set") {
+    info("cognition.perception.enabled defaulted to false (FR-191 zero-config door)");
+  } else if (percOutcome === "preserved") {
+    debug("cognition.perception.enabled preserved (operator override)");
   }
 
   // 10. Remote-brain push (A4) — best-effort, never fails the install.
@@ -381,7 +377,7 @@ function applySymlinkLayer(projectPath: string, brainRoot: string): void {
 /**
  * Enumerate the planned install operations into the DryRunCollector without
  * performing any of them. Mirrors the order of side-effects in runInstall:
- * symlinks → CLAUDE.md → .igris_version → settings.json hooks merge →
+ * symlinks → .igris_version → settings.json hooks merge →
  * registry upsert → installed_features.json.
  *
  * Discovery is read-only: we walk the brain core directory to enumerate the
@@ -423,14 +419,7 @@ function enumerateInstallPlan(
     }
   }
 
-  // CLAUDE.md (if template exists)
-  const tmplPath = join(brainRoot, "core", "templates", "CLAUDE.md.tmpl");
-  if (existsSync(tmplPath)) {
-    dry.wouldWriteFile(
-      join(projectPath, "CLAUDE.md"),
-      `regenerated from ${tmplPath}`,
-    );
-  }
+  // FR-191: no CLAUDE.md write to enumerate — the render machinery was retired.
 
   // .igris_version
   dry.wouldWriteFile(

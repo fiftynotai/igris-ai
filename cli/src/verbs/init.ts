@@ -97,13 +97,6 @@ import {
   ZipSlipError,
 } from "../lib/tarball.js";
 import { writeInstallSource } from "../lib/install-source.js";
-import {
-  GlobalClaudeMdTemplateError,
-  globalClaudeMdPath,
-  needsRewrite,
-  parseInstalledVersion,
-  regenerateGlobalClaudeMd,
-} from "../lib/global-claude-md.js";
 import { closeDb } from "../lib/registry.js";
 import { info, warn, error as logError, debug } from "../lib/log.js";
 import {
@@ -573,38 +566,10 @@ export async function runInit(opts: InitOptions): Promise<number> {
     }
   }
 
-  // --- 9b. Re-template global ~/.claude/CLAUDE.md (TD-176) -------------
-  // The global CLAUDE.md is orphaned v6 machine state — the retired
-  // igris_brain_init.sh shell installer was its only writer. This adds the
-  // missing regeneration step back, version-gated so a current file is a
-  // strict no-op. A missing template is non-fatal: re-templating a status
-  // file must never abort an install (mirrors install.ts's
-  // ClaudeMdTemplateError handling).
-  if (dry !== null) {
-    const globalPath = globalClaudeMdPath();
-    const installed = existsSync(globalPath)
-      ? parseInstalledVersion(readFileSync(globalPath, "utf-8"))
-      : null;
-    if (needsRewrite(installed, cliVersion)) {
-      dry.wouldWriteFile(globalPath, "re-template global CLAUDE.md");
-    }
-  } else {
-    try {
-      const res = regenerateGlobalClaudeMd({ cliVersion });
-      if (res.written) {
-        const from = res.previousVersion ?? "absent";
-        info(`Re-templated ${res.path} (v${from} -> v${cliVersion})`);
-      } else {
-        debug(`global CLAUDE.md current at ${res.path}, preserved`);
-      }
-    } catch (err) {
-      if (err instanceof GlobalClaudeMdTemplateError) {
-        warn(`${err.message} — skipping global CLAUDE.md re-template.`);
-      } else {
-        throw err;
-      }
-    }
-  }
+  // --- 9b. (FR-191) global ~/.claude/CLAUDE.md render retired -----------
+  // The TD-176 global re-template step was removed: `igris init` writes NO
+  // global identity file. The harness discovers Igris via the slash menu +
+  // the install/init success message.
 
   // --- 10. Write .install-source.json ----------------------------------
   if (dry !== null) {

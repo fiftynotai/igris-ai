@@ -4,10 +4,11 @@
  * Per architect's prior-mistake guidance: do NOT vi.mock the module under test.
  * We test against a real tmp filesystem + real :memory:-style sandboxed DB
  * (IGRIS_BRAIN_DIR) + skipSymlinkLayer flag for hermetic tests that don't need
- * to exercise the symlink/CLAUDE.md/.igris_version pipeline. A separate set of
+ * to exercise the symlink/.igris_version pipeline. A separate set of
  * "with symlink layer" tests stages a brain core in tmp and asserts that the
- * native TS calls (symlinks.ts, claude-md.ts, igris-version.ts) produce the
- * correct artifacts.
+ * native TS calls (symlinks.ts, igris-version.ts) produce the correct
+ * artifacts. FR-191 retired the CLAUDE.md render — install writes no
+ * identity file.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -96,12 +97,6 @@ const CANONICAL_HOOKS = {
   },
 };
 
-const TEMPLATE = `# Igris AI - Project Instructions
-
-Igris v{{IGRIS_VERSION}}
-Installed: {{INSTALL_DATE}}
-`;
-
 function stageBrain(): void {
   const hooksDir = join(tmpRoot, "core", "hooks");
   mkdirSync(hooksDir, { recursive: true });
@@ -135,10 +130,8 @@ function stageBrainWithCore(): void {
   mkdirSync(scanDir, { recursive: true });
   writeFileSync(join(scanDir, "SKILL.md"), "# scan\n");
 
-  // CLAUDE.md template
-  const tmplDir = join(tmpRoot, "core", "templates");
-  mkdirSync(tmplDir, { recursive: true });
-  writeFileSync(join(tmplDir, "CLAUDE.md.tmpl"), TEMPLATE);
+  // FR-191: no CLAUDE.md template is staged — the render machinery + its
+  // template were retired; install writes no identity file.
 }
 
 function stageProject(): string {
@@ -512,9 +505,10 @@ describe("install verb — TD-112 slug-mismatch hint (M2 reworded)", () => {
 });
 
 // ---------------------------------------------------------------------
-// M2.6 / M2.10: native symlink layer + CLAUDE.md regen + .igris_version.
+// M2.6 / M2.10: native symlink layer + .igris_version.
 // These tests stage a full brain core in tmp and assert the install verb
-// produces the correct artifacts WITHOUT shelling out.
+// produces the correct artifacts WITHOUT shelling out. FR-191 retired the
+// CLAUDE.md render — install no longer writes an identity file.
 // ---------------------------------------------------------------------
 
 describe("install verb — native symlink layer (M2.6)", () => {
@@ -577,7 +571,7 @@ describe("install verb — native symlink layer (M2.6)", () => {
     }
   });
 
-  it("regenerates CLAUDE.md with version + date substituted", async () => {
+  it("writes NO project CLAUDE.md (FR-191 — render machinery retired)", async () => {
     const { runInstall } = await import("../verbs/install.js");
     const code = await runInstall({
       path: projectDir,
@@ -586,11 +580,7 @@ describe("install verb — native symlink layer (M2.6)", () => {
       installDate: "2026-05-07",
     });
     expect(code).toBe(0);
-
-    const claudeMd = readFileSync(join(projectDir, "CLAUDE.md"), "utf-8");
-    expect(claudeMd).toContain("Igris v7.0.0");
-    expect(claudeMd).toContain("Installed: 2026-05-07");
-    expect(claudeMd).not.toContain("{{IGRIS_VERSION}}");
+    expect(existsSync(join(projectDir, "CLAUDE.md"))).toBe(false);
   });
 
   it("writes .igris_version with brain_path = IGRIS_BRAIN_DIR", async () => {
@@ -609,7 +599,7 @@ describe("install verb — native symlink layer (M2.6)", () => {
     expect(versionFile.igris_ai_version).toBe("7.0.0");
   });
 
-  it("re-install is idempotent: symlinks unchanged, CLAUDE.md regenerated stably", async () => {
+  it("re-install is idempotent: symlinks unchanged (inode preserved)", async () => {
     const { runInstall } = await import("../verbs/install.js");
     const code1 = await runInstall({
       path: projectDir,
@@ -619,7 +609,6 @@ describe("install verb — native symlink layer (M2.6)", () => {
     });
     expect(code1).toBe(0);
 
-    const claudeMd1 = readFileSync(join(projectDir, "CLAUDE.md"), "utf-8");
     const ino1 = lstatSync(join(projectDir, ".claude", "agents", "architect.md")).ino;
 
     process.env.IGRIS_KEEP_BAK = "0";
@@ -630,9 +619,6 @@ describe("install verb — native symlink layer (M2.6)", () => {
       installDate: "2026-05-07",
     });
     expect(code2).toBe(0);
-
-    const claudeMd2 = readFileSync(join(projectDir, "CLAUDE.md"), "utf-8");
-    expect(claudeMd2).toBe(claudeMd1);
 
     // Symlink inode must match — no replacement occurred.
     const ino2 = lstatSync(join(projectDir, ".claude", "agents", "architect.md")).ino;

@@ -201,15 +201,15 @@ X agents registered (Y skills available)
 
 ### 6.5. Subconscious Suggestions (FR-106)
 
-> **TD-102 / FR-118 (V7.1):** This entire section is gated behind the
-> `subconscious.enabled` config flag (default `false`). FR-118 SHIPPED the
+> **TD-102 / FR-118 / FR-191 (V7.1):** This entire section is gated behind the
+> `cognition.subconscious.enabled` config flag (default `false`). FR-118 SHIPPED the
 > LLM-driven replacement: the subconscious is now a cognition instance
 > (digest → isolated LLM call → open-typed suggestions); the old rule engine
 > (`stalled`/`gap`/`conflict`/`pattern` detectors) was deleted. The section
-> stays silent until `subconscious.enabled` is flipped to `true`.
+> stays silent until `cognition.subconscious.enabled` is flipped to `true`.
 
 This section is rendered ONLY when ALL of the following are true:
-1. `subconscious.enabled` is `true` in `~/.igris/config.json` (key absent = `false`).
+1. `cognition.subconscious.enabled` is `true` in `~/.igris/config.json` (key absent = `false`).
 2. `$ARGUMENTS` contains the literal token `--suggestions`.
 
 If either gate fails, skip this section silently — render nothing, do not
@@ -275,8 +275,8 @@ Independent of the gated suggestions table above, surface a single health line
 for the LLM subconscious engine — when it last fired, the outcome, how many
 suggestions it produced today, and the remaining daily budget. This is the
 subconscious analogue of §6.6's Perception health line and is ALSO gated behind
-`subconscious.enabled` (skip silently when the flag is absent/`false` — the
-engine does not run, so there is nothing to report).
+`cognition.subconscious.enabled` (skip silently when the flag is absent/`false` —
+the engine does not run, so there is nothing to report).
 
 Query the NEW `cognition.subconscious.*` lifecycle namespace (the engine writes
 these to `event_log` directly under `component = 'cognition.subconscious'` — the

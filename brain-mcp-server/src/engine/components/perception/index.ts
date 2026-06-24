@@ -52,24 +52,38 @@ import type { LlmExtractorGlobalConfig } from '../cognition/backend/env.js';
 /**
  * Resolve the active config via the 3-layer chain:
  *   1. `DEFAULT_PERCEPTION_CONFIG` (typed defaults)
- *   2. `~/.igris/config.json` `perception` section (operator override)
+ *   2. `~/.igris/config.json` `cognition.perception` section (operator override)
  *   3. Env vars: `IGRIS_PERCEPTION_LLM_ENABLED`, `IGRIS_PERCEPTION_LLM_TIMEOUT_MS`,
  *      `IGRIS_PERCEPTION_AUTO_APPROVE` (TD-066)
  *
- * Mirrors `subconscious/runner.ts` config handling. Failure to read the
- * file is silent — defaults still apply.
+ * FR-191: the operator-override section moved UP to the `cognition.perception`
+ * namespace (nested-only — the legacy top-level `perception` block is no longer
+ * read; the feature never shipped a consumer that relied on it). The section's
+ * `enabled` flag (what the config.json template + `applyPerceptionDefault` write)
+ * maps onto the internal `extractor_llm_enabled` knob so the install-time OFF
+ * default actually closes the door (FR-191 R-3b). Failure to read the file is
+ * silent — defaults still apply.
  */
 export function resolvePerceptionConfig(log?: { info: (m: string) => void; warn: (m: string) => void }): PerceptionExtractorConfig {
   let cfg: PerceptionExtractorConfig = { ...DEFAULT_PERCEPTION_CONFIG };
 
-  // Layer 2: ~/.igris/config.json
+  // Layer 2: ~/.igris/config.json `cognition.perception`
   try {
     const configPath = path.join(os.homedir(), '.igris', 'config.json');
     const raw = fs.readFileSync(configPath, 'utf-8');
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const section = parsed.perception;
+    const cognition = parsed.cognition;
+    const section =
+      cognition && typeof cognition === 'object' && !Array.isArray(cognition)
+        ? (cognition as Record<string, unknown>).perception
+        : undefined;
     if (section && typeof section === 'object' && !Array.isArray(section)) {
-      cfg = { ...cfg, ...(section as Partial<PerceptionExtractorConfig>) };
+      const sec = section as Partial<PerceptionExtractorConfig> & { enabled?: boolean };
+      // `cognition.perception.enabled` is the canonical on/off flag (template +
+      // applyPerceptionDefault); it maps onto `extractor_llm_enabled`.
+      const { enabled, ...rest } = sec;
+      cfg = { ...cfg, ...rest };
+      if (typeof enabled === 'boolean') cfg.extractor_llm_enabled = enabled;
     }
   } catch {
     // file absent or malformed — defaults already in place

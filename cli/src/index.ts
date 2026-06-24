@@ -14,8 +14,9 @@
  * The CLI now owns the entire install pipeline natively in TS — both the
  * materialized layer (settings.json hooks block, brain `projects` registry
  * rows, `installed_features.json`) AND the symlink layer (`.claude/agents`,
- * `.claude/rules`, `.claude/skills`, CLAUDE.md regen, `.igris_version`)
- * via `cli/src/lib/{symlinks,claude-md,igris-version}.ts`.
+ * `.claude/skills`, `.igris_version`) via
+ * `cli/src/lib/{symlinks,igris-version}.ts`. FR-191 retired the CLAUDE.md
+ * render machinery — `igris install` is zero-config and writes no identity file.
  *
  * Lifecycle pattern: top-level `main()` sets `process.exitCode` rather than
  * calling `process.exit(code)` so any pending async cleanup can flush.
@@ -197,7 +198,7 @@ async function main(argv: string[]): Promise<void> {
     .option("--no-hooks", "skip materializing hooks into .claude/settings.json")
     .option(
       "--dry-run",
-      "preview symlinks, CLAUDE.md, and hooks-merge without performing any writes",
+      "preview symlinks and hooks-merge without performing any writes",
       false,
     )
     .action(
@@ -251,7 +252,7 @@ async function main(argv: string[]): Promise<void> {
   program
     .command("register-project [path]")
     .description(
-      "Write the brain registry row for <path> only (no .claude/, no hooks, no CLAUDE.md)",
+      "Write the brain registry row for <path> only (no .claude/, no hooks)",
     )
     .option(
       "--slug <slug>",

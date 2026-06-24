@@ -3,7 +3,7 @@
  *
  * Inverts `igris install`: writes the brain `projects` registry row only.
  * Does NOT:
- *   - touch <path>/.claude/ (no symlinks, no settings.json merge, no CLAUDE.md)
+ *   - touch <path>/.claude/ (no symlinks, no settings.json merge)
  *   - write installed_features.json
  *   - merge hooks
  *   - regenerate .igris_version
@@ -92,6 +92,6 @@ export async function runRegisterProject(
   info(`Registered project: ${slug} -> ${absPath}`);
   info("");
   info("Note: register-project writes the brain registry row only.");
-  info("To install symlinks, hooks, and CLAUDE.md, run: igris install <path>");
+  info("To install symlinks and hooks, run: igris install <path>");
   return 0;
 }

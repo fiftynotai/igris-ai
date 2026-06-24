@@ -71,7 +71,7 @@ if [ "$mcp_needs_build" -eq 1 ]; then
   (cd "$MCP_SRC" && npm run build)
 fi
 
-# Stage compiled output + package.json + package-lock.json. package.json
+# Stage compiled output + package.json + package-lock.json + scripts/. package.json
 # is copied so the bundled MCP advertises "type":"module" to Node's module
 # resolver and carries its version for doctor checks. The lockfile seeds
 # the vendored install below; that install regenerates it to match the
@@ -84,6 +84,7 @@ cp -p "$MCP_SRC/package.json" "$MCP_DEST/package.json"
 if [ -f "$MCP_SRC/package-lock.json" ]; then
   cp -p "$MCP_SRC/package-lock.json" "$MCP_DEST/package-lock.json"
 fi
+cp -R "$MCP_SRC/scripts" "$MCP_DEST/"
 
 # Fail loud if the staged entrypoint is missing — a publish with a broken
 # bundle must abort rather than ship a half-package.

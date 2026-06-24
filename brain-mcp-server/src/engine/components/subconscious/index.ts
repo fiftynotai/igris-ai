@@ -93,21 +93,19 @@ function asObject(v: unknown): Record<string, unknown> | undefined {
 }
 
 /**
- * Resolve the subconscious instance config (FR-118 M2). Reads BOTH the new
- * `cognition.subconscious` path and the legacy top-level `subconscious` block
- * (back-compat — the `subconscious.enabled` dotted key stays grep-able for
- * MAINTAINING.md:67). The new path wins where both set a key; absent keys fall
- * back to `DEFAULT_SUBCONSCIOUS_CONFIG`.
+ * Resolve the subconscious instance config (FR-118 M2; FR-191). Reads the
+ * `cognition.subconscious` path NESTED-ONLY. FR-191 dropped the legacy
+ * top-level `subconscious` fallback — there are no installs to migrate (the
+ * feature never shipped to consumers), so the namespace is now canonical.
+ * Absent keys fall back to `DEFAULT_SUBCONSCIOUS_CONFIG` (OFF).
  */
 export function resolveSubconsciousConfig(
   config: Record<string, unknown> = readIgrisConfig(),
 ): SubconsciousConfig {
-  const legacy = asObject(config.subconscious) ?? {};
   const cognition = asObject(config.cognition);
   const nested = (cognition && asObject(cognition.subconscious)) ?? {};
   const pick = <T>(key: string, fallback: T): T => {
     if (nested[key] !== undefined) return nested[key] as T;
-    if (legacy[key] !== undefined) return legacy[key] as T;
     return fallback;
   };
   return {

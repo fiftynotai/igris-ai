@@ -150,21 +150,25 @@ describe("init — fresh install via --from-source", () => {
       readFileSync(join(brainRoot, "config.json"), "utf-8"),
     ) as {
       version: string;
-      subconscious: { enabled: boolean };
+      subconscious?: unknown;
+      cognition: { subconscious: { enabled: boolean } };
       remote_brain: unknown;
     };
     expect(cfg.version).toBe("9.9.9");
-    expect(cfg.subconscious.enabled).toBe(false);
+    // FR-191: the legacy top-level `subconscious` block is GONE — the canonical
+    // key is nested under `cognition.subconscious`.
+    expect(cfg.subconscious).toBeUndefined();
+    expect(cfg.cognition.subconscious.enabled).toBe(false);
     expect(cfg.remote_brain).toBe(null);
   });
 
-  it("config.json renders the FR-118 llm_extractor + cognition.{perception,subconscious} sections", async () => {
+  it("config.json renders the FR-118 llm_extractor + cognition.{perception,subconscious} sections (FR-191: both OFF, no top-level subconscious)", async () => {
     const { runInit } = await import("../verbs/init.js");
     await runInit({ fromSource: sourceRepo, cliVersion: "9.9.9", yes: true });
     const cfg = JSON.parse(
       readFileSync(join(brainRoot, "config.json"), "utf-8"),
     ) as {
-      subconscious: { enabled: boolean };
+      subconscious?: unknown;
       llm_extractor: { harness: string; fallback_order: string[] };
       cognition: {
         perception: { enabled: boolean };
@@ -177,9 +181,9 @@ describe("init — fresh install via --from-source", () => {
         };
       };
     };
-    // Legacy top-level key preserved + grep-able (MAINTAINING.md:67) — the
-    // subconscious resolver still reads it as a fallback.
-    expect(cfg.subconscious.enabled).toBe(false);
+    // FR-191: the legacy top-level `subconscious` block was removed from the
+    // template; the canonical key lives under `cognition.subconscious`.
+    expect(cfg.subconscious).toBeUndefined();
     // Global llm_extractor harness default + fallback order.
     expect(cfg.llm_extractor.harness).toBe("claude");
     expect(cfg.llm_extractor.fallback_order).toEqual(["claude", "codex", "gemini"]);
@@ -187,7 +191,18 @@ describe("init — fresh install via --from-source", () => {
     expect(cfg.cognition.subconscious.enabled).toBe(false);
     expect(cfg.cognition.subconscious.llm_daily_budget).toBe(8);
     expect(cfg.cognition.subconscious.harness).toBe(null);
-    expect(cfg.cognition.perception.enabled).toBe(true);
+    // FR-191 door: perception defaults OFF (was true).
+    expect(cfg.cognition.perception.enabled).toBe(false);
+  });
+
+  it("writes NO global ~/.claude/CLAUDE.md (FR-191 — global render retired)", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    expect(
+      await runInit({ fromSource: sourceRepo, cliVersion: "7.0.0", yes: true }),
+    ).toBe(0);
+    // HOME is sandboxed to homeOverride; the global render step (9b) was
+    // removed, so no global CLAUDE.md should be materialized.
+    expect(existsSync(join(homeOverride, ".claude", "CLAUDE.md"))).toBe(false);
   });
 
   it("--skip-remote sets config.remote_brain to null", async () => {

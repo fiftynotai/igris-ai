@@ -288,15 +288,15 @@ If `goals_upcoming[]` is empty, render nothing — no "No goals" line. Token bud
 
 ### 4.8. Subconscious Suggestions (FR-106)
 
-> **TD-102 / FR-118 (V7.1):** This entire section is gated behind the
-> `subconscious.enabled` config flag, which defaults to `false`. The old
+> **TD-102 / FR-118 / FR-191 (V7.1):** This entire section is gated behind the
+> `cognition.subconscious.enabled` config flag, which defaults to `false`. The old
 > rule-based engine had a 2% true-positive rate; FR-118 SHIPPED the redesign —
 > the subconscious is now a cognition instance (digest → isolated LLM call →
 > open-typed suggestions), and the rule detectors were deleted. Re-enable is
 > just a flag flip — no schedule re-bootstrap needed.
 
-Read `~/.igris/config.json` and check `subconscious.enabled`. If the key is
-absent, treat as `false`. If `false`, skip this section silently — render
+Read `~/.igris/config.json` and check `cognition.subconscious.enabled`. If the
+key is absent, treat as `false`. If `false`, skip this section silently — render
 nothing (no suggestion MCP tools, no failure WARNING, no "disabled" notice).
 Resume reading at §4.9.
 

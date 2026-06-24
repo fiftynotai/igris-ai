@@ -225,7 +225,7 @@ export function claudeJsonPath(): string {
  * rather than the module's parent makes the resolution correct under
  * vitest (which runs `src/`) as well as in the published package (`dist/`).
  * Same `dirname(fileURLToPath(import.meta.url))` idiom as
- * `init.ts#templateRoot()` and `global-claude-md.ts`.
+ * `init.ts#templateRoot()`.
  */
 export function bundledMcpEntryPath(): string {
   const here = dirname(fileURLToPath(import.meta.url)); // cli/dist/lib or cli/src/lib
