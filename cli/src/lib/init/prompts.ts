@@ -19,7 +19,7 @@
  * posture: `better-sqlite3`, `commander`, `tar` only).
  */
 
-import { createInterface } from "node:readline";
+import { createInterface, emitKeypressEvents } from "node:readline";
 import { existsSync, readFileSync } from "node:fs";
 import { info, warn } from "../log.js";
 import {
@@ -36,6 +36,141 @@ import { inferActivePersona, listPersonas } from "../persona.js";
  * without battling Node's readline event timing.
  */
 export type PromptFn = (question: string) => Promise<string>;
+
+/**
+ * Async secret-prompt function — same contract as {@link PromptFn} but the
+ * production binding suppresses terminal echo (B1, TD-153) so the api_key is
+ * not painted into scrollback. A `null` reader means "no masking available"
+ * (a test injected a fake prompt, or the shell is non-interactive) and callers
+ * fall back to the plain {@link PromptFn} with the visible-input warning.
+ */
+export type SecretReadFn = (question: string) => Promise<string>;
+
+/** Max URL re-prompts before bailing and leaving the remote brain unchanged (B2). */
+const MAX_URL_ATTEMPTS = 3;
+
+/**
+ * Read one line from a TTY with echo suppressed (B1 — api_key masking).
+ *
+ * Cross-platform via `node:readline` raw-mode keypress events: each printable
+ * char is rendered as `*`, Backspace/Delete erases the last char (and its
+ * star), Enter/Return submits, Ctrl-C aborts the process (matching readline's
+ * default SIGINT behavior), and Ctrl-U clears the line.
+ *
+ * Robust fallback: if `stdin` is not a TTY or `setRawMode` is unavailable /
+ * throws (CI, dumb terminals, piped input), this resolves via the supplied
+ * `visibleFallback` ({@link PromptFn}) so the prompt still works — just with
+ * visible input and the existing "clear scrollback" warning. The caller emits
+ * that warning ONLY on the fallback path.
+ *
+ * @param question   The prompt label, written verbatim before reading.
+ * @param input      The input stream (production: `process.stdin`).
+ * @param output     The output stream (production: `process.stdout`).
+ * @param visibleFallback Plain reader used when raw mode can't be engaged.
+ *
+ * Exported for unit testing the non-TTY fallback path without a real terminal.
+ */
+export function maskedSecretRead(
+  question: string,
+  input: NodeJS.ReadStream,
+  output: NodeJS.WriteStream,
+  visibleFallback: PromptFn,
+): Promise<string> {
+  // Guard: no TTY (piped/CI) → fall straight back to the visible path.
+  if (input.isTTY !== true || typeof input.setRawMode !== "function") {
+    return visibleFallback(question);
+  }
+
+  return new Promise<string>((resolve, reject) => {
+    let raw = "";
+    let settled = false;
+
+    emitKeypressEvents(input);
+
+    // Engaging raw mode can throw on exotic terminals — degrade gracefully.
+    try {
+      input.setRawMode(true);
+    } catch {
+      // Could not engage raw mode → visible fallback (no echo suppression).
+      resolve(visibleFallback(question));
+      return;
+    }
+
+    const wasPaused = input.isPaused();
+    input.resume();
+    output.write(question);
+
+    const onKeypress = (
+      str: string | undefined,
+      key: { name?: string; ctrl?: boolean; sequence?: string } | undefined,
+    ): void => {
+      if (settled) return;
+      const name = key?.name;
+
+      // Submit on Enter/Return.
+      if (name === "return" || name === "enter") {
+        output.write("\n");
+        finish(() => resolve(raw));
+        return;
+      }
+      // Ctrl-C: restore the terminal, then abort like readline's default.
+      if (key?.ctrl === true && name === "c") {
+        output.write("\n");
+        finish(() => {
+          // eslint-disable-next-line n/no-process-exit
+          process.exit(130);
+        });
+        return;
+      }
+      // Ctrl-U clears the whole line.
+      if (key?.ctrl === true && name === "u") {
+        if (raw.length > 0) {
+          output.write("\r" + question + " ".repeat(raw.length) + "\r" + question);
+          raw = "";
+        }
+        return;
+      }
+      // Backspace / Delete erases the last char and its star.
+      if (name === "backspace" || name === "delete") {
+        if (raw.length > 0) {
+          raw = raw.slice(0, -1);
+          output.write("\b \b");
+        }
+        return;
+      }
+      // Ignore any other control keys (arrows, tab, ctrl-combos) — only
+      // printable single chars are accepted into the secret.
+      if (key?.ctrl === true || str === undefined || str.length !== 1) {
+        return;
+      }
+      const code = str.charCodeAt(0);
+      if (code < 0x20 || code === 0x7f) return; // non-printable
+      raw += str;
+      output.write("*");
+    };
+
+    function finish(then: () => void): void {
+      settled = true;
+      input.removeListener("keypress", onKeypress);
+      try {
+        input.setRawMode(false);
+      } catch {
+        // best-effort restore
+      }
+      if (wasPaused) input.pause();
+      then();
+    }
+
+    input.on("keypress", onKeypress);
+
+    // If the stream errors mid-read, restore and reject so the caller's
+    // try/finally still closes any readline interface.
+    input.once("error", (err) => {
+      if (settled) return;
+      finish(() => reject(err));
+    });
+  });
+}
 
 /**
  * Structured result of the prompt flow. Consumed by `renderUserTemplate`
@@ -124,6 +259,15 @@ export async function gatherInitInputs(opts: GatherOpts): Promise<InitInputs> {
       return new Promise((res) => rl!.question(q, (a) => res(a)));
     });
 
+  // B1: masked api_key reader. Only active on the real interactive path —
+  // when a test injects `opts.prompt` we keep `null` so the visible `ask`
+  // seam stays in control (no real raw-mode, no terminal mutation in CI).
+  const secret: SecretReadFn | null =
+    opts.prompt === undefined
+      ? (q: string): Promise<string> =>
+          maskedSecretRead(q, process.stdin, process.stdout, ask)
+      : null;
+
   try {
     info("");
     info("Configuring your install. Press Enter for defaults.");
@@ -137,7 +281,7 @@ export async function gatherInitInputs(opts: GatherOpts): Promise<InitInputs> {
       return { userName, userEmail, remoteBrain: null };
     }
 
-    const remoteBrain = await askRemoteBrain(ask, null);
+    const remoteBrain = await askRemoteBrain(ask, secret, null);
     return { userName, userEmail, remoteBrain };
   } finally {
     if (rl !== null) (rl as ReturnType<typeof createInterface>).close();
@@ -178,29 +322,43 @@ async function askIdentity(
  * non-local `http://` URL (returns the seed unchanged so a re-run doesn't lose
  * the prior value to an accidental insecure entry).
  *
+ * B2 (TD-153): the URL prompt is wrapped in a bounded re-prompt loop — a value
+ * that `new URL()` rejects prints an error and re-asks (up to
+ * {@link MAX_URL_ATTEMPTS}). After the cap it bails, leaving the brain
+ * unchanged (returns the seed) so `config.json` never receives a non-URL.
+ *
+ * @param ask    Plain reader for the URL.
+ * @param secret Masked reader for the api_key (B1). `null` → fall back to the
+ *   visible `ask` path with the existing "input is visible" warning.
  * @param seed Current remote_brain (null when none configured). The URL prompt
  *   defaults to the seeded URL; the API key prompt defaults to the seeded key
  *   (masked label) so Enter keeps the existing key without re-typing it.
  */
 async function askRemoteBrain(
   ask: PromptFn,
+  secret: SecretReadFn | null,
   seed: { url: string; apiKey: string | null } | null,
 ): Promise<{ url: string; apiKey: string | null } | null> {
   info("");
   info("Optional: remote brain (VPS) for cross-machine sync.");
-  const urlDefault = seed?.url ?? "";
-  const urlRaw = (
-    await ask(
-      `Remote brain URL (blank to ${seed === null ? "skip" : "disable"}) [${urlDefault}]: `,
-    )
-  ).trim();
+
+  // B2: re-prompt the URL until it parses or we exhaust the attempt budget.
+  // A blank answer short-circuits (disable/skip) before validation runs.
+  const url = await promptRemoteUrl(ask, seed);
+  if (url === undefined) {
+    // Exhausted attempts without a valid URL → leave the brain unchanged.
+    warn(
+      `no valid URL after ${MAX_URL_ATTEMPTS} attempts — remote brain left ` +
+        `unchanged; edit ~/.igris/config.json later to set it.`,
+    );
+    return seed;
+  }
   // VPS-by-address: a blank URL ALWAYS means "no VPS" — it SKIPS when none was
   // configured and CLEARS (disables) when one was. To keep an existing VPS the
   // operator re-enters the URL (shown as the default label for copy). This is
   // the address-presence contract: present = enabled, blank = disabled. (We do
   // NOT auto-substitute the seed on blank — that would make disabling
   // impossible via a prompt.)
-  const url = urlRaw;
   if (url === "") {
     return null;
   }
@@ -222,11 +380,18 @@ async function askRemoteBrain(
     return seed;
   }
 
-  info("Note: input is visible — clear scrollback after if sensitive.");
+  // B1: read the api_key with echo suppressed when a masked reader is wired
+  // (real interactive TTY). Otherwise fall back to the visible `ask` path and
+  // print the legacy "input is visible" warning so the user knows to clear
+  // scrollback. The masked path needs no such warning (nothing was echoed).
   const keyLabel = seed?.apiKey != null ? "keep current" : "";
-  const apiKeyRaw = (
-    await ask(`Remote brain API key [${keyLabel}]: `)
-  ).trim();
+  let apiKeyRaw: string;
+  if (secret === null) {
+    info("Note: input is visible — clear scrollback after if sensitive.");
+    apiKeyRaw = (await ask(`Remote brain API key [${keyLabel}]: `)).trim();
+  } else {
+    apiKeyRaw = (await secret(`Remote brain API key [${keyLabel}]: `)).trim();
+  }
   // Enter keeps the seeded key (when present); a fresh value overrides it.
   const apiKey = apiKeyRaw === "" ? (seed?.apiKey ?? null) : apiKeyRaw;
   if (apiKey === null) {
@@ -236,6 +401,46 @@ async function askRemoteBrain(
     );
   }
   return { url, apiKey };
+}
+
+/**
+ * B2 (TD-153): prompt for the remote-brain URL with bounded validation retries.
+ *
+ * Returns:
+ *   - `""`        the user left it blank (skip/disable) — NOT validated.
+ *   - a `string`  a value that `new URL()` accepted (trimmed).
+ *   - `undefined` the attempt budget was exhausted without a valid URL; the
+ *     caller leaves the remote brain unchanged.
+ *
+ * Validation is `try { new URL(url) } catch` — the same parser the rest of the
+ * stack (sync-transport, mcp-client) uses, so a value that passes here will not
+ * surprise a later `new URL()`. The TD-252 scheme refusal is applied AFTER this
+ * (a syntactically valid `http://host` parses fine but may still be refused).
+ */
+async function promptRemoteUrl(
+  ask: PromptFn,
+  seed: { url: string; apiKey: string | null } | null,
+): Promise<string | undefined> {
+  const urlDefault = seed?.url ?? "";
+  const label = `Remote brain URL (blank to ${seed === null ? "skip" : "disable"}) [${urlDefault}]: `;
+  for (let attempt = 1; attempt <= MAX_URL_ATTEMPTS; attempt++) {
+    const urlRaw = (await ask(label)).trim();
+    if (urlRaw === "") return ""; // blank = skip/disable, never validated
+    try {
+      new URL(urlRaw);
+      return urlRaw; // parseable — accept (TD-252 refusal handled by caller)
+    } catch {
+      const remaining = MAX_URL_ATTEMPTS - attempt;
+      if (remaining > 0) {
+        warn(
+          `'${urlRaw}' is not a valid URL (expected e.g. https://brain.example.com). ` +
+            `Try again (${remaining} attempt${remaining === 1 ? "" : "s"} left), ` +
+            `or press Enter to skip.`,
+        );
+      }
+    }
+  }
+  return undefined; // budget exhausted
 }
 
 /** Parse a `y`/`n` answer, defaulting to `current` on a blank/unrecognized reply. */
@@ -414,6 +619,14 @@ export async function gatherConfigureInputs(
       return new Promise((res) => rl!.question(q, (a) => res(a)));
     });
 
+  // B1: masked api_key reader on the real interactive path only (null when a
+  // test injects `opts.prompt`, so the visible seam stays in control).
+  const secret: SecretReadFn | null =
+    opts.prompt === undefined
+      ? (q: string): Promise<string> =>
+          maskedSecretRead(q, process.stdin, process.stdout, ask)
+      : null;
+
   try {
     info("");
     info("Configuring Igris. Press Enter to keep the current value.");
@@ -438,7 +651,7 @@ export async function gatherConfigureInputs(
 
     const remoteBrain = opts.skipRemote
       ? seed.remoteBrain
-      : await askRemoteBrain(ask, seed.remoteBrain);
+      : await askRemoteBrain(ask, secret, seed.remoteBrain);
 
     info("");
     info("Cognition (LLM extraction engines — default OFF).");

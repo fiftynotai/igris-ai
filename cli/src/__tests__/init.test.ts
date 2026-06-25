@@ -593,6 +593,117 @@ describe("init — interactive prompts (TD-144)", () => {
     });
   });
 
+  // B2 (TD-153): the remote-brain URL prompt validates with `new URL()` and
+  // re-prompts (bounded) on a non-URL. A valid URL is accepted; a bad-then-good
+  // sequence re-prompts; blank still skips; exhausting the budget bails cleanly
+  // and never persists a non-URL into config.json.
+  it("B2: a valid https URL is accepted on the first try", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const { ask, calls } = queuedPrompt([
+      "Gus",
+      "gus@example.com",
+      "https://brain.valid.example/",
+      "key-x",
+    ]);
+    const code = await runInit({ fromSource: sourceRepo, isTTY: true, prompt: ask });
+    expect(code).toBe(0);
+    // name, email, URL (valid first try), api_key — exactly 4 prompts.
+    expect(calls.length).toBe(4);
+    const cfg = JSON.parse(
+      readFileSync(join(brainRoot, "config.json"), "utf-8"),
+    ) as { remote_brain: { url: string; api_key: string } | null };
+    expect(cfg.remote_brain).toEqual({
+      url: "https://brain.valid.example/",
+      api_key: "key-x",
+    });
+  });
+
+  it("B2: an invalid URL re-prompts, then accepts the valid retry", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    // name, email, BAD url, GOOD url, api_key. The URL prompt fires TWICE.
+    const { ask, calls } = queuedPrompt([
+      "Hank",
+      "hank@example.com",
+      "not a url",
+      "https://brain.retry.example/",
+      "key-y",
+    ]);
+    const code = await runInit({ fromSource: sourceRepo, isTTY: true, prompt: ask });
+    expect(code).toBe(0);
+    // 5 prompts total: the URL label was asked twice (re-prompt on the bad one).
+    expect(calls.length).toBe(5);
+    const urlPrompts = calls.filter((q) => q.includes("Remote brain URL"));
+    expect(urlPrompts.length).toBe(2);
+    const cfg = JSON.parse(
+      readFileSync(join(brainRoot, "config.json"), "utf-8"),
+    ) as { remote_brain: { url: string; api_key: string } | null };
+    expect(cfg.remote_brain).toEqual({
+      url: "https://brain.retry.example/",
+      api_key: "key-y",
+    });
+  });
+
+  it("B2: a blank URL still skips remote (no validation, remote_brain: null)", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const { ask, calls } = queuedPrompt(["Ida", "ida@example.com", ""]);
+    const code = await runInit({ fromSource: sourceRepo, isTTY: true, prompt: ask });
+    expect(code).toBe(0);
+    // name, email, blank URL — 3 prompts, NO api_key (blank short-circuits).
+    expect(calls.length).toBe(3);
+    const cfg = JSON.parse(
+      readFileSync(join(brainRoot, "config.json"), "utf-8"),
+    ) as { remote_brain: unknown };
+    expect(cfg.remote_brain).toBe(null);
+  });
+
+  it("B2: invalid URL past max attempts bails cleanly (remote_brain: null, api_key never asked)", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    // name, email, then 3 bad URLs (the max). After the budget is exhausted the
+    // api_key is NEVER asked — the queue has exactly 5 answers, so a 6th prompt
+    // would throw "queuedPrompt exhausted".
+    const { ask, calls } = queuedPrompt([
+      "Jay",
+      "jay@example.com",
+      "bad-1",
+      "://still-bad",
+      "nope nope",
+    ]);
+    const code = await runInit({ fromSource: sourceRepo, isTTY: true, prompt: ask });
+    expect(code).toBe(0);
+    // 5 prompts: name, email, and the URL asked 3 times. No api_key prompt.
+    expect(calls.length).toBe(5);
+    const urlPrompts = calls.filter((q) => q.includes("Remote brain URL"));
+    expect(urlPrompts.length).toBe(3);
+    const cfg = JSON.parse(
+      readFileSync(join(brainRoot, "config.json"), "utf-8"),
+    ) as { remote_brain: unknown };
+    // Bailed with the brain unchanged → still null (the fresh-install seed).
+    expect(cfg.remote_brain).toBe(null);
+  });
+
+  // B1 (TD-153): the api_key read is masked on a real interactive TTY. When the
+  // terminal reports NON-TTY (the injected `isTTY: false` seam), the masked
+  // reader falls back to the visible path with NO crash. Here we keep isTTY
+  // false but still inject a prompt; gatherInitInputs short-circuits to defaults
+  // on non-TTY (remote_brain: null) and never touches real raw-mode — proving
+  // the masking path is inert under non-TTY.
+  it("B1: non-TTY terminal falls back to the visible path without crashing", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const sentinel = async (_q: string): Promise<string> => {
+      throw new Error("prompt should not have been called under non-TTY");
+    };
+    const code = await runInit({
+      fromSource: sourceRepo,
+      isTTY: false,
+      prompt: sentinel,
+    });
+    expect(code).toBe(0);
+    const cfg = JSON.parse(
+      readFileSync(join(brainRoot, "config.json"), "utf-8"),
+    ) as { remote_brain: unknown };
+    expect(cfg.remote_brain).toBe(null);
+  });
+
   it("URL provided, empty api_key → api_key: null (warns but proceeds)", async () => {
     const { runInit } = await import("../verbs/init.js");
     const { ask } = queuedPrompt([
@@ -633,7 +744,14 @@ describe("init — interactive prompts (TD-144)", () => {
     const userMd = readFileSync(join(brainRoot, "USER.md"), "utf-8");
     // Default identity baked in.
     expect(userMd).toContain("name: you");
-    expect(userMd).toContain("email: ");
+    // B4 (TD-153): prove the email line was actually SUBSTITUTED, not just that
+    // the bare `email:` label (which ships in the template) survived. The old
+    // `toContain("email: ")` passed even on a broken substitution. Under --yes
+    // the default email is "" so the substituted line is exactly `- email: `
+    // with NOTHING after — assert that exact line AND that the placeholder is
+    // gone (a broken substitution would leave `{{USER_EMAIL}}`).
+    expect(userMd).toMatch(/^- email: *$/m);
+    expect(userMd).not.toContain("{{USER_EMAIL}}");
     const cfg = JSON.parse(
       readFileSync(join(brainRoot, "config.json"), "utf-8"),
     ) as { remote_brain: unknown };
@@ -875,5 +993,93 @@ describe("init — antigravity skills symlink (FR-179 Phase C)", () => {
       "skills",
     );
     expect(existsSync(linkPath)).toBe(false);
+  });
+});
+
+// B1 (TD-153): the masked api_key reader must degrade gracefully. On a stream
+// that is NOT a TTY (isTTY !== true) — CI, piped stdin, dumb terminals — it
+// resolves via the supplied visible fallback rather than calling setRawMode
+// (which would throw or corrupt a non-interactive shell). We drive
+// `maskedSecretRead` directly with a fake stream so no real terminal is needed.
+describe("maskedSecretRead — non-TTY fallback (B1)", () => {
+  it("routes to the visible fallback (no raw-mode) when input is non-TTY", async () => {
+    const { maskedSecretRead } = await import("../lib/init/prompts.js");
+
+    let fallbackCalled = false;
+    const visibleFallback = async (q: string): Promise<string> => {
+      fallbackCalled = true;
+      expect(q).toContain("API key");
+      return "typed-key";
+    };
+
+    // A bare object standing in for a non-TTY stream: isTTY is undefined, and
+    // setRawMode is present as a spy we assert is NEVER called on this path.
+    let rawModeCalls = 0;
+    const fakeIn = {
+      isTTY: undefined,
+      setRawMode: (_on: boolean): void => {
+        rawModeCalls += 1;
+      },
+    } as unknown as NodeJS.ReadStream;
+    const writes: string[] = [];
+    const fakeOut = {
+      write: (s: string): boolean => {
+        writes.push(s);
+        return true;
+      },
+    } as unknown as NodeJS.WriteStream;
+
+    const value = await maskedSecretRead(
+      "Remote brain API key []: ",
+      fakeIn,
+      fakeOut,
+      visibleFallback,
+    );
+
+    expect(value).toBe("typed-key");
+    expect(fallbackCalled).toBe(true);
+    // The masking path was never engaged — no raw-mode toggling, nothing painted.
+    expect(rawModeCalls).toBe(0);
+    expect(writes.length).toBe(0);
+  });
+
+  it("falls back when setRawMode throws even though isTTY is true", async () => {
+    const { maskedSecretRead } = await import("../lib/init/prompts.js");
+
+    let fallbackCalled = false;
+    const visibleFallback = async (_q: string): Promise<string> => {
+      fallbackCalled = true;
+      return "fallback-key";
+    };
+
+    // isTTY=true but setRawMode throws (exotic/unsupported terminal).
+    // `emitKeypressEvents` (called before the raw-mode try) probes
+    // `listenerCount`, so the fake provides it.
+    const fakeIn = {
+      isTTY: true,
+      setRawMode: (_on: boolean): void => {
+        throw new Error("ENOTTY: cannot set raw mode");
+      },
+      isPaused: (): boolean => false,
+      resume: (): void => {},
+      pause: (): void => {},
+      on: (): void => {},
+      once: (): void => {},
+      removeListener: (): void => {},
+      listenerCount: (): number => 0,
+    } as unknown as NodeJS.ReadStream;
+    const fakeOut = {
+      write: (_s: string): boolean => true,
+    } as unknown as NodeJS.WriteStream;
+
+    const value = await maskedSecretRead(
+      "Remote brain API key []: ",
+      fakeIn,
+      fakeOut,
+      visibleFallback,
+    );
+
+    expect(value).toBe("fallback-key");
+    expect(fallbackCalled).toBe(true);
   });
 });
