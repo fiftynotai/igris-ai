@@ -72,7 +72,6 @@ describe("tarball — clean fixture extraction", () => {
     expect(existsSync(join(dest, "core", "os", "standards.md"))).toBe(true);
     expect(existsSync(join(dest, "core", "hooks", "canonical-settings.json"))).toBe(true);
     expect(existsSync(join(dest, "core", "scripts", "verify_mirror.sh"))).toBe(true);
-    expect(existsSync(join(dest, "core", "templates", "CLAUDE.md.tmpl"))).toBe(true);
   });
 
   it("returns a stable contentSha256 (matches direct hash of the gzipped bytes)", async () => {

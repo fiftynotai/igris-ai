@@ -1,0 +1,1 @@
+/Users/m.elamin/.igris/core/rules/00-igris-universal.md

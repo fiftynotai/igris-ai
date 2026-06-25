@@ -83,8 +83,6 @@ function stageSourceRepo(root: string): void {
     "#!/bin/sh\necho noop\n",
   );
   chmodSync(join(core, "scripts", "verify_mirror.sh"), 0o755);
-  mkdirSync(join(core, "templates"), { recursive: true });
-  writeFileSync(join(core, "templates", "CLAUDE.md.tmpl"), "# CLAUDE template\n");
 }
 
 function claudeJson(): string {

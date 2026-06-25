@@ -72,8 +72,8 @@ CLAUDE.local.md
 .claude/agent-memory/
 
 # Igris v6 — symlinks created by `igris register` (machine-specific)
+# (FR-187 retired the .claude/rules/ symlink layer — agents + skills only.)
 .claude/agents/
-.claude/rules/
 .claude/skills/
 
 # Generated harness projections (FR-137) — mechanically derived from canonical

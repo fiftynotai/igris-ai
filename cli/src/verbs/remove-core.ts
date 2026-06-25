@@ -9,8 +9,8 @@
  *   - a SOURCE FILE deletion (skill SKILL.md, agent prompt, shared hook script)
  *     is a DELETE-BOTH (rm source + rm mirror; nothing to verify_mirror — both
  *     are gone);
- *   - a CONTENT EDIT (igris_tree.json, CLAUDE.md.tmpl, surfaces-manifest.json) is
- *     a cp + `verify_mirror.sh` MATCH (reusing the `mirrorAndVerify` pattern from
+ *   - a CONTENT EDIT (surfaces-manifest.json, core/os/INDEX.md) is a cp +
+ *     `verify_mirror.sh` MATCH (reusing the `mirrorAndVerify` pattern from
  *     add-core).
  *
  * CUTOVER-TODAY FLAG (operator, FR-203 plan §TD-096): the runtime

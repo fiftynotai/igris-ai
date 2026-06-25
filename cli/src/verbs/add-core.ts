@@ -370,7 +370,9 @@ You do NOT need: the os/ INDEX, SOUL.md, session files, brief protocol.
 /**
  * Build the repo-root `harness-manifest.json` agent entry for a new core agent,
  * mirroring the shape of the 7 existing entries (codex/gemini/opencode targets;
- * claude rides the whole-file CLAUDE.md render so it carries no target here).
+ * claude carries no target — it reads core agents natively from the
+ * `.claude/agents/` symlinks `igris install` materializes, so there is no
+ * harness-manifest projection to emit for it).
  */
 function agentManifestEntry(name: string): Record<string, unknown> {
   return {

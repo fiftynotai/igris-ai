@@ -142,8 +142,9 @@ their pre-add state.
   files (the agent prompt) get the mirror.
 - **Core agent roster (FR-187 Phase 2b)** — `igris add --core agent` writes
   `core/agents/<name>.md` (the canonical prompt) + the repo-root
-  `harness-manifest.json` entry (codex/gemini/opencode targets; claude rides
-  the whole-file CLAUDE.md render), then re-runs `core/scripts/gen_os_index.sh`
+  `harness-manifest.json` entry (codex/gemini/opencode targets; claude carries
+  no explicit target — it reads agents natively from `.claude/agents/`), then
+  re-runs `core/scripts/gen_os_index.sh`
   so the agent's own frontmatter (`name`/`description`) is discovered into the
   `core/os/INDEX.md` agent roster. There is no `igris_tree.json` agents map or
   "Available Agents" CSV anymore — the roster is the single frontmatter-derived

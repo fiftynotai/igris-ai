@@ -66,8 +66,9 @@ The CLI owns the entire install pipeline natively in TypeScript:
 
 - `<project>/.claude/settings.json` hooks block (merged, not overwritten — see
   `cli/src/lib/json-merge.ts` and `canonical-hooks.ts`)
-- `<project>/.claude/{agents,rules,skills}` symlinks (`cli/src/lib/symlinks.ts`)
-- `<project>/CLAUDE.md` regenerated from template (`cli/src/lib/claude-md.ts`)
+- `<project>/.claude/{agents,skills}` symlinks (`cli/src/lib/symlinks.ts`)
+- No `<project>/CLAUDE.md` is written — `igris install` is zero-config (FR-191
+  retired the whole-file render; see `cli/src/verbs/install.ts:159`)
 - `<project>/.igris_version` JSON marker (`cli/src/lib/igris-version.ts`)
 - Brain `projects` registry rows (direct `better-sqlite3` access, see
   `cli/src/lib/registry.ts`)

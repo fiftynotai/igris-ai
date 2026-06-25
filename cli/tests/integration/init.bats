@@ -24,8 +24,7 @@ setup() {
 stage_source_repo() {
   local root="$1"
   mkdir -p "$root/core/agents" "$root/core/skills/demo" "$root/core/rules" \
-           "$root/core/prompts" "$root/core/hooks" "$root/core/scripts" \
-           "$root/core/templates"
+           "$root/core/prompts" "$root/core/hooks" "$root/core/scripts"
   printf '# soul (bats)\n' > "$root/core/SOUL.md"
   printf '{ "version": "fixture" }\n' > "$root/core/igris_tree.json"
   printf 'agents: []\n' > "$root/core/agents/manifest.yaml"
@@ -34,7 +33,6 @@ stage_source_repo() {
   printf '{"hooks":{}}\n' > "$root/core/hooks/canonical-settings.json"
   printf '#!/bin/sh\necho noop\n' > "$root/core/scripts/verify_mirror.sh"
   chmod +x "$root/core/scripts/verify_mirror.sh"
-  printf '# CLAUDE template\n' > "$root/core/templates/CLAUDE.md.tmpl"
   printf '# igris_os\n' > "$root/core/prompts/igris_os.md"
 }
 

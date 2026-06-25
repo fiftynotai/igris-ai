@@ -94,9 +94,9 @@ export const RSYNC_EXCLUDES: readonly string[] = [
   "dist/",
   "build/",
   // Igris symlinks + local agent memory (each project's VPS has its own ~/.igris)
+  // (FR-187 retired the .claude/rules/ symlink layer — no rules dir to exclude.)
   ".claude/agent-memory/",
   ".claude/agents/",
-  ".claude/rules/",
   ".claude/skills/",
   // Machine-local version stamp written by the CLI installer (per-host)
   ".igris_version",
@@ -167,8 +167,9 @@ function rsyncExcludeFlags(): string[] {
  * does NOT abort.
  */
 const CLAUDE_SYMLINK_PATHS = [
+  // FR-187 retired the .claude/rules/ symlink layer — install creates only
+  // agents + skills symlinks now.
   ".claude/agents",
-  ".claude/rules",
   ".claude/skills",
 ] as const;
 
@@ -260,7 +261,7 @@ export async function runSyncCode(opts: SyncCodeOptions = {}): Promise<number> {
   }
   const pm2AppName = opts.pm2AppName ?? "igris-brain";
 
-  // TD-139: advisory check — warn if .claude/{agents,rules,skills}/ are
+  // TD-139: advisory check — warn if .claude/{agents,skills}/ are
   // real dirs rather than symlinks. RSYNC_EXCLUDES treats them as symlinks
   // per the v6 install model; a real directory would have its contents
   // silently stripped at deploy time. Does NOT abort.

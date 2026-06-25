@@ -262,7 +262,6 @@ describe("sync code — runSyncCode", () => {
       "build/",
       ".claude/agent-memory/",
       ".claude/agents/",
-      ".claude/rules/",
       ".claude/skills/",
       ".igris_version",
       "CLAUDE.local.md",
@@ -570,7 +569,7 @@ describe("TD-139: .claude/* non-symlink advisory", () => {
     }
   });
 
-  it("does NOT warn when .claude/{agents,rules,skills}/ are absent", async () => {
+  it("does NOT warn when .claude/{agents,skills}/ are absent", async () => {
     writeConfig({
       vps: { host: "h", user: "u", repo_path: "/r" },
       remote_brain: { url: "http://127.0.0.1:1", api_key: "k" },

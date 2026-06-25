@@ -3,7 +3,7 @@
 #
 # Produces (in cli/src/__tests__/fixtures/tarballs/):
 #   - clean-core.tar.gz — a synthetic Igris release tarball containing
-#     core/{agents,skills,os,hooks,scripts,templates}/ + core/SOUL.md.
+#     core/{agents,skills,os,hooks,scripts}/ + core/SOUL.md.
 #     GitHub's standard tarball format wraps the repo in a top-level prefix
 #     dir like `igris-ai-<sha>/` so we mirror that.
 #
@@ -35,7 +35,7 @@ trap 'rm -rf "$WORK_CLEAN"' EXIT
 PREFIX="igris-ai-fixturesha"
 CORE="$WORK_CLEAN/$PREFIX/core"
 mkdir -p "$CORE/agents" "$CORE/skills/demo" "$CORE/os" \
-         "$CORE/hooks" "$CORE/scripts" "$CORE/templates"
+         "$CORE/hooks" "$CORE/scripts"
 
 cat > "$CORE/SOUL.md" <<'EOF'
 ---
@@ -97,10 +97,6 @@ cat > "$CORE/scripts/verify_mirror.sh" <<'EOF'
 echo "verify_mirror (fixture)"
 EOF
 chmod +x "$CORE/scripts/verify_mirror.sh"
-
-cat > "$CORE/templates/CLAUDE.md.tmpl" <<'EOF'
-# CLAUDE.md (fixture template) version: {{IGRIS_VERSION}}
-EOF
 
 (
   cd "$WORK_CLEAN"

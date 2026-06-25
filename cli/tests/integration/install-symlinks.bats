@@ -1,9 +1,10 @@
 #!/usr/bin/env bats
 
 # install-symlinks.bats — integration tests for the native TS symlink layer
-# of `igris install` (M2.6/M2.10). Asserts that .claude/{agents,rules,skills}
+# of `igris install` (M2.6/M2.10). Asserts that .claude/{agents,skills}
 # symlinks land correctly when the CLI fully owns the symlink layer (no shell
-# script invoked).
+# script invoked). FR-187 retired the .claude/rules/ symlink layer (the
+# universal rule moved to core/os/standards.md) — install creates no rules link.
 #
 # Brain core staged in $IGRIS_BRAIN_DIR via stage_brain_with_core helper
 # below — minimal but realistic: a couple of agents, the universal rule, two
@@ -12,9 +13,9 @@
 
 load _helpers.bash
 
-# Stage a brain that includes core/{agents,rules,skills,templates} so the
-# native symlink layer can find sources to link. Matches stage_brain's tmp
-# layout but with extras.
+# Stage a brain that includes core/{agents,skills} so the native symlink
+# layer can find sources to link. Matches stage_brain's tmp layout but with
+# extras. (No core/rules/ — FR-187 retired the rules symlink layer.)
 stage_brain_with_core() {
   stage_brain  # writes canonical-settings.json + memory/
 
@@ -23,10 +24,6 @@ stage_brain_with_core() {
   printf '# architect\n' > "$IGRIS_BRAIN_DIR/core/agents/architect.md"
   printf '# forger\n'    > "$IGRIS_BRAIN_DIR/core/agents/forger.md"
   printf 'agents: []\n'  > "$IGRIS_BRAIN_DIR/core/agents/manifest.yaml"
-
-  # Rules
-  mkdir -p "$IGRIS_BRAIN_DIR/core/rules"
-  printf '# universal\n' > "$IGRIS_BRAIN_DIR/core/rules/00-igris-universal.md"
 
   # Skills (each is a directory)
   mkdir -p "$IGRIS_BRAIN_DIR/core/skills/hunt"
@@ -55,16 +52,6 @@ setup() {
   # Resolved target points at the brain.
   TARGET=$(readlink "$PROJ/.claude/agents/architect.md")
   [ "$TARGET" = "$IGRIS_BRAIN_DIR/core/agents/architect.md" ]
-}
-
-@test "install creates .claude/rules/00-igris-universal.md symlink" {
-  PROJ="$(stage_project rules)"
-  run $CLI_BIN install "$PROJ"
-  [ "$status" -eq 0 ]
-
-  [ -L "$PROJ/.claude/rules/00-igris-universal.md" ]
-  TARGET=$(readlink "$PROJ/.claude/rules/00-igris-universal.md")
-  [ "$TARGET" = "$IGRIS_BRAIN_DIR/core/rules/00-igris-universal.md" ]
 }
 
 @test "install creates .claude/skills/<skill>/ symlinks for each skill dir" {
