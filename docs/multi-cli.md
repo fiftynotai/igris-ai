@@ -6,7 +6,12 @@
 
 Igris skills and hooks live canonically under `~/.igris/core/`. This document defines
 how those surfaces are distributed to multiple CLI agents (Claude Code, OpenCode,
-Gemini CLI, Codex CLI) via filesystem routing — no duplication, no drift.
+Codex CLI, Antigravity) via filesystem routing — no duplication, no drift.
+
+> **Note (harness decision 2026-06-16):** Gemini CLI was dropped as a standalone
+> supported harness. The `~/.gemini/*` paths throughout this doc are now the
+> infrastructure **Antigravity** rides (it shares Gemini's config, skills-symlink,
+> and MCP paths) — preserved for Antigravity, not for Gemini CLI.
 
 Two independent axes of coverage:
 
