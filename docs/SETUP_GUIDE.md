@@ -102,9 +102,7 @@ ls -la CLAUDE.md
 # │   ├── mender.md
 # │   ├── seeker.md
 # │   └── sage.md
-# ├── rules/              # 1 universal rule (symlink → ~/.igris/core/rules/)
-# │   └── 00-igris-universal.md
-# ├── skills/             # 21 skills (per-dir symlinks → ~/.igris/core/skills/)
+# ├── skills/             # skills (per-dir symlinks → ~/.igris/core/skills/)
 # └── settings.json       # Claude Code config + Igris hooks block
 #
 # CLAUDE.md               # Claude Code project instructions (generated from template)

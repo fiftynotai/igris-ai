@@ -129,9 +129,8 @@ igris update --all
 
 ### Files That Will Be Updated
 
-- `.claude/agents/*.md` - Agent definitions (7 agents)
-- `.claude/rules/*.md` - Modular rules (5 rules)
-- `.claude/skills/` - Skills (21 skills)
+- `.claude/agents/*.md` - Agent definitions
+- `.claude/skills/` - Skills
 - `.claude/hooks/` - Hook scripts
 - `~/.igris/core/prompts/*.md` - System prompts
 - `~/.igris/core/templates/*.md` - Brief and PR templates

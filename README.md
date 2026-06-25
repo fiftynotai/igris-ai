@@ -76,9 +76,9 @@ the `igris-brain` mcp server is bundled inside the `igris-ai` npm package — `i
 ## the unfinished edges.
 
 - agent teams (`/team hunt`) requires an experimental claude code flag. parallel works. quality gates work. the ergonomics are still rough.
-- cross-cli adapters are on the roadmap. today, IGRIS is built for claude code.
+- IGRIS runs on claude code, opencode, codex, and antigravity (cross-cli adapters shipped; claude is the most polished today).
 - the comparison table got cut from this readme on purpose. a v2 pass is parked.
-- the brain has 17 mcp components. some are heavily used. some are waiting for their first real call.
+- the brain is split into focused mcp components. some are heavily used. some are waiting for their first real call.
 
 ---
 
