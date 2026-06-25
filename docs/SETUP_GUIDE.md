@@ -34,17 +34,16 @@ igris install .
 ```
 
 **What this does:**
-- Bootstraps the centralized brain at `~/.igris/` (SQLite database with FTS5 search, agents, rules, skills, prompts)
+- Bootstraps the centralized brain at `~/.igris/` (SQLite database with FTS5 search, agents, skills, prompts)
 - Registers the bundled `igris-brain` MCP server into all 4 supported harnesses (Claude → `~/.claude.json`, OpenCode → `~/.config/opencode/opencode.json`, Codex → `~/.codex/config.toml`, Antigravity → `~/.gemini/config/mcp_config.json`) so each serves the brain tools (no manual MCP setup — it ships inside the `igris-ai` npm package)
 - Symlinks `.claude/agents/` and `.claude/skills/` into your project so all projects share the same brain content
 - Merges the canonical Igris hooks block into `.claude/settings.json` (creating the file if absent, backing up any existing one)
-- Regenerates `CLAUDE.md` in your project root from the brain template
 - Writes a `.igris_version` marker for upgrade detection
 - Registers the project in the brain so it shows up in `/projects` and cross-project queries
 
 > **Restart your harness(es) after `igris init`** so they pick up the newly registered `igris-brain` MCP server. The brain tools are not available until the harness reloads its config (e.g. Claude Code reloads `~/.claude.json`).
 
-Project state (sessions, briefs, plans, generated context docs) lives under `~/.igris/projects/<slug>/` — **not** in the project repo. The only files Igris writes into the project repo are `.claude/`, `CLAUDE.md`, and `.igris_version`.
+Project state (sessions, briefs, plans, generated context docs) lives under `~/.igris/projects/<slug>/` — **not** in the project repo. The only files Igris writes into the project repo are `.claude/` and `.igris_version` (FR-191 zero-config: no `CLAUDE.md` is generated).
 
 ### Onboarding (`igris configure`)
 
@@ -105,7 +104,6 @@ ls -la CLAUDE.md
 # ├── skills/             # skills (per-dir symlinks → ~/.igris/core/skills/)
 # └── settings.json       # Claude Code config + Igris hooks block
 #
-# CLAUDE.md               # Claude Code project instructions (generated from template)
 # .igris_version          # JSON marker recording the installed CLI version
 
 # Brain-side state (outside the project repo) lives under:

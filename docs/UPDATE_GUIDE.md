@@ -88,7 +88,7 @@ Projects installed with `igris install` (v7) — or the retired `igris_install.s
 cd /path/to/igris-ai
 git pull origin main
 
-# Re-initialize the brain (picks up new agents, rules, skills)
+# Re-initialize the brain (picks up new agents, skills)
 igris init
 ```
 
@@ -123,7 +123,7 @@ igris update --all
 2. Shows what will be updated
 3. Asks for confirmation
 4. Creates backup in `.igris_backup/`
-5. Updates system files (agents, rules, skills, prompts, templates)
+5. Updates system files (agents, skills, prompts, templates)
 6. Preserves your data (briefs, session, context)
 7. Updates `.igris_version`
 
@@ -174,7 +174,6 @@ Every update creates a timestamped backup:
 .igris_backup/
 ├── 20260222_100000/              # Update backup
 │   ├── agents/
-│   ├── rules/
 │   ├── skills/
 │   ├── prompts/
 │   ├── templates/

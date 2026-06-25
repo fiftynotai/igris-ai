@@ -1181,7 +1181,7 @@ session:
 - No session_end REST MODE flip — CURRENT_SESSION.md remains at its last state until
   something else flips it.
 
-All other Igris surfaces (skills, agents, rules) continue to work on Gemini
+All other Igris surfaces (skills, agents) continue to work on Gemini
 via the FR-153 symlink projection at `~/.gemini/skills/`.
 
 ### Testing
