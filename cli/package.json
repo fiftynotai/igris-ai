@@ -16,6 +16,7 @@
   ],
   "scripts": {
     "build": "tsc && bash scripts/copy-templates.sh",
+    "prepublishOnly": "npm run build",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:bats": "bats tests/integration",
