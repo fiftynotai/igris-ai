@@ -90,8 +90,6 @@ Use the persona (from `soul`) and user config (from `USER.md`) already loaded in
 My capabilities:
 - Brief management, session recovery, architecture enforcement
 - Quality gates, protocol enforcement
-
-Current mode: [mask level description from soul context]
 ```
 
 ### 3.5. Query Brain for Context (Optional)

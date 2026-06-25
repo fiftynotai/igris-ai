@@ -414,18 +414,16 @@ igris-ai/
 ├── .claude/
 │   ├── agents/              # Symlinks → ~/.igris/core/agents/
 │   ├── hooks/               # Hook scripts
-│   ├── rules/               # Symlink → ~/.igris/core/rules/
 │   ├── skills/              # Symlinks → ~/.igris/core/skills/
 │   └── settings.json        # Claude Code config
 ├── core/                    # Distribution source for ~/.igris/core/
 │   ├── agents/              # Native subagents
-│   ├── prompts/             # System prompts (igris_os.md)
-│   ├── rules/               # 1 universal rule (v7)
+│   ├── os/                  # OS context modules + generated INDEX (boot-loaded)
+│   ├── prompts/             # brain_stewardship + session_protocol (reference)
 │   ├── skills/              # Skills
-│   ├── scripts/             # Mirrored helpers (verify_mirror.sh, cli-adapters/)
+│   ├── scripts/             # Mirrored helpers (verify_mirror.sh, gen_os_index.sh, cli-adapters/)
 │   ├── templates/           # PR/brief templates
-│   ├── SOUL.md              # Persona identity
-│   └── igris_tree.json      # Context routing tree (v7)
+│   └── SOUL.md              # Persona identity
 ├── brain-mcp-server/        # Brain MCP server (TypeScript)
 ├── cli/                     # The `igris` npm CLI (TypeScript)
 ├── docs/                    # Documentation
@@ -513,8 +511,8 @@ form of this contract).
    bash core/scripts/verify_mirror.sh <file>
    # Verdict must say MATCH.
    ```
-   This applies to: `core/agents/*.md`, `core/skills/*/SKILL.md`,
-   `core/prompts/*.md`, `core/rules/*.md`, `core/SOUL.md`, `core/igris_tree.json`,
+   This applies to: `core/agents/*.md`, `core/os/**`, `core/skills/*/SKILL.md`,
+   `core/prompts/*.md`, `core/SOUL.md`,
    `core/hooks/**`, `core/scripts/**`. The sentinel runs MIRROR_CHECK on
    every changed `core/` file during /hunt TESTING; uncommitted drift
    blocks the commit.
@@ -522,13 +520,11 @@ form of this contract).
 6. **When you change the `/hunt` state machine** → update:
    - `docs/architecture/SYSTEM.md`'s state-machine diagram (the mermaid
      block).
-   - `core/skills/hunt/SKILL.md` (the canonical state machine).
-   - `core/prompts/igris_os.md` "Workflow (Strict)" section — these
-     two MUST stay in sync; the §13 enumeration rule lists this.
+   - `core/skills/hunt/SKILL.md` (the canonical state machine — the sole
+     source since the `igris_os.md` monolith was retired in FR-187).
 
 7. **When you bump a current-system version string** → sweep ALL of:
    - `package.json:version` (canonical).
-   - `core/prompts/igris_os.md` (multiple lines — grep first).
    - `CONTRIBUTING.md` "Project structure" version notes.
    - Any README banner or footer that names a version.
    - Do NOT add `CLAUDE.md` to the sweep — it carries no version string
@@ -623,7 +619,7 @@ echo "  Ubuntu: sudo apt install python3"
 
 - **[README.md](README.md)** - Project overview
 - **`~/.igris/projects/{project}/context/coding_guidelines.md`** - Coding standards
-- **`~/.igris/core/prompts/igris_os.md`** - Igris AI operating system
+- **`~/.igris/core/os/INDEX.md`** - Igris OS module index (boot context)
 
 ### Questions?
 
