@@ -404,6 +404,7 @@ The **live** agent roster is discovered from each agent's own frontmatter (`name
 6. **Igris-managed vs Claude-only hooks** — Igris hooks live only in `canonical-settings.json`; project-local Claude hooks go in a separate `.claude/settings.json` block and are preserved by the canonical merge.
 7. **Forger does NOT commit** — `/hunt`'s state machine owns `COMMITTING`; sentinel runs tests, warden reviews, orchestrator commits. Forger stops at the last code-touching step and reports `IMPLEMENTATION COMPLETE — UNCOMMITTED` (L-248 / PI-004).
 8. **Version sweep on bumps** — bumping the current-system version means sweeping every enumeration surface: `package.json`, `CONTRIBUTING.md` "Project structure", any README banner. `CLAUDE.md` carries no version string (TD-267 — boot-pointer only). TD-147 is the cautionary tale.
+9. **Secret-scanning gate (TD-159)** — no secret-shaped string (public IP outside RFC-1918/loopback, API-key shapes, SSH/cloud keys, the operator-VPS-IP family) reaches a commit. Deterministic `gitleaks` runs at four layers: pre-commit hook (`gitleaks protect --staged`), CI (`.github/workflows/secrets-scan.yml`), warden's review checklist, and CONTRIBUTING.md Documentation Invariant #9. Config: `.gitleaks.toml`. Use placeholders/`${ENV}` indirection, never literals; allowlist a true false positive with an inline `# gitleaks:allow` marker. TD-157 is the cautionary tale (the IP leak that survived 5 hunts + every other gate). Full guide: [`docs/operations/secret-scanning.md`](../operations/secret-scanning.md).
 
 ---
 

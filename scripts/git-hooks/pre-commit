@@ -46,6 +46,18 @@ set -e
 #       Done-but-no-commit, committed-but-open) against the canonical
 #       brief_status.status source. WARN only — surfaces the report, does
 #       NOT block the commit (matches check_contract_consumers' posture).
+#   - gitleaks protect --staged  (TD-159)
+#       Always runs (gitleaks decides what to scan from the staged set).
+#       Deterministic secret-scanner — catches the secret-shaped strings
+#       every other gate misses (IPv4 outside RFC-1918/loopback, API-key
+#       shapes, SSH private keys, AWS/Stripe/Slack/GitHub tokens, plus the
+#       Igris-specific operator-VPS-IP family rule). Config: .gitleaks.toml.
+#       HARD-fails the commit on any finding (layer 1 of the 4-layer model).
+#       Degrades gracefully (WARN + skip) if gitleaks is not installed —
+#       CI (.github/workflows/secrets-scan.yml) is the non-bypassable net.
+#       See docs/operations/secret-scanning.md. WHY: TD-157 (the IP leak
+#       that survived 5 hunts + every other gate, caught only by manual
+#       git grep). Bypass with `--no-verify` only in an emergency.
 #
 # (TD-110 canonical-hooks lockstep validator was retired in MG-014 M5;
 #  the legacy `install_claude_hooks.sh` shell emitter is gone, so the
@@ -316,6 +328,69 @@ if [ "$needs_reconciliation_check" = "1" ]; then
   # body to `failed=1` (one-line change — the run block is otherwise unchanged).
   if ! bash "$REPO_ROOT/scripts/validate_brief_state_reconciliation.sh"; then
     echo "[pre-commit] Brief-state contradictions surfaced above (WARN only — not blocking)."
+  fi
+fi
+
+# TD-159: gitleaks secret scan (layer 1 of the 4-layer model). Always runs —
+# gitleaks scans the staged set itself and decides what to inspect, so there is
+# no file-trigger gate (a secret can land in any file type). HARD-fails on any
+# finding. Degrades gracefully (WARN + skip) if gitleaks is absent so a
+# contributor without it installed is not hard-blocked; CI is the non-bypassable
+# net. The config lives at .gitleaks.toml (only present if TD-159 is adopted).
+if [ -f "$REPO_ROOT/.gitleaks.toml" ]; then
+  if command -v gitleaks >/dev/null 2>&1; then
+    echo "[pre-commit] Scanning staged changes for secrets (gitleaks)..."
+    # `protect --staged` scans only the staged diff (fast: <500ms on a typical
+    # 10-file diff). --redact keeps the scanned secret out of the hook log;
+    # the actionable report below tells the author where to look. set -e is
+    # bypassed in the if-condition so the finding is aggregated into $failed
+    # and reported together with any other validator failures.
+    gitleaks_report="$(mktemp)"
+    if ! gitleaks protect --staged \
+           --config "$REPO_ROOT/.gitleaks.toml" \
+           --redact \
+           --report-format json \
+           --report-path "$gitleaks_report" \
+           --no-banner >/dev/null 2>&1; then
+      echo ""
+      echo "[pre-commit] gitleaks: SECRET-SHAPED CONTENT DETECTED — refusing commit"
+      echo ""
+      # Summarise each finding as file:line + rule (secret value redacted).
+      if command -v python3 >/dev/null 2>&1 && [ -s "$gitleaks_report" ]; then
+        python3 - "$gitleaks_report" <<'PYEOF'
+import json, sys
+try:
+    with open(sys.argv[1]) as fh:
+        findings = json.load(fh)
+except Exception:
+    findings = []
+for f in findings:
+    loc = f"{f.get('File','?')}:{f.get('StartLine','?')}"
+    print(f"  - {loc}  rule={f.get('RuleID','?')}  (secret redacted)")
+PYEOF
+      else
+        echo "  (install python3 to see per-finding file:line; report at $gitleaks_report)"
+      fi
+      echo ""
+      echo "  If this is a REAL secret:"
+      echo "    1. Remove it from the staged content (use a placeholder /"
+      echo "       \${ENV_VAR} indirection — see CONTRIBUTING.md Documentation"
+      echo "       Invariant #9)."
+      echo "    2. If it was a live credential, rotate it."
+      echo "    3. See docs/operations/secret-scanning.md for the full"
+      echo "       remediation decision-tree."
+      echo ""
+      echo "  If this is a FALSE POSITIVE (test fixture, example URL, etc.):"
+      echo "    Add an inline '# gitleaks:allow' marker on the same line with a"
+      echo "    one-line rationale, then re-stage. (Or path-allowlist it in"
+      echo "    .gitleaks.toml if it is a whole fixture file.)"
+      echo ""
+      failed=1
+    fi
+    rm -f "$gitleaks_report"
+  else
+    echo "[pre-commit] gitleaks not installed — skipping local secret scan (WARN)."
+    echo "[pre-commit]   Install: brew install gitleaks  (CI still enforces it)."
   fi
 fi
 

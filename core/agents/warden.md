@@ -56,6 +56,36 @@ You do NOT need: the os/ INDEX, SOUL.md, session files, brief protocol.
 - [ ] No unsafe deserialization
 - [ ] Authentication/authorization checks present
 
+## SECURITY SCAN CHECKLIST (TD-159)
+
+Before APPROVE on any commit that touches files SHIPPED in the npm package
+(repo-tracked files, especially under `core/`, `cli/src/`,
+`brain-mcp-server/src/`, `docs/`, root-level `*.md`/`*.json`/`*.yaml`):
+
+1. Trust the pre-commit `gitleaks` output (it ran already; sentinel's TESTING
+   phase output should include it). If sentinel reports `gitleaks: 0 findings`,
+   you can skip Step 2.
+2. If sentinel did NOT report gitleaks output (e.g., this is an out-of-band
+   review or sentinel was skipped), spot-check the staged diff yourself for:
+   - IPv4 outside RFC-1918/loopback/link-local/broadcast — flag
+   - Long base64-ish strings on the right side of `api_key=`/`token=`/`secret=` — flag
+   - `-----BEGIN` (any private key) — flag
+   - `AKIA[0-9A-Z]{16}` (AWS access key) — flag
+   - `sk_live_` (Stripe live key) — flag
+   - `xoxb-`/`xoxp-` (Slack tokens) — flag
+3. If a flagged item is intentional (test fixture, example URL with explicit
+   allowlist comment), confirm the inline `# gitleaks:allow` marker is present
+   and the reason is documented.
+4. If a flagged item is NOT intentional: REJECT with file:line and the
+   remediation guidance.
+
+The pre-commit `gitleaks` gate is the load-bearing scanner. Your role is
+context-aware backup for things the curated rule-set doesn't catch (e.g., a
+project-specific internal subnet that doesn't match any rule pattern).
+
+See `docs/operations/secret-scanning.md` for the rule categories, the
+allowlist mechanism, and the remediation decision-tree.
+
 ## QUALITY CHECKLIST
 
 - [ ] Readable, well-named code

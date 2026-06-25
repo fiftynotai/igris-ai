@@ -540,6 +540,17 @@ form of this contract).
      TD-102 / FR-118 callout. (Without it, a contributor reading the
      doc wastes time troubleshooting an engine that's switched off.)
 
+9. **When you author docs, configs, or examples containing
+   URLs/IPs/keys/credentials, use placeholders** (`<your-vps-host>`,
+   `<api-key>`, `${SECRET_NAME}`, `https://example.com`) and reference the
+   source-of-truth config — never literals. Pre-commit `gitleaks` will refuse
+   the commit otherwise (TD-159, the four-layer secret-scanning model). If a
+   legitimate inline literal is needed (e.g., a public address in user-facing
+   docs), add an explicit `# gitleaks:allow` marker on the same line with a
+   one-line rationale. Full guidance — what gitleaks checks, how to allowlist,
+   and how to remediate a real leak — is in
+   [`docs/operations/secret-scanning.md`](docs/operations/secret-scanning.md).
+
 ### Pre-commit reflex
 
 Before any PR that touches an enumeration surface (skill, agent, tool,

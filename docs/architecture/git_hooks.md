@@ -10,8 +10,15 @@ A single `pre-commit` dispatcher (`scripts/git-hooks/pre-commit`) that condition
 |---|---|---|
 | `scripts/validate_brain_stewardship_enums.sh` | Every enum value declared on `memory_store` (`category`, `scope`, `provenance`) appears in backticks somewhere inside the `<!-- SECTION: brain_stewardship -->` region of `core/prompts/brain_stewardship.md`. Also asserts schema-shrinkage: enum-shaped backticked tokens in the docs must still exist in the schema. Overridable via `SCHEMA_FILE` / `PROMPT_FILE` env vars. | TD-070 / DRIFT-1, TD-072, TD-092 (renamed in TD-148) |
 | `scripts/validate_lockfile_in_sync.sh` | `npm ci --dry-run --ignore-scripts` from repo root succeeds (workspace-aware lockfile is in sync with all `package.json` files). Catches the drift class where a workspace package was renamed or version-bumped without regenerating `package-lock.json`. | TD-134 |
+| `gitleaks protect --staged --config .gitleaks.toml` | No secret-shaped string reaches a commit (public IP outside RFC-1918/loopback, API-key shapes, SSH/cloud keys, the operator-VPS-IP family). **Runs unconditionally** (gitleaks scans the staged set itself — no file trigger). HARD-fails on any finding; degrades gracefully (WARN + skip) if `gitleaks` is absent so a contributor without it isn't blocked. Full guide: [`docs/operations/secret-scanning.md`](../operations/secret-scanning.md). | TD-159 |
 
-Both validators are also runnable standalone:
+> The full validator roster lives in the dispatcher's header comment
+> (`scripts/git-hooks/pre-commit`); this table summarizes the load-bearing
+> ones. Several validators (TD-219 SKILL.md YAML, TD-248 harness-leak, FR-135
+> harness drift, FR-186 contract consumers, TD-257 brief-state reconciliation)
+> are wired in addition to the rows above.
+
+Both core validators are also runnable standalone:
 
 ```bash
 bash scripts/validate_brain_stewardship_enums.sh

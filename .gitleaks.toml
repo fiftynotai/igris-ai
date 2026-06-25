@@ -1,0 +1,164 @@
+# Igris AI — gitleaks configuration (TD-159)
+#
+# Automated secret-scanning gate. Extends the gitleaks default ruleset
+# (AWS / GCP / Azure / Stripe / Slack / GitHub PAT / generic high-entropy /
+# SSH private keys / etc.) with three Igris-specific custom rules and an
+# allowlist tuned for this repo's known-benign fixtures and historical docs.
+#
+# This file is consumed by THREE layers (see docs/operations/secret-scanning.md):
+#   1. scripts/git-hooks/pre-commit  — `gitleaks protect --staged --config .gitleaks.toml`
+#   2. .github/workflows/secrets-scan.yml — `gitleaks/gitleaks-action@v2` (same config)
+#   3. ad-hoc `gitleaks detect --source . --no-git --config .gitleaks.toml`
+#
+# WHY this exists: the operator's VPS IP leaked into
+# core/prompts/brain_stewardship.md and survived 5 prior hunts + every
+# existing quality gate (architect/forger/sentinel/warden/brief-gate/mirror).
+# It was caught only by a manual `git grep` pre-release. The gap was the
+# absence of a deterministic scanner — warden is for nuance, not for grep.
+# See TD-157 (the incident) and TD-159 (this prevention layer).
+
+title = "Igris AI gitleaks config"
+
+# Extend the curated gitleaks default ruleset rather than replacing it. The
+# custom rules below are ADDED on top of the defaults.
+[extend]
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# Custom rules
+# ---------------------------------------------------------------------------
+
+# Rule 1 — Igris operator's VPS IP family (HIGH; always fails the commit).
+# This is the exact IP family that leaked in TD-157. Even though TD-157
+# scrubbed it from the live tree, gitleaks must treat its reappearance
+# ANYWHERE in a future commit as a hard leak. The pattern is authored from
+# the real operator-IP family (memory ID 383: re-derive from ground truth,
+# do not paraphrase) — the 76.13.180.0/24 block.
+[[rules]]
+id = "igris-operator-vps-ip"
+description = "Igris operator VPS IP family (76.13.180.0/24) — the TD-157 leak; never recommit"
+# Word-boundary anchored so it does not match inside a longer number.
+regex = '''\b76\.13\.180\.\d{1,3}\b'''
+tags = ["igris", "vps", "ip", "high-severity"]
+
+# Rule 2 — Igris-shaped API-key assignments (HIGH; always fails the commit).
+# Matches a long base64/hex-ish secret on the right side of an api_key /
+# API_KEY / apiKey / api-key assignment (`=`, `:`, or `: ` in YAML/JSON).
+# Placeholders (`${VAR}`, `<api-key>`, `your-...`, `example`) are NOT matched
+# because the capture requires >=20 chars of base64/hex alphabet with no
+# `$ { } < > space` — see the allowlist regexes below for the explicit
+# placeholder carve-outs and the Documentation Invariant #9 guidance.
+[[rules]]
+id = "igris-api-key-assignment"
+description = "Long secret-shaped value assigned to api_key/API_KEY/apiKey/api-key"
+regex = '''(?i)\b(?:api[_-]?key)\b\s*[:=]\s*["']?([A-Za-z0-9+/_=-]{20,})["']?'''
+secretGroup = 1
+tags = ["igris", "api-key", "high-severity"]
+# Carve out the placeholder/fixture shapes so legitimate authored examples
+# and ${ENV} indirection do not trip this rule.
+[rules.allowlist]
+regexTarget = "match"
+regexes = [
+  # ${VAR} / ${MY_TOKEN} env-indirection (the only allowed form in configs).
+  '''\$\{[A-Za-z0-9_]+\}''',
+  # <placeholder> angle-bracket form.
+  '''<[^>]+>''',
+  # Obvious non-secret words used in docs/examples.
+  '''(?i)(your[_-]?api[_-]?key|example|placeholder|changeme|redacted|xxxxx|dummy|fake|sample)''',
+]
+
+# Rule 3 — Public (internet-routable) IPv4 in config-shaped contexts (MEDIUM;
+# warns, allowlistable with an inline `# gitleaks:allow` marker). Catches a
+# stray public IP in *.json / *.yaml / *.yml / *.md before it becomes the
+# next 76.13.180.x. RFC-1918, loopback, link-local, broadcast, and
+# documentation ranges are excluded by the allowlist below (the regex matches
+# any dotted quad; the allowlist subtracts the non-routable ranges). Internet-
+# routable IPs that are intentional (test fixtures, user-facing example
+# addresses) must carry an inline `# gitleaks:allow` with a one-line rationale.
+[[rules]]
+id = "igris-public-ipv4-in-config"
+description = "Public IPv4 literal in a config-shaped context (use a hostname/placeholder instead)"
+regex = '''\b(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b'''
+path = '''.*\.(json|ya?ml|md)$'''
+tags = ["igris", "ip", "medium-severity"]
+[rules.allowlist]
+regexTarget = "match"
+regexes = [
+  # Loopback 127.0.0.0/8
+  '''\b127\.\d{1,3}\.\d{1,3}\.\d{1,3}\b''',
+  # RFC-1918 10.0.0.0/8
+  '''\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b''',
+  # RFC-1918 172.16.0.0/12
+  '''\b172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}\b''',
+  # RFC-1918 192.168.0.0/16
+  '''\b192\.168\.\d{1,3}\.\d{1,3}\b''',
+  # Link-local 169.254.0.0/16
+  '''\b169\.254\.\d{1,3}\.\d{1,3}\b''',
+  # Broadcast / unspecified
+  '''\b(?:0\.0\.0\.0|255\.255\.255\.255)\b''',
+  # RFC-5737 documentation ranges (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24)
+  '''\b(?:192\.0\.2|198\.51\.100|203\.0\.113)\.\d{1,3}\b''',
+  # Markdown section/heading numbers & semver-with-build read as dotted quads
+  # but are NOT IPs: "### 2.6.4.5.", "§3.6.1.1", "v1.2.3.4". The shapes
+  # that matter for the leak (a real public IP) always have at least one
+  # octet >= 100 OR a leading-zero/3-digit octet; doc section numbers are
+  # uniformly small single-digit components. Allow quads where EVERY octet
+  # is a single digit (0-9) — section/version refs, never a routable host.
+  '''\b\d\.\d\.\d\.\d\b''',
+]
+
+# ---------------------------------------------------------------------------
+# Global allowlist
+# ---------------------------------------------------------------------------
+#
+# Files and paths that legitimately contain secret-SHAPED (but non-secret)
+# strings: test fixtures pinning fake keys / old version refs, historical
+# CHANGELOG entries, and archived scripts/docs that referenced old internal
+# addresses before the TD-157 / TD-147 sweeps.
+[allowlist]
+description = "Igris repo allowlist — fixtures, historical entries, archives"
+
+paths = [
+  # --- Carried-but-not-committed local state (SYSTEM.md §9 invariant #5) ---
+  # Agent memory and local Claude settings are gitignored — they never enter
+  # a commit, so they cannot leak via the gate. `gitleaks detect --no-git`
+  # walks them anyway (it ignores .gitignore), so allowlist them to keep the
+  # retroactive ad-hoc scan clean. The pre-commit/CI gates only ever see
+  # tracked+staged content, so these paths are irrelevant there regardless.
+  '''\.claude/agent-memory/.*''',
+  '''\.claude/settings\.local\.json$''',
+  # --- Test fixtures (intentionally pin fake/example keys & old refs) ---
+  # The CLI mcp-config tests assert rejection of literal keys and acceptance
+  # of ${VAR} indirection; the literals are fake fixtures, not real secrets.
+  '''cli/src/__tests__/.*\.(ts|js)$''',
+  # Bats fixtures under test/ that pin `--env API=sk-live-do-not-leak` etc.
+  '''test/.*\.(bash|sh)$''',
+  '''test/fixtures/.*''',
+  # --- Historical / archived surfaces (TD-159 scope is FUTURE commits) ---
+  # CHANGELOG historical entries: anything under released sections may
+  # reference old addresses that were public for months (TD-157 reasoning).
+  '''CHANGELOG\.md$''',
+  # Archived migration scripts that legitimately referenced old internal
+  # addresses before they were retired.
+  '''scripts/archive/.*''',
+  # Archived/historical docs.
+  '''docs/archive/.*''',
+  # gitleaks' own config (this file documents the 76.13.180.x pattern as a
+  # rule regex; it is not a leak of the address).
+  '''\.gitleaks\.toml$''',
+  # The ops doc explains the rules and necessarily shows example patterns.
+  '''docs/operations/secret-scanning\.md$''',
+]
+
+# Regex-level allowlist (applies to the MATCH text across all rules). These
+# subtract universally-benign shapes so even a non-allowlisted file does not
+# false-positive on an env-indirection placeholder or a documentation IP.
+regexTarget = "match"
+regexes = [
+  # ${VAR} env indirection is the sanctioned secret-handling form repo-wide.
+  '''\$\{[A-Za-z0-9_]+\}''',
+  # RFC-5737 documentation IP ranges are always safe to write in docs.
+  '''\b(?:192\.0\.2|198\.51\.100|203\.0\.113)\.\d{1,3}\b''',
+  # example.com / example.org sanctioned example hosts.
+  '''(?i)\bexample\.(?:com|org|net)\b''',
+]
