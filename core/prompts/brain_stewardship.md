@@ -7,6 +7,8 @@ trigger, and you are responsible for reaching for it at the right moment.
 A brain READ that is not triggered is invisible to the next session: a
 correctly-stored memory that is never recalled does not change behavior.
 
+> **Status (post-FR-187):** this file is NO LONGER loaded at boot — `core/os/memory.md` is the boot-tier Memory contract. `brain_stewardship.md` is retained as (1) the input to `scripts/validate_brain_stewardship_enums.sh` (a pre-commit gate) and (2) an enumeration surface tracked in MAINTAINING.md. Don't delete it expecting `memory.md` to cover it — they serve different roles.
+
 <!-- SECTION: brain_stewardship -->
 
 ## How sync routes (read this first)
