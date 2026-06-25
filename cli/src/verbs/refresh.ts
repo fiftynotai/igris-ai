@@ -328,6 +328,7 @@ function recordedChannelToFlag(channel: Channel, ref: string): string {
   if (channel === "main") return "main";
   if (channel === "release") return ref; // tag name verbatim
   if (channel === "tag") return ref;
+  if (channel === "branch") return ref; // branch name verbatim (TD-154)
   return ref;
 }
 

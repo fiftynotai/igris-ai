@@ -5,8 +5,8 @@
  *   {
  *     "schema_version": 2,
  *     "cli_version":    "<x.y.z>",
- *     "brain_channel":  "release" | "main" | "tag" | null,
- *     "brain_ref":      "<tag>" | "main" | null,
+ *     "brain_channel":  "release" | "main" | "tag" | "branch" | null,
+ *     "brain_ref":      "<tag>" | "main" | "<branch>" | null,
  *     "hooks_version":  "<sha256 of canonical-settings.json>" | null,
  *     "agents_version": "<sha256 of brain agents/manifest.yaml>" | null,
  *     "skills_version": "<sha256 of recursive sort+hash of brain skills/>" | null,

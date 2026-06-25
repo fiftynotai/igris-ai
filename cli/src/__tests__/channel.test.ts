@@ -11,12 +11,14 @@ import {
   ChannelResolveError,
   DEFAULT_OWNER,
   DEFAULT_REPO,
+  headsTarballUrl,
   mainTarballUrl,
   repoName,
   repoOwner,
   resolveChannel,
   tagTarballUrl,
 } from "../lib/channel.js";
+import type { RefClass } from "../lib/channel.js";
 
 afterEach(() => {
   delete process.env.IGRIS_GITHUB_OWNER;
@@ -51,6 +53,18 @@ describe("channel — URL builders", () => {
     // A tag name with `/` (e.g. "release/2026-05") gets percent-encoded.
     expect(tagTarballUrl("release/2026-05")).toContain("%2F");
   });
+
+  it("headsTarballUrl uses owner/repo and refs/heads/<branch> (TD-154)", () => {
+    expect(headsTarballUrl("develop")).toBe(
+      `https://github.com/${DEFAULT_OWNER}/${DEFAULT_REPO}/archive/refs/heads/develop.tar.gz`,
+    );
+    // A branch name with `/` (e.g. "feature/x") gets percent-encoded.
+    expect(headsTarballUrl("feature/x")).toContain("%2F");
+  });
+
+  it("mainTarballUrl is headsTarballUrl('main') — byte-identical (TD-154 regression)", () => {
+    expect(mainTarballUrl()).toBe(headsTarballUrl("main"));
+  });
 });
 
 describe("channel — resolveChannel", () => {
@@ -71,7 +85,10 @@ describe("channel — resolveChannel", () => {
   });
 
   it("--channel=v7.0.0 returns 'tag' kind", async () => {
-    const r = await resolveChannel({ flag: "v7.0.0" });
+    const r = await resolveChannel({
+      flag: "v7.0.0",
+      classifyFn: () => Promise.resolve("tag" as RefClass),
+    });
     expect(r.kind).toBe("tag");
     expect(r.ref).toBe("v7.0.0");
     expect(r.tarballUrl).toContain("/refs/tags/v7.0.0.tar.gz");
@@ -109,6 +126,7 @@ describe("channel — resolveChannel", () => {
     let called = false;
     const r = await resolveChannel({
       flag: "v6.5.0",
+      classifyFn: () => Promise.resolve("tag" as RefClass),
       latestReleaseTagFn: () => {
         called = true;
         return Promise.resolve("should-not-be-used");
@@ -116,6 +134,105 @@ describe("channel — resolveChannel", () => {
     });
     expect(called).toBe(false);
     expect(r.ref).toBe("v6.5.0");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-154: tag-vs-branch classification for non-main --channel values.
+//
+// Mocks ONLY the injected `classifyFn` seam (mirroring the latestReleaseTagFn
+// pattern) — no real git-ref API call, no vi.mock of channel.ts. Each case
+// asserts the resolved kind/ref/tarballUrl, and the "neither" case asserts the
+// clear error MESSAGE (not a raw 404).
+// ---------------------------------------------------------------------------
+describe("channel — tag-vs-branch classification (TD-154)", () => {
+  it("classifies as a tag → resolves to refs/tags/<x>", async () => {
+    let seen: string | undefined;
+    const r = await resolveChannel({
+      flag: "v7.0.0",
+      classifyFn: (ref) => {
+        seen = ref;
+        return Promise.resolve("tag" as RefClass);
+      },
+    });
+    expect(seen).toBe("v7.0.0");
+    expect(r.kind).toBe("tag");
+    expect(r.ref).toBe("v7.0.0");
+    expect(r.tarballUrl).toBe(tagTarballUrl("v7.0.0"));
+    expect(r.tarballUrl).toContain("/refs/tags/v7.0.0.tar.gz");
+  });
+
+  it("classifies as a branch → falls back to refs/heads/<x>", async () => {
+    const r = await resolveChannel({
+      flag: "develop",
+      classifyFn: () => Promise.resolve("branch" as RefClass),
+    });
+    expect(r.kind).toBe("branch");
+    expect(r.ref).toBe("develop");
+    expect(r.tarballUrl).toBe(headsTarballUrl("develop"));
+    expect(r.tarballUrl).toContain("/refs/heads/develop.tar.gz");
+  });
+
+  it("throws a clear 'no tag or branch named' error when neither (not a raw 404)", async () => {
+    await expect(
+      resolveChannel({
+        flag: "does-not-exist",
+        classifyFn: () => Promise.resolve("none" as RefClass),
+      }),
+    ).rejects.toThrow(ChannelResolveError);
+    await expect(
+      resolveChannel({
+        flag: "does-not-exist",
+        classifyFn: () => Promise.resolve("none" as RefClass),
+      }),
+    ).rejects.toThrow(/no tag or branch named 'does-not-exist'/);
+    // And explicitly NOT a 404-style message.
+    await expect(
+      resolveChannel({
+        flag: "does-not-exist",
+        classifyFn: () => Promise.resolve("none" as RefClass),
+      }),
+    ).rejects.not.toThrow(/404/);
+  });
+
+  it("does NOT call the classifier when flag is 'main' (regression)", async () => {
+    let called = false;
+    const r = await resolveChannel({
+      flag: "main",
+      classifyFn: () => {
+        called = true;
+        return Promise.resolve("branch" as RefClass);
+      },
+    });
+    expect(called).toBe(false);
+    expect(r.kind).toBe("main");
+    expect(r.ref).toBe("main");
+    expect(r.tarballUrl).toContain("/refs/heads/main.tar.gz");
+  });
+
+  it("does NOT call the classifier on the no-flag release path (regression)", async () => {
+    let called = false;
+    const r = await resolveChannel({
+      latestReleaseTagFn: () => Promise.resolve("v7.0.0"),
+      classifyFn: () => {
+        called = true;
+        return Promise.resolve("tag" as RefClass);
+      },
+    });
+    expect(called).toBe(false);
+    expect(r.kind).toBe("release");
+    expect(r.ref).toBe("v7.0.0");
+    expect(r.tarballUrl).toContain("/refs/tags/v7.0.0.tar.gz");
+  });
+
+  it("propagates a genuine network error from the classifier (not 'none')", async () => {
+    await expect(
+      resolveChannel({
+        flag: "develop",
+        classifyFn: () =>
+          Promise.reject(new ChannelResolveError("GitHub API unreachable (ECONNREFUSED).")),
+      }),
+    ).rejects.toThrow(/unreachable/);
   });
 });
 

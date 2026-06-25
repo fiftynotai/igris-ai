@@ -20,7 +20,7 @@ export interface InstalledFeatures {
    * install ran before init/refresh deposited the install-source file
    * (legacy v1 row migrated forward).
    */
-  brain_channel: "release" | "main" | "tag" | null;
+  brain_channel: Channel | null;
   /**
    * Resolved channel ref ("v7.0.0", "main", or any tag) at install time
    * (M2 — schema v2). Mirrors `~/.igris/.install-source.json#ref`. `null`
@@ -104,8 +104,11 @@ export interface CanonicalHooks {
  * - "release": latest published GitHub release tag (default).
  * - "main":    bleeding-edge main branch.
  * - "tag":     a specific git tag, captured in InstallSource.ref.
+ * - "branch":  a specific git branch (e.g. "develop"), captured in
+ *              InstallSource.ref (TD-154). The "main" kind is the special-cased
+ *              default branch; "branch" covers every other branch name.
  */
-export type Channel = "release" | "main" | "tag";
+export type Channel = "release" | "main" | "tag" | "branch";
 
 /**
  * Per-CLI bridge target. Phase 2 supports four CLIs natively; bridges

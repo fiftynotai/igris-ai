@@ -94,7 +94,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--channel <ref>",
-      "channel to fetch from: 'main', 'v7.0.0', or any tag",
+      "channel to fetch from: 'main', a tag (e.g. 'v7.0.0'), or any branch (e.g. 'develop')",
     )
     .option("--upgrade", "upgrade an existing install (preserves user state)", false)
     .option(
@@ -209,7 +209,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--channel <ref>",
-      "switch to a different channel: 'main', 'v7.0.0', or any tag",
+      "switch to a different channel: 'main', a tag (e.g. 'v7.0.0'), or any branch (e.g. 'develop')",
     )
     .option(
       "--no-propagate",

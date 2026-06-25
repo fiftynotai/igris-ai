@@ -105,12 +105,12 @@ import {
   type InitInputs,
   type PromptFn,
 } from "../lib/init/prompts.js";
-import type { CLITarget } from "../types.js";
+import type { Channel, CLITarget } from "../types.js";
 
 export interface InitOptions {
   /** Local repo root for contributor mode. Skips network. */
   fromSource?: string;
-  /** Channel flag: undefined = latest release, "main" = main, else tag. */
+  /** Channel flag: undefined = latest release, "main" = main, else a tag or branch (TD-154). */
   channel?: string;
   /** Allow upgrading an existing install. */
   upgrade?: boolean;
@@ -268,7 +268,7 @@ export async function runInit(opts: InitOptions): Promise<number> {
 
   // --- 3. Resolve channel + fetch (or from-source copy) -----------------
   let channelRef: string;
-  let channelKind: "release" | "main" | "tag";
+  let channelKind: Channel;
   let tarballUrl: string | null = null;
   let contentSha256: string;
   let stagingPath: string;
