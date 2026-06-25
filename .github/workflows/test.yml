@@ -51,6 +51,17 @@ jobs:
         run: |
           git --version
 
+      - name: Install gitleaks (TD-159 — so test/secrets_scan.test.bash runs, not skips)
+        run: |
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            brew install gitleaks
+          else
+            GL=8.30.1
+            curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GL}/gitleaks_${GL}_linux_x64.tar.gz" | tar -xz -C /tmp gitleaks
+            sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
+          fi
+          gitleaks version
+
       - name: Run test suite
         run: |
           # Run test files sequentially to avoid parallel execution issues

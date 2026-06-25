@@ -120,11 +120,14 @@ description = "Igris repo allowlist — fixtures, historical entries, archives"
 
 paths = [
   # --- Carried-but-not-committed local state (SYSTEM.md §9 invariant #5) ---
-  # Agent memory and local Claude settings are gitignored — they never enter
-  # a commit, so they cannot leak via the gate. `gitleaks detect --no-git`
-  # walks them anyway (it ignores .gitignore), so allowlist them to keep the
-  # retroactive ad-hoc scan clean. The pre-commit/CI gates only ever see
-  # tracked+staged content, so these paths are irrelevant there regardless.
+  # Agent memory + the per-developer `.claude/settings.local.json` are gitignored
+  # REPO-WIDE (see .gitignore — settings.local.json was added there under TD-159
+  # C1; it is an untracked, local-only file holding approved-command perms that
+  # may embed machine-local secrets). Because they are gitignored AND untracked,
+  # they cannot reach a commit — the pre-commit/CI gates only ever see
+  # tracked+staged content. `gitleaks detect --no-git` walks the working dir
+  # anyway (it ignores .gitignore), so they are allowlisted to keep the ad-hoc
+  # retroactive scan clean. NOT a commit-gate blind spot: the gate never sees them.
   '''\.claude/agent-memory/.*''',
   '''\.claude/settings\.local\.json$''',
   # --- Test fixtures (intentionally pin fake/example keys & old refs) ---

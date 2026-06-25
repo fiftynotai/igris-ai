@@ -36,7 +36,7 @@ igris install .
 **What this does:**
 - Bootstraps the centralized brain at `~/.igris/` (SQLite database with FTS5 search, agents, rules, skills, prompts)
 - Registers the bundled `igris-brain` MCP server into all 4 supported harnesses (Claude → `~/.claude.json`, OpenCode → `~/.config/opencode/opencode.json`, Codex → `~/.codex/config.toml`, Antigravity → `~/.gemini/config/mcp_config.json`) so each serves the brain tools (no manual MCP setup — it ships inside the `igris-ai` npm package)
-- Symlinks `.claude/agents/`, `.claude/rules/`, and `.claude/skills/` into your project so all projects share the same brain content
+- Symlinks `.claude/agents/` and `.claude/skills/` into your project so all projects share the same brain content
 - Merges the canonical Igris hooks block into `.claude/settings.json` (creating the file if absent, backing up any existing one)
 - Regenerates `CLAUDE.md` in your project root from the brain template
 - Writes a `.igris_version` marker for upgrade detection

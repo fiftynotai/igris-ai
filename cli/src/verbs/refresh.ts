@@ -22,7 +22,7 @@ import {
   existsSync,
   mkdirSync,
 } from "node:fs";
-import { dirname, join, resolve as pathResolve } from "node:path";
+import { join, resolve as pathResolve } from "node:path";
 import {
   AtomicExtractError,
   atomicSwap,
@@ -80,13 +80,10 @@ export interface RefreshOptions {
   confirmFn?: (prompt: string) => boolean;
 }
 
-const FAKE_DIRNAME = ".";
-
 /**
  * Re-fetch and atomically swap brain core. Returns process exit code.
  */
 export async function runRefresh(opts: RefreshOptions): Promise<number> {
-  void FAKE_DIRNAME; // reserved for future cache-aware swap path
   const dryRun = opts.dryRun === true;
   const dry = dryRun ? new DryRunCollector() : null;
 
@@ -467,7 +464,6 @@ function defaultConfirm(prompt: string): boolean {
   // Simpler: just read up to 1024 bytes from /dev/tty.
   try {
     const fs = require("node:fs");
-    void dirname; // keep imports anchored under noUnusedLocals
     const buf = Buffer.alloc(1024);
     const fd = fs.openSync("/dev/tty", "r");
     const n = fs.readSync(fd, buf, 0, 1024, null);

@@ -14,6 +14,7 @@
  *   - igris_goal_get      — goal + serving briefs/learnings
  *   - igris_goal_update   — partial patch with status->achieved auto-stamp
  *   - igris_goal_progress — count-based completion across serving briefs
+ *   - igris_goal_dashboard — status counts, upcoming deadlines, stalled goals
  *
  * Emits: goal.created, goal.updated, goal.achieved
  * Listens: (none in Phase 1 — listeners deferred to FR-106 subconscious)

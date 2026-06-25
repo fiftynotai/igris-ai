@@ -165,9 +165,8 @@ EOF
   mkdir -p "$FAKEHOME/.claude"
 
   # Run --fix with the staged env. We tolerate non-zero exit (the
-  # bridge-fix arm calls runInit which talks to GitHub releases, and
-  # runInstall expects CLAUDE.md.tmpl in the staged brain — neither is
-  # in scope for this minimal fixture). The TD-122 contract is that
+  # bridge-fix arm calls runInit which talks to GitHub releases — out of
+  # scope for this minimal fixture). The TD-122 contract is that
   # BOTH fix arms fire in one invocation — pre-fix the bridge-missing
   # arm `break`'d, so the not-installed arm was unreachable.
   HOME="$FAKEHOME" PATH="$FAKEPATH:$PATH" run $CLI_BIN doctor --fix 2>&1

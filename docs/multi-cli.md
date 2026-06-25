@@ -388,9 +388,10 @@ the model; Igris is the OS it rides"* — a bare harness greeting as "Igris" was
 the bug, not the feature. The OS now boots only when `/boot` (a registered
 skill) is invoked; nothing reaches a harness via an always-read file.
 
-The CLAUDE.md identity block is governed separately (the whole-file `CLAUDE.md`
-render from `core/templates/CLAUDE.md.tmpl`) and its sweep rides the FR-187
-cutover — it is **not** part of the retired `os_identity` projection surface.
+The CLAUDE.md render machinery (`core/templates/CLAUDE.md.tmpl` + the whole-file
+render) was **retired in FR-191 / TD-267** — `igris install` writes no CLAUDE.md
+render; the repo `CLAUDE.md` is a static boot-pointer. (This was separate from the
+`os_identity` projection surface, which FR-202 M4 also retired.)
 
 The per-harness **delegation mechanism** that used to ride the identity region
 on `dynamic-define` harnesses is now a **context layer** (see the next section).

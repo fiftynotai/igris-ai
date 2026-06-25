@@ -92,7 +92,7 @@ git pull origin main
 igris init
 ```
 
-Since `.claude/agents/`, `.claude/rules/`, and `.claude/skills/` are symlinked, all linked projects immediately see the updated files.
+Since `.claude/agents/` and `.claude/skills/` are symlinked, all linked projects immediately see the updated files.
 
 ### Copy-Based Projects (Manual Update)
 
@@ -185,7 +185,6 @@ Every update creates a timestamped backup:
 
 - All files that will be modified during the update
 - Agent definitions (`.claude/agents/`)
-- Rule files (`.claude/rules/`)
 - System prompts (`~/.igris/core/prompts/`)
 - Templates (`~/.igris/core/templates/`)
 - Version file (`.igris_version`)
@@ -219,7 +218,6 @@ BACKUP=".igris_backup/20260222_100000"
 
 # Restore files
 cp -r "$BACKUP/agents/"* .claude/agents/
-cp -r "$BACKUP/rules/"* .claude/rules/
 cp -r "$BACKUP/prompts/"* ~/.igris/core/prompts/
 cp -r "$BACKUP/templates/"* ~/.igris/core/templates/
 cp "$BACKUP/.igris_version" .

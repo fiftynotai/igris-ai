@@ -71,6 +71,10 @@ CLAUDE.local.md
 # Agent working memory (local-only)
 .claude/agent-memory/
 
+# Per-developer local Claude settings — approved-command permission strings
+# that may embed machine-local secrets. Must NEVER be committed (TD-159 C1).
+.claude/settings.local.json
+
 # Igris v6 — symlinks created by `igris register` (machine-specific)
 # (FR-187 retired the .claude/rules/ symlink layer — agents + skills only.)
 .claude/agents/

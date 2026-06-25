@@ -2,7 +2,7 @@
 
 Contributor-facing reference for how the system fits together.
 
-**Start here if you're new:** [`SYSTEM.md`](./SYSTEM.md) is the canonical system overview — the 4 layers, the 19 brain components, the brief lifecycle, the hook dataflow, the 7-agent roster + 21 skills, and "how do I add X?" extension points. It links out to the per-feature docs below for every subsystem.
+**Start here if you're new:** [`SYSTEM.md`](./SYSTEM.md) is the canonical system overview — the 4 layers, the 19 brain components, the brief lifecycle, the hook dataflow, the agent roster + the skills, and "how do I add X?" extension points. It links out to the per-feature docs below for every subsystem.
 
 For any specific subsystem, read its per-feature doc directly. These are the source of truth; `SYSTEM.md` summarizes and cross-links.
 
