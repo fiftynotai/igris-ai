@@ -82,7 +82,7 @@ brain DB and cross-checks `git log`, flagging:
 ### Closing-commit detection
 
 A commit "closes" a brief when its message references the brief id — via the
-`closes #<ID>` footer convention (`core/rules/00-igris-universal.md`) OR a bare
+`closes #<ID>` footer convention (`core/os/standards.md`) OR a bare
 `<ID>` token anywhere in the subject or body. `git log --grep` searches the
 whole message, so both conventions are matched. A missed match produces a noisy
 C2 line, not a blocked commit (the gate is WARN), so the false-positive cost is

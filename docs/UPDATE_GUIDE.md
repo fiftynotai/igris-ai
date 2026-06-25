@@ -135,7 +135,6 @@ igris update --all
 - `~/.igris/core/prompts/*.md` - System prompts
 - `~/.igris/core/templates/*.md` - Brief and PR templates
 - `scripts/igris_*.sh` - Core scripts
-- `CLAUDE.md` - Claude Code instructions
 
 ### Files That Will Be Preserved
 

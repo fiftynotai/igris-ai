@@ -89,7 +89,6 @@ igris init --persona professional
 # Confirm the Igris surface inside your project
 ls -la .claude/
 cat .igris_version
-ls -la CLAUDE.md
 
 # Expected structure inside the project repo:
 # .claude/

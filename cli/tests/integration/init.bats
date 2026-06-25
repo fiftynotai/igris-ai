@@ -23,12 +23,11 @@ setup() {
 
 stage_source_repo() {
   local root="$1"
-  mkdir -p "$root/core/agents" "$root/core/skills/demo" "$root/core/rules" \
+  mkdir -p "$root/core/agents" "$root/core/skills/demo" \
            "$root/core/prompts" "$root/core/hooks" "$root/core/scripts"
   printf '# soul (bats)\n' > "$root/core/SOUL.md"
   printf '{ "version": "fixture" }\n' > "$root/core/igris_tree.json"
   printf 'agents: []\n' > "$root/core/agents/manifest.yaml"
-  printf '# universal\n' > "$root/core/rules/00-igris-universal.md"
   printf '# demo skill\n' > "$root/core/skills/demo/SKILL.md"
   printf '{"hooks":{}}\n' > "$root/core/hooks/canonical-settings.json"
   printf '#!/bin/sh\necho noop\n' > "$root/core/scripts/verify_mirror.sh"
