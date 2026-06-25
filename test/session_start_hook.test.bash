@@ -36,7 +36,7 @@ setup() {
   BASELINE="$SANDBOX/baseline.json"
   cat > "$BASELINE" <<'EOF'
 {
-  "additionalContext": "[IGRIS SESSION STATE]\\nSource: startup\\nMode: NO SESSION\\nActive Brief: None\\nBlockers: None\\n[/IGRIS SESSION STATE]\\n[IGRIS AUTO-BOOT] Run /awaken to ground this session."
+  "additionalContext": "[IGRIS SESSION STATE]\\nSource: startup\\nMode: NO SESSION\\nActive Brief: None\\nBlockers: None\\n[/IGRIS SESSION STATE]\\n[IGRIS AUTO-BOOT] Run /boot to ground this session."
 }
 EOF
 
@@ -105,22 +105,22 @@ PYEOF
 }
 
 # --- FR-202 M4 Unit A: auto-boot nudge gating ------------------------------
-# The hook appends an [IGRIS AUTO-BOOT] /awaken cue to additionalContext on a
+# The hook appends an [IGRIS AUTO-BOOT] /boot cue to additionalContext on a
 # FRESH session only. Fresh = native-Claude "startup" OR the OpenCode bridge's
 # "opencode" source (which it dispatches only on session.created). A Claude
 # resume/clear/compact is already grounded → the cue must be ABSENT.
 
-@test "startup: auto-boot /awaken nudge present (jq shape == pinned baseline)" {
+@test "startup: auto-boot /boot nudge present (jq shape == pinned baseline)" {
   require_jq
   require_python3
   run run_hook_no_tty "$SANDBOX/home" "" "{\"source\":\"startup\",\"cwd\":\"$SANDBOX/proj\"}" "$SANDBOX/out.json"
   [ "$status" -eq 0 ]
   # Byte-equal to the baseline (which now carries the nudge) AND the cue is there.
   cmp "$BASELINE" "$SANDBOX/out.json"
-  grep -q '\[IGRIS AUTO-BOOT\] Run /awaken to ground this session\.' "$SANDBOX/out.json"
+  grep -q '\[IGRIS AUTO-BOOT\] Run /boot to ground this session\.' "$SANDBOX/out.json"
 }
 
-@test "opencode source: auto-boot /awaken nudge present (OpenCode session.created)" {
+@test "opencode source: auto-boot /boot nudge present (OpenCode session.created)" {
   require_jq
   require_python3
   # Unified bridge envelope: top-level source=opencode, payload is the raw event.
@@ -129,7 +129,7 @@ PYEOF
     "$SANDBOX/out.json"
   [ "$status" -eq 0 ]
   grep -q 'Source: opencode' "$SANDBOX/out.json"
-  grep -q '\[IGRIS AUTO-BOOT\] Run /awaken to ground this session\.' "$SANDBOX/out.json"
+  grep -q '\[IGRIS AUTO-BOOT\] Run /boot to ground this session\.' "$SANDBOX/out.json"
 }
 
 @test "resume/clear/compact: auto-boot nudge ABSENT (already grounded — no churn)" {
@@ -174,7 +174,7 @@ PYEOF
   jq_ctx=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['additionalContext'])" "$SANDBOX/jq.json")
   py_ctx=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['additionalContext'])" "$SANDBOX/py.json")
   [ "$jq_ctx" = "$py_ctx" ]
-  printf '%s' "$jq_ctx" | grep -q '\[IGRIS AUTO-BOOT\] Run /awaken to ground this session\.'
+  printf '%s' "$jq_ctx" | grep -q '\[IGRIS AUTO-BOOT\] Run /boot to ground this session\.'
 }
 
 # --- tty-positive tests (allocate a pty via python) -------------------------

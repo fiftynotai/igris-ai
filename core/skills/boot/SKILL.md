@@ -1,5 +1,6 @@
 ---
-name: awaken
+name: boot
+tier: essential
 description: Start or resume session - loads state and continues work
 disable-model-invocation: false
 allowed-tools:
@@ -16,13 +17,13 @@ allowed-tools:
   - mcp__igris-brain__igris_suggestion_list
   - mcp__igris-brain__igris_perception_review_pending
 triggers:
+  - "BOOT"
   - "AWAKEN"
-  - "ARISE"
   - "start session"
   - "resume session"
 ---
 
-# AWAKEN - Start/Resume Session
+# BOOT - Start/Resume Session
 
 Initialize Igris AI and resume any pending work.
 
@@ -36,7 +37,7 @@ Read `~/.igris/core/os/INDEX.md` first — this is the **module map** for what c
 2. From the module table, load every module whose `tier` is `boot` — read each from `~/.igris/core/os/<module>.md` (the `SOUL` row maps to `~/.igris/core/SOUL.md`).
 3. Read all resolved modules silently. `on-demand` / `reference` modules are NOT loaded here — pull them later when their `consult_when` fires.
 
-**Always-needed files** (not in the INDEX, needed for awaken mechanics):
+**Always-needed files** (not in the INDEX, needed for boot mechanics):
 - `~/.igris/USER.md` - User config (addressing mode, mask preference)
 - `~/.igris/config.json` - Remote brain URL and API key
 
@@ -44,7 +45,7 @@ Read `~/.igris/core/os/INDEX.md` first — this is the **module map** for what c
 
 ### 2. Load Session State — Gather
 
-The session model is **per-instance** (see `session_protocol.md`): every instance owns one `session/instances/<instance_id>.md` file, keyed by its `instance_id`. There is no shared `CURRENT_SESSION.md`. `/awaken` does NOT read a single fixed file — it *gathers*: it enumerates the project's session files + the live instance registry, classifies each file (the Lock-2/3 truth table), and picks THE handoff. As of FR-195 the entire enumerate→classify→pick algorithm is OWNED by the `igris session gather` verb — the skill does not re-derive it.
+The session model is **per-instance** (see `session_protocol.md`): every instance owns one `session/instances/<instance_id>.md` file, keyed by its `instance_id`. There is no shared `CURRENT_SESSION.md`. `/boot` does NOT read a single fixed file — it *gathers*: it enumerates the project's session files + the live instance registry, classifies each file (the Lock-2/3 truth table), and picks THE handoff. As of FR-195 the entire enumerate→classify→pick algorithm is OWNED by the `igris session gather` verb — the skill does not re-derive it.
 
 Run the gather verb and read its JSON digest:
 ```bash
@@ -144,7 +145,7 @@ igris boot-sync --project <slug>
 
 Per Lock 1, heartbeat is **display-only** and NOTHING auto-destroys a stale instance. This section is a *display* of genuine crashes — it does NOT remove anything.
 
-A clean `/rest` → `/awaken` cycle leaves nothing stale: `/rest` already calls `igris_instance_remove` in its §2.5 "Close Instance Ownership" step, so the prior instance is gone from the registry by the time `/awaken` runs. What this section surfaces is the *genuine crash* case — an instance that exited without `/rest`.
+A clean `/rest` → `/boot` cycle leaves nothing stale: `/rest` already calls `igris_instance_remove` in its §2.5 "Close Instance Ownership" step, so the prior instance is gone from the registry by the time `/boot` runs. What this section surfaces is the *genuine crash* case — an instance that exited without `/rest`.
 
 This is purely a display of the `crashed[]` list the §2 `igris session gather` digest ALREADY computed (the ABANDONED LIVE set — `state='live'` with an absent/stale owner). No new tool call is needed; the verb did the classification.
 
@@ -187,7 +188,7 @@ igris session register --project <slug> \
 
 ### 3.8. Housekeeping Sweep (Mandatory)
 
-The crash-robust, idempotent archive sweep (H0–H3) is OWNED by the `igris housekeeping` verb (FR-195). It is NOT a daemon, NOT scheduled — it runs once per `/awaken`, AFTER gather (§2) and AFTER registration (§3.7), BEFORE the assessment surfaces (§4). The verb's H0–H3 are individually crash-robust and idempotent; running it twice is harmless and a crash mid-sweep leaves a consistent state (Lock 4 — `session_protocol.md` §5). The header-presence guard (idempotency) and per-file append-then-delete (crash-robustness) are the exact atomicity contracts that "cannot be enforced from a skill recipe" — which is why this is CODE, not inline markdown.
+The crash-robust, idempotent archive sweep (H0–H3) is OWNED by the `igris housekeeping` verb (FR-195). It is NOT a daemon, NOT scheduled — it runs once per `/boot`, AFTER gather (§2) and AFTER registration (§3.7), BEFORE the assessment surfaces (§4). The verb's H0–H3 are individually crash-robust and idempotent; running it twice is harmless and a crash mid-sweep leaves a consistent state (Lock 4 — `session_protocol.md` §5). The header-presence guard (idempotency) and per-file append-then-delete (crash-robustness) are the exact atomicity contracts that "cannot be enforced from a skill recipe" — which is why this is CODE, not inline markdown.
 
 Run the housekeeping verb (the ordering contract requires it AFTER gather + register):
 ```bash
@@ -195,7 +196,7 @@ igris housekeeping --project <slug>
 ```
 
 What the verb does (faithful to the prior inline H0–H3):
-- **H0** — retire the legacy `CURRENT_SESSION.md` row (`instance_id IS NULL`) that gather provably read this `/awaken`: flip its DB state to `archived` (content carried through unchanged, instance_id untouched) and move `session/CURRENT_SESSION.md` → `session/archive/CURRENT_SESSION-<updated_at>.md`. The Lock-2 "read-before-archive" invariant holds because the skill ran gather FIRST (the ordering contract).
+- **H0** — retire the legacy `CURRENT_SESSION.md` row (`instance_id IS NULL`) that gather provably read this `/boot`: flip its DB state to `archived` (content carried through unchanged, instance_id untouched) and move `session/CURRENT_SESSION.md` → `session/archive/CURRENT_SESSION-<updated_at>.md`. The Lock-2 "read-before-archive" invariant holds because the skill ran gather FIRST (the ordering contract).
 - **H1** — RESTED → ARCHIVED supersession (the ONLY steady-state archiving): a `rested` file is archived only when a *newer* `rested` file from a *different* instance proves it was consumed. An ABANDONED LIVE file is NEVER archived here.
 - **H2** — roll individual `session/archive/*.md` files older than 30 days into `session/archive/<YYYY-MM>.md` month digests (header-guarded, append-then-delete).
 - **H3** — 150-file ceiling burst valve: if >150 individual files remain after H2, roll oldest-first into month digests until ≤150.
@@ -358,7 +359,7 @@ is unavailable (older brain), skip silently.
 Extraction happens in a detached background process at session-end (spawned
 by `session_end.sh` / `pre_compact.sh` via `perception_extract_and_persist.sh`).
 This section is purely a SELECT — it surfaces whatever the background process
-has committed since the last awaken. /awaken does NOT drain any inbox.
+has committed since the last boot. /boot does NOT drain any inbox.
 
 #### Pre-step (TD-074, TD-080): perception failure WARNING
 
@@ -505,7 +506,7 @@ If the §2 `igris session gather` digest selected a genuine handoff with `handof
 **Next Steps:** [handoff.next_steps]
 ```
 
-If `gather.fresh_start` is true (`handoff` is null), this is a fresh start — skip the resume display. (A legacy `CURRENT_SESSION.md` handoff with `is_legacy: true` is displayed identically — the resume is invisible to the user, exactly as pre-FR-126 `/awaken` read it.)
+If `gather.fresh_start` is true (`handoff` is null), this is a fresh start — skip the resume display. (A legacy `CURRENT_SESSION.md` handoff with `is_legacy: true` is displayed identically — the resume is invisible to the user, exactly as pre-FR-126 `/boot` read it.)
 
 ### 6. Display Recommendations
 
@@ -519,7 +520,7 @@ If `gather.fresh_start` is true (`handoff` is null), this is a fresh start — s
 
 ### 7. Update Session
 
-`igris session register` (§3.7) already wrote this instance's LIVE per-instance file `~/.igris/projects/{project}/session/instances/<instance_id>.md` at `state='live'` (where `<instance_id>` is `register.instance_id` from the §3.7 digest), seeded from the handoff. §7 is the end-of-awaken confirm/refresh of THAT file — if the awakening surfaced anything that should land in the LIVE scratchpad (or once a hunt starts and `**Mode:**` flips to `HUNT MODE`), update it directly via `igris_session_file_update` with `project`, `filename=instances/<instance_id>.md`, `content`, `instance_id=<instance_id>`, `state='live'`. On a plain awaken with no further edits the register write already stands — no extra write is required.
+`igris session register` (§3.7) already wrote this instance's LIVE per-instance file `~/.igris/projects/{project}/session/instances/<instance_id>.md` at `state='live'` (where `<instance_id>` is `register.instance_id` from the §3.7 digest), seeded from the handoff. §7 is the end-of-boot confirm/refresh of THAT file — if the booting surfaced anything that should land in the LIVE scratchpad (or once a hunt starts and `**Mode:**` flips to `HUNT MODE`), update it directly via `igris_session_file_update` with `project`, `filename=instances/<instance_id>.md`, `content`, `instance_id=<instance_id>`, `state='live'`. On a plain boot with no further edits the register write already stands — no extra write is required.
 
 The per-instance file replaces the old single `CURRENT_SESSION.md`. There is no Mode flip on a shared file; each instance owns and writes its own file freely.
 

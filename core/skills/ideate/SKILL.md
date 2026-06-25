@@ -1,5 +1,6 @@
 ---
 name: ideate
+tier: opt-in
 description: Feature brainstorming and ideation - value/effort matrix, feature briefs
 disable-model-invocation: false
 allowed-tools:

@@ -1,5 +1,6 @@
 ---
-name: standardize
+name: ground
+tier: essential
 description: "Author any project-context doc (coding_guidelines, architecture_map, api_pattern, design_system, test_standards) from its catalog skeleton, using one of 4 acquisition modes. Default type: coding_guidelines. `inventory` lists which docs exist vs missing-but-applicable."
 disable-model-invocation: false
 allowed-tools:
@@ -10,6 +11,7 @@ allowed-tools:
   - Bash
   - mcp__igris-brain__igris_project_status
 triggers:
+  - "GROUND"
   - "STANDARDIZE"
   - "LAWKEEPER"
   - "generate guidelines"
@@ -20,7 +22,7 @@ triggers:
   - "context doc inventory"
 ---
 
-# Standardize Skill
+# Ground Skill
 
 Author a project-context doc from the **doc-type catalog** — the self-describing
 source of truth at `~/.igris/core/context-doc-types/*.md`. Each type declares its
@@ -29,7 +31,7 @@ a type, acquires the project's actual conventions via one of 4 modes, fills that
 type's skeleton, and writes the `target` under
 `~/.igris/projects/{project}/context/`.
 
-`coding_guidelines` is the **default type** — `standardize` with no doc-type
+`coding_guidelines` is the **default type** — `ground` with no doc-type
 authors `coding_guidelines.md` exactly as before.
 
 ## Arguments
@@ -42,7 +44,7 @@ authors `coding_guidelines.md` exactly as before.
 - `inventory` → run the **inventory view** instead of authoring (see below). Not a
   doc-type; it lists status for the project.
 - **Empty / omitted** → defaults to `coding_guidelines` (back-compat — a no-arg
-  `standardize` authors `coding_guidelines.md` as it always has).
+  `ground` authors `coding_guidelines.md` as it always has).
 
 **Second token — the acquisition mode** (how to gather the content), optional:
 - `analyze` → Mode B: Analyze current project (**default** when omitted)
@@ -138,16 +140,16 @@ the catalog — **not** hardwired to `coding_guidelines.md`):
   Mode D).
 - Note which mode (A/B/C/D) was used at the foot of the doc.
 
-> Example: `standardize design_system` reads
+> Example: `ground design_system` reads
 > `~/.igris/core/context-doc-types/design_system.md`, writes
 > `~/.igris/projects/{project}/context/design_system.md` with the sections
 > *Design tokens / Components / Layout & spacing / Conventions & decisions*
-> (its skeleton), filled from the project's UI. `standardize` (no arg) reads
+> (its skeleton), filled from the project's UI. `ground` (no arg) reads
 > `coding_guidelines.md`, writes `coding_guidelines.md` with *Naming conventions
 > / Structure & organization / Idiomatic patterns / Decisions* — identical to the
 > prior behavior.
 
-## Inventory (`standardize inventory`)
+## Inventory (`ground inventory`)
 
 A read-only, derived **status view**: for the current project, which context docs
 exist, which **apply** (the project's archetype matched against each type's
@@ -192,11 +194,11 @@ modify anything.
 | test_standards    | test_standards.md    | unknown | yes | present |
 
 Missing-but-applicable: architecture_map, design_system
-→ Author one with: standardize <type>
+→ Author one with: ground <type>
 ```
 
 End by naming the missing-but-applicable types and pointing at
-`standardize <type>` to author each. Do not author them automatically — the
+`ground <type>` to author each. Do not author them automatically — the
 inventory only reports.
 
 ## Constraints
@@ -206,7 +208,7 @@ inventory only reports.
    never hardwire `coding_guidelines.md` (except as the default type).
 3. **SKELETON from the catalog** — a type's section structure comes from its
    `core/context-doc-types/<type>.md` body, not from this skill.
-4. **BACK-COMPAT** — `standardize` with no doc-type authors `coding_guidelines.md`
+4. **BACK-COMPAT** — `ground` with no doc-type authors `coding_guidelines.md`
    exactly as before (default type = `coding_guidelines`, default mode = B).
 5. **ALWAYS detect platform** — for relevant best practices.
 6. **ALWAYS include examples** — concrete examples in the authored doc.
@@ -218,5 +220,5 @@ inventory only reports.
 
 `~/.igris/projects/{project}/context/<target>` — the authored doc for the chosen
 doc-type (default `coding_guidelines.md`), structured by that type's catalog
-skeleton. Or, for `standardize inventory`, the printed status table (no file
+skeleton. Or, for `ground inventory`, the printed status table (no file
 written).

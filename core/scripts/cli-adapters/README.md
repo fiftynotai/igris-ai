@@ -220,7 +220,7 @@ and no `igris add identity` arm. The surface registry is back to four:
 The whole-file `CLAUDE.md` render (and its `core/templates/CLAUDE.md.tmpl` +
 `identity.tmpl`) was **removed in FR-191** (the zero-config "door"): `igris install`
 no longer writes any identity file — project or global. Igris stays unaware of a
-cold harness by default; OS identity is delivered only via the `/awaken` boot
+cold harness by default; OS identity is delivered only via the `/boot` boot
 ceremony (decision #872). The per-harness delegation mechanism that used to ride
 the identity region is now the harness-specific context layer (below).
 

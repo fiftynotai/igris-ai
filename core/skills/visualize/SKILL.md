@@ -1,5 +1,6 @@
 ---
 name: visualize
+tier: opt-in
 description: Render and open the current project's brief graph as an interactive HTML visualization
 disable-model-invocation: false
 allowed-tools:

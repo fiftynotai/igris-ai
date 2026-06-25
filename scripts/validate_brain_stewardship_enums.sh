@@ -298,7 +298,7 @@ INTERNAL_TOOL_ALLOWLIST = {
     # cache management — operator/janitor surface
     'igris_cache_clean', 'igris_cache_rebuild',
 
-    # context tree mechanics — wired into /awaken, not actor-chosen
+    # context mechanics — wired into /boot, not actor-chosen
     'igris_context_get', 'igris_context_load', 'igris_context_register',
     'igris_context_tree',
 
@@ -331,6 +331,7 @@ INTERNAL_TOOL_ALLOWLIST = {
     # subconscious + suggestion surface — paused per v7 (subconscious.enabled=false)
     'igris_subconscious_run',
     'igris_suggestion_acted', 'igris_suggestion_dismiss', 'igris_suggestion_list',
+    'igris_suggestion_apply_action',
 }
 
 forward_misses = doc_names - gateway_names - DOC_ONLY_ALLOWLIST

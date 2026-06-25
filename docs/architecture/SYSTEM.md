@@ -6,7 +6,7 @@
 
 ## 1. The 30-Second Pitch
 
-Igris AI is an **open-source AI engineering OS** that orchestrates agent teams to implement software with human oversight. A local **brain** (SQLite + FTS5 + sqlite-vec) at `~/.igris/memory/knowledge.db` stores briefs, learnings, errors, tasks, perception events, and metrics. A unified `igris` CLI manages installation, sync, and lifecycle. The orchestrator (Claude Code grounded via the `/awaken` ceremony, which loads the layered OS context from `core/os/INDEX.md`) enforces a **brief-first protocol** and delegates work to **7 specialized agents** (architect, forger, sentinel, warden, mender, seeker, sage) within a single Claude Code session. An optional VPS acts as an **async backup hub + dashboard backend + cross-machine sync**; local is always authoritative.
+Igris AI is an **open-source AI engineering OS** that orchestrates agent teams to implement software with human oversight. A local **brain** (SQLite + FTS5 + sqlite-vec) at `~/.igris/memory/knowledge.db` stores briefs, learnings, errors, tasks, perception events, and metrics. A unified `igris` CLI manages installation, sync, and lifecycle. The orchestrator (Claude Code grounded via the `/boot` ceremony, which loads the layered OS context from `core/os/INDEX.md`) enforces a **brief-first protocol** and delegates work to **7 specialized agents** (architect, forger, sentinel, warden, mender, seeker, sage) within a single Claude Code session. An optional VPS acts as an **async backup hub + dashboard backend + cross-machine sync**; local is always authoritative.
 
 ---
 
@@ -73,7 +73,7 @@ flowchart TB
 | `event_log` | Audit trail of all events (used for perception extraction) |
 | `projects` | Installed projects registry |
 | `entity_edges` | Typed relationships across briefs, learnings, errors, sessions, goals |
-| `sync_queue` | VPS replication backlog (JSONL-style queue, drained on `/awaken`/`/rest`/`/sync`) |
+| `sync_queue` | VPS replication backlog (JSONL-style queue, drained on `/boot`/`/rest`/`/sync`) |
 
 ### 3.1 Mirror invariant (TD-096)
 
@@ -199,10 +199,10 @@ Adapters under `core/hooks/bridges/` let non-Claude CLIs (OpenCode, Codex, Gemin
 
 ## 6. The Sync Model
 
-**Principle:** the local brain DB is always authoritative. The VPS is the **always-on peer** that local brains sync to and offload long-running work to — not a backup, not the source of truth. If the VPS is unavailable, the engineer's work continues uninterrupted; on the next connectivity, `/awaken` pulls any VPS changes and merges them locally.
+**Principle:** the local brain DB is always authoritative. The VPS is the **always-on peer** that local brains sync to and offload long-running work to — not a backup, not the source of truth. If the VPS is unavailable, the engineer's work continues uninterrupted; on the next connectivity, `/boot` pulls any VPS changes and merges them locally.
 
 **VPS roles (5):**
-1. Cross-machine sync hub — machine A's push is visible to machine B on next `/awaken` pull. Local CLIs push deltas via `brain_push_async.sh` on session end.
+1. Cross-machine sync hub — machine A's push is visible to machine B on next `/boot` pull. Local CLIs push deltas via `brain_push_async.sh` on session end.
 2. Dashboard backend — serves the web UI at `/dashboard`.
 3. Scheduler — owns cron-style routines (`igris_schedule_*`) that fire without local presence.
 4. Hook event sink — local CLI POSTs hook events to `/api/hooks/event` for cross-machine observability.
@@ -210,7 +210,7 @@ Adapters under `core/hooks/bridges/` let non-Claude CLIs (OpenCode, Codex, Gemin
 
 **Mental model:** local brains are the active drivers (low-latency stdio MCP, offline-tolerant). The VPS is the persistent peer they sync deltas to when the operator's session ends. Wiping the VPS does not lose the local brain — but it does lose the scheduler state, dashboard history, and cross-machine merge point. Treat it as a peer node, not a copy.
 
-**Sync queue mechanism:** `sync_queue.jsonl` per project holds rows that failed to push. On the next `/awaken`, `/rest`, or `/sync data`, the `igris_sync_queue_drain` tool retries each row. Callers must use `ALLOWED_KEYS_PER_OP` (in `cli/src/lib/sync/data.ts:224`) to build tool args — never spread arbitrary JSON from queue entries (TD-128 strict-input contract).
+**Sync queue mechanism:** `sync_queue.jsonl` per project holds rows that failed to push. On the next `/boot`, `/rest`, or `/sync data`, the `igris_sync_queue_drain` tool retries each row. Callers must use `ALLOWED_KEYS_PER_OP` (in `cli/src/lib/sync/data.ts:224`) to build tool args — never spread arbitrary JSON from queue entries (TD-128 strict-input contract).
 
 **Auto-push pattern (TD-080):** background actors (perception extractor today, FR-118 subconscious tomorrow) invoke `core/hooks/shared/brain_push_async.sh` synchronously; callers detach via `nohup ... & disown`. The helper reads remote config from `~/.igris/config.json`, always exits 0, logs to `~/.igris/projects/{slug}/session/brain_push.log` with 1 MB rotation, and is silent when the remote is unconfigured.
 
@@ -250,16 +250,35 @@ Each agent's own CONTEXT PROTOCOL (in `core/agents/<name>.md`) names the context
 
 | Group | Skills |
 |-------|--------|
-| **Lifecycle** | `/awaken`, `/rest`, `/hunt` |
+| **Lifecycle** | `/boot`, `/rest`, `/hunt` |
 | **Brief management** | `/register`, `/archive`, `/scan` |
-| **Documentation & quality** | `/document`, `/audit`, `/standardize` |
+| **Documentation & quality** | `/document`, `/audit`, `/ground` |
 | **Knowledge & reuse** | `/harvest`, `/promote`, `/reuse` |
 | **Collaboration & visibility** | `/team`, `/dashboard`, `/portfolio` |
 | **Utilities** | `/sync`, `/release`, `/projects`, `/ideate` |
-| **Brand & design** | `/fifty-kit`, `/ui-design`, `/visualize` |
+| **Brand & design** | `/visualize` |
 | **Migrations & harness** | `/migrate-analyze`, `/onboard-harness` |
 
 Each skill is `core/skills/<name>/SKILL.md` with YAML frontmatter (allowed tools, triggers, etc.).
+
+#### 7.2.1 Skill tiers (FR-205 classification)
+
+FR-205 tags each surviving SKILL.md with a `tier:` frontmatter field. This is a
+**classification only** — it records intent for downstream briefs and adds no
+filtering or distribution logic. **FR-191** ("the door") owns the future
+default-install essentials-only filter; **FR-206** ("the store") owns opt-in
+distribution of the opt-in tier. FR-205 changes no projection: every tagged skill
+still projects exactly as before.
+
+| Tier | Skills | Meaning |
+|------|--------|---------|
+| **essential** (11) | `/boot`, `/rest`, `/register`, `/hunt`, `/scan`, `/archive`, `/harvest`, `/promote`, `/reuse`, `/ground`, `/sync` | The core workflow — shipped to every default install (FR-191's filter target). |
+| **opt-in** (7) | `/team`, `/audit`, `/document`, `/release`, `/ideate`, `/migrate-analyze`, `/visualize` | Useful but not core — distributed opt-in (FR-206's channel target); FR-205 only classifies them, does NOT remove them from projection. |
+| **personal** (1) | `fifty-kit` | Machine/operator-personal; moved out of `core/skills/` to the FR-155 project-scoped personal overlay (no longer in consumer projection). |
+| **pending** (4) | `/dashboard`, `/portfolio`, `/projects` (FR-207), `/onboard-harness` (TD-266) | Tiering DEFERRED to the owning briefs — left untagged by FR-205. |
+
+`/ui-design` was DELETED by FR-205 (no consumers). `fifty-kit` was removed from
+the consumer skill surface and now lives only in the operator's personal overlay.
 
 ### 7.3 Orchestrator-delegates principle
 

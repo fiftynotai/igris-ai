@@ -24,7 +24,7 @@ The OS's knowledge lives in distinct **stores**. Each holds one kind of knowledg
 
 **Each store holds ONE kind of knowledge with ONE authority. Route a fact to the store matching its KIND** (standard → doc, lesson → memory, code-fact → code, history → git, structured-record → its DB table). **A fact lives in exactly one source — never duplicated. When a fact changes kind, it MOVES (promotes), never copies.** Memory stages raw lessons; a lesson that hardens into a standard **promotes** into a doc (via `/promote`) — memory is staging, docs are curated, promotion is the pipeline.
 
-Project-context docs are a store; their *types* are the self-describing **catalog** at `core/context-doc-types/` (one definition per type, declaring when it applies, when to consult it, and when it goes stale). `/promote` reads the catalog to route a hardened standard to the right doc; `/standardize` authors a doc from its type's skeleton.
+Project-context docs are a store; their *types* are the self-describing **catalog** at `core/context-doc-types/` (one definition per type, declaring when it applies, when to consult it, and when it goes stale). `/promote` reads the catalog to route a hardened standard to the right doc; `/ground` authors a doc from its type's skeleton.
 
 The Catalog store is the reusable-assets catalog. It is consulted **reuse-before-rewrite** (`conduct` → "Reuse before rewrite"): search it before building something new and reach for a block if one fits via `/reuse`; `/harvest` seeds it. The shared mechanics are in `core/docs/catalog-recipe.md`.
 

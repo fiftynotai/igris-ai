@@ -89,7 +89,7 @@ Highlights:
 - `idx_goals_project` — covers `/scan` (filtered by project).
 - `idx_goals_status`  — covers status filters.
 - `idx_goals_deadline` — **partial index** `WHERE status = 'active'`. The
-  `/awaken` "approaching deadline" query reads only active goals; archived
+  `/boot` "approaching deadline" query reads only active goals; archived
   goals would otherwise pollute the index without ever being queried.
 
 ---
@@ -204,9 +204,9 @@ Deferred to follow-up briefs to keep the surface focused:
 
 ---
 
-## /awaken integration
+## /boot integration
 
-`/awaken` calls `igris_goal_list(project, status='active', upcoming_days=14, limit=3)`
+`/boot` calls `igris_goal_list(project, status='active', upcoming_days=14, limit=3)`
 and renders ≤3 lines. The token budget is bounded:
 
 ```
@@ -216,11 +216,11 @@ and renders ≤3 lines. The token budget is bounded:
 ```
 
 If zero results, the section is omitted entirely. If more than 3 active
-goals exist beyond the 14-day window, `/awaken` prints a single trailing
+goals exist beyond the 14-day window, `/boot` prints a single trailing
 line: `(+N other active goals — run /scan for full list)`.
 
 The `upcoming_days` filter exists for this surface specifically — outside
-of `/awaken` the parameter is rarely useful.
+of `/boot` the parameter is rarely useful.
 
 ---
 

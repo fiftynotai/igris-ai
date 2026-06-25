@@ -1,5 +1,6 @@
 ---
 name: harvest
+tier: essential
 description: "Harvest reusable knowledge from a project into the brain - guided, dedup-checked capture of learnings (memory), modules (the lego catalog), and the project archetype."
 disable-model-invocation: false
 allowed-tools:
@@ -47,7 +48,7 @@ absolute path up front (the project the operator is in) — Phases 2–4 key off
 > capture note to `~/.igris/projects/{project}/context/harvest-capture-{date}.md`
 > (Markdown: the chosen archetype, the module list, and each curated learning in
 > the same shape Phase 4 would have stored) so the harvest is not lost. This
-> mirrors the awaken/rest skip-on-MCP-unavailable convention — never error,
+> mirrors the boot/rest skip-on-MCP-unavailable convention — never error,
 > never block, warn once.
 
 ## Phase 1 — Analysis

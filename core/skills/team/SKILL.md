@@ -1,5 +1,6 @@
 ---
 name: team
+tier: opt-in
 description: Parallel execution with Agent Teams - spawn teammates for parallel briefs, reviews, investigations
 disable-model-invocation: false
 allowed-tools:

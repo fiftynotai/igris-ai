@@ -1,5 +1,6 @@
 ---
 name: archive
+tier: essential
 description: "Archive a completed brief - usage: /archive BR-008"
 disable-model-invocation: false
 allowed-tools:

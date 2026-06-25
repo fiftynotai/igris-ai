@@ -1,5 +1,6 @@
 ---
 name: migrate-analyze
+tier: opt-in
 description: Migration analysis - gap analysis, migration roadmaps, MG-XXX brief generation
 disable-model-invocation: false
 allowed-tools:

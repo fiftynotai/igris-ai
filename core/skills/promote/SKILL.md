@@ -1,5 +1,6 @@
 ---
 name: promote
+tier: essential
 description: "Graduate a hardened learning into a project-context doc - operator-approved merge of a proven standard into the right doc, with a derived_from lineage breadcrumb (one-fact-one-source)."
 disable-model-invocation: false
 allowed-tools:
@@ -96,7 +97,7 @@ self-describing source of truth for which doc-type owns which kind of standard
 
 Read whatever target docs already exist (Glob the context dir). If the matched
 doc-type is **absent** on disk, offer the operator to **create it** — hand off to
-`/standardize <type>`, which authors a new, well-headed doc from that type's
+`/ground <type>`, which authors a new, well-headed doc from that type's
 catalog skeleton — or to **skip** this candidate. Do not force a standard into a
 mismatched doc.
 

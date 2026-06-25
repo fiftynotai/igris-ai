@@ -1,5 +1,6 @@
 ---
 name: rest
+tier: essential
 description: Pause or end current session - saves state for later resumption
 disable-model-invocation: false
 allowed-tools:
@@ -26,7 +27,7 @@ Safely pause or end the current session, saving state for later resumption.
 
 ### 1. Read Current Session
 
-Read this instance's own LIVE scratchpad: `~/.igris/projects/{project}/session/instances/<instance_id>.md`. The `<instance_id>` is the Instance ID already stored in the session file body from `/awaken` §3.7 (the `**Instance ID:**` field). This per-instance file is where `/awaken` wrote the LIVE state for this instance; it has no shared `CURRENT_SESSION.md`.
+Read this instance's own LIVE scratchpad: `~/.igris/projects/{project}/session/instances/<instance_id>.md`. The `<instance_id>` is the Instance ID already stored in the session file body from `/boot` §3.7 (the `**Instance ID:**` field). This per-instance file is where `/boot` wrote the LIVE state for this instance; it has no shared `CURRENT_SESSION.md`.
 
 ### 2. Confirm with User
 
@@ -84,10 +85,10 @@ If brain MCP is not available, skip this step silently. No errors, no warnings.
 You MUST drain the local sync queue file before the final push when brain MCP is available. This is NOT optional — briefs queued locally during this session depend on this.
 
 If the `igris-brain` MCP server is available:
-- Invoke the canonical atomic drain via the CLI: `igris sync data` (delegates to `cli/src/lib/sync/queue.ts`). Same contract as `/awaken` §3.6.1.1: rename-then-process atomicity (FR-128), `.draining-*` crash recovery, strict-allow-list (TD-128 M3), and `cache_path → content` resolution for `brief_create`.
+- Invoke the canonical atomic drain via the CLI: `igris sync data` (delegates to `cli/src/lib/sync/queue.ts`). Same contract as `/boot` §3.6.1.1: rename-then-process atomicity (FR-128), `.draining-*` crash recovery, strict-allow-list (TD-128 M3), and `cache_path → content` resolution for `brief_create`.
 - The drain is gated on a non-empty queue: when the queue is empty (the common `/rest` case), the CLI short-circuits after a single filesystem stat plus the remote drain call. No-op-fast.
 
-If brain MCP is NOT available, skip silently — matching the existing `/rest` skip-on-MCP-unavailable convention. The local queue (and any `.draining-*` temp) is preserved for `/awaken` to drain on the next session start. Do NOT block session end.
+If brain MCP is NOT available, skip silently — matching the existing `/rest` skip-on-MCP-unavailable convention. The local queue (and any `.draining-*` temp) is preserved for `/boot` to drain on the next session start. Do NOT block session end.
 
 ### 2.6.5. Drain Brain Sync Queue (Mandatory)
 
@@ -166,5 +167,5 @@ Resume Point:
 - Phase: [phase]
 - Next: [next steps]
 
-To resume: /awaken or "ARISE"
+To resume: /boot
 ```

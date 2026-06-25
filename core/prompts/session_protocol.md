@@ -71,7 +71,7 @@ A session file moves through exactly three states:
   own RESTED file does not bury the handoff — the original RESTED file is
   still there for the instance after it.
 - **Sequential degeneration:** one clean `/rest` produces one RESTED file;
-  the next `/awaken` reads exactly that one file. This is identical to the
+  the next `/boot` reads exactly that one file. This is identical to the
   old single-`CURRENT_SESSION.md` behavior in the common single-instance
   case.
 
@@ -88,7 +88,7 @@ Liveness is the **instance registry's** job — never the session file's.
   - *Register-on-hunt* — `current_brief` is set when a hunt starts.
   - *Release-on-`/rest`* — `/rest` explicitly clears `current_brief`. This
     clear is the deliberate "task closed" signal.
-- **The registry is visible.** `/hunt` and `/awaken` surface "instance X is
+- **The registry is visible.** `/hunt` and `/boot` surface "instance X is
   on BR-Y, last active T."
 - **Stale or crashed instance:** `current_brief` stays set, the session file
   stays in place and readable, and it shows as "stale, unconfirmed." Nothing
@@ -137,7 +137,7 @@ older than 24h) is reclaimable ONLY via explicit operator confirmation in
 
 ## 5. Archive Housekeeping  [Lock 4]
 
-- **Trigger:** a housekeeping sweep folded into `/awaken` — NOT a scheduled
+- **Trigger:** a housekeeping sweep folded into `/boot` — NOT a scheduled
   job or daemon. It is crash-robust and idempotent (running it twice is
   harmless).
 - **Retention:** the last 30 days of archived files are kept individually.
@@ -160,7 +160,7 @@ The FR-130 sessions-component tools and their roles:
 | `igris_session_file_update`| Write/update a file; args `project`, `filename`, `content`, optional `instance_id`, optional `state` (`live`/`rested`/`archived`). |
 | `igris_session_file_list`  | Enumerate a project's session files; args `project` + optional `state` filter; returns `filename`/`instance_id`/`state`/`content_hash`/`updated_at` per file (content omitted). |
 | `igris_session_sync`       | `/rest` session-snapshot recorder.                                              |
-| `igris_session_recall`     | Cross-project session recall for `/awaken`.                                     |
+| `igris_session_recall`     | Cross-project session recall for `/boot`.                                       |
 
 **`session_files` columns:** `instance_id TEXT` (nullable; owning instance
 UUID), `state TEXT NOT NULL DEFAULT 'live'` (`CHECK` in
@@ -175,8 +175,8 @@ files by state, use `igris_session_file_list`.
 
 ## 7. Recovery Protocol (per-instance)
 
-This section states the recovery *contract*. The `/awaken` step-by-step
-procedure is owned by the `/awaken` skill — it is not specified here.
+This section states the recovery *contract*. The `/boot` step-by-step
+procedure is owned by the `/boot` skill — it is not specified here.
 
 On context reset, an instance:
 

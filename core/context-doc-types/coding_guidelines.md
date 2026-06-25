@@ -19,7 +19,7 @@ or reusable code **pattern** into.
 
 ## Section skeleton
 
-> The structure `/standardize` authors from. Fill each section from the project's
+> The structure `/ground` authors from. Fill each section from the project's
 > actual code (base-repo analysis, project analysis, or merged best-practices).
 
 ## Naming conventions

@@ -19,7 +19,7 @@ request/response convention) into.
 
 ## Section skeleton
 
-> The structure `/standardize` authors from. Fill each section from the project's
+> The structure `/ground` authors from. Fill each section from the project's
 > actual API surface and client code.
 
 ## Endpoint conventions

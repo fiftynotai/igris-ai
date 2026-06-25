@@ -51,7 +51,7 @@ When in doubt, ask: *"Will a future actor reading the code learn this on their o
 
 ### When to Recall
 
-`/awaken` already pulls relevant memories at session start, so the orchestrator's baseline context is covered. Use `igris_memory_recall` and `igris_memory_search` *in addition to* that automatic recall, on-demand:
+`/boot` already pulls relevant memories at session start, so the orchestrator's baseline context is covered. Use `igris_memory_recall` and `igris_memory_search` *in addition to* that automatic recall, on-demand:
 
 - When the user asks about a topic you don't recognize from the loaded context.
 - When you switch domains mid-session (e.g., from frontend work into a database migration).
@@ -74,7 +74,7 @@ Use `igris_memory_delete` when a stored learning is provably wrong (the rule it 
 
 ### When to Inspect (Dashboard)
 
-Use `igris_memory_dashboard` with `summary_only: true` during `/scan` and `/awaken` to size the project's memory footprint without dumping content. Cross-reference `by_review_status.pending_review` against `igris_perception_dashboard` to confirm the subconscious is healthy — large pending counts that aren't draining mean the approve loop is stalled. Pass a smaller window when triaging "what landed today" and a larger one for quarterly health checks. The dashboard is unfiltered by review_status by design — you are sizing the full footprint, not just the conscious channel.
+Use `igris_memory_dashboard` with `summary_only: true` during `/scan` and `/boot` to size the project's memory footprint without dumping content. Cross-reference `by_review_status.pending_review` against `igris_perception_dashboard` to confirm the subconscious is healthy — large pending counts that aren't draining mean the approve loop is stalled. Pass a smaller window when triaging "what landed today" and a larger one for quarterly health checks. The dashboard is unfiltered by review_status by design — you are sizing the full footprint, not just the conscious channel.
 
 ### How to Tag a Stored Memory
 
@@ -163,7 +163,7 @@ Use `igris_graph_search` to find concept or decision nodes by partial name when 
 
 ### When to Inspect (Dashboard)
 
-Use `igris_graph_dashboard` with `summary_only: true` for a topology snapshot during `/scan` and `/awaken` — counts only, fast on large graphs. The full call surfaces the top nodes by total degree — reach for it before refactoring to spot god-nodes whose extraction would touch many edges.
+Use `igris_graph_dashboard` with `summary_only: true` for a topology snapshot during `/scan` and `/boot` — counts only, fast on large graphs. The full call surfaces the top nodes by total degree — reach for it before refactoring to spot god-nodes whose extraction would touch many edges.
 
 ### Example invocation
 
@@ -282,7 +282,7 @@ igris_project_dashboard({ archetype: "ai-agent-system", summary_only: true })
 
 ### When to call
 
-- During `/scan` or `/awaken`: surface pending perception items to the user for triage.
+- During `/scan` or `/boot`: surface pending perception items to the user for triage.
 - Before storing a similar new learning manually: check if the subconscious already has a draft of it (avoid double-entry).
 - After a long session: `igris_perception_approve` / `igris_perception_reject` to migrate candidates to the conscious channel.
 - Before approve/reject when `igris_perception_review_pending` shows truncated content: `igris_perception_get` with the candidate's `learning_id` to inspect the full row.

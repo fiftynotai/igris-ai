@@ -1,5 +1,6 @@
 ---
 name: audit
+tier: opt-in
 description: Codebase audit - 7 audit types for quality, security, architecture, and process analysis
 disable-model-invocation: false
 allowed-tools:

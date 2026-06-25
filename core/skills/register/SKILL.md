@@ -1,5 +1,6 @@
 ---
 name: register
+tier: essential
 description: "Create a new brief - usage: /register bug|feature|migration|debt \"title\""
 disable-model-invocation: false
 allowed-tools:
@@ -158,7 +159,7 @@ Call `igris_brief_create` with:
 
 If `igris_brief_create` fails or MCP is unavailable:
 1. Write to `~/.igris/projects/{project}/briefs/{PREFIX}-{XXX}-{slug}.md` as fallback.
-2. Display: `WARNING: Brain MCP unavailable — brief {PREFIX}-{XXX} saved to local cache only. Queued for sync on next /awaken or /sync data.`
+2. Display: `WARNING: Brain MCP unavailable — brief {PREFIX}-{XXX} saved to local cache only. Queued for sync on next /boot or /sync data.`
 3. Append a JSON line to `~/.igris/projects/{project}/sync_queue.jsonl`:
    ```json
    {"timestamp":"{ISO-8601 now}","operation":"brief_create","project":"{project}","brief_id":"{PREFIX}-{XXX}","title":"{title}","status":"Ready","priority":"{priority}","brief_type":"{type}","cache_path":"~/.igris/projects/{project}/briefs/{PREFIX}-{XXX}-{slug}.md"}

@@ -1,5 +1,6 @@
 ---
 name: release
+tier: opt-in
 description: Release preparation - changelog generation, version bumps, release notes
 disable-model-invocation: false
 allowed-tools:

@@ -1,5 +1,6 @@
 ---
 name: sync
+tier: essential
 description: "Deploy code and/or data to VPS brain - usage: /sync [code|data|all|status]"
 disable-model-invocation: false
 allowed-tools:
@@ -36,6 +37,6 @@ drain renames the queue to a private `.draining-<pid>-<ms>` temp BEFORE
 reading, so any line appended by a sibling harness between the rename
 and the truncate lands in a fresh queue file and survives for the next
 drain. The atomicity contract lives in `cli/src/lib/sync/queue.ts` —
-`/awaken` §3.6.1.1, `/rest` §2.6.4.5, and any future doctor verb MUST
+`/boot` §3.6.1.1, `/rest` §2.6.4.5, and any future doctor verb MUST
 delegate through that CLI primitive rather than spelling out the
 read-then-truncate algorithm inline.

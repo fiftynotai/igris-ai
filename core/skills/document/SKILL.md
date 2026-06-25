@@ -1,5 +1,6 @@
 ---
 name: document
+tier: opt-in
 description: Documentation workflow - README updates, API docs, architecture docs, code comments
 disable-model-invocation: false
 allowed-tools:

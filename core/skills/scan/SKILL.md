@@ -1,5 +1,6 @@
 ---
 name: scan
+tier: essential
 description: Show system status report - briefs, session, blockers, git status
 disable-model-invocation: false
 allowed-tools:
@@ -47,7 +48,7 @@ Read the per-instance session file for:
 - Active briefs
 - Resume point
 
-`/scan` may run *before* this harness's `/awaken` (the operator just opens a terminal and types `SCAN`), so resolve the file gracefully:
+`/scan` may run *before* this harness's `/boot` (the operator just opens a terminal and types `SCAN`), so resolve the file gracefully:
 
 1. If a `**Instance ID:**` is discoverable for this harness, read `~/.igris/projects/{project}/session/instances/<instance_id>.md`.
 2. Otherwise, call `igris_session_file_list` with `project=<slug>` (no `state` filter) to enumerate all session files, and read the one with the most-recent `updated_at`.

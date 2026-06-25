@@ -175,7 +175,7 @@ generator builds this by scanning each type's self-describing frontmatter
 - **maintain_when** = the staleness trigger — when a change makes the doc stale.
 
 > Consumers: `/promote` P2 (maps a hardened learning to its `target` doc) and
-> `/standardize` (authors a `target` from the type's body skeleton).
+> `/ground` (authors a `target` from the type's body skeleton).
 
 | type | target | applies_when | consult_when | maintain_when | summary |
 |---|---|---|---|---|---|

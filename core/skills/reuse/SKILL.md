@@ -1,5 +1,6 @@
 ---
 name: reuse
+tier: essential
 description: "Reuse before rewrite - search the reusable-assets catalog (the lego store) and either scaffold a new project from a template or add a cataloged package/module to the current project. Modes: scaffold-template, add-package."
 disable-model-invocation: false
 allowed-tools:
@@ -51,7 +52,7 @@ search on that.
 If the `igris-brain` MCP server is unavailable, do **not** block. Warn once:
 `Note: brain MCP unavailable — the reusable-assets catalog can't be searched this run. Re-run /reuse when the brain is reachable, or proceed manually.`
 Then offer to proceed without the catalog (the operator may know the asset
-directly). Never error, never block — same convention as `/harvest` and `/awaken`.
+directly). Never error, never block — same convention as `/harvest` and `/boot`.
 
 ## 1. Search the catalog
 

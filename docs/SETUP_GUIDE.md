@@ -236,7 +236,7 @@ This will:
 ### Generate Coding Guidelines
 
 ```
-/standardize analyze
+/ground analyze
 ```
 
 This analyzes your codebase and generates project-specific coding guidelines.
@@ -313,13 +313,13 @@ This archives the current session to `~/.igris/projects/{project}/session/archiv
 | Command | Purpose |
 |---------|---------|
 | `/scan` | System status report |
-| `/awaken` | Start/resume session |
+| `/boot` | Start/resume session |
 | `/rest` | Pause/end session |
 | `/register` | Create new brief |
 | `/hunt` | Implement brief (full workflow) |
 | `/archive` | Archive completed brief |
 | `/document` | Documentation workflow |
-| `/standardize` | Generate coding guidelines |
+| `/ground` | Generate coding guidelines |
 | `/release` | Release preparation |
 | `/ideate` | Feature brainstorming |
 | `/audit` | Codebase audit |

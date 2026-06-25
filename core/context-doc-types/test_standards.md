@@ -18,7 +18,7 @@ doc `/promote` graduates a **test** standard into.
 
 ## Section skeleton
 
-> The structure `/standardize` authors from. Fill each section from the project's
+> The structure `/ground` authors from. Fill each section from the project's
 > actual test suite and harness.
 
 ## What to test

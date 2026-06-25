@@ -101,7 +101,7 @@ per-instance namespace `cognition.subconscious`:
 
 Observe them with `igris_event_log component='cognition.subconscious'` or a direct
 `sqlite3` read. `/scan` renders a health line (last run, `suggested_today`,
-`budget_remaining`); `/awaken` §4.8 renders a failure WARNING when the latest event
+`budget_remaining`); `/boot` §4.8 renders a failure WARNING when the latest event
 is `run_failed` with no later `run_succeeded`. Both surfaces are gated behind
 `subconscious.enabled`, so they render nothing while the engine is off.
 

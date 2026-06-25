@@ -380,7 +380,7 @@ The `os_identity` projection surface (TD-233) has been **removed**. Igris no
 longer region-merges an identity block into a harness's auto-read file
 (`GEMINI.md` / `AGENTS.md`). The operator decision (2026-06-23): *"the model is
 the model; Igris is the OS it rides"* — a bare harness greeting as "Igris" was
-the bug, not the feature. The OS now boots only when `/awaken` (a registered
+the bug, not the feature. The OS now boots only when `/boot` (a registered
 skill) is invoked; nothing reaches a harness via an always-read file.
 
 The CLAUDE.md identity block is governed separately (the whole-file `CLAUDE.md`
@@ -907,7 +907,7 @@ across all three supported CLIs (Claude, OpenCode, Codex):
 
 | Igris event | Script | Purpose |
 |-------------|--------|---------|
-| `session_start` | `~/.igris/core/hooks/shared/session_start.sh` | Inject session state and active brief summary; on a FRESH session also nudge `/awaken` (FR-202 M4). |
+| `session_start` | `~/.igris/core/hooks/shared/session_start.sh` | Inject session state and active brief summary; on a FRESH session also nudge `/boot` (FR-202 M4). |
 | `session_end` | `~/.igris/core/hooks/shared/session_end.sh` | Flip CURRENT_SESSION.md to REST MODE; deregister instance from brain. |
 | `pre_compact` | `~/.igris/core/hooks/shared/pre_compact.sh` | Emit recovery context before context compaction. |
 | `post_compact` | `~/.igris/core/hooks/shared/post_compact.sh` | Log compact completion; future hook point. |
@@ -922,15 +922,15 @@ across all three supported CLIs (Claude, OpenCode, Codex):
 | OpenCode | All 6 portable | TypeScript plugin at `~/.config/opencode/plugins/igris-bridge.ts` | Auto-loaded by Bun at startup; raw `.ts` — no build step. |
 | Codex CLI | `session_end` only | `notify` program wrapper at `~/.igris/core/hooks/bridges/codex-notify.sh` | Codex exposes only post-turn notification. The user's original `notify` program is backed up to `~/.igris/config.json → cli_targets.codex.user_notify_backup` and invoked first. |
 | Gemini CLI | None (NOT projected — FR-182) | Not yet wired | gemini-cli 0.45.0 NOW has a `gemini hooks` subcommand (the old "no hook API" claim is stale) — full onboarding is tracked under FR-182. Igris does not yet project gemini hooks. |
-| Antigravity | `PreToolUse` + `PostToolUse` | BASH bridge: `~/.gemini/config/hooks.json` (gemini-cli hook format) → `core/hooks/bridges/antigravity/<event>.sh` → the shared `pre_tool_use.sh`/`post_tool_use.sh`. The bridge translates antigravity's `{toolCall,workspacePaths}` stdin ↔ the unified shape, and the gate's deny-JSON ↔ antigravity's RESPECTED `{decision,reason}` stdout | FR-181. `PreToolUse` is the brief-first gate (deny BLOCKS the tool — proven `agy` v1.0.7); `PostToolUse` is the always-allow lint fan-out. Tool-name map: `write_to_file`→Write, `replace_file_content`→Edit (both carry the path at `args.TargetFile`). Session lifecycle (session_start/end) is NOT hooked (no firing events) — it rides the `/awaken` + `/rest` skills. `igris install` config-merges the groups into `~/.gemini/config/hooks.json` (preserving any pre-existing hooks). |
+| Antigravity | `PreToolUse` + `PostToolUse` | BASH bridge: `~/.gemini/config/hooks.json` (gemini-cli hook format) → `core/hooks/bridges/antigravity/<event>.sh` → the shared `pre_tool_use.sh`/`post_tool_use.sh`. The bridge translates antigravity's `{toolCall,workspacePaths}` stdin ↔ the unified shape, and the gate's deny-JSON ↔ antigravity's RESPECTED `{decision,reason}` stdout | FR-181. `PreToolUse` is the brief-first gate (deny BLOCKS the tool — proven `agy` v1.0.7); `PostToolUse` is the always-allow lint fan-out. Tool-name map: `write_to_file`→Write, `replace_file_content`→Edit (both carry the path at `args.TargetFile`). Session lifecycle (session_start/end) is NOT hooked (no firing events) — it rides the `/boot` + `/rest` skills. `igris install` config-merges the groups into `~/.gemini/config/hooks.json` (preserving any pre-existing hooks). |
 
 **Auto-boot nudge (FR-202 M4).** On a FRESH session, `session_start.sh` appends an
-`[IGRIS AUTO-BOOT] Run /awaken to ground this session.` cue to `additionalContext`. This is a
-NUDGE the model is expected to *follow* — NOT a guaranteed system trigger; `/awaken` is a
+`[IGRIS AUTO-BOOT] Run /boot to ground this session.` cue to `additionalContext`. This is a
+NUDGE the model is expected to *follow* — NOT a guaranteed system trigger; `/boot` is a
 registered skill the model invokes in response. It fires on Claude (`source=startup`) and
 OpenCode (`session.created`) only; it is suppressed on a Claude resume/clear/compact (already
 grounded). Gemini (unwired — FR-182), Antigravity (no session hook), and Codex (`session_end`
-only) have no session-start path → ground those manually with `/awaken`.
+only) have no session-start path → ground those manually with `/boot`.
 
 ### Adding a hook — `igris add hook` (FR-180 D7)
 
@@ -1118,7 +1118,7 @@ Skips with exit code 77 when `opencode`, `bun`, or `ZAI_API_KEY` are unavailable
       "hooks": {
         "config_file": "~/.gemini/config/hooks.json",
         "events_covered": ["pre_tool_use","post_tool_use"],
-        "note": "FR-181: PreToolUse (brief-first gate) + PostToolUse (lint) config-merged into ~/.gemini/config/hooks.json → core/hooks/bridges/antigravity/<event>.sh. Session lifecycle (session_start/end) rides /awaken + /rest skills (no firing session hook)."
+        "note": "FR-181: PreToolUse (brief-first gate) + PostToolUse (lint) config-merged into ~/.gemini/config/hooks.json → core/hooks/bridges/antigravity/<event>.sh. Session lifecycle (session_start/end) rides /boot + /rest skills (no firing session hook)."
       }
     }
   }
@@ -1265,7 +1265,7 @@ are linked so a reader chases the single source of truth, not a copy:
 | **Claude** | Symlink (`atomic_symlink`) → `~/.claude/agents/<name>.md` | `symlink` → `~/.claude/skills/` | `mcpServers.<name>` / `{type:"stdio",…}` | All 6 portable + Claude-only events | none (native-static) | `native-static` (loads agents; `subagent_type:<agent>` resolves directly) |
 | **Codex** | Symlink (`atomic_symlink`) → `~/.codex/agents/<name>.toml` (FR-159) | `symlink` → `~/.agents/skills/` (FR-157 cross-CLI) | `[mcp_servers.<name>]` / resolved-literal env | `session_end` only (notify wrapper) | none (native-static) | `native-static` |
 | **Gemini** | **Hard link** (`emit_md_hardlink`) → `~/.gemini/agents/<name>.md` — loader does NOT follow symlinks (TD-208) | `symlink` → `~/.agents/skills/` (FR-157 cross-CLI) | `mcpServers.<name>` / no-`type` env | **None** projected (gemini-cli 0.45.0 has `gemini hooks` — FR-182) | `core/os/harness-specific/gemini.md` | `dynamic-define` (reads its harness-specific file at Boot → the shared delegation recipe) |
-| **Antigravity** | **N/A** — documented (no static-subagent path; built-in dynamic subagents only — FR-179) | install-time parent symlink `~/.gemini/antigravity-cli/skills` → `~/.agents/skills` (`linkAntigravitySkills`; items ride the `agents/symlink` target, FR-179) | `mcpServers.<name>` / no-`type` env — DISTINCT file `~/.gemini/config/mcp_config.json` (FR-179) | `PreToolUse` + `PostToolUse` — BASH bridge → `~/.gemini/config/hooks.json` → `core/hooks/bridges/antigravity/<event>.sh` (FR-181); session via `/awaken`+`/rest` | `core/os/harness-specific/antigravity.md` | `dynamic-define` (reads its harness-specific file at Boot — `define_subagent`/`invoke_subagent`; live-proven `agy` v1.0.10, 2026-06-21) |
+| **Antigravity** | **N/A** — documented (no static-subagent path; built-in dynamic subagents only — FR-179) | install-time parent symlink `~/.gemini/antigravity-cli/skills` → `~/.agents/skills` (`linkAntigravitySkills`; items ride the `agents/symlink` target, FR-179) | `mcpServers.<name>` / no-`type` env — DISTINCT file `~/.gemini/config/mcp_config.json` (FR-179) | `PreToolUse` + `PostToolUse` — BASH bridge → `~/.gemini/config/hooks.json` → `core/hooks/bridges/antigravity/<event>.sh` (FR-181); session via `/boot`+`/rest` | `core/os/harness-specific/antigravity.md` | `dynamic-define` (reads its harness-specific file at Boot — `define_subagent`/`invoke_subagent`; live-proven `agy` v1.0.10, 2026-06-21) |
 | **OpenCode** | Symlink → `~/.config/opencode/agent/<name>.md` — loader **does** follow symlinks (FR-171, verified live 1.14.22) | `command` → `~/.config/opencode/command/<name>.md` thin `@file` wrapper (FR-171) | `mcp.<name>` / `{type:"local", command:[…fused…], environment{}}` | All 6 portable (TS plugin) | none (native-static) | `native-static` |
 
 - Agent primitive details: see the **TD-208 subagent-distribution primitive
