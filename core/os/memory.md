@@ -43,6 +43,8 @@ Good triggers:
 - A performance win whose mechanism is worth remembering.
 - A user correction that overrides a default behavior or assumption.
 
+**After you store, link it.** If the new lesson supersedes, derives from, or relates to existing memory, draw the edge with `igris_edge_create` — see *Knowledge Graph → When to Create an Edge*. The graph only grows when you link.
+
 ### Memory holds experience — route other kinds elsewhere
 
 Memory is for the *lesson*, not for the other kinds of knowledge. A fact lives in exactly one store, the one matching its kind: a curated **standard** belongs in a project-context doc (don't store it here — **promote** it via `/promote`), a **code fact** in the code, **history** in git. Routing across stores — what belongs in memory vs a doc vs code vs git — lives in `knowledge-map`.
@@ -139,9 +141,9 @@ igris_memory_store({
 
 **Tools:** `igris_graph_node_create`, `igris_graph_node_get`, `igris_edge_create`, `igris_graph_neighbors`, `igris_graph_path`, `igris_graph_subgraph`, `igris_graph_search`, `igris_graph_dashboard`.
 
-**What's there:** typed nodes (concepts, projects, briefs, decisions) and edges (relates-to, supersedes, blocks, derived-from). The graph captures relationships a flat learnings table cannot: chains of supersession, dependency trees between briefs, lineage of decisions.
+**What's there:** typed nodes and edges (relates-to, supersedes, blocks, derived-from). The graph captures relationships a flat learnings table cannot: chains of supersession, dependency trees between briefs, lineage of decisions. Most nodes are **references** to rows in other stores — a brief, learning, goal, error, or session, addressed by `(type, id)`. The only nodes stored IN the graph table are free-standing **`concept`** nodes (an abstract idea with no home elsewhere).
 
-Brief / learning / error / session / goal nodes live in their own surfaces and are referenced by their `(type, id)` directly. Free-standing nodes — typically `node_type=concept` or `node_type=decision`, with no backing row elsewhere — must be registered via `igris_graph_node_create` before linking.
+Brief / learning / error / session / goal nodes live in their own surfaces and are referenced by their `(type, id)` directly — never duplicated into the graph. Only a genuinely free-standing **`concept`** node (no backing row anywhere) is registered via `igris_graph_node_create` before linking. **A decision is NOT a free-standing node — it is a `category=decision` learning** (its home is the learnings table); reference it as `(type=learning, id)` and draw its lineage edges (`supersedes`, `derived_from`) between those learning refs. Registering a separate `decision` node would split one fact across two homes.
 
 ### When to call
 
@@ -151,7 +153,17 @@ Brief / learning / error / session / goal nodes live in their own surfaces and a
 
 ### When to Register a Node
 
-Use `igris_graph_node_create` to register a free-standing concept or decision node before linking it via `igris_edge_create`. Briefs / learnings / errors / sessions / goals are addressable by their existing IDs without explicit registration — only concept and decision nodes need this call. The handler is idempotent: re-creating an identical `(node_type, node_external_id)` pair returns the existing row with `created: false`. The original label is preserved on conflict; rename via delete-then-recreate. Use `properties.project` to scope a node so `igris_graph_dashboard` project filtering can find it.
+Use `igris_graph_node_create` to register a free-standing **`concept`** node before linking it via `igris_edge_create`. Briefs / learnings / errors / sessions / goals (including `category=decision` learnings) are addressable by their existing IDs without registration — only `concept` nodes need this call. The handler is idempotent: re-creating an identical `(node_type, node_external_id)` pair returns the existing row with `created: false`. The original label is preserved on conflict; rename via delete-then-recreate. Use `properties.project` to scope a node so `igris_graph_dashboard` project filtering can find it.
+
+### When to Create an Edge
+
+The knowledge graph is **yours to grow.** Briefs auto-link to each other (the briefs component infers `parent_of` / `blocks` / `depends_on` from brief metadata), but **learnings, decisions, and concepts only enter the graph when you link them.** After storing an experiential memory, ask whether it relates to existing memory — and if so, draw the edge with `igris_edge_create`:
+
+- A decision that **supersedes** an earlier one → `supersedes` between the two `(type=learning, id)` refs.
+- A lesson **derived from** a brief or another learning → `derived_from`.
+- A lesson that **relates to** another (same subsystem / same failure mode) → `related_to`.
+
+An unlinked learning is invisible to `igris_graph_neighbors` — don't leave the semantic graph to briefs alone. (Honor-system today; a forcing mechanism is tracked in FR-210, edge inference in FR-211.)
 
 ### When to Inspect a Single Node
 
@@ -159,7 +171,7 @@ Use `igris_graph_node_get` to inspect one node's metadata plus its in/out edge d
 
 ### When to Search
 
-Use `igris_graph_search` to find concept or decision nodes by partial name when you only know a fragment of the label or external id. Substring match against `label` and `node_external_id`; pass plain text. Optional `node_type` filter narrows by type. Use the returned score to disambiguate when multiple candidates come back.
+Use `igris_graph_search` to find `concept` nodes by partial name when you only know a fragment of the label or external id. Substring match against `label` and `node_external_id`; pass plain text. Optional `node_type` filter narrows by type. Use the returned score to disambiguate when multiple candidates come back.
 
 ### When to Inspect (Dashboard)
 
