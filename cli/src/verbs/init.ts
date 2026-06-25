@@ -28,7 +28,6 @@
  */
 
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -42,12 +41,7 @@ import {
   atomicSwap,
   stagingDirFor,
 } from "../lib/atomic-extract.js";
-import {
-  cacheStore,
-  findCached,
-  TTL_INFINITE,
-  TTL_MAIN_MS,
-} from "../lib/cache.js";
+import { cacheStore, TTL_INFINITE, TTL_MAIN_MS } from "../lib/cache.js";
 import {
   ChannelResolveError,
   resolveChannel,
@@ -65,7 +59,6 @@ import { copyFromSource, FromSourceError } from "../lib/from-source.js";
 import {
   antigravityMcpConfigPath,
   brainDir,
-  cacheDir,
   claudeJsonPath,
   codexConfigTomlPath,
   configJsonPath,
@@ -346,10 +339,21 @@ export async function runInit(opts: InitOptions): Promise<number> {
     } else {
       wipeDir(stagingDir);
       mkdirSync(stagingDir, { recursive: true });
+      // TD-113 cache-seed TEE: fetchAndExtract writes the RAW gzip bytes to
+      // this sink path WHILE streaming them through gunzip→extract (one fetch,
+      // two consumers). After a successful extract we promote the sink + the
+      // extracted tree into the cache via cacheStore, so a later `igris refresh`
+      // at the same SHA can extract from the cache instead of re-downloading.
+      // The sink lives OUTSIDE stagingDir (a sibling) so (a) it isn't swept
+      // into the atomic swap of stagingDir/core, and (b) cacheStore can copy
+      // the WHOLE stagingDir as the extracted tree without dragging the archive
+      // into <sha>/extracted/.
+      const tarballSink = `${stagingDir}.tarball.tar.gz`;
       try {
         const fetched = await fetchAndExtract({
           url: tarballUrl,
           destDir: stagingDir,
+          cacheSinkPath: tarballSink,
         });
         contentSha256 = fetched.contentSha256;
       } catch (err) {
@@ -374,18 +378,38 @@ export async function runInit(opts: InitOptions): Promise<number> {
       }
       sourceKind = "github";
       stagingPath = stagingDir;
-      // Cache the fetched archive for refresh-without-redownload.
+      // Seed the cache from the freshly-fetched archive + extracted tree. Done
+      // HERE (before the step-5 atomic swap wipes stagingDir) while both the
+      // sink file and stagingDir/core exist. The extracted SOURCE is
+      // stagingDir/core (cacheStore copies it under <sha>/extracted/core/).
+      // Non-fatal: a cache-write failure WARNs and lets init finish — the core
+      // swap does not depend on the cache.
       try {
-        // Re-hash the tarball file is not needed because fetchAndExtract
-        // streamed the bytes; we already have contentSha256. We don't
-        // currently retain the raw bytes (they're consumed by gunzip);
-        // skipping cache write for fresh init — refresh is responsible
-        // for cache writes when it RE-DOWNLOADS the archive. Init
-        // streams once.
-        debug(`Fetched ${tarballUrl}; sha256=${contentSha256}`);
+        cacheStore(contentSha256, {
+          // extractedSourcePath is stagingDir (which CONTAINS core/), matching
+          // the cacheStore contract: the cache's extracted/ mirrors the tree
+          // that contains core/, so findCached().extractedPath/core/ resolves.
+          tarballSourcePath: tarballSink,
+          extractedSourcePath: stagingDir,
+          channel: channelKind,
+          ref: channelRef,
+          ttlMs:
+            channelKind === "main" ? TTL_MAIN_MS : TTL_INFINITE,
+        });
+        debug(
+          `Seeded cache <${contentSha256.slice(0, 12)}…> from ${tarballUrl}`,
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        warn(`cache-write skipped: ${msg}`);
+        warn(`cache-seed skipped: ${msg}`);
+      } finally {
+        // The sink served its purpose (copied into the cache). Remove the
+        // sibling archive so it doesn't linger next to the staging dir.
+        try {
+          if (existsSync(tarballSink)) rmSync(tarballSink, { force: true });
+        } catch {
+          /* best-effort */
+        }
       }
     }
     stagingPath = stagingDir;
@@ -629,18 +653,12 @@ export async function runInit(opts: InitOptions): Promise<number> {
     info(`Wrote ${installSourcePath()}`);
   }
 
-  // --- 11. Cache the freshly-extracted core (refresh fast-path) --------
-  // Skipped for from-source (nothing to cache) and for dry-run.
-  if (dry === null && sourceKind === "github" && tarballUrl !== null) {
-    // We don't currently retain the raw bytes after fetchAndExtract — for
-    // M1 we accept that init doesn't seed the cache; refresh always
-    // re-fetches and CAN seed the cache by saving its raw bytes.
-    void TTL_MAIN_MS;
-    void TTL_INFINITE;
-    void cacheStore;
-    void findCached;
-    void cacheDir;
-  }
+  // --- 11. Cache seeding happened inline at step 3 (TD-113) ------------
+  // The github fetch path now seeds the cache via cacheStore() right after a
+  // successful fetchAndExtract (using the cache-sink TEE), so a later
+  // `igris refresh` at the same SHA extracts from the cache instead of
+  // re-downloading. No separate post-swap step is needed (and the staging dir
+  // is gone by here anyway).
 
   // --- 13. Register igris-brain MCP in all 4 harness configs (FR-169) ----
   // `npm install -g igris-ai` ships a bundled brain-mcp-server; a harness
@@ -888,8 +906,3 @@ function renderConfigTemplate(args: {
   }
   return raw;
 }
-
-// Suppress unused-import warnings for things wired in but not yet
-// consumed at the M1 boundary (cache pre-seed etc.). M2/M5 wire these.
-void rmSync;
-void copyFileSync;

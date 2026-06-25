@@ -39,13 +39,14 @@
 import { createHash } from "node:crypto";
 import {
   createReadStream,
+  createWriteStream,
   existsSync,
   mkdirSync,
   rmSync,
   statSync,
 } from "node:fs";
 import { request as httpsRequest, type RequestOptions } from "node:https";
-import { resolve as pathResolve, sep } from "node:path";
+import { dirname, resolve as pathResolve, sep } from "node:path";
 import {
   Readable,
   Transform,
@@ -99,11 +100,51 @@ export class NetworkError extends TarballError {
 export type HttpsGetFn = (url: string) => Promise<Readable>;
 
 /**
+ * Test seam (TD-113): when `IGRIS_BLOCK_NETWORK=1`, every real HTTPS fetch
+ * throws immediately. Integration tests set this on the SECOND `igris refresh`
+ * to PROVE the cache hit short-circuited before any network call — if the
+ * cache path were skipped and a fetch were attempted, this fires and the test
+ * fails loud. The `file://` fixture seam (`IGRIS_TARBALL_FILE`) is checked
+ * BEFORE this guard so a hermetic fixture run is never blocked; only a genuine
+ * network attempt trips it.
+ */
+function networkBlocked(): boolean {
+  return process.env.IGRIS_BLOCK_NETWORK === "1";
+}
+
+/**
  * Default HTTPS GET. Follows redirects up to MAX_REDIRECTS. Surfaces
  * non-2xx responses as `NetworkError`. The returned readable stream
  * yields the response body bytes.
+ *
+ * Two test seams short-circuit the real HTTPS request, in this order:
+ *   1. `IGRIS_TARBALL_FILE` — stream that local file instead of fetching.
+ *      Lets a bats test drive the GitHub code path hermetically (no TLS, no
+ *      live GitHub) so the cache-seed-on-init behavior is exercised end-to-end.
+ *   2. `IGRIS_BLOCK_NETWORK=1` — throw a NetworkError. Proves a cache HIT
+ *      avoided the network (the fixture seam wins, so a legit cached run is
+ *      never tripped; only an UNEXPECTED fetch attempt is).
  */
 export async function httpsGet(url: string): Promise<Readable> {
+  // Seam 1: local-fixture override (hermetic GitHub-path runs).
+  const fixture = process.env.IGRIS_TARBALL_FILE;
+  if (fixture !== undefined && fixture.length > 0) {
+    if (!existsSync(fixture)) {
+      throw new TarballError(
+        `IGRIS_TARBALL_FILE points at a missing file: ${fixture}`,
+      );
+    }
+    return createReadStream(fixture);
+  }
+  // Seam 2: hard network block (cache-hit proof).
+  if (networkBlocked()) {
+    throw new NetworkError(
+      `network blocked by IGRIS_BLOCK_NETWORK while fetching ${url} ` +
+        `(a cache hit should have avoided this fetch)`,
+      -1,
+    );
+  }
+
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const result = await singleGet(current);
@@ -184,6 +225,20 @@ export interface FetchAndExtractOptions {
   destDir: string;
   /** Optional override for the GET function (test seam). */
   httpsGetFn?: HttpsGetFn;
+  /**
+   * TD-113 cache-seed TEE: when set, the RAW gzipped tarball bytes are written
+   * to this path WHILE they stream through the gunzip→extract pipeline. This is
+   * a single-fetch, two-consumer split — the bytes that gunzip consumes are the
+   * same bytes that land at `cacheSinkPath`, so the on-disk archive is
+   * byte-identical to what GitHub served (and re-hashes to `contentSha256`).
+   *
+   * The sink is written atomically-enough for our purpose: it is created at the
+   * start and only considered valid AFTER the pipeline resolves. On ANY
+   * pipeline failure (zip-slip, network, malformed tar) the partial sink is
+   * removed so a corrupt half-archive is never cached. The parent dir is
+   * created if absent.
+   */
+  cacheSinkPath?: string;
 }
 
 export interface FetchAndExtractResult {
@@ -211,12 +266,45 @@ export async function fetchAndExtract(
   let fileCount = 0;
   let zipSlipReject: ZipSlipError | null = null;
 
+  // TD-113 cache-seed TEE: a WriteStream that captures the RAW gzip bytes as
+  // they flow through `hashTap`. `sinkError` latches the first write error so
+  // we can surface it after the pipeline drains; `sinkDone` resolves when the
+  // sink has fully flushed to disk (we await BOTH the pipeline and this before
+  // declaring success, so `cacheStore` reads a complete file).
+  let sink: ReturnType<typeof createWriteStream> | null = null;
+  // Holder (not a bare `let`) so the closure assignment below is visible to
+  // TS's control-flow analysis at the read site — a bare `let sinkError`
+  // assigned only `null` synchronously narrows to `never` after a `!== null`.
+  const sinkErr: { err: Error | null } = { err: null };
+  let sinkDone: Promise<void> | null = null;
+  if (opts.cacheSinkPath !== undefined) {
+    const sinkDir = dirname(opts.cacheSinkPath);
+    if (!existsSync(sinkDir)) mkdirSync(sinkDir, { recursive: true });
+    const s = createWriteStream(opts.cacheSinkPath);
+    sink = s;
+    sinkDone = new Promise<void>((resolveP) => {
+      s.on("error", (err: Error) => {
+        if (sinkErr.err === null) sinkErr.err = err;
+        resolveP();
+      });
+      s.on("finish", () => resolveP());
+      s.on("close", () => resolveP());
+    });
+  }
+
   // Stream pipeline:
   //   stream → hashTap (Transform) → gunzip → tar.x with filter
-  // The hash sees the gzipped bytes (matches what GitHub serves).
+  // The hash sees the gzipped bytes (matches what GitHub serves). The same
+  // chunk is mirrored into `sink` (the cache TEE) before it is passed onward.
   const hashTap = new Transform({
     transform(chunk: Buffer, _enc, cb): void {
       hash.update(chunk);
+      if (sink !== null && sinkErr.err === null) {
+        // Best-effort: a backpressured write returns false but still buffers;
+        // we don't pause the pipeline on it (the archive is ~100KB, the OS
+        // buffer absorbs it). A genuine write error latches `sinkErr.err`.
+        sink.write(chunk);
+      }
       cb(null, chunk);
     },
   });
@@ -257,6 +345,11 @@ export async function fetchAndExtract(
   try {
     await pipeline(stream, hashTap, gunzip, extractStream);
   } catch (err) {
+    // The pipeline failed: the cache sink (if any) holds a partial archive —
+    // tear it down and remove the file so a corrupt half-download is NEVER
+    // promoted into the cache. Failures here are swallowed (the original
+    // pipeline error is the one the caller must see).
+    await discardSink(sink, sinkDone, opts.cacheSinkPath);
     // If we already recorded a zip-slip rejection, that takes precedence.
     if (zipSlipReject !== null) throw zipSlipReject;
     if (err instanceof ZipSlipError) throw err;
@@ -267,13 +360,64 @@ export async function fetchAndExtract(
   }
 
   if (zipSlipReject !== null) {
+    // Same teardown on the post-drain zip-slip surface (strict mode can defer
+    // the typed error to here): never cache a rejected archive.
+    await discardSink(sink, sinkDone, opts.cacheSinkPath);
     throw zipSlipReject;
+  }
+
+  // Success: end the sink and wait for the full flush so the on-disk archive
+  // is complete BEFORE the caller hands it to cacheStore. A sink write error
+  // (rare: ENOSPC, EACCES) becomes a TarballError so init's cache write is
+  // skipped rather than caching a truncated file.
+  await finalizeSink(sink, sinkDone);
+  if (sinkErr.err !== null) {
+    // The extraction itself succeeded; only the TEE failed. Remove the partial
+    // sink and surface a typed error — init treats a cache-write failure as
+    // non-fatal (it warns and proceeds), so the core swap still happens.
+    await discardSink(null, null, opts.cacheSinkPath);
+    throw new TarballError(
+      `cache sink write failed: ${sinkErr.err.message}`,
+    );
   }
 
   return {
     contentSha256: hash.digest("hex"),
     fileCount,
   };
+}
+
+/** End the cache sink and await its flush. No-op when no sink was opened. */
+async function finalizeSink(
+  sink: ReturnType<typeof createWriteStream> | null,
+  sinkDone: Promise<void> | null,
+): Promise<void> {
+  if (sink === null) return;
+  sink.end();
+  if (sinkDone !== null) await sinkDone;
+}
+
+/**
+ * Tear down a partial cache sink and remove its file. Used on the failure
+ * paths so a corrupt/partial archive is never left behind for a later
+ * findCached() to serve. Swallows its own errors.
+ */
+async function discardSink(
+  sink: ReturnType<typeof createWriteStream> | null,
+  sinkDone: Promise<void> | null,
+  sinkPath: string | undefined,
+): Promise<void> {
+  try {
+    if (sink !== null) {
+      sink.destroy();
+      if (sinkDone !== null) await sinkDone;
+    }
+    if (sinkPath !== undefined && existsSync(sinkPath)) {
+      rmSync(sinkPath, { force: true });
+    }
+  } catch {
+    // Best-effort cleanup; never mask the original error.
+  }
 }
 
 /**

@@ -1083,3 +1083,70 @@ describe("maskedSecretRead — non-TTY fallback (B1)", () => {
     expect(fallbackCalled).toBe(true);
   });
 });
+
+// TD-113: init seeds the tarball cache after a GitHub-path fetch. We drive the
+// GitHub code path hermetically with the `IGRIS_TARBALL_FILE` seam (httpsGet
+// streams the committed clean fixture instead of hitting GitHub) plus
+// `--channel=main` (resolveChannel short-circuits "main" with NO releases-API
+// call) and `--skip-remote` (skips the network HEAD check, but still routes
+// through the github branch because --from-source is absent). After a
+// successful fetch+extract the cache entry <sha>/{tarball.tar.gz,meta.json}
+// must exist, keyed by the same content_sha256 recorded in .install-source.json.
+describe("init — cache seed after a github fetch (TD-113)", () => {
+  const FIXTURE = join(
+    __dirname,
+    "fixtures",
+    "tarballs",
+    "clean-core.tar.gz",
+  );
+
+  it("seeds cache after a github fetch", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const { cacheTarballPath, cacheMetaPath } = await import("../lib/cache.js");
+
+    const prev = process.env.IGRIS_TARBALL_FILE;
+    process.env.IGRIS_TARBALL_FILE = FIXTURE;
+    try {
+      const code = await runInit({
+        channel: "main",
+        skipRemote: true,
+        yes: true,
+        cliVersion: "7.0.0",
+      });
+      expect(code).toBe(0);
+    } finally {
+      if (prev === undefined) delete process.env.IGRIS_TARBALL_FILE;
+      else process.env.IGRIS_TARBALL_FILE = prev;
+    }
+
+    // .install-source.json records source=github + a real content sha.
+    const isj = JSON.parse(
+      readFileSync(join(brainRoot, ".install-source.json"), "utf-8"),
+    ) as { source: string; channel: string; content_sha256: string };
+    expect(isj.source).toBe("github");
+    expect(isj.channel).toBe("main");
+    expect(isj.content_sha256).toMatch(/^[0-9a-f]{64}$/);
+
+    // The cache entry for that exact sha exists: both the raw tarball and the
+    // meta.json landed under ~/.igris/.cache/<sha>/.
+    const sha = isj.content_sha256;
+    expect(existsSync(cacheTarballPath(sha))).toBe(true);
+    expect(existsSync(cacheMetaPath(sha))).toBe(true);
+
+    // The seeded meta carries the channel + a main-channel (24h) TTL, and the
+    // extracted tree is present under <sha>/extracted/core/.
+    const meta = JSON.parse(
+      readFileSync(cacheMetaPath(sha), "utf-8"),
+    ) as { channel: string; ttl_ms: number };
+    expect(meta.channel).toBe("main");
+    expect(meta.ttl_ms).toBe(24 * 60 * 60 * 1000);
+    expect(
+      existsSync(join(brainRoot, ".cache", sha, "extracted", "core", "SOUL.md")),
+    ).toBe(true);
+
+    // The cached tarball is byte-identical to what was fetched (re-hashes to
+    // the recorded sha) — proves the TEE captured the raw archive faithfully.
+    const { hashTarballFile } = await import("../lib/tarball.js");
+    expect(await hashTarballFile(cacheTarballPath(sha))).toBe(sha);
+  });
+});
