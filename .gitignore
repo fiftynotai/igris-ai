@@ -79,9 +79,11 @@ CLAUDE.local.md
 # Generated harness projections (FR-137) — mechanically derived from canonical
 # sources by `igris harness compile`; never committed (regenerated on demand,
 # drift-checked against canonical). NB: the FR-153 codex AGENTS.md skills
-# aggregator was retired; project-root AGENTS.md (and GEMINI.md) are now the
-# TD-233 orchestrator-identity files — COMMITTED-as-canonical (the pre-commit
-# drift gate requires them on fresh checkouts), so they are NOT ignored.
+# aggregator was retired. Project-root AGENTS.md (and GEMINI.md) carry NO Igris
+# identity content — the os_identity surface was retired (FR-202 M4; TD-267
+# closed the loop). They are kept un-ignored only as inert harness-native
+# placeholders that the pre-commit drift gate requires present on fresh
+# checkouts; they are NOT identity files and enumerate nothing.
 .codex/
 .gemini/
 

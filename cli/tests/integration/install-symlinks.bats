@@ -7,7 +7,8 @@
 #
 # Brain core staged in $IGRIS_BRAIN_DIR via stage_brain_with_core helper
 # below — minimal but realistic: a couple of agents, the universal rule, two
-# skill dirs, the CLAUDE.md template.
+# skill dirs. (No CLAUDE.md template — FR-191 retired the render; TD-267 made
+# CLAUDE.md a static boot-pointer that install never regenerates.)
 
 load _helpers.bash
 
@@ -33,14 +34,8 @@ stage_brain_with_core() {
   mkdir -p "$IGRIS_BRAIN_DIR/core/skills/scan"
   printf '# scan skill\n' > "$IGRIS_BRAIN_DIR/core/skills/scan/SKILL.md"
 
-  # CLAUDE.md template (used by claude-md.ts)
-  mkdir -p "$IGRIS_BRAIN_DIR/core/templates"
-  cat > "$IGRIS_BRAIN_DIR/core/templates/CLAUDE.md.tmpl" <<'TMPL'
-# Igris AI Project Instructions
-
-Igris v{{IGRIS_VERSION}}
-Installed: {{INSTALL_DATE}}
-TMPL
+  # FR-191 retired the CLAUDE.md render + its .tmpl; TD-267 made CLAUDE.md a
+  # static boot-pointer. No template is staged — install writes no CLAUDE.md.
 }
 
 setup() {
@@ -85,18 +80,18 @@ setup() {
   [ -f "$PROJ/.claude/skills/scan/SKILL.md" ]
 }
 
-@test "install regenerates CLAUDE.md from template" {
+@test "install writes NO project CLAUDE.md (FR-191 render retired; TD-267 zero-config)" {
   PROJ="$(stage_project claudemd)"
+  # Project has no pre-existing CLAUDE.md.
+  [ ! -f "$PROJ/CLAUDE.md" ]
+
   run $CLI_BIN install "$PROJ"
   [ "$status" -eq 0 ]
 
-  [ -f "$PROJ/CLAUDE.md" ]
-  # Substituted version (any non-template version pattern X.Y.Z)
-  run grep -E '^Igris v[0-9]+\.[0-9]+\.[0-9]+' "$PROJ/CLAUDE.md"
-  [ "$status" -eq 0 ]
-  # No template placeholders remain.
-  run grep -E '\{\{IGRIS_VERSION\}\}' "$PROJ/CLAUDE.md"
-  [ "$status" -ne 0 ]
+  # install is zero-config: it writes NO identity file. The CLAUDE.md render
+  # machinery + its .tmpl were retired (FR-191) and the file carries no
+  # enumeration (TD-267) — install must not regenerate one.
+  [ ! -f "$PROJ/CLAUDE.md" ]
 }
 
 @test "install writes .igris_version with brain_path matching IGRIS_BRAIN_DIR" {
@@ -121,4 +116,35 @@ setup() {
   INO_AFTER=$(stat -f '%i' "$PROJ/.claude/agents/architect.md" 2>/dev/null || stat -c '%i' "$PROJ/.claude/agents/architect.md")
 
   [ "$INO_BEFORE" = "$INO_AFTER" ]
+}
+
+# TD-267: the repo-root CLAUDE.md is a static boot-pointer. It MUST carry no
+# identity assertion and no hardcoded skill/agent/path enumeration — those drift
+# (the pre-TD-267 file already listed renamed/deleted skills). This guard fires
+# if a future contributor regrows enumeration into CLAUDE.md (the #254 regrowth
+# class, now prevented for humans, not just hooks). Lightweight grep, not a
+# standalone validator (S-sized; MAINTAINING.md holds the durable contract).
+@test "repo CLAUDE.md is a boot-pointer — no identity assertion, no enumeration (TD-267)" {
+  REPO_ROOT="$(cd "$CLI_DIST/../.." && pwd)"
+  CLAUDE_MD="$REPO_ROOT/CLAUDE.md"
+  [ -f "$CLAUDE_MD" ]
+
+  # No identity assertion.
+  run grep -iE 'You ARE Igris' "$CLAUDE_MD"
+  [ "$status" -ne 0 ]
+
+  # No enumeration headings (skill list / agent list / key-paths table).
+  run grep -iE '## Available Skills|## Available Agents|## Key Paths' "$CLAUDE_MD"
+  [ "$status" -ne 0 ]
+
+  # No skill-roster enumeration: for every skill in core/skills/* OTHER than the
+  # single allowed `/boot` reference, the `/<skill>` token must be absent. This
+  # is roster-driven (self-updating) and path-safe (it matches only real skill
+  # names, not `/core` / `/os` path segments in the `~/.igris/...` pointer).
+  for skill_dir in "$REPO_ROOT"/core/skills/*/; do
+    skill="$(basename "$skill_dir")"
+    [ "$skill" = "boot" ] && continue
+    run grep -F "/$skill" "$CLAUDE_MD"
+    [ "$status" -ne 0 ]
+  done
 }

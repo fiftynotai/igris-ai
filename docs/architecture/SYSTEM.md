@@ -326,9 +326,11 @@ triggers: ["trigger phrase", "alt phrase"]
 ```
 
 1. Body: explanation, usage examples, state machine (if multi-phase).
-2. Register the name in `CLAUDE.md` "Available Skills" + `core/templates/CLAUDE.md.tmpl` (the root `CLAUDE.md` is regenerated from this template).
-3. Add the skill to the §7.2 grouped table above.
-4. Mirror the skill to `~/.igris/core/skills/<name>/SKILL.md` (TD-096) and verify with `core/scripts/verify_mirror.sh`.
+2. Add the skill to the §7.2 grouped table above (the human-readable skill
+   roster). The `core/skills/*` tree is the canonical enumeration; do NOT
+   write the skill name into `CLAUDE.md` — it carries no enumeration (TD-267;
+   the boot-pointer defers identity/routing to `/boot` + `core/os/INDEX.md`).
+3. Mirror the skill to `~/.igris/core/skills/<name>/SKILL.md` (TD-096) and verify with `core/scripts/verify_mirror.sh`.
 
 ### 8.4 Add an agent
 
@@ -391,10 +393,10 @@ The **live** agent roster is discovered from each agent's own frontmatter (`name
 2. **Mirror invariant (TD-096)** — `~/.igris/core/` mirrors repo `core/` byte-for-byte. Verify with `core/scripts/verify_mirror.sh`; sentinel runs MIRROR_CHECK on every changed `core/` file.
 3. **Strict-input MCP gateway (TD-128)** — every brain tool's `inputSchema` declares `additionalProperties: false`; callers use `ALLOWED_KEYS_PER_OP` allowlists.
 4. **Local-primary sync** — never treat the VPS as authoritative; on divergence, trust the local DB.
-5. **Carried-but-not-committed drift** — `CLAUDE.md` install-date line, `.claude/agent-memory/*/MEMORY.md`, `brain-mcp-server/.claude/`, and `.igris_version` regenerate post-install and are gitignored or carried-not-committed. Do not "clean" them in a code-touching commit.
+5. **Carried-but-not-committed drift** — `.claude/agent-memory/*/MEMORY.md`, `brain-mcp-server/.claude/`, and `.igris_version` regenerate post-install and are gitignored or carried-not-committed. Do not "clean" them in a code-touching commit. (`CLAUDE.md` is a static boot-pointer that nothing regenerates — TD-267; FR-191 retired its render.)
 6. **Igris-managed vs Claude-only hooks** — Igris hooks live only in `canonical-settings.json`; project-local Claude hooks go in a separate `.claude/settings.json` block and are preserved by the canonical merge.
 7. **Forger does NOT commit** — `/hunt`'s state machine owns `COMMITTING`; sentinel runs tests, warden reviews, orchestrator commits. Forger stops at the last code-touching step and reports `IMPLEMENTATION COMPLETE — UNCOMMITTED` (L-248 / PI-004).
-8. **Version sweep on bumps** — bumping the current-system version means sweeping every enumeration surface: `package.json`, `CLAUDE.md`, `CONTRIBUTING.md` "Project structure", any README banner. TD-147 is the cautionary tale.
+8. **Version sweep on bumps** — bumping the current-system version means sweeping every enumeration surface: `package.json`, `CONTRIBUTING.md` "Project structure", any README banner. `CLAUDE.md` carries no version string (TD-267 — boot-pointer only). TD-147 is the cautionary tale.
 
 ---
 

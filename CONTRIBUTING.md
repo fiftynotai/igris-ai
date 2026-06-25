@@ -484,22 +484,27 @@ form of this contract).
    - The `events_covered` list in `~/.igris/config.json:cli_targets.*.hooks`.
 
 3. **When you add or remove an agent** → register it in:
-   - `core/agents/<name>.md` (the agent definition itself).
-   - `core/igris_tree.json:agents` (the LIVE routing — the canonical
-     source for which context files the agent loads).
-   - `core/agents/manifest.yaml` (DEPRECATED registry, but kept for
-     reference until removed).
-   - `CLAUDE.md` "Available Agents" line + `core/templates/CLAUDE.md.tmpl`.
+   - `core/agents/<name>.md` (the agent definition itself — its frontmatter
+     is the canonical roster source).
+   - `core/scripts/gen_os_index.sh` discovers the agent frontmatter into the
+     `core/os/INDEX.md` roster (FR-187 Phase 2b — re-run it).
    - `docs/architecture/SYSTEM.md`'s agent roster table.
    - `README.md` if agent count or list appears.
+   - Do NOT write the agent into `CLAUDE.md` — it carries no enumeration
+     (TD-267; the boot-pointer defers identity/routing to `/boot` +
+     `core/os/INDEX.md`).
 
 4. **When you add or remove a skill** → register it in:
-   - `core/skills/<name>/SKILL.md` (the skill itself).
-   - `CLAUDE.md` "Available Skills" list + `core/templates/CLAUDE.md.tmpl`.
-   - `docs/architecture/SYSTEM.md`'s skill inventory table.
+   - `core/skills/<name>/SKILL.md` (the skill itself — the `core/skills/*`
+     tree is the canonical roster).
+   - `docs/architecture/SYSTEM.md` §7.2 grouped skill table (the
+     human-readable enumeration surface).
    - `README.md` slash-command tables (both the Workflow section and the
      Skills section).
    - `docs/<feature>.md` if a feature doc references the skill.
+   - Do NOT write the skill into `CLAUDE.md` — it carries no enumeration
+     (TD-267; the boot-pointer defers the skill roster to `core/skills/*`
+     + the SYSTEM.md §7.2 table).
 
 5. **When you change a `core/` file that has a runtime mirror** → follow
    the **TD-096 mirror-sync protocol**:
@@ -523,11 +528,11 @@ form of this contract).
 
 7. **When you bump a current-system version string** → sweep ALL of:
    - `package.json:version` (canonical).
-   - `core/igris_tree.json:version`.
-   - `CLAUDE.md:4` (orchestrator identity line).
    - `core/prompts/igris_os.md` (multiple lines — grep first).
    - `CONTRIBUTING.md` "Project structure" version notes.
    - Any README banner or footer that names a version.
+   - Do NOT add `CLAUDE.md` to the sweep — it carries no version string
+     (TD-267; the boot-pointer holds no identity/version line).
    - This is the **TD-147 lesson**: a v6→v7 sweep missed multiple
      surfaces and shipped self-contradicting docs.
 
