@@ -83,6 +83,13 @@ flowchart TB
 
 The rule-based subconscious detectors (`subconscious_engine.md`) had a 2% true-positive rate in Phase 2 live runs and trained users to ignore diagnostics. v7 sets `~/.igris/config.json:subconscious.enabled = false` and both schedule rows are disabled; existing pending suggestions are bulk-dismissed with the reason `"subconscious paused pending FR-118 redesign (TD-102)"`. The ~6.6 kLOC engine is preserved as reference material; FR-118 redesign is the path to re-enable.
 
+### 3.3 Deliberate graceful-degradation choices
+
+These are intentional, not bugs — documented openly because a stated limitation is maturity:
+
+- **No auto-release listener on `brief.completed`** — releasing or archiving a completed brief is an explicit operator action, never an automatic side-effect of completion (Lock-1: nothing auto-ships or auto-destroys). You `/archive` or `/release` deliberately.
+- **Agent events are fire-and-forget** — `igris_agent_event` emissions during `/hunt` never block the workflow and can gap silently if the brain MCP is briefly unavailable. The dashboard may under-count a phase; the hunt itself is never delayed or failed by a missed event. Correctness over telemetry completeness.
+
 ---
 
 ## 4. The Brief Lifecycle

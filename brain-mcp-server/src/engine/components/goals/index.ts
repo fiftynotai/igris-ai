@@ -8,7 +8,7 @@
  * already-registered `serves_goal` edge type and `goal` entity type from
  * FR-105.
  *
- * Provides 5 MCP tools:
+ * Provides the goal-management MCP tools:
  *   - igris_goal_create   — server-side GL-XXX allocation
  *   - igris_goal_list     — filtered query (project, status, upcoming_days)
  *   - igris_goal_get      — goal + serving briefs/learnings
