@@ -11,8 +11,9 @@ builds this by scanning each module's self-describing frontmatter
   `consult_when` fires), `reference` (consulted, not auto-loaded).
 - **scope** = who loads it: `orchestrator` or `universal` (all actors).
 
-> The operator module `~/.igris/USER.md` (machine-home) is part of the scan
-> set but is wired in at cutover — it is not indexed from this repo-side pass.
+> The operator module `~/.igris/USER.md` lives at machine-home, so its
+> frontmatter is not scanned in this repo-side pass — it is emitted as a
+> constant boot-tier row so the operator layer appears in the map.
 
 | module | layer | tier | scope | summary | consult_when |
 |---|---|---|---|---|---|
@@ -22,6 +23,7 @@ builds this by scanning each module's self-describing frontmatter
 | self-extension | capability | boot | orchestrator | Self-extension — to grow the OS, identify the kind of extension and follow its way. | — |
 | SOUL | identity | boot | orchestrator | The OS persona — name, voice, traits. Customizable; reskin freely. | — |
 | standards | conduct | boot | universal | Cross-actor baseline every Igris actor follows — commits, code quality, security, testing, brief-first. | — |
+| USER | operator | boot | orchestrator | who I serve — operator identity + preferences (machine-home: ~/.igris/USER.md) | — |
 | knowledge-map | knowledge-map | on-demand | orchestrator | The map of where knowledge lives — the stores, what each holds, and the rule for routing a fact to the right one. | deciding where a piece of knowledge belongs / routing knowledge across stores |
 | self-maintenance | reference | on-demand | orchestrator | How to correctly extend the Igris OS itself — find the layer, follow its rule, sweep the consumers. | before working on or extending the Igris OS itself |
 | surfaces-detail | capability | on-demand | orchestrator | The full `igris add` reference — per-surface command table, core-vs-personal, and the gotchas. | when adding or repairing a surface via igris add |

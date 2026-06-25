@@ -32,9 +32,11 @@ set -euo pipefail
 #              metadata, the OS discovers them and generates the map. Never
 #              hand-edit the output — re-run this script.
 #
-#              The operator module (~/.igris/USER.md, machine-home) is a known
-#              index entry but is NOT read here — USER is wired into the index
-#              at cutover, not from machine-home in this repo-side pass.
+#              The operator module (~/.igris/USER.md, machine-home) is NOT read
+#              here — its frontmatter is never scanned repo-side. It is emitted
+#              as a CONSTANT boot-tier `operator` row so the operator layer
+#              appears in the map. USER.md stays machine-home (preserve-on-
+#              refresh operator state), never in channel-canonical core/ (TD-271).
 #
 # Usage:       bash core/scripts/gen_os_index.sh
 #              Resolves its own paths from the script location, so it can be
@@ -154,6 +156,22 @@ if missing:
     for m in missing:
         sys.stderr.write(f"  - {m}\n")
     sys.exit(1)
+
+# The operator module (~/.igris/USER.md) is machine-home, not a repo file, so its
+# frontmatter is never scanned in this repo-side pass. But it IS a boot-tier
+# context layer (who I serve) and belongs in the map — emit a CONSTANT row so the
+# 7-layer model is complete. (TD-271: USER.md stays machine-home — preserve-on-
+# refresh operator state — rather than moving into channel-canonical core/.)
+rows.append(
+    {
+        "name": "USER",
+        "layer": "operator",
+        "tier": "boot",
+        "scope": "orchestrator",
+        "summary": "who I serve — operator identity + preferences (machine-home: ~/.igris/USER.md)",
+        "consult_when": "",
+    }
+)
 
 rows.sort(key=lambda r: (TIER_RANK.get(r["tier"], 99), r["name"].lower()))
 
@@ -337,8 +355,9 @@ builds this by scanning each module's self-describing frontmatter
   `consult_when` fires), `reference` (consulted, not auto-loaded).
 - **scope** = who loads it: `orchestrator` or `universal` (all actors).
 
-> The operator module `~/.igris/USER.md` (machine-home) is part of the scan
-> set but is wired in at cutover — it is not indexed from this repo-side pass.
+> The operator module `~/.igris/USER.md` lives at machine-home, so its
+> frontmatter is not scanned in this repo-side pass — it is emitted as a
+> constant boot-tier row so the operator layer appears in the map.
 
 | module | layer | tier | scope | summary | consult_when |
 |---|---|---|---|---|---|

@@ -34,14 +34,13 @@ Initialize Igris AI and resume any pending work.
 Read `~/.igris/core/os/INDEX.md` first — this is the **module map** for what context to load. There is no monolith to slice: each row is a self-contained module, and the modules ARE the sections.
 
 1. Read `~/.igris/core/os/INDEX.md`
-2. From the module table, load every module whose `tier` is `boot` — read each from `~/.igris/core/os/<module>.md` (the `SOUL` row maps to `~/.igris/core/SOUL.md`).
+2. From the module table, load every module whose `tier` is `boot` — read each from `~/.igris/core/os/<module>.md`. Two rows live at machine-home, not under `os/`: the `SOUL` row → `~/.igris/core/SOUL.md`, and the `USER` (operator) row → `~/.igris/USER.md`.
 3. Read all resolved modules silently. `on-demand` / `reference` modules are NOT loaded here — pull them later when their `consult_when` fires.
 
-**Always-needed files** (not in the INDEX, needed for boot mechanics):
-- `~/.igris/USER.md` - User config (addressing mode, mask preference)
+**Always-needed files** (boot mechanics, not context modules):
 - `~/.igris/config.json` - Remote brain URL and API key
 
-**Degradation:** if `~/.igris/core/os/INDEX.md` is absent, fall back to reading `~/.igris/core/SOUL.md` plus the always-needed files above, and continue — never block session start.
+**Degradation:** if `~/.igris/core/os/INDEX.md` is absent, fall back to reading `~/.igris/core/SOUL.md` + `~/.igris/USER.md` + `~/.igris/config.json`, and continue — never block session start.
 
 ### 2. Load Session State — Gather
 

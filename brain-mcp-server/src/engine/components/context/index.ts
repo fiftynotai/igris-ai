@@ -117,13 +117,18 @@ export function parseIndexModules(indexContent: string): IndexModule[] {
 
 /**
  * Resolve an INDEX module display name to its absolute source file path.
- * Mirrors gen_os_index.sh: `SOUL` lives at core/SOUL.md; everything else
- * under core/os/<name>.md.
+ * Mirrors gen_os_index.sh: `SOUL` lives at core/SOUL.md; the `USER` operator
+ * row lives at machine-home (~/.igris/USER.md); everything else under
+ * core/os/<name>.md. (The operator row is filtered out of the bundled set in
+ * the loader — TD-271 — so this case is defensive for any other caller.)
  */
 export function moduleFilePath(moduleName: string): string {
   const coreDir = join(homedir(), '.igris', 'core');
   if (moduleName === 'SOUL') {
     return join(coreDir, 'SOUL.md');
+  }
+  if (moduleName === 'USER') {
+    return join(homedir(), '.igris', 'USER.md');
   }
   return join(coreDir, 'os', `${moduleName}.md`);
 }
@@ -398,8 +403,12 @@ export function createContextComponent(): BrainComponent {
               const allowedScopes = scopesForActor(actorType);
 
               // 3. Select the boot-tier modules this actor is scoped to load.
+              //    The operator layer (USER.md) is machine-home, loaded by the
+              //    boot ceremony directly — it is in the INDEX for map
+              //    completeness but is NOT a core/os/ file and is not bundled
+              //    here (TD-271).
               const selected = modules.filter(
-                (m) => m.tier === 'boot' && allowedScopes.has(m.scope)
+                (m) => m.tier === 'boot' && m.layer !== 'operator' && allowedScopes.has(m.scope)
               );
 
               // 4. Resolve each module name to its file and read it whole.
