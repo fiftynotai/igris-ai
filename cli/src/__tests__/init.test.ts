@@ -181,7 +181,7 @@ describe("init — fresh install via --from-source", () => {
     expect(cfg.subconscious).toBeUndefined();
     // Global llm_extractor harness default + fallback order.
     expect(cfg.llm_extractor.harness).toBe("claude");
-    expect(cfg.llm_extractor.fallback_order).toEqual(["claude", "codex", "gemini"]);
+    expect(cfg.llm_extractor.fallback_order).toEqual(["claude", "codex"]);
     // cognition.subconscious mirrors the resolver's pick() keys; stays disabled.
     expect(cfg.cognition.subconscious.enabled).toBe(false);
     expect(cfg.cognition.subconscious.llm_daily_budget).toBe(8);

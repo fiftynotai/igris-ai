@@ -96,6 +96,8 @@ export const RSYNC_EXCLUDES: readonly string[] = [
   // Igris symlinks + local agent memory (each project's VPS has its own ~/.igris)
   // (FR-187 retired the .claude/rules/ symlink layer — no rules dir to exclude.)
   ".claude/agent-memory/",
+  // Per-developer local Claude settings — may embed machine-local secrets (TD-159).
+  ".claude/settings.local.json",
   ".claude/agents/",
   ".claude/skills/",
   // Machine-local version stamp written by the CLI installer (per-host)
