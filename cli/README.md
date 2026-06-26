@@ -1,13 +1,51 @@
-# Igris CLI
+# IGRIS
 
-The unified command-line tool for Igris AI. Published to npm as
-[`igris-ai`](https://www.npmjs.com/package/igris-ai); binary command is
-`igris`. Source lives at `cli/` in the
-[`fiftynotai/igris-ai`](https://github.com/fiftynotai/igris-ai) monorepo.
+they resume your chat — IGRIS resumes your work.
 
-End users do **not** clone this repo. They install with
-`npm install -g igris-ai`. This README is for **contributors** working
-on the CLI source.
+Igris is the engineering OS for AI coding agents: cross-harness work-state
+handoff, enforcement-as-code, and one brain across every harness. The npm
+package is published as [`igris-ai`](https://www.npmjs.com/package/igris-ai);
+the binary command is `igris`.
+
+## Install
+
+```bash
+npm install -g igris-ai
+igris init
+cd /path/to/your-project && igris install .
+```
+
+`igris init` bootstraps the centralized brain at `~/.igris/`, registers the
+bundled `igris-brain` MCP server, and projects the global skills, agents, MCP,
+and hook surfaces. `igris install .` is register-only: it records the project in
+the brain so those global surfaces apply, without copying Igris files into your
+repo.
+
+First-class harnesses: Claude Code, OpenCode, and Antigravity. Codex and Gemini
+CLI are supported bridges.
+
+Cursor remains an onboarding target, not a shipped surface.
+
+## Why Igris
+
+You can get pieces of this elsewhere: specs, shared rule files, memory tools,
+and checkpoint notes. Igris is for the failure mode where pieces are not enough:
+multiple harnesses, multiple sessions, mid-workflow interruption, write
+enforcement, stale claims, crash recovery, cross-project memory, and sync all
+need one lifecycle.
+
+The launch-facing README, proof storyboard, and substitution comparison live in
+the monorepo:
+
+- [Project README](https://github.com/fiftynotai/igris-ai#readme)
+- [Substitution comparison](https://github.com/fiftynotai/igris-ai/blob/main/docs/substitution.md)
+- [Launch assets](https://github.com/fiftynotai/igris-ai/tree/main/docs/images/launch)
+
+## Contributor note
+
+Source lives at `cli/` in the
+[`fiftynotai/igris-ai`](https://github.com/fiftynotai/igris-ai) monorepo. The
+sections below are for contributors working on the CLI source.
 
 ## End-user quick reference
 
@@ -15,7 +53,7 @@ on the CLI source.
 |---|---|
 | `igris init` | Bootstrap `~/.igris/` (or upgrade an existing install) |
 | `igris refresh` | Re-fetch `~/.igris/core/` from the configured channel |
-| `igris install <path>` | Install Igris in a project (default: includes hooks) |
+| `igris install <path>` | Register a project with the brain; no repo-local surfaces are copied |
 | `igris update [--all\|--slug X\|--self] [--dry-run]` | Update materialized layer |
 | `igris register-project [path]` | Write the brain registry row only |
 | `igris sync <code\|data\|all\|status>` | Push code/data to the VPS brain |
@@ -24,7 +62,7 @@ on the CLI source.
 `--dry-run` is supported on every state-changing verb.
 
 End-user docs (install, upgrade, channels) live in the repo-root
-[`README.md`](../README.md).
+[`README.md`](https://github.com/fiftynotai/igris-ai#readme).
 
 ## Contributor flow
 

@@ -1,8 +1,8 @@
 # IGRIS
 
-the engineering workbench for claude code.
+they resume your chat — IGRIS resumes your work.
 
-build everything possible, but architect it first.
+the engineering OS for AI coding agents: cross-harness work-state handoff, enforcement-as-code, and one brain across every harness.
 
 ---
 
@@ -12,54 +12,19 @@ you shipped a 2000-line pr because nothing stopped you. your context reset mid-t
 
 speed without structure is not engineering. it is chaos with better autocomplete.
 
----
+IGRIS is the workbench around the model. it makes the brief the contract, makes the phase explicit, makes ownership atomic, and makes every write pass through gates the agent cannot talk its way around.
 
-## claude writes. IGRIS decides what gets written.
+## what IGRIS adds.
 
-claude writes. IGRIS decides what gets written, by whom, and whether it ships. it is hierarchical actor-critic with bounded iteration. metagpt split the roles. self-refine ran the loop. we did both, then made the brief a contract. it is not the model. it is the workbench around it — the brief-protocol that gates every write, the brain that survives your context reset, the seven agents with tool restrictions that mean a planner cannot implement and a reviewer cannot fix.
+| Spearhead | What changes |
+|-----------|--------------|
+| Cross-harness work-state handoff | A new harness resumes the actual work state: brief, phase, atomic claim, instance identity, supersession lifecycle, working tree, and agent log. |
+| Enforcement-as-code | Brief-first write gates, role tool restrictions, test phases, and review phases are installed as executable workflow constraints. |
+| One brain across every harness | SQLite + FTS5 at `~/.igris/memory/knowledge.db` stores briefs, sessions, plans, learnings, claims, and sync state for every registered project. |
 
-every file modification routes through a brief. every brief routes through a plan. every plan routes through a role. nothing ships because the prompt sounded confident.
+First-class harnesses: Claude Code, OpenCode, and Antigravity. Codex and Gemini CLI are supported bridges.
 
----
-
-## watch one hunt.
-
-`/hunt` runs the pipeline end-to-end. architect plans, forger builds, sentinel tests, warden reviews, orchestrator commits. one command. real output below.
-
-```text
-$ /hunt TD-161
-
-[architect]  planning  · plan written to ~/.igris/projects/igris-ai/plans/TD-161-plan.md
-[forger]     building  · core/SOUL.md edited · mirror cp ~/.igris/core/SOUL.md
-[sentinel]   testing   · verify_mirror.sh → verdict: MATCH (1 pair, 0 mismatch)
-[sentinel]   testing   · git grep "Crimson" -- ':!docs/archive/' ':!CHANGELOG.md' → 0 matches
-[warden]     reviewing · brand canon audit · IGRIS-native register restored · APPROVE
-[orchestrator] CHANGELOG.md amended in place · TD-160 bullet refined with TD-161 note
-
-result: ready for commit · 1 file changed · 0 retries · PASS
-```
-
----
-
-## three weapons.
-
-the architect plans. the forger builds. the sentinel tests. the warden reviews.
-
-the architect cannot write files. the reviewer cannot fix what it rejects.
-
-### brief-protocol
-
-every file modification requires a tracked brief. no brief, no write. briefs carry priority, acceptance criteria, test plan, lifecycle state. nine types cover the engineering surface — bug, feature, tech debt, migration, testing, process, dependency, performance, architecture. read-only work is brief-free. anything that writes a file is gated.
-
-### the brain
-
-one sqlite database at `~/.igris/memory/knowledge.db`. wal mode, fts5 search, served through the `igris-brain` mcp server. it remembers across projects, sessions, and context resets. when your session dies mid-hunt, the brain tells the next session which brief was active, which phase it was in, and which retry it was on.
-
-### tool-enforced roles
-
-architect has `read, grep, glob`. it cannot write. warden has the same constraint. this is not a prompt instruction the model can rationalise its way around — it is the tool list in the agent definition. the planner plans. the reviewer reviews. nobody negotiates.
-
----
+Cursor remains an onboarding target, not a shipped surface.
 
 ## install in three commands.
 
@@ -69,21 +34,65 @@ igris init
 cd /path/to/your-project && igris install .
 ```
 
-the `igris-brain` mcp server is bundled inside the `igris-ai` npm package — `igris init` registers it into all 4 supported harnesses (claude, opencode, codex, antigravity) for you, no separate clone-build step. restart your harness afterward so it loads the new server, then run `/hunt BR-001` against the first brief you register. install matrix, channels, and v6 upgrade paths live in [`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md) and [`docs/UPDATE_GUIDE.md`](docs/UPDATE_GUIDE.md).
+`igris init` bootstraps the centralized brain and projects skills, agents, MCP, and hooks globally. `igris install .` is register-only: it records the project in the brain so the global surfaces apply, without copying IGRIS files into your repo.
 
----
+Restart your harness afterward so it loads the `igris-brain` MCP server, then run `/register feature "first brief"` and `/hunt BR-001`. Install matrix, verification commands, and upgrade paths live in [`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md) and [`docs/UPDATE_GUIDE.md`](docs/UPDATE_GUIDE.md).
+
+## the flagship proof.
+
+On 2026-06-16, B2/G-14 passed across four vendors: Claude -> OpenCode -> Codex -> Antigravity. A hunt was interrupted mid-workflow, resumed zero-context in the next harness, picked up at the recorded phase, ran the missing tests, and preserved crash recovery plus force-reclaim behavior.
+
+That proof matters because IGRIS did not hand off a transcript. It handed off work-state: the brief, the phase, the claim, the instance, the supersession lifecycle, and the uncommitted code.
+
+The visual below is a later FR-175 handoff storyboard that shows the same class of failure: Claude stopped at a weekly limit after settling the next brief, then Codex booted and recommended that exact brief.
+
+![FR-175 cross-harness handoff storyboard](docs/images/launch/fr175-cross-harness-storyboard.gif)
+
+The storyboard uses two stills, not the original operator screen recording, and it is not the B2/G-14 proof asset. Provenance is tracked in [`docs/images/launch/README.md`](docs/images/launch/README.md).
+
+## the core workflow.
+
+`/hunt` runs the pipeline end-to-end. architect plans, forger builds, sentinel tests, warden reviews, orchestrator commits. one command. bounded roles.
+
+```text
+$ /hunt TD-161
+
+[architect]  planning  · plan written to ~/.igris/projects/igris-ai/plans/TD-161-plan.md
+[forger]     building  · core/SOUL.md edited · mirror cp ~/.igris/core/SOUL.md
+[sentinel]   testing   · verify_mirror.sh -> verdict: MATCH (1 pair, 0 mismatch)
+[sentinel]   testing   · git grep "Crimson" -- ':!docs/archive/' ':!CHANGELOG.md' -> 0 matches
+[warden]     reviewing · brand canon audit · IGRIS-native register restored · APPROVE
+[orchestrator] CHANGELOG.md amended in place · TD-160 bullet refined with TD-161 note
+
+result: ready for commit · 1 file changed · 0 retries · PASS
+```
+
+## essential skills.
+
+| Need | Skills |
+|------|--------|
+| Start and end grounded work | `/boot`, `/rest` |
+| Create, run, inspect, and close briefs | `/register`, `/hunt`, `/scan`, `/archive` |
+| Capture and harden reusable knowledge | `/harvest`, `/promote` |
+| Reuse proven assets before rebuilding | `/reuse` |
+| Generate project context docs | `/ground` |
+| Sync code or brain data | `/sync` |
+
+## why not just compose other tools?
+
+You can get pieces of this elsewhere: spec-first planning, shared rule files, agent memory, and lightweight checkpointing. That stack is real, useful, and often enough.
+
+IGRIS is for the failure mode where pieces are not enough: multiple harnesses, multiple sessions, mid-workflow interruption, write enforcement, stale claims, crash recovery, cross-project memory, and sync all need one lifecycle. The detailed comparison is in [`docs/substitution.md`](docs/substitution.md).
 
 ## the unfinished edges.
 
-- agent teams (`/team hunt`) requires an experimental claude code flag. parallel works. quality gates work. the ergonomics are still rough.
-- IGRIS runs on claude code, opencode, codex, and antigravity (cross-cli adapters shipped; claude is the most polished today).
-- the comparison table got cut from this readme on purpose. a v2 pass is parked.
-- the brain is split into focused mcp components. some are heavily used. some are waiting for their first real call.
-
----
+- Agent teams (`/team hunt`) remain experimental. Parallelism works; the ergonomics are still being hardened.
+- Resume path was proven in B2, but deterministic phase entry is still being tightened so every harness follows the same skip/re-walk behavior.
+- Cross-machine B2 is the next frontier; same-machine cross-harness is proven.
+- Some brain components are mature and heavily used. Others are intentionally parked until a real workflow needs them.
 
 ## three doors.
 
-- build log → [fifty.dev/journal](https://fifty.dev/journal)
-- the repo → [github.com/fiftynotai/igris-ai](https://github.com/fiftynotai/igris-ai)
-- the license → [mit](LICENSE)
+- build log -> [fifty.dev/journal](https://fifty.dev/journal)
+- the repo -> [github.com/fiftynotai/igris-ai](https://github.com/fiftynotai/igris-ai)
+- the license -> [mit](LICENSE)

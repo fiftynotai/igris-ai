@@ -35,7 +35,8 @@ igris install .
 
 **What this does:**
 - Bootstraps the centralized brain at `~/.igris/` (SQLite database with FTS5 search, agents, skills, prompts)
-- Registers the bundled `igris-brain` MCP server into all 5 supported harnesses (Claude → `~/.claude.json`, OpenCode → `~/.config/opencode/opencode.json`, Codex → `~/.codex/config.toml`, Gemini → `~/.gemini/settings.json`, Antigravity → `~/.gemini/config/mcp_config.json`) so each serves the brain tools (no manual MCP setup — it ships inside the `igris-ai` npm package)
+- Registers the bundled `igris-brain` MCP server into the supported harness configs: Claude Code → `~/.claude.json`, OpenCode → `~/.config/opencode/opencode.json`, Codex → `~/.codex/config.toml`, Gemini CLI → `~/.gemini/settings.json`, and Antigravity → `~/.gemini/config/mcp_config.json` (Antigravity rides the Gemini config family). First-class harnesses are Claude Code, OpenCode, and Antigravity; Codex and Gemini CLI are supported bridges.
+- Notes Cursor as an onboarding target, not a shipped surface.
 - **Projects every surface GLOBALLY at `igris init`** (FR-212c/d): skills via the pinned `skills` CLI into the universal store (`~/.claude/skills` + `~/.agents/skills`); agents into the global harness agent dirs; the canonical Igris hooks block merged ONCE into the GLOBAL `~/.claude/settings.json`
 - Registers the project in the brain so it shows up in `/projects` and cross-project queries — this registration is what de-no-ops the global hooks for the project (the `_gate.sh` registration gate)
 
@@ -142,14 +143,16 @@ If `igris doctor` reports `mcp-unregistered`, run `igris doctor --fix` (or
 
 The `igris-brain` MCP (Model Context Protocol) server provides the brain
 tools — persistent memory, brief management, cross-project intelligence —
-to every supported harness (Claude, OpenCode, Codex, Antigravity).
+to the supported harness bridge set. Claude Code, OpenCode, and Antigravity
+are first-class; Codex and Gemini CLI are supported bridges.
 
 **It ships inside the `igris-ai` npm package and registers itself
 automatically.** `npm install -g igris-ai` bundles a pre-built
-brain-mcp-server, and `igris init` / `igris install` add the `igris-brain`
-entry to all 4 supported harness configs (`~/.claude.json`,
+brain-mcp-server, and `igris init` adds the `igris-brain`
+entry to the supported MCP config files (`~/.claude.json`,
 `~/.config/opencode/opencode.json`, `~/.codex/config.toml`,
-`~/.gemini/config/mcp_config.json` for Antigravity). There is no separate
+`~/.gemini/settings.json`, and `~/.gemini/config/mcp_config.json` for
+Antigravity). There is no separate
 clone-build-configure step.
 
 **Restart Claude Code** after `igris init` so it picks up the new MCP
@@ -426,7 +429,7 @@ does not recreate any surfaces.
 
 After setup:
 
-1. **Restart your harness** (Claude, OpenCode, Codex, or Antigravity) - so it picks up the bundled `igris-brain` MCP server registered by `igris init` into all 4 harness configs
+1. **Restart your harness** (Claude Code, OpenCode, Antigravity, Codex, or Gemini CLI) - so it picks up the bundled `igris-brain` MCP server registered by `igris init`
 2. **Generate architecture docs** - Run `/document architecture`
 3. **Analyze codebase** - Run `/migrate-analyze`
 4. **Review generated briefs** - Run `List all briefs`
