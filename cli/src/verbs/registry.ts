@@ -99,6 +99,11 @@ import {
   type ListReleasesFn,
   type FetchedRepo,
 } from "../lib/github-source.js";
+import {
+  projectSkillsViaTool,
+  unprojectSkillsViaTool,
+  type SkillsToolResult,
+} from "../lib/skills-delegate.js";
 
 export type RegistryAction =
   | "add"
@@ -107,8 +112,10 @@ export type RegistryAction =
   | "add-hook"
   | "project-mcp"
   | "project-hook"
+  | "project-skills"
   | "unproject-mcp"
   | "unproject-hook"
+  | "unproject-skills"
   | "remove-skill"
   | "remove-mcp"
   | "remove-hook"
@@ -595,6 +602,23 @@ export interface RegistryOptions {
    * `<brain>/registry/hooks`. Tests point it at a fixture dir.
    */
   hookScriptRoot?: string;
+  /**
+   * FR-212a project-skills: ABSOLUTE path to the skills SOURCE dir (the dir
+   * CONTAINING the `<name>/SKILL.md` subfolders). The delegate runs
+   * `skills add <source> -g -a <agents…> -y`, which projects every skill under
+   * the root in one call. Carried by the bash compile driver's `project_skills`
+   * delegate arm (`--source`).
+   */
+  source?: string;
+  /**
+   * FR-212a project-skills/unproject-skills test seam: inject a fake
+   * `projectSkillsViaTool` so the registry-level path can be unit-tested without
+   * spawning the real `skills` CLI (the spawn itself is spied in the
+   * skills-delegate unit tests; this seam covers the registry wiring).
+   */
+  projectSkillsFn?: typeof projectSkillsViaTool;
+  /** FR-212a unproject-skills test seam: inject a fake `unprojectSkillsViaTool`. */
+  unprojectSkillsFn?: typeof unprojectSkillsViaTool;
 }
 
 // ---------------------------------------------------------------------------
@@ -6061,6 +6085,82 @@ function mergeHookGroupIntoFile(
 }
 
 /**
+ * FR-212a: `igris registry project-skills` — the INTERNAL compile-time skills
+ * projection delegate. Mirrors the `project-mcp`/`project-hook` driver shape
+ * (a thin TS step the bash `project_skills` delegate arm shells out to), but
+ * because the `skills` CLI projects EVERY skill under the source root in one
+ * `skills add <dir>` call, this is ONE invocation covering all skills (no
+ * per-row loop). The verdict is keyed on the tool's exit code; its stdout/stderr
+ * pass through. The argv carries only a PUBLIC skills path (no secret), so it is
+ * safe to surface. NO custom-engine fallback (constraint #2): the bash arm only
+ * reaches here under `IGRIS_SKILLS_ENGINE=delegate`; once here the tool is
+ * authoritative.
+ */
+function runProjectSkills(opts: RegistryOptions): number {
+  const source = opts.source;
+  if (!source) {
+    logError(
+      "registry project-skills: --source <abs-skills-root> is required " +
+        "(the dir containing <name>/SKILL.md subfolders).",
+    );
+    return 2;
+  }
+  const projectFn = opts.projectSkillsFn ?? projectSkillsViaTool;
+  let result: SkillsToolResult;
+  try {
+    result = projectFn({ source, global: true, mode: "symlink" });
+  } catch (err) {
+    // A resolution failure (no local binary) is a hard, observable error —
+    // never a silent network fetch (constraint #2).
+    logError(`registry project-skills: ${(err as Error).message}`);
+    return 1;
+  }
+  if (result.stdout) info(result.stdout);
+  if (!result.ok) {
+    logError(
+      `registry project-skills: 'skills add' exited ${result.exitCode}` +
+        (result.stderr ? `\n${result.stderr}` : ""),
+    );
+    return 1;
+  }
+  info(`project-skills: ${source} → skills (delegate, ok)`);
+  return 0;
+}
+
+/**
+ * FR-212a: `igris registry unproject-skills` — the INVERSE of project-skills.
+ * Routes un-projection through the tool's OWN `skills remove <name> -g --all -y`
+ * (NOT a manifest-path `deleteLink`), because the tool created the symlinks
+ * under `~/.agents/skills` + `~/.claude/skills` — the manifest-derived paths are
+ * not the ones to delete. Idempotent: removing an absent skill exits cleanly.
+ */
+function runUnprojectSkills(opts: RegistryOptions): number {
+  const name = opts.name;
+  if (!name) {
+    logError("registry unproject-skills: --name <skill> is required.");
+    return 2;
+  }
+  const unprojectFn = opts.unprojectSkillsFn ?? unprojectSkillsViaTool;
+  let result: SkillsToolResult;
+  try {
+    result = unprojectFn(name, { global: true });
+  } catch (err) {
+    logError(`registry unproject-skills: ${(err as Error).message}`);
+    return 1;
+  }
+  if (result.stdout) info(result.stdout);
+  if (!result.ok) {
+    logError(
+      `registry unproject-skills: 'skills remove' exited ${result.exitCode}` +
+        (result.stderr ? `\n${result.stderr}` : ""),
+    );
+    return 1;
+  }
+  info(`unproject-skills: ${name} ✗ skills (delegate, ok)`);
+  return 0;
+}
+
+/**
  * Run the registry verb. Returns an exit code:
  *   0 = success, 1 = enforcement reject, 2 = usage error (bad action/args).
  */
@@ -6079,10 +6179,14 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runProjectMcp(opts);
     case "project-hook":
       return runProjectHook(opts);
+    case "project-skills":
+      return runProjectSkills(opts);
     case "unproject-mcp":
       return runUnprojectMcp(opts);
     case "unproject-hook":
       return runUnprojectHook(opts);
+    case "unproject-skills":
+      return runUnprojectSkills(opts);
     case "remove-skill":
       return removeSkillBlock(opts, overlayPath).code;
     case "remove-mcp":
@@ -6097,7 +6201,7 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runUpdate(opts, overlayPath);
     default:
       logError(
-        `unknown registry action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, add-hook, project-mcp, project-hook, unproject-mcp, unproject-hook, remove-skill, remove-mcp, remove-hook, list, remove, update.`,
+        `unknown registry action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, add-hook, project-mcp, project-hook, project-skills, unproject-mcp, unproject-hook, unproject-skills, remove-skill, remove-mcp, remove-hook, list, remove, update.`,
       );
       return 2;
   }

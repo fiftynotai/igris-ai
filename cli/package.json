@@ -42,8 +42,10 @@
   ],
   "dependencies": {
     "@iarna/toml": "^2.2.5",
+    "add-mcp": "1.11.0",
     "better-sqlite3": "^11.0.0",
     "commander": "^12.1.0",
+    "skills": "1.5.13",
     "tar": "^7.5.14"
   },
   "devDependencies": {

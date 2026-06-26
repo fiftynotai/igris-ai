@@ -478,6 +478,10 @@ async function main(argv: string[]): Promise<void> {
       "--secrets-path <path>",
       "INTERNAL (project-mcp): override ~/.igris/secrets.env (codex only; test seam)",
     )
+    .option(
+      "--source <abs-dir>",
+      "INTERNAL (project-skills): absolute skills source root (the dir containing <name>/SKILL.md subfolders) — the FR-212a delegate arm shells this out to 'skills add'",
+    )
     .action(
       async (
         action: string,
@@ -575,6 +579,9 @@ async function main(argv: string[]): Promise<void> {
         // explicitly). Accept `--name <slug>` OR the positional, like add-mcp.
         const isProjectMcp = action === "project-mcp";
         const isProjectHook = action === "project-hook";
+        // FR-212a: unproject-skills takes the skill name via --name (the bash
+        // remove arm passes it). project-skills takes --source, not a name.
+        const isUnprojectSkills = action === "unproject-skills";
         // FR-155: --scope must be one of {"global","project"} — validate at
         // the CLI boundary so the verb layer can trust the type. Commander
         // accepts any string; we narrow here. An invalid value is a usage
@@ -651,7 +658,8 @@ async function main(argv: string[]): Promise<void> {
             isAddMcp ||
             isAddHook ||
             isProjectMcp ||
-            isProjectHook
+            isProjectHook ||
+            isUnprojectSkills
               ? (opts.name ?? name)
               : name,
           from,
@@ -677,6 +685,9 @@ async function main(argv: string[]): Promise<void> {
           overlayPath: opts.overlay,
           configPath: opts.configPath,
           secretsPath: opts.secretsPath,
+          // FR-212a project-skills: the absolute skills source root the delegate
+          // arm shells out to `skills add`.
+          source: opts.source,
         });
         process.exitCode = code;
       },

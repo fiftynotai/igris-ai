@@ -55,6 +55,30 @@ readonly CORE_SURFACES="$ADAPTER_DIR/surfaces-manifest.json"
 BRAIN_DIR="${IGRIS_BRAIN_DIR:-$HOME/.igris}"
 readonly DEFAULT_OVERLAY="$BRAIN_DIR/registry/harness-manifest.personal.json"
 
+# FR-212a: how the SKILLS DELEGATE drift arm invokes the TS delegate
+# (`igris registry project-skills`, run idempotently as the present/absent
+# re-check). Resolution mirrors compile_harnesses.sh exactly: $IGRIS_CLI (a
+# full command string — the bats seam) word-split into an ARRAY, else the
+# `igris` binary on PATH.
+IGRIS_CLI_CMD=()
+if [ -n "${IGRIS_CLI:-}" ]; then
+  read -ra IGRIS_CLI_CMD <<< "$IGRIS_CLI"
+else
+  IGRIS_CLI_CMD=(igris)
+fi
+
+# FR-212a: the SKILLS placement engine flag — read IDENTICALLY to
+# compile_harnesses.sh (L-519 §18.1: the compile pass and its drift sibling
+# MUST agree on the engine). DEFAULTS TO "custom" (the inline symlink-realpath
+# drift check below); only "delegate" opts into the tool's idempotent re-check.
+igris_skills_engine() {
+  if [ "${IGRIS_SKILLS_ENGINE:-}" = "delegate" ]; then
+    echo "delegate"
+  else
+    echo "custom"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # usage — prints usage and exits with code 2.
 # ---------------------------------------------------------------------------
@@ -1028,6 +1052,13 @@ fi
 # accumulators (TOTAL/MATCH/DRIFT/SKILL_TREE_CHECKED).
 # ---------------------------------------------------------------------------
 verify_skills() {
+# FR-212a: per-call dedup set for the SKILLS DELEGATE drift arm — the distinct
+# source roots already re-checked this run (so the sibling target-type rows per
+# source collapse to a single idempotent re-check). Reset each invocation.
+# Unused on the custom path. `=()` is bash 3.2-safe; the iteration site uses the
+# `${arr[@]+...}` empty-array guard required under `set -u`.
+DELEGATED_SKILL_ROOTS=()
+
 # ---------------------------------------------------------------------------
 # FR-180 (TD-235 / D5): mirror of compile's loud-vs-silent core-skip diagnostic.
 # The flatten gate below keeps its own in-Python commonpath check verbatim
@@ -1175,6 +1206,45 @@ if [ -n "$SKILL_ROWS" ]; then
       /*)    out_abs="$s_path" ;;
       *)     out_abs="$PROJECT_ROOT/$s_path" ;;
     esac
+
+    # FR-212a: SKILLS DELEGATE drift arm. When IGRIS_SKILLS_ENGINE=delegate, the
+    # custom symlink-realpath drift body below does NOT apply (the `skills` CLI
+    # owns placement, under ~/.agents/skills + ~/.claude/skills — NOT the
+    # manifest's target paths). Instead the present/absent verdict is the tool's
+    # IDEMPOTENT re-run: re-projecting an already-correct skill set is a clean
+    # no-op (exit 0 → MATCH); a non-zero exit means the projection is missing or
+    # broken (→ DRIFT). Dispatched ONCE per distinct source root (sibling
+    # target-type rows collapse). Mirrors the compile delegate arm (L-519 §18.1).
+    # The custom drift body stays FULLY INTACT behind the flag — `continue` skips
+    # it. NO custom fallback (constraint #2): a non-zero re-check is observable
+    # DRIFT, never a silent fall-through to the realpath check.
+    if [ "$(igris_skills_engine)" = "delegate" ]; then
+      delegate_root="${src_abs:-$HOME/.igris/core/skills}"
+      already_delegated=0
+      # bash 3.2 + `set -u` empty-array guard (the first row hits an empty set).
+      for _r in ${DELEGATED_SKILL_ROOTS[@]+"${DELEGATED_SKILL_ROOTS[@]}"}; do
+        if [ "$_r" = "$delegate_root" ]; then already_delegated=1; break; fi
+      done
+      if [ "$already_delegated" -eq 1 ]; then
+        # Sibling target-type row for an already-re-checked root: fold its TOTAL++
+        # back so the count is one-per-root, matching the single re-check verdict.
+        TOTAL=$((TOTAL - 1))
+        continue
+      fi
+      DELEGATED_SKILL_ROOTS+=("$delegate_root")
+      drc=0
+      "${IGRIS_CLI_CMD[@]}" registry project-skills \
+        --source "$delegate_root" \
+        --project-root "$PROJECT_ROOT" \
+        ${OVERLAY:+--overlay "$OVERLAY"} >/dev/null 2>&1 || drc=$?
+      if [ "$drc" -eq 0 ]; then
+        MATCH=$((MATCH + 1))
+      else
+        echo "DRIFT skills (delegate) — re-check of $delegate_root failed (exit $drc); skills missing or broken" >&2
+        DRIFT=$((DRIFT + 1))
+      fi
+      continue
+    fi
 
     # TD-201: skill TREE pre-check. ONE verdict per personal skill block
     # regardless of how many (type, method) targets it declares. Mirrors the

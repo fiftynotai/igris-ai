@@ -76,6 +76,21 @@ else
   IGRIS_CLI_CMD=(igris)
 fi
 
+# FR-212a: the SKILLS placement engine flag. DEFAULTS TO "custom" (the inline
+# per-skill symlink/wrapper loop below, the already-shipping engine) — prod
+# behavior is UNCHANGED until a later child flips the default after the
+# 5-harness smoke gate is green (#832 de-risk). Only the exact string
+# "delegate" opts into the `skills` CLI shell-out; any other value (unset, typo)
+# resolves to "custom". The drift sibling (check_harness_drift.sh verify_skills)
+# reads the SAME flag (L-519 §18.1 compile/drift pairing).
+igris_skills_engine() {
+  if [ "${IGRIS_SKILLS_ENGINE:-}" = "delegate" ]; then
+    echo "delegate"
+  else
+    echo "custom"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # atomic_symlink <link_path> <target>
 #
@@ -1458,6 +1473,12 @@ fi
 # registry dispatch loop (this fn is only called for the skills/all selection).
 # ---------------------------------------------------------------------------
 project_skills() {
+  # FR-212a: per-call dedup set for the SKILLS DELEGATE ARM — the distinct
+  # source roots already dispatched to `skills add` this run (so the 3 sibling
+  # target-type rows per source collapse to a single delegate call). Reset each
+  # invocation. Unused on the custom path. Declared with `=()` (bash 3.2-safe).
+  DELEGATED_SKILL_ROOTS=()
+
   # FR-180 (TD-235 / D5): make the ownership-gate skip of declared CORE skills
   # LOUD or VISIBLE — never silent. The flatten gate below keeps its own
   # in-Python commonpath check verbatim (projected BYTES unchanged); this block
@@ -1621,6 +1642,59 @@ PY
         /*)    out_abs="$s_path" ;;
         *)     out_abs="$PROJECT_ROOT/$s_path" ;;
       esac
+
+      # FR-212a: SKILLS DELEGATE ARM. When IGRIS_SKILLS_ENGINE=delegate, shell
+      # out to the `skills` CLI via `igris registry project-skills --source
+      # <root>` (the LOCAL pinned binary, resolved inside the TS delegate —
+      # NEVER a bare `npx`) INSTEAD of the inline custom symlink/wrapper loop
+      # (the `case` below). The tool's `skills add <root>` projects EVERY skill
+      # under the root to all 5 harnesses in ONE call, so we dispatch ONCE per
+      # distinct source root (the 3 per-source target-type rows — claude/agents/
+      # opencode — collapse to a single delegate call; DELEGATED_SKILL_ROOTS
+      # dedups). Mirrors how project_mcp/project_hook shell to the registry verb
+      # (§18.1: bash never re-implements placement). The custom `case` below stays
+      # FULLY INTACT behind the flag — `continue` skips it. NO custom fallback in
+      # the delegate path (constraint #2): a tool FAIL is an observable counted
+      # FAIL, never a silent fall-through to the symlink loop.
+      if [ "$(igris_skills_engine)" = "delegate" ]; then
+        # Resolve the source root the tool projects from. `-` (no source row)
+        # → the registry-skills default `~/.igris/core/skills`, matching the
+        # custom branches' `conv_root` fallback.
+        delegate_root="${src_abs:-$HOME/.igris/core/skills}"
+        # Dedup: only the FIRST row for a given root dispatches + counts. Later
+        # rows for the same root (the sibling target-type entries) are folded in
+        # (TOTAL was already incremented for them above — decrement to keep the
+        # count one-per-projected-root, matching the single delegate invocation).
+        already_delegated=0
+        # bash 3.2 + `set -u`: iterating an EMPTY array via "${arr[@]}" throws
+        # "unbound variable" (the first row hits this — DELEGATED_SKILL_ROOTS is
+        # empty). The `${arr[@]+"${arr[@]}"}` guard expands to nothing when the
+        # array is unset/empty, so the loop body simply never runs. Same posture
+        # as the REFUSE_TARGETS `${#...[@]} -gt 0` guards below.
+        for _r in ${DELEGATED_SKILL_ROOTS[@]+"${DELEGATED_SKILL_ROOTS[@]}"}; do
+          if [ "$_r" = "$delegate_root" ]; then already_delegated=1; break; fi
+        done
+        if [ "$already_delegated" -eq 1 ]; then
+          TOTAL=$((TOTAL - 1))
+          continue
+        fi
+        DELEGATED_SKILL_ROOTS+=("$delegate_root")
+        rc=0
+        "${IGRIS_CLI_CMD[@]}" registry project-skills \
+          --source "$delegate_root" \
+          --project-root "$PROJECT_ROOT" \
+          ${OVERLAY:+--overlay "$OVERLAY"} || rc=$?
+        if [ "$rc" -eq 0 ]; then
+          SUMMARY+=("OK    skills (delegate) -> $delegate_root")
+          OK=$((OK + 1))
+        else
+          # Observable FAIL (L-232): the delegate verb already named the failure
+          # on stderr (binary-not-local / tool exit). Never a silent no-op.
+          SUMMARY+=("FAIL  skills (delegate) — registry project-skills exited $rc")
+          FAIL=$((FAIL + 1))
+        fi
+        continue
+      fi
 
       rc=0
       case "$s_type/$s_method" in

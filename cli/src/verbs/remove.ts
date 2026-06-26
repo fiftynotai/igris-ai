@@ -72,6 +72,10 @@ import {
   type UnprojectTarget,
 } from "../lib/remove-orchestrate.js";
 import {
+  resolveSkillsEngine,
+  unprojectSkillsViaTool,
+} from "../lib/skills-delegate.js";
+import {
   resolveAddMode,
   coreProjectionParams,
   type AddSurface,
@@ -155,6 +159,19 @@ export interface RemoveOptions {
   removeCoreMcpFn?: typeof removeCoreMcp;
   /** Test seam: core hook remove override. */
   removeCoreHookFn?: typeof removeCoreHook;
+  /**
+   * FR-212a test seam: force the skills placement engine ('delegate'|'custom')
+   * for the skill arm, bypassing the IGRIS_SKILLS_ENGINE env read. Lets the
+   * remove suite exercise BOTH arms deterministically. Absent → resolve from env
+   * (default 'custom', so the existing remove tests are byte-unchanged).
+   */
+  skillsEngine?: "delegate" | "custom";
+  /**
+   * FR-212a test seam: inject a fake `unprojectSkillsViaTool` so the delegate
+   * remove arm can be unit-tested WITHOUT spawning the real `skills` CLI.
+   * Defaults to the real delegate. Only consulted on the delegate path.
+   */
+  unprojectSkillsFn?: typeof unprojectSkillsViaTool;
 }
 
 /**
@@ -272,6 +289,42 @@ function skillUnprojectTargets(
 }
 
 /**
+ * FR-212a: the SKILLS DELEGATE un-project target — a SINGLE
+ * `UnprojectTarget` that routes removal through the `skills` CLI's own
+ * `skills remove <name> -g --all -y` (NOT a manifest-path `deleteLink`). One
+ * call covers every harness the tool projected the skill to. `run`:
+ *   - returns true on a clean removal (tool exit 0) — the idempotent contract
+ *     (`skills remove` of an absent skill ALSO exits 0, so this is true even
+ *     when nothing was present; that is acceptable for the audit `deprojected[]`
+ *     line and does not affect the ABSENT-verdict which is manifest-driven).
+ *   - THROWS on a tool FAIL (non-zero exit) so `unprojectAndVerify` surfaces it
+ *     as a LOUD failure (constraint #2: no silent swallow). NEVER falls back to
+ *     the custom symlink delete.
+ */
+function skillUnprojectTargetsViaTool(
+  name: string,
+  opts: RemoveOptions,
+): UnprojectTarget[] {
+  const unprojectFn = opts.unprojectSkillsFn ?? unprojectSkillsViaTool;
+  return [
+    {
+      harness: "delegate",
+      label: `delegate:skills remove ${name}`,
+      run: () => {
+        const result = unprojectFn(name, { global: true });
+        if (!result.ok) {
+          throw new Error(
+            `'skills remove ${name}' exited ${result.exitCode}` +
+              (result.stderr ? `: ${result.stderr}` : ""),
+          );
+        }
+        return true;
+      },
+    },
+  ];
+}
+
+/**
  * Resolve the agent un-project targets — the per-harness compiled agent files
  * (codex .toml symlink, gemini hardlink, opencode .md). Reads the agent entry's
  * `targets[].path` from the base manifest (core) or the overlay (personal),
@@ -363,7 +416,21 @@ async function runRemoveSkillArm(
   const overlayPath = opts.overlayPath ?? registryOverlayPath();
   const name = opts.name!;
 
-  const unprojectTargets = skillUnprojectTargets(name, projectRoot, overlayPath, mode);
+  // FR-212a: under the SKILLS DELEGATE flag, the `skills` CLI created the
+  // projected links (under ~/.agents/skills + ~/.claude/skills — NOT the
+  // manifest's target paths), so the manifest-derived `deleteLink` targets are
+  // the WRONG paths. Route un-projection through the tool's OWN
+  // `skills remove <name> -g --all -y` via a SINGLE UnprojectTarget. The verify-
+  // ABSENT step is unaffected: storeRemoved drops the skill from the manifest
+  // FIRST, so the scoped drift flatten matches nothing (noTargetsMatched =
+  // ABSENT), never reaching the delegate verify_skills arm. Custom path
+  // (default) keeps the per-harness manifest-path `deleteLink` targets verbatim.
+  const engine =
+    opts.skillsEngine ?? resolveSkillsEngine();
+  const unprojectTargets =
+    engine === "delegate"
+      ? skillUnprojectTargetsViaTool(name, opts)
+      : skillUnprojectTargets(name, projectRoot, overlayPath, mode);
 
   if (!(await confirmDestruction(opts, "skill", name, unprojectTargets.map((t) => t.label)))) {
     info(`remove skill '${name}': aborted (not confirmed).`);
