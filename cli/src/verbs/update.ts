@@ -121,10 +121,15 @@ export async function runUpdate(opts: UpdateOptions): Promise<number> {
     try {
       // skipSymlinkLayer=true: we trust the existing project install was correct;
       // update only refreshes the materialized layer (hooks + features file).
+      // FR-212c: legacyPerProject=true preserves update's existing contract —
+      // it refreshes the per-project hooks/settings layer it has always managed.
+      // (The register-only default applies to a fresh `igris install`, not to
+      // re-materializing an already-installed per-project layer.)
       const code = await runInstall({
         path: row.path,
         slug: row.slug,
         installHooks: wantHooks,
+        legacyPerProject: true,
         skipSymlinkLayer: true,
       });
       if (code === 0) {

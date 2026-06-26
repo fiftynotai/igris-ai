@@ -1579,6 +1579,34 @@ describe("registerBrainAcrossHarnesses — DELEGATE engine (FR-212b)", () => {
     expect(registerSpy.mock.calls[1][0].harnesses).toEqual(["gemini-cli"]);
   });
 
+  it("FR-212c: threads opts.folder into the grant (folder-scoped harness trusts the REGISTERED project)", () => {
+    const registerSpy = vi.fn(okTool);
+    const grantSpy = vi.fn(grantOk);
+    const PROJECT_ROOT = "/abs/registered/project";
+    registerBrainAcrossHarnesses(
+      { harnesses: ["codex", "gemini"], folder: PROJECT_ROOT },
+      { engine: "delegate", registerViaToolFn: registerSpy, writeGrantFn: grantSpy },
+    );
+    // Each grant call receives the registered project root as `folder` — NOT
+    // process.cwd(). The codex (toml-folder) + gemini-cli (json-folder) grants
+    // are the folder-scoped ones this trust write protects.
+    expect(grantSpy).toHaveBeenCalledTimes(2);
+    expect(grantSpy.mock.calls[0][1]?.folder).toBe(PROJECT_ROOT);
+    expect(grantSpy.mock.calls[1][1]?.folder).toBe(PROJECT_ROOT);
+  });
+
+  it("FR-212c: omitting opts.folder leaves the grant `folder` undefined (writeBrainGrant defaults to cwd)", () => {
+    const registerSpy = vi.fn(okTool);
+    const grantSpy = vi.fn(grantOk);
+    registerBrainAcrossHarnesses(
+      { harnesses: ["codex"] },
+      { engine: "delegate", registerViaToolFn: registerSpy, writeGrantFn: grantSpy },
+    );
+    // No folder passed -> the grant opts carry folder:undefined, which
+    // writeBrainGrant resolves to process.cwd() (init-time behaviour).
+    expect(grantSpy.mock.calls[0][1]?.folder).toBeUndefined();
+  });
+
   it("a tool FAIL becomes a `failed` result — NO silent fall-through to the mergers", () => {
     const registerSpy = vi.fn(
       (): McpToolResult => ({

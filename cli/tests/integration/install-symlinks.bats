@@ -6,6 +6,11 @@
 # script invoked). FR-187 retired the .claude/rules/ symlink layer (the
 # universal rule moved to core/os/standards.md) — install creates no rules link.
 #
+# FR-212c: the per-project symlink layer is now LEGACY (the default install is
+# register-only — surfaces project globally at `igris init`). These tests pin
+# the legacy layer via `igris install --legacy-per-project`; the register-only
+# default is asserted by install.bats + the install.test.ts FR-212c describe.
+#
 # Brain core staged in $IGRIS_BRAIN_DIR via stage_brain_with_core helper
 # below — minimal but realistic: a couple of agents, the universal rule, two
 # skill dirs. (No CLAUDE.md template — FR-191 retired the render; TD-267 made
@@ -42,7 +47,7 @@ setup() {
 
 @test "install creates .claude/agents/<name>.md symlinks pointing at brain agents" {
   PROJ="$(stage_project agents)"
-  run $CLI_BIN install "$PROJ"
+  run $CLI_BIN install --legacy-per-project "$PROJ"
   [ "$status" -eq 0 ]
 
   [ -L "$PROJ/.claude/agents/architect.md" ]
@@ -56,7 +61,7 @@ setup() {
 
 @test "install creates .claude/skills/<skill>/ symlinks for each skill dir" {
   PROJ="$(stage_project skills)"
-  run $CLI_BIN install "$PROJ"
+  run $CLI_BIN install --legacy-per-project "$PROJ"
   [ "$status" -eq 0 ]
 
   [ -L "$PROJ/.claude/skills/hunt" ]
@@ -72,7 +77,7 @@ setup() {
   # Project has no pre-existing CLAUDE.md.
   [ ! -f "$PROJ/CLAUDE.md" ]
 
-  run $CLI_BIN install "$PROJ"
+  run $CLI_BIN install --legacy-per-project "$PROJ"
   [ "$status" -eq 0 ]
 
   # install is zero-config: it writes NO identity file. The CLAUDE.md render
@@ -83,7 +88,7 @@ setup() {
 
 @test "install writes .igris_version with brain_path matching IGRIS_BRAIN_DIR" {
   PROJ="$(stage_project versioned)"
-  run $CLI_BIN install "$PROJ"
+  run $CLI_BIN install --legacy-per-project "$PROJ"
   [ "$status" -eq 0 ]
 
   [ -f "$PROJ/.igris_version" ]
@@ -94,11 +99,11 @@ setup() {
 
 @test "re-install is idempotent — symlinks unchanged, no-op for existing matching links" {
   PROJ="$(stage_project idemlinks)"
-  run $CLI_BIN install "$PROJ"
+  run $CLI_BIN install --legacy-per-project "$PROJ"
   [ "$status" -eq 0 ]
   INO_BEFORE=$(stat -f '%i' "$PROJ/.claude/agents/architect.md" 2>/dev/null || stat -c '%i' "$PROJ/.claude/agents/architect.md")
 
-  run $CLI_BIN install "$PROJ"
+  run $CLI_BIN install --legacy-per-project "$PROJ"
   [ "$status" -eq 0 ]
   INO_AFTER=$(stat -f '%i' "$PROJ/.claude/agents/architect.md" 2>/dev/null || stat -c '%i' "$PROJ/.claude/agents/architect.md")
 

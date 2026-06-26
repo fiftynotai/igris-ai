@@ -50,6 +50,12 @@
 
 set -e
 
+# FR-212c: resolve the gate-helper path NOW, while cwd is still the invocation
+# directory. `${BASH_SOURCE[0]}` is relative when the hook is launched by a
+# relative path (tests/bridges); the later `cd "$PROJECT_DIR"` would then break
+# a relative dirname, so we capture the absolute dir up front.
+_IGRIS_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+
 INPUT=$(cat 2>/dev/null || true)
 
 resolve_project_dir() {
@@ -81,6 +87,23 @@ except Exception:
 
 PROJECT_DIR=$(resolve_project_dir)
 [ -d "$PROJECT_DIR" ] && cd "$PROJECT_DIR"
+
+# ---------------------------------------------------------------------------
+# FR-212c REGISTRATION GATE — sits ABOVE the bypass + brief-gate.
+# The shared hooks project GLOBALLY (one ~/.claude/settings.json block fires
+# them in EVERY project on the machine). If the cwd is NOT inside a registered
+# Igris project, this hook MUST no-op: exit 0 (ALLOW the write — never deny a
+# non-Igris project's writes). Only a registered project reaches the bypass +
+# brief-gate below, where behaviour is exactly as before.
+# FAIL-OPEN-TO-NO-OP: brain DB absent/locked/error -> not-registered -> allow.
+# ---------------------------------------------------------------------------
+if [ -n "$_IGRIS_HOOK_DIR" ] && [ -f "$_IGRIS_HOOK_DIR/_gate.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$_IGRIS_HOOK_DIR/_gate.sh"
+  if ! is_registered_igris_project "$PROJECT_DIR"; then
+    exit 0
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # TD-150: best-effort event_log INSERT (component='brief_gate').

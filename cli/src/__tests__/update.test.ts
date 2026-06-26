@@ -137,6 +137,7 @@ describe("update verb", () => {
       path: proj,
       slug: "alpha",
       installHooks: true,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
     });
 
@@ -176,8 +177,8 @@ describe("update verb", () => {
 
     const a = stageProject();
     const b = stageProject();
-    await runInstall({ path: a, slug: "a", installHooks: true, skipSymlinkLayer: true });
-    await runInstall({ path: b, slug: "b", installHooks: true, skipSymlinkLayer: true });
+    await runInstall({ path: a, slug: "a", installHooks: true, legacyPerProject: true, skipSymlinkLayer: true });
+    await runInstall({ path: b, slug: "b", installHooks: true, legacyPerProject: true, skipSymlinkLayer: true });
 
     const code = await runUpdate({ all: true });
     expect(code).toBe(0);
@@ -189,7 +190,7 @@ describe("update verb", () => {
     const reg = await import("../lib/registry.js");
 
     const a = stageProject();
-    await runInstall({ path: a, slug: "alive", installHooks: true, skipSymlinkLayer: true });
+    await runInstall({ path: a, slug: "alive", installHooks: true, legacyPerProject: true, skipSymlinkLayer: true });
     reg.upsertProject({
       slug: "ghost",
       name: "ghost",
@@ -265,6 +266,7 @@ describe("update verb", () => {
       path: fresh,
       slug: "fresh-proj",
       installHooks: true,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
     });
     // Capture fresh project's settings.json before dry-run to verify no

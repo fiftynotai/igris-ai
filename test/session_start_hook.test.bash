@@ -21,10 +21,13 @@ HOOK_REL="core/hooks/shared/session_start.sh"
 setup() {
   HOOK="$IGRIS_ROOT/$HOOK_REL"
   [ -f "$HOOK" ] || skip "hook missing at $HOOK"
+  [ -f "$IGRIS_ROOT/core/hooks/shared/_gate.sh" ] || skip "_gate.sh missing"
 
   # Sandbox HOME so the hook cannot see real session/brief state (output
   # determinism) and a sandbox project dir for PROJECT_DIR resolution.
-  SANDBOX="$TEST_TEMP_DIR/session_start_$BATS_TEST_NUMBER"
+  # TD-150: realpath-normalise SANDBOX so a registered projects.path matches
+  # the gate's pwd -P resolution (macOS /tmp -> /private/tmp, /var symlink).
+  SANDBOX="$(mkdir -p "$TEST_TEMP_DIR/session_start_$BATS_TEST_NUMBER" && cd "$TEST_TEMP_DIR/session_start_$BATS_TEST_NUMBER" && pwd -P)"
   mkdir -p "$SANDBOX/home" "$SANDBOX/proj"
 
   # Pinned baseline stdout (jq shape) for a FRESH project with no session state.
@@ -52,6 +55,17 @@ teardown() {
   [ -d "$SANDBOX" ] && rm -rf "$SANDBOX"
 }
 
+# register_proj <home> <projpath> [slug] — seed a brain DB row so the FR-212c
+# registration gate treats <projpath> as a registered Igris project. The hook +
+# gate hardcode <home>/.igris/memory/knowledge.db. Idempotent table create.
+register_proj() {
+  local home="$1" projpath="$2" slug="${3:-ss-test-slug}"
+  command -v sqlite3 > /dev/null 2>&1 || return 0
+  mkdir -p "$home/.igris/memory"
+  sqlite3 "$home/.igris/memory/knowledge.db" \
+    "CREATE TABLE IF NOT EXISTS projects (slug TEXT, path TEXT); INSERT INTO projects VALUES ('$slug', '$projpath');" 2>/dev/null || true
+}
+
 # Run the hook with NO controlling terminal, capturing stdout to a file.
 # A controlling tty is a session property, not an fd property — bats' fd
 # redirection does NOT remove it, so when bats runs interactively a plain
@@ -59,8 +73,15 @@ teardown() {
 # tab) instead of the no-op branch. The python3 wrapper calls os.setsid() in
 # the child so /dev/tty is unopenable deterministically in every environment
 # (python3 because macOS ships no setsid(1)).
+#
+# FR-212c: these no-tty tests assert the FULL [IGRIS SESSION STATE] injection,
+# which the registration gate only emits inside a REGISTERED project. So the
+# wrapper registers $SANDBOX/proj in the sandbox HOME before invoking (the gate
+# then de-no-ops and the baseline output is produced). The unregistered /
+# brain-absent gate cases below invoke the hook directly, NOT via this wrapper.
 # Usage: run_hook_no_tty <home> <proj_env_or_empty> <payload_or_empty> <out>
 run_hook_no_tty() {
+  register_proj "$1" "$SANDBOX/proj"
   python3 - "$HOOK" "$1" "$2" "$3" "$4" <<'PYEOF'
 import os, subprocess, sys
 hook, home, proj_env, payload, out = sys.argv[1:6]
@@ -160,7 +181,10 @@ PYEOF
   local nojq_bin="$SANDBOX/nojq_bin"
   mkdir -p "$nojq_bin"
   local t src
-  for t in bash python3 cat sqlite3 basename grep sed head dirname env printf; do
+  # FR-212c: include mkdir/rm so register_proj (invoked by run_hook_no_tty) runs
+  # under the stripped PATH; the project is already registered by the first
+  # (full-PATH) call above, but register_proj re-runs idempotently per invoke.
+  for t in bash python3 cat sqlite3 basename grep sed head dirname env printf mkdir rm; do
     src=$(command -v "$t" 2>/dev/null) && ln -sf "$src" "$nojq_bin/$t"
   done
   [ -z "$(PATH="$nojq_bin" command -v jq 2>/dev/null)" ] || skip "could not isolate jq off PATH"
@@ -224,16 +248,22 @@ PYEOF
   cmp "$BASELINE" "$SANDBOX/out.json"
 }
 
-@test "tty present + unregistered project: basename fallback slug on tty" {
+@test "tty present + unregistered project: basename fallback slug on tty, EMPTY context (FR-212c)" {
   require_python3
   require_jq
 
-  # No knowledge.db in sandbox HOME -> basename fallback.
+  # No knowledge.db in sandbox HOME -> the TITLE still sets via basename
+  # fallback (FR-178, harmless cosmetic), but the FR-212c registration gate
+  # no-ops the CONTEXT for this unregistered project: additionalContext = "".
   run run_hook_under_pty "$SANDBOX/home" "$SANDBOX/proj" "$SANDBOX/out.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"CHILD_STATUS:0"* ]]
+  # Title still names the tab with the project basename.
   [[ "$output" == *'\x1b]0;proj\x07'* ]]
-  cmp "$BASELINE" "$SANDBOX/out.json"
+  # But the injected context is empty (gate no-op for an unregistered project).
+  run python3 -c "import json,sys; print(json.load(open('$SANDBOX/out.json'))['additionalContext'])"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
 }
 
 @test "tty present + PROJECT_DIR is subdir of registered path: LIKE prefix match wins" {
@@ -271,4 +301,71 @@ PYEOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"CHILD_STATUS:0"* ]]
   [[ "$output" == *'\x1b]0;fr178-quote-slug\x07'* ]]
+}
+
+# ---------------------------------------------------------------------------
+# FR-212c: the SessionStart REGISTRATION GATE.
+# Outside a registered Igris project the hook emits an EMPTY additionalContext
+# and skips the [IGRIS SESSION STATE] block + the [IGRIS AUTO-BOOT] nudge — so
+# it never injects Igris context / nudges /boot inside someone else's repo.
+# These cases invoke the hook directly (NOT via run_hook_no_tty, which
+# auto-registers) under os.setsid() so the tty branch is a deterministic no-op.
+# ---------------------------------------------------------------------------
+
+# run_hook_raw_no_tty <home> <cwd> <out> — like run_hook_no_tty but WITHOUT the
+# auto-registration; lets us exercise the UNREGISTERED / brain-absent gate path.
+run_hook_raw_no_tty() {
+  python3 - "$HOOK" "$1" "$2" "$3" <<'PYEOF'
+import os, subprocess, sys
+hook, home, cwd, out = sys.argv[1:5]
+env = dict(os.environ, HOME=home)
+payload = '{"source":"startup","cwd":"%s"}' % cwd
+with open(out, "wb") as f:
+    p = subprocess.run(["bash", hook], input=payload.encode(), stdout=f,
+                       env=env, preexec_fn=os.setsid)
+sys.exit(p.returncode)
+PYEOF
+}
+
+@test "FR-212c: UNREGISTERED project -> empty additionalContext, no SESSION STATE, no nudge" {
+  require_jq
+  require_python3
+  command -v sqlite3 > /dev/null 2>&1 || skip "sqlite3 not available"
+  # Brain DB exists but $SANDBOX/proj is NOT registered (different path row).
+  mkdir -p "$SANDBOX/home/.igris/memory"
+  sqlite3 "$SANDBOX/home/.igris/memory/knowledge.db" \
+    "CREATE TABLE projects (slug TEXT, path TEXT); INSERT INTO projects VALUES ('other', '$SANDBOX/somewhere-else');"
+
+  run run_hook_raw_no_tty "$SANDBOX/home" "$SANDBOX/proj" "$SANDBOX/out.json"
+  [ "$status" -eq 0 ]
+  # additionalContext is empty; NO session-state block, NO /boot nudge.
+  run python3 -c "import json,sys; print(json.load(open('$SANDBOX/out.json'))['additionalContext'])"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  ! grep -q 'IGRIS SESSION STATE' "$SANDBOX/out.json"
+  ! grep -q 'IGRIS AUTO-BOOT' "$SANDBOX/out.json"
+}
+
+@test "FR-212c: brain DB absent -> empty additionalContext (fail-open-to-no-op)" {
+  require_jq
+  require_python3
+  # No brain DB in the sandbox HOME at all -> gate fails open to not-registered.
+  rm -rf "$SANDBOX/home/.igris"
+  run run_hook_raw_no_tty "$SANDBOX/home" "$SANDBOX/proj" "$SANDBOX/out.json"
+  [ "$status" -eq 0 ]
+  run python3 -c "import json,sys; print(json.load(open('$SANDBOX/out.json'))['additionalContext'])"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  ! grep -q 'IGRIS AUTO-BOOT' "$SANDBOX/out.json"
+}
+
+@test "FR-212c: REGISTERED project -> SESSION STATE block + /boot nudge present (gate transparent)" {
+  require_jq
+  require_python3
+  command -v sqlite3 > /dev/null 2>&1 || skip "sqlite3 not available"
+  register_proj "$SANDBOX/home" "$SANDBOX/proj"
+  run run_hook_raw_no_tty "$SANDBOX/home" "$SANDBOX/proj" "$SANDBOX/out.json"
+  [ "$status" -eq 0 ]
+  grep -q 'IGRIS SESSION STATE' "$SANDBOX/out.json"
+  grep -q '\[IGRIS AUTO-BOOT\] Run /boot to ground this session\.' "$SANDBOX/out.json"
 }

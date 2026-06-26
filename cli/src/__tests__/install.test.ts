@@ -168,6 +168,7 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
     const code = await runInstall({
       path: projectDir,
       installHooks: true,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
     });
     expect(code).toBe(0);
@@ -192,6 +193,7 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
     const code = await runInstall({
       path: projectDir,
       installHooks: false,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
     });
     expect(code).toBe(0);
@@ -214,6 +216,7 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
     const code = await runInstall({
       path: projectDir,
       installHooks: true,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
     });
     expect(code).toBe(0);
@@ -230,6 +233,7 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
       path: projectDir,
       slug: "fifty-dev",
       installHooks: true,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
     });
     expect(code).toBe(0);
@@ -247,6 +251,7 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
       path: projectDir,
       slug: "alpha",
       installHooks: true,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
     });
     expect(code1).toBe(0);
@@ -259,6 +264,7 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
       path: projectDir,
       slug: "alpha",
       installHooks: true,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
     });
     expect(code2).toBe(0);
@@ -278,12 +284,14 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
       path: projectDir,
       slug: "old-slug",
       installHooks: true,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
     });
     await runInstall({
       path: projectDir,
       slug: "new-slug",
       installHooks: true,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
     });
     const slugs = reg.listProjects().map((r) => r.slug).sort();
@@ -299,6 +307,7 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
     const code = await runInstall({
       path: projectDir,
       installHooks: true,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
     });
     expect(code).toBe(1);
@@ -315,6 +324,7 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
     const code = await runInstall({
       path: projectDir,
       installHooks: true,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
     });
     expect(code).toBe(0);
@@ -348,6 +358,7 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
     await runInstall({
       path: projectDir,
       installHooks: true,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
     });
     const baks = readdirSync(join(projectDir, ".claude")).filter((e) =>
@@ -361,6 +372,7 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
     const code = await runInstall({
       path: "/this/path/should/not/exist/12345",
       installHooks: true,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
     });
     expect(code).toBe(1);
@@ -388,6 +400,7 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
     const code = await runInstall({
       path: projectDir,
       installHooks: true,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
     });
     expect(code).toBe(0);
@@ -521,6 +534,7 @@ describe("install verb — native symlink layer (M2.6)", () => {
     const code = await runInstall({
       path: projectDir,
       installHooks: true,
+      legacyPerProject: true,
       // skipSymlinkLayer NOT set — exercise the native symlink layer.
     });
     expect(code).toBe(0);
@@ -543,6 +557,7 @@ describe("install verb — native symlink layer (M2.6)", () => {
     const code = await runInstall({
       path: projectDir,
       installHooks: true,
+      legacyPerProject: true,
     });
     expect(code).toBe(0);
 
@@ -557,6 +572,7 @@ describe("install verb — native symlink layer (M2.6)", () => {
     const code = await runInstall({
       path: projectDir,
       installHooks: true,
+      legacyPerProject: true,
     });
     expect(code).toBe(0);
 
@@ -576,6 +592,7 @@ describe("install verb — native symlink layer (M2.6)", () => {
     const code = await runInstall({
       path: projectDir,
       installHooks: true,
+      legacyPerProject: true,
       cliVersion: "7.0.0",
       installDate: "2026-05-07",
     });
@@ -588,6 +605,7 @@ describe("install verb — native symlink layer (M2.6)", () => {
     const code = await runInstall({
       path: projectDir,
       installHooks: true,
+      legacyPerProject: true,
       cliVersion: "7.0.0",
     });
     expect(code).toBe(0);
@@ -604,6 +622,7 @@ describe("install verb — native symlink layer (M2.6)", () => {
     const code1 = await runInstall({
       path: projectDir,
       installHooks: true,
+      legacyPerProject: true,
       cliVersion: "7.0.0",
       installDate: "2026-05-07",
     });
@@ -615,6 +634,7 @@ describe("install verb — native symlink layer (M2.6)", () => {
     const code2 = await runInstall({
       path: projectDir,
       installHooks: true,
+      legacyPerProject: true,
       cliVersion: "7.0.0",
       installDate: "2026-05-07",
     });
@@ -638,6 +658,7 @@ describe("install verb — schema v2 (brain_channel + brain_ref)", () => {
     const code = await runInstall({
       path: projectDir,
       installHooks: true,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
       cliVersion: "7.0.0",
     });
@@ -675,6 +696,7 @@ describe("install verb — schema v2 (brain_channel + brain_ref)", () => {
     const code = await runInstall({
       path: projectDir,
       installHooks: true,
+      legacyPerProject: true,
       skipSymlinkLayer: true,
       cliVersion: "7.0.0",
     });
@@ -685,5 +707,115 @@ describe("install verb — schema v2 (brain_channel + brain_ref)", () => {
     const feats = ifs.readInstalledFeatures(slug);
     expect(feats!.brain_channel).toBe("release");
     expect(feats!.brain_ref).toBe("v7.0.0");
+  });
+});
+
+// ---------------------------------------------------------------------
+// FR-212c — REGISTER-ONLY default install.
+//
+// The default `igris install` reduces to BRAIN REGISTRATION: NO per-project
+// .claude/ symlinks, NO per-project settings.json, NO .igris_version. The
+// registry row IS upserted (that row de-no-ops the globally-projected hooks).
+// The legacy per-project layer is reachable ONLY via legacyPerProject:true.
+// ---------------------------------------------------------------------
+
+describe("install verb — register-only default (FR-212c)", () => {
+  beforeEach(() => {
+    // Stage a full brain core so the symlink layer WOULD have sources to link
+    // (proving the default does NOT link, not that it has nothing to link).
+    stageBrainWithCore();
+  });
+
+  it("default install creates NO .claude/ symlinks, NO settings.json, NO .igris_version", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const code = await runInstall({
+      path: projectDir,
+      installHooks: true, // even with hooks ON, register-only writes no settings.json
+      // legacyPerProject NOT set -> register-only default.
+    });
+    expect(code).toBe(0);
+
+    // No per-project symlink layer.
+    expect(existsSync(join(projectDir, ".claude", "agents"))).toBe(false);
+    expect(existsSync(join(projectDir, ".claude", "skills"))).toBe(false);
+    // No per-project settings.json hooks merge.
+    expect(existsSync(join(projectDir, ".claude", "settings.json"))).toBe(false);
+    // No per-project version marker.
+    expect(existsSync(join(projectDir, ".igris_version"))).toBe(false);
+  });
+
+  it("default install DOES upsert the registry row + writes installed_features.json", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const reg = await import("../lib/registry.js");
+    const ifs = await import("../lib/installed-features.js");
+
+    const code = await runInstall({
+      path: projectDir,
+      slug: "reg-only",
+      installHooks: true,
+    });
+    expect(code).toBe(0);
+
+    const rows = reg.listProjects();
+    expect(rows.length).toBe(1);
+    expect(rows[0].slug).toBe("reg-only");
+    expect(rows[0].path).toBe(projectDir);
+
+    // installed_features.json is still written (upgrade-detection survives).
+    const feats = ifs.readInstalledFeatures("reg-only");
+    expect(feats).not.toBeNull();
+    expect(feats!.schema_version).toBe(2);
+  });
+
+  it("legacy flag re-enables the per-project layer (symlinks + settings.json + .igris_version)", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const code = await runInstall({
+      path: projectDir,
+      installHooks: true,
+      legacyPerProject: true,
+    });
+    expect(code).toBe(0);
+
+    // Symlinks present.
+    expect(
+      lstatSync(join(projectDir, ".claude", "agents", "architect.md")).isSymbolicLink(),
+    ).toBe(true);
+    expect(
+      lstatSync(join(projectDir, ".claude", "skills", "hunt")).isSymbolicLink(),
+    ).toBe(true);
+    // settings.json present with the canonical hooks block.
+    const settings = JSON.parse(
+      readFileSync(join(projectDir, ".claude", "settings.json"), "utf-8"),
+    ) as { hooks?: Record<string, unknown> };
+    expect(settings.hooks).toBeDefined();
+    // .igris_version present.
+    expect(existsSync(join(projectDir, ".igris_version"))).toBe(true);
+  });
+
+  it("default --dry-run plans NO symlinks / settings.json / .igris_version", async () => {
+    const { runInstall } = await import("../verbs/install.js");
+    const logMod = await import("../lib/log.js");
+    const lines: string[] = [];
+    const spy = vi
+      .spyOn(logMod, "info")
+      .mockImplementation((msg?: unknown) => {
+        if (typeof msg === "string") lines.push(msg);
+      });
+    try {
+      const code = await runInstall({
+        path: projectDir,
+        installHooks: true,
+        dryRun: true,
+      });
+      expect(code).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
+    const plan = lines.join("\n");
+    // The register-only plan mentions the registry upsert but NOT the legacy
+    // per-project artifacts.
+    expect(plan).not.toMatch(/\.igris_version/);
+    expect(plan).not.toMatch(/symlink to/);
+    expect(plan).not.toMatch(/merge canonical hooks block/);
   });
 });

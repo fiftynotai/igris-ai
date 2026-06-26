@@ -39,7 +39,12 @@ setup() {
 
   # Sandbox dir must avoid /test/ /tests/ /core/ /.igris/ /.claude/ — those
   # are exempt-path tokens. `ptu` is short and token-free.
-  SANDBOX="$(mktemp -d "${BATS_TMPDIR:-/tmp}/ptu.XXXXXX")"
+  # FR-212c: realpath-normalise (cd && pwd -P) so the registered projects.path
+  # matches the registration gate's `pwd -P` resolution (macOS /tmp ->
+  # /private/tmp). Before FR-212c the brief-gate's basename fallback masked the
+  # mismatch; the registration gate requires a REAL projects.path match (no
+  # basename fallback by design), so the sandbox must resolve to its real path.
+  SANDBOX="$(cd "$(mktemp -d "${BATS_TMPDIR:-/tmp}/ptu.XXXXXX")" && pwd -P)"
   FAKEHOME="$SANDBOX/fakehome"
   mkdir -p "$FAKEHOME/.igris/memory"
   DB="$FAKEHOME/.igris/memory/knowledge.db"
@@ -144,20 +149,27 @@ event_count() {
 }
 
 # -----------------------------------------------------------------------------
-# (c) Corrupt brain DB file (garbage bytes) -> WARNING; event INSERT may
-#     itself fail because the DB is unopenable. The contract is the WARNING
-#     fires; the INSERT-on-broken-DB is best-effort by design.
+# (c) Corrupt brain DB file (garbage bytes) -> FR-212c: the registration gate
+#     fails OPEN. A fully-corrupt DB means the gate cannot confirm registration
+#     (it can't read the `projects` table), so it treats the project as
+#     not-registered and NO-OPS the hook (exit 0, allow) ABOVE the brief-gate.
+#     The brief-gate's TD-150 db_error WARNING therefore does NOT fire here —
+#     that path is now reachable only when the project IS registered but the
+#     brief SELECT errors (a readable `projects`, broken `brief_status`),
+#     exercised in (c2) below. The FR-212c contract: NEVER block a write because
+#     the brain is unavailable, and don't run the brief-gate (or its WARNINGs)
+#     when registration can't be confirmed.
 # -----------------------------------------------------------------------------
-@test "(c) corrupt brain DB file -> WARNING fires; INSERT is best-effort" {
+@test "(c) corrupt brain DB file -> gate fails open: allow, no brief-gate WARNING" {
   # Overwrite the DB with garbage. sqlite3 will refuse to open it.
   echo "not a sqlite file" > "$DB"
 
   run_hook_split_stderr "$PROJ" "$PROJ/src/x.go"
   [ "$status" -eq 0 ]
-  [[ "$STDERR" == *"WARNING"* ]]
-  [[ "$STDERR" == *"brain DB query errored"* ]]
-  # The INSERT itself silently fails on a fully-corrupt DB — assert WARNING
-  # only here; the assertable INSERT path is exercised in (c2) below.
+  # Allowed (no deny JSON) — the gate no-ops on an unreadable brain.
+  [[ "$STDOUT" != *"permissionDecision"* ]]
+  # The brief-gate never ran, so its db_error WARNING is absent.
+  [[ "$STDERR" != *"brain DB query errored"* ]]
 }
 
 # -----------------------------------------------------------------------------
@@ -237,17 +249,21 @@ MD
       VALUES ('realslug','TD-002','t','In Progress');
   "
 
-  # Hook is invoked via the SYMLINKED path. Without pwd -P, find_project_slug
-  # would see "$SYM_PROJ" and never find 'realslug' (basename fallback would
-  # be "sym-proj", which has no brief) -> deny. With pwd -P, the symlink
-  # resolves to REAL_PROJ -> 'realslug' -> allow.
+  # Hook is invoked via the SYMLINKED path. Without pwd -P, the registration
+  # gate (and find_project_slug) would see "$SYM_PROJ" and miss the projects
+  # row -> the gate would no-op (allow). With pwd -P, the symlink resolves to
+  # REAL_PROJ -> 'realslug' is registered -> the gate is transparent -> the
+  # brief-gate runs -> the In Progress brief allows.
   run_hook_split_stderr "$SYM_PROJ" "$SYM_PROJ/src/x.go"
   [ "$status" -eq 0 ]
   [[ "$STDOUT" != *"permissionDecision"* ]]
 
-  # Control: same setup but NO projects row -> would deny (proves slug
-  # resolution actually fired, not basename luck).
-  sqlite3 "$DB" "DELETE FROM projects;"
+  # Control (FR-212c): keep 'realslug' REGISTERED at REAL_PROJ but delete the
+  # BRIEF. The symlinked invocation must still resolve via pwd -P to the
+  # registered real path (so the gate is transparent), and the brief-gate must
+  # then DENY (no active brief). A DENY here proves the realpath resolution
+  # fired — basename ("sym-proj") would be UNregistered, the gate would no-op,
+  # and the result would be ALLOW (not deny).
   sqlite3 "$DB" "DELETE FROM brief_status;"
   run_hook_split_stderr "$SYM_PROJ" "$SYM_PROJ/src/x.go"
   [ "$status" -eq 0 ]

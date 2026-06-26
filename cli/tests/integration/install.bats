@@ -5,6 +5,11 @@
 # natively in TS — no shell-script symlink layer to stub. Tests stage a
 # minimal brain core in tmp and assert the verb's outputs (settings.json,
 # CLAUDE.md, .igris_version, registry rows, installed_features.json).
+#
+# FR-212c: the DEFAULT install is register-only (registry row + features file;
+# NO per-project settings.json). The per-project hooks layer is LEGACY, pinned
+# via `--legacy-per-project`. Tests that assert the per-project settings.json
+# carry the flag; the register-only default is asserted directly below.
 
 load _helpers.bash
 
@@ -13,9 +18,23 @@ setup() {
   export IGRIS_KEEP_BAK=0
 }
 
-@test "vanilla install creates registry row, features file, hooks block" {
+@test "register-only default: registry row + features file, NO settings.json (FR-212c)" {
   PROJ="$(stage_project myproj)"
   run $CLI_BIN install "$PROJ"
+  [ "$status" -eq 0 ]
+  # Register-only: no per-project settings.json.
+  [ ! -f "$PROJ/.claude/settings.json" ]
+  # Registry row + features file ARE written.
+  [ -f "$IGRIS_BRAIN_DIR/projects/myproj/installed_features.json" ]
+  # Schema v2
+  run python3 -c "import json,sys; d=json.load(open('$IGRIS_BRAIN_DIR/projects/myproj/installed_features.json')); print(d['schema_version'])"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
+}
+
+@test "legacy-per-project install creates registry row, features file, hooks block" {
+  PROJ="$(stage_project myproj)"
+  run $CLI_BIN install --legacy-per-project "$PROJ"
   [ "$status" -eq 0 ]
   [ -f "$PROJ/.claude/settings.json" ]
   # Hooks SessionEnd present
@@ -30,18 +49,18 @@ setup() {
   [ "$output" = "2" ]
 }
 
-@test "default install installs hooks (regression test for v6 silent-failure / TD-100)" {
+@test "legacy install installs hooks (regression test for v6 silent-failure / TD-100)" {
   PROJ="$(stage_project canary)"
-  run $CLI_BIN install "$PROJ"
+  run $CLI_BIN install --legacy-per-project "$PROJ"
   [ "$status" -eq 0 ]
   run python3 -c "import json,sys; d=json.load(open('$PROJ/.claude/settings.json')); print(bool(d.get('hooks',{}).get('SessionEnd')))"
   [ "$status" -eq 0 ]
   [ "$output" = "True" ]
 }
 
-@test "--no-hooks omits hooks block but installs everything else" {
+@test "--no-hooks omits hooks block but installs everything else (legacy)" {
   PROJ="$(stage_project nohooks)"
-  run $CLI_BIN install --no-hooks "$PROJ"
+  run $CLI_BIN install --legacy-per-project --no-hooks "$PROJ"
   [ "$status" -eq 0 ]
   # settings.json should NOT exist (we don't create it without hooks)
   [ ! -f "$PROJ/.claude/settings.json" ]
@@ -97,7 +116,7 @@ setup() {
   [ "$output" = "2" ]
 }
 
-@test "install preserves a custom permissions.allow array byte-for-byte" {
+@test "legacy install preserves a custom permissions.allow array byte-for-byte" {
   PROJ="$(stage_project withperms)"
   cat > "$PROJ/.claude/settings.json" <<EOF
 {
@@ -106,31 +125,31 @@ setup() {
   }
 }
 EOF
-  run $CLI_BIN install "$PROJ"
+  run $CLI_BIN install --legacy-per-project "$PROJ"
   [ "$status" -eq 0 ]
   run python3 -c "import json,sys; d=json.load(open('$PROJ/.claude/settings.json')); print(','.join(d['permissions']['allow']))"
   [ "$status" -eq 0 ]
   [ "$output" = "Bash(git diff:*),Bash(git log:*)" ]
 }
 
-@test "install on a project with includeGitInstructions:false preserves that key" {
+@test "legacy install on a project with includeGitInstructions:false preserves that key" {
   PROJ="$(stage_project bri058)"
   cat > "$PROJ/.claude/settings.json" <<EOF
 { "includeGitInstructions": false }
 EOF
-  run $CLI_BIN install "$PROJ"
+  run $CLI_BIN install --legacy-per-project "$PROJ"
   [ "$status" -eq 0 ]
   run python3 -c "import json,sys; d=json.load(open('$PROJ/.claude/settings.json')); print(d['includeGitInstructions'])"
   [ "$status" -eq 0 ]
   [ "$output" = "False" ]
 }
 
-@test "re-install over existing is idempotent (no settings.json drift)" {
+@test "re-install (legacy) over existing is idempotent (no settings.json drift)" {
   PROJ="$(stage_project idem)"
-  run $CLI_BIN install "$PROJ"
+  run $CLI_BIN install --legacy-per-project "$PROJ"
   [ "$status" -eq 0 ]
   cp "$PROJ/.claude/settings.json" "$BATS_TEST_TMPDIR/first.json"
-  run $CLI_BIN install "$PROJ"
+  run $CLI_BIN install --legacy-per-project "$PROJ"
   [ "$status" -eq 0 ]
   run diff -q "$BATS_TEST_TMPDIR/first.json" "$PROJ/.claude/settings.json"
   [ "$status" -eq 0 ]

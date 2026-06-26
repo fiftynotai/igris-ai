@@ -32,7 +32,11 @@ setup() {
   command -v sqlite3 >/dev/null 2>&1 || skip "sqlite3 not available"
 
   # `agb` is short + token-free (avoids the exempt-path tokens).
-  SANDBOX="$(mktemp -d "${BATS_TMPDIR:-/tmp}/agb.XXXXXX")"
+  # FR-212c: realpath-normalise (cd && pwd -P) so the registered projects.path
+  # matches the registration gate's `pwd -P` resolution (macOS /tmp ->
+  # /private/tmp); otherwise the gate sees the project as unregistered and
+  # no-ops the brief-gate (allow) instead of denying a no-brief write.
+  SANDBOX="$(cd "$(mktemp -d "${BATS_TMPDIR:-/tmp}/agb.XXXXXX")" && pwd -P)"
   FAKEHOME="$SANDBOX/fakehome"
   mkdir -p "$FAKEHOME/.igris/memory"
   DB="$FAKEHOME/.igris/memory/knowledge.db"

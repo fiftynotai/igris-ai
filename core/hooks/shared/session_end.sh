@@ -21,6 +21,10 @@
 
 set -e
 
+# FR-212c: capture the gate-helper dir while cwd is still the invocation dir
+# (the later `cd "$PROJECT_DIR"` would break a relative dirname). See _gate.sh.
+_IGRIS_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+
 INPUT=$(cat 2>/dev/null || true)
 
 resolve_project_dir() {
@@ -52,6 +56,20 @@ except Exception:
 
 PROJECT_DIR=$(resolve_project_dir)
 [ -d "$PROJECT_DIR" ] && cd "$PROJECT_DIR"
+
+# ---------------------------------------------------------------------------
+# FR-212c REGISTRATION GATE. SessionEnd projects GLOBALLY. Outside a registered
+# Igris project this hook MUST no-op: clean exit 0, NO side effects (no session
+# rewrite, no brain deregister, no detached perception extractor). FAIL-OPEN-TO-
+# NO-OP: a missing/locked brain DB resolves to not-registered -> clean exit.
+# ---------------------------------------------------------------------------
+if [ -n "$_IGRIS_HOOK_DIR" ] && [ -f "$_IGRIS_HOOK_DIR/_gate.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$_IGRIS_HOOK_DIR/_gate.sh"
+  if ! is_registered_igris_project "$PROJECT_DIR"; then
+    exit 0
+  fi
+fi
 
 parse_reason() {
   if [ -z "$INPUT" ]; then

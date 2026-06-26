@@ -1162,6 +1162,13 @@ export interface BrainRegisterDeps {
  *                           Defaults to `bundledMcpEntryPath()`.
  * @param opts.harnesses     Subset to target. Defaults to all 5.
  * @param opts.configPaths   Per-harness config-path overrides (test sandbox seam).
+ * @param opts.folder        FR-212c: the FOLDER to trust for the folder-scoped
+ *                           grants (codex `[projects."<folder>"]` + gemini-cli
+ *                           `trustedFolders.json`). In the global model a project
+ *                           registration must trust the REGISTERED project root,
+ *                           NOT the installer's `process.cwd()`. Threaded down to
+ *                           `writeBrainGrant`'s `folder`. Absent = `process.cwd()`
+ *                           (the grant default — init-time behaviour unchanged).
  * @param deps               FR-212b: delegate-path seams (engine override +
  *                           spied add-mcp/grant fns). Absent = the custom engine
  *                           default + real resolvers.
@@ -1171,6 +1178,7 @@ export function registerBrainAcrossHarnesses(
     mcpEntryPath?: string;
     harnesses?: McpHarness[];
     configPaths?: Partial<Record<McpHarness, string>>;
+    folder?: string;
   },
   deps?: BrainRegisterDeps,
 ): BrainHarnessResult[] {
@@ -1256,7 +1264,10 @@ function registerOneViaDelegate(
   canonical: McpShapeCanonical,
   mcpEntryPath: string,
   opts:
-    | { configPaths?: Partial<Record<McpHarness, string>> }
+    | {
+        configPaths?: Partial<Record<McpHarness, string>>;
+        folder?: string;
+      }
     | undefined,
   deps: BrainRegisterDeps | undefined,
 ): BrainHarnessResult {
@@ -1312,8 +1323,15 @@ function registerOneViaDelegate(
   // A grant failure does NOT fail the registration (the server is registered) —
   // it is surfaced in the `grant` field for the caller to warn on, mirroring the
   // per-harness warn-and-continue posture.
+  //
+  // FR-212c: thread `opts.folder` so the FOLDER-SCOPED grants (codex project-
+  // trust + gemini-cli trustedFolders) trust the REGISTERED project root, not
+  // the installer's `process.cwd()`. Absent -> writeBrainGrant defaults to
+  // process.cwd() (init-time behaviour unchanged). For the JSON-array harnesses
+  // (claude/antigravity) `folder` is ignored — their grant is a global wildcard.
   const grant = grantFn(harness, {
     configPaths: opts?.configPaths,
+    folder: opts?.folder,
   });
 
   return {

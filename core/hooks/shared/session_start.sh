@@ -26,6 +26,10 @@
 
 set -e
 
+# FR-212c: capture the gate-helper dir while cwd is still the invocation dir
+# (the later `cd "$PROJECT_DIR"` would break a relative dirname). See _gate.sh.
+_IGRIS_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+
 # ---------------------------------------------------------------------------
 # Resolve project directory: payload.project_dir > env > CLAUDE_PROJECT_DIR > PWD
 # ---------------------------------------------------------------------------
@@ -99,6 +103,33 @@ set_terminal_title() {
 # Fire on ALL session-start paths (startup/resume/clear/compact, every bridge).
 # Must never fail the hook (set -e): the trailing '|| true' guarantees it.
 set_terminal_title || true
+
+# ---------------------------------------------------------------------------
+# FR-212c REGISTRATION GATE. SessionStart projects GLOBALLY (one
+# ~/.claude/settings.json block fires it in EVERY project on the machine).
+# Outside a registered Igris project this hook MUST no-op the CONTEXT INJECTION:
+# emit an empty additionalContext and skip the [IGRIS SESSION STATE] block + the
+# [IGRIS AUTO-BOOT] /boot nudge (injecting Igris context / nudging /boot inside
+# someone else's repo is the misfire this gate prevents). FAIL-OPEN-TO-NO-OP: a
+# missing/locked brain DB resolves to not-registered -> empty context (never an
+# Igris nudge in a non-Igris project).
+#
+# Placed AFTER set_terminal_title (FR-178): the tab title is a harmless cosmetic
+# that should still name the project tab (basename fallback) for ANY harness —
+# only the Igris CONTEXT/nudge is gated on registration.
+# ---------------------------------------------------------------------------
+if [ -n "$_IGRIS_HOOK_DIR" ] && [ -f "$_IGRIS_HOOK_DIR/_gate.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$_IGRIS_HOOK_DIR/_gate.sh"
+  if ! is_registered_igris_project "$PROJECT_DIR"; then
+    if command -v jq &> /dev/null; then
+      jq -n '{"additionalContext": ""}'
+    else
+      echo '{"additionalContext": ""}'
+    fi
+    exit 0
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # Parse 'source' field. Unified shape: top-level 'source'. Native Claude: top-level

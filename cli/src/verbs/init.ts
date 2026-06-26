@@ -60,6 +60,7 @@ import {
   antigravityMcpConfigPath,
   brainDir,
   claudeJsonPath,
+  claudeUserSettingsPath,
   codexConfigTomlPath,
   configJsonPath,
   geminiSettingsPath,
@@ -72,6 +73,7 @@ import { registerBrainAcrossHarnesses } from "../lib/mcp-register.js";
 import { applyPersona } from "../lib/persona.js";
 import { linkAntigravitySkills } from "../lib/antigravity-skills.js";
 import { installAntigravityHooks } from "../lib/antigravity-hooks.js";
+import { mergeGlobalCanonicalHooks } from "../lib/global-hooks.js";
 import {
   antigravitySkillsLinkPath,
   antigravityHooksConfigPath,
@@ -671,6 +673,13 @@ export async function runInit(opts: InitOptions): Promise<number> {
   // --dev resolution happened early (right after pre-flight) — devMcpPath
   // is the clone's MCP path when --dev was passed, else undefined.
   if (dry !== null) {
+    // FR-212c: the GLOBAL canonical-hooks merge into ~/.claude/settings.json
+    // (the per-project install step 6 moved here — surfaces project globally
+    // at init; install is registration-only).
+    dry.wouldWriteFile(
+      claudeUserSettingsPath(),
+      "merge canonical Igris hooks block (global)",
+    );
     dry.wouldWriteFile(claudeJsonPath(), "register igris-brain MCP (Claude)");
     dry.wouldWriteFile(geminiSettingsPath(), "register igris-brain MCP (Gemini)");
     dry.wouldWriteFile(codexConfigTomlPath(), "register igris-brain MCP (Codex)");
@@ -693,6 +702,22 @@ export async function runInit(opts: InitOptions): Promise<number> {
       );
     }
   } else {
+    // --- 13a. GLOBAL canonical-hooks merge (FR-212c) ---------------------
+    // The Igris hooks project GLOBALLY via ONE ~/.claude/settings.json block
+    // (the per-project install step 6 moved here). The per-project `_gate.sh`
+    // de-no-ops them outside a registered Igris project. Engine + canonical
+    // source unchanged — only the target path moved. Non-fatal: a failure
+    // WARNs and init continues to exit 0.
+    const gh = mergeGlobalCanonicalHooks();
+    if (gh.outcome === "failed") {
+      warn(`global hooks merge skipped: ${gh.error}`);
+      warn(`  Manual fix: merge the canonical hooks block into ${gh.path}`);
+    } else if (gh.outcome === "unchanged") {
+      debug(`global Igris hooks already present -> ${gh.path}`);
+    } else {
+      info(`Merged global Igris hooks block -> ${gh.path}`);
+    }
+
     const results = registerBrainAcrossHarnesses(
       devMcpPath !== undefined ? { mcpEntryPath: devMcpPath } : undefined,
     );

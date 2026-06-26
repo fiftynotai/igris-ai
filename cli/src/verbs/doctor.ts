@@ -177,10 +177,15 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
       ) {
         info(`fix: re-running install for ${row.slug}`);
         try {
+          // FR-212c: legacyPerProject=true preserves doctor --fix's existing
+          // contract — it repairs the per-project hooks/symlink layer for the
+          // drift classes it detects (not-installed / hooks-missing / -stale).
+          // The register-only default applies to a fresh `igris install`.
           const code = await runInstall({
             path: row.path,
             slug: row.slug,
             installHooks: true,
+            legacyPerProject: true,
             skipSymlinkLayer: row.driftClass !== "not-installed",
           });
           if (code !== 0) {

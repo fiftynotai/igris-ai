@@ -20,6 +20,10 @@
 
 set -e
 
+# FR-212c: capture the gate-helper dir at the top (before main()) so the
+# registration gate resolves `_gate.sh` regardless of relative invocation.
+_IGRIS_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+
 # shellcheck disable=SC2034  # INPUT is unused but stdin must be consumed
 INPUT=$(cat 2>/dev/null || true)
 
@@ -72,6 +76,20 @@ except Exception:
 main() {
   local project_dir
   project_dir=$(resolve_project_dir)
+
+  # -------------------------------------------------------------------------
+  # FR-212c REGISTRATION GATE. PostCompact projects GLOBALLY. Outside a
+  # registered Igris project this hook MUST no-op: clean exit 0, NO side effects
+  # (no compact.log write under ~/.igris/projects/<basename>). FAIL-OPEN-TO-
+  # NO-OP: a missing/locked brain DB resolves to not-registered -> clean exit.
+  # -------------------------------------------------------------------------
+  if [ -n "$_IGRIS_HOOK_DIR" ] && [ -f "$_IGRIS_HOOK_DIR/_gate.sh" ]; then
+    # shellcheck source=/dev/null
+    . "$_IGRIS_HOOK_DIR/_gate.sh"
+    if ! is_registered_igris_project "$project_dir"; then
+      exit 0
+    fi
+  fi
 
   local source
   source=$(parse_source)

@@ -243,27 +243,39 @@ async function main(argv: string[]): Promise<void> {
 
   program
     .command("install <path>")
-    .description("Install Igris in a project (default: includes hooks)")
+    .description("Register a project with the brain (FR-212c: register-only by default)")
     .option(
       "--slug <slug>",
       "registry slug (default: basename of path)",
     )
-    .option("--no-hooks", "skip materializing hooks into .claude/settings.json")
+    .option("--no-hooks", "skip materializing hooks into .claude/settings.json (legacy)")
+    .option(
+      "--legacy-per-project",
+      "also materialize the per-project layer (symlinks + .igris_version + " +
+        ".claude/settings.json hooks). Default OFF — surfaces project globally at `igris init`.",
+      false,
+    )
     .option(
       "--dry-run",
-      "preview symlinks and hooks-merge without performing any writes",
+      "preview the planned writes without performing any",
       false,
     )
     .action(
       async (
         path: string,
-        opts: { slug?: string; hooks?: boolean; dryRun?: boolean },
+        opts: {
+          slug?: string;
+          hooks?: boolean;
+          dryRun?: boolean;
+          legacyPerProject?: boolean;
+        },
       ): Promise<void> => {
         const code = await runInstall({
           path,
           slug: opts.slug,
           // commander turns --no-hooks into opts.hooks=false. Default is true.
           installHooks: opts.hooks !== false,
+          legacyPerProject: opts.legacyPerProject === true,
           dryRun: opts.dryRun === true,
         });
         process.exitCode = code;
