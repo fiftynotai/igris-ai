@@ -405,10 +405,11 @@ describe("migrateSurfaceRoot — T2 agents migration (parity)", () => {
 });
 
 describe("migrateSurfaceRoot — T3 no skill lost (before/after ⊇)", () => {
-  it("T3: AFTER resolvable names ⊇ BEFORE, incl. the personal overlay skill", () => {
+  it("T3: AFTER resolvable names ⊇ BEFORE, incl. personal overlay sibling skills", () => {
     stageCoreSkill("alpha");
     stageCoreSkill("beta");
     stagePersonalSkill("content-pipeline");
+    stagePersonalSkill("oss-readme");
     legacySkillsSymlink();
 
     const result = migrateSurfaceRoot(skillsSurface(), overlayPath());
@@ -418,8 +419,10 @@ describe("migrateSurfaceRoot — T3 no skill lost (before/after ⊇)", () => {
     const afterNames = new Set(result.after.map((a) => a.name));
     // Core skills were visible BEFORE; all must survive.
     for (const n of beforeNames) expect(afterNames.has(n)).toBe(true);
-    // The personal overlay skill is added (was not in the core source BEFORE).
+    // The personal overlay skills are added (not in the core source BEFORE),
+    // even though they share the same target root.
     expect(afterNames.has("content-pipeline")).toBe(true);
+    expect(afterNames.has("oss-readme")).toBe(true);
     // Each AFTER entry resolves to a SKILL.md.
     for (const a of result.after) {
       const link = join(claudeSkillsRoot(), a.name);

@@ -18,8 +18,7 @@
  * auto-discovers and merges with the project's base `harness-manifest.json`.
  *
  * The load-bearing logic is the write-path enforcement:
- *   1. intra-overlay dedupe (the bash merge only dedupes overlay-vs-base,
- *      NOT overlay-vs-overlay — this verb closes that gap),
+ *   1. duplicate same-surface identity rejects inside the personal overlay,
  *   2. core-collision reject at write-time (mirrors the merge guard in
  *      `_common.sh` `merge_overlay_manifest`, by reading the base manifest),
  *   3. TS schema-shape validation before persist (port of the load-bearing
@@ -1383,10 +1382,10 @@ function readBaseAgentNames(projectRoot: string): Set<string> {
 /**
  * TD-191: read the base manifest's CORE skill-target paths across ALL blocks
  * (post-TD-191 multi-source array model). Parallels `readBaseAgentNames`, but
- * unions `surfaces.skills[*].targets[].path`. The runtime merge guard in
- * `_common.sh merge_overlay_manifest` rejects any cross-block path collision;
- * this mirrors that check at write-time so the overlay never reaches a state
- * the merge would reject. Legacy single-object `surfaces.skills` is normalized
+ * unions `surfaces.skills[*].targets[].path`. Personal skill blocks may share
+ * the same consumer root because the compiler emits per-skill children under
+ * that root; base/core roots are still reserved so personal skills cannot
+ * shadow core projections. Legacy single-object `surfaces.skills` is normalized
  * to `[object]` before iteration (back-compat). Absent/malformed base → empty
  * set.
  */
@@ -3550,13 +3549,13 @@ async function runAddGithub(
  *
  * Guard chain (overlay unchanged on any reject):
  *   1. parse each `type:method:path` triple (usage error → exit 2);
- *   2. validate the resulting `surfaces.skills` block shape;
- *   3. reject a target `path` colliding with a CORE skill-target path
- *      (mirrors the `_common.sh merge_overlay_manifest` cross-block guard
- *      at write-time);
- *   4. reject a target `path` already present in another overlay block
- *      (intra-overlay cross-block dedupe);
- *   5. atomic vendor → atomic overlay write → origin write (rollback the
+ *   2. reject malformed duplicate overlay blocks for the same skill name;
+ *   3. validate the resulting `surfaces.skills` block shape;
+ *   4. reject a target root colliding with a CORE skill-target root
+ *      (mirrors the `_common.sh merge_overlay_manifest` guard at write-time);
+ *   5. allow sibling personal blocks to share consumer roots because the
+ *      compiler emits distinct `<root>/<skill>` entries;
+ *   6. atomic vendor → atomic overlay write → origin write (rollback the
  *      just-vendored tree on any post-vendor failure).
  *
  * See L-516 (universal copy-vendor), L-517 (typed-subfolder layout),
@@ -3716,34 +3715,23 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
 
   // Normalize legacy single-object `surfaces.skills` to array shape (back-compat).
   const existingBlocks = normalizeSkillsBlocks(overlay.surfaces?.skills);
-  const existingBlockIndex = findSkillBlockIndex(overlay, name);
-
-  // (intra-overlay cross-block dedupe) Reject a target `path` already present
-  // in ANY OTHER overlay block (a same-name re-add is allowed to KEEP its own
-  // targets — they're unioned in place, not duplicated).
-  const otherBlockPaths = new Set<string>();
-  for (let i = 0; i < existingBlocks.length; i++) {
-    if (i === existingBlockIndex) {
-      continue;
-    }
-    for (const t of existingBlocks[i]?.targets ?? []) {
-      if (typeof t?.path === "string") {
-        otherBlockPaths.add(t.path);
-      }
-    }
+  const matchingBlockIndexes = findSkillBlockIndexes(overlay, name);
+  if (matchingBlockIndexes.length > 1) {
+    logError(
+      `registry add-skill: overlay has ${matchingBlockIndexes.length} ` +
+        `blocks for skill '${name}'; remove duplicate blocks before re-adding. ` +
+        `Overlay unchanged: ${overlayPath}`,
+    );
+    return 1;
   }
-  for (const t of newTargets) {
-    if (otherBlockPaths.has(t.path)) {
-      logError(
-        `registry add-skill: skill-target path '${t.path}' already exists in ` +
-          `another overlay block; remove it first or choose another path. ` +
-          `Overlay unchanged: ${overlayPath}`,
-      );
-      return 1;
-    }
-  }
+  const existingBlockIndex = matchingBlockIndexes[0] ?? -1;
 
   // (core-collision reject) Mirror the _common.sh merge guard at write-time.
+  // A skill-target path is a consumer ROOT (for example ~/.agents/skills), not
+  // the final per-skill output. Sibling personal skills are allowed to share a
+  // root because the compiler appends each skill name beneath it. Core roots
+  // remain reserved: allowing personal blocks to share those would shadow the
+  // core skill surface.
   const baseSkillPaths = readBaseSkillTargetPaths(projectRoot);
   for (const t of newTargets) {
     if (baseSkillPaths.has(t.path)) {
@@ -5531,17 +5519,22 @@ async function reVendorGithub(
  * if no block matches.
  */
 function findSkillBlockIndex(overlay: Overlay, name: string): number {
+  return findSkillBlockIndexes(overlay, name)[0] ?? -1;
+}
+
+function findSkillBlockIndexes(overlay: Overlay, name: string): number[] {
+  const out: number[] = [];
   const blocks = overlay.surfaces?.skills;
   if (!Array.isArray(blocks)) {
-    return -1;
+    return out;
   }
   for (let i = 0; i < blocks.length; i++) {
     const src = blocks[i]?.source;
     if (typeof src === "string" && basename(src) === name) {
-      return i;
+      out.push(i);
     }
   }
-  return -1;
+  return out;
 }
 
 async function runUpdate(

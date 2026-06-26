@@ -189,12 +189,15 @@ subfolder layout). `merge_overlay_manifest` **concatenates** the base
 `surfaces.skills[]` with the overlay `surfaces.skills[]` — overlay blocks
 coexist alongside base blocks (NOT merged into a single base block; the
 pre-TD-191 "additive merge into base" semantics is superseded). A
-**cross-block target-path collision** between any pair of blocks (base-vs-base,
-base-vs-overlay, or overlay-vs-overlay) is a **hard error** — a personal
-customization must not silently shadow a core skill (and the writer-side
-`runAddSkill` mirrors the same guard at write time). See L-519 (Igris-owned
-topology — each per-harness compiler inside Igris OS reads every block's
-canonical content from the registry, regardless of which block it came from).
+**base-vs-overlay target-root collision** is a **hard error** — a personal
+customization must not silently shadow a core skill root (and the writer-side
+`runAddSkill` mirrors the same guard at write time). Overlay-vs-overlay root
+sharing is valid: target `path` is the consumer root (`~/.agents/skills`,
+`~/.claude/skills`, or an OpenCode command dir), and the compiler emits distinct
+per-skill outputs below it (`<root>/<skill>` or `<command-dir>/<skill>.md`). See
+L-519 (Igris-owned topology — each per-harness compiler inside Igris OS reads
+every block's canonical content from the registry, regardless of which block it
+came from).
 
 **Adding a skill — `igris add skill` (one-step) / `igris registry add-skill`
 (write-only, FR-180):** for the common case, prefer the one-step `igris add skill

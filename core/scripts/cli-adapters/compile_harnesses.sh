@@ -1338,12 +1338,11 @@ try:
 except (OSError, ValueError):
     pass
 
-# TD-191: NO `seen_paths` dedup here. The cross-block path-collision guard
-# in `_common.sh`'s `merge_overlay_manifest` rejects any duplicate
-# (block, target) path at merge time, so every row that reaches flatten is
-# legitimately distinct. Keeping a dedup here would mask a legitimate
-# multi-block target row (e.g., a personal block's `AGENTS-mine.md` next to
-# the core block's `AGENTS-core.md`).
+# TD-191 / BR-074: NO `seen_paths` dedup here. The merge guard only rejects
+# personal roots that shadow core roots; sibling personal blocks may share a
+# consumer root such as ~/.agents/skills because the compiler emits distinct
+# per-skill children below that root. Keeping a dedup here would silently drop
+# one of those legitimate personal skill rows.
 # Core surfaces own the core skills; the merged agent manifest (incl. the
 # FR-139 personal overlay) contributes project + personal skills. Core first.
 for src in sources:

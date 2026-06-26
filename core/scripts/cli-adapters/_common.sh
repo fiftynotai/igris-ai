@@ -1046,16 +1046,14 @@ for agent in overlay_agents:
 merged = dict(base)
 merged["agents"] = list(base_agents) + list(overlay_agents)
 
-# FR-137 / TD-191: merge surfaces.skills as a MULTI-BLOCK ARRAY. Personal
-# blocks compile ALONGSIDE core (each carries its own source/layer/targets),
-# so the merge is a simple concatenation rather than the legacy "keep base
-# source + union targets" model. Cross-block target-path collisions (any
-# pair, base-vs-overlay, base-vs-base, overlay-vs-overlay) are a HARD error
-# — the same FR-137 collision contract, now scoped to the wider surface.
-# This guard SUPERSEDES the flatten-pass `seen_paths` dedup (drift #4 in
-# TD-191): every legitimate (block, target) row is distinct by construction
-# once it passes here. Legacy single-object blocks normalize to `[object]`
-# so back-compat holds without a version bump.
+# FR-137 / TD-191 / BR-074: merge surfaces.skills as a MULTI-BLOCK ARRAY.
+# Personal blocks compile ALONGSIDE core (each carries its own source/layer/
+# targets), so the merge is a simple concatenation rather than the legacy "keep
+# base source + union targets" model. A target `path` is a consumer ROOT, not the
+# final per-skill output path; sibling personal blocks may share it because the
+# compiler appends each skill name below that root. Base/core target roots remain
+# reserved and still collide with overlay roots. Legacy single-object blocks
+# normalize to `[object]` so back-compat holds without a version bump.
 def _normalize_skills(value):
     if value is None:
         return []
@@ -1083,27 +1081,32 @@ merged_surfaces = None
 
 if base_blocks or overlay_blocks:
     merged_skill_blocks = list(base_blocks) + list(overlay_blocks)
-    # Cross-block path-collision guard: every (block, target) row's `path`
-    # must be unique across ALL blocks. Mirrors the agent name-collision
-    # guard above. Used to live as a base-vs-overlay-only check; widened so
-    # the multi-block surface preserves the FR-137 contract end-to-end.
-    seen_paths = {}
-    for b_idx, block in enumerate(merged_skill_blocks):
+    # Core path-collision guard: a personal skill-target root must not shadow
+    # a core/base root. Overlay-vs-overlay reuse is valid: two personal skill
+    # blocks can share ~/.agents/skills because they emit distinct
+    # ~/.agents/skills/<skill-name> children.
+    base_paths = {}
+    for b_idx, block in enumerate(base_blocks):
         for t in (block or {}).get("targets", []) or []:
             p = (t or {}).get("path")
             if p is None:
                 continue
-            if p in seen_paths:
-                prev = seen_paths[p]
+            base_paths.setdefault(p, b_idx)
+    for o_idx, block in enumerate(overlay_blocks):
+        for t in (block or {}).get("targets", []) or []:
+            p = (t or {}).get("path")
+            if p is None:
+                continue
+            if p in base_paths:
+                prev = base_paths[p]
+                merged_idx = len(base_blocks) + o_idx
                 sys.stderr.write(
                     f"Error: skill-target path '{p}' collides between "
-                    f"surfaces.skills[{prev}] and surfaces.skills[{b_idx}]; "
-                    "every skill-target path must be unique across all "
-                    "blocks (a personal skill must not shadow a core skill, "
-                    "nor a sibling personal one).\n"
+                    f"core surfaces.skills[{prev}] and overlay "
+                    f"surfaces.skills[{merged_idx}]; a personal skill must "
+                    "not shadow a core skill-target root.\n"
                 )
                 sys.exit(1)
-            seen_paths[p] = b_idx
     merged_surfaces = dict(base_surfaces)
     merged_surfaces["skills"] = merged_skill_blocks
 

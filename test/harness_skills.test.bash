@@ -352,7 +352,8 @@ EOF
 #   1. The schema accepts the new array shape (both schema + structural-fallback).
 #   2. An empty array is rejected (minItems:1).
 #   3. The legacy single-object shape still normalizes (back-compat).
-#   4. The cross-block path-collision merge guard fires across the wider surface.
+#   4. The path-collision merge guard rejects overlay-vs-base core shadowing.
+#      Overlay-vs-overlay root sharing is allowed for personal sibling skills.
 #   5. The DUAL-SOURCE DUAL-COMPILE load-bearing scenario: TWO sibling blocks
 #      with distinct sources project to DISTINCT outputs from their OWN sources
 #      (proves the multi-source fix end-to-end via the REAL compiler).
@@ -432,6 +433,32 @@ EOF
   run bash -c "source '$COMMON' && merge_overlay_manifest '$PROJ/base-array.json' '$PROJ/overlay-array.json'"
   [ "$status" -ne 0 ]
   [[ "$output" == *"collides"* ]]
+}
+
+@test "BR-074 overlay personal skill siblings may share a target root" {
+  cat > "$PROJ/base-array.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": [
+    { "source": "skills-core",
+      "targets": [ { "type": "agents", "method": "symlink", "path": ".agents/core-skills" } ] }
+  ] } }
+EOF
+  cat > "$PROJ/overlay-array.json" <<'EOF'
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": [
+    { "source": "skills/content-pipeline",
+      "layer": "personal",
+      "targets": [ { "type": "agents", "method": "symlink", "path": ".agents/skills" } ] },
+    { "source": "skills/oss-readme",
+      "layer": "personal",
+      "targets": [ { "type": "agents", "method": "symlink", "path": ".agents/skills" } ] }
+  ] } }
+EOF
+  run bash -c "source '$COMMON' && merge_overlay_manifest '$PROJ/base-array.json' '$PROJ/overlay-array.json'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"skills/content-pipeline"* ]]
+  [[ "$output" == *"skills/oss-readme"* ]]
+  [[ "$output" == *".agents/skills"* ]]
 }
 
 @test "TD-191 dual-source dual-compile: distinct sources project to distinct outputs" {

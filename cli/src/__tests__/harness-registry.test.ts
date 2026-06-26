@@ -2812,16 +2812,51 @@ describe("registry add-skill", () => {
     expect(code).toBe(2);
   });
 
-  it("rejects a target path duplicated in another (sibling) overlay block (exit 1, unchanged)", async () => {
-    // First block claims AGENTS.md.
+  it("rejects a malformed overlay with duplicate same-skill blocks", async () => {
+    const malformed = {
+      version: 1,
+      agents: [],
+      surfaces: {
+        skills: [
+          {
+            source: join(vendorBase, "skills", "demo"),
+            layer: "personal",
+            targets: [
+              { type: "agents", method: "symlink", path: ".agents/skills" },
+            ],
+          },
+          {
+            source: join(vendorBase, "other-root", "demo"),
+            layer: "personal",
+            targets: [
+              { type: "claude", method: "symlink", path: ".claude/skills" },
+            ],
+          },
+        ],
+      },
+    };
+    writeFileSync(overlayPath, JSON.stringify(malformed, null, 2) + "\n");
+    const before = readFileSync(overlayPath, "utf-8");
+
+    const code = await runRegistry(
+      skillOpts({ targets: ["agents:symlink:.agents/skills"] }),
+    );
+
+    expect(code).toBe(1);
+    expect(readFileSync(overlayPath, "utf-8")).toBe(before);
+    expect(existsSync(join(vendorBase, "skills", "demo"))).toBe(false);
+  });
+
+  it("allows sibling personal skill blocks to share a target root", async () => {
+    // First block projects one skill into the shared agents root.
     await runRegistry(skillOpts({ targets: ["agents:symlink:.agents/skills"] }));
-    // Second skill, different name, but the SAME target path → reject.
+    // Second skill, different name, SAME consumer root. This is valid because
+    // the compiler appends each skill name below the root.
     mkdirSync(join(projectRoot, "skills", "other"), { recursive: true });
     writeFileSync(
       join(projectRoot, "skills", "other", "SKILL.md"),
       "---\nname: other\ndescription: o\n---\nbody\n",
     );
-    const before = readFileSync(overlayPath, "utf-8");
     const code = await runRegistry(
       skillOpts({
         name: "other",
@@ -2829,8 +2864,99 @@ describe("registry add-skill", () => {
         targets: ["agents:symlink:.agents/skills"],
       }),
     );
-    expect(code).toBe(1);
-    expect(readFileSync(overlayPath, "utf-8")).toBe(before);
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: { source?: string; targets?: unknown[] }[] };
+    };
+    expect(overlay.surfaces?.skills).toHaveLength(2);
+    expect(overlay.surfaces?.skills?.map((b) => b.source)).toEqual([
+      join(vendorBase, "skills", "demo"),
+      join(vendorBase, "skills", "other"),
+    ]);
+    expect(overlay.surfaces?.skills?.map((b) => b.targets)).toEqual([
+      [{ type: "agents", method: "symlink", path: ".agents/skills" }],
+      [{ type: "agents", method: "symlink", path: ".agents/skills" }],
+    ]);
+    expect(
+      existsSync(join(vendorBase, "skills", "demo", "demo", "SKILL.md")),
+    ).toBe(true);
+    expect(
+      existsSync(join(vendorBase, "skills", "other", "other", "SKILL.md")),
+    ).toBe(true);
+    const origins = readOriginsFile();
+    expect("skill:demo" in origins).toBe(true);
+    expect("skill:other" in origins).toBe(true);
+  });
+
+  it("BR-074 allows oss-readme to share all personal target roots with content-pipeline", async () => {
+    const targets = [
+      "claude:symlink:~/.claude/skills",
+      "agents:symlink:~/.agents/skills",
+      "opencode:command:~/.config/opencode/command",
+    ];
+    mkdirSync(join(projectRoot, "skills", "content-pipeline"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(projectRoot, "skills", "content-pipeline", "SKILL.md"),
+      "---\nname: content-pipeline\ndescription: c\n---\nbody\n",
+    );
+    mkdirSync(join(projectRoot, "skills", "oss-readme"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, "skills", "oss-readme", "SKILL.md"),
+      "---\nname: oss-readme\ndescription: o\n---\nbody\n",
+    );
+
+    expect(
+      await runRegistry(
+        skillOpts({
+          name: "content-pipeline",
+          from: "skills/content-pipeline",
+          targets,
+        }),
+      ),
+    ).toBe(0);
+    expect(
+      await runRegistry(
+        skillOpts({
+          name: "oss-readme",
+          from: "skills/oss-readme",
+          targets,
+        }),
+      ),
+    ).toBe(0);
+
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: { source?: string; targets?: unknown[] }[] };
+    };
+    expect(overlay.surfaces?.skills).toHaveLength(2);
+    expect(overlay.surfaces?.skills?.map((b) => b.source)).toEqual([
+      join(vendorBase, "skills", "content-pipeline"),
+      join(vendorBase, "skills", "oss-readme"),
+    ]);
+    expect(overlay.surfaces?.skills?.map((b) => b.targets)).toEqual([
+      [
+        { type: "claude", method: "symlink", path: "~/.claude/skills" },
+        { type: "agents", method: "symlink", path: "~/.agents/skills" },
+        {
+          type: "opencode",
+          method: "command",
+          path: "~/.config/opencode/command",
+        },
+      ],
+      [
+        { type: "claude", method: "symlink", path: "~/.claude/skills" },
+        { type: "agents", method: "symlink", path: "~/.agents/skills" },
+        {
+          type: "opencode",
+          method: "command",
+          path: "~/.config/opencode/command",
+        },
+      ],
+    ]);
+    const origins = readOriginsFile();
+    expect("skill:content-pipeline" in origins).toBe(true);
+    expect("skill:oss-readme" in origins).toBe(true);
   });
 
   it("rejects a path colliding with a CORE skill-target at write-time (exit 1, unchanged)", async () => {
