@@ -59,6 +59,19 @@ import {
   type McpHarness,
   type McpShapeCanonical,
 } from "./mcp-shape.js";
+// FR-212b: the MCP-registration DELEGATE (add-mcp shell-out) + the Igris-owned
+// no-prompt GRANT. Both are flag-gated behind `IGRIS_MCP_ENGINE=delegate`
+// (default `custom` → the FR-162/163/164 mergers below, UNCHANGED). The
+// delegate writes the per-harness SERVER ENTRY; the grant writes the no-prompt
+// trust. Igris keeps canonical ownership: `brainCanonical` (command/args/env)
+// is built HERE and handed to the delegate as a spec — add-mcp only serializes.
+import {
+  resolveMcpEngine,
+  registerMcpViaTool,
+  type McpEngine,
+  type McpToolResult,
+} from "./mcp-delegate.js";
+import { writeBrainGrant, type GrantResult } from "./mcp-grant.js";
 // TD-221: these four harness configs are secret-bearing — `renameSync(tmp,
 // target)` below adopts the tmp file's umask-default mode (typically 644),
 // re-loosening a previously-600 config on every MCP (re-)registration. Re-harden
@@ -1084,12 +1097,51 @@ const ALL_HARNESSES: McpHarness[] = [
   "antigravity",
 ];
 
+/**
+ * FR-212b: map the Igris `McpHarness` id (claude/gemini/codex/opencode/
+ * antigravity — the SHAPE id) to the `add-mcp` AGENT id (live-probed
+ * `list-agents`). Codex/opencode/antigravity are identical; the two that differ
+ * are `claude → claude-code` and `gemini → gemini-cli` (add-mcp rejects the
+ * bare `gemini`/`claude`). Used ONLY on the delegate path.
+ */
+const ADD_MCP_AGENT_ID: Record<McpHarness, string> = {
+  claude: "claude-code",
+  gemini: "gemini-cli",
+  codex: "codex",
+  opencode: "opencode",
+  antigravity: "antigravity",
+};
+
 /** Per-harness registration outcome for the multi-harness wire-up. */
 export interface BrainHarnessResult {
   harness: McpHarness; // "claude" | "gemini" | "codex" | "opencode" | "antigravity"
   result: McpRegisterResult; // reuses the existing union verbatim
   /** Reserved: true when a harness was not targeted / skipped by choice. */
   skipped?: boolean;
+  /**
+   * FR-212b: which engine produced this harness's registration —
+   * `"custom"` (the FR-162/163/164 mergers, default) or `"delegate"` (the
+   * add-mcp shell-out). Absent on the custom path keeps the existing 30-case
+   * suite assertions (which never read this field) byte-stable.
+   */
+  engine?: McpEngine;
+  /** FR-212b (delegate only): the Igris-owned no-prompt grant outcome. */
+  grant?: GrantResult;
+}
+
+/**
+ * FR-212b: injectable seams for the DELEGATE path (tests SPY these; never spawn
+ * the real add-mcp or touch a real config). All optional — absent = the real
+ * resolvers/writers. The `engine` override bypasses the `IGRIS_MCP_ENGINE` read
+ * (so a test can force `delegate` without mutating process.env).
+ */
+export interface BrainRegisterDeps {
+  /** Force the engine (default: `resolveMcpEngine()` reading IGRIS_MCP_ENGINE). */
+  engine?: McpEngine;
+  /** Override the add-mcp registration fn (delegate path). */
+  registerViaToolFn?: typeof registerMcpViaTool;
+  /** Override the grant writer (delegate path). */
+  writeGrantFn?: typeof writeBrainGrant;
 }
 
 /**
@@ -1110,21 +1162,42 @@ export interface BrainHarnessResult {
  *                           Defaults to `bundledMcpEntryPath()`.
  * @param opts.harnesses     Subset to target. Defaults to all 5.
  * @param opts.configPaths   Per-harness config-path overrides (test sandbox seam).
+ * @param deps               FR-212b: delegate-path seams (engine override +
+ *                           spied add-mcp/grant fns). Absent = the custom engine
+ *                           default + real resolvers.
  */
-export function registerBrainAcrossHarnesses(opts?: {
-  mcpEntryPath?: string;
-  harnesses?: McpHarness[];
-  configPaths?: Partial<Record<McpHarness, string>>;
-}): BrainHarnessResult[] {
+export function registerBrainAcrossHarnesses(
+  opts?: {
+    mcpEntryPath?: string;
+    harnesses?: McpHarness[];
+    configPaths?: Partial<Record<McpHarness, string>>;
+  },
+  deps?: BrainRegisterDeps,
+): BrainHarnessResult[] {
   const mcpEntryPath = opts?.mcpEntryPath ?? bundledMcpEntryPath();
   const harnesses = opts?.harnesses ?? ALL_HARNESSES;
   const canonical = brainCanonical(mcpEntryPath);
+  // FR-212b: resolve the engine ONCE. Default `custom` (prod-unchanged); only
+  // IGRIS_MCP_ENGINE=delegate (or an explicit deps.engine override) opts in.
+  const engine = deps?.engine ?? resolveMcpEngine();
 
   const results: BrainHarnessResult[] = [];
   for (const harness of harnesses) {
     const cfg = HARNESS_CONFIG[harness];
     const targetPath = opts?.configPaths?.[harness] ?? cfg.path();
 
+    // FR-212b: DELEGATE ENGINE. add-mcp writes the per-harness SERVER ENTRY;
+    // then Igris writes the no-prompt GRANT (mcp-grant.ts). NO custom-merger
+    // fallback inside this branch (constraint #2): a tool FAIL is an observable
+    // `failed` result, never a silent fall-through to the mergers below.
+    if (engine === "delegate") {
+      results.push(
+        registerOneViaDelegate(harness, canonical, mcpEntryPath, opts, deps),
+      );
+      continue;
+    }
+
+    // --- CUSTOM ENGINE (default) — UNCHANGED from FR-169 ------------------
     // Benign-create the parent dir so a missing ~/.gemini, ~/.codex,
     // ~/.config/opencode etc. does not turn a clean install into a write
     // failure. mkdirSync failure folds into the harness's `failed` result.
@@ -1169,6 +1242,93 @@ export function registerBrainAcrossHarnesses(opts?: {
     results.push({ harness, result: { ...result, mcpEntryPath } });
   }
   return results;
+}
+
+/**
+ * FR-212b: register ONE harness via the add-mcp delegate, then write its
+ * no-prompt grant. Igris keeps canonical ownership — the launch spec
+ * (command/args/env) is built HERE from `canonical` and handed to add-mcp as a
+ * spec; add-mcp only serializes it into the harness's native config. The grant
+ * is the Igris-owned FR-184 step (NOT a residual after add-mcp). NEVER throws.
+ */
+function registerOneViaDelegate(
+  harness: McpHarness,
+  canonical: McpShapeCanonical,
+  mcpEntryPath: string,
+  opts:
+    | { configPaths?: Partial<Record<McpHarness, string>> }
+    | undefined,
+  deps: BrainRegisterDeps | undefined,
+): BrainHarnessResult {
+  const targetPath = opts?.configPaths?.[harness] ?? HARNESS_CONFIG[harness].path();
+  const registerFn = deps?.registerViaToolFn ?? registerMcpViaTool;
+  const grantFn = deps?.writeGrantFn ?? writeBrainGrant;
+
+  // 1) SERVER ENTRY via add-mcp. The spec is Igris-owned (canonical command/
+  // args/env — env is {} for the env-free brain). `harnesses` is the SINGLE
+  // mapped add-mcp agent id for this harness (one tool call per harness, so a
+  // per-harness failure stays isolated — parity with the custom loop).
+  let toolResult: McpToolResult;
+  try {
+    toolResult = registerFn({
+      name: MCP_KEY,
+      command: canonical.command,
+      args: canonical.args ?? [],
+      env: canonical.env ?? {},
+      harnesses: [ADD_MCP_AGENT_ID[harness]],
+      global: true,
+    });
+  } catch (err) {
+    // A resolution failure (no local binary) is a hard, observable error —
+    // never a silent network fetch (constraint #2).
+    return {
+      harness,
+      engine: "delegate",
+      result: {
+        outcome: "failed",
+        claudeJsonPath: targetPath,
+        mcpEntryPath,
+        error: `add-mcp registration error: ${(err as Error).message}`,
+      },
+    };
+  }
+  if (!toolResult.ok) {
+    return {
+      harness,
+      engine: "delegate",
+      result: {
+        outcome: "failed",
+        claudeJsonPath: targetPath,
+        mcpEntryPath,
+        error:
+          `add-mcp registration exited ${toolResult.exitCode}` +
+          (toolResult.stderr ? `: ${toolResult.stderr}` : ""),
+      },
+    };
+  }
+
+  // 2) NO-PROMPT GRANT (Igris-owned, FR-184). Written for EVERY harness per the
+  // probed grammar; opencode is `covered` (grant lives in agent frontmatter).
+  // A grant failure does NOT fail the registration (the server is registered) —
+  // it is surfaced in the `grant` field for the caller to warn on, mirroring the
+  // per-harness warn-and-continue posture.
+  const grant = grantFn(harness, {
+    configPaths: opts?.configPaths,
+  });
+
+  return {
+    harness,
+    engine: "delegate",
+    result: {
+      // The delegate registers/updates idempotently; add-mcp does not report a
+      // fine-grained registered/updated/unchanged split, so a clean exit maps to
+      // `registered` (the observable "the entry is present" outcome).
+      outcome: "registered",
+      claudeJsonPath: targetPath,
+      mcpEntryPath,
+    },
+    grant,
+  };
 }
 
 /**

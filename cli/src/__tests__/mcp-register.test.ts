@@ -11,7 +11,7 @@
  * corrupted.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,
   existsSync,
@@ -29,10 +29,14 @@ import {
   mergeJsonConfig,
   mergeTomlConfig,
   registerMcpInClaudeJson,
+  registerBrainAcrossHarnesses,
   inspectMcpRegistration,
   __testing__,
 } from "../lib/mcp-register.js";
 import { bundledMcpEntryPath } from "../lib/paths.js";
+import type { McpToolResult } from "../lib/mcp-delegate.js";
+import type { GrantResult } from "../lib/mcp-grant.js";
+import type { McpHarness } from "../lib/mcp-shape.js";
 
 const { MCP_KEY, BACKUP_SUFFIX, locateTomlTableSpan, renderMcpTomlTable } =
   __testing__;
@@ -1527,4 +1531,105 @@ describe("TD-221 — mergers leave the config at 600 (perms durability)", () => 
       expect(modeOf(tomlPath)).toBe(0o640);
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// FR-212b: registerBrainAcrossHarnesses under the DELEGATE engine. The custom
+// (default) path is covered by the 59 tests above (byte-stable); these assert
+// the delegate branch routes to add-mcp (spied) + writes the grant (spied) and
+// NEVER falls through to the mergers. The engine is forced via the `deps.engine`
+// seam (no process.env mutation).
+// ---------------------------------------------------------------------------
+describe("registerBrainAcrossHarnesses — DELEGATE engine (FR-212b)", () => {
+  function okTool(): McpToolResult {
+    return { ok: true, exitCode: 0, stdout: "registered", stderr: "", argv: [] };
+  }
+  function grantOk(harness: McpHarness): GrantResult {
+    return { harness, outcome: "granted", path: `/fake/${harness}.json` };
+  }
+
+  it("routes each harness to add-mcp (spied) + writes the grant — NEVER the mergers", () => {
+    const registerSpy = vi.fn(okTool);
+    const grantSpy = vi.fn(grantOk);
+    const results = registerBrainAcrossHarnesses(
+      { mcpEntryPath: "/abs/brain/index.js", harnesses: ["claude", "codex"] },
+      { engine: "delegate", registerViaToolFn: registerSpy, writeGrantFn: grantSpy },
+    );
+    // One add-mcp call + one grant per harness.
+    expect(registerSpy).toHaveBeenCalledTimes(2);
+    expect(grantSpy).toHaveBeenCalledTimes(2);
+    // Igris owns the spec: the brain command/args are passed through.
+    const firstSpec = registerSpy.mock.calls[0][0];
+    expect(firstSpec.name).toBe("igris-brain");
+    expect(firstSpec.command).toBe("node");
+    expect(firstSpec.args).toEqual(["/abs/brain/index.js"]);
+    // The result is tagged delegate + carries the grant outcome.
+    expect(results.every((r) => r.engine === "delegate")).toBe(true);
+    expect(results[0].result.outcome).toBe("registered");
+    expect(results[0].grant?.outcome).toBe("granted");
+  });
+
+  it("maps the harness id to the add-mcp agent id (claude→claude-code, gemini→gemini-cli)", () => {
+    const registerSpy = vi.fn(okTool);
+    registerBrainAcrossHarnesses(
+      { harnesses: ["claude", "gemini"] },
+      { engine: "delegate", registerViaToolFn: registerSpy, writeGrantFn: vi.fn(grantOk) },
+    );
+    expect(registerSpy.mock.calls[0][0].harnesses).toEqual(["claude-code"]);
+    expect(registerSpy.mock.calls[1][0].harnesses).toEqual(["gemini-cli"]);
+  });
+
+  it("a tool FAIL becomes a `failed` result — NO silent fall-through to the mergers", () => {
+    const registerSpy = vi.fn(
+      (): McpToolResult => ({
+        ok: false,
+        exitCode: 7,
+        stdout: "",
+        stderr: "add-mcp boom",
+        argv: [],
+      }),
+    );
+    const grantSpy = vi.fn(grantOk);
+    const results = registerBrainAcrossHarnesses(
+      { harnesses: ["claude"] },
+      { engine: "delegate", registerViaToolFn: registerSpy, writeGrantFn: grantSpy },
+    );
+    expect(results[0].result.outcome).toBe("failed");
+    expect(results[0].result.error).toMatch(/add-mcp registration exited 7/);
+    // The grant is NOT attempted when the server registration failed.
+    expect(grantSpy).not.toHaveBeenCalled();
+  });
+
+  it("a binary-resolution throw is caught → `failed` (never a network fetch)", () => {
+    const registerSpy = vi.fn(() => {
+      throw new Error("refusing to invoke a non-local add-mcp binary");
+    });
+    const results = registerBrainAcrossHarnesses(
+      { harnesses: ["claude"] },
+      { engine: "delegate", registerViaToolFn: registerSpy, writeGrantFn: vi.fn(grantOk) },
+    );
+    expect(results[0].result.outcome).toBe("failed");
+    expect(results[0].result.error).toMatch(/non-local add-mcp binary/);
+  });
+
+  it("the CUSTOM default (no deps) does NOT call the delegate spy", () => {
+    // Sanity: with the engine unset (custom), the merger path runs against the
+    // sandbox config; the delegate is never reached.
+    const registerSpy = vi.fn(okTool);
+    const claudeJsonSandbox = join(
+      mkdtempSync(join(tmpdir(), "igris-mcp-custom-")),
+      ".claude.json",
+    );
+    const results = registerBrainAcrossHarnesses(
+      {
+        mcpEntryPath: "/abs/x.js",
+        harnesses: ["claude"],
+        configPaths: { claude: claudeJsonSandbox },
+      },
+      { engine: "custom", registerViaToolFn: registerSpy },
+    );
+    expect(registerSpy).not.toHaveBeenCalled();
+    expect(results[0].result.outcome).toBe("registered");
+    expect(existsSync(claudeJsonSandbox)).toBe(true);
+  });
 });

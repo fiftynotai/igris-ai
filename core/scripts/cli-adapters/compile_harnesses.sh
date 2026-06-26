@@ -91,6 +91,23 @@ igris_skills_engine() {
   fi
 }
 
+# FR-212b: the MCP placement engine flag. DEFAULTS TO "custom" (the
+# mergeJsonConfig/mergeTomlConfig projection inside `igris registry project-mcp`,
+# the already-shipping engine) — prod behavior is UNCHANGED until a later child
+# flips the default after a multi-harness smoke gate. Only the exact string
+# "delegate" opts into the `add-mcp` shell-out (server registration) + the
+# Igris-owned no-prompt grant. The TS `runProjectMcp` reads IGRIS_MCP_ENGINE from
+# the inherited subprocess env and routes internally; this bash helper exists for
+# the engine-aware SUMMARY label + parity with `igris_skills_engine` (the drift
+# sibling check_harness_drift.sh verify_mcp reads the SAME flag — §18.1).
+igris_mcp_engine() {
+  if [ "${IGRIS_MCP_ENGINE:-}" = "delegate" ]; then
+    echo "delegate"
+  else
+    echo "custom"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # atomic_symlink <link_path> <target>
 #
@@ -1849,6 +1866,15 @@ PY
 # `if SURFACE_KIND = mcp|all` gate is now the registry dispatch loop.
 # ---------------------------------------------------------------------------
 project_mcp() {
+  # FR-212b: resolve the engine ONCE per pass for the summary label. Under
+  # "delegate" the TS `igris registry project-mcp` (reading IGRIS_MCP_ENGINE from
+  # the inherited env) shells to `add-mcp` for SERVER REGISTRATION then writes the
+  # Igris-owned no-prompt GRANT (mcp-grant.ts); under "custom" (default) it runs
+  # the proven mergeJsonConfig/mergeTomlConfig path. The per-row dispatch below is
+  # IDENTICAL either way (bash never re-implements placement — §18.1); only the
+  # SUMMARY tag differs, so a compile log shows which engine ran.
+  local mcp_engine
+  mcp_engine="$(igris_mcp_engine)"
   MCP_ROWS=$(flatten_mcp_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "$TARGET_KIND" "$PROJECT_ROOT")
   if [ -n "$MCP_ROWS" ]; then
     while IFS=$'\t' read -r m_name m_canon m_type m_enabled m_scope_type m_scope_paths; do
@@ -1884,13 +1910,16 @@ project_mcp() {
         ${OVERLAY:+--overlay "$OVERLAY"} || rc=$?
 
       if [ "$rc" -eq 0 ]; then
-        SUMMARY+=("OK    mcp/$m_name/$m_type")
+        # FR-212b: tag the engine in the summary (delegate = add-mcp + grant;
+        # custom = mergers). The placement itself is identical (the TS verb
+        # routes on the inherited IGRIS_MCP_ENGINE) — only the label differs.
+        SUMMARY+=("OK    mcp/$m_name/$m_type ($mcp_engine)")
         OK=$((OK + 1))
       else
         # Observable FAIL (L-232): a real exit code + a counted FAIL row, never
         # a silent empty success. The projector already named the failure on
-        # stderr (block-not-found / missing-secret VAR name / merge error).
-        SUMMARY+=("FAIL  mcp/$m_name/$m_type — projector exited $rc")
+        # stderr (block-not-found / missing-secret VAR name / merge/grant error).
+        SUMMARY+=("FAIL  mcp/$m_name/$m_type ($mcp_engine) — projector exited $rc")
         FAIL=$((FAIL + 1))
       fi
     done <<< "$MCP_ROWS"

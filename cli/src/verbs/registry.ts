@@ -104,6 +104,22 @@ import {
   unprojectSkillsViaTool,
   type SkillsToolResult,
 } from "../lib/skills-delegate.js";
+// FR-212b: the MCP-registration DELEGATE (add-mcp) + Igris-owned no-prompt
+// GRANT, flag-gated behind IGRIS_MCP_ENGINE (default `custom` → the mergers
+// below). `runProjectMcp` routes per-row placement to the delegate then writes
+// the grant when `delegate`; the custom mergeJsonConfig/mergeTomlConfig path is
+// UNCHANGED under the default.
+import {
+  registerMcpViaTool,
+  resolveMcpEngine,
+  type McpEngine,
+  type McpToolResult,
+} from "../lib/mcp-delegate.js";
+import {
+  writeBrainGrant,
+  verifyBrainGrant,
+  type GrantResult,
+} from "../lib/mcp-grant.js";
 
 export type RegistryAction =
   | "add"
@@ -116,6 +132,9 @@ export type RegistryAction =
   | "unproject-mcp"
   | "unproject-hook"
   | "unproject-skills"
+  // FR-212b: the grant-drift predicate (delegate engine) — exit 0 = present,
+  // 1 = missing. Consumed by check_harness_drift.sh verify_mcp.
+  | "verify-mcp-grant"
   | "remove-skill"
   | "remove-mcp"
   | "remove-hook"
@@ -619,6 +638,21 @@ export interface RegistryOptions {
   projectSkillsFn?: typeof projectSkillsViaTool;
   /** FR-212a unproject-skills test seam: inject a fake `unprojectSkillsViaTool`. */
   unprojectSkillsFn?: typeof unprojectSkillsViaTool;
+  /**
+   * FR-212b: force the MCP placement engine, bypassing the `IGRIS_MCP_ENGINE`
+   * env read (test seam + the bash adapter's explicit pass-through). Default
+   * (undefined) → `resolveMcpEngine()` → `custom` unless the env opts into
+   * `delegate`.
+   */
+  mcpEngine?: McpEngine;
+  /**
+   * FR-212b project-mcp DELEGATE test seam: inject a fake `registerMcpViaTool`
+   * so the registry-level delegate path is unit-tested without spawning the real
+   * `add-mcp` CLI (the spawn itself is spied in the mcp-delegate unit tests).
+   */
+  registerMcpFn?: typeof registerMcpViaTool;
+  /** FR-212b project-mcp DELEGATE test seam: inject a fake `writeBrainGrant`. */
+  writeGrantFn?: typeof writeBrainGrant;
 }
 
 // ---------------------------------------------------------------------------
@@ -4593,6 +4627,21 @@ function runProjectMcp(opts: RegistryOptions): number {
     return 1;
   }
 
+  // FR-212b: DELEGATE ENGINE. Route per-row placement to `add-mcp` (the LOCAL
+  // pinned binary, resolved inside the TS delegate — NEVER a bare `npx`), then
+  // write the Igris-owned no-prompt GRANT. Igris keeps canonical ownership: the
+  // launch spec (command/args/env — env as ${VAR} refs VERBATIM, never a
+  // resolved literal) is handed to add-mcp, which serializes the native config.
+  // NO custom-merger fallback in this branch (constraint #2): a tool FAIL is an
+  // observable exit 1, never a silent fall-through to the mergers below. The
+  // codex-literal resolution (parseSecretsEnv) is SKIPPED here — add-mcp writes
+  // the ${VAR} placeholder with `-y` (the placeholder-passthrough contract), so
+  // no secret is read or resolved on this path.
+  const engine = opts.mcpEngine ?? resolveMcpEngine();
+  if (engine === "delegate") {
+    return runProjectMcpViaDelegate(opts, name, harness, block.canonical);
+  }
+
   // The per-target enabled flag for THIS harness (opencode passthrough). Absent
   // target → still project (the bash driver only emits rows for declared
   // targets, but defend here against a direct call for an undeclared harness).
@@ -4670,6 +4719,118 @@ function runProjectMcp(opts: RegistryOptions): number {
   // harness (no env values).
   info(`project-mcp: ${name} → ${harness} (${result.outcome})`);
   return 0;
+}
+
+/**
+ * FR-212b: map the registry MCP harness id to the `add-mcp` AGENT id
+ * (live-probed). Identical to mcp-register.ts's `ADD_MCP_AGENT_ID` — only
+ * `claude → claude-code` and `gemini → gemini-cli` differ (add-mcp rejects the
+ * bare forms). Codex/opencode/antigravity pass through.
+ */
+const REGISTRY_ADD_MCP_AGENT_ID: Record<McpTargetType, string> = {
+  claude: "claude-code",
+  gemini: "gemini-cli",
+  codex: "codex",
+  opencode: "opencode",
+  antigravity: "antigravity",
+};
+
+/**
+ * FR-212b: the DELEGATE arm of `runProjectMcp` — register ONE (server, harness)
+ * via `add-mcp` then write the Igris-owned no-prompt grant. Igris owns WHAT the
+ * brain is (the canonical command/args/env, passed as a spec); add-mcp owns the
+ * per-harness serialization. The grant is the FR-184 step (NOT a residual after
+ * add-mcp). NO custom-merger fallback (constraint #2): a tool FAIL → exit 1.
+ *
+ * SECRET HYGIENE (constraint #1): the env values are the canonical `${VAR}` refs
+ * passed VERBATIM to add-mcp (`--env KEY=${VAR}`, placeholder-passthrough with
+ * `-y`). No codex literal is resolved on this path — there is no secret in the
+ * argv to leak. (igris-brain is env-free anyway — L-588.)
+ */
+function runProjectMcpViaDelegate(
+  opts: RegistryOptions,
+  name: string,
+  harness: McpTargetType,
+  canonical: McpCanonical,
+): number {
+  const registerFn = opts.registerMcpFn ?? registerMcpViaTool;
+  const grantFn = opts.writeGrantFn ?? writeBrainGrant;
+
+  // 1) SERVER ENTRY via add-mcp (single mapped agent id → one tool call).
+  let toolResult: McpToolResult;
+  try {
+    toolResult = registerFn({
+      name,
+      command: canonical.command,
+      args: canonical.args ?? [],
+      env: canonical.env ?? {},
+      harnesses: [REGISTRY_ADD_MCP_AGENT_ID[harness]],
+      global: true,
+    });
+  } catch (err) {
+    // A resolution failure (no local binary) is a hard, observable error.
+    logError(`registry project-mcp (delegate): ${(err as Error).message}`);
+    return 1;
+  }
+  if (toolResult.stdout) info(toolResult.stdout);
+  if (!toolResult.ok) {
+    logError(
+      `registry project-mcp (delegate): 'add-mcp' exited ${toolResult.exitCode}` +
+        (toolResult.stderr ? `\n${toolResult.stderr}` : ""),
+    );
+    return 1;
+  }
+
+  // 2) NO-PROMPT GRANT (Igris-owned, FR-184), per the probed grammar. opencode
+  // is `covered` (its grant lives in the agent frontmatter). A grant FAILURE is
+  // a LOUD exit 1 here (unlike the install path's warn-and-continue) — at
+  // compile time the grant is part of the projection contract the drift
+  // invariant (`verify_mcp`) will check, so a silent miss must not pass.
+  const grant: GrantResult = grantFn(harness, {
+    folder: opts.projectRoot,
+  });
+  if (grant.outcome === "failed") {
+    logError(
+      `registry project-mcp (delegate): grant for ${harness} failed ` +
+        `(${grant.path}): ${grant.error ?? "unknown grant error"}`,
+    );
+    return 1;
+  }
+
+  info(
+    `project-mcp: ${name} → ${harness} (delegate, registered; grant ${grant.outcome})`,
+  );
+  return 0;
+}
+
+/**
+ * FR-212b: `igris registry verify-mcp-grant --harness <h>` — the grant-drift
+ * PREDICATE the bash `verify_mcp` invariant calls. Exits 0 when the Igris-owned
+ * no-prompt grant is PRESENT for the harness (or `covered` — opencode), 1 when
+ * MISSING, 2 on a usage error. Pure read (never writes). The per-harness grant
+ * grammar lives in `verifyBrainGrant` — bash never re-implements it (§18.1).
+ */
+function runVerifyMcpGrant(opts: RegistryOptions): number {
+  if (opts.harness === undefined) {
+    logError(
+      "registry verify-mcp-grant: --harness <claude|codex|gemini|opencode|antigravity> is required",
+    );
+    return 2;
+  }
+  if (!(VALID_MCP_TARGET_TYPES as readonly string[]).includes(opts.harness)) {
+    logError(
+      `registry verify-mcp-grant: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_MCP_TARGET_TYPES)}`,
+    );
+    return 2;
+  }
+  const harness = opts.harness as McpTargetType;
+  const present = verifyBrainGrant(harness, { folder: opts.projectRoot });
+  if (present) {
+    info(`verify-mcp-grant: ${harness} (present)`);
+    return 0;
+  }
+  logError(`verify-mcp-grant: ${harness} grant MISSING`);
+  return 1;
 }
 
 function runList(overlayPath: string): number {
@@ -6181,6 +6342,8 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runProjectHook(opts);
     case "project-skills":
       return runProjectSkills(opts);
+    case "verify-mcp-grant":
+      return runVerifyMcpGrant(opts);
     case "unproject-mcp":
       return runUnprojectMcp(opts);
     case "unproject-hook":
@@ -6201,7 +6364,7 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runUpdate(opts, overlayPath);
     default:
       logError(
-        `unknown registry action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, add-hook, project-mcp, project-hook, project-skills, unproject-mcp, unproject-hook, unproject-skills, remove-skill, remove-mcp, remove-hook, list, remove, update.`,
+        `unknown registry action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, add-hook, project-mcp, project-hook, project-skills, verify-mcp-grant, unproject-mcp, unproject-hook, unproject-skills, remove-skill, remove-mcp, remove-hook, list, remove, update.`,
       );
       return 2;
   }

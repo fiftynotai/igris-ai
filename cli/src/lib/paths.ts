@@ -327,6 +327,49 @@ export function opencodeConfigPath(): string {
   return join(homedir(), ".config", "opencode", "opencode.json");
 }
 
+// ---------------------------------------------------------------------------
+// FR-212b / FR-184: the no-prompt TRUST-GRANT config files. These are DISTINCT
+// from the MCP-server-REGISTRATION files above (where the `igris-brain` launch
+// spec lives): a harness's no-prompt grant for the brain's tools lives in a
+// SEPARATE surface (Claude/Antigravity = a permissions allow-list; Codex/Gemini
+// = a per-folder trust map). Live-probed grammar (2026-06-26).
+// ---------------------------------------------------------------------------
+
+/**
+ * FR-212b: USER-level Claude Code settings: `~/.claude/settings.json` (carries
+ * `permissions.allow[]`). DISTINCT from `claudeJsonPath()` (`~/.claude.json`,
+ * where the MCP server ENTRY lives). The no-prompt grant for the brain is the
+ * wildcard `mcp__igris-brain__*` appended to `permissions.allow` here
+ * (live-verified shape). NOTE: this is the USER settings file, NOT a project's
+ * `.claude/settings.json` (`projectSettingsPath`).
+ */
+export function claudeUserSettingsPath(): string {
+  return join(homedir(), ".claude", "settings.json");
+}
+
+/**
+ * FR-212b: Antigravity's USER settings: `~/.gemini/antigravity-cli/settings.json`
+ * (carries `permissions.allow[]`). DISTINCT from `antigravityMcpConfigPath()`
+ * (the MCP server config) and `antigravityHooksConfigPath()` (hooks). The
+ * no-prompt grant for the brain is the wildcard `mcp(igris-brain/*)` appended to
+ * `permissions.allow` here (live-verified: the live file enumerates 19 per-tool
+ * `mcp(igris-brain/<tool>)` entries; the wildcard is the single-grant form).
+ */
+export function antigravitySettingsPath(): string {
+  return join(homedir(), ".gemini", "antigravity-cli", "settings.json");
+}
+
+/**
+ * FR-212b / FR-184: Gemini-CLI's per-folder trust map:
+ * `~/.gemini/trustedFolders.json` (`{ "<abs-folder>": "TRUST_FOLDER" }`).
+ * Gemini-CLI's no-prompt grant is FOLDER-scoped, not server-scoped (the FR-184
+ * exception) — a trusted folder auto-approves MCP tool calls for sessions
+ * rooted there. Live-verified shape.
+ */
+export function geminiTrustedFoldersPath(): string {
+  return join(homedir(), ".gemini", "trustedFolders.json");
+}
+
 /**
  * FR-162: absolute path to the vendored-bundle dir for a registry MCP server:
  * `~/.igris/registry/mcp_servers/<name>/`. Declared now for FR-167 (`--from`

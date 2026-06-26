@@ -13,7 +13,7 @@
  * mode/routing/guard tests use injected `removeCore*Fn`/`removeBlockFn` seams.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   existsSync,
   mkdirSync,
@@ -698,5 +698,239 @@ describe("round-trip: personal hook un-merge preserves neighbors", () => {
     });
     expect(code).toBe(0);
     expect(cap.out.join("")).toContain("covered by the FR-104 plugin");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-212b: runRemove mcp under the DELEGATE engine (Warden Major — the
+// grant-REVOCATION arm `removeMcpViaDelegate` was untested; a silently-skipped
+// revoke leaves a stale no-prompt grant for a just-removed server). Mirrors the
+// SYMMETRIC register suite (mcp-register.test.ts "registerBrainAcrossHarnesses —
+// DELEGATE engine"), asserting the INVERSE: revoke via add-mcp remove +
+// removeBrainGrant, the loud revoke-failure, and the custom default unchanged.
+//
+// The arm is driven through the full `runRemove` (personal mode) with a seeded
+// overlay so `mcpStoreWasPresent` is true (the arm proceeds past
+// loudNothingToRemove). The add-mcp remove + grant revoke are SPIED via the
+// `unregisterMcpFn`/`removeGrantFn` seams; the store de-materialize is the
+// `removeMcpBlockFn` seam; the ABSENT-verify is the `captureAdapter` seam (no
+// shell spawn). The engine is forced via `mcpEngine:"delegate"`.
+// ---------------------------------------------------------------------------
+describe("runRemove mcp — DELEGATE engine grant revocation (FR-212b)", () => {
+  let tmpRoot: string;
+  let overlayPath: string;
+  const PROJECT_ROOT = "/abs/proj/root";
+
+  /** A fake add-mcp `remove` verdict (ok by default). */
+  function okUnregister() {
+    return { ok: true, exitCode: 0, stdout: "Removed igris-brain", stderr: "", argv: [] };
+  }
+  /** A fake grant-revoke result (revoked by default). */
+  function revokedGrant(harness: string) {
+    return { harness: harness as never, outcome: "revoked" as const, path: `/fake/${harness}` };
+  }
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), "igris-rm-mcp-delegate-"));
+    overlayPath = join(tmpRoot, "overlay.json");
+    // Seed the overlay with the mcp block so mcpStoreWasPresent() is true and the
+    // arm proceeds (the no-phantom-success snapshot reads the REAL overlay).
+    writeFileSync(
+      overlayPath,
+      JSON.stringify(
+        { surfaces: { mcp_servers: [{ name: "brain-test" }] } },
+        null,
+        2,
+      ) + "\n",
+    );
+  });
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it("revokes the grant for the targeted harnesses + routes un-register via add-mcp (NOT unmerge*)", async () => {
+    const unregisterSpy = vi.fn(okUnregister);
+    const revokeSpy = vi.fn(revokedGrant);
+    const code = await runRemove({
+      surface: "mcp",
+      name: "brain-test",
+      noCore: true,
+      yes: true,
+      overlayPath,
+      brainRoot: BRAIN,
+      projectRoot: PROJECT_ROOT,
+      mcpEngine: "delegate",
+      unregisterMcpFn: unregisterSpy,
+      removeGrantFn: revokeSpy,
+      // The store de-materialize is faked so the test is hermetic.
+      removeMcpBlockFn: removedBlock,
+      captureAdapter: absentCheckAdapter(),
+    });
+    expect(code).toBe(0);
+
+    // 1) add-mcp remove was called ONCE with the agent-id-mapped harness set
+    // (claude→claude-code, gemini→gemini-cli, the rest pass through) — the
+    // delegate un-register, NOT the custom unproject-mcp/unmerge* loop.
+    expect(unregisterSpy).toHaveBeenCalledTimes(1);
+    const [unregName, unregOpts] = unregisterSpy.mock.calls[0];
+    expect(unregName).toBe("brain-test");
+    expect(unregOpts?.harnesses).toEqual([
+      "claude-code",
+      "codex",
+      "gemini-cli",
+      "opencode",
+      "antigravity",
+    ]);
+    expect(unregOpts?.global).toBe(true);
+
+    // 2) the grant was REVOKED for every targeted harness (the security arm),
+    // keyed off the registry id, with the project-root folder for the
+    // folder-scoped harnesses.
+    expect(revokeSpy).toHaveBeenCalledTimes(5);
+    const revokedHarnesses = revokeSpy.mock.calls.map((c) => c[0]);
+    expect([...revokedHarnesses].sort()).toEqual(
+      ["antigravity", "claude", "codex", "gemini", "opencode"].sort(),
+    );
+    expect(revokeSpy.mock.calls[0][1]?.folder).toBe(PROJECT_ROOT);
+  });
+
+  it("restricts the revoke to a SINGLE --target harness when given", async () => {
+    const unregisterSpy = vi.fn(okUnregister);
+    const revokeSpy = vi.fn(revokedGrant);
+    const code = await runRemove({
+      surface: "mcp",
+      name: "brain-test",
+      noCore: true,
+      yes: true,
+      target: "claude",
+      overlayPath,
+      brainRoot: BRAIN,
+      projectRoot: PROJECT_ROOT,
+      mcpEngine: "delegate",
+      unregisterMcpFn: unregisterSpy,
+      removeGrantFn: revokeSpy,
+      removeMcpBlockFn: removedBlock,
+      captureAdapter: absentCheckAdapter(),
+    });
+    expect(code).toBe(0);
+    // Only claude → claude-code is unregistered + revoked.
+    expect(unregisterSpy.mock.calls[0][1]?.harnesses).toEqual(["claude-code"]);
+    expect(revokeSpy).toHaveBeenCalledTimes(1);
+    expect(revokeSpy.mock.calls[0][0]).toBe("claude");
+  });
+
+  it("a grant-revoke FAILURE produces EXIT 1 — the loud security arm (inverse of register's non-fatal grant)", async () => {
+    const unregisterSpy = vi.fn(okUnregister);
+    // The add-mcp remove succeeds, but the grant revoke fails on the 2nd harness.
+    const revokeSpy = vi.fn((harness: string) => {
+      if (harness === "codex") {
+        return {
+          harness: harness as never,
+          outcome: "failed" as const,
+          path: "/fake/codex/config.toml",
+          error: "could not write codex config",
+        };
+      }
+      return revokedGrant(harness);
+    });
+    const code = await runRemove({
+      surface: "mcp",
+      name: "brain-test",
+      noCore: true,
+      yes: true,
+      overlayPath,
+      brainRoot: BRAIN,
+      projectRoot: PROJECT_ROOT,
+      mcpEngine: "delegate",
+      unregisterMcpFn: unregisterSpy,
+      removeGrantFn: revokeSpy,
+      removeMcpBlockFn: removedBlock,
+      captureAdapter: absentCheckAdapter(),
+    });
+    // A silently-skipped revoke would leave a stale no-prompt grant — so a revoke
+    // FAILURE must be LOUD (exit 1), never swallowed.
+    expect(code).toBe(1);
+    expect(cap.err.join("")).toContain("grant revoke for codex failed");
+  });
+
+  it("an add-mcp remove FAILURE produces EXIT 1 (the grant revoke is not reached)", async () => {
+    const unregisterSpy = vi.fn(() => ({
+      ok: false,
+      exitCode: 4,
+      stdout: "",
+      stderr: "add-mcp remove boom",
+      argv: [],
+    }));
+    const revokeSpy = vi.fn(revokedGrant);
+    const code = await runRemove({
+      surface: "mcp",
+      name: "brain-test",
+      noCore: true,
+      yes: true,
+      overlayPath,
+      brainRoot: BRAIN,
+      projectRoot: PROJECT_ROOT,
+      mcpEngine: "delegate",
+      unregisterMcpFn: unregisterSpy,
+      removeGrantFn: revokeSpy,
+      removeMcpBlockFn: removedBlock,
+      captureAdapter: absentCheckAdapter(),
+    });
+    expect(code).toBe(1);
+    expect(cap.err.join("")).toContain("'add-mcp remove' exited 4");
+    // The grant revoke is NOT attempted when the server un-register failed.
+    expect(revokeSpy).not.toHaveBeenCalled();
+  });
+
+  it("a binary-resolution throw in add-mcp remove is caught → EXIT 1 (never a network fetch)", async () => {
+    const unregisterSpy = vi.fn(() => {
+      throw new Error("refusing to invoke a non-local add-mcp binary");
+    });
+    const revokeSpy = vi.fn(revokedGrant);
+    const code = await runRemove({
+      surface: "mcp",
+      name: "brain-test",
+      noCore: true,
+      yes: true,
+      overlayPath,
+      brainRoot: BRAIN,
+      projectRoot: PROJECT_ROOT,
+      mcpEngine: "delegate",
+      unregisterMcpFn: unregisterSpy,
+      removeGrantFn: revokeSpy,
+      removeMcpBlockFn: removedBlock,
+      captureAdapter: absentCheckAdapter(),
+    });
+    expect(code).toBe(1);
+    expect(cap.err.join("")).toContain("non-local add-mcp binary");
+    expect(revokeSpy).not.toHaveBeenCalled();
+  });
+
+  it("the CUSTOM default (flag unset) runs the unmerge* path — NEVER the delegate spies", async () => {
+    // With mcpEngine unset, the arm routes through the custom unproject-mcp
+    // (unmerge*) loop. The delegate spies are never reached in EITHER direction.
+    const unregisterSpy = vi.fn(okUnregister);
+    const revokeSpy = vi.fn(revokedGrant);
+    // Seed real configs so the custom unproject-mcp loop has something to un-merge
+    // — but the key assertion is that the delegate spies stay untouched.
+    const code = await runRemove({
+      surface: "mcp",
+      name: "brain-test",
+      noCore: true,
+      yes: true,
+      overlayPath,
+      brainRoot: BRAIN,
+      projectRoot: PROJECT_ROOT,
+      // mcpEngine intentionally UNSET → default "custom".
+      unregisterMcpFn: unregisterSpy,
+      removeGrantFn: revokeSpy,
+      removeMcpBlockFn: removedBlock,
+      captureAdapter: absentCheckAdapter(),
+    });
+    expect(code).toBe(0);
+    // The delegate path was never taken — neither the add-mcp remove nor the
+    // Igris grant revoke spy was called.
+    expect(unregisterSpy).not.toHaveBeenCalled();
+    expect(revokeSpy).not.toHaveBeenCalled();
   });
 });

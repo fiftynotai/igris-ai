@@ -79,6 +79,19 @@ igris_skills_engine() {
   fi
 }
 
+# FR-212b: the MCP placement engine flag — read IDENTICALLY to
+# compile_harnesses.sh (§18.1: the compile pass + its drift sibling MUST agree on
+# the engine). DEFAULTS TO "custom"; only "delegate" opts into the grant-drift
+# invariant below (under "custom" there is no Igris-written grant to verify — the
+# grant is a delegate-engine artifact, so the invariant runs ONLY when delegate).
+igris_mcp_engine() {
+  if [ "${IGRIS_MCP_ENGINE:-}" = "delegate" ]; then
+    echo "delegate"
+  else
+    echo "custom"
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # usage — prints usage and exits with code 2.
 # ---------------------------------------------------------------------------
@@ -1708,6 +1721,35 @@ if [ -n "$MCP_DRIFT_ROWS" ]; then
     verify_mcp_entry_drift "$d_name" "$d_type" "$d_config" "$d_map_key" \
       "$d_canon" "$d_enabled" "$mcp_secrets_path"
   done <<< "$MCP_DRIFT_ROWS"
+fi
+
+# FR-212b: GRANT-DRIFT INVARIANT. Under IGRIS_MCP_ENGINE=delegate, Igris wrote a
+# no-prompt trust GRANT for every harness (mcp-grant.ts) alongside the add-mcp
+# server registration. That grant is a NEW projection artifact the per-entry
+# drift loop above does NOT see (it checks the SERVER ENTRY in the mcpServers/
+# mcp_servers config, not the permissions/trust surface). Assert the grant is
+# PRESENT for every harness — a missing grant (any harness) is DRIFT. Under
+# "custom" (default) there is no Igris-written grant, so this invariant is a
+# no-op (the grant is a delegate-engine artifact). The grant predicate is the TS
+# `verifyBrainGrant` exposed via `igris registry verify-mcp-grant` (exit 0 =
+# present, 1 = missing) — bash never re-implements the per-harness grant grammar
+# (§18.1). opencode is `covered` (its grant lives in agent frontmatter) and the
+# verb reports it present.
+if [ "$(igris_mcp_engine)" = "delegate" ]; then
+  for grant_harness in claude codex gemini opencode antigravity; do
+    TOTAL=$((TOTAL + 1))
+    grc=0
+    "${IGRIS_CLI_CMD[@]}" registry verify-mcp-grant \
+      --harness "$grant_harness" \
+      --project-root "$PROJECT_ROOT" >/dev/null 2>&1 || grc=$?
+    if [ "$grc" -eq 0 ]; then
+      MATCH=$((MATCH + 1))
+    else
+      echo "  [mcp-grant/$grant_harness] DRIFTED"
+      echo "      reason    : no-prompt grant missing for $grant_harness (delegate engine)"
+      DRIFT=$((DRIFT + 1))
+    fi
+  done
 fi
 }
 

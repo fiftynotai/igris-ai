@@ -75,6 +75,15 @@ import {
   resolveSkillsEngine,
   unprojectSkillsViaTool,
 } from "../lib/skills-delegate.js";
+// FR-212b: the MCP DELEGATE un-registration (add-mcp remove) + the Igris-owned
+// grant REVOKE, flag-gated behind IGRIS_MCP_ENGINE (default `custom` → the
+// unmerge* path via `igris registry unproject-mcp`, UNCHANGED).
+import {
+  resolveMcpEngine,
+  unregisterMcpViaTool,
+} from "../lib/mcp-delegate.js";
+import { removeBrainGrant } from "../lib/mcp-grant.js";
+import type { McpHarness } from "../lib/mcp-shape.js";
 import {
   resolveAddMode,
   coreProjectionParams,
@@ -172,6 +181,19 @@ export interface RemoveOptions {
    * Defaults to the real delegate. Only consulted on the delegate path.
    */
   unprojectSkillsFn?: typeof unprojectSkillsViaTool;
+  /**
+   * FR-212b test seam: force the MCP placement engine ('delegate'|'custom') for
+   * the mcp arm, bypassing the IGRIS_MCP_ENGINE env read. Absent → resolve from
+   * env (default 'custom', so the existing remove tests are byte-unchanged).
+   */
+  mcpEngine?: "delegate" | "custom";
+  /**
+   * FR-212b test seam: inject a fake `unregisterMcpViaTool` so the delegate mcp
+   * remove arm is unit-tested WITHOUT spawning the real `add-mcp` CLI.
+   */
+  unregisterMcpFn?: typeof unregisterMcpViaTool;
+  /** FR-212b test seam: inject a fake `removeBrainGrant`. */
+  removeGrantFn?: typeof removeBrainGrant;
 }
 
 /**
@@ -564,22 +586,36 @@ async function runRemoveMcpArm(
     return loudNothingToRemove("mcp", name);
   }
 
-  // Un-project (un-merge native config) per harness, then de-materialize.
+  // FR-212b: under the DELEGATE flag, the `add-mcp` CLI created the per-harness
+  // SERVER ENTRIES (writing each harness's native config), and Igris wrote the
+  // no-prompt GRANT — so the custom `unproject-mcp` unmerge* path is the WRONG
+  // inverse. Route un-registration through the tool's OWN `add-mcp remove <name>
+  // -g -a <agents…> -y` (ONE call covering the targeted harnesses) + REVOKE the
+  // Igris-owned grant for every harness. The custom path (default) keeps the
+  // per-harness `igris registry unproject-mcp` loop verbatim. NO custom fallback
+  // on the delegate path (constraint #2): a tool/grant FAIL is a LOUD exit 1.
+  const engine = opts.mcpEngine ?? resolveMcpEngine();
   const deprojected: string[] = [];
-  for (const h of harnesses) {
-    const regOpts: RegistryOptions = {
-      action: "unproject-mcp",
-      name,
-      harness: h as RegistryOptions["harness"],
-      projectRoot,
-      overlayPath,
-    };
-    const code = await runRegistry(regOpts);
-    if (code !== 0) {
-      logError(`remove mcp '${name}': un-projection from ${h} failed (exit ${code}).`);
-      return 1;
+  if (engine === "delegate") {
+    const code = removeMcpViaDelegate(opts, name, harnesses, projectRoot, deprojected);
+    if (code !== 0) return code;
+  } else {
+    // Un-project (un-merge native config) per harness, then de-materialize.
+    for (const h of harnesses) {
+      const regOpts: RegistryOptions = {
+        action: "unproject-mcp",
+        name,
+        harness: h as RegistryOptions["harness"],
+        projectRoot,
+        overlayPath,
+      };
+      const code = await runRegistry(regOpts);
+      if (code !== 0) {
+        logError(`remove mcp '${name}': un-projection from ${h} failed (exit ${code}).`);
+        return 1;
+      }
+      deprojected.push(`${h}:${name}`);
     }
-    deprojected.push(`${h}:${name}`);
   }
 
   let storeRemoved = false;
@@ -611,6 +647,73 @@ async function runRemoveMcpArm(
     deprojected,
     storeRemoved,
   });
+}
+
+/**
+ * FR-212b: map a registry harness id (claude/codex/gemini/opencode/antigravity)
+ * to the `add-mcp` AGENT id — `claude → claude-code`, `gemini → gemini-cli`, the
+ * rest pass through.
+ */
+const REMOVE_ADD_MCP_AGENT_ID: Record<string, string> = {
+  claude: "claude-code",
+  gemini: "gemini-cli",
+  codex: "codex",
+  opencode: "opencode",
+  antigravity: "antigravity",
+};
+
+/**
+ * FR-212b: the DELEGATE arm of `runRemoveMcpArm` — un-register the server via
+ * `add-mcp remove` (ONE call for the targeted harnesses) + REVOKE the
+ * Igris-owned no-prompt grant for each. Pushes each harness into `deprojected`
+ * for the audit line. Returns 0 on success, 1 on a tool/grant FAIL (LOUD; no
+ * custom fallback — constraint #2). `harnesses` are registry ids; the grant
+ * REVOKE keys off the same id (registry id ≡ McpHarness).
+ */
+function removeMcpViaDelegate(
+  opts: RemoveOptions,
+  name: string,
+  harnesses: string[],
+  projectRoot: string,
+  deprojected: string[],
+): number {
+  const unregisterFn = opts.unregisterMcpFn ?? unregisterMcpViaTool;
+  const revokeFn = opts.removeGrantFn ?? removeBrainGrant;
+
+  // 1) Un-register the SERVER ENTRY via add-mcp (map the registry ids → agent
+  // ids; one tool call filtered to the targeted agents).
+  const agentIds = harnesses.map((h) => REMOVE_ADD_MCP_AGENT_ID[h] ?? h);
+  let toolResult;
+  try {
+    toolResult = unregisterFn(name, { harnesses: agentIds, global: true });
+  } catch (err) {
+    logError(`remove mcp '${name}' (delegate): ${(err as Error).message}`);
+    return 1;
+  }
+  if (toolResult.stdout) info(toolResult.stdout);
+  if (!toolResult.ok) {
+    logError(
+      `remove mcp '${name}' (delegate): 'add-mcp remove' exited ${toolResult.exitCode}` +
+        (toolResult.stderr ? `\n${toolResult.stderr}` : ""),
+    );
+    return 1;
+  }
+
+  // 2) REVOKE the Igris-owned no-prompt grant for each harness (opencode is
+  // `covered` — its grant lives in the agent frontmatter, removed with the
+  // agent, never here). A grant-revoke FAIL is LOUD.
+  for (const h of harnesses) {
+    const grant = revokeFn(h as McpHarness, { folder: projectRoot });
+    if (grant.outcome === "failed") {
+      logError(
+        `remove mcp '${name}' (delegate): grant revoke for ${h} failed ` +
+          `(${grant.path}): ${grant.error ?? "unknown grant error"}`,
+      );
+      return 1;
+    }
+    deprojected.push(`${h}:${name}`);
+  }
+  return 0;
 }
 
 /** The hook arm — inverse of `runAddHookArm` (#828: hooks-surface ONLY). */
