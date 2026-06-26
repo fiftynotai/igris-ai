@@ -242,6 +242,24 @@ Render the assessment from the digest:
 
 **Degradation:** when the brain DB is absent the verb emits `{ "degraded": true, "briefs": {total:0,…}, "goals_upcoming": [], "active_instances": 0, … }` and exits 0 — it STILL reads `blockers` + `git` (those do not need the DB). NEVER block session start.
 
+### 4.6. Igris Doctor Drift Summary (FR-175)
+
+Run the existing CLI diagnostic in read-only mode after the regular assessment, with a short timeout so boot cannot hang:
+
+```bash
+timeout 5s igris doctor 2>/dev/null || true
+```
+
+Parse only the markdown drift table rows (`| slug | path | drift-class | recommended-fix |`). Count rows whose `drift-class` is not `clean`, and count the unique non-clean drift classes.
+
+Render exactly one line when non-clean rows exist:
+
+```
+Igris Doctor: {issue_count} issue(s) across {class_count} drift class(es) - run /igris-doctor.
+```
+
+If the count is zero, render nothing. If `igris doctor` is unavailable, slow, or its output is unparsable, skip this section silently. `/boot` must never block on diagnostics, must never run `igris doctor --fix`, and must not reimplement doctor checks; the CLI verb remains the engine.
+
 ### 4.7. Goals Approaching Deadline (FR-110)
 
 The upcoming-goals surface is now part of the §4 `igris assess` digest (`goals_upcoming[]` — active goals with a deadline within 14 days). Do NOT make a separate goal call; render from the digest.

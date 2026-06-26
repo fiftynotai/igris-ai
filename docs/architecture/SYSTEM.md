@@ -257,7 +257,7 @@ Each agent's own CONTEXT PROTOCOL (in `core/agents/<name>.md`) names the context
 
 | Group | Skills |
 |-------|--------|
-| **Lifecycle** | `/boot`, `/rest`, `/hunt` |
+| **Lifecycle** | `/boot`, `/rest`, `/hunt`, `/igris-doctor` |
 | **Brief management** | `/register`, `/archive`, `/scan` |
 | **Documentation & quality** | `/document`, `/audit`, `/ground` |
 | **Knowledge & reuse** | `/harvest`, `/promote`, `/reuse` |
@@ -279,7 +279,7 @@ still projects exactly as before.
 
 | Tier | Skills | Meaning |
 |------|--------|---------|
-| **essential** (11) | `/boot`, `/rest`, `/register`, `/hunt`, `/scan`, `/archive`, `/harvest`, `/promote`, `/reuse`, `/ground`, `/sync` | The core workflow — shipped to every default install (FR-191's filter target). |
+| **essential** (12) | `/boot`, `/rest`, `/register`, `/hunt`, `/scan`, `/archive`, `/harvest`, `/promote`, `/reuse`, `/ground`, `/sync`, `/igris-doctor` | The core workflow and diagnostics — shipped to every default install (FR-191's filter target). |
 | **opt-in** (7) | `/team`, `/audit`, `/document`, `/release`, `/ideate`, `/migrate-analyze`, `/visualize` | Useful but not core — distributed opt-in (FR-206's channel target); FR-205 only classifies them, does NOT remove them from projection. |
 | **personal** (1) | `fifty-kit` | Machine/operator-personal; moved out of `core/skills/` to the FR-155 project-scoped personal overlay (no longer in consumer projection). |
 | **pending** (4) | `/dashboard`, `/portfolio`, `/projects` (FR-207), `/onboard-harness` (TD-266) | Tiering DEFERRED to the owning briefs — left untagged by FR-205. |
