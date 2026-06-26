@@ -13,9 +13,11 @@
  *   1. resolveMcpEngine defaults to "custom"; only "delegate" opts in.
  *   2. The REAL binary resolves to a LOCAL absolute on-disk path, never `npx`.
  *   3. assertLocalMcpBinary rejects `npx` / bare / non-existent.
- *   4. buildMcpAddArgv: `<command> -g -a <agent...> -n <name> --args … --env
- *      KEY=${VAR} -y`, the 5 Igris harness ids (gemini-cli not gemini), the
- *      ${VAR}-passthrough never a literal secret.
+ *   4. buildMcpAddArgv: `"<command> <arg…>" -g -a <agent...> -n <name> --env
+ *      KEY=${VAR} -y` — the FULL launch command as ONE positional (FR-212d fix;
+ *      a bare-word target is npx-wrapped), the 5 Igris harness ids (gemini-cli
+ *      not gemini), the ${VAR}-passthrough never a literal secret, and the
+ *      whitespace-bearing-token guard (add-mcp has no intra-positional quoting).
  *   5. buildMcpRemoveArgv: `remove <name> -g -a <agents…> -y`, empty-name guard.
  *   6. registerMcpViaTool / unregisterMcpViaTool: spy the spawn, assert argv[0]
  *      is the LOCAL binary (no bare npx), the verdict keys on the exit code, and
@@ -116,14 +118,17 @@ describe("mcp-delegate — local binary resolution (supply-chain invariant)", ()
 });
 
 describe("mcp-delegate — add argv builder", () => {
-  it("builds `<command> -g -a <5 igris harnesses> -n <name> --args <a> -y` by default", () => {
+  it("builds `\"<command> <arg>\" -g -a <5 igris harnesses> -n <name> -y` by default (FR-212d: joined positional, no --args)", () => {
     const argv = buildMcpAddArgv({
       name: "igris-brain",
       command: "node",
       args: ["/abs/brain-mcp-server/dist/index.js"],
     });
     expect(argv).toEqual([
-      "node",
+      // FR-212d: the FULL launch command is ONE positional. A bare-word target
+      // (`node`) would be npx-wrapped by add-mcp; the joined `"node <entry>"`
+      // makes it write the literal `{command:"node",args:[<entry>]}` shape.
+      "node /abs/brain-mcp-server/dist/index.js",
       "-g",
       "-a",
       "claude-code",
@@ -137,10 +142,13 @@ describe("mcp-delegate — add argv builder", () => {
       "antigravity",
       "-n",
       "igris-brain",
-      "--args",
-      "/abs/brain-mcp-server/dist/index.js",
       "-y",
     ]);
+    // The npx-wrap regression guard: the positional must NOT be the bare command
+    // word, and `--args` must NOT appear (it is what fed the npx-wrapped path).
+    expect(argv[0]).toBe("node /abs/brain-mcp-server/dist/index.js");
+    expect(argv).not.toContain("--args");
+    expect(argv).not.toContain("npx");
   });
 
   it("targets the 5 Igris harness ids — gemini-cli, NOT gemini", () => {
@@ -159,16 +167,39 @@ describe("mcp-delegate — add argv builder", () => {
       harnesses: ["claude-code"],
     });
     expect(argv).toEqual([
-      "node",
+      "node /abs/x.js",
       "-g",
       "-a",
       "claude-code",
       "-n",
       "igris-brain",
-      "--args",
-      "/abs/x.js",
       "-y",
     ]);
+  });
+
+  it("joins multiple args into the single positional in order (FR-212d)", () => {
+    const argv = buildMcpAddArgv({
+      name: "srv",
+      command: "node",
+      args: ["--enable-source-maps", "/abs/entry.js", "--flag"],
+      harnesses: ["claude-code"],
+    });
+    // command + every arg fused into ONE whitespace-joined positional target.
+    expect(argv[0]).toBe("node --enable-source-maps /abs/entry.js --flag");
+    expect(argv).not.toContain("--args");
+  });
+
+  it("builds a bare-command positional when there are NO args", () => {
+    // A command with no args is still passed as a single positional (here a
+    // single token); add-mcp would npx-wrap a bare package name, but the brain
+    // ALWAYS carries an entrypoint arg, so this is the degenerate guard case.
+    const argv = buildMcpAddArgv({
+      name: "srv",
+      command: "/abs/server",
+      harnesses: ["claude-code"],
+    });
+    expect(argv[0]).toBe("/abs/server");
+    expect(argv).not.toContain("--args");
   });
 
   it("drops -g when global is false (project scope)", () => {
@@ -214,6 +245,32 @@ describe("mcp-delegate — add argv builder", () => {
     expect(() => buildMcpAddArgv({ name: "x", command: "" })).toThrow(
       /non-empty command/,
     );
+  });
+
+  it("REFUSES a whitespace-bearing arg (add-mcp would space-split the positional) — FR-212d", () => {
+    // add-mcp tokenizes the single positional on whitespace with NO quoting
+    // grammar, so a space-bearing path would be torn into multiple args
+    // (`"node /p with space/x.js"` → args:["/p","with","space/x.js"]). The
+    // builder must refuse to emit a corrupting argv rather than silently break.
+    expect(() =>
+      buildMcpAddArgv({
+        name: "srv",
+        command: "node",
+        args: ["/path with space/index.js"],
+        harnesses: ["claude-code"],
+      }),
+    ).toThrow(/whitespace-bearing/);
+  });
+
+  it("REFUSES a whitespace-bearing COMMAND too (FR-212d)", () => {
+    expect(() =>
+      buildMcpAddArgv({
+        name: "srv",
+        command: "my command",
+        args: ["/abs/x.js"],
+        harnesses: ["claude-code"],
+      }),
+    ).toThrow(/whitespace-bearing/);
   });
 });
 
@@ -270,7 +327,10 @@ describe("mcp-delegate — registerMcpViaTool (spawn spied, never real)", () => 
       .calls[0];
     expect(callArgs[0]).toBe(FAKE_BIN);
     expect(callArgs[0]).not.toBe("npx");
-    expect(callArgs[1][0]).toBe("node"); // the command/target is argv[0] of args
+    // FR-212d: the joined `"node <entry>"` positional is argv[0] of the spawn
+    // args — NOT the bare command word (which add-mcp would npx-wrap).
+    expect(callArgs[1][0]).toBe("node /abs/x.js");
+    expect(callArgs[1]).not.toContain("--args");
     expect(result.argv[0]).toBe(FAKE_BIN);
     expect(result.argv).not.toContain("npx");
   });

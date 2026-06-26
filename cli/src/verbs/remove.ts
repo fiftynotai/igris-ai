@@ -82,6 +82,11 @@ import {
   resolveMcpEngine,
   unregisterMcpViaTool,
 } from "../lib/mcp-delegate.js";
+// FR-212d: antigravity's ENTRY is registered by the CUSTOM merger (add-mcp's
+// `~/.gemini/antigravity/` path is wrong for our antigravity — it reads
+// `~/.gemini/config/mcp_config.json`), so its REMOVAL must use the custom
+// un-merger at that same correct path — `add-mcp remove` would orphan it.
+import { unmergeJsonConfig } from "../lib/mcp-register.js";
 import { removeBrainGrant } from "../lib/mcp-grant.js";
 import type { McpHarness } from "../lib/mcp-shape.js";
 import {
@@ -194,6 +199,12 @@ export interface RemoveOptions {
   unregisterMcpFn?: typeof unregisterMcpViaTool;
   /** FR-212b test seam: inject a fake `removeBrainGrant`. */
   removeGrantFn?: typeof removeBrainGrant;
+  /**
+   * FR-212d test seam: per-harness config-path overrides (sandbox HOME). Used by
+   * the delegate mcp arm to point the antigravity CUSTOM un-merge + the grant
+   * revokes at a sandbox file. Absent → the real `~/.gemini/...` etc. paths.
+   */
+  configPaths?: Partial<Record<McpHarness, string>>;
 }
 
 /**
@@ -680,30 +691,68 @@ function removeMcpViaDelegate(
   const unregisterFn = opts.unregisterMcpFn ?? unregisterMcpViaTool;
   const revokeFn = opts.removeGrantFn ?? removeBrainGrant;
 
-  // 1) Un-register the SERVER ENTRY via add-mcp (map the registry ids → agent
-  // ids; one tool call filtered to the targeted agents).
-  const agentIds = harnesses.map((h) => REMOVE_ADD_MCP_AGENT_ID[h] ?? h);
-  let toolResult;
-  try {
-    toolResult = unregisterFn(name, { harnesses: agentIds, global: true });
-  } catch (err) {
-    logError(`remove mcp '${name}' (delegate): ${(err as Error).message}`);
-    return 1;
-  }
-  if (toolResult.stdout) info(toolResult.stdout);
-  if (!toolResult.ok) {
-    logError(
-      `remove mcp '${name}' (delegate): 'add-mcp remove' exited ${toolResult.exitCode}` +
-        (toolResult.stderr ? `\n${toolResult.stderr}` : ""),
-    );
-    return 1;
+  // FR-212d ANTIGRAVITY CARVE-OUT (symmetric with the registration carve-out):
+  // antigravity's ENTRY was written by the CUSTOM merger to the `config/` path
+  // (add-mcp's `antigravity/` path is wrong for our antigravity), so removing it
+  // via `add-mcp remove` would leave an ORPHAN. Un-merge antigravity's entry with
+  // the custom `unmergeJsonConfig` at the correct path; the OTHER 4 un-register
+  // via the tool. The grant revoke (step 3) still runs for ALL targeted harnesses.
+  const toolHarnesses = harnesses.filter((h) => h !== "antigravity");
+  const customHarnesses = harnesses.filter((h) => h === "antigravity");
+
+  // 1) Un-register the SERVER ENTRY via add-mcp for the non-antigravity targets
+  // (map the registry ids → agent ids; one tool call filtered to those agents).
+  // Skip the tool call entirely when only antigravity was targeted (e.g.
+  // `--target antigravity`) — there is nothing for add-mcp to remove.
+  if (toolHarnesses.length > 0) {
+    const agentIds = toolHarnesses.map((h) => REMOVE_ADD_MCP_AGENT_ID[h] ?? h);
+    let toolResult;
+    try {
+      toolResult = unregisterFn(name, { harnesses: agentIds, global: true });
+    } catch (err) {
+      logError(`remove mcp '${name}' (delegate): ${(err as Error).message}`);
+      return 1;
+    }
+    if (toolResult.stdout) info(toolResult.stdout);
+    if (!toolResult.ok) {
+      logError(
+        `remove mcp '${name}' (delegate): 'add-mcp remove' exited ${toolResult.exitCode}` +
+          (toolResult.stderr ? `\n${toolResult.stderr}` : ""),
+      );
+      return 1;
+    }
   }
 
-  // 2) REVOKE the Igris-owned no-prompt grant for each harness (opencode is
+  // 2) Un-merge the antigravity ENTRY with the CUSTOM un-merger at the correct
+  // read-path (`~/.gemini/config/mcp_config.json`). An absent entry is an
+  // idempotent no-op (`unchanged`); a write/malformed failure is LOUD. The loop
+  // body is antigravity-specific (the only custom-carved harness on this path),
+  // so it does not branch on the harness id.
+  if (customHarnesses.includes("antigravity")) {
+    const targetPath =
+      opts.configPaths?.antigravity ?? antigravityMcpConfigPath();
+    const r = unmergeJsonConfig({
+      targetPath,
+      mapKey: "mcpServers",
+      entryKey: name,
+    });
+    if (r.outcome === "failed") {
+      logError(
+        `remove mcp '${name}' (delegate, antigravity custom un-merge): ` +
+          `${r.error ?? "unknown un-merge error"} (${targetPath})`,
+      );
+      return 1;
+    }
+  }
+
+  // 3) REVOKE the Igris-owned no-prompt grant for each harness (opencode is
   // `covered` — its grant lives in the agent frontmatter, removed with the
   // agent, never here). A grant-revoke FAIL is LOUD.
   for (const h of harnesses) {
-    const grant = revokeFn(h as McpHarness, { folder: projectRoot });
+    const grant = revokeFn(h as McpHarness, {
+      folder: projectRoot,
+      configPaths: opts.configPaths,
+    });
     if (grant.outcome === "failed") {
       logError(
         `remove mcp '${name}' (delegate): grant revoke for ${h} failed ` +

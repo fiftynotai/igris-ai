@@ -40,11 +40,14 @@
  *
  * VERIFIED CLI INTERFACE (live probe of add-mcp@1.11.0, 2026-06-26 — NOT the
  * README):
- *   - `add-mcp <target> -g -a <agent...> -n <name> --args <a> --env KEY=${VAR}`
- *     registers a LOCAL stdio server. `<target>` is the package/command name
- *     (for the brain: the literal `node`); the launch args (the abs path to the
- *     bundled entrypoint) ride `--args`. `-a` is REPEATABLE (one flag per
- *     agent), `-g` = user-level, `-n` = server name, `-y` skips prompts.
+ *   - `add-mcp "<command> <arg…>" -g -a <agent...> -n <name> --env KEY=${VAR}`
+ *     registers a LOCAL stdio server. `<target>` is the FULL launch command as
+ *     ONE positional (for the brain: `"node <abs-entry>"`) — NOT a bare command
+ *     with the args on `--args`. A BARE-WORD target (`node`) is treated as an
+ *     npm PACKAGE NAME and npx-wrapped (`{command:"npx",args:["-y","node",…]}`);
+ *     the joined positional makes add-mcp write the LITERAL `{command,args}`
+ *     shape (FR-212d fix — `--args` is NO LONGER used). `-a` is REPEATABLE (one
+ *     flag per agent), `-g` = user-level, `-n` = server name, `-y` skips prompts.
  *   - the 5 Igris harness agent ids are EXACTLY `claude-code codex gemini-cli
  *     opencode antigravity` (live `list-agents` — same ids as the skills CLI;
  *     `gemini-cli`, NOT `gemini`).
@@ -218,14 +221,39 @@ export interface McpRegisterSpec {
 }
 
 /**
- * Build the argv for `add-mcp <command> -g -a <agent...> -n <name> --args <a>
+ * Build the argv for `add-mcp "<command> <arg…>" -g -a <agent...> -n <name>
  * --env KEY=${VAR} -y`.
+ *
+ * FR-212d FIX (the smoke-gate blocker): the FULL launch command is passed as ONE
+ * positional `<target>` — `"node <abs-entry>"` — NOT `<command>` with the args
+ * riding `--args`. add-mcp's `<target>` data model is "URL (remote) OR npm
+ * PACKAGE NAME (local stdio)": a BARE-WORD target (`node`) is treated as a
+ * package name and serialized as `{command:"npx",args:["-y","node",<entry>]}` —
+ * a runtime `npx`-fetch of a bogus "node" package (broken brain + violates the
+ * no-runtime-npx pin, constraint #2). Live-verified on add-mcp@1.11.0
+ * (2026-06-26):
+ *   - `add-mcp node ... --args <e>`        → `{"command":"npx","args":["-y","node",<e>]}` ❌
+ *   - `add-mcp "node <e>" ...`             → `{"command":"node","args":[<e>]}`           ✅
+ * add-mcp flips to a LITERAL command (no npx-wrap) when the target's FIRST token
+ * looks like a path OR is followed by space-separated launch args in the same
+ * positional. The joined `"<command> <arg…>"` positional is the operator-verified
+ * correct form. `--args` is NO LONGER used (it only feeds the npx-wrapped path).
+ *
+ * SPACE HAZARD (constraint: never silently corrupt): add-mcp tokenizes the
+ * positional on WHITESPACE and has NO intra-positional quoting grammar — a
+ * space-bearing command or arg WOULD split into multiple args (live-verified:
+ * `"node /p with space/x.js"` → `args:["/p","with","space/x.js"]`). The brain's
+ * entry path is space-free (L-588 / bundledMcpEntryPath), but rather than emit a
+ * silently-corrupting argv we THROW a clear error if any token contains
+ * whitespace. (A future space-bearing server must use the custom engine until
+ * add-mcp grows a quoting grammar.)
  *
  * SECRET HYGIENE (constraint #1): each env VALUE is emitted VERBATIM as the
  * canonical `${VAR}` indirection ref inside a `KEY=${VAR}` token — never a
  * resolved literal. With `-y`, add-mcp passes the placeholder through to the
- * written config (the documented grammar). A literal secret never enters the
- * argv, so the full argv is safe to surface in a verdict/log.
+ * written config (live-verified: `--env API_TOKEN=${MY_SECRET}` → the literal
+ * `${MY_SECRET}` in the config). A literal secret never enters the argv, so the
+ * full argv is safe to surface in a verdict/log.
  *
  * @param spec the canonical launch spec (Igris-owned command/args/env).
  */
@@ -241,9 +269,27 @@ export function buildMcpAddArgv(spec: McpRegisterSpec): string[] {
     spec.harnesses && spec.harnesses.length > 0
       ? spec.harnesses
       : IGRIS_MCP_HARNESSES;
-  // The stdio TARGET is the command to launch (e.g. `node`). The launch args
-  // (the abs entrypoint path) ride `--args`, one flag per arg.
-  const argv = [command];
+  const args = spec.args ?? [];
+  // SPACE HAZARD guard (see header): add-mcp splits the positional on whitespace
+  // with no quoting grammar, so any token with internal whitespace would be torn
+  // into multiple args. Refuse to emit a corrupting argv (the brain is space-free
+  // so this never trips in prod — it is a hard guard against a future caller).
+  for (const token of [command, ...args]) {
+    if (/\s/.test(token)) {
+      throw new Error(
+        `mcp-delegate: add-mcp cannot represent a whitespace-bearing command/arg ` +
+          `via its single positional target (it tokenizes on whitespace with no ` +
+          `quoting grammar) — got '${token}'. Use the custom MCP engine for this ` +
+          `server until add-mcp supports quoted args.`,
+      );
+    }
+  }
+  // FR-212d: the FULL launch command is ONE positional `<target>` — `"node
+  // <abs-entry>"` — so add-mcp writes the LITERAL `{command, args}` shape, NOT
+  // the npx-wrapped `{command:"npx",args:["-y",<command>,…]}` it produces for a
+  // bare package-name target. `--args` is intentionally NOT used.
+  const target = [command, ...args].join(" ");
+  const argv = [target];
   if (spec.global !== false) {
     argv.push("-g");
   }
@@ -252,9 +298,6 @@ export function buildMcpAddArgv(spec: McpRegisterSpec): string[] {
     argv.push("-a", h);
   }
   argv.push("-n", name);
-  for (const a of spec.args ?? []) {
-    argv.push("--args", a);
-  }
   // `--env KEY=${VAR}` — the value is the ${VAR} ref VERBATIM (no resolution).
   const env = spec.env ?? {};
   for (const key of Object.keys(env)) {
@@ -324,8 +367,8 @@ function toResult(
 }
 
 /**
- * Register an MCP server via the LOCAL `add-mcp` CLI: spawn `add-mcp <command>
- * -g -a <agents…> -n <name> --args … --env … -y`. Returns a structured verdict.
+ * Register an MCP server via the LOCAL `add-mcp` CLI: spawn `add-mcp "<command>
+ * <arg…>" -g -a <agents…> -n <name> --env … -y`. Returns a structured verdict.
  *
  * No custom-engine fallback (constraint #2): the caller decides the engine
  * (`resolveMcpEngine`); once here, the tool is authoritative. The argv carries

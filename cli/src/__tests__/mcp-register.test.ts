@@ -1660,4 +1660,41 @@ describe("registerBrainAcrossHarnesses — DELEGATE engine (FR-212b)", () => {
     expect(results[0].result.outcome).toBe("registered");
     expect(existsSync(claudeJsonSandbox)).toBe(true);
   });
+
+  it("FR-212d: antigravity ENTRY stays CUSTOM under delegate (correct config/ path), other harnesses delegate", () => {
+    // add-mcp writes antigravity's entry to ~/.gemini/antigravity/mcp_config.json
+    // but antigravity reads ~/.gemini/config/mcp_config.json (FR-179 R1). So under
+    // the delegate engine antigravity must route to the CUSTOM merger (the spied
+    // add-mcp tool is NOT called for it), while a co-targeted harness (claude)
+    // DOES delegate. The Igris-owned grant is still written for BOTH.
+    const registerSpy = vi.fn(okTool);
+    const grantSpy = vi.fn(grantOk);
+    const dir = mkdtempSync(join(tmpdir(), "igris-mcp-agy-"));
+    const agyConfig = join(dir, ".gemini", "config", "mcp_config.json");
+    const results = registerBrainAcrossHarnesses(
+      {
+        mcpEntryPath: "/abs/brain/index.js",
+        harnesses: ["claude", "antigravity"],
+        configPaths: { antigravity: agyConfig },
+      },
+      { engine: "delegate", registerViaToolFn: registerSpy, writeGrantFn: grantSpy },
+    );
+    // add-mcp is called for claude ONLY (1×), never for antigravity.
+    expect(registerSpy).toHaveBeenCalledTimes(1);
+    expect(registerSpy.mock.calls[0][0].harnesses).toEqual(["claude-code"]);
+    // antigravity's entry was written by the CUSTOM merger to the config/ path.
+    expect(existsSync(agyConfig)).toBe(true);
+    const written = JSON.parse(readFileSync(agyConfig, "utf-8"));
+    expect(written.mcpServers["igris-brain"]).toEqual({
+      command: "node",
+      args: ["/abs/brain/index.js"],
+      env: {},
+    });
+    // Both harnesses are tagged delegate (the antigravity carve-out still rides
+    // the delegate engine) and both got the Igris-owned grant.
+    const agy = results.find((r) => r.harness === "antigravity");
+    expect(agy?.engine).toBe("delegate");
+    expect(agy?.result.outcome).toBe("registered");
+    expect(grantSpy).toHaveBeenCalledTimes(2);
+  });
 });

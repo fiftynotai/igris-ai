@@ -68,10 +68,15 @@ import {
 import {
   resolveMcpEngine,
   registerMcpViaTool,
+  unregisterMcpViaTool,
   type McpEngine,
   type McpToolResult,
 } from "./mcp-delegate.js";
-import { writeBrainGrant, type GrantResult } from "./mcp-grant.js";
+import {
+  writeBrainGrant,
+  removeBrainGrant,
+  type GrantResult,
+} from "./mcp-grant.js";
 // TD-221: these four harness configs are secret-bearing — `renameSync(tmp,
 // target)` below adopts the tmp file's umask-default mode (typically 644),
 // re-loosening a previously-600 config on every MCP (re-)registration. Re-harden
@@ -1198,7 +1203,23 @@ export function registerBrainAcrossHarnesses(
     // then Igris writes the no-prompt GRANT (mcp-grant.ts). NO custom-merger
     // fallback inside this branch (constraint #2): a tool FAIL is an observable
     // `failed` result, never a silent fall-through to the mergers below.
-    if (engine === "delegate") {
+    //
+    // FR-212d ANTIGRAVITY CARVE-OUT (the second smoke-gate blocker): add-mcp
+    // writes antigravity's entry to `~/.gemini/antigravity/mcp_config.json`, but
+    // antigravity reads MCP EXCLUSIVELY from `~/.gemini/config/mcp_config.json`
+    // (FR-179 R1 — live-verified 2026-06-26: the operator's real machine has its
+    // antigravity MCP config at the `config/` path, and the `antigravity/` path
+    // does not exist). add-mcp's path is genuinely wrong FOR OUR antigravity, so
+    // routing antigravity through add-mcp would place the brain where antigravity
+    // never looks. This is a tool-fundamental mismatch (no add-mcp flag retargets
+    // the per-agent config path), so antigravity's ENTRY stays CUSTOM (the proven
+    // FR-179 merger writes the correct `config/` path) even under the delegate
+    // engine; the other 4 harnesses delegate to add-mcp. The Igris-owned grant
+    // (a separate concern — antigravity's wildcard in `antigravity-cli/
+    // settings.json`) is written identically below for parity with the delegate
+    // path. NOT a fallback-on-failure (constraint #2): it is a deterministic,
+    // per-harness routing decision made BEFORE any tool call.
+    if (engine === "delegate" && harness !== "antigravity") {
       results.push(
         registerOneViaDelegate(harness, canonical, mcpEntryPath, opts, deps),
       );
@@ -1206,50 +1227,88 @@ export function registerBrainAcrossHarnesses(
     }
 
     // --- CUSTOM ENGINE (default) — UNCHANGED from FR-169 ------------------
-    // Benign-create the parent dir so a missing ~/.gemini, ~/.codex,
-    // ~/.config/opencode etc. does not turn a clean install into a write
-    // failure. mkdirSync failure folds into the harness's `failed` result.
-    try {
-      mkdirSync(dirname(targetPath), { recursive: true });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      results.push({
-        harness,
-        result: {
-          outcome: "failed",
-          claudeJsonPath: targetPath,
-          mcpEntryPath,
-          error: `could not create parent dir for ${targetPath}: ${msg}`,
-        },
+    // Also the antigravity ENTRY path under the delegate engine (carve-out above).
+    const customResult = registerOneViaCustomMerger(
+      harness,
+      cfg,
+      targetPath,
+      canonical,
+      mcpEntryPath,
+    );
+    // FR-212d: on the delegate engine the antigravity carve-out must still write
+    // the Igris-owned no-prompt grant (the other 4 delegate harnesses get it via
+    // registerOneViaDelegate) so the multi-harness grant surface is uniform.
+    if (engine === "delegate") {
+      const grantFn = deps?.writeGrantFn ?? writeBrainGrant;
+      const grant = grantFn(harness, {
+        configPaths: opts?.configPaths,
+        folder: opts?.folder,
       });
-      continue;
+      results.push({ ...customResult, engine: "delegate", grant });
+    } else {
+      results.push(customResult);
     }
-
-    // igris-brain is env-free → no secrets needed for any harness (incl. codex).
-    const { entry } = buildHarnessMcpEntry(canonical, harness, undefined, undefined);
-
-    const result = cfg.isToml
-      ? mergeTomlConfig({
-          targetPath,
-          tablePrefix: cfg.mapKey,
-          entryKey: MCP_KEY,
-          entry: entry as TomlMcpEntry,
-          backup: true,
-        })
-      : mergeJsonConfig({
-          targetPath,
-          mapKey: cfg.mapKey,
-          entryKey: MCP_KEY,
-          entry: entry as Record<string, unknown>,
-          backup: true,
-        });
-
-    // Re-stamp `mcpEntryPath` so each per-harness result carries the resolved
-    // bundled path (the generic mergers set `mcpEntryPath:""`). `claudeJsonPath`
-    // already carries the per-harness targetPath from the merger.
-    results.push({ harness, result: { ...result, mcpEntryPath } });
   }
   return results;
+}
+
+/**
+ * FR-169 custom-engine per-harness registration, extracted (FR-212d) so the
+ * antigravity carve-out under the delegate engine can reuse the EXACT proven
+ * merger path. Benign-creates the parent dir, shapes the canonical via
+ * `buildHarnessMcpEntry`, and dispatches to `mergeTomlConfig` (codex) or
+ * `mergeJsonConfig` (the rest). NEVER throws (folds every failure into a
+ * per-harness `failed` result). Byte-identical to the FR-169 inline body — the
+ * 30-case suite asserting the custom path is unaffected.
+ */
+function registerOneViaCustomMerger(
+  harness: McpHarness,
+  cfg: { path: () => string; mapKey: string; isToml: boolean },
+  targetPath: string,
+  canonical: McpShapeCanonical,
+  mcpEntryPath: string,
+): BrainHarnessResult {
+  // Benign-create the parent dir so a missing ~/.gemini, ~/.codex,
+  // ~/.config/opencode etc. does not turn a clean install into a write
+  // failure. mkdirSync failure folds into the harness's `failed` result.
+  try {
+    mkdirSync(dirname(targetPath), { recursive: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      harness,
+      result: {
+        outcome: "failed",
+        claudeJsonPath: targetPath,
+        mcpEntryPath,
+        error: `could not create parent dir for ${targetPath}: ${msg}`,
+      },
+    };
+  }
+
+  // igris-brain is env-free → no secrets needed for any harness (incl. codex).
+  const { entry } = buildHarnessMcpEntry(canonical, harness, undefined, undefined);
+
+  const result = cfg.isToml
+    ? mergeTomlConfig({
+        targetPath,
+        tablePrefix: cfg.mapKey,
+        entryKey: MCP_KEY,
+        entry: entry as TomlMcpEntry,
+        backup: true,
+      })
+    : mergeJsonConfig({
+        targetPath,
+        mapKey: cfg.mapKey,
+        entryKey: MCP_KEY,
+        entry: entry as Record<string, unknown>,
+        backup: true,
+      });
+
+  // Re-stamp `mcpEntryPath` so each per-harness result carries the resolved
+  // bundled path (the generic mergers set `mcpEntryPath:""`). `claudeJsonPath`
+  // already carries the per-harness targetPath from the merger.
+  return { harness, result: { ...result, mcpEntryPath } };
 }
 
 /**
@@ -1347,6 +1406,140 @@ function registerOneViaDelegate(
     },
     grant,
   };
+}
+
+/** Per-harness un-registration outcome for the multi-harness un-wire. */
+export interface BrainUnregisterResult {
+  harness: McpHarness;
+  /** The entry-removal verdict (reuses the merger `McpRegisterResult` union). */
+  result: McpRegisterResult;
+  /** The Igris-owned grant-revoke outcome (absent only on a pre-revoke fail). */
+  grant?: GrantResult;
+}
+
+/** Injectable seams for the DELEGATE un-registration path (tests SPY these). */
+export interface BrainUnregisterDeps {
+  /** Force the engine (default: `resolveMcpEngine()` reading IGRIS_MCP_ENGINE). */
+  engine?: McpEngine;
+  /** Override the add-mcp un-registration fn (delegate path). */
+  unregisterViaToolFn?: typeof unregisterMcpViaTool;
+  /** Override the grant-revoke fn (delegate path). */
+  removeGrantFn?: typeof removeBrainGrant;
+}
+
+/**
+ * FR-212d: the SYMMETRIC INVERSE of `registerBrainAcrossHarnesses` under the
+ * DELEGATE engine — un-register the igris-brain MCP entry + REVOKE the no-prompt
+ * grant across the targeted harnesses. NEVER throws.
+ *
+ * THE ANTIGRAVITY CARVE-OUT MUST BE SYMMETRIC (the second smoke-gate blocker's
+ * removal half): because antigravity's ENTRY is written by the CUSTOM merger to
+ * `~/.gemini/config/mcp_config.json` (add-mcp's `~/.gemini/antigravity/` path is
+ * wrong for our antigravity — FR-179 R1), its REMOVAL must ALSO use the custom
+ * un-merger `unmergeJsonConfig` at that same correct path. Routing antigravity
+ * removal through `add-mcp remove` (which targets the `antigravity/` path) would
+ * leave the custom-written entry ORPHANED in `config/`. The other 4 harnesses
+ * un-register via `add-mcp remove` (the delegate inverse), exactly as they were
+ * registered. This is a deterministic per-harness routing decision (NOT a
+ * fallback) — the mirror image of the registration carve-out.
+ *
+ * On the CUSTOM engine this is a thin wrapper that un-merges every harness via
+ * the custom un-mergers (so a `custom`-registered brain un-registers correctly
+ * too) — keeping ONE place that knows the brain's per-harness removal shape.
+ *
+ * @param opts.harnesses    Subset to target. Defaults to all 5.
+ * @param opts.configPaths  Per-harness config-path overrides (test sandbox seam).
+ * @param opts.folder       Folder for the folder-scoped grant revokes (codex/
+ *                          gemini-cli). Absent = `process.cwd()`.
+ * @param deps              Delegate-path seams (engine override + spied fns).
+ */
+export function unregisterBrainAcrossHarnesses(
+  opts?: {
+    harnesses?: McpHarness[];
+    configPaths?: Partial<Record<McpHarness, string>>;
+    folder?: string;
+  },
+  deps?: BrainUnregisterDeps,
+): BrainUnregisterResult[] {
+  const harnesses = opts?.harnesses ?? ALL_HARNESSES;
+  const engine = deps?.engine ?? resolveMcpEngine();
+  const unregisterFn = deps?.unregisterViaToolFn ?? unregisterMcpViaTool;
+  const revokeFn = deps?.removeGrantFn ?? removeBrainGrant;
+
+  // The 4 harnesses that un-register via `add-mcp remove` under the delegate
+  // engine (antigravity is carved out to the custom un-merger). Computed once so
+  // a single `add-mcp remove` call covers them (one tool invocation, filtered).
+  const delegateHarnesses = harnesses.filter(
+    (h) => engine === "delegate" && h !== "antigravity",
+  );
+  const customHarnesses = harnesses.filter(
+    (h) => engine !== "delegate" || h === "antigravity",
+  );
+
+  const results: BrainUnregisterResult[] = [];
+
+  // 1) DELEGATE un-registration (add-mcp remove) for the non-antigravity 4.
+  //    ONE tool call filtered to the mapped agent ids; a tool FAIL marks every
+  //    delegated harness `failed` (LOUD — constraint #2, no custom fallback).
+  let toolFailedError: string | undefined;
+  if (delegateHarnesses.length > 0) {
+    const agentIds = delegateHarnesses.map((h) => ADD_MCP_AGENT_ID[h]);
+    let toolResult: McpToolResult;
+    try {
+      toolResult = unregisterFn(MCP_KEY, { harnesses: agentIds, global: true });
+      if (!toolResult.ok) {
+        toolFailedError =
+          `add-mcp remove exited ${toolResult.exitCode}` +
+          (toolResult.stderr ? `: ${toolResult.stderr}` : "");
+      }
+    } catch (err) {
+      toolFailedError = `add-mcp remove error: ${(err as Error).message}`;
+    }
+  }
+
+  // 2) Per-harness assembly (preserve the caller's harness order).
+  for (const harness of harnesses) {
+    const cfg = HARNESS_CONFIG[harness];
+    const targetPath = opts?.configPaths?.[harness] ?? cfg.path();
+
+    let entryResult: McpRegisterResult;
+    if (customHarnesses.includes(harness)) {
+      // CUSTOM un-merger (antigravity under delegate, OR every harness under the
+      // custom engine) — removes the entry from the CORRECT read-path.
+      entryResult = cfg.isToml
+        ? unmergeTomlConfig({
+            targetPath,
+            tablePrefix: cfg.mapKey,
+            entryKey: MCP_KEY,
+          })
+        : unmergeJsonConfig({
+            targetPath,
+            mapKey: cfg.mapKey,
+            entryKey: MCP_KEY,
+          });
+    } else {
+      // DELEGATE harness — its verdict is the shared `add-mcp remove` outcome.
+      entryResult = toolFailedError
+        ? {
+            outcome: "failed",
+            claudeJsonPath: targetPath,
+            mcpEntryPath: "",
+            error: toolFailedError,
+          }
+        : { outcome: "updated", claudeJsonPath: targetPath, mcpEntryPath: "" };
+    }
+
+    // 3) REVOKE the Igris-owned no-prompt grant for this harness. A revoke is
+    //    attempted regardless of the entry outcome (the grant is a separate
+    //    surface). opencode is `covered` (grant lives in agent frontmatter).
+    const grant = revokeFn(harness, {
+      configPaths: opts?.configPaths,
+      folder: opts?.folder,
+    });
+
+    results.push({ harness, result: entryResult, grant });
+  }
+  return results;
 }
 
 /**

@@ -771,6 +771,10 @@ describe("runRemove mcp — DELEGATE engine grant revocation (FR-212b)", () => {
     // 1) add-mcp remove was called ONCE with the agent-id-mapped harness set
     // (claude→claude-code, gemini→gemini-cli, the rest pass through) — the
     // delegate un-register, NOT the custom unproject-mcp/unmerge* loop.
+    // FR-212d: antigravity is CARVED OUT of the tool call (its entry was written
+    // by the custom merger to the config/ path; `add-mcp remove` targets the
+    // wrong antigravity/ path and would orphan it). It is un-merged via the custom
+    // un-merger instead, so it is ABSENT from the add-mcp remove agent set.
     expect(unregisterSpy).toHaveBeenCalledTimes(1);
     const [unregName, unregOpts] = unregisterSpy.mock.calls[0];
     expect(unregName).toBe("brain-test");
@@ -779,8 +783,8 @@ describe("runRemove mcp — DELEGATE engine grant revocation (FR-212b)", () => {
       "codex",
       "gemini-cli",
       "opencode",
-      "antigravity",
     ]);
+    expect(unregOpts?.harnesses).not.toContain("antigravity");
     expect(unregOpts?.global).toBe(true);
 
     // 2) the grant was REVOKED for every targeted harness (the security arm),
