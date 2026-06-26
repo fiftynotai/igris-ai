@@ -11,12 +11,14 @@
  *   - sync <code|data|all|status> [--dry-run] [--if-changed]
  *   - doctor [--fix] [--remove-orphans] [--yes]
  *
- * The CLI now owns the entire install pipeline natively in TS — both the
- * materialized layer (settings.json hooks block, brain `projects` registry
- * rows, `installed_features.json`) AND the symlink layer (`.claude/agents`,
- * `.claude/skills`, `.igris_version`) via
- * `cli/src/lib/{symlinks,igris-version}.ts`. FR-191 retired the CLAUDE.md
- * render machinery — `igris install` is zero-config and writes no identity file.
+ * The CLI owns the install pipeline natively in TS. FR-212d Phase 2 made
+ * `igris install` REGISTER-ONLY: it upserts the brain `projects` row +
+ * `installed_features.json` + the global igris-brain MCP registration. Every
+ * surface (skills/MCP/agents/hooks) projects GLOBALLY at `igris init` — the
+ * per-project symlink layer, `.igris_version` marker, and per-project
+ * `settings.json` hooks merge (and the `cli/src/lib/{symlinks,igris-version}.ts`
+ * modules) were deleted. FR-191 retired the CLAUDE.md render — install writes no
+ * identity file.
  *
  * Lifecycle pattern: top-level `main()` sets `process.exitCode` rather than
  * calling `process.exit(code)` so any pending async cleanup can flush.
@@ -243,18 +245,12 @@ async function main(argv: string[]): Promise<void> {
 
   program
     .command("install <path>")
-    .description("Register a project with the brain (FR-212c: register-only by default)")
+    .description("Register a project with the brain (register-only; surfaces project globally at `igris init`)")
     .option(
       "--slug <slug>",
       "registry slug (default: basename of path)",
     )
-    .option("--no-hooks", "skip materializing hooks into .claude/settings.json (legacy)")
-    .option(
-      "--legacy-per-project",
-      "also materialize the per-project layer (symlinks + .igris_version + " +
-        ".claude/settings.json hooks). Default OFF — surfaces project globally at `igris init`.",
-      false,
-    )
+    .option("--no-hooks", "accepted for back-compat; a no-op (hooks project globally at `igris init`)")
     .option(
       "--dry-run",
       "preview the planned writes without performing any",
@@ -267,15 +263,14 @@ async function main(argv: string[]): Promise<void> {
           slug?: string;
           hooks?: boolean;
           dryRun?: boolean;
-          legacyPerProject?: boolean;
         },
       ): Promise<void> => {
         const code = await runInstall({
           path,
           slug: opts.slug,
           // commander turns --no-hooks into opts.hooks=false. Default is true.
+          // FR-212d: install is register-only — installHooks is vestigial.
           installHooks: opts.hooks !== false,
-          legacyPerProject: opts.legacyPerProject === true,
           dryRun: opts.dryRun === true,
         });
         process.exitCode = code;

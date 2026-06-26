@@ -29,6 +29,19 @@
 load test_helper
 
 setup() {
+  # FR-212d Phase 2: the CUSTOM skills projection engine (per-skill symlinks/
+  # wrappers at the manifest `targets[].path`, + the TD-201 tree pre-check) was
+  # RETIRED — `compile/check --surface skills` now DELEGATES to the pinned
+  # `skills` CLI, which places skills by NAME in the universal store
+  # (~/.agents/skills + ~/.claude/skills), ignoring the manifest target paths.
+  # This suite exercised the deleted custom symlink/wrapper projection + its
+  # drift verdicts, so it is retired. The delegate skills placement (per-harness
+  # coverage + remove-leaves-no-dangling) is proven by:
+  #   - cli/tests/integration/fr212-smoke.sh (5-harness gate, sandboxed HOME)
+  #   - cli/src/__tests__/skills-delegate.test.ts (argv builder + local-binary)
+  #   - harness-registry.test.ts "DELEGATES both blocks' sources" (multi-source)
+  skip "FR-212d: custom skills projection retired (delegate covered by fr212-smoke + skills-delegate.test.ts)"
+
   ADAPTERS="$IGRIS_ROOT/core/scripts/cli-adapters"
   COMMON="$ADAPTERS/_common.sh"
   SCHEMA="$ADAPTERS/manifest.schema.json"
@@ -105,7 +118,8 @@ EOF
 }
 
 teardown() {
-  [ -d "$PROJ" ] && rm -rf "$PROJ"
+  [ -n "${PROJ:-}" ] && [ -d "$PROJ" ] && rm -rf "$PROJ"
+  return 0
 }
 
 # --- Schema validation -------------------------------------------------------

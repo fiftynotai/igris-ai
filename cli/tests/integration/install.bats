@@ -1,15 +1,12 @@
 #!/usr/bin/env bats
 
 # install.bats — integration tests for `igris install`, sandboxed via
-# IGRIS_BRAIN_DIR. Phase 2 (M2): the CLI owns the entire install pipeline
-# natively in TS — no shell-script symlink layer to stub. Tests stage a
-# minimal brain core in tmp and assert the verb's outputs (settings.json,
-# CLAUDE.md, .igris_version, registry rows, installed_features.json).
-#
-# FR-212c: the DEFAULT install is register-only (registry row + features file;
-# NO per-project settings.json). The per-project hooks layer is LEGACY, pinned
-# via `--legacy-per-project`. Tests that assert the per-project settings.json
-# carry the flag; the register-only default is asserted directly below.
+# IGRIS_BRAIN_DIR. FR-212d Phase 2: `igris install` is REGISTER-ONLY — it upserts
+# the brain `projects` row + `installed_features.json` (+ the global igris-brain
+# MCP registration). The per-project symlink layer, `.igris_version` marker, and
+# per-project `settings.json` hooks merge (and the `--legacy-per-project` flag)
+# were DELETED — every surface projects GLOBALLY at `igris init`. These tests pin
+# the register-only contract + slug handling.
 
 load _helpers.bash
 
@@ -18,7 +15,7 @@ setup() {
   export IGRIS_KEEP_BAK=0
 }
 
-@test "register-only default: registry row + features file, NO settings.json (FR-212c)" {
+@test "register-only install: registry row + features file, NO settings.json (FR-212d)" {
   PROJ="$(stage_project myproj)"
   run $CLI_BIN install "$PROJ"
   [ "$status" -eq 0 ]
@@ -32,44 +29,25 @@ setup() {
   [ "$output" = "2" ]
 }
 
-@test "legacy-per-project install creates registry row, features file, hooks block" {
-  PROJ="$(stage_project myproj)"
-  run $CLI_BIN install --legacy-per-project "$PROJ"
-  [ "$status" -eq 0 ]
-  [ -f "$PROJ/.claude/settings.json" ]
-  # Hooks SessionEnd present
-  run python3 -c "import json,sys; d=json.load(open('$PROJ/.claude/settings.json')); print(d['hooks']['SessionEnd'][0]['hooks'][0]['command'])"
-  [ "$status" -eq 0 ]
-  [ "$output" = "\$HOME/.igris/core/hooks/shared/session_end.sh" ]
-  # Registry row written
-  [ -f "$IGRIS_BRAIN_DIR/projects/myproj/installed_features.json" ]
-  # Schema v2
-  run python3 -c "import json,sys; d=json.load(open('$IGRIS_BRAIN_DIR/projects/myproj/installed_features.json')); print(d['schema_version'])"
-  [ "$status" -eq 0 ]
-  [ "$output" = "2" ]
-}
-
-@test "legacy install installs hooks (regression test for v6 silent-failure / TD-100)" {
-  PROJ="$(stage_project canary)"
-  run $CLI_BIN install --legacy-per-project "$PROJ"
-  [ "$status" -eq 0 ]
-  run python3 -c "import json,sys; d=json.load(open('$PROJ/.claude/settings.json')); print(bool(d.get('hooks',{}).get('SessionEnd')))"
-  [ "$status" -eq 0 ]
-  [ "$output" = "True" ]
-}
-
-@test "--no-hooks omits hooks block but installs everything else (legacy)" {
+@test "--no-hooks is a no-op but still creates the registry row + features file (FR-212d)" {
   PROJ="$(stage_project nohooks)"
-  run $CLI_BIN install --legacy-per-project --no-hooks "$PROJ"
+  run $CLI_BIN install --no-hooks "$PROJ"
   [ "$status" -eq 0 ]
-  # settings.json should NOT exist (we don't create it without hooks)
+  # No per-project settings.json (register-only, regardless of --no-hooks).
   [ ! -f "$PROJ/.claude/settings.json" ]
-  # But features file does
+  # But features file does exist.
   [ -f "$IGRIS_BRAIN_DIR/projects/nohooks/installed_features.json" ]
-  # And hooks_version is null
+  # And hooks_version is null (no hooks hashed under --no-hooks).
   run python3 -c "import json,sys; d=json.load(open('$IGRIS_BRAIN_DIR/projects/nohooks/installed_features.json')); print(d['hooks_version'])"
   [ "$status" -eq 0 ]
   [ "$output" = "None" ]
+}
+
+@test "install rejects the retired --legacy-per-project flag (FR-212d)" {
+  PROJ="$(stage_project legacygone)"
+  run $CLI_BIN install --legacy-per-project "$PROJ"
+  # The flag was deleted — commander rejects the unknown option.
+  [ "$status" -ne 0 ]
 }
 
 @test "--slug fifty-dev with basename fifty_dev produces registry row keyed fifty-dev (TD-100 fixture)" {
@@ -116,41 +94,19 @@ setup() {
   [ "$output" = "2" ]
 }
 
-@test "legacy install preserves a custom permissions.allow array byte-for-byte" {
-  PROJ="$(stage_project withperms)"
-  cat > "$PROJ/.claude/settings.json" <<EOF
-{
-  "permissions": {
-    "allow": ["Bash(git diff:*)", "Bash(git log:*)"]
-  }
-}
-EOF
-  run $CLI_BIN install --legacy-per-project "$PROJ"
-  [ "$status" -eq 0 ]
-  run python3 -c "import json,sys; d=json.load(open('$PROJ/.claude/settings.json')); print(','.join(d['permissions']['allow']))"
-  [ "$status" -eq 0 ]
-  [ "$output" = "Bash(git diff:*),Bash(git log:*)" ]
-}
+# FR-212d Phase 2: the legacy per-project settings.json tests (custom
+# permissions.allow preservation, includeGitInstructions preservation, re-install
+# settings.json idempotency) were DELETED — install no longer writes a
+# per-project settings.json. The per-project hooks merge's no-clobber/idempotent
+# contract is now exercised at the GLOBAL target by global-hooks.test.ts.
 
-@test "legacy install on a project with includeGitInstructions:false preserves that key" {
-  PROJ="$(stage_project bri058)"
-  cat > "$PROJ/.claude/settings.json" <<EOF
-{ "includeGitInstructions": false }
-EOF
-  run $CLI_BIN install --legacy-per-project "$PROJ"
-  [ "$status" -eq 0 ]
-  run python3 -c "import json,sys; d=json.load(open('$PROJ/.claude/settings.json')); print(d['includeGitInstructions'])"
-  [ "$status" -eq 0 ]
-  [ "$output" = "False" ]
-}
-
-@test "re-install (legacy) over existing is idempotent (no settings.json drift)" {
+@test "re-install over existing is idempotent (no duplicate registry rows)" {
   PROJ="$(stage_project idem)"
-  run $CLI_BIN install --legacy-per-project "$PROJ"
+  run $CLI_BIN install --slug idem "$PROJ"
   [ "$status" -eq 0 ]
-  cp "$PROJ/.claude/settings.json" "$BATS_TEST_TMPDIR/first.json"
-  run $CLI_BIN install --legacy-per-project "$PROJ"
+  run $CLI_BIN install --slug idem "$PROJ"
   [ "$status" -eq 0 ]
-  run diff -q "$BATS_TEST_TMPDIR/first.json" "$PROJ/.claude/settings.json"
+  run sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "SELECT COUNT(*) FROM projects WHERE slug='idem';"
   [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
 }

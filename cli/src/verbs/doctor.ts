@@ -26,29 +26,40 @@
  *                             never compile) and cleans the strays — TD-223
  *                             (RE-SCOPED, corrected root cause).
  *
+ * Brain-level (continued):
+ *   hooks-missing           → the GLOBAL ~/.claude/settings.json lacks the Igris
+ *                             SessionEnd hook (or is absent/malformed). FR-212d
+ *                             moved hooks global — there is no per-project hooks
+ *                             layer anymore, so this is a single (brain) row.
+ *   hooks-stale             → the global settings carry the Igris SessionEnd hook
+ *                             but at a non-canonical command path.
+ *
  * Per-project:
  *   path-missing            → orphan (registry row points at deleted dir)
- *   not-installed           → path exists but .claude/ missing
- *   hooks-missing           → settings.json present but lacks SessionEnd Igris hook
- *                             (the TD-100 silent-failure class)
- *   hooks-stale             → settings.json has Igris hooks but their hash differs
  *   channel-mismatch        → installed_features.json#cli_version newer than current CLI
  *   slug-basename-mismatch  → row.slug !== basename(row.path)  (informational)
  *   duplicate-path          → multiple slugs with the same realpath (fifty_eco_system)
  *   symlink-target          → row.path is itself a symlink
- *   clean                   → none of the above
+ *   clean                   → registered + path exists (the register-only happy path)
+ *
+ * FR-212d Phase 2: the `not-installed` class (path exists but `.claude/` missing)
+ * was RETIRED — `igris install` is register-only and no longer writes a
+ * per-project `.claude/` layer, so its absence no longer signals "not installed".
+ * A registered project whose path exists is clean.
  *
  * Precedence (high → low): path-missing → brain-core-missing → brain-core-stale →
- * channel-mismatch → bridge-missing → mcp-unregistered → secret-perms →
- * skills-pollution → duplicate-path → not-installed → hooks-missing → hooks-stale →
+ * channel-mismatch → bridge-missing → mcp-unregistered → hooks-missing →
+ * hooks-stale → secret-perms → skills-pollution → duplicate-path →
  * symlink-target → slug-basename-mismatch → clean.
- * (mcp-unregistered + secret-perms + skills-pollution sit next to bridge-missing
- *  — all brain-level, config/state-driven, and orthogonal to core state.
- *  skills-pollution is lowest brain-level precedence — TD-223.)
+ * (mcp-unregistered + hooks-missing/hooks-stale + secret-perms + skills-pollution
+ *  sit next to bridge-missing — all brain-level, config/state-driven, and
+ *  orthogonal to core state. skills-pollution is lowest brain-level precedence
+ *  — TD-223.)
  *
- * --fix repairs not-installed / hooks-missing / hooks-stale by re-running install,
- * brain-core-missing by invoking runRefresh(), bridge-missing by invoking
- * partial-mode runInit({ upgrade: true }), mcp-unregistered by calling
+ * --fix repairs hooks-missing / hooks-stale by re-merging the GLOBAL Igris hooks
+ * (`mergeGlobalCanonicalHooks` — a single brain-level action, no per-project
+ * re-install), brain-core-missing by invoking runRefresh(), bridge-missing by
+ * invoking partial-mode runInit({ upgrade: true }), mcp-unregistered by calling
  * registerBrainAcrossHarnesses() directly to backfill all 4 harnesses (FR-169;
  * cheap — no need to re-run init), secret-perms by chmod'ing the flagged file
  * to 600 (TD-220; both Igris-owned and harness-owned under the explicit flag —
@@ -73,15 +84,12 @@ import {
   deleteProjectRow,
 } from "../lib/registry.js";
 import {
-  computeFeatureHashes,
-} from "../lib/installed-features.js";
-import {
   claudeJsonPath,
+  claudeUserSettingsPath,
   codexConfigTomlPath,
   configJsonPath,
   geminiSettingsPath,
   opencodeConfigPath,
-  projectSettingsPath,
   registryOverlayPath,
   secretsEnvPath,
 } from "../lib/paths.js";
@@ -101,7 +109,7 @@ import {
   inspectMcpRegistration,
   registerBrainAcrossHarnesses,
 } from "../lib/mcp-register.js";
-import { runInstall } from "./install.js";
+import { mergeGlobalCanonicalHooks } from "../lib/global-hooks.js";
 import { runRefresh } from "./refresh.js";
 import { runInit } from "./init.js";
 import { detectBrainCoreMissing } from "../lib/drift/brain-core-missing.js";
@@ -160,42 +168,41 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
   // TD-122: bridge-missing fix is invocation-bounded — a single partial
   // init resolves all bridge-missing rows in one pass. We track this
   // flag so subsequent bridge-missing rows skip re-invocation, but DO
-  // NOT `break` the loop: that would skip per-project drift classes
-  // (not-installed / hooks-* / brain-core-missing) that come after
-  // bridge-missing in `drift`.
+  // NOT `break` the loop: that would skip other drift classes
+  // (hooks-missing / hooks-stale / brain-core-missing / secret-perms /
+  // skills-pollution) that come after bridge-missing in `drift`.
   let bridgeFixApplied = false;
   // TD-223: skills-pollution emits a single brain-level row, but guard against
   // a repeated convert pass defensively (mirrors bridgeFixApplied).
   let skillsPollutionFixApplied = false;
 
+  // FR-212d: hooks are global now (ONE block), so the hooks-missing/hooks-stale
+  // fix — re-merging `~/.claude/settings.json` — is a single brain-level action.
+  // Guard against re-running it per (brain) row defensively (there is only one).
+  let globalHooksFixApplied = false;
+
   if (opts.fix) {
     for (const row of drift) {
       if (
-        row.driftClass === "not-installed" ||
         row.driftClass === "hooks-missing" ||
         row.driftClass === "hooks-stale"
       ) {
-        info(`fix: re-running install for ${row.slug}`);
-        try {
-          // FR-212c: legacyPerProject=true preserves doctor --fix's existing
-          // contract — it repairs the per-project hooks/symlink layer for the
-          // drift classes it detects (not-installed / hooks-missing / -stale).
-          // The register-only default applies to a fresh `igris install`.
-          const code = await runInstall({
-            path: row.path,
-            slug: row.slug,
-            installHooks: true,
-            legacyPerProject: true,
-            skipSymlinkLayer: row.driftClass !== "not-installed",
-          });
-          if (code !== 0) {
-            errored++;
-            logError(`${row.slug}: fix returned exit ${code}`);
-          }
-        } catch (err) {
+        // FR-212d Phase 2: the per-project hooks layer was retired — hooks live
+        // in ONE global `~/.claude/settings.json` block. The fix is GLOBAL-only:
+        // re-merge the canonical Igris hooks (idempotent + no-clobber +
+        // never-throws). There is no per-project materialization to re-run, so
+        // this is NOT a per-project re-install — the row is brain-level.
+        if (globalHooksFixApplied) {
+          continue;
+        }
+        globalHooksFixApplied = true;
+        info("fix: hooks-missing/stale — refreshing the GLOBAL Igris hooks (~/.claude/settings.json)");
+        const gh = mergeGlobalCanonicalHooks();
+        if (gh.outcome === "failed") {
           errored++;
-          const msg = err instanceof Error ? err.message : String(err);
-          logError(`${row.slug}: ${msg}`);
+          logError(`global hooks refresh failed: ${gh.error}`);
+        } else {
+          info(`  global Igris hooks ${gh.outcome} -> ${gh.path}`);
         }
       } else if (row.driftClass === "brain-core-missing") {
         info(`fix: brain-core-missing — invoking 'igris refresh'`);
@@ -213,9 +220,9 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
       } else if (row.driftClass === "bridge-missing") {
         // TD-122: a single partial-init resolves all bridge-missing rows
         // in one pass. Subsequent rows are skipped via the flag — but
-        // we MUST NOT `break` the outer loop, because per-project drift
-        // classes (not-installed / hooks-* / brain-core-missing) may
-        // still be waiting after the bridge-missing block.
+        // we MUST NOT `break` the outer loop, because other drift classes
+        // (hooks-missing / hooks-stale / brain-core-missing / secret-perms /
+        // skills-pollution) may still be waiting after the bridge-missing block.
         if (bridgeFixApplied) {
           continue;
         }
@@ -248,8 +255,14 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
         // Claude-only via inspectMcpRegistration — the trigger fires on
         // Claude, the fix backfills all 4. Broadening detection to all 4
         // harnesses is a tracked FR-169 follow-up.)
-        info("fix: mcp-unregistered — registering igris-brain MCP in all 4 harnesses");
-        const results = registerBrainAcrossHarnesses();
+        info("fix: mcp-unregistered — registering igris-brain MCP in all 5 harnesses");
+        // FR-212d: doctor backfills the brain MCP via the IN-PROCESS custom
+        // merger (deterministic, no `add-mcp` subprocess — same robust posture as
+        // `igris init`). The harness-COMPILE projection delegates; this fix does
+        // not.
+        const results = registerBrainAcrossHarnesses(undefined, {
+          engine: "custom",
+        });
         for (const { harness, result } of results) {
           if (result.outcome === "failed") {
             errored++;
@@ -276,13 +289,13 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
         }
       } else if (row.driftClass === "secret-perms") {
         // TD-220: the actual chmod runs in the FINAL re-harden pass below
-        // (after the fix loop) — NOT here. Rationale: an mcp-unregistered /
-        // not-installed fix earlier or later in this same loop re-writes a
-        // harness config via tmp+renameSync, which adopts the umask-default
-        // mode (644) and re-loosens it (Risk R1). Chmod'ing in-loop would
-        // race that rewrite. Deferring to a post-loop pass makes the chmod
-        // ordering-independent WITHOUT touching the FR-162/163 mergers
-        // (R1 stays a deferred follow-up). Here we only announce intent.
+        // (after the fix loop) — NOT here. Rationale: an mcp-unregistered fix
+        // earlier or later in this same loop re-writes a harness config via
+        // tmp+renameSync, which adopts the umask-default mode (644) and
+        // re-loosens it (Risk R1). Chmod'ing in-loop would race that rewrite.
+        // Deferring to a post-loop pass makes the chmod ordering-independent
+        // WITHOUT touching the FR-162/163 mergers (R1 stays a deferred
+        // follow-up). Here we only announce intent.
         const owner = isIgrisOwnedSecretFile(row.path)
           ? "Igris-owned"
           : "harness-owned";
@@ -356,14 +369,18 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
     if (opts.fix) {
       // After --fix, the auto-fixable classes are conceptually resolved (best-effort).
       if (
-        r.driftClass === "not-installed" ||
-        r.driftClass === "hooks-missing" ||
-        r.driftClass === "hooks-stale" ||
         r.driftClass === "brain-core-missing" ||
         r.driftClass === "bridge-missing" ||
         r.driftClass === "mcp-unregistered"
       ) {
         return false;
+      }
+      // FR-212d: a hooks-missing/hooks-stale row resolves ONLY if a LIVE re-probe
+      // of the GLOBAL `~/.claude/settings.json` now finds the canonical Igris
+      // hooks present. A failed global-hooks merge (malformed/unwritable target)
+      // keeps the row non-clean (exit 1) — re-check rather than assume.
+      if (r.driftClass === "hooks-missing" || r.driftClass === "hooks-stale") {
+        return detectGlobalHooksDrift() !== null;
       }
       // TD-220: a secret-perms row is resolved by --fix ONLY if the post-fix
       // verdict is "ok". A git-tracked row stays flagged (chmod can't untrack)
@@ -447,6 +464,15 @@ export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]>
     });
   }
 
+  // hooks-missing / hooks-stale (FR-212d): brain-level, config-driven, sits
+  // next to mcp-unregistered. Under the global-projection model the Igris hooks
+  // are ONE block in `~/.claude/settings.json` (not per-project), so global
+  // hooks drift is a SINGLE `(brain)`-slug row — fired when the global settings
+  // lack the Igris SessionEnd hook (hooks-missing) or carry it at a non-canonical
+  // command path (hooks-stale).
+  const globalHooks = detectGlobalHooksDrift();
+  if (globalHooks !== null) out.push(globalHooks);
+
   // secret-perms (TD-220): brain-level, config-driven, sits next to
   // mcp-unregistered. Flags Igris-owned config.json/secrets.env + the 4
   // harness configs when their perms are group/world-readable or git-tracked.
@@ -489,20 +515,31 @@ export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]>
 
 /**
  * Classify every registry row into a single drift class. Returns one DriftRow
- * per registry row in the same order the registry returned them. Detects:
+ * per registry row in the same order the registry returned them.
  *
- * - path-missing: !existsSync(row.path)
- * - duplicate-path: any other row whose realpath(row.path) is identical to this one's
- * - not-installed: path exists but .claude/ missing
- * - hooks-missing: settings.json exists but no SessionEnd Igris hook
- * - hooks-stale: settings.json has Igris hooks but their hash differs from canonical
- * - slug-basename-mismatch: row.slug !== basename(row.path)
- * - symlink-target: row.path is a symlink (lstat says symlink)
- * - clean: none of the above
+ * FR-212d Phase 2 (register-only / global surfaces): `igris install` no longer
+ * materializes a per-project `.claude/` layer (no symlinks, no per-project
+ * `settings.json`, no `.igris_version`) — every surface projects GLOBALLY at
+ * `igris init`, and the Igris hooks live in ONE global `~/.claude/settings.json`
+ * block. So the per-project "install integrity" is reduced to: the registry row
+ * exists AND its path still exists on disk. The `not-installed` /
+ * `hooks-missing` / `hooks-stale` classes (which keyed on the now-deleted
+ * per-project `.claude/` layer) were RETIRED from the per-project pass. The
+ * global-hooks drift check moved to a single brain-level row in
+ * `classifyDriftAll` (`detectGlobalHooksDrift`), since hooks are global now.
  *
- * Precedence: path-missing > duplicate-path > not-installed > hooks-missing
- *           > hooks-stale > symlink-target > slug-basename-mismatch > clean.
- * (path-missing wins because if the path is gone, hooks-* and not-installed are vacuous.)
+ * Detects (per-project):
+ * - path-missing: !existsSync(row.path) — the registry row points at a deleted
+ *                 dir (the one genuinely-broken state a register-only project
+ *                 can still be in). Resolved via --remove-orphans.
+ * - duplicate-path: any other row whose realpath(row.path) is identical.
+ * - slug-basename-mismatch: row.slug !== basename(row.path) (informational).
+ * - symlink-target: row.path is a symlink (informational).
+ * - clean: registered + path exists (the register-only happy path).
+ *
+ * Precedence: path-missing > duplicate-path > slug-basename-mismatch >
+ *             symlink-target > clean.
+ * (path-missing wins because if the path is gone, everything else is vacuous.)
  */
 export function classifyDrift(rows: RegistryRow[]): DriftRow[] {
   // Pre-pass: build realpath -> slugs map for duplicate-path detection.
@@ -521,12 +558,6 @@ export function classifyDrift(rows: RegistryRow[]): DriftRow[] {
   }
 
   const out: DriftRow[] = [];
-  let canonicalHashes: ReturnType<typeof computeFeatureHashes> | null = null;
-  try {
-    canonicalHashes = computeFeatureHashes({ includeHooks: true });
-  } catch {
-    canonicalHashes = null;
-  }
 
   for (const r of rows) {
     if (!existsSync(r.path)) {
@@ -562,51 +593,10 @@ export function classifyDrift(rows: RegistryRow[]): DriftRow[] {
       continue;
     }
 
-    const claudeDir = `${r.path}/.claude`;
-    if (!existsSync(claudeDir)) {
-      out.push({
-        slug: r.slug,
-        path: r.path,
-        driftClass: "not-installed",
-        recommendedFix: "run 'igris install <path>' or 'igris doctor --fix'",
-        resolvedPath,
-      });
-      continue;
-    }
-
-    const settings = projectSettingsPath(r.path);
-    const settingsState = inspectSettings(settings);
-    if (settingsState === "hooks-missing") {
-      out.push({
-        slug: r.slug,
-        path: r.path,
-        driftClass: "hooks-missing",
-        recommendedFix: "run 'igris install <path>' or 'igris doctor --fix'",
-        resolvedPath,
-      });
-      continue;
-    }
-
-    if (settingsState === "hooks-present") {
-      // Compare against canonical hash; if different, mark stale.
-      // We compute the hash by reading just the hooks section out of settings.json
-      // and comparing against canonical. For Phase 1, "stale" means the Igris-owned
-      // SessionEnd command is present but its hash diverges from the canonical file.
-      if (canonicalHashes !== null) {
-        const sessionEndCmd = extractSessionEndCommand(settings);
-        const canonicalCmd = "$HOME/.igris/core/hooks/shared/session_end.sh";
-        if (sessionEndCmd !== null && sessionEndCmd !== canonicalCmd) {
-          out.push({
-            slug: r.slug,
-            path: r.path,
-            driftClass: "hooks-stale",
-            recommendedFix: "run 'igris doctor --fix' to refresh hooks",
-            resolvedPath,
-          });
-          continue;
-        }
-      }
-    }
+    // FR-212d: a registered project whose path exists IS installed (register-
+    // only model). The old `.claude/`-presence + per-project `settings.json`
+    // hooks checks were deleted — they reflected a per-project layer `igris
+    // install` no longer writes. Global-hooks drift is a brain-level row.
 
     if (basename(r.path) !== r.slug) {
       out.push({
@@ -1040,6 +1030,57 @@ function detectMissingSecrets(): void {
       }
     }
   }
+}
+
+/**
+ * FR-212d: classify the GLOBAL Igris hooks block (`~/.claude/settings.json`)
+ * into a single brain-level drift row, or null when it is present + canonical.
+ *
+ * Under the global-projection model the Igris hooks fire for EVERY project on
+ * the machine via ONE user-level settings block (`igris init` merges it; the
+ * per-project `_gate.sh` de-no-ops them outside a registered project). There is
+ * no per-project hooks layer anymore, so this is the ONE place hooks drift is
+ * detected:
+ *   - hooks-missing: the global settings exist but lack the Igris SessionEnd
+ *                    hook (or the file is absent/malformed).
+ *   - hooks-stale:   the Igris SessionEnd hook is present but at a non-canonical
+ *                    command path.
+ *
+ * Both are repaired by the `--fix` global-hooks refresh (mergeGlobalCanonicalHooks).
+ * Read-only + never throws. `opts.settingsPath` overrides the target (tests
+ * sandbox HOME). When the canonical-hooks source can't be read (e.g. brain core
+ * missing), we skip the stale comparison but still flag a genuinely-absent hook.
+ */
+function detectGlobalHooksDrift(opts?: {
+  settingsPath?: string;
+}): DriftRow | null {
+  const target = opts?.settingsPath ?? claudeUserSettingsPath();
+  const canonicalCmd = "$HOME/.igris/core/hooks/shared/session_end.sh";
+
+  const state = inspectSettings(target);
+  if (state === "missing" || state === "malformed" || state === "hooks-missing") {
+    return {
+      slug: "(brain)",
+      path: target,
+      driftClass: "hooks-missing",
+      recommendedFix:
+        "run 'igris init' or 'igris doctor --fix' to merge the global Igris hooks",
+    };
+  }
+
+  // hooks-present: flag stale only when the SessionEnd command diverges from
+  // the canonical path.
+  const sessionEndCmd = extractSessionEndCommand(target);
+  if (sessionEndCmd !== null && sessionEndCmd !== canonicalCmd) {
+    return {
+      slug: "(brain)",
+      path: target,
+      driftClass: "hooks-stale",
+      recommendedFix: "run 'igris doctor --fix' to refresh the global hooks",
+    };
+  }
+
+  return null;
 }
 
 type SettingsState = "missing" | "hooks-missing" | "hooks-present" | "malformed";

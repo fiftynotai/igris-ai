@@ -1,15 +1,19 @@
 /**
- * doctor tests — Phase 6.
+ * doctor tests — Phase 6 (+ FR-212d register-only / global-surfaces update).
  *
- * Drift classification: 8 fixture registries, one per drift class. Each
- * asserts the expected `DriftRow.driftClass` value. --fix and --remove-orphans
- * exercised via runDoctor returning the right exit code.
+ * Drift classification: one fixture per drift class, each asserting the expected
+ * `DriftRow.driftClass`. --fix and --remove-orphans exercised via runDoctor
+ * returning the right exit code. FR-212d: install is register-only (no
+ * per-project `.claude/`), and hooks are a brain-level GLOBAL check — the suite
+ * sandboxes HOME with a clean baseline (valid global hooks + claude.json +
+ * opt-out config) so the brain-level rows don't fire spuriously.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   chmodSync,
   cpSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -106,11 +110,49 @@ function stageValidClaudeJson(): void {
   chmodSync(claudeJson, 0o600);
 }
 
+/**
+ * FR-212d (register-only): `igris install` no longer writes a per-project
+ * `.claude/` layer — a registered project whose path exists is CLEAN. Stage a
+ * bare project dir (no `.claude/`) to exercise the real register-only path. The
+ * `.claude/` arg exists only for the few tests that still stage per-project
+ * scaffolding for unrelated reasons (none currently need it).
+ */
 function stageProject(name = "proj"): string {
   const dir = mkdtempSync(join(tmpdir(), `igris-cli-doctor-${name}-`));
-  mkdirSync(join(dir, ".claude"), { recursive: true });
   projectDirs.push(dir);
   return dir;
+}
+
+/**
+ * FR-212d: write a valid GLOBAL `~/.claude/settings.json` (in the sandboxed
+ * HOME) carrying the canonical Igris hooks. Under the global-projection model
+ * the Igris hooks live in ONE user-level settings block, so the new brain-level
+ * `hooks-missing`/`hooks-stale` drift check (detectGlobalHooksDrift) reads this
+ * file. The sandboxed HOME starts WITHOUT it, which would make every test trip a
+ * brain-level `hooks-missing` row — so the baseline stages it. Tests that
+ * exercise hooks-missing/hooks-stale mutate or remove it in their own setup.
+ */
+function stageValidGlobalHooks(): void {
+  const settingsDir = join(homeOverride, ".claude");
+  mkdirSync(settingsDir, { recursive: true });
+  writeFileSync(
+    join(settingsDir, "settings.json"),
+    JSON.stringify(CANONICAL_HOOKS, null, 2) + "\n",
+  );
+}
+
+/**
+ * FR-212d: write an explicit-opt-out `~/.igris/config.json` (`cli_targets: {}`)
+ * under the sandbox brain dir so the bridge-missing detector never fires from
+ * the staged `~/.claude/` config dir (created by stageValidGlobalHooks) when a
+ * real `claude` binary is on the dev machine's PATH. `detectBridgeMissing`
+ * treats an explicitly-empty `cli_targets` as user opt-out → no rows, PATH-
+ * independent (hermetic). Set at 600 so it doesn't also trip secret-perms.
+ */
+function stageOptOutConfig(): void {
+  const cfg = join(tmpRoot, "config.json");
+  writeFileSync(cfg, JSON.stringify({ version: "7.0.0", cli_targets: {} }) + "\n");
+  chmodSync(cfg, 0o600);
 }
 
 /**
@@ -153,6 +195,18 @@ beforeEach(async () => {
   process.env.HOME = homeOverride;
   stageBrain();
   stageValidClaudeJson();
+  // FR-212d: stage a valid GLOBAL ~/.claude/settings.json so the new
+  // brain-level hooks-missing/hooks-stale check has a clean baseline. Tests
+  // that exercise those classes mutate/remove it.
+  stageValidGlobalHooks();
+  // FR-212d: staging ~/.claude/ above (the global-hooks parent) makes
+  // detectInstalledCLIs treat claude as "detected" whenever a real `claude` is
+  // on the dev machine's PATH (config-dir + PATH = detected) — which would make
+  // the bridge-missing detector fire spuriously (config.json lacks claude). Seed
+  // an EXPLICIT-opt-out config.json (`cli_targets: {}`) so bridge-missing never
+  // fires from the staged config dir, hermetically (independent of PATH). Tests
+  // that need a different config.json overwrite it (preserving the opt-out).
+  stageOptOutConfig();
   const ch = await import("../lib/canonical-hooks.js");
   ch.clearCache();
   const reg = await import("../lib/registry.js");
@@ -170,14 +224,21 @@ afterEach(async () => {
 });
 
 describe("doctor — drift classification (read-only)", () => {
-  it("clean: vanilla install → driftClass=clean", async () => {
+  it("clean: register-only install → driftClass=clean (FR-212d real path)", async () => {
     const { runInstall } = await import("../verbs/install.js");
     const { classifyDrift } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
 
+    // FR-212d: stageProject is now a BARE dir (no pre-staged `.claude/`), so this
+    // exercises the ACTUAL register-only `runInstall` — which writes NO
+    // per-project `.claude/` layer. A registered project whose path exists must
+    // classify `clean` even though `<project>/.claude` is absent. (Pre-fix this
+    // test only passed because the fixture pre-created `.claude` — the masking
+    // the warden flagged.)
     const proj = stageProject("clean");
     const slug = require("node:path").basename(proj);
-    await runInstall({ path: proj, slug, installHooks: true, skipSymlinkLayer: true });
+    await runInstall({ path: proj, slug, installHooks: true });
+    expect(existsSync(join(proj, ".claude"))).toBe(false); // register-only: no layer
     const drift = classifyDrift(reg.listProjects());
     expect(drift.length).toBe(1);
     expect(drift[0].driftClass).toBe("clean");
@@ -198,47 +259,52 @@ describe("doctor — drift classification (read-only)", () => {
     expect(drift[0].driftClass).toBe("path-missing");
   });
 
-  it("not-installed: path exists but .claude/ missing", async () => {
+  it("FR-212d: a bare registered dir (no .claude/) is clean, NOT not-installed", async () => {
+    // FR-212d retired the `not-installed` class — register-only install writes no
+    // per-project `.claude/` layer, so its absence no longer means "not
+    // installed". A registered row whose path exists is clean.
     const { classifyDrift } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
     const dir = mkdtempSync(join(tmpdir(), "igris-cli-doctor-bare-"));
     projectDirs.push(dir);
+    expect(existsSync(join(dir, ".claude"))).toBe(false);
+    // Slug = basename so slug-basename-mismatch (informational) doesn't mask the
+    // clean verdict we're asserting.
+    const slug = require("node:path").basename(dir);
     reg.upsertProject({
-      slug: "bare",
-      name: "bare",
+      slug,
+      name: slug,
       path: dir,
       tech_stack: "",
       igris_version: "7.0.0",
     });
     const drift = classifyDrift(reg.listProjects());
-    expect(drift[0].driftClass).toBe("not-installed");
+    expect(drift[0].driftClass).toBe("clean");
+    // The retired class must never resurface.
+    expect(drift.some((r) => r.driftClass === "not-installed")).toBe(false);
   });
 
-  it("hooks-missing: settings.json present but no Igris SessionEnd", async () => {
-    const { classifyDrift } = await import("../verbs/doctor.js");
+  it("hooks-missing (brain-level): GLOBAL ~/.claude/settings.json lacks Igris SessionEnd", async () => {
+    // FR-212d: hooks are global now — a SINGLE (brain) row, read from
+    // ~/.claude/settings.json (NOT per-project). Overwrite the staged-valid
+    // global settings with one lacking the Igris hooks.
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
-    const proj = stageProject("hooksmissing");
     writeFileSync(
-      join(proj, ".claude", "settings.json"),
+      join(homeOverride, ".claude", "settings.json"),
       JSON.stringify({ includeGitInstructions: false }) + "\n",
     );
-    reg.upsertProject({
-      slug: require("node:path").basename(proj),
-      name: "x",
-      path: proj,
-      tech_stack: "",
-      igris_version: "7.0.0",
-    });
-    const drift = classifyDrift(reg.listProjects());
-    expect(drift[0].driftClass).toBe("hooks-missing");
+    const drift = await classifyDriftAll(reg.listProjects());
+    const row = drift.find((r) => r.driftClass === "hooks-missing");
+    expect(row).toBeDefined();
+    expect(row!.slug).toBe("(brain)");
   });
 
-  it("hooks-stale: settings.json has Igris hooks at a different command path", async () => {
-    const { classifyDrift } = await import("../verbs/doctor.js");
+  it("hooks-stale (brain-level): GLOBAL settings carry Igris hooks at a non-canonical path", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
-    const proj = stageProject("hooksstale");
     writeFileSync(
-      join(proj, ".claude", "settings.json"),
+      join(homeOverride, ".claude", "settings.json"),
       JSON.stringify({
         hooks: {
           SessionEnd: [
@@ -254,15 +320,10 @@ describe("doctor — drift classification (read-only)", () => {
         },
       }) + "\n",
     );
-    reg.upsertProject({
-      slug: require("node:path").basename(proj),
-      name: "x",
-      path: proj,
-      tech_stack: "",
-      igris_version: "7.0.0",
-    });
-    const drift = classifyDrift(reg.listProjects());
-    expect(drift[0].driftClass).toBe("hooks-stale");
+    const drift = await classifyDriftAll(reg.listProjects());
+    const row = drift.find((r) => r.driftClass === "hooks-stale");
+    expect(row).toBeDefined();
+    expect(row!.slug).toBe("(brain)");
   });
 
   it("slug-basename-mismatch: row.slug != basename(row.path)", async () => {
@@ -274,7 +335,6 @@ describe("doctor — drift classification (read-only)", () => {
       path: proj,
       slug: "totally-different-slug",
       installHooks: true,
-      skipSymlinkLayer: true,
     });
     const drift = classifyDrift(reg.listProjects());
     expect(drift[0].driftClass).toBe("slug-basename-mismatch");
@@ -285,13 +345,12 @@ describe("doctor — drift classification (read-only)", () => {
     const { classifyDrift } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
     const proj = stageProject("dup");
-    await runInstall({ path: proj, slug: "slug-one", installHooks: true, skipSymlinkLayer: true });
-    await runInstall({ path: proj, slug: "slug-two", installHooks: true, skipSymlinkLayer: true });
+    await runInstall({ path: proj, slug: "slug-one", installHooks: true });
+    await runInstall({ path: proj, slug: "slug-two", installHooks: true });
     await runInstall({
       path: proj,
       slug: "slug-three",
       installHooks: true,
-      skipSymlinkLayer: true,
     });
     const drift = classifyDrift(reg.listProjects());
     // All three should be flagged as duplicate-path (precedence above slug-mismatch).
@@ -309,7 +368,7 @@ describe("doctor — drift classification (read-only)", () => {
     const link = join(linkBase, "linked-proj");
     symlinkSync(real, link);
     // Install registers `real` as canonical, then we add a separate row for the symlink path.
-    await runInstall({ path: real, slug: "real-target", installHooks: true, skipSymlinkLayer: true });
+    await runInstall({ path: real, slug: "real-target", installHooks: true });
     // Simulate someone registering the symlinked path under a different slug.
     reg.upsertProject({
       slug: "via-symlink",
@@ -455,7 +514,6 @@ describe("doctor — runDoctor exit codes", () => {
       path: proj,
       slug: require("node:path").basename(proj),
       installHooks: true,
-      skipSymlinkLayer: true,
     });
     // TD-220: install re-loosened the harness configs (R1); a genuinely
     // "clean" machine has them at 600. Harden so the read-pass stays clean.
@@ -464,21 +522,16 @@ describe("doctor — runDoctor exit codes", () => {
     expect(code).toBe(0);
   });
 
-  it("exits 1 with drift when settings.json missing hooks block (TD-100 silent-failure)", async () => {
+  it("exits 1 when the GLOBAL settings.json is missing the Igris hooks block (TD-100 silent-failure, FR-212d)", async () => {
+    // FR-212d: the TD-100 silent-failure class is now GLOBAL — the Igris hooks
+    // live in ONE `~/.claude/settings.json` block. Overwrite the staged-valid
+    // global hooks with a settings file lacking the Igris SessionEnd hook so the
+    // brain-level hooks-missing row fires → exit 1.
     const { runDoctor } = await import("../verbs/doctor.js");
-    const reg = await import("../lib/registry.js");
-    const proj = stageProject("td100");
     writeFileSync(
-      join(proj, ".claude", "settings.json"),
+      join(homeOverride, ".claude", "settings.json"),
       JSON.stringify({ includeGitInstructions: false }) + "\n",
     );
-    reg.upsertProject({
-      slug: "td100-victim",
-      name: "td100-victim",
-      path: proj,
-      tech_stack: "",
-      igris_version: "7.0.0",
-    });
     const code = await runDoctor({ fix: false, removeOrphans: false, yes: false });
     expect(code).toBe(1);
   });
@@ -542,30 +595,35 @@ describe("doctor — runDoctor exit codes", () => {
     expect(after).toContain(`\${${VAR}}`);
   });
 
-  it("--fix repairs hooks-missing", async () => {
+  it("--fix repairs hooks-missing by refreshing the GLOBAL hooks (FR-212d)", async () => {
     const { runDoctor } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
-    const ifs = await import("../lib/installed-features.js");
+    const { claudeUserSettingsPath } = await import("../lib/paths.js");
     const proj = stageProject("fixme");
-    writeFileSync(
-      join(proj, ".claude", "settings.json"),
-      JSON.stringify({ includeGitInstructions: false }) + "\n",
-    );
+    // Slug = basename so the project itself is clean (no informational
+    // slug-basename-mismatch) — the only non-clean row must be hooks-missing.
+    const slug = require("node:path").basename(proj);
     reg.upsertProject({
-      slug: "fixme",
-      name: "fixme",
+      slug,
+      name: slug,
       path: proj,
       tech_stack: "",
       igris_version: "7.0.0",
     });
+    // FR-212d: hooks-missing is a brain-level row read from the GLOBAL
+    // ~/.claude/settings.json. Overwrite the staged-valid global hooks with a
+    // settings file that LACKS the Igris hooks so the row fires.
+    writeFileSync(
+      join(homeOverride, ".claude", "settings.json"),
+      JSON.stringify({ includeGitInstructions: false }) + "\n",
+    );
     const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
     expect(code).toBe(0);
-    // After --fix, settings.json should have the canonical SessionEnd command.
+    // FR-212d: the fix re-merges the canonical Igris hooks into the GLOBAL
+    // `~/.claude/settings.json` (the live hooks surface now). HOME is sandboxed
+    // in this suite so `claudeUserSettingsPath()` resolves into tmp.
     const settings = JSON.parse(
-      require("node:fs").readFileSync(
-        join(proj, ".claude", "settings.json"),
-        "utf-8",
-      ),
+      require("node:fs").readFileSync(claudeUserSettingsPath(), "utf-8"),
     ) as { hooks: Record<string, unknown[]> };
     const sessionEnd = settings.hooks.SessionEnd as Array<{
       hooks: Array<{ command: string }>;
@@ -573,7 +631,6 @@ describe("doctor — runDoctor exit codes", () => {
     expect(sessionEnd[0].hooks[0].command).toBe(
       "$HOME/.igris/core/hooks/shared/session_end.sh",
     );
-    expect(ifs.readInstalledFeatures("fixme")).not.toBeNull();
   });
 
   it("--remove-orphans --yes deletes path-missing rows", async () => {
@@ -599,41 +656,36 @@ describe("doctor — runDoctor exit codes", () => {
   });
 
   // -------------------------------------------------------------------
-  // TD-122: --fix loop must visit per-project drift rows that come AFTER
-  // a bridge-missing row. Pre-TD-122, the bridge-missing arm called
+  // TD-122: --fix loop must visit drift rows that come AFTER a
+  // bridge-missing row. Pre-TD-122, the bridge-missing arm called
   // `break`, which (a) skipped multiple bridge-missing rows that should
-  // have been deduped via a flag, and (b) skipped per-project rows
-  // (not-installed / hooks-* / brain-core-missing) entirely. Post-TD-122
-  // the arm sets `bridgeFixApplied = true` and continues, so a single
-  // `--fix` invocation handles BOTH classes.
+  // have been deduped via a flag, and (b) skipped later drift rows
+  // entirely. Post-TD-122 the arm sets `bridgeFixApplied = true` and
+  // continues, so a single `--fix` invocation handles BOTH classes.
   //
-  // Architect-approved test approach (plan §4 + §8 Risk #6): spy on the
-  // dependency modules `init.js` and `install.js` (NOT the SUT
-  // `doctor.js` per L-159). We inject a synthetic bridge-missing row
-  // ahead of the not-installed row by spying on `detectBridgeMissing`
-  // (a doctor.ts dependency, not the SUT). After --fix:
+  // FR-212d: the `not-installed` class was retired (register-only). The
+  // "second class after bridge-missing" is now the brain-level
+  // hooks-missing row (global ~/.claude/settings.json lacking the Igris
+  // hooks), whose fix is `mergeGlobalCanonicalHooks`. Test approach (per
+  // L-159): spy on the DEPENDENCY modules `init.js` + `global-hooks.js`
+  // (NOT the SUT `doctor.js`). After --fix:
   //   - runInit was invoked exactly once (bridge fix)
-  //   - runInstall was invoked at least once (not-installed fix)
+  //   - mergeGlobalCanonicalHooks was invoked (hooks-missing fix)
   // Both calls in one runDoctor invocation = `break` was replaced with
   // continue.
   // -------------------------------------------------------------------
-  it("--fix: bridge-missing AND not-installed in one invocation (TD-122)", async () => {
+  it("--fix: bridge-missing AND hooks-missing in one invocation (TD-122)", async () => {
     const initMod = await import("../verbs/init.js");
-    const installMod = await import("../verbs/install.js");
+    const ghMod = await import("../lib/global-hooks.js");
     const bridgeMod = await import("../lib/drift/bridge-missing.js");
     const { runDoctor } = await import("../verbs/doctor.js");
-    const reg = await import("../lib/registry.js");
 
-    // Stage a not-installed project (path exists, .claude/ missing).
-    const proj = mkdtempSync(join(tmpdir(), "igris-cli-doctor-td122-"));
-    projectDirs.push(proj);
-    reg.upsertProject({
-      slug: "td122-not-installed",
-      name: "td122-not-installed",
-      path: proj,
-      tech_stack: "",
-      igris_version: "7.0.0",
-    });
+    // Make the GLOBAL hooks row fire: overwrite the staged-valid global
+    // settings with one lacking the Igris hooks.
+    writeFileSync(
+      join(homeOverride, ".claude", "settings.json"),
+      JSON.stringify({ includeGitInstructions: false }) + "\n",
+    );
 
     // Inject a synthetic bridge-missing drift row. The detector itself
     // is a pure function; spying on it cleanly isolates the doctor
@@ -649,38 +701,30 @@ describe("doctor — runDoctor exit codes", () => {
         },
       ]);
 
-    // Stub runInit so we don't actually re-init the test brain. We DO
-    // want runInstall to fire its full path (it's not the SUT, but we
-    // need it to do its job for the not-installed fix to mutate state).
-    // Returning 0 from runInit signals "fix succeeded".
+    // Stub runInit so we don't actually re-init the test brain. Returning
+    // 0 signals "bridge fix succeeded".
     const initSpy = vi.spyOn(initMod, "runInit").mockResolvedValue(0);
-    const installSpy = vi.spyOn(installMod, "runInstall");
+    // Spy on the global-hooks merge (the hooks-missing fix). Let it run for
+    // real — it writes into the sandboxed HOME and clears the row.
+    const ghSpy = vi.spyOn(ghMod, "mergeGlobalCanonicalHooks");
 
     try {
-      // --fix should visit BOTH classes. We don't care about the exit
-      // code per se — partial success is acceptable; the assertion is
-      // that both fix paths fired in one invocation.
+      // --fix should visit BOTH classes. The assertion is that both fix
+      // paths fired in one invocation (the loop did NOT break after
+      // bridge-missing).
       await runDoctor({ fix: true, removeOrphans: false, yes: false });
 
       // Bridge fix invoked exactly once.
       expect(initSpy).toHaveBeenCalledTimes(1);
       expect(initSpy).toHaveBeenCalledWith({ upgrade: true, yes: true });
 
-      // not-installed fix invoked at least once. (runInstall is also
-      // called from the install verb chain; we only need ONE call here
-      // to evidence the loop did NOT break after bridge-missing.)
-      expect(installSpy).toHaveBeenCalled();
-      const installCalls = installSpy.mock.calls;
-      // Look for the call matching our staged not-installed slug.
-      const matched = installCalls.some(
-        (call) =>
-          (call[0] as { slug?: string }).slug === "td122-not-installed",
-      );
-      expect(matched).toBe(true);
+      // hooks-missing fix invoked at least once — evidence the loop did
+      // NOT break after bridge-missing.
+      expect(ghSpy).toHaveBeenCalled();
     } finally {
       bridgeSpy.mockRestore();
       initSpy.mockRestore();
-      installSpy.mockRestore();
+      ghSpy.mockRestore();
     }
   });
 });
@@ -847,7 +891,9 @@ describe("doctor — secret-perms drift class (TD-220)", () => {
     const reg = await import("../lib/registry.js");
 
     const cfg = configJsonPath(); // resolves under tmpRoot (IGRIS_BRAIN_DIR)
-    writeFileSync(cfg, JSON.stringify({ version: "7.0.0" }) + "\n");
+    // cli_targets:{} keeps bridge-missing opted-out (see stageOptOutConfig) so
+    // the only non-clean row is the 644-perms one under test.
+    writeFileSync(cfg, JSON.stringify({ version: "7.0.0", cli_targets: {} }) + "\n");
     chmodSync(cfg, 0o644);
 
     const drift = await classifyDriftAll(reg.listProjects());
@@ -866,7 +912,9 @@ describe("doctor — secret-perms drift class (TD-220)", () => {
     const { configJsonPath } = await import("../lib/paths.js");
 
     const cfg = configJsonPath();
-    writeFileSync(cfg, JSON.stringify({ version: "7.0.0" }) + "\n");
+    // cli_targets:{} keeps bridge-missing opted-out so --fix's only action is
+    // the chmod (a spurious bridge-missing would fail the fix's runInit).
+    writeFileSync(cfg, JSON.stringify({ version: "7.0.0", cli_targets: {} }) + "\n");
     chmodSync(cfg, 0o644);
     expect(statSync(cfg).mode & 0o777).toBe(0o644);
 
@@ -917,8 +965,9 @@ describe("doctor — secret-perms drift class (TD-220)", () => {
     const reg = await import("../lib/registry.js");
 
     // config.json + secrets.env staged at 600; harness claude.json already 600.
+    // cli_targets:{} keeps bridge-missing opted-out (baseline parity).
     const cfg = configJsonPath();
-    writeFileSync(cfg, JSON.stringify({ version: "7.0.0" }) + "\n");
+    writeFileSync(cfg, JSON.stringify({ version: "7.0.0", cli_targets: {} }) + "\n");
     chmodSync(cfg, 0o600);
     const sec = secretsEnvPath();
     writeFileSync(sec, "export FOO=bar\n");

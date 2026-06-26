@@ -19,7 +19,7 @@ Before you begin, ensure you have:
 
 ## Installation
 
-Igris AI v7.0 uses a single brain-based install. The centralized brain lives at `~/.igris/` and projects receive symlinks into it, so updates to the brain automatically propagate to every linked project.
+Igris AI v7.0 uses a single brain-based install. The centralized brain lives at `~/.igris/`, and every surface (skills, agents, MCP, hooks) projects **globally** at `igris init` (FR-212c/d) — into the universal skill store, the global harness agent/MCP dirs, and the one global `~/.claude/settings.json` hooks block. `igris install <path>` is **register-only**: it registers the project with the brain (so the global hooks apply) and writes no files into the project repo. A single `igris init`/`igris refresh` re-projects the global surfaces and every registered project sees the change immediately.
 
 ```bash
 # Step 1: Install the CLI globally from npm
@@ -35,15 +35,19 @@ igris install .
 
 **What this does:**
 - Bootstraps the centralized brain at `~/.igris/` (SQLite database with FTS5 search, agents, skills, prompts)
-- Registers the bundled `igris-brain` MCP server into all 4 supported harnesses (Claude → `~/.claude.json`, OpenCode → `~/.config/opencode/opencode.json`, Codex → `~/.codex/config.toml`, Antigravity → `~/.gemini/config/mcp_config.json`) so each serves the brain tools (no manual MCP setup — it ships inside the `igris-ai` npm package)
-- Symlinks `.claude/agents/` and `.claude/skills/` into your project so all projects share the same brain content
-- Merges the canonical Igris hooks block into `.claude/settings.json` (creating the file if absent, backing up any existing one)
-- Writes a `.igris_version` marker for upgrade detection
-- Registers the project in the brain so it shows up in `/projects` and cross-project queries
+- Registers the bundled `igris-brain` MCP server into all 5 supported harnesses (Claude → `~/.claude.json`, OpenCode → `~/.config/opencode/opencode.json`, Codex → `~/.codex/config.toml`, Gemini → `~/.gemini/settings.json`, Antigravity → `~/.gemini/config/mcp_config.json`) so each serves the brain tools (no manual MCP setup — it ships inside the `igris-ai` npm package)
+- **Projects every surface GLOBALLY at `igris init`** (FR-212c/d): skills via the pinned `skills` CLI into the universal store (`~/.claude/skills` + `~/.agents/skills`); agents into the global harness agent dirs; the canonical Igris hooks block merged ONCE into the GLOBAL `~/.claude/settings.json`
+- Registers the project in the brain so it shows up in `/projects` and cross-project queries — this registration is what de-no-ops the global hooks for the project (the `_gate.sh` registration gate)
+
+> **`igris install <path>` is REGISTER-ONLY (FR-212d):** it writes NO per-project
+> `.claude/` symlink layer, NO per-project `settings.json`, and NO `.igris_version`
+> marker. Those were retired — every surface projects globally at `igris init`.
+> `install` just registers the project path with the brain (so the global hooks
+> apply) + writes `installed_features.json` for upgrade detection.
 
 > **Restart your harness(es) after `igris init`** so they pick up the newly registered `igris-brain` MCP server. The brain tools are not available until the harness reloads its config (e.g. Claude Code reloads `~/.claude.json`).
 
-Project state (sessions, briefs, plans, generated context docs) lives under `~/.igris/projects/<slug>/` — **not** in the project repo. The only files Igris writes into the project repo are `.claude/` and `.igris_version` (FR-191 zero-config: no `CLAUDE.md` is generated).
+Project state (sessions, briefs, plans, generated context docs) lives under `~/.igris/projects/<slug>/` — **not** in the project repo. FR-212d made `igris install` register-only: it writes **no files into the project repo** (FR-191 zero-config already removed the `CLAUDE.md` render; FR-212d removed the `.claude/` symlink layer + `.igris_version`).
 
 ### Onboarding (`igris configure`)
 
@@ -86,24 +90,15 @@ igris init --persona professional
 ### Verify Installation
 
 ```bash
-# Confirm the Igris surface inside your project
-ls -la .claude/
-cat .igris_version
+# FR-212d: surfaces project GLOBALLY (not into the project repo). Confirm the
+# global skills store + the global hooks block + the brain MCP registration:
+ls -la ~/.claude/skills/        # skills via the `skills` CLI delegate (claude)
+ls -la ~/.agents/skills/        # the cross-CLI universal store (codex/gemini/opencode/antigravity)
+cat ~/.claude/settings.json     # the ONE global Igris hooks block (FR-212c)
+igris doctor                    # registry + brain-MCP + drift health
 
-# Expected structure inside the project repo:
-# .claude/
-# ├── agents/             # 7 native subagents (symlinks → ~/.igris/core/agents/)
-# │   ├── architect.md
-# │   ├── forger.md
-# │   ├── sentinel.md
-# │   ├── warden.md
-# │   ├── mender.md
-# │   ├── seeker.md
-# │   └── sage.md
-# ├── skills/             # skills (per-dir symlinks → ~/.igris/core/skills/)
-# └── settings.json       # Claude Code config + Igris hooks block
-#
-# .igris_version          # JSON marker recording the installed CLI version
+# The project repo gets NO Igris files (register-only install): no .claude/
+# symlink layer, no settings.json, no .igris_version, no CLAUDE.md.
 
 # Brain-side state (outside the project repo) lives under:
 # ~/.igris/projects/<slug>/
@@ -111,6 +106,7 @@ cat .igris_version
 # ├── briefs/             # Local brief cache (briefs live in the brain DB)
 # ├── plans/              # Architect plans
 # └── context/            # Generated architecture docs (from /document)
+# ├── installed_features.json   # content hashes for `igris update` detection
 ```
 
 ### Check Brain Health (Brain-First Only)
@@ -406,13 +402,23 @@ Restart Claude Code once the install completes. To confirm the fix, re-run
 the verification check from
 [Native dependencies (built at install time)](#native-dependencies-built-at-install-time).
 
-### Issue: Symlinks broken after moving Igris AI repo
+### Issue: Global surfaces stale after moving Igris AI repo or upgrading
+
+FR-212d retired the per-project `.claude/` symlink layer — every surface
+(skills/agents/MCP/hooks) projects **globally** at `igris init`. If the global
+skills/agents/hooks look stale, re-project them:
 
 **Solution:**
 ```bash
-# Re-run the install script to recreate symlinks
-igris install .
+# Re-project the GLOBAL surfaces (skills, agents, MCP, hooks)
+igris init
+
+# Or refresh the brain core from the configured channel first:
+igris refresh
 ```
+
+`igris install .` only registers the project with the brain (register-only) — it
+does not recreate any surfaces.
 
 ---
 

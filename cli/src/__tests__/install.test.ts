@@ -162,40 +162,30 @@ afterEach(async () => {
   delete process.env.IGRIS_KEEP_BAK;
 });
 
-describe("install verb — materialized layer (skipSymlinkLayer)", () => {
-  it("vanilla install installs hooks (regression for v6 silent-failure)", async () => {
+// FR-212d Phase 2: `igris install` is register-only — the per-project
+// settings.json hooks merge + the symlink layer + .igris_version were DELETED
+// (hooks/skills/agents project GLOBALLY at `igris init`). The former
+// "materialized layer" tests that asserted a per-project settings.json (vanilla
+// hooks, .bak backup, includeGitInstructions preservation, fails-fast on a
+// missing canonical-settings.json) were REMOVED — there is no per-project
+// settings.json to assert. The register-only behavior (registry row + features
+// file + slug handling + no per-project artifacts) is covered here + in the
+// "register-only (FR-212d)" describe below.
+describe("install verb — register-only registry + features", () => {
+  it("install never writes a per-project settings.json (hooks are global now)", async () => {
     const { runInstall } = await import("../verbs/install.js");
-    const code = await runInstall({
-      path: projectDir,
-      installHooks: true,
-      legacyPerProject: true,
-      skipSymlinkLayer: true,
-    });
+    const code = await runInstall({ path: projectDir, installHooks: true });
     expect(code).toBe(0);
-
-    const settings = JSON.parse(
-      readFileSync(join(projectDir, ".claude", "settings.json"), "utf-8"),
-    ) as { hooks: Record<string, unknown[]> };
-    expect(settings.hooks).toBeDefined();
-    const sessionEnd = settings.hooks.SessionEnd as Array<{
-      hooks: Array<{ command: string }>;
-    }>;
-    expect(sessionEnd[0].hooks[0].command).toBe(
-      "$HOME/.igris/core/hooks/shared/session_end.sh",
-    );
+    // No per-project settings.json under the register-only model.
+    expect(existsSync(join(projectDir, ".claude", "settings.json"))).toBe(false);
   });
 
-  it("--no-hooks omits hooks block but still creates registry row + features file", async () => {
+  it("--no-hooks is a no-op but still creates registry row + features file", async () => {
     const { runInstall } = await import("../verbs/install.js");
     const reg = await import("../lib/registry.js");
     const ifs = await import("../lib/installed-features.js");
 
-    const code = await runInstall({
-      path: projectDir,
-      installHooks: false,
-      legacyPerProject: true,
-      skipSymlinkLayer: true,
-    });
+    const code = await runInstall({ path: projectDir, installHooks: false });
     expect(code).toBe(0);
 
     const settingsPath = join(projectDir, ".claude", "settings.json");
@@ -207,18 +197,14 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
 
     const feats = ifs.readInstalledFeatures(slug);
     expect(feats).not.toBeNull();
+    // --no-hooks → the features file's hooks_version is null (no hooks hashed).
     expect(feats!.hooks_version).toBe(null);
   });
 
   it("slug defaults to basename when --slug omitted", async () => {
     const { runInstall } = await import("../verbs/install.js");
     const reg = await import("../lib/registry.js");
-    const code = await runInstall({
-      path: projectDir,
-      installHooks: true,
-      legacyPerProject: true,
-      skipSymlinkLayer: true,
-    });
+    const code = await runInstall({ path: projectDir, installHooks: true });
     expect(code).toBe(0);
     const rows = reg.listProjects();
     expect(rows.length).toBe(1);
@@ -233,8 +219,6 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
       path: projectDir,
       slug: "fifty-dev",
       installHooks: true,
-      legacyPerProject: true,
-      skipSymlinkLayer: true,
     });
     expect(code).toBe(0);
     const rows = reg.listProjects();
@@ -243,36 +227,22 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
     expect(rows[0].path).toBe(projectDir);
   });
 
-  it("re-install is idempotent (no duplicate rows; settings.json stable)", async () => {
+  it("re-install is idempotent (no duplicate rows)", async () => {
     const { runInstall } = await import("../verbs/install.js");
     const reg = await import("../lib/registry.js");
-    process.env.IGRIS_KEEP_BAK = "0";
     const code1 = await runInstall({
       path: projectDir,
       slug: "alpha",
       installHooks: true,
-      legacyPerProject: true,
-      skipSymlinkLayer: true,
     });
     expect(code1).toBe(0);
-    const settings1 = readFileSync(
-      join(projectDir, ".claude", "settings.json"),
-      "utf-8",
-    );
 
     const code2 = await runInstall({
       path: projectDir,
       slug: "alpha",
       installHooks: true,
-      legacyPerProject: true,
-      skipSymlinkLayer: true,
     });
     expect(code2).toBe(0);
-    const settings2 = readFileSync(
-      join(projectDir, ".claude", "settings.json"),
-      "utf-8",
-    );
-    expect(settings2).toBe(settings1);
     const rows = reg.listProjects();
     expect(rows.length).toBe(1);
   });
@@ -280,91 +250,10 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
   it("re-install with new --slug for same path leaves both registry rows (orphan-resolution belongs to doctor)", async () => {
     const { runInstall } = await import("../verbs/install.js");
     const reg = await import("../lib/registry.js");
-    await runInstall({
-      path: projectDir,
-      slug: "old-slug",
-      installHooks: true,
-      legacyPerProject: true,
-      skipSymlinkLayer: true,
-    });
-    await runInstall({
-      path: projectDir,
-      slug: "new-slug",
-      installHooks: true,
-      legacyPerProject: true,
-      skipSymlinkLayer: true,
-    });
+    await runInstall({ path: projectDir, slug: "old-slug", installHooks: true });
+    await runInstall({ path: projectDir, slug: "new-slug", installHooks: true });
     const slugs = reg.listProjects().map((r) => r.slug).sort();
     expect(slugs).toEqual(["new-slug", "old-slug"]);
-  });
-
-  it("install fails fast on missing canonical-settings.json with actionable error", async () => {
-    rmSync(join(tmpRoot, "core", "hooks", "canonical-settings.json"));
-    const ch = await import("../lib/canonical-hooks.js");
-    ch.clearCache();
-
-    const { runInstall } = await import("../verbs/install.js");
-    const code = await runInstall({
-      path: projectDir,
-      installHooks: true,
-      legacyPerProject: true,
-      skipSymlinkLayer: true,
-    });
-    expect(code).toBe(1);
-  });
-
-  it("install backs up settings.json to .bak.<timestamp> before merging", async () => {
-    const settingsPath = join(projectDir, ".claude", "settings.json");
-    writeFileSync(
-      settingsPath,
-      JSON.stringify({ permissions: { allow: ["Bash(echo:*)"] } }) + "\n",
-    );
-
-    const { runInstall } = await import("../verbs/install.js");
-    const code = await runInstall({
-      path: projectDir,
-      installHooks: true,
-      legacyPerProject: true,
-      skipSymlinkLayer: true,
-    });
-    expect(code).toBe(0);
-
-    const claudeDir = join(projectDir, ".claude");
-    const entries = readdirSync(claudeDir);
-    const baks = entries.filter((e) => e.startsWith("settings.json.bak."));
-    expect(baks.length).toBe(1);
-    const bakContent = JSON.parse(
-      readFileSync(join(claudeDir, baks[0]), "utf-8"),
-    ) as Record<string, unknown>;
-    expect(bakContent.permissions).toBeDefined();
-    expect(bakContent.hooks).toBeUndefined();
-
-    const merged = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<
-      string,
-      unknown
-    >;
-    expect(merged.permissions).toBeDefined();
-    expect(merged.hooks).toBeDefined();
-  });
-
-  it("IGRIS_KEEP_BAK=0 disables .bak creation", async () => {
-    process.env.IGRIS_KEEP_BAK = "0";
-    const settingsPath = join(projectDir, ".claude", "settings.json");
-    writeFileSync(
-      settingsPath,
-      JSON.stringify({ permissions: { allow: ["Bash(echo:*)"] } }) + "\n",
-    );
-    const { runInstall } = await import("../verbs/install.js");
-    await runInstall({
-      path: projectDir,
-      installHooks: true,
-      legacyPerProject: true,
-      skipSymlinkLayer: true,
-    });
-    const baks = readdirSync(join(projectDir, ".claude")).filter((e) =>
-      e.startsWith("settings.json.bak."),
-    );
-    expect(baks.length).toBe(0);
   });
 
   it("install on missing path returns exit 1", async () => {
@@ -372,8 +261,6 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
     const code = await runInstall({
       path: "/this/path/should/not/exist/12345",
       installHooks: true,
-      legacyPerProject: true,
-      skipSymlinkLayer: true,
     });
     expect(code).toBe(1);
   });
@@ -385,31 +272,8 @@ describe("install verb — materialized layer (skipSymlinkLayer)", () => {
         path: projectDir,
         slug: "Invalid Slug!",
         installHooks: true,
-        skipSymlinkLayer: true,
       }),
     ).rejects.toThrow(/Invalid slug/);
-  });
-
-  it("install with includeGitInstructions:false in pre-existing settings.json preserves that key", async () => {
-    const settingsPath = join(projectDir, ".claude", "settings.json");
-    writeFileSync(
-      settingsPath,
-      JSON.stringify({ includeGitInstructions: false }) + "\n",
-    );
-    const { runInstall } = await import("../verbs/install.js");
-    const code = await runInstall({
-      path: projectDir,
-      installHooks: true,
-      legacyPerProject: true,
-      skipSymlinkLayer: true,
-    });
-    expect(code).toBe(0);
-    const merged = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<
-      string,
-      unknown
-    >;
-    expect(merged.includeGitInstructions).toBe(false);
-    expect(merged.hooks).toBeDefined();
   });
 });
 
@@ -441,7 +305,6 @@ describe("install verb — TD-112 slug-mismatch hint (M2 reworded)", () => {
         path: projectDir,
         slug: "explicit-slug-foo",
         installHooks: true,
-        skipSymlinkLayer: true,
       });
       expect(code).toBe(0);
       const stderr = cap.read();
@@ -467,7 +330,6 @@ describe("install verb — TD-112 slug-mismatch hint (M2 reworded)", () => {
         path: projectDir,
         slug: matchingSlug,
         installHooks: true,
-        skipSymlinkLayer: true,
       });
       expect(code).toBe(0);
       const stderr = cap.read();
@@ -484,7 +346,6 @@ describe("install verb — TD-112 slug-mismatch hint (M2 reworded)", () => {
       const code = await runInstall({
         path: projectDir,
         installHooks: true,
-        skipSymlinkLayer: true,
       });
       expect(code).toBe(0);
       const stderr = cap.read();
@@ -505,7 +366,6 @@ describe("install verb — TD-112 slug-mismatch hint (M2 reworded)", () => {
         path: projectDir,
         slug: "quiet-explicit-slug",
         installHooks: true,
-        skipSymlinkLayer: true,
       });
       expect(code).toBe(0);
       const stderr = cap.read();
@@ -517,134 +377,12 @@ describe("install verb — TD-112 slug-mismatch hint (M2 reworded)", () => {
   });
 });
 
-// ---------------------------------------------------------------------
-// M2.6 / M2.10: native symlink layer + .igris_version.
-// These tests stage a full brain core in tmp and assert the install verb
-// produces the correct artifacts WITHOUT shelling out. FR-191 retired the
-// CLAUDE.md render — install no longer writes an identity file.
-// ---------------------------------------------------------------------
-
-describe("install verb — native symlink layer (M2.6)", () => {
-  beforeEach(() => {
-    stageBrainWithCore();
-  });
-
-  it("creates .claude/agents/<file>.md symlinks pointing at brain agents", async () => {
-    const { runInstall } = await import("../verbs/install.js");
-    const code = await runInstall({
-      path: projectDir,
-      installHooks: true,
-      legacyPerProject: true,
-      // skipSymlinkLayer NOT set — exercise the native symlink layer.
-    });
-    expect(code).toBe(0);
-
-    const architectLink = join(projectDir, ".claude", "agents", "architect.md");
-    expect(lstatSync(architectLink).isSymbolicLink()).toBe(true);
-    expect(readlinkSync(architectLink)).toBe(
-      join(tmpRoot, "core", "agents", "architect.md"),
-    );
-
-    const forgerLink = join(projectDir, ".claude", "agents", "forger.md");
-    expect(lstatSync(forgerLink).isSymbolicLink()).toBe(true);
-
-    const manifestLink = join(projectDir, ".claude", "agents", "manifest.yaml");
-    expect(lstatSync(manifestLink).isSymbolicLink()).toBe(true);
-  });
-
-  it("does NOT create a .claude/rules/ symlink layer (FR-187: universal rule retired)", async () => {
-    const { runInstall } = await import("../verbs/install.js");
-    const code = await runInstall({
-      path: projectDir,
-      installHooks: true,
-      legacyPerProject: true,
-    });
-    expect(code).toBe(0);
-
-    // The universal rule (and its symlink layer) was retired under FR-187;
-    // its baseline moved into core/os/standards.md. Install no longer
-    // materializes a .claude/rules/ directory.
-    expect(existsSync(join(projectDir, ".claude", "rules"))).toBe(false);
-  });
-
-  it("creates .claude/skills/<skill>/ symlinks for each skill dir", async () => {
-    const { runInstall } = await import("../verbs/install.js");
-    const code = await runInstall({
-      path: projectDir,
-      installHooks: true,
-      legacyPerProject: true,
-    });
-    expect(code).toBe(0);
-
-    for (const slug of ["hunt", "scan"]) {
-      const link = join(projectDir, ".claude", "skills", slug);
-      expect(lstatSync(link).isSymbolicLink()).toBe(true);
-      expect(readlinkSync(link)).toBe(
-        join(tmpRoot, "core", "skills", slug),
-      );
-      // Through the symlink, can read SKILL.md.
-      expect(existsSync(join(link, "SKILL.md"))).toBe(true);
-    }
-  });
-
-  it("writes NO project CLAUDE.md (FR-191 — render machinery retired)", async () => {
-    const { runInstall } = await import("../verbs/install.js");
-    const code = await runInstall({
-      path: projectDir,
-      installHooks: true,
-      legacyPerProject: true,
-      cliVersion: "7.0.0",
-      installDate: "2026-05-07",
-    });
-    expect(code).toBe(0);
-    expect(existsSync(join(projectDir, "CLAUDE.md"))).toBe(false);
-  });
-
-  it("writes .igris_version with brain_path = IGRIS_BRAIN_DIR", async () => {
-    const { runInstall } = await import("../verbs/install.js");
-    const code = await runInstall({
-      path: projectDir,
-      installHooks: true,
-      legacyPerProject: true,
-      cliVersion: "7.0.0",
-    });
-    expect(code).toBe(0);
-
-    const versionFile = JSON.parse(
-      readFileSync(join(projectDir, ".igris_version"), "utf-8"),
-    ) as { brain_path: string; igris_ai_version: string };
-    expect(versionFile.brain_path).toBe(tmpRoot);
-    expect(versionFile.igris_ai_version).toBe("7.0.0");
-  });
-
-  it("re-install is idempotent: symlinks unchanged (inode preserved)", async () => {
-    const { runInstall } = await import("../verbs/install.js");
-    const code1 = await runInstall({
-      path: projectDir,
-      installHooks: true,
-      legacyPerProject: true,
-      cliVersion: "7.0.0",
-      installDate: "2026-05-07",
-    });
-    expect(code1).toBe(0);
-
-    const ino1 = lstatSync(join(projectDir, ".claude", "agents", "architect.md")).ino;
-
-    process.env.IGRIS_KEEP_BAK = "0";
-    const code2 = await runInstall({
-      path: projectDir,
-      installHooks: true,
-      legacyPerProject: true,
-      cliVersion: "7.0.0",
-      installDate: "2026-05-07",
-    });
-    expect(code2).toBe(0);
-
-    // Symlink inode must match — no replacement occurred.
-    const ino2 = lstatSync(join(projectDir, ".claude", "agents", "architect.md")).ino;
-    expect(ino2).toBe(ino1);
-  });
-});
+// FR-212d Phase 2: the "native symlink layer (M2.6)" describe was DELETED — the
+// per-project `.claude/{agents,skills}` symlink layer + `.igris_version` writer
+// were removed (skills/agents project globally at `igris init`). The FR-191
+// "no project CLAUDE.md" + FR-187 "no .claude/rules/" absence assertions are
+// subsumed by the register-only "creates NO .claude/ symlinks" test below — with
+// no per-project materialization at all, those artifacts can never appear.
 
 // ---------------------------------------------------------------------
 // M2 — installed_features.json schema v2.
@@ -658,8 +396,6 @@ describe("install verb — schema v2 (brain_channel + brain_ref)", () => {
     const code = await runInstall({
       path: projectDir,
       installHooks: true,
-      legacyPerProject: true,
-      skipSymlinkLayer: true,
       cliVersion: "7.0.0",
     });
     expect(code).toBe(0);
@@ -696,8 +432,6 @@ describe("install verb — schema v2 (brain_channel + brain_ref)", () => {
     const code = await runInstall({
       path: projectDir,
       installHooks: true,
-      legacyPerProject: true,
-      skipSymlinkLayer: true,
       cliVersion: "7.0.0",
     });
     expect(code).toBe(0);
@@ -719,10 +453,10 @@ describe("install verb — schema v2 (brain_channel + brain_ref)", () => {
 // The legacy per-project layer is reachable ONLY via legacyPerProject:true.
 // ---------------------------------------------------------------------
 
-describe("install verb — register-only default (FR-212c)", () => {
+describe("install verb — register-only (FR-212d)", () => {
   beforeEach(() => {
-    // Stage a full brain core so the symlink layer WOULD have sources to link
-    // (proving the default does NOT link, not that it has nothing to link).
+    // Stage a full brain core so a (former) symlink layer WOULD have sources to
+    // link (proving register-only does NOT link, not that it has nothing to).
     stageBrainWithCore();
   });
 
@@ -767,30 +501,10 @@ describe("install verb — register-only default (FR-212c)", () => {
     expect(feats!.schema_version).toBe(2);
   });
 
-  it("legacy flag re-enables the per-project layer (symlinks + settings.json + .igris_version)", async () => {
-    const { runInstall } = await import("../verbs/install.js");
-    const code = await runInstall({
-      path: projectDir,
-      installHooks: true,
-      legacyPerProject: true,
-    });
-    expect(code).toBe(0);
-
-    // Symlinks present.
-    expect(
-      lstatSync(join(projectDir, ".claude", "agents", "architect.md")).isSymbolicLink(),
-    ).toBe(true);
-    expect(
-      lstatSync(join(projectDir, ".claude", "skills", "hunt")).isSymbolicLink(),
-    ).toBe(true);
-    // settings.json present with the canonical hooks block.
-    const settings = JSON.parse(
-      readFileSync(join(projectDir, ".claude", "settings.json"), "utf-8"),
-    ) as { hooks?: Record<string, unknown> };
-    expect(settings.hooks).toBeDefined();
-    // .igris_version present.
-    expect(existsSync(join(projectDir, ".igris_version"))).toBe(true);
-  });
+  // FR-212d Phase 2: the "legacy flag re-enables the per-project layer" test was
+  // DELETED — `--legacy-per-project` and the entire per-project materialization
+  // path (symlinks + settings.json + .igris_version) were removed. Install is
+  // register-only with no opt-back-in.
 
   it("default --dry-run plans NO symlinks / settings.json / .igris_version", async () => {
     const { runInstall } = await import("../verbs/install.js");

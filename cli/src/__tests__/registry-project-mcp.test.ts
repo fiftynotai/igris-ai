@@ -10,6 +10,13 @@
  * SECRET HYGIENE: the codex tests grep the captured stdout+stderr for a sentinel
  * secret string and assert ABSENCE on the failure path (and that the on-disk
  * codex literal IS the secret on the success path — codex resolves nothing).
+ *
+ * FR-212d Phase 2: these are the per-harness MERGER-SHAPE oracle tests. The
+ * custom `buildHarnessMcpEntry` shaper + `mergeJsonConfig`/`mergeTomlConfig`
+ * mergers are KEPT (antigravity's ENTRY uses them under the delegate engine), so
+ * each call forces `mcpEngine: "custom"` to pin that shaper's byte-shape. The
+ * DELEGATE-default routing (4 harnesses → add-mcp, antigravity → custom) is
+ * covered by the registry-project-mcp DELEGATE tests + the fr212-smoke gate.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -108,6 +115,7 @@ describe("runProjectMcp — claude/gemini JSON shapes (refs, no secrets)", () =>
     const cfg = join(work, "claude.json");
     const code = await runRegistry({
       action: "project-mcp",
+      mcpEngine: "custom",
       name: "demo-mcp",
       harness: "claude",
       projectRoot,
@@ -129,6 +137,7 @@ describe("runProjectMcp — claude/gemini JSON shapes (refs, no secrets)", () =>
     const cfg = join(work, "gemini.json");
     const code = await runRegistry({
       action: "project-mcp",
+      mcpEngine: "custom",
       name: "demo-mcp",
       harness: "gemini",
       projectRoot,
@@ -146,6 +155,7 @@ describe("runProjectMcp — claude/gemini JSON shapes (refs, no secrets)", () =>
     const cfg = join(work, "opencode.json");
     const code = await runRegistry({
       action: "project-mcp",
+      mcpEngine: "custom",
       name: "demo-mcp",
       harness: "opencode",
       projectRoot,
@@ -165,10 +175,10 @@ describe("runProjectMcp — claude/gemini JSON shapes (refs, no secrets)", () =>
   it("is idempotent — second run is `unchanged` and does not churn mtime", async () => {
     writeManifest();
     const cfg = join(work, "claude.json");
-    await runRegistry({ action: "project-mcp", name: "demo-mcp", harness: "claude", projectRoot, overlayPath, configPath: cfg });
+    await runRegistry({ action: "project-mcp", mcpEngine: "custom", name: "demo-mcp", harness: "claude", projectRoot, overlayPath, configPath: cfg });
     const m1 = statSync(cfg).mtimeMs;
     const { out } = await capture(() =>
-      runRegistry({ action: "project-mcp", name: "demo-mcp", harness: "claude", projectRoot, overlayPath, configPath: cfg }),
+      runRegistry({ action: "project-mcp", mcpEngine: "custom", name: "demo-mcp", harness: "claude", projectRoot, overlayPath, configPath: cfg }),
     );
     expect(out).toContain("unchanged");
     expect(statSync(cfg).mtimeMs).toBe(m1);
@@ -182,6 +192,7 @@ describe("runProjectMcp — codex TOML (resolved literal) + secret hygiene", () 
     const cfg = join(work, "config.toml");
     const code = await runRegistry({
       action: "project-mcp",
+      mcpEngine: "custom",
       name: "demo-mcp",
       harness: "codex",
       projectRoot,
@@ -205,6 +216,7 @@ describe("runProjectMcp — codex TOML (resolved literal) + secret hygiene", () 
     const { code, out } = await capture(() =>
       runRegistry({
         action: "project-mcp",
+        mcpEngine: "custom",
         name: "demo-mcp",
         harness: "codex",
         projectRoot,
@@ -240,6 +252,7 @@ describe("runProjectMcp — no-clobber + malformed safety", () => {
     );
     const code = await runRegistry({
       action: "project-mcp",
+      mcpEngine: "custom",
       name: "demo-mcp",
       harness: "claude",
       projectRoot,
@@ -261,6 +274,7 @@ describe("runProjectMcp — no-clobber + malformed safety", () => {
     writeFileSync(cfg, broken);
     const code = await runRegistry({
       action: "project-mcp",
+      mcpEngine: "custom",
       name: "demo-mcp",
       harness: "claude",
       projectRoot,
@@ -280,6 +294,7 @@ describe("runProjectMcp — no-clobber + malformed safety", () => {
     const { code, out } = await capture(() =>
       runRegistry({
         action: "project-mcp",
+        mcpEngine: "custom",
         name: "no-such-mcp",
         harness: "claude",
         projectRoot,
@@ -324,6 +339,7 @@ describe("runProjectMcp — overlay merge (finding #2)", () => {
     const cfg = join(work, "claude.json");
     const code = await runRegistry({
       action: "project-mcp",
+      mcpEngine: "custom",
       name: "personal-mcp",
       harness: "claude",
       projectRoot,
@@ -362,6 +378,7 @@ describe("runProjectMcp — overlay merge (finding #2)", () => {
     const { code, out } = await capture(() =>
       runRegistry({
         action: "project-mcp",
+        mcpEngine: "custom",
         name: "demo-mcp",
         harness: "claude",
         projectRoot,
@@ -441,6 +458,7 @@ describe("runProjectMcp — FR-180 core surfaces union (ownership-gated)", () =>
     const cfg = join(work, "claude-core.json");
     const code = await runRegistry({
       action: "project-mcp",
+      mcpEngine: "custom",
       name: "core-mcp",
       harness: "claude",
       projectRoot: brainRoot,
@@ -466,6 +484,7 @@ describe("runProjectMcp — FR-180 core surfaces union (ownership-gated)", () =>
     const { code, out } = await capture(() =>
       runRegistry({
         action: "project-mcp",
+        mcpEngine: "custom",
         name: "core-mcp",
         harness: "claude",
         projectRoot: unrelated,

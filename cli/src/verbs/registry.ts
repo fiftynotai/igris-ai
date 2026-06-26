@@ -4627,21 +4627,35 @@ function runProjectMcp(opts: RegistryOptions): number {
     return 1;
   }
 
-  // FR-212b: DELEGATE ENGINE. Route per-row placement to `add-mcp` (the LOCAL
-  // pinned binary, resolved inside the TS delegate — NEVER a bare `npx`), then
-  // write the Igris-owned no-prompt GRANT. Igris keeps canonical ownership: the
-  // launch spec (command/args/env — env as ${VAR} refs VERBATIM, never a
-  // resolved literal) is handed to add-mcp, which serializes the native config.
-  // NO custom-merger fallback in this branch (constraint #2): a tool FAIL is an
-  // observable exit 1, never a silent fall-through to the mergers below. The
-  // codex-literal resolution (parseSecretsEnv) is SKIPPED here — add-mcp writes
-  // the ${VAR} placeholder with `-y` (the placeholder-passthrough contract), so
-  // no secret is read or resolved on this path.
+  // FR-212d Phase 2: DELEGATE ENGINE is the default (the smoke gate is green).
+  // For the 4 DELEGATED harnesses (claude/codex/gemini/opencode) route per-row
+  // placement to `add-mcp` (the LOCAL pinned binary, resolved inside the TS
+  // delegate — NEVER a bare `npx`), then write the Igris-owned no-prompt GRANT.
+  // Igris keeps canonical ownership: the launch spec (command/args/env — env as
+  // ${VAR} refs VERBATIM, never a resolved literal) is handed to add-mcp, which
+  // serializes the native config. NO custom-merger fallback in that branch
+  // (constraint #2): a tool FAIL is an observable exit 1.
+  //
+  // ANTIGRAVITY CARVE-OUT (KEPT — parity with registerBrainAcrossHarnesses):
+  // antigravity reads MCP EXCLUSIVELY from `~/.gemini/config/mcp_config.json`
+  // (FR-179 R1), but add-mcp writes the `antigravity/` path it never reads — a
+  // tool-fundamental mismatch with no flag to retarget it. So antigravity's
+  // ENTRY stays CUSTOM (the proven `mergeJsonConfig` at the correct `config/`
+  // path via `mcpConfigPathFor('antigravity')`) REGARDLESS of the engine — it
+  // falls THROUGH to the custom merger body below. The grant is still written by
+  // the delegate path for the other 4; antigravity's own grant is a separate
+  // surface handled elsewhere (the install/remove paths). This is a
+  // deterministic per-harness routing decision made BEFORE any tool call, NOT a
+  // fallback-on-failure.
   const engine = opts.mcpEngine ?? resolveMcpEngine();
-  if (engine === "delegate") {
+  if (engine === "delegate" && harness !== "antigravity") {
     return runProjectMcpViaDelegate(opts, name, harness, block.canonical);
   }
 
+  // CUSTOM MERGER (antigravity under delegate — the carve-out above). The
+  // codex-literal resolution stays here for the generic-correctness of the
+  // merger, though antigravity is the only harness that reaches it now.
+  //
   // The per-target enabled flag for THIS harness (opencode passthrough). Absent
   // target → still project (the bash driver only emits rows for declared
   // targets, but defend here against a direct call for an undeclared harness).

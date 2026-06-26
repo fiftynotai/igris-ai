@@ -27,6 +27,15 @@
 load test_helper
 
 setup() {
+  # FR-212d Phase 2: the TD-201 skill TREE pre-check lived in the custom
+  # `verify_skills` body, which was DELETED when skills projection moved to the
+  # `skills` CLI delegate (the delegate owns placement + freshness; there is no
+  # registry-vendored-copy-vs-source tree drift in the delegate model — the tool
+  # re-projects from the source root). This suite is retired with the custom
+  # body. Delegate skills drift is the tool's idempotent re-check (covered by
+  # fr212-smoke + skills-delegate.test.ts).
+  skip "FR-212d: TD-201 skill tree pre-check retired with the custom verify_skills body"
+
   ADAPTERS="$IGRIS_ROOT/core/scripts/cli-adapters"
   COMMON="$ADAPTERS/_common.sh"
   GUARD="$ADAPTERS/check_harness_drift.sh"
@@ -51,7 +60,8 @@ setup() {
 }
 
 teardown() {
-  [ -d "$PROJ" ] && rm -rf "$PROJ"
+  [ -n "${PROJ:-}" ] && [ -d "$PROJ" ] && rm -rf "$PROJ"
+  return 0
 }
 
 # ---------- helpers ----------------------------------------------------------

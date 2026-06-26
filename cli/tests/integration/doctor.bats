@@ -5,9 +5,38 @@
 
 load _helpers.bash
 
+# FR-212d: doctor now reads GLOBAL brain-level state (~/.claude/settings.json
+# for hooks, ~/.claude.json for the brain MCP, harness config perms). To keep
+# the exit-code assertions HERMETIC (not coupled to the dev's real ~/.claude/),
+# every test runs under a sandboxed HOME seeded with a clean baseline:
+#   - ~/.claude/settings.json carrying the canonical Igris hooks (no hooks-missing)
+#   - ~/.claude.json with a valid igris-brain MCP entry at 600 (no mcp-unregistered)
+#   - ~/.igris/config.json with cli_targets:{} (bridge-missing opt-out)
+# Tests that want a drift to fire mutate this sandbox in their own body.
+#
+# `os.homedir()` honors $HOME on this platform, so exporting HOME redirects every
+# brain-level read into the sandbox. The brain dir stays IGRIS_BRAIN_DIR (tmp).
 setup() {
   stage_brain
   export IGRIS_KEEP_BAK=0
+  export SANDBOX_HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$SANDBOX_HOME/.claude"
+  # Valid global Igris hooks (mirrors the stub canonical-settings.json).
+  printf '%s\n' "$STUB_CANONICAL_HOOKS" > "$SANDBOX_HOME/.claude/settings.json"
+  # Valid igris-brain MCP entry pointing at a real on-disk file (600 so the
+  # secret-perms class doesn't flag it).
+  : > "$SANDBOX_HOME/fake-mcp.js"
+  cat > "$SANDBOX_HOME/.claude.json" <<EOF
+{ "mcpServers": { "igris-brain": { "type": "stdio", "command": "node", "args": ["$SANDBOX_HOME/fake-mcp.js"], "env": {} } } }
+EOF
+  chmod 600 "$SANDBOX_HOME/.claude.json"
+  # Explicit bridge-missing opt-out (the staged ~/.claude/ would otherwise make
+  # detectInstalledCLIs flag a real `claude` on PATH).
+  cat > "$IGRIS_BRAIN_DIR/config.json" <<EOF
+{ "version": "7.0.0", "cli_targets": {} }
+EOF
+  chmod 600 "$IGRIS_BRAIN_DIR/config.json"
+  export HOME="$SANDBOX_HOME"
 }
 
 @test "doctor exits 0 on clean registry" {
@@ -18,42 +47,31 @@ setup() {
   [ "$status" -eq 0 ]
 }
 
-@test "doctor exits 1 with drift table when settings.json missing hooks block (TD-100 silent-failure)" {
-  PROJ="$(stage_project td100)"
-  cat > "$PROJ/.claude/settings.json" <<EOF
+@test "doctor exits 1 when the GLOBAL settings.json is missing the Igris hooks block (TD-100 silent-failure, FR-212d)" {
+  # FR-212d: the TD-100 silent-failure class is GLOBAL now — overwrite the
+  # staged-valid global hooks with a settings file lacking the Igris hooks so the
+  # brain-level hooks-missing row fires.
+  cat > "$HOME/.claude/settings.json" <<EOF
 { "includeGitInstructions": false }
 EOF
-  # Insert registry row directly via sqlite (skip install; we want exactly the drift state).
-  sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "
-    CREATE TABLE IF NOT EXISTS projects (
-      slug TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL,
-      tech_stack TEXT, igris_version TEXT, status TEXT DEFAULT 'active',
-      registered_at TEXT, last_session_at TEXT, metadata TEXT
-    );
-    INSERT INTO projects (slug, name, path, igris_version) VALUES ('td100','td100','$PROJ','7.0.0');
-  "
   run $CLI_BIN doctor
   [ "$status" -eq 1 ]
   [[ "$output" =~ "hooks-missing" ]]
 }
 
-@test "doctor --fix repairs hooks-missing" {
-  PROJ="$(stage_project fixme)"
-  cat > "$PROJ/.claude/settings.json" <<EOF
+@test "doctor --fix repairs hooks-missing by refreshing the GLOBAL hooks (FR-212d)" {
+  # FR-212d: hooks-missing is a brain-level row read from the GLOBAL
+  # ~/.claude/settings.json (sandboxed by setup()). Overwrite the staged-valid
+  # global hooks with a settings file LACKING the Igris hooks so the row fires,
+  # then assert `--fix` re-merges the canonical Igris hooks into the global file.
+  cat > "$HOME/.claude/settings.json" <<EOF
 { "includeGitInstructions": false }
 EOF
-  sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "
-    CREATE TABLE IF NOT EXISTS projects (
-      slug TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL,
-      tech_stack TEXT, igris_version TEXT, status TEXT DEFAULT 'active',
-      registered_at TEXT, last_session_at TEXT, metadata TEXT
-    );
-    INSERT INTO projects (slug, name, path, igris_version) VALUES ('fixme','fixme','$PROJ','7.0.0');
-  "
   run $CLI_BIN doctor --fix
   [ "$status" -eq 0 ]
-  # After --fix, settings.json should have the canonical SessionEnd command.
-  run python3 -c "import json,sys; d=json.load(open('$PROJ/.claude/settings.json')); print(d['hooks']['SessionEnd'][0]['hooks'][0]['command'])"
+  # The fix refreshes the GLOBAL ~/.claude/settings.json (the live hooks surface).
+  [ -f "$HOME/.claude/settings.json" ]
+  run python3 -c "import json,sys; d=json.load(open('$HOME/.claude/settings.json')); print(d['hooks']['SessionEnd'][0]['hooks'][0]['command'])"
   [ "$status" -eq 0 ]
   [ "$output" = "\$HOME/.igris/core/hooks/shared/session_end.sh" ]
 }
@@ -120,28 +138,16 @@ EOF
   [[ "$output" =~ "path-missing" ]]
 }
 
-@test "doctor --fix: bridge-missing + not-installed both fixed in one pass (TD-122)" {
-  # TD-122: pre-fix the bridge-missing arm `break`'d, skipping all per-
-  # project drift rows after it. Post-fix, the loop continues. We stage:
-  #   1. a fake `claude` binary on PATH + ~/.claude/ config dir, so that
-  #      `detectInstalledCLIs` returns claude in its detected set
-  #   2. an `~/.igris/config.json` with non-empty cli_targets that LACKS
-  #      claude — this is the bridge-missing condition
-  #   3. a registry row pointing at a path with no .claude/ — the
-  #      not-installed condition
+@test "doctor --fix: bridge-missing + hooks-missing both fixed in one pass (TD-122)" {
+  # TD-122: pre-fix the bridge-missing arm `break`'d, skipping all drift rows
+  # after it. Post-fix, the loop continues. FR-212d: `not-installed` was retired
+  # (register-only), so the "second class after bridge-missing" is now the
+  # brain-level global hooks-missing fix. We stage:
+  #   1. a fake `claude` binary on PATH + ~/.claude/ config dir (no Igris hooks),
+  #      so detectInstalledCLIs returns claude AND the global hooks-missing fires
+  #   2. an ~/.igris/config.json with non-empty cli_targets that LACKS claude —
+  #      the bridge-missing condition
   # After `doctor --fix`, BOTH should be repaired in a single invocation.
-  PROJ="$(stage_project td122)"
-  # Strip the .claude/ that stage_project created — we want not-installed.
-  rm -rf "$PROJ/.claude"
-
-  sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "
-    CREATE TABLE IF NOT EXISTS projects (
-      slug TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL,
-      tech_stack TEXT, igris_version TEXT, status TEXT DEFAULT 'active',
-      registered_at TEXT, last_session_at TEXT, metadata TEXT
-    );
-    INSERT INTO projects (slug, name, path, igris_version) VALUES ('td122','td122','$PROJ','7.0.0');
-  "
 
   # Stage a non-empty cli_targets that LACKS claude (a CLI in our catalog).
   # The detector treats this as bridge-missing iff claude is detected.
@@ -158,21 +164,26 @@ exit 0
 EOF
   chmod +x "$FAKEPATH/claude"
 
-  # Fake ~/.claude/ config dir under a HOME we control. detect-cli walks
-  # `homedir() + spec.configDirRel` (".claude"). Override HOME so the
-  # detection sees our staged dir without polluting the real home.
+  # Fake HOME with a ~/.claude/ config dir (so claude is "detected") but a
+  # settings.json that LACKS the Igris hooks (so the global hooks-missing row
+  # fires). detect-cli walks `homedir() + ".claude"`; the global hooks check
+  # reads `~/.claude/settings.json`.
   FAKEHOME="$BATS_TEST_TMPDIR/fakehome"
   mkdir -p "$FAKEHOME/.claude"
+  cat > "$FAKEHOME/.claude/settings.json" <<EOF
+{ "includeGitInstructions": false }
+EOF
 
-  # Run --fix with the staged env. We tolerate non-zero exit (the
-  # bridge-fix arm calls runInit which talks to GitHub releases — out of
-  # scope for this minimal fixture). The TD-122 contract is that
-  # BOTH fix arms fire in one invocation — pre-fix the bridge-missing
-  # arm `break`'d, so the not-installed arm was unreachable.
+  # Run --fix with the staged env. We tolerate non-zero exit (the bridge-fix arm
+  # calls runInit which talks to GitHub releases — out of scope for this minimal
+  # fixture). The TD-122 contract is that BOTH fix arms fire in one invocation —
+  # pre-fix the bridge-missing arm `break`'d, so the later arm was unreachable.
   HOME="$FAKEHOME" PATH="$FAKEPATH:$PATH" run $CLI_BIN doctor --fix 2>&1
-  # The smoking gun: both arms emitted their fix-attempt log lines.
-  # If `break` ever returns to this arm (TD-122 regression), the
-  # not-installed message will not appear.
+  # The smoking gun: both arms emitted their fix-attempt log lines. If `break`
+  # ever returns to the bridge-missing arm (TD-122 regression), the global-hooks
+  # refresh message will not appear.
   [[ "$output" =~ "bridge-missing for claude" ]]
-  [[ "$output" =~ "re-running install for td122" ]]
+  # FR-212d: the second class after bridge-missing is the brain-level global
+  # hooks-missing fix.
+  [[ "$output" =~ "refreshing the GLOBAL Igris hooks" ]]
 }

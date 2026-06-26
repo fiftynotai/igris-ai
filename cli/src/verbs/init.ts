@@ -718,8 +718,16 @@ export async function runInit(opts: InitOptions): Promise<number> {
       info(`Merged global Igris hooks block -> ${gh.path}`);
     }
 
+    // FR-212d Phase 2: `igris init` wires the brain MCP via the IN-PROCESS custom
+    // merger (deterministic native shapes, no `add-mcp`/`node` subprocess at
+    // init time — robust on restricted-PATH/offline boxes). The DELEGATE engine
+    // is the default for the harness-COMPILE projection (`runProjectMcp` →
+    // `add-mcp`), but the install/init/doctor brain-wiring keeps the proven
+    // in-process path (the same posture as `registerMcpInClaudeJson`). Antigravity
+    // is custom either way (FR-179 config-path).
     const results = registerBrainAcrossHarnesses(
       devMcpPath !== undefined ? { mcpEntryPath: devMcpPath } : undefined,
+      { engine: "custom" },
     );
     let anyWired = false;
     for (const { harness, result } of results) {

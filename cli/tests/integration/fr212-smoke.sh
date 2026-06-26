@@ -117,9 +117,12 @@ make_sandbox() { cd "$(mktemp -d "${TMPDIR:-/tmp}/fr212smoke.XXXXXX")" && pwd -P
 check1_skills() {
   local home="$1" src="$2"
   echo
-  echo "### CHECK 1 — skills placed + discoverable (delegate: \`skills add -g -a <5>\`)"
+  echo "### CHECK 1 — skills placed + discoverable (delegate is the DEFAULT — no forced flag)"
+  # FR-212d Phase 2: delegate is now the DEFAULT skills engine (the custom loop
+  # was retired). NO IGRIS_SKILLS_ENGINE override — the verb uses the default,
+  # proving the flip took effect.
   local out
-  out="$(cd "$home" && HOME="$home" IGRIS_SKILLS_ENGINE=delegate \
+  out="$(cd "$home" && HOME="$home" \
         node "$CLI" registry project-skills --source "$src" 2>&1)"
   echo "--- igris registry project-skills (delegate) output ---"
   printf '%s\n' "$out" | sed "s#$home#\$HOME#g" | grep -vE '^[[:space:]]*$' | head -26
@@ -153,10 +156,14 @@ check2_mcp() {
   local home="$1" proj="$2"
   echo
   echo "### CHECK 2 — MCP server entry + no-prompt grant (delegate: \`add-mcp\` + Igris grant)"
+  # FR-212d Phase 2: delegate is now the DEFAULT MCP engine. NO `{ engine:
+  # 'delegate' }` override — `registerBrainAcrossHarnesses` resolves the default
+  # (delegate for the 4, antigravity carved to custom), proving the flip took
+  # effect end-to-end through the production default path.
   local reg_json
   reg_json="$(HOME="$home" node --input-type=module -e "
 import { registerBrainAcrossHarnesses } from '$REPO_ROOT/cli/dist/lib/mcp-register.js';
-const res = registerBrainAcrossHarnesses({ folder: '$proj' }, { engine: 'delegate' });
+const res = registerBrainAcrossHarnesses({ folder: '$proj' });
 console.log(JSON.stringify(res.map(r => ({
   harness: r.harness, engine: r.engine, outcome: r.result.outcome,
   err: r.result.error || null,
@@ -246,18 +253,20 @@ check3_remove() {
   echo
   echo "### CHECK 3 — remove leaves zero dangling (delegate inverse)"
 
-  echo "--- igris registry unproject-skills --name boot (delegate -> skills remove) ---"
-  HOME="$home" IGRIS_SKILLS_ENGINE=delegate node "$CLI" registry unproject-skills --name boot 2>&1 \
+  echo "--- igris registry unproject-skills --name boot (delegate DEFAULT -> skills remove) ---"
+  # FR-212d: delegate is the default — no IGRIS_SKILLS_ENGINE override.
+  HOME="$home" node "$CLI" registry unproject-skills --name boot 2>&1 \
     | sed "s#$home#\$HOME#g" | grep -vE '^[[:space:]]*$' | head -12
 
   echo "--- delegate MCP un-registration + grant revoke (all 5, production-symmetric) ---"
   # FR-212d: drive the SAME production removal path the verb uses
-  # (unregisterBrainAcrossHarnesses) — it carves out antigravity to the custom
-  # un-merger (add-mcp remove targets the wrong antigravity/ path) so the
-  # custom-written config/ entry is actually removed, not orphaned.
+  # (unregisterBrainAcrossHarnesses) with the DEFAULT engine (no override) — it
+  # carves out antigravity to the custom un-merger (add-mcp remove targets the
+  # wrong antigravity/ path) so the custom-written config/ entry is actually
+  # removed, not orphaned.
   HOME="$home" node --input-type=module -e "
 import { unregisterBrainAcrossHarnesses } from '$REPO_ROOT/cli/dist/lib/mcp-register.js';
-const res = unregisterBrainAcrossHarnesses({ harnesses: ['claude','gemini','codex','opencode','antigravity'], folder: '$proj' }, { engine: 'delegate' });
+const res = unregisterBrainAcrossHarnesses({ harnesses: ['claude','gemini','codex','opencode','antigravity'], folder: '$proj' });
 for (const r of res) {
   console.log('unregister', r.harness, r.result.outcome, '| revoke', r.grant ? r.grant.outcome : 'none');
 }

@@ -1,16 +1,16 @@
 /**
- * `igris install <path>` — FR-212c (register-only default).
+ * `igris install <path>` — FR-212d (register-only).
  *
  * In the FR-212 global-projection model, ALL surfaces (skills/MCP/agents/hooks)
  * project GLOBALLY at `igris init`. `igris install <project>` therefore reduces
  * to BRAIN REGISTRATION: it tells the brain "this path is an Igris project" so
  * the globally-projected hooks de-no-op for it (the `_gate.sh` registration
- * gate keys on the `projects.path` row this writes). The per-project symlink
- * layer, the `.igris_version` marker, and the per-project `settings.json` hooks
- * merge are LEGACY — gated behind `--legacy-per-project` (default OFF). They are
- * NOT deleted here (FR-212d retires the dead code after the smoke gate is green).
+ * gate keys on the `projects.path` row this writes). FR-212d Phase 2 DELETED the
+ * legacy per-project layer (symlinks + `.igris_version` + per-project
+ * `settings.json` hooks merge) and the `--legacy-per-project` flag — there is no
+ * longer a per-project materialization path.
  *
- * Pipeline — DEFAULT (register-only):
+ * Pipeline (register-only):
  *   7.  Registry: upsert the explicit slug (NOT basename) — the de-no-op gate.
  *   8.  installed_features.json: content hashes (schema v2: brain_channel/ref).
  *   9.  cognition.{perception,subconscious}.enabled=false defaults (only if absent).
@@ -18,27 +18,12 @@
  *   11. Register igris-brain MCP in ~/.claude.json (already global; belt-and-
  *       suspenders for the from-source contributor flow).
  *
- * Pipeline — LEGACY add-ons (only when `--legacy-per-project`):
- *   3. Symlink layer: <path>/.claude/{agents,skills} → ~/.igris/core/... .
- *   5. .igris_version: write JSON marker at <path>/.igris_version.
- *   6. Hooks (with --no-hooks opt-out): merge canonical hooks into
- *      <path>/.claude/settings.json. Backs up original to .bak.<timestamp>.
- *
  * Flag semantics:
- *   D-1: Igris-hooks-first inside event arrays.
- *   D-2: .bak.<timestamp> kept unless IGRIS_KEEP_BAK=0.
  *   D-4: better-sqlite3 direct DB access (not via MCP).
  */
 
-import {
-  existsSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
-import { basename, join, resolve as pathResolve } from "node:path";
-import { loadCanonicalHooks } from "../lib/canonical-hooks.js";
-import { mergeCanonicalHooks, MalformedSettingsError } from "../lib/json-merge.js";
+import { existsSync } from "node:fs";
+import { basename, resolve as pathResolve } from "node:path";
 import { upsertProject } from "../lib/registry.js";
 import {
   computeFeatureHashes,
@@ -48,17 +33,10 @@ import {
 import {
   brainDir,
   claudeJsonPath,
-  projectSettingsPath,
   installedFeaturesPath,
 } from "../lib/paths.js";
 import { registerMcpInClaudeJson } from "../lib/mcp-register.js";
-import { linkDir, linkFile, SymlinkConflictError } from "../lib/symlinks.js";
-import {
-  discoverAgentEntries,
-  discoverSkillEntries,
-} from "../lib/install-discovery.js";
 import { validateSlug } from "../lib/slug.js";
-import { writeIgrisVersion } from "../lib/igris-version.js";
 import { applyPerceptionDefault, applySubconsciousDefault } from "../lib/init-config.js";
 import { pushProjectToRemote } from "../lib/remote-push.js";
 import { readInstallSource } from "../lib/install-source.js";
@@ -68,16 +46,12 @@ import { info, warn, error as logError, debug } from "../lib/log.js";
 export interface InstallOptions {
   path: string;
   slug?: string;
-  installHooks: boolean;
   /**
-   * FR-212c: opt back into the LEGACY per-project layer (symlinks +
-   * `.igris_version` + per-project `settings.json` hooks merge). Default
-   * OFF — the default install is register-only because all surfaces project
-   * globally at `igris init`. NOT deleted here (FR-212d retires the code).
+   * FR-212d: vestigial — the per-project hooks merge it gated was deleted (hooks
+   * project globally at `igris init`). Retained so existing callers/tests still
+   * type-check; no pipeline step reads it. `--no-hooks` is accepted as a no-op.
    */
-  legacyPerProject?: boolean;
-  /** Internal: skip the symlink layer entirely. Used by tests + update verb. */
-  skipSymlinkLayer?: boolean;
+  installHooks: boolean;
   /** Internal: CLI version string, defaults to package.json's version. */
   cliVersion?: string;
   /**
@@ -87,35 +61,19 @@ export interface InstallOptions {
    */
   installDate?: string;
   /**
-   * When true, preview the would-be writes (symlinks, hooks merge,
-   * registry upsert, installed_features.json) without performing any. The
-   * verb returns 0 after printing the plan; `runUpdate --dry-run` does NOT
-   * delegate here — it has its own enumeration path.
+   * When true, preview the would-be writes (registry upsert,
+   * installed_features.json, MCP register) without performing any. The verb
+   * returns 0 after printing the plan; `runUpdate --dry-run` does NOT delegate
+   * here — it has its own enumeration path.
    */
   dryRun?: boolean;
 }
 
 // Slug grammar lives in lib/slug.ts (TD-118 — single source of truth).
-
-function backupSettings(filePath: string): string | null {
-  if (process.env.IGRIS_KEEP_BAK === "0") {
-    return null;
-  }
-  if (!existsSync(filePath)) {
-    return null;
-  }
-  const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const bak = `${filePath}.bak.${ts}`;
-  // copy via read+write (renameSync would lose the original)
-  writeFileSync(bak, readFileSync(filePath, "utf-8"));
-  return bak;
-}
-
-function atomicWrite(filePath: string, content: string): void {
-  const tmp = `${filePath}.tmp.${process.pid}.${Date.now()}`;
-  writeFileSync(tmp, content);
-  renameSync(tmp, filePath);
-}
+//
+// FR-212d Phase 2: `backupSettings` + `atomicWrite` (the per-project
+// settings.json backup + atomic write helpers) were DELETED with the legacy
+// step-6 hooks merge — install no longer writes a per-project settings.json.
 
 /**
  * Run `igris install`. Returns process exit code.
@@ -140,107 +98,26 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
   const root = brainDir();
 
   // M3 — dry-run short-circuit. Enumerate would-be writes via DryRunCollector
-  // and exit 0 without touching disk or the registry. We intentionally do NOT
-  // run the symlink/hooks-merge code paths in preview mode — the
-  // collector enumerates the planned operations from the same input as the
-  // real run (project path + slug + install-source).
-  //
-  // FR-212c: the default install is REGISTER-ONLY. Steps 3/5/6 (symlink layer,
-  // .igris_version, per-project settings.json hooks) are LEGACY and run ONLY
-  // under --legacy-per-project. The global model projects every surface at
-  // `igris init`; the brain row written in step 7 is what de-no-ops the
-  // globally-projected hooks for this project.
-  const legacy = opts.legacyPerProject === true;
-
+  // and exit 0 without touching disk or the registry. The collector enumerates
+  // the planned operations from the same input as the real run (slug +
+  // install-source). FR-212d: register-only — no per-project layer to enumerate.
   if (opts.dryRun === true) {
     const dry = new DryRunCollector();
-    enumerateInstallPlan(absPath, root, slug, opts.installHooks, legacy, dry);
+    enumerateInstallPlan(absPath, slug, dry);
     dry.print();
     return 0;
   }
 
-  // 3. (LEGACY) Symlink layer — native TS replacement for igris_install.sh:212-237.
-  if (legacy && opts.skipSymlinkLayer !== true) {
-    try {
-      applySymlinkLayer(absPath, root);
-    } catch (err) {
-      if (err instanceof SymlinkConflictError) {
-        logError(`symlink-layer install failed: ${err.message}`);
-        return 1;
-      }
-      throw err;
-    }
-  }
-
-  // 4. FR-191: the CLAUDE.md render step was retired. `igris install` is
-  // zero-config and writes no identity file — the harness discovers Igris via
-  // the slash menu + the install success message (R-1 / AC #4).
-
-  // 5. (LEGACY) .igris_version write.
-  if (legacy && opts.skipSymlinkLayer !== true) {
-    writeIgrisVersion(absPath, cliVersion);
-    debug(`Wrote ${absPath}/.igris_version`);
-  }
-
-  // 6. (LEGACY) Materialized layer — per-project hooks merge (default ON when
-  // --legacy-per-project is set). Global hooks now land in ~/.claude/settings.json
-  // at `igris init` (the canonical-hooks merge target moved to the user file).
-  const settingsPath = projectSettingsPath(absPath);
-  let hooksHash: string | null = null;
-
-  if (legacy && opts.installHooks) {
-    let canonical;
-    try {
-      canonical = loadCanonicalHooks();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logError(msg);
-      return 1;
-    }
-
-    let existing: Record<string, unknown> = {};
-    if (existsSync(settingsPath)) {
-      try {
-        existing = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<
-          string,
-          unknown
-        >;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        logError(
-          `refusing to clobber unreadable ${settingsPath}: ${msg}`,
-        );
-        return 1;
-      }
-    }
-
-    let merged: Record<string, unknown>;
-    try {
-      merged = mergeCanonicalHooks(existing, canonical);
-    } catch (err) {
-      if (err instanceof MalformedSettingsError) {
-        logError(
-          `settings.json merge failed (refusing to clobber): ${err.message}`,
-        );
-        return 1;
-      }
-      throw err;
-    }
-
-    const bakPath = backupSettings(settingsPath);
-    if (bakPath !== null) {
-      debug(`backed up existing settings.json to ${bakPath}`);
-    }
-    atomicWrite(settingsPath, JSON.stringify(merged, null, 2) + "\n");
-    info(`Wrote ${settingsPath} with merged hooks block`);
-  } else if (!legacy) {
-    debug(
-      "register-only install: hooks project globally at `igris init` " +
-        "(no per-project settings.json; pass --legacy-per-project for the old behavior)",
-    );
-  } else {
-    info("--no-hooks: skipping settings.json hooks merge");
-  }
+  // 3-6. FR-212d Phase 2: the legacy per-project layer (symlink layer,
+  // `.igris_version` marker, per-project `settings.json` hooks merge) + the
+  // CLAUDE.md render (FR-191) were DELETED. `igris install` is register-only:
+  // every surface projects GLOBALLY at `igris init` (the canonical-hooks merge
+  // target moved to `~/.claude/settings.json`); install just registers the
+  // project with the brain (step 7) so the global hooks de-no-op for it.
+  debug(
+    "register-only install: surfaces project globally at `igris init` " +
+      "(no per-project layer; --no-hooks is a no-op).",
+  );
 
   // 7. Registry — upsert with explicit slug.
   const techStack = detectTechStack(absPath);
@@ -261,7 +138,6 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
 
   // 8. installed_features.json — content hashes for upgrade detection (schema v2).
   const hashes = computeFeatureHashes({ includeHooks: opts.installHooks });
-  hooksHash = hashes.hooks_version;
 
   // Read brain channel/ref from .install-source.json (M2 schema v2 fields).
   // When the file is absent (CLI invoked before init/refresh), both default
@@ -277,7 +153,7 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
     cli_version: cliVersion,
     brain_channel: brainChannel,
     brain_ref: brainRef,
-    hooks_version: hooksHash,
+    hooks_version: hashes.hooks_version,
     agents_version: hashes.agents_version,
     skills_version: hashes.skills_version,
     rules_version: hashes.rules_version,
@@ -337,10 +213,7 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
   info("Install summary:");
   info(`  slug:           ${slug}`);
   info(`  path:           ${absPath}`);
-  info(`  mode:           ${legacy ? "legacy-per-project" : "register-only"}`);
-  if (legacy) {
-    info(`  hooks:          ${opts.installHooks ? "yes" : "no"}`);
-  }
+  info(`  mode:           register-only`);
   info(`  features:       ${root}/projects/${slug}/installed_features.json`);
 
   // TD-112: when --slug differs from basename(path), preserve a diagnostic
@@ -361,109 +234,24 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
   return 0;
 }
 
-/**
- * Materialize the .claude/{agents,rules,skills} symlinks on the project.
- * Mirrors `scripts/igris_install.sh:212-237` exactly:
- *
- *   - Agents: each *.md file under brain agents/ is linked individually.
- *     manifest.yaml is also linked.
- *   - Skills: each subdirectory under brain skills/ is linked as a dir.
- *
- * FR-187: the Rules symlink layer was removed when the universal rule retired
- * (baseline → core/os/standards.md). No `.claude/rules/` symlink is created.
- *
- * Throws SymlinkConflictError if any pre-existing path collides with a
- * non-matching symlink target. The early throw is intentional — install
- * never silently clobbers.
- */
-function applySymlinkLayer(projectPath: string, brainRoot: string): void {
-  const claudeDir = join(projectPath, ".claude");
-
-  // ---- Agents ---------------------------------------------------------
-  // TD-117: discovery is centralized in lib/install-discovery.ts so this
-  // verb and the dry-run enumerator share one source of truth.
-  const agentEntries = discoverAgentEntries(brainRoot);
-  if (agentEntries.length > 0) {
-    const agentsDest = join(claudeDir, "agents");
-    for (const entry of agentEntries) {
-      linkFile(entry.src, join(agentsDest, entry.basename));
-    }
-  }
-
-  // ---- Skills ---------------------------------------------------------
-  const skillEntries = discoverSkillEntries(brainRoot);
-  if (skillEntries.length > 0) {
-    const skillsDest = join(claudeDir, "skills");
-    for (const entry of skillEntries) {
-      linkDir(entry.src, join(skillsDest, entry.basename));
-    }
-  }
-}
+// FR-212d Phase 2: `applySymlinkLayer` (the per-project `.claude/{agents,skills}`
+// symlink materializer) was DELETED — `igris install` is register-only and no
+// longer symlinks. Skills/agents project GLOBALLY at `igris init` (skills via the
+// `skills` CLI delegate; agents via the global agent compiler). The TS symlink
+// primitives (`lib/symlinks.ts`) and the install discovery walk
+// (`lib/install-discovery.ts`) were deleted with it.
 
 /**
- * Enumerate the planned install operations into the DryRunCollector without
- * performing any of them. Mirrors the order of side-effects in runInstall:
- * symlinks → .igris_version → settings.json hooks merge →
- * registry upsert → installed_features.json.
- *
- * Discovery is read-only: we walk the brain core directory to enumerate the
- * symlinks that WOULD be created and report them as `would_create_dir` /
- * `would_write_file` records. The collector's printer renders them as a plan.
+ * Enumerate the planned register-only install operations into the DryRunCollector
+ * without performing any. FR-212d: there is no per-project layer to plan — only
+ * the registry upsert, installed_features.json, and the global igris-brain MCP
+ * registration.
  */
 function enumerateInstallPlan(
   projectPath: string,
-  brainRoot: string,
   slug: string,
-  installHooks: boolean,
-  legacy: boolean,
   dry: DryRunCollector,
 ): void {
-  const claudeDir = join(projectPath, ".claude");
-
-  // FR-212c: the symlink layer, .igris_version, and per-project hooks merge are
-  // LEGACY — only enumerated under --legacy-per-project. The register-only
-  // default plans none of them (surfaces project globally at `igris init`).
-  if (legacy) {
-    // Symlinks: agents (TD-117 — same discovery source as applySymlinkLayer)
-    const agentEntries = discoverAgentEntries(brainRoot);
-    if (agentEntries.length > 0) {
-      const agentsDest = join(claudeDir, "agents");
-      dry.wouldCreateDir(agentsDest);
-      for (const entry of agentEntries) {
-        dry.wouldWriteFile(
-          join(agentsDest, entry.basename),
-          `symlink to ${entry.src}`,
-        );
-      }
-    }
-
-    // Symlinks: skills
-    const skillEntries = discoverSkillEntries(brainRoot);
-    if (skillEntries.length > 0) {
-      const skillsDest = join(claudeDir, "skills");
-      dry.wouldCreateDir(skillsDest);
-      for (const entry of skillEntries) {
-        dry.wouldWriteFile(
-          join(skillsDest, entry.basename),
-          `symlink to ${entry.src}`,
-        );
-      }
-    }
-
-    // FR-191: no CLAUDE.md write to enumerate — the render machinery was retired.
-
-    // .igris_version
-    dry.wouldWriteFile(join(projectPath, ".igris_version"), "version marker");
-
-    // Hooks merge
-    if (installHooks) {
-      dry.wouldWriteFile(
-        projectSettingsPath(projectPath),
-        "merge canonical hooks block",
-      );
-    }
-  }
-
   // Registry upsert (no file path, but we record it as an invoked command).
   dry.wouldInvokeCommand(
     "sqlite",

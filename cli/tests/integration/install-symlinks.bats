@@ -1,43 +1,32 @@
 #!/usr/bin/env bats
 
-# install-symlinks.bats — integration tests for the native TS symlink layer
-# of `igris install` (M2.6/M2.10). Asserts that .claude/{agents,skills}
-# symlinks land correctly when the CLI fully owns the symlink layer (no shell
-# script invoked). FR-187 retired the .claude/rules/ symlink layer (the
-# universal rule moved to core/os/standards.md) — install creates no rules link.
+# install-symlinks.bats — FR-212d-updated.
 #
-# FR-212c: the per-project symlink layer is now LEGACY (the default install is
-# register-only — surfaces project globally at `igris init`). These tests pin
-# the legacy layer via `igris install --legacy-per-project`; the register-only
-# default is asserted by install.bats + the install.test.ts FR-212c describe.
-#
-# Brain core staged in $IGRIS_BRAIN_DIR via stage_brain_with_core helper
-# below — minimal but realistic: a couple of agents, the universal rule, two
-# skill dirs. (No CLAUDE.md template — FR-191 retired the render; TD-267 made
-# CLAUDE.md a static boot-pointer that install never regenerates.)
+# HISTORY: this file pinned the native TS per-project symlink layer of `igris
+# install` (.claude/{agents,skills} symlinks + .igris_version). FR-212d Phase 2
+# DELETED that layer (and the `--legacy-per-project` flag): `igris install` is
+# register-only — skills/agents project GLOBALLY at `igris init` (skills via the
+# `skills` CLI delegate; agents via the global agent compiler). So this file now
+# pins the INVERSE: register-only install materializes NO per-project layer. The
+# TD-267 CLAUDE.md boot-pointer guard (engine-independent) is retained.
 
 load _helpers.bash
 
-# Stage a brain that includes core/{agents,skills} so the native symlink
-# layer can find sources to link. Matches stage_brain's tmp layout but with
-# extras. (No core/rules/ — FR-187 retired the rules symlink layer.)
+# Stage a brain WITH core/{agents,skills} so a (former) symlink layer WOULD have
+# had sources to link — proving register-only does NOT link, not that there is
+# nothing to link.
 stage_brain_with_core() {
   stage_brain  # writes canonical-settings.json + memory/
 
-  # Agents
   mkdir -p "$IGRIS_BRAIN_DIR/core/agents"
   printf '# architect\n' > "$IGRIS_BRAIN_DIR/core/agents/architect.md"
   printf '# forger\n'    > "$IGRIS_BRAIN_DIR/core/agents/forger.md"
   printf 'agents: []\n'  > "$IGRIS_BRAIN_DIR/core/agents/manifest.yaml"
 
-  # Skills (each is a directory)
   mkdir -p "$IGRIS_BRAIN_DIR/core/skills/hunt"
   printf '# hunt skill\n' > "$IGRIS_BRAIN_DIR/core/skills/hunt/SKILL.md"
   mkdir -p "$IGRIS_BRAIN_DIR/core/skills/scan"
   printf '# scan skill\n' > "$IGRIS_BRAIN_DIR/core/skills/scan/SKILL.md"
-
-  # FR-191 retired the CLAUDE.md render + its .tmpl; TD-267 made CLAUDE.md a
-  # static boot-pointer. No template is staged — install writes no CLAUDE.md.
 }
 
 setup() {
@@ -45,69 +34,33 @@ setup() {
   export IGRIS_KEEP_BAK=0
 }
 
-@test "install creates .claude/agents/<name>.md symlinks pointing at brain agents" {
-  PROJ="$(stage_project agents)"
-  run $CLI_BIN install --legacy-per-project "$PROJ"
+@test "register-only install creates NO per-project .claude/{agents,skills} symlinks (FR-212d)" {
+  PROJ="$(stage_project regonly)"
+  run $CLI_BIN install "$PROJ"
   [ "$status" -eq 0 ]
-
-  [ -L "$PROJ/.claude/agents/architect.md" ]
-  [ -L "$PROJ/.claude/agents/forger.md" ]
-  [ -L "$PROJ/.claude/agents/manifest.yaml" ]
-
-  # Resolved target points at the brain.
-  TARGET=$(readlink "$PROJ/.claude/agents/architect.md")
-  [ "$TARGET" = "$IGRIS_BRAIN_DIR/core/agents/architect.md" ]
+  # The per-project symlink layer was deleted — surfaces project globally.
+  [ ! -e "$PROJ/.claude/agents" ]
+  [ ! -e "$PROJ/.claude/skills" ]
 }
 
-@test "install creates .claude/skills/<skill>/ symlinks for each skill dir" {
-  PROJ="$(stage_project skills)"
-  run $CLI_BIN install --legacy-per-project "$PROJ"
+@test "register-only install writes NO .igris_version marker (FR-212d)" {
+  PROJ="$(stage_project noversion)"
+  run $CLI_BIN install "$PROJ"
   [ "$status" -eq 0 ]
-
-  [ -L "$PROJ/.claude/skills/hunt" ]
-  [ -L "$PROJ/.claude/skills/scan" ]
-
-  # Reading through the symlink yields the SKILL.md
-  [ -f "$PROJ/.claude/skills/hunt/SKILL.md" ]
-  [ -f "$PROJ/.claude/skills/scan/SKILL.md" ]
+  # The .igris_version writer + the per-project marker were retired.
+  [ ! -f "$PROJ/.igris_version" ]
 }
 
 @test "install writes NO project CLAUDE.md (FR-191 render retired; TD-267 zero-config)" {
   PROJ="$(stage_project claudemd)"
-  # Project has no pre-existing CLAUDE.md.
   [ ! -f "$PROJ/CLAUDE.md" ]
 
-  run $CLI_BIN install --legacy-per-project "$PROJ"
+  run $CLI_BIN install "$PROJ"
   [ "$status" -eq 0 ]
 
-  # install is zero-config: it writes NO identity file. The CLAUDE.md render
-  # machinery + its .tmpl were retired (FR-191) and the file carries no
-  # enumeration (TD-267) — install must not regenerate one.
+  # install is zero-config: it writes NO identity file (FR-191 retired the render
+  # + its .tmpl; TD-267 made CLAUDE.md a static boot-pointer).
   [ ! -f "$PROJ/CLAUDE.md" ]
-}
-
-@test "install writes .igris_version with brain_path matching IGRIS_BRAIN_DIR" {
-  PROJ="$(stage_project versioned)"
-  run $CLI_BIN install --legacy-per-project "$PROJ"
-  [ "$status" -eq 0 ]
-
-  [ -f "$PROJ/.igris_version" ]
-  run python3 -c "import json,sys; d=json.load(open('$PROJ/.igris_version')); print(d['brain_path'])"
-  [ "$status" -eq 0 ]
-  [ "$output" = "$IGRIS_BRAIN_DIR" ]
-}
-
-@test "re-install is idempotent — symlinks unchanged, no-op for existing matching links" {
-  PROJ="$(stage_project idemlinks)"
-  run $CLI_BIN install --legacy-per-project "$PROJ"
-  [ "$status" -eq 0 ]
-  INO_BEFORE=$(stat -f '%i' "$PROJ/.claude/agents/architect.md" 2>/dev/null || stat -c '%i' "$PROJ/.claude/agents/architect.md")
-
-  run $CLI_BIN install --legacy-per-project "$PROJ"
-  [ "$status" -eq 0 ]
-  INO_AFTER=$(stat -f '%i' "$PROJ/.claude/agents/architect.md" 2>/dev/null || stat -c '%i' "$PROJ/.claude/agents/architect.md")
-
-  [ "$INO_BEFORE" = "$INO_AFTER" ]
 }
 
 # TD-267: the repo-root CLAUDE.md is a static boot-pointer. It MUST carry no

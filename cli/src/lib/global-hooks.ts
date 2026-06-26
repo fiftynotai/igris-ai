@@ -19,10 +19,12 @@
 
 import {
   existsSync,
+  mkdirSync,
   readFileSync,
   renameSync,
   writeFileSync,
 } from "node:fs";
+import { dirname } from "node:path";
 import { loadCanonicalHooks } from "./canonical-hooks.js";
 import { mergeCanonicalHooks, MalformedSettingsError } from "./json-merge.js";
 import { claudeUserSettingsPath } from "./paths.js";
@@ -117,6 +119,11 @@ export function mergeGlobalCanonicalHooks(opts?: {
   }
 
   try {
+    // Benign-create the parent dir (`~/.claude/`). At `igris init` the dir
+    // already exists, but `igris update`/`igris doctor --fix` can call this on a
+    // machine where `~/.claude/` was never created — without this the atomic
+    // tmp-write ENOENTs (FR-212d). Idempotent; recursive.
+    mkdirSync(dirname(targetPath), { recursive: true });
     backupSettings(targetPath);
     atomicWrite(targetPath, serialized);
   } catch (err) {

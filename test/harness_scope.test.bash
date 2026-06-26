@@ -346,6 +346,7 @@ EOF
 # ---------------------------------------------------------------------------
 
 @test "FR-155 skills compile: scope absent → emits unconditionally (back-compat)" {
+  skip "FR-212d: custom skills scope-filter projection retired (skills delegate to the skills CLI)"
   write_skills_manifest "$PROJ_A" ""
   run bash "$COMPILE" --project-root "$PROJ_A"
   [ "$status" -eq 0 ]
@@ -353,6 +354,7 @@ EOF
 }
 
 @test "FR-155 skills compile: scope=project paths=[A] matched by A → emits" {
+  skip "FR-212d: custom skills scope-filter projection retired (skills delegate to the skills CLI)"
   write_skills_manifest "$PROJ_A" "{ \"type\": \"project\", \"paths\": [\"$PROJ_A\"] }"
   run bash "$COMPILE" --project-root "$PROJ_A"
   [ "$status" -eq 0 ]
@@ -376,6 +378,7 @@ EOF
 }
 
 @test "FR-155 skills drift: scope=project paths=[A] matched by A → MATCH" {
+  skip "FR-212d: custom skills scope-filter projection retired (skills delegate to the skills CLI)"
   write_skills_manifest "$PROJ_A" "{ \"type\": \"project\", \"paths\": [\"$PROJ_A\"] }"
   run bash "$COMPILE" --project-root "$PROJ_A"
   [ "$status" -eq 0 ]

@@ -67,29 +67,22 @@ else
   IGRIS_CLI_CMD=(igris)
 fi
 
-# FR-212a: the SKILLS placement engine flag — read IDENTICALLY to
-# compile_harnesses.sh (L-519 §18.1: the compile pass and its drift sibling
-# MUST agree on the engine). DEFAULTS TO "custom" (the inline symlink-realpath
-# drift check below); only "delegate" opts into the tool's idempotent re-check.
+# FR-212d Phase 2: the SKILLS engine is now ALWAYS "delegate" — read IDENTICALLY
+# to compile_harnesses.sh (L-519 §18.1: the compile pass and its drift sibling
+# MUST agree). The custom symlink-realpath drift body was DELETED; `verify_skills`
+# is the tool's idempotent re-check only. No escape hatch (the `IGRIS_SKILLS_ENGINE`
+# env read is gone). Kept as a constant for the unconditional delegate drift arm.
 igris_skills_engine() {
-  if [ "${IGRIS_SKILLS_ENGINE:-}" = "delegate" ]; then
-    echo "delegate"
-  else
-    echo "custom"
-  fi
+  echo "delegate"
 }
 
-# FR-212b: the MCP placement engine flag — read IDENTICALLY to
-# compile_harnesses.sh (§18.1: the compile pass + its drift sibling MUST agree on
-# the engine). DEFAULTS TO "custom"; only "delegate" opts into the grant-drift
-# invariant below (under "custom" there is no Igris-written grant to verify — the
-# grant is a delegate-engine artifact, so the invariant runs ONLY when delegate).
+# FR-212d Phase 2: the MCP engine is now ALWAYS "delegate" — so the grant-drift
+# invariant below (assert the Igris-owned no-prompt grant is present per harness)
+# ALWAYS runs. The custom merger placement for the delegated harnesses was
+# DELETED; antigravity's ENTRY stays custom INSIDE the TS but its drift is still
+# the shared per-entry shape check (engine-agnostic). No escape hatch.
 igris_mcp_engine() {
-  if [ "${IGRIS_MCP_ENGINE:-}" = "delegate" ]; then
-    echo "delegate"
-  else
-    echo "custom"
-  fi
+  echo "delegate"
 }
 
 # ---------------------------------------------------------------------------
@@ -290,31 +283,9 @@ print(hashlib.sha256(sys.argv[1].encode("utf-8")).hexdigest())
 PY
 }
 
-# ---------------------------------------------------------------------------
-# resolve_skill_link_path <out_abs> <skill_name>
-#
-# TD-218 (Option C): compute the per-skill symlink link_path with a de-dup
-# guard. MUST stay byte-identical to the same helper in compile_harnesses.sh
-# (L-519 §18.1 / L-554 — drift derives the expected layout the same way
-# compile creates it). The contract is that the target `path` (→ out_abs) is
-# the PARENT skills dir, and the loop appends `/<skill_name>`. A LEGACY/hand-
-# edited manifest may carry a per-skill `path` that already ends in
-# `/<skill_name>` (e.g. `~/.agents/skills/content-pipeline`); naively
-# appending would double-nest to `<out_abs>/<skill_name>/<skill_name>/
-# SKILL.md` (depth-2), which native loaders (depth-1 scan) never discover.
-# When out_abs already terminates in <skill_name>, treat it as the link
-# target itself and do NOT append. Echoes the resolved link_path on stdout.
-# See TD-218.
-# ---------------------------------------------------------------------------
-resolve_skill_link_path() {
-  local out_abs="$1"
-  local skill_name="$2"
-  if [ "$(basename "$out_abs")" = "$skill_name" ]; then
-    printf '%s\n' "$out_abs"
-  else
-    printf '%s\n' "$out_abs/$skill_name"
-  fi
-}
+# FR-212d Phase 2: `resolve_skill_link_path` was DELETED here — its only caller
+# was the custom verify_skills symlink body, now retired (skills drift is the
+# `skills` CLI idempotent re-check). The compile sibling's copy was deleted too.
 
 # ---------------------------------------------------------------------------
 # verify_md_agent_symlink_drift <name> <harness_label> <target_abs>
@@ -532,6 +503,14 @@ verify_gemini_agent_hardlink_drift() {
 # the compile MCP pass (§18.1). Reads the on-disk harness config entry via
 # `extract_mcp_entry`, derives the EXPECTED native shape via `normalize_mcp_shape`
 # (the SAME helper that defines what compile writes), and structurally compares.
+#
+# FR-212d NOTE: this per-entry check re-derives the expected shape via the CUSTOM
+# `normalize_mcp_shape` (⇄ TS `buildHarnessMcpEntry`), so it is only valid for
+# CUSTOM-written entries. Today every MCP block is custom-shaped — the brain is
+# the only server, and it is written by the in-process custom merger
+# (init/install/doctor) OR by add-mcp into a custom-equivalent shape; only a
+# future personal-MCP placed via a non-custom `add-mcp` path would differ and
+# need its own expected-shape derivation here.
 #
 # Verdicts (single per row, via the any_* idiom inside the python compare):
 #   MISSING — config file absent OR the entry absent (extract rc 10). DRIFT++.
@@ -774,9 +753,9 @@ DRIFT=0
 # `case "$TREE_CHECKED" in *":$name:"*)` works under bash 3.2 (macOS default
 # — no associative arrays).
 TREE_CHECKED=":"
-# TD-201: per-skill-NAME tree-hash dedup (a multi-target skill block fires one
-# tree verdict, not one per (type, method) row). Same idiom as TREE_CHECKED.
-SKILL_TREE_CHECKED=":"
+# FR-212d Phase 2: SKILL_TREE_CHECKED (the per-skill-NAME tree-hash dedup) was
+# removed with the custom verify_skills body — skills drift is now the `skills`
+# CLI idempotent re-check, which has no per-skill tree pre-check to dedup.
 
 echo "Harness drift check (project root: $PROJECT_ROOT):"
 echo ""
@@ -1059,10 +1038,11 @@ fi
 # verify_skills — the skills drift-verification surface plugin (FR-202 M0).
 # Contains the FR-180 loud-vs-silent core-skip diagnostic, the SKILL_ROWS
 # flatten, and the per-skill tree-hash + per-target drift verdict loop — all
-# moved VERBATIM from the former inline skills drift pass. The outer
-# `if SURFACE_KIND = skills|all` gates are now the registry dispatch loop (this
-# fn runs only for the skills/all selection). Reads/writes the shared global
-# accumulators (TOTAL/MATCH/DRIFT/SKILL_TREE_CHECKED).
+# FR-212d Phase 2: the custom symlink/wrapper drift body + the TD-201 tree
+# pre-check were deleted; verify_skills is now the `skills` CLI idempotent
+# re-check. The outer `if SURFACE_KIND = skills|all` gates are the registry
+# dispatch loop (this fn runs only for the skills/all selection). Reads/writes
+# the shared global accumulators (TOTAL/MATCH/DRIFT/DELEGATED_SKILL_ROOTS).
 # ---------------------------------------------------------------------------
 verify_skills() {
 # FR-212a: per-call dedup set for the SKILLS DELEGATE drift arm — the distinct
@@ -1220,430 +1200,45 @@ if [ -n "$SKILL_ROWS" ]; then
       *)     out_abs="$PROJECT_ROOT/$s_path" ;;
     esac
 
-    # FR-212a: SKILLS DELEGATE drift arm. When IGRIS_SKILLS_ENGINE=delegate, the
-    # custom symlink-realpath drift body below does NOT apply (the `skills` CLI
-    # owns placement, under ~/.agents/skills + ~/.claude/skills — NOT the
-    # manifest's target paths). Instead the present/absent verdict is the tool's
-    # IDEMPOTENT re-run: re-projecting an already-correct skill set is a clean
-    # no-op (exit 0 → MATCH); a non-zero exit means the projection is missing or
-    # broken (→ DRIFT). Dispatched ONCE per distinct source root (sibling
-    # target-type rows collapse). Mirrors the compile delegate arm (L-519 §18.1).
-    # The custom drift body stays FULLY INTACT behind the flag — `continue` skips
-    # it. NO custom fallback (constraint #2): a non-zero re-check is observable
-    # DRIFT, never a silent fall-through to the realpath check.
-    if [ "$(igris_skills_engine)" = "delegate" ]; then
-      delegate_root="${src_abs:-$HOME/.igris/core/skills}"
-      already_delegated=0
-      # bash 3.2 + `set -u` empty-array guard (the first row hits an empty set).
-      for _r in ${DELEGATED_SKILL_ROOTS[@]+"${DELEGATED_SKILL_ROOTS[@]}"}; do
-        if [ "$_r" = "$delegate_root" ]; then already_delegated=1; break; fi
-      done
-      if [ "$already_delegated" -eq 1 ]; then
-        # Sibling target-type row for an already-re-checked root: fold its TOTAL++
-        # back so the count is one-per-root, matching the single re-check verdict.
-        TOTAL=$((TOTAL - 1))
-        continue
-      fi
-      DELEGATED_SKILL_ROOTS+=("$delegate_root")
-      drc=0
-      "${IGRIS_CLI_CMD[@]}" registry project-skills \
-        --source "$delegate_root" \
-        --project-root "$PROJECT_ROOT" \
-        ${OVERLAY:+--overlay "$OVERLAY"} >/dev/null 2>&1 || drc=$?
-      if [ "$drc" -eq 0 ]; then
-        MATCH=$((MATCH + 1))
-      else
-        echo "DRIFT skills (delegate) — re-check of $delegate_root failed (exit $drc); skills missing or broken" >&2
-        DRIFT=$((DRIFT + 1))
-      fi
+    # FR-212d Phase 2: SKILLS DELEGATE drift verdict (the ONLY skills-drift path
+    # now — the custom symlink-realpath drift body + the TD-201 tree pre-check
+    # were DELETED after the smoke gate went green). The `skills` CLI owns
+    # placement (under ~/.agents/skills + ~/.claude/skills — NOT the manifest's
+    # target paths), so the present/absent verdict is the tool's IDEMPOTENT
+    # re-run: re-projecting an already-correct skill set is a clean no-op
+    # (exit 0 → MATCH); a non-zero exit means the projection is missing or broken
+    # (→ DRIFT). Dispatched ONCE per distinct source root (sibling target-type
+    # rows collapse). Mirrors the compile delegate dispatch (L-519 §18.1). NO
+    # custom fallback (constraint #2): a non-zero re-check is observable DRIFT.
+    delegate_root="${src_abs:-$HOME/.igris/core/skills}"
+    already_delegated=0
+    # bash 3.2 + `set -u` empty-array guard (the first row hits an empty set).
+    for _r in ${DELEGATED_SKILL_ROOTS[@]+"${DELEGATED_SKILL_ROOTS[@]}"}; do
+      if [ "$_r" = "$delegate_root" ]; then already_delegated=1; break; fi
+    done
+    if [ "$already_delegated" -eq 1 ]; then
+      # Sibling target-type row for an already-re-checked root: fold its TOTAL++
+      # back so the count is one-per-root, matching the single re-check verdict.
+      TOTAL=$((TOTAL - 1))
       continue
     fi
-
-    # TD-201: skill TREE pre-check. ONE verdict per personal skill block
-    # regardless of how many (type, method) targets it declares. Mirrors the
-    # FR-156 agent tree pre-check above — `hash_agent_tree` is intentionally
-    # reused (Option B): the algorithm (sorted relpath + \0 + bytes folded
-    # into sha256) is surface-agnostic. See L-519 / TD-201 plan §2.
-    #
-    # Gated to layer=personal. Core skills (declared in surfaces-manifest.json)
-    # have no registry-vendored copy to drift against, so this is a silent
-    # no-op for them — same posture as FR-156's agent tree pre-check.
-    # MATCH/DRIFT counters bump WITHOUT TOTAL++, mirroring FR-156's posture
-    # exactly (the per-target FR-152 row counts toward TOTAL; this is an
-    # orthogonal pre-check). Dedup is keyed on the skill NAME (basename of
-    # src_abs, which is `registrySkillDirPath(<name>)` per L-517).
-    #
-    # SHAPE NOTE: `igris registry add-skill` vendors a single-skill source
-    # (containing top-level `SKILL.md`) as `<src_abs>/<skill_name>/...` —
-    # the vendor primitive name-prefixes (see `vendorSkillTreeAtomic` in
-    # cli/src/verbs/registry.ts:1217). So to compare apples-to-apples with
-    # the operator's original `origin.dir` (which has `SKILL.md` at root),
-    # the registry side is hashed one level DOWN at `<src_abs>/<name>`.
-    if [ "$s_layer" = "personal" ] && [ -n "$src_abs" ]; then
-      skill_name="$(basename "$src_abs")"
-      # FR-180 (S1): honor --filter on the per-skill tree drift pre-check too,
-      # so `igris add`'s scoped verify doesn't surface a pre-existing UNRELATED
-      # personal skill's tree drift as this add's failure.
-      if skill_name_matches_filter "$skill_name" "$FILTER"; then
-      skill_registry_dir="$src_abs/$skill_name"
-      skill_dedup_already=0
-      case "$SKILL_TREE_CHECKED" in
-        *":$skill_name:"*) skill_dedup_already=1 ;;
-      esac
-      if [ "$skill_dedup_already" -eq 0 ]; then
-        SKILL_TREE_CHECKED="${SKILL_TREE_CHECKED}${skill_name}:"
-        skill_origins_path="$BRAIN_DIR/registry/origins.json"
-        skill_origin_info=""
-        if [ -f "$skill_origins_path" ]; then
-          skill_origin_info=$(python3 - "$skill_origins_path" "$skill_name" <<'PY'
-import json
-import sys
-try:
-    with open(sys.argv[1], "r", encoding="utf-8") as fh:
-        origins = json.load(fh)
-except OSError:
-    sys.exit(0)
-o = origins.get("skill:" + sys.argv[2])
-if not isinstance(o, dict):
-    sys.exit(0)
-otype = o.get("type", "")
-if otype == "path":
-    print(otype + "\t" + (o.get("dir") or ""))
-elif otype == "github":
-    print(otype + "\t" + (o.get("repo") or "") + "@" + (o.get("ref") or ""))
-PY
-)
-        fi
-        if [ -z "$skill_origin_info" ]; then
-          : # no origin recorded for this personal skill — silent skip. The
-            # per-target FR-153 verdict below still fires. Same zero-migration
-            # posture as the FR-156 agent pre-check.
-        else
-          skill_origin_type="${skill_origin_info%%	*}"
-          skill_origin_payload="${skill_origin_info#*	}"
-          if [ "$skill_origin_type" = "path" ]; then
-            skill_origin_dir="$skill_origin_payload"
-            case "$skill_origin_dir" in
-              "~"/*) skill_origin_dir="$HOME/${skill_origin_dir#"~/"}" ;;
-            esac
-            if [ ! -d "$skill_registry_dir" ]; then
-              echo "  [$skill_name/tree] DRIFTED — registry dir absent: $skill_registry_dir"
-              DRIFT=$((DRIFT + 1))
-            elif [ ! -d "$skill_origin_dir" ]; then
-              echo "  [$skill_name/tree] NOTE — source dir gone ($skill_origin_dir); tree drift undetectable, per-target verify continues"
-            else
-              skill_tree_expected=$(hash_agent_tree "$skill_registry_dir")
-              skill_tree_actual=$(hash_agent_tree "$skill_origin_dir")
-              if [ "$skill_tree_expected" = "$skill_tree_actual" ]; then
-                echo "  [$skill_name/tree] MATCH"
-                MATCH=$((MATCH + 1))
-              else
-                echo "  [$skill_name/tree] DRIFTED"
-                echo "      registry  : $skill_registry_dir (sha $skill_tree_expected)"
-                echo "      source    : $skill_origin_dir (sha $skill_tree_actual)"
-                # Locate up to N=5 differing relpaths. Identical skip-list and
-                # cap to the FR-156 agent diff walker (so the two stay in
-                # lockstep). Diff emits relpaths only — no body bytes ever
-                # printed (L-515 read-only posture). TD-202: REGISTRY-NOTICE.md
-                # added to skip-list — vendored-copy sidecar must not register
-                # as drift against the operator's source (which lacks it).
-                skill_tree_diff=$(python3 - "$skill_registry_dir" "$skill_origin_dir" <<'PY'
-import hashlib
-import os
-import sys
-
-EXACT = {"MAINTAINING.md", ".DS_Store", "node_modules", ".venv", "__pycache__", "REGISTRY-NOTICE.md"}
-
-
-def skipped(name):
-    if name in EXACT:
-        return True
-    if name.startswith(".git"):
-        return True
-    if name.endswith(".pyc"):
-        return True
-    return False
-
-
-def walk(tree):
-    out = {}
-    if not os.path.isdir(tree):
-        return out
-    for root, dirs, files in os.walk(tree):
-        dirs[:] = [d for d in dirs if not skipped(d)]
-        for f in files:
-            if skipped(f):
-                continue
-            abs_p = os.path.join(root, f)
-            rel = os.path.relpath(abs_p, tree).replace(os.sep, "/")
-            # FR-158 / FR-159: per-harness α-assembly output exclusion is
-            # moot for skills (no α-assembly output) but kept for parity
-            # with hash_agent_tree — see TD-201 plan §2 + FR-158 + FR-159.
-            if rel in ("harness.claude.md", "harness.gemini.md", "harness.codex.toml", "harness.opencode.md"):
-                continue
-            try:
-                with open(abs_p, "rb") as fh:
-                    out[rel] = hashlib.sha256(fh.read()).hexdigest()
-            except OSError:
-                out[rel] = "<unreadable>"
-    return out
-
-
-a = walk(sys.argv[1])  # registry
-b = walk(sys.argv[2])  # source
-diffs = []
-keys = sorted(set(a) | set(b))
-for k in keys:
-    if k not in a:
-        diffs.append("+ " + k + " (only in source)")
-    elif k not in b:
-        diffs.append("- " + k + " (only in registry)")
-    elif a[k] != b[k]:
-        diffs.append("~ " + k + " (contents differ)")
-N = 5
-for d in diffs[:N]:
-    print("      " + d)
-if len(diffs) > N:
-    print("      (... and {} more)".format(len(diffs) - N))
-PY
-)
-                if [ -n "$skill_tree_diff" ]; then
-                  printf '%s\n' "$skill_tree_diff"
-                fi
-                echo "      reason    : skill tree diverges from recorded path-origin source — \`igris registry add-skill --name $skill_name --from <src>\` re-vendors"
-                DRIFT=$((DRIFT + 1))
-              fi
-            fi
-          elif [ "$skill_origin_type" = "github" ]; then
-            echo "  [$skill_name/tree] NOTE — github origin ($skill_origin_payload); freshness is release-tag tracked, tree-hash drift not applicable"
-          fi
-        fi
-      fi
-      fi  # FR-180 (S1): close skill_name_matches_filter guard
-    fi
-
-    verdict="MATCH"
-    reason=""
-    case "$s_type/$s_method" in
-      claude/symlink|agents/symlink)
-        # FR-149/FR-153/FR-157/FR-202 (M1): per-skill symlinks under
-        # <out_abs>/<name> pointing at <src_abs>/<name>. Verdict by target-path
-        # realpath + L-515 registry containment. ONE parameterized branch serves
-        # the live symlink targets (pairs line-for-line with the collapsed
-        # compile-side branch, L-519 §18.1):
-        #   claude → no absolute-literal guard (Claude resolves symlinks from
-        #            their location).
-        #   agents → keeps the FR-157 D2 absolute-literal verdict (codex
-        #            re-resolves relative symlinks from cwd regardless of where
-        #            the symlink LIVES; the `~/.agents/skills/` standard is read
-        #            natively by codex AND gemini, so they need no standalone
-        #            target).
-        # Every <name>/SKILL.md walked at compile time must have a registry-
-        # anchored symlink under out_abs at drift time. Both sides of the
-        # containment check are realpath'd so macOS `/var` → `/private/var` does
-        # not produce false "not registry-anchored". The dead standalone
-        # codex/symlink + gemini/symlink verdict branches were removed in FR-202
-        # M1 (no manifest declared them). The collapse preserves the exact
-        # verdict bytes each live branch emitted: every reason string keys on
-        # $s_type (== the literal "claude"/"agents" the old branches printed),
-        # and the relative-target verdict fires for `agents` only.
-        conv_root="${src_abs:-$HOME/.igris/core/skills}"
-        if [ ! -d "$conv_root" ]; then
-          echo "  [skills/$s_type] MISSING — skills root absent: $conv_root"
-          DRIFT=$((DRIFT + 1))
-          continue
-        fi
-        registry_real=$(realpath "$BRAIN_DIR/registry" 2>/dev/null || echo "$BRAIN_DIR/registry")
-        any_missing=0
-        any_drift=0
-        any_unanchored=0
-        any_realfile=0
-        any_too_deep=0
-        any_relative=0
-        checked=0
-        while IFS= read -r -d '' skill_md; do
-          skill_name="$(basename "$(dirname "$skill_md")")"
-          # FR-180 (S1): honor --filter on the skills surface (parity with the
-          # agent flatten + compile_harnesses.sh skills branches). Scopes
-          # `igris add`'s verify to the just-added skill. §18.1 paired change.
-          skill_name_matches_filter "$skill_name" "$FILTER" || continue
-          skill_dir="$(dirname "$skill_md")"
-          skill_dir_real=$(realpath "$skill_dir" 2>/dev/null || echo "$skill_dir")
-          link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
-          if [ ! -e "$link_path" ] && [ ! -L "$link_path" ]; then
-            any_missing=1
-          elif [ -L "$link_path" ]; then
-            # FR-157 D2: for the agents target, the literal target must be
-            # absolute (codex re-resolves relative symlinks from cwd). Check
-            # readlink BEFORE realpath. Claude has no such guard.
-            if [ "$s_type" = "agents" ]; then
-              literal=$(readlink "$link_path" 2>/dev/null || true)
-              case "$literal" in
-                /*) : ;;
-                *) any_relative=1 ;;
-              esac
-            fi
-            resolved=$(realpath "$link_path" 2>/dev/null || true)
-            if [ -z "$resolved" ]; then
-              any_drift=1
-            else
-              # FR-180 cross-phase: the COMPILE side (the §18.1 source of truth)
-              # creates the per-skill symlink pointing at <conv_root>/<name>
-              # (`skill_dir`). For a CORE skill conv_root is `~/.igris/core/skills`
-              # (the surfaces-manifest `~`-prefixed source), so the canonical
-              # symlink target is NOT under the registry — it points straight at
-              # core. The MATCH condition is therefore "resolves to the canonical
-              # source compile linked" (`resolved == skill_dir_real`), which holds
-              # for BOTH a registry-vendored personal skill (skill_dir under the
-              # registry) AND a core skill (skill_dir under core/skills). The
-              # registry-containment check is retained ONLY to distinguish a
-              # registry-anchored-but-WRONG-file drift from a genuinely unanchored
-              # (points-nowhere-canonical) symlink. Without this, every core skill
-              # false-DRIFTED as "not registry-anchored" whenever the check was
-              # scoped to a root that OWNS the core surfaces (e.g. `igris add
-              # --core`'s brain-root verify) — a pre-existing check/compile
-              # divergence masked while core skills were never checked from an
-              # owning root.
-              if [ "$resolved" = "$skill_dir_real" ]; then
-                : # MATCH — symlink points at the canonical source compile linked.
-              else
-                case "$resolved" in
-                  "$registry_real"/*|"$registry_real")
-                    # Registry-anchored but NOT the expected canonical file.
-                    any_drift=1
-                    ;;
-                  *)
-                    any_unanchored=1
-                    ;;
-                esac
-              fi
-            fi
-            # TD-218: depth-1 discoverability — SKILL.md MUST be at
-            # <link_path>/SKILL.md. A registry-anchored-but-too-deep symlink
-            # (legacy per-skill target.path) leaves SKILL.md one level deeper,
-            # invisible to native loaders that scan depth-1.
-            if [ ! -f "$link_path/SKILL.md" ]; then
-              any_too_deep=1
-            fi
-          else
-            # Not a symlink — a regular file/dir at the symlink target. Treated
-            # as drift: the symlink mechanism is not in effect.
-            any_realfile=1
-          fi
-          checked=$((checked + 1))
-        done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
-                   -name 'SKILL.md' -print0 | sort -z)
-        if [ "$any_missing" -eq 1 ]; then
-          verdict="MISSING"
-          reason="one or more $s_type skill symlinks absent"
-        elif [ "$any_realfile" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more target paths are regular files/dirs, not symlinks (legacy reference-mode state — remove manually, then run \`igris harness compile\`)"
-        elif [ "$any_unanchored" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more $s_type skill symlinks not registry-anchored (legacy reference-mode state — run \`igris harness compile\` to migrate)"
-        elif [ "$any_drift" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more $s_type skill symlinks point at the wrong canonical (registry-anchored but mismatched)"
-        elif [ "$any_too_deep" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more $s_type skill symlinks resolve but SKILL.md is not at depth-1 (<link_path>/SKILL.md missing) — native loaders scan depth-1; repair target.path to the PARENT skills dir, then run \`igris harness compile\`"
-        elif [ "$s_type" = "agents" ] && [ "$any_relative" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more agents skill symlinks have a relative target (codex resolves these from cwd, not symlink location — FR-157 D2)"
-        fi
-        echo "  [skills/$s_type] $verdict"
-        echo "      source     : $conv_root"
-        echo "      artifact dir: $out_abs ($checked skills checked)"
-        ;;
-      opencode/command)
-        # FR-171: thin command wrappers (Option A). For each <name>/SKILL.md
-        # under the source root, a `<out_abs>/<name>.md` wrapper must exist,
-        # carry our generated-marker (line 1), and load the canonical SKILL.md
-        # via the expected `@~/.igris/core/skills/<name>/SKILL.md` directive.
-        # Verdicts (pair line-for-line with the compile branch, L-519 §18.1):
-        #   MISSING  — one or more wrapper files absent (or roster count ≠
-        #              wrapper count → count-parity failure, same signal).
-        #   DRIFTED  — a wrapper is a symlink (foreign shape), OR lacks the
-        #              generated-marker (hand-authored — would be refused at
-        #              compile), OR its `@`-target points at the wrong skill.
-        #   MATCH    — every roster skill has a marked wrapper with the correct
-        #              `@`-target.
-        conv_root="${src_abs:-$HOME/.igris/core/skills}"
-        if [ ! -d "$conv_root" ]; then
-          echo "  [skills/$s_type] MISSING — skills root absent: $conv_root"
-          DRIFT=$((DRIFT + 1))
-          continue
-        fi
-        any_missing=0
-        any_symlink=0
-        any_unmarked=0
-        any_wrong_target=0
-        checked=0
-        # FR-171 marker — MUST byte-match OPENCODE_COMMAND_MARKER in
-        # compile_harnesses.sh (§18.1 compile/drift pairing).
-        oc_marker="<!-- Generated by igris harness compile (FR-171 opencode/command) — edit the canonical SKILL.md, not this wrapper -->"
-        while IFS= read -r -d '' skill_md; do
-          skill_name="$(basename "$(dirname "$skill_md")")"
-          # FR-180 (S1): honor --filter on the skills surface (parity with the
-          # other 4 check branches + compile). Scopes `igris add`'s verify.
-          skill_name_matches_filter "$skill_name" "$FILTER" || continue
-          link_path="$out_abs/$skill_name.md"
-          # FR-171: expected `@`-target is the ACTUAL canonical SKILL.md the
-          # compile walked (~`-prefixed when under $HOME), computed identically
-          # to compile's opencode_at_target (L-519 §18.1 — same source walk).
-          case "$skill_md" in
-            "$HOME"/*) expected_at="@~/${skill_md#"$HOME"/}" ;;
-            *)         expected_at="@$skill_md" ;;
-          esac
-          if [ -L "$link_path" ]; then
-            any_symlink=1
-          elif [ ! -e "$link_path" ]; then
-            any_missing=1
-          else
-            first_line="$(head -n 1 "$link_path" 2>/dev/null || true)"
-            if [ "$first_line" != "$oc_marker" ]; then
-              any_unmarked=1
-            elif ! grep -qF -- "$expected_at" "$link_path" 2>/dev/null; then
-              any_wrong_target=1
-            fi
-          fi
-          checked=$((checked + 1))
-        done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
-                   -name 'SKILL.md' -print0 | sort -z)
-        if [ "$any_missing" -eq 1 ]; then
-          verdict="MISSING"
-          reason="one or more opencode command wrappers absent (run \`igris harness compile\`)"
-        elif [ "$any_symlink" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more opencode command targets are symlinks (a command wrapper is a real file — remove manually, then run \`igris harness compile\`)"
-        elif [ "$any_unmarked" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more opencode command wrappers lack the FR-171 generated-marker (hand-authored file at a generated path — remove manually if it should be a generated wrapper)"
-        elif [ "$any_wrong_target" -eq 1 ]; then
-          verdict="DRIFTED"
-          reason="one or more opencode command wrappers do not load the expected canonical SKILL.md via @file (run \`igris harness compile\`)"
-        fi
-        echo "  [skills/$s_type] $verdict"
-        echo "      source     : $conv_root"
-        echo "      artifact dir: $out_abs ($checked wrappers checked)"
-        ;;
-      *)
-        verdict="DRIFTED"
-        reason="unsupported type/method '$s_type/$s_method'"
-        echo "  [skills/$s_type] $verdict"
-        ;;
-    esac
-
-    if [ "$verdict" = "MATCH" ]; then
+    DELEGATED_SKILL_ROOTS+=("$delegate_root")
+    drc=0
+    "${IGRIS_CLI_CMD[@]}" registry project-skills \
+      --source "$delegate_root" \
+      --project-root "$PROJECT_ROOT" \
+      ${OVERLAY:+--overlay "$OVERLAY"} >/dev/null 2>&1 || drc=$?
+    if [ "$drc" -eq 0 ]; then
       MATCH=$((MATCH + 1))
     else
-      echo "      reason     : $reason"
+      echo "DRIFT skills (delegate) — re-check of $delegate_root failed (exit $drc); skills missing or broken" >&2
       DRIFT=$((DRIFT + 1))
     fi
+    continue
   done <<< "$SKILL_ROWS"
 fi
 }
+
 
 # ---------------------------------------------------------------------------
 # verify_mcp — the MCP-server drift-verification surface plugin (FR-202 M0).
@@ -1728,14 +1323,20 @@ fi
 # server registration. That grant is a NEW projection artifact the per-entry
 # drift loop above does NOT see (it checks the SERVER ENTRY in the mcpServers/
 # mcp_servers config, not the permissions/trust surface). Assert the grant is
-# PRESENT for every harness — a missing grant (any harness) is DRIFT. Under
-# "custom" (default) there is no Igris-written grant, so this invariant is a
-# no-op (the grant is a delegate-engine artifact). The grant predicate is the TS
-# `verifyBrainGrant` exposed via `igris registry verify-mcp-grant` (exit 0 =
-# present, 1 = missing) — bash never re-implements the per-harness grant grammar
-# (§18.1). opencode is `covered` (its grant lives in agent frontmatter) and the
-# verb reports it present.
-if [ "$(igris_mcp_engine)" = "delegate" ]; then
+# PRESENT for every harness — a missing grant (any harness) is DRIFT. The grant
+# predicate is the TS `verifyBrainGrant` exposed via `igris registry
+# verify-mcp-grant` (exit 0 = present, 1 = missing) — bash never re-implements the
+# per-harness grant grammar (§18.1). opencode is `covered` (its grant lives in
+# agent frontmatter) and the verb reports it present.
+#
+# FR-212d Phase 2: the engine is now ALWAYS delegate, so the grant invariant is
+# GATED on whether the brain MCP is actually in scope (`$MCP_DRIFT_ROWS` non-empty
+# — i.e. an mcp_servers block was flattened from the manifest/core surfaces). A
+# project that declares NO MCP block (e.g. an agent-only personal manifest, or a
+# project that does not own the core surfaces) has nothing to grant, so the
+# invariant must not fire a phantom grant-DRIFT. The smoke gate + real installs
+# declare the brain MCP, so the grant IS asserted there.
+if [ -n "$MCP_DRIFT_ROWS" ]; then
   for grant_harness in claude codex gemini opencode antigravity; do
     TOTAL=$((TOTAL + 1))
     grc=0
@@ -1855,7 +1456,7 @@ fi
 # registry entry + a verify_<surface> plugin, ZERO edit here. Plugins are called
 # as PLAIN statements (never in a condition) so `set -e` stays active inside them
 # exactly as in the former top-level passes. Accumulators (TOTAL/MATCH/DRIFT and
-# the TREE_CHECKED/SKILL_TREE_CHECKED dedup strings) are global, shared across
+# the TREE_CHECKED dedup string + DELEGATED_SKILL_ROOTS) are global, shared across
 # plugins (bash 3.2 has no namerefs). Verdict bytes are held INVARIANT — the
 # Phase-0 byte-identical baseline is the acceptance oracle.
 # ---------------------------------------------------------------------------

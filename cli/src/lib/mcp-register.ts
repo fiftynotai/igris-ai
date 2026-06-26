@@ -1567,11 +1567,25 @@ export function registerMcpInClaudeJson(opts?: {
   claudeJsonPath?: string;
 }): McpRegisterResult {
   const targetPath = opts?.claudeJsonPath ?? claudeJsonPath();
-  const [{ result }] = registerBrainAcrossHarnesses({
-    mcpEntryPath: opts?.mcpEntryPath,
-    harnesses: ["claude"],
-    configPaths: opts?.claudeJsonPath ? { claude: opts.claudeJsonPath } : undefined,
-  });
+  // FR-212d: this is the install-time `~/.claude.json` belt-and-suspenders shim
+  // (install step 11 / doctor mcp-unregistered fix), NOT the harness-compile MCP
+  // projection the delegate owns. It keeps the hardened DIRECT-WRITE contract
+  // (idempotency, malformed-never-corrupted, single rolling backup — the 30-case
+  // suite) by forcing the CUSTOM merger regardless of the (now delegate-default)
+  // engine. Same posture as antigravity: a deterministic Igris-owned write for a
+  // specific config the delegate path does not cleanly serve here. The harness
+  // `compile`/`registerBrainAcrossHarnesses` path delegates the 4 harnesses; this
+  // narrow shim does not.
+  const [{ result }] = registerBrainAcrossHarnesses(
+    {
+      mcpEntryPath: opts?.mcpEntryPath,
+      harnesses: ["claude"],
+      configPaths: opts?.claudeJsonPath
+        ? { claude: opts.claudeJsonPath }
+        : undefined,
+    },
+    { engine: "custom" },
+  );
   // Re-stamp the Claude-specific result fields the existing suite asserts.
   return {
     ...result,

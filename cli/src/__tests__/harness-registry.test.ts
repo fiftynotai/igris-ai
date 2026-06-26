@@ -4268,118 +4268,135 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
     expect(produced).toContain("XYZZY");
   });
 
-  it("add-skill overlay: REAL compiler --surface skills projects the personal block ALONGSIDE the core block (multi-source)", async () => {
+  it("add-skill overlay: REAL compiler --surface skills DELEGATES both blocks' sources to the `skills` CLI (multi-source, FR-212d)", async () => {
     if (!toolingAvailable()) {
       return;
     }
     process.env.IGRIS_BRAIN_DIR = brainDir;
 
-    // TD-191 semantics: `surfaces.skills` is an ARRAY of blocks. Each block
-    // carries its OWN source/layer/targets. The personal block compiles
-    // ALONGSIDE the core block — they are SIBLINGS in the array, NOT a
-    // shared-source-with-unioned-targets pair (which was the pre-TD-191
-    // model). The core block here uses its own skills source; the personal
-    // block carries a DIFFERENT skills source (the writer vendors it under
-    // ~/.igris/registry/skills/<name>/).
-    const coreSkillsRoot = join(fixtureRoot, "skills-core");
-    mkdirSync(join(coreSkillsRoot, "alpha"), { recursive: true });
-    writeFileSync(
-      join(coreSkillsRoot, "alpha", "SKILL.md"),
-      "---\nname: alpha\ndescription: core alpha\n---\nALPHA CORE BODY\n",
-    );
+    // FR-212d Phase 2: `compile --surface skills` no longer projects per-skill
+    // symlinks at the manifest `targets[].path`. The custom engine was retired;
+    // `project_skills` now shells to `igris registry project-skills --source
+    // <root>` → `skills add <root> -g -a <5 harnesses>`, which places EVERY skill
+    // under each distinct source root into the universal store
+    // (`~/.agents/skills/<name>` + `~/.claude/skills/<name>`). The per-block
+    // `targets[].path` + cross-source-isolation concepts are MOOT (the `skills`
+    // CLI keys placement by skill NAME in a shared store). This test sandboxes
+    // HOME so the real `skills` CLI writes into tmp (NEVER the dev's real home)
+    // and asserts BOTH blocks' sources (core `alpha` + personal vendored `mine`)
+    // were projected — proving the multi-source delegate dispatch ran for each
+    // distinct source root. (Per-harness placement detail is the smoke gate's job.)
+    const homeBackup = process.env.HOME;
+    const homeSandbox = join(tmpRoot, "delegate-home");
+    mkdirSync(homeSandbox, { recursive: true });
+    process.env.HOME = homeSandbox;
+    try {
+      // TD-191 semantics: `surfaces.skills` is an ARRAY of sibling blocks, each
+      // with its OWN source. The core block uses its own skills source; the
+      // personal block carries a DIFFERENT source (vendored under
+      // ~/.igris/registry/skills/<name>/).
+      const coreSkillsRoot = join(fixtureRoot, "skills-core");
+      mkdirSync(join(coreSkillsRoot, "alpha"), { recursive: true });
+      writeFileSync(
+        join(coreSkillsRoot, "alpha", "SKILL.md"),
+        "---\nname: alpha\ndescription: core alpha\n---\nALPHA CORE BODY\n",
+      );
 
-    const personalSkillsRoot = join(fixtureRoot, "skills-mine");
-    mkdirSync(join(personalSkillsRoot, "mine"), { recursive: true });
-    writeFileSync(
-      join(personalSkillsRoot, "mine", "SKILL.md"),
-      "---\nname: mine\ndescription: personal mine\n---\nMINE PERSONAL BODY\n",
-    );
+      const personalSkillsRoot = join(fixtureRoot, "skills-mine");
+      mkdirSync(join(personalSkillsRoot, "mine"), { recursive: true });
+      writeFileSync(
+        join(personalSkillsRoot, "mine", "SKILL.md"),
+        "---\nname: mine\ndescription: personal mine\n---\nMINE PERSONAL BODY\n",
+      );
 
-    const coreOut = join(fixtureRoot, "gemini-core");
-    const personalOut = join(fixtureRoot, "gemini-personal");
-    writeFileSync(
-      join(fixtureRoot, "harness-manifest.json"),
-      JSON.stringify({
-        version: 1,
-        agents: [],
-        surfaces: {
-          skills: [
-            {
-              source: coreSkillsRoot,
-              layer: "core",
-              targets: [
-                { type: "claude", method: "symlink", path: coreOut },
-              ],
-            },
-          ],
+      const coreOut = join(fixtureRoot, "gemini-core");
+      const personalOut = join(fixtureRoot, "gemini-personal");
+      writeFileSync(
+        join(fixtureRoot, "harness-manifest.json"),
+        JSON.stringify({
+          version: 1,
+          agents: [],
+          surfaces: {
+            skills: [
+              {
+                source: coreSkillsRoot,
+                layer: "core",
+                targets: [{ type: "claude", method: "symlink", path: coreOut }],
+              },
+            ],
+          },
+        }),
+      );
+
+      // Write the personal overlay via the REAL verb (TD-191 copy-vendor mode,
+      // namespaced origin, registry/skills/<name>/ vendored tree) — UNCHANGED by
+      // FR-212d (the add-skill store path is independent of the projection engine).
+      const writtenOverlay = join(
+        brainDir,
+        "registry",
+        "harness-manifest.personal.json",
+      );
+      const addCode = await runRegistry({
+        action: "add-skill",
+        name: "mine",
+        from: join(personalSkillsRoot, "mine"),
+        targets: [`claude:symlink:${personalOut}`],
+        projectRoot: fixtureRoot,
+      });
+      expect(addCode).toBe(0);
+      expect(existsSync(writtenOverlay)).toBe(true);
+      // Vendored tree lives under registry/skills/<name>/ per L-517.
+      const vendoredSkill = join(
+        brainDir,
+        "registry",
+        "skills",
+        "mine",
+        "mine",
+        "SKILL.md",
+      );
+      expect(existsSync(vendoredSkill)).toBe(true);
+
+      // The overlay passes the REAL validate_manifest (surfaces sub-shape).
+      const validate = execFileSync(
+        "bash",
+        [
+          "-c",
+          `source "${COMMON_SH}" && validate_manifest "${writtenOverlay}" "${SCHEMA}"`,
+        ],
+        { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
+      );
+      expect(typeof validate).toBe("string");
+
+      // Run the REAL compiler restricted to the skills surface. It auto-discovers
+      // the personal overlay, concatenates blocks (core + personal), and DELEGATES
+      // each distinct source root to `skills add` (HOME is sandboxed).
+      execFileSync(
+        "bash",
+        [COMPILE_SH, "--project-root", fixtureRoot, "--surface", "skills"],
+        {
+          encoding: "utf-8",
+          env: { ...process.env, IGRIS_BRAIN_DIR: brainDir, HOME: homeSandbox },
         },
-      }),
-    );
+      );
 
-    // Write the personal overlay via the REAL verb (TD-191: copy-vendor mode,
-    // namespaced origin, registry/skills/<name>/ vendored tree). Drive
-    // through IGRIS_BRAIN_DIR.
-    const writtenOverlay = join(
-      brainDir,
-      "registry",
-      "harness-manifest.personal.json",
-    );
-    const addCode = await runRegistry({
-      action: "add-skill",
-      name: "mine",
-      from: join(personalSkillsRoot, "mine"),
-      targets: [`claude:symlink:${personalOut}`],
-      projectRoot: fixtureRoot,
-    });
-    expect(addCode).toBe(0);
-    expect(existsSync(writtenOverlay)).toBe(true);
-    // Vendored tree lives under registry/skills/<name>/ per L-517.
-    const vendoredSkill = join(
-      brainDir,
-      "registry",
-      "skills",
-      "mine",
-      "mine",
-      "SKILL.md",
-    );
-    expect(existsSync(vendoredSkill)).toBe(true);
-
-    // The overlay passes the REAL validate_manifest (surfaces sub-shape).
-    const validate = execFileSync(
-      "bash",
-      [
-        "-c",
-        `source "${COMMON_SH}" && validate_manifest "${writtenOverlay}" "${SCHEMA}"`,
-      ],
-      { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
-    );
-    expect(typeof validate).toBe("string");
-
-    // Run the REAL compiler restricted to the skills surface. It auto-
-    // discovers the personal overlay, concatenates blocks (core + personal),
-    // and projects BOTH blocks from their OWN sources.
-    execFileSync(
-      "bash",
-      [COMPILE_SH, "--project-root", fixtureRoot, "--surface", "skills"],
-      { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
-    );
-    // FR-153: per-skill symlinks at <out>/<name> → <source>/<name>.
-    // Core block projected — alpha symlink from the core source.
-    expect(existsSync(join(coreOut, "alpha"))).toBe(true);
-    // Personal block projected — mine symlink from the personal vendored source.
-    expect(existsSync(join(personalOut, "mine"))).toBe(true);
-    // (Cross-source isolation: the core source's alpha skill MUST NOT land
-    // in the personal target, and vice versa — proves the per-block source
-    // selection works.)
-    expect(existsSync(join(personalOut, "alpha"))).toBe(false);
-    expect(existsSync(join(coreOut, "mine"))).toBe(false);
-    // The personal target's body proves the vendored source was read (follow
-    // the symlink to the original SKILL.md content).
-    const minePersonal = readFileSync(
-      join(personalOut, "mine", "SKILL.md"),
-      "utf-8",
-    );
-    expect(minePersonal).toContain("MINE PERSONAL BODY");
+      // FR-212d delegate placement: claude-code → ~/.claude/skills; the other 4
+      // harnesses → the shared universal store ~/.agents/skills. BOTH blocks'
+      // sources were projected (core `alpha` from skills-core, personal `mine`
+      // from the vendored registry tree) — proving the multi-source dispatch ran.
+      const claudeAlpha = join(homeSandbox, ".claude", "skills", "alpha", "SKILL.md");
+      const claudeMine = join(homeSandbox, ".claude", "skills", "mine", "SKILL.md");
+      expect(existsSync(claudeAlpha)).toBe(true);
+      expect(existsSync(claudeMine)).toBe(true);
+      // The bodies prove each block's OWN source was read (core vs personal).
+      expect(readFileSync(claudeAlpha, "utf-8")).toContain("ALPHA CORE BODY");
+      expect(readFileSync(claudeMine, "utf-8")).toContain("MINE PERSONAL BODY");
+      // The manifest `targets[].path` (custom-engine concept) is NOT honored by
+      // the delegate — no per-skill symlink lands there anymore.
+      expect(existsSync(join(coreOut, "alpha"))).toBe(false);
+      expect(existsSync(join(personalOut, "mine"))).toBe(false);
+    } finally {
+      process.env.HOME = homeBackup;
+    }
   });
 
   it("INTEGRATION #11: REAL validate_manifest accepts the writer's array-shape overlay (jsonschema + structural-fallback agree)", async () => {

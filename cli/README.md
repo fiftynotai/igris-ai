@@ -62,19 +62,28 @@ rules, prompts) and seeing the changes immediately.
 
 ## Architecture
 
-The CLI owns the entire install pipeline natively in TypeScript:
+The CLI owns the entire install pipeline natively in TypeScript. FR-212c/d
+made the surfaces GLOBAL and `igris install` **register-only** — there is no
+per-project `.claude/` layer anymore:
 
-- `<project>/.claude/settings.json` hooks block (merged, not overwritten — see
-  `cli/src/lib/json-merge.ts` and `canonical-hooks.ts`)
-- `<project>/.claude/{agents,skills}` symlinks (`cli/src/lib/symlinks.ts`)
-- No `<project>/CLAUDE.md` is written — `igris install` is zero-config (FR-191
-  retired the whole-file render; see `cli/src/verbs/install.ts:159`)
-- `<project>/.igris_version` JSON marker (`cli/src/lib/igris-version.ts`)
+- **Hooks are global** — the canonical Igris hooks block is merged ONCE into
+  `~/.claude/settings.json` at `igris init` (`cli/src/lib/global-hooks.ts` +
+  `json-merge.ts` + `canonical-hooks.ts`). The per-project `_gate.sh`
+  registration gate de-no-ops them outside a registered project.
+- **Surfaces are global** — skills land in the universal store
+  (`~/.claude/skills` + `~/.agents/skills`) via the pinned `skills` CLI delegate;
+  agents project into the global harness agent dirs. All at `igris init`.
+- **`igris install <path>` is register-only** — it writes NO files into the
+  project repo (no `.claude/` symlinks, no per-project `settings.json`, no
+  `CLAUDE.md` [FR-191], no `.igris_version` [FR-212d]). It registers the
+  project path with the brain (the de-no-op gate) + writes
+  `installed_features.json`. See `cli/src/verbs/install.ts`.
 - Brain `projects` registry rows (direct `better-sqlite3` access, see
   `cli/src/lib/registry.ts`)
 - `~/.igris/projects/<slug>/installed_features.json` (content hashes for
   upgrade detection; schema v2 includes `brain_channel` + `brain_ref`)
-- `~/.igris/config.json` `subconscious.enabled` default (TD-102 preservation)
+- `~/.igris/config.json` `cognition.{perception,subconscious}.enabled` defaults
+  (FR-191 zero-config — both default OFF, only-set-if-absent)
 - Optional remote-brain push (best-effort; mirrors legacy shell behavior)
 
 The brain core (`~/.igris/core/`) is sourced from a GitHub release tarball
@@ -89,11 +98,10 @@ drift class:
 
 | Drift class | Meaning |
 |---|---|
-| `clean` | All checks pass |
+| `clean` | All checks pass (registered + path exists — the register-only happy path) |
 | `path-missing` | Registry path no longer exists (orphan) |
-| `not-installed` | Path exists but `.claude/` missing |
-| `hooks-missing` | settings.json present but no Igris SessionEnd hook (the TD-100 silent-failure class) |
-| `hooks-stale` | Igris hooks present but their command path differs from canonical |
+| `hooks-missing` | The GLOBAL `~/.claude/settings.json` lacks the Igris SessionEnd hook (brain-level; the TD-100 silent-failure class). FR-212d moved hooks global — there is no per-project hooks layer. |
+| `hooks-stale` | The global settings carry the Igris hooks but at a non-canonical command path (brain-level) |
 | `slug-basename-mismatch` | Informational — slug != basename(path) |
 | `duplicate-path` | Multiple slugs share the same realpath |
 | `symlink-target` | Registered path is itself a symlink |
@@ -101,11 +109,18 @@ drift class:
 | `brain-core-stale` | `~/.igris/core/` content hash diverges from configured channel head (M5) |
 | `channel-mismatch` | Per-project `cli_version` ahead of current CLI (M5) |
 | `bridge-missing` | CLI on PATH lacks configured bridge (M5) |
+| `mcp-unregistered` | `~/.claude.json` lacks the igris-brain MCP entry (TD-168) |
+| `secret-perms` | An Igris-written secret file or harness config is group/world-readable or git-tracked (TD-220) |
 
-`--fix` repairs `not-installed`, `hooks-missing`, `hooks-stale` by
-re-running install; `brain-core-missing` by invoking `runRefresh()`;
-`bridge-missing` by invoking partial-mode `runInit()`. Other classes
-require manual decisions or a CLI/data update.
+FR-212d retired the `not-installed` class — `igris install` is register-only
+and writes no per-project `.claude/` layer, so its absence no longer means
+"not installed"; a registered project whose path exists is clean.
+
+`--fix` repairs `hooks-missing`/`hooks-stale` by re-merging the GLOBAL Igris
+hooks (`mergeGlobalCanonicalHooks` — a single brain-level action, no per-project
+re-install); `brain-core-missing` by invoking `runRefresh()`; `bridge-missing`
+by invoking partial-mode `runInit()`; `mcp-unregistered` by re-registering the
+brain MCP; `secret-perms` by chmod 600. Other classes require manual decisions.
 
 `--remove-orphans` interactively deletes `path-missing` rows. Skip
 prompts with `--yes`. Per-row prompts accept `y`/`n`/`a` (abort)/`all`

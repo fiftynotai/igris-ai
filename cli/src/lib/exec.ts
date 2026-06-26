@@ -1,8 +1,8 @@
 /**
  * Thin wrapper around `child_process.execFileSync` for invoking external
  * shell scripts. M3+ verbs (sync code, etc.) delegate ssh/rsync via this
- * helper. The install verb no longer shells out (M2 absorbed the symlink
- * layer into TS via cli/src/lib/symlinks.ts).
+ * helper. The install verb does not shell out (FR-212d: register-only — no
+ * symlink layer at all).
  */
 
 import { execFileSync } from "node:child_process";

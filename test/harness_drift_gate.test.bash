@@ -687,6 +687,7 @@ EOF
 }
 
 @test "FR-149: registry-anchored claude SKILL symlink yields MATCH on drift" {
+  skip "FR-212d: custom claude SKILL symlink drift retired (skills delegate to the skills CLI; drift = tool idempotent re-check)"
   build_fr149_skill_project demo
   # Compile creates the symlink.
   run bash "$COMPILE" --project-root "$PROJ" --surface skills
@@ -699,6 +700,7 @@ EOF
 }
 
 @test "FR-149: non-registry claude SKILL symlink yields DRIFTED" {
+  skip "FR-212d: custom claude SKILL symlink drift retired (skills delegate to the skills CLI; drift = tool idempotent re-check)"
   build_fr149_skill_project demo
   # Pre-create a symlink pointing OUTSIDE the registry.
   mkdir -p "$PROJ/.claude/skills" "$PROJ/elsewhere/demo"

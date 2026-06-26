@@ -64,26 +64,25 @@ function fakeSpawn(opts: {
   })) as unknown as typeof import("node:child_process").spawnSync;
 }
 
-describe("mcp-delegate — engine flag", () => {
-  it("defaults to 'custom' when IGRIS_MCP_ENGINE is unset", () => {
-    expect(resolveMcpEngine({})).toBe("custom");
+describe("mcp-delegate — engine (FR-212d: delegate is the default engine)", () => {
+  it("resolves 'delegate' unconditionally (the custom merger for the 4 delegated harnesses was retired)", () => {
+    // FR-212d Phase 2 flipped the default to delegate AND deleted the custom
+    // merger placement for claude/codex/gemini/opencode + the IGRIS_MCP_ENGINE
+    // env read. The resolver is a constant — antigravity's ENTRY still uses the
+    // custom merger, but that carve-out lives in mcp-register.ts/runProjectMcp,
+    // NOT in this resolver. There is no escape hatch back to custom.
+    expect(resolveMcpEngine({})).toBe("delegate");
   });
 
-  it("defaults to 'custom' for any non-'delegate' value (typo-safe)", () => {
-    expect(resolveMcpEngine({ IGRIS_MCP_ENGINE: "" })).toBe("custom");
-    expect(resolveMcpEngine({ IGRIS_MCP_ENGINE: "deligate" })).toBe("custom");
-    expect(resolveMcpEngine({ IGRIS_MCP_ENGINE: "CUSTOM" })).toBe("custom");
-  });
-
-  it("opts into 'delegate' ONLY on the exact string 'delegate'", () => {
+  it("ignores any IGRIS_MCP_ENGINE value — always 'delegate'", () => {
+    expect(resolveMcpEngine({ IGRIS_MCP_ENGINE: "" })).toBe("delegate");
+    expect(resolveMcpEngine({ IGRIS_MCP_ENGINE: "custom" })).toBe("delegate");
     expect(resolveMcpEngine({ IGRIS_MCP_ENGINE: "delegate" })).toBe("delegate");
   });
 
-  it("resolveMcpEngine is byte-identical in semantics to the skills resolver", () => {
-    // The flag semantics are uniform across surfaces (FR-212a/b): default custom,
-    // exact-string opt-in. (Documented invariant — guards against drift.)
-    expect(resolveMcpEngine({ IGRIS_MCP_ENGINE: "delegate" })).toBe("delegate");
-    expect(resolveMcpEngine({ IGRIS_MCP_ENGINE: undefined })).toBe("custom");
+  it("the mcp + skills resolvers are uniform (both constant 'delegate')", () => {
+    expect(resolveMcpEngine({})).toBe("delegate");
+    expect(resolveMcpEngine({ IGRIS_MCP_ENGINE: undefined })).toBe("delegate");
   });
 });
 

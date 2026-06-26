@@ -29,9 +29,22 @@ ship (defaults to `all`).
 
 ## Skills Distribution
 
+> **FR-212d (delegate engine):** skills projection is now DELEGATED to the pinned
+> external `skills` CLI (npm `skills`, exact-pinned in `cli/package.json`, resolved
+> from the LOCAL `node_modules` — never a bare `npx`). `igris add/remove skill` and
+> the skills pass of `igris harness compile` shell out to `skills add <root> -g -a
+> <agents…>` / `skills remove <name> -g --all -y`. The tool places skills by NAME
+> in the universal store — `claude-code` → `~/.claude/skills/<name>`, the other 4
+> harnesses → the shared `~/.agents/skills/<name>` — and IGNORES the manifest
+> `targets[].path` (which the custom engine used). The custom per-skill
+> symlink/wrapper engine + the `IGRIS_SKILLS_ENGINE` flag were RETIRED. The
+> per-CLI rows BELOW are HISTORICAL (the custom-engine placement); the live
+> placement is the `skills` CLI's universal store. Drift = the tool's idempotent
+> re-projection (clean exit 0 → MATCH).
+
 ---
 
-## Supported CLIs
+## Supported CLIs (HISTORICAL — custom skills engine, retired by FR-212d)
 
 | CLI | Method | Target | Notes |
 |-----|--------|--------|-------|
@@ -203,6 +216,26 @@ project-scoped skill category; `/onboard-harness` is now shipped globally.)
 ---
 
 ## MCP Servers as a `surfaces.mcp_servers` manifest declaration (FR-160 epic)
+
+> **FR-212d (delegate engine):** the harness-COMPILE MCP projection
+> (`igris harness compile --surface mcp` → `igris registry project-mcp`) now
+> DELEGATES server registration to the pinned external `add-mcp` CLI (npm
+> `add-mcp`, exact-pinned, resolved LOCAL — never a bare `npx`) for FOUR harnesses
+> (claude-code / codex / gemini-cli / opencode), then writes the Igris-owned
+> no-prompt trust GRANT (`mcp-grant.ts`, FR-184). **Antigravity is the exception
+> (KEPT custom):** its MCP config lives at `~/.gemini/config/mcp_config.json`
+> (FR-179 R1) — a path add-mcp does NOT write — so antigravity's ENTRY stays on
+> the proven `mergeJsonConfig` custom merger REGARDLESS of the engine, in both the
+> register and remove paths. So "delegate MCP" ≠ "100% add-mcp": antigravity's
+> entry + every harness's grant remain Igris-owned. The `IGRIS_MCP_ENGINE` flag +
+> the custom merger placement for the 4 delegated harnesses (in the compile path)
+> were RETIRED. **NOTE the boundary:** `igris init` / `igris install` (step 11) /
+> `igris doctor --fix` keep the IN-PROCESS custom merger for brain wiring
+> (deterministic native shapes, no `add-mcp` subprocess at init — robust on
+> restricted-PATH/offline boxes); only the harness-`compile` projection delegates.
+> The MERGE-based description below still applies to the antigravity entry + the
+> init/install/doctor brain-wiring; the 4 delegated harnesses are written by
+> add-mcp under `harness compile`.
 
 MCP servers are a **third** first-class manifest surface, alongside agents and
 skills — projected and drift-checked by `igris harness compile` /

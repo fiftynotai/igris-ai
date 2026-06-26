@@ -81,22 +81,27 @@ export const IGRIS_MCP_HARNESSES = [
 export type McpEngine = "delegate" | "custom";
 
 /**
- * Resolve the active MCP placement engine from `IGRIS_MCP_ENGINE`. DEFAULTS TO
- * `"custom"` (constraint: prod behavior unchanged until a later child flips the
- * default). Only the exact string `"delegate"` opts in; any other value (unset,
- * empty, typo) resolves to `"custom"` — the safe, already-shipping engine.
+ * The active MCP placement engine. FR-212d Phase 2 (the smoke gate is green)
+ * flipped the default to `"delegate"` AND deleted the custom merger placement
+ * for the 4 DELEGATED harnesses (claude/codex/gemini/opencode), so `add-mcp` +
+ * the Igris-owned grant is the engine for them. There is NO escape hatch: the
+ * `IGRIS_MCP_ENGINE` env read is gone (operator decision — the `"custom"` branch
+ * for the delegated paths is retired).
  *
- * Byte-identical logic to `skills-delegate.ts:resolveSkillsEngine` (FR-212a) —
- * the two resolvers are intentionally the same shape so the flag semantics are
- * uniform across surfaces.
+ * ANTIGRAVITY IS THE EXCEPTION (kept, NOT deleted): its config path differs
+ * (`~/.gemini/config/mcp_config.json`, FR-179 R1) so add-mcp would write where
+ * antigravity never reads. Antigravity's ENTRY (register + remove) stays CUSTOM
+ * (the proven `mergeJsonConfig`/`unmergeJsonConfig`) REGARDLESS of this resolver
+ * — that carve-out lives in `mcp-register.ts:registerBrainAcrossHarnesses` /
+ * `runProjectMcp`, not here. So "delegate" engine ≠ "100% add-mcp": antigravity's
+ * entry + every harness's grant stay Igris-owned.
  *
- * @param env the environment map to read (injectable for tests; defaults to
- *   `process.env`).
+ * @param _env unused — retained so the signature stays call-compatible; ignored.
  */
 export function resolveMcpEngine(
-  env: NodeJS.ProcessEnv = process.env,
+  _env: NodeJS.ProcessEnv = process.env,
 ): McpEngine {
-  return env.IGRIS_MCP_ENGINE === "delegate" ? "delegate" : "custom";
+  return "delegate";
 }
 
 /**

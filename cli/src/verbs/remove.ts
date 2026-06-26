@@ -42,7 +42,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
 import {
   registryOverlayPath,
@@ -71,17 +71,11 @@ import {
   unprojectAndVerify,
   type UnprojectTarget,
 } from "../lib/remove-orchestrate.js";
-import {
-  resolveSkillsEngine,
-  unprojectSkillsViaTool,
-} from "../lib/skills-delegate.js";
-// FR-212b: the MCP DELEGATE un-registration (add-mcp remove) + the Igris-owned
-// grant REVOKE, flag-gated behind IGRIS_MCP_ENGINE (default `custom` → the
-// unmerge* path via `igris registry unproject-mcp`, UNCHANGED).
-import {
-  resolveMcpEngine,
-  unregisterMcpViaTool,
-} from "../lib/mcp-delegate.js";
+import { unprojectSkillsViaTool } from "../lib/skills-delegate.js";
+// FR-212d: MCP un-registration is delegate-only — `add-mcp remove` + the
+// Igris-owned grant REVOKE (antigravity carved to the custom un-merger at its
+// correct `config/` read-path inside `removeMcpViaDelegate`).
+import { unregisterMcpViaTool } from "../lib/mcp-delegate.js";
 // FR-212d: antigravity's ENTRY is registered by the CUSTOM merger (add-mcp's
 // `~/.gemini/antigravity/` path is wrong for our antigravity — it reads
 // `~/.gemini/config/mcp_config.json`), so its REMOVAL must use the custom
@@ -174,24 +168,11 @@ export interface RemoveOptions {
   /** Test seam: core hook remove override. */
   removeCoreHookFn?: typeof removeCoreHook;
   /**
-   * FR-212a test seam: force the skills placement engine ('delegate'|'custom')
-   * for the skill arm, bypassing the IGRIS_SKILLS_ENGINE env read. Lets the
-   * remove suite exercise BOTH arms deterministically. Absent → resolve from env
-   * (default 'custom', so the existing remove tests are byte-unchanged).
-   */
-  skillsEngine?: "delegate" | "custom";
-  /**
    * FR-212a test seam: inject a fake `unprojectSkillsViaTool` so the delegate
    * remove arm can be unit-tested WITHOUT spawning the real `skills` CLI.
-   * Defaults to the real delegate. Only consulted on the delegate path.
+   * Defaults to the real delegate.
    */
   unprojectSkillsFn?: typeof unprojectSkillsViaTool;
-  /**
-   * FR-212b test seam: force the MCP placement engine ('delegate'|'custom') for
-   * the mcp arm, bypassing the IGRIS_MCP_ENGINE env read. Absent → resolve from
-   * env (default 'custom', so the existing remove tests are byte-unchanged).
-   */
-  mcpEngine?: "delegate" | "custom";
   /**
    * FR-212b test seam: inject a fake `unregisterMcpViaTool` so the delegate mcp
    * remove arm is unit-tested WITHOUT spawning the real `add-mcp` CLI.
@@ -223,14 +204,9 @@ function resolveTargetPath(path: string, projectRoot: string): string {
   return join(projectRoot, path);
 }
 
-/**
- * Inverse of `resolve_skill_link_path`: the symlink lives at `<out>/<name>`
- * UNLESS `<out>` already terminates in `<name>` (a legacy/hand-edited manifest
- * carrying the per-skill path), in which case `<out>` IS the link. See TD-218.
- */
-function resolveSkillLinkPath(outAbs: string, name: string): string {
-  return basename(outAbs) === name ? outAbs : join(outAbs, name);
-}
+// FR-212d Phase 2: `resolveSkillLinkPath` (the inverse of the custom
+// `resolve_skill_link_path` symlink-path resolver) was DELETED with the custom
+// skill un-projection — skills un-projection routes through `skills remove`.
 
 /** Default confirm prompt — asks on stdin, returns true on y/yes. */
 async function defaultConfirm(message: string): Promise<boolean> {
@@ -283,43 +259,10 @@ function readAgentEntries(path: string): Array<{
 // Per-surface un-project target resolution.
 // ---------------------------------------------------------------------------
 
-/**
- * Resolve the skill un-project targets — the per-harness symlinks the skill
- * projected. Reads the block's `targets[].path` from the overlay (personal) or
- * the core surfaces manifest (core), resolves each via the FR-154 3-case +
- * resolve_skill_link_path, and emits an `UnprojectTarget` that deletes the
- * symlink (idempotent — an absent symlink returns false).
- */
-function skillUnprojectTargets(
-  name: string,
-  projectRoot: string,
-  overlayPath: string,
-  mode: AddMode,
-): UnprojectTarget[] {
-  const source = mode === "core" ? coreSurfacesManifestPath() : overlayPath;
-  const key = "skills";
-  const blocks = readSurfaceBlocks<{
-    source?: string;
-    targets?: Array<{ type?: string; path?: string }>;
-  }>(source, key);
-  const block = blocks.find(
-    (b) => typeof b.source === "string" && basename(b.source) === name,
-  );
-  const targets: UnprojectTarget[] = [];
-  for (const t of block?.targets ?? []) {
-    if (typeof t.path !== "string" || typeof t.type !== "string") continue;
-    // Only symlink targets land a deletable file; command targets (opencode)
-    // write a wrapper — handled by the compile/check drift, not a symlink here.
-    const outAbs = resolveTargetPath(t.path, projectRoot);
-    const linkPath = resolveSkillLinkPath(outAbs, name);
-    targets.push({
-      harness: t.type,
-      label: `${t.type}:${linkPath}`,
-      run: () => deleteLink(linkPath),
-    });
-  }
-  return targets;
-}
+// FR-212d Phase 2: `skillUnprojectTargets` (the custom manifest-path skill
+// un-projection that deleted per-harness symlinks via `deleteLink`) was DELETED
+// — skills un-projection is delegate-only now (`skills remove`). Its `skills`-CLI
+// replacement is `skillUnprojectTargetsViaTool` below.
 
 /**
  * FR-212a: the SKILLS DELEGATE un-project target — a SINGLE
@@ -449,21 +392,15 @@ async function runRemoveSkillArm(
   const overlayPath = opts.overlayPath ?? registryOverlayPath();
   const name = opts.name!;
 
-  // FR-212a: under the SKILLS DELEGATE flag, the `skills` CLI created the
-  // projected links (under ~/.agents/skills + ~/.claude/skills — NOT the
-  // manifest's target paths), so the manifest-derived `deleteLink` targets are
-  // the WRONG paths. Route un-projection through the tool's OWN
-  // `skills remove <name> -g --all -y` via a SINGLE UnprojectTarget. The verify-
-  // ABSENT step is unaffected: storeRemoved drops the skill from the manifest
-  // FIRST, so the scoped drift flatten matches nothing (noTargetsMatched =
-  // ABSENT), never reaching the delegate verify_skills arm. Custom path
-  // (default) keeps the per-harness manifest-path `deleteLink` targets verbatim.
-  const engine =
-    opts.skillsEngine ?? resolveSkillsEngine();
-  const unprojectTargets =
-    engine === "delegate"
-      ? skillUnprojectTargetsViaTool(name, opts)
-      : skillUnprojectTargets(name, projectRoot, overlayPath, mode);
+  // FR-212d Phase 2: skills un-projection is delegate-only (the custom
+  // manifest-path `deleteLink` un-projection was DELETED with the custom
+  // placement engine). The `skills` CLI created the projected links (under
+  // ~/.agents/skills + ~/.claude/skills — NOT the manifest's target paths), so
+  // removal MUST route through the tool's OWN `skills remove <name> -g --all -y`
+  // via a SINGLE UnprojectTarget. The verify-ABSENT step is unaffected:
+  // storeRemoved drops the skill from the manifest FIRST, so the scoped drift
+  // flatten matches nothing (noTargetsMatched = ABSENT).
+  const unprojectTargets = skillUnprojectTargetsViaTool(name, opts);
 
   if (!(await confirmDestruction(opts, "skill", name, unprojectTargets.map((t) => t.label)))) {
     info(`remove skill '${name}': aborted (not confirmed).`);
@@ -471,7 +408,7 @@ async function runRemoveSkillArm(
   }
 
   // De-materialize FIRST (store side), so the ABSENT-verify sees the surface
-  // gone from the manifest. Then un-project the orphan symlinks + verify.
+  // gone from the manifest. Then un-project the orphan links + verify.
   let storeRemoved = false;
   if (mode === "core") {
     const removeCore = opts.removeCoreSkillFn ?? removeCoreSkill;
@@ -491,6 +428,18 @@ async function runRemoveSkillArm(
       return r.code;
     }
     storeRemoved = r.removed;
+  }
+
+  // FR-212d: ALREADY-ABSENT LOUD FAIL. The store manifest block is the record
+  // that Igris ever projected this skill — when it was absent (`storeRemoved`
+  // false) the skill was never ours, so this is a no-op the operator probably
+  // typo'd. Under the delegate engine the un-projection target is an IDEMPOTENT
+  // `skills remove` (exit 0 even when the skill was absent), so the post-hoc
+  // `finishRemove` de-projected-count gate can no longer detect this — drive the
+  // loud-fail off `storeRemoved` and SKIP the idempotent delegate call (running
+  // it would falsely count a de-projection + needlessly spawn the tool).
+  if (!storeRemoved) {
+    return loudNothingToRemove("skill", name);
   }
 
   return finishRemove({
@@ -597,37 +546,18 @@ async function runRemoveMcpArm(
     return loudNothingToRemove("mcp", name);
   }
 
-  // FR-212b: under the DELEGATE flag, the `add-mcp` CLI created the per-harness
-  // SERVER ENTRIES (writing each harness's native config), and Igris wrote the
-  // no-prompt GRANT — so the custom `unproject-mcp` unmerge* path is the WRONG
-  // inverse. Route un-registration through the tool's OWN `add-mcp remove <name>
-  // -g -a <agents…> -y` (ONE call covering the targeted harnesses) + REVOKE the
-  // Igris-owned grant for every harness. The custom path (default) keeps the
-  // per-harness `igris registry unproject-mcp` loop verbatim. NO custom fallback
-  // on the delegate path (constraint #2): a tool/grant FAIL is a LOUD exit 1.
-  const engine = opts.mcpEngine ?? resolveMcpEngine();
+  // FR-212d Phase 2: MCP un-registration is delegate-only (the custom per-harness
+  // `unproject-mcp` unmerge* loop was DELETED with the custom placement engine).
+  // The `add-mcp` CLI created the per-harness SERVER ENTRIES (4 delegated
+  // harnesses) and Igris wrote the no-prompt GRANT, so removal routes through the
+  // tool's OWN `add-mcp remove <name> -g -a <agents…> -y` (ONE call) + REVOKE of
+  // the Igris-owned grant for every harness. ANTIGRAVITY is carved out to the
+  // custom `unmergeJsonConfig` at its correct `config/` read-path INSIDE
+  // `removeMcpViaDelegate` (the entry was written there, not by add-mcp). NO
+  // custom fallback (constraint #2): a tool/grant FAIL is a LOUD exit 1.
   const deprojected: string[] = [];
-  if (engine === "delegate") {
-    const code = removeMcpViaDelegate(opts, name, harnesses, projectRoot, deprojected);
-    if (code !== 0) return code;
-  } else {
-    // Un-project (un-merge native config) per harness, then de-materialize.
-    for (const h of harnesses) {
-      const regOpts: RegistryOptions = {
-        action: "unproject-mcp",
-        name,
-        harness: h as RegistryOptions["harness"],
-        projectRoot,
-        overlayPath,
-      };
-      const code = await runRegistry(regOpts);
-      if (code !== 0) {
-        logError(`remove mcp '${name}': un-projection from ${h} failed (exit ${code}).`);
-        return 1;
-      }
-      deprojected.push(`${h}:${name}`);
-    }
-  }
+  const code = removeMcpViaDelegate(opts, name, harnesses, projectRoot, deprojected);
+  if (code !== 0) return code;
 
   let storeRemoved = false;
   if (mode === "core") {

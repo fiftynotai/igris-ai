@@ -759,7 +759,6 @@ describe("runRemove mcp — DELEGATE engine grant revocation (FR-212b)", () => {
       overlayPath,
       brainRoot: BRAIN,
       projectRoot: PROJECT_ROOT,
-      mcpEngine: "delegate",
       unregisterMcpFn: unregisterSpy,
       removeGrantFn: revokeSpy,
       // The store de-materialize is faked so the test is hermetic.
@@ -810,7 +809,6 @@ describe("runRemove mcp — DELEGATE engine grant revocation (FR-212b)", () => {
       overlayPath,
       brainRoot: BRAIN,
       projectRoot: PROJECT_ROOT,
-      mcpEngine: "delegate",
       unregisterMcpFn: unregisterSpy,
       removeGrantFn: revokeSpy,
       removeMcpBlockFn: removedBlock,
@@ -845,7 +843,6 @@ describe("runRemove mcp — DELEGATE engine grant revocation (FR-212b)", () => {
       overlayPath,
       brainRoot: BRAIN,
       projectRoot: PROJECT_ROOT,
-      mcpEngine: "delegate",
       unregisterMcpFn: unregisterSpy,
       removeGrantFn: revokeSpy,
       removeMcpBlockFn: removedBlock,
@@ -874,7 +871,6 @@ describe("runRemove mcp — DELEGATE engine grant revocation (FR-212b)", () => {
       overlayPath,
       brainRoot: BRAIN,
       projectRoot: PROJECT_ROOT,
-      mcpEngine: "delegate",
       unregisterMcpFn: unregisterSpy,
       removeGrantFn: revokeSpy,
       removeMcpBlockFn: removedBlock,
@@ -899,7 +895,6 @@ describe("runRemove mcp — DELEGATE engine grant revocation (FR-212b)", () => {
       overlayPath,
       brainRoot: BRAIN,
       projectRoot: PROJECT_ROOT,
-      mcpEngine: "delegate",
       unregisterMcpFn: unregisterSpy,
       removeGrantFn: revokeSpy,
       removeMcpBlockFn: removedBlock,
@@ -910,13 +905,16 @@ describe("runRemove mcp — DELEGATE engine grant revocation (FR-212b)", () => {
     expect(revokeSpy).not.toHaveBeenCalled();
   });
 
-  it("the CUSTOM default (flag unset) runs the unmerge* path — NEVER the delegate spies", async () => {
-    // With mcpEngine unset, the arm routes through the custom unproject-mcp
-    // (unmerge*) loop. The delegate spies are never reached in EITHER direction.
+  // FR-212d Phase 2: the "CUSTOM default (flag unset) runs the unmerge* path"
+  // test was DELETED — there is no longer a custom MCP-remove engine. With the
+  // flag retired, `igris remove mcp` ALWAYS routes through the delegate
+  // (`add-mcp remove` + grant revoke), with antigravity carved out to the custom
+  // un-merger at its correct read-path INSIDE `removeMcpViaDelegate`. The
+  // delegate is now the DEFAULT engine — the test below proves the flip took
+  // effect (no engine override → the add-mcp/grant spies fire).
+  it("FR-212d: flag-unset remove mcp routes through the delegate by DEFAULT", async () => {
     const unregisterSpy = vi.fn(okUnregister);
     const revokeSpy = vi.fn(revokedGrant);
-    // Seed real configs so the custom unproject-mcp loop has something to un-merge
-    // — but the key assertion is that the delegate spies stay untouched.
     const code = await runRemove({
       surface: "mcp",
       name: "brain-test",
@@ -925,16 +923,15 @@ describe("runRemove mcp — DELEGATE engine grant revocation (FR-212b)", () => {
       overlayPath,
       brainRoot: BRAIN,
       projectRoot: PROJECT_ROOT,
-      // mcpEngine intentionally UNSET → default "custom".
+      // No engine override → delegate (the only engine now).
       unregisterMcpFn: unregisterSpy,
       removeGrantFn: revokeSpy,
       removeMcpBlockFn: removedBlock,
       captureAdapter: absentCheckAdapter(),
     });
     expect(code).toBe(0);
-    // The delegate path was never taken — neither the add-mcp remove nor the
-    // Igris grant revoke spy was called.
-    expect(unregisterSpy).not.toHaveBeenCalled();
-    expect(revokeSpy).not.toHaveBeenCalled();
+    // The delegate path WAS taken — the add-mcp remove + grant revoke spies fired.
+    expect(unregisterSpy).toHaveBeenCalled();
+    expect(revokeSpy).toHaveBeenCalled();
   });
 });

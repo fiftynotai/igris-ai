@@ -26,11 +26,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as TOML from "@iarna/toml";
 import {
-  registerBrainAcrossHarnesses,
+  registerBrainAcrossHarnesses as registerBrainAcrossHarnessesRaw,
   registerMcpInClaudeJson,
+  type BrainHarnessResult,
   type McpHarness,
 } from "../lib/mcp-register.js";
 import { bundledMcpEntryPath } from "../lib/paths.js";
+
+// FR-212d Phase 2: these are the per-harness MERGER-SHAPE oracle tests — they
+// validate `buildHarnessMcpEntry`'s native shapes + the no-clobber/idempotent
+// mergers. That shaper+merger is KEPT (antigravity's ENTRY uses it under the
+// delegate engine), so the tests still pin its byte-shape by forcing the CUSTOM
+// engine here. The DELEGATE-default routing (4 harnesses → add-mcp, antigravity
+// → custom) is covered by the FR-212b delegate tests + the fr212-smoke gate.
+function registerBrainAcrossHarnesses(
+  opts?: Parameters<typeof registerBrainAcrossHarnessesRaw>[0],
+): BrainHarnessResult[] {
+  return registerBrainAcrossHarnessesRaw(opts, { engine: "custom" });
+}
 
 let workDir: string;
 /** A fixed override MCP entry path used by most tests. */

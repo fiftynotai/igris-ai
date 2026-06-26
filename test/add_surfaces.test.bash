@@ -164,6 +164,7 @@ teardown() {
 }
 
 @test "S1: scoped verify ignores a pre-existing UNRELATED skill's drift" {
+  skip "FR-212d: skills/MCP add now delegate (skills CLI / add-mcp); round-trip covered by fr212-smoke + remove.test.ts"
   # Add mytool, then add a SECOND skill (distinct target dir), then DRIFT
   # mytool's registry copy. Adding a third skill must still succeed because the
   # verify (harness check) is scoped via --filter to the just-added skill —
@@ -226,6 +227,7 @@ EOF
 # --- Phase 3: igris add mcp -------------------------------------------------
 
 @test "add mcp (personal): registers + projects the claude config entry + verifies, exit 0" {
+  skip "FR-212d: skills/MCP add now delegate (skills CLI / add-mcp); round-trip covered by fr212-smoke + remove.test.ts"
   run "${IGRIS_BIN[@]}" add mcp myserver \
     --no-core \
     --command node \
@@ -268,6 +270,7 @@ EOF
 }
 
 @test "S1: MCP scoped verify ignores a pre-existing UNRELATED MCP's drift" {
+  skip "FR-212d: skills/MCP add now delegate (skills CLI / add-mcp); round-trip covered by fr212-smoke + remove.test.ts"
   # Add `myserver`, then DRIFT its projected claude entry. Adding a SECOND MCP
   # (`other`) must still succeed because the verify (harness check) is scoped via
   # --filter to the just-added MCP — a pre-existing unrelated MCP drift does NOT
@@ -397,6 +400,7 @@ EOF
 }
 
 @test "add --core skill: PROJECTS the symlink against the brain root + verifies, exit 0" {
+  skip "FR-212d: skills/MCP add now delegate (skills CLI / add-mcp); round-trip covered by fr212-smoke + remove.test.ts"
   build_core_checkout
 
   run "${IGRIS_BIN[@]}" add --core skill zzprobeskill --project-root "$CORE_REPO"
@@ -422,6 +426,7 @@ EOF
 }
 
 @test "add --core mcp: PROJECTS the entry into the live config against the brain root, exit 0" {
+  skip "FR-212d: skills/MCP add now delegate (skills CLI / add-mcp); round-trip covered by fr212-smoke + remove.test.ts"
   build_core_checkout
 
   run "${IGRIS_BIN[@]}" add --core mcp zzprobemcp \

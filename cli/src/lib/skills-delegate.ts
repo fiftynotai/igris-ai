@@ -61,19 +61,22 @@ export const IGRIS_SKILLS_HARNESSES = [
 export type SkillsEngine = "delegate" | "custom";
 
 /**
- * Resolve the active skills placement engine from `IGRIS_SKILLS_ENGINE`.
- * DEFAULTS TO `"custom"` (constraint: prod behavior unchanged until a later
- * child flips the default). Only the exact string `"delegate"` opts in; any
- * other value (unset, empty, typo) resolves to `"custom"` — the safe,
- * already-shipping engine.
+ * The active skills placement engine. FR-212d Phase 2 (the #832 chokepoint
+ * cleared — the 5-harness smoke gate is green) flipped the default to
+ * `"delegate"` AND deleted the custom inline symlink/wrapper loop, so the
+ * `skills` CLI is now the ONLY skills-projection engine. There is NO escape
+ * hatch: the `IGRIS_SKILLS_ENGINE` env read is gone (operator decision — the
+ * `"custom"` branch for the delegated path is retired). The `SkillsEngine` type
+ * is retained for the result-shape `engine` field, but the resolver is now a
+ * constant.
  *
- * @param env the environment map to read (injectable for tests; defaults to
- *   `process.env`).
+ * @param _env unused — retained so the signature stays call-compatible with the
+ *   FR-212a probes/tests that passed an env map; ignored.
  */
 export function resolveSkillsEngine(
-  env: NodeJS.ProcessEnv = process.env,
+  _env: NodeJS.ProcessEnv = process.env,
 ): SkillsEngine {
-  return env.IGRIS_SKILLS_ENGINE === "delegate" ? "delegate" : "custom";
+  return "delegate";
 }
 
 /**

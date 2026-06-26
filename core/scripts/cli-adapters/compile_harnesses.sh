@@ -76,36 +76,26 @@ else
   IGRIS_CLI_CMD=(igris)
 fi
 
-# FR-212a: the SKILLS placement engine flag. DEFAULTS TO "custom" (the inline
-# per-skill symlink/wrapper loop below, the already-shipping engine) — prod
-# behavior is UNCHANGED until a later child flips the default after the
-# 5-harness smoke gate is green (#832 de-risk). Only the exact string
-# "delegate" opts into the `skills` CLI shell-out; any other value (unset, typo)
-# resolves to "custom". The drift sibling (check_harness_drift.sh verify_skills)
-# reads the SAME flag (L-519 §18.1 compile/drift pairing).
+# FR-212d Phase 2 (the #832 chokepoint cleared — the 5-harness smoke gate is
+# green): the SKILLS engine is now ALWAYS "delegate". The custom inline
+# symlink/wrapper loop was DELETED; `project_skills` is a thin shell-out to
+# `igris registry project-skills` (the `skills` CLI). There is NO escape hatch —
+# the `IGRIS_SKILLS_ENGINE` env read is gone (operator decision). The helper is
+# kept as a constant so the (now unconditional) delegate dispatch + the drift
+# sibling read it identically (L-519 §18.1 compile/drift pairing).
 igris_skills_engine() {
-  if [ "${IGRIS_SKILLS_ENGINE:-}" = "delegate" ]; then
-    echo "delegate"
-  else
-    echo "custom"
-  fi
+  echo "delegate"
 }
 
-# FR-212b: the MCP placement engine flag. DEFAULTS TO "custom" (the
-# mergeJsonConfig/mergeTomlConfig projection inside `igris registry project-mcp`,
-# the already-shipping engine) — prod behavior is UNCHANGED until a later child
-# flips the default after a multi-harness smoke gate. Only the exact string
-# "delegate" opts into the `add-mcp` shell-out (server registration) + the
-# Igris-owned no-prompt grant. The TS `runProjectMcp` reads IGRIS_MCP_ENGINE from
-# the inherited subprocess env and routes internally; this bash helper exists for
-# the engine-aware SUMMARY label + parity with `igris_skills_engine` (the drift
-# sibling check_harness_drift.sh verify_mcp reads the SAME flag — §18.1).
+# FR-212d Phase 2: the MCP engine is now ALWAYS "delegate" — `add-mcp` (server
+# registration) + the Igris-owned no-prompt grant for the 4 delegated harnesses,
+# with antigravity's ENTRY carved out to the custom merger INSIDE the TS
+# (`runProjectMcp`, FR-179 config-path mismatch). The custom merger placement for
+# the delegated harnesses was DELETED. No escape hatch — the `IGRIS_MCP_ENGINE`
+# env read is gone. The helper is kept as a constant for the SUMMARY label +
+# parity with the drift sibling's grant-drift invariant (which now always runs).
 igris_mcp_engine() {
-  if [ "${IGRIS_MCP_ENGINE:-}" = "delegate" ]; then
-    echo "delegate"
-  else
-    echo "custom"
-  fi
+  echo "delegate"
 }
 
 # ---------------------------------------------------------------------------
@@ -169,238 +159,15 @@ emit_md_hardlink() {
   ln "$target" "$link_path"
 }
 
-# ---------------------------------------------------------------------------
-# resolve_skill_link_path <out_abs> <skill_name>
-#
-# TD-218 (Option C): compute the per-skill symlink link_path with a de-dup
-# guard. The contract is that the target `path` (→ out_abs) is the PARENT
-# skills dir, and the loop appends `/<skill_name>`. A LEGACY/hand-edited
-# manifest may carry a per-skill `path` that already ends in `/<skill_name>`
-# (e.g. `~/.agents/skills/content-pipeline`); naively appending would
-# double-nest to `<out_abs>/<skill_name>/<skill_name>/SKILL.md` (depth-2),
-# which native loaders (depth-1 scan) never discover. When out_abs already
-# terminates in <skill_name>, treat it as the link target itself and do NOT
-# append — so EVERY registry skill resolves depth-1 even with a malformed
-# manifest. Core blocks (out_abs basename = `skills`) never trigger this.
-# Echoes the resolved link_path on stdout. See TD-218, L-519 §18.1
-# (compile/drift MUST resolve link_path identically).
-# ---------------------------------------------------------------------------
-resolve_skill_link_path() {
-  local out_abs="$1"
-  local skill_name="$2"
-  if [ "$(basename "$out_abs")" = "$skill_name" ]; then
-    printf '%s\n' "$out_abs"
-  else
-    printf '%s\n' "$out_abs/$skill_name"
-  fi
-}
-
-# ---------------------------------------------------------------------------
-# emit_skill_symlink <harness_label> <link_path> <skill_dir>
-#
-# FR-153 D1: per-symlink emit shared across the 3 skills/symlink compile
-# branches (claude/codex/gemini). Encodes the SAME 3-case dispatch the FR-149
-# claude branch did, parameterized by <harness_label> for log strings:
-#   - regular file at link_path → echo ERROR + return 1 (refuse-to-clobber)
-#   - existing symlink resolving to skill_dir → silent no-op (idempotent)
-#   - existing symlink with different target → atomic repoint + migration log
-#   - nothing there → create + log
-# Caller owns rc + SUMMARY bookkeeping. See L-519 §18.1.
-# ---------------------------------------------------------------------------
-emit_skill_symlink() {
-  local harness_label="$1"
-  local link_path="$2"
-  local skill_dir="$3"
-  if [ -e "$link_path" ] && [ ! -L "$link_path" ]; then
-    echo "[$harness_label/skills/$(basename "$link_path")] ERROR — refuse to clobber non-symlink at $link_path (remove manually if it should be a registry-anchored symlink)" >&2
-    # TD-209: append to the global collector for the batched summary block.
-    REFUSE_TARGETS+=("$link_path")
-    return 1
-  fi
-  if [ -L "$link_path" ]; then
-    local current
-    current=$(readlink "$link_path" 2>/dev/null || true)
-    if [ "$current" = "$skill_dir" ]; then
-      return 0  # already correctly anchored — silent no-op
-    fi
-    atomic_symlink "$link_path" "$skill_dir"
-    echo "migrating legacy $harness_label skill symlink: $link_path → $skill_dir (was: $current)"
-    return 0
-  fi
-  atomic_symlink "$link_path" "$skill_dir"
-  echo "creating $harness_label skill symlink: $link_path → $skill_dir"
-  return 0
-}
-
-# ---------------------------------------------------------------------------
-# opencode_at_target <skill_md>
-#
-# FR-171: compute the `@file` directive target for a skill's canonical SKILL.md.
-# The wrapper loads the ACTUAL canonical the compile walked (NOT a hardcoded
-# core path — personal/registry-vendored skills live under
-# ~/.igris/registry/skills/, core skills under ~/.igris/core/skills/). Emits a
-# `~`-prefixed path when the SKILL.md is under $HOME (portable + matches how
-# OpenCode resolved `@~/...` in the §0.2 probe), else the absolute path.
-# Echoes `@<path>` on stdout. Shared by the compile emit + drift verify so the
-# expected `@`-target is computed identically (L-519 §18.1).
-# ---------------------------------------------------------------------------
-opencode_at_target() {
-  local skill_md="$1"
-  case "$skill_md" in
-    "$HOME"/*) printf '@~/%s\n' "${skill_md#"$HOME"/}" ;;
-    *)         printf '@%s\n' "$skill_md" ;;
-  esac
-}
-
-# ---------------------------------------------------------------------------
-# opencode_command_wrapper_body <skill_md>
-#
-# FR-171: derive the deterministic body of an OpenCode command wrapper from a
-# canonical SKILL.md. Option A (thin wrappers): the wrapper does NOT copy the
-# skill content — it loads the canonical SKILL.md at invoke time via OpenCode's
-# `@file` directive (verified live: opencode stores `@<path>` in the command
-# `template` and resolves it on invocation), plus `$ARGUMENTS`. Single source
-# of truth stays the canonical SKILL.md (no edit-drift; only ADD/REMOVE drift).
-#
-# The wrapper frontmatter carries:
-#   description: <from the skill's SKILL.md frontmatter `description:`, or a
-#                fallback naming the skill if absent>
-#   agent: build   (the OpenCode primary agent that runs the command)
-#   subtask: true  (run as a subtask so the command body loads in a sub-context)
-#
-# Emits the FULL wrapper text (frontmatter + body) on stdout. The first line of
-# the file is a generated-marker comment so the drift verdict can confirm the
-# wrapper is OUR artifact (refuse-to-clobber a hand-authored command). Mirrors
-# the TS marker discipline (assembleCodexHarness). Deterministic — same SKILL.md
-# → same bytes (idempotent re-emit).
-# ---------------------------------------------------------------------------
-OPENCODE_COMMAND_MARKER="<!-- Generated by igris harness compile (FR-171 opencode/command) — edit the canonical SKILL.md, not this wrapper -->"
-
-opencode_command_wrapper_body() {
-  local skill_md="$1"
-  local skill_name
-  skill_name="$(basename "$(dirname "$skill_md")")"
-  local at_target
-  at_target="$(opencode_at_target "$skill_md")"
-  # Extract the skill's `description:` from its SKILL.md frontmatter (first
-  # `description:` line inside the leading `---` block). python3 keeps the
-  # parse robust (quoted scalars, colons-in-value). Falls back to a stable
-  # default when absent so the wrapper always has a description.
-  python3 - "$skill_md" "$skill_name" "$OPENCODE_COMMAND_MARKER" "$at_target" <<'PY'
-import sys
-
-skill_md = sys.argv[1]
-skill_name = sys.argv[2]
-marker = sys.argv[3]
-at_target = sys.argv[4]
-
-description = ""
-try:
-    with open(skill_md, "r", encoding="utf-8") as fh:
-        text = fh.read()
-except OSError:
-    text = ""
-
-# Parse the leading `---\n...\n---` frontmatter block only.
-lines = text.split("\n")
-if lines and lines[0].strip() == "---":
-    for ln in lines[1:]:
-        if ln.strip() == "---":
-            break
-        if ln.startswith("description:"):
-            val = ln[len("description:"):].strip()
-            # Strip a single pair of surrounding quotes if present.
-            if len(val) >= 2 and (
-                (val[0] == '"' and val[-1] == '"')
-                or (val[0] == "'" and val[-1] == "'")
-            ):
-                val = val[1:-1]
-            description = val
-            break
-
-if not description:
-    description = "Igris " + skill_name + " skill"
-
-# Deterministic wrapper. The `@<path>` directive (computed by opencode_at_target
-# from the ACTUAL canonical SKILL.md the compile walked) is honored by OpenCode
-# at invoke time (probed live, FR-171 §0.2). $ARGUMENTS forwards the operator's
-# command-line args into the loaded skill context.
-out = []
-out.append(marker)
-out.append("---")
-out.append("description: " + description)
-out.append("agent: build")
-out.append("subtask: true")
-out.append("---")
-out.append(at_target)
-out.append("")
-out.append("$ARGUMENTS")
-out.append("")
-sys.stdout.write("\n".join(out))
-PY
-}
-
-# ---------------------------------------------------------------------------
-# emit_opencode_command_wrapper <link_path> <skill_md>
-#
-# FR-171 Option A: write a thin OpenCode command wrapper at <link_path> (a
-# `<command-dir>/<name>.md` file) that loads the canonical SKILL.md via the
-# `@file` directive. 3-case dispatch parallel to emit_skill_symlink:
-#   - regular file at link_path that is NOT our generated wrapper → ERROR +
-#     return 1 (refuse-to-clobber a hand-authored command). Detect by probing
-#     the first line for OPENCODE_COMMAND_MARKER.
-#   - link_path is a symlink → ERROR + return 1 (a command target should be a
-#     real file; a symlink here is an unexpected legacy/foreign shape).
-#   - our generated wrapper already present with identical bytes → silent no-op.
-#   - our generated wrapper present but stale, or nothing there → atomic
-#     temp+rename write + log.
-# Caller owns rc + SUMMARY bookkeeping. See L-519 §18.1, L-515.
-# ---------------------------------------------------------------------------
-emit_opencode_command_wrapper() {
-  local link_path="$1"
-  local skill_md="$2"
-
-  # Refuse to clobber a symlink (foreign/legacy shape — commands are real files).
-  if [ -L "$link_path" ]; then
-    echo "[opencode/command/$(basename "$link_path")] ERROR — refuse to clobber symlink at $link_path (an opencode command wrapper is a real file, not a symlink — remove manually)" >&2
-    REFUSE_TARGETS+=("$link_path")
-    return 1
-  fi
-
-  local desired
-  desired="$(opencode_command_wrapper_body "$skill_md")"
-
-  if [ -e "$link_path" ]; then
-    # Real file present — must be OUR generated wrapper (marker on line 1).
-    local first_line
-    first_line="$(head -n 1 "$link_path" 2>/dev/null || true)"
-    if [ "$first_line" != "$OPENCODE_COMMAND_MARKER" ]; then
-      echo "[opencode/command/$(basename "$link_path")] ERROR — refuse to clobber non-generated file at $link_path (no FR-171 generated-marker on line 1 — remove manually if it should be a generated command wrapper)" >&2
-      REFUSE_TARGETS+=("$link_path")
-      return 1
-    fi
-    # Our wrapper — idempotent compare.
-    local current
-    current="$(cat "$link_path" 2>/dev/null || true)"
-    if [ "$current" = "$desired" ]; then
-      return 0  # already correct — silent no-op
-    fi
-    mkdir -p "$(dirname "$link_path")"
-    local tmp="$link_path.tmp-$$"
-    printf '%s' "$desired" > "$tmp"
-    mv "$tmp" "$link_path"
-    echo "updating opencode command wrapper: $link_path"
-    return 0
-  fi
-
-  # Nothing there — create.
-  mkdir -p "$(dirname "$link_path")"
-  local tmp="$link_path.tmp-$$"
-  printf '%s' "$desired" > "$tmp"
-  mv "$tmp" "$link_path"
-  echo "creating opencode command wrapper: $link_path"
-  return 0
-}
+# FR-212d Phase 2: the per-skill symlink/wrapper EMIT helpers
+# (resolve_skill_link_path / emit_skill_symlink / opencode_at_target /
+# opencode_command_wrapper_body / emit_opencode_command_wrapper) were DELETED
+# here — they were the inline custom skills-placement machinery, now fully dead
+# after project_skills became a thin `skills` CLI delegate (their only callers
+# were the deleted custom loop). `atomic_symlink` (above) is KEPT — the AGENT
+# compiler still uses it. The drift sibling (check_harness_drift.sh) DELETED its
+# copies too — its custom verify_skills body was likewise retired (verify_skills
+# is the `skills` CLI idempotent re-check now), so neither file keeps them.
 
 # ---------------------------------------------------------------------------
 # assemble_agent_harness_into_registry <harness_label> <name> <canon_abs>
@@ -1242,9 +1009,10 @@ fi
 # namerefs) and initialized HERE, before the registry-driven dispatch loop, so
 # every project_<surface> plugin shares one set.
 # TD-209: REFUSE_TARGETS is the batched refuse-to-clobber collector. Per-target
-# functions (emit_skill_symlink + compile_md_agent_target Cases C and
-# "other-shape") append the offending path here; the post-loop summary emits ONE
-# block instead of N per-file ERROR lines. Global namespace (no `local -n`
+# functions (compile_md_agent_target Cases C and "other-shape") append the
+# offending path here; the post-loop summary emits ONE block instead of N
+# per-file ERROR lines. (FR-212d: the skills emit helpers that also wrote here
+# were deleted with the custom skills loop.) Global namespace (no `local -n`
 # nameref) — required for bash 3.2 (/bin/bash on macOS). Writers MUST avoid
 # `local REFUSE_TARGETS` shadowing.
 # FR-152: TMPFILES_TO_CLEAN was initialized above the merge step; the EXIT trap
@@ -1660,190 +1428,53 @@ PY
         *)     out_abs="$PROJECT_ROOT/$s_path" ;;
       esac
 
-      # FR-212a: SKILLS DELEGATE ARM. When IGRIS_SKILLS_ENGINE=delegate, shell
-      # out to the `skills` CLI via `igris registry project-skills --source
-      # <root>` (the LOCAL pinned binary, resolved inside the TS delegate —
-      # NEVER a bare `npx`) INSTEAD of the inline custom symlink/wrapper loop
-      # (the `case` below). The tool's `skills add <root>` projects EVERY skill
-      # under the root to all 5 harnesses in ONE call, so we dispatch ONCE per
-      # distinct source root (the 3 per-source target-type rows — claude/agents/
-      # opencode — collapse to a single delegate call; DELEGATED_SKILL_ROOTS
+      # FR-212d Phase 2: SKILLS DELEGATE DISPATCH (the ONLY skills engine now —
+      # the custom inline symlink/wrapper loop was DELETED after the 5-harness
+      # smoke gate went green). Shell out to the `skills` CLI via `igris registry
+      # project-skills --source <root>` (the LOCAL pinned binary, resolved inside
+      # the TS delegate — NEVER a bare `npx`). The tool's `skills add <root>`
+      # projects EVERY skill under the root to all 5 harnesses in ONE call, so we
+      # dispatch ONCE per distinct source root (the 3 per-source target-type rows
+      # — claude/agents/opencode — collapse to a single call; DELEGATED_SKILL_ROOTS
       # dedups). Mirrors how project_mcp/project_hook shell to the registry verb
-      # (§18.1: bash never re-implements placement). The custom `case` below stays
-      # FULLY INTACT behind the flag — `continue` skips it. NO custom fallback in
-      # the delegate path (constraint #2): a tool FAIL is an observable counted
-      # FAIL, never a silent fall-through to the symlink loop.
-      if [ "$(igris_skills_engine)" = "delegate" ]; then
-        # Resolve the source root the tool projects from. `-` (no source row)
-        # → the registry-skills default `~/.igris/core/skills`, matching the
-        # custom branches' `conv_root` fallback.
-        delegate_root="${src_abs:-$HOME/.igris/core/skills}"
-        # Dedup: only the FIRST row for a given root dispatches + counts. Later
-        # rows for the same root (the sibling target-type entries) are folded in
-        # (TOTAL was already incremented for them above — decrement to keep the
-        # count one-per-projected-root, matching the single delegate invocation).
-        already_delegated=0
-        # bash 3.2 + `set -u`: iterating an EMPTY array via "${arr[@]}" throws
-        # "unbound variable" (the first row hits this — DELEGATED_SKILL_ROOTS is
-        # empty). The `${arr[@]+"${arr[@]}"}` guard expands to nothing when the
-        # array is unset/empty, so the loop body simply never runs. Same posture
-        # as the REFUSE_TARGETS `${#...[@]} -gt 0` guards below.
-        for _r in ${DELEGATED_SKILL_ROOTS[@]+"${DELEGATED_SKILL_ROOTS[@]}"}; do
-          if [ "$_r" = "$delegate_root" ]; then already_delegated=1; break; fi
-        done
-        if [ "$already_delegated" -eq 1 ]; then
-          TOTAL=$((TOTAL - 1))
-          continue
-        fi
-        DELEGATED_SKILL_ROOTS+=("$delegate_root")
-        rc=0
-        "${IGRIS_CLI_CMD[@]}" registry project-skills \
-          --source "$delegate_root" \
-          --project-root "$PROJECT_ROOT" \
-          ${OVERLAY:+--overlay "$OVERLAY"} || rc=$?
-        if [ "$rc" -eq 0 ]; then
-          SUMMARY+=("OK    skills (delegate) -> $delegate_root")
-          OK=$((OK + 1))
-        else
-          # Observable FAIL (L-232): the delegate verb already named the failure
-          # on stderr (binary-not-local / tool exit). Never a silent no-op.
-          SUMMARY+=("FAIL  skills (delegate) — registry project-skills exited $rc")
-          FAIL=$((FAIL + 1))
-        fi
+      # (§18.1: bash never re-implements placement). NO custom fallback (constraint
+      # #2): a tool FAIL is an observable counted FAIL.
+      #
+      # Resolve the source root the tool projects from. `-` (no source row)
+      # → the registry-skills default `~/.igris/core/skills`.
+      delegate_root="${src_abs:-$HOME/.igris/core/skills}"
+      # Dedup: only the FIRST row for a given root dispatches + counts. Later
+      # rows for the same root (the sibling target-type entries) are folded in
+      # (TOTAL was already incremented for them above — decrement to keep the
+      # count one-per-projected-root, matching the single delegate invocation).
+      already_delegated=0
+      # bash 3.2 + `set -u`: iterating an EMPTY array via "${arr[@]}" throws
+      # "unbound variable" (the first row hits this — DELEGATED_SKILL_ROOTS is
+      # empty). The `${arr[@]+"${arr[@]}"}` guard expands to nothing when the
+      # array is unset/empty, so the loop body simply never runs.
+      for _r in ${DELEGATED_SKILL_ROOTS[@]+"${DELEGATED_SKILL_ROOTS[@]}"}; do
+        if [ "$_r" = "$delegate_root" ]; then already_delegated=1; break; fi
+      done
+      if [ "$already_delegated" -eq 1 ]; then
+        TOTAL=$((TOTAL - 1))
         continue
       fi
-
+      DELEGATED_SKILL_ROOTS+=("$delegate_root")
       rc=0
-      case "$s_type/$s_method" in
-        claude/symlink|agents/symlink)
-          # FR-149/FR-153/FR-157/FR-202 (M1): per-skill registry-anchored
-          # symlinks. ONE parameterized branch serves the live symlink targets:
-          #   claude → ~/.claude/skills (Claude's native skills loader follows
-          #            the symlink; no absolute-target guard).
-          #   agents → ~/.agents/skills, the cross-CLI shared standard codex AND
-          #            gemini both read natively (FR-157) — so they need no
-          #            standalone target. Keeps the FR-157 D2 absolute-target
-          #            guard (codex resolves relative-path symlinks from cwd,
-          #            POSIX-incorrect, regardless of where the symlink LIVES).
-          # For each <name>/SKILL.md under the source root, emit a symlink at
-          # <out_abs>/<name> pointing at <src_abs>/<name>. Idempotent (already
-          # correct → silent no-op), atomic-repoint on path change, and
-          # refuse-to-clobber on a non-symlink target. The dead standalone
-          # codex/symlink + gemini/symlink branches were removed in FR-202 M1
-          # (no manifest declared them; agents/symlink supersedes both). The
-          # collapse preserves the exact bytes each live branch emitted: the
-          # absolute-target guard fires for `agents` only, and emit_skill_symlink
-          # receives $s_type as its label (== the literal "claude"/"agents" the
-          # old branches passed). See L-519, FR-157.
-          conv_root="${src_abs:-$HOME/.igris/core/skills}"
-          if [ ! -d "$conv_root" ]; then
-            SUMMARY+=("FAIL  skills/$s_type — skills root missing: $conv_root")
-            FAIL=$((FAIL + 1))
-            continue
-          fi
-          while IFS= read -r -d '' skill_md; do
-            skill_name="$(basename "$(dirname "$skill_md")")"
-            # FR-180 (S1): honor --filter on the skills surface (parity with the
-            # agent flatten, which fnmatches the agent name). Lets `igris add`'s
-            # scoped verify re-check only the just-added skill.
-            skill_name_matches_filter "$skill_name" "$FILTER" || continue
-            skill_dir="$(dirname "$skill_md")"
-            link_path="$(resolve_skill_link_path "$out_abs" "$skill_name")"
-            # TD-218: create the LINK's parent dir (not out_abs). For a parent
-            # target.path this is out_abs itself; for a de-dup'd per-skill path
-            # (link_path == out_abs) it is out_abs's parent — so the link path
-            # is NOT pre-created as a real dir (which would refuse-to-clobber).
-            mkdir -p "$(dirname "$link_path")"
-            # FR-157 D2: agents symlink absolute-path enforcement (inherits
-            # codex hazard via the cross-CLI `.agents/` consumer chain). The
-            # claude target has no such guard (Claude resolves symlinks from
-            # their location), so this fires for `agents` only.
-            if [ "$s_type" = "agents" ]; then
-              case "$skill_dir" in
-                /*) : ;;
-                *)
-                  echo "[$s_type/skills/$skill_name] ERROR — agents symlink requires absolute target (got relative: $skill_dir). The 'source' field must be absolute, '~'-prefixed, or relative-resolved (compile_harnesses.sh source-resolution should have absolutized this)." >&2
-                  SUMMARY+=("FAIL  skills/$s_type/$skill_name — agents symlink target not absolute: $skill_dir")
-                  rc=1
-                  continue
-                  ;;
-              esac
-            fi
-            if ! emit_skill_symlink "$s_type" "$link_path" "$skill_dir"; then
-              SUMMARY+=("FAIL  skills/$s_type/$skill_name — refuse to clobber non-symlink at $link_path")
-              rc=1
-              continue
-            fi
-          done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
-                     -name 'SKILL.md' -print0 | sort -z)
-          ;;
-        opencode/command)
-          # FR-171 Option A: thin command wrappers. For each <name>/SKILL.md
-          # under the source root, write a `<out_abs>/<name>.md` command wrapper
-          # whose body loads the canonical SKILL.md via OpenCode's `@file`
-          # directive (single source of truth stays the canonical SKILL.md — no
-          # content copy, no edit-drift). Idempotent (correct wrapper → silent
-          # no-op), atomic temp+rename, refuse-to-clobber a non-generated file.
-          # NOT a symlink (OpenCode commands are real files). See L-519, FR-171.
-          conv_root="${src_abs:-$HOME/.igris/core/skills}"
-          if [ ! -d "$conv_root" ]; then
-            SUMMARY+=("FAIL  skills/$s_type — skills root missing: $conv_root")
-            FAIL=$((FAIL + 1))
-            continue
-          fi
-          # L-515: contain the manifest-controlled out_abs. The wrapper write
-          # path must resolve under the OpenCode command dir's parent (the
-          # operator-declared target.path) — realpath the parent and reject if
-          # the join escapes via `..` traversal. We do not require a fixed root
-          # (the command dir is operator-chosen), but we DO reject a per-file
-          # path that resolves outside its declared out_abs parent.
-          out_parent_real=$(realpath "$(dirname "$out_abs")" 2>/dev/null || echo "")
-          while IFS= read -r -d '' skill_md; do
-            skill_name="$(basename "$(dirname "$skill_md")")"
-            # FR-180 (S1): honor --filter on the skills surface (parity with the
-            # other 4 skill branches + the agent flatten). Lets `igris add`'s
-            # scoped verify re-check only the just-added skill.
-            skill_name_matches_filter "$skill_name" "$FILTER" || continue
-            # Command wrapper file is <out_abs>/<name>.md (depth-1; OpenCode
-            # scans the command dir non-recursively). resolve_skill_link_path's
-            # de-dup guard does not apply (commands are files, not dirs); the
-            # path is always out_abs/<name>.md.
-            link_path="$out_abs/$skill_name.md"
-            mkdir -p "$out_abs"
-            # L-515 containment: the resolved parent of link_path must equal
-            # the realpath'd out_abs (no `..`-escape via skill_name).
-            link_parent_real=$(realpath "$(dirname "$link_path")" 2>/dev/null || echo "")
-            out_abs_real=$(realpath "$out_abs" 2>/dev/null || echo "")
-            if [ -z "$link_parent_real" ] || [ "$link_parent_real" != "$out_abs_real" ]; then
-              echo "[opencode/command/$skill_name] ERROR — wrapper path escapes the declared command dir (resolved parent: $link_parent_real, expected: $out_abs_real)" >&2
-              SUMMARY+=("FAIL  skills/$s_type/$skill_name — wrapper path containment violation")
-              rc=1
-              continue
-            fi
-            : "$out_parent_real"  # reserved for future stricter root pinning
-            if ! emit_opencode_command_wrapper "$link_path" "$skill_md"; then
-              SUMMARY+=("FAIL  skills/$s_type/$skill_name — refuse to clobber non-generated wrapper at $link_path")
-              rc=1
-              continue
-            fi
-          done < <(find "$conv_root" -mindepth 2 -maxdepth 2 -type f \
-                     -name 'SKILL.md' -print0 | sort -z)
-          ;;
-        *)
-          SUMMARY+=("FAIL  skills/$s_type — unsupported type/method '$s_type/$s_method'")
-          FAIL=$((FAIL + 1))
-          continue
-          ;;
-      esac
-
+      "${IGRIS_CLI_CMD[@]}" registry project-skills \
+        --source "$delegate_root" \
+        --project-root "$PROJECT_ROOT" \
+        ${OVERLAY:+--overlay "$OVERLAY"} || rc=$?
       if [ "$rc" -eq 0 ]; then
-        SUMMARY+=("OK    skills/$s_type ($s_method) -> $s_path")
+        SUMMARY+=("OK    skills (delegate) -> $delegate_root")
         OK=$((OK + 1))
       else
-        SUMMARY+=("FAIL  skills/$s_type — adapter exited $rc")
+        # Observable FAIL (L-232): the delegate verb already named the failure
+        # on stderr (binary-not-local / tool exit). Never a silent no-op.
+        SUMMARY+=("FAIL  skills (delegate) — registry project-skills exited $rc")
         FAIL=$((FAIL + 1))
       fi
-    done <<< "$SKILL_ROWS"
+      done <<< "$SKILL_ROWS"
   fi
 }
 
@@ -1866,13 +1497,14 @@ PY
 # `if SURFACE_KIND = mcp|all` gate is now the registry dispatch loop.
 # ---------------------------------------------------------------------------
 project_mcp() {
-  # FR-212b: resolve the engine ONCE per pass for the summary label. Under
-  # "delegate" the TS `igris registry project-mcp` (reading IGRIS_MCP_ENGINE from
-  # the inherited env) shells to `add-mcp` for SERVER REGISTRATION then writes the
-  # Igris-owned no-prompt GRANT (mcp-grant.ts); under "custom" (default) it runs
-  # the proven mergeJsonConfig/mergeTomlConfig path. The per-row dispatch below is
-  # IDENTICAL either way (bash never re-implements placement — §18.1); only the
-  # SUMMARY tag differs, so a compile log shows which engine ran.
+  # FR-212d: the MCP engine is now a CONSTANT "delegate" (igris_mcp_engine; the
+  # IGRIS_MCP_ENGINE env read was RETIRED). The TS `igris registry project-mcp`
+  # shells to `add-mcp` for SERVER REGISTRATION then writes the Igris-owned
+  # no-prompt GRANT (mcp-grant.ts) for the 4 delegated harnesses; antigravity's
+  # ENTRY stays custom INSIDE the TS (FR-179 config/ path) but its grant is still
+  # written. The per-row dispatch below is engine-agnostic (bash never
+  # re-implements placement — §18.1). We resolve the constant ONCE for the
+  # summary label only.
   local mcp_engine
   mcp_engine="$(igris_mcp_engine)"
   MCP_ROWS=$(flatten_mcp_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "$TARGET_KIND" "$PROJECT_ROOT")
@@ -1910,9 +1542,10 @@ project_mcp() {
         ${OVERLAY:+--overlay "$OVERLAY"} || rc=$?
 
       if [ "$rc" -eq 0 ]; then
-        # FR-212b: tag the engine in the summary (delegate = add-mcp + grant;
-        # custom = mergers). The placement itself is identical (the TS verb
-        # routes on the inherited IGRIS_MCP_ENGINE) — only the label differs.
+        # FR-212d: tag the engine in the summary (always "delegate" now =
+        # add-mcp + grant for the 4 delegated harnesses; antigravity's entry is
+        # custom-written inside the TS but tagged the same). The label is purely
+        # informational — the placement is the TS verb's job.
         SUMMARY+=("OK    mcp/$m_name/$m_type ($mcp_engine)")
         OK=$((OK + 1))
       else

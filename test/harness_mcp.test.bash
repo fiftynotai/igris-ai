@@ -130,6 +130,7 @@ print(json.dumps(d))" "$1" "$2"
 # --- 1. compile native shapes + idempotency --------------------------------
 
 @test "compile projects the MCP into all 4 configs in native shape" {
+  skip "FR-212d: custom MCP compile-projection retired (delegate via add-mcp; shape oracle is fr212-smoke + registry-project-mcp.test.ts custom-engine)"
   run run_compile
   [ "$status" -eq 0 ]
 
@@ -205,6 +206,7 @@ print(json.dumps(d))" "$1" "$2"
 # --- 5. DRIFTED + recompile→MATCH ------------------------------------------
 
 @test "hand-mutated args → drift DRIFTED naming args (no value leak); recompile→MATCH" {
+  skip "FR-212d: custom MCP compile-projection retired (delegate via add-mcp; shape oracle is fr212-smoke + registry-project-mcp.test.ts custom-engine)"
   run_compile >/dev/null 2>&1
   # Mutate claude args by hand.
   python3 -c "import json; p='$CLAUDE_CFG'; d=json.load(open(p)); d['mcpServers']['demo-mcp']['args']=['/tampered.js']; json.dump(d, open(p,'w'))"
@@ -227,6 +229,7 @@ print(json.dumps(d))" "$1" "$2"
 # --- 6. ${VAR} ref compare + secret hygiene --------------------------------
 
 @test "drift output NEVER contains the secret sentinel (all 4 harnesses)" {
+  skip "FR-212d: custom MCP compile-projection retired (delegate via add-mcp; shape oracle is fr212-smoke + registry-project-mcp.test.ts custom-engine)"
   run_compile >/dev/null 2>&1
   run run_drift
   [ "$status" -eq 0 ]
@@ -236,6 +239,7 @@ print(json.dumps(d))" "$1" "$2"
 }
 
 @test "claude/gemini/opencode configs hold the REFERENCE (no leaked literal)" {
+  skip "FR-212d: custom MCP compile-projection retired (delegate via add-mcp; shape oracle is fr212-smoke + registry-project-mcp.test.ts custom-engine)"
   run_compile >/dev/null 2>&1
   for f in "$CLAUDE_CFG" "$GEMINI_CFG" "$OPENCODE_CFG"; do
     run grep -q "$SENTINEL" "$f"
@@ -249,6 +253,7 @@ print(json.dumps(d))" "$1" "$2"
 # --- 7. no-clobber ---------------------------------------------------------
 
 @test "a hand-registered sibling MCP + other top-level keys survive compile" {
+  skip "FR-212d: custom MCP compile-projection retired (delegate via add-mcp; shape oracle is fr212-smoke + registry-project-mcp.test.ts custom-engine)"
   cat > "$CLAUDE_CFG" <<'EOF'
 {
   "numStartups": 9,
@@ -267,6 +272,7 @@ EOF
 # --- 8. overlay-merge (finding #2) -----------------------------------------
 
 @test "a personal mcp block in the overlay is seen by compile + drift" {
+  skip "FR-212d: custom MCP compile-projection retired (delegate via add-mcp; shape oracle is fr212-smoke + registry-project-mcp.test.ts custom-engine)"
   # Base manifest with NO mcp_servers; the block lives only in the overlay.
   cat > "$PROJ/harness-manifest.json" <<'EOF'
 { "version": 1, "agents": [] }
@@ -383,6 +389,7 @@ EOF
 }
 
 @test "FR-179: compile writes antigravity to ~/.gemini/config/mcp_config.json (gemini shape) + drift MATCH" {
+  skip "FR-212d: custom MCP compile-projection retired (delegate via add-mcp; shape oracle is fr212-smoke + registry-project-mcp.test.ts custom-engine)"
   write_antigravity_manifest
   local AG_CFG="$HOME/.gemini/config/mcp_config.json"
 

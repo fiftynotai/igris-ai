@@ -284,6 +284,7 @@ EOF
 }
 
 @test "compile: opencode/command → per-skill wrapper with generated-marker + @file directive" {
+  skip "FR-212d: opencode/command custom wrapper retired (skills now delegate to the skills CLI; placement covered by fr212-smoke)"
   build_opencode_command
   local w="$PROJ/.opencode/command/alpha.md"
   [ -f "$w" ]
@@ -304,6 +305,7 @@ EOF
 }
 
 @test "compile: opencode/command is idempotent (second run silent no-op, bytes identical)" {
+  skip "FR-212d: opencode/command custom wrapper retired (skills now delegate to the skills CLI; placement covered by fr212-smoke)"
   build_opencode_command
   local w="$PROJ/.opencode/command/alpha.md"
   local before
@@ -316,6 +318,7 @@ EOF
 }
 
 @test "drift: compiled opencode/command wrappers → MATCH" {
+  skip "FR-212d: opencode/command custom wrapper retired (skills now delegate to the skills CLI; placement covered by fr212-smoke)"
   build_opencode_command
   run bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
   [ "$status" -eq 0 ]
@@ -323,6 +326,7 @@ EOF
 }
 
 @test "drift: opencode/command wrapper absent → MISSING (count parity)" {
+  skip "FR-212d: opencode/command custom wrapper retired (skills now delegate to the skills CLI; placement covered by fr212-smoke)"
   build_opencode_command
   rm -f "$PROJ/.opencode/command/beta.md"
   run bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
@@ -331,6 +335,7 @@ EOF
 }
 
 @test "compile: opencode/command refuse-to-clobber a non-generated file at the wrapper path" {
+  skip "FR-212d: opencode/command custom wrapper retired (skills now delegate to the skills CLI; placement covered by fr212-smoke)"
   mkdir -p "$IGRIS_BRAIN_DIR/registry/skills/alpha" "$PROJ/.opencode/command"
   cat > "$IGRIS_BRAIN_DIR/registry/skills/alpha/SKILL.md" <<'EOF'
 ---
@@ -357,6 +362,7 @@ EOF
 }
 
 @test "drift: opencode/command wrapper without generated-marker → DRIFTED" {
+  skip "FR-212d: opencode/command custom wrapper retired (skills now delegate to the skills CLI; placement covered by fr212-smoke)"
   build_opencode_command
   # Replace alpha's wrapper with a hand-authored (unmarked) file.
   printf -- '---\ndescription: x\n---\nbody\n' > "$PROJ/.opencode/command/alpha.md"

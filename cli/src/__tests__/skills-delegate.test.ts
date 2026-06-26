@@ -60,22 +60,19 @@ function fakeSpawn(opts: {
   })) as unknown as typeof import("node:child_process").spawnSync;
 }
 
-describe("skills-delegate — engine flag", () => {
-  it("defaults to 'custom' when IGRIS_SKILLS_ENGINE is unset", () => {
-    expect(resolveSkillsEngine({})).toBe("custom");
+describe("skills-delegate — engine (FR-212d: delegate is the only engine)", () => {
+  it("resolves 'delegate' unconditionally (the custom engine was retired)", () => {
+    // FR-212d Phase 2 flipped the default to delegate AND deleted the custom
+    // inline symlink loop + the IGRIS_SKILLS_ENGINE env read. The resolver is now
+    // a constant — there is no escape hatch back to custom.
+    expect(resolveSkillsEngine({})).toBe("delegate");
   });
 
-  it("defaults to 'custom' for any non-'delegate' value (typo-safe)", () => {
-    expect(resolveSkillsEngine({ IGRIS_SKILLS_ENGINE: "" })).toBe("custom");
-    expect(resolveSkillsEngine({ IGRIS_SKILLS_ENGINE: "deligate" })).toBe(
-      "custom",
+  it("ignores any IGRIS_SKILLS_ENGINE value — always 'delegate'", () => {
+    expect(resolveSkillsEngine({ IGRIS_SKILLS_ENGINE: "" })).toBe("delegate");
+    expect(resolveSkillsEngine({ IGRIS_SKILLS_ENGINE: "custom" })).toBe(
+      "delegate",
     );
-    expect(resolveSkillsEngine({ IGRIS_SKILLS_ENGINE: "CUSTOM" })).toBe(
-      "custom",
-    );
-  });
-
-  it("opts into 'delegate' ONLY on the exact string 'delegate'", () => {
     expect(resolveSkillsEngine({ IGRIS_SKILLS_ENGINE: "delegate" })).toBe(
       "delegate",
     );

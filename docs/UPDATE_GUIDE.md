@@ -21,28 +21,37 @@ This guide explains how to update Igris AI to the latest version (v7.0+).
 
 ## Version Tracking
 
-Igris AI (v7.0+) tracks versions in the `.igris_version` file in each installed project:
+> **FR-212d:** the per-project `.igris_version` marker was RETIRED (`igris install`
+> is register-only — it writes no files into the project repo). Upgrade detection
+> now keys on the brain-side `installed_features.json` (content hashes of the
+> canonical agents/skills/hooks) at `~/.igris/projects/<slug>/installed_features.json`.
+
+Igris AI (v7.0+) tracks per-project install state in
+`~/.igris/projects/<slug>/installed_features.json` (NOT in the project repo):
 
 ```json
 {
-  "igris_ai_version": "7.0.0",
-  "install_mode": "symlink",
-  "brain_path": "/Users/you/.igris",
+  "schema_version": 2,
+  "cli_version": "7.0.0",
+  "brain_channel": "main",
+  "brain_ref": "v7.0.0",
+  "hooks_version": "<sha>",
+  "agents_version": "<sha>",
+  "skills_version": "<sha>",
   "installed_at": "2026-02-16T07:37:48Z",
-  "last_updated": "2026-02-22T10:00:00Z"
+  "updated_at": "2026-02-22T10:00:00Z"
 }
 ```
 
 **Fields:**
-- `igris_ai_version` - The installed Igris AI version
-- `install_mode` - Either `"symlink"` (brain-first) or `"copy"` (standalone)
-- `brain_path` - Path to the centralized brain (symlink mode only)
-- `installed_at` - When Igris AI was first installed in this project
-- `last_updated` - When the installation was last updated
+- `cli_version` - The CLI version that registered the project
+- `*_version` - Content hashes of the canonical agents/skills/hooks; `igris update`
+  re-runs the register-only install when these diverge from the current canonical
+- `installed_at` / `updated_at` - First registration + last refresh timestamps
 
-This file is automatically created during initialization and updated by:
-- `igris install` (the v7 unified CLI; supersedes the retired `igris_install.sh`)
-- `igris update` (replaces the retired `igris_update.sh`)
+This file is automatically written by:
+- `igris install <path>` (register-only — writes the registry row + this features file)
+- `igris update` (re-stamps it + refreshes the GLOBAL surfaces)
 
 ---
 
@@ -51,7 +60,8 @@ This file is automatically created during initialization and updated by:
 ### Check Igris AI Version
 
 ```bash
-cat .igris_version
+# Per-project install state (FR-212d: brain-side, not in the repo):
+cat ~/.igris/projects/<slug>/installed_features.json
 ```
 
 Or check the source repository version:
@@ -77,22 +87,35 @@ sqlite3 ~/.igris/memory/knowledge.db "SELECT slug, path, status FROM projects;"
 
 ## Update Models
 
-Igris AI (v7.0+) provides two update models depending on your install mode.
+> **FR-212d (global projection):** every surface (skills/agents/MCP/hooks) projects
+> GLOBALLY at `igris init` — there is no per-project `.claude/` symlink layer to
+> auto-update. A single `igris init` (or `igris refresh`) re-projects the global
+> surfaces; ALL registered projects immediately see the change (they share the one
+> global store + the one global hooks block). `igris install` is register-only.
 
-### Symlink-Based Projects (Auto-Update)
+### Global Surfaces (the live model)
 
-Projects installed with `igris install` (v7) — or the retired `igris_install.sh` (v6) — use symlinks to the brain at `~/.igris/`. These projects **automatically receive updates** when you update the source repository:
+Surfaces live globally: skills in `~/.claude/skills` + `~/.agents/skills` (placed by
+the `skills` CLI delegate), agents in the global harness agent dirs, the Igris hooks
+in `~/.claude/settings.json`. Re-project them with:
 
 ```bash
 # Update the source repository
 cd /path/to/igris-ai
 git pull origin main
 
-# Re-initialize the brain (picks up new agents, skills)
+# Re-initialize the brain — re-projects the GLOBAL surfaces (new agents/skills/hooks)
 igris init
+
+# Or refresh the brain core from the configured channel:
+igris refresh
+
+# Re-stamp each project's features file + refresh the global hooks:
+igris update --all
 ```
 
-Since `.claude/agents/` and `.claude/skills/` are symlinked, all linked projects immediately see the updated files.
+Because the surfaces are global, every registered project sees the updated agents/
+skills/hooks immediately after the re-projection — no per-project re-link needed.
 
 ### Copy-Based Projects (Manual Update)
 
@@ -122,19 +145,23 @@ igris update --all
 1. Checks current version against latest release
 2. Shows what will be updated
 3. Asks for confirmation
-4. Creates backup in `.igris_backup/`
-5. Updates system files (agents, skills, prompts, templates)
+4. Re-stamps each registered project's `installed_features.json`
+5. Re-projects the GLOBAL surfaces (agents, skills, hooks) — see below
 6. Preserves your data (briefs, session, context)
-7. Updates `.igris_version`
 
-### Files That Will Be Updated
+### What Gets Updated (global surfaces — FR-212d)
 
-- `.claude/agents/*.md` - Agent definitions
-- `.claude/skills/` - Skills
-- `.claude/hooks/` - Hook scripts
+`igris update` re-stamps each project's `installed_features.json` and refreshes
+the GLOBAL Igris hooks (`~/.claude/settings.json`). The brain CONTENT (agents,
+skills, prompts) is updated by re-fetching `~/.igris/core/` (`igris refresh`)
+and re-projecting it globally (`igris init`):
+
+- `~/.igris/core/agents/*.md` - Agent definitions (projected to the global harness agent dirs)
+- `~/.igris/core/skills/*` - Skills (projected to the universal store `~/.claude/skills` + `~/.agents/skills`)
+- `~/.claude/settings.json` - The GLOBAL Igris hooks block
 - `~/.igris/core/prompts/*.md` - System prompts
-- `~/.igris/core/templates/*.md` - Brief and PR templates
-- `scripts/igris_*.sh` - Core scripts
+
+There is no per-project `.claude/` layer to update — every surface is global.
 
 ### Files That Will Be Preserved
 
@@ -165,27 +192,21 @@ igris update --all --force
 
 ## Backup and Safety
 
-### Automatic Backups
+### Brain core backup (`igris refresh`)
 
-Every update creates a timestamped backup:
-
-```
-.igris_backup/
-├── 20260222_100000/              # Update backup
-│   ├── agents/
-│   ├── skills/
-│   ├── prompts/
-│   ├── templates/
-│   └── .igris_version
-```
+`igris refresh` swaps `~/.igris/core/` atomically — the prior core is preserved
+as `~/.igris/core.bak.<timestamp>` so a bad refresh can be rolled back by
+reverting the source repo and re-running `igris init` (see Rollback below). The
+GLOBAL `~/.claude/settings.json` hooks merge keeps a single `.bak.<timestamp>` of
+the prior file (unless `IGRIS_KEEP_BAK=0`).
 
 ### What Gets Backed Up
 
-- All files that will be modified during the update
-- Agent definitions (`.claude/agents/`)
-- System prompts (`~/.igris/core/prompts/`)
-- Templates (`~/.igris/core/templates/`)
-- Version file (`.igris_version`)
+- The prior `~/.igris/core/` (agents, skills, prompts) as `~/.igris/core.bak.<timestamp>`
+- The prior GLOBAL `~/.claude/settings.json` (one `.bak.<timestamp>`)
+
+> FR-212d: there is no per-project `.claude/` layer and no `.igris_version`
+> marker to back up — `igris install` is register-only.
 
 ### What Never Gets Modified
 
@@ -203,38 +224,27 @@ These files are **always preserved** during updates:
 
 ## Rollback Instructions
 
-If an update causes issues, you can roll back using the backup.
+If an update causes issues, roll back by reverting the brain SOURCE and
+re-projecting the GLOBAL surfaces. Because every surface is global (FR-212d),
+there is no per-project layer to restore — one rollback fixes every registered
+project at once.
 
-### Rollback Igris AI Core
-
-```bash
-# Find your backup
-ls -la .igris_backup/
-
-# Example: Rollback to backup from Feb 22
-BACKUP=".igris_backup/20260222_100000"
-
-# Restore files
-cp -r "$BACKUP/agents/"* .claude/agents/
-cp -r "$BACKUP/prompts/"* ~/.igris/core/prompts/
-cp -r "$BACKUP/templates/"* ~/.igris/core/templates/
-cp "$BACKUP/.igris_version" .
-
-echo "Rollback complete"
-```
-
-### Rollback Brain (Symlink Mode)
-
-For symlink-based installations, rollback by reverting the source repository:
+### Rollback the brain core + global surfaces
 
 ```bash
+# 1. Revert the source repository to the last-good commit
 cd /path/to/igris-ai
-git log --oneline -5  # Find the commit to revert to
+git log --oneline -5    # find the commit to revert to
 git checkout <commit-hash>
 
-# Re-initialize brain from the reverted state
-igris init
+# 2. Re-fetch the brain core from the reverted source + re-project globally
+igris init --from-source .    # swaps ~/.igris/core/ and re-projects skills/agents/MCP/hooks
 ```
+
+`igris refresh` keeps the prior core as `~/.igris/core.bak.<timestamp>`; if you
+only need to undo a `refresh` (not a source change), point `igris init` /
+`igris refresh` back at the previous channel/ref. The GLOBAL
+`~/.claude/settings.json` keeps a `.bak.<timestamp>` of the prior hooks block.
 
 ---
 
@@ -248,10 +258,10 @@ Error: Igris AI not initialized in this directory
 ```
 
 **Solution:**
-You're not in an Igris AI project directory. Make sure:
+The project isn't registered with the brain. Make sure:
 1. You're in the correct project directory
-2. Igris AI is initialized (`.igris_version` exists)
-3. If not initialized, run the appropriate install script
+2. The brain is initialized (`ls ~/.igris/core/`) — run `igris init` if not
+3. The project is registered — run `igris install .` (register-only)
 
 ### "Could not fetch remote version"
 
@@ -287,17 +297,19 @@ igris update --all
 3. Check error message for specific issue
 4. Try update again, or use `--dry-run` first
 
-### Symlinks Broken
+### Global surfaces stale or missing
 
-**Problem:** Symlinks point to a moved or deleted brain directory.
+**Problem:** The global skills/agents/hooks point at a moved or deleted brain
+directory, or look out of date.
 
 **Solution:**
 ```bash
-# Check where symlinks point
-ls -la .claude/agents
+# Check the global skill/agent stores + the global hooks
+ls -la ~/.claude/skills ~/.agents/skills
+ls -la ~/.claude/settings.json
 
-# Re-run the install script to recreate symlinks
-igris install .
+# Re-project the GLOBAL surfaces (skills, agents, MCP, hooks)
+igris init
 ```
 
 ### Brain Database Corrupted
@@ -318,7 +330,10 @@ cd /path/to/igris-ai && igris init
 
 **Solution:**
 ```bash
-# Use --force to re-copy all files
+# Re-fetch the brain core + re-project the global surfaces
+igris refresh && igris init
+
+# Force re-stamp every registered project's features file
 igris update --all --force
 ```
 
@@ -354,14 +369,13 @@ If still having issues, rollback and report the issue on GitHub.
    git pull origin main
    ```
 
-2. **Re-initialize brain (symlink mode):**
+2. **Re-project the GLOBAL surfaces:**
    ```bash
-   igris init
+   igris init        # re-projects skills/agents/MCP/hooks globally
    ```
 
-3. **Run update for copy-based projects:**
+3. **Re-stamp registered projects' features files:**
    ```bash
-   cd /path/to/your-project
    igris update --all
    ```
 
