@@ -869,8 +869,7 @@ codex CLI's native agent-import command or REIMPLEMENT the TOML emit. FR-138
 3-key codex subagent TOML directly, as the live default path — no opt-in
 flag, no env gate. FR-159 ported the REIMPLEMENT path to TS
 (`assembleCodexHarness`) + a parallel bash helper for compile-side fallback.
-The 7 Igris-
-core agents now distribute to `.codex/agents/*.toml` by default whenever
+The Igris-core agents now distribute to `.codex/agents/*.toml` by default whenever
 `compile_harnesses.sh --target codex` (or `--target all`) runs. The former
 `--d1-reimplement` flag and `IGRIS_CODEX_D1=reimplement` env opt-in are retained
 only as deprecated, accepted no-ops for back-compat with any caller still
@@ -1237,7 +1236,7 @@ Linux.
 
 ## Agent-prompt harnesses (FR-136)
 
-Agent prompts (the 7 Igris-core agents and any project agents) are projected to
+Agent prompts (the Igris-core agents and any project agents) are projected to
 per-CLI harness files (Codex `.toml`, Claude `.md`) by the TD-021 adapters under
 `core/scripts/cli-adapters/`. FR-136 formalized this:
 

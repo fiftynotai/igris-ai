@@ -10,10 +10,10 @@ schema: "https://igris.ai/schemas/agent-manifest.yaml"
 
 metadata:
   name: "IGRIS Agent Ecosystem"
-  description: "Agent definitions for IGRIS v7.0 - 7 agents across 4 tiers"
+  description: "Agent definitions for IGRIS v7.0 - 9 agents across 4 tiers"
   created: "2025-12-03"
   updated: "2026-02-13"
-  agent_count: 7
+  agent_count: 9
 
 tiers:
   1:
@@ -97,6 +97,43 @@ agents:
       - "review"
       - "audit"
       - "inspect"
+
+  - name: aegis
+    file: aegis.md
+    tier: 1
+    role: "Security review and threat analysis"
+    description: "Finds vulnerabilities, models threats, and audits code/dependencies for defensive hardening"
+    tools:
+      - Read
+      - Write
+      - Edit
+      - Bash
+      - Grep
+      - Glob
+    triggers:
+      - "security"
+      - "threat model"
+      - "vulnerability"
+      - "audit"
+      - "aegis"
+
+  - name: scribe
+    file: scribe.md
+    tier: 1
+    role: "Documentation"
+    description: "Writes and maintains READMEs, API references, architecture docs, and code comments"
+    tools:
+      - Read
+      - Write
+      - Edit
+      - Grep
+      - Glob
+    triggers:
+      - "docs"
+      - "documentation"
+      - "README"
+      - "API reference"
+      - "scribe"
 
   # Tier 3: Maintenance
   - name: mender

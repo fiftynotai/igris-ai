@@ -6,7 +6,7 @@
 
 ## 1. The 30-Second Pitch
 
-Igris AI is an **open-source AI engineering OS** that orchestrates agent teams to implement software with human oversight. A local **brain** (SQLite + FTS5 + sqlite-vec) at `~/.igris/memory/knowledge.db` stores briefs, learnings, errors, tasks, perception events, and metrics. A unified `igris` CLI manages installation, sync, and lifecycle. The orchestrator (Claude Code grounded via the `/boot` ceremony, which loads the layered OS context from `core/os/INDEX.md`) enforces a **brief-first protocol** and delegates work to **7 specialized agents** (architect, forger, sentinel, warden, mender, seeker, sage) within a single Claude Code session. An optional VPS acts as an **async backup hub + dashboard backend + cross-machine sync**; local is always authoritative.
+Igris AI is an **open-source AI engineering OS** that orchestrates agent teams to implement software with human oversight. A local **brain** (SQLite + FTS5 + sqlite-vec) at `~/.igris/memory/knowledge.db` stores briefs, learnings, errors, tasks, perception events, and metrics. A unified `igris` CLI manages installation, sync, and lifecycle. The orchestrator (Claude Code grounded via the `/boot` ceremony, which loads the layered OS context from `core/os/INDEX.md`) enforces a **brief-first protocol** and delegates work to specialized agents discovered from `core/agents/*.md`. An optional VPS acts as an **async backup hub + dashboard backend + cross-machine sync**; local is always authoritative.
 
 ---
 
@@ -225,7 +225,7 @@ Adapters under `core/hooks/bridges/` let non-Claude CLIs (OpenCode, Codex, Gemin
 
 ## 7. Agent + Skill Orchestration
 
-### 7.1 The 7-agent roster
+### 7.1 The 9-agent roster
 
 ```mermaid
 flowchart LR
@@ -234,6 +234,8 @@ flowchart LR
     O --> F["forger<br/>implement, write"]
     O --> S["sentinel<br/>test + execute, read-only writes"]
     O --> W["warden<br/>review, read-only"]
+    O --> E["aegis<br/>security review, defensive"]
+    O --> D["scribe<br/>documentation, read/write docs"]
     O --> M["mender<br/>diagnose, read-only"]
     O --> K["seeker<br/>research, read-only"]
     O --> G["sage<br/>Flutter MVVM, read/write"]
@@ -247,6 +249,8 @@ The table below lists each agent's `tools:` from its YAML frontmatter (`core/age
 | **forger** | Code implementation | Read/Write (WRITES code) | `Read, Write, Edit, Bash, Grep, Glob` | `/hunt` BUILDING |
 | **sentinel** | Test execution & validation | Read + Execute (RUNS tests, does not write code) | `Read, Bash, Grep` | `/hunt` TESTING |
 | **warden** | Code review & security guardian | Read-only (REVIEWS, never modifies) | `Read, Grep, Glob` | `/hunt` REVIEWING; `/audit` |
+| **aegis** | Security review & threat analysis | Defensive review/hardening | `Read, Grep, Glob, Bash, Write, Edit` | On-demand for security review, threat modeling, and hardening |
+| **scribe** | Documentation | Clarifying docs/comments only | `Read, Write, Edit, Grep, Glob` | On-demand documentation work; `/document` remains the orchestrator-level skill |
 | **mender** | Error diagnosis & recovery | Read-only (DIAGNOSES, does not fix directly) | `Read, Grep, Glob, Bash, mcp__igris-brain__igris_error_lookup` | Auto on test/commit failure (self-heal); orchestrator applies fixes |
 | **seeker** | Codebase research & investigation | Read-only (EXPLORES, does not modify) | `Read, Grep, Glob, Bash` (model: `haiku`) | On-demand; `/audit`; research questions |
 | **sage** | Flutter MVVM + Actions domain expert | Read/Write (IMPLEMENTS Flutter code) | `Read, Write, Edit, Bash, Glob, Grep` | On-demand for Flutter MVVM work (custom Tier-5 agent; not part of `/hunt` by default) |
@@ -368,18 +372,15 @@ memory: project
 ## CONSTRAINTS
 ```
 
-Tree routing entry:
+Agent registration:
 
-```json
-"agents": {
-  "agent_name": {
-    "load": ["coding_guidelines", "architecture_map"],
-    "note": "When/why this agent is invoked"
-  }
-}
-```
+1. Put the canonical prompt at `core/agents/<name>.md` with `name`, `description`, and `tools` frontmatter.
+2. Add role/tier metadata to `core/agents/manifest.yaml`.
+3. Add per-harness projection targets to the repo-root `harness-manifest.json`.
+4. Run `core/scripts/gen_os_index.sh` so `core/os/INDEX.md` discovers the agent roster from frontmatter.
+5. Run the harness compile/drift path so Codex, Gemini, and OpenCode projections match the canonical prompt.
 
-The **live** agent roster is discovered from each agent's own frontmatter (`name`/`description` in `core/agents/<name>.md`) into the `core/os/INDEX.md` "Agent roster" by `core/scripts/gen_os_index.sh` (FR-187 Phase 2b). `core/agents/manifest.yaml` supplies role/tier metadata and is retained for that; the retired `igris_tree.json:agents` map is gone.
+The **live** agent roster is discovered from each agent's own frontmatter (`name`/`description` in `core/agents/<name>.md`) into the `core/os/INDEX.md` "Agent roster" by `core/scripts/gen_os_index.sh` (FR-187 Phase 2b). `core/agents/manifest.yaml` supplies role/tier metadata and is retained for that; the retired routing-tree agent map is gone.
 
 ### 8.5 Add a brief type
 

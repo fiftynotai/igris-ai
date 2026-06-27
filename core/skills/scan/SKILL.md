@@ -431,7 +431,7 @@ NEVER regenerates anything. Token budget: ~80 tokens.
 Run the drift guard wrapper read-only and capture its exit code + summary:
 ```bash
 GUARD="$REPO_ROOT/core/scripts/cli-adapters/check_harness_drift.sh"
-MANIFEST="$REPO_ROOT/core/scripts/cli-adapters/harness-manifest.json"
+MANIFEST="$REPO_ROOT/harness-manifest.json"
 
 # Silent-degradation posture (matches §5.5 / §6.6): if the adapter layer or
 # manifest is absent, render NOTHING for this section. The guard's verdict is
@@ -441,7 +441,7 @@ if [ -f "$GUARD" ] && [ -f "$MANIFEST" ]; then
 fi
 ```
 
-The wrapper checks the 7 Igris-core agents (content-pipeline agents are
+The wrapper checks the Igris-core agents declared in the repo-root harness manifest (content-pipeline agents are
 excluded — they have no canonical in this repo until FR-136). The guard's
 per-agent summary line reads `N targets — M in sync, K drifted/missing`.
 
@@ -452,14 +452,14 @@ summing the per-agent results into one MATCH/DRIFTED count:
 
 ```
 ### Harness Drift
-7 agent targets — 7 in sync
+N agent targets — N in sync
 ```
 
 When any target is out of sync (DRIFTED or MISSING), name the count and the
 remedy:
 ```
 ### Harness Drift
-7 agent targets — 4 in sync, 3 drifted/missing — run `compile_harnesses.sh` to resync
+N agent targets — M in sync, K drifted/missing — run `compile_harnesses.sh` to resync
 ```
 
 If the guard script or the manifest is absent, omit the section entirely.

@@ -1,6 +1,6 @@
 {
   "$schema": "core/scripts/cli-adapters/manifest.schema.json",
-  "_comment": "Igris-ai PROJECT harness manifest (FR-136). Declares the 7 core agents whose codex harnesses are mechanically regenerated from their canonical core/agents/<name>.md prompts (TD-021). Core ships only the SCHEMA (core/scripts/cli-adapters/manifest.schema.json); each project ships its own data manifest at its repo root. Canonical is the SOLE source of truth; every target listed here is a GENERATED artifact - editing a target file directly is a process error. Personal/Layer-2 customizations are NOT declared here - they live in an optional gitignored overlay at ~/.igris/registry/harness-manifest.personal.json (FR-139). FR-202 M4: the os_identity surface (TD-233) was retired — the orchestrator no longer projects an identity region into any harness's auto-read file. The per-harness delegation mechanism is now a CONTEXT LAYER (core/os/harness-specific/<harness>.md, loaded at Boot for the Detect-resolved harness), not a projected surface.",
+  "_comment": "Igris-ai PROJECT harness manifest (FR-136). Declares the 9 core agents whose codex harnesses are mechanically regenerated from their canonical core/agents/<name>.md prompts (TD-021). Core ships only the SCHEMA (core/scripts/cli-adapters/manifest.schema.json); each project ships its own data manifest at its repo root. Canonical is the SOLE source of truth; every target listed here is a GENERATED artifact - editing a target file directly is a process error. Personal/Layer-2 customizations are NOT declared here - they live in an optional gitignored overlay at ~/.igris/registry/harness-manifest.personal.json (FR-139). FR-202 M4: the os_identity surface (TD-233) was retired — the orchestrator no longer projects an identity region into any harness's auto-read file. The per-harness delegation mechanism is now a CONTEXT LAYER (core/os/harness-specific/<harness>.md, loaded at Boot for the Detect-resolved harness), not a projected surface.",
   "version": 1,
   "_harnesses_comment": "Per-harness `delegation_model` — the applicability predicate for the harness-specific context layer (FR-202 M4). `native-static` = the harness loads Igris agents statically and a skill delegating via `subagent_type:<agent>` resolves directly (no harness-specific file needed). `dynamic-define` = the harness cannot load static Igris agents but defines subagents at runtime (e.g. Antigravity `define_subagent`/`invoke_subagent`); it has a `core/os/harness-specific/<harness>.md` file pointing at the shared delegation recipe, so the orchestrator is taught 'read ~/.igris/core/agents/<X>.md → define_subagent → invoke' ONCE at Boot, with ZERO per-skill branching. A harness absent from this map defaults to native-static. This is no longer a projected surface (the recipe was re-homed off the identity region into the harness-specific layer); the map survives only to select which harness-specific file applies.",
   "harnesses": {
@@ -11,6 +11,28 @@
     "antigravity": { "delegation_model": "dynamic-define" }
   },
   "agents": [
+    {
+      "name": "aegis",
+      "canonical": {
+        "dir": "core/agents",
+        "file": "aegis.md",
+        "versioned": false
+      },
+      "targets": [
+        {
+          "type": "codex",
+          "path": ".codex/agents/aegis.toml"
+        },
+        {
+          "type": "gemini",
+          "path": "~/.gemini/agents/aegis.md"
+        },
+        {
+          "type": "opencode",
+          "path": "~/.config/opencode/agent/aegis.md"
+        }
+      ]
+    },
     {
       "name": "architect",
       "canonical": {
@@ -118,6 +140,28 @@
         {
           "type": "opencode",
           "path": "~/.config/opencode/agent/seeker.md"
+        }
+      ]
+    },
+    {
+      "name": "scribe",
+      "canonical": {
+        "dir": "core/agents",
+        "file": "scribe.md",
+        "versioned": false
+      },
+      "targets": [
+        {
+          "type": "codex",
+          "path": ".codex/agents/scribe.toml"
+        },
+        {
+          "type": "gemini",
+          "path": "~/.gemini/agents/scribe.md"
+        },
+        {
+          "type": "opencode",
+          "path": "~/.config/opencode/agent/scribe.md"
         }
       ]
     },

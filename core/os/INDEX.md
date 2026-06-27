@@ -36,10 +36,12 @@ a hand-listed name. Reach for the agent whose role fits the work.
 
 | agent | role |
 |---|---|
+| aegis | Security review and threat-analysis specialist for Igris AI. Hunts vulnerabilities, models threats, and audits code/dependencies for defensive hardening. Reports findings with severity and concrete remediation. |
 | architect | Strategic implementation planner for Igris AI. Use when planning implementation for briefs, designing architecture, or creating step-by-step plans. Delegates to this agent before any code changes. |
 | forger | Code implementation specialist for Igris AI. Implements code according to approved plans. Writes clean, tested code following project conventions. |
 | mender | Error diagnosis and recovery specialist for Igris AI. Diagnoses errors and suggests specific fixes. Powers the self-healing protocol. |
 | sage | Expert Flutter specialist mastering Kalvad's MVVM + Actions Layer architecture with GetX. Specializes in building scalable Flutter apps with clean separation of concerns, reactive state management, and type-safe API integration patterns. |
+| scribe | Documentation specialist for Igris AI. Writes and maintains READMEs, API references, architecture docs, and code comments. Turns implemented code into clear, accurate, audience-appropriate documentation. |
 | seeker | Codebase research and investigation specialist for Igris AI. Investigates codebase, explains architecture, and researches how things work. |
 | sentinel | Test execution and validation specialist for Igris AI. Validates implementations by running tests, linting, and builds. Reports PASS/FAIL with detailed diagnostics. |
 | warden | Code review, quality guardian, and auditor for Igris AI. Reviews code for quality, security, and guideline compliance (APPROVE/REJECT). Also runs comprehensive codebase audits via /audit skill. |
