@@ -78,7 +78,7 @@ setup() {
     process.stdin.on("data", d => s += d);
     process.stdin.on("end", () => {
       const o = JSON.parse(s);
-      for (const k of ["harness","brain_db","sqlite3","remote_brain","mode"]) {
+      for (const k of ["harness","project_slug","project_path","brain_root","brain_db","sqlite3","remote_brain","mode"]) {
         if (!(k in o)) { console.error("missing key: " + k); process.exit(1); }
       }
       process.exit(0);

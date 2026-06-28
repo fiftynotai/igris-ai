@@ -7,8 +7,13 @@
  * a missing brain DB is a fresh-start, not an error (SKILL.md's "do NOT block
  * session start" invariant).
  *
- * The four signals:
+ * The lifecycle identity:
  *   - harness        — inferred from the launching CLI's env markers.
+ *   - project_slug   — basename(cwd), matching the Mount verbs' default.
+ *   - project_path   — process cwd, the path Mount verbs register/assess.
+ *   - brain_root     — resolved Igris brain root (`~/.igris` or override).
+ *
+ * The capability signals:
  *   - brain_db       — `existsSync(brainDbPath())`; the local channel is live.
  *   - sqlite3        — `command -v sqlite3`; only matters for the skill's own
  *                      remaining shell-outs. The verbs use in-process
@@ -26,8 +31,8 @@
  */
 
 import { existsSync } from "node:fs";
-import { delimiter, join } from "node:path";
-import { brainDbPath } from "./paths.js";
+import { basename, delimiter, join } from "node:path";
+import { brainDbPath, brainDir } from "./paths.js";
 import { readRemoteBrainConfig } from "./mcp-client.js";
 import type { DetectResult } from "../types.js";
 
@@ -85,6 +90,7 @@ export function detectCapabilities(): DetectResult {
   const brainDb = existsSync(brainDbPath());
   const sqlite3 = commandOnPath("sqlite3");
   const remoteBrain = readRemoteBrainConfig() !== null;
+  const projectPath = process.cwd();
 
   // Mode precedence: no local DB dominates (a fresh start with no resume),
   // then no remote (local-only run), else full.
@@ -99,6 +105,9 @@ export function detectCapabilities(): DetectResult {
 
   return {
     harness,
+    project_slug: basename(projectPath),
+    project_path: projectPath,
+    brain_root: brainDir(),
     brain_db: brainDb,
     sqlite3,
     remote_brain: remoteBrain,

@@ -29,93 +29,57 @@ Initialize Igris AI and resume any pending work.
 
 ## Execution
 
-### 1. Load Context via the os/ INDEX
+### 1. Detect — L0
 
-Read `~/.igris/core/os/INDEX.md` first — this is the **module map** for what context to load. There is no monolith to slice: each row is a self-contained module, and the modules ARE the sections.
+Run the detection verb first and read its JSON digest:
 
-1. Read `~/.igris/core/os/INDEX.md`
-2. From the module table, load every module whose `tier` is `boot` — read each from `~/.igris/core/os/<module>.md`. Two rows live at machine-home, not under `os/`: the `SOUL` row → `~/.igris/core/SOUL.md`, and the `USER` (operator) row → `~/.igris/USER.md`.
+```bash
+igris detect
+```
+
+The digest is the lifecycle handoff from the environment into Boot:
+
+```jsonc
+{ "harness": "claude|codex|gemini|opencode|antigravity|unknown",
+  "project_slug": "igris-ai",
+  "project_path": "/abs/project/path",
+  "brain_root": "~/.igris",
+  "brain_db": true,
+  "sqlite3": true,
+  "remote_brain": true,
+  "mode": "full|degraded-no-db|degraded-no-remote" }
+```
+
+Carry these fields forward:
+- `detect.harness` selects the harness-specific OS context file in §2.
+- `detect.project_slug` is the `<slug>` used by Mount verbs below.
+- `detect.project_path` is the absolute project path passed to `session register`.
+- `detect.brain_root` is the runtime brain root for context reads.
+- `detect.mode` / booleans drive degraded notices only; detection never blocks boot.
+
+### 2. Boot — L1 OS Core
+
+Read `<detect.brain_root>/core/os/INDEX.md` first — this is the **module map** for what context to load. There is no monolith to slice: each row is a self-contained module, and the modules ARE the sections.
+
+1. Read `<detect.brain_root>/core/os/INDEX.md`
+2. From the module table, load every module whose `tier` is `boot` except `USER` — read each from `<detect.brain_root>/core/os/<module>.md`. The `SOUL` row lives at `<detect.brain_root>/core/SOUL.md`; the `USER` row is visible in the map but is deferred to Login (§3).
 3. Read all resolved modules silently. `on-demand` / `reference` modules are NOT loaded here — pull them later when their `consult_when` fires.
+4. From the `Harness-specific roster`, if a row's `harness` equals `detect.harness`, read `<detect.brain_root>/core/os/<file>` for that row. If no row matches, this is a clean no-op (native-static harnesses need no file; `unknown` is not an error).
 
 **Always-needed files** (boot mechanics, not context modules):
-- `~/.igris/config.json` - Remote brain URL and API key
+- `<detect.brain_root>/config.json` - Remote brain URL and API key
 
-**Degradation:** if `~/.igris/core/os/INDEX.md` is absent, fall back to reading `~/.igris/core/SOUL.md` + `~/.igris/USER.md` + `~/.igris/config.json`, and continue — never block session start.
+**Degradation:** if `<detect.brain_root>/core/os/INDEX.md` is absent, fall back to reading `<detect.brain_root>/core/SOUL.md` + `<detect.brain_root>/USER.md` + `<detect.brain_root>/config.json`, display one short degraded-context notice, and continue — never block session start.
 
-### 2. Load Session State — Gather
+### 3. Login — L2 Operator
 
-The session model is **per-instance** (see `session_protocol.md`): every instance owns one `session/instances/<instance_id>.md` file, keyed by its `instance_id`. There is no shared `CURRENT_SESSION.md`. `/boot` does NOT read a single fixed file — it *gathers*: it enumerates the project's session files + the live instance registry, classifies each file (the Lock-2/3 truth table), and picks THE handoff. As of FR-195 the entire enumerate→classify→pick algorithm is OWNED by the `igris session gather` verb — the skill does not re-derive it.
+Read `<detect.brain_root>/USER.md`. This is the Login layer: the machine-home operator profile and preferences. It is distinct from Boot's OS core so the operator layer can vary per machine without being shipped as core OS content.
 
-Run the gather verb and read its JSON digest:
+### 4. Mount — L3 Remote Sync
+
+Mount starts with the remote channel so restored session files are visible before handoff selection. Run the boot-sync verb and read its JSON digest:
 ```bash
-igris session gather --project <slug> [--self-instance-id <recovered-id>]
-```
-- `--self-instance-id` is OPTIONAL — pass it only if THIS harness can locate its own prior per-instance file (an `instance_id` persisted in the harness's working dir / `$CLAUDE_PROJECT_DIR` heuristics, the G4 chicken-and-egg). The common case omits it; the verb leaves `self_instance_id: null` and §3.7's heartbeat mints a fresh id. Gather is an *observer* — it never mints, never writes a session file (Lock-2 "nothing destructive in gather").
-- The verb does ALL the classification: it enumerates `session_files` + the live `instances` registry, applies the Lock-2/3 truth table (LIVE SIBLING / ABANDONED LIVE / GENUINE HANDOFF), handles the FR-133 legacy `CURRENT_SESSION.md`-adoption fall-through, picks the newest GENUINE HANDOFF, and fetches content for THAT one only.
-
-**The gather digest** (stdout JSON — read these fields):
-```jsonc
-{ "degraded": false,
-  "handoff": {                  // null when fresh_start (no genuine handoff)
-    "instance_id": "…|null",    // null for a legacy CURRENT_SESSION.md row
-    "filename": "instances/<id>.md|CURRENT_SESSION.md",
-    "mode": "REST MODE|null",   // the handoff file's **Mode:** line
-    "resume_point": "…",        // feeds §5's resume display
-    "next_steps": "…",          // seeds §3.7's LIVE file (resume carry-forward)
-    "is_legacy": false },       // FR-133 legacy-adoption flag
-  "self_instance_id": "…|null", // recovered (G4) else null → §3.7 mints
-  "siblings":  [{ "instance_id": "…", "current_brief": "…|null", "last_active": "…" }],
-  "crashed":   [{ "instance_id": "…", "last_active": "…", "scratchpad": "session/…" }],
-  "fresh_start": false }        // true ⟺ handoff is null
-```
-
-**What the digest means for display (G5):**
-- `handoff.resume_point` / `handoff.next_steps` → feed §5's resume display (only when `handoff.mode == "REST MODE"`; see §5).
-- `siblings[]` → render a one-line-per-entry "Active siblings" list ("instance {short_id} on {current_brief}, last active {last_active}").
-- `crashed[]` → render a one-line-per-entry "Crashed scratchpads" list ("instance {short_id} crashed mid-session — scratchpad at {scratchpad}"). This is the ABANDONED LIVE surface (§3.6.4 below is the same set — display only, NEVER destructive: no auto-archive, no ownership clear; Lock 1).
-- `self_instance_id` → carry to §3.7 (recovered id to reuse, or null to mint).
-
-All gather output is **display-only** — nothing destructive happens (the verb writes nothing to `session_files`; its only DB side-effect is the registry's own staleness maintenance, the same as the old `igris_instance_list` call).
-
-**Degradation:** when the brain DB is absent the verb emits `{ "degraded": true, "fresh_start": true, "handoff": null, … }` and exits 0 — treat it as a fresh start (no resume). NEVER block session start on a degraded gather.
-
-**Ordering contract:** gather MUST run BEFORE §3.7 register and BEFORE §3.8 housekeeping. The verbs are separate processes and do NOT enforce cross-process order — the skill's call sequence (gather → register → housekeeping) is the contract. H0's Lock-2 "the legacy row was provably read before it is archived" holds ONLY because this skill ran gather first.
-
-### 3. Display Persona Greeting
-
-Use the persona (from `soul`) and user config (from `USER.md`) already loaded in Step 1:
-```
-[PERSONA GREETING FROM soul context]
-
-My capabilities:
-- Brief management, session recovery, architecture enforcement
-- Quality gates, protocol enforcement
-```
-
-### 3.5. Query Brain for Context (Optional)
-
-If the `igris-brain` MCP server is available:
-- Call `igris_memory_recall` with the current project slug and context="session start, current project priorities"
-- Display any relevant cross-project learnings to the user
-- Call `igris_project_register` to update `last_session_at` for this project
-- Call `igris_session_recall` with days=2 to see recent cross-project activity
-- If sessions returned, display a "Cross-Project Context" section:
-  ```
-  ### Cross-Project Context (last 48h)
-  - project-a: Worked on BR-012 (auth fix), BUILDING phase
-  - project-b: Completed FR-005 (dark mode)
-  ```
-- This gives a "welcome back" overview across all projects
-
-If brain MCP is not available, skip this step silently. No errors, no warnings.
-
-### 3.6. Sync with Remote Brain (boot-sync)
-
-The entire VPS↔local sync — the brain row pull, the sync-queue drain, the session-file restore, and the definition refresh — is OWNED by the `igris boot-sync` verb (FR-195). It is the REMOTE channel: it drains the local `sync_queue.jsonl` (reusing the canonical atomic `sync data` primitive — FR-128 rename-then-process, crash recovery from stale `.draining-*` temps, per-entry strict-allow-list, `cache_path → content` resolution) AND pulls VPS→local rows over `GET /sync/pull`, merging them last-write-wins into the LOCAL brain DB. `session_files` and `definition_files` ride that same pull — there is no separate endpoint for them. Do NOT inline any of this in markdown — the atomicity + directionality contracts cannot be enforced from a skill recipe; the single CLI code path is the contract.
-
-Run the boot-sync verb and read its JSON digest:
-```bash
-igris boot-sync --project <slug>
+igris boot-sync --project <detect.project_slug>
 ```
 
 **The boot-sync digest** (stdout JSON — read these fields):
@@ -136,36 +100,103 @@ igris boot-sync --project <slug>
 
 **Degradation:** the verb ALWAYS exits 0 and NEVER blocks session start. When `degraded: true` (remote unconfigured) or any part fails (`ok: false`, recorded in `skipped[]`), display the one-line notice and continue — a missing/unreachable remote is a local-only run, not an error. Each part is independent: a failed pull does not abort the drain or vice-versa.
 
-> **What replaced what (FR-195):** boot-sync subsumes the former §3.6 (`igris_brain_pull`), §3.6.1 (`igris_sync_queue_drain`), §3.6.1.1 (`igris sync data` local drain), §3.6.2 (`igris_session_file_pull`), and §3.6.3 (`igris_definition_pull`) — five separate MCP/CLI calls collapsed into one verb. The `_pull` (VPS→local restore) vs `_list` (state-aware local enumerate) distinction that mattered when the skill called both is now internal: §2 gather owns the `_list` side (classification); §3.6 boot-sync owns the `_pull` side (restore). They no longer share a call site to conflate.
+> **What replaced what (FR-195):** boot-sync subsumes the former §3.6 (`igris_brain_pull`), §3.6.1 (`igris_sync_queue_drain`), §3.6.1.1 (`igris sync data` local drain), §3.6.2 (`igris_session_file_pull`), and §3.6.3 (`igris_definition_pull`) — five separate MCP/CLI calls collapsed into one verb. The `_pull` (VPS→local restore) vs `_list` (state-aware local enumerate) distinction that mattered when the skill called both is now internal: this Mount step owns the `_pull` side (restore), and §4.1 gather owns the `_list` side (classification). They no longer share a call site to conflate.
 
-### 3.6.4. Surface Stale Previous Instances (Mandatory)
+### 4.1 Mount — Load Session State / Gather
+
+The session model is **per-instance** (see `session_protocol.md`): every instance owns one `session/instances/<instance_id>.md` file, keyed by its `instance_id`. There is no shared `CURRENT_SESSION.md`. `/boot` does NOT read a single fixed file — it *gathers*: it enumerates the project's session files + the live instance registry, classifies each file (the Lock-2/3 truth table), and picks THE handoff. As of FR-195 the entire enumerate→classify→pick algorithm is OWNED by the `igris session gather` verb — the skill does not re-derive it.
+
+Run the gather verb and read its JSON digest:
+```bash
+igris session gather --project <detect.project_slug> [--self-instance-id <recovered-id>]
+```
+- `--self-instance-id` is OPTIONAL — pass it only if THIS harness can locate its own prior per-instance file (an `instance_id` persisted in the harness's working dir / `$CLAUDE_PROJECT_DIR` heuristics, the G4 chicken-and-egg). The common case omits it; the verb leaves `self_instance_id: null` and §4.4's heartbeat mints a fresh id. Gather is an *observer* — it never mints, never writes a session file (Lock-2 "nothing destructive in gather").
+- The verb does ALL the classification: it enumerates `session_files` + the live `instances` registry, applies the Lock-2/3 truth table (LIVE SIBLING / ABANDONED LIVE / GENUINE HANDOFF), handles the FR-133 legacy `CURRENT_SESSION.md`-adoption fall-through, picks the newest GENUINE HANDOFF, and fetches content for THAT one only.
+
+**The gather digest** (stdout JSON — read these fields):
+```jsonc
+{ "degraded": false,
+  "handoff": {                  // null when fresh_start (no genuine handoff)
+    "instance_id": "…|null",    // null for a legacy CURRENT_SESSION.md row
+    "filename": "instances/<id>.md|CURRENT_SESSION.md",
+    "mode": "REST MODE|null",   // the handoff file's **Mode:** line
+    "resume_point": "…",        // feeds §5's resume display
+    "next_steps": "…",          // seeds §4.4's LIVE file (resume carry-forward)
+    "is_legacy": false },       // FR-133 legacy-adoption flag
+  "self_instance_id": "…|null", // recovered (G4) else null → §4.4 mints
+  "siblings":  [{ "instance_id": "…", "current_brief": "…|null", "last_active": "…" }],
+  "crashed":   [{ "instance_id": "…", "last_active": "…", "scratchpad": "session/…" }],
+  "fresh_start": false }        // true ⟺ handoff is null
+```
+
+**What the digest means for display (G5):**
+- `handoff.resume_point` / `handoff.next_steps` → feed §5's resume display (only when `handoff.mode == "REST MODE"`; see §5).
+- `siblings[]` → render a one-line-per-entry "Active siblings" list ("instance {short_id} on {current_brief}, last active {last_active}").
+- `crashed[]` → render a one-line-per-entry "Crashed scratchpads" list ("instance {short_id} crashed mid-session — scratchpad at {scratchpad}"). This is the ABANDONED LIVE surface (§4.3.1 below is the same set — display only, NEVER destructive: no auto-archive, no ownership clear; Lock 1).
+- `self_instance_id` → carry to §4.4 (recovered id to reuse, or null to mint).
+
+All gather output is **display-only** — nothing destructive happens (the verb writes nothing to `session_files`; its only DB side-effect is the registry's own staleness maintenance, the same as the old `igris_instance_list` call).
+
+**Degradation:** when the brain DB is absent the verb emits `{ "degraded": true, "fresh_start": true, "handoff": null, … }` and exits 0 — treat it as a fresh start (no resume). NEVER block session start on a degraded gather.
+
+**Ordering contract:** boot-sync MUST run before gather, and gather MUST run BEFORE §4.4 register and BEFORE §4.5 housekeeping. The verbs are separate processes and do NOT enforce cross-process order — the skill's call sequence (boot-sync → gather → register → housekeeping → assess) is the contract. H0's Lock-2 "the legacy row was provably read before it is archived" holds ONLY because this skill ran gather before housekeeping.
+
+### 4.2 Display Persona Greeting
+
+Use the persona (from `SOUL`) loaded in §2 and user config (from `USER.md`) loaded in §3:
+```
+[PERSONA GREETING FROM soul context]
+
+My capabilities:
+- Brief management, session recovery, architecture enforcement
+- Quality gates, protocol enforcement
+```
+
+### 4.3 Query Brain for Context (Optional)
+
+If the `igris-brain` MCP server is available:
+- Call `igris_memory_recall` with the current project slug and context="session start, current project priorities"
+- Display any relevant cross-project learnings to the user
+- Call `igris_project_register` to update `last_session_at` for this project
+- Call `igris_session_recall` with days=2 to see recent cross-project activity
+- If sessions returned, display a "Cross-Project Context" section:
+  ```
+  ### Cross-Project Context (last 48h)
+  - project-a: Worked on BR-012 (auth fix), BUILDING phase
+  - project-b: Completed FR-005 (dark mode)
+  ```
+- This gives a "welcome back" overview across all projects
+
+If brain MCP is not available, skip this step silently. No errors, no warnings.
+
+### 4.3.1 Surface Stale Previous Instances (Mandatory)
 
 Per Lock 1, heartbeat is **display-only** and NOTHING auto-destroys a stale instance. This section is a *display* of genuine crashes — it does NOT remove anything.
 
 A clean `/rest` → `/boot` cycle leaves nothing stale: `/rest` already calls `igris_instance_remove` in its §2.5 "Close Instance Ownership" step, so the prior instance is gone from the registry by the time `/boot` runs. What this section surfaces is the *genuine crash* case — an instance that exited without `/rest`.
 
-This is purely a display of the `crashed[]` list the §2 `igris session gather` digest ALREADY computed (the ABANDONED LIVE set — `state='live'` with an absent/stale owner). No new tool call is needed; the verb did the classification.
+This is purely a display of the `crashed[]` list the §4.1 `igris session gather` digest ALREADY computed (the ABANDONED LIVE set — `state='live'` with an absent/stale owner). No new tool call is needed; the verb did the classification.
 
 - For each entry in `gather.crashed[]`, surface it: "stale, unconfirmed — instance {short_id}, last active {last_active}; scratchpad at {scratchpad}".
 - Do NOT call `igris_instance_remove`. Do NOT auto-archive its file. Do NOT clear its `current_brief`. Reclaim is an explicit operator action — never automatic.
 
 If `gather` was degraded (empty `crashed[]`), render nothing. Do NOT block session start.
 
-This is a read of genuine crashes, not a destructive sweep. Multi-instance is valid; a live sibling is left alone (it shows in the §2 "Active siblings" list from `gather.siblings[]`, not here).
+This is a read of genuine crashes, not a destructive sweep. Multi-instance is valid; a live sibling is left alone (it shows in the §4.1 "Active siblings" list from `gather.siblings[]`, not here).
 
-### 3.7. Register Instance (Mandatory)
+### 4.4 Mount — Register Instance (Mandatory)
 
 Registration — the heartbeat upsert + the LIVE per-instance file write — is OWNED by the `igris session register` verb (FR-195). It mints-or-recovers the `instance_id`, writes the heartbeat row, and writes `session/instances/<id>.md` at `state='live'` with the contract line shape (`**Instance ID:**`, `**Mode:** Active`, `**Active Brief:**`) that the phase-guard fallback and `/hunt` parse. It seeds the LIVE file's "Next Steps" from gather's chosen handoff so the resume context carries forward.
 
-Run the register verb AFTER §2 gather (the ordering contract — gather's outputs feed register):
+Run the register verb AFTER §4.1 gather (the ordering contract — gather's outputs feed register):
 ```bash
-igris session register --project <slug> \
+igris session register --project <detect.project_slug> \
   [--self-instance-id <gather.self_instance_id>] \
-  [--project-path <abs-project-dir>] \
+  [--project-path <detect.project_path>] \
   [--seed-next-steps "<gather.handoff.next_steps>"]
 ```
 - `--self-instance-id` — pass `gather.self_instance_id` when it was recovered (non-null); OMIT it to mint a fresh UUID. (This is the G4 recover-or-mint decision, now resolved by gather + register together.)
-- `--seed-next-steps` — pass `gather.handoff.next_steps` when gather selected a genuine handoff (the resume carry-forward, §3.7 step 2c). Omit on a fresh start.
+- `--seed-next-steps` — pass `gather.handoff.next_steps` when gather selected a genuine handoff (the resume carry-forward from §4.1). Omit on a fresh start.
 - `--project-path` — the absolute project directory (the heartbeat's `project_path` field).
 
 **The register digest** (stdout JSON — read these fields):
@@ -183,13 +214,13 @@ igris session register --project <slug> \
 
 **Degradation:** when the brain DB is absent the verb emits `{ "degraded": true, … }` and exits 0 — display "Instance registration skipped (brain unavailable)" and continue. NEVER block session start.
 
-### 3.8. Housekeeping Sweep (Mandatory)
+### 4.5 Mount — Housekeeping Sweep (Mandatory)
 
-The crash-robust, idempotent archive sweep (H0–H3) is OWNED by the `igris housekeeping` verb (FR-195). It is NOT a daemon, NOT scheduled — it runs once per `/boot`, AFTER gather (§2) and AFTER registration (§3.7), BEFORE the assessment surfaces (§4). The verb's H0–H3 are individually crash-robust and idempotent; running it twice is harmless and a crash mid-sweep leaves a consistent state (Lock 4 — `session_protocol.md` §5). The header-presence guard (idempotency) and per-file append-then-delete (crash-robustness) are the exact atomicity contracts that "cannot be enforced from a skill recipe" — which is why this is CODE, not inline markdown.
+The crash-robust, idempotent archive sweep (H0–H3) is OWNED by the `igris housekeeping` verb (FR-195). It is NOT a daemon, NOT scheduled — it runs once per `/boot`, AFTER gather (§4.1) and AFTER registration (§4.4), BEFORE the assessment surface (§4.6). The verb's H0–H3 are individually crash-robust and idempotent; running it twice is harmless and a crash mid-sweep leaves a consistent state (Lock 4 — `session_protocol.md` §5). The header-presence guard (idempotency) and per-file append-then-delete (crash-robustness) are the exact atomicity contracts that "cannot be enforced from a skill recipe" — which is why this is CODE, not inline markdown.
 
-Run the housekeeping verb (the ordering contract requires it AFTER gather + register):
+Run the housekeeping verb (the ordering contract requires it AFTER boot-sync + gather + register):
 ```bash
-igris housekeeping --project <slug>
+igris housekeeping --project <detect.project_slug>
 ```
 
 What the verb does (faithful to the prior inline H0–H3):
@@ -214,13 +245,13 @@ What the verb does (faithful to the prior inline H0–H3):
 
 **Degradation:** when the brain DB is absent the verb emits `{ "degraded": true, "noop": true, … }` and exits 0 — there are no session files to sweep on a fresh start. NEVER block session start.
 
-### 4. Perform System Assessment
+### 4.6 Mount — Perform System Assessment
 
-The MINIMAL system-assessment surface — brief-status summary + active blockers + git snapshot + active-instance count + upcoming goals — is OWNED by the `igris assess` verb (FR-195, decision D-A). It does the brief-dashboard summary SQL, reads `session/BLOCKERS.md`, runs `git status`, counts live instances, and lists goals due within 14 days. It DELIBERATELY OMITS suggestions (§4.8) and perception pending (§4.9) — those re-introduce ceremony noise and stay as the skill's own surfaces below; assess does not cover them.
+The MINIMAL system-assessment surface — brief-status summary + active blockers + git snapshot + active-instance count + upcoming goals — is OWNED by the `igris assess` verb (FR-195, decision D-A). It does the brief-dashboard summary SQL, reads `session/BLOCKERS.md`, runs `git status`, counts live instances, and lists goals due within 14 days. It DELIBERATELY OMITS suggestions (§4.10) and perception pending (§4.11) — those re-introduce ceremony noise and stay as the skill's own surfaces below; assess does not cover them.
 
 Run the assess verb and render from its JSON digest:
 ```bash
-igris assess --project <slug>
+igris assess --project <detect.project_slug>
 ```
 
 **The assess digest** (stdout JSON — read these fields):
@@ -238,11 +269,11 @@ Render the assessment from the digest:
 - `blockers[]` → surface active blockers (if any).
 - `git` → "On {branch}{, dirty}{, ahead N}".
 - `active_instances` → "Active Instances: {n}".
-- `goals_upcoming[]` → see §4.7 (the goals surface is now part of this digest).
+- `goals_upcoming[]` → see §4.9 (the goals surface is now part of this digest).
 
 **Degradation:** when the brain DB is absent the verb emits `{ "degraded": true, "briefs": {total:0,…}, "goals_upcoming": [], "active_instances": 0, … }` and exits 0 — it STILL reads `blockers` + `git` (those do not need the DB). NEVER block session start.
 
-### 4.5. Context-Doc Presence Nudge (FR-209)
+### 4.7 Mount — Context-Doc Presence Nudge (FR-209)
 
 The project-context-docs presence check is a SOFT nudge, not a gate. It is owned
 by the shared CLI primitive; `/boot` only renders the short signal.
@@ -250,7 +281,7 @@ by the shared CLI primitive; `/boot` only renders the short signal.
 Run:
 
 ```bash
-igris context-docs inventory --project <slug> --json 2>/dev/null || true
+igris context-docs inventory --project <detect.project_slug> --json 2>/dev/null || true
 ```
 
 Read only these fields from the JSON digest:
@@ -272,7 +303,7 @@ If the list is empty, unknown-only, the command is unavailable, or the JSON is
 unparseable, render nothing. NEVER block boot, never author docs automatically,
 and do not re-implement the `applies_when` logic here.
 
-### 4.6. Igris Doctor Drift Summary (FR-175)
+### 4.8 Ready Check — Igris Doctor Drift Summary (FR-175)
 
 Run the existing CLI diagnostic in read-only mode after the regular assessment, with a short timeout so boot cannot hang:
 
@@ -290,9 +321,9 @@ Igris Doctor: {issue_count} issue(s) across {class_count} drift class(es) - run 
 
 If the count is zero, render nothing. If `igris doctor` is unavailable, slow, or its output is unparsable, skip this section silently. `/boot` must never block on diagnostics, must never run `igris doctor --fix`, and must not reimplement doctor checks; the CLI verb remains the engine.
 
-### 4.7. Goals Approaching Deadline (FR-110)
+### 4.9 Ready Check — Goals Approaching Deadline (FR-110)
 
-The upcoming-goals surface is now part of the §4 `igris assess` digest (`goals_upcoming[]` — active goals with a deadline within 14 days). Do NOT make a separate goal call; render from the digest.
+The upcoming-goals surface is now part of the §4.6 `igris assess` digest (`goals_upcoming[]` — active goals with a deadline within 14 days). Do NOT make a separate goal call; render from the digest.
 
 For each entry in `assess.goals_upcoming[]`, render:
 
@@ -306,7 +337,7 @@ Each entry carries `goal_id` / `title` / `deadline` / `priority`. (The prior "N 
 
 If `goals_upcoming[]` is empty, render nothing — no "No goals" line. Token budget: ~120 tokens.
 
-### 4.8. Subconscious Suggestions (FR-106)
+### 4.10 Ready Check — Subconscious Suggestions (FR-106)
 
 > **TD-102 / FR-118 / FR-191 (V7.1):** This entire section is gated behind the
 > `cognition.subconscious.enabled` config flag, which defaults to `false`. The old
@@ -315,25 +346,25 @@ If `goals_upcoming[]` is empty, render nothing — no "No goals" line. Token bud
 > open-typed suggestions), and the rule detectors were deleted. Re-enable is
 > just a flag flip — no schedule re-bootstrap needed.
 
-Read `~/.igris/config.json` and check `cognition.subconscious.enabled`. If the
+Read `<detect.brain_root>/config.json` and check `cognition.subconscious.enabled`. If the
 key is absent, treat as `false`. If `false`, skip this section silently — render
 nothing (no suggestion MCP tools, no failure WARNING, no "disabled" notice).
-Resume reading at §4.9.
+Resume reading at §4.11.
 
 #### Pre-step (FR-118): subconscious failure WARNING
 
-Mirroring §4.9's perception failure pre-step. Before rendering the pending
+Mirroring §4.11's perception failure pre-step. Before rendering the pending
 suggestions, query the latest subconscious run so a recent LLM-run failure
 surfaces prominently. The engine writes its lifecycle to `event_log` directly
 under the `cognition.subconscious` component (NOT the legacy `subconscious.*`
 bus events). Read the local DB via `sqlite3` (same TD-080 rationale: the local
-DB is the merged superset post-§3.6 pull; the `igris_event_log` MCP routes to
+DB is the merged superset post-§4 pull; the `igris_event_log` MCP routes to
 the remote and would miss this machine's local-only runs). The subconscious
 runs whole-brain (no per-project slug), so this query is NOT slug-scoped:
 
 ```bash
 command -v sqlite3 >/dev/null 2>&1 || return 0  # skip WARNING silently if absent
-sqlite3 "$HOME/.igris/memory/knowledge.db" \
+sqlite3 "<detect.brain_root>/memory/knowledge.db" \
   "SELECT created_at, event_name, json_extract(payload, '\$.reason') AS reason
    FROM event_log
    WHERE component = 'cognition.subconscious'
@@ -347,7 +378,7 @@ The "no later success" check (substitute the failed row's `created_at`):
 
 ```bash
 command -v sqlite3 >/dev/null 2>&1 || return 0
-sqlite3 "$HOME/.igris/memory/knowledge.db" \
+sqlite3 "<detect.brain_root>/memory/knowledge.db" \
   "SELECT COUNT(*) FROM event_log
    WHERE component = 'cognition.subconscious'
      AND event_name = 'cognition.subconscious.run_succeeded'
@@ -399,7 +430,7 @@ run `igris_suggestion_list` directly for full details.
 If zero results, render nothing — no "No suggestions" line. If the tool
 is unavailable (older brain), skip silently.
 
-### 4.9. Pending Perception Candidates (FR-109 / TD-066)
+### 4.11 Ready Check — Pending Perception Candidates (FR-109 / TD-066)
 
 Extraction happens in a detached background process at session-end (spawned
 by `session_end.sh` / `pre_compact.sh` via `perception_extract_and_persist.sh`).
@@ -413,9 +444,9 @@ event so a recent failure surfaces prominently. **TD-080 fix (Gap A):** read
 directly from the local DB via `sqlite3` (NOT via `igris_event_log` MCP) so
 this machine's local-only events surface here. The MCP tool routes to the
 remote brain, which misses any perception runs that happened on this machine
-since the last `/rest`. Post-§3.6 pull, the local DB is the merged superset.
+since the last `/rest`. Post-§4 pull, the local DB is the merged superset.
 
-Run (substitute `$PROJECT_SLUG` for the current project slug):
+Run (set `$PROJECT_SLUG` from `detect.project_slug`):
 ```bash
 # Defense-in-depth (TD-080 Q-3): refuse to interpolate if slug doesn't match
 # the registered slug shape. Belt-and-suspenders against any future code path
@@ -426,7 +457,7 @@ if [[ ! "$PROJECT_SLUG" =~ ^[a-z0-9_-]+$ ]]; then
   return 0  # do not surface this section this run
 fi
 
-sqlite3 "$HOME/.igris/memory/knowledge.db" \
+sqlite3 "<detect.brain_root>/memory/knowledge.db" \
   "SELECT created_at, event_name, json_extract(payload, '\$.reason') AS reason
    FROM event_log
    WHERE component = 'perception' AND project_slug = '$PROJECT_SLUG'
@@ -448,7 +479,7 @@ if [[ ! "$PROJECT_SLUG" =~ ^[a-z0-9_-]+$ ]]; then
   return 0
 fi
 
-sqlite3 "$HOME/.igris/memory/knowledge.db" \
+sqlite3 "<detect.brain_root>/memory/knowledge.db" \
   "SELECT COUNT(*) FROM event_log
    WHERE component = 'perception' AND project_slug = '$PROJECT_SLUG'
      AND event_name = 'perception.run_succeeded'
@@ -479,7 +510,7 @@ Suppression rules (do NOT render the WARNING when):
   the failed row.
 
 Token budget for the WARNING block: ~80 tokens. The pending list below
-remains unchanged in budget (~150 tokens). Total §4.9 upper bound: ~230 tokens.
+remains unchanged in budget (~150 tokens). Total §4.11 upper bound: ~230 tokens.
 
 If `sqlite3` is unavailable or the DB file is missing, skip the WARNING silently.
 
@@ -488,10 +519,10 @@ If `sqlite3` is unavailable or the DB file is missing, skip the WARNING silently
 **TD-080 fix (Gap A):** read directly from the local DB via `sqlite3` (NOT
 via `igris_perception_review_pending` MCP). Same rationale as the WARNING
 above — local-only pending rows from this machine's recent extractions are
-invisible to the remote-routed MCP tool. Post-§3.6 pull, the local DB is the
+invisible to the remote-routed MCP tool. Post-§4 pull, the local DB is the
 merged superset.
 
-Run (substitute `$PROJECT_SLUG`):
+Run (set `$PROJECT_SLUG` from `detect.project_slug`):
 ```bash
 # Defense-in-depth (TD-080 Q-3): refuse to interpolate if slug doesn't match
 # the registered slug shape.
@@ -499,13 +530,13 @@ if [[ ! "$PROJECT_SLUG" =~ ^[a-z0-9_-]+$ ]]; then
   return 0
 fi
 
-sqlite3 "$HOME/.igris/memory/knowledge.db" \
+sqlite3 "<detect.brain_root>/memory/knowledge.db" \
   "SELECT title, source_extractor, confidence
    FROM learnings
    WHERE project = '$PROJECT_SLUG' AND review_status = 'pending_review'
    ORDER BY created_at DESC LIMIT 5;"
 
-sqlite3 "$HOME/.igris/memory/knowledge.db" \
+sqlite3 "<detect.brain_root>/memory/knowledge.db" \
   "SELECT COUNT(*) FROM learnings
    WHERE project = '$PROJECT_SLUG' AND review_status = 'pending_review';"
 ```
@@ -535,14 +566,14 @@ If zero results, render nothing — no "No pending" line. If `sqlite3` is
 unavailable or the DB file is missing, skip silently (same defensive guards
 as the WARNING block above).
 
-If `auto_approve_enabled=true` is set in `~/.igris/config.json`'s `perception`
+If `auto_approve_enabled=true` is set in `<detect.brain_root>/config.json`'s `perception`
 section, the background extractor inserts new rows as `approved` directly
 and they bypass this surface — they appear in `recall`/`search` immediately
 without operator review. Default is opt-in (off).
 
 ### 5. Display Resume Point (if resuming)
 
-If the §2 `igris session gather` digest selected a genuine handoff with `handoff.mode == "REST MODE"`, display its resume point from the digest fields — `handoff.resume_point` and `handoff.next_steps` (the verb parsed these from the chosen handoff file's content), NOT from any fixed `CURRENT_SESSION.md`:
+If the §4.1 `igris session gather` digest selected a genuine handoff with `handoff.mode == "REST MODE"`, display its resume point from the digest fields — `handoff.resume_point` and `handoff.next_steps` (the verb parsed these from the chosen handoff file's content), NOT from any fixed `CURRENT_SESSION.md`:
 ```
 ## Resuming Session
 
@@ -565,7 +596,7 @@ If `gather.fresh_start` is true (`handoff` is null), this is a fresh start — s
 
 ### 7. Update Session
 
-`igris session register` (§3.7) already wrote this instance's LIVE per-instance file `~/.igris/projects/{project}/session/instances/<instance_id>.md` at `state='live'` (where `<instance_id>` is `register.instance_id` from the §3.7 digest), seeded from the handoff. §7 is the end-of-boot confirm/refresh of THAT file — if the booting surfaced anything that should land in the LIVE scratchpad (or once a hunt starts and `**Mode:**` flips to `HUNT MODE`), update it directly via `igris_session_file_update` with `project`, `filename=instances/<instance_id>.md`, `content`, `instance_id=<instance_id>`, `state='live'`. On a plain boot with no further edits the register write already stands — no extra write is required.
+`igris session register` (§4.4) already wrote this instance's LIVE per-instance file `~/.igris/projects/{project}/session/instances/<instance_id>.md` at `state='live'` (where `<instance_id>` is `register.instance_id` from the §4.4 digest), seeded from the handoff. §7 is the end-of-boot confirm/refresh of THAT file — if the booting surfaced anything that should land in the LIVE scratchpad (or once a hunt starts and `**Mode:**` flips to `HUNT MODE`), update it directly via `igris_session_file_update` with `project`, `filename=instances/<instance_id>.md`, `content`, `instance_id=<instance_id>`, `state='live'`. On a plain boot with no further edits the register write already stands — no extra write is required.
 
 The per-instance file replaces the old single `CURRENT_SESSION.md`. There is no Mode flip on a shared file; each instance owns and writes its own file freely.
 

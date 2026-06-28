@@ -432,6 +432,16 @@ render; the repo `CLAUDE.md` is a static boot-pointer. (This was separate from t
 The per-harness **delegation mechanism** that used to ride the identity region
 on `dynamic-define` harnesses is now a **context layer** (see the next section).
 
+**Boot lifecycle (FR-214, supersedes FR-140's static-projection framing).**
+`/boot` is the executable lifecycle, not another always-read harness artifact:
+`Detect → Boot(OS core) → Login(operator) → Mount(project/session) → Ready(Userland)`.
+It starts with `igris detect`, then uses `detect.brain_root` to read
+`core/os/INDEX.md`, loads boot-tier OS modules, defers `USER.md` to Login, and
+loads exactly one harness-specific file when the generated roster has a row for
+`detect.harness`. Native-static harnesses have no file and that absence is a
+clean no-op. Mount is ordered by verbs: `boot-sync → session gather → session
+register → housekeeping → assess`.
+
 ---
 
 ## Portability Convention
@@ -1294,7 +1304,7 @@ own projection primitive, plus the delegation-mechanism context layer:
 | **Skills** | `core/skills/<name>/SKILL.md` (+ registry-vendored personal skills) | `symlink` (whole skill dir) **or** `command` (thin `@file` wrapper) |
 | **MCP** | `surfaces.mcp_servers[]` canonical block | config-**merge** into the harness's native MCP config |
 | **Hooks** | `~/.igris/core/hooks/shared/*.sh` | per-harness **bridge** (plugin / notify-wrapper) |
-| **Delegation mechanism** (context layer, FR-202 M4 — NOT a projected surface) | `harnesses.<type>.delegation_model` descriptor + `core/os/harness-specific/<harness>.md` → `_delegation-recipe.md` | `native-static` → nothing (skill delegates via `subagent_type:<agent>`); `dynamic-define` → the harness reads its `core/os/harness-specific/<harness>.md` at Boot (Detect-selected), which points at the shared delegation recipe, so the orchestrator is taught read→define_subagent→invoke once per session |
+| **Delegation mechanism** (context layer, FR-202 M4 / FR-214 — NOT a projected surface) | `harnesses.<type>.delegation_model` descriptor + `core/os/harness-specific/<harness>.md` → `_delegation-recipe.md` | `native-static` → nothing (skill delegates via `subagent_type:<agent>`); `dynamic-define` → `/boot` runs Detect, then Boot loads the Detect-selected `core/os/harness-specific/<harness>.md`, which points at the shared delegation recipe, so the orchestrator is taught read→define_subagent→invoke once per session |
 
 #### Per-harness method matrix (the harnesses today)
 

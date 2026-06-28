@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 let tmpRoot: string;
 let savedEnv: NodeJS.ProcessEnv;
@@ -76,6 +76,9 @@ describe("detect — mode", () => {
     makeRemoteConfig();
     const m = await getModule();
     const r = m.detectCapabilities();
+    expect(r.brain_root).toBe(tmpRoot);
+    expect(r.project_path).toBe(process.cwd());
+    expect(r.project_slug).toBe(basename(process.cwd()));
     expect(r.brain_db).toBe(true);
     expect(r.remote_brain).toBe(true);
     expect(r.mode).toBe("full");

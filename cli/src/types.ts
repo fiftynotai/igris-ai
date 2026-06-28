@@ -193,6 +193,12 @@ export interface InstanceRow {
  */
 export interface DetectResult {
   harness: "claude" | "codex" | "gemini" | "opencode" | "antigravity" | "unknown";
+  /** Default project slug for Mount verbs: basename(process.cwd()). */
+  project_slug: string;
+  /** Current project directory seen by the booting CLI process. */
+  project_path: string;
+  /** Resolved Igris brain root (`~/.igris` or IGRIS_BRAIN_DIR override). */
+  brain_root: string;
   /** `existsSync(brainDbPath())` — the local channel is available. */
   brain_db: boolean;
   /** `command -v sqlite3` — only matters for the skill's own remaining shell-outs (the verbs use in-process better-sqlite3). */
@@ -260,7 +266,7 @@ export interface GatherDigest {
  * FR-195 (M2) — the `session register` digest.
  *
  * Emitted after the heartbeat upsert + LIVE per-instance file write
- * (SKILL.md §3.7). `minted` is true when no prior id was supplied (a fresh
+ * (SKILL.md §4.4). `minted` is true when no prior id was supplied (a fresh
  * UUID was generated); false when an existing id was recovered+refreshed.
  * `seeded_from_handoff` is true when gather selected a genuine handoff whose
  * Next Steps were carried into the new LIVE file (the resume context).
@@ -277,7 +283,7 @@ export interface RegisterDigest {
 /**
  * FR-195 (M2) — the `housekeeping` digest (H0–H3).
  *
- * Each field maps to one sweep step (SKILL.md §3.8): `h0_legacy_retired` is
+ * Each field maps to one sweep step (SKILL.md §4.5): `h0_legacy_retired` is
  * true when the legacy CURRENT_SESSION.md row was retired this run;
  * `h1_archived` lists the `<id>-<rested_at>.md` archive filenames produced by
  * the supersession step; `h2_rolled` / `h3_ceiling_rolled` are the counts of
@@ -411,7 +417,7 @@ export interface BootSyncQueueDrain {
 /**
  * FR-195 (M3) — the `boot-sync` digest (the REMOTE channel; never blocks).
  *
- * Emitted after the queue drain + the VPS→local row pull (SKILL.md §3.6).
+ * Emitted after the queue drain + the VPS→local row pull (SKILL.md §4).
  * `degraded` is true when `remote_brain` is unconfigured — the pulls are
  * skipped and `skipped` lists the reason(s); exit is still 0 (a missing remote
  * is a local-only run, not an error). Each part is independent: a failed pull
