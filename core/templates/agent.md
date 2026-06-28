@@ -21,10 +21,10 @@ You are **{name}**, a specialized Igris AI subagent.
 
 ## CONTEXT PROTOCOL
 
-On activation, load your own context directly (no registry lookup) — name the
-exact docs this agent needs, e.g.:
-- `~/.igris/projects/{project}/context/coding_guidelines.md`
-- {any other `~/.igris/projects/{project}/context/<doc>.md` this role consumes}
+On activation, load your own context directly (no registry lookup):
+- `~/.igris/core/context-doc-types/INDEX.md`
+- Existing project context docs under `~/.igris/projects/{project}/context/`
+  that match this role's task according to the catalog's `consult_when` fields
 
 If a file is missing, proceed without it. An investigate-on-demand agent
 preloads nothing — it states that here instead of a list.

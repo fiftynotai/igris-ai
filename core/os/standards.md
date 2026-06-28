@@ -29,7 +29,9 @@ Conventional Commits: `<type>(<scope>): <summary>`
 ## Code Quality
 
 - Run the linter/analyzer before committing (zero issues).
-- Follow the project's relevant context docs — the INDEX lists them (coding_guidelines, architecture, design, brand — whichever apply to what you're building).
+- Follow the project's relevant context docs. The context-doc type catalog lists
+  when to consult each doc (`consult_when`) and when a change makes it stale
+  (`maintain_when`).
 - Document public APIs.
 
 ## Security

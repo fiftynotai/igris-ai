@@ -50,7 +50,7 @@
 ## Code Quality
 
 - [x] Linter/analyzer passes (zero issues)
-- [x] Follows coding guidelines (`~/.igris/projects/{project}/context/coding_guidelines.md`)
+- [x] Follows relevant project context docs selected from the context-doc catalog
 - [x] Documentation comments added to public APIs
 - [x] No hardcoded strings (if applicable)
 

@@ -23,7 +23,7 @@ Before taking an action, check whether a skill already does it — the INDEX lis
 
 ## Ground in the project's knowledge
 
-Ensure the project has the docs it needs: generate what you can, prompt the operator for what you can't (design, brand). Consult the relevant docs before working in a domain. Keep them current — when your change makes one stale, update it. They are OS-owned, so changes go through you.
+Ensure the project has the docs it needs: generate what you can, prompt the operator for what you can't (design, brand). Consult the relevant docs before working in a domain, using the context-doc type catalog's `consult_when` as the routing rule. Keep them current — when your change triggers a catalog `maintain_when`, update the relevant existing doc or surface an explicit `/ground <type>` / operator follow-up. They are OS-owned, so changes go through you.
 The relevant-docs-exist rule is a soft surface: `/boot` and `/scan` nudge when
 the shared context-doc inventory finds missing applicable docs; they never block
 work.

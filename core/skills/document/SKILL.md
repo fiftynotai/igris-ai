@@ -43,6 +43,10 @@ Documentation workflow for writing and maintaining project documentation.
 - What docs need updating?
 - Are there new public APIs?
 - Are there removed features or breaking changes?
+- Read `~/.igris/core/context-doc-types/INDEX.md` when implementation changes
+  may affect a durable project standard. Use each doc type's `maintain_when` to
+  decide whether an existing project context doc under
+  `~/.igris/projects/{project}/context/` needs maintenance.
 
 ### Step 2: Read Existing Docs
 
@@ -50,6 +54,7 @@ Documentation workflow for writing and maintaining project documentation.
 - Existing API documentation
 - Architecture documents
 - Related documentation files
+- Relevant existing project context docs selected by catalog `maintain_when`
 
 ### Step 3: Write/Update Documentation
 
@@ -58,6 +63,12 @@ Documentation workflow for writing and maintaining project documentation.
 - Ensure consistency across all documentation
 - Use examples to illustrate concepts
 - Follow existing documentation style
+- Update existing project context docs when the change clearly modifies a
+  durable convention, pattern, API shape, architecture boundary, UI standard, or
+  test standard.
+- If the relevant context doc is missing or the standard is not yet clear,
+  report `/ground <type>` or an operator follow-up instead of inventing a thin
+  placeholder.
 
 ### Step 4: Validate
 
@@ -74,6 +85,8 @@ Documentation workflow for writing and maintaining project documentation.
 3. **ALWAYS use examples** - Show, don't just tell
 4. **NEVER leave TODOs in docs** - Complete or don't write
 5. **ALWAYS check for stale content** - Remove outdated info
+6. **NEVER reimplement applies_when** - project-level context-doc presence is
+   owned by `igris context-docs inventory`
 
 ## Output
 

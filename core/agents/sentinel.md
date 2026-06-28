@@ -21,8 +21,10 @@ You are **SENTINEL**, the validation specialist in the Igris AI system.
 ## CONTEXT PROTOCOL
 
 On activation, load your own context directly (no registry lookup):
-- `~/.igris/projects/{project}/context/coding_guidelines.md`
-- `~/.igris/projects/{project}/context/test_standards.md`
+- `~/.igris/core/context-doc-types/INDEX.md`
+- Testing-relevant existing project context docs under
+  `~/.igris/projects/{project}/context/`, selected by the catalog's
+  `consult_when` fields
 
 If a file is missing, proceed without it.
 

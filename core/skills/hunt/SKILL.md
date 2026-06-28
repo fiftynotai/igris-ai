@@ -194,6 +194,37 @@ Proceed to PLANNING phase.
    surface this so forger does not skip it. If the architect omits these
    sub-steps and the implementation touches core/ files, the orchestrator
    annotates the prompt with a reminder before passing to forger in step 4.
+3.8. **Catalog-driven context-doc plan (FR-213):**
+   The architect MUST read `~/.igris/core/context-doc-types/INDEX.md` and use
+   the catalog's `consult_when` / `maintain_when` fields to add a `Context Docs`
+   section to the plan when any project-context doc is relevant. This is a
+   lightweight LLM judgment step, not a task classifier. Do NOT reimplement
+   `applies_when`; project-level presence stays owned by
+   `igris context-docs inventory`.
+
+   Before invoking architect, run:
+
+   ```bash
+   igris context-docs inventory --project {project} --json 2>/dev/null || true
+   ```
+
+   Pass the raw JSON output into the architect prompt as
+   `Context-doc inventory (applies_when source of truth)`. If the command fails,
+   returns degraded output, or emits invalid JSON, continue without blocking and
+   tell architect the inventory is unavailable. `/hunt` reads this digest only
+   for applicability/presence (`docs[].type`, `docs[].target`, `docs[].exists`,
+   `docs[].applies`, `missing_applicable[]`, `remediation[]`). It never
+   recreates the predicate logic.
+
+   The plan's `Context Docs` section MUST include:
+   - `Consult before build` — target docs the forger should read when present,
+     with the matching `consult_when` reason.
+   - `Potential maintenance after build` — target docs that may need updates if
+     the implementation triggers their `maintain_when` condition.
+   - `Missing applicable/relevant docs` — docs absent from
+     `~/.igris/projects/{project}/context/`, grounded in the inventory digest
+     when available, with `/ground <type>` remediation instead of invented
+     placeholder docs.
 4. **Delegate to the architect role** using your Agent tool:
 
 ```
@@ -208,6 +239,16 @@ Agent tool parameters:
   2. Implementation steps
   3. Test scenarios
   4. Risk assessment
+  5. Context Docs: read ~/.igris/core/context-doc-types/INDEX.md, use
+     consult_when to identify project context docs to read before build, and
+     use maintain_when to identify docs that may need updates after build.
+     Use the supplied Context-doc inventory JSON for applies/existence/missing
+     docs. Do not infer or reimplement applies_when; presence is owned by
+     igris context-docs inventory.
+
+  Context-doc inventory (applies_when source of truth):
+  [raw JSON from `igris context-docs inventory --project {project} --json`,
+  or 'unavailable']
 
   Write plan to ~/.igris/projects/{project}/plans/{BRIEF_ID}-plan.md"
 ```
@@ -270,11 +311,20 @@ Agent tool parameters:
 
   Brief: [brief content]
   Plan: [plan content if exists]
-  Coding Guidelines: Read ~/.igris/projects/{project}/context/coding_guidelines.md
+  Context Docs: Follow the plan's Context Docs section. Read every existing
+  project context doc listed under Consult before build. If the plan has no
+  Context Docs section, read ~/.igris/core/context-doc-types/INDEX.md and use
+  consult_when to decide which existing docs under
+  ~/.igris/projects/{project}/context/ are relevant to this implementation.
+  Do not reimplement applies_when.
 
   Follow the plan and implement all required changes.
-  Ensure code follows architecture standards.
+  Ensure code follows all consulted project context docs.
   Add documentation comments to public APIs.
+  In your final report, include a 'Context doc impact' block. List any durable
+  convention, pattern, API shape, architecture boundary, UI standard, or test
+  standard changed, and name which maintain_when condition it may trigger. If
+  none, say 'None'.
 
   CRITICAL — DO NOT COMMIT. The /hunt state machine routes
   BUILDING -> TESTING -> REVIEWING -> COMMITTING; the orchestrator
@@ -393,10 +443,17 @@ Agent tool parameters:
 - prompt: "Review the implementation for quality.
 
   Check:
-  1. Code follows coding_guidelines.md
-  2. No security vulnerabilities
-  3. Tests are adequate
-  4. Documentation is present
+  1. Read ~/.igris/core/context-doc-types/INDEX.md and the plan's Context Docs
+     section. Load every existing project context doc relevant by consult_when.
+  2. REJECT if the implementation violates any consulted project context doc.
+  3. REJECT if an obvious maintain_when trigger was ignored: either the relevant
+     context doc must already be updated, Phase 6 context-doc maintenance must
+     be explicitly queued, or the deferral/remediation must be explicit. Do NOT
+     reject merely because a legitimate Context doc impact is waiting for the
+     DOCUMENTING phase to resolve it.
+  4. No security vulnerabilities.
+  5. Tests are adequate.
+  6. Documentation is present where required.
 
   Output: APPROVE or REJECT with feedback."
 ```
@@ -446,12 +503,17 @@ Agent tool parameters:
 - Component library changes
 - README-worthy features implemented
 - API signatures change
+- The forger or warden reports a `Context doc impact`
+- A catalog `maintain_when` condition is triggered for an existing project
+  context doc
 
 **Skip /document skill when (proceed directly to COMMITTING):**
 - Internal refactoring only
 - Bug fixes with no API changes
 - Test-only changes
 - Session/config changes
+- No `maintain_when` condition is triggered and Warden did not request
+  context-doc maintenance
 
 4. **If docs needed:**
    - **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call `igris_agent_event` with:
@@ -471,11 +533,19 @@ Agent tool parameters:
      - arguments: "{BRIEF_ID} - Update documentation for changes made.
        Brief: [brief content]
        Changes made: [summary of implementation changes]
+       Context Docs: Read ~/.igris/core/context-doc-types/INDEX.md. Use
+       maintain_when to decide whether existing docs under
+       ~/.igris/projects/{project}/context/ need updates. Update existing
+       context docs when the change clearly modifies a durable standard.
+       If the relevant context doc is missing or the standard is not yet clear,
+       report /ground <type> or an operator follow-up instead of inventing a
+       thin placeholder.
        Check and update as needed:
        1. README.md (if user-facing features)
        2. API documentation (if API changes)
        3. Module catalog (if new modules)
-       4. Code comments (if public API changes)
+       4. Project context docs (if maintain_when triggers)
+       5. Code comments (if public API changes)
        Only update docs that are relevant to the changes made."
      ```
 
