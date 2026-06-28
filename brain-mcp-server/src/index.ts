@@ -70,6 +70,7 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 interface ServerConfig {
   mode: 'stdio' | 'http';
   port: number;
+  host: string | undefined;
   apiKey: string | undefined;
 }
 
@@ -77,15 +78,16 @@ interface ServerConfig {
  * Parse CLI arguments and environment variables to build the server config.
  *
  * Precedence (highest to lowest):
- *   1. CLI flags: --http, --port <number>
- *   2. Environment variables: BRAIN_HTTP, BRAIN_PORT, BRAIN_API_KEY
- *   3. Defaults: mode=stdio, port=3001, apiKey=undefined
+ *   1. CLI flags: --http, --port <number>, --host <host>
+ *   2. Environment variables: BRAIN_HTTP, BRAIN_PORT, BRAIN_HOST, BRAIN_API_KEY
+ *   3. Defaults: mode=stdio, port=3001, host=undefined, apiKey=undefined
  */
 function parseConfig(): ServerConfig {
   const args = process.argv.slice(2);
 
   let mode: 'stdio' | 'http' = 'stdio';
   let port = 3001;
+  let host: string | undefined;
   const apiKey = process.env.BRAIN_API_KEY || undefined;
 
   // CLI: --http flag
@@ -102,6 +104,15 @@ function parseConfig(): ServerConfig {
     }
   }
 
+  // CLI: --host <host>
+  const hostIdx = args.indexOf('--host');
+  if (hostIdx !== -1 && hostIdx + 1 < args.length) {
+    const parsed = args[hostIdx + 1].trim();
+    if (parsed) {
+      host = parsed;
+    }
+  }
+
   // Env fallbacks (only when CLI didn't set them)
   if (mode === 'stdio' && process.env.BRAIN_HTTP) {
     mode = 'http';
@@ -112,8 +123,14 @@ function parseConfig(): ServerConfig {
       port = parsed;
     }
   }
+  if (hostIdx === -1 && process.env.BRAIN_HOST) {
+    const parsed = process.env.BRAIN_HOST.trim();
+    if (parsed) {
+      host = parsed;
+    }
+  }
 
-  return { mode, port, apiKey };
+  return { mode, port, host, apiKey };
 }
 
 // ---------------------------------------------------------------------------
@@ -1709,9 +1726,15 @@ async function runHttp(config: ServerConfig): Promise<void> {
   });
 
   // Start listening
-  app.listen(config.port, () => {
-    console.error(`Igris Brain MCP Server v7.0.0 started (http, port ${config.port})`);
-  });
+  const onListening = () => {
+    const bind = config.host ? `${config.host}:${config.port}` : `port ${config.port}`;
+    console.error(`Igris Brain MCP Server v7.0.0 started (http, ${bind})`);
+  };
+  if (config.host) {
+    app.listen(config.port, config.host, onListening);
+  } else {
+    app.listen(config.port, onListening);
+  }
 
   // Graceful shutdown
   const shutdownHttp = async () => {
