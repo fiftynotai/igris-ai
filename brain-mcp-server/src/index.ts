@@ -463,29 +463,20 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // Protected by authMiddleware via app.use('/api', ...) above.
   // -----------------------------------------------------------------------
 
-  // GET /api/instances — list all live instances with stale-marking
+  // GET /api/instances — list instances without read-time liveness mutation
   app.get('/api/instances', (req: Request, res: Response) => {
     try {
       const db = getDb();
       const includeStale = req.query.include_stale === 'true';
-
-      // Purge instances stale for >4 hours
-      db.prepare(
-        "DELETE FROM instances WHERE last_heartbeat_at < datetime('now', '-240 minutes')"
-      ).run();
 
       // Purge agent_events older than 7 days
       db.prepare(
         "DELETE FROM agent_events WHERE created_at < datetime('now', '-7 days')"
       ).run();
 
-      db.prepare(
-        `UPDATE instances SET status = 'stale' WHERE last_heartbeat_at < datetime('now', '-45 minutes') AND status != 'stale'`
-      ).run();
-
       const whereClause = includeStale ? '' : "WHERE status != 'stale'";
       const rows = db.prepare(
-        `SELECT id, machine_hostname, machine_os, project_slug, project_path, current_brief, current_phase, current_task, status, last_heartbeat_at, started_at FROM instances ${whereClause} ORDER BY last_heartbeat_at DESC`
+        `SELECT * FROM instances ${whereClause} ORDER BY last_heartbeat_at DESC`
       ).all();
       res.json({ instances: rows, count: rows.length });
     } catch (err) {

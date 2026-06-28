@@ -113,6 +113,14 @@ function tableColumns(handle: Database.Database, name: string): Set<string> {
   return new Set(rows.map((r) => r.name));
 }
 
+function optionalProjection(
+  columns: ReadonlySet<string>,
+  name: string,
+  fallback = "NULL",
+): string {
+  return columns.has(name) ? name : `${fallback} AS ${name}`;
+}
+
 /**
  * Read the local project profile row used by `context-docs inventory`.
  *
@@ -255,22 +263,13 @@ export interface ListInstancesArgs {
 }
 
 /**
- * List live instances, applying the brain's staleness side-effects first.
+ * List instances without treating heartbeat age as liveness.
  *
- * Reproduces `handleInstanceList`
- * (`brain-mcp-server/src/tools/instances.ts:121-196`) — INCLUDING the
- * registry-maintenance side-effects the brain handler performs before the
- * SELECT:
- *   - purge instances stale > 240 minutes (`instances.ts:124-127`);
- *   - mark instances stale > 45 minutes (`instances.ts:134-137`).
- *
- * These touch the `instances` registry ONLY — never `session_files` (#220:
- * gather is read-only w.r.t. session files; the one faithful write exception
- * is exactly this registry maintenance the brain already does). The
- * `agent_events` 7-day purge from the handler is OMITTED: it is unrelated to
- * the gather classification, and `agent_events` is not a table M1 seeds or
- * touches (#287). The dynamic WHERE clause + `ORDER BY last_heartbeat_at DESC`
- * are copied verbatim. Preflights `instances`: a missing table → `[]`.
+ * FR-190 deliberately removes the old list-time side effects that purged rows
+ * older than 240 minutes and marked rows stale after 45 minutes. A heartbeat is
+ * only last activity, not liveness; normal reads must not delete the evidence
+ * needed to explain or reclaim a crashed instance. Cleanup belongs in an
+ * explicit housekeeping path, not this ordinary read.
  */
 export function listInstances(args: ListInstancesArgs = {}): InstanceRow[] {
   const handle = getDb();
@@ -280,22 +279,7 @@ export function listInstances(args: ListInstancesArgs = {}): InstanceRow[] {
   if (!tableExists(handle, "instances")) {
     return [];
   }
-
-  // Side-effect 1 — purge instances stale for longer than 4 hours (240 min).
-  // Verbatim from handleInstanceList:125-127. Touches `instances` only.
-  handle
-    .prepare(
-      "DELETE FROM instances WHERE last_heartbeat_at < datetime('now', '-240 minutes')",
-    )
-    .run();
-
-  // Side-effect 2 — auto-mark stale instances (>45 min since last heartbeat).
-  // Verbatim from handleInstanceList:135-137. Touches `instances` only.
-  handle
-    .prepare(
-      "UPDATE instances SET status = 'stale' WHERE last_heartbeat_at < datetime('now', '-45 minutes') AND status != 'stale'",
-    )
-    .run();
+  const columns = tableColumns(handle, "instances");
 
   // Dynamic WHERE — verbatim shape from handleInstanceList:140-157.
   const conditions: string[] = [];
@@ -317,12 +301,20 @@ export function listInstances(args: ListInstancesArgs = {}): InstanceRow[] {
   const whereClause =
     conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
-  // SELECT verbatim from handleInstanceList:159-165.
   const rows = handle
     .prepare(
       `
       SELECT id, machine_hostname, machine_os, project_slug, current_brief,
-             current_phase, current_task, status, last_heartbeat_at
+             current_phase, current_task, status, last_heartbeat_at,
+             ${optionalProjection(columns, "harness")},
+             ${optionalProjection(columns, "harness_session_id")},
+             ${optionalProjection(columns, "owner_pid")},
+             ${optionalProjection(columns, "owner_started_at")},
+             ${optionalProjection(columns, "liveness_method")},
+             ${optionalProjection(columns, "liveness_status")},
+             ${optionalProjection(columns, "liveness_checked_at")},
+             ${optionalProjection(columns, "lease_expires_at")},
+             ${optionalProjection(columns, "state_updated_at")}
       FROM instances
       ${whereClause}
       ORDER BY last_heartbeat_at DESC
@@ -361,6 +353,14 @@ export interface HeartbeatInput {
   current_brief?: string | null;
   current_phase?: string | null;
   current_task?: string | null;
+  harness?: string | null;
+  harness_session_id?: string | null;
+  owner_pid?: number | null;
+  owner_started_at?: string | null;
+  liveness_method?: string | null;
+  liveness_status?: string | null;
+  liveness_checked_at?: string | null;
+  lease_expires_at?: string | null;
 }
 
 /** Result of a {@link heartbeat} upsert. */
@@ -373,13 +373,10 @@ export interface HeartbeatResult {
 /**
  * Mint-or-recover an instance via the upsert.
  *
- * Reproduces `handleInstanceHeartbeat`
- * (`brain-mcp-server/src/tools/instances.ts:56-82`): when `instance_id` is
- * omitted a fresh UUID is generated (`randomUUID()`, instances.ts:58); the
- * INSERT … ON CONFLICT(id) DO UPDATE refreshes `status='active'` and
- * `last_heartbeat_at=datetime('now')`, carrying the machine/project/brief
- * columns through from the supplied args (instances.ts:60-72). This is a
- * faithful WRITE — registering a live instance is the whole point of §3.7.
+ * The old name remains for call-site stability, but FR-190 narrows the
+ * semantics: this writes instance lifecycle/state metadata. It does not prove
+ * liveness; liveness comes from PID/start-time checks on same-machine rows and
+ * lease/claim state for cross-machine coordination.
  *
  * The `agent_capabilities` upsert side-table the brain handler does
  * (instances.ts:87-102) is OMITTED: capabilities are not part of the awaken
@@ -397,6 +394,7 @@ export function heartbeat(input: HeartbeatInput): HeartbeatResult {
   if (!tableExists(handle, "instances")) {
     throw new BrainTableMissingError("instances");
   }
+  const columns = tableColumns(handle, "instances");
 
   // randomUUID when no id supplied (instances.ts:58). The mint flag keys on
   // whether the CALLER supplied an id, not on result.changes (a recovered id
@@ -405,38 +403,133 @@ export function heartbeat(input: HeartbeatInput): HeartbeatResult {
   const minted = input.instance_id === undefined;
   const instanceId = input.instance_id ?? randomUUID();
 
-  // SQL verbatim from handleInstanceHeartbeat:60-72 (sans project columns the
-  // SELECT projection does not re-read; we still bind project_path for the
-  // brain dashboard, exactly as the handler does).
+  const insertColumns = [
+    "id",
+    "machine_hostname",
+    "machine_os",
+    "project_slug",
+    "project_path",
+    "current_brief",
+    "current_phase",
+    "current_task",
+    "status",
+    "last_heartbeat_at",
+  ];
+  const values: unknown[] = [
+    instanceId,
+    input.machine_hostname,
+    input.machine_os ?? null,
+    input.project_slug ?? null,
+    input.project_path ?? null,
+    input.current_brief ?? null,
+    input.current_phase ?? null,
+    input.current_task ?? null,
+    "active",
+    new Date().toISOString().replace("T", " ").substring(0, 19),
+  ];
+  const updates = [
+    "machine_hostname = excluded.machine_hostname",
+    "machine_os = excluded.machine_os",
+    "project_slug = excluded.project_slug",
+    "project_path = excluded.project_path",
+    "current_brief = excluded.current_brief",
+    "current_phase = excluded.current_phase",
+    "current_task = excluded.current_task",
+    "status = 'active'",
+    "last_heartbeat_at = excluded.last_heartbeat_at",
+  ];
+
+  const optionalInputs: Array<[string, unknown]> = [
+    ["harness", input.harness ?? null],
+    ["harness_session_id", input.harness_session_id ?? null],
+    ["owner_pid", input.owner_pid ?? null],
+    ["owner_started_at", input.owner_started_at ?? null],
+    ["liveness_method", input.liveness_method ?? null],
+    ["liveness_status", input.liveness_status ?? null],
+    ["liveness_checked_at", input.liveness_checked_at ?? null],
+    ["lease_expires_at", input.lease_expires_at ?? null],
+    [
+      "state_updated_at",
+      new Date().toISOString().replace("T", " ").substring(0, 19),
+    ],
+  ];
+  for (const [name, value] of optionalInputs) {
+    if (!columns.has(name)) continue;
+    insertColumns.push(name);
+    values.push(value);
+    updates.push(`${name} = excluded.${name}`);
+  }
+
   handle
     .prepare(
       `
-      INSERT INTO instances (id, machine_hostname, machine_os, project_slug, project_path, current_brief, current_phase, current_task, status, last_heartbeat_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', datetime('now'))
+      INSERT INTO instances (${insertColumns.join(", ")})
+      VALUES (${insertColumns.map(() => "?").join(", ")})
       ON CONFLICT(id) DO UPDATE SET
-        machine_hostname = excluded.machine_hostname,
-        machine_os = excluded.machine_os,
-        project_slug = excluded.project_slug,
-        project_path = excluded.project_path,
-        current_brief = excluded.current_brief,
-        current_phase = excluded.current_phase,
-        current_task = excluded.current_task,
-        status = 'active',
-        last_heartbeat_at = datetime('now')
+        ${updates.join(",\n        ")}
     `,
     )
-    .run(
-      instanceId,
-      input.machine_hostname,
-      input.machine_os ?? null,
-      input.project_slug ?? null,
-      input.project_path ?? null,
-      input.current_brief ?? null,
-      input.current_phase ?? null,
-      input.current_task ?? null,
-    );
+    .run(...values);
 
   return { instance_id: instanceId, minted };
+}
+
+export interface InstanceStateUpdateInput {
+  instance_id: string;
+  project_slug?: string | null;
+  current_brief?: string | null;
+  current_phase?: string | null;
+  current_task?: string | null;
+  lease_expires_at?: string | null;
+  status?: "active" | "idle" | "stale";
+}
+
+export function instanceStateUpdate(input: InstanceStateUpdateInput): boolean {
+  const handle = getDb();
+  if (!tableExists(handle, "instances")) {
+    throw new BrainTableMissingError("instances");
+  }
+  const columns = tableColumns(handle, "instances");
+  const sets: string[] = [];
+  const values: unknown[] = [];
+
+  for (const [name, value] of [
+    ["project_slug", input.project_slug],
+    ["current_brief", input.current_brief],
+    ["current_phase", input.current_phase],
+    ["current_task", input.current_task],
+    ["status", input.status],
+    ["lease_expires_at", input.lease_expires_at],
+  ] as Array<[string, unknown]>) {
+    if (value === undefined || !columns.has(name)) continue;
+    sets.push(`${name} = ?`);
+    values.push(value);
+  }
+
+  const now = new Date().toISOString().replace("T", " ").substring(0, 19);
+  if (columns.has("state_updated_at")) {
+    sets.push("state_updated_at = ?");
+    values.push(now);
+  }
+  if (columns.has("last_heartbeat_at")) {
+    sets.push("last_heartbeat_at = ?");
+    values.push(now);
+  }
+  if (sets.length === 0) return false;
+  values.push(input.instance_id);
+  const result = handle
+    .prepare(`UPDATE instances SET ${sets.join(", ")} WHERE id = ?`)
+    .run(...values);
+  return result.changes > 0;
+}
+
+export function instanceRemove(instanceId: string): boolean {
+  const handle = getDb();
+  if (!tableExists(handle, "instances")) {
+    throw new BrainTableMissingError("instances");
+  }
+  const result = handle.prepare("DELETE FROM instances WHERE id = ?").run(instanceId);
+  return result.changes > 0;
 }
 
 /** Input for {@link sessionFileUpsert} — mirrors `SessionFileUpdateInput`. */
@@ -723,6 +816,9 @@ export const BOOT_SYNC_PULL_TABLES: PullTableConfig[] = [
       "id", "machine_hostname", "machine_os", "project_slug", "project_path",
       "current_brief", "current_phase", "current_task", "status",
       "started_at", "last_heartbeat_at", "metadata",
+      "harness", "harness_session_id", "owner_pid", "owner_started_at",
+      "liveness_method", "liveness_status", "liveness_checked_at",
+      "lease_expires_at", "state_updated_at",
     ],
   },
   // sync.ts:166-172
@@ -797,6 +893,7 @@ function mergeRows(
     .map((k) => `${k} = ?`)
     .join(" AND ")}`;
   const lookupStmt = handle.prepare(lookupSql);
+  const existingColumns = tableColumns(handle, config.table);
 
   for (const row of rows) {
     const keyValues = config.syncKey.map((k) => row[k]);
@@ -806,7 +903,9 @@ function mergeRows(
         | undefined;
 
       if (!existing) {
-        const cols = config.columns.filter((c) => row[c] !== undefined);
+        const cols = config.columns.filter(
+          (c) => row[c] !== undefined && existingColumns.has(c),
+        );
         const placeholders = cols.map(() => "?").join(", ");
         handle
           .prepare(
@@ -827,6 +926,7 @@ function mergeRows(
 
           for (const col of config.columns) {
             if (config.syncKey.includes(col)) continue;
+            if (!existingColumns.has(col)) continue;
 
             if (config.mergeFields?.[col] === "merge_tags") {
               setClauses.push(`${col} = ?`);

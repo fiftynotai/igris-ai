@@ -54,6 +54,19 @@ const INSTANCES_DDL = `
   );
 `;
 
+/** FR-190 instances component migration v2 columns. */
+const INSTANCE_LIVENESS_DDL = `
+  ALTER TABLE instances ADD COLUMN harness TEXT;
+  ALTER TABLE instances ADD COLUMN harness_session_id TEXT;
+  ALTER TABLE instances ADD COLUMN owner_pid INTEGER;
+  ALTER TABLE instances ADD COLUMN owner_started_at TEXT;
+  ALTER TABLE instances ADD COLUMN liveness_method TEXT;
+  ALTER TABLE instances ADD COLUMN liveness_status TEXT;
+  ALTER TABLE instances ADD COLUMN liveness_checked_at TEXT;
+  ALTER TABLE instances ADD COLUMN lease_expires_at TEXT;
+  ALTER TABLE instances ADD COLUMN state_updated_at TEXT;
+`;
+
 /** DDL for brief_status — db.ts migration v2 (verbatim, sans FK on projects). */
 const BRIEF_STATUS_DDL = `
   CREATE TABLE IF NOT EXISTS brief_status (
@@ -142,6 +155,11 @@ function insertInstance(
     status?: string;
     current_brief?: string | null;
     last_heartbeat_at?: string;
+    machine_hostname?: string;
+    harness?: string | null;
+    owner_pid?: number | null;
+    owner_started_at?: string | null;
+    liveness_status?: string | null;
   },
 ): void {
   db.prepare(
@@ -149,13 +167,29 @@ function insertInstance(
      VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(
     row.id,
-    "host-" + row.id,
+    row.machine_hostname ?? "host-" + row.id,
     row.project_slug ?? "demo",
     row.current_brief ?? null,
     row.status ?? "active",
-    // Default heartbeat = now so the row is non-stale unless a test overrides.
+    // Default activity timestamp; tests may override it to prove age is inert.
     row.last_heartbeat_at ?? new Date().toISOString().replace("T", " ").substring(0, 19),
   );
+  const updates: string[] = [];
+  const values: unknown[] = [];
+  for (const [name, value] of [
+    ["harness", row.harness],
+    ["owner_pid", row.owner_pid],
+    ["owner_started_at", row.owner_started_at],
+    ["liveness_status", row.liveness_status],
+  ] as Array<[string, unknown]>) {
+    if (value === undefined) continue;
+    updates.push(`${name} = ?`);
+    values.push(value);
+  }
+  if (updates.length > 0) {
+    values.push(row.id);
+    db.prepare(`UPDATE instances SET ${updates.join(", ")} WHERE id = ?`).run(...values);
+  }
 }
 
 async function getModule(): Promise<typeof import("../lib/brain-db.js")> {
@@ -302,36 +336,26 @@ describe("brain-db — listInstances", () => {
     expect(rows[0].status).toBe("active");
   });
 
-  it("marks an instance stale when last heartbeat is >45min old (side-effect)", async () => {
+  it("does not mark an instance stale just because last activity is old", async () => {
     seedBrain((db) => {
       db.exec(INSTANCES_DDL);
-      // 60 minutes ago — should be auto-marked stale by listInstances.
       insertInstance(db, {
         id: "i-old",
         project_slug: "demo",
         last_heartbeat_at: "datetime-placeholder",
       });
-      // overwrite with a real 60-min-ago timestamp via SQL
       db.prepare(
         "UPDATE instances SET last_heartbeat_at = datetime('now','-60 minutes') WHERE id = 'i-old'",
       ).run();
     });
     const m = await getModule();
-    // status='active' filter → the now-stale row is excluded.
     const active = m.listInstances({ project: "demo", status: "active" });
-    expect(active.find((r) => r.id === "i-old")).toBeUndefined();
-    // include_stale → it surfaces with status='stale' (the mutation landed).
-    const all = m.listInstances({
-      project: "demo",
-      status: "all",
-      includeStale: true,
-    });
-    const stale = all.find((r) => r.id === "i-old");
-    expect(stale).toBeDefined();
-    expect(stale?.status).toBe("stale");
+    const row = active.find((r) => r.id === "i-old");
+    expect(row).toBeDefined();
+    expect(row?.status).toBe("active");
   });
 
-  it("purges an instance stale for >240min (side-effect)", async () => {
+  it("does not purge old instance rows during ordinary reads", async () => {
     seedBrain((db) => {
       db.exec(INSTANCES_DDL);
       insertInstance(db, { id: "i-dead", project_slug: "demo" });
@@ -340,28 +364,26 @@ describe("brain-db — listInstances", () => {
       ).run();
     });
     const m = await getModule();
-    // Even with include_stale it is GONE — purged from the table entirely.
     const all = m.listInstances({
       project: "demo",
       status: "all",
       includeStale: true,
     });
-    expect(all.find((r) => r.id === "i-dead")).toBeUndefined();
-    // And the row is physically deleted (purge, not just hidden).
+    expect(all.find((r) => r.id === "i-dead")).toBeDefined();
     m.closeDb();
     const check = new Database(join(tmpRoot, "memory", "knowledge.db"));
     const row = check
       .prepare("SELECT id FROM instances WHERE id = 'i-dead'")
       .get();
     check.close();
-    expect(row).toBeUndefined();
+    expect(row).toBeDefined();
   });
 
-  it("the staleness side-effect touches instances ONLY, never session_files (#220)", async () => {
+  it("ordinary instance reads never mutate session_files (#220)", async () => {
     seedBrain((db) => {
       db.exec(INSTANCES_DDL);
       db.exec(SESSION_FILES_DDL);
-      // An ABANDONED-LIVE-shaped row: a live session file whose owner is stale.
+      // An ABANDONED-LIVE-shaped row: a live session file whose owner has old activity.
       insertSessionFile(db, {
         id: "sf",
         project: "demo",
@@ -376,7 +398,7 @@ describe("brain-db — listInstances", () => {
       ).run();
     });
     const m = await getModule();
-    m.listInstances({ project: "demo", status: "active" }); // triggers purge
+    m.listInstances({ project: "demo", status: "active" });
     m.closeDb();
     // The session_files row is UNTOUCHED — state still 'live', not archived.
     const check = new Database(join(tmpRoot, "memory", "knowledge.db"));
@@ -497,6 +519,77 @@ describe("brain-db — heartbeat (WRITE: mint-or-recover upsert)", () => {
     expect(row.status).toBe("active"); // refreshed back to active
     expect(row.current_brief).toBe("BR-NEW");
     expect(row.machine_hostname).toBe("host-recover");
+  });
+
+  it("stores liveness metadata when the migrated columns exist", async () => {
+    seedBrain((db) => db.exec(INSTANCES_DDL + INSTANCE_LIVENESS_DDL));
+    const m = await getModule();
+    const res = m.heartbeat({
+      machine_hostname: "host-1",
+      project_slug: "demo",
+      harness: "codex",
+      owner_pid: 123,
+      owner_started_at: "Mon Jun 29 00:00:00 2026",
+      liveness_method: "pid_start_time",
+      liveness_status: "alive",
+      liveness_checked_at: "2026-06-29 00:00:00",
+    });
+    m.closeDb();
+    const check = new Database(join(tmpRoot, "memory", "knowledge.db"));
+    const row = check
+      .prepare(
+        "SELECT harness, owner_pid, owner_started_at, liveness_method, liveness_status FROM instances WHERE id = ?",
+      )
+      .get(res.instance_id) as {
+      harness: string;
+      owner_pid: number;
+      owner_started_at: string;
+      liveness_method: string;
+      liveness_status: string;
+    };
+    check.close();
+    expect(row).toEqual({
+      harness: "codex",
+      owner_pid: 123,
+      owner_started_at: "Mon Jun 29 00:00:00 2026",
+      liveness_method: "pid_start_time",
+      liveness_status: "alive",
+    });
+  });
+
+  it("instanceStateUpdate writes display state and a lease expiry", async () => {
+    seedBrain((db) => {
+      db.exec(INSTANCES_DDL + INSTANCE_LIVENESS_DDL);
+      insertInstance(db, { id: "i-lease", project_slug: "demo" });
+    });
+    const m = await getModule();
+    const updated = m.instanceStateUpdate({
+      instance_id: "i-lease",
+      current_brief: "FR-190",
+      current_phase: "BUILDING",
+      current_task: "implementing liveness",
+      lease_expires_at: "2026-06-29 01:00:00",
+    });
+    expect(updated).toBe(true);
+    m.closeDb();
+    const check = new Database(join(tmpRoot, "memory", "knowledge.db"));
+    const row = check
+      .prepare(
+        "SELECT current_brief, current_phase, current_task, lease_expires_at, state_updated_at FROM instances WHERE id = 'i-lease'",
+      )
+      .get() as {
+      current_brief: string;
+      current_phase: string;
+      current_task: string;
+      lease_expires_at: string;
+      state_updated_at: string;
+    };
+    check.close();
+    expect(row.current_brief).toBe("FR-190");
+    expect(row.current_phase).toBe("BUILDING");
+    expect(row.current_task).toBe("implementing liveness");
+    expect(row.lease_expires_at).toBe("2026-06-29 01:00:00");
+    expect(row.state_updated_at).toBeTruthy();
   });
 });
 

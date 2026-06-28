@@ -17,7 +17,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { GatherDigest } from "../types.js";
 
@@ -54,6 +54,15 @@ const INSTANCES_DDL = `
     last_heartbeat_at TEXT NOT NULL DEFAULT (datetime('now')),
     metadata TEXT DEFAULT '{}'
   );
+  ALTER TABLE instances ADD COLUMN harness TEXT;
+  ALTER TABLE instances ADD COLUMN harness_session_id TEXT;
+  ALTER TABLE instances ADD COLUMN owner_pid INTEGER;
+  ALTER TABLE instances ADD COLUMN owner_started_at TEXT;
+  ALTER TABLE instances ADD COLUMN liveness_method TEXT;
+  ALTER TABLE instances ADD COLUMN liveness_status TEXT;
+  ALTER TABLE instances ADD COLUMN liveness_checked_at TEXT;
+  ALTER TABLE instances ADD COLUMN lease_expires_at TEXT;
+  ALTER TABLE instances ADD COLUMN state_updated_at TEXT;
 `;
 
 function dbFile(): string {
@@ -99,16 +108,32 @@ function insertSessionFile(
   );
 }
 
-/** Insert an ACTIVE (fresh heartbeat) instance. */
+/** Insert an ACTIVE instance row with current activity metadata. */
 function insertActiveInstance(
   db: Database.Database,
   id: string,
   currentBrief: string | null = null,
+  opts: {
+    machine_hostname?: string;
+    owner_pid?: number | null;
+    owner_started_at?: string | null;
+    harness?: string | null;
+  } = {},
 ): void {
   db.prepare(
-    `INSERT INTO instances (id, machine_hostname, project_slug, current_brief, status, last_heartbeat_at)
-     VALUES (?, ?, 'demo', ?, 'active', datetime('now'))`,
-  ).run(id, "host-" + id, currentBrief);
+    `INSERT INTO instances (
+       id, machine_hostname, project_slug, current_brief, status,
+       last_heartbeat_at, harness, owner_pid, owner_started_at
+     )
+     VALUES (?, ?, 'demo', ?, 'active', datetime('now'), ?, ?, ?)`,
+  ).run(
+    id,
+    opts.machine_hostname ?? "host-" + id,
+    currentBrief,
+    opts.harness ?? null,
+    opts.owner_pid ?? null,
+    opts.owner_started_at ?? null,
+  );
 }
 
 async function getSession(): Promise<typeof import("../verbs/session.js")> {
@@ -199,6 +224,93 @@ describe("session gather — classification matrix (SKILL.md §2 G2)", () => {
     expect(d.siblings[0].instance_id).toBe("i-live");
     expect(d.siblings[0].current_brief).toBe("BR-42");
     expect(d.crashed).toEqual([]);
+  });
+
+  it("2b. multiple same-machine live owners → multiple LIVE SIBLINGS", async () => {
+    const { getProcessStartTime } = await import("../lib/process-liveness.js");
+    const startedAt = getProcessStartTime(process.pid);
+    expect(startedAt).not.toBeNull();
+
+    const seed = openSeed();
+    insertActiveInstance(seed, "i-live-a", "FR-100", {
+      machine_hostname: hostname(),
+      owner_pid: process.pid,
+      owner_started_at: startedAt,
+      harness: "codex",
+    });
+    insertActiveInstance(seed, "i-live-b", "FR-101", {
+      machine_hostname: hostname(),
+      owner_pid: process.pid,
+      owner_started_at: startedAt,
+      harness: "claude",
+    });
+    insertSessionFile(seed, {
+      id: "a",
+      filename: "instances/i-live-a.md",
+      instance_id: "i-live-a",
+      state: "live",
+    });
+    insertSessionFile(seed, {
+      id: "b",
+      filename: "instances/i-live-b.md",
+      instance_id: "i-live-b",
+      state: "live",
+    });
+    seed.close();
+
+    const d = await runGather();
+    expect(d.siblings.map((s) => s.instance_id).sort()).toEqual([
+      "i-live-a",
+      "i-live-b",
+    ]);
+    expect(d.siblings.every((s) => s.liveness_status === "alive")).toBe(true);
+    expect(d.crashed).toEqual([]);
+  });
+
+  it("2c. same-machine missing owner PID → ABANDONED LIVE immediately", async () => {
+    const seed = openSeed();
+    insertActiveInstance(seed, "i-dead", "FR-102", {
+      machine_hostname: hostname(),
+      owner_pid: 999_999_999,
+      owner_started_at: "definitely not alive",
+      harness: "antigravity",
+    });
+    insertSessionFile(seed, {
+      id: "dead",
+      filename: "instances/i-dead.md",
+      instance_id: "i-dead",
+      state: "live",
+    });
+    seed.close();
+
+    const d = await runGather();
+    expect(d.siblings).toEqual([]);
+    expect(d.crashed.length).toBe(1);
+    expect(d.crashed[0].instance_id).toBe("i-dead");
+    expect(d.crashed[0].liveness_status).toBe("dead");
+  });
+
+  it("2d. same-machine PID reuse mismatch → ABANDONED LIVE", async () => {
+    const seed = openSeed();
+    insertActiveInstance(seed, "i-reused", "FR-103", {
+      machine_hostname: hostname(),
+      owner_pid: process.pid,
+      owner_started_at: "Mon Jan  1 00:00:00 1970",
+      harness: "gemini",
+    });
+    insertSessionFile(seed, {
+      id: "reused",
+      filename: "instances/i-reused.md",
+      instance_id: "i-reused",
+      state: "live",
+    });
+    seed.close();
+
+    const d = await runGather();
+    expect(d.siblings).toEqual([]);
+    expect(d.crashed.length).toBe(1);
+    expect(d.crashed[0].instance_id).toBe("i-reused");
+    expect(d.crashed[0].liveness_status).toBe("dead_pid_reused");
   });
 
   it("3. one live file, owner absent/stale → ABANDONED LIVE, NOT consumed, file untouched", async () => {

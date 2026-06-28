@@ -2,12 +2,12 @@
  * Igris Brain -- Instance Tools
  *
  * Provides live instance registry for tracking active Igris sessions
- * across machines. Instances heartbeat to the brain with machine info,
- * current project, brief, and phase. Stale instances are auto-detected
- * when no heartbeat is received for 45+ minutes.
+ * across machines. FR-190 narrows heartbeat to legacy activity/state updates:
+ * liveness is proven locally with PID/start-time metadata, while cross-machine
+ * coordination rides brief claims / work leases.
  *
  * Tools:
- * - igris_instance_heartbeat: Register or update a live instance
+ * - igris_instance_heartbeat: Legacy-compatible register/state update
  * - igris_instance_list: List all active instances
  * - igris_instance_remove: Deregister an instance on /rest
  *
@@ -18,7 +18,7 @@
 import { getDb } from '../db.js';
 import { randomUUID } from 'node:crypto';
 
-/** Input shape for igris_instance_heartbeat */
+/** Input shape for the legacy-compatible igris_instance_heartbeat tool. */
 interface InstanceHeartbeatInput {
   instance_id?: string;
   machine_hostname: string;
@@ -28,6 +28,14 @@ interface InstanceHeartbeatInput {
   current_brief?: string;
   current_phase?: string;
   current_task?: string;
+  harness?: string;
+  harness_session_id?: string;
+  owner_pid?: number;
+  owner_started_at?: string;
+  liveness_method?: string;
+  liveness_status?: string;
+  liveness_checked_at?: string;
+  lease_expires_at?: string;
 }
 
 /** Input shape for igris_instance_list */
@@ -40,6 +48,20 @@ interface InstanceListInput {
 /** Input shape for igris_instance_remove */
 interface InstanceRemoveInput {
   instance_id: string;
+}
+
+function tableColumns(name: string): Set<string> {
+  const db = getDb();
+  const rows = db.prepare(`PRAGMA table_info(${name})`).all() as { name: string }[];
+  return new Set(rows.map((r) => r.name));
+}
+
+function optionalProjection(
+  columns: ReadonlySet<string>,
+  name: string,
+  fallback = 'NULL',
+): string {
+  return columns.has(name) ? name : `${fallback} AS ${name}`;
 }
 
 /**
@@ -55,21 +77,21 @@ interface InstanceRemoveInput {
 function handleInstanceHeartbeat(args: InstanceHeartbeatInput): { content: { type: string; text: string }[] } {
   const db = getDb();
   const instanceId = args.instance_id ?? randomUUID();
-
-  const result = db.prepare(`
-    INSERT INTO instances (id, machine_hostname, machine_os, project_slug, project_path, current_brief, current_phase, current_task, status, last_heartbeat_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', datetime('now'))
-    ON CONFLICT(id) DO UPDATE SET
-      machine_hostname = excluded.machine_hostname,
-      machine_os = excluded.machine_os,
-      project_slug = excluded.project_slug,
-      project_path = excluded.project_path,
-      current_brief = excluded.current_brief,
-      current_phase = excluded.current_phase,
-      current_task = excluded.current_task,
-      status = 'active',
-      last_heartbeat_at = datetime('now')
-  `).run(
+  const columns = tableColumns('instances');
+  const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+  const insertColumns = [
+    'id',
+    'machine_hostname',
+    'machine_os',
+    'project_slug',
+    'project_path',
+    'current_brief',
+    'current_phase',
+    'current_task',
+    'status',
+    'last_heartbeat_at',
+  ];
+  const values: unknown[] = [
     instanceId,
     args.machine_hostname,
     args.machine_os ?? null,
@@ -77,10 +99,47 @@ function handleInstanceHeartbeat(args: InstanceHeartbeatInput): { content: { typ
     args.project_path ?? null,
     args.current_brief ?? null,
     args.current_phase ?? null,
-    args.current_task ?? null
-  );
+    args.current_task ?? null,
+    'active',
+    now,
+  ];
+  const updates = [
+    'machine_hostname = excluded.machine_hostname',
+    'machine_os = excluded.machine_os',
+    'project_slug = excluded.project_slug',
+    'project_path = excluded.project_path',
+    'current_brief = excluded.current_brief',
+    'current_phase = excluded.current_phase',
+    'current_task = excluded.current_task',
+    "status = 'active'",
+    'last_heartbeat_at = excluded.last_heartbeat_at',
+  ];
 
-  const action = result.changes > 0 && args.instance_id ? 'heartbeat updated' : 'registered';
+  for (const [name, value] of [
+    ['harness', args.harness ?? null],
+    ['harness_session_id', args.harness_session_id ?? null],
+    ['owner_pid', args.owner_pid ?? null],
+    ['owner_started_at', args.owner_started_at ?? null],
+    ['liveness_method', args.liveness_method ?? null],
+    ['liveness_status', args.liveness_status ?? null],
+    ['liveness_checked_at', args.liveness_checked_at ?? null],
+    ['lease_expires_at', args.lease_expires_at ?? null],
+    ['state_updated_at', now],
+  ] as Array<[string, unknown]>) {
+    if (!columns.has(name)) continue;
+    insertColumns.push(name);
+    values.push(value);
+    updates.push(`${name} = excluded.${name}`);
+  }
+
+  const result = db.prepare(`
+    INSERT INTO instances (${insertColumns.join(', ')})
+    VALUES (${insertColumns.map(() => '?').join(', ')})
+    ON CONFLICT(id) DO UPDATE SET
+      ${updates.join(',\n      ')}
+  `).run(...values);
+
+  const action = result.changes > 0 && args.instance_id ? 'state updated' : 'registered';
 
   // (TD-265) The agent_capabilities upsert was removed with the task/coordination
   // teardown — that table is dropped in the db.ts v20 migration. Instance
@@ -97,28 +156,19 @@ function handleInstanceHeartbeat(args: InstanceHeartbeatInput): { content: { typ
 /**
  * List all active Igris instances across machines.
  *
- * Automatically marks instances with no heartbeat for 45+ minutes as stale
- * before returning results. Supports filtering by status and project.
+ * Supports filtering by status and project. FR-190: ordinary listing no longer
+ * mutates rows based on heartbeat age; heartbeat is last activity, not liveness.
  *
  * @param args - Optional filters for status and project
  * @returns MCP-formatted response with instance table
  */
 function handleInstanceList(args: InstanceListInput): { content: { type: string; text: string }[] } {
   const db = getDb();
-
-  // Purge instances stale for longer than 4 hours (240 minutes)
-  db.prepare(
-    "DELETE FROM instances WHERE last_heartbeat_at < datetime('now', '-240 minutes')"
-  ).run();
+  const columns = tableColumns('instances');
 
   // Purge agent_events older than 7 days
   db.prepare(
     "DELETE FROM agent_events WHERE created_at < datetime('now', '-7 days')"
-  ).run();
-
-  // Auto-mark stale instances
-  db.prepare(
-    "UPDATE instances SET status = 'stale' WHERE last_heartbeat_at < datetime('now', '-45 minutes') AND status != 'stale'"
   ).run();
 
   // Build dynamic WHERE clause
@@ -143,7 +193,16 @@ function handleInstanceList(args: InstanceListInput): { content: { type: string;
 
   const rows = db.prepare(`
     SELECT id, machine_hostname, machine_os, project_slug, current_brief,
-           current_phase, current_task, status, last_heartbeat_at
+           current_phase, current_task, status, last_heartbeat_at,
+           ${optionalProjection(columns, 'harness')},
+           ${optionalProjection(columns, 'harness_session_id')},
+           ${optionalProjection(columns, 'owner_pid')},
+           ${optionalProjection(columns, 'owner_started_at')},
+           ${optionalProjection(columns, 'liveness_method')},
+           ${optionalProjection(columns, 'liveness_status')},
+           ${optionalProjection(columns, 'liveness_checked_at')},
+           ${optionalProjection(columns, 'lease_expires_at')},
+           ${optionalProjection(columns, 'state_updated_at')}
     FROM instances
     ${whereClause}
     ORDER BY last_heartbeat_at DESC
@@ -159,11 +218,11 @@ function handleInstanceList(args: InstanceListInput): { content: { type: string;
   }
 
   // Format as markdown table
-  const header = '| ID | Machine | OS | Project | Brief | Phase | Task | Status | Last Heartbeat |';
-  const separator = '|----|---------|----|---------| ------|-------|------|--------|----------------|';
+  const header = '| ID | Harness | Machine | OS | Project | Brief | Phase | Task | Status | Liveness | Lease | Last Activity |';
+  const separator = '|----|---------|---------|----|---------|-------|-------|------|--------|----------|-------|---------------|';
   const tableRows = rows.map(r => {
     const shortId = (r.id as string).substring(0, 8);
-    return `| ${shortId} | ${r.machine_hostname || '-'} | ${r.machine_os || '-'} | ${r.project_slug || '-'} | ${r.current_brief || '-'} | ${r.current_phase || '-'} | ${r.current_task || '-'} | ${r.status || '-'} | ${r.last_heartbeat_at || '-'} |`;
+    return `| ${shortId} | ${r.harness || '-'} | ${r.machine_hostname || '-'} | ${r.machine_os || '-'} | ${r.project_slug || '-'} | ${r.current_brief || '-'} | ${r.current_phase || '-'} | ${r.current_task || '-'} | ${r.status || '-'} | ${r.liveness_status || '-'} | ${r.lease_expires_at || '-'} | ${r.state_updated_at || r.last_heartbeat_at || '-'} |`;
   });
 
   return {

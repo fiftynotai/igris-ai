@@ -179,7 +179,23 @@ export interface InstanceRow {
   current_task: string | null;
   status: string;
   last_heartbeat_at: string;
+  harness: string | null;
+  harness_session_id: string | null;
+  owner_pid: number | null;
+  owner_started_at: string | null;
+  liveness_method: string | null;
+  liveness_status: InstanceLivenessStatus | null;
+  liveness_checked_at: string | null;
+  lease_expires_at: string | null;
+  state_updated_at: string | null;
 }
+
+export type InstanceLivenessStatus =
+  | "alive"
+  | "dead"
+  | "dead_pid_reused"
+  | "unknown_remote"
+  | "unknown_no_metadata";
 
 /**
  * FR-195 (M1) — capability-detection digest emitted by `igris detect`.
@@ -234,6 +250,10 @@ export interface GatherSibling {
   instance_id: string;
   current_brief: string | null;
   last_active: string;
+  harness?: string | null;
+  liveness_status?: InstanceLivenessStatus;
+  liveness_method?: string;
+  lease_expires_at?: string | null;
 }
 
 /** FR-195 (M1) — an ABANDONED-LIVE (crashed) entry in the `session gather` digest. */
@@ -242,6 +262,8 @@ export interface GatherCrashed {
   last_active: string;
   /** On-disk scratchpad path for the crashed instance's session file. */
   scratchpad: string;
+  liveness_status?: InstanceLivenessStatus;
+  liveness_method?: string;
 }
 
 /**
@@ -265,8 +287,8 @@ export interface GatherDigest {
 /**
  * FR-195 (M2) — the `session register` digest.
  *
- * Emitted after the heartbeat upsert + LIVE per-instance file write
- * (SKILL.md §4.4). `minted` is true when no prior id was supplied (a fresh
+ * Emitted after instance registration/state upsert + LIVE per-instance file
+ * write (SKILL.md §4.4). `minted` is true when no prior id was supplied (a fresh
  * UUID was generated); false when an existing id was recovered+refreshed.
  * `seeded_from_handoff` is true when gather selected a genuine handoff whose
  * Next Steps were carried into the new LIVE file (the resume context).

@@ -3,7 +3,8 @@
  *
  * Wraps the existing instance tool handlers and agent event handler
  * as a BrainComponent.
- * Provides: igris_instance_heartbeat, igris_instance_list, igris_instance_remove,
+ * Provides: igris_instance_heartbeat (legacy-compatible state update),
+ *           igris_instance_list, igris_instance_remove,
  *           igris_agent_event
  *
  * @module engine/components/instances
@@ -66,6 +67,37 @@ export function createInstancesComponent(): BrainComponent {
             CREATE INDEX IF NOT EXISTS idx_agent_events_created ON agent_events(created_at);
           `,
         },
+        {
+          version: 2,
+          description: 'Add instance liveness metadata columns (FR-190)',
+          sql: `
+            CREATE TABLE IF NOT EXISTS instances (
+                id TEXT PRIMARY KEY,
+                machine_hostname TEXT NOT NULL,
+                machine_os TEXT,
+                project_slug TEXT,
+                project_path TEXT,
+                current_brief TEXT,
+                current_phase TEXT,
+                current_task TEXT,
+                status TEXT DEFAULT 'active' CHECK (status IN ('active', 'idle', 'stale')),
+                started_at TEXT NOT NULL DEFAULT (datetime('now')),
+                last_heartbeat_at TEXT NOT NULL DEFAULT (datetime('now')),
+                metadata TEXT DEFAULT '{}'
+            );
+            ALTER TABLE instances ADD COLUMN harness TEXT;
+            ALTER TABLE instances ADD COLUMN harness_session_id TEXT;
+            ALTER TABLE instances ADD COLUMN owner_pid INTEGER;
+            ALTER TABLE instances ADD COLUMN owner_started_at TEXT;
+            ALTER TABLE instances ADD COLUMN liveness_method TEXT;
+            ALTER TABLE instances ADD COLUMN liveness_status TEXT;
+            ALTER TABLE instances ADD COLUMN liveness_checked_at TEXT;
+            ALTER TABLE instances ADD COLUMN lease_expires_at TEXT;
+            ALTER TABLE instances ADD COLUMN state_updated_at TEXT;
+            CREATE INDEX IF NOT EXISTS idx_instances_owner_pid ON instances(owner_pid);
+            CREATE INDEX IF NOT EXISTS idx_instances_lease ON instances(lease_expires_at);
+          `,
+        },
       ];
     },
 
@@ -73,7 +105,7 @@ export function createInstancesComponent(): BrainComponent {
       return [
         {
           name: 'igris_instance_heartbeat',
-          description: 'Register or update a live Igris instance in the brain. Called on /awaken to register, and during /hunt to update current brief/phase. Returns the instance ID for subsequent heartbeats.',
+          description: 'Register or update an Igris instance row. FR-190: this is legacy-compatible state/activity metadata, not a liveness proof; same-machine liveness uses PID/start-time and cross-machine coordination uses leases/claims.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -108,7 +140,39 @@ export function createInstancesComponent(): BrainComponent {
               },
               instance_id: {
                 type: 'string',
-                description: 'Existing instance ID for heartbeat updates (omit for new registration)',
+                description: 'Existing instance ID for state updates (omit for new registration)',
+              },
+              harness: {
+                type: 'string',
+                description: 'Harness driving this instance (codex, claude, gemini, opencode, antigravity, unknown)',
+              },
+              harness_session_id: {
+                type: 'string',
+                description: 'Harness-native session/thread id when available',
+              },
+              owner_pid: {
+                type: 'number',
+                description: 'Same-machine owner process PID for liveness proof',
+              },
+              owner_started_at: {
+                type: 'string',
+                description: 'Owner process start time; paired with PID to defeat PID reuse',
+              },
+              liveness_method: {
+                type: 'string',
+                description: 'Liveness method used for this row, e.g. pid_start_time, remote, none',
+              },
+              liveness_status: {
+                type: 'string',
+                description: 'Last known liveness classification',
+              },
+              liveness_checked_at: {
+                type: 'string',
+                description: 'Timestamp of the last liveness classification',
+              },
+              lease_expires_at: {
+                type: 'string',
+                description: 'Remote-visible work lease expiry for cross-machine coordination',
               },
             },
             required: ['machine_hostname'],
@@ -125,7 +189,7 @@ export function createInstancesComponent(): BrainComponent {
         },
         {
           name: 'igris_instance_list',
-          description: 'List all active Igris instances across machines. Auto-marks instances with no heartbeat for 45+ minutes as stale. Purges instances stale for >4 hours.',
+          description: 'List Igris instances across machines. FR-190: listing does not mark stale or purge based on heartbeat age.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -172,7 +236,7 @@ export function createInstancesComponent(): BrainComponent {
             properties: {
               instance_id: {
                 type: 'string',
-                description: 'Instance ID from heartbeat registration',
+                description: 'Instance ID from session registration',
               },
               agent: {
                 type: 'string',

@@ -214,10 +214,12 @@ describe('Legacy Migration Bridge (BR-035)', () => {
     // ships. sessions ships 2 as of FR-130 (v1 = session_files DDL, v2 =
     // instance_id + state columns); briefs ships 2 as of FR-127 (v1 =
     // brief_files DDL, v2 = claimed_by + claimed_at on brief_status); the
-    // rest ship a single v1. The v1 migration of every component still owns
-    // the table-creation DDL, so the sub-tests below all read migrations[0].
+    // instances ships 2 as of FR-190 (v1 = agent_events DDL, v2 = instance
+    // liveness columns on the legacy instances table). The remaining components
+    // ship a single v1. The v1 migration of every component still owns
+    // the primary table-creation DDL, so the sub-tests below read migrations[0].
     const componentFactories = [
-      { name: 'instances', factory: createInstancesComponent, table: 'agent_events', migrationCount: 1 },
+      { name: 'instances', factory: createInstancesComponent, table: 'agent_events', migrationCount: 2 },
       { name: 'sync', factory: createSyncComponent, table: 'sync_queue', migrationCount: 1 },
       { name: 'briefs', factory: createBriefsComponent, table: 'brief_files', migrationCount: 2 },
       { name: 'sessions', factory: createSessionsComponent, table: 'session_files', migrationCount: 2 },

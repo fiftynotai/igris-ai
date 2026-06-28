@@ -1,8 +1,8 @@
 /**
  * FR-195 (M2) — session register tests.
  *
- * The §3.7 contract: heartbeat upsert (mint OR recover) + write the LIVE
- * per-instance file (seeded from gather's handoff), NON-DESTRUCTIVELY (#230).
+ * The §3.7 contract: instance registration upsert (mint OR recover) + write
+ * the LIVE per-instance file (seeded from gather's handoff), NON-DESTRUCTIVELY (#230).
  * Each test seeds a real brain DB (IGRIS_BRAIN_DIR, never a mock — #159) and
  * reads back BOTH the DB row and the on-disk file (under
  * <IGRIS_BRAIN_DIR>/projects/<slug>/session/instances/).
@@ -60,17 +60,30 @@ const INSTANCES_DDL = `
   );
 `;
 
+const INSTANCE_LIVENESS_DDL = `
+  ALTER TABLE instances ADD COLUMN harness TEXT;
+  ALTER TABLE instances ADD COLUMN harness_session_id TEXT;
+  ALTER TABLE instances ADD COLUMN owner_pid INTEGER;
+  ALTER TABLE instances ADD COLUMN owner_started_at TEXT;
+  ALTER TABLE instances ADD COLUMN liveness_method TEXT;
+  ALTER TABLE instances ADD COLUMN liveness_status TEXT;
+  ALTER TABLE instances ADD COLUMN liveness_checked_at TEXT;
+  ALTER TABLE instances ADD COLUMN lease_expires_at TEXT;
+  ALTER TABLE instances ADD COLUMN state_updated_at TEXT;
+`;
+
 function dbFile(): string {
   return join(tmpRoot, "memory", "knowledge.db");
 }
 
 /** Seed a brain DB with the two tables (no rows by default). */
-function seedSchema(): void {
+function seedSchema(withLivenessColumns = true): void {
   mkdirSync(join(tmpRoot, "memory"), { recursive: true });
   const db = new Database(dbFile());
   db.pragma("journal_mode = WAL");
   db.exec(SESSION_FILES_DDL);
   db.exec(INSTANCES_DDL);
+  if (withLivenessColumns) db.exec(INSTANCE_LIVENESS_DDL);
   db.close();
 }
 
@@ -110,11 +123,42 @@ async function runRegister(opts: {
 /** Read an instances-table row (or undefined). */
 function readInstanceRow(
   id: string,
-): { status: string; project_slug: string | null } | undefined {
+):
+  | {
+      status: string;
+      project_slug: string | null;
+      harness?: string | null;
+      owner_pid?: number | null;
+      owner_started_at?: string | null;
+      liveness_status?: string | null;
+    }
+  | undefined {
   const db = new Database(dbFile());
+  const cols = db.prepare("PRAGMA table_info(instances)").all() as {
+    name: string;
+  }[];
+  const names = new Set(cols.map((c) => c.name));
+  const projections = ["status", "project_slug"];
+  for (const name of [
+    "harness",
+    "owner_pid",
+    "owner_started_at",
+    "liveness_status",
+  ]) {
+    if (names.has(name)) projections.push(name);
+  }
   const row = db
-    .prepare("SELECT status, project_slug FROM instances WHERE id = ?")
-    .get(id) as { status: string; project_slug: string | null } | undefined;
+    .prepare(`SELECT ${projections.join(", ")} FROM instances WHERE id = ?`)
+    .get(id) as
+    | {
+        status: string;
+        project_slug: string | null;
+        harness?: string | null;
+        owner_pid?: number | null;
+        owner_started_at?: string | null;
+        liveness_status?: string | null;
+      }
+    | undefined;
   db.close();
   return row;
 }
@@ -171,6 +215,10 @@ describe("session register — §3.7", () => {
     const inst = readInstanceRow(d.instance_id);
     expect(inst?.status).toBe("active");
     expect(inst?.project_slug).toBe("demo");
+    expect(inst?.harness).toBe("unknown");
+    expect(inst?.owner_pid).toBeGreaterThan(0);
+    expect(inst?.owner_started_at).toBeTruthy();
+    expect(inst?.liveness_status).toBe("alive");
 
     // On-disk LIVE file exists and carries the MAINTAINING line shape.
     const fp = instanceFilePath("demo", d.instance_id);
@@ -210,6 +258,16 @@ describe("session register — §3.7", () => {
       .get() as { n: number };
     cdb.close();
     expect(count.n).toBe(1);
+  });
+
+  it("stays compatible when the brain DB has only the legacy instance columns", async () => {
+    seedSchema(false);
+    const d = await runRegister({ project: "demo", projectPath: "/tmp/demo" });
+    expect(d.degraded).toBe(false);
+    expect(d.instance_id).toMatch(/^[0-9a-f-]{36}$/);
+    const inst = readInstanceRow(d.instance_id);
+    expect(inst?.status).toBe("active");
+    expect(inst?.project_slug).toBe("demo");
   });
 
   it("seeds the LIVE file's Next Steps from the handoff (resume carry-forward)", async () => {

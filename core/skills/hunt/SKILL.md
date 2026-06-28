@@ -17,7 +17,6 @@ allowed-tools:
   - mcp__igris-brain__igris_brief_update
   - mcp__igris-brain__igris_brief_claim
   - mcp__igris-brain__igris_brief_release
-  - mcp__igris-brain__igris_instance_heartbeat
   - mcp__igris-brain__igris_instance_list
   - mcp__igris-brain__igris_agent_event
 triggers:
@@ -83,11 +82,11 @@ Execute the complete implementation workflow for a brief, from planning through 
 4. If Status is "Done" or "Draft", refuse with message
 5. Update Status: "Ready" -> "In Progress" if needed
 6. **Surface the instance registry (Lock 1 — display-only):**
-   If the `igris-brain` MCP server is available, call `igris_instance_list` with `status='active'` and `project` = current project slug. For every *other* live instance returned (any instance that is not this harness's own), surface a one-line advisory: "instance {short_id} is on {current_brief}, last active {last_active}". This warns the operator before they claim a brief a sibling is already working.
+   Run `igris instance list --project {project}`. For every *other* live or remote-uncertain instance returned (any instance that is not this harness's own), surface a one-line advisory: "instance {short_id} ({harness}, {liveness_status}) is on {current_brief}, last activity {last_active}". This warns the operator before they claim a brief a sibling is already working. Same-machine `dead` / `dead_pid_reused` instances may be surfaced as reclaim candidates, but this step remains display-only.
 
    **This step is display-only — it does NOT block the hunt.** If a sibling already owns the brief being hunted, the hunt still proceeds; the operator is merely informed. FR-127 owns the atomic claim gate — its enforced claim-and-lock sits immediately after this surfacing step and turns this advisory display into a gate. This step is FR-127's merge base.
 
-   If brain MCP is NOT available or `igris_instance_list` is unavailable (older brain), skip silently. Do NOT block the hunt.
+   If `igris instance list` is unavailable (older CLI), skip silently. Do NOT block the hunt.
 
 6.5. **Atomically claim the brief (FR-127 — the hard gate):**
    If the `igris-brain` MCP server is available, call `igris_brief_claim` with
@@ -101,15 +100,15 @@ Execute the complete implementation workflow for a brief, from planning through 
      yours)." and continue. Otherwise display nothing and continue to step 7.)
 
    - **`claimed: false`** — the brief is claimed by `held_by`. Determine if that
-     claim is LIVE or STALE: call `igris_instance_list` with `status='active'`
-     and the project slug, and check whether `held_by` appears in the active set.
-       - **`held_by` IS in the active set** (live claim) → **HARD STOP.** Display:
+     claim is LIVE or RECLAIMABLE: run `igris instance list --project {project}`
+     and inspect the held instance's liveness result.
+       - **`held_by` is `alive` or `unknown_remote` / `unknown_no_metadata` with an unexpired lease** (live/uncertain claim) → **HARD STOP.** Display:
          "BR-XXX is being hunted by instance {held_by} ({harness}, active {T}
          ago). Two instances cannot hunt the same brief. Aborting /hunt."
          Do NOT proceed to step 7. Do NOT mutate brief status. End the skill.
-       - **`held_by` is NOT in the active set, OR `held_since` is older than 24h**
-         (stale claim) → display: "BR-XXX's claim by {held_by} looks stale
-         (claimer not active / claim {age} old). Reclaim? [y/N]" — WAIT for
+       - **`held_by` is `dead` / `dead_pid_reused`, OR the remote/unknown lease expired, OR `held_since` is older than 24h**
+         (reclaimable claim) → display: "BR-XXX's claim by {held_by} looks reclaimable
+         ({reason}). Reclaim? [y/N]" — WAIT for
          explicit operator input. On **N / anything but y** → HARD STOP, end the
          skill. On **y** → call `igris_brief_release` with the STALE `held_by`
          instance_id, then call `igris_brief_claim` again with THIS instance's
@@ -159,7 +158,7 @@ Loading brief and preparing for implementation.
 Proceed to PLANNING phase.
 ```
 
-**Heartbeat:** If Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call `igris_instance_heartbeat` with current_brief and current_phase="INIT". See "Instance Heartbeat" section below.
+**Instance State:** If Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, run `igris instance state --project {project} --instance-id {instance_id} --current-brief {brief_id} --current-phase INIT --current-task "loading brief" --lease-minutes 120`. See "Instance State and Work Lease" below.
 
 ### Phase 2: PLANNING
 
@@ -632,34 +631,34 @@ Next actions:
 3. View status: /scan
 ```
 
-## Instance Heartbeat (Mandatory When Available)
+## Instance State and Work Lease (Mandatory When Available)
 
-On each phase transition (PLANNING, BUILDING, TESTING, REVIEWING, DOCUMENTING, COMMITTING, COMPLETE), you MUST refresh the instance heartbeat if an instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`.
+On each phase transition (PLANNING, BUILDING, TESTING, REVIEWING, DOCUMENTING, COMMITTING, COMPLETE), you MUST update this instance's state and renew its work lease if an instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`.
 
-If the `igris-brain` MCP server is available AND an instance ID is stored:
+If the CLI is available AND an instance ID is stored:
 1. Read the Instance ID from `~/.igris/projects/{project}/session/instances/<instance_id>.md`
-2. Call `igris_instance_heartbeat` with:
-   - instance_id = the instance ID from `~/.igris/projects/{project}/session/instances/<instance_id>.md`
-   - machine_hostname = system hostname
-   - machine_os = platform (e.g., "darwin", "linux")
-   - project_slug = current project slug
-   - project_path = absolute path to project directory
-   - current_brief = the brief ID being implemented
-   - current_phase = the new phase name
-   - current_task = description of current activity (e.g., "architect planning", "forger implementing")
-3. This keeps the instance "active" on the dashboard and shows real-time workflow progress
+2. Run:
+   ```bash
+   igris instance state --project {project} \
+     --instance-id {instance_id} \
+     --current-brief {brief_id} \
+     --current-phase {phase} \
+     --current-task "{description}" \
+     --lease-minutes 120
+   ```
+3. This records progress and renews the remote-visible work lease. It is not a liveness proof; same-machine liveness comes from PID/start-time metadata recorded by `/boot`.
 
-If brain MCP is not available or no instance ID is stored, skip silently. Do NOT block workflow execution.
+If the CLI is unavailable or no instance ID is stored, skip silently. Do NOT block workflow execution.
 
-### Mid-Phase Heartbeats for Long-Running Phases
+### Mid-Phase Lease Renewal for Long-Running Phases
 
-During long phases (BUILDING, TESTING), the active subagent may run for extended periods. To prevent the instance from being marked stale mid-workflow:
+During long phases (BUILDING, TESTING), the active subagent may run for extended periods. To keep cross-machine coordination honest:
 
-- When delegating to **forger** (BUILDING phase), include in the Task prompt: "If you have access to `igris_instance_heartbeat` and the instance_id from `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call it periodically during long implementations to keep the instance active."
-- When delegating to **sentinel** (TESTING phase), include the same heartbeat reminder in the Task prompt.
-- The orchestrator should also call `igris_instance_heartbeat` immediately before each Task delegation (not just on phase transitions) to maximize the heartbeat window for the subagent.
+- The orchestrator should run `igris instance state ... --lease-minutes 120` immediately before each Task delegation.
+- If a long phase exceeds the lease window, renew the lease before continuing.
+- Do not instruct subagents to emit heartbeat calls; heartbeat age is no longer a liveness signal.
 
-This ensures instances remain visible on the dashboard even during phases that exceed the 45-minute stale threshold.
+This ensures other machines can see that the work is still reserved without pretending they can inspect this machine's process liveness.
 
 ## Agent Event Emission (Mandatory When Available)
 

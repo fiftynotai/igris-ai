@@ -25,6 +25,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { detectCapabilities } from "../lib/detect.js";
 import { briefStatusSummary, listInstances, upcomingGoals } from "../lib/brain-db.js";
+import { classifyInstanceLiveness } from "../lib/process-liveness.js";
 import { projectBlockersPath } from "../lib/paths.js";
 import { basenameOfCwd } from "../lib/sync/util.js";
 import type {
@@ -135,10 +136,14 @@ export function buildAssessDigest(slug: string, cwd: string): AssessDigest {
   }
 
   const briefs: AssessBriefs = briefStatusSummary(slug);
-  // Active-instance count: live (non-stale) instances for this project. The
-  // staleness purge/mark side-effects run as part of listInstances (the brain's
-  // own maintenance) — assess just reads the resulting count.
-  const activeInstances = listInstances({ project: slug, status: "active" }).length;
+  const activeInstances = listInstances({
+    project: slug,
+    status: "all",
+    includeStale: true,
+  }).filter((row) => {
+    const liveness = classifyInstanceLiveness(row);
+    return liveness.status !== "dead" && liveness.status !== "dead_pid_reused";
+  }).length;
   const goalsUpcoming: AssessGoal[] = upcomingGoals(slug, GOALS_UPCOMING_DAYS);
 
   return {

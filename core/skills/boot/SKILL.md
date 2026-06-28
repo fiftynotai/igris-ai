@@ -110,7 +110,7 @@ Run the gather verb and read its JSON digest:
 ```bash
 igris session gather --project <detect.project_slug> [--self-instance-id <recovered-id>]
 ```
-- `--self-instance-id` is OPTIONAL — pass it only if THIS harness can locate its own prior per-instance file (an `instance_id` persisted in the harness's working dir / `$CLAUDE_PROJECT_DIR` heuristics, the G4 chicken-and-egg). The common case omits it; the verb leaves `self_instance_id: null` and §4.4's heartbeat mints a fresh id. Gather is an *observer* — it never mints, never writes a session file (Lock-2 "nothing destructive in gather").
+- `--self-instance-id` is OPTIONAL — pass it only if THIS harness can locate its own prior per-instance file (an `instance_id` persisted in the harness's working dir / `$CLAUDE_PROJECT_DIR` heuristics, the G4 chicken-and-egg). The common case omits it; the verb leaves `self_instance_id: null` and §4.4's registration mints a fresh id. Gather is an *observer* — it never mints, never writes a session file (Lock-2 "nothing destructive in gather").
 - The verb does ALL the classification: it enumerates `session_files` + the live `instances` registry, applies the Lock-2/3 truth table (LIVE SIBLING / ABANDONED LIVE / GENUINE HANDOFF), handles the FR-133 legacy `CURRENT_SESSION.md`-adoption fall-through, picks the newest GENUINE HANDOFF, and fetches content for THAT one only.
 
 **The gather digest** (stdout JSON — read these fields):
@@ -131,11 +131,11 @@ igris session gather --project <detect.project_slug> [--self-instance-id <recove
 
 **What the digest means for display (G5):**
 - `handoff.resume_point` / `handoff.next_steps` → feed §5's resume display (only when `handoff.mode == "REST MODE"`; see §5).
-- `siblings[]` → render a one-line-per-entry "Active siblings" list ("instance {short_id} on {current_brief}, last active {last_active}").
+- `siblings[]` → render a one-line-per-entry "Active siblings" list ("instance {short_id} ({liveness_status}) on {current_brief}, last activity {last_active}"). Same-machine `alive` is process-proof; `unknown_remote` / `unknown_no_metadata` is a coordination fallback, not a liveness proof.
 - `crashed[]` → render a one-line-per-entry "Crashed scratchpads" list ("instance {short_id} crashed mid-session — scratchpad at {scratchpad}"). This is the ABANDONED LIVE surface (§4.3.1 below is the same set — display only, NEVER destructive: no auto-archive, no ownership clear; Lock 1).
 - `self_instance_id` → carry to §4.4 (recovered id to reuse, or null to mint).
 
-All gather output is **display-only** — nothing destructive happens (the verb writes nothing to `session_files`; its only DB side-effect is the registry's own staleness maintenance, the same as the old `igris_instance_list` call).
+All gather output is **display-only** — nothing destructive happens. The verb writes nothing to `session_files` and no longer treats heartbeat age as liveness.
 
 **Degradation:** when the brain DB is absent the verb emits `{ "degraded": true, "fresh_start": true, "handoff": null, … }` and exits 0 — treat it as a fresh start (no resume). NEVER block session start on a degraded gather.
 
@@ -171,13 +171,13 @@ If brain MCP is not available, skip this step silently. No errors, no warnings.
 
 ### 4.3.1 Surface Stale Previous Instances (Mandatory)
 
-Per Lock 1, heartbeat is **display-only** and NOTHING auto-destroys a stale instance. This section is a *display* of genuine crashes — it does NOT remove anything.
+Per Lock 1, liveness is **display-only** and NOTHING auto-destroys a stale or dead instance. This section is a *display* of crashed/reclaimable scratchpads — it does NOT remove anything.
 
 A clean `/rest` → `/boot` cycle leaves nothing stale: `/rest` already calls `igris_instance_remove` in its §2.5 "Close Instance Ownership" step, so the prior instance is gone from the registry by the time `/boot` runs. What this section surfaces is the *genuine crash* case — an instance that exited without `/rest`.
 
-This is purely a display of the `crashed[]` list the §4.1 `igris session gather` digest ALREADY computed (the ABANDONED LIVE set — `state='live'` with an absent/stale owner). No new tool call is needed; the verb did the classification.
+This is purely a display of the `crashed[]` list the §4.1 `igris session gather` digest ALREADY computed (the ABANDONED LIVE set — `state='live'` with an absent owner or a same-machine owner proven dead by PID/start-time). No new tool call is needed; the verb did the classification.
 
-- For each entry in `gather.crashed[]`, surface it: "stale, unconfirmed — instance {short_id}, last active {last_active}; scratchpad at {scratchpad}".
+- For each entry in `gather.crashed[]`, surface it: "reclaimable, unconfirmed — instance {short_id}, liveness {liveness_status}, last activity {last_active}; scratchpad at {scratchpad}".
 - Do NOT call `igris_instance_remove`. Do NOT auto-archive its file. Do NOT clear its `current_brief`. Reclaim is an explicit operator action — never automatic.
 
 If `gather` was degraded (empty `crashed[]`), render nothing. Do NOT block session start.
@@ -186,7 +186,7 @@ This is a read of genuine crashes, not a destructive sweep. Multi-instance is va
 
 ### 4.4 Mount — Register Instance (Mandatory)
 
-Registration — the heartbeat upsert + the LIVE per-instance file write — is OWNED by the `igris session register` verb (FR-195). It mints-or-recovers the `instance_id`, writes the heartbeat row, and writes `session/instances/<id>.md` at `state='live'` with the contract line shape (`**Instance ID:**`, `**Mode:** Active`, `**Active Brief:**`) that the phase-guard fallback and `/hunt` parse. It seeds the LIVE file's "Next Steps" from gather's chosen handoff so the resume context carries forward.
+Registration — the instance metadata upsert + the LIVE per-instance file write — is OWNED by the `igris session register` verb (FR-195, extended by FR-190). It mints-or-recovers the `instance_id`, writes the instance row with harness/PID/start-time metadata when available, and writes `session/instances/<id>.md` at `state='live'` with the contract line shape (`**Instance ID:**`, `**Mode:** Active`, `**Active Brief:**`) that the phase-guard fallback and `/hunt` parse. It seeds the LIVE file's "Next Steps" from gather's chosen handoff so the resume context carries forward.
 
 Run the register verb AFTER §4.1 gather (the ordering contract — gather's outputs feed register):
 ```bash
@@ -197,7 +197,7 @@ igris session register --project <detect.project_slug> \
 ```
 - `--self-instance-id` — pass `gather.self_instance_id` when it was recovered (non-null); OMIT it to mint a fresh UUID. (This is the G4 recover-or-mint decision, now resolved by gather + register together.)
 - `--seed-next-steps` — pass `gather.handoff.next_steps` when gather selected a genuine handoff (the resume carry-forward from §4.1). Omit on a fresh start.
-- `--project-path` — the absolute project directory (the heartbeat's `project_path` field).
+- `--project-path` — the absolute project directory (the instance row's `project_path` field).
 
 **The register digest** (stdout JSON — read these fields):
 ```jsonc
@@ -209,7 +209,7 @@ igris session register --project <detect.project_slug> \
 ```
 
 - Display: "Instance registered: {instance_id}".
-- Carry `instance_id` forward — it is used for subsequent heartbeats (`/hunt`) and the ownership-close on `/rest`, and it is the `<instance_id>` §7 confirms the LIVE file for.
+- Carry `instance_id` forward — it is used for subsequent `igris instance state` work-lease updates (`/hunt`) and the ownership-close on `/rest`, and it is the `<instance_id>` §7 confirms the LIVE file for.
 - The register verb is non-destructive (#230): a re-run of a recovered instance PRESERVES the existing on-disk LIVE file (it does not clobber the running instance's scratchpad back to a skeleton).
 
 **Degradation:** when the brain DB is absent the verb emits `{ "degraded": true, … }` and exits 0 — display "Instance registration skipped (brain unavailable)" and continue. NEVER block session start.

@@ -45,6 +45,7 @@ import { runRemove } from "./verbs/remove.js";
 import { runDetect } from "./verbs/detect.js";
 import { runBootSync } from "./verbs/boot-sync.js";
 import { runSession, type SessionAction } from "./verbs/session.js";
+import { runInstance, type InstanceAction } from "./verbs/instance.js";
 import { runHousekeeping } from "./verbs/housekeeping.js";
 import { runAssess } from "./verbs/assess.js";
 import { runContextDocs, type ContextDocsAction } from "./verbs/context-docs.js";
@@ -941,7 +942,7 @@ async function main(argv: string[]): Promise<void> {
   program
     .command("session <action>")
     .description(
-      "FR-195: session-lifecycle verbs. Actions: gather (the Lock-2/3 classifier — enumerate + classify session files against the live instance registry, pick THE handoff); register (heartbeat upsert + write the LIVE per-instance file, seeded from the handoff). Prints a JSON digest to stdout. Unknown action → exit 2.",
+      "FR-195/FR-190: session-lifecycle verbs. Actions: gather (the Lock-2/3 classifier — enumerate + classify session files against per-instance liveness metadata, pick THE handoff); register (instance metadata upsert + write the LIVE per-instance file, seeded from the handoff). Prints a JSON digest to stdout. Unknown action → exit 2.",
     )
     .option(
       "--project <slug>",
@@ -953,7 +954,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--project-path <path>",
-      "register: absolute path to the project directory (heartbeat's project_path)",
+      "register: absolute path to the project directory (instance row project_path)",
     )
     .option(
       "--seed-next-steps <text>",
@@ -977,6 +978,55 @@ async function main(argv: string[]): Promise<void> {
           selfInstanceId: opts.selfInstanceId,
           projectPath: opts.projectPath,
           seedNextSteps: opts.seedNextSteps,
+          json: opts.json !== false,
+        });
+        process.exitCode = code;
+      },
+    );
+
+  program
+    .command("instance <action>")
+    .description(
+      "FR-190: explicit instance lifecycle verbs. Actions: list (classify local liveness), state (update display/lease state), deregister (remove a cleanly closed instance). Heartbeat is not a liveness primitive.",
+    )
+    .option(
+      "--project <slug>",
+      "project slug (default: basename of cwd)",
+    )
+    .option("--instance-id <id>", "instance id for state/deregister")
+    .option("--current-brief <id>", "state: currently reserved/active brief id")
+    .option("--current-phase <phase>", "state: current workflow phase")
+    .option("--current-task <text>", "state: current task description")
+    .option(
+      "--lease-minutes <minutes>",
+      "state: renew the cross-machine work lease for this many minutes; <=0 clears it",
+    )
+    .option("--json", "emit the digest as JSON to stdout (default)", true)
+    .action(
+      (
+        action: string,
+        opts: {
+          project?: string;
+          instanceId?: string;
+          currentBrief?: string;
+          currentPhase?: string;
+          currentTask?: string;
+          leaseMinutes?: string;
+          json?: boolean;
+        },
+      ): void => {
+        const leaseMinutes =
+          opts.leaseMinutes === undefined
+            ? undefined
+            : Number.parseInt(opts.leaseMinutes, 10);
+        const code = runInstance({
+          action: action as InstanceAction,
+          project: opts.project,
+          instanceId: opts.instanceId,
+          currentBrief: opts.currentBrief,
+          currentPhase: opts.currentPhase,
+          currentTask: opts.currentTask,
+          leaseMinutes,
           json: opts.json !== false,
         });
         process.exitCode = code;

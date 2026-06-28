@@ -5,13 +5,14 @@
  * precedent.
  *
  * M1 shipped `gather` — the local-channel Lock-2/3 classifier (SKILL.md §2,
- * G1–G5). M2 adds `register` — the heartbeat upsert + LIVE per-instance file
- * write (SKILL.md §3.7).
+ * G1–G5). M2 adds `register` — the instance metadata upsert + LIVE
+ * per-instance file write (SKILL.md §3.7). FR-190 extends registration with
+ * harness/PID/start-time metadata and removes heartbeat age from liveness.
  *
  * Channel: LOCAL (better-sqlite3 via brain-db.ts), no network. `gather` is
  * read-only w.r.t. `session_files` (#220 / Lock-2 "nothing destructive in
- * gather"). `register` DOES write — the heartbeat row + the LIVE file — but
- * non-destructively (#230): the heartbeat upsert and `sessionFileUpsert`'s
+ * gather"). `register` DOES write — the instance row + the LIVE file — but
+ * non-destructively (#230): the instance upsert and `sessionFileUpsert`'s
  * COALESCE never null an existing row's instance_id/state, and the on-disk
  * file write preserves an existing file's content (an idempotent re-run does
  * NOT clobber).
@@ -26,6 +27,10 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { detectCapabilities } from "../lib/detect.js";
+import {
+  classifyInstanceLiveness,
+  resolveOwnerProcess,
+} from "../lib/process-liveness.js";
 import {
   listSessionFiles,
   listInstances,
@@ -57,10 +62,10 @@ export interface SessionOptions {
    * The harness's recovered prior instance id, if it could locate one
    * (SKILL.md §2 G4). For `gather` this maps a row to self; for `register`
    * it is the id to refresh (recover). Null/omitted → `register` mints a
-   * fresh UUID via the heartbeat upsert.
+   * fresh UUID via the instance upsert.
    */
   selfInstanceId?: string;
-  /** Absolute path to the project directory (heartbeat's project_path field). */
+  /** Absolute path to the project directory (instance row project_path field). */
   projectPath?: string;
   /**
    * `register` only: the chosen handoff's resume content from `gather`'s
@@ -93,7 +98,8 @@ type RowClass =
  */
 function classifyRow(
   row: SessionFileRow,
-  activeIds: ReadonlySet<string>,
+  siblingIds: ReadonlySet<string>,
+  deadIds: ReadonlySet<string>,
   selfId: string | null,
 ): RowClass {
   // archived → already consumed and superseded; ignore (both registry states).
@@ -115,13 +121,16 @@ function classifyRow(
   // At gather time self is not yet registered (G4), so a recovered selfId is
   // the only way a row maps to self; if selfId is null, no row is self.
   const ownerId = row.instance_id;
-  const ownerIsActive =
-    ownerId !== null && ownerId !== selfId && activeIds.has(ownerId);
+  if (ownerId !== null && ownerId === selfId) {
+    return "ignore";
+  }
+  const ownerIsSibling = ownerId !== null && siblingIds.has(ownerId);
+  const ownerIsDead = ownerId !== null && deadIds.has(ownerId);
 
   if (row.state === "live") {
-    // live + owner active, non-stale, not-self → LIVE SIBLING (display only).
-    // live + owner absent OR stale → ABANDONED LIVE (crash; never consumed).
-    return ownerIsActive ? "live-sibling" : "abandoned-live";
+    // live + owner proven/declared non-dead → LIVE SIBLING (display only).
+    // live + owner absent OR proven-dead → ABANDONED LIVE (crash; never consumed).
+    return ownerIsSibling && !ownerIsDead ? "live-sibling" : "abandoned-live";
   }
 
   if (row.state === "rested") {
@@ -173,18 +182,30 @@ function buildGatherDigest(
   slug: string,
   selfId: string | null,
 ): GatherDigest {
-  // G1 — enumerate. Both reads are local + read-only (listInstances applies
-  // the brain's own mark-stale/purge to the instances registry).
+  // G1 — enumerate. FR-190: instance reads no longer purge/mark stale based on
+  // heartbeat age; liveness is classified per instance below.
   const files: SessionFileRow[] = listSessionFiles(slug);
-  const activeInstances: InstanceRow[] = listInstances({
-    status: "active",
+  const instanceRows: InstanceRow[] = listInstances({
+    status: "all",
+    includeStale: true,
     project: slug,
   });
-  const activeIds = new Set<string>(activeInstances.map((i) => i.id));
-  // Index active rows by id for the sibling display fields (current_brief etc).
-  const activeById = new Map<string, InstanceRow>();
-  for (const inst of activeInstances) {
-    activeById.set(inst.id, inst);
+  const siblingIds = new Set<string>();
+  const deadIds = new Set<string>();
+  const instanceById = new Map<string, InstanceRow>();
+  const livenessById = new Map<
+    string,
+    ReturnType<typeof classifyInstanceLiveness>
+  >();
+  for (const inst of instanceRows) {
+    instanceById.set(inst.id, inst);
+    const liveness = classifyInstanceLiveness(inst);
+    livenessById.set(inst.id, liveness);
+    if (liveness.status === "dead" || liveness.status === "dead_pid_reused") {
+      deadIds.add(inst.id);
+    } else {
+      siblingIds.add(inst.id);
+    }
   }
 
   const siblings: GatherSibling[] = [];
@@ -193,20 +214,32 @@ function buildGatherDigest(
 
   // G2 — classify each row.
   for (const row of files) {
-    const klass = classifyRow(row, activeIds, selfId);
+    const klass = classifyRow(row, siblingIds, deadIds, selfId);
     if (klass === "live-sibling" && row.instance_id !== null) {
-      const inst = activeById.get(row.instance_id);
+      const inst = instanceById.get(row.instance_id);
+      const liveness = livenessById.get(row.instance_id);
       siblings.push({
         instance_id: row.instance_id,
         current_brief: inst ? inst.current_brief : null,
-        // Prefer the registry's heartbeat time; fall back to the file mtime.
-        last_active: inst ? inst.last_heartbeat_at : row.updated_at,
+        // Prefer explicit state update time, then old heartbeat/activity time,
+        // then the file mtime for legacy rows.
+        last_active: inst
+          ? (inst.state_updated_at ?? inst.last_heartbeat_at)
+          : row.updated_at,
+        harness: inst ? inst.harness : null,
+        liveness_status: liveness?.status,
+        liveness_method: liveness?.method,
+        lease_expires_at: inst ? inst.lease_expires_at : null,
       });
     } else if (klass === "abandoned-live") {
+      const liveness =
+        row.instance_id !== null ? livenessById.get(row.instance_id) : undefined;
       crashed.push({
         instance_id: row.instance_id ?? "",
         last_active: row.updated_at,
         scratchpad: `session/${row.filename}`,
+        liveness_status: liveness?.status,
+        liveness_method: liveness?.method,
       });
     } else if (klass === "genuine-handoff") {
       genuineHandoffs.push(row);
@@ -286,10 +319,10 @@ function buildLiveFileContent(
 }
 
 /**
- * Run the `register` action — the heartbeat upsert + LIVE per-instance file
+ * Run the `register` action — the instance metadata upsert + LIVE per-instance file
  * write (SKILL.md §3.7). Returns the digest + the process exit code.
  *
- * Non-destructive (#230): the heartbeat upsert refreshes-or-mints the registry
+ * Non-destructive (#230): the instance upsert refreshes-or-mints the registry
  * row; the LIVE file is written FRESH only when it does not already exist on
  * disk — an idempotent re-run (same recovered id) PRESERVES the existing file's
  * content rather than clobbering the running instance's scratchpad. The
@@ -317,21 +350,29 @@ function runRegister(opts: SessionOptions): { digest: RegisterDigest; code: numb
     };
   }
 
-  // Heartbeat upsert — recover (selfInstanceId supplied) or mint (omitted).
+  // Instance metadata upsert — recover (selfInstanceId supplied) or mint (omitted).
   // Wrapped so a BrainTableMissingError (a present-but-unmigrated DB) degrades
   // rather than crashing the awaken sequence.
   let hb;
   try {
+    const owner = resolveOwnerProcess();
+    const now = new Date().toISOString().replace("T", " ").substring(0, 19);
     hb = heartbeat({
       instance_id: opts.selfInstanceId,
       machine_hostname: hostname(),
       machine_os: process.platform,
       project_slug: slug,
       project_path: opts.projectPath ?? null,
+      harness: caps.harness,
+      owner_pid: owner ? owner.pid : null,
+      owner_started_at: owner ? owner.started_at : null,
+      liveness_method: owner ? "pid_start_time" : "none",
+      liveness_status: owner ? "alive" : "unknown_no_metadata",
+      liveness_checked_at: now,
     });
   } catch (err) {
     warn(
-      `session register: heartbeat skipped (${
+      `session register: instance upsert skipped (${
         err instanceof Error ? err.message : String(err)
       }).`,
     );
@@ -381,7 +422,7 @@ function runRegister(opts: SessionOptions): { digest: RegisterDigest; code: numb
       state: "live",
     });
   } catch (err) {
-    // The heartbeat already landed; a session_files write failure is a partial
+    // The instance row already landed; a session_files write failure is a partial
     // success — surface it as degraded but keep the minted/recovered id.
     warn(
       `session register: session_files upsert skipped (${

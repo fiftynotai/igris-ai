@@ -70,6 +70,11 @@ interface SyncTableConfig {
   columns: string[];
 }
 
+function tableColumns(db: Database.Database, name: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${name})`).all() as { name: string }[];
+  return new Set(rows.map((r) => r.name));
+}
+
 // ---------------------------------------------------------------------------
 // Sync table definitions
 // ---------------------------------------------------------------------------
@@ -151,6 +156,9 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'id', 'machine_hostname', 'machine_os', 'project_slug', 'project_path',
       'current_brief', 'current_phase', 'current_task', 'status',
       'started_at', 'last_heartbeat_at', 'metadata',
+      'harness', 'harness_session_id', 'owner_pid', 'owner_started_at',
+      'liveness_method', 'liveness_status', 'liveness_checked_at',
+      'lease_expires_at', 'state_updated_at',
     ],
   },
   {
@@ -730,6 +738,9 @@ async function handleBrainPush(
   let totalRows = 0;
 
   for (const config of activeSyncTables) {
+    const existingColumns = tableColumns(db, config.table);
+    const selectedColumns = config.columns.filter((c) => existingColumns.has(c));
+    if (!existingColumns.has(config.timestampCol)) continue;
     // Get last push timestamp for this table
     const stateRow = db.prepare(
       'SELECT last_push_at FROM sync_state WHERE remote_url = ? AND table_name = ?'
@@ -745,7 +756,7 @@ async function handleBrainPush(
     // even if the column list ever drifts, this filter keeps the privacy
     // posture intact (pending candidates are session-private until approved).
     // Other tables remain unfiltered.
-    const cols = config.columns.join(', ');
+    const cols = selectedColumns.join(', ');
     const extraFilter = config.table === 'learnings' ? " AND review_status = 'approved'" : '';
     const rows = db.prepare(
       `SELECT ${cols} FROM ${config.table} WHERE ${config.timestampCol} > ?${extraFilter}`

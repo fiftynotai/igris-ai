@@ -8,7 +8,6 @@ allowed-tools:
   - Write
   - Edit
   - mcp__igris-brain__igris_session_file_update
-  - mcp__igris-brain__igris_instance_heartbeat
   - mcp__igris-brain__igris_instance_remove
   - mcp__igris-brain__igris_brief_release
 triggers:
@@ -41,8 +40,8 @@ Read the Instance ID from the per-instance session file body (the `**Instance ID
 
 If the `igris-brain` MCP server is available AND an Instance ID exists, perform THREE actions in this order:
 
-1. **Clear `current_brief` ownership** — call `igris_instance_heartbeat` with the stored `instance_id` and `current_brief=""` (empty string). This is the documented Lock-1 release signal: the empty `current_brief` is the auditable "task closed" event. Pass the same `machine_hostname` / `machine_os` / `project_slug` / `project_path` the instance was registered with so the heartbeat upserts the existing row rather than minting a new one.
-2. **Deregister the instance** — call `igris_instance_remove` with the `instance_id`. This is dashboard cleanup. Display: "Instance ownership closed and deregistered: {instance_id}".
+1. **Clear `current_brief` ownership and lease** — run `igris instance state --project {project} --instance-id {instance_id} --current-brief "" --current-phase RESTING --current-task "closing session" --lease-minutes 0`. This is the documented Lock-1 release signal: the empty `current_brief` is the auditable "task closed" event and the lease clear tells other machines this work is no longer reserved.
+2. **Deregister the instance** — run `igris instance deregister --project {project} --instance-id {instance_id}`. This is dashboard cleanup. Display: "Instance ownership closed and deregistered: {instance_id}".
 3. **Release any brief claims held by this instance (FR-127)** — for the
    Active Brief recorded in this instance's session file (and any other brief
    this instance is recorded as hunting), call `igris_brief_release` with
@@ -57,7 +56,7 @@ If the `igris-brain` MCP server is available AND an Instance ID exists, perform 
    stale by the next `/hunt` (claimer absent from the active registry once the
    instance is deregistered) and reclaimable via operator confirmation.
 
-Ordering rationale: the ownership-clear runs first so that even if `igris_instance_remove` fails, the `current_brief` flag is already cleared — the release event is recorded regardless. (`igris_instance_remove` deletes the instance row entirely, which would *implicitly* drop `current_brief` with it; the explicit heartbeat-with-empty-brief makes the release deliberate and auditable, which Lock 1 requires.) The brief-claim release (action 3) runs LAST: even if it fails, the instance is already deregistered, so the next `/hunt` sees the claimer absent from the active set and offers a stale-reclaim — the claim is never permanently stuck.
+Ordering rationale: the ownership-clear runs first so that even if `igris instance deregister` fails, the `current_brief` flag and lease are already cleared — the release event is recorded regardless. The brief-claim release (action 3) runs LAST: even if it fails, the instance is already deregistered or lease-cleared, so the next `/hunt` sees the claimer as absent/reclaimable by explicit operator confirmation — the claim is never permanently stuck.
 
 > FR-127 note: FR-127's atomic brief-claim gate releases (action 3 above) the lock it took at hunt-start, alongside the Lock-1 ownership-clear. This section is named "Close Instance Ownership" because it is the named home for that lock-release.
 
