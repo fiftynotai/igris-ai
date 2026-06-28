@@ -9,6 +9,7 @@
  *   - update [--all] [--slug <slug>] [--self] [--dry-run]
  *   - register-project [path] [--slug <slug>] [--allow-missing-path]
  *   - sync <code|data|all|status> [--dry-run] [--if-changed]
+ *   - context-docs inventory --project <slug> [--json]
  *   - doctor [--fix] [--remove-orphans] [--yes]
  *
  * The CLI owns the install pipeline natively in TS. FR-212d Phase 2 made
@@ -46,6 +47,7 @@ import { runBootSync } from "./verbs/boot-sync.js";
 import { runSession, type SessionAction } from "./verbs/session.js";
 import { runHousekeeping } from "./verbs/housekeeping.js";
 import { runAssess } from "./verbs/assess.js";
+import { runContextDocs, type ContextDocsAction } from "./verbs/context-docs.js";
 import type { McpHarness } from "./lib/mcp-env-normalize.js";
 import { setVerbosity, info, error as logError } from "./lib/log.js";
 
@@ -1059,6 +1061,27 @@ async function main(argv: string[]): Promise<void> {
       });
       process.exitCode = code;
     });
+
+  program
+    .command("context-docs <action>")
+    .description(
+      "FR-209: inspect shared context-doc catalog coverage for one project. Action: inventory.",
+    )
+    .requiredOption("--project <slug>", "project slug to inventory")
+    .option("--json", "emit a machine-readable digest instead of markdown", false)
+    .action(
+      (
+        action: string,
+        opts: { project: string; json?: boolean },
+      ): void => {
+        const code = runContextDocs({
+          action: action as ContextDocsAction,
+          project: opts.project,
+          json: opts.json === true,
+        });
+        process.exitCode = code;
+      },
+    );
 
   program
     .command("doctor")

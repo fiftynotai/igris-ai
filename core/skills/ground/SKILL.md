@@ -151,36 +151,20 @@ the catalog — **not** hardwired to `coding_guidelines.md`):
 
 ## Inventory (`ground inventory`)
 
-A read-only, derived **status view**: for the current project, which context docs
-exist, which **apply** (the project's archetype matched against each type's
-`applies_when`), and which are **missing-but-applicable** (apply but absent on
-disk). This is the signal `conduct.md` #9 ("ensure the project has the docs it
-needs") and FR-199's presence-enforcement read against — it does NOT author or
-modify anything.
+`ground inventory` is a read-only, derived **status view** backed by the shared
+CLI primitive:
 
-**Compute it from three inputs:**
-1. **The catalog** — Glob `~/.igris/core/context-doc-types/*.md`, Read each, and
-   parse from frontmatter: `type`, `target`, `applies_when`, `optional`.
-2. **The project archetype** — call `igris_project_status` (slug = current
-   project) and read its `archetype` + `tech_stack`. This is the project-kind the
-   `applies_when` predicate is matched against.
-3. **The on-disk docs** — Glob `~/.igris/projects/{project}/context/` and list
-   which `target` files are present.
+```bash
+igris context-docs inventory --project <slug>
+```
 
-**For each catalog type, derive:**
-- **exists?** — is the type's `target` present in the context dir?
-- **applies?** — does the project's archetype/tech-stack satisfy the type's
-  `applies_when` predicate? Judge the natural-language predicate against the
-  archetype: e.g. `applies_when: UI-bearing projects` applies to a
-  `brand-website` / `design-kit` / mobile-app archetype; `applies_when: all
-  projects` always applies (`coding_guidelines`, the non-optional one); an
-  `API-bearing` predicate applies when the stack exposes/consumes an API. When the
-  archetype is unknown or ambiguous, mark **applies? = unknown** rather than
-  guessing a hard no.
-- **missing-but-applicable?** — `applies? = yes` AND `exists? = no`. This is the
-  actionable signal.
+The CLI owns the relevance computation: catalog frontmatter (`type`, `target`,
+`applies_when`, `optional`) × project profile (`archetype`, `tech_stack`) × the
+on-disk context dir. This skill must not re-implement or reinterpret
+`applies_when`; the verb is the single source of truth shared with `/boot` and
+`/scan`.
 
-**Print the table:**
+Run the command and print its markdown output:
 
 ```
 ## Context-doc inventory — <slug> (archetype: <archetype>)
@@ -197,9 +181,11 @@ Missing-but-applicable: architecture_map, design_system
 → Author one with: ground <type>
 ```
 
-End by naming the missing-but-applicable types and pointing at
-`ground <type>` to author each. Do not author them automatically — the
-inventory only reports.
+When the command is unavailable, or the markdown output includes
+`Inventory degraded:`, report that the inventory is unavailable/incomplete and
+stop. Do not fall back to a second implementation in this skill. End by naming
+the missing-but-applicable types and pointing at `ground <type>` to author each.
+Do not author them automatically — the inventory only reports.
 
 ## Constraints
 

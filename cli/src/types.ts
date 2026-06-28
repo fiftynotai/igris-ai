@@ -349,6 +349,46 @@ export interface AssessDigest {
   goals_upcoming: AssessGoal[];
 }
 
+/** FR-209 — project profile fields read from the local brain `projects` row. */
+export interface ProjectProfile {
+  slug: string;
+  path: string | null;
+  archetype: string | null;
+  tech_stack: string | null;
+}
+
+/** FR-209 — graceful read result for the local brain project profile. */
+export interface ProjectProfileResult {
+  degraded: boolean;
+  profile: ProjectProfile | null;
+}
+
+/** FR-209 — context-doc applicability tri-state. */
+export type ContextDocApplies = "yes" | "no" | "unknown";
+
+/** FR-209 — one catalog row joined to project context-doc existence. */
+export interface ContextDocInventoryRow {
+  type: string;
+  target: string;
+  applies_when: string;
+  applies: ContextDocApplies;
+  optional: boolean;
+  summary: string;
+  exists: boolean;
+  missing_applicable: boolean;
+}
+
+/** FR-209 — digest emitted by `igris context-docs inventory`. */
+export interface ContextDocsInventoryDigest {
+  project: string;
+  archetype: string | null;
+  tech_stack: string | null;
+  degraded: boolean;
+  docs: ContextDocInventoryRow[];
+  missing_applicable: string[];
+  remediation: string[];
+}
+
 /**
  * FR-195 (M3) — the per-pull result inside the `boot-sync` digest. `ok` is
  * false when that pull failed (network error, non-200, or a local merge

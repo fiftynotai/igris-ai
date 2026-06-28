@@ -242,6 +242,36 @@ Render the assessment from the digest:
 
 **Degradation:** when the brain DB is absent the verb emits `{ "degraded": true, "briefs": {total:0,…}, "goals_upcoming": [], "active_instances": 0, … }` and exits 0 — it STILL reads `blockers` + `git` (those do not need the DB). NEVER block session start.
 
+### 4.5. Context-Doc Presence Nudge (FR-209)
+
+The project-context-docs presence check is a SOFT nudge, not a gate. It is owned
+by the shared CLI primitive; `/boot` only renders the short signal.
+
+Run:
+
+```bash
+igris context-docs inventory --project <slug> --json 2>/dev/null || true
+```
+
+Read only these fields from the JSON digest:
+
+```jsonc
+{ "degraded": false,
+  "missing_applicable": ["api_pattern", "test_standards"],
+  "remediation": ["/ground api_pattern", "/ground test_standards"] }
+```
+
+If `degraded` is false and `missing_applicable[]` is non-empty, render exactly
+one short line:
+
+```
+Context docs: missing applicable docs — /ground api_pattern · /ground test_standards
+```
+
+If the list is empty, unknown-only, the command is unavailable, or the JSON is
+unparseable, render nothing. NEVER block boot, never author docs automatically,
+and do not re-implement the `applies_when` logic here.
+
 ### 4.6. Igris Doctor Drift Summary (FR-175)
 
 Run the existing CLI diagnostic in read-only mode after the regular assessment, with a short timeout so boot cannot hang:

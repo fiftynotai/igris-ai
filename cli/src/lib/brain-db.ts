@@ -40,6 +40,8 @@ import type {
   InstanceRow,
   AssessBriefs,
   AssessGoal,
+  ProjectProfile,
+  ProjectProfileResult,
 } from "../types.js";
 
 let db: Database.Database | null = null;
@@ -102,6 +104,72 @@ function tableExists(handle: Database.Database, name: string): boolean {
     )
     .get(name) as { name: string } | undefined;
   return row !== undefined;
+}
+
+function tableColumns(handle: Database.Database, name: string): Set<string> {
+  const rows = handle.prepare(`PRAGMA table_info(${name})`).all() as {
+    name: string;
+  }[];
+  return new Set(rows.map((r) => r.name));
+}
+
+/**
+ * Read the local project profile row used by `context-docs inventory`.
+ *
+ * Read-only and create-never: an absent DB, absent `projects` table, absent
+ * row, or older schema with missing columns all degrade into a partial/null
+ * profile rather than throwing or running DDL. Unlike most accessors in this
+ * module, this checks the DB file before opening it so a fresh sandbox does
+ * not get a newly-created empty DB just because inventory ran.
+ */
+export function readProjectProfile(slug: string): ProjectProfileResult {
+  if (!existsSync(brainDbPath())) {
+    return { degraded: true, profile: null };
+  }
+
+  const handle = getDb();
+  if (!tableExists(handle, "projects")) {
+    return { degraded: true, profile: null };
+  }
+
+  const columns = tableColumns(handle, "projects");
+  if (!columns.has("slug")) {
+    return { degraded: true, profile: null };
+  }
+
+  const projections = ["slug"];
+  if (columns.has("path")) projections.push("path");
+  if (columns.has("archetype")) projections.push("archetype");
+  if (columns.has("tech_stack")) projections.push("tech_stack");
+
+  const row = handle
+    .prepare(`SELECT ${projections.join(", ")} FROM projects WHERE slug = ?`)
+    .get(slug) as
+    | {
+        slug: string;
+        path?: string | null;
+        archetype?: string | null;
+        tech_stack?: string | null;
+      }
+    | undefined;
+
+  if (row === undefined) {
+    return { degraded: true, profile: null };
+  }
+
+  const profile: ProjectProfile = {
+    slug: row.slug,
+    path: row.path ?? null,
+    archetype: row.archetype ?? null,
+    tech_stack: row.tech_stack ?? null,
+  };
+  return {
+    degraded:
+      !columns.has("path") ||
+      !columns.has("archetype") ||
+      !columns.has("tech_stack"),
+    profile,
+  };
 }
 
 /**

@@ -24,6 +24,16 @@ export function brainDbPath(): string {
   return join(brainDir(), "memory", "knowledge.db");
 }
 
+/** Absolute path to the runtime context-doc catalog directory. */
+export function contextDocTypesDir(): string {
+  return join(brainDir(), "core", "context-doc-types");
+}
+
+/** Absolute path to a project's context-doc directory. */
+export function projectContextDir(slug: string): string {
+  return join(brainDir(), "projects", slug, "context");
+}
+
 /** Absolute path to the canonical hooks JSON file in the runtime brain. */
 export function canonicalHooksPath(): string {
   return join(brainDir(), "core", "hooks", "canonical-settings.json");

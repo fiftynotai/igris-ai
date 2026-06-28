@@ -192,6 +192,9 @@ X agents registered (Y skills available)
 - Cross-project patterns: N available
 - Last brain sync: [timestamp]
 
+### Context Docs
+[The §6.8 table/nudge — or omit if the primitive is unavailable]
+
 ### Harness Drift
 [The §6.7 line — or omit if the guard / manifest is absent]
 
@@ -464,3 +467,30 @@ N agent targets — M in sync, K drifted/missing — run `compile_harnesses.sh` 
 
 If the guard script or the manifest is absent, omit the section entirely.
 Do NOT block /scan, do NOT print an error.
+
+### 6.8. Context Docs (FR-209)
+
+Surface the shared project-context-doc inventory in `/scan`. This is a SOFT
+presence nudge, not a gate; `/scan` reports status and remediation commands only.
+
+Run:
+
+```bash
+igris context-docs inventory --project <slug> 2>/dev/null || true
+```
+
+The `context-docs inventory` verb owns the catalog/project/doc matching:
+`core/context-doc-types/*.md` frontmatter (`applies_when`, `target`) × the
+project profile (`archetype`, `tech_stack`) ×
+`~/.igris/projects/{project}/context/`. `/scan` must not re-implement or
+reinterpret that logic.
+
+When the command returns markdown output, render it under:
+
+```
+### Context Docs
+<inventory markdown>
+```
+
+If the primitive is unavailable or errors, omit the section entirely. Do not
+block `/scan`, do not author docs automatically, and do not print a stack trace.

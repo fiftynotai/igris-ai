@@ -22,7 +22,7 @@ Adding a capability module? Drop a self-describing `core/os/<cap>.md` with corre
 
 ## Extend a subsystem
 
-A subsystem spans more than one layer. Don't treat it as a single unit: **decompose it into its layers, place each piece in the layer it belongs to, then follow that layer's extension rule.** The project-context-docs subsystem is the worked example — its catalog is OS core (self-describing doc-type definitions), its generate workflow is a protocol (skill), its presence-enforcement is enforcement + conduct, its instances are OS project-knowledge, its inventory is the knowledge-map.
+A subsystem spans more than one layer. Don't treat it as a single unit: **decompose it into its layers, place each piece in the layer it belongs to, then follow that layer's extension rule.** The project-context-docs subsystem is the worked example — its catalog is OS core (self-describing doc-type definitions), its generate workflow is a protocol (skill), its presence-enforcement is enforcement + conduct, its instances are OS project-knowledge, and its inventory is a shared CLI primitive consumed by the protocol surfaces.
 
 **Enforcement-layer extension rule:** to add an enforcement, drop the mechanism — a hook/gate in `core/hooks/` (or a gate-step in a skill) for a `gate`, a pipeline for `automation`, or nothing for `honor-system` — AND a self-describing definition in `core/enforcement/<slug>.md` (frontmatter: `obligation` · `mechanism` · `status` · `lives_in` · `summary`), then re-run `core/scripts/gen_enforcement_registry.sh` so `core/enforcement/INDEX.md` regenerates. Never hand-edit the INDEX.
 
