@@ -46,6 +46,11 @@ set -e
 #       Done-but-no-commit, committed-but-open) against the canonical
 #       brief_status.status source. WARN only — surfaces the report, does
 #       NOT block the commit (matches check_contract_consumers' posture).
+#   - validate_error_fingerprint_loop.sh  (TD-240)
+#       Triggers if: core/agents/mender.md OR core/skills/hunt/SKILL.md is
+#                    staged.
+#       Ensures mender keeps lookup-before-diagnosis language and /hunt keeps
+#       verified post-fix storage ownership via igris_error_lookup.
 #   - gitleaks protect --staged  (TD-159)
 #       Always runs (gitleaks decides what to scan from the staged set).
 #       Deterministic secret-scanner — catches the secret-shaped strings
@@ -189,6 +194,7 @@ needs_skill_yaml_check=0
 needs_skill_os_leak_check=0
 needs_contract_check=0
 needs_reconciliation_check=0
+needs_error_loop_check=0
 
 if echo "$staged" | grep -qE '^(core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
   needs_enum_check=1
@@ -247,6 +253,15 @@ if [ -f "$REPO_ROOT/scripts/validate_brief_state_reconciliation.sh" ]; then
   fi
 fi
 
+# TD-240: keep the marketed "never debug twice" loop fed. The validator is
+# small and content-contract focused, so run it only when the two producer
+# prompts change.
+if [ -f "$REPO_ROOT/scripts/validate_error_fingerprint_loop.sh" ]; then
+  if echo "$staged" | grep -qE '^(core/agents/mender\.md|core/skills/hunt/SKILL\.md)$'; then
+    needs_error_loop_check=1
+  fi
+fi
+
 failed=0
 
 if [ "$needs_enum_check" = "1" ]; then
@@ -298,6 +313,16 @@ if [ "$needs_harness_check" = "1" ]; then
     echo "[pre-commit] Harness drift detected (or a generated harness is missing)."
     echo "[pre-commit]   Run: bash core/scripts/cli-adapters/compile_harnesses.sh --project-root ."
     echo "[pre-commit]   (or 'igris harness compile' once FR-136 lands), then re-stage."
+    failed=1
+  fi
+fi
+
+if [ "$needs_error_loop_check" = "1" ]; then
+  echo "[pre-commit] Validating error-fingerprint loop contract (TD-240)..."
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed and reported
+  # together at the end.
+  if ! bash "$REPO_ROOT/scripts/validate_error_fingerprint_loop.sh"; then
     failed=1
   fi
 fi

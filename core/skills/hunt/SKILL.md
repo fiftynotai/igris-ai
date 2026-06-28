@@ -11,6 +11,7 @@ allowed-tools:
   - Grep
   - Glob
   - Agent
+  - mcp__igris-brain__igris_error_lookup
   - mcp__igris-brain__igris_brief_sync
   - mcp__igris-brain__igris_brief_get
   - mcp__igris-brain__igris_brief_update
@@ -338,6 +339,14 @@ Agent tool parameters:
    - Update Agent Log with result
 
 6. **If PASS:**
+   - If this PASS follows a mender-guided retry and mender returned an Error
+     Memory Handoff, store the verified recovery before leaving TESTING:
+     call `igris_error_lookup` with `project={current project slug}`,
+     `message={Canonical Error Message from mender}`, and
+     `solution={verified Root Cause + fix summary from the applied changes}`.
+     This storage step is orchestrator-owned because only the orchestrator sees
+     the post-fix sentinel PASS. If brain MCP or `igris_error_lookup` is
+     unavailable, skip silently; never block a passing hunt on memory storage.
    - Proceed to REVIEWING
 
 7. **If FAIL and Retry Count < 3:**
@@ -350,7 +359,12 @@ Agent tool parameters:
      - phase: "TESTING"
      - metadata: '{"attempt": {retry_count}, "reason": "test failure"}'
      Skip silently if unavailable.
-   - Delegate to mender agent for diagnosis
+   - Delegate to mender agent for diagnosis. Include the sentinel failure output
+     verbatim and instruct mender that its first diagnostic action MUST be
+     `igris_error_lookup` with the canonical error message before parsing,
+     grepping, hypothesizing, or inspecting files. Require mender to return an
+     `Error Memory Handoff` block containing `Canonical Error Message`, `Root
+     Cause`, and `Proposed Solution`.
    - Return to BUILDING with fix instructions
 
 8. **If FAIL and Retry Count >= 3:**
