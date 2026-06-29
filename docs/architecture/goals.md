@@ -82,7 +82,7 @@ Highlights:
   `'measured at <metric>'`). Intentionally not an enum — outcomes vary too
   much to constrain usefully.
 - `project_slug TEXT` (nullable) — `NULL` denotes a cross-project goal
-  surfaced in `/portfolio` rather than `/scan`.
+  surfaced in `/ops` rather than `/scan`.
 
 ### Indexes
 
@@ -230,11 +230,11 @@ A goal with `project_slug = NULL` is a **cross-project goal**. These are:
 
 - **Not shown in `/scan`** — `/scan` is project-scoped, so it filters
   `project_slug = $project`.
-- **Shown in `/portfolio`** — rendered in the heatmap row labeled
+- **Shown in `/ops`** — rendered in the heatmap row labeled
   "Cross-project".
 
 This split is intentional: cross-project goals would dilute `/scan`'s
-project-focused output, but they are exactly what `/portfolio` is for.
+project-focused output, but they are exactly what `/ops` is for.
 
 ---
 

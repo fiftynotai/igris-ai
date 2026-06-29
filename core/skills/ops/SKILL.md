@@ -1,7 +1,7 @@
 ---
-name: portfolio
+name: ops
 tier: essential
-description: Cross-project command center for in-flight work, blockers, project roster, and brain health
+description: Cross-project ops command center for in-flight work, blockers, project roster, and brain health
 disable-model-invocation: false
 allowed-tools:
   - Bash
@@ -12,7 +12,8 @@ allowed-tools:
   - mcp__igris-brain__igris_brief_dashboard
   - mcp__igris-brain__igris_instance_list
 triggers:
-  - "portfolio"
+  - "ops"
+  - "operations"
   - "cross-project"
   - "brain status"
   - "what needs me"
@@ -22,20 +23,20 @@ triggers:
   - "managed projects"
 ---
 
-# PORTFOLIO - Cross-Project Command Center
+# OPS - Cross-Project Command Center
 
 Answer the operator's real cross-project question:
 
 > Across all projects and machines, what is in flight, what is blocked, what needs me, and is the brain healthy?
 
-`/portfolio` is the single cross-project OS surface. It replaces the retired `/dashboard` and `/projects` skills by folding their useful brief/session/project views into one coherent command.
+`/ops` is the single cross-project OS surface. It replaces the retired `/dashboard`, `/projects`, and interim `/portfolio` command names by folding their useful brief/session/project views into one coherent command.
 
 ## Usage
 
 ```bash
-/portfolio
-/portfolio active
-/portfolio archived
+/ops
+/ops active
+/ops archived
 ```
 
 ## Arguments
@@ -185,7 +186,7 @@ sqlite3 ~/.igris/memory/knowledge.db "
 Format as:
 
 ```markdown
-## Igris Portfolio
+## Igris Ops
 
 ### Needs Me
 1. [Blocked or claimed work that needs operator decision]

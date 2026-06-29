@@ -92,7 +92,7 @@ Call `igris_goal_list` with `project` and `status='active'` to list active goals
 Progress bar conventions:
 - 10 cells; fill ratio = round(completion_pct * 10)
 - When `completion_pct` is `null` (no serving briefs), render `[----------] 0/0` with a faded/dimmed style
-- Cap rendered table at 10 active goals; if more exist, append `(+N more — use /portfolio for full view)`
+- Cap rendered table at 10 active goals; if more exist, append `(+N more — use /ops for full view)`
 
 If no active goals exist, omit the section entirely.
 

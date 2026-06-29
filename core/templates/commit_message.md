@@ -38,12 +38,12 @@
 ### Example 1: New Feature
 
 ```
-feat(skills): add cross-project portfolio skill
+feat(skills): add cross-project ops skill
 
-- Add /portfolio skill with brief, project, and health tracking
+- Add /ops skill with brief, project, and health tracking
 - Add brain MCP integration for cross-project queries
 - Add filtering by project, status, and priority
-- Add unit tests for portfolio rendering logic
+- Add unit tests for ops rendering logic
 
 closes #FR-045
 ```

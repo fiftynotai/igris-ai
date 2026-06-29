@@ -354,7 +354,7 @@ archetype, status, last session. Drives the affinity boosts in recall.
   omit `slug` and pass `status` / `archetype` / `tech_stack` filters for
   narrowed cross-project listings (replaces the older `_list` pattern).
   `summary_only: true` for counts-only during `/scan`.
-- During the `/portfolio` skill flow.
+- During the `/ops` skill flow.
 
 ### Example invocation
 
@@ -487,7 +487,7 @@ throughput, error rates. Source for agent activity dashboards.
 
 ### When to call
 
-- During `/scan` or `/portfolio`: pull recent metric snapshots.
+- During `/scan` or `/ops`: pull recent metric snapshots.
 - When the user asks "is this getting faster/slower?": query velocity over
   the relevant window.
 - Before refactoring a hot path: check the current cost so you can measure
@@ -495,7 +495,7 @@ throughput, error rates. Source for agent activity dashboards.
 
 ### When to Inspect (Dashboard)
 
-Use `igris_metrics_dashboard` during `/scan` or `/portfolio` for a
+Use `igris_metrics_dashboard` during `/scan` or `/ops` for a
 one-shot agent-utilization view. The canonical `_dashboard` shape
 returns `totals.by_agent` (invocations / success_rate / avg_duration_ms
 / retries per agent), `totals.by_action`, `totals.by_result` (the four

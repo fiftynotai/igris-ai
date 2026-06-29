@@ -289,7 +289,7 @@ export function handleGoalCreate(args: Record<string, unknown>): ToolResult {
   }
   // project is required by the brief but goals may also be cross-project
   // (project_slug = NULL). Accept undefined/empty -> stored as NULL so the
-  // /portfolio surface can render "Cross-project" without a sentinel value.
+  // /ops surface can render "Cross-project" without a sentinel value.
   const projectSlugCol: string | null =
     projectSlug && projectSlug.length > 0 ? projectSlug : null;
 

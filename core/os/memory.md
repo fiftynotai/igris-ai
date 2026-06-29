@@ -266,7 +266,7 @@ igris_error_dashboard({ project: "igris-ai", summary_only: true })
 - When onboarding a new project: `igris_project_register` so its briefs and learnings can participate in cross-project recall and promotion.
 - After registration, to flip `status` (e.g., archive a project) or correct `tech_stack` / `archetype`: `igris_project_update` (partial UPDATE — only the fields you pass are written). For brand-new projects use `igris_project_register`, not `_update`.
 - For a unified per-project / cross-project view: `igris_project_dashboard`. Set `slug` for one project's detail; omit `slug` and pass `status` / `archetype` / `tech_stack` filters for narrowed cross-project listings. `summary_only: true` for counts-only during `/scan`.
-- During the `/portfolio` skill flow.
+- During the `/ops` skill flow.
 
 ### Example invocation
 
@@ -335,7 +335,7 @@ igris_goal_dashboard({ project: "igris-ai" })
 
 ### When to call
 
-- During `/scan` or `/portfolio`: pull recent metric snapshots.
+- During `/scan` or `/ops`: pull recent metric snapshots.
 - When the user asks "is this getting faster/slower?": query velocity over the relevant window.
 - Before refactoring a hot path: check the current cost so you can measure the win.
 - For a one-shot agent-utilization view: `igris_metrics_dashboard` returns per-agent invocations / success-rate / avg-duration / retries, per-action and per-result breakdowns, recent invocations with a week-over-week delta, and the longest-running invocations. Pair with `igris_brief_velocity` for completion-rate context. Optional `agent` filter scopes everything to one agent; `summary_only: true` drops the samples block.
