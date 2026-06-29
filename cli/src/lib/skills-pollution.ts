@@ -13,7 +13,7 @@
  * THROUGH the parent symlink and writes the per-item symlink INTO the canonical
  * source (`~/.igris/core/skills/<n>`) — active damage. The verified leaks are
  * `~/.igris/core/skills/content-pipeline` + `~/.igris/core/agents/content-*.md`,
- * each a projection symlink into the registry, not real core content.
+ * each a projection symlink into the loadout, not real core content.
  *
  * The PRIOR plan ("21 materialized real-dir COPIES pollute ~/.claude/skills")
  * was a misdiagnosis: the "real dirs" were an artifact of `ls`-through-a-parent-
@@ -53,14 +53,14 @@
  *   `rename(2)`'d into place (kernel rename REPLACES the now-absent name).
  * - Refuse-on-divergence (L-515): a root that is a symlink to something OTHER
  *   than the canonical source is REFUSED + reported, untouched. A stray source
- *   symlink whose realpath is NOT contained in the registry is report-only.
+ *   symlink whose realpath is NOT contained in the loadout is report-only.
  * - realpath containment (#515 — two prior warden rejections): EVERY mutation
  *   (staging dir, backup, per-item symlink, stray unlink) is realpath-contained
- *   within the declared root / registry before acting; a symlink-escape refuses.
+ *   within the declared root / loadout before acting; a symlink-escape refuses.
  * - Idempotent: once a root is a real dir the migration verdict is false, so a
  *   re-run is a no-op (no 2nd `.bak`).
  * - Stray cleanup NEVER `rm`s a real dir or canonical content: it `unlink`s ONLY
- *   a depth-1 SYMLINK whose realpath is contained in `~/.igris/registry/` AND
+ *   a depth-1 SYMLINK whose realpath is contained in `~/.igris/loadout/` AND
  *   only after the migrated per-item symlink exists in the real surface dir.
  *
  * Security (§14 / L-515): every diagnostic names a path / item name only —
@@ -82,7 +82,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, sep } from "node:path";
-import { brainDir, registryDirPath, registryOverlayPath } from "./paths.js";
+import { brainDir, loadoutDirPath, loadoutOverlayPath } from "./paths.js";
 import { debug } from "./log.js";
 
 // ---------------------------------------------------------------------------
@@ -439,7 +439,7 @@ export interface InventoryItem {
 /**
  * Enumerate personal SKILL entries from the overlay's `surfaces.skills[]`. Each
  * block's `source` is the FULL skill dir (e.g.
- * `~/.igris/registry/skills/content-pipeline`), and the per-item symlink lives
+ * `~/.igris/loadout/skills/content-pipeline`), and the per-item symlink lives
  * at `<root>/<linkName>` where `<linkName>` is the basename of the source AND
  * the target is the L-517 nested `<source>/<linkName>` (the directory that
  * actually contains SKILL.md — matches the compile output). NEVER throws.
@@ -450,7 +450,7 @@ export interface InventoryItem {
  */
 export function enumeratePersonalSkills(
   surfaceRoot: string,
-  overlayPath: string = registryOverlayPath(),
+  overlayPath: string = loadoutOverlayPath(),
 ): InventoryItem[] {
   const out: InventoryItem[] = [];
   let parsed: unknown;
@@ -506,7 +506,7 @@ export function enumeratePersonalSkills(
  */
 export function enumeratePersonalAgents(
   surfaceRoot: string,
-  overlayPath: string = registryOverlayPath(),
+  overlayPath: string = loadoutOverlayPath(),
 ): InventoryItem[] {
   const out: InventoryItem[] = [];
   let parsed: unknown;
@@ -570,7 +570,7 @@ function safeIsDir(p: string): boolean {
  */
 export function buildSurfaceInventory(
   surface: SurfaceRoot,
-  overlayPath: string = registryOverlayPath(),
+  overlayPath: string = loadoutOverlayPath(),
 ): InventoryItem[] {
   const items: InventoryItem[] = [];
   if (surface.kind === "skills") {
@@ -691,7 +691,7 @@ function enumerateResolvableThroughRoot(
       // core agents + 3 personal harness.claude.md symlinks. The aux
       // `manifest.yaml` is ALSO kept in the BEFORE set so the ⊇ invariant
       // covers the preserved auxiliary file. Other shapes (dirs like the
-      // registry's `routing/`) are not surface items and are not counted.
+      // loadout's `routing/`) are not surface items and are not counted.
       const keep =
         name.endsWith(".md") || enumerateAgentAuxNamesSet(root).has(name);
       if (keep) out.push({ name, target: realpathSafe(abs) });
@@ -743,7 +743,7 @@ function safeIsFile(p: string): boolean {
  */
 export function migrateSurfaceRoot(
   surface: SurfaceRoot,
-  overlayPath: string = registryOverlayPath(),
+  overlayPath: string = loadoutOverlayPath(),
   now: Date = new Date(),
 ): MigrateResult {
   const { kind, root, source } = surface;
@@ -898,18 +898,18 @@ export interface StraySymlink {
   /** The resolved realpath the stray points at. */
   resolved: string;
   /**
-   * True iff the stray's realpath is contained in `~/.igris/registry/` — i.e. it
+   * True iff the stray's realpath is contained in `~/.igris/loadout/` — i.e. it
    * is a leaked PROJECTION (removable). False → report-only (could be a hand-
    * authored symlink; never auto-remove).
    */
-  isRegistryProjection: boolean;
+  isLoadoutProjection: boolean;
 }
 
 /**
  * Find every depth-1 SYMLINK inside a canonical source root (skills or agents).
  * NEVER throws. These are leaked projections from a compile that wrote through
- * the legacy whole-dir symlink. Each is classified as a registry-projection
- * (removable) vs unknown (report-only) by realpath-containment in the registry.
+ * the legacy whole-dir symlink. Each is classified as a loadout-projection
+ * (removable) vs unknown (report-only) by realpath-containment in the loadout.
  */
 export function findStraySourceSymlinks(coreSource: string): StraySymlink[] {
   const out: StraySymlink[] = [];
@@ -920,7 +920,7 @@ export function findStraySourceSymlinks(coreSource: string): StraySymlink[] {
   } catch {
     return [];
   }
-  const registryReal = realpathSafe(registryDirPath());
+  const loadoutReal = realpathSafe(loadoutDirPath());
   for (const name of names) {
     if (skippedName(name)) continue;
     const p = join(coreSource, name);
@@ -935,7 +935,7 @@ export function findStraySourceSymlinks(coreSource: string): StraySymlink[] {
     out.push({
       path: p,
       resolved,
-      isRegistryProjection: isContained(resolved, registryReal),
+      isLoadoutProjection: isContained(resolved, loadoutReal),
     });
   }
   return out;
@@ -944,7 +944,7 @@ export function findStraySourceSymlinks(coreSource: string): StraySymlink[] {
 /** Outcome of a single {@link removeStraySourceSymlink} call. */
 export type StrayRemoveOutcome =
   | "removed" // the stray projection symlink was unlinked
-  | "skipped-not-projection" // not contained in the registry → report-only
+  | "skipped-not-projection" // not contained in the loadout → report-only
   | "skipped-not-symlink" // no longer a symlink at fix time (TOCTOU)
   | "skipped-no-migrated-target" // the migrated per-item symlink does not exist yet
   | "error";
@@ -955,7 +955,7 @@ export type StrayRemoveOutcome =
  *
  * Preconditions (ALL must hold before unlink):
  * 1. The path is STILL a symlink (TOCTOU re-check).
- * 2. Its realpath is contained in `~/.igris/registry/` (a projection).
+ * 2. Its realpath is contained in `~/.igris/loadout/` (a projection).
  * 3. The migrated per-item symlink exists in the real surface dir
  *    (`<surfaceRoot>/<name>`) — so the personal entry has a proper home before
  *    we remove the leaked copy.
@@ -976,12 +976,12 @@ export function removeStraySourceSymlink(
   }
   if (!isLink) return "skipped-not-symlink";
 
-  // 2. Registry-projection containment.
-  const registryReal = realpathSafe(registryDirPath());
-  if (!isContained(realpathSafe(strayPath), registryReal)) {
+  // 2. Loadout-projection containment.
+  const loadoutReal = realpathSafe(loadoutDirPath());
+  if (!isContained(realpathSafe(strayPath), loadoutReal)) {
     debug(
       `skills-pollution: leaving stray '${strayPath}' — its target is not a ` +
-        `registry projection (report-only; never auto-removed).`,
+        `loadout projection (report-only; never auto-removed).`,
     );
     return "skipped-not-projection";
   }

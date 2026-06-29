@@ -2,7 +2,7 @@
  * FR-164 (FR-160 epic): the PURE canonical→per-harness MCP entry shaper.
  *
  * This is the ONE place the TypeScript native per-harness MCP entry shape is
- * defined. It is consumed by `registry.ts:runProjectMcp` (the compile-time
+ * defined. It is consumed by `loadout.ts:runProjectMcp` (the compile-time
  * projector) AND pinned by the golden-fixture parity test
  * (`mcp-shape.test.ts`). The bash side (`_common.sh normalize_mcp_shape`)
  * mirrors these exact 4 shapes byte-for-byte; a bats parity test asserts the
@@ -25,9 +25,9 @@ import type { TomlMcpEntry } from "./mcp-register.js";
 export type { McpHarness } from "./mcp-env-normalize.js";
 
 /**
- * The canonical MCP launch spec (the registry `surfaces.mcp_servers[].canonical`
+ * The canonical MCP launch spec (the loadout `surfaces.mcp_servers[].canonical`
  * shape). Declared here so the shaper has no import dependency on the verb
- * module. Byte-compatible with `McpCanonical` in registry.ts (env values are
+ * module. Byte-compatible with `McpCanonical` in loadout.ts (env values are
  * `${VAR}` indirection refs; `args`/`env` default to []/{} when absent).
  */
 export interface McpShapeCanonical {
@@ -73,7 +73,7 @@ export interface HarnessMcpEntryResult {
  * `secrets` is required ONLY for codex (the other three pass refs through). The
  * key-iteration order of `env` is preserved verbatim from the canonical input.
  *
- * @param canonical  The registry canonical launch spec.
+ * @param canonical  The loadout canonical launch spec.
  * @param harness    Which harness shape to build.
  * @param enabled    Per-target `enabled` flag (opencode only; defaults true).
  * @param secrets    Codex secret map (from `parseSecretsEnv`). Unused for the

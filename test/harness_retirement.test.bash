@@ -6,12 +6,12 @@
 # FR-152 retires the legacy `sync_claude_agents.sh` body-refresh adapter (the
 # script that powered FR-149's Case C real-file claude back-compat path). Post-
 # FR-152, claude + gemini agent targets are atomic symlinks that resolve to a
-# single registry-resident harness.md, assembled at compile/vendor time.
+# single loadout-resident harness.md, assembled at compile/vendor time.
 #
 # FR-159 retires the legacy `sync_codex_agents.sh` codex TOML converter — the
 # emit moves to TS `assembleCodexHarness` (vendor-side) + bash
-# `assemble_codex_harness_into_registry` (compile-side fallback). The
-# `.codex/agents/<name>.toml` target is now a symlink to the registry-resident
+# `assemble_codex_harness_into_loadout` (compile-side fallback). The
+# `.codex/agents/<name>.toml` target is now a symlink to the loadout-resident
 # `harness.codex.toml` (parity with claude — codex follows symlinks).
 #
 # No script-shaped consumer of the deleted files should remain anywhere in

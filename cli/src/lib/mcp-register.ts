@@ -1070,8 +1070,8 @@ function brainCanonical(mcpEntryPath: string): McpShapeCanonical {
 
 /**
  * Per-harness config resolution table — the LOCAL mirror of
- * `registry.ts`'s `mcpConfigPathFor`/`mcpMapKeyFor` switches (FR-164). Defined
- * here (not imported) to avoid an import cycle: `registry.ts` already imports
+ * `loadout.ts`'s `mcpConfigPathFor`/`mcpMapKeyFor` switches (FR-164). Defined
+ * here (not imported) to avoid an import cycle: `loadout.ts` already imports
  * FROM this module. `mapKey` is the JSON map key for the three JSON harnesses,
  * OR the TOML `tablePrefix` for codex (`isToml: true`). Path helpers come from
  * `./paths.js`.

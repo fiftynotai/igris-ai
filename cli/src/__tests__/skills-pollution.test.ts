@@ -66,11 +66,11 @@ function claudeSkillsRoot(): string {
 function claudeAgentsRoot(): string {
   return join(homeOverride, ".claude", "agents");
 }
-function registryDir(): string {
-  return join(homeOverride, ".igris", "registry");
+function loadoutDir(): string {
+  return join(homeOverride, ".igris", "loadout");
 }
 function overlayPath(): string {
-  return join(registryDir(), "harness-manifest.personal.json");
+  return join(loadoutDir(), "harness-manifest.personal.json");
 }
 
 /** Create a canonical core skill `<name>` with a SKILL.md + nested aux file. */
@@ -103,10 +103,10 @@ function stageAgentsManifest(): string {
 
 /**
  * Stage a personal SKILL block in the overlay (L-517 nested layout:
- * registry/skills/<name>/<name>/SKILL.md). Returns the nested SKILL dir.
+ * loadout/skills/<name>/<name>/SKILL.md). Returns the nested SKILL dir.
  */
 function stagePersonalSkill(name: string): string {
-  const nested = join(registryDir(), "skills", name, name);
+  const nested = join(loadoutDir(), "skills", name, name);
   mkdirSync(nested, { recursive: true });
   writeFileSync(
     join(nested, "SKILL.md"),
@@ -117,7 +117,7 @@ function stagePersonalSkill(name: string): string {
   overlay.surfaces = overlay.surfaces ?? {};
   overlay.surfaces.skills = overlay.surfaces.skills ?? [];
   overlay.surfaces.skills.push({
-    source: join(registryDir(), "skills", name),
+    source: join(loadoutDir(), "skills", name),
     layer: "personal",
     targets: [{ type: "claude", method: "symlink", path: "~/.claude/skills" }],
   });
@@ -127,10 +127,10 @@ function stagePersonalSkill(name: string): string {
 
 /**
  * Stage a personal AGENT block in the overlay
- * (registry/agents/<name>/harness.claude.md). Returns the harness path.
+ * (loadout/agents/<name>/harness.claude.md). Returns the harness path.
  */
 function stagePersonalAgent(name: string): string {
-  const dir = join(registryDir(), "agents", name);
+  const dir = join(loadoutDir(), "agents", name);
   mkdirSync(dir, { recursive: true });
   const harness = join(dir, "harness.claude.md");
   writeFileSync(harness, `---\nname: ${name}\n---\n\nPersonal agent ${name}.\n`);
@@ -156,7 +156,7 @@ function readOverlay(): any {
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function writeOverlay(o: any): void {
-  mkdirSync(registryDir(), { recursive: true });
+  mkdirSync(loadoutDir(), { recursive: true });
   writeFileSync(overlayPath(), JSON.stringify(o, null, 2) + "\n");
 }
 
@@ -184,7 +184,7 @@ beforeEach(() => {
   homeBackup = process.env.HOME;
   homeOverride = join(tmpRoot, "home");
   mkdirSync(homeOverride, { recursive: true });
-  // Sandbox BOTH the brain (manifest reader) AND HOME (source/target/registry).
+  // Sandbox BOTH the brain (manifest reader) AND HOME (source/target/loadout).
   process.env.IGRIS_BRAIN_DIR = join(homeOverride, ".igris");
   process.env.HOME = homeOverride;
   mkdirSync(skillsSource(), { recursive: true });
@@ -309,7 +309,7 @@ describe("enumeration — canonical source + personal overlay", () => {
     stageCoreSkill("beta");
     // A leaked projection symlink must be EXCLUDED (not a real core skill).
     symlinkSync(
-      join(registryDir(), "skills", "x"),
+      join(loadoutDir(), "skills", "x"),
       join(skillsSource(), "stray"),
     );
     expect(enumerateCanonicalSkills(skillsSource())).toEqual(["alpha", "beta"]);
@@ -320,7 +320,7 @@ describe("enumeration — canonical source + personal overlay", () => {
     stageCoreAgent("forger");
     stageAgentsManifest();
     symlinkSync(
-      join(registryDir(), "agents", "y", "harness.claude.md"),
+      join(loadoutDir(), "agents", "y", "harness.claude.md"),
       join(agentsSource(), "content-deck.md"),
     );
     expect(enumerateCoreAgents(agentsSource())).toEqual([
@@ -335,7 +335,7 @@ describe("enumeration — canonical source + personal overlay", () => {
     expect(items.length).toBe(1);
     expect(items[0].linkName).toBe("content-pipeline");
     expect(items[0].target).toBe(
-      join(registryDir(), "skills", "content-pipeline", "content-pipeline"),
+      join(loadoutDir(), "skills", "content-pipeline", "content-pipeline"),
     );
   });
 
@@ -345,7 +345,7 @@ describe("enumeration — canonical source + personal overlay", () => {
     expect(items.length).toBe(1);
     expect(items[0].linkName).toBe("content-deck.md");
     expect(items[0].target).toBe(
-      join(registryDir(), "agents", "content-deck", "harness.claude.md"),
+      join(loadoutDir(), "agents", "content-deck", "harness.claude.md"),
     );
   });
 });
@@ -434,13 +434,13 @@ describe("migrateSurfaceRoot — T3 no skill lost (before/after ⊇)", () => {
 });
 
 describe("stray source symlink — T4 cleaned / T5 report-only", () => {
-  it("T4: a registry-projection stray is unlinked after migration", () => {
+  it("T4: a loadout-projection stray is unlinked after migration", () => {
     stageCoreSkill("alpha");
     stagePersonalSkill("content-pipeline");
     // Plant the leaked projection stray INSIDE the canonical source, pointing
-    // into the registry (the nested L-517 layout).
+    // into the loadout (the nested L-517 layout).
     symlinkSync(
-      join(registryDir(), "skills", "content-pipeline", "content-pipeline"),
+      join(loadoutDir(), "skills", "content-pipeline", "content-pipeline"),
       join(skillsSource(), "content-pipeline"),
     );
     legacySkillsSymlink();
@@ -459,7 +459,7 @@ describe("stray source symlink — T4 cleaned / T5 report-only", () => {
     ).toBe(true);
   });
 
-  it("T5: a stray pointing OUTSIDE the registry is NEVER removed (report-only)", () => {
+  it("T5: a stray pointing OUTSIDE the loadout is NEVER removed (report-only)", () => {
     stageCoreSkill("alpha");
     const outside = join(tmpRoot, "outside-target");
     mkdirSync(outside, { recursive: true });
@@ -468,7 +468,7 @@ describe("stray source symlink — T4 cleaned / T5 report-only", () => {
     const strays = findStraySourceSymlinks(skillsSource());
     const weird = strays.find((s) => s.path.endsWith("weird"));
     expect(weird).toBeDefined();
-    expect(weird!.isRegistryProjection).toBe(false);
+    expect(weird!.isLoadoutProjection).toBe(false);
 
     const outcome = removeStraySourceSymlink(
       join(skillsSource(), "weird"),
@@ -482,7 +482,7 @@ describe("stray source symlink — T4 cleaned / T5 report-only", () => {
     stageCoreSkill("alpha");
     stagePersonalSkill("content-pipeline");
     symlinkSync(
-      join(registryDir(), "skills", "content-pipeline", "content-pipeline"),
+      join(loadoutDir(), "skills", "content-pipeline", "content-pipeline"),
       join(skillsSource(), "content-pipeline"),
     );
     // NO migration yet → the migrated per-item home does not exist.
@@ -630,7 +630,7 @@ describe("classifyMigration — T9 already real dir / T10 recurrence", () => {
     stageAgentsManifest();
     stagePersonalSkill("content-pipeline");
     symlinkSync(
-      join(registryDir(), "skills", "content-pipeline", "content-pipeline"),
+      join(loadoutDir(), "skills", "content-pipeline", "content-pipeline"),
       join(skillsSource(), "content-pipeline"),
     );
     legacySkillsSymlink();
@@ -641,7 +641,7 @@ describe("classifyMigration — T9 already real dir / T10 recurrence", () => {
       "agents",
       "skills",
     ]);
-    const projectionStray = report.strays.find((s) => s.isRegistryProjection);
+    const projectionStray = report.strays.find((s) => s.isLoadoutProjection);
     expect(projectionStray).toBeDefined();
     expect(projectionStray!.path).toBe(join(skillsSource(), "content-pipeline"));
   });

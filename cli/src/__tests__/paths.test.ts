@@ -1,9 +1,9 @@
 /**
  * TD-191: dedicated tests for the L-517 typed-subfolder layout helpers in
  * `cli/src/lib/paths.ts`. Covers:
- *   - `registryAgentDirPath(name)` resolves under `<brainDir>/registry/agents/<name>`
- *   - `registrySkillDirPath(name)` resolves under `<brainDir>/registry/skills/<name>`
- *   - Both honor `IGRIS_BRAIN_DIR` (the env seam every other registry helper
+ *   - `loadoutAgentDirPath(name)` resolves under `<brainDir>/loadout/agents/<name>`
+ *   - `loadoutSkillDirPath(name)` resolves under `<brainDir>/loadout/skills/<name>`
+ *   - Both honor `IGRIS_BRAIN_DIR` (the env seam every other loadout helper
  *     uses; tests sandbox the brain by setting that env var).
  *   - Symmetric shape: both produce `<base>/<name>` differing only in the
  *     type prefix.
@@ -17,11 +17,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  registryAgentDirPath,
-  registryDirPath,
-  registryOriginsPath,
-  registryOverlayPath,
-  registrySkillDirPath,
+  loadoutAgentDirPath,
+  loadoutDirPath,
+  loadoutOriginsPath,
+  loadoutOverlayPath,
+  loadoutSkillDirPath,
   secretsEnvPath,
 } from "../lib/paths.js";
 
@@ -43,25 +43,25 @@ afterEach(() => {
 });
 
 describe("TD-191 L-517 path helpers", () => {
-  it("registryAgentDirPath('foo') resolves under <brain>/registry/agents/foo", () => {
-    const p = registryAgentDirPath("foo");
-    expect(p).toBe(join(sandbox, "registry", "agents", "foo"));
+  it("loadoutAgentDirPath('foo') resolves under <brain>/loadout/agents/foo", () => {
+    const p = loadoutAgentDirPath("foo");
+    expect(p).toBe(join(sandbox, "loadout", "agents", "foo"));
   });
 
-  it("registrySkillDirPath('bar') resolves under <brain>/registry/skills/bar", () => {
-    const p = registrySkillDirPath("bar");
-    expect(p).toBe(join(sandbox, "registry", "skills", "bar"));
+  it("loadoutSkillDirPath('bar') resolves under <brain>/loadout/skills/bar", () => {
+    const p = loadoutSkillDirPath("bar");
+    expect(p).toBe(join(sandbox, "loadout", "skills", "bar"));
   });
 
   it("both helpers honor IGRIS_BRAIN_DIR (sandbox seam)", () => {
     const other = mkdtempSync(join(tmpdir(), "igris-paths-td191-other-"));
     try {
       process.env.IGRIS_BRAIN_DIR = other;
-      expect(registryAgentDirPath("foo")).toBe(
-        join(other, "registry", "agents", "foo"),
+      expect(loadoutAgentDirPath("foo")).toBe(
+        join(other, "loadout", "agents", "foo"),
       );
-      expect(registrySkillDirPath("foo")).toBe(
-        join(other, "registry", "skills", "foo"),
+      expect(loadoutSkillDirPath("foo")).toBe(
+        join(other, "loadout", "skills", "foo"),
       );
     } finally {
       rmSync(other, { recursive: true, force: true });
@@ -69,13 +69,13 @@ describe("TD-191 L-517 path helpers", () => {
   });
 
   it("symmetric shape: agent + skill differ only in the type prefix", () => {
-    const agentPath = registryAgentDirPath("alpha");
-    const skillPath = registrySkillDirPath("alpha");
+    const agentPath = loadoutAgentDirPath("alpha");
+    const skillPath = loadoutSkillDirPath("alpha");
     // Both end in `/<base>/<name>`; the diff is the typed-subfolder name.
     expect(agentPath.endsWith("/agents/alpha")).toBe(true);
     expect(skillPath.endsWith("/skills/alpha")).toBe(true);
     // The parent dirs (one level up from the name) are siblings under
-    // `<brain>/registry/`.
+    // `<brain>/loadout/`.
     expect(agentPath.replace("/agents/alpha", "")).toBe(
       skillPath.replace("/skills/alpha", ""),
     );
@@ -92,16 +92,16 @@ describe("TD-191 L-517 path helpers", () => {
     }
   });
 
-  it("L-517 invariant: catalog files live at the registry root, NOT in typed subfolders", () => {
-    // `registryOverlayPath()` and `registryOriginsPath()` are catalog files —
-    // they MUST resolve at the registry root, not under `agents/` or `skills/`.
-    expect(registryOverlayPath()).toBe(
-      join(sandbox, "registry", "harness-manifest.personal.json"),
+  it("L-517 invariant: catalog files live at the loadout root, NOT in typed subfolders", () => {
+    // `loadoutOverlayPath()` and `loadoutOriginsPath()` are catalog files —
+    // they MUST resolve at the loadout root, not under `agents/` or `skills/`.
+    expect(loadoutOverlayPath()).toBe(
+      join(sandbox, "loadout", "harness-manifest.personal.json"),
     );
-    expect(registryOriginsPath()).toBe(
-      join(sandbox, "registry", "origins.json"),
+    expect(loadoutOriginsPath()).toBe(
+      join(sandbox, "loadout", "origins.json"),
     );
-    // (Sanity: registryDirPath is just the root.)
-    expect(registryDirPath()).toBe(join(sandbox, "registry"));
+    // (Sanity: loadoutDirPath is just the root.)
+    expect(loadoutDirPath()).toBe(join(sandbox, "loadout"));
   });
 });

@@ -1045,9 +1045,11 @@ function migrateSchema(db: Database.Database): void {
   // v19: rename the reusable-assets store `registry` → `catalog` (TD-259).
   //
   // The lego store was named `registry`, colliding with the personal surface
-  // overlay (`igris registry …`, `~/.igris/registry/…`) and the project
-  // registry (`igris_project_*`). TD-259 reclaims "registry" exclusively for the
-  // surface overlay; the reusable-assets store becomes `catalog` (table, FTS5
+  // overlay (the FR-139 personal customization store — `igris registry`/
+  // `~/.igris/registry/` at the time, renamed to `igris loadout`/
+  // `~/.igris/loadout/` under FR-216) and the project registry
+  // (`igris_project_*`). TD-259 freed "registry" from the lego store; the
+  // reusable-assets store becomes `catalog` (table, FTS5
   // virtual table, triggers, indexes — and the `igris_catalog_*` MCP tools).
   //
   // Strategy (D-3): `ALTER TABLE registry RENAME TO catalog` is an O(1)

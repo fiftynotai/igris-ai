@@ -70,7 +70,7 @@
  * agent) and cleaning each stray projection symlink leaked into the canonical
  * source (TD-223 RE-SCOPED; backup-not-delete the old root symlink, atomic
  * rename, realpath-contained, refuse-on-unexpected-target, idempotent — a stray
- * that is not a registry projection stays flagged for manual resolution; --fix
+ * that is not a loadout projection stays flagged for manual resolution; --fix
  * prints the before/after enumeration as the no-loss proof).
  * --remove-orphans deletes path-missing rows after per-row confirmation
  * (skip prompt with --yes).
@@ -90,7 +90,7 @@ import {
   configJsonPath,
   geminiSettingsPath,
   opencodeConfigPath,
-  registryOverlayPath,
+  loadoutOverlayPath,
   secretsEnvPath,
 } from "../lib/paths.js";
 import { extractVarName, parseSecretsEnv } from "../lib/secrets.js";
@@ -307,7 +307,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
         // source. The migrator backs up the old root symlink (rename, never rm),
         // realpath-contains every mutation, and refuses an unexpected target.
         // The before/after enumeration is PRINTED as the no-loss proof. A stray
-        // that is not a registry projection is left untouched (manual review).
+        // that is not a loadout projection is left untouched (manual review).
         // There is ONE skills-pollution row, so guard against a repeated pass.
         if (skillsPollutionFixApplied) {
           continue;
@@ -740,8 +740,8 @@ function detectSkillsPollution(): DriftRow | null {
         `(resolve manually — never auto-rewritten)`,
     );
   }
-  const removableStrays = report.strays.filter((s) => s.isRegistryProjection);
-  const unknownStrays = report.strays.filter((s) => !s.isRegistryProjection);
+  const removableStrays = report.strays.filter((s) => s.isLoadoutProjection);
+  const unknownStrays = report.strays.filter((s) => !s.isLoadoutProjection);
   if (removableStrays.length > 0) {
     parts.push(
       `${removableStrays.length} stray projection symlink(s) in the canonical ` +
@@ -790,16 +790,16 @@ function warnSkillsPollutionEntries(): void {
     );
   }
   for (const stray of report.strays) {
-    if (stray.isRegistryProjection) {
+    if (stray.isLoadoutProjection) {
       warn(
         `skills-pollution: stray projection symlink '${stray.path}' leaked into ` +
           `the canonical source — 'igris doctor --fix' will unlink it (it is a ` +
-          `registry projection, not core content).`,
+          `loadout projection, not core content).`,
       );
     } else {
       warn(
         `skills-pollution: stray symlink '${stray.path}' in the canonical source ` +
-          `does NOT resolve into the registry — NOT auto-removed. Resolve ` +
+          `does NOT resolve into the loadout — NOT auto-removed. Resolve ` +
           `manually (verify it is not hand-authored, then remove).`,
       );
     }
@@ -898,7 +898,7 @@ function fixSkillsPollution(): number {
       info(`  removed stray projection symlink '${stray.path}'`);
     } else if (outcome === "skipped-not-projection") {
       warn(
-        `skills-pollution: stray '${stray.path}' is NOT a registry projection ` +
+        `skills-pollution: stray '${stray.path}' is NOT a loadout projection ` +
           `— left untouched. Resolve manually.`,
       );
     } else if (outcome === "skipped-no-migrated-target") {
@@ -979,7 +979,7 @@ function detectMissingSecrets(): void {
     canonical?: { env?: unknown };
   }> = [];
   try {
-    const overlayPath = registryOverlayPath();
+    const overlayPath = loadoutOverlayPath();
     if (!existsSync(overlayPath)) {
       return;
     }

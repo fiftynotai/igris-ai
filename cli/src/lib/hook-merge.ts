@@ -14,7 +14,7 @@
  * starts with the CORE prefix `$HOME/.igris/core/hooks/` (then re-appends the
  * canonical set). A personal-added hook must NOT be clobbered by that re-merge.
  * The fix is provenance-by-prefix: a personal hook's command lives under the
- * REGISTRY prefix `$HOME/.igris/registry/hooks/<name>/` — a DIFFERENT prefix
+ * LOADOUT prefix `$HOME/.igris/loadout/hooks/<name>/` — a DIFFERENT prefix
  * `mergeCanonicalHooks` treats as user-owned and PRESERVES. This module owns the
  * prefix constant + a `personalHookCommandPath` helper so the add path and the
  * preservation contract share ONE definition.
@@ -28,17 +28,17 @@ import type { ClaudeHookGroup } from "./hook-shape.js";
  * literal `$HOME` form matches the canonical-settings.json convention (Claude
  * Code expands `$HOME` at runtime). Because it is NOT the core prefix
  * (`$HOME/.igris/core/hooks/`) and NOT a legacy portable filename,
- * `mergeCanonicalHooks` (json-merge.ts) classifies a registry-prefixed group as
+ * `mergeCanonicalHooks` (json-merge.ts) classifies a loadout-prefixed group as
  * user-owned and PRESERVES it across the canonical re-merge — the R2 fix.
  */
-export const PERSONAL_HOOK_CMD_PREFIX = "$HOME/.igris/registry/hooks/";
+export const PERSONAL_HOOK_CMD_PREFIX = "$HOME/.igris/loadout/hooks/";
 
 /** The CORE prefix (mirror of IGRIS_HOOK_CMD_PREFIX in json-merge.ts). */
 export const CORE_HOOK_CMD_PREFIX = "$HOME/.igris/core/hooks/";
 
 /**
  * Build the personal hook command path for `<name>` firing on `<event>`:
- *   $HOME/.igris/registry/hooks/<name>/<event>.sh
+ *   $HOME/.igris/loadout/hooks/<name>/<event>.sh
  * One definition shared by `add-hook.ts` (which writes the script + the overlay
  * block's `canonical.command`) and the R2 preservation contract.
  */
@@ -46,7 +46,7 @@ export function personalHookCommandPath(name: string, event: string): string {
   return `${PERSONAL_HOOK_CMD_PREFIX}${name}/${event}.sh`;
 }
 
-/** True iff `command` is a personal (registry-provenance) hook command. */
+/** True iff `command` is a personal (loadout-provenance) hook command. */
 export function isPersonalHookCommand(command: string): boolean {
   return command.startsWith(PERSONAL_HOOK_CMD_PREFIX);
 }

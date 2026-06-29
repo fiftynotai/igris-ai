@@ -7,7 +7,7 @@ families live here — do not conflate them.
 
 Skill harness projection lives in `compile_harnesses.sh` (skills pass) — for
 each `<name>/SKILL.md` under the source root, each live target projects ONE
-per-skill registry-anchored symlink at `<target>/<name>` → `<source>/<name>`
+per-skill loadout-anchored symlink at `<target>/<name>` → `<source>/<name>`
 (FR-153). The live skills triad is:
 
 - `claude/symlink` → `~/.claude/skills` (Claude's native skills loader follows
@@ -31,18 +31,18 @@ them, and the live triad's projected bytes + drift verdicts are unchanged.
 Regenerate per-agent harness projections from a single canonical agent prompt.
 Canonical (plus its FR-151 `frontmatter.md` sidecar) is the **sole source of
 truth**; every claude/gemini `~/.claude/agents/<name>.md` /
-`~/.gemini/agents/<name>.md` is an atomic symlink resolving to a registry-
+`~/.gemini/agents/<name>.md` is an atomic symlink resolving to a loadout-
 resident `harness.md` assembled at compile/vendor time. Codex emits a 3-key
 `.codex/agents/<name>.toml`. Editing a target file directly is a process error.
 
 | Script | Contract | Output |
 |--------|----------|--------|
-| `compile_harnesses.sh` | `compile_harnesses.sh --project-root <dir> [--manifest <p>] [--filter <glob>] [--target claude\|codex\|gemini\|all]` | Orchestrates: reads the manifest. All three agent harnesses (claude/codex/gemini) α-project from registry-resident files (`harness.claude.md`, `harness.codex.toml`, `harness.gemini.md`). claude + codex emit via symlink; gemini emits via hard link (TD-208). Codex assembly is bash-side `assemble_codex_harness_into_registry` for core agents and TS-side `assembleCodexHarness` for vendor (FR-159). |
-| `check_harness_drift.sh` | `check_harness_drift.sh --project-root <dir> [--manifest <p>] [--filter <glob>]` | CI-style guard — exit 1 if any claude/codex symlink target is non-registry-anchored, refuses-to-clobber a real-file target, or any gemini hard link has diverged (TD-208). All three agent harnesses use the per-harness registry-resident file as their verdict basis (FR-159 retired the codex body-sha verdict). |
+| `compile_harnesses.sh` | `compile_harnesses.sh --project-root <dir> [--manifest <p>] [--filter <glob>] [--target claude\|codex\|gemini\|all]` | Orchestrates: reads the manifest. All three agent harnesses (claude/codex/gemini) α-project from loadout-resident files (`harness.claude.md`, `harness.codex.toml`, `harness.gemini.md`). claude + codex emit via symlink; gemini emits via hard link (TD-208). Codex assembly is bash-side `assemble_codex_harness_into_loadout` for core agents and TS-side `assembleCodexHarness` for vendor (FR-159). |
+| `check_harness_drift.sh` | `check_harness_drift.sh --project-root <dir> [--manifest <p>] [--filter <glob>]` | CI-style guard — exit 1 if any claude/codex symlink target is non-loadout-anchored, refuses-to-clobber a real-file target, or any gemini hard link has diverged (TD-208). All three agent harnesses use the per-harness loadout-resident file as their verdict basis (FR-159 retired the codex body-sha verdict). |
 
 `sync_codex_agents.sh` was RETIRED by FR-159 — the codex TOML emit moved to
-TS `assembleCodexHarness` in `cli/src/verbs/registry.ts` (vendor-side) with a
-parallel bash `assemble_codex_harness_into_registry` in `compile_harnesses.sh`
+TS `assembleCodexHarness` in `cli/src/verbs/loadout.ts` (vendor-side) with a
+parallel bash `assemble_codex_harness_into_loadout` in `compile_harnesses.sh`
 (compile-side fallback for core agents). This mirrors the FR-153 retirement
 posture (`md_to_agents_md.sh` + `md_to_gemini_toml.sh` deleted; their work
 moved to symlink primitives + the TS harness assemblers).
@@ -73,10 +73,10 @@ between a claude harness body and the canonical body — an `anchor` line plus
 an `insert` paragraph list. A manifest entry opts in via
 `"body_exception": "<name>"`. FR-144/FR-152: the appendix is applied at
 ASSEMBLY time (by `compile_harnesses.sh` and the TS vendor primitive in
-`registry.ts`), baked into the registry-resident `harness.md`. Codex emitters
+`loadout.ts`), baked into the loadout-resident `harness.md`. Codex emitters
 write the plain canonical body — the exception is claude/gemini-only via
 assembly. Resolution is layer-keyed: personal-layer sidecars live under
-`<brain>/registry/body-exceptions/<name>.json`; core-layer sidecars live next
+`<brain>/loadout/body-exceptions/<name>.json`; core-layer sidecars live next
 to this adapter directory. Currently one exists: `designer-harness-skill-para`
 (DESIGNER's harness-skill invocation note).
 
@@ -87,7 +87,7 @@ whether to WRAP the codex CLI's native agent-import command or REIMPLEMENT
 the TOML emit. FR-138 RESOLVED it in favor of REIMPLEMENT — the emit path
 writes the fully-specified 3-key codex subagent TOML directly. FR-159 then
 ported the emit to TS (`assembleCodexHarness`) + a parallel bash helper
-(`assemble_codex_harness_into_registry`) for byte-equivalent compile-side
+(`assemble_codex_harness_into_loadout`) for byte-equivalent compile-side
 fallback. The former `--d1-reimplement` flag / `IGRIS_CODEX_D1=reimplement`
 env opt-in are GONE (no surface to accept them on after the bash script
 deletion). A WRAP variant remains possible behind a future `--d1-wrap` flag
@@ -106,7 +106,7 @@ TD-021:
 ## MCP secrets (FR-160e)
 
 MCP servers often need a secret (an API key, a token). Igris NEVER stores the
-literal secret in the registry overlay or in any git-tracked file — the overlay
+literal secret in the loadout overlay or in any git-tracked file — the overlay
 holds only a `${VAR}` indirection ref (the `add-mcp` write-guard rejects any
 other form). How that ref is emitted into each harness's live config depends on
 the harness. Three patterns cover every MCP server:
@@ -156,7 +156,7 @@ the `export VAR=…` line above; doctor will not write secrets for you.
 
 The load-bearing guarantee: the projector NEVER writes a resolved literal into
 a git-tracked file — Codex `config.toml` lives at `~/.codex/`, outside the repo,
-and the registry overlay stays `${VAR}`-only. The `.gitignore` entry for
+and the loadout overlay stays `${VAR}`-only. The `.gitignore` entry for
 `secrets.env` is defense-in-depth against a stray in-repo copy.
 
 ### The irreducible per-harness shape-emitters (FR-202 M2)
@@ -234,7 +234,7 @@ hook script the harness runs, optionally `matcher`/`timeout`), and
 per-harness `targets[{type ∈ {claude, opencode}, method:"merge"}]`.
 
 - **Compile** (`compile_harnesses.sh`, narrows via `--surface hook`): for each
-  `(hook, target)` row it dispatches to `igris registry project-hook`, which
+  `(hook, target)` row it dispatches to `igris loadout project-hook`, which
   config-**merges** the hook GROUP (built by the TS projector `cli/src/lib/
   hook-shape.ts`) into the target. claude → the project's `.claude/settings.json`
   `hooks.<Event>[]` array (idempotent — re-projecting replaces in place; user
@@ -251,15 +251,15 @@ per-harness `targets[{type ∈ {claude, opencode}, method:"merge"}]`.
   golden in `hook-shape.test.ts`.
 - **R2 — refresh-overwrite safety.** A core hook's command lives under
   `$HOME/.igris/core/hooks/shared/`; a personal hook's under
-  `$HOME/.igris/registry/hooks/`. `install`/`update`/`doctor --fix` re-merge the
+  `$HOME/.igris/loadout/hooks/`. `install`/`update`/`doctor --fix` re-merge the
   canonical hooks (`mergeCanonicalHooks` in `cli/src/lib/json-merge.ts`), which
-  drops-then-re-applies CORE-prefix groups but PRESERVES the registry-prefix
+  drops-then-re-applies CORE-prefix groups but PRESERVES the loadout-prefix
   personal ones — so a personal hook is never clobbered by a refresh. The
   `IGRIS_PERSONAL_HOOK_CMD_PREFIX` carve-out in `isIgrisEntry` makes this an
   explicit, regression-tested contract (the R2 merge gate).
 - **Adding a hook (`igris add hook`, FR-180 D7):** the one-step add verb writes
-  the hook script + a `surfaces.hooks[]` block (personal → the registry overlay
-  + `~/.igris/registry/hooks/<name>/`; core → `surfaces-manifest.json` +
+  the hook script + a `surfaces.hooks[]` block (personal → the loadout overlay
+  + `~/.igris/loadout/hooks/<name>/`; core → `surfaces-manifest.json` +
   `core/hooks/shared/`) then projects + verifies it. `merge_overlay_manifest`
   unions hook blocks (base ++ overlay) with a `name` + `(event, target)` cell
   collision guard.
@@ -351,14 +351,14 @@ the Boot stage loads and the compile/drift engine never touches.
 > **FR-202 M3 — agents surface: KEEP confirmed, no centralization needed.** The
 > per-harness agent frontmatter field-maps are **already single-sourced**, NOT
 > scattered. They live in exactly ONE compile-side assembler,
-> `assemble_agent_harness_into_registry` (which holds `CLAUDE_TO_GEMINI_TOOLS`
+> `assemble_agent_harness_into_loadout` (which holds `CLAUDE_TO_GEMINI_TOOLS`
 > and `CLAUDE_TO_OPENCODE_TOOLS` inline); the `compile_md_agent_target` dispatch
 > wrapper named in the agents row above carries no field-map of its own — it just
-> routes to that assembler (or to `assemble_codex_harness_into_registry`, which
+> routes to that assembler (or to `assemble_codex_harness_into_loadout`, which
 > emits TOML and translates no tools). The ONLY "copy" of these maps is the
 > deliberate, test-pinned §18.1 bash↔TS dual-impl (the TS twins
 > `CLAUDE_TO_GEMINI_TOOLS` / `CLAUDE_TO_OPENCODE_TOOLS` in
-> `cli/src/verbs/registry.ts` serve the personal-agent vendor path; golden-fixture
+> `cli/src/verbs/loadout.ts` serve the personal-agent vendor path; golden-fixture
 > parity tests pin them byte-for-byte). The drift side carries **no frontmatter
 > field-map at all** — `verify_agents` verdicts by symlink/hardlink-realpath +
 > per-agent tree-hash, never by re-translating frontmatter. So the brief's

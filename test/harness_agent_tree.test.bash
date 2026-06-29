@@ -9,7 +9,7 @@
 # verdict per agent (Decision 2: tree-hash + diff sub-line, not per-file).
 #
 # These tests are end-to-end against the bash adapters (compile + drift)
-# with a synthesized vendored registry + a recorded `origins.json`:
+# with a synthesized vendored loadout + a recorded `origins.json`:
 #
 #   1. hash_agent_tree returns a stable 64-char sha256 over a tree (no env
 #      drift between runs; the well-known empty-sha for a missing dir).
@@ -125,8 +125,8 @@ teardown() {
 
 # ---------- end-to-end drift integration -------------------------------------
 
-# Synthesize a personal agent state: registry vendor + recorded path-origin
-# + manifest. Mirrors what `igris registry add` writes (without exercising
+# Synthesize a personal agent state: loadout vendor + recorded path-origin
+# + manifest. Mirrors what `igris loadout add` writes (without exercising
 # the CLI itself — bash tests against bash adapters).
 build_personal_agent_tree() {
   local name="$1"
@@ -134,20 +134,20 @@ build_personal_agent_tree() {
   local target_path="$3" # e.g. .claude/agents/<name>.md
   local target_kind="$4" # claude|gemini|codex
 
-  local registry_dir="$IGRIS_BRAIN_DIR/registry/agents/$name"
-  mkdir -p "$registry_dir"
-  # Mirror the source tree into the registry (this is what
+  local loadout_dir="$IGRIS_BRAIN_DIR/loadout/agents/$name"
+  mkdir -p "$loadout_dir"
+  # Mirror the source tree into the loadout (this is what
   # vendorAgentTreeAtomic does). Use cp -R for the bats setup.
-  cp -R "$source_dir/." "$registry_dir/"
+  cp -R "$source_dir/." "$loadout_dir/"
 
   # Record the origin (origins.json shape — keyed `agent:<name>`).
-  local origins_path="$IGRIS_BRAIN_DIR/registry/origins.json"
+  local origins_path="$IGRIS_BRAIN_DIR/loadout/origins.json"
   if [ ! -f "$origins_path" ]; then
     printf '{}\n' > "$origins_path"
   fi
   # Compute the tree hash + write the origin entry.
   local tree_hash
-  tree_hash=$(bash -c "source '$COMMON' && hash_agent_tree '$registry_dir'")
+  tree_hash=$(bash -c "source '$COMMON' && hash_agent_tree '$loadout_dir'")
   python3 - "$origins_path" "$name" "$source_dir" "$tree_hash" <<'PY'
 import json
 import sys
@@ -162,7 +162,7 @@ with open(sys.argv[1], "w", encoding="utf-8") as fh:
     json.dump(data, fh, indent=2)
 PY
 
-  # Manifest declaring the agent (canonical.dir = registry).
+  # Manifest declaring the agent (canonical.dir = loadout).
   local manifest="$PROJ/harness-manifest.json"
   cat > "$manifest" <<EOF
 {
@@ -172,7 +172,7 @@ PY
       "name": "$name",
       "layer": "personal",
       "canonical": {
-        "dir": "$registry_dir",
+        "dir": "$loadout_dir",
         "versioned": true,
         "glob": "system-prompt-v*.md"
       },
@@ -213,7 +213,7 @@ EOF
   [[ "$output" == *"[demo/claude] MATCH"* ]]
 }
 
-@test "drift: mutate the registry copy → tree verdict flips to DRIFTED + locates the relpath in the sub-line" {
+@test "drift: mutate the loadout copy → tree verdict flips to DRIFTED + locates the relpath in the sub-line" {
   local src="$PROJ/src_mut"
   mkdir -p "$src/routing"
   cat > "$src/frontmatter.claude.md" <<'EOF'
@@ -234,7 +234,7 @@ EOF
 
   # Mutate the REGISTRY-side copy (NOT the source). Tree-hash divergence
   # should fire on this side too.
-  printf 'TAMPERED\n' > "$IGRIS_BRAIN_DIR/registry/agents/muta/routing/_routing.md"
+  printf 'TAMPERED\n' > "$IGRIS_BRAIN_DIR/loadout/agents/muta/routing/_routing.md"
   run bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
   [ "$status" -eq 1 ]
   [[ "$output" == *"[muta/tree] DRIFTED"* ]]
@@ -274,13 +274,13 @@ description: 3-target agent
 EOF
   printf '# body\n' > "$src/system-prompt-v1.0.md"
 
-  local registry_dir="$IGRIS_BRAIN_DIR/registry/agents/multi"
-  mkdir -p "$registry_dir"
-  cp -R "$src/." "$registry_dir/"
-  local origins_path="$IGRIS_BRAIN_DIR/registry/origins.json"
+  local loadout_dir="$IGRIS_BRAIN_DIR/loadout/agents/multi"
+  mkdir -p "$loadout_dir"
+  cp -R "$src/." "$loadout_dir/"
+  local origins_path="$IGRIS_BRAIN_DIR/loadout/origins.json"
   printf '{}\n' > "$origins_path"
   local tree_hash
-  tree_hash=$(bash -c "source '$COMMON' && hash_agent_tree '$registry_dir'")
+  tree_hash=$(bash -c "source '$COMMON' && hash_agent_tree '$loadout_dir'")
   python3 - "$origins_path" "multi" "$src" "$tree_hash" <<'PY'
 import json
 import sys
@@ -300,7 +300,7 @@ PY
       "name": "multi",
       "layer": "personal",
       "canonical": {
-        "dir": "$registry_dir",
+        "dir": "$loadout_dir",
         "versioned": true,
         "glob": "system-prompt-v*.md"
       },
@@ -332,18 +332,18 @@ EOF
 }
 
 @test "drift: github-origin agent → tree pre-check NOTE (release-tag tracked, not source-tree tracked)" {
-  local registry_dir="$IGRIS_BRAIN_DIR/registry/agents/ghagent"
-  mkdir -p "$registry_dir"
-  cat > "$registry_dir/frontmatter.claude.md" <<'EOF'
+  local loadout_dir="$IGRIS_BRAIN_DIR/loadout/agents/ghagent"
+  mkdir -p "$loadout_dir"
+  cat > "$loadout_dir/frontmatter.claude.md" <<'EOF'
 ---
 name: ghagent
 description: github origin
 ---
 EOF
-  printf '# body\n' > "$registry_dir/system-prompt-v1.0.md"
+  printf '# body\n' > "$loadout_dir/system-prompt-v1.0.md"
 
   # Github-shaped origin entry.
-  local origins_path="$IGRIS_BRAIN_DIR/registry/origins.json"
+  local origins_path="$IGRIS_BRAIN_DIR/loadout/origins.json"
   cat > "$origins_path" <<'EOF'
 {
   "agent:ghagent": {
@@ -364,7 +364,7 @@ EOF
       "name": "ghagent",
       "layer": "personal",
       "canonical": {
-        "dir": "$registry_dir",
+        "dir": "$loadout_dir",
         "versioned": true,
         "glob": "system-prompt-v*.md"
       },
@@ -388,15 +388,15 @@ EOF
 }
 
 @test "drift: personal agent with NO recorded origin → tree pre-check silently skipped, per-target verdict still fires" {
-  local registry_dir="$IGRIS_BRAIN_DIR/registry/agents/noorigin"
-  mkdir -p "$registry_dir"
-  cat > "$registry_dir/frontmatter.claude.md" <<'EOF'
+  local loadout_dir="$IGRIS_BRAIN_DIR/loadout/agents/noorigin"
+  mkdir -p "$loadout_dir"
+  cat > "$loadout_dir/frontmatter.claude.md" <<'EOF'
 ---
 name: noorigin
 description: zero-migration legacy
 ---
 EOF
-  printf '# body\n' > "$registry_dir/system-prompt-v1.0.md"
+  printf '# body\n' > "$loadout_dir/system-prompt-v1.0.md"
 
   # NO origins.json — simulate a legacy zero-migration state (TD-191's
   # zero-migration posture: origins.json did not exist on disk before).
@@ -408,7 +408,7 @@ EOF
       "name": "noorigin",
       "layer": "personal",
       "canonical": {
-        "dir": "$registry_dir",
+        "dir": "$loadout_dir",
         "versioned": true,
         "glob": "system-prompt-v*.md"
       },
@@ -443,7 +443,7 @@ EOF
 
   build_personal_agent_tree "gone" "$src" ".claude/agents/gone.md" "claude"
 
-  # Operator deleted the source dir after the registry was vendored.
+  # Operator deleted the source dir after the loadout was vendored.
   rm -rf "$src"
 
   run bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"

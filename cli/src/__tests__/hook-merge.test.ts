@@ -22,7 +22,7 @@ import {
 import { buildClaudeHookGroup } from "../lib/hook-shape.js";
 
 const GROUP = buildClaudeHookGroup("PreToolUse", {
-  command: "$HOME/.igris/registry/hooks/my-guard/PreToolUse.sh",
+  command: "$HOME/.igris/loadout/hooks/my-guard/PreToolUse.sh",
   matcher: "Write|Edit",
 });
 
@@ -105,7 +105,7 @@ describe("hookCommandPresent — drift reader", () => {
       hookCommandPresent(
         settings,
         "PreToolUse",
-        "$HOME/.igris/registry/hooks/my-guard/PreToolUse.sh",
+        "$HOME/.igris/loadout/hooks/my-guard/PreToolUse.sh",
       ),
     ).toBe(true);
   });
@@ -113,28 +113,28 @@ describe("hookCommandPresent — drift reader", () => {
   it("absent → false (different command, wrong event, no hooks)", () => {
     const settings = mergeHookIntoSettings({}, "PreToolUse", GROUP);
     expect(hookCommandPresent(settings, "PreToolUse", "$HOME/other.sh")).toBe(false);
-    expect(hookCommandPresent(settings, "SessionStart", "$HOME/.igris/registry/hooks/my-guard/PreToolUse.sh")).toBe(false);
+    expect(hookCommandPresent(settings, "SessionStart", "$HOME/.igris/loadout/hooks/my-guard/PreToolUse.sh")).toBe(false);
     expect(hookCommandPresent({}, "PreToolUse", "x")).toBe(false);
     expect(hookCommandPresent(null, "PreToolUse", "x")).toBe(false);
   });
 });
 
 describe("R2 provenance helpers", () => {
-  it("personalHookCommandPath builds the registry-prefix path", () => {
+  it("personalHookCommandPath builds the loadout-prefix path", () => {
     expect(personalHookCommandPath("my-guard", "PreToolUse")).toBe(
-      "$HOME/.igris/registry/hooks/my-guard/PreToolUse.sh",
+      "$HOME/.igris/loadout/hooks/my-guard/PreToolUse.sh",
     );
   });
 
   it("isPersonalHookCommand classifies by prefix", () => {
     expect(isPersonalHookCommand(personalHookCommandPath("g", "SessionStart"))).toBe(true);
     expect(isPersonalHookCommand("$HOME/.igris/core/hooks/shared/SessionStart.sh")).toBe(false);
-    expect(PERSONAL_HOOK_CMD_PREFIX).toBe("$HOME/.igris/registry/hooks/");
+    expect(PERSONAL_HOOK_CMD_PREFIX).toBe("$HOME/.igris/loadout/hooks/");
   });
 
   it("resolveHookCommandPath expands the $HOME prefix against a home dir", () => {
-    expect(resolveHookCommandPath("$HOME/.igris/registry/hooks/g/PreToolUse.sh", "/Users/me")).toBe(
-      "/Users/me/.igris/registry/hooks/g/PreToolUse.sh",
+    expect(resolveHookCommandPath("$HOME/.igris/loadout/hooks/g/PreToolUse.sh", "/Users/me")).toBe(
+      "/Users/me/.igris/loadout/hooks/g/PreToolUse.sh",
     );
     expect(resolveHookCommandPath("/abs/path.sh", "/Users/me")).toBe("/abs/path.sh");
   });

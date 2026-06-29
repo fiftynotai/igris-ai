@@ -26,7 +26,7 @@ igris add <skill|agent|mcp|hook> <name> [--from <dir-or-github>] \
 `igris add` is **atomic, one-step, and self-verifying**. For one invocation it:
 
 1. **Materializes** the surface — vendors/registers it into the
-   `~/.igris/registry/` overlay (personal), or writes the `core/` source file +
+   `~/.igris/loadout/` overlay (personal), or writes the `core/` source file +
    mirrors it to the runtime brain (core).
 2. **Projects** it to all four harnesses (Claude, Gemini, Codex, OpenCode) via
    `harness compile --surface <s>`. The **MCP** surface additionally projects to
@@ -43,7 +43,7 @@ igris add <skill|agent|mcp|hook> <name> [--from <dir-or-github>] \
 If the projection produced **zero targets**, or the ownership gate skipped a
 requested core surface, `igris add` **fails loudly** with an actionable message
 — it can never report a phantom success (TD-235). This is the whole point of the
-verb: the old `registry add-* → harness compile` two-step could silently no-op
+verb: the old `loadout add-* → harness compile` two-step could silently no-op
 when the ownership gate skipped a surface; `igris add` closes that hole.
 
 ---
@@ -52,7 +52,7 @@ when the ownership gate skipped a surface; `igris add` closes that hole.
 
 | Mode | When | What it edits |
 |---|---|---|
-| **Personal** (default) | normal use | `~/.igris/registry/` overlay — available across all your projects |
+| **Personal** (default) | normal use | `~/.igris/loadout/` overlay — available across all your projects |
 | **Core** | `--core`, or running from the igris-ai checkout (auto-detected) | the Igris source (`core/…`), mirrored + byte-verified to the runtime brain |
 
 - Auto-detection fires when the resolved `--project-root` is the igris-ai
@@ -72,7 +72,7 @@ when the ownership gate skipped a surface; `igris add` closes that hole.
 | **Skill** | `igris add skill <name> --from <skills-dir> --target <type:method:path>` | `<skills-dir>/<name>/SKILL.md` is vendored; target is e.g. `agents:symlink:~/.agents/skills`. Core skills auto-discover — `--core` writes `core/skills/<name>/SKILL.md` only (no manifest edit). |
 | **Agent** | `igris add agent <name> --from <dir> --target <type:path>` | all-four-harness α-assembly at vendor time. `--core` writes `core/agents/<name>.md` + the repo-root `harness-manifest.json` entry, then re-runs `core/scripts/gen_os_index.sh` to regenerate the agent roster in `core/os/INDEX.md` (FR-187 Phase 2b: the roster is discovered from each agent's own frontmatter — no `igris_tree.json` / CLAUDE.md enumeration writes). |
 | **MCP** | `igris add mcp <name> --command <bin> [--arg …] [--env KEY=${VAR}] [--startup-timeout-sec <n>] --target <type:merge[:enabled]>` | config-merge into each harness's native MCP config (claude/gemini `mcpServers`, opencode `mcp`, codex `[mcp_servers.<name>]`). **`--env` values MUST be `${VAR}` indirection refs — inline secrets are REJECTED** at the writer boundary (the real secret is resolved from the environment by the harness at launch, never stored). `--core` appends a `surfaces.mcp_servers[]` block to `core/scripts/cli-adapters/surfaces-manifest.json` (the global Layer-1 surfaces file the MCP flatten reads) + TD-096 mirror. |
-| **Hook** | `igris add hook <name> --event <Event> [--matcher <glob>] [--timeout <n>] [--target <type:merge[:enabled]>]` | config-merge of an event-hook GROUP into each harness's native hook surface. `<Event>` is one of `SessionStart`, `SessionEnd`, `PreToolUse`, `PostToolUse`, `PreCompact`, `PostCompact`. Targets default to `claude:merge`; the hook harnesses are **claude** (the `.claude/settings.json` `hooks.<Event>[]` array), **opencode** (covered by the FR-104 plugin), and **antigravity** (FR-181 — config-merge into `~/.gemini/config/hooks.json` via the BASH bridge `core/hooks/bridges/antigravity/<event>.sh`; PreToolUse brief-gate + PostToolUse, session lifecycle rides `/boot`+`/rest`). codex supports only session_end; gemini-cli 0.45.0 DOES have a `gemini hooks` API (the prior "no hook API" note was stale — onboarding tracked under FR-182, not yet projected). **Personal** writes the hook SCRIPT to `~/.igris/registry/hooks/<name>/<Event>.sh` + a `surfaces.hooks[]` overlay block; the registry-prefix command path is what the canonical re-merge **preserves** (see the R2 gotcha). `--core` writes `core/hooks/shared/<Event>.sh` + a `surfaces.hooks[]` block in `core/scripts/cli-adapters/surfaces-manifest.json` + TD-096 mirrors both. `--matcher` only applies to `Pre/PostToolUse`. |
+| **Hook** | `igris add hook <name> --event <Event> [--matcher <glob>] [--timeout <n>] [--target <type:merge[:enabled]>]` | config-merge of an event-hook GROUP into each harness's native hook surface. `<Event>` is one of `SessionStart`, `SessionEnd`, `PreToolUse`, `PostToolUse`, `PreCompact`, `PostCompact`. Targets default to `claude:merge`; the hook harnesses are **claude** (the `.claude/settings.json` `hooks.<Event>[]` array), **opencode** (covered by the FR-104 plugin), and **antigravity** (FR-181 — config-merge into `~/.gemini/config/hooks.json` via the BASH bridge `core/hooks/bridges/antigravity/<event>.sh`; PreToolUse brief-gate + PostToolUse, session lifecycle rides `/boot`+`/rest`). codex supports only session_end; gemini-cli 0.45.0 DOES have a `gemini hooks` API (the prior "no hook API" note was stale — onboarding tracked under FR-182, not yet projected). **Personal** writes the hook SCRIPT to `~/.igris/loadout/hooks/<name>/<Event>.sh` + a `surfaces.hooks[]` overlay block; the loadout-prefix command path is what the canonical re-merge **preserves** (see the R2 gotcha). `--core` writes `core/hooks/shared/<Event>.sh` + a `surfaces.hooks[]` block in `core/scripts/cli-adapters/surfaces-manifest.json` + TD-096 mirrors both. `--matcher` only applies to `Pre/PostToolUse`. |
 
 ---
 
@@ -91,10 +91,10 @@ igris remove <skill|agent|mcp|hook> <name> [--core | --no-core] \
 For one invocation it:
 
 1. **Un-projects** the surface from every harness — deletes the
-   registry-anchored symlink/hardlink (skill/agent) or un-merges the named
+   loadout-anchored symlink/hardlink (skill/agent) or un-merges the named
    native-config block (mcp/hook), preserving every OTHER server / hook group /
    top-level key byte-for-byte.
-2. **De-materializes** it from the registry overlay (personal) OR deletes the
+2. **De-materializes** it from the loadout overlay (personal) OR deletes the
    `core/` source + un-sweeps the §13 agent enumeration surfaces (core),
    re-mirroring every touched mirrored `core/` file (TD-096).
 3. **Verifies ABSENT** via `harness check` — for `remove`, a drift-clean result
@@ -103,7 +103,7 @@ For one invocation it:
    → loud fail.
 
 **The inverted no-phantom-success gate (TD-235, flipped):** a removal that
-de-projected ZERO targets AND found nothing in the registry/`core/` to delete is
+de-projected ZERO targets AND found nothing in the loadout/`core/` to delete is
 a **LOUD FAIL** ("already absent? check the name") — never a phantom success.
 
 **The one intentional asymmetry — a destructive `--yes` confirm.** Because
@@ -116,9 +116,9 @@ asks for confirmation unless `--yes` is passed (scripted / round-trip use).
 | Surface | Command | Notes |
 |---|---|---|
 | **Skill** | `igris remove skill <name>` | Deletes the per-harness symlink(s) the skill projected, splices the `surfaces.skills[]` overlay block (drops the `skill:<name>` origin sidecar key + the vendored tree). `--core` deletes `core/skills/<name>/` + the runtime mirror (skills auto-discover — no manifest edit, the inverse of the add). |
-| **Agent** | `igris remove agent <name>` | Deletes the per-harness compiled agent files (codex `.toml`, gemini hardlink, opencode `.md`), reuses the existing `registry remove` (overlay + origin + vendor dir). `--core` deletes `core/agents/<name>.md` + mirror, SPLICES the repo-root `harness-manifest.json` entry, then re-runs `core/scripts/gen_os_index.sh` so the agent drops out of the regenerated `core/os/INDEX.md` roster (FR-187 Phase 2b: frontmatter-discovered, no enumeration surfaces to un-sweep). **Refuses to remove a BUILTIN agent without `--force`** (architect/forger/sentinel/warden/mender/seeker/sage/aegis/scribe are load-bearing in delegation). |
+| **Agent** | `igris remove agent <name>` | Deletes the per-harness compiled agent files (codex `.toml`, gemini hardlink, opencode `.md`), reuses the existing `loadout remove` (overlay + origin + vendor dir). `--core` deletes `core/agents/<name>.md` + mirror, SPLICES the repo-root `harness-manifest.json` entry, then re-runs `core/scripts/gen_os_index.sh` so the agent drops out of the regenerated `core/os/INDEX.md` roster (FR-187 Phase 2b: frontmatter-discovered, no enumeration surfaces to un-sweep). **Refuses to remove a BUILTIN agent without `--force`** (architect/forger/sentinel/warden/mender/seeker/sage/aegis/scribe are load-bearing in delegation). |
 | **MCP** | `igris remove mcp <name> [--harness <type>]` | Un-merges the `mcpServers.<name>` / `mcp.<name>` / `[mcp_servers.<name>]` block from each harness's native config (all 5 MCP targets incl. antigravity's distinct `~/.gemini/config/mcp_config.json`), splices the `surfaces.mcp_servers[]` block. `--harness` scopes to one harness. `--core` splices the core `surfaces.mcp_servers[]` block + TD-096 re-mirror. |
-| **Hook** | `igris remove hook <name> [--event <Event>]` | Un-merges the hook GROUP from each harness's `hooks.<Event>[]` array (matched by the registry-prefix command path; neighbor groups preserved; the now-empty `hooks` key is dropped). `--event` is required to locate the group (recovered from the store when omitted). Deletes the registry hook script `~/.igris/registry/hooks/<name>/`. **#828:** removes ONLY the hooks-SURFACE mechanism — NEVER a `core/enforcement/*.md` def. opencode hooks ride the shared FR-104 plugin (which is NEVER removed — a covered no-op). `--core` splices the core `surfaces.hooks[]` block + TD-096 re-mirror; deletes the shared `core/hooks/shared/<Event>.sh` only when no OTHER block references it (reuse-don't-clobber, in reverse). |
+| **Hook** | `igris remove hook <name> [--event <Event>]` | Un-merges the hook GROUP from each harness's `hooks.<Event>[]` array (matched by the loadout-prefix command path; neighbor groups preserved; the now-empty `hooks` key is dropped). `--event` is required to locate the group (recovered from the store when omitted). Deletes the loadout hook script `~/.igris/loadout/hooks/<name>/`. **#828:** removes ONLY the hooks-SURFACE mechanism — NEVER a `core/enforcement/*.md` def. opencode hooks ride the shared FR-104 plugin (which is NEVER removed — a covered no-op). `--core` splices the core `surfaces.hooks[]` block + TD-096 re-mirror; deletes the shared `core/hooks/shared/<Event>.sh` only when no OTHER block references it (reuse-don't-clobber, in reverse). |
 
 **Round-trip identity:** `igris add <surface> <name>` then
 `igris remove <surface> <name>` is a true byte-restoring identity — the overlay/
@@ -176,7 +176,7 @@ their pre-add state.
 - **MCP secrets (§14)** — `igris add mcp --env KEY=${VAR}` stores only the
   `${VAR}` indirection ref; an inline secret value is REJECTED. The harness
   resolves the real value from the environment at launch time, so no secret ever
-  enters the registry overlay or the core surfaces manifest.
+  enters the loadout overlay or the core surfaces manifest.
 - **MCP verify scoping (S1)** — unlike a per-item symlink (skills/agents), an MCP
   add is a config-MERGE into each harness's native MCP config. The MCP compile +
   drift passes honor `--filter <name>` (wired in Phase 3 for parity with skills/
@@ -187,7 +187,7 @@ their pre-add state.
   `~/.igris/core/hooks/canonical-settings.json` into `.claude/settings.json`,
   dropping-then-re-applying every group whose command starts with the CORE
   prefix `$HOME/.igris/core/hooks/`. A **personal**-added hook lives under a
-  DIFFERENT prefix — `$HOME/.igris/registry/hooks/<name>/` — which the
+  DIFFERENT prefix — `$HOME/.igris/loadout/hooks/<name>/` — which the
   re-merge classifies as user-owned and **preserves**. That is the merge gate:
   a personal hook is never clobbered by a refresh. (A core hook IS re-applied
   by the canonical re-merge because it carries the core prefix — that is also
@@ -195,7 +195,7 @@ their pre-add state.
   refresh-no-clobber behavior is regression-tested (the R2 merge gate for
   Phase 5).
 - **Hooks are a config-MERGE surface (like MCP), not a symlink** — the hook
-  compile pass invokes `igris registry project-hook`, which appends the hook
+  compile pass invokes `igris loadout project-hook`, which appends the hook
   GROUP into the `hooks.<Event>[]` array idempotently (a re-project of the same
   command path replaces in place — never a duplicate) and preserves every
   pre-existing user group + every other top-level settings key. The drift pass
@@ -221,12 +221,12 @@ their pre-add state.
 and is the right tool for doctor / `--fix`-style repair:
 
 ```
-igris registry add-skill <source-dir> --name <name> --target <type:method:path>
+igris loadout add-skill <source-dir> --name <name> --target <type:method:path>
 igris harness compile --surface skills
 igris harness check   --surface skills
 ```
 
-`igris registry add-*` is **write-only** (no project/verify); `igris harness
+`igris loadout add-*` is **write-only** (no project/verify); `igris harness
 compile/check` is the low-level projection/drift tool. Use them when you need to
 re-project an already-registered surface without re-vendoring, or when scripting
 a repair. For "add a new surface," prefer `igris add`.

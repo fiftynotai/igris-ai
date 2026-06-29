@@ -2,7 +2,7 @@
  * FR-165 (FR-160 epic): the env-var-indirection secrets LIBRARY.
  *
  * Pure helpers over `~/.igris/secrets.env` — the single source of real MCP
- * secrets. The registry overlay only ever stores `${VAR}` indirection refs;
+ * secrets. The loadout overlay only ever stores `${VAR}` indirection refs;
  * the actual literal is resolved from this file at the Codex compile-time
  * projection (FR-164). claude/gemini/opencode resolve the ref + inherit
  * exported env at launch, so they never need this library.
@@ -24,10 +24,10 @@ export type SecretsMap = Record<string, string>;
 
 /**
  * Canonical env-reference grammar. Byte-identical to `ENV_VAR_REF` at
- * `cli/src/verbs/registry.ts:3381` (the WRITE-guard source of truth — the
+ * `cli/src/verbs/loadout.ts:3381` (the WRITE-guard source of truth — the
  * `add-mcp` verb rejects any env value that is not exactly this form). Kept
  * as a deliberate duplicate (NOT a shared import) so this brief does not
- * touch registry.ts and disturb the FR-162 reject-message suite. If the two
+ * touch loadout.ts and disturb the FR-162 reject-message suite. If the two
  * ever diverge, this comment is the breadcrumb. See FR-165 plan Risks
  * ("Second env grammar drift").
  */
@@ -35,7 +35,7 @@ const ENV_VAR_REF = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
 
 /**
  * OpenCode token form: `{env:VAR}`. Accepted by `resolveRef` so a caller can
- * hand either the registry `${VAR}` value or a normalized OpenCode value and
+ * hand either the loadout `${VAR}` value or a normalized OpenCode value and
  * get the underlying literal back.
  */
 const OPENCODE_ENV_REF = /^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/;
@@ -129,7 +129,7 @@ function stripOneQuotePair(value: string): string {
  * Codex compile-time-literal path ONLY.
  * - Accepts the `${VAR}` canonical form (matches ENV_VAR_REF) AND the
  *   `{env:VAR}` OpenCode token form, so a caller can hand either the
- *   registry value or a normalized OpenCode value and get the literal back.
+ *   loadout value or a normalized OpenCode value and get the literal back.
  * - A NON-reference value (already a literal) is returned verbatim.
  * - When the referenced VAR is absent from `secrets`, returns
  *   { resolved: null, missing: "<VAR>" } so the caller can warn WITHOUT ever

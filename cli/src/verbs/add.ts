@@ -2,13 +2,13 @@
  * `igris add <skill|agent|mcp|hook> <name> [--from …]` — FR-180.
  *
  * The unified, one-step, self-verifying surface-add verb. Collapses the old
- * `registry add-* → harness compile` two-step into ONE atomic command that
+ * `loadout add-* → harness compile` two-step into ONE atomic command that
  * materializes (vendor/register for personal, write `core/` for core) AND
  * projects to all four harnesses AND verifies (drift-clean), with a LOUD
  * failure on any no-op (TD-235).
  *
  * Layering (D9 — `add` orchestrates, it does NOT re-implement the write path):
- *   - personal materialize  → `verbs/registry.ts` (`materializeSkill`, …) —
+ *   - personal materialize  → `verbs/loadout.ts` (`materializeSkill`, …) —
  *     the heavily-tested write path, reused verbatim (R7 guard).
  *   - core materialize       → `verbs/add-core.ts` (`addCoreSkill`, …).
  *   - project + verify       → `lib/add-orchestrate.ts` (`projectAndVerify`) —
@@ -16,15 +16,15 @@
  *     surface and converts a 0-projected outcome into a loud failure.
  *
  * Do NOT confuse with `verbs/install.ts:runInstall` (project bootstrap) or
- * `verbs/registry.ts:runRegistry` (the low-level write verb this wraps).
+ * `verbs/loadout.ts:runLoadout` (the low-level write verb this wraps).
  *
  * Phase 0 + Phase 1 of FR-180 ship the dispatcher + the `skill` arm; Phase 2
  * adds the `agent` arm end-to-end (personal + core); Phase 3 adds the `mcp` arm
  * (personal via the structured `materializeMcp` wrapper over the existing MCP
  * writer; core via `addCoreMcp`). Phase 5 adds the `hook` arm — the net-new
  * first-class surface (D7, Option B): personal via the `materializeHook` wrapper
- * over `runAddHook` (which writes the registry hook script + a `surfaces.hooks[]`
- * overlay block; the registry-prefix command is what the canonical re-merge
+ * over `runAddHook` (which writes the loadout hook script + a `surfaces.hooks[]`
+ * overlay block; the loadout-prefix command is what the canonical re-merge
  * preserves — R2); core via `addCoreHook`. (FR-202 M4 retired the `identity` arm
  * along with the os_identity surface — the delegation mechanism is now a context
  * layer, core/os/harness-specific/<harness>.md, not an `igris add` surface.)
@@ -32,7 +32,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { brainDir, registryOverlayPath } from "../lib/paths.js";
+import { brainDir, loadoutOverlayPath } from "../lib/paths.js";
 import { info, error as logError } from "../lib/log.js";
 import {
   materializeSkill,
@@ -40,8 +40,8 @@ import {
   materializeMcp,
   materializeHook,
   realpathStrict,
-  type RegistryOptions,
-} from "./registry.js";
+  type LoadoutOptions,
+} from "./loadout.js";
 import { projectAndVerify } from "../lib/add-orchestrate.js";
 import {
   addCoreSkill,
@@ -271,7 +271,7 @@ export function coreProjectionParams(
  * Mirrors the mcp arm's shape: resolve mode → materialize → `projectAndVerify(
  * "hook", …)`. Personal uses the structured-return `materializeHook` wrapper
  * over `runAddHook` (R7 — every guard runs in the writer; the personal hook's
- * command lives under the REGISTRY prefix so the canonical re-merge preserves it
+ * command lives under the LOADOUT prefix so the canonical re-merge preserves it
  * — R2). Core uses `addCoreHook` (write the shared script + a `surfaces.hooks[]`
  * block + TD-096 mirror).
  *
@@ -327,9 +327,9 @@ async function runAddHookArm(opts: AddOptions, mode: AddMode): Promise<number> {
   }
 
   // ----- Personal mode. -----
-  const overlayPath = opts.overlayPath ?? registryOverlayPath();
+  const overlayPath = opts.overlayPath ?? loadoutOverlayPath();
   const materialize = opts.materializeHookFn ?? materializeHook;
-  const regOpts: RegistryOptions = {
+  const regOpts: LoadoutOptions = {
     action: "add-hook",
     name: opts.name,
     event: opts.event,
@@ -364,14 +364,14 @@ async function runAddHookArm(opts: AddOptions, mode: AddMode): Promise<number> {
   info(
     `Added personal hook '${opts.name}' on ${opts.event}: registered + projected ` +
       `${verify.projected.length} target(s), drift-clean. The hook survives ` +
-      `'igris update' / 'igris doctor --fix' (registry-provenance — R2).`,
+      `'igris update' / 'igris doctor --fix' (loadout-provenance — R2).`,
   );
   return 0;
 }
 
 /**
  * The `skill` arm — Phase 1 vertical slice. Personal: materialize via the
- * registry writer, then projectAndVerify("skills"). Core: write the SKILL.md
+ * loadout writer, then projectAndVerify("skills"). Core: write the SKILL.md
  * scaffold + TD-096 mirror via add-core, then projectAndVerify from the
  * (auto-detected) repo root with --expect-core.
  */
@@ -421,9 +421,9 @@ async function runAddSkillArm(opts: AddOptions, mode: AddMode): Promise<number> 
   }
 
   // ----- Personal mode. -----
-  const overlayPath = opts.overlayPath ?? registryOverlayPath();
+  const overlayPath = opts.overlayPath ?? loadoutOverlayPath();
   const materialize = opts.materializeSkillFn ?? materializeSkill;
-  const regOpts: RegistryOptions = {
+  const regOpts: LoadoutOptions = {
     action: "add-skill",
     name: opts.name,
     from: opts.from,
@@ -520,9 +520,9 @@ async function runAddAgentArm(opts: AddOptions, mode: AddMode): Promise<number> 
   }
 
   // ----- Personal mode. -----
-  const overlayPath = opts.overlayPath ?? registryOverlayPath();
+  const overlayPath = opts.overlayPath ?? loadoutOverlayPath();
   const materialize = opts.materializeAgentFn ?? materializeAgent;
-  const regOpts: RegistryOptions = {
+  const regOpts: LoadoutOptions = {
     action: "add",
     name: opts.name,
     from: opts.from,
@@ -630,9 +630,9 @@ async function runAddMcpArm(opts: AddOptions, mode: AddMode): Promise<number> {
   }
 
   // ----- Personal mode. -----
-  const overlayPath = opts.overlayPath ?? registryOverlayPath();
+  const overlayPath = opts.overlayPath ?? loadoutOverlayPath();
   const materialize = opts.materializeMcpFn ?? materializeMcp;
-  const regOpts: RegistryOptions = {
+  const regOpts: LoadoutOptions = {
     action: "add-mcp",
     name: opts.name,
     command: opts.command,
@@ -704,7 +704,7 @@ export async function runAdd(opts: AddOptions): Promise<number> {
         `at ${opts.projectRoot ?? process.cwd()}.`,
     );
   } else {
-    info(`add ${surface}: operating in PERSONAL mode (registry overlay).`);
+    info(`add ${surface}: operating in PERSONAL mode (loadout overlay).`);
   }
 
   switch (surface) {

@@ -56,7 +56,7 @@ setup() {
 
   # Isolate from the live brain dir so the guard/compile do NOT
   # auto-discover the user's personal overlay manifest at
-  # ~/.igris/registry/harness-manifest.personal.json (FR-146 leaves this in
+  # ~/.igris/loadout/harness-manifest.personal.json (FR-146 leaves this in
   # place between runs; without isolation it merges into every test's
   # manifest and breaks synthetic-root tests).
   ISOLATED_BRAIN="$TEST_TEMP_DIR/brain_$BATS_TEST_NUMBER"
@@ -64,14 +64,14 @@ setup() {
   export IGRIS_BRAIN_DIR="$ISOLATED_BRAIN"
 
   PROJ="$TEST_TEMP_DIR/harness_skills_$BATS_TEST_NUMBER"
-  # FR-153 + L-515: drift's "registry containment" check requires the symlink
-  # target to resolve UNDER the brain registry root, so skills source lives at
-  # $IGRIS_BRAIN_DIR/registry/skills (mirrors the real `igris registry
-  # add-skill` flow which vendors skills under <brain>/registry/skills/).
-  mkdir -p "$PROJ" "$IGRIS_BRAIN_DIR/registry/skills/alpha" \
-    "$IGRIS_BRAIN_DIR/registry/skills/beta"
+  # FR-153 + L-515: drift's "loadout containment" check requires the symlink
+  # target to resolve UNDER the brain loadout root, so skills source lives at
+  # $IGRIS_BRAIN_DIR/loadout/skills (mirrors the real `igris loadout
+  # add-skill` flow which vendors skills under <brain>/loadout/skills/).
+  mkdir -p "$PROJ" "$IGRIS_BRAIN_DIR/loadout/skills/alpha" \
+    "$IGRIS_BRAIN_DIR/loadout/skills/beta"
 
-  cat > "$IGRIS_BRAIN_DIR/registry/skills/alpha/SKILL.md" <<'EOF'
+  cat > "$IGRIS_BRAIN_DIR/loadout/skills/alpha/SKILL.md" <<'EOF'
 ---
 name: alpha
 description: the alpha skill
@@ -82,7 +82,7 @@ description: the alpha skill
 Alpha skill body.
 EOF
 
-  cat > "$IGRIS_BRAIN_DIR/registry/skills/beta/SKILL.md" <<'EOF'
+  cat > "$IGRIS_BRAIN_DIR/loadout/skills/beta/SKILL.md" <<'EOF'
 ---
 name: beta
 description: the beta skill
@@ -93,12 +93,12 @@ description: the beta skill
 Beta skill body.
 EOF
 
-  # A project-OWNED manifest declaring a skills surface against the registry-
+  # A project-OWNED manifest declaring a skills surface against the loadout-
   # vendored skills dir (so drift's L-515 containment check fires MATCH).
   # FR-202 M1: the live skills triad uses the symlink/command methods. Source
-  # is the ABSOLUTE registry path — satisfies agents/symlink's D2 absolute-path
-  # guard AND resides under <brain>/registry/ for L-515 MATCH.
-  SKILLS_SRC="$IGRIS_BRAIN_DIR/registry/skills"
+  # is the ABSOLUTE loadout path — satisfies agents/symlink's D2 absolute-path
+  # guard AND resides under <brain>/loadout/ for L-515 MATCH.
+  SKILLS_SRC="$IGRIS_BRAIN_DIR/loadout/skills"
   cat > "$PROJ/harness-manifest.json" <<EOF
 {
   "version": 1,
@@ -266,11 +266,11 @@ PY
   [[ "$output" == *"[skills/claude] MATCH"* ]]
 }
 
-@test "FR-157: drift flags a manually-repointed agents symlink (registry-unanchored) and recovers after recompile" {
+@test "FR-157: drift flags a manually-repointed agents symlink (loadout-unanchored) and recovers after recompile" {
   run bash "$COMPILE" --project-root "$PROJ"
   [ "$status" -eq 0 ]
   # Repoint one of the agents skill symlinks to somewhere ELSE (outside the
-  # source root); drift should flag it as registry-unanchored / mismatched.
+  # source root); drift should flag it as loadout-unanchored / mismatched.
   mkdir -p "$PROJ/elsewhere/alpha"
   rm "$PROJ/.agents/skills/alpha"
   ln -s "$PROJ/elsewhere/alpha" "$PROJ/.agents/skills/alpha"
@@ -518,17 +518,17 @@ EOF
   # L-519 §18.1 compile + drift-verify pairing. The compile pass and the
   # drift pass must produce IDENTICAL flatten rows. FR-153: post-retirement
   # this exercises the symlink branches on both sides. Sources live under
-  # $IGRIS_BRAIN_DIR/registry so L-515 containment fires MATCH.
-  mkdir -p "$IGRIS_BRAIN_DIR/registry/skills-core/alpha" \
-    "$IGRIS_BRAIN_DIR/registry/skills-mine/mine"
-  cat > "$IGRIS_BRAIN_DIR/registry/skills-core/alpha/SKILL.md" <<'EOF'
+  # $IGRIS_BRAIN_DIR/loadout so L-515 containment fires MATCH.
+  mkdir -p "$IGRIS_BRAIN_DIR/loadout/skills-core/alpha" \
+    "$IGRIS_BRAIN_DIR/loadout/skills-mine/mine"
+  cat > "$IGRIS_BRAIN_DIR/loadout/skills-core/alpha/SKILL.md" <<'EOF'
 ---
 name: alpha
 description: a
 ---
 alpha body
 EOF
-  cat > "$IGRIS_BRAIN_DIR/registry/skills-mine/mine/SKILL.md" <<'EOF'
+  cat > "$IGRIS_BRAIN_DIR/loadout/skills-mine/mine/SKILL.md" <<'EOF'
 ---
 name: mine
 description: m
@@ -541,9 +541,9 @@ EOF
   "agents": [],
   "surfaces": {
     "skills": [
-      { "source": "$IGRIS_BRAIN_DIR/registry/skills-core", "layer": "core",
+      { "source": "$IGRIS_BRAIN_DIR/loadout/skills-core", "layer": "core",
         "targets": [ { "type": "claude", "method": "symlink", "path": "claude-core" } ] },
-      { "source": "$IGRIS_BRAIN_DIR/registry/skills-mine", "layer": "personal",
+      { "source": "$IGRIS_BRAIN_DIR/loadout/skills-mine", "layer": "personal",
         "targets": [ { "type": "claude", "method": "symlink", "path": "claude-mine" } ] }
     ]
   }
@@ -572,7 +572,7 @@ EOF
 # ---------------------------------------------------------------------------
 # FR-149: claude as a first-class skills target (claude/symlink).
 #
-# Compile-side behavior: registry-anchored per-skill symlinks under the
+# Compile-side behavior: loadout-anchored per-skill symlinks under the
 # target dir (one per <skill>/SKILL.md in `source`). Idempotent on rerun
 # (silent no-op), atomic-repoint on path mismatch with a log line, and
 # refuse-to-clobber a non-symlink at the target path. L-519 §18.1 pairs
@@ -581,12 +581,12 @@ EOF
 
 # build_fr149_skill_project: helper to seed a per-test project with ONE
 # personal skills block declaring a claude:symlink target. The "source"
-# (skills root) lives at PROJ/registry-skills/<name>/ to simulate the
-# L-516 registry-vendored layout; the compiler emits the symlink under
+# (skills root) lives at PROJ/loadout-skills/<name>/ to simulate the
+# L-516 loadout-vendored layout; the compiler emits the symlink under
 # PROJ/.claude/skills/<name>.
 build_fr149_skill_project() {
-  mkdir -p "$PROJ/registry-skills/alpha"
-  cat > "$PROJ/registry-skills/alpha/SKILL.md" <<'EOF'
+  mkdir -p "$PROJ/loadout-skills/alpha"
+  cat > "$PROJ/loadout-skills/alpha/SKILL.md" <<'EOF'
 ---
 name: alpha
 description: alpha skill for FR-149 claude/symlink
@@ -601,7 +601,7 @@ EOF
   "surfaces": {
     "skills": [
       {
-        "source": "registry-skills",
+        "source": "loadout-skills",
         "layer": "personal",
         "targets": [
           { "type": "claude", "method": "symlink", "path": ".claude/skills" }
@@ -617,11 +617,11 @@ EOF
   build_fr149_skill_project
   run bash "$COMPILE" --project-root "$PROJ" --surface skills
   [ "$status" -eq 0 ]
-  # The symlink lives at PROJ/.claude/skills/alpha → PROJ/registry-skills/alpha.
+  # The symlink lives at PROJ/.claude/skills/alpha → PROJ/loadout-skills/alpha.
   [ -L "$PROJ/.claude/skills/alpha" ]
   local resolved
   resolved="$(readlink "$PROJ/.claude/skills/alpha")"
-  [ "$resolved" = "$PROJ/registry-skills/alpha" ]
+  [ "$resolved" = "$PROJ/loadout-skills/alpha" ]
   [[ "$output" == *"creating claude skill symlink"* ]]
   [[ "$output" == *"OK    skills/claude (symlink)"* ]]
 }
@@ -635,7 +635,7 @@ EOF
   [ "$status" -eq 0 ]
   local resolved
   resolved="$(readlink "$PROJ/.claude/skills/alpha")"
-  [ "$resolved" = "$PROJ/registry-skills/alpha" ]
+  [ "$resolved" = "$PROJ/loadout-skills/alpha" ]
   # Migration log line, NOT a create log line.
   [[ "$output" == *"migrating legacy claude skill symlink"* ]]
   [[ "$output" != *"creating claude skill symlink"* ]]
@@ -696,9 +696,9 @@ EOF
 # build_fr149_skill_project but emitting an agents:symlink target.
 build_fr157_agents_skill_project() {
   # Clean slate (mirrors the FR-149 setup posture).
-  rm -rf "$IGRIS_BRAIN_DIR/registry/skills"
-  mkdir -p "$IGRIS_BRAIN_DIR/registry/skills/alpha"
-  cat > "$IGRIS_BRAIN_DIR/registry/skills/alpha/SKILL.md" <<'EOF'
+  rm -rf "$IGRIS_BRAIN_DIR/loadout/skills"
+  mkdir -p "$IGRIS_BRAIN_DIR/loadout/skills/alpha"
+  cat > "$IGRIS_BRAIN_DIR/loadout/skills/alpha/SKILL.md" <<'EOF'
 ---
 name: alpha
 description: alpha skill for FR-157 agents/symlink
@@ -706,7 +706,7 @@ description: alpha skill for FR-157 agents/symlink
 
 alpha body
 EOF
-  local skills_src="$IGRIS_BRAIN_DIR/registry/skills"
+  local skills_src="$IGRIS_BRAIN_DIR/loadout/skills"
   cat > "$PROJ/harness-manifest.json" <<EOF
 {
   "version": 1,
@@ -724,7 +724,7 @@ EOF
   }
 }
 EOF
-  FR157_ALPHA_DIR="$IGRIS_BRAIN_DIR/registry/skills/alpha"
+  FR157_ALPHA_DIR="$IGRIS_BRAIN_DIR/loadout/skills/alpha"
 }
 
 @test "FR-157: cold compile creates an agents/symlink per skill at the right target" {
@@ -834,10 +834,10 @@ EOF
   # Build a project with TWO skills (alpha, beta) under the SAME claude
   # symlink target, then plant regular files at BOTH so the compiler
   # refuses both in one pass.
-  build_fr149_skill_project   # seeds alpha at $PROJ/registry-skills/alpha
-  # Add a second skill source under the same registry-skills root.
-  mkdir -p "$PROJ/registry-skills/beta"
-  cat > "$PROJ/registry-skills/beta/SKILL.md" <<'EOF'
+  build_fr149_skill_project   # seeds alpha at $PROJ/loadout-skills/alpha
+  # Add a second skill source under the same loadout-skills root.
+  mkdir -p "$PROJ/loadout-skills/beta"
+  cat > "$PROJ/loadout-skills/beta/SKILL.md" <<'EOF'
 ---
 name: beta
 description: second skill for TD-209 multi-refuse
@@ -895,19 +895,19 @@ EOF
 
 # build_td218_malformed_project <type> — seed a per-test project whose ONE
 # skills block carries a PER-SKILL malformed path (`<parent>/<name>`) for the
-# given target <type> (agents|claude). The source models the REAL registry
-# layout: the vendored wrapper `registry/skills/content-pipeline/
+# given target <type> (agents|claude). The source models the REAL loadout
+# layout: the vendored wrapper `loadout/skills/content-pipeline/
 # content-pipeline/SKILL.md` (L-517 `<name>/<name>/SKILL.md`), with `source`
 # pointing at the OUTER dir — exactly how the deployed content-pipeline
 # overlay is shaped. So `skill_dir` = the INNER content-pipeline dir (which
 # holds SKILL.md), `skill_name` = content-pipeline, and `out_abs` = the
 # malformed `.${ttype}/skills/content-pipeline`. Source resides under
-# $IGRIS_BRAIN_DIR/registry so L-515 containment fires MATCH.
+# $IGRIS_BRAIN_DIR/loadout so L-515 containment fires MATCH.
 build_td218_malformed_project() {
   local ttype="$1"
-  rm -rf "$IGRIS_BRAIN_DIR/registry/skills"
-  mkdir -p "$IGRIS_BRAIN_DIR/registry/skills/content-pipeline/content-pipeline"
-  cat > "$IGRIS_BRAIN_DIR/registry/skills/content-pipeline/content-pipeline/SKILL.md" <<'EOF'
+  rm -rf "$IGRIS_BRAIN_DIR/loadout/skills"
+  mkdir -p "$IGRIS_BRAIN_DIR/loadout/skills/content-pipeline/content-pipeline"
+  cat > "$IGRIS_BRAIN_DIR/loadout/skills/content-pipeline/content-pipeline/SKILL.md" <<'EOF'
 ---
 name: content-pipeline
 description: the content-pipeline skill for TD-218
@@ -916,7 +916,7 @@ description: the content-pipeline skill for TD-218
 content-pipeline body
 EOF
   # `source` is the OUTER dir; find walks <source>/<name>/SKILL.md at depth-2.
-  local skills_src="$IGRIS_BRAIN_DIR/registry/skills/content-pipeline"
+  local skills_src="$IGRIS_BRAIN_DIR/loadout/skills/content-pipeline"
   # NOTE the malformed path: it ends in the skill name `content-pipeline`
   # (the per-skill shape that produced the FR-153/156/157 double-nest).
   cat > "$PROJ/harness-manifest.json" <<EOF
@@ -937,10 +937,10 @@ EOF
 }
 EOF
   # The INNER dir is the resolved skill_dir (holds SKILL.md directly).
-  TD218_SKILL_DIR="$IGRIS_BRAIN_DIR/registry/skills/content-pipeline/content-pipeline"
+  TD218_SKILL_DIR="$IGRIS_BRAIN_DIR/loadout/skills/content-pipeline/content-pipeline"
   # The OUTER wrapper parent — used by the depth-2 drift test to plant a
-  # too-deep (but still registry-anchored) symlink.
-  TD218_WRAPPER_DIR="$IGRIS_BRAIN_DIR/registry/skills/content-pipeline"
+  # too-deep (but still loadout-anchored) symlink.
+  TD218_WRAPPER_DIR="$IGRIS_BRAIN_DIR/loadout/skills/content-pipeline"
 }
 
 @test "TD-218: compile de-dups a malformed per-skill agents path to depth-1 (no double-nest)" {
@@ -976,15 +976,15 @@ EOF
   [[ "$output" == *"[skills/agents] MATCH"* ]]
 }
 
-@test "TD-218: drift flags a registry-anchored-but-too-deep symlink as DRIFTED" {
+@test "TD-218: drift flags a loadout-anchored-but-too-deep symlink as DRIFTED" {
   build_td218_malformed_project agents
   # The de-dup'd link_path drift computes is .agents/skills/content-pipeline.
-  # Hand-build a symlink THERE that resolves into the registry (so L-515
+  # Hand-build a symlink THERE that resolves into the loadout (so L-515
   # containment passes) but points at the WRAPPER PARENT
-  # (registry/skills/content-pipeline) rather than the inner skill dir — so
+  # (loadout/skills/content-pipeline) rather than the inner skill dir — so
   # SKILL.md is one level too deep (<link_path>/content-pipeline/SKILL.md, NOT
   # <link_path>/SKILL.md). This is exactly the depth-2 nest the bug produced.
-  # Pre-TD-218 drift reported MATCH for this shape (registry-anchored); post-
+  # Pre-TD-218 drift reported MATCH for this shape (loadout-anchored); post-
   # TD-218 it is flagged DRIFTED — either via the wrong-canonical verdict
   # (resolved != skill_dir) or the new depth-1 assertion, both of which the
   # bug's blindness missed.

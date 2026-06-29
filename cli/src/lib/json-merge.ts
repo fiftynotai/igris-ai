@@ -45,7 +45,7 @@ const IGRIS_HOOK_CMD_PREFIX = "$HOME/.igris/core/hooks/";
  * incidental side effect of the prefix check). See FR-180 D7 + the
  * refresh-no-clobber test.
  */
-const IGRIS_PERSONAL_HOOK_CMD_PREFIX = "$HOME/.igris/registry/hooks/";
+const IGRIS_PERSONAL_HOOK_CMD_PREFIX = "$HOME/.igris/loadout/hooks/";
 
 /**
  * Pre-FR-104 Igris portable hooks lived in the project-local `.claude/hooks/`
@@ -171,7 +171,7 @@ function isIgrisEntry(entry: unknown, stripLegacy: boolean): boolean {
     if (typeof h !== "object" || h === null) continue;
     const cmd = (h as { command?: unknown }).command;
     if (typeof cmd !== "string") continue;
-    // FR-180 (D7 / R2): a PERSONAL-added hook (registry-prefix command) is NEVER
+    // FR-180 (D7 / R2): a PERSONAL-added hook (loadout-prefix command) is NEVER
     // stripped — it is preserved across the canonical re-merge so install /
     // update / doctor --fix cannot clobber it. The early-continue makes this an
     // explicit, deliberate carve-out (not merely "it doesn't match the core

@@ -33,7 +33,7 @@ setup() {
 
   # Isolate from the live brain dir so the guard/compile do NOT
   # auto-discover the user's personal overlay manifest at
-  # ~/.igris/registry/harness-manifest.personal.json (FR-146 leaves this in
+  # ~/.igris/loadout/harness-manifest.personal.json (FR-146 leaves this in
   # place between runs; without isolation it merges into every test's
   # manifest and breaks synthetic-root tests).
   ISOLATED_BRAIN="$TEST_TEMP_DIR/brain_$BATS_TEST_NUMBER"
@@ -54,7 +54,7 @@ description: a sample canonical agent prompt
 Canonical body. Must match the harness body exactly.
 EOF
 
-  # FR-152: claude target is a registry-anchored symlink the compiler creates.
+  # FR-152: claude target is a loadout-anchored symlink the compiler creates.
   # No pre-authored real harness file (that was the FR-149-era Case C path,
   # retired by FR-152; pre-creating one would now hard-error refuse-to-clobber).
 

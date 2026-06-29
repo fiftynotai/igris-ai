@@ -14,7 +14,7 @@
 
 import { extractVarName, resolveRef, type SecretsMap } from "./secrets.js";
 
-/** The MCP harnesses (mirrors VALID_MCP_TARGET_TYPES in registry.ts). */
+/** The MCP harnesses (mirrors VALID_MCP_TARGET_TYPES in loadout.ts). */
 export type McpHarness =
   | "claude"
   | "gemini"

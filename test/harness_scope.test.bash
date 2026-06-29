@@ -40,7 +40,7 @@ setup() {
   [ -x "$GUARD" ] || skip "check_harness_drift.sh missing at $GUARD"
   require_python3
 
-  # Isolated brain dir per test — prevents the live registry/personal overlay
+  # Isolated brain dir per test — prevents the live loadout/personal overlay
   # from leaking into synthetic-project tests (per FR-146 / harness_skills
   # precedent). MUST be exported so the adapters that resolve
   # BRAIN_DIR=${IGRIS_BRAIN_DIR:-~/.igris} pick this up.
@@ -57,7 +57,7 @@ setup() {
 
   # A canonical agent prompt (frontmatter + body). The α-assembly extracts
   # frontmatter inline (TD-195 fallback — no FR-151 sidecar present) so the
-  # claude target's symlink resolves to a registry-resident harness.md.
+  # claude target's symlink resolves to a loadout-resident harness.md.
   for proj in "$PROJ_A" "$PROJ_B"; do
     cat > "$proj/canon/sample.md" <<'EOF'
 ---
@@ -72,10 +72,10 @@ EOF
   done
 
   # A skills source root for the surfaces.skills matrix. Lives under the
-  # isolated brain so the FR-153 / L-515 registry-containment check passes
+  # isolated brain so the FR-153 / L-515 loadout-containment check passes
   # for the claude/symlink target.
-  mkdir -p "$IGRIS_BRAIN_DIR/registry/skills/widget"
-  cat > "$IGRIS_BRAIN_DIR/registry/skills/widget/SKILL.md" <<'EOF'
+  mkdir -p "$IGRIS_BRAIN_DIR/loadout/skills/widget"
+  cat > "$IGRIS_BRAIN_DIR/loadout/skills/widget/SKILL.md" <<'EOF'
 ---
 name: widget
 description: a widget skill for scope tests
@@ -117,7 +117,7 @@ write_skills_manifest() {
   if [ -n "$scope_json" ]; then
     scope_field=",\n        \"scope\": $scope_json"
   fi
-  printf "{\n  \"version\": 1,\n  \"agents\": [],\n  \"surfaces\": {\n    \"skills\": [\n      {\n        \"source\": \"%s/registry/skills\",\n        \"targets\": [\n          { \"type\": \"claude\", \"method\": \"symlink\", \"path\": \".claude/skills\" }\n        ]%b\n      }\n    ]\n  }\n}\n" "$IGRIS_BRAIN_DIR" "$scope_field" > "$root/harness-manifest.json"
+  printf "{\n  \"version\": 1,\n  \"agents\": [],\n  \"surfaces\": {\n    \"skills\": [\n      {\n        \"source\": \"%s/loadout/skills\",\n        \"targets\": [\n          { \"type\": \"claude\", \"method\": \"symlink\", \"path\": \".claude/skills\" }\n        ]%b\n      }\n    ]\n  }\n}\n" "$IGRIS_BRAIN_DIR" "$scope_field" > "$root/harness-manifest.json"
 }
 
 # ---------------------------------------------------------------------------

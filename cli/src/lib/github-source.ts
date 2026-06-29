@@ -1,16 +1,16 @@
 /**
- * FR-148 GitHub-origin source module for `igris registry`.
+ * FR-148 GitHub-origin source module for `igris loadout`.
  *
  * Provides the parser, fetch abstraction, manifest read+validate, surface
  * selection, and release-freshness comparison used by the `github` origin
  * type. Builds on FR-142's copy-vendor + typed-origin foundation in
- * `verbs/registry.ts`.
+ * `verbs/loadout.ts`.
  *
  * THE TESTABILITY SEAM (L-159 / L-173): the network/tooling boundary is two
  * injectable functions — `FetchRepoFn` and `ListReleasesFn` — mirroring
  * FR-142's `overlayPath`/`vendorDir` seams. Unit tests inject fakes that
  * return a staged fixture repo dir + a fake SHA + a fixture release list.
- * NEVER `vi.mock` the SUT (`runRegistry`); stub the FETCH instead.
+ * NEVER `vi.mock` the SUT (`runLoadout`); stub the FETCH instead.
  *
  * EXTRACTION NOTE (high-impact, plan §2 risk): we do NOT reuse
  * `tarball.ts`'s `fetchAndExtract` — its `isEntrySafe` hard-codes a `core/`-only
@@ -19,7 +19,7 @@
  * path-traversal guard but drops the `core/` filter.
  *
  * The repo manifest is validated against the EXISTING exported
- * `validateOverlayShape` from `verbs/registry.ts` (the FR-141 TS port of
+ * `validateOverlayShape` from `verbs/loadout.ts` (the FR-141 TS port of
  * `manifest.schema.json`, parity-tested against the real bash
  * `validate_manifest`). Reuse — no fork, no new schema.
  */
@@ -43,7 +43,7 @@ import { createGunzip } from "node:zlib";
 import { x as tarExtract } from "tar";
 import { httpsGet } from "./tarball.js";
 import { httpsGetJson } from "./http.js";
-import { validateOverlayShape } from "../verbs/registry.js";
+import { validateOverlayShape } from "../verbs/loadout.js";
 
 const pipeline = promisify(streamPipeline);
 
@@ -334,7 +334,7 @@ export interface RepoManifest {
 /**
  * Read + validate the repo's manifest. Looks for `<repoDir>/igris.json` first,
  * then `<repoDir>/.igris/manifest.json`. Validates with the EXISTING
- * `validateOverlayShape` (reused from verbs/registry.ts). Returns the manifest
+ * `validateOverlayShape` (reused from verbs/loadout.ts). Returns the manifest
  * or an error message string.
  */
 export function readRepoManifest(repoDir: string): RepoManifest | string {
@@ -393,7 +393,7 @@ function globToRegExp(glob: string): RegExp {
  * A malicious repo manifest can carry `canonical.dir: "../../../etc"` or
  * `file: "../../passwd"` — the schema validator only checks these are STRINGS,
  * not that they stay inside the repo. Without this guard we would vendor
- * arbitrary host files into `~/.igris/registry/`.
+ * arbitrary host files into `~/.igris/loadout/`.
  */
 function isContainedUnder(root: string, candidate: string): boolean {
   const resolvedRoot = pathResolve(root);
@@ -805,7 +805,7 @@ export async function listReleasesDefault(
   }
 }
 
-/** Stable content hash over a vendored file set (mirrors registry.ts). */
+/** Stable content hash over a vendored file set (mirrors loadout.ts). */
 export function hashFileSet(absDir: string, fileRelPaths: string[]): string {
   const h = createHash("sha256");
   for (const rel of [...fileRelPaths].sort()) {

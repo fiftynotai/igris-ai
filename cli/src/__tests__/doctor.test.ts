@@ -546,7 +546,7 @@ describe("doctor — runDoctor exit codes", () => {
     // Personal overlay with an MCP block carrying an unresolved env ref.
     const overlayPath = path.join(
       tmpRoot,
-      "registry",
+      "loadout",
       "harness-manifest.personal.json",
     );
     mkdirSync(path.dirname(overlayPath), { recursive: true });
@@ -1113,29 +1113,29 @@ describe("doctor — skills-pollution drift class (TD-223 RE-SCOPED)", () => {
     expect(claudeBaks("agents").length).toBe(1);
   });
 
-  it("T4: a registry-projection stray in the source is cleaned under --fix", async () => {
+  it("T4: a loadout-projection stray in the source is cleaned under --fix", async () => {
     const { runDoctor } = await import("../verbs/doctor.js");
     stageSkillsSurface();
     stageCanonicalSkill("foo");
-    // The registry lives under brainDir() (IGRIS_BRAIN_DIR=tmpRoot) — that is
-    // where registryOverlayPath() + registryDirPath() resolve. Stage the
+    // The loadout store lives under brainDir() (IGRIS_BRAIN_DIR=tmpRoot) — that is
+    // where loadoutOverlayPath() + loadoutDirPath() resolve. Stage the
     // personal content-pipeline skill there (L-517 nested layout).
-    const registrySkillDir = join(tmpRoot, "registry", "skills", "content-pipeline");
-    const nested = join(registrySkillDir, "content-pipeline");
+    const loadoutSkillDir = join(tmpRoot, "loadout", "skills", "content-pipeline");
+    const nested = join(loadoutSkillDir, "content-pipeline");
     mkdirSync(nested, { recursive: true });
     writeFileSync(
       join(nested, "SKILL.md"),
       `---\nname: content-pipeline\ndescription: "cp"\n---\n\nBody.\n`,
     );
     writeFileSync(
-      join(tmpRoot, "registry", "harness-manifest.personal.json"),
+      join(tmpRoot, "loadout", "harness-manifest.personal.json"),
       JSON.stringify({
         version: 1,
         agents: [],
         surfaces: {
           skills: [
             {
-              source: registrySkillDir,
+              source: loadoutSkillDir,
               layer: "personal",
               targets: [
                 { type: "claude", method: "symlink", path: "~/.claude/skills" },
@@ -1145,7 +1145,7 @@ describe("doctor — skills-pollution drift class (TD-223 RE-SCOPED)", () => {
         },
       }) + "\n",
     );
-    // The leaked projection stray inside the canonical source (→ the registry).
+    // The leaked projection stray inside the canonical source (→ the loadout).
     symlinkSync(nested, join(coreSkillsRoot(), "content-pipeline"));
     legacySkillsSymlink();
 
@@ -1161,11 +1161,11 @@ describe("doctor — skills-pollution drift class (TD-223 RE-SCOPED)", () => {
     ).toBe(true);
   });
 
-  it("T5: a stray NOT a registry projection is reported but never removed (exits 1)", async () => {
+  it("T5: a stray NOT a loadout projection is reported but never removed (exits 1)", async () => {
     const { runDoctor } = await import("../verbs/doctor.js");
     stageSkillsSurface();
     stageCanonicalSkill("foo");
-    // A stray symlink pointing OUTSIDE the registry.
+    // A stray symlink pointing OUTSIDE the loadout.
     const outside = mkdtempSync(join(tmpdir(), "igris-doctor-stray-outside-"));
     projectDirs.push(outside);
     symlinkSync(outside, join(coreSkillsRoot(), "weird"));

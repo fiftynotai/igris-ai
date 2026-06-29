@@ -17,7 +17,7 @@ The OS's knowledge lives in distinct **stores**. Each holds one kind of knowledg
 | Memory | experiential structured-records (learnings, goals, errors, metrics, sessions-meta, briefs-meta, graph) — route each by kind to its table | brain DB (`knowledge.db`) | VPS push/pull (accumulated knowledge) |
 | Project-context docs | curated authored-prose standards (coding_guidelines, architecture, design, brand) | file (`~/.igris/projects/{project}/context/`) | *(portability follow-on)* |
 | Catalog (reusable-assets "lego" store) | reusable-asset references — what · where · when-to-use · how-to-integrate (NOT the asset code) | brain DB `catalog` table (`knowledge.db`) | VPS push/pull (in SYNC_TABLES) |
-| Loadout (your portable personal overlay) | the operator's bring-your-own extensions — personal skills / subagents / MCPs that project to harnesses; carried machine-to-machine | files (`~/.igris/registry/` — dir + `igris registry` verb rename to `loadout` pending) | *(portability follow-on)* |
+| Loadout (your portable personal overlay) | the operator's bring-your-own extensions — personal skills / subagents / MCPs that project to harnesses; carried machine-to-machine | files (`~/.igris/loadout/` — dir + `igris loadout` verb) | *(portability follow-on)* |
 | Code | code facts (ground truth) | the repo | external — **read, never stored** |
 | Git | history | git | external — **read, never snapshot** |
 

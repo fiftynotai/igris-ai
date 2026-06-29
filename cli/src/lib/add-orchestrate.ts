@@ -2,7 +2,7 @@
  * FR-180: the shared "project + verify" engine for `igris add <surface>`.
  *
  * This is the TD-235 chokepoint. Every surface arm of `add` (skill/agent/mcp/
- * hook — the four material surfaces), after materializing into the registry/
+ * hook — the four material surfaces), after materializing into the loadout/
  * overlay (personal) or `core/` (core), funnels its projection through
  * `projectAndVerify`. That function:
  *
@@ -17,7 +17,7 @@
  *
  * This file owns NO surface-specific knowledge — it takes a surface name + the
  * resolved project root and drives the §18.1 deliver+drift contract. The
- * materialize half lives in `registry.ts` (personal) / `add-core.ts` (core);
+ * materialize half lives in `loadout.ts` (personal) / `add-core.ts` (core);
  * the dispatch lives in `verbs/add.ts`.
  */
 

@@ -1,10 +1,10 @@
 /**
- * FR-141/FR-142 registry-verb tests — `igris registry add|list|remove|update`.
+ * FR-141/FR-142 loadout-verb tests — `igris loadout add|list|remove|update`.
  *
  * NOTE on the filename: this is `harness-registry.test.ts`, NOT
  * `registry.test.ts`. The latter is taken by the UNRELATED project-registry
- * SQLite module (`lib/registry.ts`). This file tests the harness-overlay verb
- * at `verbs/registry.ts`.
+ * SQLite module (`lib/loadout.ts`). This file tests the harness-overlay verb
+ * at `verbs/loadout.ts`.
  *
  * FR-142 COPY-VENDOR MODE: `add` no longer references a live external path; it
  * COPIES the canonical files into a vendored dir and points `canonical.dir` at
@@ -35,7 +35,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  runRegistry,
+  runLoadout,
   validateAgentEntry,
   validateMcpServersSurface,
   validateMcpServersSurfaceArray,
@@ -44,7 +44,7 @@ import {
   validateOverlayShape,
   validateSkillsSurface,
   validateSkillsSurfaceArray,
-} from "../verbs/registry.js";
+} from "../verbs/loadout.js";
 import type {
   GithubSpec,
   FetchedRepo,
@@ -74,7 +74,7 @@ function vendorDir(name: string): string {
 /**
  * TD-191 test-seam skill vendor-dir resolver: `<vendorBase>/skills/<name>`.
  * Mirrors the L-517 layout (typed subfolder) so tests assert paths under
- * `<base>/skills/<name>/` without touching `~/.igris/registry/`.
+ * `<base>/skills/<name>/` without touching `~/.igris/loadout/`.
  */
 function skillVendorDir(name: string): string {
   return join(vendorBase, "skills", name);
@@ -84,7 +84,7 @@ beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "igris-cli-harness-registry-"));
   overlayPath = join(tmpRoot, "overlay.json");
   originsPath = join(tmpRoot, "origins.json");
-  vendorBase = join(tmpRoot, "registry");
+  vendorBase = join(tmpRoot, "loadout");
   projectRoot = join(tmpRoot, "proj");
   mkdirSync(projectRoot, { recursive: true });
   // Most add tests need a real unversioned source file at canon/x.md.
@@ -111,7 +111,7 @@ function readOriginsFile(): Record<string, { type: string; dir: string; hash: st
 }
 
 /** A complete copy-mode add with the common test seams wired. */
-function addOpts(extra: Record<string, unknown>): Parameters<typeof runRegistry>[0] {
+function addOpts(extra: Record<string, unknown>): Parameters<typeof runLoadout>[0] {
   return {
     action: "add",
     projectRoot,
@@ -119,16 +119,16 @@ function addOpts(extra: Record<string, unknown>): Parameters<typeof runRegistry>
     originsPath,
     vendorDir,
     ...extra,
-  } as Parameters<typeof runRegistry>[0];
+  } as Parameters<typeof runLoadout>[0];
 }
 
 // ---------------------------------------------------------------------------
 // add (copy-vendor)
 // ---------------------------------------------------------------------------
 
-describe("registry add", () => {
+describe("loadout add", () => {
   it("copies the canonical into the vendored dir + records origin (layer=personal)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "mycustom",
         from: "canon/x.md",
@@ -171,7 +171,7 @@ describe("registry add", () => {
     writeFileSync(join(projectRoot, "vcanon", "v1.md"), "one\n");
     writeFileSync(join(projectRoot, "vcanon", "v2.md"), "two\n");
     writeFileSync(join(projectRoot, "vcanon", "skip.txt"), "nope\n");
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "vagent",
         from: "vcanon",
@@ -191,7 +191,7 @@ describe("registry add", () => {
     // FR-156: tree vendor brings the WHOLE source dir minus the skip-list.
     // The overlay still records `glob: 'v*.md'` (consumed by
     // `assembleClaudeHarness`'s body-picker), but unrelated sibling files
-    // are no longer dropped — that was the L-516 violation (registry copy
+    // are no longer dropped — that was the L-516 violation (loadout copy
     // was not self-sufficient when authors shipped sibling supporting
     // files like routing/ or archetypes/).
     expect(existsSync(join(vendorDir("vagent"), "v1.md"))).toBe(true);
@@ -200,7 +200,7 @@ describe("registry add", () => {
   });
 
   it("--versioned without --glob is a usage error (exit 2), no vendor dir", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "vagent",
         from: "vcanon",
@@ -214,7 +214,7 @@ describe("registry add", () => {
   });
 
   it("--glob without --versioned is a usage error (exit 2), no vendor dir", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "agent",
         from: "canon/x.md",
@@ -227,7 +227,7 @@ describe("registry add", () => {
   });
 
   it("rejects a second add with an existing overlay name (intra-overlay dedupe)", async () => {
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "dup",
         from: "canon/x.md",
@@ -237,7 +237,7 @@ describe("registry add", () => {
     const before = readFileSync(overlayPath, "utf-8");
     const originsBefore = readFileSync(originsPath, "utf-8");
     writeFileSync(join(projectRoot, "canon", "y.md"), "# y\nother\n");
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "dup",
         from: "canon/y.md",
@@ -267,7 +267,7 @@ describe("registry add", () => {
         ],
       }),
     );
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "forger",
         from: "canon/x.md",
@@ -282,7 +282,7 @@ describe("registry add", () => {
   });
 
   it("treats an absent base manifest as no base agents (no hard-fail)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "nobase",
         from: "canon/x.md",
@@ -294,7 +294,7 @@ describe("registry add", () => {
   });
 
   it("fails (exit 1) when the source file does not exist (nothing to copy)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "ghostsrc",
         from: "canon/missing.md",
@@ -308,15 +308,15 @@ describe("registry add", () => {
 
   it("requires <name>, --from, and --target (usage errors)", async () => {
     expect(
-      await runRegistry(
+      await runLoadout(
         addOpts({ from: "canon/x.md", targets: ["claude:p"] }),
       ),
     ).toBe(2);
     expect(
-      await runRegistry(addOpts({ name: "x", targets: ["claude:p"] })),
+      await runLoadout(addOpts({ name: "x", targets: ["claude:p"] })),
     ).toBe(2);
     expect(
-      await runRegistry(addOpts({ name: "x", from: "canon/x.md" })),
+      await runLoadout(addOpts({ name: "x", from: "canon/x.md" })),
     ).toBe(2);
   });
 
@@ -336,7 +336,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: vfront\n---\n",
     );
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "vfront",
         from: "vcanon",
@@ -367,7 +367,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "system-prompt-v1.md"),
       "v1 body\n",
     );
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "vplain",
         from: "vcanon",
@@ -390,7 +390,7 @@ describe("registry add", () => {
       join(projectRoot, "canon", "frontmatter.claude.md"),
       "---\nname: ufront\n---\n",
     );
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "ufront",
         from: "canon/x.md",
@@ -414,7 +414,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "fm body\n",
     );
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "vdouble",
         from: "vcanon",
@@ -447,7 +447,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: demo\ndescription: FR-152 α-assembly\n---\n",
     );
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "demo",
         from: "vcanon",
@@ -479,7 +479,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: idem\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "idem",
         from: "vcanon",
@@ -491,14 +491,14 @@ describe("registry add", () => {
     const harnessPath = join(vendorDir("idem"), "harness.claude.md");
     const first = readFileSync(harnessPath, "utf-8");
     // Remove the existing entry and re-add → same bytes.
-    await runRegistry({
+    await runLoadout({
       action: "remove",
       name: "idem",
       overlayPath,
       originsPath,
       vendorDir,
     });
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "idem",
         from: "vcanon",
@@ -522,7 +522,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: ver\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "ver",
         from: "vcanon",
@@ -546,7 +546,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "system-prompt-v1.md"),
       "body without sidecar\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "nofm",
         from: "vcanon",
@@ -568,7 +568,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: hashed\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "hashed",
         from: "vcanon",
@@ -580,7 +580,7 @@ describe("registry add", () => {
     const beforeHash = readOriginsFile()["agent:hashed"].hash;
     // `update` re-vendors + re-assembles; the hash MUST stay constant when
     // source bytes are unchanged.
-    const upd = await runRegistry({
+    const upd = await runLoadout({
       action: "update",
       name: "hashed",
       projectRoot,
@@ -611,7 +611,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: gemstr\ndescription: gemini string-tools test\ntools: Read\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "gemstr",
         from: "vcanon",
@@ -643,7 +643,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: gemmem\ndescription: gemini memory-drop test\ntools: Read\nmemory: project\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "gemmem",
         from: "vcanon",
@@ -672,7 +672,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: gemedit\ntools: Read, Edit, Bash, mcp__igris-brain__igris_error_lookup\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "gemedit",
         from: "vcanon",
@@ -694,7 +694,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: gemcsv\ntools: Read, Grep, Bash, FakeFutureTool\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "gemcsv",
         from: "vcanon",
@@ -715,7 +715,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: gemarr\ntools: [Read, Grep]\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "gemarr",
         from: "vcanon",
@@ -741,7 +741,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.gemini.md"),
       "---\nname: gemov-overridden\nkind: local\ntools: [read_file, web_search]\ncustom_field: special\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "gemov",
         from: "vcanon",
@@ -763,7 +763,7 @@ describe("registry add", () => {
   it("FR-158: assembleGeminiHarness no-ops when neither frontmatter sidecar is present (back-compat)", async () => {
     mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
     writeFileSync(join(projectRoot, "vcanon", "x.md"), "body without any sidecar\n");
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "gemnone",
         from: "vcanon/x.md",
@@ -782,7 +782,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: gemidem\ntools: Read\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "gemidem",
         from: "vcanon",
@@ -793,7 +793,7 @@ describe("registry add", () => {
     );
     const harnessPath = join(vendorDir("gemidem"), "harness.gemini.md");
     const first = readFileSync(harnessPath, "utf-8");
-    await runRegistry({
+    await runLoadout({
       action: "update",
       name: "gemidem",
       projectRoot,
@@ -812,7 +812,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: gemboth\ntools: Read\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "gemboth",
         from: "vcanon",
@@ -839,7 +839,7 @@ describe("registry add", () => {
     // A direct add with a gemini target succeeds and produces a valid overlay
     // entry. FR-151 already extended the type enum to include gemini for agent
     // targets; this exercises the path end-to-end.
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "gem",
         from: "canon/x.md",
@@ -873,7 +873,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: cdx\ndescription: FR-159 codex assembler\n---\n",
     );
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "cdx",
         from: "vcanon",
@@ -903,7 +903,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: cdxidem\ndescription: idempotency check\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "cdxidem",
         from: "vcanon",
@@ -914,14 +914,14 @@ describe("registry add", () => {
     );
     const tomlPath = join(vendorDir("cdxidem"), "harness.codex.toml");
     const first = readFileSync(tomlPath, "utf-8");
-    await runRegistry({
+    await runLoadout({
       action: "remove",
       name: "cdxidem",
       overlayPath,
       originsPath,
       vendorDir,
     });
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "cdxidem",
         from: "vcanon",
@@ -946,7 +946,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: cdxver\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "cdxver",
         from: "vcanon",
@@ -967,7 +967,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "system-prompt-v1.md"),
       "body without sidecar\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "cdxnofm",
         from: "vcanon",
@@ -988,7 +988,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: cdxhash\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "cdxhash",
         from: "vcanon",
@@ -998,7 +998,7 @@ describe("registry add", () => {
       }),
     );
     const beforeHash = readOriginsFile()["agent:cdxhash"].hash;
-    const upd = await runRegistry({
+    const upd = await runLoadout({
       action: "update",
       name: "cdxhash",
       projectRoot,
@@ -1018,7 +1018,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: triple\ndescription: triple-harness fixture\ntools: Read\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "triple",
         from: "vcanon",
@@ -1054,7 +1054,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: cdxbx\n---\n",
     );
-    const bxDir = join(tmpRoot, "brain", "registry", "body-exceptions");
+    const bxDir = join(tmpRoot, "brain", "loadout", "body-exceptions");
     mkdirSync(bxDir, { recursive: true });
     writeFileSync(
       join(bxDir, "cdxbx.json"),
@@ -1062,11 +1062,11 @@ describe("registry add", () => {
     );
     // The personal body-exception resolution path keys on the `bodyException`
     // option + IGRIS_BRAIN_DIR. We surface the bx via IGRIS_BRAIN_DIR so the
-    // sidecar landed at brain/registry/body-exceptions/cdxbx.json is found.
+    // sidecar landed at brain/loadout/body-exceptions/cdxbx.json is found.
     const savedBrain = process.env.IGRIS_BRAIN_DIR;
     process.env.IGRIS_BRAIN_DIR = join(tmpRoot, "brain");
     try {
-      await runRegistry(
+      await runLoadout(
         addOpts({
           name: "cdxbx",
           from: "vcanon",
@@ -1106,7 +1106,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: cdxtq\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "cdxtq",
         from: "vcanon",
@@ -1139,7 +1139,7 @@ describe("registry add", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: cdxesc\ndescription: has a \\backslash and \"quote\" in it\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "cdxesc",
         from: "vcanon",
@@ -1178,7 +1178,7 @@ describe("registry add", () => {
     writeFileSync(join(projectRoot, "vcanon", "frontmatter.claude.md"), goldenFm);
     writeFileSync(join(projectRoot, "vcanon", "system-prompt-v1.md"), goldenBody);
 
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "fixture-agent",
         from: "vcanon",
@@ -1213,7 +1213,7 @@ describe("registry add", () => {
 // (§18.1 / L-554) — the golden-parity test is the regression guard.
 // ---------------------------------------------------------------------------
 
-describe("registry add — FR-171 assembleOpencodeHarness", () => {
+describe("loadout add — FR-171 assembleOpencodeHarness", () => {
   it("runAdd assembles harness.opencode.md by auto-translating frontmatter.claude.md (boolean tools map)", async () => {
     mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
     writeFileSync(
@@ -1224,7 +1224,7 @@ describe("registry add — FR-171 assembleOpencodeHarness", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: ocagent\ndescription: opencode assembler\ntools: Read, Grep, Bash\n---\n",
     );
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "ocagent",
         from: "vcanon",
@@ -1254,7 +1254,7 @@ describe("registry add — FR-171 assembleOpencodeHarness", () => {
       join(projectRoot, "vcanon", "frontmatter.claude.md"),
       "---\nname: ocws\ntools: [Read, WebSearch, Glob]\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "ocws",
         from: "vcanon",
@@ -1281,7 +1281,7 @@ describe("registry add — FR-171 assembleOpencodeHarness", () => {
       join(projectRoot, "vcanon", "frontmatter.opencode.md"),
       "---\nmode: primary\nname: ocov-overridden\ntools:\n  bash: true\ncustom_field: special\n---\n",
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "ocov",
         from: "vcanon",
@@ -1302,7 +1302,7 @@ describe("registry add — FR-171 assembleOpencodeHarness", () => {
   it("assembleOpencodeHarness no-ops when neither frontmatter sidecar is present (back-compat)", async () => {
     mkdirSync(join(projectRoot, "vcanon"), { recursive: true });
     writeFileSync(join(projectRoot, "vcanon", "x.md"), "body without any sidecar\n");
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "ocnone",
         from: "vcanon/x.md",
@@ -1314,12 +1314,12 @@ describe("registry add — FR-171 assembleOpencodeHarness", () => {
 
   it("FR-171 GOLDEN PARITY (§18.1 / L-554): TS assembleOpencodeHarness byte-equals the bash inline-python3 translator", () => {
     // The primary regression guard for the dual-implemented translator. The TS
-    // `assembleOpencodeHarness` and the bash `assemble_agent_harness_into_registry
+    // `assembleOpencodeHarness` and the bash `assemble_agent_harness_into_loadout
     // opencode` inline python3 block MUST produce byte-identical
     // `harness.opencode.md` for the same canonical input. We synthesize ONE
     // vendored agent dir, run the bash compiler against it (which writes the
-    // bash-side harness.opencode.md INTO the registry dir), capture those bytes,
-    // delete the harness, then re-run the TS assembler via runRegistry against
+    // bash-side harness.opencode.md INTO the loadout dir), capture those bytes,
+    // delete the harness, then re-run the TS assembler via runLoadout against
     // the same inputs and compare.
     if (!toolingAvailable()) {
       return;
@@ -1328,9 +1328,9 @@ describe("registry add — FR-171 assembleOpencodeHarness", () => {
     const body = "# parity\n\nparity body line one\nparity body line two\n";
 
     // --- bash side ---------------------------------------------------------
-    // Synthesize a vendored registry agent dir + a manifest, run COMPILE_SH.
+    // Synthesize a vendored loadout agent dir + a manifest, run COMPILE_SH.
     const brainDir = join(tmpRoot, "brain-bash");
-    const bashRegAgent = join(brainDir, "registry", "agents", "parity");
+    const bashRegAgent = join(brainDir, "loadout", "agents", "parity");
     mkdirSync(bashRegAgent, { recursive: true });
     writeFileSync(join(bashRegAgent, "frontmatter.claude.md"), fm);
     writeFileSync(join(bashRegAgent, "system-prompt-v1.md"), body);
@@ -1364,7 +1364,7 @@ describe("registry add — FR-171 assembleOpencodeHarness", () => {
     // Disable IGRIS_BRAIN_DIR for the TS path so it uses the injected vendorDir.
     const savedBrain = process.env.IGRIS_BRAIN_DIR;
     delete process.env.IGRIS_BRAIN_DIR;
-    return runRegistry(
+    return runLoadout(
       addOpts({
         name: "parity",
         from: "pcanon",
@@ -1386,9 +1386,9 @@ describe("registry add — FR-171 assembleOpencodeHarness", () => {
 // --target parsing (still pure parse — must fail fast BEFORE copy on bad input)
 // ---------------------------------------------------------------------------
 
-describe("registry add — --target parsing", () => {
+describe("loadout add — --target parsing", () => {
   it("parses type:path and supports multiple --target", async () => {
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "multi",
         from: "canon/x.md",
@@ -1408,7 +1408,7 @@ describe("registry add — --target parsing", () => {
   });
 
   it("preserves a path containing ':' (splits on first colon only)", async () => {
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "colon",
         from: "canon/x.md",
@@ -1425,7 +1425,7 @@ describe("registry add — --target parsing", () => {
   });
 
   it("rejects an unknown target type (exit 2), no vendor dir", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "bad",
         from: "canon/x.md",
@@ -1438,7 +1438,7 @@ describe("registry add — --target parsing", () => {
   });
 
   it("FR-171: accepts an opencode agent target (now first-class)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "oc-agent",
         from: "canon/x.md",
@@ -1455,7 +1455,7 @@ describe("registry add — --target parsing", () => {
   });
 
   it("rejects a target with no colon (exit 2), no vendor dir", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "bad",
         from: "canon/x.md",
@@ -1471,12 +1471,12 @@ describe("registry add — --target parsing", () => {
 // --canonical deprecated alias
 // ---------------------------------------------------------------------------
 
-describe("registry add — --canonical deprecated alias", () => {
+describe("loadout add — --canonical deprecated alias", () => {
   it("the verb still accepts the value via the from field (alias coalesced at CLI)", async () => {
     // The CLI boundary coalesces --canonical into opts.from; the verb itself
     // takes a single `from` field. Assert from works (the alias path is wired
     // in index.ts; this asserts the field the alias maps to).
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "aliased",
         from: "canon/x.md",
@@ -1788,7 +1788,7 @@ describe("validateHookSurface — FR-180 (D7)", () => {
     event: "PreToolUse",
     layer: "personal",
     canonical: {
-      command: "$HOME/.igris/registry/hooks/my-guard/PreToolUse.sh",
+      command: "$HOME/.igris/loadout/hooks/my-guard/PreToolUse.sh",
       matcher: "Write|Edit",
       timeout: 10,
     },
@@ -1877,9 +1877,9 @@ describe("validateHookSurface — FR-180 (D7)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// FR-180 (D7): runAddHook (registry add-hook) — the personal hook overlay
-// writer + registry-script materializer. Pins the write-path guards (name/
-// event/target, core+intra-overlay collision, the registry-prefix command, the
+// FR-180 (D7): runAddHook (loadout add-hook) — the personal hook overlay
+// writer + loadout-script materializer. Pins the write-path guards (name/
+// event/target, core+intra-overlay collision, the loadout-prefix command, the
 // script scaffold). Sandboxed via explicit overlayPath + hookScriptRoot.
 // ---------------------------------------------------------------------------
 describe("runAddHook — FR-180 (D7) personal write path", () => {
@@ -1892,7 +1892,7 @@ describe("runAddHook — FR-180 (D7) personal write path", () => {
     tmp = mkdtempSync(join(tmpdir(), "igris-add-hook-"));
     overlayPath = join(tmp, "overlay.json");
     projectRoot = join(tmp, "proj");
-    scriptRoot = join(tmp, "registry-hooks");
+    scriptRoot = join(tmp, "loadout-hooks");
     mkdirSync(projectRoot, { recursive: true });
     writeFileSync(
       join(projectRoot, "harness-manifest.json"),
@@ -1903,8 +1903,8 @@ describe("runAddHook — FR-180 (D7) personal write path", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("writes a hooks block (registry-prefix command) + the script scaffold (exit 0)", async () => {
-    const code = await runRegistry({
+  it("writes a hooks block (loadout-prefix command) + the script scaffold (exit 0)", async () => {
+    const code = await runLoadout({
       action: "add-hook",
       name: "my-guard",
       event: "PreToolUse",
@@ -1919,10 +1919,10 @@ describe("runAddHook — FR-180 (D7) personal write path", () => {
     expect(blocks).toHaveLength(1);
     expect(blocks[0].name).toBe("my-guard");
     expect(blocks[0].event).toBe("PreToolUse");
-    // R2: the command MUST use the registry prefix so the canonical re-merge
+    // R2: the command MUST use the loadout prefix so the canonical re-merge
     // preserves it.
     expect(blocks[0].canonical.command).toBe(
-      "$HOME/.igris/registry/hooks/my-guard/PreToolUse.sh",
+      "$HOME/.igris/loadout/hooks/my-guard/PreToolUse.sh",
     );
     expect(blocks[0].canonical.matcher).toBe("Write|Edit");
     // default target is claude:merge.
@@ -1934,7 +1934,7 @@ describe("runAddHook — FR-180 (D7) personal write path", () => {
   });
 
   it("requires --event", async () => {
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add-hook",
       name: "g",
       projectRoot,
@@ -1945,7 +1945,7 @@ describe("runAddHook — FR-180 (D7) personal write path", () => {
   });
 
   it("rejects an event not in the portable six", async () => {
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add-hook",
       name: "g",
       event: "OnError",
@@ -1957,7 +1957,7 @@ describe("runAddHook — FR-180 (D7) personal write path", () => {
   });
 
   it("rejects an intra-overlay (event, target) cell collision", async () => {
-    const first = await runRegistry({
+    const first = await runLoadout({
       action: "add-hook",
       name: "g1",
       event: "PreToolUse",
@@ -1967,7 +1967,7 @@ describe("runAddHook — FR-180 (D7) personal write path", () => {
     });
     expect(first).toBe(0);
     // A second hook claiming the SAME (PreToolUse, claude) cell is rejected.
-    const second = await runRegistry({
+    const second = await runLoadout({
       action: "add-hook",
       name: "g2",
       event: "PreToolUse",
@@ -1979,7 +1979,7 @@ describe("runAddHook — FR-180 (D7) personal write path", () => {
   });
 
   it("rejects a duplicate hook name in the overlay", async () => {
-    await runRegistry({
+    await runLoadout({
       action: "add-hook",
       name: "dup",
       event: "PreToolUse",
@@ -1987,7 +1987,7 @@ describe("runAddHook — FR-180 (D7) personal write path", () => {
       overlayPath,
       hookScriptRoot: scriptRoot,
     });
-    const again = await runRegistry({
+    const again = await runLoadout({
       action: "add-hook",
       name: "dup",
       event: "PostToolUse",
@@ -2005,7 +2005,7 @@ describe("runAddHook — FR-180 (D7) personal write path", () => {
 
 /**
  * FR-155 scope vitest matrix — pins the runAdd + runAddSkill scope handling
- * documented in `cli/src/verbs/registry.ts`.
+ * documented in `cli/src/verbs/loadout.ts`.
  *
  *   - default add (no --scope / no --project) → on-disk overlay OMITS the
  *     `scope` field (schema treats absent as global) so the diff for an
@@ -2027,7 +2027,7 @@ describe("runAddHook — FR-180 (D7) personal write path", () => {
  * derive `EXPECTED_TMP_REAL` once from `realpathSync(tmpdir())` so the test
  * works on Linux too (where the realpath is just the literal path).
  */
-describe("registry add — FR-155 scope", () => {
+describe("loadout add — FR-155 scope", () => {
   // Derive the canonical realpath of the OS tmp dir so the test works on
   // BOTH macOS (where /tmp -> /private/tmp) and Linux (where they coincide).
   // The matrix below stages `--project <path>` values under tmpdir() and
@@ -2042,7 +2042,7 @@ describe("registry add — FR-155 scope", () => {
   };
 
   it("default add (no --scope, no --project) → overlay entry has no `scope` field", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "globdefault",
         from: "canon/x.md",
@@ -2061,13 +2061,13 @@ describe("registry add — FR-155 scope", () => {
   it("--project P → entry.scope === {type:'project', paths:[realpath(P)]}", async () => {
     const projP = join(projectRoot, "consumerA");
     mkdirSync(projP, { recursive: true });
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "scoped",
         from: "canon/x.md",
         targets: ["claude:.claude/agents/scoped.md"],
         project: projP,
-      } as Parameters<typeof runRegistry>[0]),
+      } as Parameters<typeof runLoadout>[0]),
     );
     expect(code).toBe(0);
     const overlay = readOverlayFile() as {
@@ -2086,22 +2086,22 @@ describe("registry add — FR-155 scope", () => {
     const projQ = join(projectRoot, "consumerB");
     mkdirSync(projP, { recursive: true });
     mkdirSync(projQ, { recursive: true });
-    let code = await runRegistry(
+    let code = await runLoadout(
       addOpts({
         name: "multi",
         from: "canon/x.md",
         targets: ["claude:.claude/agents/multi.md"],
         project: projP,
-      } as Parameters<typeof runRegistry>[0]),
+      } as Parameters<typeof runLoadout>[0]),
     );
     expect(code).toBe(0);
-    code = await runRegistry(
+    code = await runLoadout(
       addOpts({
         name: "multi",
         from: "canon/x.md",
         targets: ["claude:.claude/agents/multi.md"],
         project: projQ,
-      } as Parameters<typeof runRegistry>[0]),
+      } as Parameters<typeof runLoadout>[0]),
     );
     expect(code).toBe(0);
     const overlay = readOverlayFile() as {
@@ -2117,22 +2117,22 @@ describe("registry add — FR-155 scope", () => {
   it("re-add --project P (same) on existing project entry is IDEMPOTENT (no duplicate, exit 0)", async () => {
     const projP = join(projectRoot, "consumerA");
     mkdirSync(projP, { recursive: true });
-    let code = await runRegistry(
+    let code = await runLoadout(
       addOpts({
         name: "idem",
         from: "canon/x.md",
         targets: ["claude:.claude/agents/idem.md"],
         project: projP,
-      } as Parameters<typeof runRegistry>[0]),
+      } as Parameters<typeof runLoadout>[0]),
     );
     expect(code).toBe(0);
-    code = await runRegistry(
+    code = await runLoadout(
       addOpts({
         name: "idem",
         from: "canon/x.md",
         targets: ["claude:.claude/agents/idem.md"],
         project: projP,
-      } as Parameters<typeof runRegistry>[0]),
+      } as Parameters<typeof runLoadout>[0]),
     );
     expect(code).toBe(0);
     const overlay = readOverlayFile() as {
@@ -2146,7 +2146,7 @@ describe("registry add — FR-155 scope", () => {
   });
 
   it("re-add --project Q against an existing GLOBAL entry → exit 1 with --scope project hint", async () => {
-    let code = await runRegistry(
+    let code = await runLoadout(
       addOpts({
         name: "globthenproj",
         from: "canon/x.md",
@@ -2157,13 +2157,13 @@ describe("registry add — FR-155 scope", () => {
     const projQ = join(projectRoot, "consumerB");
     mkdirSync(projQ, { recursive: true });
     const overlayBefore = readFileSync(overlayPath, "utf-8");
-    code = await runRegistry(
+    code = await runLoadout(
       addOpts({
         name: "globthenproj",
         from: "canon/x.md",
         targets: ["claude:.claude/agents/globthenproj.md"],
         project: projQ,
-      } as Parameters<typeof runRegistry>[0]),
+      } as Parameters<typeof runLoadout>[0]),
     );
     expect(code).toBe(1);
     // Overlay byte-unchanged — reject is non-destructive.
@@ -2171,7 +2171,7 @@ describe("registry add — FR-155 scope", () => {
   });
 
   it("--scope project --project Q on existing GLOBAL entry → CONVERT to project (paths=[realpath(Q)])", async () => {
-    let code = await runRegistry(
+    let code = await runLoadout(
       addOpts({
         name: "convert",
         from: "canon/x.md",
@@ -2181,14 +2181,14 @@ describe("registry add — FR-155 scope", () => {
     expect(code).toBe(0);
     const projQ = join(projectRoot, "consumerC");
     mkdirSync(projQ, { recursive: true });
-    code = await runRegistry(
+    code = await runLoadout(
       addOpts({
         name: "convert",
         from: "canon/x.md",
         targets: ["claude:.claude/agents/convert.md"],
         scope: "project",
         project: projQ,
-      } as Parameters<typeof runRegistry>[0]),
+      } as Parameters<typeof runLoadout>[0]),
     );
     expect(code).toBe(0);
     const overlay = readOverlayFile() as {
@@ -2204,22 +2204,22 @@ describe("registry add — FR-155 scope", () => {
   it("--scope global on existing project entry → CONVERT to global (scope field DROPPED)", async () => {
     const projP = join(projectRoot, "consumerD");
     mkdirSync(projP, { recursive: true });
-    let code = await runRegistry(
+    let code = await runLoadout(
       addOpts({
         name: "globback",
         from: "canon/x.md",
         targets: ["claude:.claude/agents/globback.md"],
         project: projP,
-      } as Parameters<typeof runRegistry>[0]),
+      } as Parameters<typeof runLoadout>[0]),
     );
     expect(code).toBe(0);
-    code = await runRegistry(
+    code = await runLoadout(
       addOpts({
         name: "globback",
         from: "canon/x.md",
         targets: ["claude:.claude/agents/globback.md"],
         scope: "global",
-      } as Parameters<typeof runRegistry>[0]),
+      } as Parameters<typeof runLoadout>[0]),
     );
     expect(code).toBe(0);
     const overlay = readOverlayFile() as {
@@ -2231,32 +2231,32 @@ describe("registry add — FR-155 scope", () => {
   });
 
   it("--scope global + --project is a USAGE error (exit 2)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "badcombo",
         from: "canon/x.md",
         targets: ["claude:.claude/agents/badcombo.md"],
         scope: "global",
         project: "/tmp/foo",
-      } as Parameters<typeof runRegistry>[0]),
+      } as Parameters<typeof runLoadout>[0]),
     );
     expect(code).toBe(2);
   });
 
   it("--scope project without --project is a USAGE error (exit 2)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "badscope",
         from: "canon/x.md",
         targets: ["claude:.claude/agents/badscope.md"],
         scope: "project",
-      } as Parameters<typeof runRegistry>[0]),
+      } as Parameters<typeof runLoadout>[0]),
     );
     expect(code).toBe(2);
   });
 });
 
-describe("registry add-skill — FR-155 scope", () => {
+describe("loadout add-skill — FR-155 scope", () => {
   const realpathOf = (p: string): string => {
     const fs = require("node:fs") as typeof import("node:fs");
     try {
@@ -2277,7 +2277,7 @@ describe("registry add-skill — FR-155 scope", () => {
     return src;
   }
 
-  function skillOpts(extra: Record<string, unknown>): Parameters<typeof runRegistry>[0] {
+  function skillOpts(extra: Record<string, unknown>): Parameters<typeof runLoadout>[0] {
     return {
       action: "add-skill",
       projectRoot,
@@ -2285,12 +2285,12 @@ describe("registry add-skill — FR-155 scope", () => {
       originsPath,
       skillVendorDir,
       ...extra,
-    } as Parameters<typeof runRegistry>[0];
+    } as Parameters<typeof runLoadout>[0];
   }
 
   it("default add-skill (no --scope, no --project) → block has no `scope` field", async () => {
     const src = stageSkillsSource();
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({
         name: "myskills",
         from: src,
@@ -2310,7 +2310,7 @@ describe("registry add-skill — FR-155 scope", () => {
     const src = stageSkillsSource();
     const projP = join(projectRoot, "consumerSkillA");
     mkdirSync(projP, { recursive: true });
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({
         name: "myskills",
         from: src,
@@ -2335,7 +2335,7 @@ describe("registry add-skill — FR-155 scope", () => {
     const projQ = join(projectRoot, "consumerSkillB");
     mkdirSync(projP, { recursive: true });
     mkdirSync(projQ, { recursive: true });
-    let code = await runRegistry(
+    let code = await runLoadout(
       skillOpts({
         name: "myskills",
         from: src,
@@ -2344,7 +2344,7 @@ describe("registry add-skill — FR-155 scope", () => {
       }),
     );
     expect(code).toBe(0);
-    code = await runRegistry(
+    code = await runLoadout(
       skillOpts({
         name: "myskills",
         from: src,
@@ -2365,7 +2365,7 @@ describe("registry add-skill — FR-155 scope", () => {
 
   it("re-add --project Q against existing GLOBAL block → exit 1 with --scope project hint", async () => {
     const src = stageSkillsSource();
-    let code = await runRegistry(
+    let code = await runLoadout(
       skillOpts({
         name: "myskills",
         from: src,
@@ -2376,7 +2376,7 @@ describe("registry add-skill — FR-155 scope", () => {
     const projQ = join(projectRoot, "consumerSkillC");
     mkdirSync(projQ, { recursive: true });
     const overlayBefore = readFileSync(overlayPath, "utf-8");
-    code = await runRegistry(
+    code = await runLoadout(
       skillOpts({
         name: "myskills",
         from: src,
@@ -2390,7 +2390,7 @@ describe("registry add-skill — FR-155 scope", () => {
 
   it("--scope project --project Q on existing GLOBAL block → CONVERT to project", async () => {
     const src = stageSkillsSource();
-    let code = await runRegistry(
+    let code = await runLoadout(
       skillOpts({
         name: "myskills",
         from: src,
@@ -2400,7 +2400,7 @@ describe("registry add-skill — FR-155 scope", () => {
     expect(code).toBe(0);
     const projQ = join(projectRoot, "consumerSkillD");
     mkdirSync(projQ, { recursive: true });
-    code = await runRegistry(
+    code = await runLoadout(
       skillOpts({
         name: "myskills",
         from: src,
@@ -2424,7 +2424,7 @@ describe("registry add-skill — FR-155 scope", () => {
     const src = stageSkillsSource();
     const projP = join(projectRoot, "consumerSkillE");
     mkdirSync(projP, { recursive: true });
-    let code = await runRegistry(
+    let code = await runLoadout(
       skillOpts({
         name: "myskills",
         from: src,
@@ -2433,7 +2433,7 @@ describe("registry add-skill — FR-155 scope", () => {
       }),
     );
     expect(code).toBe(0);
-    code = await runRegistry(
+    code = await runLoadout(
       skillOpts({
         name: "myskills",
         from: src,
@@ -2451,7 +2451,7 @@ describe("registry add-skill — FR-155 scope", () => {
 
   it("--scope global + --project is a USAGE error (exit 2)", async () => {
     const src = stageSkillsSource();
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({
         name: "myskills",
         from: src,
@@ -2465,7 +2465,7 @@ describe("registry add-skill — FR-155 scope", () => {
 
   it("--scope project without --project is a USAGE error (exit 2)", async () => {
     const src = stageSkillsSource();
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({
         name: "myskills",
         from: src,
@@ -2481,9 +2481,9 @@ describe("registry add-skill — FR-155 scope", () => {
 // remove + list
 // ---------------------------------------------------------------------------
 
-describe("registry remove", () => {
+describe("loadout remove", () => {
   it("removes entry + vendored copy + origin; last leaves a valid empty overlay", async () => {
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "only",
         from: "canon/x.md",
@@ -2494,7 +2494,7 @@ describe("registry remove", () => {
     // TD-191: agent origin keyed `agent:<name>`.
     expect("agent:only" in readOriginsFile()).toBe(true);
 
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "remove",
       name: "only",
       overlayPath,
@@ -2512,7 +2512,7 @@ describe("registry remove", () => {
   });
 
   it("rejects removing a nonexistent name (exit 1), overlay unchanged", async () => {
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "keep",
         from: "canon/x.md",
@@ -2520,7 +2520,7 @@ describe("registry remove", () => {
       }),
     );
     const before = readFileSync(overlayPath, "utf-8");
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "remove",
       name: "ghost",
       overlayPath,
@@ -2548,14 +2548,14 @@ describe("registry remove", () => {
         surfaces: { skills: [skillsBlock] },
       }),
     );
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "tmp",
         from: "canon/x.md",
         targets: ["claude:.claude/agents/tmp.md"],
       }),
     );
-    await runRegistry({
+    await runLoadout({
       action: "remove",
       name: "tmp",
       overlayPath,
@@ -2567,23 +2567,23 @@ describe("registry remove", () => {
   });
 });
 
-describe("registry list", () => {
+describe("loadout list", () => {
   it("reports empty then populated", async () => {
-    expect(await runRegistry({ action: "list", overlayPath })).toBe(0);
-    await runRegistry(
+    expect(await runLoadout({ action: "list", overlayPath })).toBe(0);
+    await runLoadout(
       addOpts({
         name: "shown",
         from: "canon/x.md",
         targets: ["claude:.claude/agents/shown.md"],
       }),
     );
-    expect(await runRegistry({ action: "list", overlayPath })).toBe(0);
+    expect(await runLoadout({ action: "list", overlayPath })).toBe(0);
   });
 });
 
-describe("registry unknown action", () => {
+describe("loadout unknown action", () => {
   it("returns 2 and writes nothing", async () => {
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "bogus" as never,
       overlayPath,
     });
@@ -2603,7 +2603,7 @@ describe("registry unknown action", () => {
  */
 function skillOpts(
   extra: Record<string, unknown>,
-): Parameters<typeof runRegistry>[0] {
+): Parameters<typeof runLoadout>[0] {
   return {
     action: "add-skill",
     projectRoot,
@@ -2614,10 +2614,10 @@ function skillOpts(
     name: "demo",
     from: "skills/demo",
     ...extra,
-  } as Parameters<typeof runRegistry>[0];
+  } as Parameters<typeof runLoadout>[0];
 }
 
-describe("registry add-skill", () => {
+describe("loadout add-skill", () => {
   beforeEach(() => {
     // A live skills source: `skills/demo/SKILL.md` (TD-191 single-skill shape;
     // the vendor primitive copies it as `<vendoredDir>/demo/SKILL.md`).
@@ -2629,7 +2629,7 @@ describe("registry add-skill", () => {
   });
 
   it("vendors the skill tree, writes a schema-valid block array, records skill origin", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({
         targets: [
           "agents:symlink:.agents/skills",
@@ -2655,7 +2655,7 @@ describe("registry add-skill", () => {
     ]);
     // The written block validates against the schema port.
     expect(validateSkillsSurface(block)).toBeNull();
-    // L-517: vendored tree exists at registrySkillDirPath("demo")/demo/SKILL.md
+    // L-517: vendored tree exists at loadoutSkillDirPath("demo")/demo/SKILL.md
     // (the test-seam vendorDir resolves to vendorBase/skills/<name>).
     const vendored = join(vendorBase, "skills", "demo", "demo", "SKILL.md");
     expect(existsSync(vendored)).toBe(true);
@@ -2676,8 +2676,8 @@ describe("registry add-skill", () => {
       join(projectRoot, "skills", "other", "SKILL.md"),
       "---\nname: other\ndescription: o\n---\nother body\n",
     );
-    await runRegistry(skillOpts({ targets: ["agents:symlink:.agents/skills-demo"] }));
-    const code = await runRegistry(
+    await runLoadout(skillOpts({ targets: ["agents:symlink:.agents/skills-demo"] }));
+    const code = await runLoadout(
       skillOpts({
         name: "other",
         from: "skills/other",
@@ -2702,7 +2702,7 @@ describe("registry add-skill", () => {
   });
 
   it("same-name re-add updates the existing block IN PLACE (re-vendor, hash advance)", async () => {
-    await runRegistry(skillOpts({ targets: ["agents:symlink:.agents/skills"] }));
+    await runLoadout(skillOpts({ targets: ["agents:symlink:.agents/skills"] }));
     const hashBefore = (
       readOriginsFile() as Record<string, Record<string, unknown>>
     )["skill:demo"].hash as string;
@@ -2712,7 +2712,7 @@ describe("registry add-skill", () => {
       join(projectRoot, "skills", "demo", "SKILL.md"),
       "---\nname: demo\ndescription: d\n---\nMUTATED body\n",
     );
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["agents:symlink:.agents/skills"] }),
     );
     expect(code).toBe(0);
@@ -2738,9 +2738,9 @@ describe("registry add-skill", () => {
   });
 
   it("same-name re-add unions targets (idempotent for an exact dup)", async () => {
-    await runRegistry(skillOpts({ targets: ["agents:symlink:.agents/skills-demo"] }));
+    await runLoadout(skillOpts({ targets: ["agents:symlink:.agents/skills-demo"] }));
     // Adding a NEW target path for the SAME skill — appended to the same block.
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({
         targets: ["claude:symlink:.claude/skills"],
       }),
@@ -2756,7 +2756,7 @@ describe("registry add-skill", () => {
     ]);
     // An exact re-run is idempotent (same paths union to same set).
     const before = readFileSync(overlayPath, "utf-8");
-    const code2 = await runRegistry(
+    const code2 = await runLoadout(
       skillOpts({ targets: ["agents:symlink:.agents/skills-demo"] }),
     );
     expect(code2).toBe(0);
@@ -2772,14 +2772,14 @@ describe("registry add-skill", () => {
   });
 
   it("same-name re-add WITHOUT --from re-vendors from the recorded origin dir", async () => {
-    await runRegistry(skillOpts({ targets: ["agents:symlink:.agents/skills"] }));
+    await runLoadout(skillOpts({ targets: ["agents:symlink:.agents/skills"] }));
     // Mutate the source (consumer side).
     writeFileSync(
       join(projectRoot, "skills", "demo", "SKILL.md"),
       "---\nname: demo\ndescription: d\n---\nSECOND PASS\n",
     );
     // No --from: writer should fall back to the recorded origin's dir.
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add-skill",
       name: "demo",
       projectRoot,
@@ -2800,7 +2800,7 @@ describe("registry add-skill", () => {
   });
 
   it("first-time --from is REQUIRED (exit 2 with no recorded origin)", async () => {
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add-skill",
       name: "newname",
       projectRoot,
@@ -2838,7 +2838,7 @@ describe("registry add-skill", () => {
     writeFileSync(overlayPath, JSON.stringify(malformed, null, 2) + "\n");
     const before = readFileSync(overlayPath, "utf-8");
 
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["agents:symlink:.agents/skills"] }),
     );
 
@@ -2849,7 +2849,7 @@ describe("registry add-skill", () => {
 
   it("allows sibling personal skill blocks to share a target root", async () => {
     // First block projects one skill into the shared agents root.
-    await runRegistry(skillOpts({ targets: ["agents:symlink:.agents/skills"] }));
+    await runLoadout(skillOpts({ targets: ["agents:symlink:.agents/skills"] }));
     // Second skill, different name, SAME consumer root. This is valid because
     // the compiler appends each skill name below the root.
     mkdirSync(join(projectRoot, "skills", "other"), { recursive: true });
@@ -2857,7 +2857,7 @@ describe("registry add-skill", () => {
       join(projectRoot, "skills", "other", "SKILL.md"),
       "---\nname: other\ndescription: o\n---\nbody\n",
     );
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({
         name: "other",
         from: "skills/other",
@@ -2908,7 +2908,7 @@ describe("registry add-skill", () => {
     );
 
     expect(
-      await runRegistry(
+      await runLoadout(
         skillOpts({
           name: "content-pipeline",
           from: "skills/content-pipeline",
@@ -2917,7 +2917,7 @@ describe("registry add-skill", () => {
       ),
     ).toBe(0);
     expect(
-      await runRegistry(
+      await runLoadout(
         skillOpts({
           name: "oss-readme",
           from: "skills/oss-readme",
@@ -2981,7 +2981,7 @@ describe("registry add-skill", () => {
         },
       }),
     );
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["agents:symlink:.agents/skills"] }),
     );
     expect(code).toBe(1);
@@ -2993,7 +2993,7 @@ describe("registry add-skill", () => {
 
   it("requires name + at least one target (usage error exit 2)", async () => {
     expect(
-      await runRegistry({
+      await runLoadout({
         action: "add-skill",
         overlayPath,
         from: "skills/demo",
@@ -3001,7 +3001,7 @@ describe("registry add-skill", () => {
       }),
     ).toBe(2);
     expect(
-      await runRegistry({
+      await runLoadout({
         action: "add-skill",
         overlayPath,
         projectRoot,
@@ -3013,18 +3013,18 @@ describe("registry add-skill", () => {
   });
 
   it("rejects a nonexistent source dir (exit 1)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ from: "does-not-exist", targets: ["agents:symlink:.agents/skills"] }),
     );
     expect(code).toBe(1);
   });
 
-  it("L-517: vendored tree lands under registry/skills/<name>/<name>/SKILL.md (nesting preserved)", async () => {
+  it("L-517: vendored tree lands under loadout/skills/<name>/<name>/SKILL.md (nesting preserved)", async () => {
     // The L-519 standard format requires `<name>/SKILL.md` nesting (the
     // per-harness `find -mindepth 2 -maxdepth 2` walks in compile_harnesses.sh
     // would break on a flattened layout). Asserts the vendor primitive
     // preserves the tree shape.
-    await runRegistry(skillOpts({ targets: ["agents:symlink:.agents/skills"] }));
+    await runLoadout(skillOpts({ targets: ["agents:symlink:.agents/skills"] }));
     // Nested: <vendoredDir>/<name>/SKILL.md, NOT <vendoredDir>/SKILL.md.
     expect(
       existsSync(join(vendorBase, "skills", "demo", "demo", "SKILL.md")),
@@ -3036,14 +3036,14 @@ describe("registry add-skill", () => {
 
   it("origin namespace: agent:<name> and skill:<name> coexist for the same name (no collision)", async () => {
     // Add an agent named 'demo' AND a skill named 'demo'.
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "demo",
         from: "canon/x.md",
         targets: ["claude:.claude/agents/demo.md"],
       }),
     );
-    await runRegistry(skillOpts({ targets: ["agents:symlink:.agents/skills"] }));
+    await runLoadout(skillOpts({ targets: ["agents:symlink:.agents/skills"] }));
     const origins = readOriginsFile();
     expect("agent:demo" in origins).toBe(true);
     expect("skill:demo" in origins).toBe(true);
@@ -3052,7 +3052,7 @@ describe("registry add-skill", () => {
   });
 });
 
-describe("registry add-skill — type:method:path parsing", () => {
+describe("loadout add-skill — type:method:path parsing", () => {
   beforeEach(() => {
     mkdirSync(join(projectRoot, "skills", "demo"), { recursive: true });
     writeFileSync(
@@ -3062,7 +3062,7 @@ describe("registry add-skill — type:method:path parsing", () => {
   });
 
   it("parses a valid triple", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["claude:symlink:.claude/skills"] }),
     );
     expect(code).toBe(0);
@@ -3075,7 +3075,7 @@ describe("registry add-skill — type:method:path parsing", () => {
   });
 
   it("preserves a path containing a colon", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["agents:symlink:dir:with:colons/.agents/skills"] }),
     );
     expect(code).toBe(0);
@@ -3091,7 +3091,7 @@ describe("registry add-skill — type:method:path parsing", () => {
     // FR-157: `agents/symlink` projects into `~/.agents/skills/`, the cross-CLI
     // shared standard codex+gemini both read natively — the surviving guarded
     // symlink target after FR-202 M1 retired the standalone codex/gemini ones.
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["agents:symlink:.agents/skills"] }),
     );
     expect(code).toBe(0);
@@ -3106,7 +3106,7 @@ describe("registry add-skill — type:method:path parsing", () => {
   it("FR-149: accepts claude:symlink:<path> (the no-guard live skill target)", async () => {
     // FR-149: `claude/symlink` projects into `~/.claude/skills` (Claude's native
     // loader follows the symlink; no absolute-target guard).
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["claude:symlink:.claude/skills"] }),
     );
     expect(code).toBe(0);
@@ -3123,25 +3123,25 @@ describe("registry add-skill — type:method:path parsing", () => {
     // skill targets — codex+gemini read the agents/symlink projection natively
     // (FR-157). The add-skill verb must reject them (exit 2), matching the
     // narrowed VALID_SKILL_TYPE_METHOD_PAIRS + manifest schema.
-    const codexCode = await runRegistry(
+    const codexCode = await runLoadout(
       skillOpts({ targets: ["codex:symlink:.codex/skills"] }),
     );
     expect(codexCode).toBe(2);
-    const geminiCode = await runRegistry(
+    const geminiCode = await runLoadout(
       skillOpts({ targets: ["gemini:symlink:.gemini/skills"] }),
     );
     expect(geminiCode).toBe(2);
   });
 
   it("rejects a bad method (exit 2)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["codex:bogus:AGENTS.md"] }),
     );
     expect(code).toBe(2);
   });
 
   it("rejects a missing third part (exit 2)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["codex:compiler"] }),
     );
     expect(code).toBe(2);
@@ -3149,10 +3149,10 @@ describe("registry add-skill — type:method:path parsing", () => {
 
   // FR-149: claude is now a first-class skills target via the symlink method.
   // The parser accepts claude/symlink, rejects claude/compiler and gemini/compiler,
-  // and runAddSkill refuses a claude:symlink:<path> that lands inside the registry.
+  // and runAddSkill refuses a claude:symlink:<path> that lands inside the loadout.
 
   it("FR-149: accepts claude:symlink:<path>", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["claude:symlink:.claude/skills"] }),
     );
     expect(code).toBe(0);
@@ -3165,34 +3165,34 @@ describe("registry add-skill — type:method:path parsing", () => {
   });
 
   it("FR-149: rejects claude:compiler:<path> with pair allowlist message", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["claude:compiler:AGENTS.md"] }),
     );
     expect(code).toBe(2);
   });
 
   it("FR-149: rejects gemini:compiler:<path> with pair allowlist message", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["gemini:compiler:AGENTS.md"] }),
     );
     expect(code).toBe(2);
   });
 
-  it("FR-149: runAddSkill rejects claude:symlink:<path> pointing inside the registry (cycle)", async () => {
-    // The target path resolves to ~/.igris/registry/skills (or similar) — pointing
-    // a symlink target INSIDE the registry would create a self-loop. The writer
+  it("FR-149: runAddSkill rejects claude:symlink:<path> pointing inside the loadout (cycle)", async () => {
+    // The target path resolves to ~/.igris/loadout/skills (or similar) — pointing
+    // a symlink target INSIDE the loadout would create a self-loop. The writer
     // must reject pre-vendor so neither the overlay nor the vendor tree change.
     const overlayBefore = existsSync(overlayPath)
       ? readFileSync(overlayPath, "utf-8")
       : null;
-    // Sandbox the registry under tmpRoot via IGRIS_BRAIN_DIR for this test only.
+    // Sandbox the loadout under tmpRoot via IGRIS_BRAIN_DIR for this test only.
     const prevBrainDir = process.env.IGRIS_BRAIN_DIR;
     process.env.IGRIS_BRAIN_DIR = join(tmpRoot, ".igris");
     try {
-      const code = await runRegistry(
+      const code = await runLoadout(
         skillOpts({
-          // resolves under the sandboxed registry root via IGRIS_BRAIN_DIR.
-          targets: [`claude:symlink:${join(tmpRoot, ".igris", "registry", "skills")}`],
+          // resolves under the sandboxed loadout root via IGRIS_BRAIN_DIR.
+          targets: [`claude:symlink:${join(tmpRoot, ".igris", "loadout", "skills")}`],
         }),
       );
       expect(code).toBe(1);
@@ -3217,10 +3217,10 @@ describe("registry add-skill — type:method:path parsing", () => {
   // cross-CLI shared `~/.agents/skills/` standard. The parser accepts
   // agents/symlink, rejects agents/compiler + agents/converter, and the
   // widened containment guard rejects agents:symlink pointing inside the
-  // registry (same cycle hazard as the FR-149 claude case).
+  // loadout (same cycle hazard as the FR-149 claude case).
 
   it("FR-157: accepts agents:symlink:<path>", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["agents:symlink:.agents/skills"] }),
     );
     expect(code).toBe(0);
@@ -3233,20 +3233,20 @@ describe("registry add-skill — type:method:path parsing", () => {
   });
 
   it("FR-157: rejects agents:compiler:<path> with pair allowlist message", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["agents:compiler:AGENTS.md"] }),
     );
     expect(code).toBe(2);
   });
 
   it("FR-157: rejects agents:converter:<path> with pair allowlist message", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["agents:converter:out"] }),
     );
     expect(code).toBe(2);
   });
 
-  it("FR-157: runAddSkill rejects agents:symlink:<path> pointing inside the registry (cycle — widened containment guard)", async () => {
+  it("FR-157: runAddSkill rejects agents:symlink:<path> pointing inside the loadout (cycle — widened containment guard)", async () => {
     // FR-157 widens the FR-149 claude-only containment guard to `method ===
     // "symlink"` so codex/gemini/agents all share the cycle protection.
     const overlayBefore = existsSync(overlayPath)
@@ -3255,9 +3255,9 @@ describe("registry add-skill — type:method:path parsing", () => {
     const prevBrainDir = process.env.IGRIS_BRAIN_DIR;
     process.env.IGRIS_BRAIN_DIR = join(tmpRoot, ".igris");
     try {
-      const code = await runRegistry(
+      const code = await runLoadout(
         skillOpts({
-          targets: [`agents:symlink:${join(tmpRoot, ".igris", "registry", "skills")}`],
+          targets: [`agents:symlink:${join(tmpRoot, ".igris", "loadout", "skills")}`],
         }),
       );
       expect(code).toBe(1);
@@ -3286,7 +3286,7 @@ describe("registry add-skill — type:method:path parsing", () => {
     const overlayBefore = existsSync(overlayPath)
       ? readFileSync(overlayPath, "utf-8")
       : null;
-    const code = await runRegistry(
+    const code = await runLoadout(
       // skillOpts default name is `demo`; the path ends in `/demo`.
       skillOpts({ targets: ["agents:symlink:.agents/skills/demo"] }),
     );
@@ -3302,7 +3302,7 @@ describe("registry add-skill — type:method:path parsing", () => {
   });
 
   it("TD-218: rejects a per-skill claude:symlink path ending in the skill name (generalizes across types)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["claude:symlink:~/.claude/skills/demo"] }),
     );
     expect(code).toBe(1);
@@ -3311,7 +3311,7 @@ describe("registry add-skill — type:method:path parsing", () => {
   it("TD-218: ACCEPTS the PARENT skills dir (basename != skill name) — the correct shape", async () => {
     // The guard must NOT fire for the canonical parent-dir path. This is the
     // shape `add-skill` is supposed to produce; it stays code 0.
-    const code = await runRegistry(
+    const code = await runLoadout(
       skillOpts({ targets: ["agents:symlink:.agents/skills"] }),
     );
     expect(code).toBe(0);
@@ -3512,7 +3512,7 @@ describe("TD-191 back-compat: legacy single-object surfaces.skills", () => {
         },
       }),
     );
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add-skill",
       name: "demo",
       from: "skills/demo",
@@ -3532,9 +3532,9 @@ describe("TD-191 back-compat: legacy single-object surfaces.skills", () => {
 // update (re-vendor from recorded origin)
 // ---------------------------------------------------------------------------
 
-describe("registry update", () => {
+describe("loadout update", () => {
   async function seedAdd(name: string, file = "canon/x.md"): Promise<void> {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name,
         from: file,
@@ -3548,7 +3548,7 @@ describe("registry update", () => {
     await seedAdd("u1");
     // TD-191: agent origins keyed `agent:<name>`.
     const hashBefore = readOriginsFile()["agent:u1"].hash;
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "update",
       name: "u1",
       overlayPath,
@@ -3565,7 +3565,7 @@ describe("registry update", () => {
     const hashBefore = readOriginsFile()["agent:u2"].hash;
     // Mutate the SOURCE file.
     writeFileSync(join(projectRoot, "canon", "x.md"), "# x\nMUTATED\n");
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "update",
       name: "u2",
       overlayPath,
@@ -3596,7 +3596,7 @@ describe("registry update", () => {
     const hashB = readOriginsFile()["agent:ub"].hash;
     // Mutate only canon_a/a.md.
     writeFileSync(join(projectRoot, "canon_a", "a.md"), "alpha-CHANGED\n");
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "update",
       all: true,
       overlayPath,
@@ -3609,7 +3609,7 @@ describe("registry update", () => {
   });
 
   it("exit 1 for an absent agent", async () => {
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "update",
       name: "nope",
       overlayPath,
@@ -3636,7 +3636,7 @@ describe("registry update", () => {
       }),
     );
     writeFileSync(originsPath, JSON.stringify({}));
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "update",
       name: "noorigin",
       overlayPath,
@@ -3648,10 +3648,10 @@ describe("registry update", () => {
 
   it("exactly one of <name> or --all is required (exit 2)", async () => {
     expect(
-      await runRegistry({ action: "update", overlayPath, originsPath, vendorDir }),
+      await runLoadout({ action: "update", overlayPath, originsPath, vendorDir }),
     ).toBe(2);
     expect(
-      await runRegistry({
+      await runLoadout({
         action: "update",
         name: "x",
         all: true,
@@ -3685,7 +3685,7 @@ describe("registry update", () => {
     };
     writeFileSync(originsPath, JSON.stringify(origins));
 
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "update",
       all: true,
       overlayPath,
@@ -3701,7 +3701,7 @@ describe("registry update", () => {
   it("re-vendors a versioned surface whose glob now matches a DIFFERENT file set", async () => {
     mkdirSync(join(projectRoot, "vsrc"), { recursive: true });
     writeFileSync(join(projectRoot, "vsrc", "v1.md"), "one\n");
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "vupd",
         from: "vsrc",
@@ -3716,7 +3716,7 @@ describe("registry update", () => {
 
     // Add a second matching file at the source.
     writeFileSync(join(projectRoot, "vsrc", "v2.md"), "two\n");
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "update",
       name: "vupd",
       overlayPath,
@@ -3748,7 +3748,7 @@ describe("registry update", () => {
       join(projectRoot, "canon", "frontmatter.claude.md"),
       "---\nname: fmhash\nv: 2\n---\n",
     );
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "update",
       name: "fmhash",
       overlayPath,
@@ -3798,7 +3798,7 @@ function makeStubReleases(tags: string[]): ListReleasesFn {
   return async () => tags;
 }
 
-describe("registry add — github origin (stubbed fetch)", () => {
+describe("loadout add — github origin (stubbed fetch)", () => {
   let repoDir: string;
 
   beforeEach(() => {
@@ -3821,7 +3821,7 @@ describe("registry add — github origin (stubbed fetch)", () => {
   });
 
   it("parses + vendors + records a github origin (single-entry manifest)", async () => {
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add",
       name: "mypack",
       from: "github:owner/repo@v1.0.0",
@@ -3880,7 +3880,7 @@ describe("registry add — github origin (stubbed fetch)", () => {
         ],
       }),
     );
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add",
       name: "beta",
       from: "github:owner/repo@v1.0.0",
@@ -3914,7 +3914,7 @@ describe("registry add — github origin (stubbed fetch)", () => {
         ],
       }),
     );
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add",
       name: "gamma",
       from: "github:owner/repo@v1.0.0",
@@ -3934,7 +3934,7 @@ describe("registry add — github origin (stubbed fetch)", () => {
     // Move the fixture under packs/.
     mkdirSync(join(repoDir, "packs", "agents"), { recursive: true });
     writeFileSync(join(repoDir, "packs", "agents", "mypack.md"), "# scoped\n");
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add",
       name: "mypack",
       from: "github:owner/repo@v1.0.0#packs",
@@ -3955,7 +3955,7 @@ describe("registry add — github origin (stubbed fetch)", () => {
 
   it("rejects a bad repo manifest (exit 1, no vendor)", async () => {
     writeFileSync(join(repoDir, "igris.json"), JSON.stringify({ version: 2 }));
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add",
       name: "mypack",
       from: "github:owner/repo@v1.0.0",
@@ -3972,7 +3972,7 @@ describe("registry add — github origin (stubbed fetch)", () => {
 
   it("rejects a bad spec (exit 2) WITHOUT attempting a fetch", async () => {
     const calls: GithubSpec[] = [];
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add",
       name: "mypack",
       from: "github:owner/repo", // no @ref
@@ -3988,7 +3988,7 @@ describe("registry add — github origin (stubbed fetch)", () => {
   });
 
   it("surfaces a fetch failure as exit 1 (actionable error)", async () => {
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add",
       name: "mypack",
       from: "github:owner/private@v1.0.0",
@@ -4029,7 +4029,7 @@ describe("registry add — github origin (stubbed fetch)", () => {
         ],
       }),
     );
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add",
       name: "mypack",
       from: "github:owner/repo@v1.0.0",
@@ -4052,7 +4052,7 @@ describe("registry add — github origin (stubbed fetch)", () => {
     // in `canonical.dir` as a symlink pointing OUTSIDE the fetched repo root.
     // Lexical `..` containment passes (the link's own path is under repo); the
     // realpath guard must reject the dereferenced out-of-repo target before any
-    // copyFileSync vendors host files into ~/.igris/registry/.
+    // copyFileSync vendors host files into ~/.igris/loadout/.
     const outside = mkdtempSync(join(tmpdir(), "igris-host-secret-"));
     writeFileSync(join(outside, "passwd"), "root:x:0:0\n");
     // Replace the fixture's real `agents/` dir with a symlink to `outside`.
@@ -4077,7 +4077,7 @@ describe("registry add — github origin (stubbed fetch)", () => {
         ],
       }),
     );
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add",
       name: "mypack",
       from: "github:owner/repo@v1.0.0",
@@ -4097,7 +4097,7 @@ describe("registry add — github origin (stubbed fetch)", () => {
   });
 });
 
-describe("registry update — github origin (stubbed fetch + releases)", () => {
+describe("loadout update — github origin (stubbed fetch + releases)", () => {
   let repoDir: string;
 
   beforeEach(async () => {
@@ -4118,7 +4118,7 @@ describe("registry update — github origin (stubbed fetch + releases)", () => {
       }),
     );
     // Seed an add at v1.0.0.
-    await runRegistry({
+    await runLoadout({
       action: "add",
       name: "mypack",
       from: "github:owner/repo@v1.0.0",
@@ -4132,7 +4132,7 @@ describe("registry update — github origin (stubbed fetch + releases)", () => {
   });
 
   it("reports unchanged when the pinned tag is the latest", async () => {
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "update",
       name: "mypack",
       overlayPath,
@@ -4148,7 +4148,7 @@ describe("registry update — github origin (stubbed fetch + releases)", () => {
   });
 
   it("reports no releases found (unchanged) when releases is empty", async () => {
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "update",
       name: "mypack",
       overlayPath,
@@ -4169,7 +4169,7 @@ describe("registry update — github origin (stubbed fetch + releases)", () => {
     // Mutate the fixture so the re-vendored bytes differ.
     writeFileSync(join(repoDir, "agents", "mypack.md"), "# v2 fresh\n");
     const calls: GithubSpec[] = [];
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "update",
       name: "mypack",
       overlayPath,
@@ -4198,14 +4198,14 @@ describe("registry update — github origin (stubbed fetch + releases)", () => {
 
   it("--all processes a github origin alongside a path origin", async () => {
     // Add a sibling path origin.
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "localpack",
         from: "canon/x.md",
         targets: ["claude:.claude/agents/localpack.md"],
       }),
     );
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "update",
       all: true,
       overlayPath,
@@ -4235,14 +4235,14 @@ function toolingAvailable(): boolean {
   }
 }
 
-describe("registry integration (real compile_harnesses.sh + validate_manifest)", () => {
+describe("loadout integration (real compile_harnesses.sh + validate_manifest)", () => {
   let brainDir: string;
   let fixtureRoot: string;
   const prevBrainEnv = process.env.IGRIS_BRAIN_DIR;
 
   beforeEach(() => {
     brainDir = join(tmpRoot, "brain");
-    mkdirSync(join(brainDir, "registry"), { recursive: true });
+    mkdirSync(join(brainDir, "loadout"), { recursive: true });
     fixtureRoot = join(tmpRoot, "fixture");
     // Canonical prompt (unversioned) at canon/mycustom.md. FR-152: includes
     // inline frontmatter so the TD-195 fallback in resolve_or_extract_frontmatter
@@ -4253,13 +4253,13 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
       "---\nname: mycustom\ndescription: personal agent\n---\n\n# mycustom\n\nPersonal agent body.\n",
     );
     // Target dir for the produced codex harness. (We use a codex target, not
-    // claude: under FR-152/FR-159 claude is a registry-anchored symlink to an
-    // assembled harness.md, while the codex target is a registry-anchored
+    // claude: under FR-152/FR-159 claude is a loadout-anchored symlink to an
+    // assembled harness.md, while the codex target is a loadout-anchored
     // symlink to a TS-assembled `harness.codex.toml` — proving auto-discovery
     // produced output without a pre-seeded target. The legacy
     // `sync_codex_agents.sh` was retired by FR-159; the test still asserts
     // a real .toml exists at the target path because the symlink resolves to
-    // the registry-resident assembled file.)
+    // the loadout-resident assembled file.)
     mkdirSync(join(fixtureRoot, ".codex", "agents"), { recursive: true });
     // Base manifest with ONE base agent of a DIFFERENT name (so no collision).
     writeFileSync(
@@ -4291,17 +4291,17 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
       return;
     }
 
-    // Write the overlay via the REAL verb into the sandboxed brain registry,
+    // Write the overlay via the REAL verb into the sandboxed brain loadout,
     // using the same paths the adapter auto-discovers (no test seams here:
-    // exercise registryOverlayPath()/registryAgentDirPath()/registryOriginsPath()
+    // exercise loadoutOverlayPath()/loadoutAgentDirPath()/loadoutOriginsPath()
     // via IGRIS_BRAIN_DIR so the verb + adapter agree automatically).
     process.env.IGRIS_BRAIN_DIR = brainDir;
     const writtenOverlay = join(
       brainDir,
-      "registry",
+      "loadout",
       "harness-manifest.personal.json",
     );
-    const addCode = await runRegistry({
+    const addCode = await runLoadout({
       action: "add",
       name: "mycustom",
       from: "canon/mycustom.md",
@@ -4310,13 +4310,13 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
     });
     expect(addCode).toBe(0);
     expect(existsSync(writtenOverlay)).toBe(true);
-    // TD-191 L-517: the vendored agent copy lives at registry/agents/<name>/.
-    const vendored = join(brainDir, "registry", "agents", "mycustom", "mycustom.md");
+    // TD-191 L-517: the vendored agent copy lives at loadout/agents/<name>/.
+    const vendored = join(brainDir, "loadout", "agents", "mycustom", "mycustom.md");
     expect(existsSync(vendored)).toBe(true);
-    // The L-517 invariant: nothing loose at the registry root (only catalog
+    // The L-517 invariant: nothing loose at the loadout root (only catalog
     // files + typed subfolders).
-    const registryRoot = join(brainDir, "registry");
-    const rootEntries = readdirSync(registryRoot).sort();
+    const loadoutRoot = join(brainDir, "loadout");
+    const rootEntries = readdirSync(loadoutRoot).sort();
     // Allow: harness-manifest.personal.json, origins.json, agents/, plus any
     // future typed subfolder if the test happened to seed one (here: agents/).
     for (const entry of rootEntries) {
@@ -4360,7 +4360,7 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
       return;
     }
     process.env.IGRIS_BRAIN_DIR = brainDir;
-    const addCode = await runRegistry({
+    const addCode = await runLoadout({
       action: "add",
       name: "mycustom",
       from: "canon/mycustom.md",
@@ -4374,7 +4374,7 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
       join(fixtureRoot, "canon", "mycustom.md"),
       "---\nname: mycustom\ndescription: personal agent\n---\n\n# mycustom\n\nUPDATED personal agent body marker XYZZY.\n",
     );
-    const updCode = await runRegistry({
+    const updCode = await runLoadout({
       action: "update",
       name: "mycustom",
       projectRoot: fixtureRoot,
@@ -4402,7 +4402,7 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
 
     // FR-212d Phase 2: `compile --surface skills` no longer projects per-skill
     // symlinks at the manifest `targets[].path`. The custom engine was retired;
-    // `project_skills` now shells to `igris registry project-skills --source
+    // `project_skills` now shells to `igris loadout project-skills --source
     // <root>` → `skills add <root> -g -a <5 harnesses>`, which places EVERY skill
     // under each distinct source root into the universal store
     // (`~/.agents/skills/<name>` + `~/.claude/skills/<name>`). The per-block
@@ -4420,7 +4420,7 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
       // TD-191 semantics: `surfaces.skills` is an ARRAY of sibling blocks, each
       // with its OWN source. The core block uses its own skills source; the
       // personal block carries a DIFFERENT source (vendored under
-      // ~/.igris/registry/skills/<name>/).
+      // ~/.igris/loadout/skills/<name>/).
       const coreSkillsRoot = join(fixtureRoot, "skills-core");
       mkdirSync(join(coreSkillsRoot, "alpha"), { recursive: true });
       writeFileSync(
@@ -4455,14 +4455,14 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
       );
 
       // Write the personal overlay via the REAL verb (TD-191 copy-vendor mode,
-      // namespaced origin, registry/skills/<name>/ vendored tree) — UNCHANGED by
+      // namespaced origin, loadout/skills/<name>/ vendored tree) — UNCHANGED by
       // FR-212d (the add-skill store path is independent of the projection engine).
       const writtenOverlay = join(
         brainDir,
-        "registry",
+        "loadout",
         "harness-manifest.personal.json",
       );
-      const addCode = await runRegistry({
+      const addCode = await runLoadout({
         action: "add-skill",
         name: "mine",
         from: join(personalSkillsRoot, "mine"),
@@ -4471,10 +4471,10 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
       });
       expect(addCode).toBe(0);
       expect(existsSync(writtenOverlay)).toBe(true);
-      // Vendored tree lives under registry/skills/<name>/ per L-517.
+      // Vendored tree lives under loadout/skills/<name>/ per L-517.
       const vendoredSkill = join(
         brainDir,
-        "registry",
+        "loadout",
         "skills",
         "mine",
         "mine",
@@ -4508,7 +4508,7 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
       // FR-212d delegate placement: claude-code → ~/.claude/skills; the other 4
       // harnesses → the shared universal store ~/.agents/skills. BOTH blocks'
       // sources were projected (core `alpha` from skills-core, personal `mine`
-      // from the vendored registry tree) — proving the multi-source dispatch ran.
+      // from the vendored loadout tree) — proving the multi-source dispatch ran.
       const claudeAlpha = join(homeSandbox, ".claude", "skills", "alpha", "SKILL.md");
       const claudeMine = join(homeSandbox, ".claude", "skills", "mine", "SKILL.md");
       expect(existsSync(claudeAlpha)).toBe(true);
@@ -4556,12 +4556,12 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
 
     const writtenOverlay = join(
       brainDir,
-      "registry",
+      "loadout",
       "harness-manifest.personal.json",
     );
     // First add-skill: appends block 1.
     expect(
-      await runRegistry({
+      await runLoadout({
         action: "add-skill",
         name: "alpha",
         from: join(skillsRoot, "alpha"),
@@ -4571,7 +4571,7 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
     ).toBe(0);
     // Second add-skill (NEW name): appends block 2 (multi-source).
     expect(
-      await runRegistry({
+      await runLoadout({
         action: "add-skill",
         name: "beta",
         from: join(skillsRoot, "beta"),
@@ -4612,7 +4612,7 @@ describe("registry integration (real compile_harnesses.sh + validate_manifest)",
 // jsonschema path (when `import jsonschema` succeeds) AND the structural
 // fallback must BOTH agree.
 // ---------------------------------------------------------------------------
-describe("registry integration — FR-161 mcp_servers (real validate_manifest)", () => {
+describe("loadout integration — FR-161 mcp_servers (real validate_manifest)", () => {
   let mcpTmp: string;
 
   const wellFormedMcpManifest = {
@@ -4698,12 +4698,12 @@ describe("registry integration — FR-161 mcp_servers (real validate_manifest)",
 //
 // Promotes agent vendor from "file-set" (frontmatter.md + system-prompt-vN.md
 // only) to "tree vendor" (whole source directory minus skip-list). Closes
-// the L-516 violation where supporting files (DECK's routing/+registry/,
+// the L-516 violation where supporting files (DECK's routing/+loadout/,
 // DESIGNER's archetypes/) lived in the operator's source dir only — making
-// the registry copy non-self-sufficient. Symmetric topology with the TD-191
+// the loadout copy non-self-sufficient. Symmetric topology with the TD-191
 // skill tree primitives (L-519 §18.1).
 //
-// Primitives are not exported; tested end-to-end through `runRegistry` —
+// Primitives are not exported; tested end-to-end through `runLoadout` —
 // the only orthodox surface. Covered axes (architect's L-29 enumeration):
 //   - tree vendoring (nested dirs preserved; skip-list excludes correctly)
 //   - hash determinism (deterministic + order-independent + harness.md
@@ -4715,21 +4715,21 @@ describe("registry integration — FR-161 mcp_servers (real validate_manifest)",
 // ---------------------------------------------------------------------------
 
 describe("FR-156: agent tree vendor + hash", () => {
-  it("vendors a nested source tree — sibling dirs preserved under the registry copy", async () => {
+  it("vendors a nested source tree — sibling dirs preserved under the loadout copy", async () => {
     // Source shape mirrors DECK / DESIGNER's actual layout: frontmatter +
-    // body + routing/ + registry/.
+    // body + routing/ + loadout/.
     const src = join(projectRoot, "tree_src");
     mkdirSync(src, { recursive: true });
     mkdirSync(join(src, "routing"), { recursive: true });
-    mkdirSync(join(src, "registry"), { recursive: true });
+    mkdirSync(join(src, "loadout"), { recursive: true });
     writeFileSync(
       join(src, "frontmatter.claude.md"),
       "---\nname: t1\ndescription: tree-shaped\n---\n",
     );
     writeFileSync(join(src, "system-prompt-v1.md"), "# body v1\n");
     writeFileSync(join(src, "routing", "_routing.md"), "routing-rules\n");
-    writeFileSync(join(src, "registry", "types.md"), "types-doc\n");
-    const code = await runRegistry(
+    writeFileSync(join(src, "loadout", "types.md"), "types-doc\n");
+    const code = await runLoadout(
       addOpts({
         name: "t1",
         from: "tree_src/system-prompt-v1.md",
@@ -4742,7 +4742,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     expect(existsSync(join(v, "frontmatter.claude.md"))).toBe(true);
     expect(existsSync(join(v, "system-prompt-v1.md"))).toBe(true);
     expect(existsSync(join(v, "routing", "_routing.md"))).toBe(true);
-    expect(existsSync(join(v, "registry", "types.md"))).toBe(true);
+    expect(existsSync(join(v, "loadout", "types.md"))).toBe(true);
     // FR-152 α-assembly still works against the tree-vendored sources.
     expect(existsSync(join(v, "harness.claude.md"))).toBe(true);
     // Recorded origin hash is the tree hash (matches what the bash drift
@@ -4769,7 +4769,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     writeFileSync(join(src, ".git", "HEAD"), "ref\n");
     writeFileSync(join(src, "__pycache__", "x.pyc"), "bytecode\n");
     writeFileSync(join(src, "stale.pyc"), "bytecode-top-level\n");
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "t2",
         from: "noise_src/system-prompt-v1.md",
@@ -4804,7 +4804,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     writeFileSync(join(outside, "SECRET.md"), "should-not-leak\n");
     // Symlink inside the source that points OUTSIDE the source tree.
     symlinkSync(join(outside, "SECRET.md"), join(src, "escape.md"));
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "t3",
         from: "esc_src/system-prompt-v1.md",
@@ -4844,7 +4844,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     );
     writeFileSync(join(src, "system-prompt-v1.md"), "# body\n");
     expect(
-      await runRegistry(
+      await runLoadout(
         addOpts({
           name: "t4",
           from: "stable_src/system-prompt-v1.md",
@@ -4854,7 +4854,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     ).toBe(0);
     const hashBefore = readOriginsFile()["agent:t4"].hash;
     // Re-vendor without touching the source.
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "update",
       name: "t4",
       overlayPath,
@@ -4866,7 +4866,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     // Dropping a `.DS_Store` into the source after the first add → still
     // `unchanged` (skip-list excludes it from the basis on both sides).
     writeFileSync(join(src, ".DS_Store"), "x\n");
-    const code2 = await runRegistry({
+    const code2 = await runLoadout({
       action: "update",
       name: "t4",
       overlayPath,
@@ -4887,7 +4887,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     writeFileSync(join(src, "system-prompt-v1.md"), "# body\n");
     writeFileSync(join(src, "routing", "_routing.md"), "v1\n");
     expect(
-      await runRegistry(
+      await runLoadout(
         addOpts({
           name: "t5",
           from: "mut_src/system-prompt-v1.md",
@@ -4899,7 +4899,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     // Mutate the NESTED file.
     writeFileSync(join(src, "routing", "_routing.md"), "v2-CHANGED\n");
     expect(
-      await runRegistry({
+      await runLoadout({
         action: "update",
         name: "t5",
         overlayPath,
@@ -4923,7 +4923,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     );
     writeFileSync(join(src, "system-prompt-v1.md"), "# body\n");
     expect(
-      await runRegistry(
+      await runLoadout(
         addOpts({
           name: "t6",
           from: "add_src/system-prompt-v1.md",
@@ -4935,7 +4935,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     // Drop a NEW sibling file into the source.
     writeFileSync(join(src, "new_sibling.md"), "added-content\n");
     expect(
-      await runRegistry({
+      await runLoadout({
         action: "update",
         name: "t6",
         overlayPath,
@@ -4957,7 +4957,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     writeFileSync(join(src, "system-prompt-v1.md"), "# body\n");
     writeFileSync(join(src, "extra.md"), "extra\n");
     expect(
-      await runRegistry(
+      await runLoadout(
         addOpts({
           name: "t7",
           from: "rm_src/system-prompt-v1.md",
@@ -4969,7 +4969,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     // Remove a sibling file from the source.
     rmSync(join(src, "extra.md"));
     expect(
-      await runRegistry({
+      await runLoadout({
         action: "update",
         name: "t7",
         overlayPath,
@@ -4978,12 +4978,12 @@ describe("FR-156: agent tree vendor + hash", () => {
       }),
     ).toBe(0);
     expect(readOriginsFile()["agent:t7"].hash).not.toBe(hashBefore);
-    // Registry copy no longer has the removed file (re-vendor replaces the
+    // Loadout copy no longer has the removed file (re-vendor replaces the
     // whole dir atomically).
     expect(existsSync(join(vendorDir("t7"), "extra.md"))).toBe(false);
   });
 
-  it("atomicity: empty-after-skip source throws and leaves no orphan registry dir", async () => {
+  it("atomicity: empty-after-skip source throws and leaves no orphan loadout dir", async () => {
     // A source dir whose ENTIRE contents are in the skip-list — vendor must
     // throw the "no files after skip-list" error and not leave any partial
     // copy behind.
@@ -4991,7 +4991,7 @@ describe("FR-156: agent tree vendor + hash", () => {
     mkdirSync(src, { recursive: true });
     writeFileSync(join(src, ".DS_Store"), "cruft\n");
     writeFileSync(join(src, "MAINTAINING.md"), "author-only\n");
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "tnone",
         from: "empty_src/MAINTAINING.md",
@@ -5016,7 +5016,7 @@ describe("FR-156: agent tree vendor + hash", () => {
 // TD-202: in-band REGISTRY-NOTICE.md sidecar + skip-list parity + update hint
 // ---------------------------------------------------------------------------
 
-describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
+describe("loadout — TD-202 REGISTRY-NOTICE.md sidecar", () => {
   /**
    * Capture process.stdout.write so we can assert against the post-update
    * reminder. `info()` from `lib/log.ts` writes to process.stdout — no spy
@@ -5047,7 +5047,7 @@ describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
   }
 
   it("agent add emits REGISTRY-NOTICE.md next to harness.claude.md naming the source", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addOpts({
         name: "td202agent",
         from: "canon/x.md",
@@ -5061,7 +5061,7 @@ describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
     // Sidecar names the SOURCE dir (path origin → filesystem path).
     expect(text).toContain(join(projectRoot, "canon"));
     // Sidecar names the agent so the editor can copy the update command.
-    expect(text).toContain("igris registry update td202agent");
+    expect(text).toContain("igris loadout update td202agent");
     // Anti-edit guidance is the headline.
     expect(text).toMatch(/DO NOT edit/);
     expect(text).toMatch(/§18\.5/);
@@ -5073,7 +5073,7 @@ describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
       join(projectRoot, "skills", "td202skill", "SKILL.md"),
       "---\nname: td202skill\ndescription: d\n---\nbody\n",
     );
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add-skill",
       projectRoot,
       overlayPath,
@@ -5092,7 +5092,7 @@ describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
     expect(existsSync(sidecar)).toBe(true);
     const text = readFileSync(sidecar, "utf-8");
     expect(text).toContain(join(projectRoot, "skills", "td202skill"));
-    expect(text).toContain("igris registry update td202skill");
+    expect(text).toContain("igris loadout update td202skill");
   });
 
   it("sidecar bytes are NOT in the hash basis (skip-list parity — agents)", async () => {
@@ -5100,7 +5100,7 @@ describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
     // (or mutate the existing one) → re-hash and assert no change.
     // We use the public `update` path so the hash is recomputed by the same
     // helper the production code uses.
-    const seedCode = await runRegistry(
+    const seedCode = await runLoadout(
       addOpts({
         name: "td202hash",
         from: "canon/x.md",
@@ -5114,7 +5114,7 @@ describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
     // tree and the hash MUST be unchanged.
     const sidecar = join(vendorDir("td202hash"), "REGISTRY-NOTICE.md");
     writeFileSync(sidecar, "garbled content — must not affect hash\n");
-    const upd = await runRegistry({
+    const upd = await runLoadout({
       action: "update",
       name: "td202hash",
       projectRoot,
@@ -5134,7 +5134,7 @@ describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
       join(projectRoot, "skills", "td202skillhash", "SKILL.md"),
       "---\nname: td202skillhash\ndescription: d\n---\nbody\n",
     );
-    const seedCode = await runRegistry({
+    const seedCode = await runLoadout({
       action: "add-skill",
       projectRoot,
       overlayPath,
@@ -5155,7 +5155,7 @@ describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
     );
     const sidecar = join(skillDir, "REGISTRY-NOTICE.md");
     writeFileSync(sidecar, "tampered sidecar — must not affect hash\n");
-    const upd = await runRegistry({
+    const upd = await runLoadout({
       action: "update",
       name: "td202skillhash",
       projectRoot,
@@ -5169,7 +5169,7 @@ describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
   });
 
   it("update re-emits REGISTRY-NOTICE.md (sidecar restored after deletion)", async () => {
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "td202update",
         from: "canon/x.md",
@@ -5181,7 +5181,7 @@ describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
     // Operator manually deletes the sidecar — update must put it back.
     rmSync(sidecar);
     expect(existsSync(sidecar)).toBe(false);
-    const upd = await runRegistry({
+    const upd = await runLoadout({
       action: "update",
       name: "td202update",
       projectRoot,
@@ -5194,7 +5194,7 @@ describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
   });
 
   it("post-update reminder line names TD-202 + §18.5", async () => {
-    await runRegistry(
+    await runLoadout(
       addOpts({
         name: "td202hint",
         from: "canon/x.md",
@@ -5203,7 +5203,7 @@ describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
     );
     const cap = captureStdout();
     try {
-      const upd = await runRegistry({
+      const upd = await runLoadout({
         action: "update",
         name: "td202hint",
         projectRoot,
@@ -5255,7 +5255,7 @@ describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
       };
     };
     const listReleases: ListReleasesFn = async () => [];
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add",
       projectRoot,
       overlayPath,
@@ -5290,19 +5290,19 @@ describe("registry — TD-202 REGISTRY-NOTICE.md sidecar", () => {
 /** A complete add-mcp run with the common test seams wired. */
 function addMcpOpts(
   extra: Record<string, unknown>,
-): Parameters<typeof runRegistry>[0] {
+): Parameters<typeof runLoadout>[0] {
   return {
     action: "add-mcp",
     projectRoot,
     overlayPath,
     originsPath,
     ...extra,
-  } as Parameters<typeof runRegistry>[0];
+  } as Parameters<typeof runLoadout>[0];
 }
 
-describe("registry add-mcp — guard-chain rejects (overlay unchanged)", () => {
+describe("loadout add-mcp — guard-chain rejects (overlay unchanged)", () => {
   it("rejects a bad name (exit 2); overlay absent stays absent", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addMcpOpts({
         name: "Bad Name",
         command: "node",
@@ -5314,7 +5314,7 @@ describe("registry add-mcp — guard-chain rejects (overlay unchanged)", () => {
   });
 
   it("rejects a missing name (exit 2)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addMcpOpts({ command: "node", targets: ["claude:merge"] }),
     );
     expect(code).toBe(2);
@@ -5322,7 +5322,7 @@ describe("registry add-mcp — guard-chain rejects (overlay unchanged)", () => {
   });
 
   it("rejects when no --target is given (exit 2)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addMcpOpts({ name: "brain-x", command: "node" }),
     );
     expect(code).toBe(2);
@@ -5330,7 +5330,7 @@ describe("registry add-mcp — guard-chain rejects (overlay unchanged)", () => {
   });
 
   it("rejects a new block with no --command (exit 2)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addMcpOpts({ name: "brain-x", targets: ["claude:merge"] }),
     );
     expect(code).toBe(2);
@@ -5339,7 +5339,7 @@ describe("registry add-mcp — guard-chain rejects (overlay unchanged)", () => {
 
   it("rejects --scope project (exit 2, 'global-only in v1')", async () => {
     const spy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    const code = await runRegistry(
+    const code = await runLoadout(
       addMcpOpts({
         name: "brain-x",
         command: "node",
@@ -5356,7 +5356,7 @@ describe("registry add-mcp — guard-chain rejects (overlay unchanged)", () => {
 
   it("rejects --project (exit 2, 'global-only in v1')", async () => {
     const spy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    const code = await runRegistry(
+    const code = await runLoadout(
       addMcpOpts({
         name: "brain-x",
         command: "node",
@@ -5373,7 +5373,7 @@ describe("registry add-mcp — guard-chain rejects (overlay unchanged)", () => {
 
   it("rejects an inline-secret --env (exit 2, must be a ${VAR} ref)", async () => {
     const spy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    const code = await runRegistry(
+    const code = await runLoadout(
       addMcpOpts({
         name: "brain-x",
         command: "node",
@@ -5389,7 +5389,7 @@ describe("registry add-mcp — guard-chain rejects (overlay unchanged)", () => {
   });
 
   it("rejects a malformed --env (no '=') (exit 2)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addMcpOpts({
         name: "brain-x",
         command: "node",
@@ -5404,13 +5404,13 @@ describe("registry add-mcp — guard-chain rejects (overlay unchanged)", () => {
   it("rejects target grammar errors (exit 2)", async () => {
     // Too few parts.
     expect(
-      await runRegistry(
+      await runLoadout(
         addMcpOpts({ name: "brain-x", command: "node", targets: ["claude"] }),
       ),
     ).toBe(2);
     // Bad method.
     expect(
-      await runRegistry(
+      await runLoadout(
         addMcpOpts({
           name: "brain-x",
           command: "node",
@@ -5420,7 +5420,7 @@ describe("registry add-mcp — guard-chain rejects (overlay unchanged)", () => {
     ).toBe(2);
     // Bad type.
     expect(
-      await runRegistry(
+      await runLoadout(
         addMcpOpts({
           name: "brain-x",
           command: "node",
@@ -5430,7 +5430,7 @@ describe("registry add-mcp — guard-chain rejects (overlay unchanged)", () => {
     ).toBe(2);
     // Bad enabled flag.
     expect(
-      await runRegistry(
+      await runLoadout(
         addMcpOpts({
           name: "brain-x",
           command: "node",
@@ -5459,7 +5459,7 @@ describe("registry add-mcp — guard-chain rejects (overlay unchanged)", () => {
       }),
     );
     const spy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    const code = await runRegistry(
+    const code = await runLoadout(
       addMcpOpts({
         name: "igris-brain",
         command: "node",
@@ -5474,9 +5474,9 @@ describe("registry add-mcp — guard-chain rejects (overlay unchanged)", () => {
   });
 });
 
-describe("registry add-mcp — happy path + origin record", () => {
+describe("loadout add-mcp — happy path + origin record", () => {
   it("writes a well-formed block + an inline origin (exit 0)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addMcpOpts({
         name: "brain-test",
         command: "node",
@@ -5514,7 +5514,7 @@ describe("registry add-mcp — happy path + origin record", () => {
   });
 
   it("accepts a valid ${VAR} env ref (regression guard against false-reject)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addMcpOpts({
         name: "brain-env",
         command: "node",
@@ -5532,7 +5532,7 @@ describe("registry add-mcp — happy path + origin record", () => {
   });
 
   it("parses an enabled target flag (opencode:merge:true)", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addMcpOpts({
         name: "brain-en",
         command: "node",
@@ -5552,7 +5552,7 @@ describe("registry add-mcp — happy path + origin record", () => {
   });
 
   it("threads a startup-timeout-sec into canonical", async () => {
-    const code = await runRegistry(
+    const code = await runLoadout(
       addMcpOpts({
         name: "brain-to",
         command: "node",
@@ -5569,11 +5569,11 @@ describe("registry add-mcp — happy path + origin record", () => {
   });
 });
 
-describe("registry add-mcp — same-name re-add union", () => {
+describe("loadout add-mcp — same-name re-add union", () => {
   it("unions a new target type + inherits command/args (in-place, exit 0)", async () => {
     // First registration: claude + gemini.
     expect(
-      await runRegistry(
+      await runLoadout(
         addMcpOpts({
           name: "brain-test",
           command: "node",
@@ -5584,7 +5584,7 @@ describe("registry add-mcp — same-name re-add union", () => {
     ).toBe(0);
 
     // Re-add with a NEW codex target + enabled:false, NO --command (inherited).
-    const code = await runRegistry(
+    const code = await runLoadout(
       addMcpOpts({
         name: "brain-test",
         targets: ["codex:merge:false"],
@@ -5613,7 +5613,7 @@ describe("registry add-mcp — same-name re-add union", () => {
 
   it("overwrites an existing target's enabled flag on re-add (same type)", async () => {
     expect(
-      await runRegistry(
+      await runLoadout(
         addMcpOpts({
           name: "brain-test",
           command: "node",
@@ -5623,7 +5623,7 @@ describe("registry add-mcp — same-name re-add union", () => {
     ).toBe(0);
     // Re-add the SAME type with enabled:false → overwrite in place.
     expect(
-      await runRegistry(
+      await runLoadout(
         addMcpOpts({ name: "brain-test", targets: ["claude:merge:false"] }),
       ),
     ).toBe(0);

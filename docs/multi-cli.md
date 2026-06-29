@@ -48,9 +48,9 @@ ship (defaults to `all`).
 
 | CLI | Method | Target | Notes |
 |-----|--------|--------|-------|
-| Claude Code | `symlink` | `~/.claude/skills/` | Each registry-vendored skill (`~/.igris/registry/skills/<name>/`) becomes a symlink at `~/.claude/skills/<name>/`. The compiler emits the symlink from `<target_path>` to the registry-vendored copy — first-class projection on par with codex/gemini (FR-149, see L-519). Core skills live at `~/.igris/core/skills/` and follow the same mechanism. Full directory linked so nested assets (`scripts/`, `workflow-template.md`, `templates/*.md`) are available. |
-| OpenCode | `command` | `~/.config/opencode/command/` | **FR-171:** First-class skills distribution via thin command wrappers. Each registry-vendored / core skill gets a `<command-dir>/<name>.md` wrapper whose body loads the canonical `SKILL.md` via OpenCode's `@file` directive (`@~/.igris/core/skills/<name>/SKILL.md`) plus `$ARGUMENTS`. The canonical SKILL.md stays the single source of truth — the wrapper is a pointer, not a copy (no edit-drift; only ADD/REMOVE drift). Supersedes the prior `none`/soft-fallback posture that relied on OpenCode reading `~/.claude/skills/`. OpenCode is ALSO first-class for agents — see [Subagent Distribution](#subagent-distribution). |
-| Codex CLI + Gemini CLI (cross-CLI shared) | `symlink` | `~/.agents/skills/` | **FR-157:** Codex AND Gemini both natively discover `~/.agents/skills/` as the cross-CLI shared skill location (Codex's `core-skills/src/loader.rs` walks it; Gemini docs at `docs/cli/skills.md` reference it explicitly). Per-skill symlink at `~/.agents/skills/<name>/` → registry-vendored canonical OR `~/.igris/core/skills/<name>/` for core skills. Symlink target MUST be absolute (codex resolves relative-path symlinks from cwd — the FR-153 D2 guard, now carried by this `agents/symlink` branch since FR-202 M1 deleted the standalone `codex/symlink` target). Antigravity CLI natively loads skills from `~/.gemini/antigravity-cli/skills/` (confirmed `agy` v1.0.7, 2026-06-11) — a dir antigravity does NOT self-create, so `igris install` symlinks it → `~/.agents/skills` (`linkAntigravitySkills`, idempotent-repair; `igris doctor` drift class `antigravity-skills-link` repairs it). Skill items ride the `agents/symlink` target into `~/.agents/skills`, so a future `igris add skill` reaches antigravity for free (FR-179). |
+| Claude Code | `symlink` | `~/.claude/skills/` | Each loadout-vendored skill (`~/.igris/loadout/skills/<name>/`) becomes a symlink at `~/.claude/skills/<name>/`. The compiler emits the symlink from `<target_path>` to the loadout-vendored copy — first-class projection on par with codex/gemini (FR-149, see L-519). Core skills live at `~/.igris/core/skills/` and follow the same mechanism. Full directory linked so nested assets (`scripts/`, `workflow-template.md`, `templates/*.md`) are available. |
+| OpenCode | `command` | `~/.config/opencode/command/` | **FR-171:** First-class skills distribution via thin command wrappers. Each loadout-vendored / core skill gets a `<command-dir>/<name>.md` wrapper whose body loads the canonical `SKILL.md` via OpenCode's `@file` directive (`@~/.igris/core/skills/<name>/SKILL.md`) plus `$ARGUMENTS`. The canonical SKILL.md stays the single source of truth — the wrapper is a pointer, not a copy (no edit-drift; only ADD/REMOVE drift). Supersedes the prior `none`/soft-fallback posture that relied on OpenCode reading `~/.claude/skills/`. OpenCode is ALSO first-class for agents — see [Subagent Distribution](#subagent-distribution). |
+| Codex CLI + Gemini CLI (cross-CLI shared) | `symlink` | `~/.agents/skills/` | **FR-157:** Codex AND Gemini both natively discover `~/.agents/skills/` as the cross-CLI shared skill location (Codex's `core-skills/src/loader.rs` walks it; Gemini docs at `docs/cli/skills.md` reference it explicitly). Per-skill symlink at `~/.agents/skills/<name>/` → loadout-vendored canonical OR `~/.igris/core/skills/<name>/` for core skills. Symlink target MUST be absolute (codex resolves relative-path symlinks from cwd — the FR-153 D2 guard, now carried by this `agents/symlink` branch since FR-202 M1 deleted the standalone `codex/symlink` target). Antigravity CLI natively loads skills from `~/.gemini/antigravity-cli/skills/` (confirmed `agy` v1.0.7, 2026-06-11) — a dir antigravity does NOT self-create, so `igris install` symlinks it → `~/.agents/skills` (`linkAntigravitySkills`, idempotent-repair; `igris doctor` drift class `antigravity-skills-link` repairs it). Skill items ride the `agents/symlink` target into `~/.agents/skills`, so a future `igris add skill` reaches antigravity for free (FR-179). |
 | ~~Codex CLI (legacy per-CLI)~~ | ~~`symlink`~~ | ~~`~/.codex/skills/`~~ | **REMOVED (FR-202 M1).** The standalone `codex/symlink` target was deleted — the schema now REJECTS it. Codex reads the cross-CLI `agents/symlink` projection (`~/.agents/skills/`) natively (FR-157); use that instead. |
 | ~~Gemini CLI (legacy per-CLI)~~ | ~~`symlink`~~ | ~~`~/.gemini/skills/`~~ | **REMOVED (FR-202 M1).** The standalone `gemini/symlink` target was deleted — the schema now REJECTS it. Gemini reads the cross-CLI `agents/symlink` projection (`~/.agents/skills/`) natively (FR-157); use that instead. |
 
@@ -105,7 +105,7 @@ As of FR-137 the skill projection logic lives inside the FR-136 manifest-driven
 harness engine as first-class `surfaces.skills` targets — projected (and
 drift-checked) by `igris harness compile` / `igris harness drift`, exactly the
 way per-agent harnesses are. **FR-153** then unified all three harnesses
-(claude/codex/gemini) onto the same per-skill registry-anchored symlink
+(claude/codex/gemini) onto the same per-skill loadout-anchored symlink
 projection that FR-149 established for claude, and **retired** the legacy
 `md_to_agents_md.sh` (AGENTS.md aggregator) + `md_to_gemini_toml.sh` (per-skill
 TOML converter) scripts entirely.
@@ -151,7 +151,7 @@ block to its own targets) and the array schema at
   used verbatim; a relative path resolves from `--project-root`.
 - `targets[].method` — post-**FR-202 (M1)** the valid `(type, method)` pairs are
   `claude/symlink`, `agents/symlink`, `opencode/command`. The symlink IS the
-  projection, anchored at the registry-vendored copy (FR-149/FR-153/FR-157);
+  projection, anchored at the loadout-vendored copy (FR-149/FR-153/FR-157);
   `opencode/command` is the FR-171 thin `@file` command wrapper. An invalid pair
   (e.g. `claude/compiler`, `agents/compiler`, `codex/symlink`, `gemini/symlink`)
   is REJECTED at schema validation. **FR-157** introduced `agents/symlink` as the
@@ -168,7 +168,7 @@ block to its own targets) and the array schema at
   deleted the standalone `codex/symlink` branch that originally carried it),
   and it matters because Codex reads `~/.agents/skills/` natively.
 - The drift guard verdicts each per-skill symlink by realpath against the
-  registry-vendored canonical (L-515 containment), pairing line-for-line
+  loadout-vendored canonical (L-515 containment), pairing line-for-line
   with the compile-side branch (L-519 §18.1). No more date-stamped marker
   stripping — the symlink IS the projection, so date drift is impossible.
 - `igris harness compile --surface skills` projects only the skills surface;
@@ -181,10 +181,10 @@ projection. A project may also carry its own `surfaces.skills` in its
 `harness-manifest.json` for project-specific skills.
 
 **FR-139 overlay seam (post-TD-191).** A consumer's **personal** skills arrive
-via the FR-139 overlay (`~/.igris/registry/harness-manifest.personal.json`),
+via the FR-139 overlay (`~/.igris/loadout/harness-manifest.personal.json`),
 which carries its own `surfaces.skills` array — typically one block per
-personal-skill source written by `igris registry add-skill` (per L-516,
-copy-vendored to `~/.igris/registry/skills/<name>/`; per L-517, typed
+personal-skill source written by `igris loadout add-skill` (per L-516,
+copy-vendored to `~/.igris/loadout/skills/<name>/`; per L-517, typed
 subfolder layout). `merge_overlay_manifest` **concatenates** the base
 `surfaces.skills[]` with the overlay `surfaces.skills[]` — overlay blocks
 coexist alongside base blocks (NOT merged into a single base block; the
@@ -196,17 +196,17 @@ sharing is valid: target `path` is the consumer root (`~/.agents/skills`,
 `~/.claude/skills`, or an OpenCode command dir), and the compiler emits distinct
 per-skill outputs below it (`<root>/<skill>` or `<command-dir>/<skill>.md`). See
 L-519 (Igris-owned topology — each per-harness compiler inside Igris OS reads
-every block's canonical content from the registry, regardless of which block it
+every block's canonical content from the loadout, regardless of which block it
 came from).
 
-**Adding a skill — `igris add skill` (one-step) / `igris registry add-skill`
+**Adding a skill — `igris add skill` (one-step) / `igris loadout add-skill`
 (write-only, FR-180):** for the common case, prefer the one-step `igris add skill
 <name> --from <skills-dir> --target <type:method:path>` — it vendors the skill AND
 projects it to all four harnesses (per-skill symlink) AND verifies drift-clean in
 one command, failing loudly if nothing projected (TD-235). `--core` writes
 `core/skills/<name>/SKILL.md` (auto-discovered — no manifest edit) instead of the
-personal overlay. `igris registry add-skill` (above) is the **write-only**
-low-level primitive (copy-vendor into `~/.igris/registry/skills/<name>/` + the
+personal overlay. `igris loadout add-skill` (above) is the **write-only**
+low-level primitive (copy-vendor into `~/.igris/loadout/skills/<name>/` + the
 overlay block, no project/verify), kept as the repair primitive alongside the
 `igris harness compile --surface skills` two-step. See `core/docs/ADD-SURFACES.md`.
 
@@ -221,7 +221,7 @@ project-scoped skill category; `/onboard-harness` is now shipped globally.)
 ## MCP Servers as a `surfaces.mcp_servers` manifest declaration (FR-160 epic)
 
 > **FR-212d (delegate engine):** the harness-COMPILE MCP projection
-> (`igris harness compile --surface mcp` → `igris registry project-mcp`) now
+> (`igris harness compile --surface mcp` → `igris loadout project-mcp`) now
 > DELEGATES server registration to the pinned external `add-mcp` CLI (npm
 > `add-mcp`, exact-pinned, resolved LOCAL — never a bare `npx`) for FOUR harnesses
 > (claude-code / codex / gemini-cli / opencode), then writes the Igris-owned
@@ -248,12 +248,12 @@ server is upserted into the five harnesses' native MCP config files (FR-179
 added Antigravity as a 5th MCP target), leaving every other entry and top-level
 key in those (hot, user-owned) files byte-for-byte untouched.
 
-### Registering an MCP server — `igris add mcp` (one-step) / `igris registry add-mcp` (write-only)
+### Registering an MCP server — `igris add mcp` (one-step) / `igris loadout add-mcp` (write-only)
 
 > **FR-180:** for the common case, prefer the one-step `igris add mcp <name>
 > --command <bin> --target type:merge` — it registers the server AND projects it
 > to all four harness configs AND verifies drift-clean in one command (and fails
-> loudly if nothing projected). `igris registry add-mcp` below is the
+> loudly if nothing projected). `igris loadout add-mcp` below is the
 > **write-only** low-level primitive (register only, no project/verify), kept as
 > the repair primitive. See `core/docs/ADD-SURFACES.md`.
 
@@ -262,7 +262,7 @@ key in those (hot, user-owned) files byte-for-byte untouched.
 never touches a live CLI config; that projection is `igris harness compile`):
 
 ```
-igris registry add-mcp <name> \
+igris loadout add-mcp <name> \
   --command <bin> [--arg <value> ...] \
   [--env KEY=${VAR} ...] \
   [--startup-timeout-sec <n>] \
@@ -278,7 +278,7 @@ igris registry add-mcp <name> \
   that harness (opencode passthrough).
 - **`--env` values MUST be a single `${VAR}` indirection reference** (e.g.
   `--env API_KEY=${MY_TOKEN}`). An inline secret is **rejected** at the verb
-  boundary — the real secret never enters the registry or any config. The
+  boundary — the real secret never enters the loadout or any config. The
   literal lives only in `~/.igris/secrets.env` (chmod 600, gitignored, outside
   the repo) and is resolved at projection time **for Codex only**.
 - v1 is **global-only**: `--scope project` / `--project` are rejected.
@@ -298,7 +298,7 @@ no-op (NTFS has no POSIX mode bits), so init/doctor never false-flag there.
 
 The per-surface model wants `~/.claude/skills` and `~/.claude/agents` to be **real
 directories** holding one symlink per skill/agent (core → `~/.igris/core/...`,
-personal → the registry-vendored copy). A **v6-era install** instead made each a
+personal → the loadout-vendored copy). A **v6-era install** instead made each a
 **whole-directory symlink** → `~/.igris/core/{skills,agents}`. That state is
 actively harmful: because the target *is* the canonical source, a per-item
 projection (`igris harness compile`) writes its symlink **into** `~/.igris/core/`,
@@ -307,14 +307,14 @@ polluting the source (observed: a `content-pipeline` skill symlink and three
 
 `igris doctor` detects this as the `skills-pollution` drift class: it flags any
 declared surface root that is a whole-dir symlink to its canonical source, plus
-any stray registry-projection symlink found inside the core source. `igris doctor
+any stray loadout-projection symlink found inside the core source. `igris doctor
 --fix` **migrates** each affected root to a real directory of per-item symlinks
 (materialized directly from the canonical source + the personal overlay — never
 via a recompile, which the FR-137 commonpath gate / the absence of a core-agent
 `claude` target would leave empty), then removes the stray source symlinks. The
 fix is guarded: it prints a before/after inventory and **fails closed** if any
 item would be lost, **backs up** the old root symlink to `<root>.bak-<UTC>`
-(never deletes canonical content), removes **only** registry-anchored projection
+(never deletes canonical content), removes **only** loadout-anchored projection
 symlinks from the source (never a real dir), realpath-contains every mutation,
 refuses a root symlink pointing anywhere other than the canonical source, and is
 idempotent (a migrated real dir is a no-op on re-run). On Windows it is a no-op.
@@ -338,7 +338,7 @@ re-implements it (L-519 §18.1). The five shapes:
 
 **The `${VAR}` indirection rule (FR-160e).** Claude, Gemini, Antigravity and
 OpenCode resolve the env reference + inherit exported env at launch, so the
-registry's `${VAR}` (translated to `{env:VAR}` for OpenCode) is written
+loadout's `${VAR}` (translated to `{env:VAR}` for OpenCode) is written
 verbatim — **no secret ever lands in those configs**. Codex's sandbox (`inherit="core"`) resolves neither
 refs nor inherited env, so its env values are the **resolved literal** read from
 `~/.igris/secrets.env` at compile time. When a Codex `${VAR}` has no entry in
@@ -361,20 +361,20 @@ verdict `MATCH` / `DRIFTED` (naming the differing **key names**, never values) /
 **without printing either**. A malformed config is reported `DRIFTED`
 ("unparseable") rather than clobbered.
 
-> `igris registry project-mcp` is the **internal** per-harness projector the
+> `igris loadout project-mcp` is the **internal** per-harness projector the
 > compile/drift bash passes invoke (one config write per call). It is not a
 > user-facing verb — register servers with `add-mcp` and project them with
 > `igris harness compile`.
 
 ### Shipped default: `igris-brain`
 
-The Igris brain MCP server is itself a **registry-distributed default** — it
+The Igris brain MCP server is itself a **loadout-distributed default** — it
 rides the very mechanism described above to reach all five harnesses (FR-169
 wires it into every harness at `igris init`; FR-179 added Antigravity). It is
 registered and projected exactly like any other server:
 
 ```
-igris registry add-mcp igris-brain \
+igris loadout add-mcp igris-brain \
   --command node --arg <bundled-path> \
   --target claude:merge --target gemini:merge \
   --target opencode:merge --target codex:merge \
@@ -519,7 +519,7 @@ defence-in-depth back-compat but is no longer called by the live compile path.
 ## Nested Skill Files
 
 Post-FR-153, all three harnesses (claude/codex/gemini) project each skill as a
-**directory symlink** to the registry-vendored `<source>/<name>/` tree — so
+**directory symlink** to the loadout-vendored `<source>/<name>/` tree — so
 nested files like `scripts/*.sh`, `workflow-template.md`, and
 `register/templates/*.md` are visible to every consumer that follows symlinks.
 
@@ -533,16 +533,16 @@ that read sibling files (e.g. claude reading `scripts/`) see them automatically.
 ## Nested Agent Files (FR-156)
 
 Personal-overlay agents are vendored as **full directory trees** into
-`~/.igris/registry/agents/<name>/` — the same shape as skills (symmetric
+`~/.igris/loadout/agents/<name>/` — the same shape as skills (symmetric
 topology with FR-149 + TD-191, L-519 §18.1). An agent's `system-prompt-vN.md`
-body can reference siblings like `routing/_routing.md`, `registry/types.md`,
-or `archetypes/ARCH-*.md` and `igris registry add` / `igris registry update`
+body can reference siblings like `routing/_routing.md`, `loadout/types.md`,
+or `archetypes/ARCH-*.md` and `igris loadout add` / `igris loadout update`
 will vendor the entire source dir alongside the body. This closes the L-516
 violation where pre-FR-156 only the frontmatter + chosen body file were
 copied — supporting files lived in the operator's source dir only, so the
-registry copy was not self-sufficient.
+loadout copy was not self-sufficient.
 
-**Adding an agent — `igris add agent` (one-step) / `igris registry add` (write-only,
+**Adding an agent — `igris add agent` (one-step) / `igris loadout add` (write-only,
 FR-180):** for the common case, prefer the one-step `igris add agent <name> --from
 <dir> --target <type:path>` — it α-assembles the agent into all four harness shapes
 at vendor time AND projects it (per-harness symlink/hard-link) AND verifies
@@ -550,15 +550,15 @@ drift-clean in one command, failing loudly if nothing projected (TD-235). `--cor
 writes `core/agents/<name>.md` + the repo-root `harness-manifest.json` entry, then
 re-runs `core/scripts/gen_os_index.sh` so the agent's own frontmatter is discovered
 into the `core/os/INDEX.md` roster (FR-187 Phase 2b — no `igris_tree.json` / CLAUDE.md
-enumeration writes). `igris registry add` (above) is the **write-only** low-level primitive
+enumeration writes). `igris loadout add` (above) is the **write-only** low-level primitive
 (vendor only, no project/verify), kept as the repair primitive alongside the
 `igris harness compile` two-step. See `core/docs/ADD-SURFACES.md`.
 
 **Reference convention** — bodies SHOULD cite siblings via the absolute
-registry path:
+loadout path:
 
 ```
-See ~/.igris/registry/agents/deck/routing/_routing.md for the routing rules.
+See ~/.igris/loadout/agents/deck/routing/_routing.md for the routing rules.
 ```
 
 NOT a relative path. Igris does **not** rewrite operator-authored body text;
@@ -566,7 +566,7 @@ the body you author is the body the harness reads. (See TD-197 for the
 content-pipeline migration that converts the in-tree DECK/DESIGNER bodies
 to this convention.)
 
-**Vendor skip-list** excludes operator-author noise from the registry copy:
+**Vendor skip-list** excludes operator-author noise from the loadout copy:
 
 - `MAINTAINING.md` — internal-author-only doc
 - `.DS_Store` — macOS filesystem cruft
@@ -588,7 +588,7 @@ honest. A DRIFTED verdict locates up to 5 differing relpaths in a sub-line
 (architect-chosen Decision 2 — strict single tree verdict + file-list diff,
 NOT per-file fan-out).
 
-**`igris registry update <name>`** re-vendors the whole tree from the
+**`igris loadout update <name>`** re-vendors the whole tree from the
 recorded path origin. A change ANYWHERE in the source tree (content,
 addition, removal) flips the recorded hash → status=changed. Update
 semantics widened with FR-156: pre-FR-156 a sibling unrelated file added to
@@ -601,48 +601,48 @@ outside the agent dir.
 ## Editing Vendored Content (TD-202)
 
 Personal-overlay skills and agents are copy-vendored from operator source dirs
-into `~/.igris/registry/{skills,agents}/<name>/`. The registry-vendored copy is
+into `~/.igris/loadout/{skills,agents}/<name>/`. The loadout-vendored copy is
 what runtime harnesses load (claude/codex/gemini all read from the same
-registry-anchored symlinks per FR-152/FR-153/FR-156). **The registry is not the
+loadout-anchored symlinks per FR-152/FR-153/FR-156). **The loadout is not the
 editing surface** — direct edits there are silently overwritten on the next
-`igris registry update` or `add` cycle.
+`igris loadout update` or `add` cycle.
 
 **Editing flow:**
 
 ```bash
 # 1. Find the source dir (recorded at vendor time):
-cat ~/.igris/registry/origins.json | jq '."skill:content-pipeline"'
+cat ~/.igris/loadout/origins.json | jq '."skill:content-pipeline"'
 # { "type": "path", "dir": "/Users/me/automation/content/skills/content-pipeline", "hash": "..." }
 
 # 2. Edit at source:
 $EDITOR /Users/me/automation/content/skills/content-pipeline/SKILL.md
 
 # 3. Re-vendor:
-igris registry update content-pipeline
+igris loadout update content-pipeline
 # →   content-pipeline: changed
 # →
 # →   Reminder: edits to vendored surfaces must happen at the SOURCE path,
-# →   not under ~/.igris/registry/. Re-run `igris registry update <name>`
+# →   not under ~/.igris/loadout/. Re-run `igris loadout update <name>`
 # →   after editing the source. See TD-202 / coding_guidelines.md §18.5.
 ```
 
 **In-band notice.** Every vendored tree carries a `REGISTRY-NOTICE.md` sidecar
-(emitted by `igris registry add` / `add-skill` / `update`) naming the source
-path. Editors who open the registry-vendored copy see the notice next to the
+(emitted by `igris loadout add` / `add-skill` / `update`) naming the source
+path. Editors who open the loadout-vendored copy see the notice next to the
 file they were about to mutate. The sidecar is excluded from the FR-156 vendor
 skip-list (hash basis stays in sync with the operator's source tree that has
 no such file).
 
-**Detection.** If the registry copy diverges from the recorded source tree,
+**Detection.** If the loadout copy diverges from the recorded source tree,
 `check_harness_drift.sh` reports `[<name>/tree] DRIFTED` with up to 5
 differing relpaths (FR-156 for agents; TD-201 extended to skills). The
-verdict pairs the registry sha + source sha so the operator can locate the
+verdict pairs the loadout sha + source sha so the operator can locate the
 divergence without re-deriving the diff.
 
 **Github-origin caveat.** Surfaces vendored from `github:owner/repo@ref` have
 no on-disk source path — the `Source:` line in `REGISTRY-NOTICE.md` is the
 `github:owner/repo@ref` URI. Edit upstream, tag a new release, then
-`igris registry update` picks up the newer tag.
+`igris loadout update` picks up the newer tag.
 
 See `coding_guidelines.md` §18.5 and TD-202 for the full rationale.
 
@@ -718,10 +718,10 @@ coexist:
 | File | Role |
 |------|------|
 | `scripts/cli-adapters/harness-manifest.json` | Declarative manifest: per agent, the canonical source (dir + glob/file + `versioned` flag) and the set of harness targets. Handles both canonical conventions. |
-| `cli/src/verbs/registry.ts::assembleCodexHarness` | Vendor-side α-assembler — writes `<brain>/registry/agents/<name>/harness.codex.toml` (3-key TOML: `description`, `developer_instructions`, `name`) from `frontmatter.claude.md` + body. FR-159 TS port replacing the retired `sync_codex_agents.sh`. |
-| `cli/src/verbs/registry.ts::assembleOpencodeHarness` | Vendor-side α-assembler — writes `<brain>/registry/agents/<name>/harness.opencode.md` (OpenCode-shaped frontmatter: `mode: subagent`, boolean `tools:` map via `CLAUDE_TO_OPENCODE_TOOLS`, `permission:` MCP grant) from `frontmatter.claude.md` + body, OR honors an operator-authored `frontmatter.opencode.md` verbatim. FR-171. Byte-identical to the compile-side bash inline-python3 translator (§18.1 golden-fixture parity). |
-| `scripts/cli-adapters/compile_harnesses.sh` | Orchestrator — reads the manifest, projects per-harness registry-resident files (`harness.claude.md`, `harness.codex.toml`, `harness.gemini.md`, `harness.opencode.md`) to each target. claude + codex + opencode emit via symlink (FR-171: OpenCode's agent loader follows symlinks); gemini emits via hard link (TD-208). For core agents without vendor-side α-assembly, `assemble_*_harness_into_registry` provides byte-equivalent compile-side fallback. `--project-root`, `--filter`, `--target` flags. |
-| `scripts/cli-adapters/check_harness_drift.sh` | CI-style drift guard — exits non-zero if any claude/codex/opencode symlink target is non-registry-anchored, refuses-to-clobber a real-file target, or any gemini hard-link target has diverged (TD-208). All 4 agent harnesses use per-harness registry-resident files as verdict basis (FR-159 retired the codex body-sha verdict; FR-171 added opencode). |
+| `cli/src/verbs/loadout.ts::assembleCodexHarness` | Vendor-side α-assembler — writes `<brain>/loadout/agents/<name>/harness.codex.toml` (3-key TOML: `description`, `developer_instructions`, `name`) from `frontmatter.claude.md` + body. FR-159 TS port replacing the retired `sync_codex_agents.sh`. |
+| `cli/src/verbs/loadout.ts::assembleOpencodeHarness` | Vendor-side α-assembler — writes `<brain>/loadout/agents/<name>/harness.opencode.md` (OpenCode-shaped frontmatter: `mode: subagent`, boolean `tools:` map via `CLAUDE_TO_OPENCODE_TOOLS`, `permission:` MCP grant) from `frontmatter.claude.md` + body, OR honors an operator-authored `frontmatter.opencode.md` verbatim. FR-171. Byte-identical to the compile-side bash inline-python3 translator (§18.1 golden-fixture parity). |
+| `scripts/cli-adapters/compile_harnesses.sh` | Orchestrator — reads the manifest, projects per-harness loadout-resident files (`harness.claude.md`, `harness.codex.toml`, `harness.gemini.md`, `harness.opencode.md`) to each target. claude + codex + opencode emit via symlink (FR-171: OpenCode's agent loader follows symlinks); gemini emits via hard link (TD-208). For core agents without vendor-side α-assembly, `assemble_*_harness_into_loadout` provides byte-equivalent compile-side fallback. `--project-root`, `--filter`, `--target` flags. |
+| `scripts/cli-adapters/check_harness_drift.sh` | CI-style drift guard — exits non-zero if any claude/codex/opencode symlink target is non-loadout-anchored, refuses-to-clobber a real-file target, or any gemini hard-link target has diverged (TD-208). All 4 agent harnesses use per-harness loadout-resident files as verdict basis (FR-159 retired the codex body-sha verdict; FR-171 added opencode). |
 | `scripts/cli-adapters/body-exceptions/*.json` | Documented intentional body divergences (see below). |
 
 ### Manifest schema
@@ -762,10 +762,10 @@ harness carries one extra paragraph (the harness-skill invocation note). The
 manifest entry sets `"body_exception": "designer-harness-skill-para"`, and the
 sidecar `body-exceptions/designer-harness-skill-para.json` declares a unique
 `anchor` line plus the `insert` paragraph. The appendix is applied at
-ASSEMBLY time (FR-152) — baked into BOTH per-harness registry-resident outputs
+ASSEMBLY time (FR-152) — baked into BOTH per-harness loadout-resident outputs
 (`harness.claude.md` and `harness.gemini.md`, FR-158) by both the TS vendor
 primitive and the bash `compile_harnesses.sh` assembly helper — and
-`check_harness_drift.sh` verifies registry-anchored containment of the symlink,
+`check_harness_drift.sh` verifies loadout-anchored containment of the symlink,
 so the exception is not flagged as drift and is not silently lost on recompile.
 The body-exception sidecar is body-relative (the anchor line is in the SAME
 body both harnesses consume), so a single JSON file applies identically to
@@ -773,12 +773,12 @@ both outputs — there is no per-harness body-exception variant.
 
 ### Per-harness frontmatter sidecars (FR-158)
 
-Each agent that ships through `igris registry add` can carry one or both of
+Each agent that ships through `igris loadout add` can carry one or both of
 two operator-authored sidecars co-located with its body file(s):
 
 | Sidecar | Consumed by | Behavior when present |
 |---|---|---|
-| `frontmatter.claude.md` | `assembleClaudeHarness` (always) AND `assembleGeminiHarness` (when no Gemini sidecar) | Claude-shape frontmatter (PascalCase tools, no `kind` field). Vendored verbatim into `<registry>/agents/<name>/harness.claude.md`. Auto-translated for Gemini when `frontmatter.gemini.md` is absent. |
+| `frontmatter.claude.md` | `assembleClaudeHarness` (always) AND `assembleGeminiHarness` (when no Gemini sidecar) | Claude-shape frontmatter (PascalCase tools, no `kind` field). Vendored verbatim into `<loadout>/agents/<name>/harness.claude.md`. Auto-translated for Gemini when `frontmatter.gemini.md` is absent. |
 | `frontmatter.gemini.md` | `assembleGeminiHarness` (overrides) | Gemini-shape frontmatter — honored verbatim with no field-by-field merge. Author this when the Claude→Gemini auto-translate doesn't fit (e.g., an agent declaring `Glob` whose Gemini equivalent semantics matter). |
 
 When NEITHER sidecar is present, the assemblers no-op and the compile-side
@@ -819,12 +819,12 @@ required).
 #### Codex emission (FR-159 — TS port complete)
 
 Codex emission is TS-driven from FR-159 onwards. `assembleCodexHarness` in
-`cli/src/verbs/registry.ts` reads the FR-151 `frontmatter.claude.md` sidecar
-+ canonical body and writes `<brain>/registry/agents/<name>/harness.codex.toml`
+`cli/src/verbs/loadout.ts` reads the FR-151 `frontmatter.claude.md` sidecar
++ canonical body and writes `<brain>/loadout/agents/<name>/harness.codex.toml`
 at vendor time (alongside `harness.claude.md` + `harness.gemini.md`). For core
 agents without vendor-side α-assembly, `compile_harnesses.sh` provides a
-byte-equivalent compile-side fallback (`assemble_codex_harness_into_registry`).
-The `.codex/agents/<name>.toml` target is a SYMLINK to the registry file
+byte-equivalent compile-side fallback (`assemble_codex_harness_into_loadout`).
+The `.codex/agents/<name>.toml` target is a SYMLINK to the loadout file
 (parity with the claude primitive — codex follows symlinks for both skills
 and agent .toml loaders). The retired `sync_codex_agents.sh` is gone (FR-153
 retirement posture; no `--d1-reimplement` no-op flag remains because the
@@ -834,20 +834,20 @@ surface that accepted it was the bash script).
 
 The consumer-side agent target (`.claude/agents/<name>.md`,
 `.gemini/agents/<name>.md`, `.codex/agents/<name>.toml`) is materialized by
-`compile_harnesses.sh` from the registry-resident assembled harness file.
+`compile_harnesses.sh` from the loadout-resident assembled harness file.
 Each harness uses a DIFFERENT filesystem primitive — chosen so the consumer's
-subagent loader actually reads the registry bytes:
+subagent loader actually reads the loadout bytes:
 
 | Harness | Primitive | Path | Why |
 |---|---|---|---|
 | Claude | Symbolic link (`ln -sf` via `atomic_symlink`) | `~/.claude/agents/<name>.md` | Claude follows symlinks fine; symlink is the cheapest atomic-repoint primitive (temp+rename). |
-| Gemini | Hard link (`ln` via `emit_md_hardlink`) | `~/.gemini/agents/<name>.md` | Gemini's subagent loader does NOT follow symbolic links (verified live 2026-06-01) but DOES follow hard links. Hard link preserves **L-516** registry-canonical: same inode = same bytes-on-disk = registry is THE single physical home. A `cp` copy would break L-516 (two bytes-on-disk copies, not one). |
-| Codex | Symbolic link (`ln -sf` via `atomic_symlink`) | `~/.codex/agents/<name>.toml` | FR-159: codex consumes TOML, but its subagent .toml loader follows symlinks fine (parity with claude and with codex's already-symlinked skill loader per FR-157). `assembleCodexHarness` writes the 3-key TOML to the registry; the target is a symlink to it. |
+| Gemini | Hard link (`ln` via `emit_md_hardlink`) | `~/.gemini/agents/<name>.md` | Gemini's subagent loader does NOT follow symbolic links (verified live 2026-06-01) but DOES follow hard links. Hard link preserves **L-516** loadout-canonical: same inode = same bytes-on-disk = loadout is THE single physical home. A `cp` copy would break L-516 (two bytes-on-disk copies, not one). |
+| Codex | Symbolic link (`ln -sf` via `atomic_symlink`) | `~/.codex/agents/<name>.toml` | FR-159: codex consumes TOML, but its subagent .toml loader follows symlinks fine (parity with claude and with codex's already-symlinked skill loader per FR-157). `assembleCodexHarness` writes the 3-key TOML to the loadout; the target is a symlink to it. |
 
 **Operational notes**
 
 - **Atomic re-vendor invalidates the hard link.** `vendorAgentTreeAtomic` in
-  `cli/src/verbs/registry.ts` uses temp-file + rename for the registry
+  `cli/src/verbs/loadout.ts` uses temp-file + rename for the loadout
   `harness.gemini.md`, which assigns a NEW inode. The OLD hard link at
   `~/.gemini/agents/<name>.md` now points at an orphaned inode. The very next
   `igris harness compile` `rm -f`'s and re-`ln`'s the target against the new
@@ -859,7 +859,7 @@ subagent loader actually reads the registry bytes:
   contract is broken (L-516 violated). The hint is `igris harness compile` to
   re-establish the hard link.
 - **Cross-filesystem caveat.** Hard links require `~/.gemini/agents/` and
-  `~/.igris/registry/agents/<name>/` to be on the same filesystem. Both live
+  `~/.igris/loadout/agents/<name>/` to be on the same filesystem. Both live
   under `$HOME/` on the standard macOS dev setup. If `ln` ever fails with
   "Cross-device link", it surfaces a clean error from `set -euo pipefail` —
   no silent fallback. Linux portability + alternate-filesystem support are
@@ -997,7 +997,7 @@ igris add hook <name> --event <Event> [--matcher <glob>] [--timeout <n>] [--targ
 - `<Event>` is one of `SessionStart`, `SessionEnd`, `PreToolUse`, `PostToolUse`,
   `PreCompact`, `PostCompact`. `--matcher` (tool-glob) applies only to the two
   tool events. Targets default to `claude:merge`.
-- **Personal** writes the hook script to `~/.igris/registry/hooks/<name>/<Event>.sh`
+- **Personal** writes the hook script to `~/.igris/loadout/hooks/<name>/<Event>.sh`
   + a `surfaces.hooks[]` overlay block, then config-merges the hook GROUP into the
   project's `.claude/settings.json` `hooks.<Event>[]` array (idempotent —
   re-projecting replaces in place, never a duplicate; pre-existing user groups +
@@ -1005,7 +1005,7 @@ igris add hook <name> --event <Event> [--matcher <glob>] [--timeout <n>] [--targ
 - **R2 — a personal hook survives `igris update` / `doctor --fix`.** The canonical
   re-merge (which drops-then-re-applies every group with the CORE prefix
   `$HOME/.igris/core/hooks/`) treats the personal hook's REGISTRY-prefix command
-  (`$HOME/.igris/registry/hooks/…`) as user-owned and PRESERVES it. The refresh
+  (`$HOME/.igris/loadout/hooks/…`) as user-owned and PRESERVES it. The refresh
   cannot clobber a personal hook.
 - **opencode** hooks are covered by the FR-104 plugin (a `claude:merge` writes the
   settings.json group; an `opencode:merge` target verifies the plugin exists — no
@@ -1031,9 +1031,9 @@ igris remove <skill|agent|mcp|hook> <name> [--core | --no-core] \
 ```
 
 For one invocation it **un-projects** the surface from every harness (deletes the
-registry-anchored symlink/hardlink, un-merges the named native-config block —
+loadout-anchored symlink/hardlink, un-merges the named native-config block —
 preserving every other server/hook-group/top-level key byte-for-byte),
-**de-materializes** it from the registry overlay (personal) / deletes the `core/`
+**de-materializes** it from the loadout overlay (personal) / deletes the `core/`
 source + un-sweeps the §13 agent enumeration surfaces (core), then **verifies the
 surface is ABSENT** via `harness check` (a drift-clean / empty match is the
 SUCCESS verdict for remove — the one place the add/remove symmetry flips).
@@ -1259,10 +1259,10 @@ per-CLI harness files (Codex `.toml`, Claude `.md`) by the TD-021 adapters under
   adapters resolve `<project-root>/harness-manifest.json` by default (override
   with `--manifest <path>`).
 - **Personal overlay (Layer-2)** — an OPTIONAL gitignored overlay at
-  `~/.igris/registry/harness-manifest.personal.json` is auto-discovered and its
+  `~/.igris/loadout/harness-manifest.personal.json` is auto-discovered and its
   `agents[]` merged into the base before flattening. A personal agent whose name
   collides with a core agent is a hard error (no shadowing). This is the FR-139
-  customization-registry seam. Override with `--overlay <path>`.
+  customization-loadout seam. Override with `--overlay <path>`.
 - **`igris harness` verb** — `igris harness compile` regenerates harnesses;
   `igris harness check` runs the drift guard. Both shell out to the bash adapters
   (`compile_harnesses.sh` / `check_harness_drift.sh`) with exit-code passthrough.
@@ -1279,7 +1279,7 @@ third families have live disposition today:
 | Family | Concern | Disposition |
 |--------|---------|-------------|
 | `sync_<target>.sh` (+ `compile_harnesses.sh` / `check_harness_drift.sh`) | **Per-agent subagent prompts** (TD-021). One canonical `core/agents/<name>.md` → one harness per target. | **Canonical** for subagent harnesses. `sync_*` are the per-target emitters; `compile_harnesses.sh` orchestrates; `check_harness_drift.sh` guards. |
-| `md_to_<surface>.sh` (`md_to_agents_md.sh`, `md_to_gemini_toml.sh`) | **Skills surfaces** (FR-103 / FR-137). The `~/.igris/core/skills/` tree → per-CLI skill artifacts. | **RETIRED by FR-153** — superseded by the symlink-based registry-anchored skill projection (`compile_harnesses.sh` skills pass + `_common.sh`'s pair allowlist). Both scripts deleted. |
+| `md_to_<surface>.sh` (`md_to_agents_md.sh`, `md_to_gemini_toml.sh`) | **Skills surfaces** (FR-103 / FR-137). The `~/.igris/core/skills/` tree → per-CLI skill artifacts. | **RETIRED by FR-153** — superseded by the symlink-based loadout-anchored skill projection (`compile_harnesses.sh` skills pass + `_common.sh`'s pair allowlist). Both scripts deleted. |
 | `<target>.sh` (e.g. `codex.sh`, `gemini.sh`) | The dormant FR-104-era bridge contract: `<target>.sh <project-path>`, invoked by `materializeBridges()` in `cli/src/lib/bridges.ts` during `igris init`. | **Superseded by the `igris harness` verb.** No `<target>.sh` script exists, so `materializeBridges` skips every target today (a silent no-op). The harness verb (`cli/src/verbs/harness.ts`) is the live seam — it shells out to `compile_harnesses.sh` / `check_harness_drift.sh` directly and deliberately never touches `bridges.ts`. The inert `bridges.ts` contract is left in place for a follow-up cleanup brief (no code change in FR-138); do not build `<target>.sh` scripts against it. |
 
 ### Add a New Harness (the four-material-surface runbook)
@@ -1300,8 +1300,8 @@ own projection primitive, plus the delegation-mechanism context layer:
 
 | Surface | Canonical source | Projection primitive |
 |---------|------------------|----------------------|
-| **Agents** | `core/agents/<name>.md` → registry-assembled `harness.<label>.<ext>` | per-harness symlink **or** hard-link (depends on whether the loader follows symlinks) |
-| **Skills** | `core/skills/<name>/SKILL.md` (+ registry-vendored personal skills) | `symlink` (whole skill dir) **or** `command` (thin `@file` wrapper) |
+| **Agents** | `core/agents/<name>.md` → loadout-assembled `harness.<label>.<ext>` | per-harness symlink **or** hard-link (depends on whether the loader follows symlinks) |
+| **Skills** | `core/skills/<name>/SKILL.md` (+ loadout-vendored personal skills) | `symlink` (whole skill dir) **or** `command` (thin `@file` wrapper) |
 | **MCP** | `surfaces.mcp_servers[]` canonical block | config-**merge** into the harness's native MCP config |
 | **Hooks** | `~/.igris/core/hooks/shared/*.sh` | per-harness **bridge** (plugin / notify-wrapper) |
 | **Delegation mechanism** (context layer, FR-202 M4 / FR-214 — NOT a projected surface) | `harnesses.<type>.delegation_model` descriptor + `core/os/harness-specific/<harness>.md` → `_delegation-recipe.md` | `native-static` → nothing (skill delegates via `subagent_type:<agent>`); `dynamic-define` → `/boot` runs Detect, then Boot loads the Detect-selected `core/os/harness-specific/<harness>.md`, which points at the shared delegation recipe, so the orchestrator is taught read→define_subagent→invoke once per session |
@@ -1375,13 +1375,13 @@ are linked so a reader chases the single source of truth, not a copy:
    `compiler`/`converter` methods) — pick `symlink` unless the harness reads
    skills from a native command/prompt surface (then `command`). Mirror the
    same pair in `valid_pairs` inside `_common.sh validate_manifest` and
-   `VALID_SKILL_TYPE_METHOD_PAIRS` in `cli/src/verbs/registry.ts`.
+   `VALID_SKILL_TYPE_METHOD_PAIRS` in `cli/src/verbs/loadout.ts`.
 5. **Compiler passes (dual-impl — §18.1 parity MANDATORY)** — add the agent
    dispatch arm to `case "$ttype" in` and the skills dispatch arm to
    `case "$s_type/$s_method" in` in `compile_harnesses.sh`; add the bash
-   compile-side α-assembler `assemble_<NEW>_harness_into_registry` (core-agent
+   compile-side α-assembler `assemble_<NEW>_harness_into_loadout` (core-agent
    path) + its inline-python3 tool translator; add the TS vendor-side
-   `assemble<New>Harness` + `CLAUDE_TO_<NEW>_TOOLS` in `cli/src/verbs/registry.ts`
+   `assemble<New>Harness` + `CLAUDE_TO_<NEW>_TOOLS` in `cli/src/verbs/loadout.ts`
    (personal-agent path) wired into the 4 vendor sites. The bash and TS
    translators MUST be **byte-identical**, pinned by a golden-fixture parity test
    (L-554). Post-FR-153 the skills compile branch calls either
@@ -1398,7 +1398,7 @@ are linked so a reader chases the single source of truth, not a copy:
    `~/.igris/core/hooks/shared/*.sh`. A harness with no hook API (like Gemini) has
    a documented no-op bridge, not a missing touchpoint.
 8. **Declare targets** — add the `<NEW>` agent targets to `harness-manifest.json`
-   (core agents) + `~/.igris/registry/harness-manifest.personal.json` (personal
+   (core agents) + `~/.igris/loadout/harness-manifest.personal.json` (personal
    agents), and the `<NEW>` skills target to `surfaces-manifest.json`.
 9. **Runtime config (descriptive)** — add `cli_targets.<NEW>` to
    `~/.igris/config.json` with `{method, target, note, hooks}`. Remember:
@@ -1466,21 +1466,21 @@ entries are silently skipped — neither counted in `TOTAL` nor flagged as drift
 ```bash
 # Global (default): targets emit as absolute paths (~/.claude/agents/<name>.md, etc.).
 # Available to claude/codex/gemini from any working directory.
-igris registry add --name X --from ./path/to/source
+igris loadout add --name X --from ./path/to/source
 
 # Project-scoped: targets emit as project-relative paths. Only emits when
 # compile/drift runs against the listed --project-root realpath.
-igris registry add --name X --from ./source --project /abs/proj-a
+igris loadout add --name X --from ./source --project /abs/proj-a
 
 # Multi-project additive: same name + --project again appends to scope.paths.
-igris registry add --name X --project /abs/proj-b   # paths becomes [proj-a, proj-b]
+igris loadout add --name X --project /abs/proj-b   # paths becomes [proj-a, proj-b]
 
 # Idempotent: re-adding the same project on a project entry is a no-op.
-igris registry add --name X --project /abs/proj-a   # already present; no change
+igris loadout add --name X --project /abs/proj-a   # already present; no change
 
 # Conversion (explicit — silent auto-convert is refused):
-igris registry add --name X --scope project --project /abs/proj-a   # global → project
-igris registry add --name X --scope global                          # project → global (paths dropped)
+igris loadout add --name X --scope project --project /abs/proj-a   # global → project
+igris loadout add --name X --scope global                          # project → global (paths dropped)
 ```
 
 Re-add with `--project P` against an existing **global** entry is refused with

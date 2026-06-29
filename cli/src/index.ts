@@ -39,7 +39,7 @@ import { runRefresh } from "./verbs/refresh.js";
 import { runRegisterProject } from "./verbs/register-project.js";
 import { runSync, type SyncSubVerb } from "./verbs/sync.js";
 import { runHarness, type HarnessAction } from "./verbs/harness.js";
-import { runRegistry, type RegistryAction } from "./verbs/registry.js";
+import { runLoadout, type LoadoutAction } from "./verbs/loadout.js";
 import { runAdd } from "./verbs/add.js";
 import { runRemove } from "./verbs/remove.js";
 import { runDetect } from "./verbs/detect.js";
@@ -409,14 +409,14 @@ async function main(argv: string[]): Promise<void> {
     );
 
   program
-    .command("registry <action>")
+    .command("loadout <action>")
     .description(
       "Register Layer-2 personal customizations into the overlay (FR-141/FR-142/FR-143/FR-148/FR-162/FR-180). " +
-        "Actions: add (copy-vendors the canonical files), add-skill (references a skills source dir into surfaces.skills), add-mcp (registers a global MCP server into surfaces.mcp_servers), add-hook (registers an event-hook block into surfaces.hooks + writes the registry hook script), list, remove, update (re-vendors from origin). " +
+        "Actions: add (copy-vendors the canonical files), add-skill (references a skills source dir into surfaces.skills), add-mcp (registers a global MCP server into surfaces.mcp_servers), add-hook (registers an event-hook block into surfaces.hooks + writes the loadout hook script), list, remove, update (re-vendors from origin). " +
         "--from accepts a local path OR github:owner/repo@<ref>[#subdir]. " +
         "For add-skill, the positional <source-dir> (or --from) is the live skills root and --target is type:method:path. " +
         "For add-mcp, --command + --target type:merge[:enabled] register a global MCP; --env values must be ${VAR} indirection refs (inline secrets rejected). " +
-        "For add-hook, --event <Event> registers a config-merge hook block (--matcher / --timeout optional); the command lives under the registry prefix so 'igris update' preserves it. " +
+        "For add-hook, --event <Event> registers a config-merge hook block (--matcher / --timeout optional); the command lives under the loadout prefix so 'igris update' preserves it. " +
         "These add-* actions are WRITE-ONLY (no project/verify) — the one-step front door is 'igris add <surface>'.",
     )
     .argument("[name]", "agent name (add/remove/update) OR skills source-dir (add-skill)")
@@ -527,51 +527,51 @@ async function main(argv: string[]): Promise<void> {
         // deprecation notice if the alias is used (FR-141 shipped --canonical
         // days ago — keep it working, but steer toward --from).
         if (opts.canonical !== undefined && opts.from === undefined) {
-          info("registry: --canonical is deprecated; use --from <path> instead.");
+          info("loadout: --canonical is deprecated; use --from <path> instead.");
         }
-        // FR-180: `registry add-skill` survives as the low-level write-only
+        // FR-180: `loadout add-skill` survives as the low-level write-only
         // primitive (it does NOT project/verify), but `igris add skill` is now
         // the one-step front door. Steer the operator toward it. The deprecation
-        // fires only at the CLI boundary — `runRegistry` stays clean for the
+        // fires only at the CLI boundary — `runLoadout` stays clean for the
         // verb-level test suites (R7).
         if (action === "add-skill") {
           info(
-            "registry add-skill is write-only (it vendors/registers but does NOT " +
+            "loadout add-skill is write-only (it vendors/registers but does NOT " +
               "project or verify) — it is the low-level primitive. For the one-step " +
               "(vendor + project + verify) flow use 'igris add skill <name> --from <dir> --target …'.",
           );
         }
         // FR-180 (Phase 2): same write-only deprecation for the agent write
-        // primitive `registry add` — `igris add agent` is the one-step front door.
+        // primitive `loadout add` — `igris add agent` is the one-step front door.
         if (action === "add") {
           info(
-            "registry add is write-only (it vendors/registers an agent but does NOT " +
+            "loadout add is write-only (it vendors/registers an agent but does NOT " +
               "project or verify) — it is the low-level primitive. For the one-step " +
               "(vendor + project + verify) flow use 'igris add agent <name> --from <dir> --target …'.",
           );
         }
         // FR-180 (Phase 3): same write-only deprecation for the MCP write
-        // primitive `registry add-mcp` — `igris add mcp` is the one-step front door.
+        // primitive `loadout add-mcp` — `igris add mcp` is the one-step front door.
         if (action === "add-mcp") {
           info(
-            "registry add-mcp is write-only (it registers the MCP block but does NOT " +
+            "loadout add-mcp is write-only (it registers the MCP block but does NOT " +
               "project or verify) — it is the low-level primitive. For the one-step " +
               "(register + project + verify) flow use 'igris add mcp <name> --command <bin> --target type:merge'.",
           );
         }
         // FR-180 (Phase 5): same write-only deprecation for the hook write
-        // primitive `registry add-hook` — `igris add hook` is the one-step front
+        // primitive `loadout add-hook` — `igris add hook` is the one-step front
         // door.
         if (action === "add-hook") {
           info(
-            "registry add-hook is write-only (it registers the hooks block + writes the " +
-              "registry hook script but does NOT project or verify) — it is the low-level " +
+            "loadout add-hook is write-only (it registers the hooks block + writes the " +
+              "loadout hook script but does NOT project or verify) — it is the low-level " +
               "primitive. For the one-step (register + project + verify) flow use " +
               "'igris add hook <name> --event <Event>'.",
           );
         }
         // FR-143: `add-skill` takes its skills source-dir as the positional
-        // arg (`igris registry add-skill <source-dir> --target ...`); coalesce
+        // arg (`igris loadout add-skill <source-dir> --target ...`); coalesce
         // it into `from` when --from was not given explicitly. The positional
         // is NOT a `name` for skills (surfaces.skills is a single object).
         const isAddSkill = action === "add-skill";
@@ -603,7 +603,7 @@ async function main(argv: string[]): Promise<void> {
           } else {
             // Print on stderr through the same logError channel the verb uses.
             process.stderr.write(
-              `registry: --scope value '${opts.scope}' is not one of 'global' | 'project'\n`,
+              `loadout: --scope value '${opts.scope}' is not one of 'global' | 'project'\n`,
             );
             process.exitCode = 2;
             return;
@@ -611,14 +611,14 @@ async function main(argv: string[]): Promise<void> {
         }
         // FR-162: --startup-timeout-sec is a STRING from Commander. Validate the
         // numeric parse at the CLI boundary (mirror the --scope check above) so
-        // RegistryOptions.startupTimeoutSec stays typed `number` and the verb
+        // LoadoutOptions.startupTimeoutSec stays typed `number` and the verb
         // can trust it. An invalid value is a usage error (exit 2).
         let startupTimeoutSec: number | undefined;
         if (opts.startupTimeoutSec !== undefined) {
           const n = Number(opts.startupTimeoutSec);
           if (!Number.isInteger(n)) {
             process.stderr.write(
-              `registry: --startup-timeout-sec value '${opts.startupTimeoutSec}' must be an integer\n`,
+              `loadout: --startup-timeout-sec value '${opts.startupTimeoutSec}' must be an integer\n`,
             );
             process.exitCode = 2;
             return;
@@ -626,14 +626,14 @@ async function main(argv: string[]): Promise<void> {
           startupTimeoutSec = n;
         }
         // FR-180 (Phase 5): --timeout is a STRING from Commander (add-hook).
-        // Validate the numeric parse at the CLI boundary so RegistryOptions
+        // Validate the numeric parse at the CLI boundary so LoadoutOptions
         // .timeout stays typed `number`. An invalid value is a usage error.
         let timeoutArg: number | undefined;
         if (opts.timeout !== undefined) {
           const n = Number(opts.timeout);
           if (!Number.isInteger(n)) {
             process.stderr.write(
-              `registry: --timeout value '${opts.timeout}' must be an integer\n`,
+              `loadout: --timeout value '${opts.timeout}' must be an integer\n`,
             );
             process.exitCode = 2;
             return;
@@ -641,7 +641,7 @@ async function main(argv: string[]): Promise<void> {
           timeoutArg = n;
         }
         // FR-164 project-mcp: --harness must be one of the 4 MCP harnesses.
-        // Validate at the CLI boundary (mirror --scope) so RegistryOptions
+        // Validate at the CLI boundary (mirror --scope) so LoadoutOptions
         // .harness stays typed. An invalid value is a usage error (exit 2).
         let harnessArg: McpHarness | undefined;
         if (opts.harness !== undefined) {
@@ -655,14 +655,14 @@ async function main(argv: string[]): Promise<void> {
             harnessArg = opts.harness;
           } else {
             process.stderr.write(
-              `registry: --harness value '${opts.harness}' is not one of 'claude' | 'codex' | 'gemini' | 'opencode' | 'antigravity'\n`,
+              `loadout: --harness value '${opts.harness}' is not one of 'claude' | 'codex' | 'gemini' | 'opencode' | 'antigravity'\n`,
             );
             process.exitCode = 2;
             return;
           }
         }
-        const code = await runRegistry({
-          action: action as RegistryAction,
+        const code = await runLoadout({
+          action: action as LoadoutAction,
           name:
             isAddSkill ||
             isAddMcp ||
@@ -715,7 +715,7 @@ async function main(argv: string[]): Promise<void> {
         "end-to-end. For mcp use --command + --target type:merge[:enabled] (--env values " +
         "must be ${VAR} indirection refs — inline secrets are rejected). " +
         "For hook use --event <Event> (the command merges into .claude/settings.json " +
-        "and survives 'igris update'/'doctor --fix'). The low-level 'igris registry add-* + " +
+        "and survives 'igris update'/'doctor --fix'). The low-level 'igris loadout add-* + " +
         "igris harness compile' two-step survives as the repair primitive.",
     )
     .option("--from <path-or-github>", "source dir / github ref (skill/agent/mcp)")
@@ -740,7 +740,7 @@ async function main(argv: string[]): Promise<void> {
       "restrict projection to one harness: claude | codex | gemini | opencode",
     )
     // FR-180 Phase 3: MCP launch options (the `mcp` arm — same surface as
-    // `registry add-mcp`). --env values MUST be ${VAR} indirection refs.
+    // `loadout add-mcp`). --env values MUST be ${VAR} indirection refs.
     .option("--command <bin>", "MCP launch command (add mcp); REQUIRED for a new MCP")
     .option("--arg <value>", "MCP launch arg (add mcp; repeatable)", collect, [])
     .option(
@@ -790,7 +790,7 @@ async function main(argv: string[]): Promise<void> {
       ): Promise<void> => {
         // FR-180 Phase 3: --startup-timeout-sec is a STRING from Commander.
         // Validate the numeric parse at the CLI boundary (mirror the
-        // `registry add-mcp` check) so AddOptions.startupTimeoutSec stays typed.
+        // `loadout add-mcp` check) so AddOptions.startupTimeoutSec stays typed.
         let startupTimeoutSec: number | undefined;
         if (opts.startupTimeoutSec !== undefined) {
           const n = Number(opts.startupTimeoutSec);
@@ -848,8 +848,8 @@ async function main(argv: string[]): Promise<void> {
     .description(
       "FR-203: the symmetric inverse of `igris add` — one-step removal of a " +
         "surface (skill | agent | mcp | hook). UN-PROJECTS from every harness " +
-        "(deletes the registry-anchored symlink/hardlink, un-merges the named " +
-        "native-config block), de-materializes from the registry (personal) / " +
+        "(deletes the loadout-anchored symlink/hardlink, un-merges the named " +
+        "native-config block), de-materializes from the loadout (personal) / " +
         "deletes the core/ source + un-sweeps the §13 enumeration surfaces (core), " +
         "then VERIFIES the surface is ABSENT (drift-clean = removed). Core-vs-" +
         "personal is auto-detected and overridable with --core / --no-core; the " +
@@ -1059,7 +1059,7 @@ async function main(argv: string[]): Promise<void> {
         json?: boolean;
       }): void => {
         // --roll-days / --ceiling are STRINGS from Commander; parse + validate
-        // at the CLI boundary (mirror the registry numeric-arg checks).
+        // at the CLI boundary (mirror the loadout numeric-arg checks).
         let rollDays: number | undefined;
         if (opts.rollDays !== undefined) {
           const n = Number(opts.rollDays);

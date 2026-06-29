@@ -28,14 +28,14 @@ import {
   detectCoreRepo,
   coreProjectionParams,
 } from "../verbs/add.js";
-import { runRegistry } from "../verbs/registry.js";
+import { runLoadout } from "../verbs/loadout.js";
 import type { AdapterCaptureFn } from "../verbs/harness.js";
 import type {
   SkillMaterializeResult,
   AgentMaterializeResult,
   McpMaterializeResult,
   HookMaterializeResult,
-} from "../verbs/registry.js";
+} from "../verbs/loadout.js";
 import type { AddCoreResult } from "../verbs/add-core.js";
 
 const BRAIN = "/tmp/igris-test-brain-add";
@@ -428,7 +428,7 @@ describe("runAdd agent — personal happy path", () => {
       brainRoot: BRAIN,
       materializeAgentFn: async (opts, overlay) => {
         materializeCalled = true;
-        // The agent arm routes through the registry "add" action (R7 reuse).
+        // The agent arm routes through the loadout "add" action (R7 reuse).
         expect(opts.action).toBe("add");
         expect(opts.name).toBe("bot");
         expect(overlay).toBeDefined();
@@ -550,7 +550,7 @@ describe("runAdd mcp — personal happy path", () => {
       brainRoot: BRAIN,
       materializeMcpFn: (opts, overlay) => {
         materializeCalled = true;
-        // The mcp arm routes through the registry "add-mcp" action (R7 reuse).
+        // The mcp arm routes through the loadout "add-mcp" action (R7 reuse).
         expect(opts.action).toBe("add-mcp");
         expect(opts.name).toBe("myserver");
         expect(opts.command).toBe("node");
@@ -670,7 +670,7 @@ describe("runAdd hook — personal happy path (D7, Phase 5)", () => {
       brainRoot: BRAIN,
       materializeHookFn: (opts, overlay) => {
         materializeCalled = true;
-        // The hook arm routes through the registry "add-hook" action (R7 reuse).
+        // The hook arm routes through the loadout "add-hook" action (R7 reuse).
         expect(opts.action).toBe("add-hook");
         expect(opts.name).toBe("my-guard");
         expect(opts.event).toBe("PreToolUse");
@@ -871,8 +871,8 @@ describe("detectCoreRepo — real filesystem signal", () => {
   });
 });
 
-// --- S2: back-compat — registry add-skill is the WRITE-ONLY primitive -------
-describe("back-compat: registry add-skill is write-only (does NOT project)", () => {
+// --- S2: back-compat — loadout add-skill is the WRITE-ONLY primitive -------
+describe("back-compat: loadout add-skill is write-only (does NOT project)", () => {
   let tmpRoot: string;
   let overlayPath: string;
   let originsPath: string;
@@ -885,7 +885,7 @@ describe("back-compat: registry add-skill is write-only (does NOT project)", () 
     tmpRoot = mkdtempSync(join(tmpdir(), "igris-add-backcompat-"));
     overlayPath = join(tmpRoot, "overlay.json");
     originsPath = join(tmpRoot, "origins.json");
-    vendorBase = join(tmpRoot, "registry");
+    vendorBase = join(tmpRoot, "loadout");
     projectRoot = join(tmpRoot, "proj");
     mkdirSync(projectRoot, { recursive: true });
     writeFileSync(join(projectRoot, "harness-manifest.json"), '{"version":1,"agents":[]}\n');
@@ -906,7 +906,7 @@ describe("back-compat: registry add-skill is write-only (does NOT project)", () 
   });
 
   it("writes the overlay block but creates NO projection symlink", async () => {
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "add-skill",
       name: "bctool",
       from: skillSrc,
@@ -922,7 +922,7 @@ describe("back-compat: registry add-skill is write-only (does NOT project)", () 
     expect(existsSync(overlayPath)).toBe(true);
     expect(readFileSync(overlayPath, "utf-8")).toContain("bctool");
 
-    // But NOTHING projected — registry add-skill is write-only. The projection
+    // But NOTHING projected — loadout add-skill is write-only. The projection
     // symlink that `igris add skill` (or `harness compile`) would create does
     // NOT exist here.
     expect(existsSync(join(projectionTargetDir, "bctool"))).toBe(false);

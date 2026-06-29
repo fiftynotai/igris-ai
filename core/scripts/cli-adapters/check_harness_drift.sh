@@ -12,7 +12,7 @@
 #   --overlay <path>      - OPTIONAL Layer-2 personal-overlay manifest merged
 #                           into the base before flatten (FR-136 base+overlay
 #                           seam). Default: auto-discover
-#                           <brain>/registry/harness-manifest.personal.json.
+#                           <brain>/loadout/harness-manifest.personal.json.
 #   --filter <name-glob>  - Only check agents whose name matches the glob.
 # Dependencies: python3, _common.sh (auto-sourced from script dir)
 # Exit codes:
@@ -31,8 +31,8 @@
 #
 # FR-137 / FR-153 SKILLS SURFACE: after the agent loop, the guard also drift-
 # checks the surfaces.skills targets — all three harnesses (claude/codex/gemini)
-# project per-skill registry-anchored symlinks. The verdict is by target-path
-# realpath against the registry-vendored skill dir (L-515 containment), NOT a
+# project per-skill loadout-anchored symlinks. The verdict is by target-path
+# realpath against the loadout-vendored skill dir (L-515 containment), NOT a
 # body sha (the legacy AGENTS.md aggregator + per-skill TOML converter that
 # needed date-stripped sha compares were retired by FR-153).
 
@@ -51,12 +51,12 @@ readonly SCHEMA="$ADAPTER_DIR/manifest.schema.json"
 readonly CORE_SURFACES="$ADAPTER_DIR/surfaces-manifest.json"
 
 # Resolve the runtime brain dir (IGRIS_BRAIN_DIR, else ~/.igris) to locate the
-# OPTIONAL personal overlay (FR-139 seam) under <brain>/registry/.
+# OPTIONAL personal overlay (FR-139 seam) under <brain>/loadout/.
 BRAIN_DIR="${IGRIS_BRAIN_DIR:-$HOME/.igris}"
-readonly DEFAULT_OVERLAY="$BRAIN_DIR/registry/harness-manifest.personal.json"
+readonly DEFAULT_OVERLAY="$BRAIN_DIR/loadout/harness-manifest.personal.json"
 
 # FR-212a: how the SKILLS DELEGATE drift arm invokes the TS delegate
-# (`igris registry project-skills`, run idempotently as the present/absent
+# (`igris loadout project-skills`, run idempotently as the present/absent
 # re-check). Resolution mirrors compile_harnesses.sh exactly: $IGRIS_CLI (a
 # full command string — the bats seam) word-split into an ARRAY, else the
 # `igris` binary on PATH.
@@ -292,8 +292,8 @@ PY
 #
 # FR-152 / FR-158 / FR-159 / FR-171 / TD-208 per-harness drift verdict for
 # claude + codex + gemini + opencode AGENT targets. Each harness has its own
-# registry-resident expected file
-# (`<BRAIN_DIR>/registry/agents/<name>/harness.<label>.<ext>`, where ext = `md`
+# loadout-resident expected file
+# (`<BRAIN_DIR>/loadout/agents/<name>/harness.<label>.<ext>`, where ext = `md`
 # for claude/gemini/opencode and `toml` for codex) — the assembly happens at
 # compile time. The verdict primitive is PER-HARNESS:
 #
@@ -310,8 +310,8 @@ PY
 #
 # Claude / Codex branch verdicts (FR-152 / FR-159):
 #   DRIFTED — target is a regular file (refuse-to-clobber posture).
-#   DRIFTED — symlink resolves outside the registry (legacy reference-mode).
-#   DRIFTED — symlink resolves inside the registry but to the wrong file.
+#   DRIFTED — symlink resolves outside the loadout (legacy reference-mode).
+#   DRIFTED — symlink resolves inside the loadout but to the wrong file.
 #   DRIFTED — symlink is broken.
 #   MATCH   — symlink resolves to the expected harness.<label>.<ext>.
 #
@@ -325,7 +325,7 @@ verify_md_agent_symlink_drift() {
   local harness_label="$2"
   local target_abs="$3"
 
-  # FR-159: codex's expected registry file is harness.codex.toml (TOML, not
+  # FR-159: codex's expected loadout file is harness.codex.toml (TOML, not
   # Markdown). Claude/gemini stay on .md. The rest of the function is
   # extension-agnostic — the symlink/realpath compare cares only about
   # paths, not file contents.
@@ -333,7 +333,7 @@ verify_md_agent_symlink_drift() {
   if [ "$harness_label" = "codex" ]; then
     harness_ext="toml"
   fi
-  local expected_target="$BRAIN_DIR/registry/agents/$name/harness.${harness_label}.${harness_ext}"
+  local expected_target="$BRAIN_DIR/loadout/agents/$name/harness.${harness_label}.${harness_ext}"
 
   # Common precondition: MISSING when target absent (no -L, no -e). Applies
   # to both claude and gemini branches.
@@ -353,7 +353,7 @@ verify_md_agent_symlink_drift() {
     # Regular file (or other non-symlink shape) → refuse-to-clobber DRIFTED.
     echo "  [$name/$harness_label] DRIFTED"
     echo "      target    : $target_abs"
-    echo "      reason    : non-symlink target — remove manually if it should be a registry-anchored symlink (FR-152 retired the body-refresh back-compat)"
+    echo "      reason    : non-symlink target — remove manually if it should be a loadout-anchored symlink (FR-152 retired the body-refresh back-compat)"
     DRIFT=$((DRIFT + 1))
     return 0
   fi
@@ -368,22 +368,22 @@ verify_md_agent_symlink_drift() {
     return 0
   fi
 
-  local registry_real expected_real
-  registry_real=$(realpath "$BRAIN_DIR/registry" 2>/dev/null || echo "$BRAIN_DIR/registry")
+  local loadout_real expected_real
+  loadout_real=$(realpath "$BRAIN_DIR/loadout" 2>/dev/null || echo "$BRAIN_DIR/loadout")
   expected_real=$(realpath "$expected_target" 2>/dev/null || echo "$expected_target")
 
   case "$resolved" in
-    "$registry_real"/*|"$registry_real")
+    "$loadout_real"/*|"$loadout_real")
       if [ "$resolved" = "$expected_real" ]; then
         echo "  [$name/$harness_label] MATCH"
         echo "      expected  : $expected_target"
-        echo "      symlink target: $target_abs → $resolved [registry-anchored]"
+        echo "      symlink target: $target_abs → $resolved [loadout-anchored]"
         MATCH=$((MATCH + 1))
       else
         echo "  [$name/$harness_label] DRIFTED"
         echo "      expected  : $expected_target"
-        echo "      symlink target: $target_abs → $resolved [registry-anchored but mismatched]"
-        echo "      reason    : $harness_label symlink registry-anchored but points at the wrong file (got: $resolved, expected: $expected_real)"
+        echo "      symlink target: $target_abs → $resolved [loadout-anchored but mismatched]"
+        echo "      reason    : $harness_label symlink loadout-anchored but points at the wrong file (got: $resolved, expected: $expected_real)"
         DRIFT=$((DRIFT + 1))
       fi
       ;;
@@ -391,7 +391,7 @@ verify_md_agent_symlink_drift() {
       echo "  [$name/$harness_label] DRIFTED"
       echo "      expected  : $expected_target"
       echo "      symlink target: $target_abs → $resolved"
-      echo "      reason    : $harness_label symlink target not registry-anchored (legacy reference-mode state — run \`igris harness compile\` to migrate)"
+      echo "      reason    : $harness_label symlink target not loadout-anchored (legacy reference-mode state — run \`igris harness compile\` to migrate)"
       DRIFT=$((DRIFT + 1))
       ;;
   esac
@@ -403,12 +403,12 @@ verify_md_agent_symlink_drift() {
 # TD-208 hard-link drift verdict for the Gemini agent target. The target is a
 # HARD LINK to <expected_target> — inode equality is the primary MATCH signal.
 # The Gemini subagent loader does NOT follow symbolic links (verified live
-# 2026-06-01) but DOES follow hard links; the registry-canonical (L-516)
+# 2026-06-01) but DOES follow hard links; the loadout-canonical (L-516)
 # invariant is preserved because hard link = same inode = same bytes-on-disk
-# = registry remains the single physical home.
+# = loadout remains the single physical home.
 #
 # Verdict ordering (L-28 precondition discipline mirrors verify_mirror.sh):
-#   1. expected_target MISSING in registry → DRIFTED (compile never ran).
+#   1. expected_target MISSING in loadout → DRIFTED (compile never ran).
 #   2. target is a symbolic link → DRIFTED (legacy pre-TD-208 emit; recompile
 #      migrates to hard link).
 #   3. inode(target) == inode(expected_target) AND nlink(expected_target) >= 2
@@ -418,7 +418,7 @@ verify_md_agent_symlink_drift() {
 #      contract is broken (L-516 violated — there are now TWO bytes-on-disk
 #      copies, not one). DRIFT-WARN counts as drift (exit 1).
 #   5. inode mismatch AND byte-content differs → DRIFTED (target diverged
-#      from registry; recompile re-establishes).
+#      from loadout; recompile re-establishes).
 #
 # Note: BSD `stat -f` and macOS `md5 -q` are darwin-only flags. TD-096 mirror
 # is darwin-only per current ops; Linux portability is a future brief if
@@ -432,8 +432,8 @@ verify_gemini_agent_hardlink_drift() {
   if [ ! -f "$expected_target" ]; then
     echo "  [$name/gemini] DRIFTED"
     echo "      target    : $target_abs"
-    echo "      expected  : $expected_target [absent in registry]"
-    echo "      reason    : registry harness.gemini.md missing — run \`igris harness compile\` to assemble + hard-link"
+    echo "      expected  : $expected_target [absent in loadout]"
+    echo "      reason    : loadout harness.gemini.md missing — run \`igris harness compile\` to assemble + hard-link"
     DRIFT=$((DRIFT + 1))
     return 0
   fi
@@ -465,7 +465,7 @@ verify_gemini_agent_hardlink_drift() {
     fi
     echo "  [$name/gemini] MATCH"
     echo "      target    : $target_abs [hard link, inode $tgt_inode, nlink $src_nlink]"
-    echo "      registry  : $expected_target"
+    echo "      loadout  : $expected_target"
     MATCH=$((MATCH + 1))
     return 0
   fi
@@ -479,7 +479,7 @@ verify_gemini_agent_hardlink_drift() {
     echo "  [$name/gemini] DRIFT-WARN"
     echo "      target    : $target_abs [inode $tgt_inode, real-file copy]"
     echo "      expected  : $expected_target [inode $src_inode, hard-link source]"
-    echo "      reason    : target content matches registry but the file is a real-file copy, not a hard link (operator manually \`cp\`-replaced, or CLI bug) — content fine, primitive wrong; run \`igris harness compile\` to re-establish the hard link"
+    echo "      reason    : target content matches loadout but the file is a real-file copy, not a hard link (operator manually \`cp\`-replaced, or CLI bug) — content fine, primitive wrong; run \`igris harness compile\` to re-establish the hard link"
     # DRIFT-WARN counts as drift in the summary (exit 1) — content equality
     # is a soft signal but the primitive contract is broken (L-516 violated).
     DRIFT=$((DRIFT + 1))
@@ -490,7 +490,7 @@ verify_gemini_agent_hardlink_drift() {
   echo "  [$name/gemini] DRIFTED"
   echo "      target    : $target_abs [inode $tgt_inode, content differs]"
   echo "      expected  : $expected_target [inode $src_inode]"
-  echo "      reason    : gemini target diverged from registry (different bytes AND different inode) — run \`igris harness compile\` to re-establish"
+  echo "      reason    : gemini target diverged from loadout (different bytes AND different inode) — run \`igris harness compile\` to re-establish"
   DRIFT=$((DRIFT + 1))
   return 0
 }
@@ -720,7 +720,7 @@ for agent in manifest.get("agents", []):
     canon_ref = canon.get("glob", "") if canon.get("versioned") else canon.get("file", "")
     body_exc = agent.get("body_exception", "") or "-"
     # FR-144: propagate `layer` as the last column so body-exception sidecar
-    # resolution can be keyed on it (core -> in-repo, personal -> registry).
+    # resolution can be keyed on it (core -> in-repo, personal -> loadout).
     # Defaults to non-empty "core", so no `-` sentinel / tab-collapse risk.
     layer = agent.get("layer", "") or "core"
     # FR-155: propagate `scope` as the FINAL columns (mirrors compile_harnesses.sh).
@@ -808,7 +808,7 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
 
   # Resolve canonical. An absolute or `~`-prefixed canon_dir is used verbatim
   # (FR-142 copy-vendor points canonical.dir at the vendored copy under
-  # ~/.igris/registry/<name>/); a relative dir is project-relative. Mirrors the
+  # ~/.igris/loadout/<name>/); a relative dir is project-relative. Mirrors the
   # canonical resolution in compile_harnesses.sh.
   case "$canon_dir" in
     "~"/*) canon_base="$HOME/${canon_dir#"~/"}" ;;
@@ -835,16 +835,16 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
 
   # Resolve the body-exception sidecar.
   # FR-144: resolution is LAYER-KEYED (not fallback). A `layer:"personal"`
-  # agent's sidecar lives in the runtime registry (Layer-2,
-  # <brain>/registry/body-exceptions/, honoring IGRIS_BRAIN_DIR); a core
+  # agent's sidecar lives in the runtime loadout (Layer-2,
+  # <brain>/loadout/body-exceptions/, honoring IGRIS_BRAIN_DIR); a core
   # agent's sidecar lives in-repo alongside the adapter (Layer-1, unchanged).
-  # Keying on layer (rather than try-registry-then-repo) keeps provenance
+  # Keying on layer (rather than try-loadout-then-repo) keeps provenance
   # one-directional: a re-introduced repo sidecar can never serve a personal
   # agent — closing the L-498 leak this brief addresses.
   exc_abs=""
   if [ -n "$body_exc" ] && [ "$body_exc" != "-" ]; then
     if [ "$layer" = "personal" ]; then
-      exc_abs="$BRAIN_DIR/registry/body-exceptions/$body_exc.json"
+      exc_abs="$BRAIN_DIR/loadout/body-exceptions/$body_exc.json"
     else
       exc_abs="$ADAPTER_DIR/body-exceptions/$body_exc.json"
     fi
@@ -856,7 +856,7 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
   fi
 
   # FR-156: TREE pre-check. ONE verdict per agent (deduped via TREE_CHECKED)
-  # comparing the vendored registry tree against the recorded path-origin's
+  # comparing the vendored loadout tree against the recorded path-origin's
   # source tree. Runs BEFORE the per-target FR-152 symlink check (plan
   # step 11) — the two verdicts are ORTHOGONAL (tree-match doesn't imply
   # symlink-correct, and vice versa) so both must fire so the summary count
@@ -870,7 +870,7 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
   esac
   if [ "$layer" = "personal" ] && [ "$tree_already_checked" -eq 0 ]; then
     TREE_CHECKED="${TREE_CHECKED}${name}:"
-    tree_origins_path="$BRAIN_DIR/registry/origins.json"
+    tree_origins_path="$BRAIN_DIR/loadout/origins.json"
     tree_origin_info=""
     if [ -f "$tree_origins_path" ]; then
       tree_origin_info=$(python3 - "$tree_origins_path" "$name" <<'PY'
@@ -907,27 +907,27 @@ PY
         case "$tree_origin_dir" in
           "~"/*) tree_origin_dir="$HOME/${tree_origin_dir#"~/"}" ;;
         esac
-        tree_registry_dir="$BRAIN_DIR/registry/agents/$name"
-        if [ ! -d "$tree_registry_dir" ]; then
-          echo "  [$name/tree] DRIFTED — registry dir absent: $tree_registry_dir"
+        tree_loadout_dir="$BRAIN_DIR/loadout/agents/$name"
+        if [ ! -d "$tree_loadout_dir" ]; then
+          echo "  [$name/tree] DRIFTED — loadout dir absent: $tree_loadout_dir"
           DRIFT=$((DRIFT + 1))
         elif [ ! -d "$tree_origin_dir" ]; then
           echo "  [$name/tree] NOTE — source dir gone ($tree_origin_dir); tree drift undetectable, per-target verify continues"
         else
-          tree_expected=$(hash_agent_tree "$tree_registry_dir")
+          tree_expected=$(hash_agent_tree "$tree_loadout_dir")
           tree_actual=$(hash_agent_tree "$tree_origin_dir")
           if [ "$tree_expected" = "$tree_actual" ]; then
             echo "  [$name/tree] MATCH"
             MATCH=$((MATCH + 1))
           else
             echo "  [$name/tree] DRIFTED"
-            echo "      registry  : $tree_registry_dir (sha $tree_expected)"
+            echo "      loadout  : $tree_loadout_dir (sha $tree_expected)"
             echo "      source    : $tree_origin_dir (sha $tree_actual)"
             # Locate up to N=5 differing relpaths so the operator can act
             # without re-deriving the diff manually. Skip-list MUST stay byte-
             # for-byte in sync with TS isAgentTreeSkipped and bash
             # hash_agent_tree (TD-202: REGISTRY-NOTICE.md added).
-            tree_diff=$(python3 - "$tree_registry_dir" "$tree_origin_dir" <<'PY'
+            tree_diff=$(python3 - "$tree_loadout_dir" "$tree_origin_dir" <<'PY'
 import hashlib
 import os
 import sys
@@ -971,7 +971,7 @@ def walk(tree):
     return out
 
 
-a = walk(sys.argv[1])  # registry
+a = walk(sys.argv[1])  # loadout
 b = walk(sys.argv[2])  # source
 diffs = []
 keys = sorted(set(a) | set(b))
@@ -979,7 +979,7 @@ for k in keys:
     if k not in a:
         diffs.append("+ " + k + " (only in source)")
     elif k not in b:
-        diffs.append("- " + k + " (only in registry)")
+        diffs.append("- " + k + " (only in loadout)")
     elif a[k] != b[k]:
         diffs.append("~ " + k + " (contents differ)")
 N = 5
@@ -992,7 +992,7 @@ PY
             if [ -n "$tree_diff" ]; then
               printf '%s\n' "$tree_diff"
             fi
-            echo "      reason    : agent tree diverges from recorded path-origin source — \`igris registry update $name\` re-vendors"
+            echo "      reason    : agent tree diverges from recorded path-origin source — \`igris loadout update $name\` re-vendors"
             DRIFT=$((DRIFT + 1))
           fi
         fi
@@ -1014,14 +1014,14 @@ PY
 
   # FR-152 / FR-158 / FR-159 / FR-171: claude + codex + gemini + opencode AGENT
   # verdicts are by target-path realpath against the per-harness
-  # registry-resident assembled file (`harness.claude.md`, `harness.codex.toml`,
+  # loadout-resident assembled file (`harness.claude.md`, `harness.codex.toml`,
   # `harness.gemini.md`, `harness.opencode.md` respectively — NOT body sha).
   # Pair line-for-line with `compile_md_agent_target` (L-519 §18.1
   # compile/drift-verify pairing). opencode follows symlinks (verified live) so
   # it shares the claude symlink-verdict branch (harness_ext=md). Both sides of
   # the containment check are realpath'd so macOS `/var` → `/private/var` (and
   # similar symlink-resolved TMPDIR prefixes) do not produce false
-  # "not registry-anchored" verdicts.
+  # "not loadout-anchored" verdicts.
   if [ "$ttype" = "claude" ] || [ "$ttype" = "gemini" ] || [ "$ttype" = "codex" ] || [ "$ttype" = "opencode" ]; then
     verify_md_agent_symlink_drift "$name" "$ttype" "$target_abs"
     continue
@@ -1224,7 +1224,7 @@ if [ -n "$SKILL_ROWS" ]; then
     fi
     DELEGATED_SKILL_ROOTS+=("$delegate_root")
     drc=0
-    "${IGRIS_CLI_CMD[@]}" registry project-skills \
+    "${IGRIS_CLI_CMD[@]}" loadout project-skills \
       --source "$delegate_root" \
       --project-root "$PROJECT_ROOT" \
       ${OVERLAY:+--overlay "$OVERLAY"} >/dev/null 2>&1 || drc=$?
@@ -1324,7 +1324,7 @@ fi
 # drift loop above does NOT see (it checks the SERVER ENTRY in the mcpServers/
 # mcp_servers config, not the permissions/trust surface). Assert the grant is
 # PRESENT for every harness — a missing grant (any harness) is DRIFT. The grant
-# predicate is the TS `verifyBrainGrant` exposed via `igris registry
+# predicate is the TS `verifyBrainGrant` exposed via `igris loadout
 # verify-mcp-grant` (exit 0 = present, 1 = missing) — bash never re-implements the
 # per-harness grant grammar (§18.1). opencode is `covered` (its grant lives in
 # agent frontmatter) and the verb reports it present.
@@ -1340,7 +1340,7 @@ if [ -n "$MCP_DRIFT_ROWS" ]; then
   for grant_harness in claude codex gemini opencode antigravity; do
     TOTAL=$((TOTAL + 1))
     grc=0
-    "${IGRIS_CLI_CMD[@]}" registry verify-mcp-grant \
+    "${IGRIS_CLI_CMD[@]}" loadout verify-mcp-grant \
       --harness "$grant_harness" \
       --project-root "$PROJECT_ROOT" >/dev/null 2>&1 || grc=$?
     if [ "$grc" -eq 0 ]; then

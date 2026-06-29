@@ -3,12 +3,12 @@
  * `igris remove <surface>` — the SYMMETRIC INVERSE of `lib/add-orchestrate.ts`.
  *
  * This is the TD-235 chokepoint, INVERTED. Every surface arm of `remove`
- * (skill/agent/mcp/hook), after de-materializing from the registry/overlay
+ * (skill/agent/mcp/hook), after de-materializing from the loadout/overlay
  * (personal) or `core/` (core), funnels its un-projection through
  * `unprojectAndVerify`. That function:
  *
  *   1. UN-PROJECTS the surface from each (or one `--harness`) target — deleting
- *      the registry-anchored symlink (skill/agent) / un-merging the named native
+ *      the loadout-anchored symlink (skill/agent) / un-merging the named native
  *      config block (mcp/hook) — collecting a `deprojected[]` of the targets it
  *      actually removed; then
  *   2. VERIFIES ABSENT: runs `harness check --surface <s> --filter <name>` via
@@ -32,7 +32,7 @@
  * This file owns NO surface-specific knowledge beyond the per-harness un-project
  * dispatch table — it takes the surface name + the target list + an
  * un-projector callback and drives the §18.1 drift contract in reverse. The
- * de-materialize half lives in `registry.ts` (personal) / `remove-core.ts`
+ * de-materialize half lives in `loadout.ts` (personal) / `remove-core.ts`
  * (core); the dispatch lives in `verbs/remove.ts`.
  */
 

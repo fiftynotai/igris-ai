@@ -3,7 +3,7 @@
  *
  * Covers the spec parser grammar, the semver/release-tag freshness comparator,
  * the repo-manifest read+validate, and surface selection. NO network, NO SUT
- * (`runRegistry`) — these exercise the exported pure functions directly
+ * (`runLoadout`) — these exercise the exported pure functions directly
  * (L-159/L-173: stub the fetch boundary, never mock the module under test;
  * here there is no fetch at all — the functions are deterministic).
  */

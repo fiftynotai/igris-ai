@@ -41,7 +41,7 @@ setup() {
 
   # Isolate from the live brain dir so the guard/compile do NOT auto-discover
   # the user's personal overlay manifest at
-  # ~/.igris/registry/harness-manifest.personal.json (FR-146 leaves this in
+  # ~/.igris/loadout/harness-manifest.personal.json (FR-146 leaves this in
   # place between runs). Matches the harness_skills.test.bash precedent.
   ISOLATED_BRAIN="$TEST_TEMP_DIR/brain_$BATS_TEST_NUMBER"
   mkdir -p "$ISOLATED_BRAIN"
@@ -60,7 +60,7 @@ setup() {
 
   # A canonical agent prompt (frontmatter + body). Compile-time α-assembly
   # extracts frontmatter inline (TD-195 fallback — no FR-151 sidecar present)
-  # and produces a registry-resident harness.claude.md the symlink will point at.
+  # and produces a loadout-resident harness.claude.md the symlink will point at.
   cat > "$PROJ/canon/sample.md" <<'EOF'
 ---
 name: sample
@@ -115,10 +115,10 @@ EOF
   run bash "$COMPILE" --project-root "$PROJ" --target claude
   [ "$status" -eq 0 ]
   [ -L "$PROJ/nested/dir/sample.md" ]
-  # The symlink target must reside in the registry under $IGRIS_BRAIN_DIR.
+  # The symlink target must reside in the loadout under $IGRIS_BRAIN_DIR.
   local resolved
   resolved="$(readlink "$PROJ/nested/dir/sample.md")"
-  [[ "$resolved" == "$IGRIS_BRAIN_DIR/registry/agents/sample/harness.claude.md" ]]
+  [[ "$resolved" == "$IGRIS_BRAIN_DIR/loadout/agents/sample/harness.claude.md" ]]
 }
 
 @test "FR-154 compile: absolute target outside PROJECT_ROOT resolves verbatim" {
@@ -316,8 +316,8 @@ EOF
 
 @test "FR-154 drift: an absolute target outside PROJECT_ROOT reports MATCH after compile" {
   # Sanity check that the abs-outside-PROJ_ROOT shape survives drift's
-  # registry-containment check on the symlink TARGET (the symlink TARGET is
-  # still the registry harness.claude.md; only the symlink LOCATION is outside
+  # loadout-containment check on the symlink TARGET (the symlink TARGET is
+  # still the loadout harness.claude.md; only the symlink LOCATION is outside
   # PROJ). This guards against a future drift-side regression that confuses
   # "containment of the link path" with "containment of the link target".
   local abs_target="$TEST_TEMP_DIR/abs_outside_match_$BATS_TEST_NUMBER/sample.md"

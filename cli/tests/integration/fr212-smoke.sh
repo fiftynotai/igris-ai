@@ -123,8 +123,8 @@ check1_skills() {
   # proving the flip took effect.
   local out
   out="$(cd "$home" && HOME="$home" \
-        node "$CLI" registry project-skills --source "$src" 2>&1)"
-  echo "--- igris registry project-skills (delegate) output ---"
+        node "$CLI" loadout project-skills --source "$src" 2>&1)"
+  echo "--- igris loadout project-skills (delegate) output ---"
   printf '%s\n' "$out" | sed "s#$home#\$HOME#g" | grep -vE '^[[:space:]]*$' | head -26
 
   local list_json
@@ -253,9 +253,9 @@ check3_remove() {
   echo
   echo "### CHECK 3 — remove leaves zero dangling (delegate inverse)"
 
-  echo "--- igris registry unproject-skills --name boot (delegate DEFAULT -> skills remove) ---"
+  echo "--- igris loadout unproject-skills --name boot (delegate DEFAULT -> skills remove) ---"
   # FR-212d: delegate is the default — no IGRIS_SKILLS_ENGINE override.
-  HOME="$home" node "$CLI" registry unproject-skills --name boot 2>&1 \
+  HOME="$home" node "$CLI" loadout unproject-skills --name boot 2>&1 \
     | sed "s#$home#\$HOME#g" | grep -vE '^[[:space:]]*$' | head -12
 
   echo "--- delegate MCP un-registration + grant revoke (all 5, production-symmetric) ---"

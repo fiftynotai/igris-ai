@@ -1,19 +1,19 @@
 /**
- * `igris registry <add|list|remove|update> [options]` — the FR-141/FR-142
- * Layer-2 customization-registry overlay WRITER.
+ * `igris loadout <add|list|remove|update> [options]` — the FR-141/FR-142
+ * Layer-2 customization-loadout overlay WRITER.
  *
  * FR-142 COPY-VENDOR MODE: `add` no longer references a live external path;
- * it COPIES the surface's canonical files into `~/.igris/registry/<name>/`
+ * it COPIES the surface's canonical files into `~/.igris/loadout/<name>/`
  * (atomic temp-dir + rename) and points the overlay's `canonical.dir` at that
  * VENDORED copy (as an absolute `brainDir()`-derived path the patched
  * compiler resolves verbatim). A typed origin `{type:"path", dir, hash}` is
- * recorded in a sibling `~/.igris/registry/origins.json` (option (b): OUTSIDE
+ * recorded in a sibling `~/.igris/loadout/origins.json` (option (b): OUTSIDE
  * the manifest so the overlay stays schema-clean). The new `update` action
  * re-vendors from the recorded origin and reports per-surface changed/unchanged
  * via content-hash comparison.
  *
  * Writes the runtime-only personal overlay
- * `~/.igris/registry/harness-manifest.personal.json`, which the already-live
+ * `~/.igris/loadout/harness-manifest.personal.json`, which the already-live
  * FR-136 merge seam (`compile_harnesses.sh` / `check_harness_drift.sh`)
  * auto-discovers and merges with the project's base `harness-manifest.json`.
  *
@@ -32,9 +32,10 @@
  * Integration test #11 runs the REAL `validate_manifest` against an overlay this
  * verb writes, so any drift between this TS validator and the schema reds the build.
  *
- * NAME COLLISION NOTE: this is the verb at `cli/src/verbs/registry.ts`. It is
- * UNRELATED to `cli/src/lib/registry.ts` (the project-registry SQLite module)
- * despite the shared basename. This verb does NOT import `lib/registry.ts`.
+ * NOTE: this is the Layer-2 loadout verb at `cli/src/verbs/loadout.ts`. It is
+ * UNRELATED to `cli/src/lib/registry.ts` (the project-registry SQLite module).
+ * The FR-216 rename (`verbs/registry.ts` → `verbs/loadout.ts`) removed the prior
+ * basename collision. This verb does NOT import `lib/registry.ts`.
  */
 
 import { createHash } from "node:crypto";
@@ -52,11 +53,11 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 import {
-  registryAgentDirPath,
-  registryDirPath,
-  registryOriginsPath,
-  registryOverlayPath,
-  registrySkillDirPath,
+  loadoutAgentDirPath,
+  loadoutDirPath,
+  loadoutOriginsPath,
+  loadoutOverlayPath,
+  loadoutSkillDirPath,
   coreSurfacesManifestPath,
   claudeJsonPath,
   geminiSettingsPath,
@@ -120,7 +121,7 @@ import {
   type GrantResult,
 } from "../lib/mcp-grant.js";
 
-export type RegistryAction =
+export type LoadoutAction =
   | "add"
   | "add-skill"
   | "add-mcp"
@@ -143,7 +144,7 @@ export type RegistryAction =
 
 /** Allowed harness target types (mirrors manifest.schema.json target enum).
  * FR-171: `opencode` added as a first-class agent target (OpenCode's agent
- * loader follows symlinks — projects a registry-anchored symlink to
+ * loader follows symlinks — projects a loadout-anchored symlink to
  * harness.opencode.md, same primitive as claude). */
 const VALID_TARGET_TYPES = ["claude", "codex", "gemini", "opencode"] as const;
 type TargetType = (typeof VALID_TARGET_TYPES)[number];
@@ -164,7 +165,7 @@ type SkillTargetType = (typeof VALID_SKILL_TARGET_TYPES)[number];
 
 /**
  * FR-143/FR-149/FR-171/FR-202: allowed SKILL target methods. `symlink` = the
- * registry-anchored per-skill symlink; `command` = the FR-171 OpenCode thin
+ * loadout-anchored per-skill symlink; `command` = the FR-171 OpenCode thin
  * command wrapper. Mirrors `$defs.skills_surface.targets.method`. FR-202 (M1):
  * the long-retired `compiler` (codex AGENTS.md aggregator) + `converter`
  * (gemini per-skill TOML) methods were dropped here in lockstep with the
@@ -302,8 +303,8 @@ interface SkillTargetSpec {
 /**
  * TD-191: ONE skills projection block. Multiple coexist as elements of
  * `surfaces.skills[]` (multi-source: a personal block compiles ALONGSIDE
- * the core block). `source` points at the VENDORED tree under the registry
- * (L-516 universal copy-vendor — `registrySkillDirPath(<name>)` for personal
+ * the core block). `source` points at the VENDORED tree under the loadout
+ * (L-516 universal copy-vendor — `loadoutSkillDirPath(<name>)` for personal
  * blocks, the canonical skills dir for the core block). Mirrors
  * `$defs.skills_surface` in `manifest.schema.json`.
  */
@@ -380,7 +381,7 @@ interface HookCanonical {
  * `surfaces.hooks[]` (multi-block, like `mcp_servers`). A hook block IS keyed on
  * its `name`; `event` is one of the six PORTABLE_EVENTS; `canonical.command` is
  * the shared hook script the harness runs (a personal block's command lives
- * under ~/.igris/registry/hooks/<name>/ — the distinct provenance the canonical
+ * under ~/.igris/loadout/hooks/<name>/ — the distinct provenance the canonical
  * re-merge preserves, fixing R2). Mirrors `$defs.hook_surface`.
  */
 interface HookSurface {
@@ -488,16 +489,16 @@ export interface InlineOrigin {
 /**
  * The typed origin recorded per surface, stored OUTSIDE the harness manifest
  * (option (b)) in `origins.json`. A discriminated union over `type`; the
- * compiler never reads this file (only `igris registry update` does).
+ * compiler never reads this file (only `igris loadout update` does).
  */
 export type Origin = PathOrigin | GithubOrigin | InlineOrigin;
 
 /** Map of surface name → its typed origin. The shape of `origins.json`. */
 export type OriginsMap = Record<string, Origin>;
 
-export interface RegistryOptions {
+export interface LoadoutOptions {
   /** Which sub-verb to run. */
-  action: RegistryAction;
+  action: LoadoutAction;
   /** Agent name (add/remove/update). */
   name?: string;
   /**
@@ -556,16 +557,16 @@ export interface RegistryOptions {
    * a number at the CLI boundary so the verb can trust the type.
    */
   startupTimeoutSec?: number;
-  /** Test seam: overlay path override (defaults to registryOverlayPath()). */
+  /** Test seam: overlay path override (defaults to loadoutOverlayPath()). */
   overlayPath?: string;
-  /** Test seam: origins.json path override (defaults to registryOriginsPath()). */
+  /** Test seam: origins.json path override (defaults to loadoutOriginsPath()). */
   originsPath?: string;
-  /** Test seam: agent vendor-dir base override (defaults to registryAgentDirPath()). */
+  /** Test seam: agent vendor-dir base override (defaults to loadoutAgentDirPath()). */
   vendorDir?: (name: string) => string;
   /**
    * TD-191 test seam: skill vendor-dir base override (defaults to
-   * `registrySkillDirPath()`). Parallels `vendorDir` for the L-516 skill
-   * copy-vendor path so tests can sandbox the skill registry tree.
+   * `loadoutSkillDirPath()`). Parallels `vendorDir` for the L-516 skill
+   * copy-vendor path so tests can sandbox the skill loadout tree.
    */
   skillVendorDir?: (name: string) => string;
   /**
@@ -615,9 +616,9 @@ export interface RegistryOptions {
    */
   hookSettingsPath?: string;
   /**
-   * FR-180 (D7) project-hook test seam: the registry hooks-script root the
+   * FR-180 (D7) project-hook test seam: the loadout hooks-script root the
    * personal `command` resolves against for the existence check. Defaults to
-   * `<brain>/registry/hooks`. Tests point it at a fixture dir.
+   * `<brain>/loadout/hooks`. Tests point it at a fixture dir.
    */
   hookScriptRoot?: string;
   /**
@@ -630,9 +631,9 @@ export interface RegistryOptions {
   source?: string;
   /**
    * FR-212a project-skills/unproject-skills test seam: inject a fake
-   * `projectSkillsViaTool` so the registry-level path can be unit-tested without
+   * `projectSkillsViaTool` so the loadout-level path can be unit-tested without
    * spawning the real `skills` CLI (the spawn itself is spied in the
-   * skills-delegate unit tests; this seam covers the registry wiring).
+   * skills-delegate unit tests; this seam covers the loadout wiring).
    */
   projectSkillsFn?: typeof projectSkillsViaTool;
   /** FR-212a unproject-skills test seam: inject a fake `unprojectSkillsViaTool`. */
@@ -646,7 +647,7 @@ export interface RegistryOptions {
   mcpEngine?: McpEngine;
   /**
    * FR-212b project-mcp DELEGATE test seam: inject a fake `registerMcpViaTool`
-   * so the registry-level delegate path is unit-tested without spawning the real
+   * so the loadout-level delegate path is unit-tested without spawning the real
    * `add-mcp` CLI (the spawn itself is spied in the mcp-delegate unit tests).
    */
   registerMcpFn?: typeof registerMcpViaTool;
@@ -1601,8 +1602,8 @@ function globToRegExp(glob: string): RegExp {
 
 /**
  * FR-152 + FR-144: resolve a personal-layer body-exception sidecar to its
- * absolute path under the runtime registry (`<brain>/registry/body-exceptions/
- * <name>.json`). Personal agents (the only layer the registry writer touches)
+ * absolute path under the runtime loadout (`<brain>/loadout/body-exceptions/
+ * <name>.json`). Personal agents (the only layer the loadout writer touches)
  * key their sidecars off the brain dir, mirroring
  * `compile_harnesses.sh:381-385`. Returns the resolved path when the sidecar
  * exists; returns undefined when no body-exception is configured. Throws when
@@ -1615,7 +1616,7 @@ function resolvePersonalBodyExceptionPath(
     return undefined;
   }
   const sidecar = join(
-    registryDirPath(),
+    loadoutDirPath(),
     "body-exceptions",
     `${bodyException}.json`,
   );
@@ -1693,7 +1694,7 @@ export function assembleClaudeHarness(
   // FR-144 / TD-193: apply the body-exception appendix when provided. The
   // sidecar JSON shape (`{anchor, insert}`) matches what the runtime
   // body-exceptions/<name>.json files carry — see
-  // ~/.igris/registry/body-exceptions/ + repo core/scripts/cli-adapters/
+  // ~/.igris/loadout/body-exceptions/ + repo core/scripts/cli-adapters/
   // body-exceptions/ (FR-144 layer-keyed resolution; this helper is layer-
   // agnostic — callers pass the resolved path).
   if (bodyExceptionPath !== undefined && bodyExceptionPath.length > 0) {
@@ -2169,7 +2170,7 @@ function escapeTomlMultilineBody(raw: string): string {
 /**
  * FR-159 α-assembly (Codex branch): derive
  * `<vendoredDir>/harness.codex.toml` so codex's subagent loader resolves
- * the project's `~/.codex/agents/<name>.toml` symlink to a registry-anchored
+ * the project's `~/.codex/agents/<name>.toml` symlink to a loadout-anchored
  * 3-key TOML document (`description`, `developer_instructions`, `name`).
  *
  * Replaces the bash `sync_codex_agents.sh` which was deleted by FR-159 (see
@@ -2255,7 +2256,7 @@ export function assembleCodexHarness(
     if (key === "description") descriptionRaw = value;
     if (key === "name") nameRaw = value;
   }
-  // Name fallback: `<basename(vendoredDir)>` (registry vendor dir = agent
+  // Name fallback: `<basename(vendoredDir)>` (loadout vendor dir = agent
   // name). Matches `sync_codex_agents.sh`'s `basename(OUTPUT_PATH) - .toml`
   // fallback when the sidecar omits a name.
   if (nameRaw === "") {
@@ -2291,7 +2292,7 @@ export function assembleCodexHarness(
 /**
  * TD-202 — emit a `REGISTRY-NOTICE.md` sidecar inside a vendored tree naming
  * the SOURCE the editor must mutate. The notice is best-effort UX (in-band
- * "edit source, not registry" guidance) — its emission MUST NOT fail the
+ * "edit source, not loadout" guidance) — its emission MUST NOT fail the
  * containing add/update verb (the overlay write is the contract). Callers
  * invoke this AFTER `hashAgentTree`/`hashSkillTree` so the notice's bytes
  * never enter the hash basis even if the skip-list mirror lags (defense-in-
@@ -2319,20 +2320,20 @@ function writeRegistryNotice(
   try {
     const body =
       `<!--\n` +
-      `  TD-202: this directory is a registry-vendored copy. DO NOT edit files here.\n` +
+      `  TD-202: this directory is a loadout-vendored copy. DO NOT edit files here.\n` +
       `  Source: ${sourceRef}\n` +
-      `  To change: edit the source, then run \`igris registry update ${name}\`.\n` +
+      `  To change: edit the source, then run \`igris loadout update ${name}\`.\n` +
       `  Direct edits to this directory will be OVERWRITTEN on the next \`update\`\n` +
       `  or \`add\` cycle, and the drift-verify check will flag them as DRIFTED.\n` +
       `-->\n\n` +
-      `# Registry-vendored copy — do not edit here\n\n` +
-      `This is a copy of \`${sourceRef}\` maintained by \`igris registry\`. Edit the\n` +
+      `# Loadout-vendored copy — do not edit here\n\n` +
+      `This is a copy of \`${sourceRef}\` maintained by \`igris loadout\`. Edit the\n` +
       `source, then run:\n\n` +
       `\`\`\`bash\n` +
-      `igris registry update ${name}\n` +
+      `igris loadout update ${name}\n` +
       `\`\`\`\n\n` +
       `Why this file exists: see TD-202 (the 2026-06-01 Codex incident — direct\n` +
-      `registry edits to content-pipeline/SKILL.md got silently overwritten on the\n` +
+      `loadout edits to content-pipeline/SKILL.md got silently overwritten on the\n` +
       `next update cycle). The drift checker (\`igris harness check\`) reports\n` +
       `DRIFTED if this copy diverges from source. See coding_guidelines.md §18.5.\n`;
 
@@ -2369,7 +2370,7 @@ function writeRegistryNotice(
     // TD-202: in-band notice is UX, not contract. Log + continue; the overlay
     // write is the load-bearing artifact.
     info(
-      `registry: could not write REGISTRY-NOTICE.md in ${vendoredDir}: ${(err as Error).message}`,
+      `loadout: could not write REGISTRY-NOTICE.md in ${vendoredDir}: ${(err as Error).message}`,
     );
   }
 }
@@ -2455,7 +2456,7 @@ function stripLeadingFrontmatter(text: string): string {
 /**
  * FR-144 / TD-193: insert appendix lines after a unique `anchor` line in
  * `body`. Byte-for-byte semantics match the bash compile-side path's
- * `apply_body_exception` (in `assemble_agent_harness_into_registry`) so the JS
+ * `apply_body_exception` (in `assemble_agent_harness_into_loadout`) so the JS
  * vendor path produces the same bytes. Throws on non-unique anchor (zero or
  * multiple matches).
  */
@@ -2594,7 +2595,7 @@ function copySkillTreeRecursive(srcDir: string, destDir: string): void {
  * TD-191: stable content hash over a vendored skill tree. Folds every file's
  * relpath (sorted) + bytes into one sha256. Same idiom as `hashSurface` but
  * walks the full tree (skills can carry nested dirs). Used to detect source
- * mutation in `igris registry update` for skill blocks.
+ * mutation in `igris loadout update` for skill blocks.
  *
  * TD-201: applies `isAgentTreeSkipped` (same skip-list as `hashAgentTree`).
  * Cross-implementation hash parity with bash `hash_agent_tree` (reused for
@@ -2651,7 +2652,7 @@ function hashSkillTree(treeDir: string): string {
  * TD-191 path re-vendor for SKILLS. Mirrors `reVendorPath` semantics
  * (hash-compare against recorded origin) but uses `vendorSkillTreeAtomic` +
  * `hashSkillTree`. The vendored `destDir` is passed in (defaults to
- * `registrySkillDirPath(name)` at the call site) so tests can sandbox it.
+ * `loadoutSkillDirPath(name)` at the call site) so tests can sandbox it.
  * Symmetric topology with agent updates per L-519 §18.1.
  */
 function reVendorSkillPath(
@@ -2728,7 +2729,7 @@ function pickAssemblyFiles(
 // "file-set" (vendorSurfaceAtomic over frontmatter.claude.md +
 // system-prompt-vN.md)
 // to "tree vendor" (whole source directory minus a fixed skip-list) so agents
-// with sibling content (DECK's routing/+registry/, DESIGNER's archetypes/)
+// with sibling content (DECK's routing/+loadout/, DESIGNER's archetypes/)
 // vendor self-sufficiently — closes the L-516 violation where supporting
 // files lived in the operator's source dir only. Symmetric topology with the
 // TD-191 SKILL-TREE primitives above (L-519 §18.1).
@@ -2956,19 +2957,19 @@ function parseSkillTarget(spec: string): SkillTargetSpec | string {
 // ---------------------------------------------------------------------------
 
 async function runAdd(
-  opts: RegistryOptions,
+  opts: LoadoutOptions,
   overlayPath: string,
 ): Promise<number> {
   if (opts.name === undefined || opts.name.length === 0) {
-    logError("registry add: <name> is required");
+    logError("loadout add: <name> is required");
     return 2;
   }
   if (opts.from === undefined || opts.from.length === 0) {
-    logError("registry add: --from <dir-or-file> is required");
+    logError("loadout add: --from <dir-or-file> is required");
     return 2;
   }
   if (opts.targets === undefined || opts.targets.length === 0) {
-    logError("registry add: at least one --target <type:path> is required");
+    logError("loadout add: at least one --target <type:path> is required");
     return 2;
   }
 
@@ -2983,14 +2984,14 @@ async function runAdd(
   for (const spec of opts.targets) {
     const parsed = parseTarget(spec);
     if (typeof parsed === "string") {
-      logError(`registry add: ${parsed}`);
+      logError(`loadout add: ${parsed}`);
       return 2;
     }
     targets.push(parsed);
   }
 
   const projectRoot = opts.projectRoot ?? process.cwd();
-  const vendorDirFor = opts.vendorDir ?? registryAgentDirPath;
+  const vendorDirFor = opts.vendorDir ?? loadoutAgentDirPath;
   const vendoredDir = vendorDirFor(opts.name);
 
   // Resolve the canonical SOURCE file set from --from (validates flags + that
@@ -2999,31 +3000,31 @@ async function runAdd(
   let unversionedFile: string | undefined;
   if (opts.versioned === true) {
     if (opts.glob === undefined || opts.glob.length === 0) {
-      logError("registry add: --versioned requires --glob <g>");
+      logError("loadout add: --versioned requires --glob <g>");
       return 2;
     }
     const r = resolveSource(opts.from, true, opts.glob, projectRoot);
     if (typeof r === "string") {
-      logError(`registry add: ${r}`);
+      logError(`loadout add: ${r}`);
       return 1;
     }
     resolved = r;
   } else {
     if (opts.glob !== undefined) {
-      logError("registry add: --glob is only valid with --versioned");
+      logError("loadout add: --glob is only valid with --versioned");
       return 2;
     }
     const idx = opts.from.lastIndexOf("/");
     const file = idx >= 0 ? opts.from.slice(idx + 1) : opts.from;
     if (file.length === 0) {
       logError(
-        "registry add: --from must include a filename when not --versioned",
+        "loadout add: --from must include a filename when not --versioned",
       );
       return 2;
     }
     const r = resolveSource(opts.from, false, undefined, projectRoot);
     if (typeof r === "string") {
-      logError(`registry add: ${r}`);
+      logError(`loadout add: ${r}`);
       return 1;
     }
     resolved = r;
@@ -3033,7 +3034,7 @@ async function runAdd(
   // Build the canonical spec — `dir` points at the VENDORED copy (absolute,
   // brainDir()-derived). The patched compiler resolves an absolute canon.dir
   // verbatim (its `/*` case), correct under both the prod brain and the
-  // IGRIS_BRAIN_DIR test sandbox (which is where registryAgentDirPath lands).
+  // IGRIS_BRAIN_DIR test sandbox (which is where loadoutAgentDirPath lands).
   let canonical: CanonicalSpec;
   if (opts.versioned === true) {
     canonical = { dir: vendoredDir, versioned: true, glob: opts.glob };
@@ -3049,14 +3050,14 @@ async function runAdd(
   // append/convert/error.
   if (opts.scope === "global" && opts.project !== undefined) {
     logError(
-      "registry add: --scope global is incompatible with --project (global " +
+      "loadout add: --scope global is incompatible with --project (global " +
         "entries have no paths[]). Omit --project to convert to global.",
     );
     return 2;
   }
   if (opts.scope === "project" && opts.project === undefined) {
     logError(
-      "registry add: --scope project requires --project <path> (paths[] must " +
+      "loadout add: --scope project requires --project <path> (paths[] must " +
         "be non-empty for project scope).",
     );
     return 2;
@@ -3089,7 +3090,7 @@ async function runAdd(
   // errors at write-time).
   const entryErr = validateAgentEntry(entry);
   if (entryErr !== null) {
-    logError(`registry add: invalid agent entry: ${entryErr}`);
+    logError(`loadout add: invalid agent entry: ${entryErr}`);
     return 1;
   }
 
@@ -3126,14 +3127,14 @@ async function runAdd(
       overlay.agents[existingIndex] = mutated;
       const overlayErr = validateOverlayShape(overlay);
       if (overlayErr !== null) {
-        logError(`registry add: resulting overlay invalid: ${overlayErr}`);
+        logError(`loadout add: resulting overlay invalid: ${overlayErr}`);
         return 1;
       }
       try {
         writeOverlayAtomic(overlayPath, overlay);
       } catch (err) {
         logError(
-          `registry add: failed to write overlay: ${(err as Error).message}`,
+          `loadout add: failed to write overlay: ${(err as Error).message}`,
         );
         return 1;
       }
@@ -3154,14 +3155,14 @@ async function runAdd(
       overlay.agents[existingIndex] = mutated;
       const overlayErr = validateOverlayShape(overlay);
       if (overlayErr !== null) {
-        logError(`registry add: resulting overlay invalid: ${overlayErr}`);
+        logError(`loadout add: resulting overlay invalid: ${overlayErr}`);
         return 1;
       }
       try {
         writeOverlayAtomic(overlayPath, overlay);
       } catch (err) {
         logError(
-          `registry add: failed to write overlay: ${(err as Error).message}`,
+          `loadout add: failed to write overlay: ${(err as Error).message}`,
         );
         return 1;
       }
@@ -3194,14 +3195,14 @@ async function runAdd(
         overlay.agents[existingIndex] = mutated;
         const overlayErr = validateOverlayShape(overlay);
         if (overlayErr !== null) {
-          logError(`registry add: resulting overlay invalid: ${overlayErr}`);
+          logError(`loadout add: resulting overlay invalid: ${overlayErr}`);
           return 1;
         }
         try {
           writeOverlayAtomic(overlayPath, overlay);
         } catch (err) {
           logError(
-            `registry add: failed to write overlay: ${(err as Error).message}`,
+            `loadout add: failed to write overlay: ${(err as Error).message}`,
           );
           return 1;
         }
@@ -3214,7 +3215,7 @@ async function runAdd(
       // existing scope=global; --project narrows availability → require
       // explicit --scope project per the FR-155 decision (no silent convert).
       logError(
-        `registry add: entry '${opts.name}' is currently scope=global; ` +
+        `loadout add: entry '${opts.name}' is currently scope=global; ` +
           `re-run with --scope project to convert (this narrows availability — ` +
           `claude/codex/gemini outside the listed --project paths will stop ` +
           `seeing '${opts.name}'). Overlay unchanged: ${overlayPath}`,
@@ -3227,7 +3228,7 @@ async function runAdd(
   // (b) Intra-overlay dedupe — the bash merge does NOT dedupe overlay-vs-overlay.
   if (overlay.agents.some((a) => a.name === opts.name)) {
     logError(
-      `registry add: an overlay agent named '${opts.name}' already exists; ` +
+      `loadout add: an overlay agent named '${opts.name}' already exists; ` +
         `remove it first or choose another name. Overlay unchanged: ${overlayPath}`,
     );
     return 1;
@@ -3237,7 +3238,7 @@ async function runAdd(
   const baseNames = readBaseAgentNames(projectRoot);
   if (baseNames.has(opts.name)) {
     logError(
-      `registry add: '${opts.name}' collides with a base (core) agent name; ` +
+      `loadout add: '${opts.name}' collides with a base (core) agent name; ` +
         "a personal customization must not shadow a core agent. Overlay unchanged.",
     );
     return 1;
@@ -3247,14 +3248,14 @@ async function runAdd(
   overlay.agents.push(entry);
   const overlayErr = validateOverlayShape(overlay);
   if (overlayErr !== null) {
-    logError(`registry add: resulting overlay invalid: ${overlayErr}`);
+    logError(`loadout add: resulting overlay invalid: ${overlayErr}`);
     return 1;
   }
 
   // All guards passed → VENDOR the agent TREE (atomic), then persist the
   // overlay, then record the origin. FR-156 promotes the vendor from
-  // "file-set" to "tree" so sibling files (DECK's routing/+registry/,
-  // DESIGNER's archetypes/) land in the registry alongside the body. If
+  // "file-set" to "tree" so sibling files (DECK's routing/+loadout/,
+  // DESIGNER's archetypes/) land in the loadout alongside the body. If
   // overlay persist fails after vendoring, clean up the just-vendored tree
   // so a rejected add leaves no orphan copy.
   //
@@ -3269,7 +3270,7 @@ async function runAdd(
     // FR-152 / FR-158 α-assembly: emit BOTH per-harness derived outputs
     // (`harness.claude.md` and `harness.gemini.md`) alongside frontmatter +
     // body so claude/gemini compile-time symlinks resolve to their
-    // respective registry file. No-op when no FR-151/FR-158 sidecar exists
+    // respective loadout file. No-op when no FR-151/FR-158 sidecar exists
     // (the Gemini assembler will also no-op when neither sidecar is present).
     // Hash is computed BEFORE assembly so derived files are excluded from
     // origin freshness (downstream-derived; `hashAgentTree` also excludes
@@ -3287,7 +3288,7 @@ async function runAdd(
     assembleOpencodeHarness(vendoredDir, assemblyFiles, bxPath);
   } catch (err) {
     rmSync(vendoredDir, { recursive: true, force: true });
-    logError(`registry add: failed to vendor canonical files: ${(err as Error).message}`);
+    logError(`loadout add: failed to vendor canonical files: ${(err as Error).message}`);
     return 1;
   }
   // TD-202 in-band notice — emitted post-hash (line 1986), post-assemble,
@@ -3300,7 +3301,7 @@ async function runAdd(
     writeOverlayAtomic(overlayPath, overlay);
   } catch (err) {
     rmSync(vendoredDir, { recursive: true, force: true });
-    logError(`registry add: failed to write overlay: ${(err as Error).message}`);
+    logError(`loadout add: failed to write overlay: ${(err as Error).message}`);
     return 1;
   }
 
@@ -3309,7 +3310,7 @@ async function runAdd(
   // skill cannot collide. Zero-migration: origins.json did not exist on
   // disk before TD-191, so the first write under this brief establishes
   // the keyspace shape.
-  const originsPath = opts.originsPath ?? registryOriginsPath();
+  const originsPath = opts.originsPath ?? loadoutOriginsPath();
   try {
     const origins = readOrigins(originsPath);
     origins[originKey("agent", opts.name)] = {
@@ -3319,7 +3320,7 @@ async function runAdd(
     };
     writeOriginsAtomic(originsPath, origins);
   } catch (err) {
-    logError(`registry add: failed to record origin: ${(err as Error).message}`);
+    logError(`loadout add: failed to record origin: ${(err as Error).message}`);
     return 1;
   }
 
@@ -3335,12 +3336,12 @@ async function runAdd(
  * (usage errors exit 2), fetches the repo via the injectable `fetchRepo` seam
  * into a temp dir, reads + validates the repo manifest, selects ONE surface by
  * `<name>`, runs the SAME guard chain as `runAdd` (validate, intra-overlay
- * dedupe, core-collision), vendors the selected files into the registry dir,
+ * dedupe, core-collision), vendors the selected files into the loadout dir,
  * persists the overlay, and records a `GithubOrigin`. The temp clone is always
  * cleaned up in a finally. `<name>` is guaranteed defined by the caller.
  */
 async function runAddGithub(
-  opts: RegistryOptions,
+  opts: LoadoutOptions,
   overlayPath: string,
 ): Promise<number> {
   const name = opts.name!;
@@ -3351,7 +3352,7 @@ async function runAddGithub(
   for (const spec of opts.targets!) {
     const parsed = parseTarget(spec);
     if (typeof parsed === "string") {
-      logError(`registry add: ${parsed}`);
+      logError(`loadout add: ${parsed}`);
       return 2;
     }
     targets.push(parsed);
@@ -3360,11 +3361,11 @@ async function runAddGithub(
   // Parse the github spec (usage error → exit 2). Parse PRECEDES fetch.
   const spec = parseGithubSpec(from);
   if (typeof spec === "string") {
-    logError(`registry add: ${spec}`);
+    logError(`loadout add: ${spec}`);
     return 2;
   }
 
-  const vendorDirFor = opts.vendorDir ?? registryAgentDirPath;
+  const vendorDirFor = opts.vendorDir ?? loadoutAgentDirPath;
   const vendoredDir = vendorDirFor(name);
   const fetchRepo = opts.fetchRepo ?? fetchRepoDefault;
 
@@ -3372,7 +3373,7 @@ async function runAddGithub(
   try {
     fetched = await fetchRepo(spec);
   } catch (err) {
-    logError(`registry add: ${(err as Error).message}`);
+    logError(`loadout add: ${(err as Error).message}`);
     return 1;
   }
 
@@ -3380,14 +3381,14 @@ async function runAddGithub(
     // Read + validate the repo manifest (reuses validateOverlayShape).
     const manifest = readRepoManifest(fetched.dir);
     if (typeof manifest === "string") {
-      logError(`registry add: ${manifest}`);
+      logError(`loadout add: ${manifest}`);
       return 1;
     }
 
     // Select ONE surface by <name>; resolve its canonical files on disk.
     const selected = selectSurface(manifest, name, fetched.dir, spec.subdir);
     if (typeof selected === "string") {
-      logError(`registry add: ${selected}`);
+      logError(`loadout add: ${selected}`);
       return 1;
     }
 
@@ -3419,7 +3420,7 @@ async function runAddGithub(
     // (a) Validate the new entry shape.
     const entryErr = validateAgentEntry(entry);
     if (entryErr !== null) {
-      logError(`registry add: invalid agent entry: ${entryErr}`);
+      logError(`loadout add: invalid agent entry: ${entryErr}`);
       return 1;
     }
 
@@ -3435,7 +3436,7 @@ async function runAddGithub(
     // (b) Intra-overlay dedupe.
     if (overlay.agents.some((a) => a.name === name)) {
       logError(
-        `registry add: an overlay agent named '${name}' already exists; ` +
+        `loadout add: an overlay agent named '${name}' already exists; ` +
           `remove it first or choose another name. Overlay unchanged: ${overlayPath}`,
       );
       return 1;
@@ -3446,7 +3447,7 @@ async function runAddGithub(
     const baseNames = readBaseAgentNames(projectRoot);
     if (baseNames.has(name)) {
       logError(
-        `registry add: '${name}' collides with a base (core) agent name; ` +
+        `loadout add: '${name}' collides with a base (core) agent name; ` +
           "a personal customization must not shadow a core agent. Overlay unchanged.",
       );
       return 1;
@@ -3456,7 +3457,7 @@ async function runAddGithub(
     overlay.agents.push(entry);
     const overlayErr = validateOverlayShape(overlay);
     if (overlayErr !== null) {
-      logError(`registry add: resulting overlay invalid: ${overlayErr}`);
+      logError(`loadout add: resulting overlay invalid: ${overlayErr}`);
       return 1;
     }
 
@@ -3486,7 +3487,7 @@ async function runAddGithub(
     } catch (err) {
       rmSync(vendoredDir, { recursive: true, force: true });
       logError(
-        `registry add: failed to vendor canonical files: ${(err as Error).message}`,
+        `loadout add: failed to vendor canonical files: ${(err as Error).message}`,
       );
       return 1;
     }
@@ -3502,11 +3503,11 @@ async function runAddGithub(
       writeOverlayAtomic(overlayPath, overlay);
     } catch (err) {
       rmSync(vendoredDir, { recursive: true, force: true });
-      logError(`registry add: failed to write overlay: ${(err as Error).message}`);
+      logError(`loadout add: failed to write overlay: ${(err as Error).message}`);
       return 1;
     }
 
-    const originsPath = opts.originsPath ?? registryOriginsPath();
+    const originsPath = opts.originsPath ?? loadoutOriginsPath();
     try {
       const origins = readOrigins(originsPath);
       const origin: GithubOrigin = {
@@ -3523,7 +3524,7 @@ async function runAddGithub(
       origins[originKey("agent", name)] = origin;
       writeOriginsAtomic(originsPath, origins);
     } catch (err) {
-      logError(`registry add: failed to record origin: ${(err as Error).message}`);
+      logError(`loadout add: failed to record origin: ${(err as Error).message}`);
       return 1;
     }
 
@@ -3540,7 +3541,7 @@ async function runAddGithub(
 /**
  * `add-skill` — register a personal SKILL projection in the overlay.
  *
- * Vendors the source tree into `~/.igris/registry/skills/<name>/`, persists
+ * Vendors the source tree into `~/.igris/loadout/skills/<name>/`, persists
  * one block in `overlay.surfaces.skills[]` whose `source` points at the
  * vendored tree, and records a path origin keyed `skill:<name>`. A second
  * call with a DIFFERENT name appends a new block (multi-source); a second
@@ -3563,24 +3564,24 @@ async function runAddGithub(
  * See L-515 — future remote-skill sources MUST clamp resolved paths inside
  * the fetch sandbox.
  */
-function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
+function runAddSkill(opts: LoadoutOptions, overlayPath: string): number {
   if (opts.name === undefined || opts.name.length === 0) {
     // `--name` is now REQUIRED (per L-516 + drift #7: block identity by name).
     // A `--from`-only run (legacy) cannot key origins or re-vendor the same
     // block in place. `--from` becomes optional on re-runs (see below) but the
     // name is always required.
-    logError("registry add-skill: <name> is required");
+    logError("loadout add-skill: <name> is required");
     return 2;
   }
   if (!NAME_PATTERN.test(opts.name)) {
     logError(
-      `registry add-skill: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
+      `loadout add-skill: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
     );
     return 2;
   }
   if (opts.targets === undefined || opts.targets.length === 0) {
     logError(
-      "registry add-skill: at least one --target <type:method:path> is required",
+      "loadout add-skill: at least one --target <type:method:path> is required",
     );
     return 2;
   }
@@ -3591,14 +3592,14 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
   // `--scope project` requires `--project`. Mirrors L-519.
   if (opts.scope === "global" && opts.project !== undefined) {
     logError(
-      "registry add-skill: --scope global is incompatible with --project " +
+      "loadout add-skill: --scope global is incompatible with --project " +
         "(global blocks have no paths[]). Omit --project to convert to global.",
     );
     return 2;
   }
   if (opts.scope === "project" && opts.project === undefined) {
     logError(
-      "registry add-skill: --scope project requires --project <path> " +
+      "loadout add-skill: --scope project requires --project <path> " +
         "(paths[] must be non-empty for project scope).",
     );
     return 2;
@@ -3613,7 +3614,7 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
   for (const spec of opts.targets) {
     const parsed = parseSkillTarget(spec);
     if (typeof parsed === "string") {
-      logError(`registry add-skill: ${parsed}`);
+      logError(`loadout add-skill: ${parsed}`);
       return 2;
     }
     newTargets.push(parsed);
@@ -3621,24 +3622,24 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
 
   const projectRoot = opts.projectRoot ?? process.cwd();
   const name = opts.name;
-  const originsPath = opts.originsPath ?? registryOriginsPath();
+  const originsPath = opts.originsPath ?? loadoutOriginsPath();
 
   // FR-149/FR-157: any <type>:symlink:<path> must NOT resolve INSIDE
-  // ~/.igris/registry/. The symlink target IS the registry-vendored copy;
+  // ~/.igris/loadout/. The symlink target IS the loadout-vendored copy;
   // aiming any symlink target there would create a self-referential link
   // the compiler can't safely follow. FR-157 widens the original claude-
   // only guard to all symlink methods (codex/gemini/agents) — the cycle
   // hazard was always type-agnostic; claude-only was a code-paint accident.
   // See L-515 (containment) + L-519.
-  const registryRoot = registryDirPath();
+  const loadoutRoot = loadoutDirPath();
   for (const t of newTargets) {
     if (t.method === "symlink") {
       const resolved = resolveSourcePath(t.path, projectRoot);
-      if (resolved === registryRoot || resolved.startsWith(`${registryRoot}/`)) {
+      if (resolved === loadoutRoot || resolved.startsWith(`${loadoutRoot}/`)) {
         logError(
-          `registry add-skill: ${t.type}:symlink target '${t.path}' resolves under ` +
-            `the registry root (${registryRoot}); the symlink target IS the ` +
-            "registry — pointing a target inside the registry creates a cycle. " +
+          `loadout add-skill: ${t.type}:symlink target '${t.path}' resolves under ` +
+            `the loadout root (${loadoutRoot}); the symlink target IS the ` +
+            "loadout — pointing a target inside the loadout creates a cycle. " +
             "Use a path under ~/.claude/skills/, ~/.agents/skills/, or another consumer location.",
         );
         return 1;
@@ -3660,7 +3661,7 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
   for (const t of newTargets) {
     if (t.method === "symlink" && basename(t.path) === name) {
       logError(
-        `registry add-skill: ${t.type}:symlink target '${t.path}' ends in the ` +
+        `loadout add-skill: ${t.type}:symlink target '${t.path}' ends in the ` +
           `skill name '${name}'. Use the PARENT skills dir (e.g. ` +
           `'${dirname(t.path)}'), NOT '${t.path}' — the compiler appends ` +
           `'/${name}' for you, so a per-skill path double-nests to ` +
@@ -3693,13 +3694,13 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
     consumerSourceDir = recordedOrigin.dir;
   } else {
     logError(
-      `registry add-skill: --from <source-dir> is required (no recorded origin for '${name}')`,
+      `loadout add-skill: --from <source-dir> is required (no recorded origin for '${name}')`,
     );
     return 2;
   }
   if (!existsSync(consumerSourceDir)) {
     logError(
-      `registry add-skill: skills source dir does not exist: ${consumerSourceDir}`,
+      `loadout add-skill: skills source dir does not exist: ${consumerSourceDir}`,
     );
     return 1;
   }
@@ -3718,7 +3719,7 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
   const matchingBlockIndexes = findSkillBlockIndexes(overlay, name);
   if (matchingBlockIndexes.length > 1) {
     logError(
-      `registry add-skill: overlay has ${matchingBlockIndexes.length} ` +
+      `loadout add-skill: overlay has ${matchingBlockIndexes.length} ` +
         `blocks for skill '${name}'; remove duplicate blocks before re-adding. ` +
         `Overlay unchanged: ${overlayPath}`,
     );
@@ -3736,7 +3737,7 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
   for (const t of newTargets) {
     if (baseSkillPaths.has(t.path)) {
       logError(
-        `registry add-skill: skill-target path '${t.path}' collides with a base ` +
+        `loadout add-skill: skill-target path '${t.path}' collides with a base ` +
           "(core) skill-target; a personal skill must not shadow a core skill. " +
           "Overlay unchanged.",
       );
@@ -3802,7 +3803,7 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
       }
     } else {
       logError(
-        `registry add-skill: block '${name}' is currently scope=global; ` +
+        `loadout add-skill: block '${name}' is currently scope=global; ` +
           `re-run with --scope project to convert (this narrows availability — ` +
           `claude/codex/gemini outside the listed --project paths will stop ` +
           `seeing skill block '${name}'). Overlay unchanged: ${overlayPath}`,
@@ -3816,7 +3817,7 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
   }
 
   // Build the block. `source` points at the VENDORED tree per L-516.
-  const skillVendorDirFor = opts.skillVendorDir ?? registrySkillDirPath;
+  const skillVendorDirFor = opts.skillVendorDir ?? loadoutSkillDirPath;
   const vendoredDir = skillVendorDirFor(name);
   const newBlock: SkillsSurface = {
     source: vendoredDir,
@@ -3834,7 +3835,7 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
   // so the block-level error names the offender clearly.)
   const blockErr = validateSkillsSurface(newBlock);
   if (blockErr !== null) {
-    logError(`registry add-skill: invalid skills block: ${blockErr}`);
+    logError(`loadout add-skill: invalid skills block: ${blockErr}`);
     return 1;
   }
 
@@ -3852,7 +3853,7 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
   // Validate the WHOLE overlay (defense-in-depth) before any side effect.
   const overlayErr = validateOverlayShape(overlay);
   if (overlayErr !== null) {
-    logError(`registry add-skill: resulting overlay invalid: ${overlayErr}`);
+    logError(`loadout add-skill: resulting overlay invalid: ${overlayErr}`);
     return 1;
   }
 
@@ -3866,7 +3867,7 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
   } catch (err) {
     rmSync(vendoredDir, { recursive: true, force: true });
     logError(
-      `registry add-skill: failed to vendor skill tree: ${(err as Error).message}`,
+      `loadout add-skill: failed to vendor skill tree: ${(err as Error).message}`,
     );
     return 1;
   }
@@ -3881,7 +3882,7 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
   } catch (err) {
     rmSync(vendoredDir, { recursive: true, force: true });
     logError(
-      `registry add-skill: failed to write overlay: ${(err as Error).message}`,
+      `loadout add-skill: failed to write overlay: ${(err as Error).message}`,
     );
     return 1;
   }
@@ -3895,7 +3896,7 @@ function runAddSkill(opts: RegistryOptions, overlayPath: string): number {
     };
     writeOriginsAtomic(originsPath, origins);
   } catch (err) {
-    logError(`registry add-skill: failed to record origin: ${(err as Error).message}`);
+    logError(`loadout add-skill: failed to record origin: ${(err as Error).message}`);
     return 1;
   }
 
@@ -3918,7 +3919,7 @@ export interface SkillMaterializeResult {
   ok: boolean;
   /** The exit code `runAddSkill` produced (0 on success, 1/2 on reject). */
   code: number;
-  /** The registry vendored-tree dir (`~/.igris/registry/skills/<name>/`). */
+  /** The loadout vendored-tree dir (`~/.igris/loadout/skills/<name>/`). */
   vendoredDir: string;
   /** The overlay manifest path the block was written to. */
   overlayWritten: string;
@@ -3931,18 +3932,18 @@ export interface SkillMaterializeResult {
  * into a `SkillMaterializeResult` so `verbs/add.ts` can decide whether to
  * proceed to `projectAndVerify`. `vendoredDir` is derived deterministically
  * from the same seam `runAddSkill` vendors into (`skillVendorDir` override or
- * `registrySkillDirPath`), so it is valid whether or not the write succeeded
+ * `loadoutSkillDirPath`), so it is valid whether or not the write succeeded
  * (the caller only consumes it when `ok` is true).
  *
- * See R7 (registry write-path regression guard) + D9 (materialize/project
+ * See R7 (loadout write-path regression guard) + D9 (materialize/project
  * boundary) in FR-180-plan.
  */
 export function materializeSkill(
-  opts: RegistryOptions,
+  opts: LoadoutOptions,
   overlayPath: string,
 ): SkillMaterializeResult {
   const code = runAddSkill(opts, overlayPath);
-  const skillVendorDirFor = opts.skillVendorDir ?? registrySkillDirPath;
+  const skillVendorDirFor = opts.skillVendorDir ?? loadoutSkillDirPath;
   const vendoredDir =
     opts.name !== undefined && opts.name.length > 0
       ? skillVendorDirFor(opts.name)
@@ -3967,7 +3968,7 @@ export interface AgentMaterializeResult {
   ok: boolean;
   /** The exit code `runAdd` (agent) produced (0 on success, 1/2 on reject). */
   code: number;
-  /** The registry vendored-tree dir (`~/.igris/registry/agents/<name>/`). */
+  /** The loadout vendored-tree dir (`~/.igris/loadout/agents/<name>/`). */
   vendoredDir: string;
   /** The overlay manifest path the block was written to. */
   overlayWritten: string;
@@ -3981,18 +3982,18 @@ export interface AgentMaterializeResult {
  * the heavily-tested write path) — and re-shapes the result into an
  * {@link AgentMaterializeResult} so `verbs/add.ts` can decide whether to proceed
  * to `projectAndVerify("agents", …)`. `vendoredDir` is derived from the same
- * `vendorDir` seam `runAdd` vendors into (`registryAgentDirPath` default), so it
+ * `vendorDir` seam `runAdd` vendors into (`loadoutAgentDirPath` default), so it
  * is valid regardless of write outcome (the caller only consumes it on success).
  *
- * See R7 (registry write-path regression guard) + D9 (materialize/project
+ * See R7 (loadout write-path regression guard) + D9 (materialize/project
  * boundary) in FR-180-plan.
  */
 export async function materializeAgent(
-  opts: RegistryOptions,
+  opts: LoadoutOptions,
   overlayPath: string,
 ): Promise<AgentMaterializeResult> {
   const code = await runAdd(opts, overlayPath);
-  const vendorDirFor = opts.vendorDir ?? registryAgentDirPath;
+  const vendorDirFor = opts.vendorDir ?? loadoutAgentDirPath;
   const vendoredDir =
     opts.name !== undefined && opts.name.length > 0
       ? vendorDirFor(opts.name)
@@ -4034,11 +4035,11 @@ export interface McpMaterializeResult {
  *
  * `runAddMcp` is synchronous (an inline MCP ref has no `github:` fetch), so this
  * wrapper is synchronous too — the shape difference from the (async) agent
- * wrapper. See R7 (registry write-path regression guard) + D9 (materialize/
+ * wrapper. See R7 (loadout write-path regression guard) + D9 (materialize/
  * project boundary) in FR-180-plan.
  */
 export function materializeMcp(
-  opts: RegistryOptions,
+  opts: LoadoutOptions,
   overlayPath: string,
 ): McpMaterializeResult {
   const code = runAddMcp(opts, overlayPath);
@@ -4052,7 +4053,7 @@ export function materializeMcp(
 /**
  * FR-180 (D7): structured-return result for the personal hook materialize.
  * Mirrors {@link McpMaterializeResult} — a personal hook write produces an
- * overlay block + the registry hook SCRIPT, so beyond ok/code it surfaces the
+ * overlay block + the loadout hook SCRIPT, so beyond ok/code it surfaces the
  * overlay it was written to.
  */
 export interface HookMaterializeResult {
@@ -4072,7 +4073,7 @@ export interface HookMaterializeResult {
  * script scaffold, no `github:` fetch — same shape as the MCP wrapper).
  */
 export function materializeHook(
-  opts: RegistryOptions,
+  opts: LoadoutOptions,
   overlayPath: string,
 ): HookMaterializeResult {
   const code = runAddHook(opts, overlayPath);
@@ -4120,7 +4121,7 @@ function parseMcpTarget(spec: string): McpTarget | string {
 /**
  * FR-162: the env-var-indirection WRITE GUARD (FR-160 decision #1). Parses
  * `KEY=VALUE` and REJECTS any VALUE that is not a single `${VAR}` reference —
- * inline secrets never enter the registry or any config. The real secret is
+ * inline secrets never enter the loadout or any config. The real secret is
  * resolved from the environment by the harness at launch time; the overlay only
  * stores the indirection ref.
  */
@@ -4136,7 +4137,7 @@ function parseEnvPair(spec: string): { key: string; value: string } | string {
     return (
       `--env '${spec}': value '${value}' must be a single \${VAR} reference ` +
       "(e.g. ${MY_TOKEN}), NOT an inline secret. MCP env values are stored as " +
-      "indirection refs; the real secret never enters the registry or any config."
+      "indirection refs; the real secret never enters the loadout or any config."
     );
   }
   return { key, value };
@@ -4173,7 +4174,7 @@ function hashInlineCommand(command: string, args: string[]): string {
 }
 
 /**
- * FR-162 (FR-160 epic): `igris registry add-mcp` — register a GLOBAL MCP server
+ * FR-162 (FR-160 epic): `igris loadout add-mcp` — register a GLOBAL MCP server
  * into `surfaces.mcp_servers[]` of the personal overlay, recording an
  * `InlineOrigin`. Modeled on `runAddSkill`'s guard chain; MCP identity is the
  * block NAME (one server per name). v1 is GLOBAL-ONLY (project scope rejected).
@@ -4185,15 +4186,15 @@ function hashInlineCommand(command: string, args: string[]): string {
  *
  * Returns an exit code: 0 = success, 1 = enforcement reject, 2 = usage error.
  */
-function runAddMcp(opts: RegistryOptions, overlayPath: string): number {
+function runAddMcp(opts: LoadoutOptions, overlayPath: string): number {
   // Guard 1 — name required + pattern.
   if (opts.name === undefined || opts.name.length === 0) {
-    logError("registry add-mcp: <name> is required");
+    logError("loadout add-mcp: <name> is required");
     return 2;
   }
   if (!NAME_PATTERN.test(opts.name)) {
     logError(
-      `registry add-mcp: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
+      `loadout add-mcp: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
     );
     return 2;
   }
@@ -4202,7 +4203,7 @@ function runAddMcp(opts: RegistryOptions, overlayPath: string): number {
   // Guard 2 — at least one target.
   if (opts.targets === undefined || opts.targets.length === 0) {
     logError(
-      "registry add-mcp: at least one --target <type:merge[:enabled]> is required",
+      "loadout add-mcp: at least one --target <type:merge[:enabled]> is required",
     );
     return 2;
   }
@@ -4212,7 +4213,7 @@ function runAddMcp(opts: RegistryOptions, overlayPath: string): number {
   // `--scope project` / `--project` are rejected.
   if (opts.scope === "project" || opts.project !== undefined) {
     logError(
-      "registry add-mcp: MCP servers are global-only in v1; --scope project / " +
+      "loadout add-mcp: MCP servers are global-only in v1; --scope project / " +
         "--project are not supported. Omit them to register globally.",
     );
     return 2;
@@ -4223,7 +4224,7 @@ function runAddMcp(opts: RegistryOptions, overlayPath: string): number {
   for (const spec of opts.targets) {
     const parsed = parseMcpTarget(spec);
     if (typeof parsed === "string") {
-      logError(`registry add-mcp: ${parsed}`);
+      logError(`loadout add-mcp: ${parsed}`);
       return 2;
     }
     newTargets.push(parsed);
@@ -4235,14 +4236,14 @@ function runAddMcp(opts: RegistryOptions, overlayPath: string): number {
   for (const spec of opts.env ?? []) {
     const parsed = parseEnvPair(spec);
     if (typeof parsed === "string") {
-      logError(`registry add-mcp: ${parsed}`);
+      logError(`loadout add-mcp: ${parsed}`);
       return 2;
     }
     envMap[parsed.key] = parsed.value;
   }
 
   const projectRoot = opts.projectRoot ?? process.cwd();
-  const originsPath = opts.originsPath ?? registryOriginsPath();
+  const originsPath = opts.originsPath ?? loadoutOriginsPath();
 
   // Read existing origins early so a same-name re-add can fall back to the
   // recorded inline command/args when --command is omitted (defense-in-depth).
@@ -4288,7 +4289,7 @@ function runAddMcp(opts: RegistryOptions, overlayPath: string): number {
     }
   } else {
     logError(
-      `registry add-mcp: --command is required for a new MCP server '${name}' ` +
+      `loadout add-mcp: --command is required for a new MCP server '${name}' ` +
         "(no existing block to inherit from)",
     );
     return 2;
@@ -4301,7 +4302,7 @@ function runAddMcp(opts: RegistryOptions, overlayPath: string): number {
   const baseMcpNames = readBaseMcpNames(projectRoot);
   if (baseMcpNames.has(name)) {
     logError(
-      `registry add-mcp: MCP name '${name}' collides with a base (core) ` +
+      `loadout add-mcp: MCP name '${name}' collides with a base (core) ` +
         "mcp_servers block; a personal MCP must not shadow a core one. " +
         "Overlay unchanged.",
     );
@@ -4344,7 +4345,7 @@ function runAddMcp(opts: RegistryOptions, overlayPath: string): number {
   // this names the offender clearly).
   const blockErr = validateMcpServersSurface(newBlock);
   if (blockErr !== null) {
-    logError(`registry add-mcp: invalid mcp block: ${blockErr}`);
+    logError(`loadout add-mcp: invalid mcp block: ${blockErr}`);
     return 1;
   }
 
@@ -4362,7 +4363,7 @@ function runAddMcp(opts: RegistryOptions, overlayPath: string): number {
   // Validate the WHOLE overlay (defense-in-depth) before any side effect.
   const overlayErr = validateOverlayShape(overlay);
   if (overlayErr !== null) {
-    logError(`registry add-mcp: resulting overlay invalid: ${overlayErr}`);
+    logError(`loadout add-mcp: resulting overlay invalid: ${overlayErr}`);
     return 1;
   }
 
@@ -4372,7 +4373,7 @@ function runAddMcp(opts: RegistryOptions, overlayPath: string): number {
     writeOverlayAtomic(overlayPath, overlay);
   } catch (err) {
     logError(
-      `registry add-mcp: failed to write overlay: ${(err as Error).message}`,
+      `loadout add-mcp: failed to write overlay: ${(err as Error).message}`,
     );
     return 1;
   }
@@ -4388,7 +4389,7 @@ function runAddMcp(opts: RegistryOptions, overlayPath: string): number {
     writeOriginsAtomic(originsPath, origins);
   } catch (err) {
     logError(
-      `registry add-mcp: failed to record origin: ${(err as Error).message}`,
+      `loadout add-mcp: failed to record origin: ${(err as Error).message}`,
     );
     return 1;
   }
@@ -4539,7 +4540,7 @@ function loadMergedMcpBlocks(
 }
 
 /**
- * FR-164 (FR-160 epic): `igris registry project-mcp` — the INTERNAL compile-time
+ * FR-164 (FR-160 epic): `igris loadout project-mcp` — the INTERNAL compile-time
  * MCP projector. Reads the merged manifest (base ++ personal overlay), finds the
  * `mcp_servers` block whose `name === --name`, builds the native per-harness
  * entry via `buildHarnessMcpEntry` (which calls FR-165's `normalizeEnvForHarness`
@@ -4557,22 +4558,22 @@ function loadMergedMcpBlocks(
  *
  * NOT a user-facing verb — invoked only by the bash harness compile pass.
  */
-function runProjectMcp(opts: RegistryOptions): number {
+function runProjectMcp(opts: LoadoutOptions): number {
   // Guard — name + harness required.
   if (opts.name === undefined || opts.name.length === 0) {
-    logError("registry project-mcp: --name is required");
+    logError("loadout project-mcp: --name is required");
     return 2;
   }
   const name = opts.name;
   if (opts.harness === undefined) {
     logError(
-      "registry project-mcp: --harness <claude|codex|gemini|opencode> is required",
+      "loadout project-mcp: --harness <claude|codex|gemini|opencode> is required",
     );
     return 2;
   }
   if (!(VALID_MCP_TARGET_TYPES as readonly string[]).includes(opts.harness)) {
     logError(
-      `registry project-mcp: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_MCP_TARGET_TYPES)}`,
+      `loadout project-mcp: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_MCP_TARGET_TYPES)}`,
     );
     return 2;
   }
@@ -4584,7 +4585,7 @@ function runProjectMcp(opts: RegistryOptions): number {
   // `igris add --core mcp` is found when compiling against the brain root.
   const projectRoot = opts.projectRoot ?? process.cwd();
   const manifestPath = join(projectRoot, "harness-manifest.json");
-  const overlayPath = opts.overlayPath ?? registryOverlayPath();
+  const overlayPath = opts.overlayPath ?? loadoutOverlayPath();
   const coreSurfacesPath = coreSurfacesManifestPath();
 
   let blocks: McpServersSurface[];
@@ -4596,13 +4597,13 @@ function runProjectMcp(opts: RegistryOptions): number {
       projectRoot,
     );
     if (typeof merged === "string") {
-      logError(`registry project-mcp: ${merged}`);
+      logError(`loadout project-mcp: ${merged}`);
       return 1;
     }
     blocks = merged;
   } catch (err) {
     logError(
-      `registry project-mcp: cannot read manifest/overlay: ${(err as Error).message}`,
+      `loadout project-mcp: cannot read manifest/overlay: ${(err as Error).message}`,
     );
     return 1;
   }
@@ -4610,7 +4611,7 @@ function runProjectMcp(opts: RegistryOptions): number {
   const block = blocks.find((b) => b?.name === name);
   if (block === undefined) {
     logError(
-      `registry project-mcp: no mcp_servers block named '${name}' in the merged manifest`,
+      `loadout project-mcp: no mcp_servers block named '${name}' in the merged manifest`,
     );
     return 1;
   }
@@ -4664,7 +4665,7 @@ function runProjectMcp(opts: RegistryOptions): number {
     // Codex-only: a ${VAR} whose secret is absent. Name ONLY the VAR — NEVER a
     // value. The overlay/manifest stays unchanged (no write attempted).
     logError(
-      `registry project-mcp: cannot project '${name}' to codex — secret for ` +
+      `loadout project-mcp: cannot project '${name}' to codex — secret for ` +
         `\${${missing}} is not set in secrets.env; add it or remove the env ref`,
     );
     return 1;
@@ -4685,7 +4686,7 @@ function runProjectMcp(opts: RegistryOptions): number {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logError(
-      `registry project-mcp: could not create parent dir for ${targetPath}: ${msg}`,
+      `loadout project-mcp: could not create parent dir for ${targetPath}: ${msg}`,
     );
     return 1;
   }
@@ -4711,7 +4712,7 @@ function runProjectMcp(opts: RegistryOptions): number {
     // the already-shaped entry; codex literals are inside the entry object the
     // merger writes atomically, never echoed). NEVER a silent empty success.
     logError(
-      `registry project-mcp: failed to project '${name}' to ${harness} ` +
+      `loadout project-mcp: failed to project '${name}' to ${harness} ` +
         `(${targetPath}): ${result.error ?? "unknown merge error"}`,
     );
     return 1;
@@ -4724,12 +4725,12 @@ function runProjectMcp(opts: RegistryOptions): number {
 }
 
 /**
- * FR-212b: map the registry MCP harness id to the `add-mcp` AGENT id
+ * FR-212b: map the loadout MCP harness id to the `add-mcp` AGENT id
  * (live-probed). Identical to mcp-register.ts's `ADD_MCP_AGENT_ID` — only
  * `claude → claude-code` and `gemini → gemini-cli` differ (add-mcp rejects the
  * bare forms). Codex/opencode/antigravity pass through.
  */
-const REGISTRY_ADD_MCP_AGENT_ID: Record<McpTargetType, string> = {
+const LOADOUT_ADD_MCP_AGENT_ID: Record<McpTargetType, string> = {
   claude: "claude-code",
   gemini: "gemini-cli",
   codex: "codex",
@@ -4750,7 +4751,7 @@ const REGISTRY_ADD_MCP_AGENT_ID: Record<McpTargetType, string> = {
  * argv to leak. (igris-brain is env-free anyway — L-588.)
  */
 function runProjectMcpViaDelegate(
-  opts: RegistryOptions,
+  opts: LoadoutOptions,
   name: string,
   harness: McpTargetType,
   canonical: McpCanonical,
@@ -4766,18 +4767,18 @@ function runProjectMcpViaDelegate(
       command: canonical.command,
       args: canonical.args ?? [],
       env: canonical.env ?? {},
-      harnesses: [REGISTRY_ADD_MCP_AGENT_ID[harness]],
+      harnesses: [LOADOUT_ADD_MCP_AGENT_ID[harness]],
       global: true,
     });
   } catch (err) {
     // A resolution failure (no local binary) is a hard, observable error.
-    logError(`registry project-mcp (delegate): ${(err as Error).message}`);
+    logError(`loadout project-mcp (delegate): ${(err as Error).message}`);
     return 1;
   }
   if (toolResult.stdout) info(toolResult.stdout);
   if (!toolResult.ok) {
     logError(
-      `registry project-mcp (delegate): 'add-mcp' exited ${toolResult.exitCode}` +
+      `loadout project-mcp (delegate): 'add-mcp' exited ${toolResult.exitCode}` +
         (toolResult.stderr ? `\n${toolResult.stderr}` : ""),
     );
     return 1;
@@ -4793,7 +4794,7 @@ function runProjectMcpViaDelegate(
   });
   if (grant.outcome === "failed") {
     logError(
-      `registry project-mcp (delegate): grant for ${harness} failed ` +
+      `loadout project-mcp (delegate): grant for ${harness} failed ` +
         `(${grant.path}): ${grant.error ?? "unknown grant error"}`,
     );
     return 1;
@@ -4806,22 +4807,22 @@ function runProjectMcpViaDelegate(
 }
 
 /**
- * FR-212b: `igris registry verify-mcp-grant --harness <h>` — the grant-drift
+ * FR-212b: `igris loadout verify-mcp-grant --harness <h>` — the grant-drift
  * PREDICATE the bash `verify_mcp` invariant calls. Exits 0 when the Igris-owned
  * no-prompt grant is PRESENT for the harness (or `covered` — opencode), 1 when
  * MISSING, 2 on a usage error. Pure read (never writes). The per-harness grant
  * grammar lives in `verifyBrainGrant` — bash never re-implements it (§18.1).
  */
-function runVerifyMcpGrant(opts: RegistryOptions): number {
+function runVerifyMcpGrant(opts: LoadoutOptions): number {
   if (opts.harness === undefined) {
     logError(
-      "registry verify-mcp-grant: --harness <claude|codex|gemini|opencode|antigravity> is required",
+      "loadout verify-mcp-grant: --harness <claude|codex|gemini|opencode|antigravity> is required",
     );
     return 2;
   }
   if (!(VALID_MCP_TARGET_TYPES as readonly string[]).includes(opts.harness)) {
     logError(
-      `registry verify-mcp-grant: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_MCP_TARGET_TYPES)}`,
+      `loadout verify-mcp-grant: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_MCP_TARGET_TYPES)}`,
     );
     return 2;
   }
@@ -4858,9 +4859,9 @@ function runList(overlayPath: string): number {
   return 0;
 }
 
-function runRemove(opts: RegistryOptions, overlayPath: string): number {
+function runRemove(opts: LoadoutOptions, overlayPath: string): number {
   if (opts.name === undefined || opts.name.length === 0) {
-    logError("registry remove: <name> is required");
+    logError("loadout remove: <name> is required");
     return 2;
   }
   let overlay: Overlay;
@@ -4874,21 +4875,21 @@ function runRemove(opts: RegistryOptions, overlayPath: string): number {
   overlay.agents = overlay.agents.filter((a) => a.name !== opts.name);
   if (overlay.agents.length === before) {
     logError(
-      `registry remove: no personal agent named '${opts.name}'. Overlay unchanged.`,
+      `loadout remove: no personal agent named '${opts.name}'. Overlay unchanged.`,
     );
     return 1;
   }
   // Keep a valid empty overlay rather than deleting the file.
   const overlayErr = validateOverlayShape(overlay);
   if (overlayErr !== null) {
-    logError(`registry remove: resulting overlay invalid: ${overlayErr}`);
+    logError(`loadout remove: resulting overlay invalid: ${overlayErr}`);
     return 1;
   }
   writeOverlayAtomic(overlayPath, overlay);
 
   // FR-142: drop the typed origin + the vendored copy (no orphan copies).
   // TD-191: namespaced origin key (`agent:<name>`).
-  const originsPath = opts.originsPath ?? registryOriginsPath();
+  const originsPath = opts.originsPath ?? loadoutOriginsPath();
   const agentOriginKey = originKey("agent", opts.name);
   try {
     const origins = readOrigins(originsPath);
@@ -4899,9 +4900,9 @@ function runRemove(opts: RegistryOptions, overlayPath: string): number {
   } catch {
     // A malformed origins sidecar should not block overlay removal; the
     // overlay (the compile-time truth) is already cleaned. Leave a note.
-    info(`registry remove: could not update origins sidecar at ${originsPath}`);
+    info(`loadout remove: could not update origins sidecar at ${originsPath}`);
   }
-  const vendorDirFor = opts.vendorDir ?? registryAgentDirPath;
+  const vendorDirFor = opts.vendorDir ?? loadoutAgentDirPath;
   rmSync(vendorDirFor(opts.name), { recursive: true, force: true });
 
   info(`Removed personal agent '${opts.name}' from ${overlayPath}`);
@@ -4911,7 +4912,7 @@ function runRemove(opts: RegistryOptions, overlayPath: string): number {
 // ---------------------------------------------------------------------------
 // FR-203: personal de-materialize helpers — the INVERSES of the `add-*` writers.
 // Each splices the named block out of the overlay, drops the typed origin
-// sidecar entry, and deletes the vendored dir / registry script (no orphans).
+// sidecar entry, and deletes the vendored dir / loadout script (no orphans).
 // Returns a structured `RemoveMaterializeResult` so `verbs/remove.ts` can decide
 // whether the store actually changed (the inverted no-phantom-success gate keys
 // on `removed === false` AND nothing un-projected → LOUD fail).
@@ -4933,12 +4934,12 @@ export interface RemoveMaterializeResult {
  * FR-203: remove a personal SKILL block — the inverse of `runAddSkill`. Splices
  * `overlay.surfaces.skills[]` by `basename(source) === name`, drops the
  * `skill:<name>` origin sidecar key, and deletes the vendored tree
- * `registrySkillDirPath(name)`. Idempotent: an absent block returns
+ * `loadoutSkillDirPath(name)`. Idempotent: an absent block returns
  * `removed:false` (NOT an error here — the dispatcher decides whether
  * already-absent is a loud fail, after also checking un-projection).
  */
 export function removeSkillBlock(
-  opts: RegistryOptions,
+  opts: LoadoutOptions,
   overlayPath: string,
 ): RemoveMaterializeResult {
   const result: RemoveMaterializeResult = {
@@ -4948,15 +4949,15 @@ export function removeSkillBlock(
     overlayWritten: overlayPath,
   };
   if (opts.name === undefined || opts.name.length === 0) {
-    logError("registry remove-skill: <name> is required");
+    logError("loadout remove-skill: <name> is required");
     return result;
   }
   // FR-203 C1 (defense-in-depth): reject a name that fails NAME_PATTERN BEFORE
-  // deriving any fs path — `registrySkillDirPath(name)` feeds a recursive
+  // deriving any fs path — `loadoutSkillDirPath(name)` feeds a recursive
   // `rmSync` below, so a traversal name (`../../../x`) must never reach it.
   if (!NAME_PATTERN.test(opts.name)) {
     logError(
-      `registry remove-skill: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
+      `loadout remove-skill: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
     );
     return result;
   }
@@ -4977,7 +4978,7 @@ export function removeSkillBlock(
     }
     const overlayErr = validateOverlayShape(overlay);
     if (overlayErr !== null) {
-      logError(`registry remove-skill: resulting overlay invalid: ${overlayErr}`);
+      logError(`loadout remove-skill: resulting overlay invalid: ${overlayErr}`);
       return { ...result, code: 1 };
     }
     writeOverlayAtomic(overlayPath, overlay);
@@ -4986,7 +4987,7 @@ export function removeSkillBlock(
 
   // Drop the typed origin sidecar entry (best-effort — a malformed sidecar
   // must not block the overlay removal that already landed).
-  const originsPath = opts.originsPath ?? registryOriginsPath();
+  const originsPath = opts.originsPath ?? loadoutOriginsPath();
   const key = originKey("skill", name);
   try {
     const origins = readOrigins(originsPath);
@@ -4995,11 +4996,11 @@ export function removeSkillBlock(
       writeOriginsAtomic(originsPath, origins);
     }
   } catch {
-    info(`registry remove-skill: could not update origins sidecar at ${originsPath}`);
+    info(`loadout remove-skill: could not update origins sidecar at ${originsPath}`);
   }
 
   // Delete the vendored tree (no orphan copies).
-  const skillVendorDirFor = opts.skillVendorDir ?? registrySkillDirPath;
+  const skillVendorDirFor = opts.skillVendorDir ?? loadoutSkillDirPath;
   const vendoredDir = skillVendorDirFor(name);
   if (existsSync(vendoredDir)) {
     rmSync(vendoredDir, { recursive: true, force: true });
@@ -5019,7 +5020,7 @@ export function removeSkillBlock(
  * Idempotent: an absent block returns `removed:false`.
  */
 export function removeMcpBlock(
-  opts: RegistryOptions,
+  opts: LoadoutOptions,
   overlayPath: string,
 ): RemoveMaterializeResult {
   const result: RemoveMaterializeResult = {
@@ -5029,14 +5030,14 @@ export function removeMcpBlock(
     overlayWritten: overlayPath,
   };
   if (opts.name === undefined || opts.name.length === 0) {
-    logError("registry remove-mcp: <name> is required");
+    logError("loadout remove-mcp: <name> is required");
     return result;
   }
   // FR-203 C1 (uniformity — no fs path derived here, but the guard is
   // structurally identical across the three de-materialize helpers).
   if (!NAME_PATTERN.test(opts.name)) {
     logError(
-      `registry remove-mcp: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
+      `loadout remove-mcp: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
     );
     return result;
   }
@@ -5057,14 +5058,14 @@ export function removeMcpBlock(
     }
     const overlayErr = validateOverlayShape(overlay);
     if (overlayErr !== null) {
-      logError(`registry remove-mcp: resulting overlay invalid: ${overlayErr}`);
+      logError(`loadout remove-mcp: resulting overlay invalid: ${overlayErr}`);
       return { ...result, code: 1 };
     }
     writeOverlayAtomic(overlayPath, overlay);
     result.removed = true;
   }
 
-  const originsPath = opts.originsPath ?? registryOriginsPath();
+  const originsPath = opts.originsPath ?? loadoutOriginsPath();
   const key = originKey("mcp", name);
   try {
     const origins = readOrigins(originsPath);
@@ -5073,7 +5074,7 @@ export function removeMcpBlock(
       writeOriginsAtomic(originsPath, origins);
     }
   } catch {
-    info(`registry remove-mcp: could not update origins sidecar at ${originsPath}`);
+    info(`loadout remove-mcp: could not update origins sidecar at ${originsPath}`);
   }
 
   if (result.removed) {
@@ -5084,13 +5085,13 @@ export function removeMcpBlock(
 
 /**
  * FR-203: remove a personal HOOK block — the inverse of `runAddHook`. Splices
- * `overlay.surfaces.hooks[]` by `block.name === name` and deletes the registry
- * hook SCRIPT dir `~/.igris/registry/hooks/<name>/`. #828: this touches ONLY the
+ * `overlay.surfaces.hooks[]` by `block.name === name` and deletes the loadout
+ * hook SCRIPT dir `~/.igris/loadout/hooks/<name>/`. #828: this touches ONLY the
  * hooks SURFACE (the script + the overlay block) — never a `core/enforcement/`
  * def. Idempotent: an absent block returns `removed:false`.
  */
 export function removeHookBlock(
-  opts: RegistryOptions,
+  opts: LoadoutOptions,
   overlayPath: string,
 ): RemoveMaterializeResult {
   const result: RemoveMaterializeResult = {
@@ -5100,14 +5101,14 @@ export function removeHookBlock(
     overlayWritten: overlayPath,
   };
   if (opts.name === undefined || opts.name.length === 0) {
-    logError("registry remove-hook: <name> is required");
+    logError("loadout remove-hook: <name> is required");
     return result;
   }
   // FR-203 C1 (defense-in-depth): reject a traversal name BEFORE deriving the
   // script dir — `join(scriptRoot, name)` feeds a recursive `rmSync` below.
   if (!NAME_PATTERN.test(opts.name)) {
     logError(
-      `registry remove-hook: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
+      `loadout remove-hook: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
     );
     return result;
   }
@@ -5130,7 +5131,7 @@ export function removeHookBlock(
       }
       const overlayErr = validateOverlayShape(overlay);
       if (overlayErr !== null) {
-        logError(`registry remove-hook: resulting overlay invalid: ${overlayErr}`);
+        logError(`loadout remove-hook: resulting overlay invalid: ${overlayErr}`);
         return { ...result, code: 1 };
       }
       writeOverlayAtomic(overlayPath, overlay);
@@ -5138,9 +5139,9 @@ export function removeHookBlock(
     }
   }
 
-  // Delete the registry hook SCRIPT dir (the per-name provenance prefix).
+  // Delete the loadout hook SCRIPT dir (the per-name provenance prefix).
   const scriptRoot =
-    opts.hookScriptRoot ?? join(brainDir(), "registry", "hooks");
+    opts.hookScriptRoot ?? join(brainDir(), "loadout", "hooks");
   const scriptDir = join(scriptRoot, name);
   if (existsSync(scriptDir)) {
     rmSync(scriptDir, { recursive: true, force: true });
@@ -5154,7 +5155,7 @@ export function removeHookBlock(
 }
 
 /**
- * FR-203: `igris registry unproject-mcp` — the INVERSE of `project-mcp`. Removes
+ * FR-203: `igris loadout unproject-mcp` — the INVERSE of `project-mcp`. Removes
  * ONE MCP block's native entry from ONE harness's config (the inverse of the
  * `mergeJsonConfig`/`mergeTomlConfig` write), preserving every OTHER server +
  * top-level key. Does NOT read the manifest/overlay (the block may already be
@@ -5164,21 +5165,21 @@ export function removeHookBlock(
  *
  * Exit codes: 0 = removed/unchanged; 1 = merge/write failure; 2 = usage.
  */
-function runUnprojectMcp(opts: RegistryOptions): number {
+function runUnprojectMcp(opts: LoadoutOptions): number {
   if (opts.name === undefined || opts.name.length === 0) {
-    logError("registry unproject-mcp: --name is required");
+    logError("loadout unproject-mcp: --name is required");
     return 2;
   }
   const name = opts.name;
   if (opts.harness === undefined) {
     logError(
-      "registry unproject-mcp: --harness <claude|codex|gemini|opencode|antigravity> is required",
+      "loadout unproject-mcp: --harness <claude|codex|gemini|opencode|antigravity> is required",
     );
     return 2;
   }
   if (!(VALID_MCP_TARGET_TYPES as readonly string[]).includes(opts.harness)) {
     logError(
-      `registry unproject-mcp: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_MCP_TARGET_TYPES)}`,
+      `loadout unproject-mcp: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_MCP_TARGET_TYPES)}`,
     );
     return 2;
   }
@@ -5200,7 +5201,7 @@ function runUnprojectMcp(opts: RegistryOptions): number {
 
   if (result.outcome === "failed") {
     logError(
-      `registry unproject-mcp: failed to un-project '${name}' from ${harness} ` +
+      `loadout unproject-mcp: failed to un-project '${name}' from ${harness} ` +
         `(${targetPath}): ${result.error ?? "unknown un-merge error"}`,
     );
     return 1;
@@ -5210,7 +5211,7 @@ function runUnprojectMcp(opts: RegistryOptions): number {
 }
 
 /**
- * FR-203: `igris registry unproject-hook` — the INVERSE of `project-hook`.
+ * FR-203: `igris loadout unproject-hook` — the INVERSE of `project-hook`.
  * Removes ONE hook block's GROUP from ONE harness's native hook surface:
  *
  *   claude     → splice the group whose command path matches from
@@ -5225,28 +5226,28 @@ function runUnprojectMcp(opts: RegistryOptions): number {
  *
  * Exit codes: 0 = removed/covered/unchanged; 1 = shape/write failure; 2 = usage.
  */
-function runUnprojectHook(opts: RegistryOptions): number {
+function runUnprojectHook(opts: LoadoutOptions): number {
   if (opts.name === undefined || opts.name.length === 0) {
-    logError("registry unproject-hook: --name is required");
+    logError("loadout unproject-hook: --name is required");
     return 2;
   }
   const name = opts.name;
   if (opts.harness === undefined) {
     logError(
-      "registry unproject-hook: --harness <claude|opencode|antigravity> is required",
+      "loadout unproject-hook: --harness <claude|opencode|antigravity> is required",
     );
     return 2;
   }
   if (!(VALID_HOOK_TARGET_TYPES as readonly string[]).includes(opts.harness)) {
     logError(
-      `registry unproject-hook: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_HOOK_TARGET_TYPES)}`,
+      `loadout unproject-hook: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_HOOK_TARGET_TYPES)}`,
     );
     return 2;
   }
   const harness = opts.harness as HookTargetType;
   if (opts.event === undefined || opts.event.length === 0) {
     logError(
-      `registry unproject-hook: --event <${VALID_HOOK_EVENTS.join("|")}> is required`,
+      `loadout unproject-hook: --event <${VALID_HOOK_EVENTS.join("|")}> is required`,
     );
     return 2;
   }
@@ -5280,7 +5281,7 @@ function runUnprojectHook(opts: RegistryOptions): number {
     >;
   } catch (err) {
     logError(
-      `registry unproject-hook: refusing to clobber unreadable ${settingsPath}: ${(err as Error).message}`,
+      `loadout unproject-hook: refusing to clobber unreadable ${settingsPath}: ${(err as Error).message}`,
     );
     return 1;
   }
@@ -5291,7 +5292,7 @@ function runUnprojectHook(opts: RegistryOptions): number {
   } catch (err) {
     if (err instanceof HookMergeShapeError) {
       logError(
-        `registry unproject-hook: ${harness} hooks un-merge failed (refusing to clobber): ${err.message}`,
+        `loadout unproject-hook: ${harness} hooks un-merge failed (refusing to clobber): ${err.message}`,
       );
       return 1;
     }
@@ -5310,7 +5311,7 @@ function runUnprojectHook(opts: RegistryOptions): number {
     renameSync(tmp, settingsPath);
   } catch (err) {
     logError(
-      `registry unproject-hook: failed to write ${settingsPath}: ${(err as Error).message}`,
+      `loadout unproject-hook: failed to write ${settingsPath}: ${(err as Error).message}`,
     );
     return 1;
   }
@@ -5514,7 +5515,7 @@ async function reVendorGithub(
 
 /**
  * TD-191: locate the skill block matching `name` in `overlay.surfaces.skills`.
- * A personal block's `source` is `registrySkillDirPath(<name>)` (L-516 +
+ * A personal block's `source` is `loadoutSkillDirPath(<name>)` (L-516 +
  * L-517) so its basename is the skill name. Returns the block index, or -1
  * if no block matches.
  */
@@ -5538,13 +5539,13 @@ function findSkillBlockIndexes(overlay: Overlay, name: string): number[] {
 }
 
 async function runUpdate(
-  opts: RegistryOptions,
+  opts: LoadoutOptions,
   overlayPath: string,
 ): Promise<number> {
   const hasName = opts.name !== undefined && opts.name.length > 0;
   const hasAll = opts.all === true;
   if (hasName === hasAll) {
-    logError("registry update: provide exactly one of <name> or --all");
+    logError("loadout update: provide exactly one of <name> or --all");
     return 2;
   }
 
@@ -5555,7 +5556,7 @@ async function runUpdate(
     logError((err as Error).message);
     return 1;
   }
-  const originsPath = opts.originsPath ?? registryOriginsPath();
+  const originsPath = opts.originsPath ?? loadoutOriginsPath();
   let origins: OriginsMap;
   try {
     origins = readOrigins(originsPath);
@@ -5563,8 +5564,8 @@ async function runUpdate(
     logError((err as Error).message);
     return 1;
   }
-  const agentVendorDirFor = opts.vendorDir ?? registryAgentDirPath;
-  const skillVendorDirFor = opts.skillVendorDir ?? registrySkillDirPath;
+  const agentVendorDirFor = opts.vendorDir ?? loadoutAgentDirPath;
+  const skillVendorDirFor = opts.skillVendorDir ?? loadoutSkillDirPath;
   const fetchRepo = opts.fetchRepo ?? fetchRepoDefault;
   const listReleases = opts.listReleases ?? listReleasesDefault;
 
@@ -5591,10 +5592,10 @@ async function runUpdate(
     const hasSkill = skillIdx >= 0 && skillKey in origins;
     if (!hasAgent && !hasSkill) {
       if (agentEntry === undefined && skillIdx < 0) {
-        logError(`registry update: no personal agent or skill named '${name}'.`);
+        logError(`loadout update: no personal agent or skill named '${name}'.`);
       } else {
         logError(
-          `registry update: '${name}' has no recorded origin (cannot re-vendor).`,
+          `loadout update: '${name}' has no recorded origin (cannot re-vendor).`,
         );
       }
       return 1;
@@ -5643,7 +5644,7 @@ async function runUpdate(
         listReleases,
       );
       if (typeof result === "string") {
-        logError(`registry update: ${item.name}: ${result.replace(/^error: /, "")}`);
+        logError(`loadout update: ${item.name}: ${result.replace(/^error: /, "")}`);
         hadError = true;
         continue;
       }
@@ -5673,7 +5674,7 @@ async function runUpdate(
         skillVendorDirFor(item.name),
       );
       if (typeof result === "string") {
-        logError(`registry update: ${item.name}: ${result.replace(/^error: /, "")}`);
+        logError(`loadout update: ${item.name}: ${result.replace(/^error: /, "")}`);
         hadError = true;
         continue;
       }
@@ -5700,18 +5701,18 @@ async function runUpdate(
     try {
       writeOriginsAtomic(originsPath, origins);
     } catch (err) {
-      logError(`registry update: failed to persist origins: ${(err as Error).message}`);
+      logError(`loadout update: failed to persist origins: ${(err as Error).message}`);
       return 1;
     }
   }
   // TD-202: subtle but visible nudge — remind the operator that future edits
-  // belong at the source, not under ~/.igris/registry/. Fires once per
+  // belong at the source, not under ~/.igris/loadout/. Fires once per
   // invocation when any work item was processed (not per-entry to keep the
   // signal-to-noise ratio reasonable).
   if (work.length > 0) {
     info("");
     info("Reminder: edits to vendored surfaces must happen at the SOURCE path,");
-    info("not under ~/.igris/registry/. Re-run `igris registry update <name>`");
+    info("not under ~/.igris/loadout/. Re-run `igris loadout update <name>`");
     info("after editing the source. See TD-202 / coding_guidelines.md §18.5.");
   }
   return hadError ? 1 : 0;
@@ -5789,9 +5790,9 @@ function readBaseHookCells(projectRoot: string): {
 }
 
 /**
- * FR-180 (D7): `igris registry add-hook` — the WRITE-ONLY personal hook
+ * FR-180 (D7): `igris loadout add-hook` — the WRITE-ONLY personal hook
  * registrar (the low-level primitive `igris add hook` wraps). Writes the hook
- * SCRIPT scaffold to `~/.igris/registry/hooks/<name>/<event>.sh` (the distinct
+ * SCRIPT scaffold to `~/.igris/loadout/hooks/<name>/<event>.sh` (the distinct
  * provenance prefix the canonical re-merge preserves — R2) AND a personal
  * `surfaces.hooks[]` block to the overlay. Does NOT project (that is `igris add
  * hook` / `project-hook`).
@@ -5800,15 +5801,15 @@ function readBaseHookCells(projectRoot: string): {
  * pre-write): name + pattern, valid `event`, ≥1 target, core-name + core-cell
  * collision, intra-overlay collision. Exit codes: 0 ok; 1 reject; 2 usage.
  */
-function runAddHook(opts: RegistryOptions, overlayPath: string): number {
+function runAddHook(opts: LoadoutOptions, overlayPath: string): number {
   // Guard 1 — name + pattern.
   if (opts.name === undefined || opts.name.length === 0) {
-    logError("registry add-hook: <name> is required");
+    logError("loadout add-hook: <name> is required");
     return 2;
   }
   if (!NAME_PATTERN.test(opts.name)) {
     logError(
-      `registry add-hook: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
+      `loadout add-hook: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
     );
     return 2;
   }
@@ -5817,13 +5818,13 @@ function runAddHook(opts: RegistryOptions, overlayPath: string): number {
   // Guard 2 — event required + valid.
   if (opts.event === undefined || opts.event.length === 0) {
     logError(
-      `registry add-hook: --event <${VALID_HOOK_EVENTS.join("|")}> is required`,
+      `loadout add-hook: --event <${VALID_HOOK_EVENTS.join("|")}> is required`,
     );
     return 2;
   }
   if (!(VALID_HOOK_EVENTS as readonly string[]).includes(opts.event)) {
     logError(
-      `registry add-hook: --event '${opts.event}' is not one of ${JSON.stringify(VALID_HOOK_EVENTS)}`,
+      `loadout add-hook: --event '${opts.event}' is not one of ${JSON.stringify(VALID_HOOK_EVENTS)}`,
     );
     return 2;
   }
@@ -5840,11 +5841,11 @@ function runAddHook(opts: RegistryOptions, overlayPath: string): number {
   for (const spec of targetSpecs) {
     const parsed = parseHookTarget(spec);
     if (typeof parsed === "string") {
-      logError(`registry add-hook: ${parsed}`);
+      logError(`loadout add-hook: ${parsed}`);
       return 2;
     }
     if (seenTypes.has(parsed.type)) {
-      logError(`registry add-hook: duplicate --target type '${parsed.type}'`);
+      logError(`loadout add-hook: duplicate --target type '${parsed.type}'`);
       return 2;
     }
     seenTypes.add(parsed.type);
@@ -5858,7 +5859,7 @@ function runAddHook(opts: RegistryOptions, overlayPath: string): number {
   const base = readBaseHookCells(projectRoot);
   if (base.names.has(name)) {
     logError(
-      `registry add-hook: hook name '${name}' collides with a base (core) hook; ` +
+      `loadout add-hook: hook name '${name}' collides with a base (core) hook; ` +
         "a personal customization must not shadow a core hook. Overlay unchanged.",
     );
     return 1;
@@ -5867,7 +5868,7 @@ function runAddHook(opts: RegistryOptions, overlayPath: string): number {
     const cell = `${event} ${t.type}`;
     if (base.cells.has(cell)) {
       logError(
-        `registry add-hook: hook cell (${event}, ${t.type}) collides with a base ` +
+        `loadout add-hook: hook cell (${event}, ${t.type}) collides with a base ` +
           "(core) hook; two hooks must not both own the same event in the same " +
           "harness. Overlay unchanged.",
       );
@@ -5889,7 +5890,7 @@ function runAddHook(opts: RegistryOptions, overlayPath: string): number {
   const existingNames = new Set(existingBlocks.map((b) => b.name));
   if (existingNames.has(name)) {
     logError(
-      `registry add-hook: hook '${name}' already declared in the personal overlay; ` +
+      `loadout add-hook: hook '${name}' already declared in the personal overlay; ` +
         "edit it or remove the existing block first. Overlay unchanged.",
     );
     return 1;
@@ -5904,7 +5905,7 @@ function runAddHook(opts: RegistryOptions, overlayPath: string): number {
     const cell = `${event} ${t.type}`;
     if (existingCells.has(cell)) {
       logError(
-        `registry add-hook: hook cell (${event}, ${t.type}) already declared in ` +
+        `loadout add-hook: hook cell (${event}, ${t.type}) already declared in ` +
           "the personal overlay; edit or remove the existing block first. " +
           "Overlay unchanged.",
       );
@@ -5912,10 +5913,10 @@ function runAddHook(opts: RegistryOptions, overlayPath: string): number {
     }
   }
 
-  // Build the block. The personal command lives under the REGISTRY prefix so the
+  // Build the block. The personal command lives under the LOADOUT prefix so the
   // canonical re-merge preserves it (R2). The literal `$HOME` form matches the
   // canonical-settings.json convention (Claude expands $HOME at runtime).
-  const command = `$HOME/.igris/registry/hooks/${name}/${event}.sh`;
+  const command = `$HOME/.igris/loadout/hooks/${name}/${event}.sh`;
   const canonical: HookCanonical = { command };
   if (opts.matcher !== undefined && opts.matcher.length > 0) {
     canonical.matcher = opts.matcher;
@@ -5933,13 +5934,13 @@ function runAddHook(opts: RegistryOptions, overlayPath: string): number {
 
   const blockErr = validateHookSurface(block);
   if (blockErr !== null) {
-    logError(`registry add-hook: invalid hook block: ${blockErr}`);
+    logError(`loadout add-hook: invalid hook block: ${blockErr}`);
     return 1;
   }
 
   // --- Write the hook SCRIPT scaffold (the materialize half). ----------------
   const scriptRoot =
-    opts.hookScriptRoot ?? join(brainDir(), "registry", "hooks");
+    opts.hookScriptRoot ?? join(brainDir(), "loadout", "hooks");
   const scriptDir = join(scriptRoot, name);
   const scriptPath = join(scriptDir, `${event}.sh`);
   if (!existsSync(scriptPath)) {
@@ -5951,7 +5952,7 @@ function runAddHook(opts: RegistryOptions, overlayPath: string): number {
       });
     } catch (err) {
       logError(
-        `registry add-hook: failed to write hook script ${scriptPath}: ${(err as Error).message}`,
+        `loadout add-hook: failed to write hook script ${scriptPath}: ${(err as Error).message}`,
       );
       return 1;
     }
@@ -5963,7 +5964,7 @@ function runAddHook(opts: RegistryOptions, overlayPath: string): number {
 
   const overlayErr = validateOverlayShape(overlay);
   if (overlayErr !== null) {
-    logError(`registry add-hook: resulting overlay invalid: ${overlayErr}`);
+    logError(`loadout add-hook: resulting overlay invalid: ${overlayErr}`);
     return 1;
   }
 
@@ -5971,7 +5972,7 @@ function runAddHook(opts: RegistryOptions, overlayPath: string): number {
     writeOverlayAtomic(overlayPath, overlay);
   } catch (err) {
     logError(
-      `registry add-hook: failed to write overlay: ${(err as Error).message}`,
+      `loadout add-hook: failed to write overlay: ${(err as Error).message}`,
     );
     return 1;
   }
@@ -5989,7 +5990,7 @@ function hookScriptScaffold(name: string, event: string): string {
 # Personal Igris hook '${name}' for the ${event} event.
 # Generated by \`igris add hook ${name} --event ${event}\`. Replace the body
 # below with the hook's real behavior. This script is preserved across
-# \`igris update\` / \`igris doctor --fix\` (registry-provenance — see FR-180 R2).
+# \`igris update\` / \`igris doctor --fix\` (loadout-provenance — see FR-180 R2).
 set -euo pipefail
 
 # TODO: implement the ${event} hook for '${name}'.
@@ -6061,13 +6062,13 @@ function resolveHookScriptPath(command: string): string {
 }
 
 /**
- * FR-180 (D7): `igris registry project-hook` — the INTERNAL compile-time hook
+ * FR-180 (D7): `igris loadout project-hook` — the INTERNAL compile-time hook
  * projector. Reads the merged manifest (core ++ base ++ overlay), finds the
  * `hooks` block whose `name === --name`, and projects ONE harness:
  *
  *   claude   → merge the hook GROUP into `<projectRoot>/.claude/settings.json`
  *              `hooks.<Event>[]` (idempotent; preserves user groups + other
- *              top-level keys). The R2-safe registry-prefix command is what the
+ *              top-level keys). The R2-safe loadout-prefix command is what the
  *              canonical re-merge later preserves.
  *   opencode → the FR-104 plugin already routes the six events to the shared
  *              scripts. A personal opencode hook is COVERED by the plugin, not a
@@ -6079,21 +6080,21 @@ function resolveHookScriptPath(command: string): string {
  * Exit codes: 0 = projected/covered/unchanged; 1 = block-not-found / shape /
  * write failure; 2 = usage.
  */
-function runProjectHook(opts: RegistryOptions): number {
+function runProjectHook(opts: LoadoutOptions): number {
   if (opts.name === undefined || opts.name.length === 0) {
-    logError("registry project-hook: --name is required");
+    logError("loadout project-hook: --name is required");
     return 2;
   }
   const name = opts.name;
   if (opts.harness === undefined) {
     logError(
-      "registry project-hook: --harness <claude|opencode|antigravity> is required",
+      "loadout project-hook: --harness <claude|opencode|antigravity> is required",
     );
     return 2;
   }
   if (!(VALID_HOOK_TARGET_TYPES as readonly string[]).includes(opts.harness)) {
     logError(
-      `registry project-hook: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_HOOK_TARGET_TYPES)}`,
+      `loadout project-hook: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_HOOK_TARGET_TYPES)}`,
     );
     return 2;
   }
@@ -6101,7 +6102,7 @@ function runProjectHook(opts: RegistryOptions): number {
 
   const projectRoot = opts.projectRoot ?? process.cwd();
   const manifestPath = join(projectRoot, "harness-manifest.json");
-  const overlayPath = opts.overlayPath ?? registryOverlayPath();
+  const overlayPath = opts.overlayPath ?? loadoutOverlayPath();
   const coreSurfacesPath = coreSurfacesManifestPath();
 
   let blocks: HookSurface[];
@@ -6113,13 +6114,13 @@ function runProjectHook(opts: RegistryOptions): number {
       projectRoot,
     );
     if (typeof merged === "string") {
-      logError(`registry project-hook: ${merged}`);
+      logError(`loadout project-hook: ${merged}`);
       return 1;
     }
     blocks = merged;
   } catch (err) {
     logError(
-      `registry project-hook: cannot read manifest/overlay: ${(err as Error).message}`,
+      `loadout project-hook: cannot read manifest/overlay: ${(err as Error).message}`,
     );
     return 1;
   }
@@ -6127,14 +6128,14 @@ function runProjectHook(opts: RegistryOptions): number {
   const block = blocks.find((b) => b?.name === name);
   if (block === undefined) {
     logError(
-      `registry project-hook: no hooks block named '${name}' in the merged manifest`,
+      `loadout project-hook: no hooks block named '${name}' in the merged manifest`,
     );
     return 1;
   }
   if (!block.targets.some((t) => t.type === harness)) {
     // The bash driver only emits rows for declared targets; defend a direct call.
     logError(
-      `registry project-hook: hook '${name}' has no '${harness}' target`,
+      `loadout project-hook: hook '${name}' has no '${harness}' target`,
     );
     return 1;
   }
@@ -6150,7 +6151,7 @@ function runProjectHook(opts: RegistryOptions): number {
     );
     if (!existsSync(pluginPath)) {
       logError(
-        `registry project-hook: opencode hook '${name}' requires the FR-104 plugin ` +
+        `loadout project-hook: opencode hook '${name}' requires the FR-104 plugin ` +
           `at ${pluginPath}; run 'igris install' to deposit it`,
       );
       return 1;
@@ -6202,7 +6203,7 @@ function mergeHookGroupIntoFile(
       >;
     } catch (err) {
       logError(
-        `registry project-hook: refusing to clobber unreadable ${settingsPath}: ${(err as Error).message}`,
+        `loadout project-hook: refusing to clobber unreadable ${settingsPath}: ${(err as Error).message}`,
       );
       return 1;
     }
@@ -6214,7 +6215,7 @@ function mergeHookGroupIntoFile(
   } catch (err) {
     if (err instanceof HookMergeShapeError) {
       logError(
-        `registry project-hook: ${label} hooks merge failed (refusing to clobber): ${err.message}`,
+        `loadout project-hook: ${label} hooks merge failed (refusing to clobber): ${err.message}`,
       );
       return 1;
     }
@@ -6228,7 +6229,7 @@ function mergeHookGroupIntoFile(
     renameSync(tmp, settingsPath);
   } catch (err) {
     logError(
-      `registry project-hook: failed to write ${settingsPath}: ${(err as Error).message}`,
+      `loadout project-hook: failed to write ${settingsPath}: ${(err as Error).message}`,
     );
     return 1;
   }
@@ -6236,14 +6237,14 @@ function mergeHookGroupIntoFile(
   // Belt-and-suspenders: a hook's script must exist (it is a path the harness
   // will run). Resolve + check; a missing script is a loud failure (never a
   // phantom-OK projection). Core scripts live under core/hooks/{shared,bridges},
-  // personal under registry/hooks. The command stores the literal `$HOME/.igris`
+  // personal under loadout/hooks. The command stores the literal `$HOME/.igris`
   // convention; resolve it against the ACTUAL brain dir (`brainDir()`, honoring
   // IGRIS_BRAIN_DIR) — NOT `$HOME` — so a sandboxed/relocated brain resolves to
   // the real script location (in production brainDir() === $HOME/.igris).
   const resolved = resolveHookScriptPath(block.canonical.command);
   if (!existsSync(resolved)) {
     logError(
-      `registry project-hook: hook '${name}' command script not found at ${resolved}`,
+      `loadout project-hook: hook '${name}' command script not found at ${resolved}`,
     );
     return 1;
   }
@@ -6253,7 +6254,7 @@ function mergeHookGroupIntoFile(
 }
 
 /**
- * FR-212a: `igris registry project-skills` — the INTERNAL compile-time skills
+ * FR-212a: `igris loadout project-skills` — the INTERNAL compile-time skills
  * projection delegate. Mirrors the `project-mcp`/`project-hook` driver shape
  * (a thin TS step the bash `project_skills` delegate arm shells out to), but
  * because the `skills` CLI projects EVERY skill under the source root in one
@@ -6264,11 +6265,11 @@ function mergeHookGroupIntoFile(
  * reaches here under `IGRIS_SKILLS_ENGINE=delegate`; once here the tool is
  * authoritative.
  */
-function runProjectSkills(opts: RegistryOptions): number {
+function runProjectSkills(opts: LoadoutOptions): number {
   const source = opts.source;
   if (!source) {
     logError(
-      "registry project-skills: --source <abs-skills-root> is required " +
+      "loadout project-skills: --source <abs-skills-root> is required " +
         "(the dir containing <name>/SKILL.md subfolders).",
     );
     return 2;
@@ -6280,13 +6281,13 @@ function runProjectSkills(opts: RegistryOptions): number {
   } catch (err) {
     // A resolution failure (no local binary) is a hard, observable error —
     // never a silent network fetch (constraint #2).
-    logError(`registry project-skills: ${(err as Error).message}`);
+    logError(`loadout project-skills: ${(err as Error).message}`);
     return 1;
   }
   if (result.stdout) info(result.stdout);
   if (!result.ok) {
     logError(
-      `registry project-skills: 'skills add' exited ${result.exitCode}` +
+      `loadout project-skills: 'skills add' exited ${result.exitCode}` +
         (result.stderr ? `\n${result.stderr}` : ""),
     );
     return 1;
@@ -6296,16 +6297,16 @@ function runProjectSkills(opts: RegistryOptions): number {
 }
 
 /**
- * FR-212a: `igris registry unproject-skills` — the INVERSE of project-skills.
+ * FR-212a: `igris loadout unproject-skills` — the INVERSE of project-skills.
  * Routes un-projection through the tool's OWN `skills remove <name> -g --all -y`
  * (NOT a manifest-path `deleteLink`), because the tool created the symlinks
  * under `~/.agents/skills` + `~/.claude/skills` — the manifest-derived paths are
  * not the ones to delete. Idempotent: removing an absent skill exits cleanly.
  */
-function runUnprojectSkills(opts: RegistryOptions): number {
+function runUnprojectSkills(opts: LoadoutOptions): number {
   const name = opts.name;
   if (!name) {
-    logError("registry unproject-skills: --name <skill> is required.");
+    logError("loadout unproject-skills: --name <skill> is required.");
     return 2;
   }
   const unprojectFn = opts.unprojectSkillsFn ?? unprojectSkillsViaTool;
@@ -6313,13 +6314,13 @@ function runUnprojectSkills(opts: RegistryOptions): number {
   try {
     result = unprojectFn(name, { global: true });
   } catch (err) {
-    logError(`registry unproject-skills: ${(err as Error).message}`);
+    logError(`loadout unproject-skills: ${(err as Error).message}`);
     return 1;
   }
   if (result.stdout) info(result.stdout);
   if (!result.ok) {
     logError(
-      `registry unproject-skills: 'skills remove' exited ${result.exitCode}` +
+      `loadout unproject-skills: 'skills remove' exited ${result.exitCode}` +
         (result.stderr ? `\n${result.stderr}` : ""),
     );
     return 1;
@@ -6329,11 +6330,11 @@ function runUnprojectSkills(opts: RegistryOptions): number {
 }
 
 /**
- * Run the registry verb. Returns an exit code:
+ * Run the loadout verb. Returns an exit code:
  *   0 = success, 1 = enforcement reject, 2 = usage error (bad action/args).
  */
-export async function runRegistry(opts: RegistryOptions): Promise<number> {
-  const overlayPath = opts.overlayPath ?? registryOverlayPath();
+export async function runLoadout(opts: LoadoutOptions): Promise<number> {
+  const overlayPath = opts.overlayPath ?? loadoutOverlayPath();
   switch (opts.action) {
     case "add":
       return runAdd(opts, overlayPath);
@@ -6371,7 +6372,7 @@ export async function runRegistry(opts: RegistryOptions): Promise<number> {
       return runUpdate(opts, overlayPath);
     default:
       logError(
-        `unknown registry action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, add-hook, project-mcp, project-hook, project-skills, verify-mcp-grant, unproject-mcp, unproject-hook, unproject-skills, remove-skill, remove-mcp, remove-hook, list, remove, update.`,
+        `unknown loadout action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, add-hook, project-mcp, project-hook, project-skills, verify-mcp-grant, unproject-mcp, unproject-hook, unproject-skills, remove-skill, remove-mcp, remove-hook, list, remove, update.`,
       );
       return 2;
   }

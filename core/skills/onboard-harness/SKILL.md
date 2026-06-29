@@ -141,7 +141,7 @@ catalog; there is no `CLI_CATALOG` symbol). Verify: `grep -q '"<NEW>"' cli/src/t
 `core/scripts/cli-adapters/manifest.schema.json` — add `"<NEW>"` to the agent +
 skills `targets[].type` enums and a skills `oneOf {type,method}` branch; mirror
 the `(type, method)` pair into `_common.sh validate_manifest` `valid_pairs` AND
-`cli/src/verbs/registry.ts` `VALID_SKILL_TYPE_METHOD_PAIRS`. Then **declare the
+`cli/src/verbs/loadout.ts` `VALID_SKILL_TYPE_METHOD_PAIRS`. Then **declare the
 targets** at the Phase-1-proven paths: agents → `harness-manifest.json`
 (core) + the personal overlay; skills/mcp/hooks → `surfaces-manifest.json` /
 `harness-manifest.json` per surface. Verify: `igris harness compile --surface all`
@@ -149,9 +149,9 @@ does not schema-reject.
 
 ### 3 — Compile + drift arms (§18.1 dual-impl — parity MANDATORY)
 `compile_harnesses.sh` **and** `check_harness_drift.sh` (and the TS halves in
-`registry.ts`): add the `<NEW>` agent + skills dispatch arms; the agent **emit
+`loadout.ts`): add the `<NEW>` agent + skills dispatch arms; the agent **emit
 primitive** (symlink if the Phase-1 loader follows symlinks, else hard-link); the
-bash `assemble_<NEW>_harness_into_registry` α-assembler + python translator AND
+bash `assemble_<NEW>_harness_into_loadout` α-assembler + python translator AND
 the TS `assemble<New>Harness` + `CLAUDE_TO_<NEW>_TOOLS` — **byte-identical**,
 pinned by a golden-fixture parity test. **Every compile branch gets a matching
 drift branch** (a divergence means `check` reports DRIFTED right after a clean

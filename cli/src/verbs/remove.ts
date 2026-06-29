@@ -3,17 +3,17 @@
  *
  * The symmetric INVERSE of `igris add` (`verbs/add.ts`). One atomic,
  * self-verifying, mode-announced command that:
- *   1. UN-PROJECTS the surface from every harness (delete the registry-anchored
+ *   1. UN-PROJECTS the surface from every harness (delete the loadout-anchored
  *      symlink/hardlink; un-merge the named native-config block), then
- *   2. de-materializes it from the registry/overlay (personal) OR deletes the
+ *   2. de-materializes it from the loadout/overlay (personal) OR deletes the
  *      `core/` source + un-sweeps the §13 enumeration surfaces (core), then
  *   3. VERIFIES the surface is ABSENT (drift-clean = correctly removed).
  *
  * Layering mirrors `add` exactly (D9 — `remove` orchestrates, it does NOT
  * re-implement the write path):
- *   - personal de-materialize → `verbs/registry.ts` (`removeSkillBlock`,
+ *   - personal de-materialize → `verbs/loadout.ts` (`removeSkillBlock`,
  *     `removeMcpBlock`, `removeHookBlock`; the agent arm reuses the EXISTING
- *     `registry.ts:runRemove`).
+ *     `loadout.ts:runRemove`).
  *   - core de-materialize       → `verbs/remove-core.ts`.
  *   - un-project + verify-ABSENT → `lib/remove-orchestrate.ts`
  *     (`unprojectAndVerify`) — the TD-235 chokepoint, INVERTED.
@@ -24,7 +24,7 @@
  * so there are FOUR surfaces and NO `remove identity` arm.
  *
  * THE INVERTED NO-PHANTOM-SUCCESS GATE (TD-235, flipped): a removal that
- * de-projected ZERO targets AND found nothing in the registry/`core/` to delete
+ * de-projected ZERO targets AND found nothing in the loadout/`core/` to delete
  * is a LOUD FAIL ("already absent? check the name") — the inverse of `add`'s
  * 0-projected loud-fail. A post-removal `harness check` that legitimately matches
  * NOTHING for that name is SUCCESS (the empty-match inversion documented in
@@ -45,7 +45,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
 import {
-  registryOverlayPath,
+  loadoutOverlayPath,
   coreSurfacesManifestPath,
   claudeJsonPath,
   geminiSettingsPath,
@@ -60,13 +60,13 @@ import {
   hookCommandPresent,
 } from "../lib/hook-merge.js";
 import {
-  runRegistry,
+  runLoadout,
   removeSkillBlock,
   removeMcpBlock,
   removeHookBlock,
   NAME_PATTERN,
-  type RegistryOptions,
-} from "./registry.js";
+  type LoadoutOptions,
+} from "./loadout.js";
 import {
   unprojectAndVerify,
   type UnprojectTarget,
@@ -373,7 +373,7 @@ async function confirmDestruction(
   const lines = [
     `remove ${surface} '${name}' will de-project the following target(s):`,
     ...targetLabels.map((l) => `  - ${l}`),
-    "and remove the surface from the registry/core store. This is destructive.",
+    "and remove the surface from the loadout/core store. This is destructive.",
   ];
   const confirm = opts.confirm ?? defaultConfirm;
   return confirm(lines.join("\n"));
@@ -389,7 +389,7 @@ async function runRemoveSkillArm(
   mode: AddMode,
 ): Promise<number> {
   const projectRoot = opts.projectRoot ?? process.cwd();
-  const overlayPath = opts.overlayPath ?? registryOverlayPath();
+  const overlayPath = opts.overlayPath ?? loadoutOverlayPath();
   const name = opts.name!;
 
   // FR-212d Phase 2: skills un-projection is delegate-only (the custom
@@ -461,7 +461,7 @@ async function runRemoveAgentArm(
   mode: AddMode,
 ): Promise<number> {
   const projectRoot = opts.projectRoot ?? process.cwd();
-  const overlayPath = opts.overlayPath ?? registryOverlayPath();
+  const overlayPath = opts.overlayPath ?? loadoutOverlayPath();
   const name = opts.name!;
 
   // Builtin-agent guard (load-bearing core agents in the os/ INDEX roster).
@@ -492,10 +492,10 @@ async function runRemoveAgentArm(
     storeRemoved = r.removed;
     if (r.verifyOutput.length > 0) info(r.verifyOutput);
   } else {
-    // Personal agent — reuse the EXISTING registry `remove` (overlay + origin +
+    // Personal agent — reuse the EXISTING loadout `remove` (overlay + origin +
     // vendor dir). It returns 1 when the agent is absent; treat absence as
     // storeRemoved=false (the loud-fail gate decides, after un-projection).
-    const code = await runRegistry(regOptsFor("remove", name, opts));
+    const code = await runLoadout(regOptsFor("remove", name, opts));
     storeRemoved = code === 0;
   }
 
@@ -518,7 +518,7 @@ async function runRemoveMcpArm(
   mode: AddMode,
 ): Promise<number> {
   const projectRoot = opts.projectRoot ?? process.cwd();
-  const overlayPath = opts.overlayPath ?? registryOverlayPath();
+  const overlayPath = opts.overlayPath ?? loadoutOverlayPath();
   const name = opts.name!;
 
   const harnesses =
@@ -591,7 +591,7 @@ async function runRemoveMcpArm(
 }
 
 /**
- * FR-212b: map a registry harness id (claude/codex/gemini/opencode/antigravity)
+ * FR-212b: map a loadout harness id (claude/codex/gemini/opencode/antigravity)
  * to the `add-mcp` AGENT id — `claude → claude-code`, `gemini → gemini-cli`, the
  * rest pass through.
  */
@@ -608,8 +608,8 @@ const REMOVE_ADD_MCP_AGENT_ID: Record<string, string> = {
  * `add-mcp remove` (ONE call for the targeted harnesses) + REVOKE the
  * Igris-owned no-prompt grant for each. Pushes each harness into `deprojected`
  * for the audit line. Returns 0 on success, 1 on a tool/grant FAIL (LOUD; no
- * custom fallback — constraint #2). `harnesses` are registry ids; the grant
- * REVOKE keys off the same id (registry id ≡ McpHarness).
+ * custom fallback — constraint #2). `harnesses` are loadout ids; the grant
+ * REVOKE keys off the same id (loadout id ≡ McpHarness).
  */
 function removeMcpViaDelegate(
   opts: RemoveOptions,
@@ -631,7 +631,7 @@ function removeMcpViaDelegate(
   const customHarnesses = harnesses.filter((h) => h === "antigravity");
 
   // 1) Un-register the SERVER ENTRY via add-mcp for the non-antigravity targets
-  // (map the registry ids → agent ids; one tool call filtered to those agents).
+  // (map the loadout ids → agent ids; one tool call filtered to those agents).
   // Skip the tool call entirely when only antigravity was targeted (e.g.
   // `--target antigravity`) — there is nothing for add-mcp to remove.
   if (toolHarnesses.length > 0) {
@@ -701,7 +701,7 @@ async function runRemoveHookArm(
   mode: AddMode,
 ): Promise<number> {
   const projectRoot = opts.projectRoot ?? process.cwd();
-  const overlayPath = opts.overlayPath ?? registryOverlayPath();
+  const overlayPath = opts.overlayPath ?? loadoutOverlayPath();
   const name = opts.name!;
 
   // The hook un-merge re-derives the command path from (name, event), so --event
@@ -743,15 +743,15 @@ async function runRemoveHookArm(
 
   const deprojected: string[] = [];
   for (const h of harnesses) {
-    const regOpts: RegistryOptions = {
+    const regOpts: LoadoutOptions = {
       action: "unproject-hook",
       name,
-      harness: h as RegistryOptions["harness"],
+      harness: h as LoadoutOptions["harness"],
       event: opts.event,
       projectRoot,
       overlayPath,
     };
-    const code = await runRegistry(regOpts);
+    const code = await runLoadout(regOpts);
     if (code !== 0) {
       logError(`remove hook '${name}': un-projection from ${h} failed (exit ${code}).`);
       return 1;
@@ -792,18 +792,18 @@ async function runRemoveHookArm(
 // Shared finish paths.
 // ---------------------------------------------------------------------------
 
-/** Build a RegistryOptions for a personal de-materialize / agent remove. */
+/** Build a LoadoutOptions for a personal de-materialize / agent remove. */
 function regOptsFor(
-  action: RegistryOptions["action"],
+  action: LoadoutOptions["action"],
   name: string,
   opts: RemoveOptions,
-): RegistryOptions {
+): LoadoutOptions {
   return {
     action,
     name,
     event: opts.event,
     projectRoot: opts.projectRoot ?? process.cwd(),
-    overlayPath: opts.overlayPath ?? registryOverlayPath(),
+    overlayPath: opts.overlayPath ?? loadoutOverlayPath(),
   };
 }
 
@@ -1012,7 +1012,7 @@ async function verifyAbsentOnly(args: {
 /** The inverted TD-235 loud-fail: nothing was de-projected / already absent. */
 function loudNothingToRemove(arm: string, name: string): number {
   logError(
-    `remove ${arm} '${name}': nothing was de-projected and no registry/core entry ` +
+    `remove ${arm} '${name}': nothing was de-projected and no loadout/core entry ` +
       `exists — already absent? Check the name (it must match an added ${arm}).`,
   );
   return 1;
@@ -1042,7 +1042,7 @@ export async function runRemove(opts: RemoveOptions): Promise<number> {
   // path in the skill/hook personal de-materialize) and `--yes` skips the
   // confirm preview, so a traversal name (`../../../x`) must be rejected at the
   // boundary. Reuses the SAME pattern + message shape every `add` writer uses
-  // (symmetry: `registry.ts` add-skill/add-mcp/add-hook), exit 2 (usage error).
+  // (symmetry: `loadout.ts` add-skill/add-mcp/add-hook), exit 2 (usage error).
   if (!NAME_PATTERN.test(opts.name)) {
     logError(
       `remove ${surface}: name '${opts.name}' must match /^[a-z0-9][a-z0-9-]*$/`,
@@ -1065,7 +1065,7 @@ export async function runRemove(opts: RemoveOptions): Promise<number> {
         `at ${opts.projectRoot ?? process.cwd()}.`,
     );
   } else {
-    info(`remove ${surface}: operating in PERSONAL mode (registry overlay).`);
+    info(`remove ${surface}: operating in PERSONAL mode (loadout overlay).`);
   }
 
   switch (surface) {

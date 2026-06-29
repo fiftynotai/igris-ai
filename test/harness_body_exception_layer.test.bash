@@ -6,15 +6,15 @@
 #
 # FR-144 relocates the Layer-2 personal body-exception sidecar OUT of the
 # public repo (core/scripts/cli-adapters/body-exceptions/) into the runtime
-# registry (<brain>/registry/body-exceptions/), and teaches both adapters to
-# resolve a `layer:"personal"` agent's body_exception from the registry while
+# loadout (<brain>/loadout/body-exceptions/), and teaches both adapters to
+# resolve a `layer:"personal"` agent's body_exception from the loadout while
 # core agents keep resolving from the in-repo dir. Resolution is LAYER-KEYED,
 # not a fallback — a re-introduced repo sidecar must never serve a personal
 # agent (the L-498 leak this brief closes).
 #
 # These tests drive the REAL adapters (L-159: never a mock) against a
 # self-contained temp project, with IGRIS_BRAIN_DIR scoped to a per-test dir so
-# the registry resolution is deterministic and machine-independent. The real
+# the loadout resolution is deterministic and machine-independent. The real
 # content-designer agent is not registered in an overlay until FR-146, so a
 # FIXTURE personal agent isolates exactly the FR-144 seam.
 #
@@ -22,7 +22,7 @@
 #       (compile renders the inserted paragraph; drift exits 0, MATCH).
 #   B — core agent still resolves its sidecar from the IN-REPO dir
 #       (regression guard: the new branch did not redirect core sidecars).
-#   C — personal sidecar absent from the registry is a hard FAIL/MISSING that
+#   C — personal sidecar absent from the loadout is a hard FAIL/MISSING that
 #       names the REGISTRY path (proving the personal branch was taken).
 #   D — IGRIS_BRAIN_DIR is honored (moving the seam moves where the sidecar is
 #       sought) — folded into A via the per-test brain dir.
@@ -42,10 +42,10 @@ setup() {
   mkdir -p "$PROJ/canon" "$PROJ/.claude/agents"
 
   # IGRIS_BRAIN_DIR seam scoped to a per-test dir. The personal-sidecar branch
-  # resolves <brain>/registry/body-exceptions/<name>.json, so this directly
+  # resolves <brain>/loadout/body-exceptions/<name>.json, so this directly
   # exercises Scenario D (honoring the seam) for every personal-agent test.
   export IGRIS_BRAIN_DIR="$PROJ/brain"
-  REGISTRY_BE="$IGRIS_BRAIN_DIR/registry/body-exceptions"
+  REGISTRY_BE="$IGRIS_BRAIN_DIR/loadout/body-exceptions"
   mkdir -p "$REGISTRY_BE"
 
   # A canonical agent prompt with a UNIQUE anchor line the sidecar targets.
@@ -65,7 +65,7 @@ ANCHOR-LINE-FOR-BODY-EXCEPTION
 - rule two
 EOF
 
-  # FR-152: claude target is a registry-anchored symlink the compiler creates
+  # FR-152: claude target is a loadout-anchored symlink the compiler creates
   # at compile time. The FR-149-era pre-authored real harness file is now an
   # error (refuse-to-clobber); we just leave the target dir empty.
 }
@@ -124,24 +124,24 @@ write_sidecar() {
   "anchor": "ANCHOR-LINE-FOR-BODY-EXCEPTION",
   "insert": [
     "",
-    "INSERTED-PERSONAL-PARAGRAPH from the runtime registry sidecar."
+    "INSERTED-PERSONAL-PARAGRAPH from the runtime loadout sidecar."
   ]
 }
 EOF
 }
 
-@test "A: personal agent resolves sidecar from the registry dir (compile renders, drift MATCH)" {
+@test "A: personal agent resolves sidecar from the loadout dir (compile renders, drift MATCH)" {
   write_personal_manifest "para-fixture"
   write_sidecar "$REGISTRY_BE/para-fixture.json"
 
   # Compile drives the REAL adapter; the inserted paragraph must land in the
-  # generated harness body, proving the personal branch resolved the registry
+  # generated harness body, proving the personal branch resolved the loadout
   # sidecar (under the per-test IGRIS_BRAIN_DIR — Scenario D).
   run bash "$COMPILE" --project-root "$PROJ" --target claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"OK    sample/claude"* ]]
   assert_file_contains "$PROJ/.claude/agents/sample.md" \
-    "INSERTED-PERSONAL-PARAGRAPH from the runtime registry sidecar."
+    "INSERTED-PERSONAL-PARAGRAPH from the runtime loadout sidecar."
 
   # Drift must see the rendered one-paragraph exception as in-sync (AC-3).
   run bash "$GUARD" --project-root "$PROJ"
@@ -152,7 +152,7 @@ EOF
 
 @test "B: core agent still resolves sidecar from the in-repo dir (regression guard)" {
   # A core-layer agent whose sidecar lives ONLY in the in-repo body-exceptions
-  # dir (NOT the registry). Proves the new personal branch did not redirect
+  # dir (NOT the loadout). Proves the new personal branch did not redirect
   # core sidecars and the unchanged else-branch still works.
   write_core_manifest "core-fixture"
   local repo_be="$PROJ/core/scripts/cli-adapters/body-exceptions"
@@ -164,14 +164,14 @@ EOF
   # points at the temp project's in-repo body-exceptions dir.
   cp "$ADAPTERS"/*.sh "$PROJ/core/scripts/cli-adapters/"
 
-  # Deliberately leave the registry EMPTY so a (wrong) personal-branch lookup
+  # Deliberately leave the loadout EMPTY so a (wrong) personal-branch lookup
   # would FAIL — only the in-repo resolution can succeed here.
   run bash "$PROJ/core/scripts/cli-adapters/compile_harnesses.sh" \
     --project-root "$PROJ" --target claude
   [ "$status" -eq 0 ]
   [[ "$output" == *"OK    sample/claude"* ]]
   assert_file_contains "$PROJ/.claude/agents/sample.md" \
-    "INSERTED-PERSONAL-PARAGRAPH from the runtime registry sidecar."
+    "INSERTED-PERSONAL-PARAGRAPH from the runtime loadout sidecar."
 
   run bash "$PROJ/core/scripts/cli-adapters/check_harness_drift.sh" \
     --project-root "$PROJ"
@@ -179,8 +179,8 @@ EOF
   [[ "$output" == *"[sample/claude] MATCH"* ]]
 }
 
-@test "C: personal sidecar absent from registry is a hard FAIL/MISSING naming the registry path" {
-  # No ghost.json anywhere. The error MUST name the registry path (proving the
+@test "C: personal sidecar absent from loadout is a hard FAIL/MISSING naming the loadout path" {
+  # No ghost.json anywhere. The error MUST name the loadout path (proving the
   # personal branch was taken), not the in-repo path, and stay a hard failure.
   write_personal_manifest "ghost"
 

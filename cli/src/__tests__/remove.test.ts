@@ -25,9 +25,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runRemove } from "../verbs/remove.js";
-import { runRegistry } from "../verbs/registry.js";
+import { runLoadout } from "../verbs/loadout.js";
 import type { AdapterCaptureFn } from "../verbs/harness.js";
-import type { RemoveMaterializeResult } from "../verbs/registry.js";
+import type { RemoveMaterializeResult } from "../verbs/loadout.js";
 import type { RemoveCoreResult } from "../verbs/remove-core.js";
 
 const BRAIN = "/tmp/igris-test-brain-remove";
@@ -188,20 +188,20 @@ describe("runRemove — C1: name traversal guard (CRITICAL security)", () => {
   it("removeSkillBlock does NOT recursively delete a traversal-named dir", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "igris-c1-skill-"));
     try {
-      // A real dir OUTSIDE the registry that a `../../../victim` would reach.
+      // A real dir OUTSIDE the loadout that a `../../../victim` would reach.
       const victim = join(tmp, "victim");
       mkdirSync(victim, { recursive: true });
       writeFileSync(join(victim, "important.txt"), "do not delete");
       const overlayPath = join(tmp, "overlay.json");
       writeFileSync(overlayPath, '{"version":1,"agents":[]}\n');
 
-      const code = await runRegistry({
+      const code = await runLoadout({
         action: "remove-skill",
         name: `../../../${join(tmp, "victim").slice(1)}`, // traversal toward victim
         overlayPath,
         // Point the skill vendor base AT the tmp root so a NAIVE join could land
         // on the victim — the guard must reject before that join is even built.
-        skillVendorDir: (n: string) => join(tmp, "registry", "skills", n),
+        skillVendorDir: (n: string) => join(tmp, "loadout", "skills", n),
       });
       expect(code).toBe(2);
       // The victim dir + its file are UNTOUCHED.
@@ -222,11 +222,11 @@ describe("runRemove — C1: name traversal guard (CRITICAL security)", () => {
       const overlayPath = join(tmp, "overlay.json");
       writeFileSync(overlayPath, '{"version":1,"agents":[]}\n');
 
-      const code = await runRegistry({
+      const code = await runLoadout({
         action: "remove-hook",
         name: "../../../evil",
         overlayPath,
-        hookScriptRoot: join(tmp, "registry", "hooks"),
+        hookScriptRoot: join(tmp, "loadout", "hooks"),
       });
       expect(code).toBe(2);
       expect(existsSync(victim)).toBe(true);
@@ -411,7 +411,7 @@ describe("round-trip: personal skill (add → remove → restored)", () => {
     tmpRoot = mkdtempSync(join(tmpdir(), "igris-rt-skill-"));
     overlayPath = join(tmpRoot, "overlay.json");
     originsPath = join(tmpRoot, "origins.json");
-    vendorBase = join(tmpRoot, "registry");
+    vendorBase = join(tmpRoot, "loadout");
     projectRoot = join(tmpRoot, "proj");
     mkdirSync(projectRoot, { recursive: true });
     writeFileSync(join(projectRoot, "harness-manifest.json"), '{"version":1,"agents":[]}\n');
@@ -430,10 +430,10 @@ describe("round-trip: personal skill (add → remove → restored)", () => {
     const linkParent = join(tmpRoot, "projected");
     mkdirSync(linkParent, { recursive: true });
 
-    // ADD (write-only registry primitive — the projection symlink is created by
+    // ADD (write-only loadout primitive — the projection symlink is created by
     // the harness compiler, which we don't run here; the round-trip asserts the
     // STORE side restores byte-for-byte).
-    const addCode = await runRegistry({
+    const addCode = await runLoadout({
       action: "add-skill",
       name: "rttool",
       from: skillSrc,
@@ -449,7 +449,7 @@ describe("round-trip: personal skill (add → remove → restored)", () => {
 
     // The pre-add overlay state: no surfaces.skills block.
     // REMOVE (personal de-materialize: splice block + drop origin + delete vendor).
-    const remCode = await runRegistry({
+    const remCode = await runLoadout({
       action: "remove-skill",
       name: "rttool",
       projectRoot,
@@ -473,7 +473,7 @@ describe("round-trip: personal skill (add → remove → restored)", () => {
   });
 });
 
-describe("round-trip: personal agent (registry remove restores overlay)", () => {
+describe("round-trip: personal agent (loadout remove restores overlay)", () => {
   let tmpRoot: string;
   let overlayPath: string;
   let originsPath: string;
@@ -485,7 +485,7 @@ describe("round-trip: personal agent (registry remove restores overlay)", () => 
     tmpRoot = mkdtempSync(join(tmpdir(), "igris-rt-agent-"));
     overlayPath = join(tmpRoot, "overlay.json");
     originsPath = join(tmpRoot, "origins.json");
-    vendorBase = join(tmpRoot, "registry");
+    vendorBase = join(tmpRoot, "loadout");
     projectRoot = join(tmpRoot, "proj");
     mkdirSync(projectRoot, { recursive: true });
     writeFileSync(join(projectRoot, "harness-manifest.json"), '{"version":1,"agents":[]}\n');
@@ -501,7 +501,7 @@ describe("round-trip: personal agent (registry remove restores overlay)", () => 
   });
 
   it("add then remove restores the overlay agents array + drops the vendor dir", async () => {
-    const addCode = await runRegistry({
+    const addCode = await runLoadout({
       action: "add",
       name: "rtbot",
       from: agentSrc,
@@ -514,7 +514,7 @@ describe("round-trip: personal agent (registry remove restores overlay)", () => 
     expect(addCode).toBe(0);
     expect(readFileSync(overlayPath, "utf-8")).toContain("rtbot");
 
-    const remCode = await runRegistry({
+    const remCode = await runLoadout({
       action: "remove",
       name: "rtbot",
       projectRoot,
@@ -559,7 +559,7 @@ describe("round-trip: personal mcp un-merge preserves neighbors", () => {
       ) + "\n",
     );
 
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "unproject-mcp",
       name: "removeme",
       harness: "claude",
@@ -582,7 +582,7 @@ describe("round-trip: personal mcp un-merge preserves neighbors", () => {
       JSON.stringify({ mcpServers: { keepme: { command: "node" } } }, null, 2) + "\n",
     );
     const before = readFileSync(configPath, "utf-8");
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "unproject-mcp",
       name: "ghost",
       harness: "claude",
@@ -598,7 +598,7 @@ describe("round-trip: personal mcp un-merge preserves neighbors", () => {
       configPath,
       JSON.stringify({ mcpServers: { only: { command: "node" } }, keep: 1 }, null, 2) + "\n",
     );
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "unproject-mcp",
       name: "only",
       harness: "claude",
@@ -625,7 +625,7 @@ describe("round-trip: personal hook un-merge preserves neighbors", () => {
 
   it("unproject-hook splices the named group + preserves a user group + drops empty hooks", async () => {
     // The personal command path for (my-guard, PreToolUse).
-    const cmd = "$HOME/.igris/registry/hooks/my-guard/PreToolUse.sh";
+    const cmd = "$HOME/.igris/loadout/hooks/my-guard/PreToolUse.sh";
     writeFileSync(
       settingsPath,
       JSON.stringify(
@@ -646,7 +646,7 @@ describe("round-trip: personal hook un-merge preserves neighbors", () => {
       ) + "\n",
     );
 
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "unproject-hook",
       name: "my-guard",
       harness: "claude",
@@ -664,7 +664,7 @@ describe("round-trip: personal hook un-merge preserves neighbors", () => {
   });
 
   it("un-merging the only group drops hooks entirely (byte-restores)", async () => {
-    const cmd = "$HOME/.igris/registry/hooks/solo/SessionStart.sh";
+    const cmd = "$HOME/.igris/loadout/hooks/solo/SessionStart.sh";
     writeFileSync(
       settingsPath,
       JSON.stringify(
@@ -676,7 +676,7 @@ describe("round-trip: personal hook un-merge preserves neighbors", () => {
         2,
       ) + "\n",
     );
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "unproject-hook",
       name: "solo",
       harness: "claude",
@@ -690,7 +690,7 @@ describe("round-trip: personal hook un-merge preserves neighbors", () => {
   });
 
   it("opencode hook un-project is a covered no-op (the shared plugin is never removed)", async () => {
-    const code = await runRegistry({
+    const code = await runLoadout({
       action: "unproject-hook",
       name: "anything",
       harness: "opencode",
@@ -787,7 +787,7 @@ describe("runRemove mcp — DELEGATE engine grant revocation (FR-212b)", () => {
     expect(unregOpts?.global).toBe(true);
 
     // 2) the grant was REVOKED for every targeted harness (the security arm),
-    // keyed off the registry id, with the project-root folder for the
+    // keyed off the loadout id, with the project-root folder for the
     // folder-scoped harnesses.
     expect(revokeSpy).toHaveBeenCalledTimes(5);
     const revokedHarnesses = revokeSpy.mock.calls.map((c) => c[0]);

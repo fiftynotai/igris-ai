@@ -72,62 +72,62 @@ export function coreSurfacesManifestPath(): string {
 }
 
 /**
- * Absolute path to the Layer-2 customization registry dir: `~/.igris/registry/`.
+ * Absolute path to the Layer-2 customization loadout dir: `~/.igris/loadout/`.
  *
  * Honors IGRIS_BRAIN_DIR (so tests sandbox it via the same env seam the bash
  * adapters use). The FR-136 compile/check adapters resolve the personal
  * overlay under this exact dir (`compile_harnesses.sh` sets
- * `DEFAULT_OVERLAY="$BRAIN_DIR/registry/harness-manifest.personal.json"`), so a
+ * `DEFAULT_OVERLAY="$BRAIN_DIR/loadout/harness-manifest.personal.json"`), so a
  * sandboxed brain dir makes the FR-141 verb and the adapters agree automatically.
  */
-export function registryDirPath(): string {
-  return join(brainDir(), "registry");
+export function loadoutDirPath(): string {
+  return join(brainDir(), "loadout");
 }
 
 /**
  * Absolute path to the Layer-2 personal overlay manifest written by
- * `igris registry add|remove`: `~/.igris/registry/harness-manifest.personal.json`.
+ * `igris loadout add|remove`: `~/.igris/loadout/harness-manifest.personal.json`.
  * Byte-identical to the adapter's auto-discovered `DEFAULT_OVERLAY`. Catalog
- * file at the registry root under L-517 (typed-subfolder layout).
+ * file at the loadout root under L-517 (typed-subfolder layout).
  */
-export function registryOverlayPath(): string {
-  return join(registryDirPath(), "harness-manifest.personal.json");
+export function loadoutOverlayPath(): string {
+  return join(loadoutDirPath(), "harness-manifest.personal.json");
 }
 
 /**
- * Absolute path to the vendored-copy directory for a registry AGENT:
- * `~/.igris/registry/agents/<name>/`. TD-191 introduces the L-517 typed-
+ * Absolute path to the vendored-copy directory for a loadout AGENT:
+ * `~/.igris/loadout/agents/<name>/`. TD-191 introduces the L-517 typed-
  * subfolder layout (`agents/`, `skills/`, `body-exceptions/`) so the
- * registry root stays catalog-only. Renamed from the generic-named
+ * loadout root stays catalog-only. Renamed from the generic-named
  * `registrySurfaceDirPath` per L-519 §18.4 (a generic helper that named a
  * specific use case). See L-517 (typed layout) and L-519 (anti-pattern).
  */
-export function registryAgentDirPath(name: string): string {
-  return join(registryDirPath(), "agents", name);
+export function loadoutAgentDirPath(name: string): string {
+  return join(loadoutDirPath(), "agents", name);
 }
 
 /**
- * Absolute path to the vendored-tree directory for a registry SKILL:
- * `~/.igris/registry/skills/<name>/`. Mirrors `registryAgentDirPath` under
+ * Absolute path to the vendored-tree directory for a loadout SKILL:
+ * `~/.igris/loadout/skills/<name>/`. Mirrors `loadoutAgentDirPath` under
  * the L-517 typed-subfolder layout; the FR-143/TD-191 `add-skill` writer
  * vendors `<src>/<name>/SKILL.md` into here so the codex compiler + gemini
  * converter's `find -mindepth 2` walks still resolve. See L-517.
  */
-export function registrySkillDirPath(name: string): string {
-  return join(registryDirPath(), "skills", name);
+export function loadoutSkillDirPath(name: string): string {
+  return join(loadoutDirPath(), "skills", name);
 }
 
 /**
  * Absolute path to the FR-142 typed-origin sidecar:
- * `~/.igris/registry/origins.json`. Catalog file at the registry root under
+ * `~/.igris/loadout/origins.json`. Catalog file at the loadout root under
  * L-517 (the only catalog files at root are this and `harness-manifest.
  * personal.json`; everything else is in a typed subfolder). Stored OUTSIDE
  * the harness manifest (option (b)) so the overlay stays schema-clean — the
- * compiler never reads this file; only `igris registry update` does.
+ * compiler never reads this file; only `igris loadout update` does.
  * Honors IGRIS_BRAIN_DIR.
  */
-export function registryOriginsPath(): string {
-  return join(registryDirPath(), "origins.json");
+export function loadoutOriginsPath(): string {
+  return join(loadoutDirPath(), "origins.json");
 }
 
 /** Absolute path to a project's .claude/settings.json. */
@@ -221,7 +221,7 @@ export function soulTemplatePath(name: string): string {
  * source of real MCP secrets. chmod 600, gitignored (lives OUTSIDE the repo).
  * Honors IGRIS_BRAIN_DIR (the test-sandbox seam every other helper uses).
  *
- * The registry overlay stores only `${VAR}` indirection refs; the actual
+ * The loadout overlay stores only `${VAR}` indirection refs; the actual
  * literal a Codex compile resolves at FR-164 projection time is read from
  * this file. claude/gemini/opencode never read it (they resolve the ref +
  * inherit exported env at launch).
@@ -381,13 +381,13 @@ export function geminiTrustedFoldersPath(): string {
 }
 
 /**
- * FR-162: absolute path to the vendored-bundle dir for a registry MCP server:
- * `~/.igris/registry/mcp_servers/<name>/`. Declared now for FR-167 (`--from`
- * bundle vendoring) parity with `registrySkillDirPath`; FR-162 (inline
+ * FR-162: absolute path to the vendored-bundle dir for a loadout MCP server:
+ * `~/.igris/loadout/mcp_servers/<name>/`. Declared now for FR-167 (`--from`
+ * bundle vendoring) parity with `loadoutSkillDirPath`; FR-162 (inline
  * command-ref) does NOT vendor, so this is unused by `runAddMcp` but reserved
  * under the L-517 typed-subfolder layout. Honors IGRIS_BRAIN_DIR via
- * `registryDirPath()` (same env-sandbox seam as `registrySkillDirPath`).
+ * `loadoutDirPath()` (same env-sandbox seam as `loadoutSkillDirPath`).
  */
-export function registryMcpDirPath(name: string): string {
-  return join(registryDirPath(), "mcp_servers", name);
+export function loadoutMcpDirPath(name: string): string {
+  return join(loadoutDirPath(), "mcp_servers", name);
 }

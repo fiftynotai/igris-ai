@@ -35,7 +35,7 @@ setup() {
   [ -f "$CLI_ENTRY" ] || skip "cli/dist/index.js missing — run 'npm run build' in cli/ first (L-552)"
   command -v node >/dev/null 2>&1 || skip "node not available"
   IGRIS_BIN=(node "$CLI_ENTRY")
-  # The MCP compile pass shells out to `igris registry project-mcp`; point it at
+  # The MCP compile pass shells out to `igris loadout project-mcp`; point it at
   # the freshly-built CLI (Phase 3 mcp arm).
   export IGRIS_CLI="node $CLI_ENTRY"
 
@@ -47,7 +47,7 @@ setup() {
   # Isolated brain dir WITH the repo adapters copied in (igris add resolves the
   # adapter dir as brainDir()/core/scripts/cli-adapters).
   ISOLATED_BRAIN="$TEST_TEMP_DIR/brain_$BATS_TEST_NUMBER"
-  mkdir -p "$ISOLATED_BRAIN/registry" "$ISOLATED_BRAIN/core/scripts"
+  mkdir -p "$ISOLATED_BRAIN/loadout" "$ISOLATED_BRAIN/core/scripts"
   cp -R "$ADAPTERS" "$ISOLATED_BRAIN/core/scripts/cli-adapters"
   cp "$IGRIS_ROOT/core/scripts/verify_mirror.sh" "$ISOLATED_BRAIN/core/scripts/verify_mirror.sh"
   export IGRIS_BRAIN_DIR="$ISOLATED_BRAIN"
@@ -61,7 +61,7 @@ EOF
 
   # A source SKILL dir (single-skill shape: <src>/SKILL.md). `--from` points at
   # the skill dir itself so the recorded origin == the vendored tree's content
-  # root (registry/skills/mytool/mytool/SKILL.md) — TD-201 tree-drift MATCH.
+  # root (loadout/skills/mytool/mytool/SKILL.md) — TD-201 tree-drift MATCH.
   SKILL_SRC="$TEST_TEMP_DIR/skillsrc_$BATS_TEST_NUMBER/mytool"
   mkdir -p "$SKILL_SRC"
   cat > "$SKILL_SRC/SKILL.md" <<'EOF'
@@ -74,7 +74,7 @@ EOF
 
   # A source AGENT body file (unversioned `--from <file>`). The α-assembly emits
   # the per-harness outputs at vendor time; the opencode target projects a
-  # registry-anchored symlink into the sandbox HOME.
+  # loadout-anchored symlink into the sandbox HOME.
   AGENT_SRC_DIR="$TEST_TEMP_DIR/agentsrc_$BATS_TEST_NUMBER"
   mkdir -p "$AGENT_SRC_DIR" "$SANDBOX_HOME/.config/opencode/agent"
   AGENT_SRC="$AGENT_SRC_DIR/mybot.md"
@@ -110,8 +110,8 @@ teardown() {
   [ -f "$HOME/.claude/skills/mytool/SKILL.md" ]
 
   # The overlay block was written.
-  [ -f "$ISOLATED_BRAIN/registry/harness-manifest.personal.json" ]
-  grep -q "mytool" "$ISOLATED_BRAIN/registry/harness-manifest.personal.json"
+  [ -f "$ISOLATED_BRAIN/loadout/harness-manifest.personal.json" ]
+  grep -q "mytool" "$ISOLATED_BRAIN/loadout/harness-manifest.personal.json"
 }
 
 @test "add skill (personal): re-add is idempotent (second run still exit 0)" {
@@ -140,8 +140,8 @@ teardown() {
   [ -L "$HOME/.config/opencode/agent/mybot.md" ]
 
   # The overlay block was written.
-  [ -f "$ISOLATED_BRAIN/registry/harness-manifest.personal.json" ]
-  grep -q "mybot" "$ISOLATED_BRAIN/registry/harness-manifest.personal.json"
+  [ -f "$ISOLATED_BRAIN/loadout/harness-manifest.personal.json" ]
+  grep -q "mybot" "$ISOLATED_BRAIN/loadout/harness-manifest.personal.json"
 }
 
 # DIVERGENCE FROM SKILLS (flagged): the agent writer (`runAdd`) hard-REJECTS a
@@ -166,7 +166,7 @@ teardown() {
 @test "S1: scoped verify ignores a pre-existing UNRELATED skill's drift" {
   skip "FR-212d: skills/MCP add now delegate (skills CLI / add-mcp); round-trip covered by fr212-smoke + remove.test.ts"
   # Add mytool, then add a SECOND skill (distinct target dir), then DRIFT
-  # mytool's registry copy. Adding a third skill must still succeed because the
+  # mytool's loadout copy. Adding a third skill must still succeed because the
   # verify (harness check) is scoped via --filter to the just-added skill —
   # pre-existing unrelated drift does NOT false-fail a clean add (S1).
   "${IGRIS_BIN[@]}" add skill mytool --no-core --from "$SKILL_SRC" \
@@ -184,8 +184,8 @@ description: "Another skill - usage: /other"
 body2
 EOF
 
-  # Now CORRUPT mytool's registry copy → unrelated tree drift.
-  echo "MUTATED-UNRELATED" >> "$ISOLATED_BRAIN/registry/skills/mytool/mytool/SKILL.md"
+  # Now CORRUPT mytool's loadout copy → unrelated tree drift.
+  echo "MUTATED-UNRELATED" >> "$ISOLATED_BRAIN/loadout/skills/mytool/mytool/SKILL.md"
 
   # Adding `other` must succeed: its scoped verify (--filter other) never looks
   # at mytool's drift.
@@ -242,8 +242,8 @@ EOF
   [[ "$output" == *"PERSONAL mode"* ]]
 
   # The overlay block was written.
-  [ -f "$ISOLATED_BRAIN/registry/harness-manifest.personal.json" ]
-  grep -q "myserver" "$ISOLATED_BRAIN/registry/harness-manifest.personal.json"
+  [ -f "$ISOLATED_BRAIN/loadout/harness-manifest.personal.json" ]
+  grep -q "myserver" "$ISOLATED_BRAIN/loadout/harness-manifest.personal.json"
 
   # The projection MERGED the entry into the live claude config (real effect).
   [ -f "$HOME/.claude.json" ]
@@ -302,14 +302,14 @@ EOF
   # The mode line is printed (D1, never silent).
   [[ "$output" == *"PERSONAL mode"* ]]
 
-  # The overlay block + the registry hook SCRIPT were written.
-  [ -f "$ISOLATED_BRAIN/registry/harness-manifest.personal.json" ]
-  grep -q "my-guard" "$ISOLATED_BRAIN/registry/harness-manifest.personal.json"
-  [ -x "$ISOLATED_BRAIN/registry/hooks/my-guard/PreToolUse.sh" ]
+  # The overlay block + the loadout hook SCRIPT were written.
+  [ -f "$ISOLATED_BRAIN/loadout/harness-manifest.personal.json" ]
+  grep -q "my-guard" "$ISOLATED_BRAIN/loadout/harness-manifest.personal.json"
+  [ -x "$ISOLATED_BRAIN/loadout/hooks/my-guard/PreToolUse.sh" ]
 
   # The projection MERGED the hook GROUP into the project settings.json (real effect).
   [ -f "$PROJ/.claude/settings.json" ]
-  python3 -c "import json; d=json.load(open('$PROJ/.claude/settings.json')); cmds=[h['command'] for g in d['hooks']['PreToolUse'] for h in g['hooks']]; assert '\$HOME/.igris/registry/hooks/my-guard/PreToolUse.sh' in cmds, cmds"
+  python3 -c "import json; d=json.load(open('$PROJ/.claude/settings.json')); cmds=[h['command'] for g in d['hooks']['PreToolUse'] for h in g['hooks']]; assert '\$HOME/.igris/loadout/hooks/my-guard/PreToolUse.sh' in cmds, cmds"
   # The success line names the R2 preservation contract.
   [[ "$output" == *"survives"* ]]
 }
@@ -317,7 +317,7 @@ EOF
 @test "R2 MERGE GATE: the canonical hooks re-merge PRESERVES a personal-added hook" {
   # Add a personal hook, then run the SAME canonical re-merge install/update/
   # doctor --fix use (mergeCanonicalHooks). The personal hook MUST survive — its
-  # registry-prefix command is classified user-owned and is never clobbered.
+  # loadout-prefix command is classified user-owned and is never clobbered.
   "${IGRIS_BIN[@]}" add hook my-guard --no-core --event PreToolUse \
     --matcher "Write|Edit" --project-root "$PROJ"
   [ -f "$PROJ/.claude/settings.json" ]
@@ -346,7 +346,7 @@ EOF
   '
 
   # ASSERT: personal hook SURVIVED + the canonical core hook was (re)applied.
-  python3 -c "import json; d=json.load(open('$PROJ/.claude/settings.json')); cmds=[h['command'] for g in d['hooks']['PreToolUse'] for h in g['hooks']]; assert '\$HOME/.igris/registry/hooks/my-guard/PreToolUse.sh' in cmds, ('personal clobbered', cmds); assert any(c.startswith('\$HOME/.igris/core/hooks/') for c in cmds), ('core not applied', cmds)"
+  python3 -c "import json; d=json.load(open('$PROJ/.claude/settings.json')); cmds=[h['command'] for g in d['hooks']['PreToolUse'] for h in g['hooks']]; assert '\$HOME/.igris/loadout/hooks/my-guard/PreToolUse.sh' in cmds, ('personal clobbered', cmds); assert any(c.startswith('\$HOME/.igris/core/hooks/') for c in cmds), ('core not applied', cmds)"
 }
 
 @test "S1: hook scoped verify ignores a pre-existing UNRELATED hook's drift" {
@@ -377,7 +377,7 @@ build_core_checkout() {
   # Runtime brain UNDER the sandbox HOME so `~/.igris/...` == the brain.
   CORE_BRAIN="$HOME/.igris"
   mkdir -p "$CORE_BRAIN/core/scripts" "$CORE_BRAIN/core/skills" \
-           "$CORE_BRAIN/core/agents" "$CORE_BRAIN/registry"
+           "$CORE_BRAIN/core/agents" "$CORE_BRAIN/loadout"
   cp -R "$ADAPTERS" "$CORE_BRAIN/core/scripts/cli-adapters"
   cp "$IGRIS_ROOT/core/scripts/verify_mirror.sh" "$CORE_BRAIN/core/scripts/verify_mirror.sh"
   export IGRIS_BRAIN_DIR="$CORE_BRAIN"

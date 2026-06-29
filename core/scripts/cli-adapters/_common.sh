@@ -477,12 +477,12 @@ PY
 #
 # FR-156: stable content hash over a vendored agent tree (sorted relpath +
 # \0 + bytes, folded into one sha256). Bash counterpart to TS
-# `hashAgentTree` in cli/src/verbs/registry.ts — must produce IDENTICAL hex
+# `hashAgentTree` in cli/src/verbs/loadout.ts — must produce IDENTICAL hex
 # output for the same tree contents so drift-verify's pre-check pairs with
-# the recorded origin hash written by `igris registry add/update`.
+# the recorded origin hash written by `igris loadout add/update`.
 #
 # Skip-list MUST stay byte-for-byte in sync with the TS side at
-# `cli/src/verbs/registry.ts:isAgentTreeSkipped` (three sites, one rule —
+# `cli/src/verbs/loadout.ts:isAgentTreeSkipped` (three sites, one rule —
 # any drift between them re-opens the L-430 "hash basis ≠ disk" trap).
 # Per-harness α-assembly outputs (`harness.claude.md`, `harness.gemini.md`)
 # are excluded from the basis because they are FR-152 / FR-158 DERIVED
@@ -500,11 +500,11 @@ import os
 import sys
 
 # Skip-list: keep byte-for-byte in sync with THREE sites total — TS
-# cli/src/verbs/registry.ts:isAgentTreeSkipped (FR-156), and the two
+# cli/src/verbs/loadout.ts:isAgentTreeSkipped (FR-156), and the two
 # inline EXACT sets in check_harness_drift.sh (agent tree-diff at ~556,
 # skill tree-diff at ~912). REGISTRY-NOTICE.md is the TD-202 vendored-
 # copy sidecar — excluded from hash basis so its presence in the
-# registry copy (and absence at the operator's source) does not flip
+# loadout copy (and absence at the operator's source) does not flip
 # the hash → DRIFTED.
 EXACT = {"MAINTAINING.md", ".DS_Store", "node_modules", ".venv", "__pycache__", "REGISTRY-NOTICE.md"}
 
@@ -990,11 +990,11 @@ PY
 # ---------------------------------------------------------------------------
 # merge_overlay_manifest <base-manifest> <overlay-manifest-or-empty>
 #
-# Implements the FR-136 base+overlay merge seam (the FR-139 registry seam,
+# Implements the FR-136 base+overlay merge seam (the FR-139 loadout seam,
 # plan section 2 Option B). Emits to stdout a merged manifest JSON whose
 # `agents[]` is base.agents ++ overlay.agents. The base manifest is the
 # Layer-1 (public, in-repo) data; the overlay is an OPTIONAL gitignored
-# Layer-2 (personal/customization) file in the runtime registry.
+# Layer-2 (personal/customization) file in the runtime loadout.
 #
 # Guard: a personal (overlay) agent whose `name` collides with a base agent
 # name is a HARD ERROR (returns non-zero) - a customization must never
@@ -1569,7 +1569,7 @@ args = canonical.get("args", []) or []
 env = canonical.get("env", {}) or {}
 
 # Canonical ${VAR} grammar (byte-identical to ENV_VAR_REF in secrets.ts /
-# registry.ts) + opencode {env:VAR} grammar. Used only to translate the
+# loadout.ts) + opencode {env:VAR} grammar. Used only to translate the
 # REFERENCE token per harness — a value is never resolved here.
 VAR_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 

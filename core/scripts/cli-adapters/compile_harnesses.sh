@@ -2,11 +2,11 @@
 
 # Description: Orchestrate harness regeneration. Reads harness-manifest.json
 #              and, for each agent/target, emits the matching per-harness
-#              projection: claude → atomic symlink to registry-resident
+#              projection: claude → atomic symlink to loadout-resident
 #              harness.claude.md (FR-152); gemini → hard link to
 #              harness.gemini.md (TD-208); codex → atomic symlink to
 #              harness.codex.toml (FR-159 — TS `assembleCodexHarness` vendor-
-#              side, bash `assemble_codex_harness_into_registry` compile-side
+#              side, bash `assemble_codex_harness_into_loadout` compile-side
 #              fallback for core agents). See L-519 §18.1 (compile/drift-verify
 #              pairing).
 # Usage: compile_harnesses.sh --project-root <dir> [options]
@@ -17,9 +17,9 @@
 #                            its own data manifest; core ships only the schema).
 #   --overlay <path>       - OPTIONAL Layer-2 personal-overlay manifest whose
 #                            agents[] are merged into the base before flatten
-#                            (FR-136 base+overlay seam; FR-139 registry seam).
+#                            (FR-136 base+overlay seam; FR-139 loadout seam).
 #                            Default: auto-discover
-#                            <brain>/registry/harness-manifest.personal.json
+#                            <brain>/loadout/harness-manifest.personal.json
 #                            if present (absent is the normal case).
 #   --filter <name-glob>   - Only process agents whose name matches the glob
 #                            (shell case-glob, e.g. 'content-*'). Default: all.
@@ -55,11 +55,11 @@ readonly CORE_SURFACES="$ADAPTER_DIR/surfaces-manifest.json"
 
 # Resolve the runtime brain dir like the brain MCP / verify_mirror.sh do:
 # honor IGRIS_BRAIN_DIR, else ~/.igris. The personal overlay (FR-139 seam)
-# lives under <brain>/registry/ and is OPTIONAL (absent is the normal case).
+# lives under <brain>/loadout/ and is OPTIONAL (absent is the normal case).
 BRAIN_DIR="${IGRIS_BRAIN_DIR:-$HOME/.igris}"
-readonly DEFAULT_OVERLAY="$BRAIN_DIR/registry/harness-manifest.personal.json"
+readonly DEFAULT_OVERLAY="$BRAIN_DIR/loadout/harness-manifest.personal.json"
 
-# FR-164: how the MCP pass invokes the TS projector (`igris registry
+# FR-164: how the MCP pass invokes the TS projector (`igris loadout
 # project-mcp`). The merge engine (mergeJsonConfig/mergeTomlConfig) lives in the
 # built CLI — bash NEVER re-implements it (§18.1). Resolution order:
 #   1. $IGRIS_CLI — a full command string (e.g. "node /repo/cli/dist/index.js").
@@ -79,7 +79,7 @@ fi
 # FR-212d Phase 2 (the #832 chokepoint cleared — the 5-harness smoke gate is
 # green): the SKILLS engine is now ALWAYS "delegate". The custom inline
 # symlink/wrapper loop was DELETED; `project_skills` is a thin shell-out to
-# `igris registry project-skills` (the `skills` CLI). There is NO escape hatch —
+# `igris loadout project-skills` (the `skills` CLI). There is NO escape hatch —
 # the `IGRIS_SKILLS_ENGINE` env read is gone (operator decision). The helper is
 # kept as a constant so the (now unconditional) delegate dispatch + the drift
 # sibling read it identically (L-519 §18.1 compile/drift pairing).
@@ -130,7 +130,7 @@ atomic_symlink() {
 # $target. The hard link IS the file from the kernel's perspective — same
 # inode, same bytes-on-disk, nlink increments. Gemini subagent loaders do NOT
 # follow symbolic links (verified live 2026-06-01) but DO follow hard links.
-# Hard link preserves L-516 registry-canonical: the registry file remains THE
+# Hard link preserves L-516 loadout-canonical: the loadout file remains THE
 # single physical home; the target just adds a directory entry.
 #
 # IMPORTANT — atomicity model differs from atomic_symlink:
@@ -141,13 +141,13 @@ atomic_symlink() {
 #     during compile.
 #
 # Re-vendor invalidates hard links: vendorAgentTreeAtomic in cli/src/verbs/
-# registry.ts uses temp-file + rename for the registry-resident
+# loadout.ts uses temp-file + rename for the loadout-resident
 # harness.gemini.md, which assigns a NEW inode. The OLD hard link at
 # $link_path now points at an orphaned inode and must be removed BEFORE `ln`
 # re-shares the new one. The `rm -f` here handles that case.
 #
-# Precondition: $target exists as a regular file in the registry (assembled
-# by assemble_agent_harness_into_registry immediately prior).
+# Precondition: $target exists as a regular file in the loadout (assembled
+# by assemble_agent_harness_into_loadout immediately prior).
 # Postcondition: stat -f %i "$link_path" == stat -f %i "$target" AND
 # stat -f %l "$target" >= 2.
 # ---------------------------------------------------------------------------
@@ -170,13 +170,13 @@ emit_md_hardlink() {
 # is the `skills` CLI idempotent re-check now), so neither file keeps them.
 
 # ---------------------------------------------------------------------------
-# assemble_agent_harness_into_registry <harness_label> <name> <canon_abs>
+# assemble_agent_harness_into_loadout <harness_label> <name> <canon_abs>
 #                                      <exc_abs> <out_dir>
 #
 # FR-152 / FR-158 α-assembly (compile-side fallback). Materializes
 # `<out_dir>/harness.<harness_label>.md` = `---\n<frontmatter>\n---\n\n<body>`
 # for the given harness ("claude" or "gemini"). Symlinks at compile time
-# resolve to this registry-resident file.
+# resolve to this loadout-resident file.
 #
 # Frontmatter resolution preference per harness:
 #   claude:
@@ -202,7 +202,7 @@ emit_md_hardlink() {
 # (same JSON for both harness labels — Decision 3).
 # Atomic temp + mv. Idempotent — same inputs → same bytes. See L-519, FR-158.
 # ---------------------------------------------------------------------------
-assemble_agent_harness_into_registry() {
+assemble_agent_harness_into_loadout() {
   local harness_label="$1"
   local name="$2"
   local canon_abs="$3"
@@ -259,7 +259,7 @@ assemble_agent_harness_into_registry() {
 import re
 import sys
 
-# CLAUDE_TO_GEMINI_TOOLS — mirror of cli/src/verbs/registry.ts's
+# CLAUDE_TO_GEMINI_TOOLS — mirror of cli/src/verbs/loadout.ts's
 # CLAUDE_TO_GEMINI_TOOLS record. Keep byte-for-byte in sync.
 TOOL_MAP = {
     "Read": "read_file",
@@ -279,7 +279,7 @@ TOOL_MAP = {
 # `frontmatter.gemini.md` is the escape hatch. `memory` (TD-229) is a
 # Claude-only key: Gemini's strict subagent schema rejects it with
 # "Unrecognized key(s) in object: 'memory'" → the agent fails to load.
-# Keep byte-for-byte in sync with the TS DROPS condition in registry.ts.
+# Keep byte-for-byte in sync with the TS DROPS condition in loadout.ts.
 DROPS = {"model", "temperature", "max_turns", "memory"}
 
 
@@ -367,7 +367,7 @@ PY
 import re
 import sys
 
-# CLAUDE_TO_OPENCODE_TOOLS — mirror of cli/src/verbs/registry.ts's
+# CLAUDE_TO_OPENCODE_TOOLS — mirror of cli/src/verbs/loadout.ts's
 # CLAUDE_TO_OPENCODE_TOOLS record. Keep byte-for-byte in sync. 8 direct maps;
 # WebSearch OMITTED (no native OpenCode equivalent — do NOT invent a key).
 TOOL_MAP = {
@@ -381,7 +381,7 @@ TOOL_MAP = {
     "WebFetch": "webfetch",
 }
 
-# OPENCODE_MCP_PERMISSIONS — mirror of registry.ts. The igris-brain MCP grant
+# OPENCODE_MCP_PERMISSIONS — mirror of loadout.ts. The igris-brain MCP grant
 # (FR-166 server merged into opencode.json). Key shape confirmed live
 # (opencode 1.14.22): `mcp__<server>__*`.
 MCP_PERMISSIONS = ["mcp__igris-brain__*"]
@@ -518,16 +518,16 @@ PY
 }
 
 # ---------------------------------------------------------------------------
-# assemble_codex_harness_into_registry <name> <canon_abs> <exc_abs> <out_dir>
+# assemble_codex_harness_into_loadout <name> <canon_abs> <exc_abs> <out_dir>
 #
 # FR-159: derive `<out_dir>/harness.codex.toml` from the FR-151 Claude-shape
 # frontmatter sidecar + canonical body. Byte-equivalent to the retired
 # `sync_codex_agents.sh` (modulo the leading marker line). Pairs with the TS
-# `assembleCodexHarness` in cli/src/verbs/registry.ts (L-519 cross-impl parity).
+# `assembleCodexHarness` in cli/src/verbs/loadout.ts (L-519 cross-impl parity).
 #
-# Frontmatter resolution chain (mirrors `assemble_agent_harness_into_registry`
+# Frontmatter resolution chain (mirrors `assemble_agent_harness_into_loadout`
 # for the Claude side; codex only ever reads the Claude-shape sidecar):
-#   1. `<out_dir>/frontmatter.claude.md` (registry-vendored sidecar),
+#   1. `<out_dir>/frontmatter.claude.md` (loadout-vendored sidecar),
 #   2. `<dirname canon_abs>/frontmatter.claude.md` (in-place sidecar),
 #   3. TD-195 fallback: extract inline frontmatter from `canon_abs` via
 #      parse_frontmatter (empty block if none — preserves pre-FR-152 lenient
@@ -537,7 +537,7 @@ PY
 # path) is ACCEPTED for signature symmetry with the Claude/Gemini assembler
 # but NEVER applied — codex emit deliberately bypasses body-exception per
 # FR-159 plan §Decision 3 + TD-193 gate. The drift verdict relies on this
-# (post-FR-159 the drift verdict is symlink-realpath, but the registry-side
+# (post-FR-159 the drift verdict is symlink-realpath, but the loadout-side
 # expected body is still the plain canonical).
 #
 # Reads ONLY `description` and `name` from the frontmatter (TOML schema is
@@ -547,7 +547,7 @@ PY
 # Atomic emit (mktemp + mv). Idempotent: same inputs → same bytes. See
 # L-519, FR-159.
 # ---------------------------------------------------------------------------
-assemble_codex_harness_into_registry() {
+assemble_codex_harness_into_loadout() {
   local name="$1"
   local canon_abs="$2"
   local exc_abs="$3"
@@ -602,7 +602,7 @@ assemble_codex_harness_into_registry() {
 
   # Resolve the TOML `name`: frontmatter `name:` > basename of out_dir.
   # (No CLI override here — the caller passes the agent name implicitly
-  # via the out_dir = `<BRAIN_DIR>/registry/agents/<name>` convention.)
+  # via the out_dir = `<BRAIN_DIR>/loadout/agents/<name>` convention.)
   local agent_name
   agent_name=$(get_skill_field "$fm_path" "name")
   if [ -z "$agent_name" ]; then
@@ -656,7 +656,7 @@ PY
 #                         <target_abs>
 #
 # FR-152 / FR-158 / FR-159 / TD-208 per-harness α-projection for claude +
-# gemini + codex agent targets. Each harness owns its own registry-resident
+# gemini + codex agent targets. Each harness owns its own loadout-resident
 # derived file (`harness.claude.md`, `harness.gemini.md`, or
 # `harness.codex.toml`); the projection at `<target_abs>` points at the
 # matching one. The emit primitive is PER-HARNESS:
@@ -674,12 +674,12 @@ PY
 #   gemini → HARD LINK (`ln` via emit_md_hardlink). TD-208: Gemini's subagent
 #            loader does NOT follow symbolic links (verified live 2026-06-01)
 #            but DOES follow hard links. Hard link preserves L-516
-#            registry-canonical: same inode = same bytes-on-disk = registry
+#            loadout-canonical: same inode = same bytes-on-disk = loadout
 #            remains the single physical home.
 #
 # Claude / Codex branch — 3-case symlink dispatch (FR-152 / FR-159):
 #   Case A — target absent → assemble + create symlink → harness.<label>.<ext>.
-#   Case B — target IS a symlink → if it resolves to the registry
+#   Case B — target IS a symlink → if it resolves to the loadout
 #            harness.<label>.<ext>, silent no-op; else atomically repoint + log.
 #   Case C — target IS a regular file → HARD ERROR (refuse-to-clobber).
 #
@@ -696,7 +696,7 @@ PY
 #     compile pipeline is the only legitimate writer of this path.
 #
 # FR-159 codex assembly: codex uses a separate assembler
-# `assemble_codex_harness_into_registry` that emits a 3-key TOML document
+# `assemble_codex_harness_into_loadout` that emits a 3-key TOML document
 # (description, developer_instructions, name) byte-for-byte equivalent to
 # the retired `sync_codex_agents.sh`. Body-exception is NOT applied for
 # codex (parity with retired script; see L-519 §18.1 + TD-193).
@@ -718,21 +718,21 @@ compile_md_agent_target() {
     harness_ext="toml"
   fi
 
-  local registry_agent_dir="$BRAIN_DIR/registry/agents/$name"
+  local loadout_agent_dir="$BRAIN_DIR/loadout/agents/$name"
   if [ "$harness_label" = "codex" ]; then
-    if ! assemble_codex_harness_into_registry "$name" "$canon_abs" \
+    if ! assemble_codex_harness_into_loadout "$name" "$canon_abs" \
                                               "$exc_abs" \
-                                              "$registry_agent_dir"; then
+                                              "$loadout_agent_dir"; then
       return 1
     fi
   else
-    if ! assemble_agent_harness_into_registry "$harness_label" "$name" \
+    if ! assemble_agent_harness_into_loadout "$harness_label" "$name" \
                                               "$canon_abs" "$exc_abs" \
-                                              "$registry_agent_dir"; then
+                                              "$loadout_agent_dir"; then
       return 1
     fi
   fi
-  local harness_target="$registry_agent_dir/harness.${harness_label}.${harness_ext}"
+  local harness_target="$loadout_agent_dir/harness.${harness_label}.${harness_ext}"
 
   # TD-208: gemini emits via hard link (Gemini loader does not follow
   # symlinks). The harness IS a real file (non-symlink), so "real file at
@@ -776,10 +776,10 @@ compile_md_agent_target() {
 
   # Case C: real file, NOT a symlink → refuse-to-clobber. The FR-149 back-compat
   # via the legacy body-refresh adapter is retired by FR-152; the operator
-  # must remove the file manually before compile re-creates a registry-anchored
+  # must remove the file manually before compile re-creates a loadout-anchored
   # symlink.
   if [ -f "$target_abs" ] && [ ! -L "$target_abs" ]; then
-    echo "[$name/$harness_label] ERROR — refuse to clobber non-symlink target: $target_abs (remove manually if it should be a registry-anchored symlink)" >&2
+    echo "[$name/$harness_label] ERROR — refuse to clobber non-symlink target: $target_abs (remove manually if it should be a loadout-anchored symlink)" >&2
     # TD-209: append to the global collector for the batched summary block.
     REFUSE_TARGETS+=("$target_abs")
     return 1
@@ -937,7 +937,7 @@ if ! igris_surface_is_valid "$SURFACE_KIND"; then
 fi
 
 # FR-136 overlay resolution: an explicit --overlay wins; otherwise auto-discover
-# the personal overlay in the runtime registry (OPTIONAL - absent is normal).
+# the personal overlay in the runtime loadout (OPTIONAL - absent is normal).
 if [ "$OVERLAY_SET" -eq 0 ]; then
   if [ -f "$DEFAULT_OVERLAY" ]; then
     OVERLAY="$DEFAULT_OVERLAY"
@@ -981,7 +981,7 @@ _cleanup_tmpfiles() {
 trap '_cleanup_tmpfiles' EXIT
 
 # Merge base + optional personal overlay (FR-136 base+overlay seam; FR-139
-# registry seam). A name collision between an overlay (personal) agent and a
+# loadout seam). A name collision between an overlay (personal) agent and a
 # base (core) agent is a HARD ERROR. The merged manifest is written to a temp
 # file that the python3 flatten step below reads.
 MERGED_MANIFEST="$MANIFEST"
@@ -1063,7 +1063,7 @@ for agent in manifest.get("agents", []):
     # later columns. A literal `-` keeps every column positionally stable.
     body_exc = agent.get("body_exception", "") or "-"
     # FR-144: propagate `layer` as the last column so body-exception sidecar
-    # resolution can be keyed on it (core -> in-repo, personal -> registry).
+    # resolution can be keyed on it (core -> in-repo, personal -> loadout).
     # Defaults to non-empty "core", so no `-` sentinel / tab-collapse risk.
     layer = agent.get("layer", "") or "core"
     # FR-155: propagate `scope` as the FINAL columns (appended AFTER layer so
@@ -1136,7 +1136,7 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
 
   # Resolve the canonical source dir. An absolute or `~`-prefixed canon_dir is
   # used verbatim (FR-142 copy-vendor points canonical.dir at the vendored copy
-  # under ~/.igris/registry/<name>/); a relative dir is project-relative. Mirrors
+  # under ~/.igris/loadout/<name>/); a relative dir is project-relative. Mirrors
   # the skills-source 3-case resolution below (lines ~386-390).
   case "$canon_dir" in
     "~"/*) canon_base="$HOME/${canon_dir#"~/"}" ;;
@@ -1173,16 +1173,16 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
 
   # Resolve an optional body-exception sidecar. `-` is the empty sentinel.
   # FR-144: resolution is LAYER-KEYED (not fallback). A `layer:"personal"`
-  # agent's sidecar lives in the runtime registry (Layer-2,
-  # <brain>/registry/body-exceptions/, honoring IGRIS_BRAIN_DIR); a core
+  # agent's sidecar lives in the runtime loadout (Layer-2,
+  # <brain>/loadout/body-exceptions/, honoring IGRIS_BRAIN_DIR); a core
   # agent's sidecar lives in-repo alongside the adapter (Layer-1, unchanged).
-  # Keying on layer (rather than try-registry-then-repo) keeps provenance
+  # Keying on layer (rather than try-loadout-then-repo) keeps provenance
   # one-directional: a re-introduced repo sidecar can never serve a personal
   # agent — closing the L-498 leak this brief addresses.
   exc_abs=""
   if [ -n "$body_exc" ] && [ "$body_exc" != "-" ]; then
     if [ "$layer" = "personal" ]; then
-      exc_abs="$BRAIN_DIR/registry/body-exceptions/$body_exc.json"
+      exc_abs="$BRAIN_DIR/loadout/body-exceptions/$body_exc.json"
     else
       exc_abs="$ADAPTER_DIR/body-exceptions/$body_exc.json"
     fi
@@ -1197,7 +1197,7 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
   rc=0
   case "$ttype" in
     claude)
-      # FR-152 / FR-158: registry-anchored symlink → assembled
+      # FR-152 / FR-158: loadout-anchored symlink → assembled
       # harness.claude.md (Case A/B); real-file target → refuse-to-clobber
       # (Case C retired). See L-519.
       compile_md_agent_target "claude" "$name" "$canon_abs" "$exc_abs" \
@@ -1213,9 +1213,9 @@ while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target
                               "$target_abs" || rc=$?
       ;;
     codex)
-      # FR-159: codex now α-projects from the registry-resident
+      # FR-159: codex now α-projects from the loadout-resident
       # harness.codex.toml (assembled by TS assembleCodexHarness at vendor
-      # time, or by compile-side assemble_codex_harness_into_registry as
+      # time, or by compile-side assemble_codex_harness_into_loadout as
       # a fallback for core agents). Target is a symlink, parallel to claude.
       compile_md_agent_target "codex" "$name" "$canon_abs" "$exc_abs" \
                               "$target_abs" || rc=$?
@@ -1429,18 +1429,18 @@ PY
 
       # FR-212d Phase 2: SKILLS DELEGATE DISPATCH (the ONLY skills engine now —
       # the custom inline symlink/wrapper loop was DELETED after the 5-harness
-      # smoke gate went green). Shell out to the `skills` CLI via `igris registry
+      # smoke gate went green). Shell out to the `skills` CLI via `igris loadout
       # project-skills --source <root>` (the LOCAL pinned binary, resolved inside
       # the TS delegate — NEVER a bare `npx`). The tool's `skills add <root>`
       # projects EVERY skill under the root to all 5 harnesses in ONE call, so we
       # dispatch ONCE per distinct source root (the 3 per-source target-type rows
       # — claude/agents/opencode — collapse to a single call; DELEGATED_SKILL_ROOTS
-      # dedups). Mirrors how project_mcp/project_hook shell to the registry verb
+      # dedups). Mirrors how project_mcp/project_hook shell to the loadout verb
       # (§18.1: bash never re-implements placement). NO custom fallback (constraint
       # #2): a tool FAIL is an observable counted FAIL.
       #
       # Resolve the source root the tool projects from. `-` (no source row)
-      # → the registry-skills default `~/.igris/core/skills`.
+      # → the loadout-skills default `~/.igris/core/skills`.
       delegate_root="${src_abs:-$HOME/.igris/core/skills}"
       # Dedup: only the FIRST row for a given root dispatches + counts. Later
       # rows for the same root (the sibling target-type entries) are folded in
@@ -1460,7 +1460,7 @@ PY
       fi
       DELEGATED_SKILL_ROOTS+=("$delegate_root")
       rc=0
-      "${IGRIS_CLI_CMD[@]}" registry project-skills \
+      "${IGRIS_CLI_CMD[@]}" loadout project-skills \
         --source "$delegate_root" \
         --project-root "$PROJECT_ROOT" \
         ${OVERLAY:+--overlay "$OVERLAY"} || rc=$?
@@ -1470,7 +1470,7 @@ PY
       else
         # Observable FAIL (L-232): the delegate verb already named the failure
         # on stderr (binary-not-local / tool exit). Never a silent no-op.
-        SUMMARY+=("FAIL  skills (delegate) — registry project-skills exited $rc")
+        SUMMARY+=("FAIL  skills (delegate) — loadout project-skills exited $rc")
         FAIL=$((FAIL + 1))
       fi
       done <<< "$SKILL_ROWS"
@@ -1480,7 +1480,7 @@ PY
 # ---------------------------------------------------------------------------
 # project_mcp — the MCP-server projection surface plugin (FR-202 M0).
 # FR-164 (FR-160 epic): for each (mcp-block,target) row, dispatch to the TS
-# projector (`igris registry project-mcp`) which builds the native per-harness
+# projector (`igris loadout project-mcp`) which builds the native per-harness
 # entry and MERGES it into the live harness config via the proven
 # mergeJsonConfig/mergeTomlConfig (§18.1: bash NEVER re-implements the merge —
 # this pass is a thin driver + accounting). Each invocation writes ONE config; we
@@ -1497,7 +1497,7 @@ PY
 # ---------------------------------------------------------------------------
 project_mcp() {
   # FR-212d: the MCP engine is now a CONSTANT "delegate" (igris_mcp_engine; the
-  # IGRIS_MCP_ENGINE env read was RETIRED). The TS `igris registry project-mcp`
+  # IGRIS_MCP_ENGINE env read was RETIRED). The TS `igris loadout project-mcp`
   # shells to `add-mcp` for SERVER REGISTRATION then writes the Igris-owned
   # no-prompt GRANT (mcp-grant.ts) for the 4 delegated harnesses; antigravity's
   # ENTRY stays custom INSIDE the TS (FR-179 config/ path) but its grant is still
@@ -1534,7 +1534,7 @@ project_mcp() {
       # finds the named block, and writes the native shape atomically. Its
       # stdout/stderr passes through (the projector never prints a secret).
       rc=0
-      "${IGRIS_CLI_CMD[@]}" registry project-mcp \
+      "${IGRIS_CLI_CMD[@]}" loadout project-mcp \
         --name "$m_name" \
         --harness "$m_type" \
         --project-root "$PROJECT_ROOT" \
@@ -1561,12 +1561,12 @@ project_mcp() {
 # ---------------------------------------------------------------------------
 # project_hook — the event-hook projection surface plugin (FR-202 M0).
 # FR-180 (D7 - Option B): for each (hook-block, target) row, dispatch to the TS
-# projector (`igris registry project-hook`), which MERGES the hook GROUP into the
+# projector (`igris loadout project-hook`), which MERGES the hook GROUP into the
 # harness's native hook surface (claude → .claude/settings.json hooks array;
 # opencode → covered by the FR-104 plugin). §18.1: bash NEVER re-implements the
 # merge — this pass is a thin driver + accounting. ONE config per call; OK/FAIL
 # counted per (hook,target) into the shared accumulators. The command path is a
-# SCRIPT path the harness runs (never a secret) — the personal registry-prefix
+# SCRIPT path the harness runs (never a secret) — the personal loadout-prefix
 # path is what the canonical re-merge preserves (R2). Honors --filter (S1) for
 # the scoped verify.
 #
@@ -1592,7 +1592,7 @@ project_hook() {
       TOTAL=$((TOTAL + 1))
 
       rc=0
-      "${IGRIS_CLI_CMD[@]}" registry project-hook \
+      "${IGRIS_CLI_CMD[@]}" loadout project-hook \
         --name "$h_name" \
         --harness "$h_type" \
         --project-root "$PROJECT_ROOT" \

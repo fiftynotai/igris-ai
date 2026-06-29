@@ -16,7 +16,7 @@ making it a faithful proxy.
 
 Discovers:
   - repo `core/skills/*/SKILL.md` (canonical sources, ALWAYS).
-  - `~/.igris/registry/skills/*/*/SKILL.md` (vendored) IF that dir exists —
+  - `~/.igris/loadout/skills/*/*/SKILL.md` (vendored) IF that dir exists —
     best-effort, gated on existence so CI stays hermetic.
   - SKILL_GLOB env override (one or more glob patterns, `:`-separated) to
     point the validator at a fixture dir (used by the bats recurrence test).
@@ -41,8 +41,8 @@ import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 CORE_SKILLS_GLOB = str(REPO_ROOT / "core" / "skills" / "*" / "SKILL.md")
-REGISTRY_SKILLS_GLOB = str(
-    pathlib.Path.home() / ".igris" / "registry" / "skills" / "*" / "*" / "SKILL.md"
+LOADOUT_SKILLS_GLOB = str(
+    pathlib.Path.home() / ".igris" / "loadout" / "skills" / "*" / "*" / "SKILL.md"
 )
 
 
@@ -55,8 +55,8 @@ def discover() -> list[pathlib.Path]:
         patterns = [CORE_SKILLS_GLOB]
         # Best-effort vendored scan only when the machine-local dir exists,
         # so CI never depends on a path outside the repo.
-        if pathlib.Path(REGISTRY_SKILLS_GLOB).parent.parent.exists():
-            patterns.append(REGISTRY_SKILLS_GLOB)
+        if pathlib.Path(LOADOUT_SKILLS_GLOB).parent.parent.exists():
+            patterns.append(LOADOUT_SKILLS_GLOB)
 
     found: set[str] = set()
     for pat in patterns:

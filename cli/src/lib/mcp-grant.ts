@@ -28,7 +28,7 @@
  *   opencode     (no file written here) — OpenCode's brain grant is the per-agent
  *                  frontmatter `permission: { "mcp__igris-brain__*": allow }`
  *                  emitted by the EXISTING agent/skills projection (FR-166 /
- *                  registry.ts `OPENCODE_MCP_PERMISSIONS`). `verifyBrainGrant`
+ *                  loadout.ts `OPENCODE_MCP_PERMISSIONS`). `verifyBrainGrant`
  *                  reports opencode as `covered` (grant lives elsewhere), never
  *                  a drift miss.
  *

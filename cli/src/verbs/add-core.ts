@@ -68,7 +68,7 @@ export interface AddCoreSkillOptions {
   skipMirror?: boolean;
 }
 
-/** Skill name must be lower-kebab (mirrors the registry NAME_PATTERN). */
+/** Skill name must be lower-kebab (mirrors the loadout NAME_PATTERN). */
 const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
 /**
@@ -585,10 +585,10 @@ function regenerateAgentRoster(
 // FR-180 Phase 3: core MCP add path.
 // ---------------------------------------------------------------------------
 
-/** MCP name must be lower-kebab (parallels the registry NAME_PATTERN). */
+/** MCP name must be lower-kebab (parallels the loadout NAME_PATTERN). */
 const MCP_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
-/** The MCP harness target types (mirrors VALID_MCP_TARGET_TYPES in registry.ts). */
+/** The MCP harness target types (mirrors VALID_MCP_TARGET_TYPES in loadout.ts). */
 const MCP_TARGET_TYPES = [
   "claude",
   "codex",
@@ -600,7 +600,7 @@ type McpCoreTargetType = (typeof MCP_TARGET_TYPES)[number];
 
 /**
  * §14 SECURITY: the env-var-indirection WRITE GUARD on the CORE path (FR-160
- * decision #1; identical rule to `parseEnvPair` in registry.ts). A `--env`
+ * decision #1; identical rule to `parseEnvPair` in loadout.ts). A `--env`
  * VALUE must be a single `${VAR}` reference — inline secrets are REJECTED so no
  * secret ever lands in the core surfaces manifest (which is committed + mirrored
  * to every install). The real secret is resolved from the environment by the
