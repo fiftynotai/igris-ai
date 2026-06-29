@@ -329,11 +329,11 @@ export function createSyncComponent(): BrainComponent {
         break;
       }
 
-      case 'instance.heartbeat': {
+      case 'instance.state_updated': {
         const hostname = data.machine_hostname as string;
         const rows = queryTableRows(
           'instances',
-          'WHERE machine_hostname = ? ORDER BY last_heartbeat_at DESC LIMIT 1',
+          'WHERE machine_hostname = ? ORDER BY last_activity_at DESC LIMIT 1',
           [hostname],
         );
         if (rows.length > 0) tables['instances'] = rows;
@@ -695,7 +695,7 @@ export function createSyncComponent(): BrainComponent {
           { name: 'brief.completed', description: 'Auto-push brief status on completion' },
           { name: 'session.synced', description: 'Auto-push latest session on sync' },
           { name: 'session.file.updated', description: 'Auto-push session file on update' },
-          { name: 'instance.heartbeat', description: 'Auto-push instance data on heartbeat' },
+          { name: 'instance.state_updated', description: 'Auto-push instance data on state update' },
           // Batched push events (10s window)
           { name: 'memory.stored', description: 'Batch-push learnings table' },
           { name: 'error.stored', description: 'Batch-push errors table' },
@@ -716,7 +716,7 @@ export function createSyncComponent(): BrainComponent {
       ctx.bus.on('brief.completed', onImmediateEvent);
       ctx.bus.on('session.synced', onImmediateEvent);
       ctx.bus.on('session.file.updated', onImmediateEvent);
-      ctx.bus.on('instance.heartbeat', onImmediateEvent);
+      ctx.bus.on('instance.state_updated', onImmediateEvent);
       ctx.bus.on('memory.stored', onBatchedEvent);
       ctx.bus.on('error.stored', onBatchedEvent);
       ctx.bus.on('project.registered', onBatchedEvent);
@@ -741,7 +741,7 @@ export function createSyncComponent(): BrainComponent {
         _ctx.bus.off('brief.completed', onImmediateEvent);
         _ctx.bus.off('session.synced', onImmediateEvent);
         _ctx.bus.off('session.file.updated', onImmediateEvent);
-        _ctx.bus.off('instance.heartbeat', onImmediateEvent);
+        _ctx.bus.off('instance.state_updated', onImmediateEvent);
         _ctx.bus.off('memory.stored', onBatchedEvent);
         _ctx.bus.off('error.stored', onBatchedEvent);
         _ctx.bus.off('project.registered', onBatchedEvent);

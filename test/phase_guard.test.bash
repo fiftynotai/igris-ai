@@ -7,7 +7,7 @@
 # retired session/CURRENT_SESSION.md. FR-133 archived that file, so the grep
 # returned empty and the guard went silently inert. The fix re-points
 # brief discovery to the brain `instances` registry (machine-scoped, freshest
-# heartbeat), with a per-instance session-file fallback, then a legacy
+# activity), with a per-instance session-file fallback, then a legacy
 # CURRENT_SESSION.md fallback. The gate decision still uses brief_status.phase
 # (refuse on BUILDING|TESTING) — only the brief-DISCOVERY source changed.
 #
@@ -76,7 +76,7 @@ setup() {
       current_task TEXT,
       status TEXT DEFAULT 'active',
       started_at TEXT NOT NULL DEFAULT (datetime('now')),
-      last_heartbeat_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_activity_at TEXT NOT NULL DEFAULT (datetime('now')),
       metadata TEXT DEFAULT '{}'
     );
     CREATE TABLE brief_status (
@@ -102,7 +102,7 @@ run_guard() {
 seed_instance() {
   local brief="$1" istatus="$2" host="$3" phase="${4:-BUILDING}"
   sqlite3 "$DB" "
-    INSERT INTO instances (id, machine_hostname, project_slug, current_brief, current_phase, status, last_heartbeat_at)
+    INSERT INTO instances (id, machine_hostname, project_slug, current_brief, current_phase, status, last_activity_at)
       VALUES ('$brief-$host', '$host', '$PROJECT', '$brief', '$phase', '$istatus', datetime('now'));
   "
 }

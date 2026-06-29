@@ -36,7 +36,7 @@ import type { Engine, EngineConfig } from './engine/index.js';
 // REST API helpers (used by HTTP endpoints, not MCP tools)
 import { handleAgentEvent, handleAgentEventList, handleAgentEventLog, handleAgentMetricsSummary, handleAgentMetricsByProject } from './tools/agent_events.js';
 import type { AgentEventInput } from './tools/agent_events.js';
-import { handleInstanceRemove, handleInstanceHeartbeat } from './tools/instances.js';
+import { handleInstanceRemove, handleInstanceState } from './tools/instances.js';
 import { handleProjectBudget, handleProjectBudgetSet } from './tools/projects.js';
 import { handleBriefVelocity } from './tools/briefs.js';
 import { handleMetricsRecord } from './tools/metrics.js';
@@ -476,7 +476,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       const whereClause = includeStale ? '' : "WHERE status != 'stale'";
       const rows = db.prepare(
-        `SELECT * FROM instances ${whereClause} ORDER BY last_heartbeat_at DESC`
+        `SELECT * FROM instances ${whereClause} ORDER BY last_activity_at DESC`
       ).all();
       res.json({ instances: rows, count: rows.length });
     } catch (err) {
@@ -498,21 +498,21 @@ async function runHttp(config: ServerConfig): Promise<void> {
     }
   });
 
-  // POST /api/instances/heartbeat — register/update worker instance
-  app.post('/api/instances/heartbeat', express.json(), (req: Request, res: Response) => {
+  // POST /api/instances/state — register/update worker instance state
+  app.post('/api/instances/state', express.json(), (req: Request, res: Response) => {
     try {
       if (!req.body.machine_hostname) {
         res.status(400).json({ error: 'Missing required field: machine_hostname' });
         return;
       }
-      const result = handleInstanceHeartbeat(req.body);
+      const result = handleInstanceState(req.body);
       const text = result.content[0].text;
       const idMatch = text.match(/:\s*(.+)$/);
       const instanceId = idMatch ? idMatch[1].trim() : null;
       res.json({ ok: true, message: text, instance_id: instanceId });
     } catch (err) {
       const message = errMsg(err);
-      console.error('[brain] POST /api/instances/heartbeat error:', message);
+      console.error('[brain] POST /api/instances/state error:', message);
       res.status(500).json({ error: message });
     }
   });

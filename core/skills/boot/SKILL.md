@@ -135,7 +135,7 @@ igris session gather --project <detect.project_slug> [--self-instance-id <recove
 - `crashed[]` → render a one-line-per-entry "Crashed scratchpads" list ("instance {short_id} crashed mid-session — scratchpad at {scratchpad}"). This is the ABANDONED LIVE surface (§4.3.1 below is the same set — display only, NEVER destructive: no auto-archive, no ownership clear; Lock 1).
 - `self_instance_id` → carry to §4.4 (recovered id to reuse, or null to mint).
 
-All gather output is **display-only** — nothing destructive happens. The verb writes nothing to `session_files` and no longer treats heartbeat age as liveness.
+All gather output is **display-only** — nothing destructive happens. The verb writes nothing to `session_files` and no longer treats activity age as liveness.
 
 **Degradation:** when the brain DB is absent the verb emits `{ "degraded": true, "fresh_start": true, "handoff": null, … }` and exits 0 — treat it as a fresh start (no resume). NEVER block session start on a degraded gather.
 

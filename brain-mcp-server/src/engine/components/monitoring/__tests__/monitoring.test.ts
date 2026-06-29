@@ -567,11 +567,11 @@ describe('Monitoring Component', () => {
       comp.destroy();
     });
 
-    it('instance.heartbeat logged with correct component name', () => {
+    it('instance.state_updated logged with correct component name', () => {
       const comp = createMonitoringComponent();
       comp.init(makeCtx(bus));
 
-      bus.emit('instance.heartbeat', { instance_id: 'inst-1' });
+      bus.emit('instance.state_updated', { instance_id: 'inst-1' });
 
       const rows = db.prepare('SELECT event_name, component FROM event_log').all() as {
         event_name: string;
@@ -579,7 +579,7 @@ describe('Monitoring Component', () => {
       }[];
 
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toEqual({ event_name: 'instance.heartbeat', component: 'instances' });
+      expect(rows[0]).toEqual({ event_name: 'instance.state_updated', component: 'instances' });
 
       comp.destroy();
     });
@@ -656,7 +656,7 @@ describe('Monitoring Component', () => {
       const comp = createMonitoringComponent();
       comp.init(makeCtx(bus));
 
-      bus.emit('instance.heartbeat', { instance_id: 'inst-abc-123' });
+      bus.emit('instance.state_updated', { instance_id: 'inst-abc-123' });
 
       const row = db.prepare('SELECT instance_id FROM event_log').get() as { instance_id: string };
       expect(row.instance_id).toBe('inst-abc-123');

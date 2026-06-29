@@ -105,9 +105,9 @@ sqlite3 ~/.igris/memory/knowledge.db "
   PRAGMA trusted_schema=ON;
   SELECT id, machine_hostname, project_slug, current_brief, current_phase,
          current_task, status, lease_expires_at, state_updated_at,
-         last_heartbeat_at
+         last_activity_at
   FROM instances
-  ORDER BY COALESCE(state_updated_at, last_heartbeat_at) DESC;
+  ORDER BY COALESCE(state_updated_at, last_activity_at) DESC;
 "
 ```
 
@@ -115,7 +115,7 @@ Treat liveness as advisory:
 
 - Same-machine liveness belongs to `igris instance list`, which classifies `alive`, `dead`, and `dead_pid_reused` using PID/start-time metadata.
 - Remote rows are coordination state, not process proof; show lease/claim state when present.
-- Do not infer liveness from heartbeat/activity age.
+- Do not infer liveness from activity age.
 
 ### 4. Recent Sessions
 
@@ -227,4 +227,4 @@ Format as:
 - Make "Needs Me" the top section even when it is empty; empty means the operator can trust there is no obvious cross-project action.
 - Prefer concise tables over long prose.
 - Do not show huge raw samples from dashboards; use summary counts and the top few rows.
-- Treat heartbeat/activity timestamps as last activity only, never as liveness proof.
+- Treat activity timestamps as visibility metadata only, never as liveness proof.

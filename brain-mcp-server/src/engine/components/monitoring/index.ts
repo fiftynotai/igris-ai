@@ -14,7 +14,7 @@
  *          schedule.run_complete, cache.rebuilt, cache.cleaned,
  *          brief.synced, brief.created,
  *          brief.completed, session.synced, session.file.updated,
- *          instance.heartbeat, memory.stored, error.stored,
+ *          instance.state_updated, memory.stored, error.stored,
  *          project.registered, metrics.recorded,
  *          subconscious.bootstrap_failed,
  *          perception.run_started, perception.run_succeeded,
@@ -58,7 +58,7 @@ const EVENT_COMPONENT_MAP: Record<string, string> = {
   'brief.completed': 'briefs',
   'session.synced': 'sessions',
   'session.file.updated': 'sessions',
-  'instance.heartbeat': 'instances',
+  'instance.state_updated': 'instances',
   'memory.stored': 'memory',
   'error.stored': 'errors',
   'project.registered': 'projects',
@@ -212,7 +212,7 @@ export function createMonitoringComponent(): BrainComponent {
           { name: 'brief.completed', description: 'Log brief completion events' },
           { name: 'session.synced', description: 'Log session sync events' },
           { name: 'session.file.updated', description: 'Log session file update events' },
-          { name: 'instance.heartbeat', description: 'Log instance heartbeat events' },
+          { name: 'instance.state_updated', description: 'Log instance state update events' },
           { name: 'memory.stored', description: 'Log memory storage events' },
           { name: 'error.stored', description: 'Log error storage events' },
           { name: 'project.registered', description: 'Log project registration events' },
@@ -247,7 +247,7 @@ export function createMonitoringComponent(): BrainComponent {
       ctx.bus.on('brief.completed', onEventReceived);
       ctx.bus.on('session.synced', onEventReceived);
       ctx.bus.on('session.file.updated', onEventReceived);
-      ctx.bus.on('instance.heartbeat', onEventReceived);
+      ctx.bus.on('instance.state_updated', onEventReceived);
       ctx.bus.on('memory.stored', onEventReceived);
       ctx.bus.on('error.stored', onEventReceived);
       ctx.bus.on('project.registered', onEventReceived);
@@ -290,7 +290,7 @@ export function createMonitoringComponent(): BrainComponent {
         _ctx.bus.off('brief.completed', onEventReceived);
         _ctx.bus.off('session.synced', onEventReceived);
         _ctx.bus.off('session.file.updated', onEventReceived);
-        _ctx.bus.off('instance.heartbeat', onEventReceived);
+        _ctx.bus.off('instance.state_updated', onEventReceived);
         _ctx.bus.off('memory.stored', onEventReceived);
         _ctx.bus.off('error.stored', onEventReceived);
         _ctx.bus.off('project.registered', onEventReceived);

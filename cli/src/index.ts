@@ -987,7 +987,7 @@ async function main(argv: string[]): Promise<void> {
   program
     .command("instance <action>")
     .description(
-      "FR-190: explicit instance lifecycle verbs. Actions: list (classify local liveness), state (update display/lease state), deregister (remove a cleanly closed instance). Heartbeat is not a liveness primitive.",
+      "FR-190/TD-277: explicit instance lifecycle verbs. Actions: list (classify local liveness), state (update display/lease state), deregister (remove a cleanly closed instance). Activity time is not a liveness primitive.",
     )
     .option(
       "--project <slug>",

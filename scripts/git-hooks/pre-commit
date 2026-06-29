@@ -90,9 +90,9 @@ cd "$REPO_ROOT"
 #
 # Active-Brief source (FR-186 / G-01R): the brief is discovered from the brain
 # `instances` registry — the machine-disambiguated live source kept fresh by
-# heartbeats — NOT the retired CURRENT_SESSION.md. FR-133 archived that file, so
+# instance state updates — NOT the retired CURRENT_SESSION.md. FR-133 archived that file, so
 # the old grep returned empty and the guard went silently inert. Discovery order:
-#   1. instances registry  (machine-scoped, freshest active heartbeat)
+#   1. instances registry  (machine-scoped, freshest active state update)
 #   2. newest per-instance session file carrying an **Active Brief:** line
 #   3. legacy CURRENT_SESSION.md (un-migrated consumer projects only)
 #
@@ -133,7 +133,7 @@ if [ "${IGRIS_BYPASS_PHASE_GUARD:-0}" != "1" ]; then
            AND machine_hostname='$HOSTNAME_SQL'
            AND status='active'
            AND current_brief IS NOT NULL
-         ORDER BY last_heartbeat_at DESC LIMIT 1;" \
+         ORDER BY last_activity_at DESC LIMIT 1;" \
       2>/dev/null | tr -d '[:space:]')"
   fi
 

@@ -39,7 +39,7 @@ const INSTANCES_DDL = `
     current_task TEXT,
     status TEXT DEFAULT 'active' CHECK (status IN ('active','idle','stale')),
     started_at TEXT NOT NULL DEFAULT (datetime('now')),
-    last_heartbeat_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_activity_at TEXT NOT NULL DEFAULT (datetime('now')),
     metadata TEXT DEFAULT '{}'
   );
 `;
@@ -161,7 +161,7 @@ describe("assess — MINIMAL D-A digest", () => {
       ib.run(SLUG, "FR-1", "t1", "Ready", "P0");
       ib.run(SLUG, "FR-2", "t2", "Done", "P2");
       db.prepare(
-        `INSERT INTO instances (id, machine_hostname, project_slug, status, last_heartbeat_at)
+        `INSERT INTO instances (id, machine_hostname, project_slug, status, last_activity_at)
          VALUES ('i-1', 'h', ?, 'active', datetime('now'))`,
       ).run(SLUG);
     });

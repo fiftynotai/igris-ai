@@ -173,8 +173,8 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // (FR-198 registry asset-reference columns), v18 (TD-238 brief field
       // normalization), v19 (TD-259 registry→catalog rename), and v20 (TD-265
       // worker-subsystem table teardown) run immediately after v13 in the same
-      // migrate call, so MAX(version) is 20 once v13 has been applied.
-      expect(getSchemaVersion(db)).toBe(20);
+      // migrate call, so MAX(version) is 21 once v13 has been applied.
+      expect(getSchemaVersion(db)).toBe(21);
     },
   );
 
@@ -200,8 +200,8 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // (FR-198 registry asset-reference columns), v18 (TD-238 brief field
       // normalization), v19 (TD-259 registry→catalog rename), and v20 (TD-265
       // worker-subsystem table teardown) run immediately after v13 in the same
-      // migrate call, so MAX(version) is 20 once v13 has been applied.
-      expect(getSchemaVersion(db)).toBe(20);
+      // migrate call, so MAX(version) is 21 once v13 has been applied.
+      expect(getSchemaVersion(db)).toBe(21);
 
       const learningsCount = db
         .prepare('SELECT COUNT(*) AS n FROM learnings_vec')
@@ -257,8 +257,8 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // (FR-198 registry asset-reference columns), v18 (TD-238 brief field
       // normalization), v19 (TD-259 registry→catalog rename), and v20 (TD-265
       // worker-subsystem table teardown) run immediately after v13 in the same
-      // migrate call, so MAX(version) is 20 once v13 has been applied.
-      expect(getSchemaVersion(db)).toBe(20);
+      // migrate call, so MAX(version) is 21 once v13 has been applied.
+      expect(getSchemaVersion(db)).toBe(21);
       expect(tableExists(db, 'learnings_vec')).toBe(true);
       expect(tableExists(db, 'errors_vec')).toBe(true);
       expect(tableExists(db, 'briefs_vec')).toBe(true);
@@ -297,8 +297,8 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // (FR-198 registry asset-reference columns), v18 (TD-238 brief field
       // normalization), v19 (TD-259 registry→catalog rename), and v20 (TD-265
       // worker-subsystem table teardown) run immediately after v13 in the same
-      // migrate call, so MAX(version) is 20 once v13 has been applied.
-      expect(getSchemaVersion(db)).toBe(20);
+      // migrate call, so MAX(version) is 21 once v13 has been applied.
+      expect(getSchemaVersion(db)).toBe(21);
     },
   );
 
@@ -317,8 +317,8 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // (FR-198 registry asset-reference columns), v18 (TD-238 brief field
       // normalization), v19 (TD-259 registry→catalog rename), and v20 (TD-265
       // worker-subsystem table teardown) run immediately after v13 in the same
-      // migrate call, so MAX(version) is 20 once v13 has been applied.
-      expect(getSchemaVersion(db)).toBe(20);
+      // migrate call, so MAX(version) is 21 once v13 has been applied.
+      expect(getSchemaVersion(db)).toBe(21);
 
       // 3 rows seeded, row 0 had a malformed (100-byte) embedding → skipped.
       // Other 2 must still be backfilled.

@@ -154,7 +154,7 @@ interface SessionFileUpdateInput {
   project: string;
   filename: string;
   content: string;
-  /** Owning instance UUID (FR-130; optional — from igris_instance_heartbeat). */
+  /** Owning instance UUID (FR-130; optional — from igris_instance_state). */
   instance_id?: string;
   /** Lifecycle state (FR-130; optional — defaults to 'live' for new rows). */
   state?: SessionFileState;

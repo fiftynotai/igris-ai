@@ -17,9 +17,9 @@
  *   1. A populated v19 DB carrying task + coordination rows: boot succeeds, all
  *      7 tables are gone, the engine_migrations rows for tasks/coordination are
  *      removed, the autonomous-priority-adjust schedule row is removed, and
- *      schema_version advances to exactly 20.
+ *      schema_version advances to exactly 21.
  *   2. A fresh DB that never had the tables: the idempotent DROP TABLE IF EXISTS
- *      is a clean no-op and schema_version still reaches 20.
+ *      is a clean no-op and schema_version still reaches 21.
  *   3. Idempotency — a second migrateSchema() changes nothing and does not throw.
  *
  * Exercises the REAL migrateSchema() from db.js (no SUT mock, per L-159/#159).
@@ -225,9 +225,9 @@ describe('migration v20 — worker-subsystem table teardown (TD-265)', () => {
       }
     });
 
-    it('advances schema_version to exactly 20', () => {
+    it('advances schema_version to exactly 21', () => {
       migrateSchema(db);
-      expect(getSchemaVersion(db)).toBe(20);
+      expect(getSchemaVersion(db)).toBe(21);
     });
 
     it('removes the engine_migrations rows for tasks + coordination, keeps survivors', () => {
@@ -254,12 +254,12 @@ describe('migration v20 — worker-subsystem table teardown (TD-265)', () => {
       expect(names).toContain('nightly-cleanup');
     });
 
-    it('is idempotent — a second migrateSchema() does not throw and keeps version at 20', () => {
+    it('is idempotent — a second migrateSchema() does not throw and keeps version at 21', () => {
       migrateSchema(db);
-      expect(getSchemaVersion(db)).toBe(20);
+      expect(getSchemaVersion(db)).toBe(21);
 
       expect(() => migrateSchema(db)).not.toThrow();
-      expect(getSchemaVersion(db)).toBe(20);
+      expect(getSchemaVersion(db)).toBe(21);
       for (const t of WORKER_TABLES) {
         expect(tableExists(db, t)).toBe(false);
       }
@@ -280,9 +280,9 @@ describe('migration v20 — worker-subsystem table teardown (TD-265)', () => {
       expect(() => migrateSchema(db)).not.toThrow();
     });
 
-    it('advances schema_version to exactly 20 with the no-op drop', () => {
+    it('advances schema_version to exactly 21 with the no-op drop', () => {
       migrateSchema(db);
-      expect(getSchemaVersion(db)).toBe(20);
+      expect(getSchemaVersion(db)).toBe(21);
       for (const t of WORKER_TABLES) {
         expect(tableExists(db, t)).toBe(false);
       }

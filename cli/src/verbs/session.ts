@@ -7,7 +7,7 @@
  * M1 shipped `gather` — the local-channel Lock-2/3 classifier (SKILL.md §2,
  * G1–G5). M2 adds `register` — the instance metadata upsert + LIVE
  * per-instance file write (SKILL.md §3.7). FR-190 extends registration with
- * harness/PID/start-time metadata and removes heartbeat age from liveness.
+ * harness/PID/start-time metadata and removes activity age from liveness.
  *
  * Channel: LOCAL (better-sqlite3 via brain-db.ts), no network. `gather` is
  * read-only w.r.t. `session_files` (#220 / Lock-2 "nothing destructive in
@@ -35,7 +35,7 @@ import {
   listSessionFiles,
   listInstances,
   getSessionFileContent,
-  heartbeat,
+  registerOrUpdateInstanceState,
   sessionFileUpsert,
 } from "../lib/brain-db.js";
 import { projectSessionInstancesDir } from "../lib/paths.js";
@@ -183,7 +183,7 @@ function buildGatherDigest(
   selfId: string | null,
 ): GatherDigest {
   // G1 — enumerate. FR-190: instance reads no longer purge/mark stale based on
-  // heartbeat age; liveness is classified per instance below.
+  // activity age; liveness is classified per instance below.
   const files: SessionFileRow[] = listSessionFiles(slug);
   const instanceRows: InstanceRow[] = listInstances({
     status: "all",
@@ -221,11 +221,9 @@ function buildGatherDigest(
       siblings.push({
         instance_id: row.instance_id,
         current_brief: inst ? inst.current_brief : null,
-        // Prefer explicit state update time, then old heartbeat/activity time,
-        // then the file mtime for legacy rows.
-        last_active: inst
-          ? (inst.state_updated_at ?? inst.last_heartbeat_at)
-          : row.updated_at,
+        // Prefer explicit state update time, then activity time, then the file
+        // mtime for legacy rows.
+        last_active: inst ? (inst.state_updated_at ?? inst.last_activity_at) : row.updated_at,
         harness: inst ? inst.harness : null,
         liveness_status: liveness?.status,
         liveness_method: liveness?.method,
@@ -353,11 +351,11 @@ function runRegister(opts: SessionOptions): { digest: RegisterDigest; code: numb
   // Instance metadata upsert — recover (selfInstanceId supplied) or mint (omitted).
   // Wrapped so a BrainTableMissingError (a present-but-unmigrated DB) degrades
   // rather than crashing the awaken sequence.
-  let hb;
+  let registration;
   try {
     const owner = resolveOwnerProcess();
     const now = new Date().toISOString().replace("T", " ").substring(0, 19);
-    hb = heartbeat({
+    registration = registerOrUpdateInstanceState({
       instance_id: opts.selfInstanceId,
       machine_hostname: hostname(),
       machine_os: process.platform,
@@ -388,7 +386,7 @@ function runRegister(opts: SessionOptions): { digest: RegisterDigest; code: numb
     };
   }
 
-  const instanceId = hb.instance_id;
+  const instanceId = registration.instance_id;
   const relFilename = `instances/${instanceId}.md`;
   const instancesDir = projectSessionInstancesDir(slug);
   const diskPath = join(instancesDir, `${instanceId}.md`);
@@ -433,7 +431,7 @@ function runRegister(opts: SessionOptions): { digest: RegisterDigest; code: numb
       digest: {
         degraded: true,
         instance_id: instanceId,
-        minted: hb.minted,
+        minted: registration.minted,
         live_file: relFilename,
         seeded_from_handoff: seededFromHandoff,
       },
@@ -445,7 +443,7 @@ function runRegister(opts: SessionOptions): { digest: RegisterDigest; code: numb
     digest: {
       degraded: false,
       instance_id: instanceId,
-      minted: hb.minted,
+      minted: registration.minted,
       live_file: relFilename,
       seeded_from_handoff: seededFromHandoff,
     },

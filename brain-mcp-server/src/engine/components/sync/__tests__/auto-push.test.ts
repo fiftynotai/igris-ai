@@ -440,13 +440,13 @@ describe('Sync Auto-Push', () => {
       comp.destroy();
     });
 
-    it('instance.heartbeat triggers push of instances', async () => {
+    it('instance.state_updated triggers push of instances', async () => {
       mockDb._stmt.all.mockReturnValueOnce([{ machine_hostname: 'host-1', status: 'active' }]);
 
       const comp = createSyncComponent();
       comp.init(makeCtx(bus));
 
-      bus.emit('instance.heartbeat', { machine_hostname: 'host-1' });
+      bus.emit('instance.state_updated', { machine_hostname: 'host-1' });
       await flushMicrotasks();
 
       expect(fetchWithRetry).toHaveBeenCalledTimes(1);
@@ -487,7 +487,7 @@ describe('Sync Auto-Push', () => {
 
       bus.emit('brief.synced', { project: 'p', brief_id: 'BR-001' });
       bus.emit('session.synced', { project: 'p' });
-      bus.emit('instance.heartbeat', { machine_hostname: 'h' });
+      bus.emit('instance.state_updated', { machine_hostname: 'h' });
       await flushMicrotasks();
 
       expect(fetchWithRetry).not.toHaveBeenCalled();
@@ -659,7 +659,7 @@ describe('Sync Auto-Push', () => {
       bus.emit('brief.completed', { project: 'p', brief_id: 'BR-001' });
       bus.emit('session.synced', { project: 'p' });
       bus.emit('session.file.updated', { project: 'p', filename: 'f' });
-      bus.emit('instance.heartbeat', { machine_hostname: 'h' });
+      bus.emit('instance.state_updated', { machine_hostname: 'h' });
       bus.emit('memory.stored', { project: 'p' });
       bus.emit('error.stored', { project: 'p' });
       bus.emit('project.registered', { slug: 's' });
@@ -723,7 +723,7 @@ describe('Sync Auto-Push', () => {
         'brief.completed',
         'session.synced',
         'session.file.updated',
-        'instance.heartbeat',
+        'instance.state_updated',
         'memory.stored',
         'error.stored',
         'project.registered',

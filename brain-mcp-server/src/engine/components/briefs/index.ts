@@ -505,7 +505,7 @@ export function createBriefsComponent(): BrainComponent {
               },
               instance_id: {
                 type: 'string',
-                description: 'The claiming instance UUID (from igris_instance_heartbeat)',
+                description: 'The claiming instance UUID (from igris_instance_state)',
               },
             },
             required: ['project', 'brief_id', 'instance_id'],
@@ -567,7 +567,7 @@ export function createBriefsComponent(): BrainComponent {
           { name: 'brief.completed', description: 'A brief status transitioned to a terminal state (Done or Archived)' },
           { name: 'brief.similar_detected', description: 'Similar briefs were detected during creation' },
           // FR-127: orphan emits (no listeners yet) — extension point for a
-          // future claim-activity dashboard. Permitted, as instance.heartbeat
+          // future claim-activity dashboard. Permitted, as instance state.
           // already demonstrates.
           { name: 'brief.claimed', description: 'A brief was atomically claimed by an instance (FR-127)' },
           { name: 'brief.released', description: 'A brief claim was released by an instance (FR-127)' },

@@ -274,7 +274,7 @@ DOC_ONLY_ALLOWLIST = set()
 INTERNAL_TOOL_ALLOWLIST = {
     # agent / instance internals — managed by orchestrator hooks, not advertised
     'igris_agent_event',
-    'igris_instance_heartbeat', 'igris_instance_list', 'igris_instance_remove',
+    'igris_instance_state', 'igris_instance_list', 'igris_instance_remove',
 
     # backfill / embedding maintenance — operator-run, not actor-decision
     'igris_brief_backfill_embeddings',

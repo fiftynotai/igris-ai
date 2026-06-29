@@ -178,7 +178,7 @@ export interface InstanceRow {
   current_phase: string | null;
   current_task: string | null;
   status: string;
-  last_heartbeat_at: string;
+  last_activity_at: string;
   harness: string | null;
   harness_session_id: string | null;
   owner_pid: number | null;

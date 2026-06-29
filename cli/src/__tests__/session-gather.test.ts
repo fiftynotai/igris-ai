@@ -51,7 +51,7 @@ const INSTANCES_DDL = `
     current_task TEXT,
     status TEXT DEFAULT 'active' CHECK (status IN ('active', 'idle', 'stale')),
     started_at TEXT NOT NULL DEFAULT (datetime('now')),
-    last_heartbeat_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_activity_at TEXT NOT NULL DEFAULT (datetime('now')),
     metadata TEXT DEFAULT '{}'
   );
   ALTER TABLE instances ADD COLUMN harness TEXT;
@@ -123,7 +123,7 @@ function insertActiveInstance(
   db.prepare(
     `INSERT INTO instances (
        id, machine_hostname, project_slug, current_brief, status,
-       last_heartbeat_at, harness, owner_pid, owner_started_at
+       last_activity_at, harness, owner_pid, owner_started_at
      )
      VALUES (?, ?, 'demo', ?, 'active', datetime('now'), ?, ?, ?)`,
   ).run(

@@ -137,7 +137,7 @@ export function createSessionsComponent(): BrainComponent {
               },
               instance_id: {
                 type: 'string',
-                description: 'Owning instance UUID (optional; from igris_instance_heartbeat)',
+                description: 'Owning instance UUID (optional; from igris_instance_state)',
               },
               state: {
                 type: 'string',

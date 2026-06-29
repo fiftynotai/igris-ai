@@ -7,7 +7,7 @@
  * TD-098). The seed DDL is copied from the brain's authoritative schema:
  *   - session_files: sessions component schema v1 + v2 ALTERs
  *     (brain-mcp-server/src/engine/components/sessions/schema.ts:39-63)
- *   - instances:     db.ts:328-341 (migration v4)
+ *   - instances:     db.ts v4 + TD-277 terminal activity timestamp shape
  * We seed ONLY the tables M1 touches (#287) — NO *_vec virtual tables / vec0
  * triggers (irrelevant here + macOS sqlite chokes on them).
  */
@@ -49,10 +49,16 @@ const INSTANCES_DDL = `
     current_task TEXT,
     status TEXT DEFAULT 'active' CHECK (status IN ('active', 'idle', 'stale')),
     started_at TEXT NOT NULL DEFAULT (datetime('now')),
-    last_heartbeat_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_activity_at TEXT NOT NULL DEFAULT (datetime('now')),
     metadata TEXT DEFAULT '{}'
   );
 `;
+
+/** Pre-TD-277 instances DDL, used only to prove local migration from old DBs. */
+const LEGACY_INSTANCES_DDL = INSTANCES_DDL.replace(
+  "last_activity_at TEXT NOT NULL DEFAULT (datetime('now'))",
+  "last_heartbeat_at TEXT NOT NULL DEFAULT (datetime('now'))",
+);
 
 /** FR-190 instances component migration v2 columns. */
 const INSTANCE_LIVENESS_DDL = `
@@ -154,7 +160,7 @@ function insertInstance(
     project_slug?: string;
     status?: string;
     current_brief?: string | null;
-    last_heartbeat_at?: string;
+    last_activity_at?: string;
     machine_hostname?: string;
     harness?: string | null;
     owner_pid?: number | null;
@@ -163,7 +169,7 @@ function insertInstance(
   },
 ): void {
   db.prepare(
-    `INSERT INTO instances (id, machine_hostname, project_slug, current_brief, status, last_heartbeat_at)
+    `INSERT INTO instances (id, machine_hostname, project_slug, current_brief, status, last_activity_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
   ).run(
     row.id,
@@ -172,7 +178,7 @@ function insertInstance(
     row.current_brief ?? null,
     row.status ?? "active",
     // Default activity timestamp; tests may override it to prove age is inert.
-    row.last_heartbeat_at ?? new Date().toISOString().replace("T", " ").substring(0, 19),
+    row.last_activity_at ?? new Date().toISOString().replace("T", " ").substring(0, 19),
   );
   const updates: string[] = [];
   const values: unknown[] = [];
@@ -342,10 +348,10 @@ describe("brain-db — listInstances", () => {
       insertInstance(db, {
         id: "i-old",
         project_slug: "demo",
-        last_heartbeat_at: "datetime-placeholder",
+        last_activity_at: "datetime-placeholder",
       });
       db.prepare(
-        "UPDATE instances SET last_heartbeat_at = datetime('now','-60 minutes') WHERE id = 'i-old'",
+        "UPDATE instances SET last_activity_at = datetime('now','-60 minutes') WHERE id = 'i-old'",
       ).run();
     });
     const m = await getModule();
@@ -360,7 +366,7 @@ describe("brain-db — listInstances", () => {
       db.exec(INSTANCES_DDL);
       insertInstance(db, { id: "i-dead", project_slug: "demo" });
       db.prepare(
-        "UPDATE instances SET last_heartbeat_at = datetime('now','-300 minutes') WHERE id = 'i-dead'",
+        "UPDATE instances SET last_activity_at = datetime('now','-300 minutes') WHERE id = 'i-dead'",
       ).run();
     });
     const m = await getModule();
@@ -394,7 +400,7 @@ describe("brain-db — listInstances", () => {
       });
       insertInstance(db, { id: "i-crash", project_slug: "demo" });
       db.prepare(
-        "UPDATE instances SET last_heartbeat_at = datetime('now','-300 minutes') WHERE id = 'i-crash'",
+        "UPDATE instances SET last_activity_at = datetime('now','-300 minutes') WHERE id = 'i-crash'",
       ).run();
     });
     const m = await getModule();
@@ -431,14 +437,14 @@ function readSessionRow(
   return row;
 }
 
-describe("brain-db — heartbeat (WRITE: mint-or-recover upsert)", () => {
+describe("brain-db — instance state registration (WRITE: mint-or-recover upsert)", () => {
   it("throws BrainTableMissingError when instances is absent (create-never)", async () => {
     // DB exists with only session_files — instances absent. A WRITE must NOT
     // silently no-op (the symmetric opposite of reads), and must NOT CREATE.
     seedBrain((db) => db.exec(SESSION_FILES_DDL));
     const m = await getModule();
     expect(() =>
-      m.heartbeat({ machine_hostname: "host-1", project_slug: "demo" }),
+      m.registerOrUpdateInstanceState({ machine_hostname: "host-1", project_slug: "demo" }),
     ).toThrow(m.BrainTableMissingError);
     m.closeDb();
     // instances STILL absent (no CREATE side-effect).
@@ -455,7 +461,7 @@ describe("brain-db — heartbeat (WRITE: mint-or-recover upsert)", () => {
   it("mints a fresh UUID and inserts a row when no instance_id is supplied", async () => {
     seedBrain((db) => db.exec(INSTANCES_DDL));
     const m = await getModule();
-    const res = m.heartbeat({
+    const res = m.registerOrUpdateInstanceState({
       machine_hostname: "host-mint",
       project_slug: "demo",
       project_path: "/tmp/demo",
@@ -481,6 +487,28 @@ describe("brain-db — heartbeat (WRITE: mint-or-recover upsert)", () => {
     expect(row.status).toBe("active");
   });
 
+  it("renames a legacy activity column before writing state", async () => {
+    seedBrain((db) => db.exec(LEGACY_INSTANCES_DDL));
+    const m = await getModule();
+    const res = m.registerOrUpdateInstanceState({
+      machine_hostname: "host-legacy",
+      project_slug: "demo",
+    });
+    m.closeDb();
+
+    const check = new Database(join(tmpRoot, "memory", "knowledge.db"));
+    const columns = check.prepare("PRAGMA table_info(instances)").all() as { name: string }[];
+    const names = columns.map((c) => c.name);
+    const row = check
+      .prepare("SELECT last_activity_at FROM instances WHERE id = ?")
+      .get(res.instance_id) as { last_activity_at: string };
+    check.close();
+
+    expect(names).toContain("last_activity_at");
+    expect(names).not.toContain("last_heartbeat_at");
+    expect(row.last_activity_at).toMatch(/^\d{4}-\d{2}-\d{2}/);
+  });
+
   it("recovers (refreshes) an existing row when its instance_id is supplied", async () => {
     seedBrain((db) => {
       db.exec(INSTANCES_DDL);
@@ -491,11 +519,11 @@ describe("brain-db — heartbeat (WRITE: mint-or-recover upsert)", () => {
         current_brief: "OLD",
       });
       db.prepare(
-        "UPDATE instances SET last_heartbeat_at = datetime('now','-90 minutes') WHERE id = 'i-known'",
+        "UPDATE instances SET last_activity_at = datetime('now','-90 minutes') WHERE id = 'i-known'",
       ).run();
     });
     const m = await getModule();
-    const res = m.heartbeat({
+    const res = m.registerOrUpdateInstanceState({
       instance_id: "i-known",
       machine_hostname: "host-recover",
       project_slug: "demo",
@@ -524,7 +552,7 @@ describe("brain-db — heartbeat (WRITE: mint-or-recover upsert)", () => {
   it("stores liveness metadata when the migrated columns exist", async () => {
     seedBrain((db) => db.exec(INSTANCES_DDL + INSTANCE_LIVENESS_DDL));
     const m = await getModule();
-    const res = m.heartbeat({
+    const res = m.registerOrUpdateInstanceState({
       machine_hostname: "host-1",
       project_slug: "demo",
       harness: "codex",

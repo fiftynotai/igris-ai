@@ -57,7 +57,7 @@ flowchart TB
 | 15 | `coordination` | Autonomous decision rules & coordination config |
 | 16 | `subconscious` | Rule-based anomaly detection (**DISABLED in v7**; see §3.1) |
 | 17 | `perception` | Observation & pattern extraction from sessions |
-| 18 | `monitoring` | Agent & system observability (heartbeats, SLA) |
+| 18 | `monitoring` | Agent & system observability (activity, SLA) |
 | 19 | `registry` | Reusable-assets catalog (templates/modules — the "lego" store; FR-099/FR-198) |
 
 **Tool count:** 120+ brain tools distributed across the 19 components (the `igris-brain` MCP server is the single gateway). Every tool's `inputSchema` declares `additionalProperties: false` (TD-128 strict-input contract; enforced at `brain-mcp-server/src/engine/gateway.ts:47-138`). Callers must use allowlists when forwarding queue entries or external payloads (see `cli/src/lib/sync/data.ts:224`).
@@ -152,7 +152,7 @@ Agents per phase: `PLANNING` → architect; `BUILDING` → forger; `TESTING` →
 
 **Escape hatches** (one-shot, never `export`, loud + event-logged):
 - `IGRIS_BYPASS_BRIEF_GATE=1` — bypass the brief-gate hook for one command.
-- `IGRIS_BYPASS_PHASE_GUARD=1` — bypass the phase-guard pre-commit hook for one commit. The guard discovers the Active Brief from the brain `instances` registry (machine-scoped, freshest heartbeat), with a per-instance session-file fallback — not the retired `CURRENT_SESSION.md` (re-pointed under FR-186 / G-01R).
+- `IGRIS_BYPASS_PHASE_GUARD=1` — bypass the phase-guard pre-commit hook for one commit. The guard discovers the Active Brief from the brain `instances` registry (machine-scoped, freshest activity timestamp), with a per-instance session-file fallback — not the retired `CURRENT_SESSION.md` (re-pointed under FR-186 / G-01R).
 - `IGRIS_ALLOW_INSECURE_SYNC=1` — allow remote VPS sync over plain `http://` to a non-local host (TD-252). By default the transport classifier (`cli/src/lib/sync-transport.ts`) REFUSES non-local `http://` because the `api_key` would travel in cleartext; this override allows it with a loud per-sync warning. `https://` and `http://` to localhost (`127.0.0.1`/`::1`) are always allowed. Also settable persistently as `config.json` `remote_brain.allow_insecure: true`.
 
 ---

@@ -1251,6 +1251,35 @@ function migrateSchema(db: Database.Database): void {
     })();
     console.error('[brain] Schema migrated to version 20 (TD-265 worker-subsystem table teardown)');
   }
+
+  // TD-277: remove heartbeat vocabulary from the normal instances schema.
+  // Existing local DBs created before TD-277 have `last_heartbeat_at`; rename
+  // it to `last_activity_at`. Fresh DBs still pass through v4 first, so the
+  // terminal schema after v21 is the clean activity column.
+  let postV20Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV20Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+  if (postV20Version >= 20 && postV20Version < 21) {
+    const tableInfo = (name: string): Set<string> => {
+      const rows = db.prepare(`PRAGMA table_info(${name})`).all() as { name: string }[];
+      return new Set(rows.map((r) => r.name));
+    };
+
+    db.transaction(() => {
+      const columns = tableInfo('instances');
+      if (!columns.has('last_activity_at') && columns.has('last_heartbeat_at')) {
+        db.exec(`ALTER TABLE instances RENAME COLUMN last_heartbeat_at TO last_activity_at`);
+      }
+      db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (21)').run();
+    })();
+    console.error('[brain] Schema migrated to version 21 (TD-277 instance activity timestamp rename)');
+  }
 }
 
 /**

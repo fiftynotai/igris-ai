@@ -215,8 +215,10 @@ describe('Legacy Migration Bridge (BR-035)', () => {
     // instance_id + state columns); briefs ships 2 as of FR-127 (v1 =
     // brief_files DDL, v2 = claimed_by + claimed_at on brief_status); the
     // instances ships 2 as of FR-190 (v1 = agent_events DDL, v2 = instance
-    // liveness columns on the legacy instances table). The remaining components
-    // ship a single v1. The v1 migration of every component still owns
+    // liveness columns on the legacy instances table). The TD-277 activity
+    // timestamp rename is owned by legacy db.ts because the engine runs that
+    // chain before component migrations. The remaining components ship a single
+    // v1. The v1 migration of every component still owns
     // the primary table-creation DDL, so the sub-tests below read migrations[0].
     const componentFactories = [
       { name: 'instances', factory: createInstancesComponent, table: 'agent_events', migrationCount: 2 },

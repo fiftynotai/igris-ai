@@ -3,7 +3,7 @@
  *
  * Wraps the existing instance tool handlers and agent event handler
  * as a BrainComponent.
- * Provides: igris_instance_heartbeat (legacy-compatible state update),
+ * Provides: igris_instance_state,
  *           igris_instance_list, igris_instance_remove,
  *           igris_agent_event
  *
@@ -19,12 +19,12 @@ import type {
   EventDef,
 } from '../../types.js';
 import {
-  handleInstanceHeartbeat,
+  handleInstanceState,
   handleInstanceList,
   handleInstanceRemove,
 } from '../../../tools/instances.js';
 import type {
-  InstanceHeartbeatInput,
+  InstanceStateInput,
   InstanceListInput,
   InstanceRemoveInput,
 } from '../../../tools/instances.js';
@@ -104,8 +104,8 @@ export function createInstancesComponent(): BrainComponent {
     tools(): ToolDefinition[] {
       return [
         {
-          name: 'igris_instance_heartbeat',
-          description: 'Register or update an Igris instance row. FR-190: this is legacy-compatible state/activity metadata, not a liveness proof; same-machine liveness uses PID/start-time and cross-machine coordination uses leases/claims.',
+          name: 'igris_instance_state',
+          description: 'Register or update an Igris instance state row. This records activity/display/lease metadata only; same-machine liveness uses PID/start-time and cross-machine coordination uses leases/claims.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -178,8 +178,8 @@ export function createInstancesComponent(): BrainComponent {
             required: ['machine_hostname'],
           },
           handler: (args) => {
-            const result = handleInstanceHeartbeat(args as unknown as InstanceHeartbeatInput);
-            _ctx?.bus.emit('instance.heartbeat', {
+            const result = handleInstanceState(args as unknown as InstanceStateInput);
+            _ctx?.bus.emit('instance.state_updated', {
               machine_hostname: (args as Record<string, unknown>).machine_hostname,
               project_slug: (args as Record<string, unknown>).project_slug,
               instance_id: (args as Record<string, unknown>).instance_id,
@@ -189,7 +189,7 @@ export function createInstancesComponent(): BrainComponent {
         },
         {
           name: 'igris_instance_list',
-          description: 'List Igris instances across machines. FR-190: listing does not mark stale or purge based on heartbeat age.',
+          description: 'List Igris instances across machines. Listing does not mark stale or purge based on activity age.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -298,8 +298,7 @@ export function createInstancesComponent(): BrainComponent {
     events(): { emits: EventDef[]; listens: EventDef[] } {
       return {
         emits: [
-          // Orphan: sync auto-push extension point — will be consumed when sync auto-push is implemented
-          { name: 'instance.heartbeat', description: 'An instance heartbeat was received' },
+          { name: 'instance.state_updated', description: 'An instance state row was updated' },
         ],
         listens: [],
       };

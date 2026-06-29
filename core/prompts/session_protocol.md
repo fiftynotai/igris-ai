@@ -28,7 +28,7 @@ state:
 | LIVE / RESTED  | `session/instances/<instance_id>.md`               |
 | ARCHIVED       | `session/archive/<instance_id>-<rested_at>.md`     |
 
-- `instance_id` is the UUID minted by `igris_instance_heartbeat`. The
+- `instance_id` is the UUID minted by `igris_instance_state`. The
   `<rested_at>` suffix on archived paths is the rest timestamp — it prevents
   collision when one instance rests repeatedly.
 - **Each instance writes its own file freely.** Each instance *is* Igris; it
@@ -81,9 +81,9 @@ A session file moves through exactly three states:
 
 Liveness is the **instance registry's** job — never the session file's.
 
-- **Heartbeat is DISPLAY-ONLY.** It reports "last active at T" and nothing
-  more. It MUST NOT trigger any destructive action — no auto-archive, no
-  auto-adopt, no auto-release.
+- **Activity time is DISPLAY-ONLY.** It reports "last active at T" and
+  nothing more. It MUST NOT trigger any destructive action — no auto-archive,
+  no auto-adopt, no auto-release.
 - **Ownership is EXPLICIT:**
   - *Register-on-hunt* — `current_brief` is set when a hunt starts.
   - *Release-on-`/rest`* — `/rest` explicitly clears `current_brief`. This
@@ -112,7 +112,7 @@ success (re-entrant). `/rest` (via `igris_brief_release`) and brief-completion
 release the claim — both ownership-scoped, so an instance only frees a claim
 it holds. A stale claim (claimer absent from the active registry, or claim
 older than 24h) is reclaimable ONLY via explicit operator confirmation in
-`/hunt` — heartbeat silence never auto-releases (Lock 1).
+`/hunt` — activity silence never auto-releases (Lock 1).
 
 ---
 
@@ -182,8 +182,8 @@ On context reset, an instance:
 
 1. Obtains its `instance_id` — recovered from its own prior session file if
    resuming an existing instance, or minted fresh by
-   `igris_instance_heartbeat` for a new one (`igris_instance_heartbeat`
-   mints a new ID when called without an `instance_id`; the ID is not
+   `igris_instance_state` for a new one (`igris_instance_state` mints a new ID
+   when called without an `instance_id`; the ID is not
    deterministically derivable).
 2. Reads its own `session/instances/<instance_id>.md` — its LIVE scratchpad,
    if one exists.

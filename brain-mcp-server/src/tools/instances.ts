@@ -2,12 +2,12 @@
  * Igris Brain -- Instance Tools
  *
  * Provides live instance registry for tracking active Igris sessions
- * across machines. FR-190 narrows heartbeat to legacy activity/state updates:
- * liveness is proven locally with PID/start-time metadata, while cross-machine
- * coordination rides brief claims / work leases.
+ * across machines. Liveness is proven locally with PID/start-time metadata,
+ * while cross-machine coordination rides brief claims / work leases. Instance
+ * state/activity updates are visibility metadata, not liveness proof.
  *
  * Tools:
- * - igris_instance_heartbeat: Legacy-compatible register/state update
+ * - igris_instance_state: Register/update instance state
  * - igris_instance_list: List all active instances
  * - igris_instance_remove: Deregister an instance on /rest
  *
@@ -18,8 +18,8 @@
 import { getDb } from '../db.js';
 import { randomUUID } from 'node:crypto';
 
-/** Input shape for the legacy-compatible igris_instance_heartbeat tool. */
-interface InstanceHeartbeatInput {
+/** Input shape for the igris_instance_state tool. */
+interface InstanceStateInput {
   instance_id?: string;
   machine_hostname: string;
   machine_os?: string;
@@ -56,6 +56,17 @@ function tableColumns(name: string): Set<string> {
   return new Set(rows.map((r) => r.name));
 }
 
+function ensureInstancesActivityColumn(): Set<string> {
+  const db = getDb();
+  let columns = tableColumns('instances');
+  if (columns.has('last_activity_at')) return columns;
+  if (columns.has('last_heartbeat_at')) {
+    db.exec('ALTER TABLE instances RENAME COLUMN last_heartbeat_at TO last_activity_at');
+    columns = tableColumns('instances');
+  }
+  return columns;
+}
+
 function optionalProjection(
   columns: ReadonlySet<string>,
   name: string,
@@ -74,10 +85,10 @@ function optionalProjection(
  * @param args - Instance data including machine hostname and optional fields
  * @returns MCP-formatted response with the instance ID
  */
-function handleInstanceHeartbeat(args: InstanceHeartbeatInput): { content: { type: string; text: string }[] } {
+function handleInstanceState(args: InstanceStateInput): { content: { type: string; text: string }[] } {
   const db = getDb();
   const instanceId = args.instance_id ?? randomUUID();
-  const columns = tableColumns('instances');
+  const columns = ensureInstancesActivityColumn();
   const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
   const insertColumns = [
     'id',
@@ -89,7 +100,7 @@ function handleInstanceHeartbeat(args: InstanceHeartbeatInput): { content: { typ
     'current_phase',
     'current_task',
     'status',
-    'last_heartbeat_at',
+    'last_activity_at',
   ];
   const values: unknown[] = [
     instanceId,
@@ -112,7 +123,7 @@ function handleInstanceHeartbeat(args: InstanceHeartbeatInput): { content: { typ
     'current_phase = excluded.current_phase',
     'current_task = excluded.current_task',
     "status = 'active'",
-    'last_heartbeat_at = excluded.last_heartbeat_at',
+    'last_activity_at = excluded.last_activity_at',
   ];
 
   for (const [name, value] of [
@@ -141,10 +152,6 @@ function handleInstanceHeartbeat(args: InstanceHeartbeatInput): { content: { typ
 
   const action = result.changes > 0 && args.instance_id ? 'state updated' : 'registered';
 
-  // (TD-265) The agent_capabilities upsert was removed with the task/coordination
-  // teardown — that table is dropped in the db.ts v20 migration. Instance
-  // heartbeats no longer carry capabilities.
-
   return {
     content: [{
       type: 'text',
@@ -156,15 +163,15 @@ function handleInstanceHeartbeat(args: InstanceHeartbeatInput): { content: { typ
 /**
  * List all active Igris instances across machines.
  *
- * Supports filtering by status and project. FR-190: ordinary listing no longer
- * mutates rows based on heartbeat age; heartbeat is last activity, not liveness.
+ * Supports filtering by status and project. Ordinary listing does not mutate
+ * rows based on activity age; activity time is not liveness.
  *
  * @param args - Optional filters for status and project
  * @returns MCP-formatted response with instance table
  */
 function handleInstanceList(args: InstanceListInput): { content: { type: string; text: string }[] } {
   const db = getDb();
-  const columns = tableColumns('instances');
+  const columns = ensureInstancesActivityColumn();
 
   // Purge agent_events older than 7 days
   db.prepare(
@@ -193,7 +200,7 @@ function handleInstanceList(args: InstanceListInput): { content: { type: string;
 
   const rows = db.prepare(`
     SELECT id, machine_hostname, machine_os, project_slug, current_brief,
-           current_phase, current_task, status, last_heartbeat_at,
+           current_phase, current_task, status, last_activity_at,
            ${optionalProjection(columns, 'harness')},
            ${optionalProjection(columns, 'harness_session_id')},
            ${optionalProjection(columns, 'owner_pid')},
@@ -205,7 +212,7 @@ function handleInstanceList(args: InstanceListInput): { content: { type: string;
            ${optionalProjection(columns, 'state_updated_at')}
     FROM instances
     ${whereClause}
-    ORDER BY last_heartbeat_at DESC
+    ORDER BY last_activity_at DESC
   `).all(...params) as Record<string, unknown>[];
 
   if (rows.length === 0) {
@@ -222,7 +229,7 @@ function handleInstanceList(args: InstanceListInput): { content: { type: string;
   const separator = '|----|---------|---------|----|---------|-------|-------|------|--------|----------|-------|---------------|';
   const tableRows = rows.map(r => {
     const shortId = (r.id as string).substring(0, 8);
-    return `| ${shortId} | ${r.harness || '-'} | ${r.machine_hostname || '-'} | ${r.machine_os || '-'} | ${r.project_slug || '-'} | ${r.current_brief || '-'} | ${r.current_phase || '-'} | ${r.current_task || '-'} | ${r.status || '-'} | ${r.liveness_status || '-'} | ${r.lease_expires_at || '-'} | ${r.state_updated_at || r.last_heartbeat_at || '-'} |`;
+    return `| ${shortId} | ${r.harness || '-'} | ${r.machine_hostname || '-'} | ${r.machine_os || '-'} | ${r.project_slug || '-'} | ${r.current_brief || '-'} | ${r.current_phase || '-'} | ${r.current_task || '-'} | ${r.status || '-'} | ${r.liveness_status || '-'} | ${r.lease_expires_at || '-'} | ${r.state_updated_at || r.last_activity_at || '-'} |`;
   });
 
   return {
@@ -269,5 +276,5 @@ function handleInstanceRemove(args: InstanceRemoveInput): { content: { type: str
   };
 }
 
-export { handleInstanceHeartbeat, handleInstanceList, handleInstanceRemove };
-export type { InstanceHeartbeatInput, InstanceListInput, InstanceRemoveInput };
+export { handleInstanceState, handleInstanceList, handleInstanceRemove };
+export type { InstanceStateInput, InstanceListInput, InstanceRemoveInput };

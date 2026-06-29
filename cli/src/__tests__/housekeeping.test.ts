@@ -65,7 +65,7 @@ const INSTANCES_DDL = `
     current_task TEXT,
     status TEXT DEFAULT 'active' CHECK (status IN ('active', 'idle', 'stale')),
     started_at TEXT NOT NULL DEFAULT (datetime('now')),
-    last_heartbeat_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_activity_at TEXT NOT NULL DEFAULT (datetime('now')),
     metadata TEXT DEFAULT '{}'
   );
 `;

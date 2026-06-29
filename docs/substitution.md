@@ -30,7 +30,7 @@ IGRIS hands off work-state, not just context:
 
 - brief id, status, priority, and acceptance criteria
 - current phase in the hunt state machine
-- atomic claim holder and heartbeat
+- atomic claim holder and activity timestamp
 - instance identity and supersession lifecycle
 - agent log and retry count
 - uncommitted working tree expectations

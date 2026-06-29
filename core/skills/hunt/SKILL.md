@@ -656,7 +656,7 @@ During long phases (BUILDING, TESTING), the active subagent may run for extended
 
 - The orchestrator should run `igris instance state ... --lease-minutes 120` immediately before each Task delegation.
 - If a long phase exceeds the lease window, renew the lease before continuing.
-- Do not instruct subagents to emit heartbeat calls; heartbeat age is no longer a liveness signal.
+- Do not instruct subagents to emit instance activity calls; activity age is not a liveness signal.
 
 This ensures other machines can see that the work is still reserved without pretending they can inspect this machine's process liveness.
 

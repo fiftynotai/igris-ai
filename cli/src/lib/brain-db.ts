@@ -8,8 +8,10 @@
  * the instances migration (`brain-mcp-server/src/db.ts:328`) create these
  * tables. So this module is **create-never**: it preflights table existence
  * (the L-133 pattern already in `handleSessionFileList`) and treats a missing
- * table as "empty" rather than migrating schema the brain owns. A CLI run at
- * a cold boot must never mutate the brain's schema.
+ * table as "empty" rather than creating schema the brain owns. The one allowed
+ * upgrade is the TD-277 rename of an existing instances table from the retired
+ * activity column to `last_activity_at`, so a cold local boot can use the clean
+ * state/activity model before the brain server runs.
  *
  * Channel discipline (L-246): this is the **LOCAL** channel — it opens
  * `brainDbPath()` directly with `better-sqlite3`, never a VPS round-trip. The
@@ -111,6 +113,25 @@ function tableColumns(handle: Database.Database, name: string): Set<string> {
     name: string;
   }[];
   return new Set(rows.map((r) => r.name));
+}
+
+/**
+ * Upgrade an existing instances table to the TD-277 activity timestamp shape.
+ *
+ * This never creates the table. It only rewrites the retired local column name
+ * when an already-migrated brain DB has not yet been touched by the brain
+ * server's schema migration on this machine.
+ */
+function ensureInstancesActivityColumn(handle: Database.Database): Set<string> {
+  let columns = tableColumns(handle, "instances");
+  if (columns.has("last_activity_at")) {
+    return columns;
+  }
+  if (columns.has("last_heartbeat_at")) {
+    handle.exec("ALTER TABLE instances RENAME COLUMN last_heartbeat_at TO last_activity_at");
+    columns = tableColumns(handle, "instances");
+  }
+  return columns;
 }
 
 function optionalProjection(
@@ -263,11 +284,11 @@ export interface ListInstancesArgs {
 }
 
 /**
- * List instances without treating heartbeat age as liveness.
+ * List instances without treating activity age as liveness.
  *
  * FR-190 deliberately removes the old list-time side effects that purged rows
- * older than 240 minutes and marked rows stale after 45 minutes. A heartbeat is
- * only last activity, not liveness; normal reads must not delete the evidence
+ * older than 240 minutes and marked rows stale after 45 minutes. Activity time
+ * is visibility metadata, not liveness; normal reads must not delete the evidence
  * needed to explain or reclaim a crashed instance. Cleanup belongs in an
  * explicit housekeeping path, not this ordinary read.
  */
@@ -279,7 +300,7 @@ export function listInstances(args: ListInstancesArgs = {}): InstanceRow[] {
   if (!tableExists(handle, "instances")) {
     return [];
   }
-  const columns = tableColumns(handle, "instances");
+  const columns = ensureInstancesActivityColumn(handle);
 
   // Dynamic WHERE — verbatim shape from handleInstanceList:140-157.
   const conditions: string[] = [];
@@ -305,7 +326,7 @@ export function listInstances(args: ListInstancesArgs = {}): InstanceRow[] {
     .prepare(
       `
       SELECT id, machine_hostname, machine_os, project_slug, current_brief,
-             current_phase, current_task, status, last_heartbeat_at,
+             current_phase, current_task, status, last_activity_at,
              ${optionalProjection(columns, "harness")},
              ${optionalProjection(columns, "harness_session_id")},
              ${optionalProjection(columns, "owner_pid")},
@@ -317,7 +338,7 @@ export function listInstances(args: ListInstancesArgs = {}): InstanceRow[] {
              ${optionalProjection(columns, "state_updated_at")}
       FROM instances
       ${whereClause}
-      ORDER BY last_heartbeat_at DESC
+      ORDER BY last_activity_at DESC
     `,
     )
     .all(...params) as InstanceRow[];
@@ -342,8 +363,8 @@ export class BrainTableMissingError extends Error {
   }
 }
 
-/** Input for {@link heartbeat} — mirrors `InstanceHeartbeatInput` (the subset the awaken path passes). */
-export interface HeartbeatInput {
+/** Input for {@link registerOrUpdateInstanceState} — mirrors the instance-state tool subset the boot path passes. */
+export interface InstanceStateRegistrationInput {
   /** Recovered prior id (gather G4) → refresh; omit → mint a fresh UUID. */
   instance_id?: string;
   machine_hostname: string;
@@ -363,20 +384,19 @@ export interface HeartbeatInput {
   lease_expires_at?: string | null;
 }
 
-/** Result of a {@link heartbeat} upsert. */
-export interface HeartbeatResult {
+/** Result of a {@link registerOrUpdateInstanceState} upsert. */
+export interface InstanceStateRegistrationResult {
   instance_id: string;
   /** True when a fresh UUID was minted (no prior id supplied); false on recover/refresh. */
   minted: boolean;
 }
 
 /**
- * Mint-or-recover an instance via the upsert.
+ * Mint-or-recover an instance via the state/activity upsert.
  *
- * The old name remains for call-site stability, but FR-190 narrows the
- * semantics: this writes instance lifecycle/state metadata. It does not prove
- * liveness; liveness comes from PID/start-time checks on same-machine rows and
- * lease/claim state for cross-machine coordination.
+ * This writes instance lifecycle/state metadata. It does not prove liveness;
+ * liveness comes from PID/start-time checks on same-machine rows and lease/claim
+ * state for cross-machine coordination.
  *
  * The `agent_capabilities` upsert side-table the brain handler does
  * (instances.ts:87-102) is OMITTED: capabilities are not part of the awaken
@@ -386,7 +406,9 @@ export interface HeartbeatResult {
  * (instances.ts:84): a fresh UUID (no `instance_id` supplied) is a mint; a
  * supplied id is a recover/refresh.
  */
-export function heartbeat(input: HeartbeatInput): HeartbeatResult {
+export function registerOrUpdateInstanceState(
+  input: InstanceStateRegistrationInput,
+): InstanceStateRegistrationResult {
   const handle = getDb();
 
   // create-never: a present brain DB has migrated `instances`; a writer must
@@ -394,7 +416,7 @@ export function heartbeat(input: HeartbeatInput): HeartbeatResult {
   if (!tableExists(handle, "instances")) {
     throw new BrainTableMissingError("instances");
   }
-  const columns = tableColumns(handle, "instances");
+  const columns = ensureInstancesActivityColumn(handle);
 
   // randomUUID when no id supplied (instances.ts:58). The mint flag keys on
   // whether the CALLER supplied an id, not on result.changes (a recovered id
@@ -413,7 +435,7 @@ export function heartbeat(input: HeartbeatInput): HeartbeatResult {
     "current_phase",
     "current_task",
     "status",
-    "last_heartbeat_at",
+    "last_activity_at",
   ];
   const values: unknown[] = [
     instanceId,
@@ -436,7 +458,7 @@ export function heartbeat(input: HeartbeatInput): HeartbeatResult {
     "current_phase = excluded.current_phase",
     "current_task = excluded.current_task",
     "status = 'active'",
-    "last_heartbeat_at = excluded.last_heartbeat_at",
+    "last_activity_at = excluded.last_activity_at",
   ];
 
   const optionalInputs: Array<[string, unknown]> = [
@@ -489,7 +511,7 @@ export function instanceStateUpdate(input: InstanceStateUpdateInput): boolean {
   if (!tableExists(handle, "instances")) {
     throw new BrainTableMissingError("instances");
   }
-  const columns = tableColumns(handle, "instances");
+  const columns = ensureInstancesActivityColumn(handle);
   const sets: string[] = [];
   const values: unknown[] = [];
 
@@ -511,8 +533,8 @@ export function instanceStateUpdate(input: InstanceStateUpdateInput): boolean {
     sets.push("state_updated_at = ?");
     values.push(now);
   }
-  if (columns.has("last_heartbeat_at")) {
-    sets.push("last_heartbeat_at = ?");
+  if (columns.has("last_activity_at")) {
+    sets.push("last_activity_at = ?");
     values.push(now);
   }
   if (sets.length === 0) return false;
@@ -810,12 +832,12 @@ export const BOOT_SYNC_PULL_TABLES: PullTableConfig[] = [
   {
     table: "instances",
     syncKey: ["id"],
-    timestampCol: "last_heartbeat_at",
+    timestampCol: "last_activity_at",
     strategy: "lww",
     columns: [
       "id", "machine_hostname", "machine_os", "project_slug", "project_path",
       "current_brief", "current_phase", "current_task", "status",
-      "started_at", "last_heartbeat_at", "metadata",
+      "started_at", "last_activity_at", "metadata",
       "harness", "harness_session_id", "owner_pid", "owner_started_at",
       "liveness_method", "liveness_status", "liveness_checked_at",
       "lease_expires_at", "state_updated_at",
@@ -892,6 +914,9 @@ function mergeRows(
   const lookupSql = `SELECT * FROM ${config.table} WHERE ${config.syncKey
     .map((k) => `${k} = ?`)
     .join(" AND ")}`;
+  if (config.table === "instances") {
+    ensureInstancesActivityColumn(handle);
+  }
   const lookupStmt = handle.prepare(lookupSql);
   const existingColumns = tableColumns(handle, config.table);
 

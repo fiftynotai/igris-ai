@@ -93,9 +93,9 @@ describe('migration v17 — registry asset-reference columns (FR-198)', () => {
       expect(cols).toContain('source');
       expect(cols).toContain('source_ref');
 
-      // With vec available the whole chain runs through v20 (TD-265 dropped the
+      // With vec available the whole chain runs through v21 (TD-265 dropped the
       // worker-subsystem tables after the v19 registry→catalog rename).
-      expect(getSchemaVersion(db)).toBe(20);
+      expect(getSchemaVersion(db)).toBe(21);
     },
   );
 
@@ -153,8 +153,8 @@ describe('migration v17 — registry asset-reference columns (FR-198)', () => {
       );
       // Exactly one of each — no duplicate ADD COLUMN.
       expect(cols.sort()).toEqual(['source', 'source_ref', 'when_to_use']);
-      // Chain runs through v20 once vec is available (TD-265 added v20).
-      expect(getSchemaVersion(db)).toBe(20);
+      // Chain runs through v21 once vec is available (TD-265 added v20, TD-277 added v21).
+      expect(getSchemaVersion(db)).toBe(21);
     },
   );
 

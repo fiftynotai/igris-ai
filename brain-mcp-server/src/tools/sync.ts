@@ -150,12 +150,12 @@ export const SYNC_TABLES: SyncTableConfig[] = [
   {
     table: 'instances',
     syncKey: ['id'],
-    timestampCol: 'last_heartbeat_at',
+    timestampCol: 'last_activity_at',
     strategy: 'lww',
     columns: [
       'id', 'machine_hostname', 'machine_os', 'project_slug', 'project_path',
       'current_brief', 'current_phase', 'current_task', 'status',
-      'started_at', 'last_heartbeat_at', 'metadata',
+      'started_at', 'last_activity_at', 'metadata',
       'harness', 'harness_session_id', 'owner_pid', 'owner_started_at',
       'liveness_method', 'liveness_status', 'liveness_checked_at',
       'lease_expires_at', 'state_updated_at',
