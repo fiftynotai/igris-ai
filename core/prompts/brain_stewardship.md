@@ -331,18 +331,17 @@ igris_error_dashboard({ project: "igris-ai", summary_only: true })
 > (`igris_catalog_*`), which is a different store (cataloged templates/modules,
 > the "lego" store).
 
-**Tools:** `igris_project_register`, `igris_project_list`,
-`igris_project_status`, `igris_project_update`, `igris_project_dashboard`.
+**Primary tools:** `igris_project_register`, `igris_project_list`,
+`igris_project_update`, `igris_project_dashboard`.
 
 **What's there:** all registered Igris projects — slug, path, tech stack,
 archetype, status, last session. Drives the affinity boosts in recall.
 
 ### When to call
 
-- Before a cross-project recommendation: `igris_project_status` the target to
-  verify tech stack and archetype match before suggesting reuse. (For new
-  code prefer `igris_project_dashboard({ slug })` — it returns the same
-  detail PLUS a `recent` block.)
+- Before a cross-project recommendation: `igris_project_dashboard({slug})` the
+  target to verify tech stack, archetype, and recent project context before
+  suggesting reuse (replaces the older `igris_project_status` pattern).
 - When onboarding a new project: `igris_project_register` so its briefs and
   learnings can participate in cross-project recall and promotion.
 - After registration, to flip `status` (e.g., archive a project) or correct
@@ -359,7 +358,7 @@ archetype, status, last session. Drives the affinity boosts in recall.
 ### Example invocation
 
 ```jsonc
-igris_project_status({ slug: "fifty-flutter-kit" })
+igris_project_dashboard({ slug: "fifty-flutter-kit" })
 igris_project_update({ slug: "old-prototype", status: "archived" })
 igris_project_dashboard({ archetype: "ai-agent-system", summary_only: true })
 ```
