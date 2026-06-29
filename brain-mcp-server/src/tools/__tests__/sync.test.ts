@@ -34,7 +34,7 @@ vi.mock('../../db.js', () => ({
 // ---------------------------------------------------------------------------
 
 import { getDb } from '../../db.js';
-import { handleBrainPush, SYNC_TABLES } from '../sync.js';
+import { handleBrainPush, handleSessionFilePull, SYNC_TABLES } from '../sync.js';
 
 const mockedGetDb = vi.mocked(getDb);
 
@@ -383,5 +383,62 @@ describe('Sync — FR-109 review_status / source_extractor regression', () => {
       expect(row).toHaveProperty('promoted_to_doc');
       expect(row.promoted_to_doc).toBeNull();
     });
+  });
+});
+
+describe('Sync — TD-280 handleSessionFilePull coerces BLOB content to string', () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    db.pragma('journal_mode = WAL');
+    db.exec(`
+      CREATE TABLE session_files (
+        id TEXT PRIMARY KEY,
+        project TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        content TEXT,
+        content_hash TEXT,
+        updated_at TEXT,
+        instance_id TEXT,
+        state TEXT
+      );
+    `);
+    mockedGetDb.mockReturnValue(db);
+  });
+
+  afterEach(() => {
+    db.close();
+    vi.clearAllMocks();
+  });
+
+  it('returns content as a string (never a Buffer-JSON shape) for a BLOB row', () => {
+    // Seed a row whose content is bound as a Buffer → better-sqlite3 stores a
+    // genuine BLOB (the pre-existing bad-row shape this fix tolerates on read).
+    db.prepare(
+      `INSERT INTO session_files (id, project, filename, content, content_hash, updated_at, instance_id, state)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'blob-1',
+      'igris-ai',
+      'instances/blob.md',
+      Buffer.from('**Mode:** REST MODE', 'utf8'),
+      'hash',
+      '2026-06-29 00:00:00',
+      null,
+      'rested',
+    );
+    expect(
+      (db.prepare("SELECT typeof(content) AS t FROM session_files WHERE filename = ?")
+        .get('instances/blob.md') as { t: string }).t,
+    ).toBe('blob');
+
+    const result = handleSessionFilePull({ project: 'igris-ai' });
+    const payload = JSON.parse(result.content[0].text) as {
+      files: { filename: string; content: unknown }[];
+    };
+    expect(payload.files).toHaveLength(1);
+    expect(typeof payload.files[0].content).toBe('string');
+    expect(payload.files[0].content).toBe('**Mode:** REST MODE');
   });
 });

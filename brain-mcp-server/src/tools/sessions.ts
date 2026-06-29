@@ -190,7 +190,7 @@ function handleSessionFileGet(args: SessionFileGetInput): { content: { type: str
     FROM session_files
     WHERE project = ? AND filename = ?
   `).get(args.project, args.filename) as {
-    content: string;
+    content: unknown;
     content_hash: string;
     updated_at: string;
     instance_id: string | null;
@@ -206,13 +206,19 @@ function handleSessionFileGet(args: SessionFileGetInput): { content: { type: str
     };
   }
 
+  // TD-280: coerce a BLOB-stored content (better-sqlite3 returns a Buffer) to a
+  // UTF-8 string, mirroring the CLI read boundary (getSessionFileContent).
+  const content = Buffer.isBuffer(row.content)
+    ? row.content.toString('utf8')
+    : row.content == null ? null : String(row.content);
+
   return {
     content: [{
       type: 'text',
       text: JSON.stringify({
         project: args.project,
         filename: args.filename,
-        content: row.content,
+        content,
         content_hash: row.content_hash,
         updated_at: row.updated_at,
         instance_id: row.instance_id,

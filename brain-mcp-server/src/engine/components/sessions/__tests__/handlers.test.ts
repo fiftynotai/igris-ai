@@ -204,6 +204,38 @@ describe('sessions file handlers (FR-130)', () => {
     });
   });
 
+  describe('group 3c — TD-280 _file_get coerces a BLOB content row to string', () => {
+    it('returns content as a string (never a Buffer-JSON shape) for a BLOB row', () => {
+      // Seed a row whose content is bound as a Buffer → better-sqlite3 stores a
+      // genuine BLOB, the pre-existing bad-row shape TD-279's write fix prevents
+      // going forward but that may still exist for rows written before it.
+      db.prepare(
+        `INSERT INTO session_files (id, project, filename, content, content_hash, updated_at, instance_id, state)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        'blob-row-1',
+        'igris-ai',
+        'instances/blob.md',
+        Buffer.from('**Mode:** REST MODE', 'utf8'),
+        'hash',
+        '2026-06-29 00:00:00',
+        null,
+        'rested',
+      );
+      // Confirm the seeded row really is a BLOB.
+      const seeded = db
+        .prepare("SELECT typeof(content) AS t FROM session_files WHERE filename = ?")
+        .get('instances/blob.md') as { t: string };
+      expect(seeded.t).toBe('blob');
+
+      const got = parseResult<FileGetResult>(
+        handleSessionFileGet({ project: 'igris-ai', filename: 'instances/blob.md' }),
+      );
+      expect(typeof got.content).toBe('string');
+      expect(got.content).toBe('**Mode:** REST MODE');
+    });
+  });
+
   describe('group 4 — _file_list returns all states', () => {
     it('lists files across live, rested, and archived states', () => {
       handleSessionFileUpdate({ project: 'p', filename: 'a.md', content: 'a', state: 'live' });

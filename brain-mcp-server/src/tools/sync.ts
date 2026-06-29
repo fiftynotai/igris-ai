@@ -1477,7 +1477,7 @@ function handleSessionFilePull(
     FROM session_files
     WHERE project = ?
     ORDER BY updated_at DESC
-  `).all(args.project) as { filename: string; content: string; content_hash: string; updated_at: string }[];
+  `).all(args.project) as { filename: string; content: unknown; content_hash: string; updated_at: string }[];
 
   if (rows.length === 0) {
     return {
@@ -1490,7 +1490,11 @@ function handleSessionFilePull(
 
   const files = rows.map(r => ({
     filename: r.filename,
-    content: r.content,
+    // TD-280: coerce a BLOB-stored content (Buffer) to a UTF-8 string, mirroring
+    // the CLI read boundary (getSessionFileContent).
+    content: Buffer.isBuffer(r.content)
+      ? r.content.toString('utf8')
+      : r.content == null ? null : String(r.content),
     content_hash: r.content_hash,
     updated_at: r.updated_at,
   }));
