@@ -265,8 +265,8 @@ Each agent's own CONTEXT PROTOCOL (in `core/agents/<name>.md`) names the context
 | **Brief management** | `/register`, `/archive`, `/scan` |
 | **Documentation & quality** | `/document`, `/audit`, `/ground` |
 | **Knowledge & reuse** | `/harvest`, `/promote`, `/reuse` |
-| **Collaboration & visibility** | `/team`, `/dashboard`, `/portfolio` |
-| **Utilities** | `/sync`, `/release`, `/projects`, `/ideate` |
+| **Collaboration & visibility** | `/team`, `/portfolio` |
+| **Utilities** | `/sync`, `/release`, `/ideate` |
 | **Brand & design** | `/visualize` |
 | **Migrations & harness** | `/migrate-analyze`, `/onboard-harness` |
 
@@ -283,13 +283,14 @@ still projects exactly as before.
 
 | Tier | Skills | Meaning |
 |------|--------|---------|
-| **essential** (12) | `/boot`, `/rest`, `/register`, `/hunt`, `/scan`, `/archive`, `/harvest`, `/promote`, `/reuse`, `/ground`, `/sync`, `/igris-doctor` | The core workflow and diagnostics — shipped to every default install (FR-191's filter target). |
+| **essential** (13) | `/boot`, `/rest`, `/register`, `/hunt`, `/scan`, `/archive`, `/harvest`, `/promote`, `/reuse`, `/ground`, `/sync`, `/igris-doctor`, `/portfolio` | The core workflow, diagnostics, and cross-project command center — shipped to every default install (FR-191's filter target). |
 | **opt-in** (7) | `/team`, `/audit`, `/document`, `/release`, `/ideate`, `/migrate-analyze`, `/visualize` | Useful but not core — distributed opt-in (FR-206's channel target); FR-205 only classifies them, does NOT remove them from projection. |
 | **personal** (1) | `fifty-kit` | Machine/operator-personal; moved out of `core/skills/` to the FR-155 project-scoped personal overlay (no longer in consumer projection). |
-| **pending** (4) | `/dashboard`, `/portfolio`, `/projects` (FR-207), `/onboard-harness` (TD-266) | Tiering DEFERRED to the owning briefs — left untagged by FR-205. |
+| **pending** (1) | `/onboard-harness` (TD-266) | Tiering DEFERRED to the owning brief — left untagged by FR-205. |
 
-`/ui-design` was DELETED by FR-205 (no consumers). `fifty-kit` was removed from
-the consumer skill surface and now lives only in the operator's personal overlay.
+`/ui-design` was DELETED by FR-205 (no consumers). `/dashboard` and `/projects`
+were retired by FR-207 into `/portfolio`. `fifty-kit` was removed from the
+consumer skill surface and now lives only in the operator's personal overlay.
 
 ### 7.3 Orchestrator-delegates principle
 

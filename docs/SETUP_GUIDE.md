@@ -38,7 +38,7 @@ igris install .
 - Registers the bundled `igris-brain` MCP server into the supported harness configs: Claude Code → `~/.claude.json`, OpenCode → `~/.config/opencode/opencode.json`, Codex → `~/.codex/config.toml`, Gemini CLI → `~/.gemini/settings.json`, and Antigravity → `~/.gemini/config/mcp_config.json` (Antigravity rides the Gemini config family). First-class harnesses are Claude Code, OpenCode, and Antigravity; Codex and Gemini CLI are supported bridges.
 - Notes Cursor as an onboarding target, not a shipped surface.
 - **Projects every surface GLOBALLY at `igris init`** (FR-212c/d): skills via the pinned `skills` CLI into the universal store (`~/.claude/skills` + `~/.agents/skills`); agents into the global harness agent dirs; the canonical Igris hooks block merged ONCE into the GLOBAL `~/.claude/settings.json`
-- Registers the project in the brain so it shows up in `/projects` and cross-project queries — this registration is what de-no-ops the global hooks for the project (the `_gate.sh` registration gate)
+- Registers the project in the brain so it shows up in `/portfolio` and cross-project queries — this registration is what de-no-ops the global hooks for the project (the `_gate.sh` registration gate)
 
 > **`igris install <path>` is REGISTER-ONLY (FR-212d):** it writes NO per-project
 > `.claude/` symlink layer, NO per-project `settings.json`, and NO `.igris_version`
@@ -318,9 +318,7 @@ This archives the current session to `~/.igris/projects/{project}/session/archiv
 | `/ideate` | Feature brainstorming |
 | `/audit` | Codebase audit |
 | `/team` | Parallel execution |
-| `/projects` | List brain-registered projects |
-| `/portfolio` | Cross-project dashboard |
-| `/dashboard` | Brief and session tracker |
+| `/portfolio` | Cross-project command center: in-flight work, blockers, projects, and brain health |
 
 ---
 

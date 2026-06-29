@@ -1,62 +1,172 @@
 ---
 name: portfolio
-description: Cross-project dashboard with analytics and brain health
+tier: essential
+description: Cross-project command center for in-flight work, blockers, project roster, and brain health
 disable-model-invocation: false
 allowed-tools:
   - Bash
   - Read
   - Grep
   - Glob
+  - mcp__igris-brain__igris_session_recall
+  - mcp__igris-brain__igris_brief_dashboard
+  - mcp__igris-brain__igris_instance_list
 triggers:
   - "portfolio"
   - "cross-project"
   - "brain status"
+  - "what needs me"
+  - "what is in flight"
+  - "list projects"
+  - "show projects"
+  - "managed projects"
 ---
 
-# PORTFOLIO - Cross-Project Dashboard
+# PORTFOLIO - Cross-Project Command Center
 
-Display a comprehensive dashboard of all managed projects with analytics.
+Answer the operator's real cross-project question:
+
+> Across all projects and machines, what is in flight, what is blocked, what needs me, and is the brain healthy?
+
+`/portfolio` is the single cross-project OS surface. It replaces the retired `/dashboard` and `/projects` skills by folding their useful brief/session/project views into one coherent command.
 
 ## Usage
 
-```
+```bash
 /portfolio
+/portfolio active
+/portfolio archived
 ```
+
+## Arguments
+
+`$ARGUMENTS` is optional:
+
+- Empty: show the full cross-project command center.
+- `active`: limit the project roster to active projects.
+- `archived`: limit the project roster to archived projects.
 
 ## Execution
 
 ### 1. Check Brain Exists
 
-Check `~/.igris/memory/knowledge.db`. Error if not found.
+Check `~/.igris/memory/knowledge.db`. If it is missing, display:
 
-### 2. Query Brain Health
+```text
+Brain not installed. Run: igris init
+```
+
+Then stop.
+
+### 2. Brain Health
+
+Run:
 
 ```bash
 sqlite3 ~/.igris/memory/knowledge.db "PRAGMA integrity_check;"
 sqlite3 ~/.igris/memory/knowledge.db "PRAGMA journal_mode;"
 ```
 
-### 3. Gather Statistics
-
-Run these queries against the brain DB:
+Also capture DB size:
 
 ```bash
-# Project count
+du -k ~/.igris/memory/knowledge.db
+```
+
+### 3. Work In Flight
+
+If the `igris-brain` MCP server is available:
+
+- Call `igris_brief_dashboard` with no filters.
+- Call `igris_instance_list` with `status='all'` when available.
+
+If MCP is not available, use sqlite3 fallback:
+
+```bash
+sqlite3 ~/.igris/memory/knowledge.db "
+  PRAGMA trusted_schema=ON;
+  SELECT bs.project, bs.brief_id, bs.brief_type, bs.title, bs.status,
+         bs.priority, bs.effort, bs.phase, bs.updated_at, bs.claimed_by,
+         p.name as project_name
+  FROM brief_status bs
+  LEFT JOIN projects p ON p.slug = bs.project
+  WHERE bs.status IN ('In Progress', 'Blocked')
+  ORDER BY
+    CASE bs.status WHEN 'Blocked' THEN 0 WHEN 'In Progress' THEN 1 ELSE 2 END,
+    bs.updated_at DESC;
+"
+```
+
+For active instances:
+
+```bash
+sqlite3 ~/.igris/memory/knowledge.db "
+  PRAGMA trusted_schema=ON;
+  SELECT id, machine_hostname, project_slug, current_brief, current_phase,
+         current_task, status, lease_expires_at, state_updated_at,
+         last_heartbeat_at
+  FROM instances
+  ORDER BY COALESCE(state_updated_at, last_heartbeat_at) DESC;
+"
+```
+
+Treat liveness as advisory:
+
+- Same-machine liveness belongs to `igris instance list`, which classifies `alive`, `dead`, and `dead_pid_reused` using PID/start-time metadata.
+- Remote rows are coordination state, not process proof; show lease/claim state when present.
+- Do not infer liveness from heartbeat/activity age.
+
+### 4. Recent Sessions
+
+If the `igris-brain` MCP server is available:
+
+- Call `igris_session_recall` with `days=7`.
+
+If MCP is not available, use sqlite3 fallback:
+
+```bash
+sqlite3 ~/.igris/memory/knowledge.db "
+  PRAGMA trusted_schema=ON;
+  SELECT s.project, s.brief_id, s.phase, s.mode, s.summary,
+         s.started_at, s.ended_at, p.name as project_name
+  FROM sessions s
+  LEFT JOIN projects p ON p.slug = s.project
+  WHERE s.started_at >= datetime('now', '-7 days')
+  ORDER BY s.started_at DESC;
+"
+```
+
+### 5. Project Roster
+
+Apply the optional status filter from `$ARGUMENTS` only to this section.
+
+```bash
+sqlite3 ~/.igris/memory/knowledge.db "
+  PRAGMA trusted_schema=ON;
+  SELECT slug, name, path, status, archetype, tech_stack,
+         registered_at, last_session_at
+  FROM projects
+  /* optional: WHERE status = 'active' or status = 'archived' */
+  ORDER BY last_session_at DESC NULLS LAST, slug ASC;
+"
+```
+
+### 6. Brain Statistics
+
+Run the statistics that are cheap and useful for a command-center view:
+
+```bash
 sqlite3 ~/.igris/memory/knowledge.db "SELECT COUNT(*) FROM projects WHERE status='active';"
-
-# Total learnings
+sqlite3 ~/.igris/memory/knowledge.db "SELECT COUNT(*) FROM projects WHERE status='archived';"
 sqlite3 ~/.igris/memory/knowledge.db "SELECT COUNT(*) FROM learnings;"
-
-# Global learnings
 sqlite3 ~/.igris/memory/knowledge.db "SELECT COUNT(*) FROM learnings WHERE scope='global';"
-
-# Total errors cataloged
 sqlite3 ~/.igris/memory/knowledge.db "SELECT COUNT(*) FROM errors;"
+sqlite3 ~/.igris/memory/knowledge.db "SELECT COUNT(*) FROM errors WHERE COALESCE(solution, '') != '';"
+```
 
-# Errors with solutions
-sqlite3 ~/.igris/memory/knowledge.db "SELECT COUNT(*) FROM errors WHERE solution != '';"
+Agent metrics, if the table exists:
 
-# Agent metrics summary
+```bash
 sqlite3 ~/.igris/memory/knowledge.db "
   PRAGMA trusted_schema=ON;
   SELECT agent,
@@ -65,92 +175,55 @@ sqlite3 ~/.igris/memory/knowledge.db "
          ROUND(AVG(duration_ms), 0) as avg_ms
   FROM agent_metrics
   GROUP BY agent
-  ORDER BY total DESC;
-"
-
-# Recent activity (last 7 days)
-sqlite3 ~/.igris/memory/knowledge.db "
-  SELECT project, COUNT(*) as actions
-  FROM agent_metrics
-  WHERE recorded_at >= datetime('now', '-7 days')
-  GROUP BY project
-  ORDER BY actions DESC;
-"
-
-# Top learnings (most accessed)
-sqlite3 ~/.igris/memory/knowledge.db "
-  PRAGMA trusted_schema=ON;
-  SELECT title, project, access_count
-  FROM learnings
-  WHERE access_count > 0
-  ORDER BY access_count DESC
-  LIMIT 5;
+  ORDER BY total DESC
+  LIMIT 8;
 "
 ```
 
-### 3.5. Query Active Briefs
-
-If `igris-brain` MCP server is available:
-- Call `igris_brief_dashboard` with no filters
-- Include the active brief summary in the dashboard output
-
-If MCP is not available, use sqlite3 fallback:
-```bash
-sqlite3 ~/.igris/memory/knowledge.db "
-  PRAGMA trusted_schema=ON;
-  SELECT project, brief_id, title, status, priority, phase, updated_at
-  FROM brief_status
-  WHERE status IN ('In Progress', 'Ready', 'Blocked')
-  ORDER BY updated_at DESC;
-"
-```
-
-### 4. Display Dashboard
+### 7. Display
 
 Format as:
 
-```
-## Igris Brain -- Portfolio Dashboard
+```markdown
+## Igris Portfolio
+
+### Needs Me
+1. [Blocked or claimed work that needs operator decision]
+2. [Remote/unknown leases nearing expiry]
+3. [Projects with no recent session, if relevant]
+
+### In Flight
+| Project | Brief | Title | Status | Priority | Phase | Owner | Updated |
+|---------|-------|-------|--------|----------|-------|-------|---------|
+
+### Active Instances
+| Instance | Machine | Project | Brief | Phase | Task | Liveness/Lease |
+|----------|---------|---------|-------|-------|------|----------------|
+
+### Recent Sessions (7 days)
+| Date | Project | Brief | Phase | Summary |
+|------|---------|-------|-------|---------|
 
 ### Brain Health
-- Status: OK (integrity check passed)
-- Mode: WAL (concurrent access enabled)
-- DB Size: X KB
+- Integrity: OK / issue
+- Journal mode: WAL / other
+- DB size: X KB
+- Knowledge: X learnings (Y global), X errors (Y solved)
 
 ### Projects
-- Active: X projects
-- Archived: Y projects
-
-### Knowledge Base
-- Learnings: X total (Y global, Z local)
-- Errors cataloged: X (Y with solutions)
-- Patterns: X in library
-
-### Agent Performance
-| Agent | Actions | Success Rate | Avg Duration |
-|-------|---------|-------------|-------------|
-| forger | 45 | 92% | 5200ms |
-| sentinel | 38 | 100% | 3100ms |
-
-### Recent Activity (7 days)
-| Project | Actions |
-|---------|---------|
-| igris-ai | 12 |
-| my-app | 5 |
-
-### Most Accessed Learnings
-1. "SQLite WAL Mode" (igris-ai) -- accessed 8 times
-2. "Error Fingerprinting" (igris-ai) -- accessed 5 times
-
-### Active Briefs (across all projects)
-| Project | Brief | Title | Status | Priority | Phase | Updated |
-|---------|-------|-------|--------|----------|-------|---------|
-
-_Use `/dashboard` for a detailed brief-focused view._
+| Project | Status | Archetype | Stack | Last Session | Path |
+|---------|--------|-----------|-------|--------------|------|
 
 ### Recommendations
-Based on the data, suggest:
-1. Projects with no recent activity that may need attention
-2. Agents with low success rates that may need investigation
-3. Learnings that could be promoted to global scope
+1. [Start or unblock the highest-priority blocked item]
+2. [Archive or revisit stale projects]
+3. [Promote recurring learnings or fix recurring errors]
 ```
+
+## Output Rules
+
+- Keep this command cross-project. For a single-project status snapshot, use `/scan`.
+- Make "Needs Me" the top section even when it is empty; empty means the operator can trust there is no obvious cross-project action.
+- Prefer concise tables over long prose.
+- Do not show huge raw samples from dashboards; use summary counts and the top few rows.
+- Treat heartbeat/activity timestamps as last activity only, never as liveness proof.
