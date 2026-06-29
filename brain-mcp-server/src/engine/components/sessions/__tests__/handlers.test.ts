@@ -184,6 +184,26 @@ describe('sessions file handlers (FR-130)', () => {
     });
   });
 
+  describe('group 3b — TD-279 Buffer content coerced to TEXT', () => {
+    it('a Buffer content is stored as TEXT (typeof=text), not a BLOB', () => {
+      handleSessionFileUpdate({
+        project: 'igris-ai',
+        filename: 'CURRENT_SESSION.md',
+        // A caller handing a Buffer must never land a BLOB in content — that
+        // is the bad-row shape that crashes the CLI gather parse on read.
+        content: Buffer.from('body from buffer', 'utf8') as unknown as string,
+      });
+
+      const row = db
+        .prepare(
+          "SELECT typeof(content) AS t, content FROM session_files WHERE project = ? AND filename = ?",
+        )
+        .get('igris-ai', 'CURRENT_SESSION.md') as { t: string; content: string };
+      expect(row.t).toBe('text');
+      expect(row.content).toBe('body from buffer');
+    });
+  });
+
   describe('group 4 — _file_list returns all states', () => {
     it('lists files across live, rested, and archived states', () => {
       handleSessionFileUpdate({ project: 'p', filename: 'a.md', content: 'a', state: 'live' });

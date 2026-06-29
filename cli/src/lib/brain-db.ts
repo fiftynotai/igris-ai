@@ -264,9 +264,14 @@ export function getSessionFileContent(
       WHERE project = ? AND filename = ?
     `,
     )
-    .get(slug, filename) as { content: string } | undefined;
+    .get(slug, filename) as { content: unknown } | undefined;
 
-  return row ? row.content : null;
+  // TD-279: session_files.content can be a SQLite BLOB (better-sqlite3 returns
+  // a Buffer), which has no `.match` and crashes the gather parse helpers.
+  // Coerce at the read boundary so every caller sees the declared string|null.
+  if (!row) return null;
+  const c = row.content;
+  return Buffer.isBuffer(c) ? c.toString("utf8") : c == null ? null : String(c);
 }
 
 /** Filter args for {@link listInstances}. */
@@ -594,8 +599,14 @@ export function sessionFileUpsert(input: SessionFileUpsertInput): void {
     throw new BrainTableMissingError("session_files");
   }
 
+  // TD-279: coerce content to a UTF-8 string before hashing/binding so a
+  // Buffer input never lands as a BLOB in session_files.content.
+  const contentStr = Buffer.isBuffer(input.content)
+    ? input.content.toString("utf8")
+    : String(input.content);
+
   // Verbatim from handleSessionFileUpdate:245-261.
-  const contentHash = createHash("sha256").update(input.content).digest("hex");
+  const contentHash = createHash("sha256").update(contentStr).digest("hex");
   const id = randomUUID();
   const now = new Date().toISOString().replace("T", " ").substring(0, 19);
   const instanceId = input.instance_id ?? null;
@@ -621,7 +632,7 @@ export function sessionFileUpsert(input: SessionFileUpsertInput): void {
       id,
       input.project,
       input.filename,
-      input.content,
+      contentStr,
       contentHash,
       now,
       instanceId,

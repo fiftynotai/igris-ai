@@ -151,7 +151,10 @@ function classifyRow(
  * skill's read of the file's Status section — purely a display field.
  */
 function parseMode(content: string): string | null {
-  const m = content.match(/^\*\*Mode:\*\*\s*(.+?)\s*$/m);
+  // TD-279: belt-and-suspenders — coerce so a non-string caller can never
+  // hit `.match is not a function` (the read boundary already coerces).
+  const text = typeof content === "string" ? content : String(content ?? "");
+  const m = text.match(/^\*\*Mode:\*\*\s*(.+?)\s*$/m);
   return m ? m[1] : null;
 }
 
@@ -162,11 +165,14 @@ function parseMode(content: string): string | null {
  * null so the skill renders a stable shape.
  */
 function parseField(content: string, label: string): string {
+  // TD-279: belt-and-suspenders — coerce so a non-string caller can never
+  // hit `.match is not a function` (the read boundary already coerces).
+  const text = typeof content === "string" ? content : String(content ?? "");
   const re = new RegExp(
     `^\\*\\*${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:\\*\\*\\s*(.+?)\\s*$`,
     "m",
   );
-  const m = content.match(re);
+  const m = text.match(re);
   return m ? m[1] : "";
 }
 

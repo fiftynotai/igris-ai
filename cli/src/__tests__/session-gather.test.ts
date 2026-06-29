@@ -499,6 +499,44 @@ describe("session gather — classification matrix (SKILL.md §2 G2)", () => {
   });
 });
 
+describe("session gather — TD-279 BLOB content regression", () => {
+  it("rested file whose content is a SQLite BLOB → no crash, handoff parses", async () => {
+    const seed = openSeed();
+    // Bind a Buffer directly so better-sqlite3 stores content as a BLOB —
+    // the exact bad-row shape that made gather throw `content.match is not a
+    // function` before the read-boundary coercion (TD-279).
+    const blob = Buffer.from(
+      "**Mode:** REST MODE\n**Resume Point:** finish parser\n**Next Steps:** run tests",
+      "utf8",
+    );
+    seed
+      .prepare(
+        `INSERT INTO session_files (id, project, filename, content, content_hash, updated_at, instance_id, state)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "blob",
+        "demo",
+        "instances/i-blob.md",
+        blob, // BLOB binding
+        "hash-blob",
+        "2026-06-05 10:00:00",
+        "i-gone", // no matching active instance → GENUINE HANDOFF
+        "rested",
+      );
+    seed.close();
+
+    const d = await runGather();
+    expect(d.fresh_start).toBe(false);
+    expect(d.degraded).toBe(false);
+    expect(d.handoff).not.toBeNull();
+    expect(d.handoff?.filename).toBe("instances/i-blob.md");
+    expect(d.handoff?.mode).toBe("REST MODE");
+    expect(d.handoff?.resume_point).toBe("finish parser");
+    expect(d.handoff?.next_steps).toBe("run tests");
+  });
+});
+
 describe("session — unknown action", () => {
   it("returns exit 2 for an unknown action", async () => {
     const { runSession } = await getSession();

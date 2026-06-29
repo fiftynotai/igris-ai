@@ -320,6 +320,32 @@ describe("brain-db — getSessionFileContent", () => {
       "RESUME HERE",
     );
   });
+
+  it("TD-279: returns a string (never a Buffer) for a BLOB-content row", async () => {
+    seedBrain((db) => {
+      db.exec(SESSION_FILES_DDL);
+      // Bind a Buffer so better-sqlite3 stores content as a BLOB — the bad-row
+      // shape the read-boundary coercion must absorb.
+      db.prepare(
+        `INSERT INTO session_files (id, project, filename, content, content_hash, updated_at, instance_id, state)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        "blob",
+        "demo",
+        "instances/blob.md",
+        Buffer.from("RESUME FROM BLOB", "utf8"),
+        "hash-blob",
+        "2026-06-05 00:00:00",
+        null,
+        "rested",
+      );
+    });
+    const m = await getModule();
+    const out = m.getSessionFileContent("demo", "instances/blob.md");
+    expect(typeof out).toBe("string");
+    expect(Buffer.isBuffer(out)).toBe(false);
+    expect(out).toBe("RESUME FROM BLOB");
+  });
 });
 
 describe("brain-db — listInstances", () => {
@@ -647,6 +673,27 @@ describe("brain-db — sessionFileUpsert (WRITE: COALESCE non-destructive)", () 
     expect(row?.state).toBe("live"); // COALESCE(?, 'live') on the INSERT branch
     expect(row?.instance_id).toBeNull();
     expect(row?.content).toBe("hello");
+  });
+
+  it("TD-279: a Buffer content is coerced and stored as TEXT, not a BLOB", async () => {
+    seedBrain((db) => db.exec(SESSION_FILES_DDL));
+    const m = await getModule();
+    m.sessionFileUpsert({
+      project: "demo",
+      filename: "instances/buf.md",
+      // A caller handing a Buffer must never land a BLOB in content.
+      content: Buffer.from("body from buffer", "utf8") as unknown as string,
+    });
+    m.closeDb();
+    const check = new Database(join(tmpRoot, "memory", "knowledge.db"));
+    const row = check
+      .prepare(
+        "SELECT typeof(content) AS t, content FROM session_files WHERE project = ? AND filename = ?",
+      )
+      .get("demo", "instances/buf.md") as { t: string; content: string };
+    check.close();
+    expect(row.t).toBe("text");
+    expect(row.content).toBe("body from buffer");
   });
 
   it("an OMITTED instance_id does NOT null an existing row's instance_id (#230 COALESCE)", async () => {

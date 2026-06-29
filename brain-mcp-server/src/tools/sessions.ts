@@ -242,7 +242,13 @@ function handleSessionFileUpdate(args: SessionFileUpdateInput): { content: { typ
   }
 
   const db = getDb();
-  const contentHash = createHash('sha256').update(args.content).digest('hex');
+  // TD-279: coerce content to a UTF-8 string before hashing/binding so a
+  // Buffer input never lands as a BLOB in session_files.content (which would
+  // crash the CLI gather parse on read). Mirrors cli sessionFileUpsert.
+  const contentStr = Buffer.isBuffer(args.content)
+    ? args.content.toString('utf8')
+    : String(args.content);
+  const contentHash = createHash('sha256').update(contentStr).digest('hex');
   const id = randomUUID();
   const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
 
@@ -269,7 +275,7 @@ function handleSessionFileUpdate(args: SessionFileUpdateInput): { content: { typ
       updated_at = excluded.updated_at,
       instance_id = COALESCE(excluded.instance_id, session_files.instance_id),
       state = COALESCE(?, session_files.state)
-  `).run(id, args.project, args.filename, args.content, contentHash, now, instanceId, stateArg, stateArg);
+  `).run(id, args.project, args.filename, contentStr, contentHash, now, instanceId, stateArg, stateArg);
 
   return {
     content: [{
@@ -280,7 +286,7 @@ function handleSessionFileUpdate(args: SessionFileUpdateInput): { content: { typ
         `Project: ${args.project}`,
         `Filename: ${args.filename}`,
         `Content hash: ${contentHash.substring(0, 12)}...`,
-        `Size: ${args.content.length} chars`,
+        `Size: ${contentStr.length} chars`,
       ].join('\n'),
     }],
   };
