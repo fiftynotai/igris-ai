@@ -18,19 +18,19 @@
     },
 
     "harnesses": {
-      "description": "TD-244 / FR-202 M4: per-harness `delegation_model` — the applicability predicate for the harness-specific CONTEXT LAYER (core/os/harness-specific/<harness>.md), NOT a projected surface. Maps a harness `type` to its `delegation_model`: `native-static` (the harness loads Igris agents statically → a skill delegates via `subagent_type:<agent>` directly, no harness-specific file needed) or `dynamic-define` (the harness defines subagents at runtime → it has a harness-specific file pointing at the shared delegation recipe, which the model reads at Boot for the Detect-resolved harness). A harness absent from this map defaults to `native-static`. Additive — still v1, no version bump. The recipe was re-homed off the identity region (retired) into the harness-specific layer; this map survives only to select which harness-specific file applies.",
+      "description": "TD-244 / FR-202 M4: per-harness `delegation_model` — the applicability predicate for the harness-specific CONTEXT LAYER (core/os/harness-specific/<harness>.md), NOT a projected surface. Maps a harness `type` to its `delegation_model`: `native-static` (the harness loads Igris agents statically → a skill delegates via `subagent_type:<agent>` directly, no harness-specific file needed), `dynamic-define` (the harness defines subagents at runtime → it has a harness-specific file pointing at the shared delegation recipe, which the model reads at Boot for the Detect-resolved harness), or `inline` (FR-192: no subagent spawning at all → a harness-specific file points at the shared INLINE recipe so the single agent adopts the target role's prompt + tool scope inline). A harness absent from this map defaults to `native-static`. Additive — still v1, no version bump. The recipe was re-homed off the identity region (retired) into the harness-specific layer; this map survives only to select which harness-specific file applies.",
       "type": "object",
       "additionalProperties": false,
-      "propertyNames": { "enum": ["claude", "codex", "gemini", "opencode", "antigravity"] },
+      "propertyNames": { "enum": ["claude", "codex", "gemini", "opencode", "antigravity", "cursor"] },
       "patternProperties": {
-        "^(claude|codex|gemini|opencode|antigravity)$": {
+        "^(claude|codex|gemini|opencode|antigravity|cursor)$": {
           "type": "object",
           "additionalProperties": false,
           "description": "FR-217: the canonical harness descriptor. `delegation_model` is the original FR-202 M4 field; the remaining fields (`agent_id`/`agents`/`mcp`/`grant`/`hooks`/`harness_specific_file`) are the additive FR-217 extension consolidating the per-harness wiring facts (agent ids, MCP config path/shape, grant grammar, hook capability) that consumers previously hardcoded. All are OPTIONAL at the harness level (per-surface participation is derived from block PRESENCE) so a `delegation_model`-only block still validates (back-compat). Still v1.",
           "properties": {
             "delegation_model": {
-              "enum": ["native-static", "dynamic-define"],
-              "description": "native-static: statically-loaded Igris agents; the skill delegates abstractly and the harness resolves to `subagent_type:<agent>` (no harness-specific file). dynamic-define: runtime subagent definition; the harness reads its harness-specific file (core/os/harness-specific/<harness>.md → the shared delegation recipe) at Boot, so the orchestrator is taught the read→define_subagent→invoke recipe once per session with zero per-skill branching."
+              "enum": ["native-static", "dynamic-define", "inline"],
+              "description": "native-static: statically-loaded Igris agents; the skill delegates abstractly and the harness resolves to `subagent_type:<agent>` (no harness-specific file). dynamic-define: runtime subagent definition; the harness reads its harness-specific file (core/os/harness-specific/<harness>.md → the shared delegation recipe) at Boot, so the orchestrator is taught the read→define_subagent→invoke recipe once per session with zero per-skill branching. inline (FR-192): the harness has NO subagent spawning at all (e.g. Cursor's cursor-agent — a single agent, no static-agent files AND no runtime define_subagent); it reads its harness-specific file → the shared INLINE delegation recipe (_inline-delegation-recipe.md), so the single agent is taught to ADOPT the target agent's full prompt + behavior + tool/scope constraints inline for the task span, then resume."
             },
             "agent_id": {
               "type": "string",
@@ -43,8 +43,8 @@
               "description": "FR-217: the agents-surface participation block. PRESENCE means this harness participates in the agents surface (antigravity is dynamic-define → no block → not a participant). Drives agentTargetTypes() and (via projection) agentTargetRowHarnesses().",
               "properties": {
                 "target_type": {
-                  "enum": ["claude", "codex", "gemini", "opencode", "antigravity"],
-                  "description": "The agent target `type` value (a harness id)."
+                  "enum": ["claude", "codex", "gemini", "opencode", "antigravity", "cursor"],
+                  "description": "The agent target `type` value (a harness id). Lists every harness id for completeness; harnesses with no static-agent surface (antigravity = dynamic-define, cursor = inline) simply omit the `agents` block entirely."
                 },
                 "projection": {
                   "enum": ["symlink", "target-row"],
@@ -126,7 +126,7 @@
             },
             "harness_specific_file": {
               "type": "string",
-              "description": "FR-202 M4 / FR-217: repo-relative path to the harness-specific OS context layer (core/os/harness-specific/<harness>.md), loaded at Boot for a dynamic-define harness. Present only for gemini + antigravity."
+              "description": "FR-202 M4 / FR-217: repo-relative path to the harness-specific OS context layer (core/os/harness-specific/<harness>.md), loaded at Boot for a dynamic-define or inline harness. Present for gemini + antigravity (dynamic-define) and cursor (inline)."
             }
           }
         }
@@ -308,7 +308,7 @@
             "additionalProperties": false,
             "required": ["type", "method"],
             "properties": {
-              "type":    { "enum": ["claude", "codex", "gemini", "opencode", "antigravity"] },
+              "type":    { "enum": ["claude", "codex", "gemini", "opencode", "antigravity", "cursor"] },
               "method":  { "const": "merge" },
               "enabled": { "type": "boolean", "default": true }
             }

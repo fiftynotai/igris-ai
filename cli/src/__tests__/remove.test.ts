@@ -57,11 +57,32 @@ function captureStreams(): { out: string[]; err: string[]; restore: () => void }
 }
 
 let cap: ReturnType<typeof captureStreams>;
+// TD-282 (vitest analog; FR-192 incident): some round-trip / dispatcher arms below
+// invoke the REAL `skills` / `add-mcp` delegate, which resolves the GLOBAL skill +
+// MCP store via $HOME (NOT IGRIS_BRAIN_DIR — that only isolates the brain). Without
+// redirecting HOME those ops hit the developer's REAL ~/.claude/skills +
+// ~/.agents/skills and can WIPE them (this file was the sole wiper found bisecting
+// the suite). Sandbox HOME for EVERY test → the spawned delegate (which inherits
+// process.env.HOME) lands in a throwaway tmp dir, never the operator's real store.
+let savedHome: string | undefined;
+let homeSandbox: string | undefined;
 beforeEach(() => {
   cap = captureStreams();
+  savedHome = process.env.HOME;
+  homeSandbox = mkdtempSync(join(tmpdir(), "igris-remove-home-"));
+  process.env.HOME = homeSandbox;
 });
 afterEach(() => {
   cap.restore();
+  if (savedHome !== undefined) {
+    process.env.HOME = savedHome;
+  } else {
+    delete process.env.HOME;
+  }
+  if (homeSandbox !== undefined) {
+    rmSync(homeSandbox, { recursive: true, force: true });
+    homeSandbox = undefined;
+  }
 });
 
 // The ABSENT-verify check fake: drift-clean (the surface is GONE → success).

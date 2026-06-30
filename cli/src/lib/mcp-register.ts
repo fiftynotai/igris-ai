@@ -1050,7 +1050,7 @@ export function unmergeTomlConfig(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// FR-169: register the bundled igris-brain MCP into ALL 4 harnesses at init.
+// FR-169: register the bundled igris-brain MCP into all Igris harnesses at init.
 //
 // igris-brain is a CORE OS default (L-504) — every install gets it in every
 // supported harness, not a personal add. This is Option A (direct in-process
@@ -1073,7 +1073,7 @@ function brainCanonical(mcpEntryPath: string): McpShapeCanonical {
 
 /** Per-harness registration outcome for the multi-harness wire-up. */
 export interface BrainHarnessResult {
-  harness: McpHarness; // "claude" | "gemini" | "codex" | "opencode" | "antigravity"
+  harness: McpHarness; // "claude" | "gemini" | "codex" | "opencode" | "antigravity" | "cursor"
   result: McpRegisterResult; // reuses the existing union verbatim
   /** Reserved: true when a harness was not targeted / skipped by choice. */
   skipped?: boolean;

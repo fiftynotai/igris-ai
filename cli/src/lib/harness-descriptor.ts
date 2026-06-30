@@ -48,7 +48,8 @@ export type HarnessId =
   | "gemini"
   | "codex"
   | "opencode"
-  | "antigravity";
+  | "antigravity"
+  | "cursor";
 
 export type McpFormat = "json" | "toml";
 /** buildHarnessMcpEntry emitter shapes. antigravity rides `gemini` (no own value). */
@@ -56,7 +57,7 @@ export type EntryShape = "claude" | "gemini" | "codex" | "opencode";
 export type AgentProjection = "symlink" | "target-row";
 export type GrantKind = "json-array" | "toml-folder" | "json-folder" | "covered";
 export type HookMethod = "settings-merge" | "plugin" | "config-merge";
-export type DelegationModel = "native-static" | "dynamic-define";
+export type DelegationModel = "native-static" | "dynamic-define" | "inline";
 
 /** Resolved (tilde-expanded) MCP wiring facts for one harness. */
 export interface McpFacts {
@@ -141,6 +142,7 @@ const VALID_HARNESS_IDS: readonly HarnessId[] = [
   "codex",
   "opencode",
   "antigravity",
+  "cursor",
 ];
 
 class HarnessDescriptorError extends Error {
@@ -201,9 +203,12 @@ function asString(v: unknown, where: string): string {
 }
 
 function buildEntry(id: HarnessId, raw: Record<string, unknown>): HarnessEntry {
+  // FR-192: `inline` joins {native-static, dynamic-define}. An unknown/absent
+  // value still defaults to native-static (the "absent → native-static" contract
+  // the _common.sh structural fallback documents).
   const dm = raw.delegation_model;
   const delegationModel: DelegationModel =
-    dm === "dynamic-define" ? "dynamic-define" : "native-static";
+    dm === "dynamic-define" || dm === "inline" ? dm : "native-static";
 
   const entry: HarnessEntry = {
     id,

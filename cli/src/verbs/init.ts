@@ -662,7 +662,7 @@ export async function runInit(opts: InitOptions): Promise<number> {
   // re-downloading. No separate post-swap step is needed (and the staging dir
   // is gone by here anyway).
 
-  // --- 13. Register igris-brain MCP in all 4 harness configs (FR-169) ----
+  // --- 13. Register igris-brain MCP in all Igris harness configs (FR-169) ----
   // `npm install -g igris-ai` ships a bundled brain-mcp-server; a harness
   // only serves its tools once the `igris-brain` entry exists in that
   // harness's config. igris-brain is a CORE OS default (L-504), so init wires

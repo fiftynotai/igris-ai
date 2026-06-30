@@ -40,7 +40,7 @@ igris detect
 The digest is the lifecycle handoff from the environment into Boot:
 
 ```jsonc
-{ "harness": "claude|codex|gemini|opencode|antigravity|unknown",
+{ "harness": "claude|codex|gemini|opencode|antigravity|cursor|unknown",
   "project_slug": "igris-ai",
   "project_path": "/abs/project/path",
   "brain_root": "~/.igris",

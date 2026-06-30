@@ -162,14 +162,15 @@ describe("cli-detect — applyBridgeOverride", () => {
 });
 
 describe("cli-detect — utility surface", () => {
-  it("knownCLITargets returns all 5 catalog entries", () => {
+  it("knownCLITargets returns all 6 catalog entries", () => {
     const known = knownCLITargets();
-    expect(known.length).toBe(5);
+    expect(known.length).toBe(6);
     expect(known).toContain("claude");
     expect(known).toContain("codex");
     expect(known).toContain("gemini");
     expect(known).toContain("opencode");
     expect(known).toContain("antigravity");
+    expect(known).toContain("cursor");
   });
 });
 

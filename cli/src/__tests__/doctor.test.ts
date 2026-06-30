@@ -156,7 +156,7 @@ function stageOptOutConfig(): void {
 }
 
 /**
- * TD-220: `runInstall` registers the igris-brain MCP across all 4 harnesses,
+ * TD-220: `runInstall` registers the igris-brain MCP across all Igris harnesses,
  * which the FR-162/163 mergers write via tmp+renameSync at the umask-default
  * mode (644) — Risk R1. A no-`--fix` doctor read pass would then flag those
  * harness configs as `secret-perms` (harness-owned, loose). Tests that install
@@ -463,14 +463,14 @@ describe("doctor — mcp-unregistered drift class (TD-168)", () => {
     expect(drift.some((r) => r.driftClass === "mcp-unregistered")).toBe(true);
   });
 
-  it("--fix registers the igris-brain MCP into all 4 harnesses (FR-169)", async () => {
+  it("--fix registers the igris-brain MCP into all Igris harnesses (FR-169)", async () => {
     const { runDoctor } = await import("../verbs/doctor.js");
     const fs = require("node:fs");
     // Drop ~/.claude.json so mcp-unregistered fires. runInstall (via no
     // project) is not involved — the fix arm calls
     // registerBrainAcrossHarnesses() directly, which writes into the sandboxed
     // HOME pointing at the real bundled path (built in Phase 1 —
-    // cli/dist/brain-mcp-server/...). FR-169: backfills ALL 4 harnesses.
+    // cli/dist/brain-mcp-server/...). FR-169: backfills all Igris harnesses.
     rmSync(join(homeOverride, ".claude.json"), { force: true });
     const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
     expect(code).toBe(0);

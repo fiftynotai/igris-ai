@@ -13,7 +13,7 @@
  *   1. resolveSkillsEngine defaults to "custom"; only "delegate" opts in.
  *   2. The REAL binary resolves to a LOCAL absolute on-disk path, never `npx`.
  *   3. assertLocalSkillsBinary rejects `npx` / bare / non-existent.
- *   4. buildSkillsAddArgv: `add <abs> -g -a <agents…> -y`, the 5 Igris harness
+ *   4. buildSkillsAddArgv: `add <abs> -g -a <agents…> -y`, the Igris harness
  *      ids (gemini-cli not gemini), --copy mode, abs-path guard.
  *   5. buildSkillsRemoveArgv: `remove <name> -g --all -y`, empty-name guard.
  *   6. projectSkillsViaTool / unprojectSkillsViaTool: spy the spawn, assert the
@@ -115,7 +115,7 @@ describe("skills-delegate — local binary resolution (supply-chain invariant)",
 });
 
 describe("skills-delegate — add argv builder", () => {
-  it("builds `add <abs> -g -a <5 igris harnesses> -y` by default", () => {
+  it("builds `add <abs> -g -a <6 igris harnesses> -y` by default", () => {
     const argv = buildSkillsAddArgv({ source: "/abs/.igris/core/skills" });
     expect(argv).toEqual([
       "add",
@@ -127,15 +127,17 @@ describe("skills-delegate — add argv builder", () => {
       "gemini-cli",
       "opencode",
       "antigravity",
+      "cursor",
       "-y",
     ]);
   });
 
-  it("targets the 5 Igris harness ids — gemini-cli, NOT gemini", () => {
+  it("targets the 6 Igris harness ids — gemini-cli, NOT gemini; cursor included", () => {
     expect(skillAgentIds()).toContain("gemini-cli");
     expect(skillAgentIds()).not.toContain("gemini");
+    expect(skillAgentIds()).toContain("cursor");
     expect([...skillAgentIds()].sort()).toEqual(
-      ["antigravity", "claude-code", "codex", "gemini-cli", "opencode"].sort(),
+      ["antigravity", "claude-code", "codex", "cursor", "gemini-cli", "opencode"].sort(),
     );
   });
 

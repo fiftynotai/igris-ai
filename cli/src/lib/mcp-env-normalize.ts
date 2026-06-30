@@ -57,9 +57,12 @@ export function normalizeEnvForHarness(
   switch (harness) {
     case "claude":
     case "gemini":
-    case "antigravity": {
+    case "antigravity":
+    case "cursor": {
       // Emit the canonical ref verbatim — the harness resolves it itself.
       // antigravity is gemini lineage: it resolves its own ${VAR} refs.
+      // FR-192: cursor is claude lineage (mcpServers + type:stdio) — it likewise
+      // resolves its own ${VAR} refs, so the ref passes through verbatim.
       return { value: canonicalValue };
     }
     case "opencode": {

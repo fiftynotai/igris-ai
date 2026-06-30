@@ -319,14 +319,15 @@ symlinks from the source (never a real dir), realpath-contains every mutation,
 refuses a root symlink pointing anywhere other than the canonical source, and is
 idempotent (a migrated real dir is a no-op on re-run). On Windows it is a no-op.
 
-### The five native per-harness shapes (the projection)
+### The six native per-harness shapes (the projection)
 
 `igris harness compile --surface mcp` (or `--surface all`) flattens every
 `surfaces.mcp_servers[]` block into one `(server, target)` row per declared
 harness and merges the native entry into that harness's config. The bash pass is
 a thin driver; the JSON/TOML merge (atomic, idempotent, malformed-never-clobber,
 single rolling `.igris.bak`) lives in **one** place in the CLI — bash never
-re-implements it (L-519 §18.1). The five shapes:
+re-implements it (L-519 §18.1). The six shapes (four DISTINCT wire-shapes —
+antigravity rides the gemini shape, cursor rides the claude shape):
 
 | Harness | Config file | Map | Native entry shape |
 |---------|-------------|-----|--------------------|
@@ -335,11 +336,13 @@ re-implements it (L-519 §18.1). The five shapes:
 | Antigravity | `~/.gemini/config/mcp_config.json` | `mcpServers.<name>` | `{ command, args[], env{} }` (no `type`) — gemini-identical shape, but a **DISTINCT file** from gemini's `settings.json` (antigravity does not read `settings.json`; confirmed 2026-06-11) — env values are `${VAR}` (FR-179) |
 | OpenCode | `~/.config/opencode/opencode.json` | `mcp.<name>` | `{ type:"local", command:[cmd, ...args], enabled, environment{} }` — command+args **fused** into one array; env KEY is `environment`; env values are `{env:VAR}` |
 | Codex | `~/.codex/config.toml` | `[mcp_servers.<name>]` | `{ command, args[], startup_timeout_sec?, [.env] }` — env values are **resolved literals** |
+| Cursor | `~/.cursor/mcp.json` | `mcpServers.<name>` | `{ type:"stdio", command, args[], env{} }` — **claude-identical** shape (REUSE — no new emitter), but a **DISTINCT file** from claude's `~/.claude.json`; env values are `${VAR}` (FR-192). Written by the `add-mcp` delegate (`cursor` is in `mcpAgentIds()`), not the surfaces-block loop. |
 
-**The `${VAR}` indirection rule (FR-160e).** Claude, Gemini, Antigravity and
-OpenCode resolve the env reference + inherit exported env at launch, so the
+**The `${VAR}` indirection rule (FR-160e).** Claude, Gemini, Antigravity, Cursor
+and OpenCode resolve the env reference + inherit exported env at launch, so the
 loadout's `${VAR}` (translated to `{env:VAR}` for OpenCode) is written
-verbatim — **no secret ever lands in those configs**. Codex's sandbox (`inherit="core"`) resolves neither
+verbatim — **no secret ever lands in those configs** (Cursor is claude lineage:
+it resolves its own `${VAR}` refs). Codex's sandbox (`inherit="core"`) resolves neither
 refs nor inherited env, so its env values are the **resolved literal** read from
 `~/.igris/secrets.env` at compile time. When a Codex `${VAR}` has no entry in
 `secrets.env`, the projection **fails for that row** naming the missing VAR (never
@@ -412,6 +415,49 @@ The rollout was confirmed by running `gemini mcp list` in a **fresh** Gemini
 process, which reported `✓ igris-brain ... - Connected`; checking the
 already-running session would have shown stale state. `igris harness check`
 returned **MATCH** for the `igris-brain` entry on all five harness targets.
+
+---
+
+## Cursor (FR-192) — the `inline`-delegation harness
+
+Cursor is the **6th Igris harness**, onboarded via the descriptor-centric
+`/onboard-harness` flow (one `harnesses.cursor` block in `harness-manifest.json`,
+no per-surface scatter). It is the first harness with the new
+**`delegation_model: inline`**.
+
+- **Delegation (`inline`).** Cursor's `cursor-agent` is a **single agent with no
+  subagent spawning** — neither static Igris-agent files (`native-static`) nor a
+  runtime `define_subagent` (`dynamic-define`). So `delegation_model: inline`: at
+  Boot the Detect-resolved harness loads `core/os/harness-specific/cursor.md`,
+  which points at the shared `core/os/harness-specific/_inline-delegation-recipe.md`.
+  To "delegate to role X", the single agent **reads `~/.igris/core/agents/X.md`,
+  adopts that agent's full prompt + tool/scope constraints inline, executes the
+  task as that role to completion, then resumes** — a faithful Igris agent, no
+  process spawned.
+- **MCP — reuses the claude shape.** Config `~/.cursor/mcp.json`, map key
+  `mcpServers`, native entry `{ type:"stdio", command, args[], env{} }` — **byte-
+  identical to claude** (`entry_shape: "claude"`, **no new emitter**), only the
+  file path differs. `cursor` is in `mcpAgentIds()`, so the `add-mcp` delegate
+  reaches it like the other delegated harnesses; `${VAR}` refs pass through
+  verbatim (cursor resolves them itself). **Grant is `covered`:** `cursor-agent`
+  auto-approves MCP servers in headless runs (`--approve-mcps`), so there is **no
+  persistent grant file** to write (the opencode posture).
+- **Skills — agent-id `cursor`.** `cursor` is a valid `skills` agent-id (it is in
+  `skillAgentIds()`), so `igris harness compile --surface skills` delegates skill
+  placement to the `skills` CLI for cursor automatically (`skills add <root> -a …
+  cursor`). No per-harness skills code. (The `skills` CLI has **no `list-agents`
+  subcommand** — agent support is confirmed via `add-mcp list-agents` + the
+  `skills add -a/--agent` flag.)
+- **Agents — N/A.** `cursor-agent` has no static-agent file mechanism, so cursor
+  has **no `agents` descriptor block** (it is excluded from `agentTargetTypes()`,
+  exactly like antigravity). Delegation is handled by the `inline` recipe, not a
+  projected agent surface.
+- **Hooks — N/A.** `cursor-agent` exposes no event/hook API, so
+  `hooks.supported:false` — a deliberate **documented N/A**, not a silent gap
+  (cursor is excluded from `hookTargetTypes()`).
+- **Detect signal.** `cursor-agent` exports `CURSOR_AGENT=1` into the environment
+  of every tool/shell subprocess it spawns (and its launcher wrapper `export`s
+  `CURSOR_INVOKED_AS`); `inferHarness` (`igris detect`) keys on either.
 
 ---
 

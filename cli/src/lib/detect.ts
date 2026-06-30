@@ -64,6 +64,14 @@ function inferHarness(): DetectResult["harness"] {
   if (env.OPENCODE !== undefined || env.OPENCODE_SESSION !== undefined) {
     return "opencode";
   }
+  // Cursor (FR-192): cursor-agent sets CURSOR_AGENT=1 in the environment of every
+  // tool/shell subprocess it spawns (verified: `env:{CURSOR_AGENT:"1"}` in the
+  // agent's terminal executor — so an `igris detect` run as a Cursor tool call
+  // sees it); the launcher wrapper additionally `export`s CURSOR_INVOKED_AS.
+  // Either marks a Cursor-driven run. No overlap with the other harness markers.
+  if (env.CURSOR_AGENT !== undefined || env.CURSOR_INVOKED_AS !== undefined) {
+    return "cursor";
+  }
   return "unknown";
 }
 

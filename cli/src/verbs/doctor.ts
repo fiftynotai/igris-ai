@@ -60,7 +60,7 @@
  * (`mergeGlobalCanonicalHooks` — a single brain-level action, no per-project
  * re-install), brain-core-missing by invoking runRefresh(), bridge-missing by
  * invoking partial-mode runInit({ upgrade: true }), mcp-unregistered by calling
- * registerBrainAcrossHarnesses() directly to backfill all 4 harnesses (FR-169;
+ * registerBrainAcrossHarnesses() directly to backfill all Igris harnesses (FR-169;
  * cheap — no need to re-run init), secret-perms by chmod'ing the flagged file
  * to 600 (TD-220; both Igris-owned and harness-owned under the explicit flag —
  * a git-tracked file stays flagged since chmod can't untrack it),
@@ -248,14 +248,14 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
           bridgeFixApplied = true;
         }
       } else if (row.driftClass === "mcp-unregistered") {
-        // FR-169: register the bundled igris-brain MCP into ALL 4 harnesses
-        // directly (Claude, Gemini, Codex, OpenCode). Cheap — no need to
-        // re-run init. registerBrainAcrossHarnesses never throws; a per-harness
-        // failed outcome counts into `errored`. (Detection is still
-        // Claude-only via inspectMcpRegistration — the trigger fires on
-        // Claude, the fix backfills all 4. Broadening detection to all 4
-        // harnesses is a tracked FR-169 follow-up.)
-        info("fix: mcp-unregistered — registering igris-brain MCP in all 5 harnesses");
+        // FR-169: register the bundled igris-brain MCP into every descriptor
+        // harness directly (the set is descriptor-driven via harnessIds()). Cheap
+        // — no need to re-run init. registerBrainAcrossHarnesses never throws; a
+        // per-harness failed outcome counts into `errored`. (Detection is still
+        // Claude-only via inspectMcpRegistration — the trigger fires on Claude,
+        // the fix backfills all harnesses. Broadening detection to all harnesses
+        // is a tracked FR-169 follow-up.)
+        info("fix: mcp-unregistered — registering igris-brain MCP across all Igris harnesses");
         // FR-212d: doctor backfills the brain MCP via the IN-PROCESS custom
         // merger (deterministic, no `add-mcp` subprocess — same robust posture as
         // `igris init`). The harness-COMPILE projection delegates; this fix does

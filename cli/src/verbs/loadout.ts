@@ -157,10 +157,12 @@ export type LoadoutAction =
  * opencode}) is enforced via `agentTargetTypes()` (descriptor-derived from the
  * `agents` block presence); this compile-time alias narrows the canonical
  * `HarnessId` union to the agents surface. antigravity is `dynamic-define` (no
- * `agents` descriptor block) ⇒ excluded. FR-217 M5 deleted the former hardcoded
- * `VALID_TARGET_TYPES` const (one source of truth: the descriptor).
+ * `agents` descriptor block) ⇒ excluded; FR-192: cursor is `inline` (also no
+ * `agents` block — no static-agent surface) ⇒ likewise excluded. FR-217 M5
+ * deleted the former hardcoded `VALID_TARGET_TYPES` const (one source of truth:
+ * the descriptor).
  */
-type TargetType = Exclude<HarnessId, "antigravity">;
+type TargetType = Exclude<HarnessId, "antigravity" | "cursor">;
 
 /**
  * FR-143/FR-149/FR-157/FR-171/FR-202: allowed SKILL target types. Mirrors
@@ -205,7 +207,7 @@ const VALID_SKILL_TYPE_METHOD_PAIRS = new Set<string>([
 ]);
 
 /**
- * MCP-surface target-type TYPE — all 5 harnesses participate (each carries an
+ * MCP-surface target-type TYPE — every descriptor harness participates (each carries an
  * `mcp` descriptor block). RUNTIME membership is enforced via `mcpTargetTypes()`
  * (descriptor-derived); this alias is the full canonical `HarnessId` union.
  * FR-217 M5 deleted the former hardcoded `VALID_MCP_TARGET_TYPES` const.
@@ -225,10 +227,11 @@ type McpMethod = (typeof VALID_MCP_METHODS)[number];
  * → config-merge into ~/.gemini/config/hooks.json via the FR-181 bridge). RUNTIME
  * membership is enforced via `hookTargetTypes()` (descriptor `hooks.supported`);
  * this alias narrows the canonical `HarnessId` union by EXCLUDING codex
- * (session_end only) + gemini (`gemini hooks` documented-not-projected, FR-182).
+ * (session_end only) + gemini (`gemini hooks` documented-not-projected, FR-182)
+ * + cursor (FR-192: `hooks.supported:false` — cursor-agent has no hook API).
  * FR-217 M5 deleted the former hardcoded `VALID_HOOK_TARGET_TYPES` const.
  */
-type HookTargetType = Exclude<HarnessId, "codex" | "gemini">;
+type HookTargetType = Exclude<HarnessId, "codex" | "gemini" | "cursor">;
 
 /** FR-180 (D7): hook projection is always a config-merge. Mirrors the schema const. */
 const VALID_HOOK_METHODS = ["merge"] as const;
@@ -4896,7 +4899,7 @@ function runProjectMcpViaDelegate(
 function runVerifyMcpGrant(opts: LoadoutOptions): number {
   if (opts.harness === undefined) {
     logError(
-      "loadout verify-mcp-grant: --harness <claude|codex|gemini|opencode|antigravity> is required",
+      "loadout verify-mcp-grant: --harness <claude|codex|gemini|opencode|antigravity|cursor> is required",
     );
     return 2;
   }
@@ -5253,7 +5256,7 @@ function runUnprojectMcp(opts: LoadoutOptions): number {
   const name = opts.name;
   if (opts.harness === undefined) {
     logError(
-      "loadout unproject-mcp: --harness <claude|codex|gemini|opencode|antigravity> is required",
+      "loadout unproject-mcp: --harness <claude|codex|gemini|opencode|antigravity|cursor> is required",
     );
     return 2;
   }

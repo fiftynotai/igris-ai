@@ -79,10 +79,10 @@ EOF
 
 # --- 1. read_harness_descriptor ---------------------------------------------
 
-@test "read_harness_descriptor: harness_ids lists all 5 in declaration order" {
+@test "read_harness_descriptor: harness_ids lists all 6 in declaration order" {
   run bash -c "source '$COMMON' && read_harness_descriptor '$DESCRIPTOR' harness_ids"
   [ "$status" -eq 0 ]
-  [ "$(printf '%s' "$output" | tr '\n' ',')" = "claude,codex,gemini,opencode,antigravity" ]
+  [ "$(printf '%s' "$output" | tr '\n' ',')" = "claude,codex,gemini,opencode,antigravity,cursor" ]
 }
 
 @test "read_harness_descriptor: agent_ids maps claude->claude-code, gemini->gemini-cli" {
@@ -105,12 +105,13 @@ EOF
   [ "$(printf '%s' "$output" | tr '\n' ',')" = "claude,opencode,antigravity" ]
 }
 
-@test "read_harness_descriptor: mcp_projected_harnesses = {claude,codex,gemini,opencode} (TD-281; antigravity carve-out excluded)" {
+@test "read_harness_descriptor: mcp_projected_harnesses = {claude,codex,gemini,opencode,cursor} (TD-281; antigravity carve-out excluded)" {
   # PROJECTED (mcp.projected==true) is a STRICT subset of mcp_target_types (block
-  # presence = all 5) — antigravity has an mcp block but is the FR-179 carve-out.
+  # presence = all 6) — antigravity has an mcp block but is the FR-179 carve-out
+  # (the ONLY exclusion). FR-192: cursor is mcp.projected:true → in the set.
   run bash -c "source '$COMMON' && read_harness_descriptor '$DESCRIPTOR' mcp_projected_harnesses"
   [ "$status" -eq 0 ]
-  [ "$(printf '%s' "$output" | tr '\n' ',')" = "claude,codex,gemini,opencode" ]
+  [ "$(printf '%s' "$output" | tr '\n' ',')" = "claude,codex,gemini,opencode,cursor" ]
 }
 
 @test "read_harness_descriptor: hook_projected_harnesses = {claude,opencode,antigravity} (TD-281)" {
@@ -120,10 +121,10 @@ EOF
   [ "$(printf '%s' "$output" | tr '\n' ',')" = "claude,opencode,antigravity" ]
 }
 
-@test "read_harness_descriptor: grant_harnesses = all 5; field lookups resolve" {
+@test "read_harness_descriptor: grant_harnesses = all 6; field lookups resolve" {
   run bash -c "source '$COMMON' && read_harness_descriptor '$DESCRIPTOR' grant_harnesses"
   [ "$status" -eq 0 ]
-  [ "$(printf '%s\n' "$output" | grep -c .)" = "5" ]
+  [ "$(printf '%s\n' "$output" | grep -c .)" = "6" ]
   run bash -c "source '$COMMON' && read_harness_descriptor '$DESCRIPTOR' 'grant_path:antigravity'"
   [ "$status" -eq 0 ]
   [ "$output" = "~/.gemini/antigravity-cli/settings.json" ]

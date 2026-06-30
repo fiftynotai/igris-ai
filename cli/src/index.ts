@@ -640,9 +640,14 @@ async function main(argv: string[]): Promise<void> {
           }
           timeoutArg = n;
         }
-        // FR-164 project-mcp: --harness must be one of the 4 MCP harnesses.
-        // Validate at the CLI boundary (mirror --scope) so LoadoutOptions
-        // .harness stays typed. An invalid value is a usage error (exit 2).
+        // --harness must be a known harness SHAPE id. Validate at the CLI
+        // boundary (mirror --scope) so LoadoutOptions.harness stays typed (the
+        // explicit literal chain narrows to McpHarness — a descriptor
+        // `.includes()` check would not). The PRECISE per-surface set is enforced
+        // downstream by each run* verb (project-mcp/verify-mcp-grant →
+        // mcpTargetTypes(); project-hook → hookTargetTypes(); FR-192: cursor is
+        // an mcp + grant harness but NOT a hook harness, so project-hook rejects
+        // it there). An unknown value is a usage error (exit 2).
         let harnessArg: McpHarness | undefined;
         if (opts.harness !== undefined) {
           if (
@@ -650,12 +655,13 @@ async function main(argv: string[]): Promise<void> {
             opts.harness === "codex" ||
             opts.harness === "gemini" ||
             opts.harness === "opencode" ||
-            opts.harness === "antigravity"
+            opts.harness === "antigravity" ||
+            opts.harness === "cursor"
           ) {
             harnessArg = opts.harness;
           } else {
             process.stderr.write(
-              `loadout: --harness value '${opts.harness}' is not one of 'claude' | 'codex' | 'gemini' | 'opencode' | 'antigravity'\n`,
+              `loadout: --harness value '${opts.harness}' is not one of 'claude' | 'codex' | 'gemini' | 'opencode' | 'antigravity' | 'cursor'\n`,
             );
             process.exitCode = 2;
             return;

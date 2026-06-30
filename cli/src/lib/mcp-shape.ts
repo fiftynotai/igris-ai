@@ -114,7 +114,14 @@ export function buildHarnessMcpEntry(
   }
 
   switch (harness) {
-    case "claude": {
+    case "claude":
+    // FR-192: cursor's mcp.json rides the claude entry_shape byte-for-byte
+    // ({ type:"stdio", command, args, env }) — only the config PATH differs
+    // (~/.cursor/mcp.json). cursor resolves its own ${VAR} refs (claude lineage),
+    // so normalizeEnvForHarness emits them verbatim. In practice cursor's MCP is
+    // written by the delegated `add-mcp` (mcpAgentIds includes cursor), so this
+    // branch is the custom-path fallback; it stays byte-correct regardless.
+    case "cursor": {
       const entry: Record<string, unknown> = {
         type: "stdio",
         command,

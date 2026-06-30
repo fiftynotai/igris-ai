@@ -912,7 +912,7 @@ if harnesses is not None:
     if not isinstance(harnesses, dict):
         fail("'harnesses' must be an object")
     valid_harness_types = eff_harness_types  # FR-217: descriptor-derived (was a literal)
-    valid_delegation_models = {"native-static", "dynamic-define"}
+    valid_delegation_models = {"native-static", "dynamic-define", "inline"}
     allowed_harness_keys = {"delegation_model", "agent_id", "agents", "mcp",
                             "grant", "hooks", "harness_specific_file"}
     valid_agent_projections = {"symlink", "target-row"}

@@ -4555,7 +4555,7 @@ describe("loadout integration (real compile_harnesses.sh + validate_manifest)", 
     // FR-212d Phase 2: `compile --surface skills` no longer projects per-skill
     // symlinks at the manifest `targets[].path`. The custom engine was retired;
     // `project_skills` now shells to `igris loadout project-skills --source
-    // <root>` → `skills add <root> -g -a <5 harnesses>`, which places EVERY skill
+    // <root>` → `skills add <root> -g -a <all harnesses>`, which places EVERY skill
     // under each distinct source root into the universal store
     // (`~/.agents/skills/<name>` + `~/.claude/skills/<name>`). The per-block
     // `targets[].path` + cross-source-isolation concepts are MOOT (the `skills`

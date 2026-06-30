@@ -99,8 +99,13 @@ wired yet.
 Does `<NEW>` have an agent-id the npx tools recognise?
 
 ```bash
-npx skills list-agents      # is <NEW> (or its agent_id) listed?
-npx add-mcp list-agents     # likewise for MCP
+# add-mcp publishes the canonical agent-id roster — and the `skills` CLI shares
+# that same agent-id namespace — so this ONE list answers BOTH surfaces:
+npx add-mcp list-agents     # is <NEW> (or its agent_id) listed? (covers MCP + skills)
+
+# the `skills` CLI has NO `list-agents` subcommand; confirm it accepts <NEW> via
+# its `-a/--agent` flag (the flag placement uses) — never `skills list-agents`:
+npx skills add --help       # shows `-a, --agent <agents>`; `skills add -a <NEW> …` targets it
 ```
 
 - **YES → skills + MCP placement is auto-detected** by the npx tool from
@@ -124,12 +129,12 @@ Add `harnesses.<NEW>` to `harness-manifest.json`. This is the bulk of onboarding
 | field | what it captures | notes |
 |---|---|---|
 | `agent_id` | the npx agent id (Phase 2) | the DISTRIBUTION key |
-| `agents{target_type,projection}` | static-agent surface; `projection` = `symlink` (loader follows symlinks) or `target-row` (per-agent file) — from Phase 5 | **omit the whole block** if `<NEW>` is `dynamic-define` / has no static agents |
+| `agents{target_type,projection}` | static-agent surface; `projection` = `symlink` (loader follows symlinks) or `target-row` (per-agent file) — from Phase 5 | **omit the whole block** if `<NEW>` is `dynamic-define` / `inline` / has no static agents |
 | `mcp{config_path,format,map_key,entry_shape}` | MCP wiring; `entry_shape` names the emitter to reuse (Phase 4) | omit if `<NEW>` has no MCP |
 | `grant{kind,path?,token?}` | the no-prompt grant the MCP path writes | operator-gated nuance below |
 | `hooks{supported,config_path?,method?}` | hook surface; `supported:false` is a valid documented N/A | from Phase 5 |
-| `delegation_model` | `native-static` or `dynamic-define` (Phase 6) | selects the context layer |
-| `harness_specific_file?` | the context-layer file, if `dynamic-define` (Phase 6) | omit for `native-static` |
+| `delegation_model` | `native-static`, `dynamic-define`, or `inline` (Phase 6) | selects the context layer |
+| `harness_specific_file?` | the context-layer file, if `dynamic-define` / `inline` (Phase 6) | omit for `native-static` |
 
 **Register the id-space (still hand-kept — NOT descriptor-derived):** add `<NEW>`
 to `HarnessId` + `VALID_HARNESS_IDS` in `cli/src/lib/harness-descriptor.ts`, **and**
@@ -201,6 +206,13 @@ Set `delegation_model`:
   `core/scripts/gen_os_index.sh` so the Boot harness-specific roster picks it up.
   Boot loads only the file whose `harness:` matches the resolved harness — zero
   per-skill branching.
+- **`inline`** (FR-192) — `<NEW>` has **no subagent mechanism at all** (neither
+  static-load nor runtime-define — e.g. Cursor's `cursor-agent`). Author
+  `core/os/harness-specific/<NEW>.md` exactly as for `dynamic-define`, but its body
+  **points at** `core/os/harness-specific/_inline-delegation-recipe.md` (the single
+  agent ADOPTS the target role's prompt + tool scope inline, executes as that role,
+  then resumes — no separate subagent). Set `harness_specific_file` + re-run
+  `gen_os_index.sh`.
 
 ---
 

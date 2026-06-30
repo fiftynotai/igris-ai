@@ -23,8 +23,8 @@
  * <name>` are CONFIRMED with these adjustments —
  *   - `skills add <ABS_LOCAL_DIR> -g -a <agent...> -y` — a LOCAL absolute path is
  *     accepted ("Local path validated"); `-a` takes SPACE-SEPARATED agent ids;
- *     `-y` skips the scope prompt. The 5 Igris harness agent ids are
- *     `claude-code codex gemini-cli opencode antigravity` (NOTE: `gemini-cli`,
+ *     `-y` skips the scope prompt. The 6 Igris harness agent ids are
+ *     `claude-code codex gemini-cli opencode antigravity cursor` (NOTE: `gemini-cli`,
  *     NOT `gemini` — `gemini` is rejected as an invalid agent).
  *   - default placement is symlink/universal: claude-code → `~/.claude/skills`,
  *     the other 4 read the shared universal store `~/.agents/skills`. `--copy`
@@ -176,8 +176,8 @@ export interface SkillsSpawnDeps {
  *   `<name>/SKILL.md` subfolders, e.g. `~/.igris/core/skills`). MUST be
  *   absolute — the tool validates a local path, and an absolute path avoids the
  *   cwd-relative ambiguity that bit codex symlinks (FR-157).
- * @param harnesses the `skills` agent ids to target (default: the 5 Igris
- *   harnesses). Passed space-separated after a single `-a`.
+ * @param harnesses the `skills` agent ids to target (default: all Igris harness
+ *   agent-ids from the descriptor). Passed space-separated after a single `-a`.
  * @param global when true, `-g` (user-level). Igris projects skills globally.
  * @param mode `"symlink"` (default tool behavior) or `"copy"` (`--copy`).
  */

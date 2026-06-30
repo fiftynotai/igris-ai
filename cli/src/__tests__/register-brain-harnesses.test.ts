@@ -2,7 +2,7 @@
  * register-brain-harnesses.ts tests — FR-169.
  *
  * `registerBrainAcrossHarnesses` projects the bundled igris-brain MCP into all
- * 5 harness configs (FR-179 added antigravity) by reusing the FR-164 pure
+ * all Igris harness configs (FR-179 added antigravity, FR-192 cursor) by reusing the FR-164 pure
  * shaper + the FR-162/163 mergers.
  * These tests exercise the function directly against real `node:fs` tmp files
  * (no SUT mocking — L-159), using the `configPaths` seam for hermetic per-
@@ -61,6 +61,11 @@ function sandboxConfigPaths(): Record<McpHarness, string> {
     // ~/.gemini/config/mcp_config.json on the dev box (the isolation leak that
     // made scenarios 4/5/7 report unchanged/updated instead of registered).
     antigravity: join(workDir, "gemini", "config", "mcp_config.json"),
+    // FR-192: cursor rides claude's `mcpServers` shape into ~/.cursor/mcp.json.
+    // WITHOUT this override the harness falls through to the REAL ~/.cursor/mcp.json
+    // (which already carries igris-brain) → the SAME isolation leak (updated, not
+    // registered) the antigravity note above describes.
+    cursor: join(workDir, "cursor", "mcp.json"),
   };
 }
 
@@ -88,8 +93,8 @@ function getMap(
 // ---------------------------------------------------------------------------
 // Scenario 1 — all-5 wired with correct per-harness shapes
 // ---------------------------------------------------------------------------
-describe("registerBrainAcrossHarnesses — all 5 wired (scenario 1)", () => {
-  it("writes the correct per-harness shape into each of the 5 configs", () => {
+describe("registerBrainAcrossHarnesses — all 6 wired (scenario 1)", () => {
+  it("writes the correct per-harness shape into each of the 6 configs", () => {
     const configPaths = sandboxConfigPaths();
     const results = registerBrainAcrossHarnesses({
       mcpEntryPath: MCP_PATH,
@@ -97,7 +102,7 @@ describe("registerBrainAcrossHarnesses — all 5 wired (scenario 1)", () => {
     });
 
     expect(results.map((r) => r.harness).sort()).toEqual(
-      ["antigravity", "claude", "codex", "gemini", "opencode"].sort(),
+      ["antigravity", "claude", "codex", "cursor", "gemini", "opencode"].sort(),
     );
     for (const r of results) {
       expect(r.result.outcome).toBe("registered");
@@ -150,6 +155,18 @@ describe("registerBrainAcrossHarnesses — all 5 wired (scenario 1)", () => {
       command: "node",
       args: [MCP_PATH],
     });
+
+    // FR-192: Cursor — mcpServers map, claude-IDENTICAL shape (carries
+    // `type:"stdio"`), but a DISTINCT config file (~/.cursor/mcp.json).
+    const cursor = getMap(readJson(configPaths.cursor), "mcpServers");
+    expect(cursor["igris-brain"]).toEqual({
+      type: "stdio",
+      command: "node",
+      args: [MCP_PATH],
+      env: {},
+    });
+    // The bytes match claude's entry exactly — only the path differs.
+    expect(cursor["igris-brain"]).toEqual(claude["igris-brain"]);
   });
 });
 

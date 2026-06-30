@@ -220,7 +220,7 @@ describe("init — fresh install via --from-source", () => {
 
   // FR-169: init wires igris-brain into ALL harness configs (not just Claude).
   // FR-179 added antigravity as the 5th (~/.gemini/config/mcp_config.json).
-  it("registers igris-brain into all 5 harness configs (FR-169 + FR-179)", async () => {
+  it("registers igris-brain into all Igris harness configs (FR-169 + FR-179)", async () => {
     const { runInit } = await import("../verbs/init.js");
     const { bundledMcpEntryPath } = await import("../lib/paths.js");
     const code = await runInit({ fromSource: sourceRepo });

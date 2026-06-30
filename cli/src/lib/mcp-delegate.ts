@@ -48,8 +48,8 @@
  *     the joined positional makes add-mcp write the LITERAL `{command,args}`
  *     shape (FR-212d fix — `--args` is NO LONGER used). `-a` is REPEATABLE (one
  *     flag per agent), `-g` = user-level, `-n` = server name, `-y` skips prompts.
- *   - the 5 Igris harness agent ids are EXACTLY `claude-code codex gemini-cli
- *     opencode antigravity` (live `list-agents` — same ids as the skills CLI;
+ *   - the 6 Igris harness agent ids are EXACTLY `claude-code codex gemini-cli
+ *     opencode antigravity cursor` (live `list-agents` — same ids as the skills CLI;
  *     `gemini-cli`, NOT `gemini`).
  *   - `add-mcp remove <query> -g -a <agent...> -y` is the un-registration
  *     inverse (probed: `remove [options] <query>`, `-g`/`-a`/`-y`).
@@ -210,7 +210,7 @@ export interface McpRegisterSpec {
    * the delegate is correct for any future secret-bearing MCP server.
    */
   env?: Record<string, string>;
-  /** add-mcp agent ids to target (default: the 5 Igris harnesses). */
+  /** add-mcp agent ids to target (default: all Igris harnesses from the descriptor). */
   harnesses?: readonly string[];
   /** When true (default), `-g` (user-level). Igris registers MCP globally. */
   global?: boolean;

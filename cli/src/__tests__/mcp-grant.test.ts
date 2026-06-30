@@ -365,16 +365,18 @@ describe("mcp-grant — secret hygiene (the grant carries NO secret)", () => {
 });
 
 describe("mcp-grant — across-harness sweep", () => {
-  it("writeBrainGrantAcrossHarnesses returns one result per harness (opencode covered)", () => {
+  it("writeBrainGrantAcrossHarnesses returns one result per harness (opencode + cursor covered)", () => {
     const cp = sandboxPaths();
     const results = writeBrainGrantAcrossHarnesses({ configPaths: cp, folder: FOLDER });
-    expect(results).toHaveLength(5);
+    expect(results).toHaveLength(6);
     const byHarness = Object.fromEntries(results.map((r) => [r.harness, r.outcome]));
     expect(byHarness.claude).toBe("granted");
     expect(byHarness.antigravity).toBe("granted");
     expect(byHarness.codex).toBe("granted");
     expect(byHarness.gemini).toBe("granted");
     expect(byHarness.opencode).toBe("covered");
+    // FR-192: cursor grant rides the runtime --approve-mcps flag → covered.
+    expect(byHarness.cursor).toBe("covered");
   });
 
   it("removeBrainGrantAcrossHarnesses is the inverse sweep", () => {
@@ -387,9 +389,9 @@ describe("mcp-grant — across-harness sweep", () => {
     expect(byHarness.opencode).toBe("covered");
   });
 
-  it("the grant grammar covers all 5 harnesses", () => {
+  it("the grant grammar covers all 6 harnesses", () => {
     expect([...harnessIds()].sort()).toEqual(
-      ["antigravity", "claude", "codex", "gemini", "opencode"].sort(),
+      ["antigravity", "claude", "codex", "cursor", "gemini", "opencode"].sort(),
     );
     // every harness resolves a grant grammar from the descriptor (no throw).
     for (const id of harnessIds()) {

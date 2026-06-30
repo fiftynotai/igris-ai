@@ -15,7 +15,7 @@
  *   3. assertLocalMcpBinary rejects `npx` / bare / non-existent.
  *   4. buildMcpAddArgv: `"<command> <arg…>" -g -a <agent...> -n <name> --env
  *      KEY=${VAR} -y` — the FULL launch command as ONE positional (FR-212d fix;
- *      a bare-word target is npx-wrapped), the 5 Igris harness ids (gemini-cli
+ *      a bare-word target is npx-wrapped), the Igris harness ids (gemini-cli
  *      not gemini), the ${VAR}-passthrough never a literal secret, and the
  *      whitespace-bearing-token guard (add-mcp has no intra-positional quoting).
  *   5. buildMcpRemoveArgv: `remove <name> -g -a <agents…> -y`, empty-name guard.
@@ -119,7 +119,7 @@ describe("mcp-delegate — local binary resolution (supply-chain invariant)", ()
 });
 
 describe("mcp-delegate — add argv builder", () => {
-  it("builds `\"<command> <arg>\" -g -a <5 igris harnesses> -n <name> -y` by default (FR-212d: joined positional, no --args)", () => {
+  it("builds `\"<command> <arg>\" -g -a <6 igris harnesses> -n <name> -y` by default (FR-212d: joined positional, no --args)", () => {
     const argv = buildMcpAddArgv({
       name: "igris-brain",
       command: "node",
@@ -141,6 +141,8 @@ describe("mcp-delegate — add argv builder", () => {
       "opencode",
       "-a",
       "antigravity",
+      "-a",
+      "cursor",
       "-n",
       "igris-brain",
       "-y",
@@ -152,11 +154,12 @@ describe("mcp-delegate — add argv builder", () => {
     expect(argv).not.toContain("npx");
   });
 
-  it("targets the 5 Igris harness ids — gemini-cli, NOT gemini", () => {
+  it("targets the 6 Igris harness ids — gemini-cli, NOT gemini; cursor included", () => {
     expect(mcpAgentIds()).toContain("gemini-cli");
     expect(mcpAgentIds()).not.toContain("gemini");
+    expect(mcpAgentIds()).toContain("cursor");
     expect([...mcpAgentIds()].sort()).toEqual(
-      ["antigravity", "claude-code", "codex", "gemini-cli", "opencode"].sort(),
+      ["antigravity", "claude-code", "codex", "cursor", "gemini-cli", "opencode"].sort(),
     );
   });
 
@@ -276,7 +279,7 @@ describe("mcp-delegate — add argv builder", () => {
 });
 
 describe("mcp-delegate — remove argv builder", () => {
-  it("builds `remove <name> -g -a <5 harnesses> -y` by default", () => {
+  it("builds `remove <name> -g -a <6 harnesses> -y` by default", () => {
     expect(buildMcpRemoveArgv({ name: "igris-brain" })).toEqual([
       "remove",
       "igris-brain",
@@ -291,6 +294,8 @@ describe("mcp-delegate — remove argv builder", () => {
       "opencode",
       "-a",
       "antigravity",
+      "-a",
+      "cursor",
       "-y",
     ]);
   });

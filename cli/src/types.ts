@@ -120,7 +120,8 @@ export type CLITarget =
   | "codex"
   | "gemini"
   | "opencode"
-  | "antigravity";
+  | "antigravity"
+  | "cursor";
 
 /**
  * Persisted shape of `~/.igris/.install-source.json`.
@@ -208,7 +209,7 @@ export type InstanceLivenessStatus =
  * (`boot-sync`, M3) are skipped but local verbs still run.
  */
 export interface DetectResult {
-  harness: "claude" | "codex" | "gemini" | "opencode" | "antigravity" | "unknown";
+  harness: "claude" | "codex" | "gemini" | "opencode" | "antigravity" | "cursor" | "unknown";
   /** Default project slug for Mount verbs: basename(process.cwd()). */
   project_slug: string;
   /** Current project directory seen by the booting CLI process. */

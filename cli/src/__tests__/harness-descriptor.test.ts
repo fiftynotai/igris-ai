@@ -59,6 +59,7 @@ const ALL_IDS: HarnessId[] = [
   "codex",
   "opencode",
   "antigravity",
+  "cursor",
 ];
 
 /** Repo-root canonical manifest (3 levels up from cli/src/lib === cli/src/__tests__). */
@@ -79,7 +80,7 @@ describe("resolution + cache", () => {
     const d = loadHarnessDescriptor();
     expect(d.sourcePath.endsWith("harness-manifest.json")).toBe(true);
     expect(existsSync(d.sourcePath)).toBe(true);
-    expect(d.order.length).toBe(5);
+    expect(d.order.length).toBe(6);
   });
 
   it("caches the parse (same object reference) until reset", () => {
@@ -95,7 +96,7 @@ describe("resolution + cache", () => {
   it("honors an explicit manifestPath", () => {
     const d = loadHarnessDescriptor({ manifestPath: repoRootManifest });
     expect(d.sourcePath).toBe(repoRootManifest);
-    expect(d.byId.size).toBe(5);
+    expect(d.byId.size).toBe(6);
   });
 
   it("throws on a missing explicit manifestPath", () => {
@@ -106,22 +107,25 @@ describe("resolution + cache", () => {
 });
 
 describe("accessors against the real descriptor", () => {
-  it("harnessIds() returns the 5 shape ids in declaration order", () => {
+  it("harnessIds() returns the 6 shape ids in declaration order", () => {
     expect(harnessIds()).toEqual([
       "claude",
       "codex",
       "gemini",
       "opencode",
       "antigravity",
+      "cursor",
     ]);
   });
 
-  it("agentId() encodes the claude→claude-code / gemini→gemini-cli split", () => {
+  it("agentId() encodes the claude→claude-code / gemini→gemini-cli split (cursor is identity)", () => {
     expect(agentId("claude")).toBe("claude-code");
     expect(agentId("gemini")).toBe("gemini-cli");
     expect(agentId("codex")).toBe("codex");
     expect(agentId("opencode")).toBe("opencode");
     expect(agentId("antigravity")).toBe("antigravity");
+    // FR-192: cursor's npx agent id == its shape id (no remap).
+    expect(agentId("cursor")).toBe("cursor");
   });
 
   it("mcpFacts() returns the per-harness config facts (expanded path)", () => {
@@ -143,6 +147,11 @@ describe("accessors against the real descriptor", () => {
     expect(mcpFacts("gemini").configPath).not.toBe(
       mcpFacts("antigravity").configPath,
     );
+    // FR-192: cursor rides the claude ENTRY shape into ~/.cursor/mcp.json.
+    expect(mcpFacts("cursor").entryShape).toBe("claude");
+    expect(mcpFacts("cursor").mapKey).toBe("mcpServers");
+    expect(mcpFacts("cursor").configPath).toContain(".cursor/mcp.json");
+    expect(mcpFacts("cursor").projected).toBe(true);
   });
 
   it("grantGrammar() returns the per-harness grant grammar", () => {
@@ -156,6 +165,9 @@ describe("accessors against the real descriptor", () => {
     expect(grantGrammar("gemini").kind).toBe("json-folder");
     // opencode grant rides agent frontmatter — `covered`, no file, no token.
     expect(grantGrammar("opencode")).toEqual({ kind: "covered" });
+    // FR-192: cursor auto-approves MCP at runtime (cursor-agent --approve-mcps);
+    // no persistent grant file → `covered`, like opencode.
+    expect(grantGrammar("cursor")).toEqual({ kind: "covered" });
   });
 
   it("hookFacts() reflects per-harness hook participation", () => {
@@ -178,14 +190,21 @@ describe("accessors against the real descriptor", () => {
     });
     expect(hookFacts("codex")).toEqual({ supported: false });
     expect(hookFacts("gemini")).toEqual({ supported: false });
+    // FR-192: cursor-agent has no hook API → supported:false (documented N/A).
+    expect(hookFacts("cursor")).toEqual({ supported: false });
   });
 
-  it("harnessSpecificFile() is present only for the dynamic-define harnesses", () => {
+  it("harnessSpecificFile() is present for every dynamic-define / inline harness", () => {
     expect(harnessSpecificFile("gemini")).toBe(
       "core/os/harness-specific/gemini.md",
     );
     expect(harnessSpecificFile("antigravity")).toBe(
       "core/os/harness-specific/antigravity.md",
+    );
+    // FR-192: cursor is `inline` → it carries a harness-specific file pointing at
+    // the shared INLINE delegation recipe.
+    expect(harnessSpecificFile("cursor")).toBe(
+      "core/os/harness-specific/cursor.md",
     );
     expect(harnessSpecificFile("claude")).toBeUndefined();
     expect(harnessSpecificFile("codex")).toBeUndefined();
@@ -194,16 +213,20 @@ describe("accessors against the real descriptor", () => {
 
   it("derives the per-surface participation enums from block presence", () => {
     // OPEN DECISION #1: antigravity is dynamic-define (no agents block) → excluded.
+    // FR-192: cursor is inline (no agents block) → likewise excluded.
     expect(agentTargetTypes()).toEqual(["claude", "codex", "gemini", "opencode"]);
     expect(agentTargetTypes()).not.toContain("antigravity");
+    expect(agentTargetTypes()).not.toContain("cursor");
     expect(mcpTargetTypes()).toEqual([
       "claude",
       "codex",
       "gemini",
       "opencode",
       "antigravity",
+      "cursor",
     ]);
     expect(hookTargetTypes()).toEqual(["claude", "opencode", "antigravity"]);
+    expect(hookTargetTypes()).not.toContain("cursor");
   });
 
   it("agentTargetRowHarnesses() = the projection:target-row set (parity-guard input)", () => {
@@ -212,17 +235,20 @@ describe("accessors against the real descriptor", () => {
   });
 
   it("mcpProjectedHarnesses() = the mcp.projected set (parity input; antigravity carve-out excluded)", () => {
-    // TD-281: all 5 have an mcp block (mcpTargetTypes), but antigravity is
-    // mcp.projected:false (FR-179 carve-out) → the projected set is the other 4.
+    // TD-281: all 6 have an mcp block (mcpTargetTypes), but antigravity is
+    // mcp.projected:false (FR-179 carve-out) → it is the only one excluded.
+    // FR-192: cursor is mcp.projected:true → it joins the projected set.
     expect(mcpProjectedHarnesses()).toEqual([
       "claude",
       "codex",
       "gemini",
       "opencode",
+      "cursor",
     ]);
     expect(mcpProjectedHarnesses()).not.toContain("antigravity");
     // The flag rides McpFacts: capability (block presence) ≠ projection.
     expect(mcpFacts("claude").projected).toBe(true);
+    expect(mcpFacts("cursor").projected).toBe(true);
     expect(mcpFacts("antigravity").projected).toBe(false);
     // It is a STRICT subset of the capability set (the carve-out is the gap).
     expect(mcpProjectedHarnesses().length).toBeLessThan(mcpTargetTypes().length);
@@ -255,23 +281,25 @@ describe("descriptor value snapshots (the concrete values the deleted consts hel
   // re-expressed here as direct pins of the exact values those consts held (now
   // sourced from the descriptor) — coverage preserved, no deleted-symbol imports.
 
-  it("skillAgentIds() pins the 5 npx agent ids (gemini-cli/claude-code, not bare)", () => {
+  it("skillAgentIds() pins the 6 npx agent ids (gemini-cli/claude-code, not bare; cursor)", () => {
     expect(skillAgentIds()).toEqual([
       "claude-code",
       "codex",
       "gemini-cli",
       "opencode",
       "antigravity",
+      "cursor",
     ]);
   });
 
-  it("mcpAgentIds() pins the 5 npx agent ids (== skillAgentIds())", () => {
+  it("mcpAgentIds() pins the 6 npx agent ids (== skillAgentIds())", () => {
     expect(mcpAgentIds()).toEqual([
       "claude-code",
       "codex",
       "gemini-cli",
       "opencode",
       "antigravity",
+      "cursor",
     ]);
   });
 
@@ -281,15 +309,16 @@ describe("descriptor value snapshots (the concrete values the deleted consts hel
     expect(agentId("codex")).toBe("codex");
     expect(agentId("opencode")).toBe("opencode");
     expect(agentId("antigravity")).toBe("antigravity");
+    expect(agentId("cursor")).toBe("cursor");
   });
 
-  it("harnessIds() pins the 5 shape ids", () => {
+  it("harnessIds() pins the 6 shape ids", () => {
     expect([...harnessIds()].sort()).toEqual(
-      ["antigravity", "claude", "codex", "gemini", "opencode"].sort(),
+      ["antigravity", "claude", "codex", "cursor", "gemini", "opencode"].sort(),
     );
   });
 
-  it("mcpFacts(id) pins per-harness config facts (path/mapKey/format) for all 5", () => {
+  it("mcpFacts(id) pins per-harness config facts (path/mapKey/format) for all 6", () => {
     // claude is pinned exactly via the live path helper; the rest assert the
     // known config-FILE suffix (their path helpers were deleted from the import
     // set) + the exact mapKey/format the deleted HARNESS_CONFIG table held.
@@ -316,18 +345,24 @@ describe("descriptor value snapshots (the concrete values the deleted consts hel
     expect(mcpFacts("antigravity").configPath).toContain(
       ".gemini/config/mcp_config.json",
     );
+    // FR-192: cursor rides the claude shape into ~/.cursor/mcp.json.
+    expect(mcpFacts("cursor").mapKey).toBe("mcpServers");
+    expect(mcpFacts("cursor").format).toBe("json");
+    expect(mcpFacts("cursor").configPath).toContain(".cursor/mcp.json");
   });
 
   it("entry_shape matches the buildHarnessMcpEntry emitter selection", () => {
     // No standalone const holds entry_shape — the buildHarnessMcpEntry switch IS
     // the emitter (KEPT). claude/gemini/codex/opencode select their own shape;
-    // antigravity rides `gemini` (byte-identical entry, mcp-shape.ts).
+    // antigravity rides `gemini` (byte-identical entry, mcp-shape.ts); FR-192:
+    // cursor rides `claude` (type:"stdio" — the buildHarnessMcpEntry claude case).
     const expected: Record<HarnessId, string> = {
       claude: "claude",
       gemini: "gemini",
       codex: "codex",
       opencode: "opencode",
       antigravity: "gemini",
+      cursor: "claude",
     };
     for (const id of ALL_IDS) {
       expect(mcpFacts(id).entryShape).toBe(expected[id]);
@@ -351,19 +386,22 @@ describe("descriptor value snapshots (the concrete values the deleted consts hel
     expect(grantGrammar("gemini").path).toContain(".gemini/trustedFolders.json");
     // opencode grant rides agent frontmatter — covered, no file, no token.
     expect(grantGrammar("opencode")).toEqual({ kind: "covered" });
+    // FR-192: cursor grant rides the runtime --approve-mcps flag — covered.
+    expect(grantGrammar("cursor")).toEqual({ kind: "covered" });
   });
 
   it("agentTargetTypes() pins the agents-surface set (no antigravity)", () => {
     expect(agentTargetTypes()).toEqual(["claude", "codex", "gemini", "opencode"]);
   });
 
-  it("mcpTargetTypes() pins the mcp-surface set (all 5)", () => {
+  it("mcpTargetTypes() pins the mcp-surface set (all 6)", () => {
     expect(mcpTargetTypes()).toEqual([
       "claude",
       "codex",
       "gemini",
       "opencode",
       "antigravity",
+      "cursor",
     ]);
   });
 
@@ -372,13 +410,16 @@ describe("descriptor value snapshots (the concrete values the deleted consts hel
   });
 
   it("mcpProjectedHarnesses() pins the mcp-projected set (TD-281 carve-out)", () => {
-    // The byte-identical-clean expected set: the brain MCP block targets exactly
-    // these 4; antigravity is the FR-179 carve-out (mcp.projected:false).
+    // The brain MCP block targets claude/codex/gemini/opencode; antigravity is the
+    // FR-179 carve-out (mcp.projected:false). FR-192: cursor is mcp.projected:true,
+    // so it joins the projected set (it appears in no mcp block's targets today, so
+    // it does not enter any footprint → no parity violation against the brain block).
     expect(mcpProjectedHarnesses()).toEqual([
       "claude",
       "codex",
       "gemini",
       "opencode",
+      "cursor",
     ]);
   });
 
