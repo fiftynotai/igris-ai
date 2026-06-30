@@ -30,7 +30,7 @@ export type HarnessAction = "compile" | "check";
  * FR-180: a machine-readable summary of one adapter run. The exit-code path
  * (`runHarness`) stays for back-compat + the `harness` verb; `add-orchestrate`
  * needs to distinguish "0 targets matched" (the TD-235 silent-no-op root) and
- * the loud `FAIL core <surface>` / visible `SKIPPED core surfaces` lines from a
+ * the loud `FAIL core <surface>` / visible `WARN  core skills` lines from a
  * genuine OK run. The adapter already prints these to its summary; the
  * structured path captures stdout (instead of inheriting it) and parses the
  * per-row verdicts.
@@ -47,8 +47,12 @@ export interface HarnessStructuredResult {
   /** Per-row `FAIL  <surface> — …` summary lines (verbatim, trimmed). */
   failRows: string[];
   /**
-   * The visible `SKIPPED core surfaces (personal-project compile)` info line
-   * if the adapter emitted it (D5 incidental-skip path), else undefined.
+   * FR-218: the loud `WARN  core skills are (re)projected …` line the adapter
+   * emits when a NON-OWNER (consumer) compile/drift touches the GLOBAL skills
+   * store, else undefined. (Pre-FR-218 this captured the retired `SKIPPED core
+   * surfaces (personal-project compile)` line — the ownership gate used to skip
+   * core for non-owners; FR-218 makes core always-global so it is reprojected,
+   * not skipped. Field name kept for result-shape stability.)
    */
   skippedCoreLine?: string;
 }
@@ -216,8 +220,8 @@ export async function runHarness(opts: HarnessOptions): Promise<number> {
 /**
  * FR-180: parse one adapter run's captured output into a structured verdict.
  * The adapter's summary uses `  OK    …`, `  FAIL  …` row prefixes, prints
- * `No … targets matched` on the empty-match path, and (D5) the visible
- * `SKIPPED core surfaces (personal-project compile)` info line. We parse the
+ * `No … targets matched` on the empty-match path, and (FR-218) the loud
+ * `WARN  core skills are (re)projected …` non-owner info line. We parse the
  * verbatim lines rather than re-deriving — the adapter is the single source of
  * truth for the verdict (L-519: compile/drift own the contract).
  */
@@ -237,8 +241,8 @@ export function parseHarnessOutput(
       continue;
     }
     // PARSER↔ADAPTER COUPLING: these row prefixes (`OK `/`FAIL `, the
-    // "… targets matched" empty-match line, and "SKIPPED core surfaces") are
-    // produced by the summary-emit block in
+    // "… targets matched" empty-match line, and FR-218's "WARN  core skills"
+    // non-owner diagnostic) are produced by the summary-emit block in
     // core/scripts/cli-adapters/compile_harnesses.sh (and the drift summary in
     // check_harness_drift.sh). If you change those literals on the bash side,
     // update this parser in the SAME change — there is a matching breadcrumb
@@ -251,7 +255,10 @@ export function parseHarnessOutput(
     } else if (line.includes("targets matched")) {
       // "No agent/skills/mcp/hook targets matched (…)." (compile + check).
       noTargetsMatched = true;
-    } else if (line.startsWith("SKIPPED core surfaces")) {
+    } else if (line.startsWith("WARN  core skills")) {
+      // FR-218: a non-owner compile/drift (re)projected the GLOBAL core skills.
+      // NOT a failure — core is always global; surfaced as info via add's
+      // coreSkipped passthrough.
       skippedCoreLine = line;
     }
   }

@@ -91,15 +91,17 @@ describe("projectAndVerify — TD-235 loud-failure conversion", () => {
       captureAdapter: fakeAdapter({
         compile: {
           code: 1,
-          output:
-            "FAIL  core skills — not owned by --project-root /proj; run from the igris-ai repo or pass --core\n",
+          // FR-218: a genuine delegate failure (the gate no longer FAILs core
+          // for skills — core is always global). The FAIL row + non-zero exit
+          // must still flip ok:false with the row surfaced in the reason.
+          output: "FAIL  skills (delegate) — loadout project-skills exited 1\n",
         },
       }),
     });
     expect(res.ok).toBe(false);
     expect(res.failed.length).toBeGreaterThan(0);
     expect(res.reason).toContain("compile failed");
-    expect(res.reason).toContain("not owned by --project-root /proj");
+    expect(res.reason).toContain("skills (delegate)");
   });
 
   it("ok=false when the verify (check) reports drift", async () => {
@@ -123,9 +125,13 @@ describe("projectAndVerify — TD-235 loud-failure conversion", () => {
     expect(res.check).toBeDefined();
   });
 
-  it("surfaces the visible SKIPPED-core line without failing on it alone", async () => {
-    // An incidental skip line present in compile output, but a target DID
-    // project — coreSkipped is reported but does not flip ok to false.
+  it("surfaces the FR-218 WARN-core line without failing on it alone", async () => {
+    // FR-218: a non-owner compile (re)projected the GLOBAL core skills (the WARN
+    // line) AND a target projected — coreSkipped carries the WARN but does NOT
+    // flip ok to false.
+    const warn =
+      "WARN  core skills are (re)projected to the GLOBAL user store from " +
+      "non-owner --project-root /proj (skills are global; FR-218)";
     const res = await projectAndVerify({
       surface: "skills",
       projectRoot: "/proj",
@@ -134,16 +140,14 @@ describe("projectAndVerify — TD-235 loud-failure conversion", () => {
         compile: {
           code: 0,
           output:
-            "SKIPPED core surfaces (personal-project compile)\n" +
-            "  OK    skills/claude -> x\n  1 targets — 1 ok, 0 failed\n",
+            warn +
+            "\n  OK    skills/claude -> x\n  1 targets — 1 ok, 0 failed\n",
         },
         check: { code: 0, output: "  1 targets — 1 in sync, 0 drifted/missing\n" },
       }),
     });
     expect(res.ok).toBe(true);
-    expect(res.coreSkipped).toEqual([
-      "SKIPPED core surfaces (personal-project compile)",
-    ]);
+    expect(res.coreSkipped).toEqual([warn]);
   });
 });
 

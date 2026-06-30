@@ -30,7 +30,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -4568,6 +4568,19 @@ describe("loadout integration (real compile_harnesses.sh + validate_manifest)", 
     const homeSandbox = join(tmpRoot, "delegate-home");
     mkdirSync(homeSandbox, { recursive: true });
     process.env.HOME = homeSandbox;
+    // FR-218 (mechanism B): this fixture declares applicable (global-scope)
+    // skills blocks, so the consumer compile now ALSO (re)projects the repo
+    // surfaces-manifest.json core source (`~/.igris/core/skills` →
+    // <homeSandbox>/.igris/core/skills). Seed it so the `skills` CLI delegate
+    // projects it cleanly (a real install always has this dir; never the dev's
+    // real ~/.igris — HOME is sandboxed above).
+    mkdirSync(join(homeSandbox, ".igris", "core", "skills", "zcore"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(homeSandbox, ".igris", "core", "skills", "zcore", "SKILL.md"),
+      "---\nname: zcore\ndescription: repo core skill\n---\nZCORE BODY\n",
+    );
     try {
       // TD-191 semantics: `surfaces.skills` is an ARRAY of sibling blocks, each
       // with its OWN source. The core block uses its own skills source; the
@@ -4672,6 +4685,164 @@ describe("loadout integration (real compile_harnesses.sh + validate_manifest)", 
       // the delegate — no per-skill symlink lands there anymore.
       expect(existsSync(join(coreOut, "alpha"))).toBe(false);
       expect(existsSync(join(personalOut, "mine"))).toBe(false);
+    } finally {
+      process.env.HOME = homeBackup;
+    }
+  });
+
+  it("FR-218: NON-OWNER consumer compile --surface skills (re)projects GLOBAL core skills (core declared ONLY in surfaces-manifest.json) — the 2026-06-30 prune regression", async () => {
+    if (!toolingAvailable()) {
+      return;
+    }
+    process.env.IGRIS_BRAIN_DIR = brainDir;
+
+    // The literal incident: core skills are declared ONLY in the global,
+    // core-owned surfaces-manifest.json (`source: ~/.igris/core/skills`), NOT in
+    // the consumer project's own manifest, and the consumer does NOT own that
+    // file. Pre-FR-218 the ownership gate dropped the core source for any
+    // non-owner compile, so a consumer `compile --surface skills` rebuilt the
+    // ONE global `skills` store from personal-only and PRUNED the core skills.
+    // Under mechanism (B), the personal skill added below (fr218mine) IS the
+    // (B) trigger — a consumer compile carrying a personal/project skill block
+    // re-affirms core alongside it (an agent-only / no-personal compile stays a
+    // no-op; covered by the bats SAFETY test). This sandboxes HOME so the real
+    // `skills` CLI writes into tmp (NEVER the dev's real ~/.claude|~/.agents) and
+    // proves BOTH the core skill AND the personal skill coexist post-compile. The
+    // existing ":4549" delegate test injects the core block into the PROJECT'S
+    // OWN manifest — sidestepping the gate; this test does NOT (the blind-spot
+    // FR-218 closes).
+    const homeBackup = process.env.HOME;
+    const homeSandbox = join(tmpRoot, "fr218-home");
+    mkdirSync(homeSandbox, { recursive: true });
+    process.env.HOME = homeSandbox;
+    const repoCli = `node ${join(REPO_ROOT, "cli", "dist", "index.js")}`;
+    try {
+      // CORE skill at the surfaces-manifest.json source: ~/.igris/core/skills →
+      // <homeSandbox>/.igris/core/skills. Declared ONLY here; owned by NO project.
+      const coreSkillDir = join(
+        homeSandbox,
+        ".igris",
+        "core",
+        "skills",
+        "fr218core",
+      );
+      mkdirSync(coreSkillDir, { recursive: true });
+      writeFileSync(
+        join(coreSkillDir, "SKILL.md"),
+        "---\nname: fr218core\ndescription: core skill\n---\nFR218 CORE BODY\n",
+      );
+
+      // The consumer project's OWN manifest carries NO skills block — the ONLY
+      // path for core to reach the store is the surfaces-manifest.json + the
+      // FR-218 always-union flatten.
+      writeFileSync(
+        join(fixtureRoot, "harness-manifest.json"),
+        JSON.stringify({ version: 1, agents: [] }),
+      );
+
+      // A PERSONAL skill via the REAL add-skill verb (writes the overlay the
+      // compiler auto-discovers). Distinct source root from core.
+      const personalSkillsRoot = join(fixtureRoot, "skills-mine");
+      mkdirSync(join(personalSkillsRoot, "fr218mine"), { recursive: true });
+      writeFileSync(
+        join(personalSkillsRoot, "fr218mine", "SKILL.md"),
+        "---\nname: fr218mine\ndescription: personal mine\n---\nFR218 MINE BODY\n",
+      );
+      const addCode = await runLoadout({
+        action: "add-skill",
+        name: "fr218mine",
+        from: join(personalSkillsRoot, "fr218mine"),
+        targets: [`claude:symlink:${join(fixtureRoot, "out-mine")}`],
+        projectRoot: fixtureRoot,
+      });
+      expect(addCode).toBe(0);
+
+      // Run the REAL compiler from the CONSUMER project (NON-owner of the
+      // surfaces-manifest.json). HOME + IGRIS_BRAIN_DIR sandboxed; IGRIS_CLI
+      // points at the repo dist so the delegate runs repo code.
+      const compileRes = spawnSync(
+        "bash",
+        [COMPILE_SH, "--project-root", fixtureRoot, "--surface", "skills"],
+        {
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            IGRIS_BRAIN_DIR: brainDir,
+            HOME: homeSandbox,
+            IGRIS_CLI: repoCli,
+          },
+        },
+      );
+      // The WARN is a stderr diagnostic (like the real adapter); merge the
+      // streams the way parseHarnessOutput's defaultAdapterCapture does.
+      const out = `${compileRes.stdout ?? ""}${compileRes.stderr ?? ""}`;
+      expect(compileRes.status).toBe(0);
+      // FR-218: the loud non-pruning WARN fired (a non-owner touched the global
+      // store) — and the retired SKIPPED literal is gone.
+      expect(out).toContain("WARN  core skills are");
+      expect(out).not.toContain("SKIPPED core surfaces");
+
+      // The CORE skill is STILL projected (NOT pruned) — both stores, reachable.
+      const claudeCore = join(
+        homeSandbox,
+        ".claude",
+        "skills",
+        "fr218core",
+        "SKILL.md",
+      );
+      const agentsCore = join(
+        homeSandbox,
+        ".agents",
+        "skills",
+        "fr218core",
+        "SKILL.md",
+      );
+      expect(existsSync(claudeCore)).toBe(true);
+      expect(existsSync(agentsCore)).toBe(true);
+      expect(readFileSync(claudeCore, "utf-8")).toContain("FR218 CORE BODY");
+
+      // The PERSONAL skill COEXISTS in the SAME global store (multi-source union).
+      const claudeMine = join(
+        homeSandbox,
+        ".claude",
+        "skills",
+        "fr218mine",
+        "SKILL.md",
+      );
+      const agentsMine = join(
+        homeSandbox,
+        ".agents",
+        "skills",
+        "fr218mine",
+        "SKILL.md",
+      );
+      expect(existsSync(claudeMine)).toBe(true);
+      expect(existsSync(agentsMine)).toBe(true);
+      expect(readFileSync(claudeMine, "utf-8")).toContain("FR218 MINE BODY");
+
+      // §18.1 drift twin (SAME fixture): a non-owner check --surface skills
+      // re-derives the IDENTICAL source set (core always unioned) — a clean
+      // idempotent re-projection (exit 0 → execFileSync does NOT throw) + the
+      // same loud WARN, never a false prune/drift flag.
+      const CHECK_SH = join(ADAPTER_DIR, "check_harness_drift.sh");
+      const driftRes = spawnSync(
+        "bash",
+        [CHECK_SH, "--project-root", fixtureRoot, "--surface", "skills"],
+        {
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            IGRIS_BRAIN_DIR: brainDir,
+            HOME: homeSandbox,
+            IGRIS_CLI: repoCli,
+          },
+        },
+      );
+      const driftOut = `${driftRes.stdout ?? ""}${driftRes.stderr ?? ""}`;
+      expect(driftRes.status).toBe(0);
+      expect(driftOut).toContain("WARN  core skills are");
+      expect(driftOut).toContain("in sync");
+      expect(driftOut).not.toContain("SKIPPED core surfaces");
     } finally {
       process.env.HOME = homeBackup;
     }

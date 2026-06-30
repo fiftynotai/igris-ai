@@ -49,9 +49,11 @@ export interface ProjectAndVerifyResult {
   /** FAIL summary rows from compile or check (verbatim). */
   failed: string[];
   /**
-   * The visible `SKIPPED core surfaces (personal-project compile)` line, if
-   * the adapter emitted it (D5 incidental-skip path). Present here so the
-   * caller can surface it; its presence alone is NOT a failure.
+   * FR-218: the loud `WARN  core skills are (re)projected …` line(s) from a
+   * non-owner (consumer) compile/drift that touched the GLOBAL skills store.
+   * Present here so the caller can surface it as info; its presence alone is
+   * NOT a failure. (Field name kept for result-shape stability — see
+   * HarnessStructuredResult.skippedCoreLine.)
    */
   coreSkipped: string[];
   /**

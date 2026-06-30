@@ -223,14 +223,17 @@ export interface CoreProjectionParams {
  * projection half MUST run against the RUNTIME BRAIN ROOT (`~/.igris`), NOT the
  * checkout, for two empirically-verified reasons:
  *
- *   1. OWNERSHIP GATE (skills + mcp). The compile/check ownership gate keys on
+ *   1. OWNERSHIP GATE (mcp + hook). The compile/check ownership gate keys on
  *      `commonpath(realpath(<runtime surfaces-manifest.json>), realpath(<project-
  *      root>)) == realpath(<project-root>)`. The runtime manifest lives under
  *      `~/.igris/core/scripts/cli-adapters/`, so only a project-root that is an
  *      ANCESTOR of it (i.e. `~/.igris`, or `~/.igris/core`) is "owner". The
- *      checkout is NOT an ancestor → the gate refuses (the exact LOUD
- *      `FAIL core <surface> — not owned by --project-root <repo>` this fix
- *      removes for the add path). `~/.igris` (= `brainDir()`) satisfies it.
+ *      checkout is NOT an ancestor → the gate drops the core mcp/hook blocks for
+ *      a non-owner, which under `--expect-core` surfaces the LOUD 0-targets
+ *      foot-guard (`FAIL core surfaces — 0 targets matched …`). `~/.igris`
+ *      (= `brainDir()`) satisfies it. (FR-218: SKILLS are now EXEMPT from this
+ *      gate — they are global/user-level and are always (re)projected to the
+ *      global store from ANY root; reason #2 still anchors the whole add here.)
  *
  *   2. CANONICAL RESOLUTION (agents). The repo `harness-manifest.json`
  *      stores agent `canonical.dir` as the PROJECT-RELATIVE `core/agents`. That

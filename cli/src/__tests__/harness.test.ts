@@ -138,9 +138,14 @@ describe("harness verb — bad action", () => {
 // --- FR-180: structured mode ----------------------------------------------
 
 describe("parseHarnessOutput (FR-180)", () => {
-  it("parses OK / FAIL rows, the empty-match line, and the SKIPPED line", () => {
+  it("parses OK / FAIL rows, the empty-match line, and the FR-218 WARN line", () => {
+    const warn =
+      "WARN  core skills are (re)projected to the GLOBAL user store from " +
+      "non-owner --project-root /proj (skills are global; no project-local " +
+      "skills dir; FR-218)";
     const out =
-      "SKIPPED core surfaces (personal-project compile)\n" +
+      warn +
+      "\n" +
       "  OK    skills/claude -> ~/.claude/skills/foo\n" +
       "  FAIL  skills/gemini — refuse to clobber\n" +
       "  No agent/skills/mcp/hook targets matched (filter='*').\n";
@@ -149,9 +154,9 @@ describe("parseHarnessOutput (FR-180)", () => {
     expect(r.okRows).toEqual(["OK    skills/claude -> ~/.claude/skills/foo"]);
     expect(r.failRows).toEqual(["FAIL  skills/gemini — refuse to clobber"]);
     expect(r.noTargetsMatched).toBe(true);
-    expect(r.skippedCoreLine).toBe(
-      "SKIPPED core surfaces (personal-project compile)",
-    );
+    // FR-218: the non-owner core-(re)projection WARN is captured (formerly the
+    // retired "SKIPPED core surfaces" line); the field name is kept stable.
+    expect(r.skippedCoreLine).toBe(warn);
   });
 
   it("reports no targets matched only when the line is present", () => {
@@ -208,12 +213,12 @@ describe("runHarnessStructured (FR-180)", () => {
       brainRoot: BRAIN,
       captureAdapter: () => ({
         code: 1,
-        output: "  FAIL  core skills — not owned by --project-root /proj\n",
+        output: "  FAIL  skills (delegate) — loadout project-skills exited 1\n",
       }),
     });
     expect(r.code).toBe(1);
     expect(r.failRows).toEqual([
-      "FAIL  core skills — not owned by --project-root /proj",
+      "FAIL  skills (delegate) — loadout project-skills exited 1",
     ]);
   });
 

@@ -1058,20 +1058,33 @@ verify_skills() {
 DELEGATED_SKILL_ROOTS=()
 
 # ---------------------------------------------------------------------------
-# FR-180 (TD-235 / D5): mirror of compile's loud-vs-silent core-skip diagnostic.
-# The flatten gate below keeps its own in-Python commonpath check verbatim
-# (verdict bytes unchanged); this block only adds the diagnostic + exit
-# decision. Same three cases as compile_harnesses.sh's skills pass.
+# FR-218 (mechanism B): §18.1 mirror of compile_harnesses.sh — IDENTICAL
+# decision. Core is (re)projected IFF the project OWNS core OR the merged
+# (base ++ overlay) manifest carries >=1 skill block that APPLIES to this
+# --project-root (scope-matched — manifest_has_applicable_skill_block, the prune
+# trigger). A scope-FILTERED-OUT / agent-only / no-personal non-owner drift run
+# leaves the skills pass a NO-OP (no core re-check, no skills-CLI dependency, no
+# real-$HOME touch). Computed ONCE; shared by the WARN diagnostic and the
+# flatten. Drift re-derives the IDENTICAL source set the compile flatten produces
+# — an asymmetric gate here would false-flag core skills (skills-surface-flatten-location).
 # ---------------------------------------------------------------------------
+_core_owned=0
+core_surfaces_owned "$CORE_SURFACES" "$PROJECT_ROOT" && _core_owned=1
+_merged_skill_applies=0
+manifest_has_applicable_skill_block "$MERGED_MANIFEST" "$PROJECT_ROOT" && _merged_skill_applies=1
+_include_core=0
+if [ "$_core_owned" -eq 1 ] || [ "$_merged_skill_applies" -eq 1 ]; then
+  _include_core=1
+fi
+
+# Loud, non-pruning WARN — fires ONLY when a NON-OWNER consumer drift run
+# actually re-projects core to the global store (it carries an applicable
+# personal skill — the prune trigger). Agent-only / scoped-out / no-personal
+# non-owner runs stay silent no-ops.
 if core_skills_declared "$CORE_SURFACES" \
-   && ! core_surfaces_owned "$CORE_SURFACES" "$PROJECT_ROOT"; then
-  if [ "$EXPECT_CORE" -eq 1 ]; then
-    echo "FAIL  core skills — not owned by --project-root $PROJECT_ROOT; run from the igris-ai repo or pass --core" >&2
-    DRIFT=$((DRIFT + 1))
-    TOTAL=$((TOTAL + 1))
-  else
-    echo "SKIPPED core surfaces (personal-project compile)" >&2
-  fi
+   && [ "$_core_owned" -eq 0 ] \
+   && [ "$_merged_skill_applies" -eq 1 ]; then
+  echo "WARN  core skills are (re)projected to the GLOBAL user store from non-owner --project-root $PROJECT_ROOT (skills are global; no project-local skills dir; FR-218)" >&2
 fi
 
 # ---------------------------------------------------------------------------
@@ -1082,10 +1095,11 @@ fi
 # compiler target the trailing date-stamped marker line is stripped from BOTH
 # sides before sha so the verdict is date-stable.
 # ---------------------------------------------------------------------------
-SKILL_ROWS=$(python3 - "$CORE_SURFACES" "$MERGED_MANIFEST" "$PROJECT_ROOT" <<'PY'
+SKILL_ROWS=$(python3 - "$CORE_SURFACES" "$MERGED_MANIFEST" "$_include_core" <<'PY'
 import json
-import os
 import sys
+
+include_core = sys.argv[3] == "1"
 
 
 def load_skills(path):
@@ -1106,17 +1120,12 @@ def load_skills(path):
     return []
 
 
-# Only union the GLOBAL core surfaces-manifest.json when the checked project
-# OWNS it (realpath under --project-root) — see compile_harnesses.sh. This
-# keeps core skills from being flagged against unrelated project roots.
-sources = [sys.argv[2]]
-try:
-    cs_real = os.path.realpath(sys.argv[1])
-    pr_real = os.path.realpath(sys.argv[3])
-    if os.path.commonpath([cs_real, pr_real]) == pr_real:
-        sources.insert(0, sys.argv[1])
-except (OSError, ValueError):
-    pass
+# FR-218 (mechanism B): §18.1 mirror of compile_harnesses.sh — the core
+# surfaces-manifest.json source is unioned IFF `include_core` (computed by the
+# bash caller: project OWNS core OR the merged manifest carries >=1 skill block).
+# When false (agent-only / no-personal drift) the skills pass is a no-op. Drift
+# re-derives the IDENTICAL source set the compile flatten produces.
+sources = ([sys.argv[1]] if include_core else []) + [sys.argv[2]]
 
 # TD-191: NO `seen` dedup here. The drift pass mirrors compile_harnesses.sh
 # (L-519 §18.1 compile/drift-verify pairing) — every (block, target) row

@@ -10,11 +10,12 @@
 #     asserting the projection symlink actually lands on disk (not just an
 #     overlay write).
 #   - The mode line is PRINTED (D1, never silent).
-#   - FORCED OWNERSHIP-SKIP: a raw `compile --surface skills --expect-core` in a
-#     non-owning project FAILS LOUDLY (exit != 0 + actionable message) — the
-#     TD-235 no-silent-no-op proof at the adapter layer.
-#   - Incidental personal compile (no --expect-core) emits the visible SKIPPED
-#     line and stays exit-0.
+#   - FR-218 (mechanism B) GLOBAL CORE SKILLS: a non-owner `compile --surface
+#     skills` that PROJECTS A PERSONAL SKILL also (re)projects the core skills to
+#     the GLOBAL user store (re-affirmed, never pruned) + a LOUD WARN, exit 0. An
+#     agent-only / no-personal compile is a clean NO-OP for skills (core NOT
+#     dispatched — the safety property). Mirrored on drift. Replaces the
+#     pre-FR-218 forced-ownership-skip assertions.
 #
 # Setup mirrors harness_mcp.test.bash: sandbox HOME + isolated brain, with the
 # repo adapters + verify_mirror copied into the sandbox brain so `igris add`'s
@@ -43,6 +44,22 @@ setup() {
   SANDBOX_HOME="$TEST_TEMP_DIR/home_$BATS_TEST_NUMBER"
   mkdir -p "$SANDBOX_HOME/.claude/skills" "$SANDBOX_HOME/.agents/skills"
   export HOME="$SANDBOX_HOME"
+
+  # FR-218 (mechanism B): a personal `add skill` / consumer skills compile that
+  # projects an applicable personal skill ALSO re-affirms the GLOBAL core skills
+  # (the personal `skills add` could detach core via the legacy whole-dir
+  # ~/.claude/skills symlink, so core is (re)projected alongside it). Seed the
+  # core source (~/.igris/core/skills → $SANDBOX_HOME/.igris/core/skills) so that
+  # re-affirm dispatch succeeds in the sandbox — a real install always has this
+  # dir; HOME is sandboxed so the real ~/.igris is never touched.
+  mkdir -p "$SANDBOX_HOME/.igris/core/skills/zsetupcore"
+  cat > "$SANDBOX_HOME/.igris/core/skills/zsetupcore/SKILL.md" <<'EOF'
+---
+name: zsetupcore
+description: "sandbox core skill seed"
+---
+sandbox core seed body
+EOF
 
   # Isolated brain dir WITH the repo adapters copied in (igris add resolves the
   # adapter dir as brainDir()/core/scripts/cli-adapters).
@@ -204,31 +221,124 @@ EOF
   [ -L "$HOME/.claude/skills2/other" ]
 }
 
-@test "TD-235: forced ownership-skip FAILS loudly under --expect-core (exit != 0)" {
-  # A raw compile of the core skills surface in a non-owning project, with
-  # --expect-core, must FAIL loudly — never a silent exit-0 no-op.
-  run env IGRIS_BRAIN_DIR="$ISOLATED_BRAIN" bash "$COMPILE" \
-    --project-root "$PROJ" --surface skills --expect-core
-  echo "status=$status output=$output" >&2
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"FAIL  core skills"* ]]
-  [[ "$output" == *"not owned by --project-root"* ]]
+# FR-218 (mechanism B): core skills are GLOBAL/user-level under the `skills` CLI
+# delegate (no project-local skills dir). A non-owner consumer compile that
+# PROJECTS A PERSONAL SKILL (the prune trigger — the personal `skills add`
+# replaces the legacy whole-dir ~/.claude/skills symlink) ALSO (re)projects the
+# core skills (re-affirmed, never pruned) + a LOUD WARN. An agent-only /
+# no-personal compile is a clean NO-OP for skills (core NOT dispatched — the
+# safety property; see the SAFETY test below). These replace the pre-FR-218
+# TD-235 tests that asserted the gate SKIPPED/FAILed core for non-owners.
+#
+# The repo surfaces-manifest.json declares the core skills source as
+# ~/.igris/core/skills → $SANDBOX_HOME/.igris/core/skills under the sandbox HOME.
+# `_fr218_seed_core_and_personal` seeds a core skill AND a personal/project skill
+# block in $PROJ's manifest (the (B) trigger); both source dirs exist on disk so
+# the `skills` CLI delegate projects them cleanly.
+_fr218_seed_core_and_personal() {
+  mkdir -p "$SANDBOX_HOME/.igris/core/skills/coreprobe"
+  cat > "$SANDBOX_HOME/.igris/core/skills/coreprobe/SKILL.md" <<'EOF'
+---
+name: coreprobe
+description: "core probe skill"
+---
+core probe body
+EOF
+  local psrc="$TEST_TEMP_DIR/fr218_personal_$BATS_TEST_NUMBER"
+  mkdir -p "$psrc/mine"
+  cat > "$psrc/mine/SKILL.md" <<'EOF'
+---
+name: mine
+description: "personal mine skill"
+---
+personal mine body
+EOF
+  cat > "$PROJ/harness-manifest.json" <<EOF
+{ "version": 1, "agents": [], "surfaces": { "skills": [ { "source": "$psrc", "layer": "personal", "targets": [ { "type": "claude", "method": "symlink", "path": "$SANDBOX_HOME/.claude/skills" } ] } ] } }
+EOF
 }
 
-@test "TD-235: incidental compile (no --expect-core) emits visible SKIPPED, exit 0" {
-  run env IGRIS_BRAIN_DIR="$ISOLATED_BRAIN" bash "$COMPILE" \
-    --project-root "$PROJ" --surface skills
+@test "FR-218 (B): non-owner compile --surface skills WITH a personal skill (re)projects core + projects personal + WARN, exit 0" {
+  [ -d "$IGRIS_ROOT/node_modules/skills" ] || skip "skills CLI not installed (pinned dep)"
+  _fr218_seed_core_and_personal
+  run env IGRIS_BRAIN_DIR="$ISOLATED_BRAIN" IGRIS_CLI="node $CLI_ENTRY" HOME="$SANDBOX_HOME" \
+    bash "$COMPILE" --project-root "$PROJ" --surface skills
   echo "status=$status output=$output" >&2
   [ "$status" -eq 0 ]
-  [[ "$output" == *"SKIPPED core surfaces (personal-project compile)"* ]]
+  # Loud WARN (not a silent skip); the retired SKIPPED literal is gone.
+  [[ "$output" == *"WARN  core skills are"* ]]
+  [[ "$output" != *"SKIPPED core surfaces"* ]]
+  # Core IS re-affirmed (NOT pruned) AND the personal skill is projected — both
+  # land in the global user store (both stores).
+  [ -f "$SANDBOX_HOME/.claude/skills/coreprobe/SKILL.md" ]
+  [ -f "$SANDBOX_HOME/.agents/skills/coreprobe/SKILL.md" ]
+  [ -f "$SANDBOX_HOME/.claude/skills/mine/SKILL.md" ]
 }
 
-@test "TD-235 drift mirror: forced ownership-skip FAILS loudly in check under --expect-core" {
-  run env IGRIS_BRAIN_DIR="$ISOLATED_BRAIN" bash "$GUARD" \
-    --project-root "$PROJ" --expect-core
+@test "FR-218 (B): non-owner compile --surface skills --expect-core does NOT FAIL core (core is global)" {
+  [ -d "$IGRIS_ROOT/node_modules/skills" ] || skip "skills CLI not installed (pinned dep)"
+  _fr218_seed_core_and_personal
+  run env IGRIS_BRAIN_DIR="$ISOLATED_BRAIN" IGRIS_CLI="node $CLI_ENTRY" HOME="$SANDBOX_HOME" \
+    bash "$COMPILE" --project-root "$PROJ" --surface skills --expect-core
   echo "status=$status output=$output" >&2
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"FAIL  core skills"* ]]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WARN  core skills are"* ]]
+  # The pre-FR-218 "FAIL core skills — not owned" escalation is gone.
+  [[ "$output" != *"FAIL  core skills"* ]]
+  [ -f "$SANDBOX_HOME/.claude/skills/coreprobe/SKILL.md" ]
+}
+
+@test "FR-218 (B) drift mirror: non-owner check --surface skills re-checks core clean (MATCH) + WARN, exit 0" {
+  [ -d "$IGRIS_ROOT/node_modules/skills" ] || skip "skills CLI not installed (pinned dep)"
+  _fr218_seed_core_and_personal
+  run env IGRIS_BRAIN_DIR="$ISOLATED_BRAIN" IGRIS_CLI="node $CLI_ENTRY" HOME="$SANDBOX_HOME" \
+    bash "$GUARD" --project-root "$PROJ" --surface skills --expect-core
+  echo "status=$status output=$output" >&2
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"WARN  core skills are"* ]]
+  [[ "$output" != *"FAIL  core skills"* ]]
+  [[ "$output" != *"SKIPPED core surfaces"* ]]
+}
+
+@test "FR-218 (B) SAFETY: non-owner --surface all AGENT compile with NO personal skill does NOT dispatch core (no-op, no WARN, exit 0)" {
+  # The safety property that makes the existing agent bats files safe by
+  # construction: an agent-only (no personal/project skill block) compile from a
+  # non-owner leaves the skills pass a NO-OP — core is NOT dispatched to the
+  # `skills` CLI even though ~/.igris/core/skills EXISTS (seeded here). No
+  # `skills add` of core → no real-$HOME touch under default `--surface all`.
+  [ -d "$IGRIS_ROOT/node_modules/skills" ] || skip "skills CLI not installed (pinned dep)"
+  # Seed a core skill so "not dispatched" is unambiguous (it EXISTS but is skipped).
+  mkdir -p "$SANDBOX_HOME/.igris/core/skills/coreprobe"
+  cat > "$SANDBOX_HOME/.igris/core/skills/coreprobe/SKILL.md" <<'EOF'
+---
+name: coreprobe
+description: "core probe skill"
+---
+core probe body
+EOF
+  # Agent-only manifest, NO skills block.
+  mkdir -p "$PROJ/canon"
+  cat > "$PROJ/canon/abot.md" <<'EOF'
+---
+name: abot
+description: "a test agent"
+---
+You are ABOT.
+EOF
+  cat > "$PROJ/harness-manifest.json" <<'EOF'
+{ "version": 1, "agents": [ { "name": "abot", "canonical": { "dir": "canon", "versioned": false, "file": "abot.md" }, "targets": [ { "type": "claude", "path": ".claude/agents/abot.md" } ] } ] }
+EOF
+  run env IGRIS_BRAIN_DIR="$ISOLATED_BRAIN" IGRIS_CLI="node $CLI_ENTRY" HOME="$SANDBOX_HOME" \
+    bash "$COMPILE" --project-root "$PROJ" --target claude
+  echo "status=$status output=$output" >&2
+  [ "$status" -eq 0 ]
+  # The agent projected (the compile did real work).
+  [ -L "$PROJ/.claude/agents/abot.md" ]
+  # Skills pass is a NO-OP: core NOT dispatched, no WARN, no delegate row.
+  [[ "$output" != *"WARN  core skills are"* ]]
+  [[ "$output" != *"skills (delegate)"* ]]
+  [ ! -e "$SANDBOX_HOME/.claude/skills/coreprobe" ]
+  [ ! -e "$SANDBOX_HOME/.agents/skills/coreprobe" ]
 }
 
 # --- Phase 3: igris add mcp -------------------------------------------------

@@ -779,10 +779,12 @@ describe("runAdd hook — core happy path (D7, Phase 5)", () => {
 });
 
 describe("runAdd skill — TD-235 no-silent-no-op regression (CRITICAL)", () => {
-  it("core projection skipped by the ownership gate → non-zero + message", async () => {
-    // The compile adapter (under --expect-core) returns a loud FAIL row + a
-    // non-zero exit, simulating the gate skipping a declared-but-unowned core
-    // skill. `add` must surface it as a failure — NOT a phantom success.
+  it("a compile FAIL row (e.g. the skills delegate failed) → non-zero + message", async () => {
+    // FR-218: the ownership gate no longer skips core for skills (skills are
+    // always global). A GENUINE delegate failure still produces a loud FAIL row
+    // + a non-zero exit; `add` must surface it as a failure — NOT a phantom
+    // success (the TD-235 no-silent-no-op contract, exercised via a realistic
+    // post-FR-218 literal).
     const code = await runAdd({
       surface: "skill",
       name: "foo",
@@ -794,15 +796,14 @@ describe("runAdd skill — TD-235 no-silent-no-op regression (CRITICAL)", () => 
         if (scriptPath.includes("compile_harnesses.sh")) {
           return {
             code: 1,
-            output:
-              "FAIL  core skills — not owned by --project-root /unowned; run from the igris-ai repo or pass --core\n",
+            output: "FAIL  skills (delegate) — loadout project-skills exited 1\n",
           };
         }
         return { code: 0, output: "" };
       },
     });
     expect(code).not.toBe(0);
-    expect(cap.err.join("")).toContain("not owned by --project-root /unowned");
+    expect(cap.err.join("")).toContain("skills (delegate)");
   });
 
   it("0-projected compile → loud failure, never a phantom success", async () => {
@@ -828,7 +829,10 @@ describe("runAdd skill — TD-235 no-silent-no-op regression (CRITICAL)", () => 
     expect(cap.err.join("")).toContain("projection/verify failed");
   });
 
-  it("incidental personal compile emits the visible SKIPPED line + exit-0", async () => {
+  it("incidental personal compile surfaces the FR-218 WARN-core line + exit-0", async () => {
+    const warn =
+      "WARN  core skills are (re)projected to the GLOBAL user store from " +
+      "non-owner --project-root /proj (skills are global; FR-218)";
     const code = await runAdd({
       surface: "skill",
       name: "foo",
@@ -839,23 +843,21 @@ describe("runAdd skill — TD-235 no-silent-no-op regression (CRITICAL)", () => 
       materializeSkillFn: okMaterialize,
       captureAdapter: (scriptPath) => {
         if (scriptPath.includes("compile_harnesses.sh")) {
-          // A real personal project where the gate skipped core surfaces but
-          // the personal skill DID project (1 target).
+          // FR-218: a consumer compile that ALSO (re)projected the GLOBAL core
+          // skills (the WARN) while the personal skill DID project (1 target).
           return {
             code: 0,
             output:
-              "SKIPPED core surfaces (personal-project compile)\n" +
-              "  OK    skills/claude -> x\n  1 targets — 1 ok, 0 failed\n",
+              warn +
+              "\n  OK    skills/claude -> x\n  1 targets — 1 ok, 0 failed\n",
           };
         }
         return { code: 0, output: "  1 targets — 1 in sync, 0 drifted/missing\n" };
       },
     });
     expect(code).toBe(0);
-    // The SKIPPED line is surfaced (info → stdout) but does not fail the add.
-    expect(cap.out.join("")).toContain(
-      "SKIPPED core surfaces (personal-project compile)",
-    );
+    // The WARN line is surfaced (info → stdout) but does not fail the add.
+    expect(cap.out.join("")).toContain("WARN  core skills are (re)projected");
   });
 });
 

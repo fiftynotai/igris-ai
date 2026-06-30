@@ -40,11 +40,12 @@ igris add <skill|agent|mcp|hook> <name> [--from <dir-or-github>] \
    `~/.gemini/config/hooks.json`).
 3. **Verifies** the projection is drift-clean via `harness check`.
 
-If the projection produced **zero targets**, or the ownership gate skipped a
-requested core surface, `igris add` **fails loudly** with an actionable message
-— it can never report a phantom success (TD-235). This is the whole point of the
-verb: the old `loadout add-* → harness compile` two-step could silently no-op
-when the ownership gate skipped a surface; `igris add` closes that hole.
+If the projection produced **zero targets** (the TD-235 silent-no-op), `igris
+add` **fails loudly** with an actionable message — it can never report a phantom
+success. This is the whole point of the verb: the old `loadout add-* → harness
+compile` two-step could silently no-op; `igris add` closes that hole. (FR-218: a
+consumer compile that projects a personal skill also re-affirms the global core
+skills — never pruning them — see "Core SKILLS are GLOBAL" below.)
 
 ---
 
@@ -163,16 +164,21 @@ their pre-add state.
   just run the one command. (Earlier builds wrote the source only and then
   loud-failed `FAIL core <surface> — not owned by --project-root <repo>`; that is
   FIXED — core adds now land in the harnesses.)
-- **The loud `FAIL  core <surface> — not owned …` is still reserved** for a
-  genuinely mis-routed `--expect-core` compile — e.g. someone runs `harness
-  compile --surface skills --expect-core` with a `--project-root` that owns no
-  core surfaces. The gate is intact; `igris add --core` simply passes the
-  CORRECT project-root so it never trips on a legitimate core add.
-- **Personal vs incidental skip** — when you compile an unrelated personal
-  project (WITHOUT `--expect-core`), the core surfaces are intentionally skipped
-  with a single visible `SKIPPED core surfaces (personal-project compile)` line
-  (exit 0). That is not an error — it is the gate doing its job (core surfaces
-  don't leak into unrelated projects).
+- **The `--expect-core` stricter assert** is the 0-targets-matched foot-guard:
+  an `--expect-core` run that matches NOTHING fails loudly (`FAIL  core surfaces
+  — 0 targets matched …`) rather than silently no-op'ing. `igris add --core`
+  passes the CORRECT project-root so a legitimate core add always matches.
+- **Core SKILLS are GLOBAL (FR-218, mechanism B)** — skills placement under the
+  `skills` CLI delegate is global/user-level (there is NO project-local skills
+  dir). When a consumer (non-owner) compile **projects a personal/project skill**
+  (the action that, via the legacy whole-dir `~/.claude/skills` symlink, used to
+  detach core), it **also (re)projects the core skills to the global user store**
+  — core is re-affirmed, never pruned — and emits a single visible `WARN  core
+  skills are (re)projected …` line (exit 0). An **agent-only / no-personal-skill**
+  compile is a clean **no-op** for skills (core is NOT re-dispatched; no
+  skills-CLI call, no global-store touch — the safety property). (Pre-FR-218 the
+  ownership gate SKIPPED core for non-owners, then the personal projection pruned
+  it — the 2026-06-30 incident, now fixed.)
 - **MCP secrets (§14)** — `igris add mcp --env KEY=${VAR}` stores only the
   `${VAR}` indirection ref; an inline secret value is REJECTED. The harness
   resolves the real value from the environment at launch time, so no secret ever

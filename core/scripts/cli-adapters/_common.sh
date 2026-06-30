@@ -1708,12 +1708,18 @@ skill_name_matches_filter() {
 # also on any realpath/commonpath failure (safe default → core surfaces are
 # NOT unioned for an unrelated project).
 #
-# This is a DIAGNOSTIC predicate only — it does NOT change what the flatten
-# gates project (those keep their own in-Python commonpath check verbatim, so
-# the projected bytes are unchanged). compile/drift use it to decide between a
-# LOUD core-skip FAIL (the run EXPECTED core surfaces) and a visible-but-exit-0
-# SKIPPED line (an incidental personal-project compile). §18.1: ONE shared
-# helper used by BOTH compile_harnesses.sh and check_harness_drift.sh.
+# FR-218: this is LOAD-BEARING for the skills surface (no longer diagnostic-only).
+# It is one input to the skills core-union decision in BOTH
+# compile_harnesses.sh `project_skills` and check_harness_drift.sh `verify_skills`:
+#   _include_core = core_surfaces_owned(core_surfaces, project_root)
+#                   OR manifest_has_applicable_skill_block(merged_manifest, project_root)
+# When `_include_core` is true the core surfaces-manifest.json source IS unioned
+# into the skills flatten (so skills are GLOBAL — never pruned); when false an
+# agent-only / scoped-out / no-personal non-owner compile is a clean skills no-op.
+# A non-owner compile that DOES re-affirm core emits a loud, NON-pruning WARN
+# (the retired exit-0 "SKIPPED core surfaces" line is gone). Changing/removing
+# this helper changes projection behavior — do NOT treat it as diagnostic.
+# §18.1: ONE shared helper used by BOTH compile_harnesses.sh and check_harness_drift.sh.
 # ---------------------------------------------------------------------------
 core_surfaces_owned() {
   local core_surfaces="$1"
@@ -1766,6 +1772,84 @@ if value is None:
 blocks = [value] if isinstance(value, dict) else (value if isinstance(value, list) else [])
 for block in blocks:
     if isinstance(block, dict) and (block.get("targets") or []):
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# FR-218 (mechanism B): does <manifest> declare >=1 skills block (with >=1
+# target) whose SCOPE APPLIES to <project-root>? This is the "a personal/project
+# skill is actually projected here" prune-trigger test that gates whether the
+# GLOBAL core skills source is (re)projected alongside it. Scope semantics MIRROR
+# the per-row filter in the compile/drift skills loops:
+#   - scope absent / type=global  → applies to every project root.
+#   - scope.type=project          → applies iff realpath(<project-root>) equals
+#     the realpath of >=1 entry in scope.paths[] (paths resolved `~`→$HOME,
+#     /abs verbatim, else <project-root>-relative — the FR-154 3-case resolver;
+#     both sides realpath'd for macOS /tmp ↔ /private/tmp equality).
+# A scope-FILTERED-OUT block does NOT count (it is not projected here, so it is
+# not a prune trigger and must NOT pull in the core source) — this keeps an
+# agent-only OR scoped-out compile a clean skills no-op (the FR-218 safety
+# property; otherwise a `--surface all` agent/scoped compile would `skills add`
+# the global core source needlessly). §18.1: ONE shared helper used by BOTH
+# compile_harnesses.sh and check_harness_drift.sh.
+#
+# manifest_has_applicable_skill_block <manifest-path> <project-root>
+#   Returns 0 if >=1 applicable block; 1 otherwise (or on read error).
+# ---------------------------------------------------------------------------
+manifest_has_applicable_skill_block() {
+  local manifest="$1"
+  local project_root="$2"
+  python3 - "$manifest" "$project_root" <<'PY'
+import json
+import os
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except OSError:
+    sys.exit(1)
+
+project_root = sys.argv[2]
+value = (data.get("surfaces") or {}).get("skills")
+blocks = [value] if isinstance(value, dict) else (value if isinstance(value, list) else [])
+
+try:
+    pr_real = os.path.realpath(project_root)
+except OSError:
+    pr_real = project_root
+
+
+def scope_applies(block):
+    scope = block.get("scope") or {}
+    if (scope.get("type") or "global") != "project":
+        return True  # absent / global → applies everywhere
+    for p in scope.get("paths") or []:
+        if not isinstance(p, str) or not p:
+            continue
+        if p.startswith("~/"):
+            p_abs = os.path.join(os.path.expanduser("~"), p[2:])
+        elif p.startswith("/"):
+            p_abs = p
+        else:
+            p_abs = os.path.join(project_root, p)
+        try:
+            p_real = os.path.realpath(p_abs)
+        except OSError:
+            p_real = p_abs
+        if p_real == pr_real:
+            return True
+    return False
+
+
+for block in blocks:
+    if not isinstance(block, dict):
+        continue
+    if not (block.get("targets") or []):
+        continue
+    if scope_applies(block):
         sys.exit(0)
 sys.exit(1)
 PY

@@ -826,9 +826,10 @@ usage() {
   echo "                          [--surface agents|skills|mcp|hook|all] [--expect-core]" >&2
   echo "" >&2
   echo "Regenerates harness files declared in the manifest from canonical prompts." >&2
-  echo "--expect-core: fail LOUDLY (non-zero) if a declared core surface is skipped" >&2
-  echo "               by the ownership gate (FR-180/TD-235); else an incidental" >&2
-  echo "               personal-project compile emits a visible SKIPPED line, exit 0." >&2
+  echo "--expect-core: fail LOUDLY (non-zero) if a --expect-core run matches 0" >&2
+  echo "               targets (the TD-235 silent-no-op guard). FR-218: core SKILLS" >&2
+  echo "               are always (re)projected to the global user store; a non-owner" >&2
+  echo "               compile emits a visible WARN, exit 0 — core is never skipped." >&2
   exit 2
 }
 
@@ -1273,28 +1274,46 @@ project_skills() {
   # invocation. Unused on the custom path. Declared with `=()` (bash 3.2-safe).
   DELEGATED_SKILL_ROOTS=()
 
-  # FR-180 (TD-235 / D5): make the ownership-gate skip of declared CORE skills
-  # LOUD or VISIBLE — never silent. The flatten gate below keeps its own
-  # in-Python commonpath check verbatim (projected BYTES unchanged); this block
-  # only adds a diagnostic + exit decision around it. Three cases:
-  #   - core skills declared AND not owned AND --expect-core → LOUD FAIL +
-  #     non-zero exit (the run EXPECTED core surfaces; a misroute must not
-  #     silently no-op).
-  #   - core skills declared AND not owned AND NOT --expect-core → a single
-  #     VISIBLE "SKIPPED core surfaces (personal-project compile)" line, exit 0
-  #     (the legitimate "don't leak core into unrelated projects" path).
-  #   - core skills owned (igris-ai checkout) OR not declared → no diagnostic;
-  #     the gate unions/ignores exactly as before.
+  # FR-218 (mechanism B): decide whether the GLOBAL core skills source is unioned
+  # this run. Under the `skills` CLI delegate, skills placement is global/user-
+  # level (no project-local skills dir), so the FR-180 OWNERSHIP gate that dropped
+  # core for non-owners is void. But unioning core on EVERY compile would make a
+  # `--surface all` agent compile dispatch `skills add <core>` needlessly (and, in
+  # an unsandboxed run, touch the real ~/.claude/skills). So core is (re)projected
+  # IFF:
+  #   (a) the project OWNS core (the igris-ai checkout), OR
+  #   (b) the merged (base ++ personal-overlay) manifest carries >=1 skill block
+  #       that APPLIES to this --project-root (scope-matched — see
+  #       manifest_has_applicable_skill_block). That is the actual PRUNE TRIGGER:
+  #       a personal/project `skills add` is what replaces the legacy whole-dir
+  #       ~/.claude/skills symlink and detaches the 21 core skills (the
+  #       2026-06-30 incident); pairing core with that dispatch re-affirms core.
+  #       A scope-FILTERED-OUT block does NOT count — it is not projected here,
+  #       so it is not a prune trigger and must NOT pull in core (else a
+  #       scoped-out / agent-only `--surface all` compile would `skills add` the
+  #       global core source needlessly).
+  # When neither holds the skills pass is a NO-OP: no core `skills add`, no
+  # skills-CLI dependency, no real-$HOME touch — the safety property. Computed
+  # ONCE so the WARN diagnostic and the flatten share ONE decision (§18.1 — the
+  # drift sibling computes it identically).
+  _core_owned=0
+  core_surfaces_owned "$CORE_SURFACES" "$PROJECT_ROOT" && _core_owned=1
+  _merged_skill_applies=0
+  manifest_has_applicable_skill_block "$MERGED_MANIFEST" "$PROJECT_ROOT" && _merged_skill_applies=1
+  _include_core=0
+  if [ "$_core_owned" -eq 1 ] || [ "$_merged_skill_applies" -eq 1 ]; then
+    _include_core=1
+  fi
+
+  # Loud, non-pruning WARN — fires ONLY when a NON-OWNER consumer compile
+  # actually (re)projects core to the global store (it carries an applicable
+  # personal skill — the prune trigger). Agent-only / scoped-out / no-personal
+  # non-owner compiles stay silent no-ops. --expect-core stays the stricter
+  # assert via the 0-targets foot-guard.
   if core_skills_declared "$CORE_SURFACES" \
-     && ! core_surfaces_owned "$CORE_SURFACES" "$PROJECT_ROOT"; then
-    if [ "$EXPECT_CORE" -eq 1 ]; then
-      echo "FAIL  core skills — not owned by --project-root $PROJECT_ROOT; run from the igris-ai repo or pass --core" >&2
-      SUMMARY+=("FAIL  core skills — not owned by --project-root $PROJECT_ROOT; run from the igris-ai repo or pass --core")
-      FAIL=$((FAIL + 1))
-      TOTAL=$((TOTAL + 1))
-    else
-      echo "SKIPPED core surfaces (personal-project compile)" >&2
-    fi
+     && [ "$_core_owned" -eq 0 ] \
+     && [ "$_merged_skill_applies" -eq 1 ]; then
+    echo "WARN  core skills are (re)projected to the GLOBAL user store from non-owner --project-root $PROJECT_ROOT (skills are global; no project-local skills dir; FR-218)" >&2
   fi
 
   # Flatten skills targets from both sources into rows:
@@ -1303,15 +1322,14 @@ project_skills() {
   # default; scope_paths="-" means scope=global so no project-root match needed).
   # FR-155: scope_type+scope_paths appended at the END so any downstream parser
   # reading only the first 4 columns stays back-compat with the pre-FR-155 shape.
-  SKILL_ROWS=$(python3 - "$CORE_SURFACES" "$MERGED_MANIFEST" "$TARGET_KIND" "$PROJECT_ROOT" <<'PY'
+  SKILL_ROWS=$(python3 - "$CORE_SURFACES" "$MERGED_MANIFEST" "$TARGET_KIND" "$_include_core" <<'PY'
 import json
-import os
 import sys
 
 core_surfaces_path = sys.argv[1]
 agent_manifest_path = sys.argv[2]
 target_kind = sys.argv[3]
-project_root = sys.argv[4]
+include_core = sys.argv[4] == "1"
 
 
 def load_skills(path):
@@ -1333,19 +1351,13 @@ def load_skills(path):
     return []
 
 
-# The core surfaces-manifest.json declares GLOBAL Layer-1 skills. It is only
-# unioned when the project being compiled OWNS it (its realpath is under
-# --project-root) — i.e. when compiling the igris-core repo itself. For any
-# other project, only that project's own (merged) manifest surfaces apply, so
-# core skills never leak into an unrelated project's projection.
-sources = [agent_manifest_path]
-try:
-    cs_real = os.path.realpath(core_surfaces_path)
-    pr_real = os.path.realpath(project_root)
-    if os.path.commonpath([cs_real, pr_real]) == pr_real:
-        sources.insert(0, core_surfaces_path)
-except (OSError, ValueError):
-    pass
+# FR-218 (mechanism B): the core surfaces-manifest.json source is unioned IFF
+# `include_core` (computed by the bash caller: the project OWNS core OR the
+# merged manifest carries >=1 skill block — the prune trigger). When false
+# (agent-only / no-personal compile) the skills pass is a no-op. Core first,
+# then the merged (base ++ personal-overlay) manifest. A missing/unreadable core
+# source simply contributes no rows (load_skills swallows OSError).
+sources = ([core_surfaces_path] if include_core else []) + [agent_manifest_path]
 
 # TD-191 / BR-074: NO `seen_paths` dedup here. The merge guard only rejects
 # personal roots that shadow core roots; sibling personal blocks may share a
@@ -1657,12 +1669,13 @@ fi
 # ---------------------------------------------------------------------------
 # Summary report.
 #
-# PARSER↔ADAPTER COUPLING (FR-180): the per-row `OK …` / `FAIL …` prefixes
-# emitted here — plus the "… targets matched" empty-match line and the
-# "SKIPPED core surfaces …" diagnostic above — are parsed by
-# `parseHarnessOutput` in cli/src/verbs/harness.ts (the structured path that
-# `igris add` relies on). If you change these literals, update that parser in
-# the SAME change (there is a matching breadcrumb comment there).
+# PARSER↔ADAPTER COUPLING (FR-180 / FR-218): the per-row `OK …` / `FAIL …`
+# prefixes emitted here — plus the "… targets matched" empty-match line and the
+# "WARN  core skills …" non-owner diagnostic above (FR-218: was the retired
+# "SKIPPED core surfaces …" line) — are parsed by `parseHarnessOutput` in
+# cli/src/verbs/harness.ts (the structured path that `igris add` relies on). If
+# you change these literals, update that parser in the SAME change (there is a
+# matching breadcrumb comment there).
 # ---------------------------------------------------------------------------
 echo ""
 echo "Harness compile summary (project root: $PROJECT_ROOT):"
