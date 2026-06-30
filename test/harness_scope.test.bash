@@ -40,6 +40,15 @@ setup() {
   [ -x "$GUARD" ] || skip "check_harness_drift.sh missing at $GUARD"
   require_python3
 
+  # TD-282: sandbox HOME so any `skills` delegate (`skills add -g`) that a
+  # compile/check dispatches writes into a PER-TEST temp store, NEVER the
+  # developer's real ~/.claude/skills / ~/.agents/skills. Mirrors the
+  # add_surfaces.test.bash setup() pattern (the safety reference). The outer
+  # `HOME=$(mktemp -d) bats` wrapper is belt; this in-test export is suspenders.
+  SANDBOX_HOME="$TEST_TEMP_DIR/home_$BATS_TEST_NUMBER"
+  mkdir -p "$SANDBOX_HOME/.claude/skills" "$SANDBOX_HOME/.agents/skills"
+  export HOME="$SANDBOX_HOME"
+
   # Isolated brain dir per test — prevents the live loadout/personal overlay
   # from leaking into synthetic-project tests (per FR-146 / harness_skills
   # precedent). MUST be exported so the adapters that resolve
@@ -90,6 +99,7 @@ EOF
 teardown() {
   [ -d "$PROJ_A" ] && rm -rf "$PROJ_A"
   [ -d "$PROJ_B" ] && rm -rf "$PROJ_B"
+  [ -n "${SANDBOX_HOME:-}" ] && [ -d "$SANDBOX_HOME" ] && rm -rf "$SANDBOX_HOME"
 }
 
 # ---------------------------------------------------------------------------
@@ -126,16 +136,16 @@ write_skills_manifest() {
 
 @test "FR-155 compile: scope absent → emits unconditionally (back-compat)" {
   write_agent_manifest "$PROJ_A" ""
-  run bash "$COMPILE" --project-root "$PROJ_A" --target claude
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_A" --target claude
   [ "$status" -eq 0 ]
   [ -L "$PROJ_A/.claude/agents/sample.md" ]
 }
 
 @test "FR-155 drift: scope absent → MATCH (back-compat)" {
   write_agent_manifest "$PROJ_A" ""
-  run bash "$COMPILE" --project-root "$PROJ_A" --target claude
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_A" --target claude
   [ "$status" -eq 0 ]
-  run bash "$GUARD" --project-root "$PROJ_A"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ_A"
   [ "$status" -eq 0 ]
   [[ "$output" == *"[sample/claude] MATCH"* ]]
 }
@@ -146,16 +156,16 @@ write_skills_manifest() {
 
 @test "FR-155 compile: scope=global → emits unconditionally" {
   write_agent_manifest "$PROJ_A" '{ "type": "global" }'
-  run bash "$COMPILE" --project-root "$PROJ_A" --target claude
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_A" --target claude
   [ "$status" -eq 0 ]
   [ -L "$PROJ_A/.claude/agents/sample.md" ]
 }
 
 @test "FR-155 drift: scope=global → MATCH" {
   write_agent_manifest "$PROJ_A" '{ "type": "global" }'
-  run bash "$COMPILE" --project-root "$PROJ_A" --target claude
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_A" --target claude
   [ "$status" -eq 0 ]
-  run bash "$GUARD" --project-root "$PROJ_A"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ_A"
   [ "$status" -eq 0 ]
   [[ "$output" == *"[sample/claude] MATCH"* ]]
 }
@@ -166,16 +176,16 @@ write_skills_manifest() {
 
 @test "FR-155 compile: scope=project paths=[A] matched by --project-root A → emits" {
   write_agent_manifest "$PROJ_A" "{ \"type\": \"project\", \"paths\": [\"$PROJ_A\"] }"
-  run bash "$COMPILE" --project-root "$PROJ_A" --target claude
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_A" --target claude
   [ "$status" -eq 0 ]
   [ -L "$PROJ_A/.claude/agents/sample.md" ]
 }
 
 @test "FR-155 drift: scope=project paths=[A] matched by --project-root A → MATCH" {
   write_agent_manifest "$PROJ_A" "{ \"type\": \"project\", \"paths\": [\"$PROJ_A\"] }"
-  run bash "$COMPILE" --project-root "$PROJ_A" --target claude
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_A" --target claude
   [ "$status" -eq 0 ]
-  run bash "$GUARD" --project-root "$PROJ_A"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ_A"
   [ "$status" -eq 0 ]
   [[ "$output" == *"[sample/claude] MATCH"* ]]
 }
@@ -192,7 +202,7 @@ write_skills_manifest() {
   # compiling B, the entry is NOT applicable. No symlink should be emitted
   # under PROJ_B.
   write_agent_manifest "$PROJ_B" "{ \"type\": \"project\", \"paths\": [\"$PROJ_A\"] }"
-  run bash "$COMPILE" --project-root "$PROJ_B" --target claude
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_B" --target claude
   # Compile succeeds (the silent skip is not an error).
   [ "$status" -eq 0 ]
   # No symlink under PROJ_B (the row was filtered).
@@ -204,7 +214,7 @@ write_skills_manifest() {
   # No prior compile under PROJ_B; the manifest declares a project-scoped row
   # that does not apply. Drift MUST NOT emit a MISSING/DRIFTED for it.
   write_agent_manifest "$PROJ_B" "{ \"type\": \"project\", \"paths\": [\"$PROJ_A\"] }"
-  run bash "$GUARD" --project-root "$PROJ_B"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ_B"
   # Exit 0: nothing to check (after filter) is not an error; the adapter
   # falls through to its "no targets matched" success path.
   [ "$status" -eq 0 ]
@@ -252,9 +262,9 @@ EOF
 }
 EOF
   # Compile first so the global-scoped row gets a real MATCH verdict.
-  run bash "$COMPILE" --project-root "$PROJ_B" --target claude
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_B" --target claude
   [ "$status" -eq 0 ]
-  run bash "$GUARD" --project-root "$PROJ_B"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ_B"
   [ "$status" -eq 0 ]
   # The "1 targets" count is the load-bearing assertion: the project-scoped
   # row was filtered BEFORE the TOTAL++ increment, so the summary counts ONE
@@ -270,23 +280,23 @@ EOF
 
 @test "FR-155 compile: scope=project paths=[A,B] matched by --project-root A → emits" {
   write_agent_manifest "$PROJ_A" "{ \"type\": \"project\", \"paths\": [\"$PROJ_A\", \"$PROJ_B\"] }"
-  run bash "$COMPILE" --project-root "$PROJ_A" --target claude
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_A" --target claude
   [ "$status" -eq 0 ]
   [ -L "$PROJ_A/.claude/agents/sample.md" ]
 }
 
 @test "FR-155 compile: scope=project paths=[A,B] matched by --project-root B → emits" {
   write_agent_manifest "$PROJ_B" "{ \"type\": \"project\", \"paths\": [\"$PROJ_A\", \"$PROJ_B\"] }"
-  run bash "$COMPILE" --project-root "$PROJ_B" --target claude
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_B" --target claude
   [ "$status" -eq 0 ]
   [ -L "$PROJ_B/.claude/agents/sample.md" ]
 }
 
 @test "FR-155 drift: scope=project paths=[A,B] matched by --project-root B → MATCH" {
   write_agent_manifest "$PROJ_B" "{ \"type\": \"project\", \"paths\": [\"$PROJ_A\", \"$PROJ_B\"] }"
-  run bash "$COMPILE" --project-root "$PROJ_B" --target claude
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_B" --target claude
   [ "$status" -eq 0 ]
-  run bash "$GUARD" --project-root "$PROJ_B"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ_B"
   [ "$status" -eq 0 ]
   [[ "$output" == *"[sample/claude] MATCH"* ]]
 }
@@ -316,7 +326,7 @@ EOF
   # would resolve $tmp_proj to). The realpath-both-sides logic in the filter
   # MUST match these as equal.
   local private_proj="/private$tmp_proj"
-  run bash "$COMPILE" --project-root "$private_proj" --target claude
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$private_proj" --target claude
   [ "$status" -eq 0 ]
   [ -L "$private_proj/.claude/agents/sample.md" ]
   rm -rf "$tmp_proj"
@@ -332,9 +342,9 @@ EOF
   cp "$PROJ_A/canon/sample.md" "$tmp_proj/canon/sample.md"
   write_agent_manifest "$tmp_proj" "{ \"type\": \"project\", \"paths\": [\"$tmp_proj\"] }"
   local private_proj="/private$tmp_proj"
-  run bash "$COMPILE" --project-root "$private_proj" --target claude
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$private_proj" --target claude
   [ "$status" -eq 0 ]
-  run bash "$GUARD" --project-root "$private_proj"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$private_proj"
   [ "$status" -eq 0 ]
   [[ "$output" == *"[sample/claude] MATCH"* ]]
   rm -rf "$tmp_proj"
@@ -348,7 +358,7 @@ EOF
 @test "FR-155 skills compile: scope absent → emits unconditionally (back-compat)" {
   skip "FR-212d: custom skills scope-filter projection retired (skills delegate to the skills CLI)"
   write_skills_manifest "$PROJ_A" ""
-  run bash "$COMPILE" --project-root "$PROJ_A"
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_A"
   [ "$status" -eq 0 ]
   [ -L "$PROJ_A/.claude/skills/widget" ]
 }
@@ -356,14 +366,14 @@ EOF
 @test "FR-155 skills compile: scope=project paths=[A] matched by A → emits" {
   skip "FR-212d: custom skills scope-filter projection retired (skills delegate to the skills CLI)"
   write_skills_manifest "$PROJ_A" "{ \"type\": \"project\", \"paths\": [\"$PROJ_A\"] }"
-  run bash "$COMPILE" --project-root "$PROJ_A"
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_A"
   [ "$status" -eq 0 ]
   [ -L "$PROJ_A/.claude/skills/widget" ]
 }
 
 @test "FR-155 skills compile: scope=project paths=[A] non-match (B) → silent skip" {
   write_skills_manifest "$PROJ_B" "{ \"type\": \"project\", \"paths\": [\"$PROJ_A\"] }"
-  run bash "$COMPILE" --project-root "$PROJ_B"
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_B"
   [ "$status" -eq 0 ]
   [ ! -L "$PROJ_B/.claude/skills/widget" ]
   [ ! -e "$PROJ_B/.claude/skills/widget" ]
@@ -371,7 +381,7 @@ EOF
 
 @test "FR-155 skills drift: scope=project paths=[A] non-match → no verdict, no DRIFTED" {
   write_skills_manifest "$PROJ_B" "{ \"type\": \"project\", \"paths\": [\"$PROJ_A\"] }"
-  run bash "$GUARD" --project-root "$PROJ_B"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ_B"
   [ "$status" -eq 0 ]
   [[ "$output" != *"[skills/claude]"* ]]
   [[ "$output" != *"DRIFTED"* ]]
@@ -380,9 +390,9 @@ EOF
 @test "FR-155 skills drift: scope=project paths=[A] matched by A → MATCH" {
   skip "FR-212d: custom skills scope-filter projection retired (skills delegate to the skills CLI)"
   write_skills_manifest "$PROJ_A" "{ \"type\": \"project\", \"paths\": [\"$PROJ_A\"] }"
-  run bash "$COMPILE" --project-root "$PROJ_A"
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_A"
   [ "$status" -eq 0 ]
-  run bash "$GUARD" --project-root "$PROJ_A"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ_A"
   [ "$status" -eq 0 ]
   [[ "$output" == *"[skills/claude] MATCH"* ]]
 }
@@ -394,14 +404,14 @@ EOF
 
 @test "FR-155 schema: scope.type=project WITHOUT paths is a hard error" {
   write_agent_manifest "$PROJ_A" '{ "type": "project" }'
-  run bash "$COMPILE" --project-root "$PROJ_A" --target claude
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_A" --target claude
   [ "$status" -ne 0 ]
   [[ "$output" == *"paths"* ]] || [[ "$output" == *"scope"* ]]
 }
 
 @test "FR-155 schema: scope.type=garbage is a hard error" {
   write_agent_manifest "$PROJ_A" '{ "type": "garbage" }'
-  run bash "$COMPILE" --project-root "$PROJ_A" --target claude
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_A" --target claude
   [ "$status" -ne 0 ]
   [[ "$output" == *"scope"* ]] || [[ "$output" == *"type"* ]]
 }
@@ -447,7 +457,7 @@ EOF
       "targets": [ { "type": "agents", "method": "symlink", "path": "~/.agents/skills" } ] }
   ] } }
 EOF
-  run bash -c "source '$(COMMON_SH)' && merge_overlay_manifest '$PROJ_A/base.json' '$PROJ_A/overlay.json'"
+  run env HOME="$SANDBOX_HOME" bash -c "source '$(COMMON_SH)' && merge_overlay_manifest '$PROJ_A/base.json' '$PROJ_A/overlay.json'"
   [ "$status" -eq 0 ]
   [[ "$output" == *"fifty-kit"* ]]
   # Both blocks survive the merge (no rejection, no silent drop).
@@ -465,7 +475,7 @@ EOF
       "targets": [ { "type": "agents", "method": "symlink", "path": "~/.agents/skills" } ] }
   ] } }
 EOF
-  run bash -c "source '$(COMMON_SH)' && merge_overlay_manifest '$PROJ_A/base.json' '$PROJ_A/overlay.json'"
+  run env HOME="$SANDBOX_HOME" bash -c "source '$(COMMON_SH)' && merge_overlay_manifest '$PROJ_A/base.json' '$PROJ_A/overlay.json'"
   [ "$status" -ne 0 ]
   [[ "$output" == *"collides"* ]]
 }
@@ -483,7 +493,7 @@ EOF
       "targets": [ { "type": "agents", "method": "symlink", "path": "~/.agents/skills" } ] }
   ] } }
 EOF
-  run bash -c "source '$(COMMON_SH)' && merge_overlay_manifest '$PROJ_A/base.json' '$PROJ_A/overlay.json'"
+  run env HOME="$SANDBOX_HOME" bash -c "source '$(COMMON_SH)' && merge_overlay_manifest '$PROJ_A/base.json' '$PROJ_A/overlay.json'"
   [ "$status" -ne 0 ]
   [[ "$output" == *"collides"* ]]
 }
@@ -508,7 +518,7 @@ EOF
         { "type": "opencode", "method": "command", "path": "~/.config/opencode/command" } ] }
   ] } }
 EOF
-  run bash -c "source '$(COMMON_SH)' && merge_overlay_manifest '$PROJ_A/base.json' '$PROJ_A/overlay.json'"
+  run env HOME="$SANDBOX_HOME" bash -c "source '$(COMMON_SH)' && merge_overlay_manifest '$PROJ_A/base.json' '$PROJ_A/overlay.json'"
   [ "$status" -eq 0 ]
   [[ "$output" == *"content-pipeline"* ]]
   [[ "$output" == *"doc-pipeline"* ]]
@@ -541,14 +551,14 @@ EOF
 
   # Compile from PROJ_A (its own root): block survives the filter → dispatched.
   : > "$calllog"
-  run bash "$COMPILE" --project-root "$PROJ_A"
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_A"
   [ "$status" -eq 0 ]
   grep -q "project-skills" "$calllog"
 
   # Compile from PROJ_B (other root): PROJ_A-scoped block is filtered → NO
   # dispatch (AC2 "absent elsewhere" at dispatch granularity).
   : > "$calllog"
-  run bash "$COMPILE" --project-root "$PROJ_B"
+  run env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ_B"
   [ "$status" -eq 0 ]
   ! grep -q "project-skills" "$calllog"
 

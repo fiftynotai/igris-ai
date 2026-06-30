@@ -27,6 +27,16 @@
 load test_helper
 
 setup() {
+  # TD-282: sandbox HOME FIRST — BEFORE the unconditional skip below — so even if
+  # the FR-212d skip is ever lifted, every `skills` delegate a compile/check
+  # dispatches writes into a PER-TEST temp store, NEVER the developer's real
+  # ~/.claude/skills / ~/.agents/skills. Mirrors add_surfaces.test.bash. The
+  # outer `HOME=$(mktemp -d) bats` wrapper is belt; this in-test export is
+  # suspenders (and it survives the skip ever being removed).
+  SANDBOX_HOME="$TEST_TEMP_DIR/home_$BATS_TEST_NUMBER"
+  mkdir -p "$SANDBOX_HOME/.claude/skills" "$SANDBOX_HOME/.agents/skills"
+  export HOME="$SANDBOX_HOME"
+
   # FR-212d Phase 2: the TD-201 skill TREE pre-check lived in the custom
   # `verify_skills` body, which was DELETED when skills projection moved to the
   # `skills` CLI delegate (the delegate owns placement + freshness; there is no
@@ -61,6 +71,7 @@ setup() {
 
 teardown() {
   [ -n "${PROJ:-}" ] && [ -d "$PROJ" ] && rm -rf "$PROJ"
+  [ -n "${SANDBOX_HOME:-}" ] && [ -d "$SANDBOX_HOME" ] && rm -rf "$SANDBOX_HOME"
   return 0
 }
 
@@ -143,7 +154,7 @@ PY
 EOF
   # Compile so the per-target FR-153 verdict is MATCH (tree pre-check and
   # FR-153 verdict are orthogonal — we want both to fire as expected).
-  bash "$COMPILE" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json" --target "$target_kind" >/dev/null
+  env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json" --target "$target_kind" >/dev/null
 }
 
 # ---------- end-to-end drift integration -------------------------------------
@@ -162,7 +173,7 @@ EOF
 
   build_personal_skill_tree "alpha" "$src" "claude"
 
-  run bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"[alpha/tree] MATCH"* ]]
   # Orthogonal per-target FR-153 verdict still fires MATCH.
@@ -185,13 +196,13 @@ EOF
   build_personal_skill_tree "beta" "$src" "claude"
 
   # Sanity: starts MATCH.
-  run bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"[beta/tree] MATCH"* ]]
 
   # Mutate the SOURCE side post-add.
   printf 'v2-CHANGED\n' > "$src/lib/helper.md"
-  run bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
   [ "$status" -eq 1 ]
   [[ "$output" == *"[beta/tree] DRIFTED"* ]]
   [[ "$output" == *"lib/helper.md"* ]]
@@ -221,7 +232,7 @@ EOF
   printf 'HAND-EDITED IN REGISTRY\n' \
     > "$IGRIS_BRAIN_DIR/loadout/skills/codex-incident/codex-incident/SKILL.md"
 
-  run bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
   [ "$status" -eq 1 ]
   [[ "$output" == *"[codex-incident/tree] DRIFTED"* ]]
   [[ "$output" == *"SKILL.md"* ]]
@@ -244,7 +255,7 @@ EOF
 
   # Drop a NEW sibling file into the source post-add.
   printf 'extras body\n' > "$src/extras.md"
-  run bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
   [ "$status" -eq 1 ]
   [[ "$output" == *"[added/tree] DRIFTED"* ]]
   [[ "$output" == *"+ extras.md (only in source)"* ]]
@@ -267,7 +278,7 @@ EOF
 
   # Delete the sibling file from source post-add.
   rm "$src/extra.md"
-  run bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
   [ "$status" -eq 1 ]
   [[ "$output" == *"[removed/tree] DRIFTED"* ]]
   [[ "$output" == *"- extra.md (only in loadout)"* ]]
@@ -306,9 +317,9 @@ EOF
   }
 }
 EOF
-  bash "$COMPILE" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json" --target claude >/dev/null
+  env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json" --target claude >/dev/null
 
-  run bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
   [ "$status" -eq 0 ]
   # The per-target FR-153 verdict still fires (orthogonal).
   [[ "$output" == *"[skills/claude] MATCH"* ]]
@@ -331,7 +342,7 @@ EOF
   build_personal_skill_tree "skipped" "$src" "claude"
 
   # Sanity: starts MATCH.
-  run bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"[skipped/tree] MATCH"* ]]
 
@@ -347,7 +358,7 @@ EOF
   printf 'cruft\n' > "$src/.git/HEAD"
   printf 'cruft\n' > "$src/top.pyc"
 
-  run bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
   [ "$status" -eq 0 ]
   [[ "$output" == *"[skipped/tree] MATCH"* ]]
 }
@@ -411,9 +422,9 @@ EOF
   # Compile the whole skills surface in one pass (the `--target` flag selects an
   # AGENT-harness name, not a skill target type, so it cannot scope to the
   # agents/opencode skill targets — recompile all of them together).
-  bash "$COMPILE" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json" --surface skills >/dev/null
+  env HOME="$SANDBOX_HOME" bash "$COMPILE" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json" --surface skills >/dev/null
 
-  run bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
+  run env HOME="$SANDBOX_HOME" bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
   [ "$status" -eq 0 ]
   # Exactly ONE tree verdict despite three target rows.
   local tree_count
