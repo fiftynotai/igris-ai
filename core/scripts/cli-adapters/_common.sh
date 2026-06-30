@@ -1400,6 +1400,7 @@ merge_overlay_manifest() {
   fi
   python3 - "$base" "$overlay" <<'PY'
 import json
+import os
 import sys
 
 base_path = sys.argv[1]
@@ -1487,6 +1488,74 @@ if base_blocks or overlay_blocks:
                     "not shadow a core skill-target root.\n"
                 )
                 sys.exit(1)
+
+    # TD-268: scope-aware cross-block LEAF-collision guard. The root-reservation
+    # loop above forbids a personal root from shadowing a CORE/base root. This
+    # guard closes the genuine-clobber hole (risk #7): two skill blocks that
+    # would BOTH emit the same final skill location when their scopes overlap.
+    # The collision UNIT is the emitted LEAF (target-root, skill-name), NOT the
+    # raw root — the `skills` CLI places each skill at <root>/<basename(source)>,
+    # so content-pipeline + doc-pipeline legitimately share a root (distinct
+    # names → distinct leaves). Two blocks collide iff they share a leaf AND
+    # their scopes overlap; disjoint project scopes never collide (each emits
+    # only for its own --project-root). Runs over ALL merged blocks (base ++
+    # overlay) so a future core skills block is covered too. §18.1 twin:
+    # scopesOverlap / skillBlocksCollide in cli/src/verbs/loadout.ts. See TD-268.
+    def _scope_kind(scope):
+        if not scope:
+            return "global"
+        return scope.get("type") or "global"
+
+    def _resolve_scope_path(p):
+        # Mirrors the compile/drift filter resolution (compile_harnesses.sh
+        # L1401-1406) collapsed into one expression: `~` → $HOME, absolute
+        # verbatim, relative → cwd (the merge has no --project-root; the CLI
+        # always writes paths[] absolute, so the relative arm is a tolerated
+        # hand-edit fallback). realpath both for macOS /tmp ↔ /private/tmp.
+        return os.path.realpath(os.path.expanduser(p))
+
+    def _scopes_overlap(s1, s2):
+        if _scope_kind(s1) == "global" or _scope_kind(s2) == "global":
+            return True
+        p1 = {_resolve_scope_path(p) for p in (s1.get("paths") or [])}
+        p2 = {_resolve_scope_path(p) for p in (s2.get("paths") or [])}
+        return len(p1 & p2) > 0
+
+    def _block_leaves(block):
+        src = (block or {}).get("source")
+        if not isinstance(src, str) or not src:
+            return set()
+        sname = os.path.basename(src.rstrip("/"))
+        if not sname:
+            return set()
+        out = set()
+        for t in (block or {}).get("targets", []) or []:
+            tp = (t or {}).get("path")
+            if isinstance(tp, str) and tp:
+                out.add((tp, sname))
+        return out
+
+    for i in range(len(merged_skill_blocks)):
+        leaves_i = _block_leaves(merged_skill_blocks[i])
+        if not leaves_i:
+            continue
+        for j in range(i + 1, len(merged_skill_blocks)):
+            shared = leaves_i & _block_leaves(merged_skill_blocks[j])
+            if not shared:
+                continue
+            if _scopes_overlap((merged_skill_blocks[i] or {}).get("scope"),
+                               (merged_skill_blocks[j] or {}).get("scope")):
+                root, sname = sorted(shared)[0]
+                sys.stderr.write(
+                    f"Error: skill leaf ('{root}', '{sname}') collides between "
+                    f"surfaces.skills[{i}] and surfaces.skills[{j}] with "
+                    "overlapping scope; two skill blocks must not both project "
+                    "the same skill to the same root in overlapping scopes (the "
+                    "second would clobber the first). Use disjoint project "
+                    "scopes or distinct skill names.\n"
+                )
+                sys.exit(1)
+
     merged_surfaces = dict(base_surfaces)
     merged_surfaces["skills"] = merged_skill_blocks
 

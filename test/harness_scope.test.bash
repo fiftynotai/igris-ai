@@ -405,3 +405,152 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"scope"* ]] || [[ "$output" == *"type"* ]]
 }
+
+# ===========================================================================
+# TD-268: scope-aware cross-block LEAF-collision guard (merge_overlay_manifest).
+#
+# The merge guard's EXISTING overlay-vs-base root reservation is unchanged
+# (harness_skills.test.bash pins it). TD-268 ADDS an overlay-vs-overlay (and
+# any base++overlay) pairwise check whose collision unit is the emitted LEAF
+# (target-root, basename(source)), gated on scope OVERLAP:
+#
+#   - same leaf + DISJOINT project scopes → coexist (AC1; the FR-205 fifty-kit
+#     enabler — two project-scoped personal skill blocks).
+#   - same leaf + OVERLAPPING scope (both global, or project paths that
+#     intersect) → HARD REJECT (risk #7 genuine clobber).
+#   - DIFFERENT names sharing a root (content-pipeline + doc-pipeline shape) →
+#     coexist (back-compat must-not-regress — the live overlay).
+#
+# Tested directly against `merge_overlay_manifest` (no `skills` binary), per the
+# harness_skills.test.bash precedent. §18.1 twin: scopesOverlap /
+# skillBlocksCollide in cli/src/verbs/loadout.ts (harness-registry.test.ts).
+# ===========================================================================
+
+COMMON_SH() { echo "$ADAPTERS/_common.sh"; }
+
+write_base_empty() {
+  cat > "$1/base.json" <<'EOF'
+{ "version": 1, "agents": [] }
+EOF
+}
+
+@test "TD-268 merge: same-leaf blocks on DISJOINT project scopes coexist (exit 0)" {
+  write_base_empty "$PROJ_A"
+  cat > "$PROJ_A/overlay.json" <<EOF
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": [
+    { "source": "$IGRIS_BRAIN_DIR/loadout/skills/fifty-kit", "layer": "personal",
+      "scope": { "type": "project", "paths": ["$PROJ_A"] },
+      "targets": [ { "type": "agents", "method": "symlink", "path": "~/.agents/skills" } ] },
+    { "source": "$IGRIS_BRAIN_DIR/loadout/skills/fifty-kit", "layer": "personal",
+      "scope": { "type": "project", "paths": ["$PROJ_B"] },
+      "targets": [ { "type": "agents", "method": "symlink", "path": "~/.agents/skills" } ] }
+  ] } }
+EOF
+  run bash -c "source '$(COMMON_SH)' && merge_overlay_manifest '$PROJ_A/base.json' '$PROJ_A/overlay.json'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"fifty-kit"* ]]
+  # Both blocks survive the merge (no rejection, no silent drop).
+  [ "$(printf '%s' "$output" | grep -o 'fifty-kit' | wc -l | tr -d ' ')" -ge 2 ]
+}
+
+@test "TD-268 merge: same-leaf blocks both GLOBAL (overlapping) → hard reject" {
+  write_base_empty "$PROJ_A"
+  cat > "$PROJ_A/overlay.json" <<EOF
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": [
+    { "source": "$IGRIS_BRAIN_DIR/loadout/skills/fifty-kit", "layer": "personal",
+      "targets": [ { "type": "agents", "method": "symlink", "path": "~/.agents/skills" } ] },
+    { "source": "$IGRIS_BRAIN_DIR/loadout/skills/fifty-kit", "layer": "personal",
+      "targets": [ { "type": "agents", "method": "symlink", "path": "~/.agents/skills" } ] }
+  ] } }
+EOF
+  run bash -c "source '$(COMMON_SH)' && merge_overlay_manifest '$PROJ_A/base.json' '$PROJ_A/overlay.json'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"collides"* ]]
+}
+
+@test "TD-268 merge: same-leaf blocks with INTERSECTING project scopes → hard reject" {
+  write_base_empty "$PROJ_A"
+  cat > "$PROJ_A/overlay.json" <<EOF
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": [
+    { "source": "$IGRIS_BRAIN_DIR/loadout/skills/fifty-kit", "layer": "personal",
+      "scope": { "type": "project", "paths": ["$PROJ_A"] },
+      "targets": [ { "type": "agents", "method": "symlink", "path": "~/.agents/skills" } ] },
+    { "source": "$IGRIS_BRAIN_DIR/loadout/skills/fifty-kit", "layer": "personal",
+      "scope": { "type": "project", "paths": ["$PROJ_A", "$PROJ_B"] },
+      "targets": [ { "type": "agents", "method": "symlink", "path": "~/.agents/skills" } ] }
+  ] } }
+EOF
+  run bash -c "source '$(COMMON_SH)' && merge_overlay_manifest '$PROJ_A/base.json' '$PROJ_A/overlay.json'"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"collides"* ]]
+}
+
+@test "TD-268 merge: DIFFERENT-name global blocks sharing a root coexist (back-compat)" {
+  # content-pipeline + doc-pipeline shape — distinct names → distinct leaves →
+  # NO collision even though both are global and share all three roots. This is
+  # the live overlay; a literal root-overlap predicate would wrongly reject it.
+  write_base_empty "$PROJ_A"
+  cat > "$PROJ_A/overlay.json" <<EOF
+{ "version": 1, "agents": [],
+  "surfaces": { "skills": [
+    { "source": "$IGRIS_BRAIN_DIR/loadout/skills/content-pipeline", "layer": "personal",
+      "targets": [
+        { "type": "claude", "method": "symlink", "path": "~/.claude/skills" },
+        { "type": "agents", "method": "symlink", "path": "~/.agents/skills" },
+        { "type": "opencode", "method": "command", "path": "~/.config/opencode/command" } ] },
+    { "source": "$IGRIS_BRAIN_DIR/loadout/skills/doc-pipeline", "layer": "personal",
+      "targets": [
+        { "type": "claude", "method": "symlink", "path": "~/.claude/skills" },
+        { "type": "agents", "method": "symlink", "path": "~/.agents/skills" },
+        { "type": "opencode", "method": "command", "path": "~/.config/opencode/command" } ] }
+  ] } }
+EOF
+  run bash -c "source '$(COMMON_SH)' && merge_overlay_manifest '$PROJ_A/base.json' '$PROJ_A/overlay.json'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"content-pipeline"* ]]
+  [[ "$output" == *"doc-pipeline"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# TD-268 AC2: compile-dispatch scoping. A project-scoped skills block dispatches
+# the `skills` delegate ONLY when compiled from its own --project-root, and is
+# silently filtered (NO dispatch) elsewhere. Asserted at DISPATCH granularity
+# (the delegate is stubbed so no real `skills` binary / $HOME is touched), NOT
+# at physical-file granularity (global `skills add -g` placement can't satisfy
+# physical absence — see the plan's AC2 sub-decision).
+# ---------------------------------------------------------------------------
+
+@test "TD-268 dispatch: project-scoped block dispatches under its own root, absent elsewhere" {
+  local stub="$TEST_TEMP_DIR/cli_stub_$BATS_TEST_NUMBER.sh"
+  local calllog="$TEST_TEMP_DIR/dispatch_$BATS_TEST_NUMBER.log"
+  cat > "$stub" <<EOF
+#!/bin/bash
+echo "\$@" >> "$calllog"
+exit 0
+EOF
+  chmod +x "$stub"
+  export IGRIS_CLI="bash $stub"
+
+  # Same PROJ_A-scoped skills block written into BOTH project manifests; the
+  # only variable is which --project-root we compile from.
+  write_skills_manifest "$PROJ_A" "{ \"type\": \"project\", \"paths\": [\"$PROJ_A\"] }"
+  write_skills_manifest "$PROJ_B" "{ \"type\": \"project\", \"paths\": [\"$PROJ_A\"] }"
+
+  # Compile from PROJ_A (its own root): block survives the filter → dispatched.
+  : > "$calllog"
+  run bash "$COMPILE" --project-root "$PROJ_A"
+  [ "$status" -eq 0 ]
+  grep -q "project-skills" "$calllog"
+
+  # Compile from PROJ_B (other root): PROJ_A-scoped block is filtered → NO
+  # dispatch (AC2 "absent elsewhere" at dispatch granularity).
+  : > "$calllog"
+  run bash "$COMPILE" --project-root "$PROJ_B"
+  [ "$status" -eq 0 ]
+  ! grep -q "project-skills" "$calllog"
+
+  unset IGRIS_CLI
+}

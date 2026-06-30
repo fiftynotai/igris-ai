@@ -730,6 +730,98 @@ export function realpathStrict(p: string): string {
   }
 }
 
+/**
+ * TD-268: resolve a `scope.paths[]` entry to a realpath for overlap comparison.
+ * §18.1 twin of `_common.sh`'s `_resolve_scope_path`
+ * (`os.path.realpath(os.path.expanduser(p))`): `~`/`~/` → $HOME, absolute
+ * verbatim, relative → cwd (a tolerated hand-edit fallback — the CLI always
+ * writes `paths[]` absolute). realpath BOTH sides so macOS `/tmp` ↔
+ * `/private/tmp` compares equal, matching the compile/drift filter. See TD-268.
+ */
+function resolveScopePathForOverlap(p: string): string {
+  const expanded =
+    p === "~" ? homedir() : p.startsWith("~/") ? join(homedir(), p.slice(2)) : p;
+  return realpathStrict(expanded);
+}
+
+/** TD-268: a scope's kind (absent/empty → global). */
+function scopeKind(scope: Scope | undefined): "global" | "project" {
+  return scope?.type === "project" ? "project" : "global";
+}
+
+/**
+ * TD-268: do two scopes OVERLAP? §18.1 twin of `_common.sh`'s `_scopes_overlap`.
+ *   - global ↔ anything → overlap (a global block claims the leaf everywhere).
+ *   - project(P) ↔ project(Q) → overlap iff realpath(P.paths) ∩ realpath(Q.paths) ≠ ∅.
+ * Absent scope is global (back-compat). See TD-268.
+ */
+export function scopesOverlap(
+  a: Scope | undefined,
+  b: Scope | undefined,
+): boolean {
+  if (scopeKind(a) === "global" || scopeKind(b) === "global") {
+    return true;
+  }
+  const pa = new Set(
+    (a?.type === "project" ? a.paths : []).map(resolveScopePathForOverlap),
+  );
+  for (const p of b?.type === "project" ? b.paths : []) {
+    if (pa.has(resolveScopePathForOverlap(p))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * TD-268: the emitted LEAF set of a skills block = `{(target.path,
+ * basename(source))}`, encoded as `"<root>\u0000<skill-name>"` for set ops. The
+ * `skills` CLI places each skill at `<root>/<basename(source)>`, so the leaf —
+ * NOT the raw root — is the collision unit (content-pipeline + doc-pipeline
+ * share a root but differ by name → distinct leaves). A block with no `source`
+ * yields ∅ (no derivable skill name). §18.1 twin of `_common.sh`'s
+ * `_block_leaves`. See TD-268.
+ */
+function skillBlockLeaves(block: SkillsSurface | undefined): Set<string> {
+  const src = block?.source;
+  if (typeof src !== "string" || src.length === 0) {
+    return new Set();
+  }
+  const sname = basename(src.replace(/\/+$/, ""));
+  if (sname.length === 0) {
+    return new Set();
+  }
+  const out = new Set<string>();
+  for (const t of block?.targets ?? []) {
+    if (typeof t?.path === "string" && t.path.length > 0) {
+      out.add(`${t.path}\u0000${sname}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * TD-268: two skill blocks COLLIDE iff they share an emitted leaf AND their
+ * scopes overlap — the genuine-clobber predicate (risk #7). §18.1 twin of the
+ * `_common.sh` merge-time pairwise loop. See TD-268.
+ */
+export function skillBlocksCollide(
+  b1: SkillsSurface | undefined,
+  b2: SkillsSurface | undefined,
+): boolean {
+  const l1 = skillBlockLeaves(b1);
+  if (l1.size === 0) {
+    return false;
+  }
+  const l2 = skillBlockLeaves(b2);
+  for (const leaf of l1) {
+    if (l2.has(leaf)) {
+      return scopesOverlap(b1?.scope, b2?.scope);
+    }
+  }
+  return false;
+}
+
 /** Validate one agent entry. Returns an error message, or null if valid. */
 export function validateAgentEntry(entry: unknown): string | null {
   if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
@@ -3841,6 +3933,33 @@ function runAddSkill(opts: LoadoutOptions, overlayPath: string): number {
   if (blockErr !== null) {
     logError(`loadout add-skill: invalid skills block: ${blockErr}`);
     return 1;
+  }
+
+  // TD-268: scope-aware overlay-vs-overlay LEAF-collision guard (§18.1 twin of
+  // the _common.sh merge-time pairwise loop). DEFENSIVE: the duplicate-name
+  // guard above (matchingBlockIndexes.length>1) + the in-place re-add (same-name
+  // blocks collapse to existingBlockIndex) make a same-leaf sibling unreachable
+  // through the CLI — the leaf NAME is basename(source) = the block name, so any
+  // colliding sibling shares the name and is caught earlier. This check guards a
+  // hand-edited overlay (two same-leaf blocks with overlapping scope) and keeps
+  // the genuine-clobber predicate live in the write path. Compare against every
+  // OTHER existing block — exclude existingBlockIndex (the block being replaced
+  // in place; comparing it to itself would false-reject a legitimate re-add).
+  // See TD-268 risk #7.
+  for (let i = 0; i < existingBlocks.length; i++) {
+    if (i === existingBlockIndex) {
+      continue;
+    }
+    if (skillBlocksCollide(newBlock, existingBlocks[i])) {
+      logError(
+        `loadout add-skill: skill '${name}' collides with existing block ` +
+          `surfaces.skills[${i}] (source '${existingBlocks[i]?.source ?? "?"}') ` +
+          "— same emitted skill location and overlapping scope (the second " +
+          "would clobber the first). Use disjoint project scopes or a distinct " +
+          "name. Overlay unchanged.",
+      );
+      return 1;
+    }
   }
 
   // Splice the block into the overlay's blocks array (in place at the existing

@@ -36,6 +36,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   runLoadout,
+  scopesOverlap,
+  skillBlocksCollide,
   validateAgentEntry,
   validateMcpServersSurface,
   validateMcpServersSurfaceArray,
@@ -2363,6 +2365,35 @@ describe("loadout add-skill — FR-155 scope", () => {
     });
   });
 
+  it("TD-268: re-add SAME global skill does NOT self-trigger the leaf-collision guard (exit 0)", async () => {
+    // The TD-268 overlay-vs-overlay guard must EXCLUDE the block being replaced
+    // in place. A global re-add is the max-overlap self case (same leaf, both
+    // global) — if the self-index were not excluded the guard would falsely
+    // reject this legitimate re-vendor. Proves the exclusion is correct.
+    const src = stageSkillsSource();
+    let code = await runLoadout(
+      skillOpts({
+        name: "myskills",
+        from: src,
+        targets: ["claude:symlink:.claude/skills"],
+      }),
+    );
+    expect(code).toBe(0);
+    code = await runLoadout(
+      skillOpts({
+        name: "myskills",
+        from: src,
+        targets: ["claude:symlink:.claude/skills"],
+      }),
+    );
+    expect(code).toBe(0);
+    const overlay = readOverlayFile() as {
+      surfaces?: { skills?: unknown[] };
+    };
+    // Still exactly ONE block for `myskills` (re-add replaced in place).
+    expect(overlay.surfaces?.skills).toHaveLength(1);
+  });
+
   it("re-add --project Q against existing GLOBAL block → exit 1 with --scope project hint", async () => {
     const src = stageSkillsSource();
     let code = await runLoadout(
@@ -2474,6 +2505,127 @@ describe("loadout add-skill — FR-155 scope", () => {
       }),
     );
     expect(code).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-268: scope-aware leaf-collision predicate (§18.1 twin of _common.sh's
+// _scopes_overlap / _block_leaves merge-time pairwise loop). These pin the pure
+// predicate directly — the reachable, twinned half of the guard (the runAddSkill
+// call site is defensive parity, exercised by the re-add self-exclusion test).
+// ---------------------------------------------------------------------------
+
+describe("TD-268 scopesOverlap", () => {
+  it("global ↔ anything overlaps (absent scope is global)", () => {
+    expect(scopesOverlap(undefined, undefined)).toBe(true);
+    expect(scopesOverlap({ type: "global" }, undefined)).toBe(true);
+    expect(
+      scopesOverlap({ type: "global" }, { type: "project", paths: ["/a"] }),
+    ).toBe(true);
+    expect(
+      scopesOverlap({ type: "project", paths: ["/a"] }, undefined),
+    ).toBe(true);
+  });
+
+  it("project ↔ project overlaps iff their resolved paths intersect", () => {
+    expect(
+      scopesOverlap(
+        { type: "project", paths: ["/repo/a"] },
+        { type: "project", paths: ["/repo/b"] },
+      ),
+    ).toBe(false);
+    expect(
+      scopesOverlap(
+        { type: "project", paths: ["/repo/a", "/repo/b"] },
+        { type: "project", paths: ["/repo/b", "/repo/c"] },
+      ),
+    ).toBe(true);
+  });
+
+  it("realpath-resolves BOTH sides (a symlinked path overlaps its real target)", () => {
+    const realDir = join(tmpRoot, "realproj");
+    const linkDir = join(tmpRoot, "linkproj");
+    mkdirSync(realDir, { recursive: true });
+    symlinkSync(realDir, linkDir);
+    // Two project scopes naming the SAME dir via different paths (one through a
+    // symlink) MUST overlap — mirrors the macOS /tmp ↔ /private/tmp case.
+    expect(
+      scopesOverlap(
+        { type: "project", paths: [realDir] },
+        { type: "project", paths: [linkDir] },
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("TD-268 skillBlocksCollide", () => {
+  const block = (
+    source: string,
+    root: string,
+    scope?: { type: "global" } | { type: "project"; paths: string[] },
+  ): Parameters<typeof skillBlocksCollide>[0] =>
+    ({
+      source,
+      layer: "personal",
+      targets: [{ type: "agents", method: "symlink", path: root }],
+      ...(scope ? { scope } : {}),
+    }) as Parameters<typeof skillBlocksCollide>[0];
+
+  it("same leaf (same name + same root) + both GLOBAL → collide", () => {
+    expect(
+      skillBlocksCollide(
+        block("/x/fifty-kit", "~/.agents/skills"),
+        block("/y/fifty-kit", "~/.agents/skills"),
+      ),
+    ).toBe(true);
+  });
+
+  it("same leaf + DISJOINT project scopes → no collide (the FR-205 fifty-kit enabler)", () => {
+    expect(
+      skillBlocksCollide(
+        block("/x/fifty-kit", "~/.agents/skills", {
+          type: "project",
+          paths: ["/repo/a"],
+        }),
+        block("/y/fifty-kit", "~/.agents/skills", {
+          type: "project",
+          paths: ["/repo/b"],
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("same leaf + INTERSECTING project scopes → collide", () => {
+    expect(
+      skillBlocksCollide(
+        block("/x/fifty-kit", "~/.agents/skills", {
+          type: "project",
+          paths: ["/repo/a"],
+        }),
+        block("/y/fifty-kit", "~/.agents/skills", {
+          type: "project",
+          paths: ["/repo/a", "/repo/b"],
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("DIFFERENT names sharing a root → no collide (content-pipeline + doc-pipeline)", () => {
+    expect(
+      skillBlocksCollide(
+        block("/x/content-pipeline", "~/.agents/skills"),
+        block("/y/doc-pipeline", "~/.agents/skills"),
+      ),
+    ).toBe(false);
+  });
+
+  it("a block with no derivable source → no collide", () => {
+    expect(
+      skillBlocksCollide(
+        { targets: [{ type: "agents", method: "symlink", path: "~/.agents/skills" }] } as Parameters<typeof skillBlocksCollide>[0],
+        block("/y/fifty-kit", "~/.agents/skills"),
+      ),
+    ).toBe(false);
   });
 });
 
