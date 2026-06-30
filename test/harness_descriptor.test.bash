@@ -37,6 +37,13 @@ setup() {
   mkdir -p "$ISOLATED_BRAIN"
   export IGRIS_BRAIN_DIR="$ISOLATED_BRAIN"
 
+  # TD-281: the mcp parity arm runs under `--surface mcp`, which also fires the
+  # grant-drift invariant (igris loadout verify-mcp-grant). Stub the delegated CLI
+  # so that check is a hermetic no-op (exit 0 = grant present) — parity is computed
+  # independently, so this only suppresses unrelated grant noise + real-binary
+  # spawns. `true` ignores its args and exits 0. (Unused by the agents/read tests.)
+  export IGRIS_CLI=true
+
   PROJ="$TEST_TEMP_DIR/harness_descriptor_$BATS_TEST_NUMBER"
   mkdir -p "$PROJ/canon" "$PROJ/.claude/agents"
 
@@ -94,6 +101,21 @@ EOF
 
 @test "read_harness_descriptor: hook_target_types = {claude,opencode,antigravity}" {
   run bash -c "source '$COMMON' && read_harness_descriptor '$DESCRIPTOR' hook_target_types"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | tr '\n' ',')" = "claude,opencode,antigravity" ]
+}
+
+@test "read_harness_descriptor: mcp_projected_harnesses = {claude,codex,gemini,opencode} (TD-281; antigravity carve-out excluded)" {
+  # PROJECTED (mcp.projected==true) is a STRICT subset of mcp_target_types (block
+  # presence = all 5) — antigravity has an mcp block but is the FR-179 carve-out.
+  run bash -c "source '$COMMON' && read_harness_descriptor '$DESCRIPTOR' mcp_projected_harnesses"
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s' "$output" | tr '\n' ',')" = "claude,codex,gemini,opencode" ]
+}
+
+@test "read_harness_descriptor: hook_projected_harnesses = {claude,opencode,antigravity} (TD-281)" {
+  # No hook carve-out today → projected mirrors supported (hook_target_types).
+  run bash -c "source '$COMMON' && read_harness_descriptor '$DESCRIPTOR' hook_projected_harnesses"
   [ "$status" -eq 0 ]
   [ "$(printf '%s' "$output" | tr '\n' ',')" = "claude,opencode,antigravity" ]
 }
@@ -228,4 +250,148 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"[forger/claude] MATCH"* ]]
   [[ "$output" != *"PARITY"* ]]
+}
+
+# --- 4. drift parity guard — MCP + HOOK surfaces (TD-281) --------------------
+# NOTE on bats: a non-LAST failing command does NOT fail a test (bats 1.x runs
+# without set -e). So each must-hold assertion below uses `|| return 1`, and the
+# single discriminating assertion is LAST — otherwise the check would be dead.
+# The mcp/hook arms use the SAME footprint heuristic as agents (a block whose
+# projected-target set is a STRICT non-empty subset of the manifest footprint is
+# flagged), keyed on the TD-281 mcp.projected / hooks.projected flags.
+
+@test "parity mcp (TD-281): a sibling mcp block declares opencode, another DROPPED it → PARITY + non-zero" {
+  # TD-228 shape on the MCP surface: 'full-mcp' projects to all 4 mcp-projected
+  # harnesses; 'partial-mcp' dropped opencode. The footprint includes opencode
+  # (full-mcp establishes it), so partial-mcp's strict-subset set is the anomaly.
+  # antigravity is mcp.projected:false → never expected → neither block flagged.
+  cat > "$PROJ/harness-manifest.json" <<'EOF'
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "mcp_servers": [
+      { "name": "full-mcp",
+        "canonical": { "command": "node", "args": ["/a.js"], "env": {} },
+        "targets": [
+          { "type": "claude",   "method": "merge" },
+          { "type": "codex",    "method": "merge" },
+          { "type": "gemini",   "method": "merge" },
+          { "type": "opencode", "method": "merge" }
+        ] },
+      { "name": "partial-mcp",
+        "canonical": { "command": "node", "args": ["/b.js"], "env": {} },
+        "targets": [
+          { "type": "claude",   "method": "merge" },
+          { "type": "codex",    "method": "merge" },
+          { "type": "gemini",   "method": "merge" }
+        ] }
+    ]
+  }
+}
+EOF
+  run bash "$GUARD" --project-root "$PROJ" --surface mcp
+  [ "$status" -ne 0 ] || return 1
+  printf '%s\n' "$output" | grep -q 'parity violation' || return 1
+  # full-mcp (complete) is NOT flagged; only partial-mcp's dropped row is.
+  ! printf '%s\n' "$output" | grep -q '\[mcp/full-mcp/.*\] PARITY' || return 1
+  printf '%s\n' "$output" | grep -q '\[mcp/partial-mcp/opencode\] PARITY'
+}
+
+@test "parity mcp (TD-281 carve-out): a complete block omitting antigravity → NO false-positive" {
+  # Mirrors the real igris-brain block: targets the 4 mcp-projected harnesses,
+  # omits antigravity (mcp.projected:false — the FR-179 carve-out). A single
+  # complete block == its own footprint → not a strict subset → no PARITY. This is
+  # the byte-identical-clean shape the carve-out flag legitimizes.
+  cat > "$PROJ/harness-manifest.json" <<'EOF'
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "mcp_servers": [
+      { "name": "brainlike-mcp",
+        "canonical": { "command": "node", "args": ["/a.js"], "env": {} },
+        "targets": [
+          { "type": "claude",   "method": "merge" },
+          { "type": "codex",    "method": "merge" },
+          { "type": "gemini",   "method": "merge" },
+          { "type": "opencode", "method": "merge" }
+        ] }
+    ]
+  }
+}
+EOF
+  run bash "$GUARD" --project-root "$PROJ" --surface mcp
+  ! printf '%s\n' "$output" | grep -q 'PARITY'
+}
+
+@test "parity hook (TD-281): a sibling hook block declares antigravity, another DROPPED it → PARITY" {
+  # TD-228 shape on the HOOK surface: 'full-hook' → all 3 hook-projected harnesses;
+  # 'partial-hook' dropped antigravity. The footprint includes antigravity (the
+  # sibling declares it) → partial-hook's strict-subset set is flagged.
+  cat > "$PROJ/harness-manifest.json" <<'EOF'
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "hooks": [
+      { "name": "full-hook", "event": "PostToolUse",
+        "canonical": { "command": "/tmp/full-hook.sh" },
+        "targets": [
+          { "type": "claude",      "method": "merge" },
+          { "type": "opencode",    "method": "merge" },
+          { "type": "antigravity", "method": "merge" }
+        ] },
+      { "name": "partial-hook", "event": "PostToolUse",
+        "canonical": { "command": "/tmp/partial-hook.sh" },
+        "targets": [
+          { "type": "claude",   "method": "merge" },
+          { "type": "opencode", "method": "merge" }
+        ] }
+    ]
+  }
+}
+EOF
+  run bash "$GUARD" --project-root "$PROJ" --surface hook
+  [ "$status" -ne 0 ] || return 1
+  ! printf '%s\n' "$output" | grep -q '\[hook/full-hook/.*\] PARITY' || return 1
+  printf '%s\n' "$output" | grep -q '\[hook/partial-hook/antigravity\] PARITY'
+}
+
+@test "parity (TD-281): a complete mcp + hook manifest yields NO parity violations" {
+  # The complete shape (every block declares its full projected set) is parity-
+  # clean. The whole-guard exit is non-zero here ONLY because the synthetic sandbox
+  # has no on-disk entries to MATCH (entry/presence drift is ORTHOGONAL to parity);
+  # the live `igris harness check` against the real (compiled) manifest is the
+  # exit-0 oracle (0 drifted/missing/parity). This pins the parity contract: a
+  # complete manifest never produces a PARITY verdict on any surface.
+  cat > "$PROJ/harness-manifest.json" <<'EOF'
+{
+  "version": 1,
+  "agents": [],
+  "surfaces": {
+    "mcp_servers": [
+      { "name": "complete-mcp",
+        "canonical": { "command": "node", "args": ["/a.js"], "env": {} },
+        "targets": [
+          { "type": "claude",   "method": "merge" },
+          { "type": "codex",    "method": "merge" },
+          { "type": "gemini",   "method": "merge" },
+          { "type": "opencode", "method": "merge" }
+        ] }
+    ],
+    "hooks": [
+      { "name": "complete-hook", "event": "PostToolUse",
+        "canonical": { "command": "/tmp/complete-hook.sh" },
+        "targets": [
+          { "type": "claude",      "method": "merge" },
+          { "type": "opencode",    "method": "merge" },
+          { "type": "antigravity", "method": "merge" }
+        ] }
+    ]
+  }
+}
+EOF
+  run bash "$GUARD" --project-root "$PROJ" --surface all
+  ! printf '%s\n' "$output" | grep -q 'PARITY'
 }

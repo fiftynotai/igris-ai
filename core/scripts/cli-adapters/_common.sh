@@ -606,6 +606,11 @@ resolve_harness_descriptor_path() {
 #   agent_target_row_harnesses   - harnesses with agents.projection == "target-row"
 #   mcp_target_types             - harnesses WITH an `mcp` block
 #   hook_target_types            - harnesses with hooks.supported == true
+#   mcp_projected_harnesses      - harnesses with mcp.projected == true (TD-281:
+#                                  the surface-PROJECTED set, ≠ block presence;
+#                                  antigravity has an mcp block but is the FR-179
+#                                  carve-out → excluded)
+#   hook_projected_harnesses     - harnesses with hooks.projected == true (TD-281)
 #   grant_harnesses              - harnesses WITH a `grant` block
 #   grant_path:<harness>         - that harness's grant.path (empty if none)
 #   mcp_config_path:<harness>    - that harness's mcp.config_path (empty if none)
@@ -669,6 +674,20 @@ elif query == "hook_target_types":
     for h in ids:
         hk = _obj(h).get("hooks")
         if isinstance(hk, dict) and hk.get("supported") is True:
+            print(h)
+elif query == "mcp_projected_harnesses":
+    # TD-281: the surface-PROJECTED mcp harnesses (mcp.projected == true) — the
+    # drift parity-guard's expected set, distinct from block presence
+    # (mcp_target_types). antigravity has an mcp block but projected:false.
+    for h in ids:
+        m = _obj(h).get("mcp")
+        if isinstance(m, dict) and m.get("projected") is True:
+            print(h)
+elif query == "hook_projected_harnesses":
+    # TD-281: the surface-PROJECTED hook harnesses (hooks.projected == true).
+    for h in ids:
+        hk = _obj(h).get("hooks")
+        if isinstance(hk, dict) and hk.get("projected") is True:
             print(h)
 elif query == "grant_harnesses":
     for h in ids:
@@ -947,7 +966,11 @@ if harnesses is not None:
         if mcp_block is not None:
             if not isinstance(mcp_block, dict):
                 fail(f"harnesses['{hkey}'].mcp must be an object")
-            allowed_mcp_keys = {"config_path", "format", "map_key", "entry_shape"}
+            # TD-281: `projected` is the optional 'surface-projected vs carve-out'
+            # flag (boolean). Additive — allowed but not required (a block without
+            # it is treated as not-projected by the parity-guard).
+            allowed_mcp_keys = {"config_path", "format", "map_key", "entry_shape",
+                                "projected"}
             for key in mcp_block:
                 if key not in allowed_mcp_keys:
                     fail(f"harnesses['{hkey}'].mcp: unknown key '{key}' "
@@ -965,6 +988,8 @@ if harnesses is not None:
             if mcp_block["entry_shape"] not in valid_entry_shapes:
                 fail(f"harnesses['{hkey}'].mcp.entry_shape '{mcp_block['entry_shape']}' "
                      f"is not one of {sorted(valid_entry_shapes)}")
+            if "projected" in mcp_block and not isinstance(mcp_block["projected"], bool):
+                fail(f"harnesses['{hkey}'].mcp.projected must be a boolean")
 
         # FR-217: grant block — kind required; path/token optional strings.
         grant_block = hval.get("grant")
@@ -991,7 +1016,9 @@ if harnesses is not None:
         if hooks_block is not None:
             if not isinstance(hooks_block, dict):
                 fail(f"harnesses['{hkey}'].hooks must be an object")
-            allowed_hook_keys = {"supported", "config_path", "method"}
+            # TD-281: `projected` is the optional 'surface-projected vs carve-out'
+            # flag (boolean). Additive — allowed but not required.
+            allowed_hook_keys = {"supported", "config_path", "method", "projected"}
             for key in hooks_block:
                 if key not in allowed_hook_keys:
                     fail(f"harnesses['{hkey}'].hooks: unknown key '{key}' "
@@ -1005,6 +1032,8 @@ if harnesses is not None:
             if "method" in hooks_block and hooks_block["method"] not in valid_hook_methods:
                 fail(f"harnesses['{hkey}'].hooks.method '{hooks_block['method']}' is not one of "
                      f"{sorted(valid_hook_methods)}")
+            if "projected" in hooks_block and not isinstance(hooks_block["projected"], bool):
+                fail(f"harnesses['{hkey}'].hooks.projected must be a boolean")
 
         # FR-217: harness_specific_file — repo-relative path string.
         hsf = hval.get("harness_specific_file")

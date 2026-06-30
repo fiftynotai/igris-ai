@@ -56,7 +56,7 @@
               "type": "object",
               "additionalProperties": false,
               "required": ["config_path", "format", "map_key", "entry_shape"],
-              "description": "FR-217: the MCP-surface wiring facts. PRESENCE means this harness participates in the mcp surface. Replaces HARNESS_CONFIG / mcpConfigPathFor / mcpMapKeyFor and selects the buildHarnessMcpEntry shape.",
+              "description": "FR-217: the MCP-surface wiring facts. PRESENCE means this harness participates in the mcp surface (CAPABILITY). Replaces HARNESS_CONFIG / mcpConfigPathFor / mcpMapKeyFor and selects the buildHarnessMcpEntry shape. TD-281: `projected` adds the orthogonal PROJECTION-EXPECTATION signal the drift parity-guard reads (block presence ≠ surface-projected — antigravity has an mcp block but is the FR-179 carve-out).",
               "properties": {
                 "config_path": {
                   "type": "string",
@@ -73,6 +73,10 @@
                 "entry_shape": {
                   "enum": ["claude", "gemini", "codex", "opencode"],
                   "description": "Which buildHarnessMcpEntry emitter shape to use. antigravity rides the `gemini` shape (byte-identical entry) despite its distinct config_path."
+                },
+                "projected": {
+                  "type": "boolean",
+                  "description": "TD-281: the 'surface-projected vs carve-out' flag the drift parity-guard reads. true = this harness's targets SHOULD appear in every surfaces.mcp_servers[] block (a block omitting it that a sibling declares is a PARITY anomaly); false = a deliberate carve-out NOT projected via the mcp surface (antigravity → mcp.projected:false, FR-179: its entry is custom-written to ~/.gemini/config/, not add-mcp-projected). Optional/additive — absent ⇒ treated as not-projected. Drives mcpProjectedHarnesses() / read_harness_descriptor mcp_projected_harnesses."
                 }
               }
             },
@@ -100,7 +104,7 @@
               "type": "object",
               "additionalProperties": false,
               "required": ["supported"],
-              "description": "FR-217: hook-surface capability. `supported:true` means this harness participates in the hook surface (drives hookTargetTypes()). codex (session_end only) + gemini (documented, not projected) are `{supported:false}`.",
+              "description": "FR-217: hook-surface capability. `supported:true` means this harness participates in the hook surface (drives hookTargetTypes()). codex (session_end only) + gemini (documented, not projected) are `{supported:false}`. TD-281: `projected` adds the parity-guard's PROJECTION-EXPECTATION signal (set on the 3 supported-hook harnesses — there is no hook carve-out today, so projected mirrors supported).",
               "properties": {
                 "supported": {
                   "type": "boolean",
@@ -113,6 +117,10 @@
                 "method": {
                   "enum": ["settings-merge", "plugin", "config-merge"],
                   "description": "How hooks reach the harness: settings-merge (claude settings.json hooks block), plugin (opencode FR-104 plugin), config-merge (antigravity hooks.json)."
+                },
+                "projected": {
+                  "type": "boolean",
+                  "description": "TD-281: the 'surface-projected vs carve-out' flag the drift parity-guard reads for the hook surface. true = this harness's targets SHOULD appear in every surfaces.hooks[] block (a block omitting it that a sibling declares is a PARITY anomaly). Set on claude/opencode/antigravity (all 3 supported-hook harnesses are surface-projected — no hook carve-out today). Optional/additive — absent ⇒ not-projected (so the supported:false harnesses codex/gemini are correctly excluded). Drives hookProjectedHarnesses() / read_harness_descriptor hook_projected_harnesses."
                 }
               }
             },

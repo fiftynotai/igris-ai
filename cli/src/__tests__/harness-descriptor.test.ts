@@ -35,9 +35,11 @@ import {
   harnessIds,
   harnessSpecificFile,
   hookFacts,
+  hookProjectedHarnesses,
   loadHarnessDescriptor,
   mcpAgentIds,
   mcpFacts,
+  mcpProjectedHarnesses,
   mcpTargetTypes,
   hookTargetTypes,
   skillAgentIds,
@@ -128,6 +130,7 @@ describe("accessors against the real descriptor", () => {
       format: "json",
       mapKey: "mcpServers",
       entryShape: "claude",
+      projected: true,
     });
     expect(mcpFacts("codex").format).toBe("toml");
     expect(mcpFacts("codex").mapKey).toBe("mcp_servers");
@@ -160,13 +163,19 @@ describe("accessors against the real descriptor", () => {
       supported: true,
       configPath: claudeUserSettingsPath(),
       method: "settings-merge",
+      projected: true,
     });
     expect(hookFacts("antigravity")).toEqual({
       supported: true,
       configPath: antigravityHooksConfigPath(),
       method: "config-merge",
+      projected: true,
     });
-    expect(hookFacts("opencode")).toEqual({ supported: true, method: "plugin" });
+    expect(hookFacts("opencode")).toEqual({
+      supported: true,
+      method: "plugin",
+      projected: true,
+    });
     expect(hookFacts("codex")).toEqual({ supported: false });
     expect(hookFacts("gemini")).toEqual({ supported: false });
   });
@@ -200,6 +209,40 @@ describe("accessors against the real descriptor", () => {
   it("agentTargetRowHarnesses() = the projection:target-row set (parity-guard input)", () => {
     // claude is projection:symlink (exempt); antigravity has no agents block.
     expect(agentTargetRowHarnesses()).toEqual(["codex", "gemini", "opencode"]);
+  });
+
+  it("mcpProjectedHarnesses() = the mcp.projected set (parity input; antigravity carve-out excluded)", () => {
+    // TD-281: all 5 have an mcp block (mcpTargetTypes), but antigravity is
+    // mcp.projected:false (FR-179 carve-out) → the projected set is the other 4.
+    expect(mcpProjectedHarnesses()).toEqual([
+      "claude",
+      "codex",
+      "gemini",
+      "opencode",
+    ]);
+    expect(mcpProjectedHarnesses()).not.toContain("antigravity");
+    // The flag rides McpFacts: capability (block presence) ≠ projection.
+    expect(mcpFacts("claude").projected).toBe(true);
+    expect(mcpFacts("antigravity").projected).toBe(false);
+    // It is a STRICT subset of the capability set (the carve-out is the gap).
+    expect(mcpProjectedHarnesses().length).toBeLessThan(mcpTargetTypes().length);
+  });
+
+  it("hookProjectedHarnesses() = the hooks.projected set (parity input)", () => {
+    // TD-281: the 3 supported-hook harnesses are all projected (no carve-out
+    // today) → projected mirrors supported (hookTargetTypes).
+    expect(hookProjectedHarnesses()).toEqual([
+      "claude",
+      "opencode",
+      "antigravity",
+    ]);
+    expect(hookProjectedHarnesses()).toEqual(hookTargetTypes());
+    expect(hookFacts("claude").projected).toBe(true);
+    expect(hookFacts("antigravity").projected).toBe(true);
+    expect(hookFacts("opencode").projected).toBe(true);
+    // codex/gemini are hooks.supported:false → no projected flag.
+    expect(hookFacts("codex").projected).toBeUndefined();
+    expect(hookFacts("gemini").projected).toBeUndefined();
   });
 });
 
@@ -255,6 +298,7 @@ describe("descriptor value snapshots (the concrete values the deleted consts hel
       format: "json",
       mapKey: "mcpServers",
       entryShape: "claude",
+      projected: true,
     });
     expect(mcpFacts("gemini").mapKey).toBe("mcpServers");
     expect(mcpFacts("gemini").format).toBe("json");
@@ -325,6 +369,25 @@ describe("descriptor value snapshots (the concrete values the deleted consts hel
 
   it("hookTargetTypes() pins the hook-surface set", () => {
     expect(hookTargetTypes()).toEqual(["claude", "opencode", "antigravity"]);
+  });
+
+  it("mcpProjectedHarnesses() pins the mcp-projected set (TD-281 carve-out)", () => {
+    // The byte-identical-clean expected set: the brain MCP block targets exactly
+    // these 4; antigravity is the FR-179 carve-out (mcp.projected:false).
+    expect(mcpProjectedHarnesses()).toEqual([
+      "claude",
+      "codex",
+      "gemini",
+      "opencode",
+    ]);
+  });
+
+  it("hookProjectedHarnesses() pins the hook-projected set (TD-281)", () => {
+    expect(hookProjectedHarnesses()).toEqual([
+      "claude",
+      "opencode",
+      "antigravity",
+    ]);
   });
 });
 

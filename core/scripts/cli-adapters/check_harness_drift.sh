@@ -1486,21 +1486,174 @@ fi
 # positive — only an INCONSISTENT drop within a manifest is. Honors the same
 # surface-selection, scope.type=project, and --filter gates as the agent drift.
 #
-# SCOPE — AGENTS ONLY (deliberate, FR-217 M4): the agents surface is the one for
-# which the descriptor carries the right signal (the `projection` field). The MCP
-# + hook surfaces are intentionally NOT parity-checked here: the descriptor's
-# mcp/hook participation models harness CAPABILITY, not surface PROJECTION, and
-# the FR-179 antigravity MCP carve-out (the brain MCP surface block omits
-# antigravity BY DESIGN — its entry is custom-written to ~/.gemini/config/, not
-# add-mcp-projected) makes an "mcp → all 5" expected set a FALSE POSITIVE against
-# the real personal overlay, which would break the byte-identical gate. Extending
-# parity to mcp/hooks needs a descriptor "surface-projected vs carve-out" signal
-# (a follow-up), not the capability set. See the brief Consumer-Sweep note.
+# SCOPE — AGENTS + MCP + HOOK (TD-281 extended this beyond the FR-217 M4
+# agents-only arm): each surface is parity-checked against the descriptor's
+# PROJECTED set for that surface. Agents use `agents.projection == "target-row"`;
+# mcp/hook use the TD-281 `mcp.projected` / `hooks.projected` flags. The projected
+# flag is the "surface-projected vs carve-out" signal that distinguishes block
+# PRESENCE (capability) from surface PROJECTION (expectation): all 5 harnesses
+# have an mcp block but only {claude,codex,gemini,opencode} are mcp-projected —
+# antigravity is mcp.projected:false (the FR-179 carve-out: its entry is custom-
+# written to ~/.gemini/config/, not add-mcp-projected), so the brain MCP surface
+# block omitting antigravity is LEGITIMATE, not flagged. All three arms use the
+# SAME footprint heuristic (a block/agent whose projected-target set is a STRICT
+# non-empty subset of the manifest's collective footprint is flagged) so an
+# intentionally partial/single block is never a false positive — see
+# _verify_parity_surface. Each arm is gated by its own --surface selection.
+# ---------------------------------------------------------------------------
+# _verify_parity_surface <descriptor-path> <surface: mcp|hook>
+#
+# TD-281: the mcp/hook twin of the agents parity arm. Same FOOTPRINT heuristic as
+# agents (NOT a naive "expect the full projected set", which would false-positive
+# a legitimately partial/single block): EXPECTED = the manifest's collective
+# surface FOOTPRINT (∪ of every block's targets ∩ the descriptor's surface-
+# PROJECTED set), and a block whose projected-target set is a STRICT NON-EMPTY
+# subset of the footprint is flagged PARITY. The projected set is the NEW per-
+# surface flag (mcp.projected / hooks.projected); antigravity mcp.projected:false
+# (FR-179) is excluded so the brain MCP block omitting it is NOT flagged (the
+# byte-identical state). A block whose intersection with the projected set is
+# empty (e.g. an antigravity-only mcp fixture) is never flagged. Blocks are
+# sourced exactly like flatten_mcp_rows / flatten_hook_rows: the merged manifest
+# always + the core surfaces-manifest.json only when --project-root OWNS it.
+# Honors --filter on the block name (mirrors the mcp/hook drift loops). v1
+# surfaces are global-only so — like verify_mcp/verify_hook — no scope.type
+# filter is applied. UNQUOTED $(...) for the assignment (bash 3.2 heredoc-in-
+# "$()" is a parse error — L-519 / FR-217 M2 trap).
+# ---------------------------------------------------------------------------
+_verify_parity_surface() {
+  local descriptor="$1"
+  local surface="$2"
+  local parity_out parity_n
+  parity_out=$(python3 - "$MERGED_MANIFEST" "$CORE_SURFACES" "$descriptor" "$FILTER" "$PROJECT_ROOT" "$surface" <<'PY'
+import fnmatch
+import json
+import os
+import sys
+
+merged_path = sys.argv[1]
+core_path = sys.argv[2]
+descriptor_path = sys.argv[3]
+flt = sys.argv[4] or "*"
+project_root = sys.argv[5]
+surface = sys.argv[6]  # "mcp" | "hook"
+
+# surface -> (surfaces[] key, descriptor block key)
+SKEY = "mcp_servers" if surface == "mcp" else "hooks"
+DKEY = "mcp" if surface == "mcp" else "hooks"
+
+
+def _read_harnesses(p):
+    if not p:
+        return {}
+    try:
+        h = json.load(open(p, encoding="utf-8")).get("harnesses")
+        return h if isinstance(h, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+# Projected set = harnesses whose descriptor block carries `projected: true`.
+# Precedence mirrors the agents arm: the resolved canonical descriptor, else the
+# manifest's own harnesses block (igris-ai is self-describing).
+harnesses = _read_harnesses(descriptor_path)
+if not harnesses:
+    try:
+        mh = json.load(open(merged_path, encoding="utf-8")).get("harnesses")
+        harnesses = mh if isinstance(mh, dict) else {}
+    except Exception:  # noqa: BLE001
+        harnesses = {}
+
+projected = set()
+for hk, hv in harnesses.items():
+    if isinstance(hv, dict):
+        blk = hv.get(DKEY)
+        if isinstance(blk, dict) and blk.get("projected") is True:
+            projected.add(hk)
+if not projected:
+    sys.exit(0)
+
+
+def load_blocks(path):
+    # LIST of surface blocks; legacy single-object normalized to [obj]; missing
+    # -> []. Mirrors flatten_mcp_rows / flatten_hook_rows.
+    try:
+        data = json.load(open(path, encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return []
+    v = (data.get("surfaces") or {}).get(SKEY)
+    if v is None:
+        return []
+    if isinstance(v, dict):
+        return [v]
+    if isinstance(v, list):
+        return v
+    return []
+
+
+# Source the blocks exactly like the flatten helpers: the merged manifest always;
+# the core surfaces-manifest.json only when --project-root OWNS it.
+sources = [merged_path]
+try:
+    cs_real = os.path.realpath(core_path)
+    pr_real = os.path.realpath(project_root)
+    if os.path.commonpath([cs_real, pr_real]) == pr_real:
+        sources.insert(0, core_path)
+except (OSError, ValueError):
+    pass
+
+# Pass 1: per-block projected-target set + the collective footprint.
+blocks = []  # (name, present_projected)
+footprint = set()
+for src in sources:
+    for block in load_blocks(src):
+        if not isinstance(block, dict):
+            continue
+        name = block.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        if not fnmatch.fnmatch(name, flt):
+            continue
+        targets = block.get("targets")
+        if not isinstance(targets, list) or len(targets) == 0:
+            continue  # an absent surface is not a parity miss; only EXISTING blocks
+        present = {t["type"] for t in targets
+                   if isinstance(t, dict) and isinstance(t.get("type"), str)}
+        proj = present & projected
+        blocks.append((name, proj))
+        footprint |= proj
+
+# Pass 2: flag a block whose projected-target set is a STRICT, NON-EMPTY subset
+# of the footprint (it projects to >=1 projected harness but dropped one a
+# sibling keeps — the TD-228 shape on the mcp/hook surface). An empty
+# intersection (no projected harness at all, e.g. an antigravity-only block) is
+# never flagged.
+for name, proj in blocks:
+    if proj and proj < footprint:
+        for missing in sorted(footprint - proj):
+            print(f"  [{surface}/{name}/{missing}] PARITY")
+            print(f"      reason    : projected harness '{missing}' missing from "
+                  f"{SKEY}[] targets (siblings declare it)")
+PY
+)
+  if [ -n "$parity_out" ]; then
+    printf '%s\n' "$parity_out"
+    parity_n="$(printf '%s\n' "$parity_out" | grep -c '] PARITY')"
+    PARITY=$((PARITY + parity_n))
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# verify_parity — runs the agents (FR-217 M4) + mcp/hook (TD-281) parity arms,
+# each gated by its own --surface selection. The agents arm logic is UNCHANGED
+# (the acceptance oracle); the mcp/hook arms delegate to _verify_parity_surface.
 # ---------------------------------------------------------------------------
 verify_parity() {
-  igris_surface_selected "agents" "$SURFACE_KIND" || return 0
-  local descriptor parity_out parity_n
+  local descriptor
   descriptor="$(resolve_harness_descriptor_path)"
+
+  # --- agents arm (FR-217 M4 — unchanged logic, now gated per-arm) ---
+  if igris_surface_selected "agents" "$SURFACE_KIND"; then
+  local parity_out parity_n
   parity_out=$(python3 - "$MERGED_MANIFEST" "$descriptor" "$FILTER" "$PROJECT_ROOT" "$HOME" <<'PY'
 import fnmatch
 import json
@@ -1613,6 +1766,17 @@ PY
     printf '%s\n' "$parity_out"
     parity_n="$(printf '%s\n' "$parity_out" | grep -c '] PARITY')"
     PARITY=$((PARITY + parity_n))
+  fi
+  fi
+
+  # --- mcp arm (TD-281) — gated on the mcp surface selection ---
+  if igris_surface_selected "mcp" "$SURFACE_KIND"; then
+    _verify_parity_surface "$descriptor" "mcp"
+  fi
+
+  # --- hook arm (TD-281) — gated on the hook surface selection ---
+  if igris_surface_selected "hook" "$SURFACE_KIND"; then
+    _verify_parity_surface "$descriptor" "hook"
   fi
 }
 

@@ -65,6 +65,15 @@ export interface McpFacts {
   format: McpFormat;
   mapKey: string;
   entryShape: EntryShape;
+  /**
+   * TD-281: the "surface-projected vs carve-out" flag. `true` = this harness's
+   * targets SHOULD appear in every `surfaces.mcp_servers[]` block (the drift
+   * parity-guard's expected set); `false`/absent = a deliberate carve-out NOT
+   * projected via the mcp surface (antigravity → FR-179: custom-written to
+   * ~/.gemini/config/). Block PRESENCE (capability) is orthogonal to this
+   * (projection EXPECTATION). Drives mcpProjectedHarnesses().
+   */
+  projected?: boolean;
 }
 
 /** Resolved no-prompt grant grammar for one harness. */
@@ -82,6 +91,12 @@ export interface HookFacts {
   /** Absolute hook config FILE — absent when the merge has no single file (opencode plugin). */
   configPath?: string;
   method?: HookMethod;
+  /**
+   * TD-281: the "surface-projected vs carve-out" flag for the hook surface (see
+   * McpFacts.projected). Set on the 3 supported-hook harnesses (claude/opencode/
+   * antigravity — no hook carve-out today). Drives hookProjectedHarnesses().
+   */
+  projected?: boolean;
 }
 
 interface AgentsFacts {
@@ -228,6 +243,10 @@ function buildEntry(id: HarnessId, raw: Record<string, unknown>): HarnessEntry {
         `harnesses.${id}.mcp.entry_shape`,
       ) as EntryShape,
     };
+    // TD-281: optional surface-projected flag (boolean). Absent ⇒ not-projected.
+    if (typeof m.projected === "boolean") {
+      entry.mcp.projected = m.projected;
+    }
   }
 
   if (raw.grant !== undefined) {
@@ -265,6 +284,10 @@ function buildEntry(id: HarnessId, raw: Record<string, unknown>): HarnessEntry {
         h.method,
         `harnesses.${id}.hooks.method`,
       ) as HookMethod;
+    }
+    // TD-281: optional surface-projected flag (boolean). Absent ⇒ not-projected.
+    if (typeof h.projected === "boolean") {
+      hooks.projected = h.projected;
     }
     entry.hooks = hooks;
   }
@@ -465,4 +488,29 @@ export function agentTargetRowHarnesses(): HarnessId[] {
   return harnessIds().filter(
     (id) => entry(id).agents?.projection === "target-row",
   );
+}
+
+/**
+ * Harnesses that are surface-PROJECTED for MCP (`mcp.projected === true`), in
+ * declaration order = {claude, codex, gemini, opencode}. The drift parity-guard's
+ * expected mcp set (TD-281). DISTINCT from `mcpTargetTypes()` (block presence /
+ * capability): all 5 have an `mcp` block, but antigravity is `mcp.projected:false`
+ * (the FR-179 carve-out — its entry is custom-written to ~/.gemini/config/, not
+ * add-mcp-projected) so it is excluded. This is the "surface-projected vs carve-
+ * out" signal that lets parity expect only the harnesses whose targets SHOULD
+ * appear, keeping the brain MCP block's antigravity omission legitimate.
+ */
+export function mcpProjectedHarnesses(): HarnessId[] {
+  return harnessIds().filter((id) => entry(id).mcp?.projected === true);
+}
+
+/**
+ * Harnesses that are surface-PROJECTED for hooks (`hooks.projected === true`), in
+ * declaration order = {claude, opencode, antigravity}. The drift parity-guard's
+ * expected hook set (TD-281) = the 3 supported-hook harnesses (no hook carve-out
+ * today, so projected mirrors `hooks.supported`). codex/gemini are
+ * `hooks.supported:false` ⇒ no `projected` ⇒ excluded.
+ */
+export function hookProjectedHarnesses(): HarnessId[] {
+  return harnessIds().filter((id) => entry(id).hooks.projected === true);
 }
