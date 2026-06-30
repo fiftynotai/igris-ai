@@ -59,17 +59,27 @@ import {
   loadoutOverlayPath,
   loadoutSkillDirPath,
   coreSurfacesManifestPath,
-  claudeJsonPath,
-  geminiSettingsPath,
-  antigravityMcpConfigPath,
   antigravityHooksConfigPath,
-  codexConfigTomlPath,
-  opencodeConfigPath,
   brainDir,
   projectSettingsPath,
 } from "../lib/paths.js";
 import { info, error as logError } from "../lib/log.js";
 import { buildHarnessMcpEntry, type McpHarness } from "../lib/mcp-shape.js";
+// FR-217: the canonical harness descriptor reader. The per-surface target enums
+// + per-harness MCP facts / agent id READ from the descriptor; the local
+// hardcoded definitions were deleted in M5 (one source of truth: the descriptor).
+// The per-surface target-type TYPES are narrowed from the canonical HarnessId
+// union below. The MCP emitter SHAPE is selected via the descriptor's entry_shape.
+// NON-harness enums (skill target types, methods, hook events) stay hand-kept —
+// see harness-descriptor.ts SCOPE NOTE.
+import {
+  agentTargetTypes,
+  mcpTargetTypes,
+  hookTargetTypes,
+  mcpFacts,
+  agentId,
+  type HarnessId,
+} from "../lib/harness-descriptor.js";
 import { buildClaudeHookGroup } from "../lib/hook-shape.js";
 import {
   mergeHookIntoSettings,
@@ -142,12 +152,15 @@ export type LoadoutAction =
   | "remove"
   | "update";
 
-/** Allowed harness target types (mirrors manifest.schema.json target enum).
- * FR-171: `opencode` added as a first-class agent target (OpenCode's agent
- * loader follows symlinks — projects a loadout-anchored symlink to
- * harness.opencode.md, same primitive as claude). */
-const VALID_TARGET_TYPES = ["claude", "codex", "gemini", "opencode"] as const;
-type TargetType = (typeof VALID_TARGET_TYPES)[number];
+/**
+ * Agent-surface target-type TYPE. RUNTIME membership ({claude, codex, gemini,
+ * opencode}) is enforced via `agentTargetTypes()` (descriptor-derived from the
+ * `agents` block presence); this compile-time alias narrows the canonical
+ * `HarnessId` union to the agents surface. antigravity is `dynamic-define` (no
+ * `agents` descriptor block) ⇒ excluded. FR-217 M5 deleted the former hardcoded
+ * `VALID_TARGET_TYPES` const (one source of truth: the descriptor).
+ */
+type TargetType = Exclude<HarnessId, "antigravity">;
 
 /**
  * FR-143/FR-149/FR-157/FR-171/FR-202: allowed SKILL target types. Mirrors
@@ -192,19 +205,12 @@ const VALID_SKILL_TYPE_METHOD_PAIRS = new Set<string>([
 ]);
 
 /**
- * FR-161 (FR-160 epic): allowed MCP target types. SEPARATE from the agent
- * (`VALID_TARGET_TYPES`) and skill (`VALID_SKILL_TARGET_TYPES`) enums — MCP
- * adds a 4th harness, `opencode`, and MUST NOT widen those surfaces. Mirrors
- * `$defs.mcp_surface.targets.type` in manifest.schema.json.
+ * MCP-surface target-type TYPE — all 5 harnesses participate (each carries an
+ * `mcp` descriptor block). RUNTIME membership is enforced via `mcpTargetTypes()`
+ * (descriptor-derived); this alias is the full canonical `HarnessId` union.
+ * FR-217 M5 deleted the former hardcoded `VALID_MCP_TARGET_TYPES` const.
  */
-const VALID_MCP_TARGET_TYPES = [
-  "claude",
-  "codex",
-  "gemini",
-  "opencode",
-  "antigravity",
-] as const;
-type McpTargetType = (typeof VALID_MCP_TARGET_TYPES)[number];
+type McpTargetType = HarnessId;
 
 /**
  * FR-161: MCP projection is always config-MERGE (not symlink/compiler).
@@ -214,16 +220,15 @@ const VALID_MCP_METHODS = ["merge"] as const;
 type McpMethod = (typeof VALID_MCP_METHODS)[number];
 
 /**
- * FR-180 (D7): allowed hook target types. SEPARATE enum — the hook surface
- * carries only the TWO harnesses with a native hook MERGE surface (claude →
- * settings.json hooks array; opencode → the FR-104 plugin; antigravity →
- * config-merge into ~/.gemini/config/hooks.json via the FR-181 bridge). codex
- * (session_end only) + gemini (gemini-cli 0.45.0 has a `gemini hooks` subcommand
- * — full onboarding tracked under FR-182) are documented, not projection
- * targets. Mirrors `$defs.hook_surface.targets.type`.
+ * Hook-surface target-type TYPE — the harnesses with a native hook MERGE surface
+ * (claude → settings.json hooks array; opencode → the FR-104 plugin; antigravity
+ * → config-merge into ~/.gemini/config/hooks.json via the FR-181 bridge). RUNTIME
+ * membership is enforced via `hookTargetTypes()` (descriptor `hooks.supported`);
+ * this alias narrows the canonical `HarnessId` union by EXCLUDING codex
+ * (session_end only) + gemini (`gemini hooks` documented-not-projected, FR-182).
+ * FR-217 M5 deleted the former hardcoded `VALID_HOOK_TARGET_TYPES` const.
  */
-const VALID_HOOK_TARGET_TYPES = ["claude", "opencode", "antigravity"] as const;
-type HookTargetType = (typeof VALID_HOOK_TARGET_TYPES)[number];
+type HookTargetType = Exclude<HarnessId, "codex" | "gemini">;
 
 /** FR-180 (D7): hook projection is always a config-merge. Mirrors the schema const. */
 const VALID_HOOK_METHODS = ["merge"] as const;
@@ -588,9 +593,8 @@ export interface LoadoutOptions {
   harness?: McpHarness;
   /**
    * FR-164 project-mcp test seam: override the harness config FILE path. When
-   * absent the verb resolves it from `harness` (claudeJsonPath /
-   * geminiSettingsPath / codexConfigTomlPath / opencodeConfigPath). Tests
-   * sandbox the hot config via this seam.
+   * absent the verb resolves it from `harness` via `mcpFacts(harness).configPath`
+   * (the canonical descriptor). Tests sandbox the hot config via this seam.
    */
   configPath?: string;
   /**
@@ -830,8 +834,8 @@ export function validateAgentEntry(entry: unknown): string | null {
     if (typeof tRec.type !== "string" || typeof tRec.path !== "string") {
       return `agent.targets[${i}] type/path must be strings`;
     }
-    if (!(VALID_TARGET_TYPES as readonly string[]).includes(tRec.type)) {
-      return `agent.targets[${i}].type '${tRec.type}' is not one of ${JSON.stringify(VALID_TARGET_TYPES)}`;
+    if (!(agentTargetTypes() as readonly string[]).includes(tRec.type)) {
+      return `agent.targets[${i}].type '${tRec.type}' is not one of ${JSON.stringify(agentTargetTypes())}`;
     }
   }
 
@@ -1052,8 +1056,8 @@ export function validateMcpServersSurface(mcp: unknown): string | null {
     if (typeof tRec.type !== "string" || typeof tRec.method !== "string") {
       return `surfaces.mcp_servers.targets[${i}] type/method must be strings`;
     }
-    if (!(VALID_MCP_TARGET_TYPES as readonly string[]).includes(tRec.type)) {
-      return `surfaces.mcp_servers.targets[${i}].type '${tRec.type}' is not one of ${JSON.stringify(VALID_MCP_TARGET_TYPES)}`;
+    if (!(mcpTargetTypes() as readonly string[]).includes(tRec.type)) {
+      return `surfaces.mcp_servers.targets[${i}].type '${tRec.type}' is not one of ${JSON.stringify(mcpTargetTypes())}`;
     }
     if (!(VALID_MCP_METHODS as readonly string[]).includes(tRec.method)) {
       return `surfaces.mcp_servers.targets[${i}].method '${tRec.method}' is not one of ${JSON.stringify(VALID_MCP_METHODS)}`;
@@ -1182,8 +1186,8 @@ export function validateHookSurface(hook: unknown): string | null {
         return `surfaces.hooks.targets[${idx}] missing required key '${req}'`;
       }
     }
-    if (!(VALID_HOOK_TARGET_TYPES as readonly string[]).includes(tRec.type as string)) {
-      return `surfaces.hooks.targets[${idx}].type '${String(tRec.type)}' is not one of ${JSON.stringify(VALID_HOOK_TARGET_TYPES)}`;
+    if (!(hookTargetTypes() as readonly string[]).includes(tRec.type as string)) {
+      return `surfaces.hooks.targets[${idx}].type '${String(tRec.type)}' is not one of ${JSON.stringify(hookTargetTypes())}`;
     }
     if (!(VALID_HOOK_METHODS as readonly string[]).includes(tRec.method as string)) {
       return `surfaces.hooks.targets[${idx}].method '${String(tRec.method)}' must be 'merge'`;
@@ -2901,8 +2905,8 @@ function parseTarget(spec: string): TargetSpec | string {
   }
   const type = spec.slice(0, idx);
   const path = spec.slice(idx + 1);
-  if (!(VALID_TARGET_TYPES as readonly string[]).includes(type)) {
-    return `--target type '${type}' is not one of ${JSON.stringify(VALID_TARGET_TYPES)}`;
+  if (!(agentTargetTypes() as readonly string[]).includes(type)) {
+    return `--target type '${type}' is not one of ${JSON.stringify(agentTargetTypes())}`;
   }
   if (path.length === 0) {
     return `--target '${spec}' has an empty path`;
@@ -4102,8 +4106,8 @@ function parseMcpTarget(spec: string): McpTarget | string {
     return `--target '${spec}' must be of the form type:merge[:enabled]`;
   }
   const [type, method, enabledRaw] = parts;
-  if (!(VALID_MCP_TARGET_TYPES as readonly string[]).includes(type)) {
-    return `--target type '${type}' is not one of ${JSON.stringify(VALID_MCP_TARGET_TYPES)}`;
+  if (!(mcpTargetTypes() as readonly string[]).includes(type)) {
+    return `--target type '${type}' is not one of ${JSON.stringify(mcpTargetTypes())}`;
   }
   if (!(VALID_MCP_METHODS as readonly string[]).includes(method)) {
     return `--target method '${method}' is not one of ${JSON.stringify(VALID_MCP_METHODS)}`;
@@ -4401,45 +4405,10 @@ function runAddMcp(opts: LoadoutOptions, overlayPath: string): number {
   return 0;
 }
 
-/**
- * FR-164: per-harness map key for the MCP entry. claude/gemini both nest under
- * `mcpServers` (JSON); opencode nests under `mcp` (JSON); codex nests under the
- * `[mcp_servers.<name>]` TOML table family. Mirrors `_common.sh`'s
- * `mcp_map_key`.
- */
-function mcpMapKeyFor(harness: McpHarness): string {
-  switch (harness) {
-    case "claude":
-    case "gemini":
-    case "antigravity":
-      return "mcpServers";
-    case "opencode":
-      return "mcp";
-    case "codex":
-      return "mcp_servers";
-  }
-}
-
-/**
- * FR-164: resolve the live harness CONFIG FILE path for a harness. Tests
- * override via `opts.configPath` (the sandbox seam the bash driver passes
- * through). Mirrors `_common.sh`'s `mcp_config_path` resolution.
- */
-function mcpConfigPathFor(harness: McpHarness): string {
-  switch (harness) {
-    case "claude":
-      return claudeJsonPath();
-    case "gemini":
-      return geminiSettingsPath();
-    case "antigravity":
-      // FR-179 (R1): DISTINCT file from gemini's settings.json.
-      return antigravityMcpConfigPath();
-    case "opencode":
-      return opencodeConfigPath();
-    case "codex":
-      return codexConfigTomlPath();
-  }
-}
+// FR-217: mcpMapKeyFor / mcpConfigPathFor (the per-harness MCP map-key + config
+// FILE switches) were consolidated into the canonical descriptor in M5 — read via
+// mcpFacts(id).mapKey / mcpFacts(id).configPath (harness-descriptor.ts). One
+// source of truth; the entry SHAPE selection is mcpFacts(id).entryShape.
 
 /**
  * FR-180 cross-phase: does <project-root> OWN the core surfaces manifest? Mirrors
@@ -4571,9 +4540,9 @@ function runProjectMcp(opts: LoadoutOptions): number {
     );
     return 2;
   }
-  if (!(VALID_MCP_TARGET_TYPES as readonly string[]).includes(opts.harness)) {
+  if (!(mcpTargetTypes() as readonly string[]).includes(opts.harness)) {
     logError(
-      `loadout project-mcp: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_MCP_TARGET_TYPES)}`,
+      `loadout project-mcp: --harness '${opts.harness}' is not one of ${JSON.stringify(mcpTargetTypes())}`,
     );
     return 2;
   }
@@ -4630,7 +4599,7 @@ function runProjectMcp(opts: LoadoutOptions): number {
   // (FR-179 R1), but add-mcp writes the `antigravity/` path it never reads — a
   // tool-fundamental mismatch with no flag to retarget it. So antigravity's
   // ENTRY stays CUSTOM (the proven `mergeJsonConfig` at the correct `config/`
-  // path via `mcpConfigPathFor('antigravity')`) REGARDLESS of the engine — it
+  // path via `mcpFacts('antigravity').configPath`) REGARDLESS of the engine — it
   // falls THROUGH to the custom merger body below. The grant is still written by
   // the delegate path for the other 4; antigravity's own grant is a separate
   // surface handled elsewhere (the install/remove paths). This is a
@@ -4655,9 +4624,12 @@ function runProjectMcp(opts: LoadoutOptions): number {
   // that resolves a literal). parseSecretsEnv honors secretsPath (test seam).
   const secrets =
     harness === "codex" ? parseSecretsEnv(opts.secretsPath) : undefined;
+  // FR-217 M2: the emitter SHAPE is selected via the descriptor's entry_shape
+  // (antigravity → gemini; others identity). The buildHarnessMcpEntry switch is
+  // KEPT intact (intrinsic emitter); only the selection now reads the descriptor.
   const { entry, missing } = buildHarnessMcpEntry(
     block.canonical,
-    harness,
+    mcpFacts(harness).entryShape,
     enabled,
     secrets,
   );
@@ -4672,8 +4644,8 @@ function runProjectMcp(opts: LoadoutOptions): number {
   }
 
   // Resolve the config path + map key, then dispatch to the proven merger.
-  const targetPath = opts.configPath ?? mcpConfigPathFor(harness);
-  const mapKey = mcpMapKeyFor(harness);
+  const targetPath = opts.configPath ?? mcpFacts(harness).configPath;
+  const mapKey = mcpFacts(harness).mapKey;
 
   // Benign-create the target's parent dir so a harness whose config lives in a
   // not-yet-existing NESTED dir does not turn a clean compile into a write
@@ -4724,19 +4696,8 @@ function runProjectMcp(opts: LoadoutOptions): number {
   return 0;
 }
 
-/**
- * FR-212b: map the loadout MCP harness id to the `add-mcp` AGENT id
- * (live-probed). Identical to mcp-register.ts's `ADD_MCP_AGENT_ID` — only
- * `claude → claude-code` and `gemini → gemini-cli` differ (add-mcp rejects the
- * bare forms). Codex/opencode/antigravity pass through.
- */
-const LOADOUT_ADD_MCP_AGENT_ID: Record<McpTargetType, string> = {
-  claude: "claude-code",
-  gemini: "gemini-cli",
-  codex: "codex",
-  opencode: "opencode",
-  antigravity: "antigravity",
-};
+// FR-217: the loadout MCP harness→add-mcp-agent-id map was consolidated into the
+// canonical descriptor in M5 — read via agentId(id) (harness-descriptor.ts).
 
 /**
  * FR-212b: the DELEGATE arm of `runProjectMcp` — register ONE (server, harness)
@@ -4767,7 +4728,7 @@ function runProjectMcpViaDelegate(
       command: canonical.command,
       args: canonical.args ?? [],
       env: canonical.env ?? {},
-      harnesses: [LOADOUT_ADD_MCP_AGENT_ID[harness]],
+      harnesses: [agentId(harness)],
       global: true,
     });
   } catch (err) {
@@ -4820,9 +4781,9 @@ function runVerifyMcpGrant(opts: LoadoutOptions): number {
     );
     return 2;
   }
-  if (!(VALID_MCP_TARGET_TYPES as readonly string[]).includes(opts.harness)) {
+  if (!(mcpTargetTypes() as readonly string[]).includes(opts.harness)) {
     logError(
-      `loadout verify-mcp-grant: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_MCP_TARGET_TYPES)}`,
+      `loadout verify-mcp-grant: --harness '${opts.harness}' is not one of ${JSON.stringify(mcpTargetTypes())}`,
     );
     return 2;
   }
@@ -5177,25 +5138,25 @@ function runUnprojectMcp(opts: LoadoutOptions): number {
     );
     return 2;
   }
-  if (!(VALID_MCP_TARGET_TYPES as readonly string[]).includes(opts.harness)) {
+  if (!(mcpTargetTypes() as readonly string[]).includes(opts.harness)) {
     logError(
-      `loadout unproject-mcp: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_MCP_TARGET_TYPES)}`,
+      `loadout unproject-mcp: --harness '${opts.harness}' is not one of ${JSON.stringify(mcpTargetTypes())}`,
     );
     return 2;
   }
   const harness = opts.harness;
 
-  const targetPath = opts.configPath ?? mcpConfigPathFor(harness);
+  const targetPath = opts.configPath ?? mcpFacts(harness).configPath;
   const result =
     harness === "codex"
       ? unmergeTomlConfig({
           targetPath,
-          tablePrefix: mcpMapKeyFor(harness),
+          tablePrefix: mcpFacts(harness).mapKey,
           entryKey: name,
         })
       : unmergeJsonConfig({
           targetPath,
-          mapKey: mcpMapKeyFor(harness),
+          mapKey: mcpFacts(harness).mapKey,
           entryKey: name,
         });
 
@@ -5238,9 +5199,9 @@ function runUnprojectHook(opts: LoadoutOptions): number {
     );
     return 2;
   }
-  if (!(VALID_HOOK_TARGET_TYPES as readonly string[]).includes(opts.harness)) {
+  if (!(hookTargetTypes() as readonly string[]).includes(opts.harness)) {
     logError(
-      `loadout unproject-hook: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_HOOK_TARGET_TYPES)}`,
+      `loadout unproject-hook: --harness '${opts.harness}' is not one of ${JSON.stringify(hookTargetTypes())}`,
     );
     return 2;
   }
@@ -5729,8 +5690,8 @@ function parseHookTarget(spec: string): HookTarget | string {
     return `--target '${spec}' must be of the form type:merge[:enabled]`;
   }
   const [type, method, enabledRaw] = parts;
-  if (!(VALID_HOOK_TARGET_TYPES as readonly string[]).includes(type)) {
-    return `--target type '${type}' is not one of ${JSON.stringify(VALID_HOOK_TARGET_TYPES)}`;
+  if (!(hookTargetTypes() as readonly string[]).includes(type)) {
+    return `--target type '${type}' is not one of ${JSON.stringify(hookTargetTypes())}`;
   }
   if (method !== "merge") {
     return `--target method '${method}' must be 'merge'`;
@@ -6092,9 +6053,9 @@ function runProjectHook(opts: LoadoutOptions): number {
     );
     return 2;
   }
-  if (!(VALID_HOOK_TARGET_TYPES as readonly string[]).includes(opts.harness)) {
+  if (!(hookTargetTypes() as readonly string[]).includes(opts.harness)) {
     logError(
-      `loadout project-hook: --harness '${opts.harness}' is not one of ${JSON.stringify(VALID_HOOK_TARGET_TYPES)}`,
+      `loadout project-hook: --harness '${opts.harness}' is not one of ${JSON.stringify(hookTargetTypes())}`,
     );
     return 2;
   }

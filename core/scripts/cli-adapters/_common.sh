@@ -13,6 +13,12 @@ if [ "${IGRIS_ADAPTER_COMMON_SOURCED:-0}" = "1" ]; then
 fi
 export IGRIS_ADAPTER_COMMON_SOURCED=1
 
+# FR-217: this file's own directory, captured at SOURCE time (BEFORE any cd — a
+# later `cd` would break BASH_SOURCE resolution; L-249-class trap). Used to
+# resolve the canonical harness descriptor (harness-manifest.json) relative to
+# the adapter tree (resolve_harness_descriptor_path below).
+IGRIS_ADAPTER_COMMON_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
 # ===========================================================================
 # Surface registry (FR-202 M0) — the ONE source of truth for the wiring
 # surfaces the orchestrator (compile_harnesses.sh) projects and the drift
@@ -552,6 +558,139 @@ PY
 }
 
 # ---------------------------------------------------------------------------
+# resolve_harness_descriptor_path
+#
+# FR-217: resolve the canonical harness descriptor — the harness-manifest.json
+# that carries the `harnesses` block (the bash twin of the resolution in
+# cli/src/lib/harness-descriptor.ts). The repo keeps the manifest at the REPO
+# ROOT (sibling of core/); the runtime mirror stages it INTO core/
+# (~/.igris/core/harness-manifest.json, TD-096). Candidates are tried
+# first-existing-wins; echoes the resolved path on success.
+#
+# FR-217 M5: the hardcoded wiring consts were DELETED, so the descriptor is now
+# REQUIRED — there is nothing to fall back to. If NEITHER candidate exists the
+# tree is partial/unmaterialized (NOT a normal state): emit a clear, actionable
+# error to stderr and exit 1 (a loud hard-fail). This forecloses the FR-217
+# TESTING-phase trap where an empty path silently flowed into a downstream
+# read_harness_descriptor that died under `set -e`/pipefail as a SILENT exit 1.
+# ---------------------------------------------------------------------------
+resolve_harness_descriptor_path() {
+  # repo layout: <repo>/core/scripts/cli-adapters -> <repo>/harness-manifest.json
+  local repo_root="$IGRIS_ADAPTER_COMMON_DIR/../../../harness-manifest.json"
+  # runtime layout: ~/.igris/core/scripts/cli-adapters -> ~/.igris/core/harness-manifest.json
+  local runtime_core="$IGRIS_ADAPTER_COMMON_DIR/../../harness-manifest.json"
+  if [ -f "$repo_root" ]; then
+    echo "$repo_root"
+    return 0
+  elif [ -f "$runtime_core" ]; then
+    echo "$runtime_core"
+    return 0
+  fi
+  echo "Error: harness descriptor (harness-manifest.json) not found — looked in '$repo_root' and '$runtime_core'. Run 'igris install' or 'igris refresh' to materialize ~/.igris/core/harness-manifest.json (the runtime mirror)." >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
+# read_harness_descriptor <manifest> <query>
+#
+# FR-217: the ONE bash reader of the canonical harness descriptor (the bash twin
+# of cli/src/lib/harness-descriptor.ts). Reads the `harnesses` block from
+# <manifest> and answers <query>. python3-backed (the same precedent as
+# validate_manifest). List queries print ONE item per line in manifest
+# declaration order; field lookups print a single value (empty when absent).
+#
+# Queries:
+#   harness_ids                  - all declared harness shape ids
+#   agent_ids                    - the agent_id (npx id) of each harness
+#   agent_target_types           - harnesses WITH an `agents` block
+#   agent_target_row_harnesses   - harnesses with agents.projection == "target-row"
+#   mcp_target_types             - harnesses WITH an `mcp` block
+#   hook_target_types            - harnesses with hooks.supported == true
+#   grant_harnesses              - harnesses WITH a `grant` block
+#   grant_path:<harness>         - that harness's grant.path (empty if none)
+#   mcp_config_path:<harness>    - that harness's mcp.config_path (empty if none)
+# ---------------------------------------------------------------------------
+read_harness_descriptor() {
+  local manifest="$1"
+  local query="$2"
+  if [ ! -f "$manifest" ]; then
+    echo "Error: read_harness_descriptor: manifest '$manifest' does not exist" >&2
+    return 1
+  fi
+  python3 - "$manifest" "$query" <<'PY'
+import json
+import sys
+
+manifest_path = sys.argv[1]
+query = sys.argv[2]
+
+try:
+    with open(manifest_path, "r", encoding="utf-8") as fh:
+        manifest = json.load(fh)
+except Exception as exc:  # noqa: BLE001
+    sys.stderr.write(f"read_harness_descriptor: cannot read {manifest_path}: {exc}\n")
+    sys.exit(1)
+
+harnesses = manifest.get("harnesses")
+if not isinstance(harnesses, dict):
+    harnesses = {}
+
+# Declaration order = JSON object insertion order (preserved by json.load).
+ids = list(harnesses.keys())
+
+
+def _obj(h):
+    v = harnesses.get(h)
+    return v if isinstance(v, dict) else {}
+
+
+if query == "harness_ids":
+    for h in ids:
+        print(h)
+elif query == "agent_ids":
+    for h in ids:
+        aid = _obj(h).get("agent_id")
+        if isinstance(aid, str):
+            print(aid)
+elif query == "agent_target_types":
+    for h in ids:
+        if isinstance(_obj(h).get("agents"), dict):
+            print(h)
+elif query == "agent_target_row_harnesses":
+    for h in ids:
+        a = _obj(h).get("agents")
+        if isinstance(a, dict) and a.get("projection") == "target-row":
+            print(h)
+elif query == "mcp_target_types":
+    for h in ids:
+        if isinstance(_obj(h).get("mcp"), dict):
+            print(h)
+elif query == "hook_target_types":
+    for h in ids:
+        hk = _obj(h).get("hooks")
+        if isinstance(hk, dict) and hk.get("supported") is True:
+            print(h)
+elif query == "grant_harnesses":
+    for h in ids:
+        if isinstance(_obj(h).get("grant"), dict):
+            print(h)
+elif query.startswith("grant_path:"):
+    h = query.split(":", 1)[1]
+    g = _obj(h).get("grant")
+    if isinstance(g, dict) and isinstance(g.get("path"), str):
+        print(g["path"])
+elif query.startswith("mcp_config_path:"):
+    h = query.split(":", 1)[1]
+    m = _obj(h).get("mcp")
+    if isinstance(m, dict) and isinstance(m.get("config_path"), str):
+        print(m["config_path"])
+else:
+    sys.stderr.write(f"read_harness_descriptor: unknown query '{query}'\n")
+    sys.exit(2)
+PY
+}
+
+# ---------------------------------------------------------------------------
 # validate_manifest <manifest-path> <schema-path>
 #
 # Validates a harness manifest against the JSON Schema (FR-136). Two code
@@ -577,12 +716,21 @@ validate_manifest() {
     echo "Error: manifest '$manifest' does not exist" >&2
     return 1
   fi
-  python3 - "$manifest" "$schema" <<'PY'
+  # FR-217: resolve the canonical harness descriptor and pass it as argv[3]. The
+  # per-surface harness enums derive from the descriptor (the schema enums become
+  # VALIDATED DERIVATIVES, §4 cross-check below); an empty path = partial tree, in
+  # which case the python falls back to the manifest's own block then the literals.
+  local descriptor_path
+  descriptor_path="$(resolve_harness_descriptor_path)"
+  python3 - "$manifest" "$schema" "$descriptor_path" <<'PY'
 import json
 import sys
 
 manifest_path = sys.argv[1]
 schema_path = sys.argv[2]
+# FR-217: the canonical harness descriptor path (resolve_harness_descriptor_path);
+# empty on a partial tree.
+descriptor_path = sys.argv[3] if len(sys.argv) > 3 else ""
 
 
 def fail(msg: str) -> None:
@@ -598,6 +746,106 @@ except json.JSONDecodeError as exc:
 except OSError as exc:
     fail(f"cannot read manifest: {exc}")
 
+# ---- FR-217: descriptor-derived harness sets + schema<->descriptor cross-check -
+# The canonical descriptor (the `harnesses` block) is AUTHORITATIVE; the schema's
+# harness enums + the structural-fallback `valid_*` sets are VALIDATED DERIVATIVES
+# of it. We compute the descriptor sets ONCE here (used by BOTH the jsonschema and
+# structural paths) and assert each schema harness-enum equals the descriptor set
+# (§4 drift-foreclosure). Precedence: the resolved canonical descriptor → the
+# manifest's own `harnesses` block (igris-ai is self-describing) → empty.
+
+
+def _read_harnesses(path: str) -> dict:
+    if not path:
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            h = json.load(fh).get("harnesses")
+            return h if isinstance(h, dict) else {}
+    except Exception:  # noqa: BLE001 — an unreadable descriptor is a partial tree
+        return {}
+
+
+def _derive(harnesses: dict):
+    hids, agent, mcp, hook, grant = set(), set(), set(), set(), set()
+    for hk, hv in (harnesses or {}).items():
+        hids.add(hk)
+        if isinstance(hv, dict):
+            if isinstance(hv.get("agents"), dict):
+                agent.add(hk)
+            if isinstance(hv.get("mcp"), dict):
+                mcp.add(hk)
+            hb = hv.get("hooks")
+            if isinstance(hb, dict) and hb.get("supported") is True:
+                hook.add(hk)
+            if isinstance(hv.get("grant"), dict):
+                grant.add(hk)
+    return hids, agent, mcp, hook, grant
+
+
+_canon_h = _read_harnesses(descriptor_path)
+if not _canon_h:
+    _mh = manifest.get("harnesses")
+    _canon_h = _mh if isinstance(_mh, dict) else {}
+desc_hids, desc_agent, desc_mcp, desc_hook, _desc_grant = _derive(_canon_h)
+
+# Load the schema ONCE (the jsonschema path requires it; the structural path does
+# not; the cross-check uses it when present). None = unreadable.
+try:
+    with open(schema_path, "r", encoding="utf-8") as fh:
+        schema_doc = json.load(fh)
+except Exception:  # noqa: BLE001
+    schema_doc = None
+
+
+def _schema_enum(doc, path):
+    cur = doc
+    for k in path:
+        if not isinstance(cur, dict) or k not in cur:
+            return None
+        cur = cur[k]
+    return set(cur) if isinstance(cur, list) else None
+
+
+# §4 cross-check: each schema harness-enum MUST equal the descriptor-derived set.
+# Runs in BOTH paths. Skipped only when neither the descriptor nor a given schema
+# enum is available (partial tree); a present-but-divergent pair is a HARD fail.
+if schema_doc is not None and desc_hids:
+    _checks = [
+        ("harnesses propertyNames", desc_hids,
+         _schema_enum(schema_doc, ["properties", "harnesses", "propertyNames", "enum"])),
+        ("agents target", desc_agent,
+         _schema_enum(schema_doc, ["$defs", "agent", "properties", "targets",
+                                   "items", "properties", "type", "enum"])),
+        ("mcp target", desc_mcp,
+         _schema_enum(schema_doc, ["$defs", "mcp_surface", "properties", "targets",
+                                   "items", "properties", "type", "enum"])),
+        ("hook target", desc_hook,
+         _schema_enum(schema_doc, ["$defs", "hook_surface", "properties", "targets",
+                                   "items", "properties", "type", "enum"])),
+    ]
+    for _label, _desc_set, _schema_set in _checks:
+        if _schema_set is None:
+            continue
+        if _desc_set != _schema_set:
+            fail(f"FR-217 schema<->descriptor drift: {_label} enum "
+                 f"{sorted(_schema_set)} != descriptor-derived {sorted(_desc_set)} "
+                 f"— update manifest.schema.json or the harness descriptor so they agree")
+
+# The effective per-surface harness sets the structural fallback validates against:
+# the descriptor when resolved, else the canonical literals (safety net so a
+# missing descriptor never silently empties the enums; M5 may trim).
+if desc_hids:
+    eff_harness_types = desc_hids
+    eff_target_types = desc_agent
+    eff_mcp_target_types = desc_mcp
+    eff_hook_target_types = desc_hook
+else:
+    eff_harness_types = {"claude", "codex", "gemini", "opencode", "antigravity"}
+    eff_target_types = {"claude", "codex", "gemini", "opencode"}
+    eff_mcp_target_types = {"claude", "codex", "gemini", "opencode", "antigravity"}
+    eff_hook_target_types = {"claude", "opencode", "antigravity"}
+
 try:
     import jsonschema  # type: ignore
     have_jsonschema = True
@@ -605,13 +853,10 @@ except Exception:
     have_jsonschema = False
 
 if have_jsonschema:
+    if schema_doc is None:
+        fail(f"cannot read schema '{schema_path}'")
     try:
-        with open(schema_path, "r", encoding="utf-8") as fh:
-            schema = json.load(fh)
-    except OSError as exc:
-        fail(f"cannot read schema '{schema_path}': {exc}")
-    try:
-        jsonschema.validate(instance=manifest, schema=schema)
+        jsonschema.validate(instance=manifest, schema=schema_doc)
     except jsonschema.ValidationError as exc:
         loc = "/".join(str(p) for p in exc.absolute_path) or "<root>"
         fail(f"at '{loc}': {exc.message}")
@@ -634,17 +879,28 @@ for key in manifest:
     if key not in allowed_top:
         fail(f"unknown top-level key '{key}' (additionalProperties:false)")
 
-# TD-244 (BI-3): structural validation of the per-harness `delegation_model`
-# descriptor map. Mirrors the `harnesses` $def in manifest.schema.json so the
-# structural fallback AGREES with the jsonschema path. Absent → native-static
-# default (no delegation recipe). Each key must be a known harness type; each value an
-# object with only an optional `delegation_model` ∈ {native-static, dynamic-define}.
+# TD-244 (BI-3) / FR-217: structural validation of the per-harness descriptor
+# map. Mirrors the `harnesses` $def in manifest.schema.json so the structural
+# fallback AGREES with the jsonschema path. Absent → native-static default (no
+# delegation recipe). Each key must be a known harness type; each value an object
+# whose keys are a subset of the FR-217 descriptor fields. FR-217 EXTENDED the
+# block from `delegation_model`-only into the canonical harness descriptor; every
+# descriptor field is OPTIONAL at the harness level (per-surface participation is
+# derived from block PRESENCE), so a `delegation_model`-only block still validates
+# (back-compat). Only the keys WITHIN a present sub-object are required.
 harnesses = manifest.get("harnesses")
 if harnesses is not None:
     if not isinstance(harnesses, dict):
         fail("'harnesses' must be an object")
-    valid_harness_types = {"claude", "codex", "gemini", "opencode", "antigravity"}
+    valid_harness_types = eff_harness_types  # FR-217: descriptor-derived (was a literal)
     valid_delegation_models = {"native-static", "dynamic-define"}
+    allowed_harness_keys = {"delegation_model", "agent_id", "agents", "mcp",
+                            "grant", "hooks", "harness_specific_file"}
+    valid_agent_projections = {"symlink", "target-row"}
+    valid_mcp_formats = {"json", "toml"}
+    valid_entry_shapes = {"claude", "gemini", "codex", "opencode"}
+    valid_grant_kinds = {"json-array", "toml-folder", "json-folder", "covered"}
+    valid_hook_methods = {"settings-merge", "plugin", "config-merge"}
     for hkey, hval in harnesses.items():
         if hkey not in valid_harness_types:
             fail(f"harnesses: unknown harness type '{hkey}' "
@@ -652,19 +908,114 @@ if harnesses is not None:
         if not isinstance(hval, dict):
             fail(f"harnesses['{hkey}'] must be an object")
         for key in hval:
-            if key != "delegation_model":
+            if key not in allowed_harness_keys:
                 fail(f"harnesses['{hkey}']: unknown key '{key}' "
-                     "(additionalProperties:false; only 'delegation_model' allowed)")
+                     f"(additionalProperties:false; allowed: {sorted(allowed_harness_keys)})")
         dm = hval.get("delegation_model")
         if dm is not None and dm not in valid_delegation_models:
             fail(f"harnesses['{hkey}'].delegation_model '{dm}' is not one of "
                  f"{sorted(valid_delegation_models)}")
 
+        # FR-217: agent_id — the npx agent id (string).
+        agent_id = hval.get("agent_id")
+        if agent_id is not None and not isinstance(agent_id, str):
+            fail(f"harnesses['{hkey}'].agent_id must be a string")
+
+        # FR-217: agents block — { target_type (harness id), projection } both required.
+        agents_block = hval.get("agents")
+        if agents_block is not None:
+            if not isinstance(agents_block, dict):
+                fail(f"harnesses['{hkey}'].agents must be an object")
+            for key in agents_block:
+                if key not in {"target_type", "projection"}:
+                    fail(f"harnesses['{hkey}'].agents: unknown key '{key}' "
+                         "(additionalProperties:false; allowed: ['projection', 'target_type'])")
+            for req in ("target_type", "projection"):
+                if req not in agents_block:
+                    fail(f"harnesses['{hkey}'].agents missing required key '{req}'")
+            tt = agents_block["target_type"]
+            if tt not in valid_harness_types:
+                fail(f"harnesses['{hkey}'].agents.target_type '{tt}' is not one of "
+                     f"{sorted(valid_harness_types)}")
+            pj = agents_block["projection"]
+            if pj not in valid_agent_projections:
+                fail(f"harnesses['{hkey}'].agents.projection '{pj}' is not one of "
+                     f"{sorted(valid_agent_projections)}")
+
+        # FR-217: mcp block — config_path/format/map_key/entry_shape all required.
+        mcp_block = hval.get("mcp")
+        if mcp_block is not None:
+            if not isinstance(mcp_block, dict):
+                fail(f"harnesses['{hkey}'].mcp must be an object")
+            allowed_mcp_keys = {"config_path", "format", "map_key", "entry_shape"}
+            for key in mcp_block:
+                if key not in allowed_mcp_keys:
+                    fail(f"harnesses['{hkey}'].mcp: unknown key '{key}' "
+                         f"(additionalProperties:false; allowed: {sorted(allowed_mcp_keys)})")
+            for req in ("config_path", "format", "map_key", "entry_shape"):
+                if req not in mcp_block:
+                    fail(f"harnesses['{hkey}'].mcp missing required key '{req}'")
+            if not isinstance(mcp_block["config_path"], str):
+                fail(f"harnesses['{hkey}'].mcp.config_path must be a string")
+            if mcp_block["format"] not in valid_mcp_formats:
+                fail(f"harnesses['{hkey}'].mcp.format '{mcp_block['format']}' is not one of "
+                     f"{sorted(valid_mcp_formats)}")
+            if not isinstance(mcp_block["map_key"], str):
+                fail(f"harnesses['{hkey}'].mcp.map_key must be a string")
+            if mcp_block["entry_shape"] not in valid_entry_shapes:
+                fail(f"harnesses['{hkey}'].mcp.entry_shape '{mcp_block['entry_shape']}' "
+                     f"is not one of {sorted(valid_entry_shapes)}")
+
+        # FR-217: grant block — kind required; path/token optional strings.
+        grant_block = hval.get("grant")
+        if grant_block is not None:
+            if not isinstance(grant_block, dict):
+                fail(f"harnesses['{hkey}'].grant must be an object")
+            allowed_grant_keys = {"kind", "path", "token"}
+            for key in grant_block:
+                if key not in allowed_grant_keys:
+                    fail(f"harnesses['{hkey}'].grant: unknown key '{key}' "
+                         f"(additionalProperties:false; allowed: {sorted(allowed_grant_keys)})")
+            if "kind" not in grant_block:
+                fail(f"harnesses['{hkey}'].grant missing required key 'kind'")
+            if grant_block["kind"] not in valid_grant_kinds:
+                fail(f"harnesses['{hkey}'].grant.kind '{grant_block['kind']}' is not one of "
+                     f"{sorted(valid_grant_kinds)}")
+            if "path" in grant_block and not isinstance(grant_block["path"], str):
+                fail(f"harnesses['{hkey}'].grant.path must be a string")
+            if "token" in grant_block and not isinstance(grant_block["token"], str):
+                fail(f"harnesses['{hkey}'].grant.token must be a string")
+
+        # FR-217: hooks block — supported required (bool); config_path/method optional.
+        hooks_block = hval.get("hooks")
+        if hooks_block is not None:
+            if not isinstance(hooks_block, dict):
+                fail(f"harnesses['{hkey}'].hooks must be an object")
+            allowed_hook_keys = {"supported", "config_path", "method"}
+            for key in hooks_block:
+                if key not in allowed_hook_keys:
+                    fail(f"harnesses['{hkey}'].hooks: unknown key '{key}' "
+                         f"(additionalProperties:false; allowed: {sorted(allowed_hook_keys)})")
+            if "supported" not in hooks_block:
+                fail(f"harnesses['{hkey}'].hooks missing required key 'supported'")
+            if not isinstance(hooks_block["supported"], bool):
+                fail(f"harnesses['{hkey}'].hooks.supported must be a boolean")
+            if "config_path" in hooks_block and not isinstance(hooks_block["config_path"], str):
+                fail(f"harnesses['{hkey}'].hooks.config_path must be a string")
+            if "method" in hooks_block and hooks_block["method"] not in valid_hook_methods:
+                fail(f"harnesses['{hkey}'].hooks.method '{hooks_block['method']}' is not one of "
+                     f"{sorted(valid_hook_methods)}")
+
+        # FR-217: harness_specific_file — repo-relative path string.
+        hsf = hval.get("harness_specific_file")
+        if hsf is not None and not isinstance(hsf, str):
+            fail(f"harnesses['{hkey}'].harness_specific_file must be a string")
+
 agents = manifest["agents"]
 if not isinstance(agents, list):
     fail("'agents' must be an array")
 
-valid_target_types = {"claude", "codex", "gemini", "opencode"}
+valid_target_types = eff_target_types  # FR-217: descriptor-derived (was a literal)
 # FR-155: `scope` is allowed on agent + skills_surface entries. Absent → global
 # (default, back-compat). The structural shape ({type:"global"} OR
 # {type:"project", paths:[...]}) is validated by validate_scope_shape below.
@@ -864,7 +1215,7 @@ if surfaces is not None:
             fail("surfaces.mcp_servers must be a non-empty array")
         if len(mcp_servers) < 1:
             fail("surfaces.mcp_servers must be a non-empty array")
-        valid_mcp_target_types = {"claude", "codex", "gemini", "opencode", "antigravity"}
+        valid_mcp_target_types = eff_mcp_target_types  # FR-217: descriptor-derived
         allowed_mcp_keys = {"name", "layer", "scope", "canonical", "targets"}
         allowed_mcp_canon_keys = {"command", "args", "env", "startup_timeout_sec"}
         allowed_mcp_target_keys = {"type", "method", "enabled"}
@@ -927,7 +1278,7 @@ if surfaces is not None:
             fail("surfaces.hooks must be a non-empty array")
         valid_hook_events = {"SessionStart", "SessionEnd", "PreToolUse",
                              "PostToolUse", "PreCompact", "PostCompact"}
-        valid_hook_target_types = {"claude", "opencode", "antigravity"}
+        valid_hook_target_types = eff_hook_target_types  # FR-217: descriptor-derived
         allowed_hook_keys = {"name", "event", "layer", "scope", "canonical",
                              "targets"}
         allowed_hook_canon_keys = {"command", "matcher", "timeout"}
@@ -1812,6 +2163,8 @@ export -f read_canonical_version
 export -f latest_canonical
 export -f sha_body
 export -f validate_manifest
+export -f resolve_harness_descriptor_path  # FR-217
+export -f read_harness_descriptor          # FR-217
 export -f merge_overlay_manifest
 export -f flatten_mcp_rows
 export -f extract_mcp_entry

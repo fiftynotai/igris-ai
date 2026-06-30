@@ -42,21 +42,11 @@ import { createRequire } from "node:module";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/**
- * The five Igris harness agent ids as the `skills` CLI names them. The
- * canonical default target set for `projectSkillsViaTool` when no explicit
- * `harnesses` is given. CRITICAL: `gemini-cli` (the `skills` agent id), NOT
- * `gemini` — the live probe rejected `gemini` as an invalid agent. Codex /
- * Gemini-CLI / OpenCode / Antigravity all install to the shared universal store
- * (`~/.agents/skills`); Claude-Code gets `~/.claude/skills`.
- */
-export const IGRIS_SKILLS_HARNESSES = [
-  "claude-code",
-  "codex",
-  "gemini-cli",
-  "opencode",
-  "antigravity",
-] as const;
+// FR-217: the canonical-descriptor reader. The default skills target set READS
+// the npx agent ids from the descriptor (skillAgentIds()); the former hardcoded
+// per-harness agent-id list was deleted in M5 — the descriptor is the one source
+// of truth (gemini→gemini-cli, claude→claude-code; the rest pass through).
+import { skillAgentIds } from "./harness-descriptor.js";
 
 export type SkillsEngine = "delegate" | "custom";
 
@@ -206,7 +196,7 @@ export function buildSkillsAddArgv(args: {
   const harnesses =
     args.harnesses && args.harnesses.length > 0
       ? args.harnesses
-      : IGRIS_SKILLS_HARNESSES;
+      : skillAgentIds();
   const argv = ["add", source];
   if (args.global !== false) {
     argv.push("-g");

@@ -50,6 +50,13 @@ setup() {
   mkdir -p "$ISOLATED_BRAIN/loadout" "$ISOLATED_BRAIN/core/scripts"
   cp -R "$ADAPTERS" "$ISOLATED_BRAIN/core/scripts/cli-adapters"
   cp "$IGRIS_ROOT/core/scripts/verify_mirror.sh" "$ISOLATED_BRAIN/core/scripts/verify_mirror.sh"
+  # FR-217: the adapters read the canonical harness descriptor
+  # (resolve_harness_descriptor_path → harness-manifest.json) at runtime. Stage
+  # it into the sandbox brain at the RUNTIME-mirror location
+  # (<brain>/core/harness-manifest.json, the twin of ~/.igris/core/harness-manifest.json)
+  # so the brainDir()-resolved adapters find it. Without it the descriptor read
+  # dies under set -e and `igris add` fails with "compile exited 1".
+  cp "$IGRIS_ROOT/harness-manifest.json" "$ISOLATED_BRAIN/core/harness-manifest.json"
   export IGRIS_BRAIN_DIR="$ISOLATED_BRAIN"
 
   # A consumer project that is NOT the igris-ai checkout (personal mode).
@@ -380,6 +387,12 @@ build_core_checkout() {
            "$CORE_BRAIN/core/agents" "$CORE_BRAIN/loadout"
   cp -R "$ADAPTERS" "$CORE_BRAIN/core/scripts/cli-adapters"
   cp "$IGRIS_ROOT/core/scripts/verify_mirror.sh" "$CORE_BRAIN/core/scripts/verify_mirror.sh"
+  # FR-217: stage the canonical harness descriptor at the runtime-mirror
+  # location so the brain-resolved adapters find it (see setup() note). The CORE
+  # projection runs the adapters against THIS brain root, so the descriptor must
+  # live here (the CORE_REPO data manifest below is the agent-arm data, not the
+  # wiring descriptor).
+  cp "$IGRIS_ROOT/harness-manifest.json" "$CORE_BRAIN/core/harness-manifest.json"
   export IGRIS_BRAIN_DIR="$CORE_BRAIN"
 
   # A sandbox igris-ai checkout: detectCoreRepo needs BOTH a

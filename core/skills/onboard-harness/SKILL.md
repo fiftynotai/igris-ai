@@ -167,8 +167,10 @@ be verified** (the old skill never did): once `<NEW>` is a target + arm, a futur
 this. If it doesn't reach `<NEW>`, a target (#2) or arm (#3) is missing.
 
 ### 5 — MCP registration
-`cli/src/lib/mcp-shape.ts` (`buildHarnessMcpEntry`), `mcp-register.ts`
-(`ALL_HARNESSES`), `paths.ts` (the harness's MCP config path from Phase 1). Add
+`cli/src/lib/mcp-shape.ts` (`buildHarnessMcpEntry`), the `mcp` block in the
+`harness-manifest.json` `harnesses.<NEW>` descriptor (config_path/format/map_key/
+entry_shape — read by `mcp-register.ts` via `harnessIds()`/`mcpFacts()`, FR-217;
+there is no longer an `ALL_HARNESSES` const), `paths.ts` (tilde-expansion). Add
 the harness's native MCP entry shape — the four known shapes:
 - Claude `mcpServers.<n>` / `{type:"stdio", command, args[], env{}}` (`${VAR}`)
 - Gemini `mcpServers.<n>` / `{command, args[], env{}}` no-type (`${VAR}`)
@@ -176,7 +178,9 @@ the harness's native MCP entry shape — the four known shapes:
 - Codex `[mcp_servers.<n>]` / `{command, args[], startup_timeout_sec?, [.env]}` (env = resolved literals)
 
 So `igris install` registers the brain MCP for `<NEW>`. Verify:
-`grep -q '<NEW>' cli/src/lib/mcp-register.ts && npm --prefix cli run build`.
+`grep -q '"<NEW>"' harness-manifest.json && npm --prefix cli run build` (FR-217:
+the harness is declared in the `harnesses.<NEW>` descriptor; `mcp-register.ts`
+reads it via the descriptor, not a hardcoded list).
 
 ### 6 — Install / materialize path
 `cli/src/verbs/init.ts` / `install.ts` — ensure `igris install <project>`

@@ -47,12 +47,8 @@ import { createInterface } from "node:readline";
 import {
   loadoutOverlayPath,
   coreSurfacesManifestPath,
-  claudeJsonPath,
-  geminiSettingsPath,
   antigravityMcpConfigPath,
   antigravityHooksConfigPath,
-  codexConfigTomlPath,
-  opencodeConfigPath,
 } from "../lib/paths.js";
 import { info, error as logError } from "../lib/log.js";
 import {
@@ -83,6 +79,16 @@ import { unregisterMcpViaTool } from "../lib/mcp-delegate.js";
 import { unmergeJsonConfig } from "../lib/mcp-register.js";
 import { removeBrainGrant } from "../lib/mcp-grant.js";
 import type { McpHarness } from "../lib/mcp-shape.js";
+// FR-217: harness-wiring facts (agent id, MCP config path / map key) are read
+// from the ONE canonical descriptor — NO per-harness const map / switch here
+// (coding_guidelines §18.2). `McpHarness` ≡ `HarnessId` (re-exported), so the
+// loadout-id casts below are identity.
+import {
+  agentId,
+  mcpFacts,
+  mcpTargetTypes,
+  type HarnessId,
+} from "../lib/harness-descriptor.js";
 import {
   resolveAddMode,
   coreProjectionParams,
@@ -591,19 +597,6 @@ async function runRemoveMcpArm(
 }
 
 /**
- * FR-212b: map a loadout harness id (claude/codex/gemini/opencode/antigravity)
- * to the `add-mcp` AGENT id — `claude → claude-code`, `gemini → gemini-cli`, the
- * rest pass through.
- */
-const REMOVE_ADD_MCP_AGENT_ID: Record<string, string> = {
-  claude: "claude-code",
-  gemini: "gemini-cli",
-  codex: "codex",
-  opencode: "opencode",
-  antigravity: "antigravity",
-};
-
-/**
  * FR-212b: the DELEGATE arm of `runRemoveMcpArm` — un-register the server via
  * `add-mcp remove` (ONE call for the targeted harnesses) + REVOKE the
  * Igris-owned no-prompt grant for each. Pushes each harness into `deprojected`
@@ -635,7 +628,11 @@ function removeMcpViaDelegate(
   // Skip the tool call entirely when only antigravity was targeted (e.g.
   // `--target antigravity`) — there is nothing for add-mcp to remove.
   if (toolHarnesses.length > 0) {
-    const agentIds = toolHarnesses.map((h) => REMOVE_ADD_MCP_AGENT_ID[h] ?? h);
+    // FR-217: map loadout ids → add-mcp agent ids via the descriptor
+    // (claude→claude-code, gemini→gemini-cli, the rest identity). Only reached
+    // when the store block was present (no loud-fail); a bad `--harness` already
+    // throws downstream at the grant revoke (`grantGrammar`), so no guard here.
+    const agentIds = toolHarnesses.map((h) => agentId(h as HarnessId));
     let toolResult;
     try {
       toolResult = unregisterFn(name, { harnesses: agentIds, global: true });
@@ -663,7 +660,7 @@ function removeMcpViaDelegate(
       opts.configPaths?.antigravity ?? antigravityMcpConfigPath();
     const r = unmergeJsonConfig({
       targetPath,
-      mapKey: "mcpServers",
+      mapKey: mcpFacts("antigravity").mapKey,
       entryKey: name,
     });
     if (r.outcome === "failed") {
@@ -831,22 +828,20 @@ function hookStoreWasPresent(
   );
 }
 
-/** Map an MCP harness → its native config file path + map key. */
+/**
+ * Map an MCP harness → its native config file path + map key, derived from the
+ * canonical harness descriptor (`mcpFacts`) — NOT a per-harness `switch` (FR-217:
+ * the descriptor is the one source of truth; coding_guidelines §18.2). An unknown
+ * / non-MCP harness id (e.g. a bad `--harness`) returns `undefined`, exactly as
+ * the old switch's `default` did, so `mcpConfigPresentIn` stays a graceful false
+ * — `mcpFacts` itself would throw on a non-descriptor id.
+ */
 function mcpConfigFor(harness: string): { path: string; mapKey: string } | undefined {
-  switch (harness) {
-    case "claude":
-      return { path: claudeJsonPath(), mapKey: "mcpServers" };
-    case "gemini":
-      return { path: geminiSettingsPath(), mapKey: "mcpServers" };
-    case "antigravity":
-      return { path: antigravityMcpConfigPath(), mapKey: "mcpServers" };
-    case "opencode":
-      return { path: opencodeConfigPath(), mapKey: "mcp" };
-    case "codex":
-      return { path: codexConfigTomlPath(), mapKey: "mcp_servers" };
-    default:
-      return undefined;
+  if (!mcpTargetTypes().includes(harness as HarnessId)) {
+    return undefined;
   }
+  const facts = mcpFacts(harness as HarnessId);
+  return { path: facts.configPath, mapKey: facts.mapKey };
 }
 
 /** Is the named MCP block present in `harness`'s native config (pre-removal probe)? */

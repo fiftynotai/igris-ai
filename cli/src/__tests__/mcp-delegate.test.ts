@@ -29,7 +29,6 @@ import { describe, expect, it, vi } from "vitest";
 import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import {
-  IGRIS_MCP_HARNESSES,
   assertLocalMcpBinary,
   buildMcpAddArgv,
   buildMcpRemoveArgv,
@@ -38,6 +37,9 @@ import {
   resolveMcpEngine,
   unregisterMcpViaTool,
 } from "../lib/mcp-delegate.js";
+// FR-217: the default MCP target set is now descriptor-derived; assert against
+// the accessor the SUT reads (mcpAgentIds()), not the deleted hardcoded const.
+import { mcpAgentIds } from "../lib/harness-descriptor.js";
 
 /** A fake absolute binary path for the injected resolver (never spawned). */
 const FAKE_BIN = "/abs/node_modules/add-mcp/dist/index.js";
@@ -151,9 +153,9 @@ describe("mcp-delegate — add argv builder", () => {
   });
 
   it("targets the 5 Igris harness ids — gemini-cli, NOT gemini", () => {
-    expect(IGRIS_MCP_HARNESSES).toContain("gemini-cli");
-    expect(IGRIS_MCP_HARNESSES).not.toContain("gemini");
-    expect([...IGRIS_MCP_HARNESSES].sort()).toEqual(
+    expect(mcpAgentIds()).toContain("gemini-cli");
+    expect(mcpAgentIds()).not.toContain("gemini");
+    expect([...mcpAgentIds()].sort()).toEqual(
       ["antigravity", "claude-code", "codex", "gemini-cli", "opencode"].sort(),
     );
   });

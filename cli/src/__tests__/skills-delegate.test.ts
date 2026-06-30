@@ -25,7 +25,6 @@ import { describe, expect, it, vi } from "vitest";
 import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import {
-  IGRIS_SKILLS_HARNESSES,
   assertLocalSkillsBinary,
   buildSkillsAddArgv,
   buildSkillsRemoveArgv,
@@ -34,6 +33,9 @@ import {
   resolveSkillsEngine,
   unprojectSkillsViaTool,
 } from "../lib/skills-delegate.js";
+// FR-217: the default skills target set is now descriptor-derived; assert against
+// the accessor the SUT reads (skillAgentIds()), not the deleted hardcoded const.
+import { skillAgentIds } from "../lib/harness-descriptor.js";
 
 /** A fake absolute binary path for the injected resolver (never spawned). */
 const FAKE_BIN = "/abs/node_modules/skills/bin/cli.mjs";
@@ -130,9 +132,9 @@ describe("skills-delegate — add argv builder", () => {
   });
 
   it("targets the 5 Igris harness ids — gemini-cli, NOT gemini", () => {
-    expect(IGRIS_SKILLS_HARNESSES).toContain("gemini-cli");
-    expect(IGRIS_SKILLS_HARNESSES).not.toContain("gemini");
-    expect([...IGRIS_SKILLS_HARNESSES].sort()).toEqual(
+    expect(skillAgentIds()).toContain("gemini-cli");
+    expect(skillAgentIds()).not.toContain("gemini");
+    expect([...skillAgentIds()].sort()).toEqual(
       ["antigravity", "claude-code", "codex", "gemini-cli", "opencode"].sort(),
     );
   });

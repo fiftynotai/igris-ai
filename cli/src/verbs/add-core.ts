@@ -588,7 +588,9 @@ function regenerateAgentRoster(
 /** MCP name must be lower-kebab (parallels the loadout NAME_PATTERN). */
 const MCP_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
-/** The MCP harness target types (mirrors VALID_MCP_TARGET_TYPES in loadout.ts). */
+/** The MCP harness target types — the `igris add` core path's own list (FR-180,
+ * out of FR-217's loadout-consolidation scope; the projection path reads
+ * `mcpTargetTypes()` from the descriptor). */
 const MCP_TARGET_TYPES = [
   "claude",
   "codex",
@@ -857,7 +859,9 @@ const HOOK_EVENTS = [
 ] as const;
 type HookCoreEvent = (typeof HOOK_EVENTS)[number];
 
-/** The hook harness target types (mirrors VALID_HOOK_TARGET_TYPES). */
+/** The hook harness target types — the `igris add` core path's own list (FR-180,
+ * out of FR-217's loadout-consolidation scope; the projection path reads
+ * `hookTargetTypes()` from the descriptor). */
 const HOOK_TARGET_TYPES = ["claude", "opencode", "antigravity"] as const;
 type HookCoreTargetType = (typeof HOOK_TARGET_TYPES)[number];
 

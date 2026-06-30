@@ -52,13 +52,12 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import * as TOML from "@iarna/toml"; // PARSE-ONLY (idempotency + malformed gate); never re-emit.
-import {
-  antigravitySettingsPath,
-  claudeUserSettingsPath,
-  codexConfigTomlPath,
-  geminiTrustedFoldersPath,
-} from "./paths.js";
 import type { McpHarness } from "./mcp-shape.js";
+// FR-217: the canonical harness descriptor reader. The grant grammar (kind/path/
+// token) + the grant-harness list READ from the descriptor; the local hardcoded
+// consts were deleted in M5 (one source of truth: the descriptor). The grant FILE
+// paths are tilde-expanded inside grantGrammar() (paths.ts expandTilde).
+import { harnessIds, grantGrammar } from "./harness-descriptor.js";
 
 /** Single rolling backup suffix (mirrors mcp-register.ts). */
 const BACKUP_SUFFIX = ".igris.bak";
@@ -97,51 +96,14 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/**
- * The per-harness no-prompt grant grammar. `kind` selects the writer:
- *   - `json-array`  : append `token` to a nested `permissions.allow[]` array
- *                     (claude, antigravity).
- *   - `toml-folder` : upsert `[projects."<cwd>"] trust_level = "trusted"`
- *                     (codex — folder-scoped).
- *   - `json-folder` : set `{ "<cwd>": "TRUST_FOLDER" }` at the top level
- *                     (gemini-cli — folder-scoped, FR-184).
- *   - `covered`     : grant lives in a different surface (opencode frontmatter).
- *
- * `path` resolves the live config FILE (tests override via `configPaths`).
- */
-interface GrantGrammar {
-  kind: "json-array" | "toml-folder" | "json-folder" | "covered";
-  path: () => string;
-  /** json-array only: the wildcard token to append. */
-  token?: string;
-}
-
-const GRANT_GRAMMAR: Record<McpHarness, GrantGrammar> = {
-  claude: {
-    kind: "json-array",
-    path: claudeUserSettingsPath,
-    token: `mcp__${BRAIN_NAME}__*`,
-  },
-  antigravity: {
-    kind: "json-array",
-    path: antigravitySettingsPath,
-    token: `mcp(${BRAIN_NAME}/*)`,
-  },
-  codex: {
-    kind: "toml-folder",
-    path: codexConfigTomlPath,
-  },
-  gemini: {
-    kind: "json-folder",
-    path: geminiTrustedFoldersPath,
-  },
-  opencode: {
-    // OpenCode's brain grant is the per-agent frontmatter permission map
-    // (FR-166). Nothing to write at the server/folder level — `covered`.
-    kind: "covered",
-    path: () => "(opencode: per-agent frontmatter permission — no grant file)",
-  },
-};
+// FR-217: the per-harness no-prompt grant grammar (kind/path/token) was
+// consolidated into the canonical descriptor in M5 — it lives in
+// harness-manifest.json harnesses.<id>.grant and is read via grantGrammar()
+// (harness-descriptor.ts). The `kind` dispatch — json-array (append `token` to a
+// nested `permissions.allow[]`: claude, antigravity), toml-folder (upsert
+// `[projects."<cwd>"] trust_level="trusted"`: codex), json-folder (set
+// `{"<cwd>":"TRUST_FOLDER"}`: gemini-cli, FR-184), covered (grant rides another
+// surface: opencode frontmatter, no file) — is unchanged in the writers below.
 
 // ---------------------------------------------------------------------------
 // JSON ARRAY-APPEND writer (claude, antigravity) — append a token into a
@@ -580,17 +542,18 @@ export interface GrantOptions {
   folder?: string;
 }
 
-/** The default harness ordering for a full grant sweep. */
-export const ALL_GRANT_HARNESSES: McpHarness[] = [
-  "claude",
-  "gemini",
-  "codex",
-  "opencode",
-  "antigravity",
-];
-
 function resolvePath(harness: McpHarness, opts?: GrantOptions): string {
-  return opts?.configPaths?.[harness] ?? GRANT_GRAMMAR[harness].path();
+  // FR-217: the grant FILE path READS from the canonical descriptor
+  // (grantGrammar(id).path). `covered` harnesses (opencode) carry no grant file
+  // in the descriptor (path undefined) — fall back to the opencode diagnostic
+  // placeholder so the covered GrantResult.path stays byte-identical (the writers
+  // never use the path for `covered`; it is a diagnostic only).
+  const override = opts?.configPaths?.[harness];
+  if (override !== undefined) return override;
+  return (
+    grantGrammar(harness).path ??
+    "(opencode: per-agent frontmatter permission — no grant file)"
+  );
 }
 
 /**
@@ -602,7 +565,7 @@ export function writeBrainGrant(
   harness: McpHarness,
   opts?: GrantOptions,
 ): GrantResult {
-  const grammar = GRANT_GRAMMAR[harness];
+  const grammar = grantGrammar(harness);
   const path = resolvePath(harness, opts);
   const folder = opts?.folder ?? process.cwd();
 
@@ -633,7 +596,7 @@ export function removeBrainGrant(
   harness: McpHarness,
   opts?: GrantOptions,
 ): GrantResult {
-  const grammar = GRANT_GRAMMAR[harness];
+  const grammar = grantGrammar(harness);
   const path = resolvePath(harness, opts);
   const folder = opts?.folder ?? process.cwd();
 
@@ -673,7 +636,7 @@ export function writeBrainGrantAcrossHarnesses(opts?: {
   configPaths?: Partial<Record<McpHarness, string>>;
   folder?: string;
 }): GrantResult[] {
-  const harnesses = opts?.harnesses ?? ALL_GRANT_HARNESSES;
+  const harnesses = opts?.harnesses ?? harnessIds();
   return harnesses.map((h) =>
     writeBrainGrant(h, {
       configPaths: opts?.configPaths,
@@ -688,7 +651,7 @@ export function removeBrainGrantAcrossHarnesses(opts?: {
   configPaths?: Partial<Record<McpHarness, string>>;
   folder?: string;
 }): GrantResult[] {
-  const harnesses = opts?.harnesses ?? ALL_GRANT_HARNESSES;
+  const harnesses = opts?.harnesses ?? harnessIds();
   return harnesses.map((h) =>
     removeBrainGrant(h, {
       configPaths: opts?.configPaths,
@@ -709,7 +672,7 @@ export function verifyBrainGrant(
   harness: McpHarness,
   opts?: GrantOptions,
 ): boolean {
-  const grammar = GRANT_GRAMMAR[harness];
+  const grammar = grantGrammar(harness);
   if (grammar.kind === "covered") return true;
   const path = resolvePath(harness, opts);
   const folder = opts?.folder ?? process.cwd();
@@ -749,6 +712,5 @@ export function verifyBrainGrant(
 export const __testing__ = {
   BRAIN_NAME,
   BACKUP_SUFFIX,
-  GRANT_GRAMMAR,
   renderTrustTable,
 };

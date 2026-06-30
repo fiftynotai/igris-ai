@@ -747,6 +747,11 @@ PY
 TOTAL=0
 MATCH=0
 DRIFT=0
+# FR-217 M4: parity-guard violations (a descriptor-declared participating harness
+# MISSING from an existing surface block's targets[] — the TD-228 class the
+# per-target drift loop is blind to). Additive: does NOT touch TOTAL/MATCH/DRIFT;
+# contributes to the non-zero exit independently.
+PARITY=0
 # FR-156: per-agent tree-hash verdict is fired ONCE per agent (the loop walks
 # per-target rows, so a 3-target agent would otherwise emit 3 tree verdicts).
 # Tracked as a colon-delimited string `:name1:name2:` so the membership check
@@ -1337,7 +1342,13 @@ fi
 # invariant must not fire a phantom grant-DRIFT. The smoke gate + real installs
 # declare the brain MCP, so the grant IS asserted there.
 if [ -n "$MCP_DRIFT_ROWS" ]; then
-  for grant_harness in claude codex gemini opencode antigravity; do
+  # FR-217: the grant-harness set is READ from the canonical descriptor
+  # (harnesses with a `grant` block) instead of the hardcoded
+  # `claude codex gemini opencode antigravity` loop. Declaration order is
+  # preserved so the verdict output stays byte-identical.
+  _grant_descriptor="$(resolve_harness_descriptor_path)"
+  while IFS= read -r grant_harness; do
+    [ -z "$grant_harness" ] && continue
     TOTAL=$((TOTAL + 1))
     grc=0
     "${IGRIS_CLI_CMD[@]}" loadout verify-mcp-grant \
@@ -1350,7 +1361,7 @@ if [ -n "$MCP_DRIFT_ROWS" ]; then
       echo "      reason    : no-prompt grant missing for $grant_harness (delegate engine)"
       DRIFT=$((DRIFT + 1))
     fi
-  done
+  done < <(read_harness_descriptor "$_grant_descriptor" grant_harnesses)
 fi
 }
 
@@ -1460,13 +1471,162 @@ fi
 # plugins (bash 3.2 has no namerefs). Verdict bytes are held INVARIANT — the
 # Phase-0 byte-identical baseline is the acceptance oracle.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# verify_parity — FR-217 M4 parity guard (the TD-228 class). The per-target drift
+# loops above only verify targets that ARE listed; a DROPPED target is invisible.
+# Flag an agent that dropped an agent-target-ROW harness its SIBLINGS keep: the
+# expected set is the manifest's collective ROW FOOTPRINT (the row-harnesses at
+# least one applicable agent projects to, ∩ the descriptor's
+# agents.projection=="target-row" set = {codex,gemini,opencode}), and an agent
+# whose footprint is a STRICT non-empty subset is flagged PARITY (distinct from
+# MATCH/DRIFTED/MISSING). claude is projection:symlink (exempt) and antigravity
+# has no agents block (exempt) — neither is ever a candidate (OPEN DECISION #1).
+# Using the manifest footprint (not the full descriptor set) means an intentional
+# single/partial-row project (a codex-only or claude-only agent) is NOT a false
+# positive — only an INCONSISTENT drop within a manifest is. Honors the same
+# surface-selection, scope.type=project, and --filter gates as the agent drift.
+#
+# SCOPE — AGENTS ONLY (deliberate, FR-217 M4): the agents surface is the one for
+# which the descriptor carries the right signal (the `projection` field). The MCP
+# + hook surfaces are intentionally NOT parity-checked here: the descriptor's
+# mcp/hook participation models harness CAPABILITY, not surface PROJECTION, and
+# the FR-179 antigravity MCP carve-out (the brain MCP surface block omits
+# antigravity BY DESIGN — its entry is custom-written to ~/.gemini/config/, not
+# add-mcp-projected) makes an "mcp → all 5" expected set a FALSE POSITIVE against
+# the real personal overlay, which would break the byte-identical gate. Extending
+# parity to mcp/hooks needs a descriptor "surface-projected vs carve-out" signal
+# (a follow-up), not the capability set. See the brief Consumer-Sweep note.
+# ---------------------------------------------------------------------------
+verify_parity() {
+  igris_surface_selected "agents" "$SURFACE_KIND" || return 0
+  local descriptor parity_out parity_n
+  descriptor="$(resolve_harness_descriptor_path)"
+  parity_out=$(python3 - "$MERGED_MANIFEST" "$descriptor" "$FILTER" "$PROJECT_ROOT" "$HOME" <<'PY'
+import fnmatch
+import json
+import os
+import sys
+
+manifest_path = sys.argv[1]
+descriptor_path = sys.argv[2]
+flt = sys.argv[3] or "*"
+project_root = sys.argv[4]
+home = sys.argv[5]
+
+
+def _read_harnesses(p):
+    if not p:
+        return {}
+    try:
+        h = json.load(open(p, encoding="utf-8")).get("harnesses")
+        return h if isinstance(h, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+try:
+    manifest = json.load(open(manifest_path, encoding="utf-8"))
+except Exception:  # noqa: BLE001
+    sys.exit(0)
+
+harnesses = _read_harnesses(descriptor_path)
+if not harnesses:
+    mh = manifest.get("harnesses")
+    harnesses = mh if isinstance(mh, dict) else {}
+
+# row_harnesses = the descriptor's agent-target-ROW harnesses
+# (agents.projection == "target-row" = {codex, gemini, opencode}). claude is
+# projection:symlink (exempt) and antigravity has no agents block (exempt) —
+# neither is ever a parity candidate (the OPEN-DECISION #1 boundary).
+row_harnesses = set()
+for hk, hv in harnesses.items():
+    if isinstance(hv, dict):
+        a = hv.get("agents")
+        if isinstance(a, dict) and a.get("projection") == "target-row":
+            row_harnesses.add(hk)
+if not row_harnesses:
+    sys.exit(0)
+
+
+def scope_matches(scope):
+    # Mirror the bash scope.type=project filter (realpath, ~/ + project-relative).
+    if not isinstance(scope, dict):
+        return True
+    if scope.get("type") != "project":
+        return True
+    pr = os.path.realpath(project_root)
+    for sp in scope.get("paths") or []:
+        if not isinstance(sp, str):
+            continue
+        if sp.startswith("~/"):
+            sp_abs = os.path.join(home, sp[2:])
+        elif sp.startswith("/"):
+            sp_abs = sp
+        else:
+            sp_abs = os.path.join(project_root, sp)
+        if os.path.realpath(sp_abs) == pr:
+            return True
+    return False
+
+
+agents = manifest.get("agents")
+if not isinstance(agents, list):
+    sys.exit(0)
+
+# The TD-228 anomaly is an agent that DROPPED a row-harness its SIBLINGS keep. So
+# the expected set is the manifest's own collective ROW FOOTPRINT (the row-
+# harnesses at least one applicable agent projects to, intersected with the
+# descriptor's row set), NOT the full descriptor set. This precisely catches
+# "8 agents have {codex,gemini,opencode}, 1 dropped gemini" while NEVER false-
+# positiving a project that intentionally uses a single/partial row set (a
+# codex-only agent, a claude-only agent) — there is no sibling establishing the
+# missing harness as expected. Pass 1 builds per-agent row sets + the footprint.
+agent_rows = []  # (name, present_row_harnesses)
+footprint = set()
+for agent in agents:
+    if not isinstance(agent, dict):
+        continue
+    name = agent.get("name")
+    if not isinstance(name, str) or not fnmatch.fnmatch(name, flt):
+        continue
+    if not scope_matches(agent.get("scope")):
+        continue
+    targets = agent.get("targets")
+    if not isinstance(targets, list) or len(targets) == 0:
+        continue  # an absent surface is not a parity miss; only EXISTING blocks
+    present = {t["type"] for t in targets if isinstance(t, dict) and isinstance(t.get("type"), str)}
+    rows = present & row_harnesses
+    agent_rows.append((name, rows))
+    footprint |= rows
+
+# Pass 2: flag an agent whose row footprint is a STRICT, NON-EMPTY subset of the
+# manifest footprint (it projects to >=1 row-harness but dropped one a sibling
+# keeps — the TD-228 shape).
+for name, rows in agent_rows:
+    if rows and rows < footprint:
+        for missing in sorted(footprint - rows):
+            print(f"  [{name}/{missing}] PARITY")
+            print(f"      reason    : agent-row harness '{missing}' missing from targets[] (siblings declare it)")
+PY
+)
+  if [ -n "$parity_out" ]; then
+    printf '%s\n' "$parity_out"
+    parity_n="$(printf '%s\n' "$parity_out" | grep -c '] PARITY')"
+    PARITY=$((PARITY + parity_n))
+  fi
+}
+
 for _surface in $IGRIS_SURFACE_IDS; do
   if igris_surface_selected "$_surface" "$SURFACE_KIND"; then
     "verify_$_surface"
   fi
 done
 
-if [ "$TOTAL" -eq 0 ]; then
+# FR-217 M4: parity guard runs AFTER the per-target drift passes (additive — does
+# not touch TOTAL/MATCH/DRIFT; increments PARITY only on a violation).
+verify_parity
+
+if [ "$TOTAL" -eq 0 ] && [ "$PARITY" -eq 0 ]; then
   # FR-202 (M0): surface noun list derived from the registry
   # (IGRIS_SURFACE_LABELS) — now "No agent/skills/mcp/hook targets matched …"
   # (FR-202 M4 dropped the identity surface).
@@ -1484,8 +1644,13 @@ fi
 echo ""
 echo "  ----"
 echo "  $TOTAL targets — $MATCH in sync, $DRIFT drifted/missing"
+# FR-217 M4: only surfaced when there is a violation, so a clean run stays
+# byte-identical to the pre-parity output (the acceptance oracle).
+if [ "$PARITY" -gt 0 ]; then
+  echo "  $PARITY parity violation(s) — declared harness missing from an existing targets[]"
+fi
 
-if [ "$DRIFT" -gt 0 ]; then
+if [ "$DRIFT" -gt 0 ] || [ "$PARITY" -gt 0 ]; then
   exit 1
 fi
 exit 0

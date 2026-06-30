@@ -41,14 +41,7 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import * as TOML from "@iarna/toml"; // FR-163: PARSE-ONLY (idempotency + malformed gate); never re-emit.
-import {
-  antigravityMcpConfigPath,
-  bundledMcpEntryPath,
-  claudeJsonPath,
-  codexConfigTomlPath,
-  geminiSettingsPath,
-  opencodeConfigPath,
-} from "./paths.js";
+import { bundledMcpEntryPath, claudeJsonPath } from "./paths.js";
 // FR-169: reuse the FR-164 pure per-harness shaper + canonical type. mcp-shape.ts
 // imports TomlMcpEntry FROM this module, but McpShapeCanonical/McpHarness/
 // buildHarnessMcpEntry live there — importing them back is a type-only + value
@@ -84,6 +77,11 @@ import {
 // `chmodSecretFile` (do NOT re-implement the chmod/win32 logic — §18.1). No
 // import cycle: secret-perms.ts imports nothing from this module.
 import { chmodSecretFile } from "./secret-perms.js";
+// FR-217: the canonical harness descriptor reader. mcp-register READS the
+// per-harness MCP facts / agent id / harness list from the descriptor; the local
+// hardcoded consts were deleted in M5 (one source of truth: the descriptor). The
+// MCP emitter SHAPE is selected via the descriptor's entry_shape.
+import { harnessIds, agentId, mcpFacts } from "./harness-descriptor.js";
 
 export type { McpHarness } from "./mcp-shape.js";
 
@@ -1068,54 +1066,10 @@ function brainCanonical(mcpEntryPath: string): McpShapeCanonical {
   return { command: "node", args: [mcpEntryPath], env: {} };
 }
 
-/**
- * Per-harness config resolution table — the LOCAL mirror of
- * `loadout.ts`'s `mcpConfigPathFor`/`mcpMapKeyFor` switches (FR-164). Defined
- * here (not imported) to avoid an import cycle: `loadout.ts` already imports
- * FROM this module. `mapKey` is the JSON map key for the three JSON harnesses,
- * OR the TOML `tablePrefix` for codex (`isToml: true`). Path helpers come from
- * `./paths.js`.
- */
-const HARNESS_CONFIG: Record<
-  McpHarness,
-  { path: () => string; mapKey: string; isToml: boolean }
-> = {
-  claude: { path: claudeJsonPath, mapKey: "mcpServers", isToml: false },
-  gemini: { path: geminiSettingsPath, mapKey: "mcpServers", isToml: false },
-  opencode: { path: opencodeConfigPath, mapKey: "mcp", isToml: false },
-  codex: { path: codexConfigTomlPath, mapKey: "mcp_servers", isToml: true },
-  // FR-179: antigravity rides gemini's JSON `mcpServers` shape but writes a
-  // DISTINCT file (R1) — `~/.gemini/config/mcp_config.json`.
-  antigravity: {
-    path: antigravityMcpConfigPath,
-    mapKey: "mcpServers",
-    isToml: false,
-  },
-};
-
-/** The default harness ordering for a full brain registration. */
-const ALL_HARNESSES: McpHarness[] = [
-  "claude",
-  "gemini",
-  "codex",
-  "opencode",
-  "antigravity",
-];
-
-/**
- * FR-212b: map the Igris `McpHarness` id (claude/gemini/codex/opencode/
- * antigravity — the SHAPE id) to the `add-mcp` AGENT id (live-probed
- * `list-agents`). Codex/opencode/antigravity are identical; the two that differ
- * are `claude → claude-code` and `gemini → gemini-cli` (add-mcp rejects the
- * bare `gemini`/`claude`). Used ONLY on the delegate path.
- */
-const ADD_MCP_AGENT_ID: Record<McpHarness, string> = {
-  claude: "claude-code",
-  gemini: "gemini-cli",
-  codex: "codex",
-  opencode: "opencode",
-  antigravity: "antigravity",
-};
+// FR-217: the per-harness MCP config table, the harness ordering, and the
+// shape→agent-id map were consolidated into the canonical descriptor in M5 —
+// read via mcpFacts() / harnessIds() / agentId() (harness-descriptor.ts). One
+// source of truth; no consumer re-derives a harness list here.
 
 /** Per-harness registration outcome for the multi-harness wire-up. */
 export interface BrainHarnessResult {
@@ -1188,7 +1142,7 @@ export function registerBrainAcrossHarnesses(
   deps?: BrainRegisterDeps,
 ): BrainHarnessResult[] {
   const mcpEntryPath = opts?.mcpEntryPath ?? bundledMcpEntryPath();
-  const harnesses = opts?.harnesses ?? ALL_HARNESSES;
+  const harnesses = opts?.harnesses ?? harnessIds();
   const canonical = brainCanonical(mcpEntryPath);
   // FR-212b: resolve the engine ONCE. Default `custom` (prod-unchanged); only
   // IGRIS_MCP_ENGINE=delegate (or an explicit deps.engine override) opts in.
@@ -1196,7 +1150,15 @@ export function registerBrainAcrossHarnesses(
 
   const results: BrainHarnessResult[] = [];
   for (const harness of harnesses) {
-    const cfg = HARNESS_CONFIG[harness];
+    // FR-217: per-harness MCP facts READ from the canonical descriptor via
+    // mcpFacts(); the { path():.. } cfg shape is preserved so the helper
+    // signatures below are unchanged.
+    const facts = mcpFacts(harness);
+    const cfg = {
+      path: () => facts.configPath,
+      mapKey: facts.mapKey,
+      isToml: facts.format === "toml",
+    };
     const targetPath = opts?.configPaths?.[harness] ?? cfg.path();
 
     // FR-212b: DELEGATE ENGINE. add-mcp writes the per-harness SERVER ENTRY;
@@ -1287,7 +1249,15 @@ function registerOneViaCustomMerger(
   }
 
   // igris-brain is env-free → no secrets needed for any harness (incl. codex).
-  const { entry } = buildHarnessMcpEntry(canonical, harness, undefined, undefined);
+  // FR-217 M2: the emitter SHAPE is selected via the descriptor's entry_shape
+  // (antigravity → gemini; others identity). The buildHarnessMcpEntry switch is
+  // KEPT intact (intrinsic emitter); only the selection reads the descriptor.
+  const { entry } = buildHarnessMcpEntry(
+    canonical,
+    mcpFacts(harness).entryShape,
+    undefined,
+    undefined,
+  );
 
   const result = cfg.isToml
     ? mergeTomlConfig({
@@ -1330,7 +1300,7 @@ function registerOneViaDelegate(
     | undefined,
   deps: BrainRegisterDeps | undefined,
 ): BrainHarnessResult {
-  const targetPath = opts?.configPaths?.[harness] ?? HARNESS_CONFIG[harness].path();
+  const targetPath = opts?.configPaths?.[harness] ?? mcpFacts(harness).configPath;
   const registerFn = deps?.registerViaToolFn ?? registerMcpViaTool;
   const grantFn = deps?.writeGrantFn ?? writeBrainGrant;
 
@@ -1345,7 +1315,7 @@ function registerOneViaDelegate(
       command: canonical.command,
       args: canonical.args ?? [],
       env: canonical.env ?? {},
-      harnesses: [ADD_MCP_AGENT_ID[harness]],
+      harnesses: [agentId(harness)],
       global: true,
     });
   } catch (err) {
@@ -1461,7 +1431,7 @@ export function unregisterBrainAcrossHarnesses(
   },
   deps?: BrainUnregisterDeps,
 ): BrainUnregisterResult[] {
-  const harnesses = opts?.harnesses ?? ALL_HARNESSES;
+  const harnesses = opts?.harnesses ?? harnessIds();
   const engine = deps?.engine ?? resolveMcpEngine();
   const unregisterFn = deps?.unregisterViaToolFn ?? unregisterMcpViaTool;
   const revokeFn = deps?.removeGrantFn ?? removeBrainGrant;
@@ -1483,7 +1453,7 @@ export function unregisterBrainAcrossHarnesses(
   //    delegated harness `failed` (LOUD — constraint #2, no custom fallback).
   let toolFailedError: string | undefined;
   if (delegateHarnesses.length > 0) {
-    const agentIds = delegateHarnesses.map((h) => ADD_MCP_AGENT_ID[h]);
+    const agentIds = delegateHarnesses.map((h) => agentId(h));
     let toolResult: McpToolResult;
     try {
       toolResult = unregisterFn(MCP_KEY, { harnesses: agentIds, global: true });
@@ -1499,7 +1469,15 @@ export function unregisterBrainAcrossHarnesses(
 
   // 2) Per-harness assembly (preserve the caller's harness order).
   for (const harness of harnesses) {
-    const cfg = HARNESS_CONFIG[harness];
+    // FR-217: per-harness MCP facts READ from the canonical descriptor via
+    // mcpFacts(); the { path():.. } cfg shape is preserved so the helper
+    // signatures below are unchanged.
+    const facts = mcpFacts(harness);
+    const cfg = {
+      path: () => facts.configPath,
+      mapKey: facts.mapKey,
+      isToml: facts.format === "toml",
+    };
     const targetPath = opts?.configPaths?.[harness] ?? cfg.path();
 
     let entryResult: McpRegisterResult;

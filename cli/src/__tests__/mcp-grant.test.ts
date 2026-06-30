@@ -42,8 +42,11 @@ import {
   __testing__,
 } from "../lib/mcp-grant.js";
 import type { McpHarness } from "../lib/mcp-shape.js";
+// FR-217: the grant grammar is now descriptor-derived; assert via the accessors
+// the SUT reads (harnessIds()/grantGrammar()), not the deleted GRANT_GRAMMAR const.
+import { harnessIds, grantGrammar } from "../lib/harness-descriptor.js";
 
-const { GRANT_GRAMMAR, renderTrustTable } = __testing__;
+const { renderTrustTable } = __testing__;
 
 let workDir: string;
 /** A fixed folder used as the trust target for folder-scoped grants. */
@@ -384,9 +387,13 @@ describe("mcp-grant — across-harness sweep", () => {
     expect(byHarness.opencode).toBe("covered");
   });
 
-  it("the grant grammar table covers all 5 harnesses", () => {
-    expect(Object.keys(GRANT_GRAMMAR).sort()).toEqual(
+  it("the grant grammar covers all 5 harnesses", () => {
+    expect([...harnessIds()].sort()).toEqual(
       ["antigravity", "claude", "codex", "gemini", "opencode"].sort(),
     );
+    // every harness resolves a grant grammar from the descriptor (no throw).
+    for (const id of harnessIds()) {
+      expect(grantGrammar(id).kind).toBeTruthy();
+    }
   });
 });

@@ -190,8 +190,10 @@ Notes that the bare-table approximation can mislead a future maintainer:
 
 - **antigravity is gemini-lineage but a 5th harness:** its emitted JSON is
   byte-for-byte the gemini shape (no `type`); only axis #2 (the config FILE)
-  differs. It is **live** (FR-179/180) — do NOT drop it from
-  `VALID_MCP_TARGET_TYPES`.
+  differs. It is **live** (FR-179/180) — do NOT remove its `mcp` block from the
+  `harnesses.antigravity` descriptor (that block is what makes it a member of
+  `mcpTargetTypes()`; FR-217 derives the MCP-target enum from block presence and
+  deleted the old `VALID_MCP_TARGET_TYPES` const).
 - **The codex env value is NEVER a literal in the projected shape.**
   `normalize_mcp_shape` emits the `${VAR}` REFERENCE stand-in (it never reads
   `secrets.env`, never emits a literal). The resolved literal is written ONLY by

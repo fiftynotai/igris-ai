@@ -12,15 +12,17 @@
  * secret it returns `{ value: null, missing }` — NEVER a partial/empty literal.
  */
 
+import type { HarnessId } from "./harness-descriptor.js";
 import { extractVarName, resolveRef, type SecretsMap } from "./secrets.js";
 
-/** The MCP harnesses (mirrors VALID_MCP_TARGET_TYPES in loadout.ts). */
-export type McpHarness =
-  | "claude"
-  | "gemini"
-  | "opencode"
-  | "codex"
-  | "antigravity";
+/**
+ * The MCP harnesses. FR-217: re-homed into `harness-descriptor.ts` as the single
+ * `HarnessId` union (the descriptor's `harnesses.<id>` keys). This alias stays
+ * for back-compat so existing `McpHarness` importers — including `mcp-shape.ts`,
+ * which re-exports it onward — are unchanged. (The MCP-surface participants are
+ * derived via `mcpTargetTypes()` from the descriptor.)
+ */
+export type McpHarness = HarnessId;
 
 /**
  * Canonical→per-harness env-VALUE emit rule.

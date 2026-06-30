@@ -26,6 +26,24 @@ while IFS= read -r -d '' f; do
   cp -p "$f" "$dest_file"
 done
 
+# --- Bundle the canonical harness descriptor (FR-217) ----------------
+# cli/src/lib/harness-descriptor.ts resolves the canonical `harnesses` block from
+# the repo-root harness-manifest.json. For GLOBAL ops (init/install/doctor on a
+# consumer machine, which has no repo manifest) it falls back to a bundled copy
+# staged next to the compiled module — the same package-relative idiom as
+# bundledMcpEntryPath(). ROOT = cli/ ; the monorepo root is ROOT/.. . The
+# repo-root file stays the SINGLE source of truth; this copy is a build artifact,
+# never hand-edited.
+HARNESS_MANIFEST_SRC="$ROOT/../harness-manifest.json"
+HARNESS_MANIFEST_DEST="$ROOT/dist/lib/harness-manifest.json"
+if [ ! -f "$HARNESS_MANIFEST_SRC" ]; then
+  echo "copy-templates: harness manifest missing: $HARNESS_MANIFEST_SRC" >&2
+  exit 1
+fi
+mkdir -p "$ROOT/dist/lib"
+cp -p "$HARNESS_MANIFEST_SRC" "$HARNESS_MANIFEST_DEST"
+echo "copy-templates: bundled harness descriptor -> $HARNESS_MANIFEST_DEST"
+
 # --- Bundle brain-mcp-server (TD-168, BR-068) ------------------------
 # Stage brain-mcp-server's compiled dist/ + package.json into
 # cli/dist/brain-mcp-server/ so `npm install -g igris-ai` ships a working

@@ -63,20 +63,11 @@ import { createRequire } from "node:module";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/**
- * The five Igris harness agent ids as the `add-mcp` CLI names them. Live-probed
- * (`add-mcp list-agents`, 2026-06-26): identical to the skills CLI ids —
- * `claude-code codex gemini-cli opencode antigravity` (NOTE: `gemini-cli`, NOT
- * `gemini`). The canonical default target set for `registerMcpViaTool` when no
- * explicit `harnesses` is given.
- */
-export const IGRIS_MCP_HARNESSES = [
-  "claude-code",
-  "codex",
-  "gemini-cli",
-  "opencode",
-  "antigravity",
-] as const;
+// FR-217: the canonical-descriptor reader. The default MCP target set READS the
+// npx agent ids from the descriptor (mcpAgentIds()); the former hardcoded
+// per-harness agent-id list (live-probed `add-mcp list-agents`) was deleted in
+// M5 — the descriptor is the one source of truth (NOTE: gemini→gemini-cli).
+import { mcpAgentIds } from "./harness-descriptor.js";
 
 export type McpEngine = "delegate" | "custom";
 
@@ -273,7 +264,7 @@ export function buildMcpAddArgv(spec: McpRegisterSpec): string[] {
   const harnesses =
     spec.harnesses && spec.harnesses.length > 0
       ? spec.harnesses
-      : IGRIS_MCP_HARNESSES;
+      : mcpAgentIds();
   const args = spec.args ?? [];
   // SPACE HAZARD guard (see header): add-mcp splits the positional on whitespace
   // with no quoting grammar, so any token with internal whitespace would be torn
@@ -331,7 +322,7 @@ export function buildMcpRemoveArgv(args: {
   const harnesses =
     args.harnesses && args.harnesses.length > 0
       ? args.harnesses
-      : IGRIS_MCP_HARNESSES;
+      : mcpAgentIds();
   const argv = ["remove", name];
   if (args.global !== false) {
     argv.push("-g");

@@ -19,6 +19,21 @@ export function brainDir(): string {
   return join(homedir(), ".igris");
 }
 
+/**
+ * FR-217: expand a leading `~` / `~/` in a portable path string to the home
+ * directory. The harness descriptor (harness-manifest.json `harnesses.<id>`)
+ * stores config/grant/hook paths in the portable `~/...` form; this is the
+ * SINGLE place that expansion happens, so the expanded result is byte-identical
+ * to the hand-written `join(homedir(), ...)` builders in this file
+ * (e.g. `expandTilde("~/.claude.json") === claudeJsonPath()`). A path without a
+ * leading tilde is returned unchanged.
+ */
+export function expandTilde(p: string): string {
+  if (p === "~") return homedir();
+  if (p.startsWith("~/")) return join(homedir(), p.slice(2));
+  return p;
+}
+
 /** Absolute path to the brain SQLite DB. */
 export function brainDbPath(): string {
   return join(brainDir(), "memory", "knowledge.db");

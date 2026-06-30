@@ -26,10 +26,99 @@
         "^(claude|codex|gemini|opencode|antigravity)$": {
           "type": "object",
           "additionalProperties": false,
+          "description": "FR-217: the canonical harness descriptor. `delegation_model` is the original FR-202 M4 field; the remaining fields (`agent_id`/`agents`/`mcp`/`grant`/`hooks`/`harness_specific_file`) are the additive FR-217 extension consolidating the per-harness wiring facts (agent ids, MCP config path/shape, grant grammar, hook capability) that consumers previously hardcoded. All are OPTIONAL at the harness level (per-surface participation is derived from block PRESENCE) so a `delegation_model`-only block still validates (back-compat). Still v1.",
           "properties": {
             "delegation_model": {
               "enum": ["native-static", "dynamic-define"],
               "description": "native-static: statically-loaded Igris agents; the skill delegates abstractly and the harness resolves to `subagent_type:<agent>` (no harness-specific file). dynamic-define: runtime subagent definition; the harness reads its harness-specific file (core/os/harness-specific/<harness>.md → the shared delegation recipe) at Boot, so the orchestrator is taught the read→define_subagent→invoke recipe once per session with zero per-skill branching."
+            },
+            "agent_id": {
+              "type": "string",
+              "description": "FR-217: the npx agent id this harness is known by to the delegated `skills`/`add-mcp` tools. Equals the harness key EXCEPT claude→`claude-code` and gemini→`gemini-cli`. Source of skillAgentIds()/mcpAgentIds()/agentId()."
+            },
+            "agents": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["target_type", "projection"],
+              "description": "FR-217: the agents-surface participation block. PRESENCE means this harness participates in the agents surface (antigravity is dynamic-define → no block → not a participant). Drives agentTargetTypes() and (via projection) agentTargetRowHarnesses().",
+              "properties": {
+                "target_type": {
+                  "enum": ["claude", "codex", "gemini", "opencode", "antigravity"],
+                  "description": "The agent target `type` value (a harness id)."
+                },
+                "projection": {
+                  "enum": ["symlink", "target-row"],
+                  "description": "symlink: agents projected via a directory symlink (claude) → NOT a required per-agent target row (parity-guard exempt). target-row: each agent MUST carry an explicit target of this type (codex/gemini/opencode)."
+                }
+              }
+            },
+            "mcp": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["config_path", "format", "map_key", "entry_shape"],
+              "description": "FR-217: the MCP-surface wiring facts. PRESENCE means this harness participates in the mcp surface. Replaces HARNESS_CONFIG / mcpConfigPathFor / mcpMapKeyFor and selects the buildHarnessMcpEntry shape.",
+              "properties": {
+                "config_path": {
+                  "type": "string",
+                  "description": "The harness's MCP config FILE (the `igris-brain` server entry is merged here). `~` expands to the home dir via paths.ts."
+                },
+                "format": {
+                  "enum": ["json", "toml"],
+                  "description": "Config file format. Only codex is `toml`."
+                },
+                "map_key": {
+                  "type": "string",
+                  "description": "The map key the server entry is written under (JSON object key, or the TOML table prefix for codex)."
+                },
+                "entry_shape": {
+                  "enum": ["claude", "gemini", "codex", "opencode"],
+                  "description": "Which buildHarnessMcpEntry emitter shape to use. antigravity rides the `gemini` shape (byte-identical entry) despite its distinct config_path."
+                }
+              }
+            },
+            "grant": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind"],
+              "description": "FR-217: the per-harness no-prompt MCP trust-grant grammar. PRESENCE means this harness has a grant step. Replaces GRANT_GRAMMAR.",
+              "properties": {
+                "kind": {
+                  "enum": ["json-array", "toml-folder", "json-folder", "covered"],
+                  "description": "Selects the grant writer: json-array (append `token` to a permissions.allow[] — claude, antigravity), toml-folder (codex per-folder trust), json-folder (gemini per-folder trust), covered (grant lives in another surface, e.g. opencode agent frontmatter — no grant file)."
+                },
+                "path": {
+                  "type": "string",
+                  "description": "The grant config FILE. Absent for `covered`. `~` expands via paths.ts."
+                },
+                "token": {
+                  "type": "string",
+                  "description": "json-array only: the wildcard permission token to append."
+                }
+              }
+            },
+            "hooks": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["supported"],
+              "description": "FR-217: hook-surface capability. `supported:true` means this harness participates in the hook surface (drives hookTargetTypes()). codex (session_end only) + gemini (documented, not projected) are `{supported:false}`.",
+              "properties": {
+                "supported": {
+                  "type": "boolean",
+                  "description": "Whether Igris projects hooks into this harness."
+                },
+                "config_path": {
+                  "type": "string",
+                  "description": "The hook config FILE (when the merge targets a single file: claude → ~/.claude/settings.json, antigravity → ~/.gemini/config/hooks.json). Absent for opencode (the FR-104 plugin routes events; no per-file merge). `~` expands via paths.ts."
+                },
+                "method": {
+                  "enum": ["settings-merge", "plugin", "config-merge"],
+                  "description": "How hooks reach the harness: settings-merge (claude settings.json hooks block), plugin (opencode FR-104 plugin), config-merge (antigravity hooks.json)."
+                }
+              }
+            },
+            "harness_specific_file": {
+              "type": "string",
+              "description": "FR-202 M4 / FR-217: repo-relative path to the harness-specific OS context layer (core/os/harness-specific/<harness>.md), loaded at Boot for a dynamic-define harness. Present only for gemini + antigravity."
             }
           }
         }

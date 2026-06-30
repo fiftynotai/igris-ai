@@ -918,10 +918,19 @@ fi
 # FR-164: --target accepts `opencode` (the 4th MCP-only harness). It applies to
 # the MCP pass row filter; the agent + skills passes silently match nothing for
 # opencode (no agent/skill targets declare it), which is correct.
-case "$TARGET_KIND" in
-  claude|codex|gemini|opencode|all) : ;;
+# FR-217: the valid --target harness set is READ from the canonical descriptor
+# (the agents-surface participants) + `all`, instead of the hardcoded
+# claude|codex|gemini|opencode case. Byte-identical today (agentTargetTypes() =
+# {claude,codex,gemini,opencode}); a new agent harness needs no edit here. Falls
+# back to the canonical literals if no descriptor resolves (partial tree).
+_target_descriptor="$(resolve_harness_descriptor_path)"
+_valid_targets="$(read_harness_descriptor "$_target_descriptor" agent_target_types 2>/dev/null | tr '\n' ' ')"
+[ -z "${_valid_targets// /}" ] && _valid_targets="claude codex gemini opencode "
+_valid_targets="${_valid_targets}all"
+case " $_valid_targets " in
+  *" $TARGET_KIND "*) : ;;
   *)
-    echo "Error: --target must be claude, codex, gemini, opencode, or all (got '$TARGET_KIND')" >&2
+    echo "Error: --target must be one of: ${_valid_targets// /, } (got '$TARGET_KIND')" >&2
     usage
     ;;
 esac

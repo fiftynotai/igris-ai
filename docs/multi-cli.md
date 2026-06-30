@@ -1366,8 +1366,10 @@ are linked so a reader chases the single source of truth, not a copy:
    names, and delegation model are CHOSEN from these probes — see FR-171 plan §1.
 2. **Type catalog** — add `"<NEW>"` to the `CLITarget` union in `cli/src/types.ts`.
 3. **MCP surface** — add the native entry shape to `buildHarnessMcpEntry`
-   (`cli/src/lib/mcp-shape.ts`), `"<NEW>"` to `ALL_HARNESSES`
-   (`cli/src/lib/mcp-register.ts`), and the config path to `cli/src/lib/paths.ts`.
+   (`cli/src/lib/mcp-shape.ts`) and the `mcp` block to the `harnesses.<NEW>`
+   descriptor in `harness-manifest.json` (config_path/format/map_key/entry_shape;
+   `mcp-register.ts` reads it via `harnessIds()`/`mcpFacts()`, FR-217 — there is
+   no longer an `ALL_HARNESSES` const). Tilde-expansion stays in `paths.ts`.
 4. **Manifest schema** — add `"<NEW>"` to the agent `targets[].type` enum and the
    `surfaces.skills.targets[].type` enum in `manifest.schema.json`, plus a new
    `(type, method)` `oneOf` branch on the skills target item. The skills method
