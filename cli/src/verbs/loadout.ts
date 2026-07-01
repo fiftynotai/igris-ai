@@ -122,6 +122,7 @@ import {
 import {
   registerMcpViaTool,
   resolveMcpEngine,
+  listSupportedMcpAgents,
   type McpEngine,
   type McpToolResult,
 } from "../lib/mcp-delegate.js";
@@ -145,6 +146,10 @@ export type LoadoutAction =
   // FR-212b: the grant-drift predicate (delegate engine) — exit 0 = present,
   // 1 = missing. Consumed by check_harness_drift.sh verify_mcp.
   | "verify-mcp-grant"
+  // TD-284: the descriptor↔npx agent-id coverage PROBE — prints the agent-ids
+  // `add-mcp list-agents` supports (one per line, exit 0), or exits 3 when the
+  // tool is unavailable. Consumed by check_harness_drift.sh verify_mcp.
+  | "list-mcp-agents"
   | "remove-skill"
   | "remove-mcp"
   | "remove-hook"
@@ -222,16 +227,21 @@ const VALID_MCP_METHODS = ["merge"] as const;
 type McpMethod = (typeof VALID_MCP_METHODS)[number];
 
 /**
- * Hook-surface target-type TYPE — the harnesses with a native hook MERGE surface
- * (claude → settings.json hooks array; opencode → the FR-104 plugin; antigravity
- * → config-merge into ~/.gemini/config/hooks.json via the FR-181 bridge). RUNTIME
- * membership is enforced via `hookTargetTypes()` (descriptor `hooks.supported`);
- * this alias narrows the canonical `HarnessId` union by EXCLUDING codex
- * (session_end only) + gemini (`gemini hooks` documented-not-projected, FR-182)
- * + cursor (FR-192: `hooks.supported:false` — cursor-agent has no hook API).
+ * Hook-surface target-type TYPE — every descriptor harness participates at the
+ * TYPE level; RUNTIME membership (the harnesses with a native hook MERGE surface:
+ * claude → settings.json hooks array; opencode → the FR-104 plugin; antigravity
+ * → config-merge into ~/.gemini/config/hooks.json via the FR-181 bridge) is
+ * enforced via `hookTargetTypes()` (descriptor `hooks.supported`). TD-284 widened
+ * this alias from `Exclude<HarnessId, "codex"|"gemini"|"cursor">` to the full
+ * `HarnessId` (aligning it with `McpTargetType`): the literal harness-name
+ * narrowing lived only in the type layer — the descriptor gate is the one source
+ * of truth for hook-capability, so no type edit is needed when a 7th harness
+ * gains hooks. The runtime STILL rejects a non-hook `--target` (codex/gemini are
+ * `hooks.supported:false` — codex is session_end only, gemini `gemini hooks` is
+ * documented-not-projected FR-182; cursor is FR-192 `hooks.supported:false`).
  * FR-217 M5 deleted the former hardcoded `VALID_HOOK_TARGET_TYPES` const.
  */
-type HookTargetType = Exclude<HarnessId, "codex" | "gemini" | "cursor">;
+type HookTargetType = HarnessId;
 
 /** FR-180 (D7): hook projection is always a config-merge. Mirrors the schema const. */
 const VALID_HOOK_METHODS = ["merge"] as const;
@@ -645,6 +655,8 @@ export interface LoadoutOptions {
   projectSkillsFn?: typeof projectSkillsViaTool;
   /** FR-212a unproject-skills test seam: inject a fake `unprojectSkillsViaTool`. */
   unprojectSkillsFn?: typeof unprojectSkillsViaTool;
+  /** TD-284 list-mcp-agents test seam: inject a fake `listSupportedMcpAgents`. */
+  listMcpAgentsFn?: typeof listSupportedMcpAgents;
   /**
    * FR-212b: force the MCP placement engine, bypassing the `IGRIS_MCP_ENGINE`
    * env read (test seam + the bash adapter's explicit pass-through). Default
@@ -6413,6 +6425,42 @@ function runUnprojectSkills(opts: LoadoutOptions): number {
 }
 
 /**
+ * TD-284: `igris loadout list-mcp-agents` — the descriptor↔npx agent-id coverage
+ * PROBE the bash `verify_mcp` assertion calls. Prints the agent-ids `add-mcp
+ * list-agents` supports, ONE per line, to STDOUT (clean — no decoration, so the
+ * drift gate reads them directly) and exits 0. On an unavailable tool (add-mcp
+ * not resolvable / not runnable / empty parse) it exits 3 with a stderr
+ * diagnostic — the drift gate treats a non-zero exit (or empty stdout) as "skip
+ * the check" (graceful degradation on a box without the npx tools). Pure read
+ * (never writes). add-mcp is the SHARED authority for BOTH the mcp AND skills
+ * surfaces: they consume the SAME descriptor agent-ids and (TD-284, empirically
+ * verified) the `skills` valid-agent set also covers every Igris agent-id, but
+ * `skills` has no clean `list-agents` command — so add-mcp is the one probe.
+ */
+function runListMcpAgents(opts: LoadoutOptions): number {
+  const listFn = opts.listMcpAgentsFn ?? listSupportedMcpAgents;
+  let agents: string[];
+  try {
+    agents = listFn();
+  } catch (err) {
+    // add-mcp not resolvable/runnable → signal UNAVAILABLE (drift gate skips).
+    logError(`loadout list-mcp-agents: ${(err as Error).message}`);
+    return 3;
+  }
+  if (agents.length === 0) {
+    logError(
+      "loadout list-mcp-agents: add-mcp produced no parseable supported-agent " +
+        "list (tool unavailable or unexpected output) — the drift gate will SKIP " +
+        "the agent-id coverage check",
+    );
+    return 3;
+  }
+  // Clean stdout (no info()/color) so the bash consumer can read the ids directly.
+  process.stdout.write(`${agents.join("\n")}\n`);
+  return 0;
+}
+
+/**
  * Run the loadout verb. Returns an exit code:
  *   0 = success, 1 = enforcement reject, 2 = usage error (bad action/args).
  */
@@ -6435,6 +6483,8 @@ export async function runLoadout(opts: LoadoutOptions): Promise<number> {
       return runProjectSkills(opts);
     case "verify-mcp-grant":
       return runVerifyMcpGrant(opts);
+    case "list-mcp-agents":
+      return runListMcpAgents(opts);
     case "unproject-mcp":
       return runUnprojectMcp(opts);
     case "unproject-hook":
@@ -6455,7 +6505,7 @@ export async function runLoadout(opts: LoadoutOptions): Promise<number> {
       return runUpdate(opts, overlayPath);
     default:
       logError(
-        `unknown loadout action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, add-hook, project-mcp, project-hook, project-skills, verify-mcp-grant, unproject-mcp, unproject-hook, unproject-skills, remove-skill, remove-mcp, remove-hook, list, remove, update.`,
+        `unknown loadout action '${String(opts.action)}'. Valid: add, add-skill, add-mcp, add-hook, project-mcp, project-hook, project-skills, verify-mcp-grant, list-mcp-agents, unproject-mcp, unproject-hook, unproject-skills, remove-skill, remove-mcp, remove-hook, list, remove, update.`,
       );
       return 2;
   }

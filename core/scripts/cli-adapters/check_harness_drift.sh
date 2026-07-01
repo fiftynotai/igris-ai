@@ -1372,6 +1372,64 @@ if [ -n "$MCP_DRIFT_ROWS" ]; then
     fi
   done < <(read_harness_descriptor "$_grant_descriptor" grant_harnesses)
 fi
+
+# TD-284: DESCRIPTOR↔npx AGENT-ID COVERAGE. Every descriptor `agent_id` (the npx
+# agent id — the SAME set mcpAgentIds()/skillAgentIds() expose; claude→claude-code,
+# gemini→gemini-cli) MUST be an agent that `add-mcp` (and, by the shared-authority
+# argument below, `skills`) can register into — else the MCP registration + skills
+# projection to that harness SILENTLY no-ops. One-directional SUBSET assertion: a
+# descriptor agent-id MISSING from the tool = DRIFT (loud); a tool that supports
+# MORE (e.g. claude-desktop/cline) is NOT drift (Igris is intentionally narrower —
+# do NOT flag the extras).
+#
+# TARGET SOURCE OF TRUTH = the DESCRIPTOR, never `list-agents`. `list-agents` is
+# only the PROBE of what the tool ACCEPTS; sourcing the checked set from it would
+# over-broaden to non-harness agents (claude-desktop/cline/…). Do NOT "fix" this
+# to iterate the tool's list — the descriptor `agent_ids` (read via
+# read_harness_descriptor) are the target set.
+#
+# add-mcp is the SHARED authority for BOTH surfaces (mcp + skills): they consume
+# the SAME descriptor `agent_ids` and (TD-284, empirically verified 2026-07-01)
+# the `skills` valid-agent set also covers every Igris agent-id, but `skills` has
+# NO clean `list-agents` command — so `add-mcp list-agents` (via `igris loadout
+# list-mcp-agents`) is the one probe for both.
+#
+# GATED on $MCP_DRIFT_ROWS (brain MCP in scope) — mirrors the grant-drift gate
+# above, so an agent-only / no-mcp drift run does not fire it. GRACEFUL
+# DEGRADATION: if the probe verb is UNAVAILABLE (add-mcp not resolvable/runnable,
+# or the CLI lacks the verb → non-zero exit / empty output), SKIP with a one-line
+# stderr notice and DO NOT fail (never break `igris harness check` on a box
+# without the npx tools).
+#
+# §18.1/§18.4 NOTE (drift-only BY DESIGN — no compile twin, and correctly so):
+# compile does not PRODUCE the tool's supported-agent set (add-mcp does), so there
+# is no projected artifact to pair with. §18.4 forbids a COMPILE branch without a
+# drift branch, NOT a drift-only assertion — cf. the grant invariant above, also a
+# check with no per-target compile pass. Adding a compile_harnesses.sh twin here
+# would be meaningless (nothing to project).
+if [ -n "$MCP_DRIFT_ROWS" ]; then
+  _agentid_probe_rc=0
+  _agentid_probe_out="$("${IGRIS_CLI_CMD[@]}" loadout list-mcp-agents 2>/dev/null)" || _agentid_probe_rc=$?
+  # Keep only well-formed agent-id lines (defensive against any CLI banner noise).
+  _agentid_supported="$(printf '%s\n' "$_agentid_probe_out" | grep -E '^[a-z][a-z0-9-]*$' || true)"
+  if [ "$_agentid_probe_rc" -ne 0 ] || [ -z "$_agentid_supported" ]; then
+    echo "  [mcp-agents] SKIP — add-mcp not runnable via the CLI probe (loadout list-mcp-agents rc=$_agentid_probe_rc); descriptor↔npx agent-id coverage NOT verified" >&2
+  else
+    _agentid_descriptor="$(resolve_harness_descriptor_path)"
+    while IFS= read -r _aid; do
+      [ -z "$_aid" ] && continue
+      TOTAL=$((TOTAL + 1))
+      if printf '%s\n' "$_agentid_supported" | grep -qxF "$_aid"; then
+        # Silent MATCH (mirrors the grant invariant — loud only on drift).
+        MATCH=$((MATCH + 1))
+      else
+        echo "  [mcp-agents/$_aid] DRIFTED"
+        echo "      reason    : descriptor agent-id '$_aid' is NOT in add-mcp's supported-agent set (add-mcp list-agents) — MCP registration + skills projection to this harness will SILENTLY fail; add the agent upstream or correct the descriptor agent_id"
+        DRIFT=$((DRIFT + 1))
+      fi
+    done < <(read_harness_descriptor "$_agentid_descriptor" agent_ids)
+  fi
+fi
 }
 
 # ---------------------------------------------------------------------------

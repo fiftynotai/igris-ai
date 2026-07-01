@@ -864,12 +864,17 @@ const HOOK_EVENTS = [
 ] as const;
 type HookCoreEvent = (typeof HOOK_EVENTS)[number];
 
-/** The hook harness target type — descriptor-derived (TD-283: was a hardcoded
- * list; the runtime `--target` membership is now enforced via `hookTargetTypes()`
- * so it never re-drifts at a new hook-capable harness). The compile-time type
- * narrows `HarnessId` to the hook-capable set exactly like loadout.ts's
- * `HookTargetType` (codex/gemini have no hooks; cursor is `hooks.supported:false`). */
-type HookCoreTargetType = Exclude<HarnessId, "codex" | "gemini" | "cursor">;
+/** The hook harness target type — descriptor-derived (TD-283/TD-284). RUNTIME
+ * `--target` membership is enforced via `hookTargetTypes()` (descriptor
+ * `hooks.supported`) so it never re-drifts at a new hook-capable harness. TD-284
+ * widened the compile-time TYPE from `Exclude<HarnessId, "codex"|"gemini"|"cursor">`
+ * to the full `HarnessId` (aligning it with `McpCoreTargetType`): the literal
+ * harness-name narrowing lived only in the type layer — the descriptor gate is
+ * the single source of truth for which harnesses are hook-capable, so no type
+ * edit is needed when a 7th harness gains hooks. The runtime rejection of a
+ * non-hook `--target` (e.g. `codex:merge`) is UNCHANGED — `hookTargetTypes()`
+ * still excludes codex/gemini/cursor. Mirrors loadout.ts's `HookTargetType`. */
+type HookCoreTargetType = HarnessId;
 
 interface CoreHookTarget {
   type: HookCoreTargetType;

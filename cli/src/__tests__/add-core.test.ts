@@ -14,7 +14,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, cpSync, ex
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { addCoreSkill, addCoreAgent, addCoreMcp } from "../verbs/add-core.js";
+import { addCoreSkill, addCoreAgent, addCoreMcp, addCoreHook } from "../verbs/add-core.js";
 import { removeCoreAgent } from "../verbs/remove-core.js";
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
@@ -468,6 +468,44 @@ describe("addCoreMcp — TD-283 descriptor-derived --target reaches cursor", () 
     const block = manifest.surfaces.mcp_servers.find((m) => m.name === "cursorserver");
     expect(block).toBeDefined();
     expect(block!.targets.map((t) => t.type)).toEqual(["cursor"]);
+  });
+});
+
+describe("addCoreHook — TD-284 hook --target still rejects a non-hook harness post type-widen", () => {
+  it("rejects --target codex:merge (codex is NOT in hookTargetTypes()) even though HookCoreTargetType is now HarnessId", () => {
+    // TD-284 widened the compile-time type from Exclude<HarnessId, codex|gemini|
+    // cursor> to the full HarnessId. The RUNTIME gate is unchanged: the target
+    // validator reads the descriptor's hook-surface set (hookTargetTypes() =
+    // claude/opencode/antigravity via hooks.supported), so a non-hook harness is
+    // STILL rejected. The reject fires at parse time (BEFORE any manifest/disk
+    // touch), so no seed is needed. skipMirror + brainRoot keep it hermetic.
+    const r = addCoreHook({
+      name: "codexhook",
+      projectRoot: repo,
+      event: "PreToolUse",
+      targets: ["codex:merge"],
+      brainRoot: brain,
+      skipMirror: true,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe(2);
+    expect(r.reason).toContain("not one of");
+    // The rejection names codex + the allowed set (never silently widens).
+    expect(r.reason).toContain("codex");
+  });
+
+  it("still ACCEPTS a valid hook target (claude:merge) after the widen", () => {
+    seedSurfacesManifest(repo);
+    const r = addCoreHook({
+      name: "okhook",
+      projectRoot: repo,
+      event: "PreToolUse",
+      targets: ["claude:merge"],
+      brainRoot: brain,
+      skipMirror: true,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.code).toBe(0);
   });
 });
 

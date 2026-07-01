@@ -36,6 +36,8 @@ import {
   resolveMcpBinary,
   resolveMcpEngine,
   unregisterMcpViaTool,
+  parseSupportedMcpAgents,
+  listSupportedMcpAgents,
 } from "../lib/mcp-delegate.js";
 // FR-217: the default MCP target set is now descriptor-derived; assert against
 // the accessor the SUT reads (mcpAgentIds()), not the deleted hardcoded const.
@@ -425,5 +427,114 @@ describe("mcp-delegate — unregisterMcpViaTool (spawn spied, never real)", () =
     });
     expect(result.ok).toBe(false);
     expect(result.exitCode).toBe(1);
+  });
+});
+
+// TD-284: the descriptor->npx agent-id coverage probe fixture. Built
+// programmatically so the ESC byte comes from fromCharCode(27) (no raw control
+// char / fragile multibyte literals in source). Mirrors the REAL `add-mcp
+// list-agents` shape (2026-07-01): a banner, a "Supported agents:" heading, a
+// header + "----" separator, then COLOR-FIRST data rows (no leading spaces
+// survive ANSI-strip — the exact case the naive `^\s+` regex missed). Includes
+// `claude-desktop` (an agent Igris does NOT declare) to prove "tool supports
+// MORE" is NOT drift.
+const _ESC = String.fromCharCode(27);
+const _col = (code: string, text: string): string =>
+  `${_ESC}[${code}${text}${_ESC}[0m`;
+const _agentRow = (id: string, client: string): string =>
+  `${_col("38;5;145m", id.padEnd(18))}  ${_col("38;5;102m", client.padEnd(22))}  ` +
+  `${_col("38;5;145m", "  -  ")} ${_col("38;5;145m", "  Y  ")}`;
+const LIST_AGENTS_FIXTURE = [
+  _col("38;5;250m", "#####  #####"),
+  "",
+  _col("38;5;102m", "Supported agents:"),
+  "",
+  _col("38;5;102m", "  Argument            MCP Client              Local  Global"),
+  _col("38;5;102m", "  ------------------  ----------------------  -----  ------"),
+  _agentRow("antigravity", "Antigravity"),
+  _agentRow("claude-code", "Claude Code"),
+  _agentRow("claude-desktop", "Claude Desktop"),
+  _agentRow("codex", "Codex"),
+  _agentRow("cursor", "Cursor"),
+  _agentRow("gemini-cli", "Gemini CLI"),
+  _agentRow("opencode", "OpenCode"),
+  "",
+].join("\n");
+
+describe("mcp-delegate — parseSupportedMcpAgents (add-mcp list-agents table)", () => {
+  it("extracts the first-column agent-ids, stripping ANSI/banner/header/separator", () => {
+    const ids = parseSupportedMcpAgents(LIST_AGENTS_FIXTURE);
+    expect(ids).toEqual([
+      "antigravity",
+      "claude-code",
+      "claude-desktop",
+      "codex",
+      "cursor",
+      "gemini-cli",
+      "opencode",
+    ]);
+  });
+
+  it("every parsed id is a clean agent-id shape (no banner/header/separator leak)", () => {
+    const ids = parseSupportedMcpAgents(LIST_AGENTS_FIXTURE);
+    expect(ids).toContain("gemini-cli"); // hyphen preserved
+    expect(ids).toContain("claude-desktop"); // hyphen preserved
+    for (const id of ids) {
+      expect(id).toMatch(/^[a-z][a-z0-9-]*$/);
+    }
+    expect(ids).not.toContain("Argument");
+    expect(ids).not.toContain("Supported");
+  });
+
+  it("covers every Igris descriptor agent-id (mcpAgentIds subset of parsed) — the SUBSET contract", () => {
+    const ids = parseSupportedMcpAgents(LIST_AGENTS_FIXTURE);
+    for (const aid of mcpAgentIds()) {
+      expect(ids).toContain(aid);
+    }
+  });
+
+  it("returns [] for empty / non-table output", () => {
+    expect(parseSupportedMcpAgents("")).toEqual([]);
+    expect(parseSupportedMcpAgents("no table here\njust prose\n")).toEqual([]);
+  });
+});
+
+describe("mcp-delegate — listSupportedMcpAgents (spawn spied, never real)", () => {
+  it("parses the tool's list-agents stdout into the supported-agent set (exit 0)", () => {
+    const spawn = fakeSpawn({ status: 0, stdout: LIST_AGENTS_FIXTURE });
+    const ids = listSupportedMcpAgents({ resolveBinary: () => FAKE_BIN, spawn });
+    // Invoked `add-mcp list-agents` with the LOCAL binary.
+    const callArgs = (spawn as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0];
+    expect(callArgs[0]).toBe(FAKE_BIN);
+    expect(callArgs[1]).toEqual(["list-agents"]);
+    for (const aid of mcpAgentIds()) {
+      expect(ids).toContain(aid);
+    }
+    expect(ids).toContain("claude-desktop"); // tool supports MORE — not drift
+  });
+
+  it("returns [] on a non-zero exit (tool unavailable -> caller SKIPs)", () => {
+    const spawn = fakeSpawn({ status: 2, stderr: "boom" });
+    expect(
+      listSupportedMcpAgents({ resolveBinary: () => FAKE_BIN, spawn }),
+    ).toEqual([]);
+  });
+
+  it("returns [] on a spawn failure (ENOENT -> caller SKIPs)", () => {
+    const spawn = fakeSpawn({ status: null, error: new Error("ENOENT") });
+    expect(
+      listSupportedMcpAgents({ resolveBinary: () => FAKE_BIN, spawn }),
+    ).toEqual([]);
+  });
+
+  it("THROWS when add-mcp cannot be resolved (caller turns this into a SKIP)", () => {
+    expect(() =>
+      listSupportedMcpAgents({
+        resolveBinary: () => {
+          throw new Error("cannot resolve add-mcp");
+        },
+      }),
+    ).toThrow(/cannot resolve add-mcp/);
   });
 });

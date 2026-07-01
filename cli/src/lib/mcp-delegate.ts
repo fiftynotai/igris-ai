@@ -413,3 +413,79 @@ export function unregisterMcpViaTool(
   });
   return toResult([bin, ...argv], result);
 }
+
+/** Options for the list-agents probe — injectable seams keep tests off the real CLI. */
+export interface McpListAgentsDeps {
+  /** Override the binary resolver (tests inject a fake absolute path). */
+  resolveBinary?: () => string;
+  /** Override the spawn (tests SPY this — NEVER spawn the real CLI in a unit test). */
+  spawn?: typeof spawnSync;
+}
+
+/**
+ * TD-284: parse the `add-mcp list-agents` human table into the set of supported
+ * agent-id tokens (its first "Argument" column). add-mcp has NO machine-readable
+ * (`--json`) output (live-probed 2026-07-01 — `error: unknown option '--json'`),
+ * so we parse the rendered table: strip ANSI, then take the FIRST token of each
+ * DATA row — a row whose first token is a lowercase `[a-z0-9-]` agent-id followed
+ * by a >=2-space column gap and another column. The banner (box-drawing chars),
+ * the "Supported agents:" heading, the "Argument …" header (uppercase A), and the
+ * "----" separator all fail that shape and are skipped. Order-preserving; add-mcp
+ * lists each id once. This is a SUPERSET probe — it returns ALL supported agents
+ * (e.g. `claude-desktop`, `cline`); the caller (check_harness_drift.sh) does the
+ * one-directional SUBSET assertion (descriptor agent-ids ⊆ this set), so a tool
+ * that supports MORE than Igris declares is intentionally NOT drift.
+ */
+export function parseSupportedMcpAgents(raw: string): string[] {
+  // add-mcp emits ANSI SGR color even to a NON-TTY pipe (live-verified: the
+  // captured bytes carry a raw ESC 0x1b before each `[…m`), and a colored row
+  // begins AT the ESC (no leading spaces survive to the stripped text). Strip
+  // the full `ESC[…m` sequences, then trimStart so the agent-id is at column 0.
+  // ESC is built via fromCharCode(27) to keep a control char out of the regex
+  // literal (no-control-regex-safe).
+  const ansi = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+  const ids: string[] = [];
+  for (const rawLine of raw.replace(ansi, "").split("\n")) {
+    // A DATA row: <agent-id> then a >=2-space column gap then the next column
+    // (MCP Client). The banner (box chars), "Supported agents:"/"Argument …"
+    // (uppercase), and the "----" separator all fail this shape.
+    const m = /^([a-z][a-z0-9-]*)\s{2,}\S/.exec(rawLine.trimStart());
+    if (m) {
+      ids.push(m[1]);
+    }
+  }
+  return ids;
+}
+
+/**
+ * TD-284: probe the LOCAL `add-mcp list-agents` for the agent-ids the tool
+ * supports (the authoritative "what agents can add-mcp register into" set).
+ * Consumed by the check_harness_drift.sh descriptor↔npx agent-id coverage
+ * assertion via `igris loadout list-mcp-agents`. Read-only — `list-agents` never
+ * writes (safe against the real store/HOME).
+ *
+ * Resolution + supply-chain posture mirror `registerMcpViaTool`: the binary is
+ * the LOCAL pinned add-mcp (never a bare `npx`). THROWS if add-mcp cannot be
+ * resolved (a hard, observable error — the caller turns that into the graceful
+ * "skip" the drift gate wants). A spawn failure or a non-zero exit returns `[]`
+ * (also treated as "unavailable" by the caller), never a partial/false list.
+ *
+ * add-mcp is the SHARED authority for BOTH the mcp and skills surfaces: the
+ * `skills` CLI consumes the SAME descriptor agent-ids and (TD-284, empirically
+ * verified) its own valid-agent set also covers every Igris agent-id, but `skills`
+ * exposes NO clean `list-agents` command — so add-mcp is the one probe (see the
+ * mcpAgentIds/skillAgentIds note in this module + harness-descriptor.ts).
+ */
+export function listSupportedMcpAgents(deps: McpListAgentsDeps = {}): string[] {
+  const bin = (deps.resolveBinary ?? resolveMcpBinary)();
+  assertLocalMcpBinary(bin);
+  const spawn = deps.spawn ?? spawnSync;
+  const result = spawn(bin, ["list-agents"], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error || result.status !== 0) {
+    return [];
+  }
+  return parseSupportedMcpAgents((result.stdout ?? "").toString());
+}
