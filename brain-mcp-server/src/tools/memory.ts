@@ -59,6 +59,24 @@ function computeTechStackOverlap(stackA: string | null, stackB: string | null): 
   return intersection.size / union.size;
 }
 
+/**
+ * A model-supplied edge captured at store time (FR-210 Path B).
+ *
+ * The `from` side is always the just-stored learning (`from_type:'learning'`,
+ * `from_id:String(learningId)`); the caller only specifies the target and the
+ * edge type. Consumed by the edges component's `onMemoryStored` subscriber,
+ * NOT written here — ownership of every edge-write stays in the edges component
+ * (learning #206). `to_type`/`edge_type` are validated against
+ * `VALID_ENTITY_TYPES`/`VALID_EDGE_TYPES` at the store-schema surface.
+ */
+interface EdgeSpec {
+  to_type: string;
+  to_id: string;
+  edge_type: string;
+  confidence?: number;
+  metadata?: Record<string, unknown>;
+}
+
 /** Input shape for igris_memory_store */
 interface MemoryStoreInput {
   project: string;
@@ -68,6 +86,13 @@ interface MemoryStoreInput {
   tags?: string;
   tech_stack?: string;
   source_brief?: string;
+  /**
+   * FR-210 Path B: relationships the model reasons about at store time. Not
+   * written by `handleMemoryStore`; surfaced (with the new `learningId`) to the
+   * memory component handler, which emits the enriched `memory.stored` payload
+   * that the edges component's `onMemoryStored` subscriber turns into edges.
+   */
+  edges?: EdgeSpec[];
   scope?: 'local' | 'global';
   provenance?: 'observed' | 'inferred' | 'synthesized' | 'ambiguous' | 'human_asserted';
   /**
@@ -253,9 +278,13 @@ function validateMemoryInput(args: MemoryStoreInput): string | null {
   return null;
 }
 
-async function handleMemoryStore(args: MemoryStoreInput): Promise<{ content: { type: string; text: string }[] }> {
+async function handleMemoryStore(
+  args: MemoryStoreInput,
+): Promise<{ content: { type: string; text: string }[]; learningId?: number }> {
   const validationError = validateMemoryInput(args);
   if (validationError) {
+    // Additive contract (FR-210): `learningId` is omitted when nothing was
+    // stored, so callers can distinguish a validation no-op from a real write.
     return { content: [{ type: 'text', text: `Validation error: ${validationError}` }] };
   }
 
@@ -312,6 +341,10 @@ async function handleMemoryStore(args: MemoryStoreInput): Promise<{ content: { t
       type: 'text',
       text: `Learning stored successfully.\n\nID: ${learningId}\nProject: ${args.project}\nCategory: ${args.category}\nTitle: ${args.title}\nScope: ${args.scope ?? 'local'}\nProvenance: ${args.provenance ?? 'observed'}\nReview status: ${reviewStatus}${embeddingNote}${promotedNote}`,
     }],
+    // FR-210: expose the new row id to the component handler so it can emit the
+    // enriched `memory.stored` payload (edge `from_id`). Additive — the existing
+    // `content` shape is untouched, so every current caller is unaffected.
+    learningId,
   };
 }
 
@@ -1870,6 +1903,7 @@ export {
   computeTechStackOverlap,
 };
 export type {
+  EdgeSpec,
   MemoryStoreInput,
   MemorySearchInput,
   MemoryRecallInput,

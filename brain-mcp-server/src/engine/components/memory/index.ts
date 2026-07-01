@@ -45,6 +45,10 @@ import type {
   MemoryDashboardInput,
   PatternSuggestInput,
 } from '../../../tools/memory.js';
+// FR-210: reuse the edges component's entity/edge vocabularies for the store
+// schema's `edges` param so the two surfaces stay in lockstep (const-only,
+// pure import — no runtime coupling; edge WRITES still route through the bus).
+import { VALID_ENTITY_TYPES, VALID_EDGE_TYPES } from '../edges/handlers.js';
 
 export function createMemoryComponent(): BrainComponent {
   let _ctx: ComponentContext | null = null;
@@ -117,13 +121,59 @@ export function createMemoryComponent(): BrainComponent {
                 type: 'string',
                 description: 'Which extractor produced this row (FR-109 + TD-066). Default "manual" for direct tool calls; perception passes "llm"; /harvest passes "distill" (the enum value stays "distill" after the /distill → /harvest rename — it is a persisted channel-tag, not the skill name). Validated against VALID_SOURCE_EXTRACTOR.',
               },
+              edges: {
+                type: 'array',
+                description: 'FR-210: relationships to capture at store time. Supply the edges you reason about NOW (learning→learning "supersedes"/"related_to", learning→brief "derived_from"/"duplicates", learning→decision, …) instead of a follow-up igris_edge_create call — the "from" side is always this new learning. Each edge is written as provenance "observed". Setting source_brief already auto-creates the learning→brief "derived_from" net edge; use this array for everything else.',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    to_type: {
+                      type: 'string',
+                      enum: [...VALID_ENTITY_TYPES],
+                      description: 'Type of the target entity',
+                    },
+                    to_id: {
+                      type: 'string',
+                      description: 'Stable id of the target entity (e.g. "FR-210", "950")',
+                    },
+                    edge_type: {
+                      type: 'string',
+                      enum: [...VALID_EDGE_TYPES],
+                      description: 'Edge type from the catalog (e.g. "supersedes", "related_to", "derived_from", "duplicates")',
+                    },
+                    confidence: {
+                      type: 'number',
+                      description: 'Confidence in [0, 1] (default 1.0)',
+                    },
+                    metadata: {
+                      type: 'object',
+                      description: 'Free-form metadata merged into the stored edge (default {})',
+                    },
+                  },
+                  required: ['to_type', 'to_id', 'edge_type'],
+                },
+              },
             },
             required: ['project', 'category', 'title', 'content'],
           },
           handler: async (args) => {
             const result = await handleMemoryStore(args as unknown as MemoryStoreInput);
-            _ctx?.bus.emit('memory.stored', { project: (args as Record<string, unknown>).project });
-            return result;
+            // FR-210: enrich the payload so the edges component's onMemoryStored
+            // subscriber can populate learning→brief (source_brief) + model-supplied
+            // (edges[]) edges at store time. Additive fields — existing listeners
+            // (monitoring, sync) read only `project` and are unaffected.
+            const a = args as Record<string, unknown>;
+            _ctx?.bus.emit('memory.stored', {
+              project: a.project,
+              id: result.learningId,
+              category: a.category,
+              source_brief: a.source_brief,
+              edges: a.edges,
+            });
+            // Return only the MCP tool contract (`content`); `learningId` is an
+            // internal handoff to the emit above and is not part of the response.
+            return { content: result.content };
           },
         },
         {
@@ -432,8 +482,12 @@ export function createMemoryComponent(): BrainComponent {
     events(): { emits: EventDef[]; listens: EventDef[] } {
       return {
         emits: [
-          // Orphan: sync auto-push extension point — will be consumed when sync auto-push is implemented
-          { name: 'memory.stored', description: 'A new learning was stored' },
+          // FR-210: enriched payload { project, id, category, source_brief, edges }.
+          // Consumed by the edges component's onMemoryStored subscriber to populate
+          // learning-to-brief (source_brief) + model-supplied (edges array) edges at
+          // store time. Also the sync auto-push extension point; monitoring/sync
+          // listeners read only `project`, so the extra fields are backward-compatible.
+          { name: 'memory.stored', description: 'A new learning was stored (enriched payload: project, id, category, source_brief, edges — FR-210)' },
           // TD-171 M1: emitted by igris_memory_delete after a successful hard-DELETE.
           // Payload: { id: number, reason: string }. Currently no in-process
           // listener — same orphan extension-point pattern as memory.stored.
