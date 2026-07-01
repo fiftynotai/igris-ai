@@ -22,7 +22,7 @@ Conventional Commits: `<type>(<scope>): <summary>`
 | chore | Maintenance tasks |
 | test | Test additions/changes |
 
-- Imperative mood, &lt;72-char summary.
+- Imperative mood, 72-char summary max (≤72; enforced by the `commit-msg` hook).
 - Reference briefs in the footer: `closes #BR-XXX`.
 - **No AI signatures** — no "Generated with…", no Co-Authored-By tags.
 

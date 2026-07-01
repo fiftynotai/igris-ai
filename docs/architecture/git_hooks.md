@@ -4,7 +4,12 @@ Igris ships local git hooks that catch drift between the brain stewardship doc (
 
 ## What's installed
 
-A single `pre-commit` dispatcher (`scripts/git-hooks/pre-commit`) that conditionally invokes its validators based on which files are in the staging area.
+Two hook types:
+
+- A `pre-commit` dispatcher (`scripts/git-hooks/pre-commit`) that conditionally invokes its validators based on which files are in the staging area.
+- A `commit-msg` hook (`scripts/git-hooks/commit-msg`) that hard-fails any commit whose summary (first non-comment, non-blank line) exceeds 72 characters (TD-180). This is a distinct hook TYPE from the pre-commit validators — it was added per the §Extending recipe below (drop the script under `scripts/git-hooks/`, no installer change). The ≤72 limit matches `core/os/standards.md` and `core/templates/commit_message.md`; bypass with `git commit --no-verify`.
+
+The `pre-commit` dispatcher's validators:
 
 | Validator | What it asserts | Brief |
 |---|---|---|
@@ -81,6 +86,8 @@ To add a new hook type (e.g., `commit-msg`, `pre-push`):
 2. Make it executable.
 3. The installer (`install_git_hooks.sh`) will symlink any file in `scripts/git-hooks/` into `.git/hooks/` — no installer changes needed.
 4. Document the new hook in this file.
+
+The `commit-msg` hook (TD-180) was added via exactly this recipe: dropped at `scripts/git-hooks/commit-msg` (executable), auto-symlinked by `install_git_hooks.sh` with zero installer change, and documented in "What's installed" above. Adding a brand-new hook TYPE does require contributors to re-run `install_git_hooks.sh` once (the symlink for a new hook name doesn't exist yet); subsequent script updates propagate through the existing symlink.
 
 ## Why local hooks (not Husky / pre-commit framework)
 
