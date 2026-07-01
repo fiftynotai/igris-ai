@@ -8,7 +8,7 @@
  * new dir absent, we expect the original `core/` to be restored.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   existsSync,
   mkdirSync,
@@ -27,6 +27,32 @@ import {
   stagingDirFor,
 } from "../lib/atomic-extract.js";
 
+// --- node:fs boundary mock (L-159: spy the fs boundary, never the SUT) ---
+// Only `atomicSwap` calls `renameSync` in the SUT+test surface, so wrapping
+// ONLY `renameSync` (passthrough for everything else) is fully targeted.
+// `renameThrowOn` holds the 1-based rename call indexes that should throw;
+// empty by default → pure passthrough, keeping all pre-existing tests green.
+const renameThrowOn = new Set<number>();
+let renameCallCount = 0;
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    renameSync: (from: string, to: string) => {
+      renameCallCount += 1;
+      if (renameThrowOn.has(renameCallCount)) {
+        const err = new Error(
+          "EEXIST: simulated post-bak swap failure",
+        ) as Error & { code?: string };
+        err.code = "EEXIST";
+        throw err;
+      }
+      return actual.renameSync(from, to);
+    },
+  };
+});
+
 let workDir: string;
 let coreDir: string;
 let newDir: string;
@@ -35,6 +61,9 @@ beforeEach(() => {
   workDir = mkdtempSync(join(tmpdir(), "igris-atomic-test-"));
   coreDir = join(workDir, "core");
   newDir = join(workDir, "core.new.12345");
+  // Reset the rename fault-injection state → default is pure passthrough.
+  renameCallCount = 0;
+  renameThrowOn.clear();
 });
 
 afterEach(() => {
@@ -214,6 +243,91 @@ describe("atomic-extract — mid-flight failure rollback (CRITICAL gate)", () =>
     expect(readFileSync(join(coreDir, "skills", "x.md"), "utf-8")).toBe(
       "skill x\n",
     );
+  });
+
+  it("post-bak swap failure triggers rollback of bak → original core (byte-equal)", () => {
+    // TD-114: genuinely reach the post-bak rollback branch (lines ~114-128).
+    // The real-fs EEXIST trigger cannot reach it (Step 1 empties the target
+    // slot before Step 2), so we fault-inject at the node:fs boundary: throw
+    // only on the 2nd rename (the swap). Call order for existing+upgrade is
+    // deterministic: bak=1 (real, ok), swap=2 (throws → catch), rollback=3
+    // (real, ok).
+    stageExistingCore();
+    // Extra files give byte-preservation surface area.
+    writeFileSync(join(coreDir, "agents-list"), "alpha\nbeta\ngamma\n");
+    mkdirSync(join(coreDir, "skills"), { recursive: true });
+    writeFileSync(join(coreDir, "skills", "x.md"), "skill x\n");
+    stageNewCore();
+
+    renameThrowOn.add(2); // swap fails; rollback (call #3) succeeds.
+
+    // The line-127 message is emitted ONLY after the rollback rename succeeds,
+    // distinguishing it from pre-bak precheck errors and the double-failure msg.
+    expect(() =>
+      atomicSwap({
+        newCorePath: newDir,
+        existingCorePath: coreDir,
+        upgrade: true,
+      }),
+    ).toThrow(/swap failed and rolled back/);
+
+    // Defensive: confirms the mock intercepted exactly bak + failed-swap +
+    // rollback (proves the branch was genuinely exercised, not short-circuited).
+    expect(renameCallCount).toBe(3);
+
+    // Original restored, byte-equal (bak carried the ORIGINAL content back).
+    expect(existsSync(coreDir)).toBe(true);
+    expect(readFileSync(join(coreDir, "marker.txt"), "utf-8")).toBe("old\n");
+    expect(readFileSync(join(coreDir, "agents-list"), "utf-8")).toBe(
+      "alpha\nbeta\ngamma\n",
+    );
+    expect(readFileSync(join(coreDir, "skills", "x.md"), "utf-8")).toBe(
+      "skill x\n",
+    );
+
+    // No orphaned bak — it was renamed back to existing.
+    const baks = readdirSync(workDir).filter((e) => e.startsWith("core.bak."));
+    expect(baks.length).toBe(0);
+
+    // newDir is LEFT for the caller (swap threw before consuming it) — the
+    // documented module contract (doc lines 18-19). The correct-on-read code
+    // does NOT clean core.new on rollback, so we assert its real behavior.
+    expect(existsSync(newDir)).toBe(true);
+  });
+
+  it("double failure (swap AND rollback) surfaces the manual-recovery message and leaves bak", () => {
+    // TD-114 optional: covers lines 120-125 (rollback rename ALSO throws).
+    // renameThrowOn={2,3}: bak=1 (ok), swap=2 (throws), rollback=3 (throws).
+    stageExistingCore();
+    stageNewCore();
+
+    renameThrowOn.add(2);
+    renameThrowOn.add(3);
+
+    // Invoke ONCE and capture the error — re-invoking would mutate fs state
+    // (the first call leaves core/ absent + core.new present, so a 2nd call
+    // would succeed instead of throw). Assert both message halves off the
+    // single thrown error.
+    let thrown: unknown;
+    try {
+      atomicSwap({
+        newCorePath: newDir,
+        existingCorePath: coreDir,
+        upgrade: true,
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(AtomicExtractError);
+    expect((thrown as Error).message).toMatch(/AND rollback failed/);
+    expect((thrown as Error).message).toMatch(/manual recovery: .*core\.bak\./);
+
+    // Bak still present (never restored) — exactly one remains.
+    const baks = readdirSync(workDir).filter((e) => e.startsWith("core.bak."));
+    expect(baks.length).toBe(1);
+
+    // Manual-recovery state: bak not moved back, new not moved in.
+    expect(existsSync(coreDir)).toBe(false);
   });
 });
 
