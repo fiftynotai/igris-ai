@@ -37,9 +37,14 @@
  * malformed file, is IDEMPOTENT (grant already present → `unchanged`, NO write),
  * writes atomically (`.tmp.<pid>.<ts>` + `renameSync`) with a single rolling
  * `.igris.bak` backup, and NEVER throws. These files hold PERMISSION GRANTS, not
- * secrets, so they are NOT chmod-600'd (locking a user's shared settings file
- * would be wrong) and carry no `${VAR}` — there is no secret to leak (L-588: the
- * brain is env-free).
+ * secrets, and carry no `${VAR}` — there is no secret to leak (L-588: the brain
+ * is env-free). Even so, TD-232 hardens every grant WRITE to 600 on-write (via
+ * TD-220's `chmodSecretFile`, right after the rename): this is a defense-in-depth
+ * + doctor-parity posture, NOT a secret-protection claim. The concrete driver is
+ * the codex grant (`~/.codex/config.toml`), which the MCP merger already hardens
+ * to 600 (TD-221) and which `igris doctor` watches — leaving the grant write at
+ * 644 re-loosened the same file and re-flagged it. Owner keeps rw on their own
+ * home file, so hardening the three non-secret grant files is harmless.
  */
 
 import {
@@ -58,6 +63,14 @@ import type { McpHarness } from "./mcp-shape.js";
 // consts were deleted in M5 (one source of truth: the descriptor). The grant FILE
 // paths are tilde-expanded inside grantGrammar() (paths.ts expandTilde).
 import { harnessIds, grantGrammar } from "./harness-descriptor.js";
+// TD-232: re-harden every grant write to 600 right after the rename (see
+// atomicWriteText). `renameSync` adopts the tmp file's umask-default mode
+// (typically 644), which re-loosened `~/.codex/config.toml` — the same file the
+// MCP merger just hardened (TD-221) and that `igris doctor` watches. Reuse
+// TD-220's win32-gated, never-throwing `chmodSecretFile` (do NOT re-implement
+// the chmod/win32 logic — §18.1). No import cycle: secret-perms.ts imports
+// nothing from this module.
+import { chmodSecretFile } from "./secret-perms.js";
 
 /** Single rolling backup suffix (mirrors mcp-register.ts). */
 const BACKUP_SUFFIX = ".igris.bak";
@@ -476,7 +489,8 @@ function applyTomlFolderGrant(op: TomlGrantOp): GrantResult["outcome"] | { error
 // ---------------------------------------------------------------------------
 // Shared atomic-write helpers (mirror mcp-register.ts step 6; NEVER throw —
 // return an error string or null on success). These config files hold GRANTS,
-// not secrets — no chmod-600.
+// not secrets, but TD-232 still chmod-600's every real write here (after the
+// rename) for doctor-parity + defense-in-depth — see atomicWriteText.
 // ---------------------------------------------------------------------------
 
 function atomicWriteJson(
@@ -505,6 +519,15 @@ function atomicWriteText(
     }
     writeFileSync(tmpPath, serialized);
     renameSync(tmpPath, targetPath);
+    // TD-232: re-harden to 600 — `renameSync` adopted the tmp file's
+    // umask-default mode (644), re-loosening a previously-600 config (notably
+    // the codex `~/.codex/config.toml` grant, which shares doctor's secret-perms
+    // scope). Placed on the line AFTER the rename, inside this write block, so it
+    // is structurally unreachable on the `unchanged`/`failed` paths (those
+    // early-return before ever calling atomicWriteText) — runs ONLY on a real
+    // grant write. chmodSecretFile is win32-gated + never-throws (TD-220), so
+    // atomicWriteText's never-throw contract is preserved.
+    chmodSecretFile(targetPath);
   } catch (err) {
     if (existsSync(tmpPath)) {
       try {

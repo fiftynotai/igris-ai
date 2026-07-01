@@ -665,12 +665,14 @@ function isIgrisOwnedSecretFile(path: string): boolean {
  * checkSecretFilePerms (never throws).
  *
  * NOTE (Risk R1 — atomic-rename re-loosens harness configs): the FR-162/163
- * mergers in mcp-register.ts write via tmp+renameSync, which adopts the
- * tmp file's umask mode (often 644). So every MCP re-registration re-loosens
- * a harness config — which is exactly why these harness configs are
- * warn/--fix-only (Decision 5) rather than proactively tightened. The clean
- * fix (chmod 600 after the rename inside the mergers) is a DEFERRED follow-up,
- * NOT TD-220 — keeping TD-220 off the FR-162/163 splice path.
+ * mergers in mcp-register.ts (and the mcp-grant.ts grant writers) write via
+ * tmp+renameSync, which adopts the tmp file's umask mode (often 644). The clean
+ * fix — chmod 600 after the rename, reusing TD-220's `chmodSecretFile` — has now
+ * SHIPPED on both Igris-owned writer paths: **TD-221** hardened the mergers and
+ * **TD-232** hardened the grant writers (notably the codex `~/.codex/config.toml`
+ * grant, which shares this secret-perms scope). These harness configs stay
+ * warn/--fix-only here (Decision 5) since doctor doesn't own them, but the Igris
+ * writers no longer re-loosen them on-write.
  */
 function detectSecretFilePerms(): DriftRow[] {
   const out: DriftRow[] = [];

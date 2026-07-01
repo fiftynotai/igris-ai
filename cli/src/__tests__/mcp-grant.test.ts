@@ -24,10 +24,12 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  chmodSync,
   existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -398,4 +400,65 @@ describe("mcp-grant — across-harness sweep", () => {
       expect(grantGrammar(id).kind).toBeTruthy();
     }
   });
+});
+
+// TD-232: every REAL grant write re-hardens the config to 600 (via TD-220's
+// chmodSecretFile, right after the rename in atomicWriteText). The concrete
+// driver is the codex grant `~/.codex/config.toml` — it shares doctor's
+// secret-perms scope and the MCP merger already hardens it (TD-221), so a 644
+// grant write re-flagged a file doctor just cleared. POSIX-gated: chmod / mode
+// bits are meaningless on win32 (chmodSecretFile is a no-op there anyway).
+const POSIX = process.platform !== "win32";
+const modeOf = (p: string): number => statSync(p).mode & 0o777;
+
+describe("TD-232 — grant writes leave the config at 600", () => {
+  it.skipIf(!POSIX)(
+    "codex (the doctor-flagged file) — TOML grant is 600 after write",
+    () => {
+      const cp = sandboxPaths();
+      const r = writeBrainGrant("codex", { configPaths: cp, folder: FOLDER });
+      expect(r.outcome).toBe("granted");
+      expect(modeOf(cp.codex!)).toBe(0o600);
+    },
+  );
+
+  it.skipIf(!POSIX)(
+    "claude (json-array) — settings.json is 600 after write",
+    () => {
+      const cp = sandboxPaths();
+      const r = writeBrainGrant("claude", { configPaths: cp });
+      expect(r.outcome).toBe("granted");
+      expect(modeOf(cp.claude!)).toBe(0o600);
+    },
+  );
+
+  it.skipIf(!POSIX)(
+    "durability — a re-loosened file is re-hardened on the next real write",
+    () => {
+      const cp = sandboxPaths();
+      // Seed a grant, then externally re-loosen the file to 644.
+      writeBrainGrant("codex", { configPaths: cp, folder: FOLDER });
+      chmodSync(cp.codex!, 0o644);
+      expect(modeOf(cp.codex!)).toBe(0o644);
+      // A DIFFERENT grant state forces a real write (revoke → real rename).
+      const r = removeBrainGrant("codex", { configPaths: cp, folder: FOLDER });
+      expect(r.outcome).toBe("revoked");
+      expect(modeOf(cp.codex!)).toBe(0o600);
+    },
+  );
+
+  it.skipIf(!POSIX)(
+    "idempotent no-touch — an `unchanged` grant leaves a distinctive mode intact",
+    () => {
+      const cp = sandboxPaths();
+      // Establish the grant, then set a distinctive mode chmodSecretFile would
+      // NEVER produce (0o640), so any accidental chmod is visible.
+      writeBrainGrant("claude", { configPaths: cp });
+      chmodSync(cp.claude!, 0o640);
+      // Same grant state → `unchanged`, so atomicWriteText is never reached.
+      const r = writeBrainGrant("claude", { configPaths: cp });
+      expect(r.outcome).toBe("unchanged");
+      expect(modeOf(cp.claude!)).toBe(0o640);
+    },
+  );
 });
