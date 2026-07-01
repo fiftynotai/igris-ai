@@ -43,7 +43,7 @@ import { handleMetricsRecord } from './tools/metrics.js';
 import type { MetricsRecordInput } from './tools/metrics.js';
 
 // Sync tables config (used by HTTP /sync/push and /sync/pull endpoints)
-import { SYNC_TABLES, processSyncPush } from './tools/sync.js';
+import { SYNC_TABLES, processSyncPush, scheduleLearningEmbedAfterMerge } from './tools/sync.js';
 
 // Database lifecycle
 import { getDb, closeDb, DB_PATH, BRAIN_DIR } from './db.js';
@@ -1509,6 +1509,10 @@ async function runHttp(config: ServerConfig): Promise<void> {
       // handleSyncQueueDrain, pushTables auto-push) inspect the body.
       const status = ok ? 200 : 207;
       res.status(status).json({ ok, results, errors });
+      // FR-220: fire the fire-and-forget post-merge embed pass AFTER the
+      // response is queued. Non-blocking (setImmediate inside), so it never
+      // delays the sync response; a no-op when the merge touched no learnings.
+      scheduleLearningEmbedAfterMerge(db, results);
     } catch (err) {
       const message = errMsg(err);
       console.error('[brain] Sync push error:', message);

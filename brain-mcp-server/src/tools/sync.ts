@@ -25,6 +25,8 @@ import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { getDb } from '../db.js';
 import { errMsg } from '../engine/helpers.js';
+import { embedNullLearnings } from '../utils/learning-embed.js';
+import { deleteEmbedding, isVectorSearchAvailable } from '../utils/vector-search.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -599,12 +601,47 @@ export function mergeRows(
             }
           }
 
+          // FR-220: stale-embedding invalidation. An LWW update that changes a
+          // learnings row's title/content makes the stored embedding (derived
+          // from the OLD text) stale — and a stale NON-NULL embedding is
+          // invisible to the post-merge `WHERE embedding IS NULL` scan. NULL
+          // both embedding columns HERE and delete the vec row below, inside
+          // the SAME per-table sync transaction the caller wraps mergeRows in,
+          // so the BLOB-null and the vec-delete stay lockstep. The row then
+          // falls into the post-merge NULL-scan (scheduleLearningEmbedAfterMerge)
+          // and is re-embedded via the normalized fingerprint. Guarded to the
+          // learnings table only.
+          const learningTextChanged =
+            config.table === 'learnings' &&
+            (existing.title !== row.title || existing.content !== row.content);
+          if (learningTextChanged) {
+            setClauses.push('embedding = ?', 'embedding_model = ?');
+            setValues.push(null, null);
+          }
+
           if (setClauses.length > 0) {
             const whereClause = config.syncKey.map(k => `${k} = ?`).join(' AND ');
             db.prepare(
               `UPDATE ${config.table} SET ${setClauses.join(', ')} WHERE ${whereClause}`
             ).run(...setValues, ...keyValues);
             updated++;
+
+            // Lockstep vec-delete for the just-NULLed embedding. DEFENSIVE:
+            // only when sqlite-vec is available. If the extension is missing the
+            // columns are already NULLed above and the row degrades to FTS until
+            // the next embed pass re-derives it (#213) — guarding here means a
+            // missing extension can never throw out of the merge and abort the
+            // sync transaction.
+            // NOTE (FR-220): with the extension DOWN, the stale learnings_vec row
+            // survives (vec-delete is skipped). It is inert while vec is down (no
+            // vector query can run), and self-heals on the next embed pass, which
+            // DELETE-then-INSERTs the vec row. The only window is a later
+            // vec-available process that hasn't re-embedded yet — a transient
+            // old-text ranking, never corruption. See TD-288 for a boot-time
+            // NULL-scan that would close that window proactively.
+            if (learningTextChanged && isVectorSearchAvailable(db)) {
+              deleteEmbedding(db, existing.id as number);
+            }
           } else {
             skipped++;
           }
@@ -692,6 +729,95 @@ export function processSyncPush(
   }
 
   return { results, errors, ok: Object.keys(errors).length === 0 };
+}
+
+// ---------------------------------------------------------------------------
+// FR-220 — post-merge learning-embedding pass (fire-and-forget, coalescing)
+// ---------------------------------------------------------------------------
+
+/**
+ * Progress-log batch granularity for the post-merge NULL-embedding scan.
+ * Forwarded to `embedNullLearnings` — it does NOT cap the rows processed
+ * (the pass drains the whole NULL backlog); it only controls log cadence.
+ */
+const EMBED_BATCH = 50;
+
+/**
+ * Coalescing guard for the post-merge embed pass. At most one pass runs at a
+ * time; a schedule call that arrives while a pass is in flight sets
+ * `embedRerun` so exactly ONE follow-up pass runs after the current one drains
+ * (collapsing N overlapping syncs into one redundant-CPU-free follow-up).
+ *
+ * Race-free by construction: the event loop is single-threaded and there is no
+ * `await` between the `!embedRerun` break check and clearing `embedInFlight`,
+ * so no schedule call can slip through that gap unobserved. Correctness does
+ * not depend on the guard — `embedNullLearnings` is idempotent (`WHERE
+ * embedding IS NULL` + per-row txn) — the guard only prevents wasted model runs.
+ */
+let embedInFlight = false;
+let embedRerun = false;
+
+/**
+ * Schedule a fire-and-forget post-merge embed pass IFF the just-committed merge
+ * inserted or updated a learnings row. A clean merge (learnings absent, or
+ * `inserted + updated === 0`) is a no-op — no pass is scheduled.
+ *
+ * NEVER blocks the caller: the pass runs on a LATER tick via `setImmediate`,
+ * after the sync response has already been queued/flushed (#224 — both halves
+ * of the background feature stay background). It is `void`-invoked and never
+ * awaited, so it cannot delay the response or the caller's return.
+ *
+ * @param db - The database the merge committed into.
+ * @param results - Per-table `MergeRowsResult` map from the merge.
+ */
+export function scheduleLearningEmbedAfterMerge(
+  db: Database.Database,
+  results: Record<string, MergeRowsResult>,
+): void {
+  const l = results['learnings'];
+  if (!l || l.inserted + l.updated === 0) return; // AC4 clean-merge no-op
+  if (embedInFlight) {
+    embedRerun = true; // coalesce overlapping syncs into one follow-up pass
+    return;
+  }
+  embedInFlight = true;
+  setImmediate(() => {
+    void runPostMergeEmbedPass(db);
+  });
+}
+
+/**
+ * Drain the NULL-embedding backlog by delegating to the shipped
+ * `embedNullLearnings` core, looping once more if an overlapping schedule call
+ * set `embedRerun` while the pass ran.
+ *
+ * NEVER rejects out of the `setImmediate` callback (#224): the inner core call
+ * is wrapped in its own try/catch (a failed pass leaves rows NULL for the next
+ * merge to re-derive — degrade-not-crash, #213/AC2), and the outer try/finally
+ * guarantees `embedInFlight` clears even on an unexpected throw. There is NO
+ * success log at schedule time (#125 observability honesty) — the only
+ * completion signal is the core's own post-pass progress/summary log.
+ *
+ * Exported for direct unit testing (drive it with a fake embedder + a tick).
+ */
+export async function runPostMergeEmbedPass(db: Database.Database): Promise<void> {
+  try {
+    for (;;) {
+      embedRerun = false;
+      try {
+        await embedNullLearnings(db, { dryRun: false, batchSize: EMBED_BATCH });
+      } catch (err) {
+        // AC2: never break the sync path. #125: no success-implying line here.
+        console.error(
+          '[fr220] post-merge embed pass failed (rows left NULL for next pass):',
+          errMsg(err),
+        );
+      }
+      if (!embedRerun) break; // no await between here and the finally → race-free
+    }
+  } finally {
+    embedInFlight = false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -925,6 +1051,10 @@ async function handleBrainPull(
     // Merge rows within a transaction for performance
     const summary: string[] = [];
     let totalMerged = 0;
+    // FR-220: per-table merge counts, kept alongside totalMerged so the
+    // post-merge embed pass can fire on a learnings insert/update (pull site
+    // symmetry with the /sync/push route).
+    const results: Record<string, MergeRowsResult> = {};
 
     const upsertState = db.prepare(`
       INSERT INTO sync_state (remote_url, table_name, last_pull_at)
@@ -939,6 +1069,7 @@ async function handleBrainPull(
         if (!rows || rows.length === 0) continue;
 
         const result = mergeRows(db, config, rows);
+        results[config.table] = result;
         totalMerged += result.inserted + result.updated;
         const failedSuffix = result.failed > 0 ? `, ${result.failed} failed` : '';
         summary.push(
@@ -957,6 +1088,12 @@ async function handleBrainPull(
         upsertState.run(remoteUrl, config.table, pulledAt);
       }
     })();
+
+    // FR-220: after the merge transaction commits, fire the fire-and-forget
+    // post-merge embed pass so synced-in learnings (sync excludes the embedding
+    // column) get embedded on receive. Non-blocking — the pull response returns
+    // without awaiting the pass. Same helper + core as the /sync/push route.
+    scheduleLearningEmbedAfterMerge(db, results);
 
     if (summary.length === 0) {
       return {

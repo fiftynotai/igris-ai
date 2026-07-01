@@ -18,7 +18,9 @@
  * Consumers (see MAINTAINING.md — normalized learning-embedding fingerprint row):
  *   - `handleMemoryBackfillEmbeddings` (`tools/memory.ts`) — delegates here.
  *   - `scripts/fr219_embed_null_learnings.ts` — the one-time maintenance script.
- *   - (FR-219b, future) the brain post-merge hook in `tools/sync.ts`.
+ *   - `runPostMergeEmbedPass` (`tools/sync.ts`) — the FR-220 brain post-merge
+ *     hook; `scheduleLearningEmbedAfterMerge` fires it fire-and-forget after a
+ *     learnings merge at both `/sync/push` and `handleBrainPull`.
  *
  * Imports SHIPPED helpers only — no re-implementation of embed / normalize /
  * vec-write (learning #930): `generateEmbedding`, `normalizeForDedup`,
