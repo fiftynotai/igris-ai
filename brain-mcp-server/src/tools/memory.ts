@@ -862,6 +862,7 @@ function handlePatternSuggest(args: PatternSuggestInput): { content: { type: str
     let learningSql = `
       SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
              l.tech_stack, l.scope, l.confidence, l.access_count,
+             l.promoted_to_doc,
              rank
       FROM learnings_fts fts
       JOIN learnings l ON l.id = fts.rowid
@@ -928,7 +929,19 @@ function handlePatternSuggest(args: PatternSuggestInput): { content: { type: str
     learningRows.forEach((row, i) => {
       sections.push(`### ${i + 1}. ${row.title}`);
       sections.push(`- **Project:** ${row.project} | **Scope:** ${row.scope} | **Category:** ${row.category}`);
-      sections.push(`- **Content:** ${row.content}`);
+      // FR-200 M2 (one-fact-one-source): a promoted learning's standard now lives
+      // in a project-context doc. Suppress the raw content and surface the doc
+      // pointer instead — mirrors handleMemorySearch (memory.ts:379-393). Gate:
+      // non-empty string => promoted. Keep the literal `Promoted: →` marker
+      // contiguous so it matches the sibling tools/tests (TD-245).
+      const promotedTo = typeof row.promoted_to_doc === 'string' && (row.promoted_to_doc as string).length > 0
+        ? (row.promoted_to_doc as string)
+        : null;
+      if (promotedTo) {
+        sections.push(`- Promoted: → ${promotedTo} (this standard now lives in the doc; see it there)`);
+      } else {
+        sections.push(`- **Content:** ${row.content}`);
+      }
       if (row.tags) sections.push(`- **Tags:** ${row.tags}`);
       if (row.tech_stack) sections.push(`- **Tech Stack:** ${row.tech_stack}`);
       sections.push('');

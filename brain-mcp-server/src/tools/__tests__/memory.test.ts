@@ -72,6 +72,7 @@ import {
   handleMemoryGet,
   handleMemoryMarkPromoted,
   handleMemoryHybridSearch,
+  handlePatternSuggest,
   promoteToGlobal,
   wordJaccardSimilarity,
   computeTechStackOverlap,
@@ -1398,6 +1399,44 @@ describe('Memory Tools (FR-092)', () => {
       const text = result.content[0].text;
 
       expect(text).toContain('Content: Plainly hybrid-searchable body');
+      expect(text).not.toContain('Promoted: →');
+    });
+  });
+
+  describe('handlePatternSuggest — promotion pointer (FR-200 M2)', () => {
+    it('surfaces the pointer and suppresses the raw content for a promoted row', () => {
+      // pattern_suggest prints the full learning body (- **Content:** ${row.content})
+      // in its "From Knowledge Base" section; a distinctive marker proves it is gone
+      // once the row is promoted (TD-245 enrolled this as a suppressing read path).
+      insertLearning(db, {
+        title: 'PATTERNLEAK promoted row',
+        content: 'PATTERNLEAKBODY full standard text that must not appear',
+        promoted_to_doc: 'igris-ai:context/coding_guidelines.md#promoted-standards',
+      });
+
+      const result = handlePatternSuggest({
+        project: 'test-project',
+        context: 'PATTERNLEAK promoted row',
+      });
+      const text = result.content[0].text;
+
+      expect(text).toContain('Promoted: → igris-ai:context/coding_guidelines.md#promoted-standards');
+      expect(text).not.toContain('PATTERNLEAKBODY');
+    });
+
+    it('still prints Content for a non-promoted row (no regression)', () => {
+      insertLearning(db, {
+        title: 'PATTERNKEEP unpromoted row',
+        content: 'PATTERNKEEPBODY plainly visible advisory body',
+      });
+
+      const result = handlePatternSuggest({
+        project: 'test-project',
+        context: 'PATTERNKEEP unpromoted row',
+      });
+      const text = result.content[0].text;
+
+      expect(text).toContain('PATTERNKEEPBODY plainly visible advisory body');
       expect(text).not.toContain('Promoted: →');
     });
   });
