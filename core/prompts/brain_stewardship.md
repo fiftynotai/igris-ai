@@ -59,8 +59,8 @@ applies migrations on first use.
 ## 1. Learnings (`igris_memory_*`)
 
 **Tools:** `igris_memory_store`, `igris_memory_recall`, `igris_memory_search`,
-`igris_memory_get`, `igris_memory_update`, `igris_memory_delete`,
-`igris_memory_dashboard`.
+`igris_memory_hybrid_search`, `igris_memory_get`, `igris_memory_update`,
+`igris_memory_delete`, `igris_memory_dashboard`.
 
 **What's there:** project-local and global lessons — patterns, decisions,
 discoveries, mistakes, optimizations. Hybrid BM25 + vector search with project
@@ -106,6 +106,24 @@ When in doubt, ask: *"Will a future actor reading the code learn this on their o
 Avoid redundant recalls within the same session over the same topic — once you have the relevant memories in context, work from them.
 
 **Category filter limitation (TD-093 follow-up):** `igris_memory_recall` does NOT currently accept a `category` parameter. To bias recall toward a specific category (e.g., `mistake`), include category-evocative keywords in the `context` query (e.g., `"... mistake regression bug"`). FTS5 ranking biases the match but does not strictly filter. If you need a hard filter, see TD-093.
+
+### When to Hybrid-Search (`igris_memory_hybrid_search`)
+
+Use `igris_memory_hybrid_search` for the highest-quality single-query recall:
+it fuses BM25 (FTS5) and vector-KNN results via RRF, so a query matches on both
+lexical keywords and semantic similarity. It excludes `pending_review` rows
+(conscious channel only) and falls back to BM25-only when sqlite-vec / embedding
+is unavailable — no caller handling needed. Input: `{ query, project?, limit? }`
+(defaults: `limit` 10, `bm25_weight`/`vector_weight` 0.5/0.5, `rrf_k` 60); pass
+`project` to scope, omit it to search everything. Prefer this over
+`igris_memory_search` (BM25-only) when you want the best ranked recall and don't
+need to tune weights.
+
+The **`/search` skill is the interactive entrypoint** for this tool — it parses
+`--project` / `--global` / `--limit`, renders the ranked `ID | Title | Snippet |
+Score` table, and pulls a chosen learning into context via `igris_memory_get`
+(`/search --pull <id>`). Reach for the raw tool in free-form reasoning; point the
+operator at `/search` when they want to browse recall interactively.
 
 ### When to Update
 
