@@ -87,6 +87,7 @@ import {
   agentId,
   mcpFacts,
   mcpTargetTypes,
+  hookTargetTypes,
   type HarnessId,
 } from "../lib/harness-descriptor.js";
 import {
@@ -143,7 +144,7 @@ export interface RemoveOptions {
   event?: string;
   /** Root the auto-detect + un-project + verify resolve against. Defaults to cwd. */
   projectRoot?: string;
-  /** Restrict un-projection to one harness (claude|codex|gemini|opencode|antigravity). */
+  /** Restrict un-projection to one harness (claude|codex|gemini|opencode|antigravity|cursor). */
   target?: string;
   /** Skip the destructive confirmation prompt (scripted / round-trip use). */
   yes?: boolean;
@@ -527,10 +528,15 @@ async function runRemoveMcpArm(
   const overlayPath = opts.overlayPath ?? loadoutOverlayPath();
   const name = opts.name!;
 
-  const harnesses =
+  // TD-283: the default un-project set is descriptor-derived (FR-217
+  // `mcpTargetTypes()`) so `igris remove mcp` reaches every mcp harness (cursor
+  // included) — was a hardcoded pre-cursor 5-list. cursor's grant is `covered`
+  // (no grant file), so removeBrainGrant is a no-op-equivalent for it, exactly
+  // like opencode (see removeMcpViaDelegate step 3).
+  const harnesses: string[] =
     opts.target !== undefined && opts.target.length > 0
       ? [opts.target]
-      : ["claude", "codex", "gemini", "opencode", "antigravity"];
+      : mcpTargetTypes();
   const targetLabels = harnesses.map((h) => `${h}:${name}`);
 
   // INVERTED no-phantom-success snapshot: capture whether the block existed
@@ -672,9 +678,10 @@ function removeMcpViaDelegate(
     }
   }
 
-  // 3) REVOKE the Igris-owned no-prompt grant for each harness (opencode is
-  // `covered` — its grant lives in the agent frontmatter, removed with the
-  // agent, never here). A grant-revoke FAIL is LOUD.
+  // 3) REVOKE the Igris-owned no-prompt grant for each harness (opencode +
+  // cursor are `covered` — no grant file to revoke: opencode's grant is the
+  // agent-frontmatter permission map (removed with the agent), cursor
+  // auto-approves via --approve-mcps). A grant-revoke FAIL is LOUD.
   for (const h of harnesses) {
     const grant = revokeFn(h as McpHarness, {
       folder: projectRoot,
@@ -717,10 +724,13 @@ async function runRemoveHookArm(
     opts = { ...opts, event: recovered };
   }
 
-  const harnesses =
+  // TD-283: descriptor-derived (FR-217 `hookTargetTypes()`) — the hook-capable
+  // set {claude, opencode, antigravity} today; never re-drifts at a new harness
+  // (cursor is `hooks.supported:false`, so it is correctly not a hook target).
+  const harnesses: string[] =
     opts.target !== undefined && opts.target.length > 0
       ? [opts.target]
-      : ["claude", "opencode", "antigravity"];
+      : hookTargetTypes();
   const targetLabels = harnesses.map((h) => `${h}:${name}`);
 
   // INVERTED no-phantom-success snapshot (see the mcp arm).

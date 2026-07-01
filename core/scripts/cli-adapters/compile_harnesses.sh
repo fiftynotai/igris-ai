@@ -88,7 +88,7 @@ igris_skills_engine() {
 }
 
 # FR-212d Phase 2: the MCP engine is now ALWAYS "delegate" — `add-mcp` (server
-# registration) + the Igris-owned no-prompt grant for the 4 delegated harnesses,
+# registration) + the Igris-owned no-prompt grant for the delegated harnesses,
 # with antigravity's ENTRY carved out to the custom merger INSIDE the TS
 # (`runProjectMcp`, FR-179 config-path mismatch). The custom merger placement for
 # the delegated harnesses was DELETED. No escape hatch — the `IGRIS_MCP_ENGINE`
@@ -1453,7 +1453,7 @@ PY
       # smoke gate went green). Shell out to the `skills` CLI via `igris loadout
       # project-skills --source <root>` (the LOCAL pinned binary, resolved inside
       # the TS delegate — NEVER a bare `npx`). The tool's `skills add <root>`
-      # projects EVERY skill under the root to all 5 harnesses in ONE call, so we
+      # projects EVERY skill under the root to all Igris harnesses in ONE call, so we
       # dispatch ONCE per distinct source root (the 3 per-source target-type rows
       # — claude/agents/opencode — collapse to a single call; DELEGATED_SKILL_ROOTS
       # dedups). Mirrors how project_mcp/project_hook shell to the loadout verb
@@ -1520,7 +1520,7 @@ project_mcp() {
   # FR-212d: the MCP engine is now a CONSTANT "delegate" (igris_mcp_engine; the
   # IGRIS_MCP_ENGINE env read was RETIRED). The TS `igris loadout project-mcp`
   # shells to `add-mcp` for SERVER REGISTRATION then writes the Igris-owned
-  # no-prompt GRANT (mcp-grant.ts) for the 4 delegated harnesses; antigravity's
+  # no-prompt GRANT (mcp-grant.ts) for the delegated harnesses; antigravity's
   # ENTRY stays custom INSIDE the TS (FR-179 config/ path) but its grant is still
   # written. The per-row dispatch below is engine-agnostic (bash never
   # re-implements placement — §18.1). We resolve the constant ONCE for the
@@ -1563,7 +1563,7 @@ project_mcp() {
 
       if [ "$rc" -eq 0 ]; then
         # FR-212d: tag the engine in the summary (always "delegate" now =
-        # add-mcp + grant for the 4 delegated harnesses; antigravity's entry is
+        # add-mcp + grant for the delegated harnesses; antigravity's entry is
         # custom-written inside the TS but tagged the same). The label is purely
         # informational — the placement is the TS verb's job.
         SUMMARY+=("OK    mcp/$m_name/$m_type ($mcp_engine)")

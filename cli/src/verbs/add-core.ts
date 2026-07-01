@@ -35,6 +35,16 @@ import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import { brainDir } from "../lib/paths.js";
 import { info } from "../lib/log.js";
+// TD-283: the core add path's MCP/hook `--target` validation is descriptor-
+// derived (FR-217) — no hardcoded harness list. `mcpTargetTypes()` /
+// `hookTargetTypes()` read the canonical descriptor's per-surface participation
+// so the validators reach every current harness (cursor included for MCP) and
+// never re-drift at a new harness.
+import {
+  mcpTargetTypes,
+  hookTargetTypes,
+  type HarnessId,
+} from "../lib/harness-descriptor.js";
 
 /** Result of a core-surface materialize. */
 export interface AddCoreResult {
@@ -588,17 +598,12 @@ function regenerateAgentRoster(
 /** MCP name must be lower-kebab (parallels the loadout NAME_PATTERN). */
 const MCP_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
-/** The MCP harness target types — the `igris add` core path's own list (FR-180,
- * out of FR-217's loadout-consolidation scope; the projection path reads
- * `mcpTargetTypes()` from the descriptor). */
-const MCP_TARGET_TYPES = [
-  "claude",
-  "codex",
-  "gemini",
-  "opencode",
-  "antigravity",
-] as const;
-type McpCoreTargetType = (typeof MCP_TARGET_TYPES)[number];
+/** The MCP harness target type — descriptor-derived (TD-283: was a hardcoded
+ * pre-cursor 5-list; the runtime `--target` membership is now enforced via
+ * `mcpTargetTypes()` so `igris add --core mcp --target` reaches every mcp
+ * harness, cursor included, and never re-drifts at a new harness). Mirrors
+ * loadout.ts's `McpTargetType = HarnessId` — all harnesses have an `mcp` block. */
+type McpCoreTargetType = HarnessId;
 
 /**
  * §14 SECURITY: the env-var-indirection WRITE GUARD on the CORE path (FR-160
@@ -624,8 +629,8 @@ function parseCoreMcpTarget(spec: string): CoreMcpTarget | string {
     return `--target '${spec}' must be of the form type:merge[:enabled]`;
   }
   const [type, method, enabledRaw] = parts;
-  if (!(MCP_TARGET_TYPES as readonly string[]).includes(type)) {
-    return `--target type '${type}' is not one of ${JSON.stringify(MCP_TARGET_TYPES)}`;
+  if (!(mcpTargetTypes() as readonly string[]).includes(type)) {
+    return `--target type '${type}' is not one of ${JSON.stringify(mcpTargetTypes())}`;
   }
   if (method !== "merge") {
     return `--target method '${method}' must be 'merge'`;
@@ -859,11 +864,12 @@ const HOOK_EVENTS = [
 ] as const;
 type HookCoreEvent = (typeof HOOK_EVENTS)[number];
 
-/** The hook harness target types — the `igris add` core path's own list (FR-180,
- * out of FR-217's loadout-consolidation scope; the projection path reads
- * `hookTargetTypes()` from the descriptor). */
-const HOOK_TARGET_TYPES = ["claude", "opencode", "antigravity"] as const;
-type HookCoreTargetType = (typeof HOOK_TARGET_TYPES)[number];
+/** The hook harness target type — descriptor-derived (TD-283: was a hardcoded
+ * list; the runtime `--target` membership is now enforced via `hookTargetTypes()`
+ * so it never re-drifts at a new hook-capable harness). The compile-time type
+ * narrows `HarnessId` to the hook-capable set exactly like loadout.ts's
+ * `HookTargetType` (codex/gemini have no hooks; cursor is `hooks.supported:false`). */
+type HookCoreTargetType = Exclude<HarnessId, "codex" | "gemini" | "cursor">;
 
 interface CoreHookTarget {
   type: HookCoreTargetType;
@@ -878,8 +884,8 @@ function parseCoreHookTarget(spec: string): CoreHookTarget | string {
     return `--target '${spec}' must be of the form type:merge[:enabled]`;
   }
   const [type, method, enabledRaw] = parts;
-  if (!(HOOK_TARGET_TYPES as readonly string[]).includes(type)) {
-    return `--target type '${type}' is not one of ${JSON.stringify(HOOK_TARGET_TYPES)}`;
+  if (!(hookTargetTypes() as readonly string[]).includes(type)) {
+    return `--target type '${type}' is not one of ${JSON.stringify(hookTargetTypes())}`;
   }
   if (method !== "merge") {
     return `--target method '${method}' must be 'merge'`;

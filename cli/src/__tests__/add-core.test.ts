@@ -444,6 +444,33 @@ describe("addCoreMcp — happy path", () => {
   });
 });
 
+describe("addCoreMcp — TD-283 descriptor-derived --target reaches cursor", () => {
+  it("accepts --target cursor:merge (cursor is in mcpTargetTypes())", () => {
+    const manifestPath = seedSurfacesManifest(repo);
+    // cursor was NOT in the pre-TD-283 hardcoded 5-list; the --target validator
+    // now reads the descriptor's mcp-surface set (`mcpTargetTypes()`), which
+    // includes cursor. skipMirror + brainRoot keep the test hermetic (validation
+    // + source write only — no runtime/HOME touch).
+    const r = addCoreMcp({
+      name: "cursorserver",
+      projectRoot: repo,
+      command: "node",
+      args: ["server.js"],
+      targets: ["cursor:merge"],
+      brainRoot: brain,
+      skipMirror: true,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.code).toBe(0);
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as {
+      surfaces: { mcp_servers: Array<{ name: string; targets: Array<{ type: string }> }> };
+    };
+    const block = manifest.surfaces.mcp_servers.find((m) => m.name === "cursorserver");
+    expect(block).toBeDefined();
+    expect(block!.targets.map((t) => t.type)).toEqual(["cursor"]);
+  });
+});
+
 describe("addCoreMcp — §14 inline-secret rejection", () => {
   it("REJECTS an --env value that is not a single ${VAR} reference", () => {
     seedSurfacesManifest(repo);

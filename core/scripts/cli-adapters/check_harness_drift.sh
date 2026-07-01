@@ -1258,7 +1258,7 @@ fi
 # verify_mcp — the MCP-server drift-verification surface plugin (FR-202 M0).
 # FR-164 (FR-160 epic): line-paired with the compile MCP pass (§18.1). Flattens
 # the SAME (mcp,target) rows via `flatten_mcp_rows` (target_kind="all" — drift
-# checks all 4 harness targets per block, consistent with drift's "check
+# checks all harness targets per block, consistent with drift's "check
 # everything" posture). For each row it resolves the harness config path + map
 # key and calls `verify_mcp_entry_drift` (which reads the on-disk entry, derives
 # the expected shape via the SHARED normalize_mcp_shape, and compares —
@@ -1500,9 +1500,9 @@ fi
 # PROJECTED set for that surface. Agents use `agents.projection == "target-row"`;
 # mcp/hook use the TD-281 `mcp.projected` / `hooks.projected` flags. The projected
 # flag is the "surface-projected vs carve-out" signal that distinguishes block
-# PRESENCE (capability) from surface PROJECTION (expectation): all 5 harnesses
-# have an mcp block but only {claude,codex,gemini,opencode} are mcp-projected —
-# antigravity is mcp.projected:false (the FR-179 carve-out: its entry is custom-
+# PRESENCE (capability) from surface PROJECTION (expectation): every Igris
+# harness has an mcp block but antigravity is mcp.projected:false (the FR-179
+# carve-out: its entry is custom-
 # written to ~/.gemini/config/, not add-mcp-projected), so the brain MCP surface
 # block omitting antigravity is LEGITIMATE, not flagged. All three arms use the
 # SAME footprint heuristic (a block/agent whose projected-target set is a STRICT

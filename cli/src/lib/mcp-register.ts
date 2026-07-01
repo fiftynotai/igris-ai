@@ -1104,8 +1104,8 @@ export interface BrainRegisterDeps {
 }
 
 /**
- * Register the bundled igris-brain MCP into ALL (or a subset of) the 4 harness
- * configs, reusing `buildHarnessMcpEntry` + `mergeJsonConfig`/`mergeTomlConfig`.
+ * Register the bundled igris-brain MCP into ALL (or a subset of) the Igris
+ * harness configs, reusing `buildHarnessMcpEntry` + `mergeJsonConfig`/`mergeTomlConfig`.
  * NEVER throws. The path is `bundledMcpEntryPath()` unless overridden
  * (`--dev`/tests). igris-brain is env-free (L-588) so secrets are never needed
  * (codex env = {}).
@@ -1552,8 +1552,8 @@ export function registerMcpInClaudeJson(opts?: {
   // suite) by forcing the CUSTOM merger regardless of the (now delegate-default)
   // engine. Same posture as antigravity: a deterministic Igris-owned write for a
   // specific config the delegate path does not cleanly serve here. The harness
-  // `compile`/`registerBrainAcrossHarnesses` path delegates the 4 harnesses; this
-  // narrow shim does not.
+  // `compile`/`registerBrainAcrossHarnesses` path delegates the non-antigravity
+  // harnesses; this narrow shim does not.
   const [{ result }] = registerBrainAcrossHarnesses(
     {
       mcpEntryPath: opts?.mcpEntryPath,

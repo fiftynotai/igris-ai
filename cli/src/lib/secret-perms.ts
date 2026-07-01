@@ -7,9 +7,14 @@
  * the mask, the win32 skip, or the git-tracked probe.
  *
  * Files in scope: `~/.igris/config.json`, `~/.igris/secrets.env` (Igris-owned,
- * proactively tightened) and the 4 harness configs `~/.claude.json`,
+ * proactively tightened) and the secret-bearing harness configs `~/.claude.json`,
  * `~/.gemini/settings.json`, `~/.codex/config.toml`,
  * `~/.config/opencode/opencode.json` (harness-owned, warn/`--fix`-only).
+ *
+ * TD-283: antigravity (`~/.gemini/config/mcp_config.json`) and cursor
+ * (`~/.cursor/mcp.json`) are INTENTIONALLY out of scope — Igris writes only the
+ * env-free brain MCP entry to those (no secret, L-588; that shape stores `${VAR}`
+ * verbatim, never a resolved literal like codex), so there is nothing to chmod.
  *
  * CONTRACT: nothing in this module ever throws. An absent file, a Windows
  * host, a missing `git` binary, a non-repo directory, or a race that makes a

@@ -138,8 +138,8 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
   // "add it to secrets.env", which doctor cannot do safely. Never echoes a value.
   detectMissingSecrets();
 
-  // TD-220: in the read pass (no --fix), the 4 harness configs are harness-
-  // owned — Igris WARNs but does NOT auto-tighten them ("don't fight the
+  // TD-220: in the read pass (no --fix), the harness-owned secret configs get a
+  // WARN — Igris does NOT auto-tighten them ("don't fight the
   // harness"). The drift table already shows the row; this names it as
   // harness-owned and offers --fix. (Igris-owned config.json/secrets.env are
   // fixed proactively at init + under --fix, so they don't get this warn.)
@@ -659,7 +659,7 @@ function isIgrisOwnedSecretFile(path: string): boolean {
 
 /**
  * TD-220: classify the perms of every Igris-written secret-bearing file +
- * the 4 harness configs into `secret-perms` drift rows. A row is emitted
+ * the harness-owned secret configs into `secret-perms` drift rows. A row is emitted
  * ONLY when the verdict is not "ok" (loose group/other bits, or git-tracked,
  * or both). Absent files and win32 produce "ok" (no row) — see
  * checkSecretFilePerms (never throws).
@@ -667,7 +667,7 @@ function isIgrisOwnedSecretFile(path: string): boolean {
  * NOTE (Risk R1 — atomic-rename re-loosens harness configs): the FR-162/163
  * mergers in mcp-register.ts write via tmp+renameSync, which adopts the
  * tmp file's umask mode (often 644). So every MCP re-registration re-loosens
- * a harness config — which is exactly why the 4 harness configs are
+ * a harness config — which is exactly why these harness configs are
  * warn/--fix-only (Decision 5) rather than proactively tightened. The clean
  * fix (chmod 600 after the rename inside the mergers) is a DEFERRED follow-up,
  * NOT TD-220 — keeping TD-220 off the FR-162/163 splice path.
@@ -675,6 +675,9 @@ function isIgrisOwnedSecretFile(path: string): boolean {
 function detectSecretFilePerms(): DriftRow[] {
   const out: DriftRow[] = [];
   const igrisOwned = igrisOwnedSecretFiles();
+  // TD-283: antigravity + cursor are intentionally NOT here — Igris writes only
+  // the env-free brain MCP entry to their config (no secret, L-588; nothing to
+  // chmod). See secret-perms.ts "Files in scope".
   const harnessOwned = [
     claudeJsonPath(),
     geminiSettingsPath(),

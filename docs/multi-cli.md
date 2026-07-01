@@ -231,13 +231,13 @@ project-scoped skill category; `/onboard-harness` is now shipped globally.)
 > the proven `mergeJsonConfig` custom merger REGARDLESS of the engine, in both the
 > register and remove paths. So "delegate MCP" ≠ "100% add-mcp": antigravity's
 > entry + every harness's grant remain Igris-owned. The `IGRIS_MCP_ENGINE` flag +
-> the custom merger placement for the 4 delegated harnesses (in the compile path)
+> the custom merger placement for the delegated harnesses (in the compile path)
 > were RETIRED. **NOTE the boundary:** `igris init` / `igris install` (step 11) /
 > `igris doctor --fix` keep the IN-PROCESS custom merger for brain wiring
 > (deterministic native shapes, no `add-mcp` subprocess at init — robust on
 > restricted-PATH/offline boxes); only the harness-`compile` projection delegates.
 > The MERGE-based description below still applies to the antigravity entry + the
-> init/install/doctor brain-wiring; the 4 delegated harnesses are written by
+> init/install/doctor brain-wiring; the delegated harnesses are written by
 > add-mcp under `harness compile`.
 
 MCP servers are a **third** first-class manifest surface, alongside agents and

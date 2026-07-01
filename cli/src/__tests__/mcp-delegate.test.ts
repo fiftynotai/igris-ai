@@ -67,7 +67,7 @@ function fakeSpawn(opts: {
 }
 
 describe("mcp-delegate — engine (FR-212d: delegate is the default engine)", () => {
-  it("resolves 'delegate' unconditionally (the custom merger for the 4 delegated harnesses was retired)", () => {
+  it("resolves 'delegate' unconditionally (the custom merger for the delegated harnesses was retired)", () => {
     // FR-212d Phase 2 flipped the default to delegate AND deleted the custom
     // merger placement for claude/codex/gemini/opencode + the IGRIS_MCP_ENGINE
     // env read. The resolver is a constant — antigravity's ENTRY still uses the

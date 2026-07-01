@@ -87,7 +87,7 @@ export interface UnprojectAndVerifyOptions {
    * removes leave this false.
    */
   expectCore?: boolean;
-  /** Restrict to one target type (claude|codex|gemini|opencode|antigravity). */
+  /** Restrict to one target type (claude|codex|gemini|opencode|antigravity|cursor). */
   target?: string;
   /** Explicit overlay-manifest override (personal path). */
   overlay?: string;

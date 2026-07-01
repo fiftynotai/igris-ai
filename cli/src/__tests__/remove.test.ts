@@ -798,23 +798,32 @@ describe("runRemove mcp — DELEGATE engine grant revocation (FR-212b)", () => {
     expect(unregisterSpy).toHaveBeenCalledTimes(1);
     const [unregName, unregOpts] = unregisterSpy.mock.calls[0];
     expect(unregName).toBe("brain-test");
+    // TD-283: the default un-project set is now descriptor-derived
+    // (`mcpTargetTypes()` = every mcp harness), so cursor→cursor joins the
+    // add-mcp remove agent set (antigravity stays carved out to the custom
+    // un-merger). Was a hardcoded pre-cursor 5-list.
     expect(unregOpts?.harnesses).toEqual([
       "claude-code",
       "codex",
       "gemini-cli",
       "opencode",
+      "cursor",
     ]);
+    expect(unregOpts?.harnesses).toContain("cursor");
     expect(unregOpts?.harnesses).not.toContain("antigravity");
     expect(unregOpts?.global).toBe(true);
 
     // 2) the grant was REVOKED for every targeted harness (the security arm),
     // keyed off the loadout id, with the project-root folder for the
-    // folder-scoped harnesses.
-    expect(revokeSpy).toHaveBeenCalledTimes(5);
+    // folder-scoped harnesses. TD-283: cursor is in the set (its grant is
+    // `covered`, so the REAL removeBrainGrant is a covered no-op for it — here
+    // the fake revoke just proves cursor is looped, like opencode).
+    expect(revokeSpy).toHaveBeenCalledTimes(6);
     const revokedHarnesses = revokeSpy.mock.calls.map((c) => c[0]);
     expect([...revokedHarnesses].sort()).toEqual(
-      ["antigravity", "claude", "codex", "gemini", "opencode"].sort(),
+      ["antigravity", "claude", "codex", "cursor", "gemini", "opencode"].sort(),
     );
+    expect(revokedHarnesses).toContain("cursor");
     expect(revokeSpy.mock.calls[0][1]?.folder).toBe(PROJECT_ROOT);
   });
 
