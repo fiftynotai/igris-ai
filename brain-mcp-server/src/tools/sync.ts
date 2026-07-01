@@ -23,6 +23,8 @@
 import type Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+import { basename, isAbsolute, sep } from 'node:path';
 import { getDb } from '../db.js';
 import { errMsg } from '../engine/helpers.js';
 import { embedNullLearnings } from '../utils/learning-embed.js';
@@ -70,6 +72,14 @@ interface SyncTableConfig {
   strategy: 'lww' | 'append';
   mergeFields?: Record<string, 'max' | 'merge_tags'>;
   columns: string[];
+  /**
+   * TD-253: columns holding absolute LOCAL filesystem paths that must be
+   * relativized before any row egresses to a remote brain. This ONE array is
+   * the source for BOTH the disclosure-manifest annotation (egress-manifest.ts)
+   * AND the runtime redaction (`redactTablesForEgress`). Every entry MUST also
+   * appear in `columns` (asserted by the parity test).
+   */
+  redactCols?: string[];
 }
 
 function tableColumns(db: Database.Database, name: string): Set<string> {
@@ -128,6 +138,9 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'slug', 'name', 'path', 'tech_stack', 'archetype', 'igris_version', 'status',
       'registered_at', 'last_session_at', 'metadata',
     ],
+    // TD-253: `path` is the absolute local checkout dir — relativized to ~ (or
+    // basename for a foreign-absolute path) before egress. See egress-manifest.ts.
+    redactCols: ['path'],
   },
   {
     table: 'sessions',
@@ -162,6 +175,9 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'liveness_method', 'liveness_status', 'liveness_checked_at',
       'lease_expires_at', 'state_updated_at',
     ],
+    // TD-253: `project_path` is the absolute local checkout dir for this
+    // instance — relativized to ~ before egress. See egress-manifest.ts.
+    redactCols: ['project_path'],
   },
   {
     table: 'agent_metrics',
@@ -346,6 +362,56 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     ],
   },
 ];
+
+// ---------------------------------------------------------------------------
+// Egress path redaction (TD-253)
+// ---------------------------------------------------------------------------
+
+/**
+ * Relativize an absolute LOCAL filesystem path so a remote brain never sees the
+ * source machine's directory layout. Idempotent (re-applying is a no-op):
+ *   - the home directory itself → `~`
+ *   - a path under home         → `~` + the suffix (e.g. `~/code/app`)
+ *   - any other absolute path   → its basename (strip the foreign prefix)
+ *   - an already-relative value → unchanged
+ * Non-string / empty values pass through untouched.
+ *
+ * Runs on the SOURCE machine (push side) where `homedir()` is the correct
+ * relativization base — the receiver/VPS is never given the real path.
+ */
+export function relativizeEgressPath(value: unknown): unknown {
+  if (typeof value !== 'string' || value === '') return value;
+  const home = homedir();
+  if (value === home) return '~';
+  if (value.startsWith(home + sep)) return '~' + value.slice(home.length);
+  if (isAbsolute(value)) return basename(value);
+  return value;
+}
+
+/**
+ * Redact the `redactCols` of every table IN PLACE, running each value through
+ * {@link relativizeEgressPath}. Returns the same object for call-site chaining.
+ *
+ * MUST be applied at each egress choke point BEFORE chunking AND before any
+ * `queueFailedRows` — mutating in place means the `tables` object reused by the
+ * failure-path re-queue is already redacted, so retries never leak (the
+ * load-bearing ordering decision, TD-253). Idempotent, so a second application
+ * (e.g. defense-in-depth in the queue-drain path) is a harmless no-op.
+ */
+export function redactTablesForEgress(
+  tables: Record<string, Record<string, unknown>[]>,
+): Record<string, Record<string, unknown>[]> {
+  for (const [tableName, rows] of Object.entries(tables)) {
+    const cfg = SYNC_TABLES.find((t) => t.table === tableName);
+    if (!cfg?.redactCols || cfg.redactCols.length === 0) continue;
+    for (const row of rows) {
+      for (const col of cfg.redactCols) {
+        if (col in row) row[col] = relativizeEgressPath(row[col]);
+      }
+    }
+  }
+  return tables;
+}
 
 // ---------------------------------------------------------------------------
 // Helper functions
@@ -903,6 +969,11 @@ async function handleBrainPush(
     };
   }
 
+  // TD-253: relativize local FS paths IN PLACE before both chunking and the
+  // failure-path `queueFailedRows` (line ~982). Mutating `tables` here means the
+  // re-queued object is already redacted, so retries never leak absolute paths.
+  redactTablesForEgress(tables);
+
   // Chunk and POST to remote
   const chunks = chunkTablesForPush(tables);
 
@@ -1298,7 +1369,10 @@ async function handleSyncQueueDrain(
       if (!out[t.table]) out[t.table] = [];
       out[t.table].push(t.row);
     }
-    return out;
+    // TD-253: idempotent defense-in-depth. Queued rows are already redacted
+    // (sites 1 & 2 redact before queueing), so this is a no-op on relative
+    // paths — but it guards any future queue-population path that skips redaction.
+    return redactTablesForEgress(out);
   }
 
   // Initial chunking: pack tagged rows up to CHUNK_SIZE_LIMIT_DRAIN. We can't

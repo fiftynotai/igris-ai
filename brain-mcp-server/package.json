@@ -15,7 +15,9 @@
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
     "test": "vitest run",
     "eval:memory": "tsx eval/memory/src/run.ts",
-    "backfill-edges": "tsx scripts/backfill_brief_edges.ts"
+    "backfill-edges": "tsx scripts/backfill_brief_edges.ts",
+    "gen:egress-manifest": "tsx scripts/gen-egress-manifest.ts",
+    "gen:egress-manifest:check": "tsx scripts/gen-egress-manifest.ts --check"
   },
   "author": "fifty.dev",
   "license": "MIT",

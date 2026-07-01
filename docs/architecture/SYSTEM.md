@@ -219,6 +219,8 @@ Adapters under `core/hooks/bridges/` let non-Claude CLIs (OpenCode, Codex, Gemin
 
 **Sync queue mechanism:** `sync_queue.jsonl` per project holds rows that failed to push. On the next `/boot`, `/rest`, or `/sync data`, the `igris_sync_queue_drain` tool retries each row. Callers must use `ALLOWED_KEYS_PER_OP` (in `cli/src/lib/sync/data.ts:224`) to build tool args — never spread arbitrary JSON from queue entries (TD-128 strict-input contract).
 
+**Egress disclosure + path redaction (TD-253):** what egresses to the VPS is disclosed in a generated manifest — [`docs/reference/sync-egress-manifest.md`](../reference/sync-egress-manifest.md) — derived from `SYNC_TABLES` (`brain-mcp-server/src/tools/sync.ts`), the single source of truth, and drift-guarded by a parity test. Before egress, absolute local filesystem paths (`projects.path`, `instances.project_path`) are relativized (home → `~`, foreign-absolute → basename) at all three push choke points via `redactTablesForEgress`, applied BEFORE chunking and the failure-retry queue so retries never leak. The disclosure is surfaced at the `igris init` / `igris configure` VPS consent prompt and in `igris sync data --dry-run`.
+
 **Auto-push pattern (TD-080):** background actors (perception extractor today, FR-118 subconscious tomorrow) invoke `core/hooks/shared/brain_push_async.sh` synchronously; callers detach via `nohup ... & disown`. The helper reads remote config from `~/.igris/config.json`, always exits 0, logs to `~/.igris/projects/{slug}/session/brain_push.log` with 1 MB rotation, and is silent when the remote is unconfigured.
 
 ---

@@ -97,6 +97,8 @@ import {
   processSyncPush,
   scheduleLearningEmbedAfterMerge,
   runPostMergeEmbedPass,
+  relativizeEgressPath,
+  redactTablesForEgress,
   SYNC_TABLES,
 } from '../sync.js';
 import {
@@ -778,5 +780,145 @@ describe('Sync — FR-220 post-merge learning embedding', () => {
     // (idempotent NULL-scan) so embedCount is exactly the two rows — no double-write.
     expect(nullCount()).toBe(0);
     expect(H.control.embedCount).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-253 — Egress path redaction
+// ---------------------------------------------------------------------------
+
+describe('TD-253 — relativizeEgressPath', () => {
+  const home = os.homedir();
+
+  it('maps the home directory itself to ~', () => {
+    expect(relativizeEgressPath(home)).toBe('~');
+  });
+
+  it('relativizes a path under home to ~ + suffix', () => {
+    expect(relativizeEgressPath(`${home}/code/app`)).toBe('~/code/app');
+  });
+
+  it('reduces a foreign-absolute path to its basename', () => {
+    expect(relativizeEgressPath('/opt/work/some-app')).toBe('some-app');
+  });
+
+  it('leaves an already-relative value unchanged', () => {
+    expect(relativizeEgressPath('code/app')).toBe('code/app');
+  });
+
+  it('is idempotent (re-applying is a no-op)', () => {
+    const once = relativizeEgressPath(`${home}/code/app`);
+    expect(relativizeEgressPath(once)).toBe(once);
+    const foreignOnce = relativizeEgressPath('/opt/work/some-app');
+    expect(relativizeEgressPath(foreignOnce)).toBe(foreignOnce);
+  });
+
+  it('passes non-string / empty values through untouched', () => {
+    expect(relativizeEgressPath(null)).toBeNull();
+    expect(relativizeEgressPath(42)).toBe(42);
+    expect(relativizeEgressPath('')).toBe('');
+  });
+});
+
+describe('TD-253 — redactTablesForEgress', () => {
+  const home = os.homedir();
+
+  it('relativizes only the redactCols of configured tables, in place', () => {
+    const projectsRow = { slug: 'app', path: `${home}/code/app`, name: 'App' };
+    const instanceRow = { id: 'i1', project_path: '/opt/work/app' };
+    const learningRow = { project: 'app', title: 't', content: `${home}/keep/me` };
+    const tables = {
+      projects: [projectsRow],
+      instances: [instanceRow],
+      learnings: [learningRow],
+    };
+
+    const returned = redactTablesForEgress(tables);
+
+    // Same reference returned (in-place mutation — the load-bearing contract).
+    expect(returned).toBe(tables);
+    expect(projectsRow.path).toBe('~/code/app');
+    expect(instanceRow.project_path).toBe('app');
+    // A non-redact table's path-shaped value is untouched.
+    expect(learningRow.content).toBe(`${home}/keep/me`);
+  });
+
+  it('is idempotent across a double application', () => {
+    const tables = { projects: [{ slug: 'a', path: `${home}/x/y` }] };
+    redactTablesForEgress(tables);
+    redactTablesForEgress(tables);
+    expect(tables.projects[0].path).toBe('~/x/y');
+  });
+});
+
+describe('TD-253 — handleBrainPush redacts before egress AND before the retry queue', () => {
+  let db: Database.Database;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    db = makeMinimalSyncDb();
+    mockedGetDb.mockReturnValue(db);
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    db.close();
+    vi.restoreAllMocks();
+  });
+
+  function seedProject(): void {
+    db.prepare(
+      `INSERT INTO projects (slug, name, path, last_session_at)
+       VALUES (?, ?, ?, ?)`,
+    ).run('app', 'App', `${os.homedir()}/code/app`, '2026-04-29 10:00:00');
+  }
+
+  it('the pushed payload carries the relativized project path (not the absolute local path)', async () => {
+    seedProject();
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, results: { projects: { inserted: 1 } } }),
+      text: async () => '',
+      status: 200,
+    })) as unknown as typeof globalThis.fetch;
+    globalThis.fetch = fetchMock;
+
+    await handleBrainPush({ remote_url: 'http://test-remote.local', api_key: 'k' });
+
+    const call = (fetchMock as ReturnType<typeof vi.fn>).mock.calls[0];
+    const body = JSON.parse((call[1] as RequestInit).body as string) as {
+      tables: Record<string, Array<Record<string, unknown>>>;
+    };
+    expect(body.tables.projects[0].path).toBe('~/code/app');
+    expect(JSON.stringify(body)).not.toContain(os.homedir());
+  });
+
+  it('the failure-path retry queue row is ALSO redacted (ordering guarantee)', async () => {
+    seedProject();
+    // 4xx → fetchWithRetry throws immediately (no backoff) → queueFailedRows.
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      json: async () => ({}),
+      text: async () => 'bad request',
+      status: 400,
+    })) as unknown as typeof globalThis.fetch;
+    globalThis.fetch = fetchMock;
+
+    const result = await handleBrainPush({
+      remote_url: 'http://test-remote.local',
+      api_key: 'k',
+    });
+    expect((result as { isError?: boolean }).isError).toBe(true);
+
+    const queued = db
+      .prepare(`SELECT table_name, row_data FROM sync_queue WHERE table_name = 'projects'`)
+      .all() as { table_name: string; row_data: string }[];
+    expect(queued.length).toBeGreaterThan(0);
+    const row = JSON.parse(queued[0].row_data) as { path: string };
+    // The queued row must NOT carry the absolute local path — redaction ran
+    // BEFORE queueFailedRows, so retries never leak.
+    expect(row.path).toBe('~/code/app');
+    expect(row.path).not.toContain(os.homedir());
   });
 });

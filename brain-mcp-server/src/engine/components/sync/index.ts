@@ -43,6 +43,7 @@ import {
   fetchWithRetry,
   queueFailedRows,
   chunkTablesForPush,
+  redactTablesForEgress,
   SYNC_TABLES,
 } from '../../../tools/sync.js';
 import type {
@@ -138,6 +139,11 @@ async function pushTables(
 ): Promise<void> {
   const totalRows = Object.values(tables).reduce((sum, rows) => sum + rows.length, 0);
   if (totalRows === 0) return;
+
+  // TD-253: relativize local FS paths IN PLACE at entry — before both chunking
+  // and the failure-path `queueFailedRows` (lines ~224/~246) — so the auto-push
+  // retry queue never carries absolute paths.
+  redactTablesForEgress(tables);
 
   const pushedAt = new Date().toISOString().replace('T', ' ').substring(0, 19);
   const chunks = chunkTablesForPush(tables);

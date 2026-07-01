@@ -66,7 +66,7 @@ It walks you through four things, **seeding every prompt from your current state
    - `professional` — a dry, neutral, matter-of-fact register.
 
    The chosen preset is copied over `~/.igris/core/SOUL.md`. Every preset carries the required `layer/tier/scope/summary` frontmatter, so the OS-index generator stays valid.
-3. **Remote brain (VPS)** — **by address presence**: enter a URL to enable cross-machine sync, or leave it **blank to disable** it. A non-local `http://` URL is **refused** (your `api_key` would travel in cleartext) unless you set `IGRIS_ALLOW_INSECURE_SYNC=1`; use `https://` instead. The `api_key` is stored in `~/.igris/config.json`, which is always chmod-tightened to `600`.
+3. **Remote brain (VPS)** — **by address presence**: enter a URL to enable cross-machine sync, or leave it **blank to disable** it. A non-local `http://` URL is **refused** (your `api_key` would travel in cleartext) unless you set `IGRIS_ALLOW_INSECURE_SYNC=1`; use `https://` instead. The `api_key` is stored in `~/.igris/config.json`, which is always chmod-tightened to `600`. Before you enter the URL, the prompt discloses exactly what egresses to the VPS; local filesystem paths are relativized before any row leaves your machine. Full disclosure: [`docs/reference/sync-egress-manifest.md`](reference/sync-egress-manifest.md).
 4. **Cognition toggles** — turn perception and/or subconscious ON or OFF. These write the nested `cognition.perception.enabled` / `cognition.subconscious.enabled` keys in `config.json`.
 
 **Flags:**

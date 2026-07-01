@@ -50,6 +50,7 @@ import {
   type DrainSnapshot,
 } from "./queue.js";
 import { info, error as logError, getVerbosity, setVerbosity } from "../log.js";
+import { EGRESS_DISCLOSURE_LINES } from "./egress-manifest.generated.js";
 
 export interface SyncDataOptions {
   /** When true, enumerate plan without invoking MCP. */
@@ -94,6 +95,9 @@ export async function runSyncData(opts: SyncDataOptions = {}): Promise<number> {
   // read the queue read-only via inspectQueueDepth/readFileSync so the
   // plan reflects on-disk depth without renaming anything.
   if (dry !== null) {
+    // TD-253: preview exactly what egresses on a real sync (sourced from the
+    // generated manifest module — cannot drift from SYNC_TABLES / the doc).
+    for (const line of EGRESS_DISCLOSURE_LINES) info(line);
     const depth = inspectQueueDepth(slug);
     // Read the live queue contents (if any) to enumerate entries in
     // the plan. We do NOT count `.draining-*` lines here because the

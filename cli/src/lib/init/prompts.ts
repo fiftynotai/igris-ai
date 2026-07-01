@@ -28,6 +28,7 @@ import {
 } from "../sync-transport.js";
 import { configJsonPath, userMdPath } from "../paths.js";
 import { inferActivePersona, listPersonas } from "../persona.js";
+import { EGRESS_DISCLOSURE_LINES } from "../sync/egress-manifest.generated.js";
 
 /**
  * Async prompt function — accepts a question string, resolves with the
@@ -341,6 +342,11 @@ async function askRemoteBrain(
 ): Promise<{ url: string; apiKey: string | null } | null> {
   info("");
   info("Optional: remote brain (VPS) for cross-machine sync.");
+
+  // TD-253: informed-consent disclosure — print EXACTLY what egresses BEFORE the
+  // URL prompt (the moment the operator opts into remote sync). Sourced from the
+  // generated manifest module so it can never drift from SYNC_TABLES / the doc.
+  for (const line of EGRESS_DISCLOSURE_LINES) info(line);
 
   // B2: re-prompt the URL until it parses or we exhaust the attempt budget.
   // A blank answer short-circuits (disable/skip) before validation runs.
