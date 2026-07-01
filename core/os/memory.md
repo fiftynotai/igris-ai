@@ -62,7 +62,7 @@ When in doubt, ask: *"Will a future actor reading the code learn this on their o
 
 Avoid redundant recalls within the same session over the same topic — once you have the relevant memories in context, work from them.
 
-**Category bias.** `igris_memory_recall` biases toward the matched text rather than strictly filtering by category. To lean recall toward a specific category (e.g., `mistake`), include category-evocative keywords in the `context` query (e.g., `"... mistake regression bug"`). The ranking favors the match but does not hard-filter.
+**Category filter.** `igris_memory_recall` accepts an optional `category` param (`pattern`, `decision`, `discovery`, `mistake`, `optimization`) that **hard-filters** results to that single category across every fetch path — a higher-ranked row of another category is excluded, not just reordered. Pass it when you want only one kind of lesson (e.g., `category: "mistake"` to surface only prior bugs/regressions). When `category` is omitted, all categories are searched and ranking is unchanged. As a complementary technique when you pass no `category`, you can still lean recall toward a kind of lesson by including category-evocative keywords in the `context` query (e.g., `"... mistake regression bug"`) — that biases the match but does not filter.
 
 ### When to Update
 
@@ -123,6 +123,14 @@ If you're about to write something low-signal, skip it. Over-storing degrades re
 igris_memory_recall({
   project: "igris-ai",
   context: "memory capability contract stewardship",
+  limit: 5
+})
+
+// Recall ONLY prior mistakes on a topic (hard category filter)
+igris_memory_recall({
+  project: "igris-ai",
+  context: "recall category filter",
+  category: "mistake",
   limit: 5
 })
 

@@ -1440,4 +1440,80 @@ describe('Memory Tools (FR-092)', () => {
       expect(text).not.toContain('Promoted: →');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // TD-093: optional `category` param hard-filters recall to a single
+  // category across every fetch path. The fixture has no learnings_vec, so
+  // recall runs BM25-only — this directly exercises the `bm25Sql` category
+  // predicate.
+  // -------------------------------------------------------------------------
+  describe('handleMemoryRecall — category filter (TD-093)', () => {
+    /**
+     * Seed a `pattern` row ranked ABOVE a `mistake` row (higher confidence +
+     * access_count => lower composite_score => ranks first) that both match
+     * the same FTS term. This proves category filtering excludes the
+     * higher-ranked row rather than merely re-ordering.
+     */
+    function seedRankedPair(): void {
+      insertLearning(db, {
+        category: 'pattern',
+        title: 'Retry backoff pattern',
+        content: 'Exponential retry backoff strategy for transient network failures',
+        confidence: 1.0,
+        access_count: 100,
+      });
+      insertLearning(db, {
+        category: 'mistake',
+        title: 'Retry backoff mistake',
+        content: 'Exponential retry backoff strategy caused a thundering herd regression',
+        confidence: 0.3,
+        access_count: 0,
+      });
+    }
+
+    it('returns ONLY the requested category even when another category ranks higher', async () => {
+      seedRankedPair();
+
+      const result = await handleMemoryRecall({
+        project: 'test-project',
+        context: 'retry backoff strategy',
+        category: 'mistake',
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Category: mistake');
+      // The higher-ranked pattern row must be excluded by the hard filter.
+      expect(text).not.toContain('Category: pattern');
+    });
+
+    it('surfaces all categories when category is omitted (zero regression)', async () => {
+      seedRankedPair();
+
+      const result = await handleMemoryRecall({
+        project: 'test-project',
+        context: 'retry backoff strategy',
+        limit: 5,
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Category: pattern');
+      expect(text).toContain('Category: mistake');
+    });
+
+    it('returns a validation error for an invalid category without throwing', async () => {
+      seedRankedPair();
+
+      const result = await handleMemoryRecall({
+        project: 'test-project',
+        context: 'retry backoff strategy',
+        // @ts-expect-error — deliberately invalid enum value for the guard test
+        category: 'bogus',
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Validation error: Invalid category');
+      expect(text).not.toContain('Category: pattern');
+      expect(text).not.toContain('Category: mistake');
+    });
+  });
 });

@@ -112,6 +112,13 @@ interface MemoryRecallInput {
   project: string;
   context: string;
   limit?: number;
+  /**
+   * TD-093: optional hard-filter to a single learning category. When omitted,
+   * all categories are searched (byte-identical SQL = zero regression). When
+   * set, results are restricted to that category on every fetch path
+   * (BM25/FTS + vector-scope + hybrid hydration).
+   */
+  category?: 'pattern' | 'decision' | 'discovery' | 'mistake' | 'optimization';
 }
 
 /** Input shape for igris_memory_get */
@@ -428,6 +435,17 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
   const db = getDb();
   const limit = args.limit ?? 5;
 
+  // TD-093: validate the optional category enum before touching the DB.
+  // Mirrors validateMemoryInput's message shape and reuses VALID_CATEGORIES.
+  if (args.category !== undefined && !VALID_CATEGORIES.includes(args.category)) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Validation error: Invalid category: must be one of ${VALID_CATEGORIES.join(', ')}.`,
+      }],
+    };
+  }
+
   const sanitized = sanitizeFts5Query(args.context);
   if (!sanitized) {
     return {
@@ -440,6 +458,9 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
 
   // --- 1. BM25 search via FTS5 (project-local + global scope) ---
   // FR-109 filter: pending_review rows excluded from conscious-channel recall.
+  // TD-093: `categoryClause` hard-filters to a single category when provided;
+  // empty when omitted so the SQL is byte-identical to the pre-TD-093 query.
+  const categoryClause = args.category ? ' AND l.category = ?' : '';
   const bm25Sql = `
     SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
            l.tech_stack, l.scope, l.source_brief, l.confidence,
@@ -450,14 +471,16 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
     JOIN learnings l ON l.id = fts.rowid
     WHERE learnings_fts MATCH ?
       AND (l.project = ? OR l.scope = 'global')
-      AND l.review_status = 'approved'
+      AND l.review_status = 'approved'${categoryClause}
     ORDER BY composite_score
     LIMIT ?
   `;
 
   let bm25Rows: Bm25Row[] = [];
   try {
-    bm25Rows = db.prepare(bm25Sql).all(sanitized, args.project, limit * 2) as Bm25Row[];
+    bm25Rows = db.prepare(bm25Sql).all(
+      sanitized, args.project, ...(args.category ? [args.category] : []), limit * 2,
+    ) as Bm25Row[];
   } catch {
     bm25Rows = [];
   }
@@ -478,9 +501,11 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
       if (vecResults.length > 0) {
         const ids = vecResults.map(r => r.rowid);
         const placeholders = ids.map(() => '?').join(',');
+        // TD-093: append the same category hard-filter to the vector-channel
+        // scope re-check so a category-mismatched vec hit never bubbles through.
         const scopeRows = db.prepare(
-          `SELECT id FROM learnings WHERE id IN (${placeholders}) AND (project = ? OR scope = 'global') AND review_status = 'approved'`,
-        ).all(...ids, args.project) as { id: number }[];
+          `SELECT id FROM learnings WHERE id IN (${placeholders}) AND (project = ? OR scope = 'global') AND review_status = 'approved'${args.category ? ' AND category = ?' : ''}`,
+        ).all(...ids, args.project, ...(args.category ? [args.category] : [])) as { id: number }[];
         const scopeIdSet = new Set(scopeRows.map(r => r.id));
         vecResults = vecResults.filter(r => scopeIdSet.has(r.rowid));
       }
@@ -530,14 +555,18 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
     // caller bypassing those upstream filters must not leak unapproved rows
     // through the hydration step. Kept symmetric with the same filter on the
     // hybrid_search hydration query below.
+    // TD-093: the `AND category = ?` here is defense-in-depth (symmetric with
+    // the review_status filter above). topIds are already category-filtered
+    // upstream, but this guarantees "ONLY category rows" even if a future
+    // caller bypasses the upstream predicates.
     const fullRows = db.prepare(
       `SELECT id, project, category, title, content, tags, tech_stack, scope,
               source_brief, confidence, created_at, access_count, provenance,
               promoted_to_doc
        FROM learnings
        WHERE id IN (${placeholders})
-         AND review_status = 'approved'`,
-    ).all(...topIds) as Bm25Row[];
+         AND review_status = 'approved'${args.category ? ' AND category = ?' : ''}`,
+    ).all(...topIds, ...(args.category ? [args.category] : [])) as Bm25Row[];
 
     const rowMap = new Map<number, Bm25Row>();
     for (const row of fullRows) {

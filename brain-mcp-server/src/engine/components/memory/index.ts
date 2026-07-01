@@ -161,7 +161,7 @@ export function createMemoryComponent(): BrainComponent {
         },
         {
           name: 'igris_memory_recall',
-          description: 'Contextual recall of relevant learnings for the current project. Combines project-local and global learnings matching the given context. Updates access counts for returned results.',
+          description: 'Contextual recall of relevant learnings for the current project. Combines project-local and global learnings matching the given context. Optionally hard-filters to a single learning category. Updates access counts for returned results.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -177,6 +177,11 @@ export function createMemoryComponent(): BrainComponent {
               limit: {
                 type: 'number',
                 description: 'Maximum number of results (default: 5)',
+              },
+              category: {
+                type: 'string',
+                enum: ['pattern', 'decision', 'discovery', 'mistake', 'optimization'],
+                description: 'Optional: hard-filter recall to a single learning category. When omitted, all categories are searched.',
               },
             },
             required: ['project', 'context'],
