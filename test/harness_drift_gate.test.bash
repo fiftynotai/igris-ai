@@ -829,6 +829,64 @@ assert_gemini_hardlink() {
   [[ "$output" == *"hard link"* ]]
 }
 
+@test "TD-230: gemini AGENT re-added memory: key is caught as SCHEMA-INVALID (drift stays MATCH)" {
+  # TD-230 / GAP-2: a present + drift-clean harness.gemini.md can still be
+  # REFUSED by Gemini's loader (unknown key `memory` — the TD-229 blind spot).
+  # After a clean compile (drift MATCH), re-inject the Claude-only `memory:` key
+  # by an IN-PLACE truncating `>` rewrite of the LOADOUT harness.gemini.md. The
+  # `>` preserves the inode, so the hard link + drift MATCH stay intact —
+  # ISOLATING the new SCHEMA-INVALID verdict (gemini drift is inode-based, not
+  # content-based, so the bytes change does not co-emit a drift verdict).
+  local root
+  root="$(build_fr152_agent_project demo gemini)"
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json" --target gemini
+  [ "$status" -eq 0 ]
+  local loadout_gemini="$IGRIS_BRAIN_DIR/loadout/agents/demo/harness.gemini.md"
+  # In-place truncating rewrite (preserves inode → hard link + drift MATCH hold).
+  cat > "$loadout_gemini" <<'EOF'
+---
+name: demo
+description: FR-152 split-shape canonical for gemini
+kind: local
+memory: project
+---
+
+# demo AGENT
+
+FR-152 body from the FR-151 split-shape sidecar.
+EOF
+  # The hard link still shares the inode (drift MATCH unaffected).
+  assert_gemini_hardlink "$root/.gemini/agents/demo.md" "$loadout_gemini"
+  run bash "$GUARD" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json"
+  # SCHEMA-INVALID drives exit 1; the drift verdict is still MATCH (isolated).
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"[demo/gemini] SCHEMA-INVALID"* ]]
+  [[ "$output" == *"unrecognized key(s): memory"* ]]
+  [[ "$output" == *"schema-invalid target(s)"* ]]
+  # The drift verdict itself remained MATCH (verdict is orthogonal).
+  [[ "$output" == *"[demo/gemini] MATCH"* ]]
+}
+
+@test "TD-230: freshly compiled clean gemini agent stays green (no false SCHEMA-INVALID)" {
+  # No-false-positive guard: a real translated gemini agent (kind: local
+  # injected, no Claude-only keys, no invalid tools) must NOT trip the new
+  # SCHEMA-INVALID verdict. Proves the current clean tree + the conservative
+  # allow-list stay green (§18.1 3-way sync sanity: the allow-list does not
+  # reject a legitimately-projected shape).
+  local root
+  root="$(build_fr152_agent_project demo gemini)"
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json" --target gemini
+  [ "$status" -eq 0 ]
+  run bash "$GUARD" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[demo/gemini] MATCH"* ]]
+  [[ "$output" != *"SCHEMA-INVALID"* ]]
+}
+
 @test "FR-152/FR-158/TD-208: claude symlink + gemini hard link resolve to DIFFERENT per-harness files" {
   # FR-158 supersedes FR-152's "shared harness.md" with per-harness derived
   # outputs (claude → harness.claude.md, gemini → harness.gemini.md, BOTH

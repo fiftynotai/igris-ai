@@ -496,6 +496,164 @@ verify_gemini_agent_hardlink_drift() {
 }
 
 # ---------------------------------------------------------------------------
+# verify_agent_schema_loadable <harness> <name> <file>
+#
+# TD-230: static (no-launch) target-harness SCHEMA-LOADABILITY dispatcher. A
+# present + drift-clean harness file can still be REFUSED by the target
+# harness's loader (GAP-2 / TD-229: an unknown key like `memory`, an invalid
+# tool name, or an `mcp__` token — the DRIFT gate is blind to this because the
+# file matches the projected bytes; the bytes THEMSELVES are unloadable). This
+# dispatcher case-switches on <harness> and delegates to the per-harness pure
+# validator. An unrecognized harness (one without a strict subagent schema) is
+# a no-op (return 0, no accumulator touched). Extensible: add a `case` arm + a
+# verify_<harness>_agent_schema_loadable fn for the next strict-schema harness.
+# ---------------------------------------------------------------------------
+verify_agent_schema_loadable() {
+  local harness="$1"
+  local name="$2"
+  local file="$3"
+  case "$harness" in
+    gemini) verify_gemini_agent_schema_loadable "$name" "$file" ;;
+    *) return 0 ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# verify_gemini_agent_schema_loadable <name> <file>
+#
+# TD-230: pure (no harness launch) static schema-loadability check for a
+# projected Gemini agent frontmatter. Mirrors READ-ONLY the compile-side
+# contract that PRODUCES a loadable file — the §18.1 drift twin of
+# compile_harnesses.sh's gemini α-assembly (TOOL_MAP + DROPS + the mcp__ filter,
+# ~lines 264-351) and loadout.ts's CLAUDE_TO_GEMINI_TOOLS. It does NOT vendor a
+# gemini-cli bundle; it re-expresses the same conservative contract Igris
+# projects. Three static checks against the parsed frontmatter:
+#   (a) ALLOWED KEYS ONLY = {name, description, tools, kind}. Any other key
+#       (memory / model / temperature / max_turns / arbitrary) → SCHEMA-INVALID
+#       (mirrors Gemini's "Unrecognized key(s) in object": 'memory').
+#   (b) VALID TOOL NAMES: every tools[] token ∈ GEMINI_BUILTIN_TOOLS (the
+#       VALUES of CLAUDE_TO_GEMINI_TOOLS). A Claude-shape token (Read/Edit/…) or
+#       any unlisted name → SCHEMA-INVALID (mirrors Gemini's "Invalid tool name").
+#   (c) NO mcp__ GRAMMAR: any tools[] token starting with `mcp__` →
+#       SCHEMA-INVALID (Gemini rejects the double-underscore Claude shape).
+#
+# §18.1 SYNC (3-WAY constant): GEMINI_BUILTIN_TOOLS below MUST stay byte-in-sync
+# with compile_harnesses.sh's TOOL_MAP values / DROPS set and loadout.ts's
+# CLAUDE_TO_GEMINI_TOOLS. The no-false-positive bats test fails loudly if this
+# allow-list rejects a legitimately-projected tool. Operator override via
+# `frontmatter.gemini.md` is the escape hatch; the allow-list can widen toward
+# the full gemini ALL_BUILTIN_TOOL_NAMES in a follow-up if a real builtin is
+# needed.
+#
+# Reuses parse_simple_frontmatter_fields / parse_tools_field (byte-identical to
+# compile_harnesses.sh's python). Increments SCHEMA_INVALID (orthogonal — NEVER
+# touches MATCH/TOTAL/DRIFT, same discipline as the PARITY accumulator). The
+# python rc is captured so it NEVER throws under set -e; exit 3 = schema-invalid
+# (reason lines on stdout), 0 = OK, any other rc = internal error (ignored, no
+# false positive — the drift verdict already fired for the file).
+# ---------------------------------------------------------------------------
+verify_gemini_agent_schema_loadable() {
+  local name="$1"
+  local file="$2"
+
+  # Extract the raw frontmatter block (parse_frontmatter returns 1 + emits
+  # nothing when the file has none — an empty block parses to zero fields = OK).
+  local fm_text
+  fm_text=$(parse_frontmatter "$file" 2>/dev/null || true)
+
+  local reasons schema_rc=0
+  reasons=$(python3 - "$fm_text" <<'PY'
+import re
+import sys
+
+# GEMINI_BUILTIN_TOOLS — the VALUES of loadout.ts CLAUDE_TO_GEMINI_TOOLS (== the
+# compile_harnesses.sh TOOL_MAP values). §18.1 3-way sync: keep byte-in-sync
+# with compile_harnesses.sh TOOL_MAP/DROPS and loadout.ts CLAUDE_TO_GEMINI_TOOLS.
+GEMINI_BUILTIN_TOOLS = {
+    "read_file", "write_file", "replace", "run_shell_command",
+    "grep_search", "list_directory", "task", "web_fetch", "web_search",
+}
+# Allowed top-level keys for a projected Gemini agent frontmatter. Anything else
+# (memory/model/temperature/max_turns/arbitrary) is an Unrecognized key. Mirrors
+# the DROPS set + the {name,description,tools,kind} shape compile emits.
+ALLOWED_KEYS = {"name", "description", "tools", "kind"}
+
+
+def parse_tools_field(value):
+    """Mirror of compile_harnesses.sh parse_tools_field / TS parseToolsField."""
+    trimmed = value.strip()
+    if trimmed == "":
+        return []
+    inner = trimmed
+    if inner.startswith("[") and inner.endswith("]"):
+        inner = inner[1:-1]
+    out = []
+    for t in inner.split(","):
+        t = t.strip()
+        if (t.startswith('"') and t.endswith('"')) or (
+            t.startswith("'") and t.endswith("'")
+        ):
+            t = t[1:-1]
+        if t:
+            out.append(t)
+    return out
+
+
+def parse_simple_frontmatter_fields(fields):
+    """Mirror of compile_harnesses.sh parse_simple_frontmatter_fields."""
+    out = []
+    pattern = re.compile(r"^([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$")
+    for raw in fields.split("\n"):
+        line = raw.rstrip("\r")
+        if line.strip() == "":
+            continue
+        m = pattern.match(line)
+        if not m:
+            continue
+        out.append({"key": m.group(1), "value": m.group(2)})
+    return out
+
+
+parsed = parse_simple_frontmatter_fields(sys.argv[1])
+reasons = []
+
+# (a) unrecognized keys (in first-seen order).
+bad_keys = [e["key"] for e in parsed if e["key"] not in ALLOWED_KEYS]
+if bad_keys:
+    reasons.append("unrecognized key(s): " + ", ".join(bad_keys))
+
+# (b)/(c) tool-token grammar.
+for e in parsed:
+    if e["key"] != "tools":
+        continue
+    for tok in parse_tools_field(e["value"]):
+        if tok.startswith("mcp__"):
+            reasons.append("mcp__ token not valid in gemini tools[]: " + tok)
+        elif tok not in GEMINI_BUILTIN_TOOLS:
+            reasons.append("invalid tool name: " + tok)
+
+if reasons:
+    for r in reasons:
+        sys.stdout.write(r + "\n")
+    sys.exit(3)
+sys.exit(0)
+PY
+) || schema_rc=$?
+
+  if [ "$schema_rc" -eq 3 ]; then
+    echo "  [$name/gemini] SCHEMA-INVALID"
+    echo "      target    : $file"
+    while IFS= read -r reason; do
+      [ -z "$reason" ] && continue
+      echo "      reason    : $reason"
+    done <<< "$reasons"
+    echo "      fix       : run \`igris harness compile\` to re-project; operator override via frontmatter.gemini.md"
+    SCHEMA_INVALID=$((SCHEMA_INVALID + 1))
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # verify_mcp_entry_drift <name> <harness> <config_path> <map_key>
 #                        <canonical_json> <enabled> <secrets_path>
 #
@@ -752,6 +910,11 @@ DRIFT=0
 # per-target drift loop is blind to). Additive: does NOT touch TOTAL/MATCH/DRIFT;
 # contributes to the non-zero exit independently.
 PARITY=0
+# TD-230: schema-invalid targets (present + drift-clean but the target harness's
+# loader REFUSES the bytes — GAP-2 / TD-229). Additive: does NOT touch
+# TOTAL/MATCH/DRIFT; contributes to the non-zero exit independently. Mirrors the
+# PARITY accumulator design exactly.
+SCHEMA_INVALID=0
 # FR-156: per-agent tree-hash verdict is fired ONCE per agent (the loop walks
 # per-target rows, so a 3-target agent would otherwise emit 3 tree verdicts).
 # Tracked as a colon-delimited string `:name1:name2:` so the membership check
@@ -1029,6 +1192,15 @@ PY
   # "not loadout-anchored" verdicts.
   if [ "$ttype" = "claude" ] || [ "$ttype" = "gemini" ] || [ "$ttype" = "codex" ] || [ "$ttype" = "opencode" ]; then
     verify_md_agent_symlink_drift "$name" "$ttype" "$target_abs"
+    # TD-230: static schema-loadability check (GAP-2 / TD-229). A present +
+    # drift-clean gemini target can still be REFUSED by Gemini's loader (unknown
+    # `memory` key, invalid tool name, mcp__ token). Validate the ON-DISK
+    # target_abs — the surface Gemini actually reads (on a MATCH it is the same
+    # inode as the loadout source). Skip when absent (MISSING already emitted by
+    # the drift verdict above). Additive verdict — never touches MATCH/TOTAL/DRIFT.
+    if [ "$ttype" = "gemini" ] && [ -f "$target_abs" ]; then
+      verify_agent_schema_loadable "gemini" "$name" "$target_abs"
+    fi
     continue
   fi
 
@@ -1857,7 +2029,7 @@ done
 # not touch TOTAL/MATCH/DRIFT; increments PARITY only on a violation).
 verify_parity
 
-if [ "$TOTAL" -eq 0 ] && [ "$PARITY" -eq 0 ]; then
+if [ "$TOTAL" -eq 0 ] && [ "$PARITY" -eq 0 ] && [ "$SCHEMA_INVALID" -eq 0 ]; then
   # FR-202 (M0): surface noun list derived from the registry
   # (IGRIS_SURFACE_LABELS) — now "No agent/skills/mcp/hook targets matched …"
   # (FR-202 M4 dropped the identity surface).
@@ -1880,8 +2052,14 @@ echo "  $TOTAL targets — $MATCH in sync, $DRIFT drifted/missing"
 if [ "$PARITY" -gt 0 ]; then
   echo "  $PARITY parity violation(s) — declared harness missing from an existing targets[]"
 fi
+# TD-230: only surfaced when there is a violation, so a clean run stays
+# byte-identical to the pre-TD-230 output (the parseHarnessOutput acceptance
+# oracle, row #89). Mirrors the PARITY conditional line exactly.
+if [ "$SCHEMA_INVALID" -gt 0 ]; then
+  echo "  $SCHEMA_INVALID schema-invalid target(s) — present + drift-clean but the target harness refuses to load them"
+fi
 
-if [ "$DRIFT" -gt 0 ] || [ "$PARITY" -gt 0 ]; then
+if [ "$DRIFT" -gt 0 ] || [ "$PARITY" -gt 0 ] || [ "$SCHEMA_INVALID" -gt 0 ]; then
   exit 1
 fi
 exit 0
