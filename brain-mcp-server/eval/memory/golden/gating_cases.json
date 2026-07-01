@@ -1,0 +1,15 @@
+{
+  "description": "Each case is a pending_review (source_extractor='llm') learning that MUST NEVER surface in recall/search/hybrid, plus a query worded to match it (so it WOULD surface if the FR-109 gate were broken). handleMemoryGet(id) MUST still return it (by-ID bypasses the gate).",
+  "cases": [
+    { "key": "AUR-11", "project": "aurora-mobile", "query": "How do we recover from a payment card enrollment timeout at the gateway?" },
+    { "key": "AUR-12", "project": "aurora-mobile", "query": "Why did money formatting break after switching the phone language mid-session?" },
+    { "key": "NIM-11", "project": "nimbus-api", "query": "Why were freshly issued tokens rejected as not valid yet on one worker?" },
+    { "key": "NIM-12", "project": "nimbus-api", "query": "How did we reduce the flood of outbound webhook calls during traffic spikes?" },
+    { "key": "NIM-13", "project": "nimbus-api", "query": "What happens when a list endpoint has no maximum page size limit?" },
+    { "key": "HEL-11", "project": "helio-web", "query": "Why did the page flash bright white before dark mode applied on reload?" },
+    { "key": "HEL-12", "project": "helio-web", "query": "How did we delay loading the support chat bubble until the visitor interacts?" },
+    { "key": "PIP-11", "project": "pipeline-etl", "query": "What caused the retry storm that tripped the upstream provider rate limit?" },
+    { "key": "PIP-12", "project": "pipeline-etl", "query": "How did caching the small reference table lookups speed up the mapper?" },
+    { "key": "PIP-13", "project": "pipeline-etl", "query": "How do we trace a suspicious figure back to the exact job run that produced it?" }
+  ]
+}

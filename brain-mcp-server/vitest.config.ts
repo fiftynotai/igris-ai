@@ -5,6 +5,7 @@ export default defineConfig({
     include: [
       'src/**/__tests__/**/*.test.ts',
       'scripts/**/__tests__/**/*.test.ts',
+      'eval/**/__tests__/**/*.test.ts',
     ],
     environment: 'node',
   },

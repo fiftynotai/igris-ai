@@ -24,6 +24,9 @@ logs/
 # and Asset 1 (GitHub Settings OG, uploaded manually, not committed)
 docs/images/generated/
 
+# Generated memory-eval scorecards (FR-188 — regenerate via `npm run eval:memory`)
+brain-mcp-server/eval-memory-scorecard.*
+
 # Python
 __pycache__/
 *.py[cod]

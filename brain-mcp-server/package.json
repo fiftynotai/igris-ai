@@ -14,6 +14,7 @@
     "start:http": "node dist/index.js --http",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
     "test": "vitest run",
+    "eval:memory": "tsx eval/memory/src/run.ts",
     "backfill-edges": "tsx scripts/backfill_brief_edges.ts"
   },
   "author": "fifty.dev",
