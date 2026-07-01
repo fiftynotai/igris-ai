@@ -26,8 +26,9 @@
 
 import { getDb, BRAIN_DIR } from '../db.js';
 import { sanitizeFts5Query } from '../utils/fts5.js';
-import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL } from '../utils/embeddings.js';
+import { generateEmbedding, embeddingToBuffer, EMBEDDING_MODEL } from '../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbedding, vectorSearch } from '../utils/vector-search.js';
+import { embedNullLearnings } from '../utils/learning-embed.js';
 import type { VectorSearchResult } from '../utils/vector-search.js';
 import { computeRRF } from '../utils/hybrid-search.js';
 import type { SourceExtractor } from '../engine/components/perception/types.js';
@@ -1226,18 +1227,24 @@ async function handleMemoryBackfillEmbeddings(args: BackfillInput): Promise<{ co
     };
   }
 
-  // INTENTIONAL: no review_status filter — backfills pending rows so they're searchable post-approval without re-embed cost
-  let sql = 'SELECT id, title, content FROM learnings WHERE embedding IS NULL';
-  const params: string[] = [];
-  if (args.project) {
-    sql += ' AND project = ?';
-    params.push(args.project);
-  }
-  sql += ' ORDER BY id LIMIT ?';
+  // INTENTIONAL: no review_status filter — backfills pending rows so they're searchable post-approval without re-embed cost.
+  //
+  // FR-219a: delegate to the shared `embedNullLearnings` core so this tool
+  // embeds the NORMALIZED fingerprint (matching the dedup query path, the
+  // perception write path, and the TD-286 canonical store geometry) instead of
+  // the RAW `${title} ${content}` it historically used — which created a raw
+  // island inside a normalized store. The `WHERE embedding IS NULL` select,
+  // the per-row lockstep dual-write (learnings.embedding + learnings_vec), and
+  // the idempotent/resumable behavior all move into the shared core.
+  const startTime = Date.now();
 
-  const learnings = db.prepare(sql).all(...params, batchSize) as { id: number; title: string; content: string }[];
+  const summary = await embedNullLearnings(db, {
+    dryRun: false,
+    limit: batchSize,
+    project: args.project,
+  });
 
-  if (learnings.length === 0) {
+  if (summary.scanned === 0) {
     // Check total count to give context
     let countSql = 'SELECT COUNT(*) as total FROM learnings';
     const countParams: string[] = [];
@@ -1255,18 +1262,8 @@ async function handleMemoryBackfillEmbeddings(args: BackfillInput): Promise<{ co
     };
   }
 
-  const startTime = Date.now();
-
-  const { succeeded: processed, failed } = await processInBatches(
-    learnings,
-    async (learning) => {
-      const embedding = await generateEmbedding(`${learning.title} ${learning.content}`);
-      db.prepare('UPDATE learnings SET embedding = ?, embedding_model = ? WHERE id = ?')
-        .run(embeddingToBuffer(embedding), EMBEDDING_MODEL, learning.id);
-      insertEmbedding(db, learning.id, embedding);
-    },
-  );
-
+  const processed = summary.embedded;
+  const failed = summary.failures;
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
   // Check remaining
