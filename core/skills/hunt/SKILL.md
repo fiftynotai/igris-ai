@@ -78,6 +78,23 @@ Execute the complete implementation workflow for a brief, from planning through 
 
 1. Load brief via `igris_brief_get` (MCP), fallback to cache at `~/.igris/projects/{project}/briefs/` matching `$ARGUMENTS`
 2. Read brief content
+2.5. **Detect resume + capture recorded phase (FR-189):**
+   Read the brief's `## Workflow State` → `**Phase:**` field into RECORDED_PHASE.
+   - Fresh hunt: Status was "Ready", OR there is no Workflow State block, OR
+     RECORDED_PHASE is empty/INIT → set RECORDED_PHASE = INIT, RESUMED = false.
+   - Resumed hunt: Status is already "In Progress" AND RECORDED_PHASE is a phase
+     beyond INIT (PLANNING/APPROVAL/BUILDING/TESTING/REVIEWING/DOCUMENTING/
+     COMMITTING) → keep RECORDED_PHASE as-is, RESUMED = true.
+   - Catch-all: Any RECORDED_PHASE not in the resume set (including `BLOCKED` and
+     a contradictory `COMPLETE` while Status is In Progress) → set RESUMED = false,
+     RECORDED_PHASE = INIT, enter Phase 2: PLANNING. (Manual intervention is
+     already required for BLOCKED; a clean restart is the safe deterministic
+     default. A smarter resume-at-block-point, if ever wanted, is a separate
+     follow-up.)
+   Corroborate with step 6.5's `reentrant: true` result; if they disagree,
+   trust the recorded `**Phase:**` value (the brief file / brain is the phase
+   source of truth). RECORDED_PHASE is used by step 8, the Workflow State
+   block, the Instance State line, and the post-INIT entry-branch below.
 3. Verify Status is "Ready" or "In Progress"
 4. If Status is "Done" or "Draft", refuse with message
 5. Update Status: "Ready" -> "In Progress" if needed
@@ -133,21 +150,22 @@ Execute the complete implementation workflow for a brief, from planning through 
    - status: "In Progress"
    - priority: the brief's priority
    - effort: the brief's effort
-   - phase: "INIT"
+   - phase: RECORDED_PHASE (INIT on a fresh hunt; the preserved recorded phase on a resume — never reset a resumed hunt to INIT)
 
    **If brain MCP is NOT available or the call fails:**
    - Display: `WARNING: Brain sync skipped for {BRIEF_ID} — MCP unavailable. Queued locally for next /boot or /sync data.`
    - Append a JSON line to `~/.igris/projects/{project}/sync_queue.jsonl`:
      ```json
-     {"timestamp":"{ISO-8601 now}","operation":"brief_sync","project":"{project}","brief_id":"{BRIEF_ID}","title":"{title}","status":"In Progress","priority":"{priority}","effort":"{effort}","brief_type":"{type}","phase":"INIT"}
+     {"timestamp":"{ISO-8601 now}","operation":"brief_sync","project":"{project}","brief_id":"{BRIEF_ID}","title":"{title}","status":"In Progress","priority":"{priority}","effort":"{effort}","brief_type":"{type}","phase":"{RECORDED_PHASE}"}
      ```
    - Do NOT block the hunt workflow — continue to next step after warning.
 
-**Update brief Workflow State:**
+**Update brief Workflow State:** On a resumed hunt (RESUMED = true) do NOT
+overwrite `**Phase:**` with INIT — write the preserved RECORDED_PHASE.
 ```markdown
 ## Workflow State
 
-**Phase:** INIT
+**Phase:** {RECORDED_PHASE}
 **Active Agent:** none
 **Retry Count:** 0
 
@@ -155,10 +173,43 @@ Execute the complete implementation workflow for a brief, from planning through 
 Loading brief and preparing for implementation.
 
 ### Next Steps
-Proceed to PLANNING phase.
+Enter the state machine at {RECORDED_PHASE}.
 ```
 
-**Instance State:** If Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, run `igris instance state --project {project} --instance-id {instance_id} --current-brief {brief_id} --current-phase INIT --current-task "loading brief" --lease-minutes 120`. See "Instance State and Work Lease" below.
+**Instance State:** If Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, run `igris instance state --project {project} --instance-id {instance_id} --current-brief {brief_id} --current-phase {RECORDED_PHASE} --current-task "loading brief" (on a resumed hunt, `--current-task "resuming at {RECORDED_PHASE}"`) --lease-minutes 120`. See "Instance State and Work Lease" below.
+
+**Phase-machine entry (FR-189 — resume-aware):**
+INIT above always ran (re-claim, session update, status sync, heartbeat). Now
+enter the state machine at RECORDED_PHASE instead of always falling through to
+PLANNING:
+
+- RECORDED_PHASE == INIT (fresh hunt) → proceed to Phase 2: PLANNING as normal.
+- RECORDED_PHASE beyond INIT (resumed hunt) → emit ONE ≤1-line light confirm of
+  the already-completed phases, e.g.
+  "Resuming FR-XXX at {RECORDED_PHASE} (INIT..{prior phases} already complete)."
+  then jump directly to the matching Phase section below. Do NOT re-run the
+  skipped phases or their agent delegations.
+
+Recorded phase → entry section:
+| RECORDED_PHASE | Enter at |
+|----------------|----------|
+| INIT           | Phase 2: PLANNING (fresh) |
+| PLANNING / APPROVAL | Phase 2: PLANNING |
+| BUILDING       | Phase 3: BUILDING |
+| TESTING        | Phase 4: TESTING |
+| REVIEWING      | Phase 5: REVIEWING |
+| DOCUMENTING    | Phase 6: DOCUMENTING |
+| COMMITTING     | Phase 7: COMMITTING |
+
+(COMPLETE is not an entry target — INIT step 4 already refuses a Done brief.)
+Any RECORDED_PHASE not in the resume set above (including `BLOCKED` and a
+contradictory `COMPLETE` while Status is In Progress) → set RESUMED = false,
+RECORDED_PHASE = INIT, enter Phase 2: PLANNING. (Manual intervention is already
+required for BLOCKED; a clean restart is the safe deterministic default. A
+smarter resume-at-block-point, if ever wanted, is a separate follow-up.)
+The recorded phase is treated as in-progress and re-runs from the top of its
+section; only strictly-earlier phases are the "completed" ones that get the
+light confirm.
 
 ### Phase 2: PLANNING
 
