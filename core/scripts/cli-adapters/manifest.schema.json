@@ -409,7 +409,7 @@
         },
         "body_exception": {
           "type": "string",
-          "description": "optional; basename of a body-exceptions/<name>.json sidecar"
+          "description": "optional; basename (no .json) of a body-exceptions sidecar. FR-144: resolution is LAYER-KEYED, not in-repo-only — a personal-layer agent's sidecar resolves under the runtime loadout (<brain>/loadout/body-exceptions/<name>.json, honoring IGRIS_BRAIN_DIR); a core-layer agent's sidecar resolves in-repo alongside this adapter (body-exceptions/<name>.json). Not fallback: a repo sidecar never serves a personal agent."
         },
         "scope": { "$ref": "#/$defs/scope" },
         "targets": {

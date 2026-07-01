@@ -807,7 +807,19 @@ frontmatter). One documented exception exists: DESIGNER's `.claude/agents`
 harness carries one extra paragraph (the harness-skill invocation note). The
 manifest entry sets `"body_exception": "designer-harness-skill-para"`, and the
 sidecar `body-exceptions/designer-harness-skill-para.json` declares a unique
-`anchor` line plus the `insert` paragraph. The appendix is applied at
+`anchor` line plus the `insert` paragraph.
+
+Sidecar resolution is LAYER-KEYED (FR-144), not in-repo-only. A **core-layer**
+agent's sidecar lives in-repo alongside the adapter
+(`scripts/cli-adapters/body-exceptions/<name>.json`); a **personal-layer**
+agent's sidecar lives in the runtime loadout
+(`<brain>/loadout/body-exceptions/<name>.json`, i.e.
+`~/.igris/loadout/body-exceptions/`, honoring `IGRIS_BRAIN_DIR`). Keying on the
+agent's layer — rather than trying loadout-then-repo — keeps provenance
+one-directional: a re-introduced repo sidecar can never serve a personal agent
+(closes the L-498 leak).
+
+The appendix is applied at
 ASSEMBLY time (FR-152) — baked into BOTH per-harness loadout-resident outputs
 (`harness.claude.md` and `harness.gemini.md`, FR-158) by both the TS vendor
 primitive and the bash `compile_harnesses.sh` assembly helper — and
