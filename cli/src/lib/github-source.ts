@@ -485,6 +485,9 @@ export function selectSurface(
   // pass the lexical check, then `copyFileSync` would follow it and vendor host
   // files. Resolving symlinks on both repo root and srcDir before the under-
   // root check closes that hole. Fails closed on a dangling/broken link.
+  // Scope: repo ROOT (repoDir), broader than the L-474 lexical #subdir-base
+  // guard — a checked-in symlink may resolve anywhere inside the repo; only
+  // escape OUTSIDE the repo is rejected.
   if (!isContainedUnderReal(repoDir, srcDir)) {
     return `surface '${entry.name}' canonical dir resolves outside the repo (symlink escape): ${entry.canonical.dir}`;
   }
@@ -536,6 +539,8 @@ export function selectSurface(
     if (!existsSync(full)) {
       return `surface '${entry.name}' canonical file does not exist: ${f}`;
     }
+    // Scope: repo ROOT (repoDir) — same boundary as the L-536 lexical guard,
+    // strengthened by dereferencing symlinks.
     if (!isContainedUnderReal(repoDir, full)) {
       return `surface '${entry.name}' file '${f}' resolves outside the repo (symlink escape)`;
     }

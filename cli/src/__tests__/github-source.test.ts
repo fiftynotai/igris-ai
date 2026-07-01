@@ -13,12 +13,15 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
+import { gzipSync } from "node:zlib";
 import {
   parseGithubSpec,
   parseSemver,
@@ -26,6 +29,7 @@ import {
   pickNewerReleaseTag,
   readRepoManifest,
   selectSurface,
+  extractRepoTarball,
   isGithubSpec,
   type RepoManifest,
 } from "../lib/github-source.js";
@@ -495,5 +499,96 @@ describe("readRepoManifest + selectSurface", () => {
     if (typeof selected !== "string") {
       expect(selected.files.sort()).toEqual(["v1.md", "v2.md"]);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// extractRepoTarball — link-entry skip (M3 path-traversal hardening)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a GZIPPED tar archive with a `prefix/` top dir containing a regular
+ * file, a symlink entry, and a hardlink entry using MANUAL ustar headers.
+ * Manual headers (mirrors tarball.test.ts's buildAbsoluteEntryTarball) keep
+ * this fully in-memory — it never creates on-disk links, so it runs
+ * deterministically even in sandboxes that block symlink().
+ * ustar field offsets: name@0(100), size@124(12), chksum@148(8),
+ * typeflag@156(1), linkname@157(100), magic "ustar\0"@257, version "00"@263.
+ * Typeflags: "0"=regular file, "2"=SymbolicLink, "1"=Link.
+ */
+function buildLinkEntryTarball(): Buffer {
+  function header(
+    name: string,
+    size: number,
+    typeflag: string,
+    linkname = "",
+  ): Buffer {
+    const buf = Buffer.alloc(512);
+    buf.write(name.slice(0, 100), 0, 100, "utf-8");
+    buf.write("0000644\0", 100, 8, "utf-8");
+    buf.write("0001750\0", 108, 8, "utf-8");
+    buf.write("0001750\0", 116, 8, "utf-8");
+    buf.write(size.toString(8).padStart(11, "0") + " ", 124, 12, "utf-8");
+    buf.write(
+      Math.floor(Date.now() / 1000)
+        .toString(8)
+        .padStart(11, "0") + " ",
+      136,
+      12,
+      "utf-8",
+    );
+    buf.write("        ", 148, 8, "utf-8"); // chksum placeholder = 8 spaces
+    buf.write(typeflag, 156, 1, "utf-8");
+    if (linkname) buf.write(linkname.slice(0, 100), 157, 100, "utf-8");
+    buf.write("ustar\0", 257, 6, "utf-8");
+    buf.write("00", 263, 2, "utf-8");
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += buf[i];
+    buf.write(sum.toString(8).padStart(6, "0") + "\0 ", 148, 8, "utf-8");
+    return buf;
+  }
+  function fileEntry(name: string, content: string): Buffer {
+    const data = Buffer.from(content, "utf-8");
+    const pad = (512 - (data.length % 512)) % 512;
+    return Buffer.concat([
+      header(name, data.length, "0"),
+      data,
+      Buffer.alloc(pad),
+    ]);
+  }
+  const linkEntry = (name: string, tf: string, target: string): Buffer =>
+    header(name, 0, tf, target); // link entries carry no data payload
+  const archive = Buffer.concat([
+    fileEntry("prefix/regular.md", "clean\n"),
+    linkEntry("prefix/evil-symlink.md", "2", "/etc/passwd"),
+    linkEntry("prefix/evil-hardlink.md", "1", "prefix/regular.md"),
+    Buffer.alloc(1024), // two zero blocks = tar EOF
+  ]);
+  return gzipSync(archive);
+}
+
+describe("extractRepoTarball — link-entry skip (M3 path-traversal hardening)", () => {
+  let dest: string;
+  beforeEach(() => {
+    dest = mkdtempSync(join(tmpdir(), "igris-gh-extract-"));
+  });
+  afterEach(() => {
+    rmSync(dest, { recursive: true, force: true });
+  });
+
+  it("skips SymbolicLink and Link tar entries; writes neither to disk", async () => {
+    // Array form yields the Buffer as one chunk; Readable.from(buf) would
+    // iterate byte-by-byte and corrupt the gzip stream (matches tarball.test.ts).
+    const stream = Readable.from([buildLinkEntryTarball()]);
+    const count = await extractRepoTarball(stream, dest);
+    // regular file lands → proves extraction ran and strip:1 worked
+    expect(existsSync(join(dest, "regular.md"))).toBe(true);
+    // NEITHER link entry was written
+    expect(existsSync(join(dest, "evil-symlink.md"))).toBe(false);
+    expect(existsSync(join(dest, "evil-hardlink.md"))).toBe(false);
+    // only the one regular file was counted (links never increment fileCount)
+    expect(count).toBe(1);
+    // belt-and-braces: dest holds exactly the one regular file
+    expect(readdirSync(dest).sort()).toEqual(["regular.md"]);
   });
 });
