@@ -55,6 +55,19 @@ import type { Migration } from '../../types.js';
  *   `merged_into`; NEITHER is a recall gate, the `review_status='superseded'`
  *   value is what the ~10 `='approved'` readers auto-exclude → ZERO read-path
  *   sweep).
+ * Version 3 (FR-116 M3, Decisions #1/#2/#5/#8): the outdated-pruning + UNDO infra.
+ *   - `brain_maintenance_undo` — the per-learning pre-state log EVERY destructive
+ *     resolver writes at apply time (Decision #2). `igris_brain_maintenance_undo`
+ *     replays the inverse from it. Brand-new table; no reader today besides the
+ *     undo tool.
+ *   - `brain_maintenance_runs.outdated_proposed` / `.outdated_pruned` / `.undone`
+ *     — the curator counters + the reversal counter aggregated into the shared
+ *     audit row.
+ *   - `learnings.last_reviewed_at` — AUDIT-ONLY, stamped by the curator `keep`
+ *     verdict + `lower_confidence`; the deterministic staleness detector skips a
+ *     row reviewed within the stale window so a kept row is not re-flagged
+ *     immediately. NOT a recall gate. The `review_status='pruned'` soft-delete is
+ *     what the ~10 `='approved'` readers auto-exclude → ZERO read-path sweep.
  */
 export const janitorMigrations: Migration[] = [
   {
@@ -93,6 +106,39 @@ export const janitorMigrations: Migration[] = [
       ALTER TABLE brain_maintenance_runs ADD COLUMN contradictions_resolved INTEGER NOT NULL DEFAULT 0;
 
       ALTER TABLE learnings ADD COLUMN superseded_by INTEGER;
+    `,
+  },
+  {
+    version: 3,
+    description:
+      'FR-116 M3: brain_maintenance_undo pre-state log (Decision #2) + brain_maintenance_runs.outdated_proposed/outdated_pruned/undone (curator counters) + learnings.last_reviewed_at (Decisions #1/#5/#8)',
+    sql: `
+      CREATE TABLE IF NOT EXISTS brain_maintenance_undo (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT,
+        action_kind TEXT NOT NULL,
+        learning_id INTEGER NOT NULL,
+        related_learning_id INTEGER,
+        edge_type TEXT,
+        prior_review_status TEXT,
+        prior_confidence REAL,
+        prior_content TEXT,
+        prior_seen_again_count INTEGER,
+        prior_embedding_nulled INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        undone_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_brain_maintenance_undo_run
+        ON brain_maintenance_undo(run_id);
+      CREATE INDEX IF NOT EXISTS idx_brain_maintenance_undo_learning
+        ON brain_maintenance_undo(learning_id);
+
+      ALTER TABLE brain_maintenance_runs ADD COLUMN outdated_proposed INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE brain_maintenance_runs ADD COLUMN outdated_pruned INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE brain_maintenance_runs ADD COLUMN undone INTEGER NOT NULL DEFAULT 0;
+
+      ALTER TABLE learnings ADD COLUMN last_reviewed_at TEXT;
     `,
   },
 ];

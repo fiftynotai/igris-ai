@@ -84,7 +84,7 @@ describe('gateway tool count (TD-171 closeout)', () => {
   gateway.register(collectAllTools());
   const tools = gateway.listTools();
 
-  it('exposes exactly 108 tools (107 − FR-211 baseline + FR-119 janitor: +1 igris_janitor_run_now)', () => {
+  it('exposes exactly 111 tools (108 baseline + FR-116 M3: +3 maintenance tools)', () => {
     // If this assertion fires, the registered surface drifted. Either a tool
     // was added/removed without bumping the count here, or the closeout
     // baseline shifted intentionally. In either case: open a brief, decide,
@@ -92,7 +92,9 @@ describe('gateway tool count (TD-171 closeout)', () => {
     // FR-211 added igris_synapse_run (edge inference), 106→107.
     // FR-119 added igris_janitor_run_now (memory hygiene) via the cognition
     // composition (createJanitorComponent → createCognitionComponent), 107→108.
-    expect(tools.length).toBe(108);
+    // FR-116 M3 added igris_brain_maintenance_undo / _history / _config (the
+    // outdated-pruning + UNDO surface) on the janitor component, 108→111.
+    expect(tools.length).toBe(111);
   });
 
   it('every component factory contributes at least one tool', () => {

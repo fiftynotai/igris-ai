@@ -39,11 +39,13 @@ import type {
   Migration,
   ToolDefinition,
 } from '../../types.js';
-import { errMsg, successResult } from '../../helpers.js';
+import { errMsg, errorResult, successResult } from '../../helpers.js';
 import { DEFAULT_JANITOR_CONFIG, type JanitorConfig } from './types.js';
 import { janitorMigrations } from './schema.js';
 import { runJanitor } from './runner.js';
+import { performUndo } from './undo.js';
 import { resolveArbiterConfig } from '../arbiter/types.js';
+import { resolveCuratorConfig } from '../curator/types.js';
 import { resolveLlmExtractorGlobalConfig } from '../subconscious/index.js';
 
 /** The well-known name used to detect an existing schedule on init. */
@@ -72,6 +74,38 @@ function asObject(v: unknown): Record<string, unknown> | undefined {
   return v && typeof v === 'object' && !Array.isArray(v)
     ? (v as Record<string, unknown>)
     : undefined;
+}
+
+/**
+ * Merge `pruning` keys into `cognition.janitor.pruning` in `~/.igris/config.json`
+ * (read-modify-write, sibling-preserving). Returns the updated pruning sub-block,
+ * or throws on any fs/parse error (the caller surfaces it as an errorResult). Used
+ * by `igris_brain_maintenance_config` SET. Only the pruning sub-block is written —
+ * the `enabled` flag is deliberately NOT settable here (that is the FR-122
+ * `configure` verb's job).
+ */
+function writeJanitorPruningConfig(
+  pruning: Record<string, unknown>,
+): Record<string, unknown> {
+  const configPath = path.join(os.homedir(), '.igris', 'config.json');
+  const raw = fs.readFileSync(configPath, 'utf-8');
+  const cfg = JSON.parse(raw) as Record<string, unknown>;
+  const cognition = (asObject(cfg.cognition) ?? {}) as Record<string, unknown>;
+  const janitor = (asObject(cognition.janitor) ?? {}) as Record<string, unknown>;
+  const priorPruning = (asObject(janitor.pruning) ?? {}) as Record<string, unknown>;
+  const nextPruning = { ...priorPruning, ...pruning };
+  const next = {
+    ...cfg,
+    cognition: {
+      ...cognition,
+      janitor: {
+        ...janitor,
+        pruning: nextPruning,
+      },
+    },
+  };
+  fs.writeFileSync(configPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  return nextPruning;
 }
 
 /**
@@ -184,7 +218,7 @@ export function createJanitorComponent(): BrainComponent {
         {
           name: 'igris_janitor_run_now',
           description:
-            'Run the janitor memory-hygiene pipeline once (FR-119/FR-116 M2). Performs the deterministic sweep (TD-086 confidence bumps for re-discovered learnings, stale pending_review rejection, dormant re-evaluation surfacing), then the near-duplicate MERGE LLM extractor (builds a cheap deterministic set of near-dupe learning pairs, judges keep/merge/false-positive, QUEUES each proposed merge as a janitor suggestion), and then the co-scheduled CONTRADICTION-RESOLUTION extractor (arbiter): builds a set of same-topic opposition pairs (high-cosine + a deterministic negation/antonym cue), judges newer-wins/both-valid-scope/evolved-merge/not-a-contradiction, and QUEUES each proposed resolution as an arbiter suggestion (applied later via igris_suggestion_apply_action). Both extractors ride the single cognition.janitor.enabled flag. Writes one brain_maintenance_runs audit row aggregating all counters. Invoked by the cron schedule "janitor_engine" daily at 04:00; also fireable manually. Returns the run outcome plus the aggregated counters. Scope with project; force bypasses the cold-start plus candidate-size gate.',
+            'Run the janitor memory-hygiene pipeline once (FR-119/FR-116 M2/M3). Performs the deterministic sweep (TD-086 confidence bumps for re-discovered learnings, stale pending_review rejection, re-evaluation surfacing), the near-duplicate MERGE LLM extractor (judges keep/merge/false-positive, QUEUES each proposed merge as a janitor suggestion), the co-scheduled CONTRADICTION-RESOLUTION extractor (arbiter): same-topic opposition pairs judged newer-wins/both-valid-scope/evolved-merge/not-a-contradiction, and the co-scheduled OUTDATED-PRUNING extractor (curator): approved learnings flagged stale by the deterministic detector (old + unused, or deprecated-tech tag) judged keep/lower_confidence/prune, each QUEUED as a curator suggestion (applied later via igris_suggestion_apply_action). All extractors ride the single cognition.janitor.enabled flag. Writes one brain_maintenance_runs audit row aggregating all counters; a run whose prune intent exceeds the anomaly threshold surfaces a warning. Invoked by the cron schedule "janitor_engine" daily at 04:00; also fireable manually. Returns the run outcome plus the aggregated counters. Scope with project; force bypasses the cold-start plus candidate-size gate.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -208,17 +242,126 @@ export function createJanitorComponent(): BrainComponent {
             // flag (Decision #4A) — resolved from the same config object so its
             // `enabled` gate stays in lockstep with the janitor's.
             const arbiterConfig = resolveArbiterConfig(igrisConfig);
+            // FR-116 M3: the curator rides the SAME `cognition.janitor.enabled`
+            // flag (Decision #4A) — resolved from the same config object.
+            const curatorConfig = resolveCuratorConfig(igrisConfig);
             const globalConfig = resolveLlmExtractorGlobalConfig();
             const project = typeof args.project === 'string' ? args.project : 'all';
             const force = args.force === true;
             const result = await runJanitor(db, project, {
               config,
               arbiterConfig,
+              curatorConfig,
               globalConfig,
               force,
               trigger: 'manual',
             });
             return successResult(JSON.stringify(result, null, 2));
+          },
+        },
+        {
+          name: 'igris_brain_maintenance_undo',
+          description:
+            'Reverse a maintenance action (FR-116 M3). Replays the inverse of a destructive/mutating maintenance action (merge_learnings, resolve_contradiction, prune_learning, confidence bump/lower) from the brain_maintenance_undo pre-state log, restoring the exact prior review_status/confidence/content (re-embedding restored content) and removing any edge the action created. Target EITHER a whole run (run_id — reverses every not-yet-undone entry of that run) OR a single log entry (entry_id). Idempotent: an already-undone run/entry reverses nothing. A nonexistent run/entry returns an error cleanly.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              run_id: {
+                type: 'string',
+                description:
+                  'The maintenance run id to reverse (reverses every not-yet-undone action of that run).',
+              },
+              entry_id: {
+                type: 'number',
+                description: 'A single brain_maintenance_undo entry id to reverse.',
+              },
+            },
+          },
+          handler: async (args) => {
+            const db = getDb();
+            const run_id = typeof args.run_id === 'string' ? args.run_id : undefined;
+            const entry_id = args.entry_id !== undefined ? Number(args.entry_id) : undefined;
+            const result = performUndo(db, {
+              ...(run_id ? { run_id } : {}),
+              ...(entry_id !== undefined ? { entry_id } : {}),
+            });
+            if (!result.ok) return errorResult(result.message);
+            return successResult(JSON.stringify(result, null, 2));
+          },
+        },
+        {
+          name: 'igris_brain_maintenance_history',
+          description:
+            'List recent brain_maintenance_runs audit rows (FR-116 M3): one row per janitor/arbiter/curator run with its aggregated counters (merges proposed/applied, confidence bumps, stale rejected, contradictions proposed/resolved, outdated proposed/pruned, undone) + status/trigger/timestamps. Use it to review what the memory-hygiene pipeline did and to find a run_id to reverse with igris_brain_maintenance_undo.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              limit: {
+                type: 'number',
+                description: 'Max rows to return, newest first (default 20, capped at 500).',
+              },
+            },
+          },
+          handler: async (args) => {
+            const db = getDb();
+            const limitRaw = args.limit !== undefined ? Number(args.limit) : 20;
+            const limit =
+              Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 500) : 20;
+            let runs: unknown[] = [];
+            try {
+              runs = db
+                .prepare(
+                  `SELECT * FROM brain_maintenance_runs ORDER BY started_at DESC, id DESC LIMIT ?`,
+                )
+                .all(limit);
+            } catch {
+              runs = [];
+            }
+            return successResult(JSON.stringify({ runs, count: runs.length }, null, 2));
+          },
+        },
+        {
+          name: 'igris_brain_maintenance_config',
+          description:
+            'Get or set the janitor-family maintenance thresholds (FR-116 M3). With no arguments: returns the resolved janitor + arbiter (contradiction) + curator (pruning) config from ~/.igris/config.json. With a "set" object: writes the given keys into cognition.janitor.pruning (the outdated-pruning thresholds — stale_months, max_access_count, deprecated_tags, max_candidates, auto_prune, anomaly_threshold), sibling-preserving, and returns the updated config. The enabled flag is NOT settable here (use the configure verb).',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              set: {
+                type: 'object',
+                additionalProperties: true,
+                description:
+                  'Pruning threshold keys to write into cognition.janitor.pruning (read-modify-write, sibling-preserving).',
+              },
+            },
+          },
+          handler: async (args) => {
+            const set = asObject(args.set);
+            if (set && Object.keys(set).length > 0) {
+              try {
+                const nextPruning = writeJanitorPruningConfig(set);
+                return successResult(
+                  JSON.stringify({ written: true, pruning: nextPruning }, null, 2),
+                );
+              } catch (err) {
+                return errorResult(`failed to write maintenance config: ${errMsg(err)}`);
+              }
+            }
+            const igrisConfig = readIgrisConfig();
+            return successResult(
+              JSON.stringify(
+                {
+                  janitor: resolveJanitorConfig(igrisConfig),
+                  contradiction: resolveArbiterConfig(igrisConfig),
+                  pruning: resolveCuratorConfig(igrisConfig),
+                },
+                null,
+                2,
+              ),
+            );
           },
         },
       ];

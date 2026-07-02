@@ -34,6 +34,7 @@ import type Database from 'better-sqlite3';
 import { errMsg } from '../../../helpers.js';
 import { handleEdgeCreate } from '../../edges/handlers.js';
 import { deleteEmbedding } from '../../../../utils/vector-search.js';
+import { logUndoEntry } from '../../janitor/undo.js';
 
 // ---------------------------------------------------------------------------
 // Result shape
@@ -451,9 +452,10 @@ export function applyAddEdge(
 // merge_learnings — soft-delete a near-duplicate into a survivor (FR-119)
 // ---------------------------------------------------------------------------
 
-/** A `learnings` row the merge executor reads (identity + rollable counters). */
+/** A `learnings` row the merge executor reads (identity + rollable counters + pre-state for undo). */
 interface MergeLearningRow {
   id: number;
+  content: string;
   seen_again_count: number | null;
   review_status: string | null;
 }
@@ -511,13 +513,13 @@ export function applyMergeLearnings(
   }
 
   const survivor = db
-    .prepare('SELECT id, seen_again_count, review_status FROM learnings WHERE id = ?')
+    .prepare('SELECT id, content, seen_again_count, review_status FROM learnings WHERE id = ?')
     .get(survivorId) as MergeLearningRow | undefined;
   if (!survivor) {
     return fail('merge_learnings', `survivor learning ${survivorId} does not exist`);
   }
   const duplicate = db
-    .prepare('SELECT id, seen_again_count, review_status FROM learnings WHERE id = ?')
+    .prepare('SELECT id, content, seen_again_count, review_status FROM learnings WHERE id = ?')
     .get(duplicateId) as MergeLearningRow | undefined;
   if (!duplicate) {
     return fail('merge_learnings', `duplicate learning ${duplicateId} does not exist`);
@@ -537,6 +539,28 @@ export function applyMergeLearnings(
 
   try {
     const runMerge = db.transaction(() => {
+      // 0. FR-116 M3 (Decision #2): capture pre-state to the undo log BEFORE
+      //    mutating, so the merge is exactly reversible. Two entries (per-learning
+      //    log): the DUPLICATE (soft-deleted; owns the derived_from edge
+      //    survivor→duplicate for edge removal) and the SURVIVOR (content synthesis
+      //    + seen_again roll). Fail-soft: logging never aborts this transaction.
+      logUndoEntry(db, {
+        action_kind: 'merge_learnings',
+        learning_id: duplicateId,
+        related_learning_id: survivorId,
+        edge_type: 'derived_from',
+        prior_review_status: duplicate.review_status ?? 'approved',
+      });
+      logUndoEntry(db, {
+        action_kind: 'merge_learnings',
+        learning_id: survivorId,
+        prior_review_status: survivor.review_status ?? 'approved',
+        prior_seen_again_count: survivor.seen_again_count ?? 0,
+        ...(synthesized
+          ? { prior_content: survivor.content, prior_embedding_nulled: true }
+          : {}),
+      });
+
       // 1. Roll seen_again_count into the survivor (+1 for this merge event).
       db.prepare(
         `UPDATE learnings
@@ -688,7 +712,19 @@ function supersedeLoser(
   loserId: number,
   justification: string | undefined,
   source: string,
+  priorReviewStatus: string | null = 'approved',
 ): void {
+  // FR-116 M3 (Decision #2): capture pre-state to the undo log BEFORE the
+  // supersede mutation, carrying the `supersedes` edge (winner→loser) so the
+  // inverse can remove it. Fail-soft — never aborts the surrounding transaction.
+  logUndoEntry(db, {
+    action_kind: 'resolve_contradiction',
+    learning_id: loserId,
+    related_learning_id: winnerId,
+    edge_type: 'supersedes',
+    prior_review_status: priorReviewStatus ?? 'approved',
+  });
+
   db.prepare(
     `UPDATE learnings
        SET review_status = 'superseded',
@@ -789,6 +825,14 @@ export function applyResolveContradiction(
         if (scopeA) {
           const next = annotate(a.content, scopeA);
           if (next !== null) {
+            // Undo: capture the pre-annotation content (Decision #2).
+            logUndoEntry(db, {
+              action_kind: 'resolve_contradiction',
+              learning_id: aId,
+              prior_review_status: a.review_status ?? 'approved',
+              prior_content: a.content,
+              prior_embedding_nulled: true,
+            });
             db.prepare(
               `UPDATE learnings
                  SET content = ?, embedding = NULL, embedding_model = NULL,
@@ -805,6 +849,14 @@ export function applyResolveContradiction(
         if (scopeB) {
           const next = annotate(b.content, scopeB);
           if (next !== null) {
+            // Undo: capture the pre-annotation content (Decision #2).
+            logUndoEntry(db, {
+              action_kind: 'resolve_contradiction',
+              learning_id: bId,
+              prior_review_status: b.review_status ?? 'approved',
+              prior_content: b.content,
+              prior_embedding_nulled: true,
+            });
             db.prepare(
               `UPDATE learnings
                  SET content = ?, embedding = NULL, embedding_model = NULL,
@@ -881,6 +933,16 @@ export function applyResolveContradiction(
   try {
     const runResolve = db.transaction(() => {
       if (resolution === 'evolved_merge') {
+        // Undo: capture the winner's pre-evolution content + seen_again_count
+        // (Decision #2) BEFORE overwriting them.
+        logUndoEntry(db, {
+          action_kind: 'resolve_contradiction',
+          learning_id: winnerId,
+          prior_review_status: winner.review_status ?? 'approved',
+          prior_content: winner.content,
+          prior_seen_again_count: winner.seen_again_count ?? 0,
+          prior_embedding_nulled: true,
+        });
         // Evolve the winner: write the reconciled content + roll seen_again_count,
         // NULL the embedding so the FR-220 post-change NULL-scan re-embeds it.
         db.prepare(
@@ -896,7 +958,7 @@ export function applyResolveContradiction(
         }
       }
       // Both newer_wins + evolved_merge supersede the loser + write the edge.
-      supersedeLoser(db, winnerId, loserId, justification, KIND_RESOLVE);
+      supersedeLoser(db, winnerId, loserId, justification, KIND_RESOLVE, loser.review_status ?? 'approved');
     });
     runResolve();
   } catch (err) {
@@ -916,5 +978,154 @@ export function applyResolveContradiction(
         ? { seen_again_count: rolledSeenAgain, content_synthesized: true }
         : {}),
     },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// prune_learning — prune / lower-confidence / keep an outdated learning (FR-116 M3)
+// ---------------------------------------------------------------------------
+
+/** A `learnings` row the prune executor reads (identity + pre-state for undo). */
+interface PruneLearningRow {
+  id: number;
+  confidence: number | null;
+  review_status: string | null;
+}
+
+const KIND_PRUNE = 'prune_learning';
+
+/**
+ * `prune_learning` `{ verdict, learning_id, confidence_delta?, justification }` —
+ * act on an OUTDATED-KNOWLEDGE candidate the curator reviewed (FR-116 M3). The
+ * `verdict` discriminator selects one of three executors:
+ *
+ *   - prune            `{ learning_id }` — soft-delete the learning:
+ *     `review_status='pruned'` (Decision #1 — a NEW review_status value auto-
+ *     excluded by every `='approved'` reader → ZERO read-path sweep) + stamp
+ *     `deleted_at` (AUDIT-ONLY, not a recall gate). Idempotent: re-pruning an
+ *     already-`'pruned'` row is a no-op.
+ *   - lower_confidence `{ learning_id, confidence_delta }` — NON-DESTRUCTIVE:
+ *     `confidence = max(0, confidence - delta)`, clamped to the db.ts:164 CHECK
+ *     [0, 1] bound. The learning stays recallable.
+ *   - keep             `{ learning_id }` — NON-DESTRUCTIVE: stamp
+ *     `last_reviewed_at` so the deterministic detector does not re-flag the row
+ *     until the next stale window elapses.
+ *
+ * Every path is a single transaction, validates the target id resolves (no
+ * hallucinated ids), and NEVER throws — a validation failure or a mid-transaction
+ * error returns `{ ok:false }` so the suggestion stays `pending` (or the
+ * auto_prune fork counts nothing). Destructive/mutating verdicts (prune,
+ * lower_confidence) capture pre-state to the undo log (Decision #2) BEFORE
+ * mutating so the action is exactly reversible. `undoRunId` links the entry to a
+ * maintenance run (the auto_prune fork passes it; the operator-apply path passes
+ * null → the entry is undoable by entry_id).
+ */
+export function applyPruneLearning(
+  db: Database.Database,
+  params: Record<string, unknown>,
+  undoRunId: string | null = null,
+): ActionResult {
+  const verdict = asString(params.verdict);
+  if (!verdict) {
+    return fail(KIND_PRUNE, 'prune_learning requires a "verdict"');
+  }
+  if (verdict !== 'prune' && verdict !== 'lower_confidence' && verdict !== 'keep') {
+    return fail(KIND_PRUNE, `unknown verdict "${verdict}"`);
+  }
+
+  const learningId = Number(params.learning_id);
+  if (!Number.isInteger(learningId) || learningId <= 0) {
+    return fail(KIND_PRUNE, 'prune_learning requires a positive integer learning_id');
+  }
+
+  const row = db
+    .prepare('SELECT id, confidence, review_status FROM learnings WHERE id = ?')
+    .get(learningId) as PruneLearningRow | undefined;
+  if (!row) return fail(KIND_PRUNE, `learning ${learningId} does not exist`);
+
+  // -------------------------------------------------------------------------
+  // prune — soft-delete via review_status='pruned' (destructive-but-reversible).
+  // -------------------------------------------------------------------------
+  if (verdict === 'prune') {
+    // IDEMPOTENT: re-pruning an already-pruned row is a no-op.
+    if ((row.review_status ?? 'approved') === 'pruned') {
+      return ok(KIND_PRUNE, `learning ${learningId} already pruned; no-op`, {
+        data: { verdict, learning_id: learningId, already_pruned: true },
+      });
+    }
+    try {
+      const runPrune = db.transaction(() => {
+        logUndoEntry(db, {
+          run_id: undoRunId,
+          action_kind: 'prune_learning',
+          learning_id: learningId,
+          prior_review_status: row.review_status ?? 'approved',
+        });
+        db.prepare(
+          `UPDATE learnings
+             SET review_status = 'pruned',
+                 deleted_at = datetime('now'),
+                 updated_at = datetime('now')
+           WHERE id = ?`,
+        ).run(learningId);
+      });
+      runPrune();
+    } catch (err) {
+      return fail(KIND_PRUNE, `prune failed: ${errMsg(err)}`);
+    }
+    return ok(KIND_PRUNE, `Pruned learning ${learningId} (soft-delete, reversible)`, {
+      data: { verdict, learning_id: learningId },
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // lower_confidence — non-destructive confidence decrement (clamped to [0, 1]).
+  // -------------------------------------------------------------------------
+  if (verdict === 'lower_confidence') {
+    let delta = Number(params.confidence_delta);
+    if (!Number.isFinite(delta) || delta <= 0) {
+      return fail(KIND_PRUNE, 'lower_confidence requires a positive confidence_delta');
+    }
+    if (delta > 1) delta = 1;
+    const current = typeof row.confidence === 'number' ? row.confidence : 0.5;
+    const next = Math.max(0, Math.min(1, current - delta));
+    try {
+      const runLower = db.transaction(() => {
+        logUndoEntry(db, {
+          run_id: undoRunId,
+          action_kind: 'lower_confidence',
+          learning_id: learningId,
+          prior_review_status: row.review_status ?? 'approved',
+          prior_confidence: current,
+        });
+        db.prepare(
+          `UPDATE learnings
+             SET confidence = ?, last_reviewed_at = datetime('now'), updated_at = datetime('now')
+           WHERE id = ?`,
+        ).run(next, learningId);
+      });
+      runLower();
+    } catch (err) {
+      return fail(KIND_PRUNE, `lower_confidence failed: ${errMsg(err)}`);
+    }
+    return ok(
+      KIND_PRUNE,
+      `Lowered confidence of learning ${learningId} from ${current} to ${next}`,
+      { data: { verdict, learning_id: learningId, confidence: next, prior_confidence: current } },
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // keep — non-destructive: stamp last_reviewed_at (no undo needed).
+  // -------------------------------------------------------------------------
+  try {
+    db.prepare(
+      `UPDATE learnings SET last_reviewed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`,
+    ).run(learningId);
+  } catch (err) {
+    return fail(KIND_PRUNE, `keep failed: ${errMsg(err)}`);
+  }
+  return ok(KIND_PRUNE, `Kept learning ${learningId} (marked reviewed)`, {
+    data: { verdict, learning_id: learningId },
   });
 }

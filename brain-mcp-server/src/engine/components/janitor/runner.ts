@@ -37,7 +37,12 @@ import {
   createArbiterInstance,
   type ArbiterRunStats,
 } from '../cognition/extractors/arbiter.js';
+import {
+  createCuratorInstance,
+  type CuratorRunStats,
+} from '../cognition/extractors/curator.js';
 import type { ArbiterConfig } from '../arbiter/types.js';
+import type { CuratorConfig } from '../curator/types.js';
 import type { Embedder } from './candidates.js';
 import {
   applyConfidenceBumps,
@@ -58,6 +63,15 @@ export interface RunJanitorOptions {
    * passes it (gated by `cognition.janitor.enabled`); tests opt in.
    */
   arbiterConfig?: ArbiterConfig;
+  /**
+   * The resolved curator instance config (FR-116 M3, Decision #4A). When present,
+   * the runner CO-DRIVES the curator outdated-pruning extractor sequentially after
+   * the arbiter, aggregating its counters into the SAME `brain_maintenance_runs`
+   * audit row + surfacing the anomaly warning. Absent → the curator is not driven
+   * (the near-dupe + arbiter paths are byte-for-byte unchanged — additive).
+   * Production always passes it (gated by `cognition.janitor.enabled`); tests opt in.
+   */
+  curatorConfig?: CuratorConfig;
   /** The global `llm_extractor` config (harness default + fallback order). */
   globalConfig?: LlmExtractorGlobalConfig;
   /** Bypass the cold-start + bytes cost gate (manual `*_run` forces a run). */
@@ -131,7 +145,7 @@ export async function runJanitor(
   let staleRejected = 0;
   let reEvalSurfaced = 0;
   if (config.enabled || force) {
-    confidenceBumps = applyConfidenceBumps(db, config, since);
+    confidenceBumps = applyConfidenceBumps(db, config, since, runId);
     staleRejected = rejectStalePending(db, config);
     reEvalSurfaced = surfaceReEvalRejections(db, config, since);
   }
@@ -177,6 +191,39 @@ export async function runJanitor(
     arbiterOutcome = arbiterExtractor.outcome;
   }
 
+  // 4c. FR-116 M3 (Decision #4A/#9): CO-DRIVE the curator outdated-pruning
+  //     extractor sequentially, aggregating its counters into the SAME audit row.
+  //     Only when a curatorConfig is supplied — the paths above are unchanged. The
+  //     runId is threaded so auto-pruned rows are undoable by run (Decision #2).
+  const curatorStats: CuratorRunStats = { proposed: 0, pruned: 0, prune_intent: 0, anomaly: false };
+  let curatorOutcome: JanitorRunResult['curator_outcome'];
+  if (options.curatorConfig) {
+    const curatorInstance = createCuratorInstance(options.curatorConfig, {
+      stats: curatorStats,
+      runId,
+    });
+    const curatorExtractor = await runExtractor(
+      db,
+      curatorInstance,
+      {
+        project,
+        trigger,
+        ...(force ? { force: true } : {}),
+      },
+      deps,
+    );
+    curatorOutcome = curatorExtractor.outcome;
+  }
+
+  // FR-116 M3: the anomaly safety-valve warning (Section F) — surfaced in the run
+  // result AND stamped on the audit row when a single run's prune intent exceeds
+  // the configured threshold.
+  const warning = curatorStats.anomaly
+    ? `ANOMALY: this run's prune intent (${curatorStats.prune_intent}) exceeded the ` +
+      `configured threshold (${options.curatorConfig?.anomaly_threshold ?? 50}); ` +
+      `auto-prune was capped and excess prunes were queued for review.`
+    : undefined;
+
   // 5. Close the audit row. When disabled (and not forced) the run is 'skipped'
   //    regardless of the extractor's own skip; otherwise mirror the extractor.
   const status = !config.enabled && !force ? 'skipped' : extractor.outcome;
@@ -194,6 +241,8 @@ export async function runJanitor(
                re_eval_surfaced = ?,
                contradictions_proposed = ?,
                contradictions_resolved = ?,
+               outdated_proposed = ?,
+               outdated_pruned = ?,
                error_message = ?
          WHERE id = ?`,
       ).run(
@@ -205,6 +254,8 @@ export async function runJanitor(
         reEvalSurfaced,
         arbiterStats.proposed,
         arbiterStats.resolved,
+        curatorStats.proposed,
+        curatorStats.pruned,
         extractor.fail_reason ?? null,
         runRowId,
       );
@@ -223,7 +274,13 @@ export async function runJanitor(
     re_eval_surfaced: reEvalSurfaced,
     contradictions_proposed: arbiterStats.proposed,
     contradictions_resolved: arbiterStats.resolved,
+    outdated_proposed: curatorStats.proposed,
+    outdated_pruned: curatorStats.pruned,
+    undone: 0,
+    prune_anomaly: curatorStats.anomaly,
     ...(arbiterOutcome ? { arbiter_outcome: arbiterOutcome } : {}),
+    ...(curatorOutcome ? { curator_outcome: curatorOutcome } : {}),
+    ...(warning ? { warning } : {}),
     ...(reason ? { reason } : {}),
   };
 }

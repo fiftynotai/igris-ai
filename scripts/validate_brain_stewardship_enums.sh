@@ -343,6 +343,15 @@ INTERNAL_TOOL_ALLOWLIST = {
     # igris_suggestion_list source_module='janitor'. Same class as
     # igris_synapse_run (default off, cognition.janitor.enabled=false).
     'igris_janitor_run_now',
+
+    # janitor-family maintenance surface (FR-116 M3) — operator/audit tools, not
+    # actor decision-triggers. _undo reverses a maintenance action from the
+    # brain_maintenance_undo pre-state log; _history lists brain_maintenance_runs
+    # audit rows; _config gets/sets the pruning thresholds. Same internal class as
+    # igris_janitor_run_now (operator/cron surface, not a brain READ decision).
+    'igris_brain_maintenance_undo',
+    'igris_brain_maintenance_history',
+    'igris_brain_maintenance_config',
 }
 
 forward_misses = doc_names - gateway_names - DOC_ONLY_ALLOWLIST

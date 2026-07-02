@@ -35,6 +35,7 @@ import {
   applyDismissExisting,
   applyFlagForReview,
   applyMergeLearnings,
+  applyPruneLearning,
   applyReEvaluateRejection,
   applyResolveContradiction,
   applyTickAc,
@@ -53,6 +54,8 @@ export const KNOWN_ACTION_KINDS = [
   're_evaluate_rejection',
   // FR-116 M2 arbiter kind:
   'resolve_contradiction',
+  // FR-116 M3 curator kind:
+  'prune_learning',
 ] as const;
 
 export type KnownActionKind = (typeof KNOWN_ACTION_KINDS)[number];
@@ -106,6 +109,10 @@ function dispatchKind(
         return applyReEvaluateRejection(params);
       case 'resolve_contradiction':
         return applyResolveContradiction(db, params);
+      case 'prune_learning':
+        // Operator-apply path: no run linkage (undoable by entry_id). The
+        // auto_prune fork links the run id directly via applyPruneLearning.
+        return applyPruneLearning(db, params);
       default:
         // GRACEFUL FALLBACK: an unknown kind is flagged for review (the safe
         // sink), not thrown. The operator still sees the suggestion; we record

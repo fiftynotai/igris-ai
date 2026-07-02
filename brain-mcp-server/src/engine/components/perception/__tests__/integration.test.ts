@@ -83,6 +83,9 @@ function makeFullSchemaDb(): Database.Database {
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       access_count INTEGER DEFAULT 0,
       last_accessed_at TEXT,
+      seen_again_count INTEGER NOT NULL DEFAULT 0,
+      last_seen_at TEXT,
+      deleted_at TEXT,
       embedding BLOB,
       embedding_model TEXT DEFAULT '',
       provenance TEXT NOT NULL DEFAULT 'observed'

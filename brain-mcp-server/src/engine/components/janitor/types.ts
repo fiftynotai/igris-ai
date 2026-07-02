@@ -193,8 +193,20 @@ export interface JanitorRunResult {
   contradictions_proposed: number;
   /** FR-116 M2: contradiction resolutions applied DIRECTLY by the arbiter auto_resolve fork. */
   contradictions_resolved: number;
-  /** The near-dupe extractor's terminal disposition of the arbiter co-run, when not succeeded. */
+  /** FR-116 M3: outdated-knowledge outcomes QUEUED for review by the curator instance. */
+  outdated_proposed: number;
+  /** FR-116 M3: outdated learnings PRUNED (soft-deleted) DIRECTLY by the curator auto_prune fork. */
+  outdated_pruned: number;
+  /** FR-116 M3: maintenance actions reversed by igris_brain_maintenance_undo (0 in a normal run). */
+  undone: number;
+  /** FR-116 M3: true when a single run's prune intent exceeded the anomaly threshold (safety-valve warning). */
+  prune_anomaly: boolean;
+  /** The terminal disposition of the arbiter co-run, when not succeeded. */
   arbiter_outcome?: 'succeeded' | 'failed' | 'skipped';
+  /** The terminal disposition of the curator co-run, when not succeeded. */
+  curator_outcome?: 'succeeded' | 'failed' | 'skipped';
+  /** A human-readable anomaly warning surfaced when prune intent exceeded the threshold. */
+  warning?: string;
   /** The near-dupe extractor's skip/fail reason, when not succeeded. */
   reason?: string;
 }

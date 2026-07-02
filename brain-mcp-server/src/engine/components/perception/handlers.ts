@@ -28,6 +28,7 @@ import {
 } from './types.js';
 import { runPerception, type LlmStatus } from './runner.js';
 import { noopLlmExtractor, type LlmExtractor } from './extractors/llm_via_claude_code.js';
+import { writePerceptionEvent } from './events.js';
 
 // ---------------------------------------------------------------------------
 // Handler context
@@ -646,11 +647,73 @@ export function handlePerceptionReject(args: Record<string, unknown>): ToolResul
 
   const db = getDb();
   const existing = db
-    .prepare('SELECT id, review_status, title FROM learnings WHERE id = ?')
-    .get(id) as { id: number; review_status: string; title: string } | undefined;
+    .prepare(
+      'SELECT id, review_status, title, COALESCE(seen_again_count, 0) AS seen_again_count FROM learnings WHERE id = ?',
+    )
+    .get(id) as
+    | { id: number; review_status: string; title: string; seen_again_count: number }
+    | undefined;
   if (!existing) return errorResult(`Learning ${id} not found`);
   if (existing.review_status === 'approved') {
     return errorResult(`Learning ${id} is already approved; cannot reject.`);
+  }
+
+  // FR-116 M3 (Decision #10): the reject→soft-delete flip. A RECURRING rejection
+  // — a candidate the perception dedup layer has re-discovered at least once
+  // (`seen_again_count > 0`) before the operator rejects it — is SOFT-deleted
+  // (review_status='rejected' + deleted_at, auto-excluded by the ~10
+  // `='approved'` readers → ZERO read-path sweep) and EMITS
+  // `perception.rejected_pattern_recurring`, which the janitor's
+  // surfaceReEvalRejections tally reads to surface a re_evaluate_rejection
+  // suggestion. This activates the dormant re-eval path (FR-119 Decision D).
+  //
+  // The COMMON single (first-time) reject path — `seen_again_count == 0`, a
+  // pattern seen once and rejected — stays a HARD DELETE (unchanged behavior):
+  // there is no recurrence to reconsider, so we do not accumulate a soft-deleted
+  // row or fire the recurrence event. The guard is `seen_again_count > 0`.
+  const isRecurring = (existing.seen_again_count ?? 0) > 0;
+
+  const bus = getBus();
+
+  if (isRecurring) {
+    try {
+      db.prepare(
+        `UPDATE learnings
+           SET review_status = 'rejected', deleted_at = datetime('now'), updated_at = datetime('now')
+         WHERE id = ?`,
+      ).run(id);
+    } catch (err) {
+      return errorResult(`Reject failed: ${errMsg(err)}`);
+    }
+    // Direct event_log write (canonical record the janitor tally reads) — the
+    // detached CLI has no bus, so writePerceptionEvent is the durable signal.
+    writePerceptionEvent(db, 'perception.rejected_pattern_recurring', {
+      project: undefined,
+      learning_id: id,
+      title: existing.title,
+      reason,
+    });
+    if (bus) {
+      bus.emit('perception.candidate_rejected', {
+        learning_id: id,
+        title: existing.title,
+        reason,
+      });
+      // Also emit on the bus for in-process listeners + the event-bus integrity
+      // literal-call-site invariant.
+      bus.emit('perception.rejected_pattern_recurring', {
+        learning_id: id,
+        title: existing.title,
+        reason,
+      });
+    }
+    return successResult(
+      JSON.stringify(
+        { deleted: true, soft: true, recurring: true, learning_id: id, reason: reason ?? '' },
+        null,
+        2,
+      ),
+    );
   }
 
   // TD-098: explicit transactional cleanup of learnings + learnings_vec.
@@ -666,7 +729,6 @@ export function handlePerceptionReject(args: Record<string, unknown>): ToolResul
     return errorResult(`Reject failed: ${errMsg(err)}`);
   }
 
-  const bus = getBus();
   if (bus) {
     bus.emit('perception.candidate_rejected', {
       learning_id: id,

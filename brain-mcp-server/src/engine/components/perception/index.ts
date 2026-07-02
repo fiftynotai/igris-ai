@@ -418,7 +418,7 @@ export function createPerceptionComponent(): BrainComponent {
           {
             name: 'perception.rejected_pattern_recurring',
             description:
-              'A perception candidate matched a previously-rejected fingerprint. Declared but not emitted in TD-086 v1 — reject is hard DELETE today; activates when FR-116 introduces soft-delete.',
+              'A recurring candidate (seen_again_count > 0) was rejected. FR-116 M3 (Decision #10) flipped reject to a SOFT-delete on recurrence + emit; the janitor surfaceReEvalRejections tally reads this to surface a re_evaluate_rejection suggestion. The common first-time reject stays a hard DELETE and does not fire this.',
           },
         ],
         listens: [],

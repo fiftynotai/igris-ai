@@ -79,14 +79,19 @@ time so a re-run does not double-bump (idempotency).
 `'rejected'` is legal without a table rebuild; the rejected row drops out of every
 approved-filter reader.
 
-### 4. Re-evaluation of rejections (DORMANT — Decision D)
+### 4. Re-evaluation of rejections (ACTIVATED — Decision D → FR-116 M3 Decision #10)
 
 `surfaceReEvalRejections` tallies `perception.rejected_pattern_recurring` events
 and, past `reject_recur_n` (5), surfaces one `re_evaluate_rejection` suggestion.
-**This source event never fires in production today** — reject is a hard DELETE,
-so no rejected row survives to recur (perception/handlers.ts:427 gates the emit
-behind an env var). The path is wired and activates automatically when FR-116
-ships soft-delete-on-reject and flips the emit. Until then it is a no-op.
+This was DORMANT in FR-119 (reject was a hard DELETE, so no rejected row survived
+to recur). **FR-116 M3 (Decision #10) flipped the perception reject path**: a
+RECURRING rejection (`seen_again_count > 0` — a candidate the dedup layer
+re-discovered before the operator rejected it) now SOFT-deletes
+(`review_status='rejected'` + `deleted_at`) and emits
+`perception.rejected_pattern_recurring` (a direct `writePerceptionEvent` to
+`event_log`, the durable signal this tally reads). The COMMON first-time reject
+(`seen_again_count == 0`) stays a HARD DELETE — the guard keeps the common path
+non-destructive-of-behavior. This is what activates the previously-dormant path.
 
 ## Soft-delete mechanism (Decision A1)
 
@@ -198,12 +203,82 @@ janitor pipeline. The v2 `'janitor'` migration adds
 `brain_maintenance_runs.contradictions_proposed`/`contradictions_resolved` (the
 arbiter counters, aggregated into the shared row) + `learnings.superseded_by`.
 
+## Outdated pruning — the curator instance (FR-116 M3)
+
+The **curator** is the SIXTH cognition instance and the CLEAN mandate's third LLM
+duty. Where the janitor MERGES and the arbiter RESOLVES, the curator PRUNES
+OUTDATED KNOWLEDGE. It is a DISTINCT instance CO-SCHEDULED under the janitor
+runner (Decision #4A) — one barrel line + component-internal modules under
+`components/curator/`, riding the single `cognition.janitor.enabled` flag.
+
+```
+components/curator/
+  types.ts       — CuratorConfig + DEFAULT_CURATOR_CONFIG + StaleCandidate +
+                   PruneProposal + resolveCuratorConfig (nested-only,
+                   enabled DERIVED from cognition.janitor.enabled)
+  candidates.ts  — buildStaleCandidates: wraps the detector + don't-double-queue
+  prompts.ts     — keep/lower_confidence/prune review prompts
+  validator.ts   — validateCuratorResponse: cite-check + verdict allow-list
+janitor/hygiene.ts               — detectOutdatedLearnings (the DETERMINISTIC detector)
+cognition/extractors/curator.ts  — the LLM outdated-review instance (6 slots)
+subconscious/actions/kinds.ts    — applyPruneLearning
+```
+
+### Staleness candidate signal (Decision #5) — deterministic
+
+`detectOutdatedLearnings` (in `hygiene.ts`) is PURE DB (no LLM): it finds APPROVED
+learnings that are STALE (`access_count <= max_access_count` (0) AND `created_at <
+now - stale_months` (6)) OR carry a `deprecated_tags` tech tag. `access_count` is
+LIVE (recall bumps it, `memory.ts:670`/`:773`). A row reviewed within the window
+(`last_reviewed_at`) is skipped so a `keep` verdict is not re-flagged immediately.
+
+### The three verdicts (`applyPruneLearning`)
+
+- **prune** — soft-delete via `review_status='pruned'` (Decision #1 — a NEW
+  review_status value auto-excluded by every `='approved'` reader → ZERO read-path
+  sweep, mirroring `'merged'`/`'superseded'`) + stamp AUDIT-ONLY `deleted_at`.
+  Idempotent (re-pruning a `'pruned'` row is a no-op).
+- **lower_confidence** — NON-DESTRUCTIVE: `confidence = max(0, confidence - delta)`,
+  clamped to the CHECK [0, 1] bound. The learning stays recallable.
+- **keep** — NON-DESTRUCTIVE: stamp `last_reviewed_at` so the detector does not
+  re-flag it until the next window elapses.
+
+Fires ONLY via operator `igris_suggestion_apply_action` or the default-OFF
+`auto_prune` fork, which is capped by the **anomaly safety valve**: if a single
+run's prune intent exceeds `anomaly_threshold` (50), auto-prune stops at the cap,
+the excess is queued for review, and the run surfaces a WARNING.
+
+### UNDO infrastructure (Decision #2) — the critical safety net
+
+EVERY destructive/mutating resolver (`merge_learnings`, `resolve_contradiction`,
+`prune_learning`, confidence bump/lower) writes a per-learning PRE-STATE row to
+`brain_maintenance_undo` at apply time (via `logUndoEntry`, fail-soft so it never
+aborts a resolver — the M1/M2 retrofit is purely additive). `performUndo(run_id |
+entry_id)` (surfaced as `igris_brain_maintenance_undo`) replays the inverse in one
+transaction: restores `review_status`/`confidence`/`seen_again_count`/`content`
+(re-embedding restored content by NULLing the embedding for the FR-220 async
+scan), removes the edge the action created, stamps `undone_at`, and bumps
+`brain_maintenance_runs.undone`. Idempotent; a nonexistent run/entry errors
+cleanly.
+
+### Config (`cognition.janitor.pruning.*`, nested-only, default OFF)
+
+`stale_months` (6), `max_access_count` (0), `deprecated_tags` ([]), `max_candidates`
+(200), `auto_prune` (false), `anomaly_threshold` (50), plus the envelope.
+`enabled` is DERIVED from `cognition.janitor.enabled`. The v3 `'janitor'` migration
+adds the `brain_maintenance_undo` table + `brain_maintenance_runs.outdated_proposed`/
+`outdated_pruned`/`undone` counters + `learnings.last_reviewed_at`.
+
 ## Surfaces
 
-- `igris_janitor_run_now` — manual/cron run tool (tool #108). Runs the near-dupe
-  MERGE extractor AND the co-scheduled arbiter contradiction extractor.
+- `igris_janitor_run_now` — manual/cron run tool. Runs the near-dupe MERGE
+  extractor AND the co-scheduled arbiter contradiction + curator outdated-pruning
+  extractors, aggregating all counters into one `brain_maintenance_runs` row.
+- `igris_brain_maintenance_undo` / `_history` / `_config` — the FR-116 M3
+  maintenance surface (tools #109–111): reverse an action, list runs, get/set the
+  pruning thresholds.
 - `/scan` §6.9 + `/boot` — a janitor health line read from the
   `cognition.janitor.*` lifecycle events + the latest `brain_maintenance_runs`
   row, gated behind `cognition.janitor.enabled`.
-- Merge proposals render through the existing `igris_suggestion_list`
-  (`source_module='janitor'`).
+- Merge / contradiction / prune proposals render through the existing
+  `igris_suggestion_list` (`source_module='janitor'`/`'arbiter'`/`'curator'`).
