@@ -58,14 +58,18 @@ if [ ! -f "$DB" ]; then
 elif [ "$(sqlite3 "$DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='brief_status';" 2>/dev/null)" != "1" ]; then
   echo "AUDIT=HARDWARN reason=table-absent db=$DB slug=$SLUG"
 else
-  # §17.2 audit query — byte-aligned with coding_guidelines §17.2.
+  # §17.2 audit query — byte-aligned with coding_guidelines §17.2. The
+  # brief_type IN-list enumerates the real (inconsistent) feature/bug
+  # vocabulary — 'Bug'/'BR' + 'Feature'/'FR'/'Feature Request' (TD-289). Do
+  # NOT drop synonyms: FR/Feature-typed P0/P1 blockers escaped the old
+  # ('Bug','Feature Request') list. Move in lockstep with §17.2.
   ROWS="$(sqlite3 -noheader "$DB" "
     SELECT brief_id || '  ' || priority || '  ' || status || '  ' || brief_type || '  ' || title
     FROM brief_status
     WHERE project='$SLUG'
       AND priority IN ('P0-Critical','P1-High')
       AND status IN ('Ready','In Progress','Blocked')
-      AND brief_type IN ('Bug','Feature Request');")"
+      AND brief_type IN ('Bug','BR','Feature','FR','Feature Request');")"
   if [ -z "$ROWS" ]; then
     echo "AUDIT=PASS slug=$SLUG (zero P0/P1 broken-feature rows)"
   else
