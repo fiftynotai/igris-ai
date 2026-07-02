@@ -292,6 +292,10 @@ export function createCartographerInstance(
     inputBytes(ctx: CartographerContext): number {
       return ctx.clusters_bytes;
     },
+
+    isEmptyContext(ctx: CartographerContext): boolean {
+      return ctx.clusters.length === 0;
+    },
   };
 }
 

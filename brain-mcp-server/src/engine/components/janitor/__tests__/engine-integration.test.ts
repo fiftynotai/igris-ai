@@ -164,6 +164,24 @@ describe('runJanitor (FR-119 — mocked backend)', () => {
     expect(latestRun(db).status).toBe('skipped');
   });
 
+  it('empty near-dupe pool → skipped (no_candidates), audit status not failed (TD-293)', async () => {
+    // TD-292/TD-293 regression (warden minor #1): with an EMPTY candidate pool
+    // (no vec → buildDuplicatePairs yields []; the instance's isEmptyContext
+    // short-circuits the engine to skip('no_candidates') BEFORE any LLM spawn),
+    // the run must resolve as 'skipped' and the brain_maintenance_runs audit row
+    // must NOT be stamped 'failed' — an empty brain is a clean no-op, not a fault.
+    vi.clearAllMocks();
+    db = makeBrain(false); // no vec → empty near-dupe pool regardless of corpus
+    vi.mocked(getDb).mockReturnValue(db as unknown as ReturnType<typeof getDb>);
+
+    const result = await runJanitor(db, 'all', { config: RUNNABLE, deps: deps('[]') });
+    expect(result.outcome).toBe('skipped');
+
+    const row = latestRun(db);
+    expect(row.status).toBe('skipped');
+    expect(row.status).not.toBe('failed');
+  });
+
   it('enabled: runs the deterministic sweep + writes the maintenance audit row', async () => {
     vi.clearAllMocks();
     db = makeBrain(false); // no vec → extractor skips gate_bytes, but the sweep runs

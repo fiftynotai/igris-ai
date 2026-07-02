@@ -266,6 +266,10 @@ export function createSynapseInstance(
     inputBytes(ctx: SynapseContext): number {
       return ctx.pairs_bytes;
     },
+
+    isEmptyContext(ctx: SynapseContext): boolean {
+      return ctx.pairs.length === 0;
+    },
   };
 }
 

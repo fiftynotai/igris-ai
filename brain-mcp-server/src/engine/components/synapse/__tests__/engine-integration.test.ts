@@ -7,7 +7,7 @@
  *     type_inferred=1, status='pending', confidence carried;
  *   - lifecycle events under the per-instance `cognition.synapse.*` namespace;
  *   - config gate off-by-default (disabled → run_skipped);
- *   - empty candidate set → gate_bytes skip (the cost gate);
+ *   - empty candidate set → no_candidates skip (the empty-context short-circuit, TD-293);
  *   - cli_missing / parse_error terminal outcomes;
  *   - input isolation: the backend seam receives only the prompt (never the DB),
  *     and the user prompt carries the candidate digest and nothing more.
@@ -151,14 +151,16 @@ describe('runSynapse (FR-211 — mocked backend)', () => {
     expect((db.prepare(`SELECT COUNT(*) AS n FROM suggestions`).get() as { n: number }).n).toBe(0);
   });
 
-  it('empty candidate set → gate_bytes skip (cost gate), zero rows', async () => {
-    // No learnings → no pairs → tiny digest below the 100-byte floor.
+  it('empty candidate set → no_candidates skip (empty-context short-circuit), zero rows', async () => {
+    // No learnings → no pairs → the instance's isEmptyContext (TD-293) short-
+    // circuits the engine to skip('no_candidates') BEFORE the bytes cost gate,
+    // so no isolated LLM spawns. (Pre-TD-293 this skipped as 'gate_bytes'.)
     const result = await runSynapse(db, 'all', {
       config: { ...DEFAULT_SYNAPSE_CONFIG, enabled: true }, // min_input_bytes=100
       deps: deps('[]'),
     });
     expect(result.outcome).toBe('skipped');
-    expect(result.skip_reason).toBe('gate_bytes');
+    expect(result.skip_reason).toBe('no_candidates');
   });
 
   it('cli_missing (no harness) → run_skipped(cli_missing)', async () => {
