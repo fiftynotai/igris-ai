@@ -306,7 +306,7 @@ igris_project_dashboard({ archetype: "ai-agent-system", summary_only: true })
 - Before storing a similar new learning manually: check if the subconscious already has a draft of it (avoid double-entry).
 - After a long session: `igris_perception_approve` / `igris_perception_reject` to migrate candidates to the conscious channel.
 - Before approve/reject when `igris_perception_review_pending` shows truncated content: `igris_perception_get` with the candidate's `learning_id` to inspect the full row.
-- During `/scan` to spot extractor health: `igris_perception_dashboard` reports inbox size (`pending`), recent approve/reject volume, run outcomes, and dedup rediscoveries. A failed-run spike or a dedup-rate drop is the early-warning signal. Pair with `igris_memory_dashboard` for the post-promotion view.
+- When the subconscious has gone quiet or run-failures spike (and during `/scan`): `igris_perception_dashboard` reports inbox size (`pending`), recent approve/reject volume, run outcomes, and dedup rediscoveries. A failed-run spike or a dedup-rate drop is the early-warning signal. Pair with `igris_memory_dashboard` for the post-promotion view.
 
 ### Example invocation
 
