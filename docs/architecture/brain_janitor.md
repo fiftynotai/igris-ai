@@ -52,7 +52,10 @@ stays agnostic — it only ever sees the LLM extractor (AC #1).
 `buildDuplicatePairs` re-embeds each APPROVED learning's **normalized
 fingerprint** (`normalizedFingerprint(title, content)` — the ONE canonical
 derivation, #930/TD-087) and runs a vec0 KNN, keeping neighbours at cosine ≥
-`dupe_cosine_floor` (0.95). **Critical:** the query embedding is derived from the
+`dupe_cosine_floor` (0.90, M1/FR-116) that ALSO clear the normalized-token
+Jaccard gate `overlap` ≥ `dupe_min_overlap` (0.6) — both gates must pass, so the
+lower cosine floor catches more rephrased dupes (#163) without flooding the LLM
+with same-topic-but-distinct pairs. **Critical:** the query embedding is derived from the
 normalized fingerprint, never the raw stored text — a raw cosine understates
 similarity (#930). The LLM then judges each pair `merge` / `keep_a` / `keep_b` /
 `keep_both` (false positive). Actionable verdicts become a `suggestions` row
@@ -120,7 +123,7 @@ later share the table.
 
 ## Config (`cognition.janitor.*`, nested-only, default OFF)
 
-`enabled` (false), `dupe_cosine_floor` (0.95), `top_k` (5), `max_pairs` (200),
+`enabled` (false), `dupe_cosine_floor` (0.90), `dupe_min_overlap` (0.6), `top_k` (5), `max_pairs` (200),
 `auto_merge` (false), `auto_merge_threshold` (0.95), `rediscovery_bump_n` (3),
 `reject_recur_n` (5), `stale_days` (14), plus the envelope
 (`llm_timeout_ms`/`llm_daily_budget`/`min_input_bytes`/`harness`). The `enabled`

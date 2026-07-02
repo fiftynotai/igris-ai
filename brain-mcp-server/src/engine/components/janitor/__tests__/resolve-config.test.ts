@@ -33,11 +33,12 @@ describe('resolveJanitorConfig — nested-only (FR-119)', () => {
   it('merges the hygiene + candidate knobs, defaulting the rest', () => {
     const cfg = resolveJanitorConfig({
       cognition: {
-        janitor: { enabled: true, dupe_cosine_floor: 0.9, stale_days: 30, auto_merge: true },
+        janitor: { enabled: true, dupe_cosine_floor: 0.85, dupe_min_overlap: 0.5, stale_days: 30, auto_merge: true },
       },
     });
     expect(cfg.enabled).toBe(true);
-    expect(cfg.dupe_cosine_floor).toBe(0.9);
+    expect(cfg.dupe_cosine_floor).toBe(0.85);
+    expect(cfg.dupe_min_overlap).toBe(0.5);
     expect(cfg.stale_days).toBe(30);
     expect(cfg.auto_merge).toBe(true);
     expect(cfg.rediscovery_bump_n).toBe(DEFAULT_JANITOR_CONFIG.rediscovery_bump_n);
@@ -47,6 +48,8 @@ describe('resolveJanitorConfig — nested-only (FR-119)', () => {
   it('defaults auto_merge to false (Decision B — always review-gated)', () => {
     const cfg = resolveJanitorConfig({ cognition: { janitor: { enabled: true } } });
     expect(cfg.auto_merge).toBe(false);
-    expect(cfg.dupe_cosine_floor).toBe(0.95);
+    // M1 (FR-116): floor lowered to 0.90, gated by the 0.6 Jaccard overlap default.
+    expect(cfg.dupe_cosine_floor).toBe(0.9);
+    expect(cfg.dupe_min_overlap).toBe(0.6);
   });
 });

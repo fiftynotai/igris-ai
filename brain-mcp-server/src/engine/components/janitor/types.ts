@@ -44,10 +44,22 @@ export interface JanitorConfig {
   harness: string | null;
   /**
    * Cosine floor for the near-dupe KNN pre-filter (L2→cosine via l2ToCosine).
-   * HIGH (0.95) — merge is destructive, so the pre-filter surfaces only very
-   * close pairs; the LLM then judges keep/merge/false-positive (#163/TD-087).
+   * Lowered to 0.90 in M1 (FR-116) — the higher recall catches more LLM-rephrased
+   * dupes (#163) that the old 0.95 floor missed. Paired with `dupe_min_overlap`:
+   * a candidate must clear BOTH gates, so the lower cosine floor does NOT flood
+   * the LLM with same-topic-but-distinct pairs. The LLM still judges
+   * keep/merge/false-positive on what survives (TD-087).
    */
   dupe_cosine_floor: number;
+  /**
+   * M1 (FR-116) Jaccard overlap GATE in [0, 1]. A candidate pair must ALSO clear
+   * this normalized-token overlap floor (not just `dupe_cosine_floor`) to be
+   * surfaced to the LLM. This is what lets `dupe_cosine_floor` drop to 0.90
+   * safely: high-cosine-but-lexically-distinct pairs (same topic, different
+   * knowledge) fall below the overlap floor and are excluded before the LLM ever
+   * sees them. Computed from the NORMALIZED fingerprint tokens (#930/TD-087).
+   */
+  dupe_min_overlap: number;
   /** Top-K neighbours probed per learning in the vec0 KNN. */
   top_k: number;
   /** Hard cap on candidate pairs per run (the learning #153 cheap pre-filter bound). */
@@ -73,10 +85,12 @@ export interface JanitorConfig {
  * Janitor instance defaults (FR-119). `enabled: false` mirrors the other three
  * cognition instances (the OPERATIONS step flips it true after the engine is
  * verified live). Daily 04:00 cron (offset from synapse's 03:00), budget-of-8,
- * 300s timeout. `dupe_cosine_floor: 0.95` is the high near-dupe floor;
- * `auto_merge: false` per Decision B. The hygiene thresholds are the plan's
- * operator-confirmed defaults (bump after 3 rediscoveries, re-eval after 5
- * recurrences, reject pending after 14 days).
+ * 300s timeout. `dupe_cosine_floor: 0.90` (M1/FR-116) is the near-dupe floor,
+ * gated by `dupe_min_overlap: 0.6` (a candidate must clear BOTH); `auto_merge:
+ * false` per Decision B and `auto_merge_threshold: 0.95` stays HIGH (the
+ * review-free fork still demands very-close pairs). The hygiene thresholds are
+ * the plan's operator-confirmed defaults (bump after 3 rediscoveries, re-eval
+ * after 5 recurrences, reject pending after 14 days).
  */
 export const DEFAULT_JANITOR_CONFIG: JanitorConfig = {
   enabled: false,
@@ -84,7 +98,8 @@ export const DEFAULT_JANITOR_CONFIG: JanitorConfig = {
   llm_daily_budget: 8,
   min_input_bytes: 100,
   harness: null,
-  dupe_cosine_floor: 0.95,
+  dupe_cosine_floor: 0.9,
+  dupe_min_overlap: 0.6,
   top_k: 5,
   max_pairs: 200,
   auto_merge: false,
@@ -103,7 +118,8 @@ export const DEFAULT_JANITOR_CONFIG: JanitorConfig = {
  * (sorted-id dedup). Carries each side's title + a NORMALIZED content snippet so
  * the model can reason without another DB read. `cosine` is the KNN similarity
  * (from the NORMALIZED-fingerprint query embedding — #930/TD-087); `overlap` is
- * a cheap normalized-token Jaccard signal for observability.
+ * the normalized-token Jaccard signal — a M1 (FR-116) GATE (`>= dupe_min_overlap`)
+ * as well as an advisory the LLM reads.
  */
 export interface DuplicatePair {
   /** The lower learning id (sorted). */
@@ -116,7 +132,7 @@ export interface DuplicatePair {
   to_snippet: string;
   /** Cosine similarity of the normalized-fingerprint embeddings (>= dupe_cosine_floor). */
   cosine: number;
-  /** Normalized-token Jaccard overlap in [0, 1] — advisory signal for the LLM. */
+  /** Normalized-token Jaccard overlap in [0, 1] — M1 gate (>= dupe_min_overlap) + LLM advisory. */
   overlap: number;
 }
 

@@ -95,6 +95,7 @@ export function resolveJanitorConfig(
     min_input_bytes: pick('min_input_bytes', DEFAULT_JANITOR_CONFIG.min_input_bytes),
     harness: pick('harness', DEFAULT_JANITOR_CONFIG.harness),
     dupe_cosine_floor: pick('dupe_cosine_floor', DEFAULT_JANITOR_CONFIG.dupe_cosine_floor),
+    dupe_min_overlap: pick('dupe_min_overlap', DEFAULT_JANITOR_CONFIG.dupe_min_overlap),
     top_k: pick('top_k', DEFAULT_JANITOR_CONFIG.top_k),
     max_pairs: pick('max_pairs', DEFAULT_JANITOR_CONFIG.max_pairs),
     auto_merge: pick('auto_merge', DEFAULT_JANITOR_CONFIG.auto_merge),
@@ -249,6 +250,7 @@ export function createJanitorComponent(): BrainComponent {
         `Janitor component initialized (memory hygiene: enabled=${janitorConfig.enabled}, ` +
           `harness=${janitorConfig.harness ?? globalConfig.harness ?? 'claude'}, ` +
           `budget=${janitorConfig.llm_daily_budget}/day, dupe_cosine_floor=${janitorConfig.dupe_cosine_floor}, ` +
+          `dupe_min_overlap=${janitorConfig.dupe_min_overlap}, ` +
           `auto_merge=${janitorConfig.auto_merge}, stale_days=${janitorConfig.stale_days})`,
       );
     },

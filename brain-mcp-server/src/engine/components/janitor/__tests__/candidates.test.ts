@@ -4,7 +4,10 @@
  * Covers `buildDuplicatePairs`:
  *   - normalized-fingerprint embedding KNN (the #930/TD-087 discipline — an
  *     INJECTED deterministic embedder stands in for generateEmbedding);
- *   - the 0.95 cosine floor excludes below-floor neighbours;
+ *   - the 0.90 cosine floor (M1/FR-116) excludes below-floor neighbours;
+ *   - the M1 Jaccard overlap GATE: a high-cosine but lexically-distinct pair is
+ *     excluded, and a ~0.92-cosine (below the old 0.95 floor) high-overlap pair
+ *     is now surfaced (the point of dropping the floor to 0.90);
  *   - only APPROVED learnings are scanned (merged/pending excluded);
  *   - already-pending janitor merge suggestions are excluded;
  *   - sorted-id dedup + deterministic ORDER + the max_pairs cap;
@@ -64,6 +67,22 @@ async function fakeEmbed(text: string): Promise<Float32Array> {
   return text.includes('alpha') ? unit(0) : unit(1);
 }
 
+/**
+ * Angle embedder: a fingerprint containing 'backoff' → a unit vector at cosine
+ * 0.92 to unit(0) (below the OLD 0.95 floor, above the NEW 0.90 one); anything
+ * else → unit(0). For unit vectors l2ToCosine returns the dot product exactly,
+ * so the KNN cosine between the two stored vectors is 0.92.
+ */
+function angleVec(): Float32Array {
+  const arr = new Float32Array(384);
+  arr[0] = 0.92;
+  arr[1] = Math.sqrt(1 - 0.92 * 0.92);
+  return arr;
+}
+async function embedAngle(text: string): Promise<Float32Array> {
+  return text.includes('backoff') ? angleVec() : unit(0);
+}
+
 function buildSchema(db: Database.Database): void {
   for (const m of subconsciousMigrations) db.exec(m.sql);
   db.exec(`
@@ -98,8 +117,9 @@ describe('buildDuplicatePairs — near-dupe KNN (vec-gated)', () => {
   afterEach(() => db.close());
 
   it.skipIf(!HAS_VEC)('pairs high-cosine near-dupes and excludes below-floor ones', async () => {
-    seed(db, 1, 'A', 'alpha rule'); // unit(0)
-    seed(db, 2, 'B', 'alpha rule restated'); // unit(0) — near-dupe of 1
+    // High token overlap (>= the 0.6 default gate) AND high cosine (unit(0)).
+    seed(db, 1, 'A', 'alpha rule for retry backoff handling'); // unit(0)
+    seed(db, 2, 'B', 'alpha rule for retry backoff handling restated'); // unit(0) — near-dupe of 1
     seed(db, 3, 'C', 'gamma unrelated'); // unit(1)
     insertEmbeddingInto(db, 'learnings_vec', 1, unit(0));
     insertEmbeddingInto(db, 'learnings_vec', 2, unit(0));
@@ -109,7 +129,60 @@ describe('buildDuplicatePairs — near-dupe KNN (vec-gated)', () => {
     expect(pairs).toHaveLength(1);
     expect(pairs[0]).toMatchObject({ from_id: 1, to_id: 2 });
     expect(pairs[0].cosine).toBeGreaterThanOrEqual(DEFAULT_JANITOR_CONFIG.dupe_cosine_floor);
+    expect(pairs[0].overlap).toBeGreaterThanOrEqual(DEFAULT_JANITOR_CONFIG.dupe_min_overlap);
   });
+
+  it.skipIf(!HAS_VEC)(
+    'M1 gate: same-topic-distinct (high cosine, LOW Jaccard) is excluded — but admitted when the gate is off',
+    async () => {
+      // Both embed to unit(0) → cosine 1.0 (same topic), but they share almost no
+      // tokens → Jaccard well below the 0.6 default gate.
+      seed(db, 1, 'X', 'alpha foxtrot delta echo golf hotel');
+      seed(db, 2, 'Y', 'alpha india juliet kilo lima mike');
+      insertEmbeddingInto(db, 'learnings_vec', 1, unit(0));
+      insertEmbeddingInto(db, 'learnings_vec', 2, unit(0));
+
+      const gated = await buildDuplicatePairs(db, DEFAULT_JANITOR_CONFIG, { embed: fakeEmbed });
+      expect(gated).toHaveLength(0); // the Jaccard gate rejects it
+
+      // Proof it is the OVERLAP gate (not cosine) doing the exclusion: drop the
+      // gate to 0 and the same high-cosine pair is surfaced.
+      const ungated = await buildDuplicatePairs(
+        db,
+        { ...DEFAULT_JANITOR_CONFIG, dupe_min_overlap: 0 },
+        { embed: fakeEmbed },
+      );
+      expect(ungated).toHaveLength(1);
+      expect(ungated[0].overlap).toBeLessThan(DEFAULT_JANITOR_CONFIG.dupe_min_overlap);
+    },
+  );
+
+  it.skipIf(!HAS_VEC)(
+    'M1 floor: a ~0.92-cosine high-overlap pair (below the old 0.95 floor) is now surfaced',
+    async () => {
+      // id2 differs from id1 by one token ('backoff') → embedAngle puts it at
+      // cosine 0.92 to id1: below the OLD 0.95 floor, above the NEW 0.90 one.
+      seed(db, 1, 'Retry', 'alpha retry failed calls policy');
+      seed(db, 2, 'Retry', 'alpha retry failed calls policy backoff');
+      insertEmbeddingInto(db, 'learnings_vec', 1, unit(0));
+      insertEmbeddingInto(db, 'learnings_vec', 2, angleVec());
+
+      const pairs = await buildDuplicatePairs(db, DEFAULT_JANITOR_CONFIG, { embed: embedAngle });
+      expect(pairs).toHaveLength(1);
+      expect(pairs[0]).toMatchObject({ from_id: 1, to_id: 2 });
+      expect(pairs[0].cosine).toBeGreaterThanOrEqual(0.9);
+      expect(pairs[0].cosine).toBeLessThan(0.95);
+      expect(pairs[0].overlap).toBeGreaterThanOrEqual(DEFAULT_JANITOR_CONFIG.dupe_min_overlap);
+
+      // The OLD 0.95 floor would have missed this dupe entirely.
+      const oldFloor = await buildDuplicatePairs(
+        db,
+        { ...DEFAULT_JANITOR_CONFIG, dupe_cosine_floor: 0.95 },
+        { embed: embedAngle },
+      );
+      expect(oldFloor).toHaveLength(0);
+    },
+  );
 
   it.skipIf(!HAS_VEC)('excludes a soft-deleted (merged) learning from the scan', async () => {
     seed(db, 1, 'A', 'alpha rule');
@@ -134,8 +207,8 @@ describe('buildDuplicatePairs — near-dupe KNN (vec-gated)', () => {
   });
 
   it.skipIf(!HAS_VEC)('does NOT exclude on a pending suggestion from a DIFFERENT source_module', async () => {
-    seed(db, 1, 'A', 'alpha rule');
-    seed(db, 2, 'B', 'alpha rule restated');
+    seed(db, 1, 'A', 'alpha rule for retry backoff handling');
+    seed(db, 2, 'B', 'alpha rule for retry backoff handling restated');
     insertEmbeddingInto(db, 'learnings_vec', 1, unit(0));
     insertEmbeddingInto(db, 'learnings_vec', 2, unit(0));
     db.prepare(
@@ -147,7 +220,8 @@ describe('buildDuplicatePairs — near-dupe KNN (vec-gated)', () => {
   });
 
   it.skipIf(!HAS_VEC)('produces a stable ordering + honours the max_pairs cap', async () => {
-    for (let i = 1; i <= 4; i++) seed(db, i, `L${i}`, 'alpha shared');
+    // Identical title+content → Jaccard 1.0, so every pair clears the M1 gate.
+    for (let i = 1; i <= 4; i++) seed(db, i, 'L', 'alpha shared common rule detail');
     for (let i = 1; i <= 4; i++) insertEmbeddingInto(db, 'learnings_vec', i, unit(0));
     const cfg: JanitorConfig = { ...DEFAULT_JANITOR_CONFIG, top_k: 10, max_pairs: 3 };
     const a = await buildDuplicatePairs(db, cfg, { embed: fakeEmbed });

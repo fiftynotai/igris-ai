@@ -99,7 +99,16 @@ function makeBrain(withVec: boolean): Database.Database {
   return db;
 }
 
-const RUNNABLE: JanitorConfig = { ...DEFAULT_JANITOR_CONFIG, enabled: true, min_input_bytes: 0 };
+// dupe_min_overlap: 0 disables the M1 (FR-116) Jaccard gate for these
+// lifecycle tests — they exercise the RUN path (queuing, terminal events,
+// auto_merge, brain isolation) with minimal 'alpha rule' fixtures, NOT the
+// candidate overlap gate (that gate is covered in candidates.test.ts).
+const RUNNABLE: JanitorConfig = {
+  ...DEFAULT_JANITOR_CONFIG,
+  enabled: true,
+  min_input_bytes: 0,
+  dupe_min_overlap: 0,
+};
 
 function deps(text: string) {
   const backend: ResolvedBackend = { harness: 'claude', fallback_order: ['claude'] };

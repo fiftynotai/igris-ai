@@ -111,7 +111,7 @@ export interface JanitorInstanceDeps {
 /**
  * Map the janitor config knobs onto the engine's per-instance
  * `CognitionInstanceConfig`. The candidate/hygiene knobs (dupe_cosine_floor/
- * top_k/max_pairs/auto_merge/thresholds/N-values) are NOT part of the agnostic
+ * dupe_min_overlap/top_k/max_pairs/auto_merge/thresholds/N-values) are NOT part of the agnostic
  * envelope — they drive the instance's own slots + the runner's sweep.
  */
 export function janitorInstanceConfig(

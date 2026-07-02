@@ -9,7 +9,11 @@
  *   For each APPROVED learning, embed its NORMALIZED fingerprint
  *   (`normalizedFingerprint(title, content)` — the ONE canonical derivation,
  *   #930/TD-087) and run a vec0 KNN over `learnings_vec` (top-k), keeping
- *   neighbours whose `l2ToCosine` similarity ≥ `cfg.dupe_cosine_floor` (0.95).
+ *   neighbours whose `l2ToCosine` similarity ≥ `cfg.dupe_cosine_floor` (0.90,
+ *   M1/FR-116) AND whose normalized-token Jaccard `overlap` ≥
+ *   `cfg.dupe_min_overlap` (0.6). BOTH gates must clear — the overlap gate is
+ *   what lets the cosine floor drop to 0.90 without flooding the LLM with
+ *   same-topic-but-lexically-distinct pairs (#163).
  *
  * CRITICAL (#930/TD-087): the QUERY embedding is derived from the NORMALIZED
  * fingerprint (the same shape `perception/dedup.ts:findNearestMatch` uses),
@@ -63,7 +67,7 @@ function snippet(content: string): string {
   return s.length > SNIPPET_MAX ? `${s.slice(0, SNIPPET_MAX)}…` : s;
 }
 
-/** Cheap normalized-token Jaccard overlap in [0, 1] — advisory signal only. */
+/** Cheap normalized-token Jaccard overlap in [0, 1] — M1 gate (>= dupe_min_overlap) + LLM advisory. */
 function tokenOverlap(aTitle: string, aContent: string, bTitle: string, bContent: string): number {
   const toks = (t: string, c: string): Set<string> =>
     new Set(`${normalizeForDedup(t)} ${normalizeForDedup(c)}`.split(' ').filter((w) => w.length > 0));
@@ -126,7 +130,7 @@ export function loadPendingMergePairs(db: Database.Database): Set<string> {
  * fail-soft; an absent vec extension (or an empty corpus) yields `[]`.
  *
  * @param db     the brain DB
- * @param config the resolved janitor config (dupe_cosine_floor / top_k / max_pairs)
+ * @param config the resolved janitor config (dupe_cosine_floor / dupe_min_overlap / top_k / max_pairs)
  * @param deps   injectable embedder seam (default: the shipped generateEmbedding)
  */
 export async function buildDuplicatePairs(
@@ -188,9 +192,17 @@ export async function buildDuplicatePairs(
       const key = sortedKey(loId, hiId);
       if (seen.has(key)) continue;
       if (pending.has(key)) continue;
-      seen.add(key);
       const lo = byId.get(loId)!;
       const hi = byId.get(hiId)!;
+      // M1 (FR-116): the Jaccard overlap GATE. With the cosine floor lowered to
+      // 0.90 the KNN admits same-topic-but-distinct pairs (high cosine, low
+      // lexical overlap); requiring `overlap >= dupe_min_overlap` too keeps only
+      // genuine near-dupes so the LLM is not flooded (#163). A gated pair is NOT
+      // marked `seen` — if the reverse KNN direction re-surfaces it the gate
+      // rejects it again identically (deterministic).
+      const overlap = tokenOverlap(lo.title, lo.content, hi.title, hi.content);
+      if (overlap < config.dupe_min_overlap) continue;
+      seen.add(key);
       pairs.push({
         from_id: loId,
         to_id: hiId,
@@ -199,7 +211,7 @@ export async function buildDuplicatePairs(
         to_title: hi.title,
         to_snippet: snippet(hi.content),
         cosine: Number(cosine.toFixed(4)),
-        overlap: tokenOverlap(lo.title, lo.content, hi.title, hi.content),
+        overlap,
       });
     }
   }
