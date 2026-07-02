@@ -18,6 +18,7 @@ import { createCuratorInstance, type CuratorContext } from '../curator.js';
 import { createCartographerInstance, type CartographerContext } from '../cartographer.js';
 import { createSynapseInstance, type SynapseContext } from '../synapse.js';
 import { createSubconsciousInstance } from '../subconscious.js';
+import { createPerceptionInstance } from '../perception.js';
 import type { DuplicatePair } from '../../../janitor/types.js';
 import type { ContradictionPair } from '../../../arbiter/types.js';
 import type { StaleCandidate } from '../../../curator/types.js';
@@ -160,6 +161,33 @@ describe('isMalformedResponse (TD-294) — the 6 janitor-family instances opt in
       expect(inst.isMalformedResponse?.('garbage')).toBe(true);
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// TD-295 — perception (the fast-follow deferred by TD-294) opts into the SAME
+// hook, but backed by its OWN parse grammar (`isPerceptionReplyWellFormed`,
+// which accepts the `{result}` envelope + fences perception's parseResponse
+// accepts — NOT the janitor-family `parseJsonArray`). A well-formed empty array
+// (bare or envelope-wrapped) is a valid "nothing worth learning" judgment
+// (→ false); garbage is malformed (→ true).
+// ---------------------------------------------------------------------------
+
+describe('isMalformedResponse (TD-295) — perception opts in with its own grammar', () => {
+  const inst = createPerceptionInstance().instance;
+
+  it('a well-formed empty array [] is NOT malformed (valid-empty judgment)', () => {
+    expect(inst.isMalformedResponse?.('[]')).toBe(false);
+  });
+
+  it('an envelope-wrapped empty array is NOT malformed (perception grammar)', () => {
+    expect(
+      inst.isMalformedResponse?.(JSON.stringify({ type: 'result', result: '[]' })),
+    ).toBe(false);
+  });
+
+  it('garbage IS malformed', () => {
+    expect(inst.isMalformedResponse?.('garbage')).toBe(true);
+  });
 });
 
 describe('isEmptyContext (TD-292) — curator prune', () => {

@@ -273,8 +273,24 @@ export function buildUserPrompt(events: TranscriptEvent[], ctx: LlmExtractorCont
  * the LLM contribution.
  */
 export function extractJsonArrayReply(stdout: string): unknown[] {
+  return tryExtractJsonArray(stdout) ?? [];
+}
+
+/**
+ * The parse core behind {@link extractJsonArrayReply}. Returns the recovered
+ * array (possibly empty) when the blob is a WELL-FORMED JSON array — bare,
+ * fenced, or `{result}`-enveloped — and `null` when the blob is unrecoverable
+ * (non-array JSON, garbage prose, or empty/whitespace).
+ *
+ * `extractJsonArrayReply` collapses that `null` to `[]` (its runner-facing
+ * contract: "no LLM contribution, proceed"). Keeping the null-vs-array
+ * distinction HERE lets {@link isPerceptionReplyWellFormed} reuse the EXACT
+ * same leniency (fences + envelope recursion) it always did, so the well-formed
+ * verdict can never drift from what perception actually accepts (TD-295).
+ */
+function tryExtractJsonArray(stdout: string): unknown[] | null {
   const trimmed = stdout.trim();
-  if (trimmed.length === 0) return [];
+  if (trimmed.length === 0) return null;
 
   const direct = tryParseArray(trimmed);
   if (direct !== null) return direct;
@@ -289,13 +305,30 @@ export function extractJsonArrayReply(stdout: string): unknown[] {
   try {
     const parsed = JSON.parse(trimmed) as Record<string, unknown>;
     if (typeof parsed.result === 'string') {
-      return extractJsonArrayReply(parsed.result);
+      return tryExtractJsonArray(parsed.result);
     }
   } catch {
     // fall through
   }
 
-  return [];
+  return null;
+}
+
+/**
+ * TD-295 — was the raw LLM reply a WELL-FORMED JSON array (possibly empty,
+ * possibly fenced, possibly `{result}`-enveloped)? Reuses the SAME parse core
+ * ({@link tryExtractJsonArray}) that `extractJsonArrayReply` uses, so the verdict
+ * matches exactly what perception accepts and cannot drift.
+ *
+ * `true`  → a valid (possibly empty) array — a legitimate "nothing worth
+ *           learning" judgment the engine records as a SUCCESSFUL zero-persist run.
+ * `false` → genuinely malformed / non-array / empty input — `parse_error`.
+ *
+ * Perception has its OWN grammar (the `{result}` envelope), so it deliberately
+ * does NOT reuse the janitor-family `parseJsonArray` predicate (TD-294).
+ */
+export function isPerceptionReplyWellFormed(raw: string): boolean {
+  return tryExtractJsonArray(raw) !== null;
 }
 
 function tryParseArray(text: string): unknown[] | null {

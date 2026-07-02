@@ -37,6 +37,7 @@ import {
   buildSystemPrompt,
   buildUserPrompt,
   extractJsonArrayReply,
+  isPerceptionReplyWellFormed,
   validateAndCoerce,
   type LlmExtractorContext,
 } from '../../perception/extractors/llm_via_claude_code.js';
@@ -383,6 +384,13 @@ export function createPerceptionInstance(
       suppressed = sup;
       return kept;
     },
+
+    // TD-295 — a well-formed (possibly empty) array is a VALID EMPTY judgment
+    // ("nothing worth learning from this session"), not a parse_error. Consulted
+    // by the engine only when parseResponse yields zero candidates. Reuses
+    // perception's OWN parse leniency (fences + `{result}` envelope) so the
+    // verdict matches exactly what parseResponse accepts.
+    isMalformedResponse: (raw) => !isPerceptionReplyWellFormed(raw),
 
     async persistCandidate(
       db: Database.Database,

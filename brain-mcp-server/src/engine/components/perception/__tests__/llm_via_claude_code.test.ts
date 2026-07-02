@@ -28,6 +28,7 @@ import {
   capPromptBytes,
   DEFAULT_MAX_PROMPT_BYTES,
   extractJsonArrayReply,
+  isPerceptionReplyWellFormed,
   type ExtractorLogger,
   LLM_CONFIDENCE_CAP,
   makeBackendLlmExtractor,
@@ -251,6 +252,57 @@ describe('extractJsonArrayReply', () => {
 
   it('returns [] when JSON is an object, not an array', () => {
     expect(extractJsonArrayReply('{"foo": "bar"}')).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isPerceptionReplyWellFormed (TD-295)
+// ---------------------------------------------------------------------------
+//
+// A well-formed (possibly empty, possibly fenced, possibly `{result}`-enveloped)
+// array is a VALID EMPTY judgment — "nothing worth learning" — which the engine
+// records as a SUCCESSFUL zero-persist run rather than parse_error. Genuinely
+// malformed / non-array / empty input stays malformed (→ parse_error). The
+// predicate reuses `extractJsonArrayReply`'s OWN parse core, so it accepts
+// EXACTLY what perception accepts.
+describe('isPerceptionReplyWellFormed (TD-295)', () => {
+  it('a bare empty array [] is well-formed (valid-empty judgment)', () => {
+    expect(isPerceptionReplyWellFormed('[]')).toBe(true);
+  });
+
+  it('a bare non-empty array is well-formed', () => {
+    expect(isPerceptionReplyWellFormed('[{"a":1}]')).toBe(true);
+  });
+
+  it('a code-fenced empty array is well-formed', () => {
+    expect(isPerceptionReplyWellFormed('```json\n[]\n```')).toBe(true);
+  });
+
+  it('a fenced non-empty array is well-formed', () => {
+    expect(isPerceptionReplyWellFormed(cannedFenced)).toBe(true);
+  });
+
+  it('an envelope wrapping an empty array is well-formed', () => {
+    expect(
+      isPerceptionReplyWellFormed(JSON.stringify({ type: 'result', result: '[]' })),
+    ).toBe(true);
+  });
+
+  it('an envelope wrapping a non-empty array is well-formed', () => {
+    expect(isPerceptionReplyWellFormed(cannedEnveloped)).toBe(true);
+  });
+
+  it('garbage prose is malformed', () => {
+    expect(isPerceptionReplyWellFormed(cannedGarbage)).toBe(false);
+  });
+
+  it('non-array JSON (an object) is malformed', () => {
+    expect(isPerceptionReplyWellFormed('{"foo": "bar"}')).toBe(false);
+  });
+
+  it('empty and whitespace-only input is malformed', () => {
+    expect(isPerceptionReplyWellFormed('')).toBe(false);
+    expect(isPerceptionReplyWellFormed('   ')).toBe(false);
   });
 });
 
