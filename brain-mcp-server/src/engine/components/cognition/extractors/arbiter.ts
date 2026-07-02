@@ -332,6 +332,10 @@ export function createArbiterInstance(
     inputBytes(ctx: ArbiterContext): number {
       return ctx.pairs_bytes;
     },
+
+    isEmptyContext(ctx: ArbiterContext): boolean {
+      return ctx.pairs.length === 0;
+    },
   };
 }
 

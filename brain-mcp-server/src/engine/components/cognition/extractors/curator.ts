@@ -322,6 +322,10 @@ export function createCuratorInstance(
     inputBytes(ctx: CuratorContext): number {
       return ctx.candidates_bytes;
     },
+
+    isEmptyContext(ctx: CuratorContext): boolean {
+      return ctx.candidates.length === 0;
+    },
   };
 }
 

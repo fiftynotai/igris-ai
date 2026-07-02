@@ -134,7 +134,7 @@ export interface ExtractorResult {
   outcome: ExtractorOutcome;
   /** Count of candidates the instance persisted (0 on skip/fail). */
   persisted: number;
-  /** Set when outcome==='skipped' — e.g. 'disabled' | 'budget' | 'cold_start' | 'gate_bytes' | 'cli_missing'. */
+  /** Set when outcome==='skipped' — e.g. 'disabled' | 'budget' | 'cold_start' | 'gate_bytes' | 'cli_missing' | 'no_candidates'. */
   skip_reason?: string;
   /** Set when outcome==='failed' — e.g. 'timeout' | 'parse_error' | 'non_zero_exit' | 'spawn_error'. */
   fail_reason?: string;
@@ -211,4 +211,13 @@ export interface CognitionInstance<TContext = unknown, TCandidate = unknown> {
    * always-run watcher) from being gated out. Perception/subconscious supply it.
    */
   inputBytes?(ctx: TContext): number;
+
+  /**
+   * Optional — report that the built context has NO work to do (e.g. an empty
+   * candidate set). When present and true, the engine short-circuits to
+   * `skipped reason=no_candidates` BEFORE resolving/spawning the backend — even
+   * under `force` (force bypasses cost gates, not "nothing to extract"). Omitted
+   * → the instance never self-reports empty (unchanged behavior).
+   */
+  isEmptyContext?(ctx: TContext): boolean;
 }

@@ -291,6 +291,10 @@ export function createJanitorInstance(
     inputBytes(ctx: JanitorContext): number {
       return ctx.pairs_bytes;
     },
+
+    isEmptyContext(ctx: JanitorContext): boolean {
+      return ctx.pairs.length === 0;
+    },
   };
 }
 

@@ -216,6 +216,15 @@ export async function runExtractor<TContext, TCandidate>(
     });
   }
 
+  // EMPTY-CONTEXT SHORT-CIRCUIT — an instance with nothing to work on (e.g. an
+  // empty candidate set) has no LLM call to make. Skip cleanly BEFORE backend
+  // resolution/spawn, unconditionally (NOT force-gated: force bypasses cost
+  // gates, but "no work to do" is never a cost decision). No run_started is
+  // written, so no budget is consumed and no isolated-claude process spawns.
+  if (instance.isEmptyContext?.(ctx)) {
+    return skip('no_candidates');
+  }
+
   // GATE 4 — bytes cost gate. Skip when the input is below the floor (unless
   // forced). An instance without `inputBytes` reports 0 (gate disabled for it).
   const inputBytes = instance.inputBytes ? instance.inputBytes(ctx) : 0;

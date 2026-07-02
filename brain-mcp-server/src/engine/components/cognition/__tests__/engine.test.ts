@@ -185,6 +185,83 @@ describe('runExtractor — gates', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Empty-context short-circuit (TD-292)
+// ---------------------------------------------------------------------------
+
+describe('runExtractor — empty-context short-circuit (TD-292)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeEventLogDb();
+  });
+  afterEach(() => db.close());
+
+  it('isEmptyContext true → run_skipped reason=no_candidates BEFORE any backend spawn', async () => {
+    let backendCalls = 0;
+    let resolveCalls = 0;
+    const inst = makeDummyInstance({ isEmptyContext: () => true });
+    const deps = fakeDeps(OK_RESPONSE, {
+      resolveBackend: () => {
+        resolveCalls += 1;
+        return { harness: 'claude', fallback_order: ['claude'] };
+      },
+      runBackend: async () => {
+        backendCalls += 1;
+        return OK_RESPONSE;
+      },
+    });
+    const r = await runExtractor(db, inst, {}, deps);
+    expect(r).toMatchObject({ outcome: 'skipped', skip_reason: 'no_candidates', persisted: 0 });
+    // no backend resolution and no spawn happened
+    expect(resolveCalls).toBe(0);
+    expect(backendCalls).toBe(0);
+    // only run_skipped landed — NO run_started (no budget consumed)
+    expect(names(db)).toEqual([eventName('dummy', 'run_skipped')]);
+  });
+
+  it('empty context is NOT force-gated: force still short-circuits to no_candidates', async () => {
+    let backendCalls = 0;
+    const inst = makeDummyInstance({ isEmptyContext: () => true });
+    const deps = fakeDeps(OK_RESPONSE, {
+      runBackend: async () => {
+        backendCalls += 1;
+        return OK_RESPONSE;
+      },
+    });
+    const r = await runExtractor(db, inst, { force: true }, deps);
+    expect(r.outcome).toBe('skipped');
+    expect(r.skip_reason).toBe('no_candidates');
+    expect(backendCalls).toBe(0);
+    expect(names(db)).toEqual([eventName('dummy', 'run_skipped')]);
+  });
+
+  it('isEmptyContext false → unaffected, runs end-to-end to run_succeeded', async () => {
+    const inst = makeDummyInstance({ isEmptyContext: () => false });
+    const r = await runExtractor(db, inst, {}, fakeDeps(OK_RESPONSE));
+    expect(r.outcome).toBe('succeeded');
+    expect(names(db)).toEqual([
+      eventName('dummy', 'run_started'),
+      eventName('dummy', 'run_succeeded'),
+    ]);
+  });
+
+  it('an instance WITHOUT isEmptyContext is unaffected (unchanged behavior)', async () => {
+    const inst = makeDummyInstance();
+    const r = await runExtractor(db, inst, {}, fakeDeps(OK_RESPONSE));
+    expect(r.outcome).toBe('succeeded');
+  });
+
+  it('a NON-empty context whose parse yields [] still returns parse_error (not short-circuited)', async () => {
+    // isEmptyContext=false (there IS candidate work), but the LLM response is
+    // garbage that parses to [] — this is a genuine parse failure, NOT no_candidates.
+    const inst = makeDummyInstance({ isEmptyContext: () => false });
+    const r = await runExtractor(db, inst, {}, fakeDeps({ ok: true, text: 'not json at all' }));
+    expect(r.outcome).toBe('failed');
+    expect(r.fail_reason).toBe('parse_error');
+    expect(names(db)).toEqual([eventName('dummy', 'run_started'), eventName('dummy', 'run_failed')]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Success + failure outcomes
 // ---------------------------------------------------------------------------
 
