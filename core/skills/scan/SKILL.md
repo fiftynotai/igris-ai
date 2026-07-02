@@ -494,3 +494,55 @@ When the command returns markdown output, render it under:
 
 If the primitive is unavailable or errors, omit the section entirely. Do not
 block `/scan`, do not author docs automatically, and do not print a stack trace.
+
+### 6.9. Janitor Engine (FR-119)
+
+Surface a single health line for the LLM memory-hygiene engine — when it last
+fired, the outcome, and the counters from its latest maintenance run. This is
+the janitor analogue of §6.5's Subconscious health line and is ALSO gated behind
+`cognition.janitor.enabled` (skip silently when the flag is absent/`false` — the
+engine does not run, so there is nothing to report). Merge PROPOSALS themselves
+render via `igris_suggestion_list` `source_module='janitor'`; this line is the
+engine-health summary only.
+
+Query the `cognition.janitor.*` lifecycle namespace (the engine writes these to
+`event_log` directly under `component = 'cognition.janitor'`) plus the latest
+`brain_maintenance_runs` audit row for the counters. Prefer the local-DB
+`sqlite3` read (same TD-080 rationale as §6.5/§6.6 — the local DB is the merged
+superset):
+
+```bash
+# Latest janitor run lifecycle event.
+sqlite3 "$HOME/.igris/memory/knowledge.db" \
+  "SELECT event_name, created_at FROM event_log
+   WHERE component = 'cognition.janitor'
+   ORDER BY created_at DESC LIMIT 1;"
+
+# Latest maintenance run counters (proposed / applied / bumps / stale rejected).
+sqlite3 "$HOME/.igris/memory/knowledge.db" \
+  "SELECT status, merges_proposed, merges_applied, confidence_bumps, stale_rejected, finished_at
+   FROM brain_maintenance_runs ORDER BY id DESC LIMIT 1;"
+```
+
+Fallback (only when `sqlite3` is absent): call `igris_event_log` with
+`component = 'cognition.janitor'`, `limit = 1` (it inherits the §6.6 remote-only
+blind spot — acceptable degradation).
+
+Render one line under a `### Janitor Engine` heading. Map the latest event suffix
+to an uppercase status (`run_succeeded`→`SUCCEEDED`, `run_failed`→`FAILED`,
+`run_skipped`→`SKIPPED`, `run_started`→`RUNNING`); append the maintenance-row
+counters.
+
+```
+### Janitor Engine
+Last run: 2026-07-02 04:00 — SUCCEEDED · merges_proposed=2 · confidence_bumps=1 · stale_rejected=3
+```
+
+When no `cognition.janitor.*` rows exist (never run, or gate off):
+```
+### Janitor Engine
+No janitor runs yet.
+```
+
+If `sqlite3` is absent AND the MCP fallback also fails, omit the line entirely.
+Do NOT block /scan.

@@ -37,7 +37,7 @@ import {
 } from "../lib/paths.js";
 import { registerMcpInClaudeJson } from "../lib/mcp-register.js";
 import { validateSlug } from "../lib/slug.js";
-import { applyPerceptionDefault, applySubconsciousDefault, applySynapseDefault } from "../lib/init-config.js";
+import { applyJanitorDefault, applyPerceptionDefault, applySubconsciousDefault, applySynapseDefault } from "../lib/init-config.js";
 import { pushProjectToRemote } from "../lib/remote-push.js";
 import { readInstallSource } from "../lib/install-source.js";
 import { DryRunCollector } from "../lib/dry-run.js";
@@ -183,6 +183,13 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
     info("cognition.synapse.enabled defaulted to false (FR-211 edge-inference instance)");
   } else if (synOutcome === "preserved") {
     debug("cognition.synapse.enabled preserved (operator override)");
+  }
+
+  const janOutcome = applyJanitorDefault();
+  if (janOutcome === "default_set") {
+    info("cognition.janitor.enabled defaulted to false (FR-119 memory-hygiene instance)");
+  } else if (janOutcome === "preserved") {
+    debug("cognition.janitor.enabled preserved (operator override)");
   }
 
   // 10. Remote-brain push (A4) — best-effort, never fails the install.

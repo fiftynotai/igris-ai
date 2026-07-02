@@ -40,6 +40,7 @@ import type {
 import { createPerceptionComponent } from '../perception/index.js';
 import { createSubconsciousComponent } from '../subconscious/index.js';
 import { createSynapseComponent } from '../synapse/index.js';
+import { createJanitorComponent } from '../janitor/index.js';
 
 /**
  * Build the unified cognition component. Composes the perception + subconscious
@@ -54,6 +55,7 @@ export function createCognitionComponent(): BrainComponent {
   const perception = createPerceptionComponent();
   const subconscious = createSubconsciousComponent();
   const synapse = createSynapseComponent();
+  const janitor = createJanitorComponent();
 
   return {
     name: 'cognition',
@@ -78,9 +80,15 @@ export function createCognitionComponent(): BrainComponent {
 
     tools(): ToolDefinition[] {
       // The full registered surface = perception's 8 tools + subconscious's 5
-      // tools + synapse's 1 tool (FR-211: igris_synapse_run). Synapse is composed
-      // here the same way subconscious is — the engine host is untouched (AC #1).
-      return [...perception.tools(), ...subconscious.tools(), ...synapse.tools()];
+      // tools + synapse's 1 tool (FR-211: igris_synapse_run) + janitor's 1 tool
+      // (FR-119: igris_janitor_run_now). Both are composed here the same way
+      // subconscious is — the engine host is untouched (AC #1).
+      return [
+        ...perception.tools(),
+        ...subconscious.tools(),
+        ...synapse.tools(),
+        ...janitor.tools(),
+      ];
     },
 
     events(): { emits: EventDef[]; listens: EventDef[] } {
@@ -118,25 +126,35 @@ export function createCognitionComponent(): BrainComponent {
       if (synapseMigrations.length > 0) {
         ctx.storage.runMigrations('synapse', synapseMigrations);
       }
+      // Janitor OWNS schema (FR-119): brain_maintenance_runs + the
+      // learnings.deleted_at/merged_into audit columns. Run UNDER the 'janitor'
+      // component key so engine_migrations keys it by (janitor, 1) — a live
+      // brain re-applies neither the CREATE nor the ALTER.
+      const janitorMigrations = janitor.schema();
+      if (janitorMigrations.length > 0) {
+        ctx.storage.runMigrations('janitor', janitorMigrations);
+      }
 
       // 2. Delegate init to the inner factories: each resolves its instance
-      //    config, sets its handler context, and (subconscious/synapse) wires its
-      //    schedule bootstrap on engine.ready.
+      //    config, sets its handler context, and (subconscious/synapse/janitor)
+      //    wires its schedule bootstrap on engine.ready.
       perception.init(ctx);
       subconscious.init(ctx);
       synapse.init(ctx);
+      janitor.init(ctx);
 
       ctx.log.info(
-        'Cognition component initialized (perception + subconscious + synapse instances)',
+        'Cognition component initialized (perception + subconscious + synapse + janitor instances)',
       );
     },
 
     destroy(): void {
-      // Tear down all inner factories (subconscious + synapse unhook their
-      // engine.ready listeners; perception is stateless).
+      // Tear down all inner factories (subconscious + synapse + janitor unhook
+      // their engine.ready listeners; perception is stateless).
       perception.destroy();
       subconscious.destroy();
       synapse.destroy();
+      janitor.destroy();
     },
   };
 }

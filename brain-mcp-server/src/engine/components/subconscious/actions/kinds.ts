@@ -33,6 +33,7 @@
 import type Database from 'better-sqlite3';
 import { errMsg } from '../../../helpers.js';
 import { handleEdgeCreate } from '../../edges/handlers.js';
+import { deleteEmbedding } from '../../../../utils/vector-search.js';
 
 // ---------------------------------------------------------------------------
 // Result shape
@@ -444,4 +445,206 @@ export function applyAddEdge(
   return ok('add_edge', `Created ${edgeType} edge ${fromType}:${fromId} → ${toType}:${toId}`, {
     data: { edge: edge as Record<string, unknown> },
   });
+}
+
+// ---------------------------------------------------------------------------
+// merge_learnings — soft-delete a near-duplicate into a survivor (FR-119)
+// ---------------------------------------------------------------------------
+
+/** A `learnings` row the merge executor reads (identity + rollable counters). */
+interface MergeLearningRow {
+  id: number;
+  seen_again_count: number | null;
+  review_status: string | null;
+}
+
+/**
+ * `merge_learnings` `{ survivor_id, duplicate_id, synthesized_content?,
+ * justification }` — soft-delete a near-duplicate learning into a survivor.
+ *
+ * The most consequential kind yet (FR-119): it is the ONLY apply-action that
+ * removes a learning from recall. It still fires ONLY on operator
+ * `igris_suggestion_apply_action` (the human-in-the-loop invariant) OR from the
+ * janitor's `auto_merge` fork (gated by cosine + LLM concurrence + a default-OFF
+ * config flag).
+ *
+ * Validation (no merging hallucinated / self / already-merged rows):
+ *   1. `survivor_id` + `duplicate_id` must be positive integers and DISTINCT.
+ *   2. BOTH must resolve to real `learnings` rows (node-existence gate, the
+ *      `applyAddEdge:361 nodeExists` discipline).
+ *
+ * Effect (single transaction — survivor data is NEVER lost):
+ *   1. IDEMPOTENT: if the duplicate is already `review_status='merged'`, no-op.
+ *   2. Roll `seen_again_count`: survivor += duplicate.seen_again_count + 1.
+ *   3. If `synthesized_content` is present, UPDATE the survivor's content and
+ *      NULL its `embedding`/`embedding_model` + drop its `learnings_vec` row so
+ *      the FR-220 post-merge NULL-scan re-embeds it from the normalized
+ *      fingerprint (the shipped `sync.ts` LWW-branch pattern — keeps
+ *      `merge_learnings` synchronous; re-embed is async and happens off-path).
+ *   4. Create a `derived_from` edge survivor→duplicate (lineage, Decision C).
+ *   5. Soft-delete the duplicate: `review_status='merged'` (Decision A — the
+ *      ~10 `review_status='approved'` readers auto-exclude it, ZERO read-path
+ *      sweep) + stamp `deleted_at` + `merged_into=survivor_id` (audit only).
+ *
+ * The `derived_from` edge is written via `handleEdgeCreate` (uses `getDb()`
+ * internally — the same live connection in production; tests mock `getDb`). It
+ * participates in the surrounding transaction because it is the same connection.
+ *
+ * Never throws — a validation failure or a mid-transaction error returns
+ * `{ ok:false }` so the suggestion stays `pending` (or the auto_merge fork
+ * counts nothing).
+ */
+export function applyMergeLearnings(
+  db: Database.Database,
+  params: Record<string, unknown>,
+): ActionResult {
+  const survivorId = Number(params.survivor_id);
+  const duplicateId = Number(params.duplicate_id);
+  if (!Number.isInteger(survivorId) || survivorId <= 0) {
+    return fail('merge_learnings', 'merge_learnings requires a positive integer survivor_id');
+  }
+  if (!Number.isInteger(duplicateId) || duplicateId <= 0) {
+    return fail('merge_learnings', 'merge_learnings requires a positive integer duplicate_id');
+  }
+  if (survivorId === duplicateId) {
+    return fail('merge_learnings', 'survivor_id and duplicate_id must be distinct');
+  }
+
+  const survivor = db
+    .prepare('SELECT id, seen_again_count, review_status FROM learnings WHERE id = ?')
+    .get(survivorId) as MergeLearningRow | undefined;
+  if (!survivor) {
+    return fail('merge_learnings', `survivor learning ${survivorId} does not exist`);
+  }
+  const duplicate = db
+    .prepare('SELECT id, seen_again_count, review_status FROM learnings WHERE id = ?')
+    .get(duplicateId) as MergeLearningRow | undefined;
+  if (!duplicate) {
+    return fail('merge_learnings', `duplicate learning ${duplicateId} does not exist`);
+  }
+
+  // IDEMPOTENT: re-applying a merge on an already-merged duplicate is a no-op.
+  if ((duplicate.review_status ?? 'approved') === 'merged') {
+    return ok('merge_learnings', `learning ${duplicateId} already merged; no-op`, {
+      data: { survivor_id: survivorId, duplicate_id: duplicateId, already_merged: true },
+    });
+  }
+
+  const synthesized = asString(params.synthesized_content);
+  const justification = asString(params.justification);
+  const rolledSeenAgain =
+    (survivor.seen_again_count ?? 0) + (duplicate.seen_again_count ?? 0) + 1;
+
+  try {
+    const runMerge = db.transaction(() => {
+      // 1. Roll seen_again_count into the survivor (+1 for this merge event).
+      db.prepare(
+        `UPDATE learnings
+           SET seen_again_count = ?, last_seen_at = datetime('now'), updated_at = datetime('now')
+         WHERE id = ?`,
+      ).run(rolledSeenAgain, survivorId);
+
+      // 2. Optional survivor content synthesis. NULL the embedding + drop the
+      //    vec row so the async post-merge NULL-scan re-embeds from the
+      //    normalized fingerprint (shipped sync.ts LWW-branch pattern) — keeps
+      //    this executor synchronous.
+      if (synthesized) {
+        db.prepare(
+          `UPDATE learnings
+             SET content = ?, embedding = NULL, embedding_model = NULL,
+                 updated_at = datetime('now')
+           WHERE id = ?`,
+        ).run(synthesized.slice(0, 1_000_000), survivorId);
+        try {
+          deleteEmbedding(db, survivorId);
+        } catch {
+          /* vec unavailable / row absent — the NULL BLOB alone drops it from recall */
+        }
+      }
+
+      // 3. Lineage edge survivor→duplicate (Decision C). handleEdgeCreate uses
+      //    getDb() internally; in production that is this same connection, so the
+      //    write joins this transaction.
+      const edgeResult = handleEdgeCreate({
+        from_type: 'learning',
+        from_id: String(survivorId),
+        to_type: 'learning',
+        to_id: String(duplicateId),
+        edge_type: 'derived_from',
+        provenance: 'inferred',
+        confidence: 0.85,
+        metadata: {
+          source: 'merge_learnings',
+          ...(justification ? { justification } : {}),
+        },
+      });
+      if (edgeResult.isError) {
+        // Abort the transaction so nothing partial lands.
+        throw new Error(
+          `derived_from edge creation failed: ${edgeResult.content[0]?.text ?? 'unknown'}`,
+        );
+      }
+
+      // 4. Soft-delete the duplicate (Decision A). review_status='merged' hides
+      //    it from every approved-filter reader; deleted_at + merged_into are
+      //    audit-only.
+      db.prepare(
+        `UPDATE learnings
+           SET review_status = 'merged',
+               deleted_at = datetime('now'),
+               merged_into = ?,
+               updated_at = datetime('now')
+         WHERE id = ?`,
+      ).run(survivorId, duplicateId);
+    });
+    runMerge();
+  } catch (err) {
+    return fail('merge_learnings', `merge failed: ${errMsg(err)}`);
+  }
+
+  return ok(
+    'merge_learnings',
+    `Merged learning ${duplicateId} into ${survivorId} (seen_again_count rolled to ${rolledSeenAgain})`,
+    {
+      data: {
+        survivor_id: survivorId,
+        duplicate_id: duplicateId,
+        seen_again_count: rolledSeenAgain,
+        content_synthesized: Boolean(synthesized),
+      },
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// re_evaluate_rejection — surface a rejected pattern for reconsideration (FR-119)
+// ---------------------------------------------------------------------------
+
+/**
+ * `re_evaluate_rejection` `{ target_learning_id?, evidence?, justification }` —
+ * a NON-destructive "reconsider this rejection" flag (Decision D — DORMANT).
+ *
+ * Its source event `perception.rejected_pattern_recurring` never fires in
+ * production today (reject is a hard DELETE, so no rejected row survives to
+ * recur — perception/handlers.ts:427 gates the emit behind an env var). This
+ * kind is BUILT so the path is ready: when FR-116 ships soft-delete-on-reject
+ * and flips the emit, the janitor's tally will start surfacing these suggestions
+ * and the operator can apply them here. It takes NO destructive action — it just
+ * records the reconsideration marker as the applied outcome (a `flag_for_review`
+ * sibling). Fail-closed on a missing justification/target is unnecessary because
+ * flagging must never fail the operator's review click; advisory params default.
+ */
+export function applyReEvaluateRejection(
+  params: Record<string, unknown>,
+): ActionResult {
+  const targetId = asString(params.target_learning_id) ?? 'unspecified';
+  const concern =
+    asString(params.justification) ??
+    asString(params.concern) ??
+    'a previously-rejected pattern recurred — reconsider the rejection';
+  return ok(
+    're_evaluate_rejection',
+    `Surfaced rejected pattern (${targetId}) for re-evaluation`,
+    { data: { target_learning_id: targetId, concern, requires_operator_review: true } },
+  );
 }

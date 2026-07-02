@@ -337,6 +337,12 @@ INTERNAL_TOOL_ALLOWLIST = {
     # brain READ surface; proposals surface via igris_suggestion_list. Same class
     # as igris_subconscious_run (default off, cognition.synapse.enabled=false).
     'igris_synapse_run',
+
+    # janitor memory-hygiene run tool (FR-119) — cron-driven LLM extractor +
+    # deterministic sweep, not a brain READ surface; merge proposals surface via
+    # igris_suggestion_list source_module='janitor'. Same class as
+    # igris_synapse_run (default off, cognition.janitor.enabled=false).
+    'igris_janitor_run_now',
 }
 
 forward_misses = doc_names - gateway_names - DOC_ONLY_ALLOWLIST

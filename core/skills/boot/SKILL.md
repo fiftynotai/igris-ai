@@ -430,6 +430,36 @@ run `igris_suggestion_list` directly for full details.
 If zero results, render nothing — no "No suggestions" line. If the tool
 is unavailable (older brain), skip silently.
 
+#### Janitor engine health (FR-119)
+
+Gated behind `cognition.janitor.enabled` in `~/.igris/config.json` (key absent =
+`false`). If `false`, skip this line silently — the engine does not run.
+
+When enabled, surface a one-line memory-hygiene health summary from the latest
+`cognition.janitor.*` lifecycle event + the latest `brain_maintenance_runs` audit
+row (same local-DB `sqlite3` rationale as the subconscious block — the local DB
+is the merged superset post-§4 pull; the janitor runs whole-brain, NOT
+slug-scoped):
+
+```bash
+command -v sqlite3 >/dev/null 2>&1 || return 0  # skip silently if absent
+sqlite3 "<detect.brain_root>/memory/knowledge.db" \
+  "SELECT status, merges_proposed, confidence_bumps, stale_rejected, finished_at
+   FROM brain_maintenance_runs ORDER BY id DESC LIMIT 1;" 2>/dev/null || true
+```
+
+Render one terse line (skip entirely if no maintenance rows exist yet). Merge
+PROPOSALS surface through the pending-suggestions block above
+(`source_module='janitor'`); this line is the engine-health summary only.
+
+```
+## Janitor
+Last run 2026-07-02 04:00 — SUCCEEDED · merges_proposed=2 · confidence_bumps=1 · stale_rejected=3
+```
+
+If `sqlite3` is unavailable, the DB is missing, or the query errors, skip the
+line silently. Token budget: ~40 tokens.
+
 ### 4.11 Ready Check — Pending Perception Candidates (FR-109 / TD-066)
 
 Extraction happens in a detached background process at session-end (spawned

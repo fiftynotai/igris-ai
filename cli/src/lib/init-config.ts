@@ -82,7 +82,7 @@ function readConfig(): Record<string, unknown> | null {
  * outcome so callers can log or surface in dry-run plans.
  */
 function applyCognitionDefault(
-  instance: "perception" | "subconscious" | "synapse",
+  instance: "perception" | "subconscious" | "synapse" | "janitor",
 ): CognitionDefaultOutcome {
   const cfg = readConfig();
   if (cfg === null) {
@@ -148,6 +148,16 @@ export function applyPerceptionDefault(): CognitionDefaultOutcome {
  */
 export function applySynapseDefault(): CognitionDefaultOutcome {
   return applyCognitionDefault("synapse");
+}
+
+/**
+ * Apply the `cognition.janitor.enabled=false` default (FR-119). Mirrors the
+ * synapse/perception/subconscious guardrail; see {@link applyCognitionDefault}
+ * for the contract. Janitor is the memory-hygiene cognition instance (near-dupe
+ * merge + TD-086 coordination) — default OFF.
+ */
+export function applyJanitorDefault(): CognitionDefaultOutcome {
+  return applyCognitionDefault("janitor");
 }
 
 // --------------------------------------------------------------------

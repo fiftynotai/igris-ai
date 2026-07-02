@@ -34,17 +34,22 @@ import {
   applyCreateBrief,
   applyDismissExisting,
   applyFlagForReview,
+  applyMergeLearnings,
+  applyReEvaluateRejection,
   applyTickAc,
   type ActionResult,
 } from './kinds.js';
 
-/** The five known action kinds. Anything else routes to `flag_for_review`. */
+/** The known action kinds. Anything else routes to `flag_for_review`. */
 export const KNOWN_ACTION_KINDS = [
   'tick_ac',
   'dismiss_existing',
   'create_brief',
   'flag_for_review',
   'add_edge',
+  // FR-119 janitor kinds:
+  'merge_learnings',
+  're_evaluate_rejection',
 ] as const;
 
 export type KnownActionKind = (typeof KNOWN_ACTION_KINDS)[number];
@@ -92,6 +97,10 @@ function dispatchKind(
         return applyFlagForReview(params);
       case 'add_edge':
         return applyAddEdge(db, params);
+      case 'merge_learnings':
+        return applyMergeLearnings(db, params);
+      case 're_evaluate_rejection':
+        return applyReEvaluateRejection(params);
       default:
         // GRACEFUL FALLBACK: an unknown kind is flagged for review (the safe
         // sink), not thrown. The operator still sees the suggestion; we record
