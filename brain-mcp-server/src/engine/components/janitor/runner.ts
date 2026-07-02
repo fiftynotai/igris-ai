@@ -54,6 +54,7 @@ import {
   rejectStalePending,
   surfaceReEvalRejections,
 } from './hygiene.js';
+import { surfaceEdgeTypeProposals, type EmergenceConfig } from './emergence.js';
 
 /** Options for `runJanitor`. */
 export interface RunJanitorOptions {
@@ -89,6 +90,18 @@ export interface RunJanitorOptions {
    * (gated by `cognition.janitor.enabled` AND the `cluster.enabled` sub-toggle).
    */
   cartographerConfig?: CartographerConfig;
+  /**
+   * The resolved emergence-sweep config (FR-116 M5, Decision #3b). When present
+   * AND `enabled` (the `cognition.janitor.emergence.enabled` sub-toggle default
+   * OFF, ANDed with `cognition.janitor.enabled`), the runner runs the
+   * DETERMINISTIC edge-type emergence sweep as part of the no-LLM sweep block: it
+   * counts recurring novel metadata signatures on inferred edges and surfaces one
+   * PROPOSAL-ONLY `propose_edge_type` suggestion per clearing signature. It NEVER
+   * mutates `VALID_EDGE_TYPES` and NEVER writes an `entity_edges` row (READ-ONLY).
+   * Absent / disabled → the sweep does not run (0 proposals). Production always
+   * passes it; tests opt in.
+   */
+  emergenceConfig?: EmergenceConfig;
   /** The global `llm_extractor` config (harness default + fallback order). */
   globalConfig?: LlmExtractorGlobalConfig;
   /** Bypass the cold-start + bytes cost gate (manual `*_run` forces a run). */
@@ -192,6 +205,17 @@ export async function runJanitor(
     confidenceBumps = applyConfidenceBumps(db, config, since, runId);
     staleRejected = rejectStalePending(db, config);
     reEvalSurfaced = surfaceReEvalRejections(db, config, since);
+  }
+
+  // 3b. FR-116 M5 (Decision #3b): the DETERMINISTIC edge-type EMERGENCE sweep.
+  //     Gated by its OWN double-toggle (`emergenceConfig.enabled` already ANDs
+  //     `cognition.janitor.enabled` with the `emergence.enabled` sub-toggle, which
+  //     DEFAULTS OFF — the highest-blast op stays dormant until opted in). PURE
+  //     READ over `entity_edges` → surfaces PROPOSAL-ONLY `propose_edge_type`
+  //     suggestions; NEVER mutates `VALID_EDGE_TYPES`, NEVER writes an edge.
+  let edgeTypesProposed = 0;
+  if (options.emergenceConfig?.enabled) {
+    edgeTypesProposed = surfaceEdgeTypeProposals(db, options.emergenceConfig);
   }
 
   // 4. Near-dupe LLM extractor through the agnostic engine.
@@ -329,6 +353,7 @@ export async function runJanitor(
                outdated_pruned = ?,
                clusters_detected = ?,
                meta_learnings_created = ?,
+               edge_types_proposed = ?,
                error_message = ?
          WHERE id = ?`,
       ).run(
@@ -344,6 +369,7 @@ export async function runJanitor(
         curatorStats.pruned,
         cartographerStats.clusters_detected,
         cartographerStats.meta_created,
+        edgeTypesProposed,
         extractor.fail_reason ?? null,
         runRowId,
       );
@@ -368,6 +394,7 @@ export async function runJanitor(
     prune_anomaly: curatorStats.anomaly,
     clusters_detected: cartographerStats.clusters_detected,
     meta_learnings_created: cartographerStats.meta_created,
+    edge_types_proposed: edgeTypesProposed,
     ...(arbiterOutcome ? { arbiter_outcome: arbiterOutcome } : {}),
     ...(curatorOutcome ? { curator_outcome: curatorOutcome } : {}),
     ...(cartographerOutcome ? { cartographer_outcome: cartographerOutcome } : {}),

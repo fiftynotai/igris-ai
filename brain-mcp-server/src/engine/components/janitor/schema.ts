@@ -75,6 +75,12 @@ import type { Migration } from '../../types.js';
  *   the shared audit row. No `learnings` change: the cluster meta is a plain
  *   approved learning + `cluster_member_of` edges (edges-vocabulary change, not a
  *   schema change).
+ * Version 5 (FR-116 M5, Decision #8): additive audit column —
+ *   `brain_maintenance_runs.edge_types_proposed` (the number of `propose_edge_type`
+ *   suggestions the DETERMINISTIC edge-type emergence sweep surfaced this run). The
+ *   sweep is PROPOSAL-ONLY (Decision #3b): it NEVER mutates `VALID_EDGE_TYPES` and
+ *   NEVER writes an `entity_edges` row — hence NO other schema change (no new
+ *   table, no vocabulary column). The vocabulary grows only by a human code edit.
  */
 export const janitorMigrations: Migration[] = [
   {
@@ -155,6 +161,14 @@ export const janitorMigrations: Migration[] = [
     sql: `
       ALTER TABLE brain_maintenance_runs ADD COLUMN clusters_detected INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE brain_maintenance_runs ADD COLUMN meta_learnings_created INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    version: 5,
+    description:
+      'FR-116 M5: brain_maintenance_runs.edge_types_proposed (emergence sweep counter, Decision #8; proposal-only — no vocab/edge mutation)',
+    sql: `
+      ALTER TABLE brain_maintenance_runs ADD COLUMN edge_types_proposed INTEGER NOT NULL DEFAULT 0;
     `,
   },
 ];

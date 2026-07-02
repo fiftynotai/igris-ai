@@ -1276,3 +1276,61 @@ export function applyClusterMeta(
     },
   );
 }
+
+// ---------------------------------------------------------------------------
+// propose_edge_type — acknowledge a proposed canonical edge type (FR-116 M5)
+// ---------------------------------------------------------------------------
+
+const KIND_PROPOSE_EDGE_TYPE = 'propose_edge_type';
+
+/**
+ * The repo file + constant a human edits to actually add a canonical edge type.
+ * Surfaced in the apply result so the operator knows the follow-up is a CODE
+ * EDIT, not a runtime mutation.
+ */
+const VOCAB_TARGET_FILE = 'brain-mcp-server/src/engine/components/edges/handlers.ts';
+const VOCAB_TARGET_CONST = 'VALID_EDGE_TYPES';
+
+/**
+ * `propose_edge_type` `{ proposed_name, signature, occurrence_count?, ... }` — the
+ * INFORMATIONAL acknowledgement of an emergent edge-type proposal (FR-116 M5,
+ * Decision #3b). The deterministic emergence sweep (`janitor/emergence.ts`)
+ * surfaces this suggestion when a novel metadata signature recurs ≥ N times on
+ * inferred edges.
+ *
+ * PROPOSAL-ONLY — this kind does NOT mutate the edge vocabulary. `VALID_EDGE_TYPES`
+ * is a `readonly` array; runtime mutation is deliberately OUT OF SCOPE (the
+ * dynamic registry is DEFERRED). It takes NO destructive action and writes NO
+ * durable record beyond the dispatcher marking the suggestion `acted` (idempotent
+ * — the apply layer refuses to re-apply an acted suggestion). It merely records
+ * the operator's acknowledgement and RETURNS a message making the human follow-up
+ * explicit: to make the type canonical, a human must add it to `VALID_EDGE_TYPES`
+ * in `edges/handlers.ts` (+ the row-100 consumer sweep). Because it makes no
+ * durable mutation, it needs NO undo entry. A `flag_for_review` sibling — advisory
+ * params default so acknowledging never fails the operator's review click.
+ */
+export function applyProposeEdgeType(params: Record<string, unknown>): ActionResult {
+  const proposedName = asString(params.proposed_name) ?? asString(params.signature) ?? 'unnamed';
+  const signature = asString(params.signature) ?? proposedName;
+  const occurrenceRaw = Number(params.occurrence_count);
+  const occurrenceCount =
+    Number.isFinite(occurrenceRaw) && occurrenceRaw > 0 ? Math.floor(occurrenceRaw) : undefined;
+  return ok(
+    KIND_PROPOSE_EDGE_TYPE,
+    `Acknowledged edge-type proposal "${proposedName}". PROPOSAL-ONLY: the vocabulary was NOT ` +
+      `modified at runtime (VALID_EDGE_TYPES is unchanged). To make it canonical, a human must add ` +
+      `'${proposedName}' to ${VOCAB_TARGET_CONST} in ${VOCAB_TARGET_FILE} + sweep the row-100 consumers.`,
+    {
+      data: {
+        proposed_name: proposedName,
+        signature,
+        ...(occurrenceCount !== undefined ? { occurrence_count: occurrenceCount } : {}),
+        vocabulary_mutated: false,
+        requires_code_edit: true,
+        target_file: VOCAB_TARGET_FILE,
+        target_constant: VOCAB_TARGET_CONST,
+        requires_operator_review: true,
+      },
+    },
+  );
+}

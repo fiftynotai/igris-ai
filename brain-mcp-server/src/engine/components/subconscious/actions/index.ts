@@ -36,6 +36,7 @@ import {
   applyDismissExisting,
   applyFlagForReview,
   applyMergeLearnings,
+  applyProposeEdgeType,
   applyPruneLearning,
   applyReEvaluateRejection,
   applyResolveContradiction,
@@ -59,6 +60,8 @@ export const KNOWN_ACTION_KINDS = [
   'prune_learning',
   // FR-116 M4 cartographer kind:
   'cluster_meta',
+  // FR-116 M5 emergence kind (INFORMATIONAL — proposal-only, no vocab mutation):
+  'propose_edge_type',
 ] as const;
 
 export type KnownActionKind = (typeof KNOWN_ACTION_KINDS)[number];
@@ -120,6 +123,11 @@ function dispatchKind(
         // Operator-apply path: no run linkage (undoable by entry_id). The
         // auto_fork fork links the run id directly via applyClusterMeta.
         return applyClusterMeta(db, params);
+      case 'propose_edge_type':
+        // FR-116 M5: INFORMATIONAL only — records the operator's acknowledgement
+        // of an emergent edge-type proposal. Does NOT mutate VALID_EDGE_TYPES
+        // (proposal-only, Decision #3b); no db effect → no undo entry.
+        return applyProposeEdgeType(params);
       default:
         // GRACEFUL FALLBACK: an unknown kind is flagged for review (the safe
         // sink), not thrown. The operator still sees the suggestion; we record

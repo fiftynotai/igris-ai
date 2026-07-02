@@ -205,6 +205,8 @@ export interface JanitorRunResult {
   clusters_detected: number;
   /** FR-116 M4: cluster meta-learnings CREATED directly this run (cartographer auto_fork). */
   meta_learnings_created: number;
+  /** FR-116 M5: `propose_edge_type` suggestions surfaced by the deterministic emergence sweep (proposal-only — no vocab mutation). */
+  edge_types_proposed: number;
   /** The terminal disposition of the arbiter co-run, when not succeeded. */
   arbiter_outcome?: 'succeeded' | 'failed' | 'skipped';
   /** The terminal disposition of the curator co-run, when not succeeded. */

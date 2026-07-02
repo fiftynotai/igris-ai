@@ -324,19 +324,72 @@ per window), `max_clusters` (20), `cluster_edge_types`
 migration adds `brain_maintenance_runs.clusters_detected`/`meta_learnings_created`.
 M4 adds NO new MCP tool — the tool count stays 111.
 
+## Edge-type emergence — the deterministic sweep (FR-116 M5, Decision #3b)
+
+The FINAL FR-116 duty, and the ONLY one that touches the edge-type VOCABULARY. It
+is NOT a cognition instance — the detection is DETERMINISTIC (a statistical
+signature count), so no LLM is needed to COUNT. It is a pure `(G)` sweep, sibling
+to the `hygiene.ts` duties, living in `janitor/emergence.ts` and CO-DRIVEN by the
+runner as part of the no-LLM sweep block.
+
+```
+janitor/emergence.ts   — surfaceEdgeTypeProposals (the sweep) + detectEmergentEdgeTypes
+                         (the testable counting core) + resolveEmergenceConfig
+janitor/runner.ts      — block 3b: runs the sweep when emergenceConfig.enabled
+```
+
+### Signature-counting (op #6a) — deterministic + READ-ONLY
+
+Inference paths stamp a semantic-relation label into an edge's metadata (the field
+chain `metadata.detector` → `signature` → `relation` → `rel`) while STORING the
+edge under a generic `edge_type`. `detectEmergentEdgeTypes` reads every
+`provenance='inferred'` edge (ORDER BY id ASC — stable), extracts + normalizes each
+signature to a lower-snake candidate name, tallies occurrences, and returns the
+NOVEL signatures (not already a `VALID_EDGE_TYPES` literal) that recur ≥
+`min_count` (default 50), sorted ascending, capped at `max_proposals`. It is PURE
+READ — no `entity_edges` mutation. DELIBERATE: `metadata.source` (the writer /
+provenance — `merge_learnings`, `cluster_meta`, …) is EXCLUDED from the field
+chain, so recurring provenance values never masquerade as edge-type proposals.
+Soft-deleted (`metadata.deleted`) and non-inferred edges are excluded.
+
+### Proposal surface (op #6b) — PROPOSAL-ONLY, NO vocab mutation
+
+`surfaceEdgeTypeProposals` inserts ONE `propose_edge_type` suggestion
+(`source_module='janitor'`) per clearing signature (skipping a signature already
+pending — don't double-queue). The `propose_edge_type` apply-action
+(`applyProposeEdgeType`) is INFORMATIONAL: it records the operator's
+acknowledgement (the dispatcher marks the suggestion `acted`) and RETURNS a message
+making the follow-up explicit — **to make the type canonical, a HUMAN must add it
+to `VALID_EDGE_TYPES` in `edges/handlers.ts` (+ the row-100 consumer sweep)**. It
+makes NO db mutation and does NOT grow the vocabulary. `VALID_EDGE_TYPES` is a
+`readonly` array; **runtime mutation is deliberately OUT OF SCOPE** (Decision #3b —
+the dynamic runtime edge-type registry is DEFERRED). Because the kind mutates
+nothing durable, it needs NO undo entry.
+
+### Config (`cognition.janitor.emergence.*`, nested-only, DOUBLE gate, default OFF)
+
+`enabled` (DEFAULT OFF — the extra gate, because vocabulary proposals are the
+highest-blast op), `min_count` (50 — `emergence_min_count`), `max_proposals` (10),
+`max_sample_ids` (10). `enabled` = `cognition.janitor.enabled` AND
+`emergence.enabled`. The v5 `'janitor'` migration adds
+`brain_maintenance_runs.edge_types_proposed`. M5 adds NO new MCP tool and NO new
+cognition instance — the tool count stays 111, and the vocabulary is UNCHANGED
+(proposal-only).
+
 ## Surfaces
 
 - `igris_janitor_run_now` — manual/cron run tool. Runs the near-dupe MERGE
   extractor AND the co-scheduled arbiter contradiction + curator outdated-pruning
-  + cartographer cluster-summary extractors, aggregating all counters into one
-  `brain_maintenance_runs` row.
+  + cartographer cluster-summary extractors AND the deterministic M5 edge-type
+  emergence sweep, aggregating all counters into one `brain_maintenance_runs` row.
 - `igris_brain_maintenance_undo` / `_history` / `_config` — the FR-116 M3
   maintenance surface (tools #109–111): reverse an action, list runs, get/set the
   pruning thresholds. `_config` GET also returns the resolved cartographer
-  (`cluster`) config. M4 adds NO new tool.
+  (`cluster`) config + the M5 emergence config. M4/M5 add NO new tool.
 - `/scan` §6.9 + `/boot` — a janitor health line read from the
   `cognition.janitor.*` lifecycle events + the latest `brain_maintenance_runs`
   row, gated behind `cognition.janitor.enabled`.
-- Merge / contradiction / prune / cluster-meta proposals render through the
-  existing `igris_suggestion_list`
-  (`source_module='janitor'`/`'arbiter'`/`'curator'`/`'cartographer'`).
+- Merge / contradiction / prune / cluster-meta / edge-type proposals render
+  through the existing `igris_suggestion_list`
+  (`source_module='janitor'`/`'arbiter'`/`'curator'`/`'cartographer'`; the M5
+  `propose_edge_type` proposals carry `source_module='janitor'`).
