@@ -185,7 +185,7 @@ export function createMemoryComponent(): BrainComponent {
             properties: {
               query: {
                 type: 'string',
-                description: 'Search query (FTS5 syntax supported: AND, OR, NOT, phrases)',
+                description: 'Search query (plain keywords — FTS5 operators, quotes, and punctuation are sanitized out; boolean/phrase syntax is not supported)',
               },
               project: {
                 type: 'string',

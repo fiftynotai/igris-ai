@@ -400,7 +400,17 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
   sql += ' ORDER BY rank LIMIT ? OFFSET ?';
   params.push(limit, offset);
 
-  const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
+  // Defense-in-depth (TD-290): the shared sanitizer now neutralizes the full
+  // class of FTS5-unsafe input, but wrap MATCH execution in a try/catch so a
+  // residual/future unsafe token degrades to "no results" instead of throwing
+  // — mirroring the resilience the recall / hybrid_search / pattern_suggest
+  // paths already have.
+  let rows: Record<string, unknown>[];
+  try {
+    rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
+  } catch {
+    rows = [];
+  }
 
   if (rows.length === 0) {
     return {

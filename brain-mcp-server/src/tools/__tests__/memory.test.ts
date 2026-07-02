@@ -1516,4 +1516,58 @@ describe('Memory Tools (FR-092)', () => {
       expect(text).not.toContain('Category: mistake');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // TD-290: FTS5-unsafe input must NEVER crash a search surface. A literal
+  // `?` used to survive the denylist sanitizer and reach `MATCH '?'`, which
+  // threw an FTS5 syntax error in handleMemorySearch (recall/hybrid/pattern
+  // swallowed it via try/catch, but returned nothing). The whitelist
+  // sanitizer + per-caller try/catch make all four surfaces degrade
+  // gracefully and consistently.
+  // -------------------------------------------------------------------------
+  describe('FTS5-unsafe input resilience (TD-290)', () => {
+    beforeEach(() => {
+      // A normal, findable row — proves that after neutralizing the unsafe
+      // punctuation the surviving barewords still match real content.
+      insertLearning(db, {
+        title: 'How do I configure caching?',
+        content: 'Use Redis to configure caching for frequently accessed data',
+      });
+    });
+
+    for (const query of ['?', '???', '()', '*', 'what?', 'how to cache?']) {
+      it(`handleMemorySearch does not throw on ${JSON.stringify(query)}`, () => {
+        expect(() => handleMemorySearch({ query })).not.toThrow();
+        const result = handleMemorySearch({ query });
+        // Normal shape: a single text content item (results or "No learnings").
+        expect(Array.isArray(result.content)).toBe(true);
+        expect(typeof result.content[0].text).toBe('string');
+      });
+
+      it(`handleMemoryRecall does not throw on ${JSON.stringify(query)}`, async () => {
+        await expect(
+          handleMemoryRecall({ project: 'test-project', context: query }),
+        ).resolves.toBeDefined();
+        const result = await handleMemoryRecall({ project: 'test-project', context: query });
+        expect(typeof result.content[0].text).toBe('string');
+      });
+
+      it(`handleMemoryHybridSearch does not throw on ${JSON.stringify(query)}`, async () => {
+        await expect(handleMemoryHybridSearch({ query })).resolves.toBeDefined();
+        const result = await handleMemoryHybridSearch({ query });
+        expect(typeof result.content[0].text).toBe('string');
+      });
+
+      it(`handlePatternSuggest does not throw on ${JSON.stringify(query)}`, () => {
+        expect(() => handlePatternSuggest({ project: 'test-project', context: query })).not.toThrow();
+      });
+    }
+
+    it('a `?`-terminated query still finds a matching learning (degrades to bareword search)', () => {
+      // "How do I configure caching?" → sanitizes to "How do I configure caching"
+      // which matches the seeded row instead of throwing or returning empty.
+      const result = handleMemorySearch({ query: 'configure caching?' });
+      expect(result.content[0].text).toContain('How do I configure caching?');
+    });
+  });
 });
