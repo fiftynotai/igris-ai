@@ -189,6 +189,12 @@ export interface JanitorRunResult {
   stale_rejected: number;
   /** re_evaluate_rejection suggestions surfaced (dormant — 0 in production). */
   re_eval_surfaced: number;
+  /** FR-116 M2: contradiction resolutions QUEUED for review by the arbiter instance. */
+  contradictions_proposed: number;
+  /** FR-116 M2: contradiction resolutions applied DIRECTLY by the arbiter auto_resolve fork. */
+  contradictions_resolved: number;
+  /** The near-dupe extractor's terminal disposition of the arbiter co-run, when not succeeded. */
+  arbiter_outcome?: 'succeeded' | 'failed' | 'skipped';
   /** The near-dupe extractor's skip/fail reason, when not succeeded. */
   reason?: string;
 }

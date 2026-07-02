@@ -41,10 +41,20 @@
 import type { Migration } from '../../types.js';
 
 /**
- * Janitor schema migrations.
+ * Janitor schema migrations. FR-116 SHARES this component key (the docstring
+ * promised it); M2 adds a v2 additive ALTER — the migration runner keys by
+ * `(janitor, version)` so a live brain that already applied v1 applies ONLY v2.
  *
  * Version 1: `brain_maintenance_runs` table (+ a created-time index) and the
  *   `learnings.deleted_at` / `learnings.merged_into` audit columns (Decision A1).
+ * Version 2 (FR-116 M2, Decision #8): additive audit columns —
+ *   `brain_maintenance_runs.contradictions_proposed` / `.contradictions_resolved`
+ *   (the arbiter counters aggregated into the shared audit row) and
+ *   `learnings.superseded_by` (the AUDIT-ONLY winner id stamped when a
+ *   contradiction resolution supersedes the older learning — mirrors
+ *   `merged_into`; NEITHER is a recall gate, the `review_status='superseded'`
+ *   value is what the ~10 `='approved'` readers auto-exclude → ZERO read-path
+ *   sweep).
  */
 export const janitorMigrations: Migration[] = [
   {
@@ -72,6 +82,17 @@ export const janitorMigrations: Migration[] = [
 
       ALTER TABLE learnings ADD COLUMN deleted_at TEXT;
       ALTER TABLE learnings ADD COLUMN merged_into INTEGER;
+    `,
+  },
+  {
+    version: 2,
+    description:
+      'FR-116 M2: brain_maintenance_runs.contradictions_proposed/resolved (arbiter counters) + learnings.superseded_by audit column (Decision #8)',
+    sql: `
+      ALTER TABLE brain_maintenance_runs ADD COLUMN contradictions_proposed INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE brain_maintenance_runs ADD COLUMN contradictions_resolved INTEGER NOT NULL DEFAULT 0;
+
+      ALTER TABLE learnings ADD COLUMN superseded_by INTEGER;
     `,
   },
 ];

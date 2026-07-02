@@ -33,6 +33,11 @@ import {
   createJanitorInstance,
   type JanitorRunStats,
 } from '../cognition/extractors/janitor.js';
+import {
+  createArbiterInstance,
+  type ArbiterRunStats,
+} from '../cognition/extractors/arbiter.js';
+import type { ArbiterConfig } from '../arbiter/types.js';
 import type { Embedder } from './candidates.js';
 import {
   applyConfidenceBumps,
@@ -44,14 +49,25 @@ import {
 export interface RunJanitorOptions {
   /** The resolved janitor instance config (envelope + candidate/hygiene knobs). */
   config?: JanitorConfig;
+  /**
+   * The resolved arbiter instance config (FR-116 M2, Decision #4A). When present,
+   * the runner CO-DRIVES the arbiter contradiction extractor sequentially after
+   * the near-dupe extractor, aggregating its counters into the SAME
+   * `brain_maintenance_runs` audit row. Absent → the arbiter is not driven (the
+   * near-dupe path is byte-for-byte unchanged — additive). Production always
+   * passes it (gated by `cognition.janitor.enabled`); tests opt in.
+   */
+  arbiterConfig?: ArbiterConfig;
   /** The global `llm_extractor` config (harness default + fallback order). */
   globalConfig?: LlmExtractorGlobalConfig;
   /** Bypass the cold-start + bytes cost gate (manual `*_run` forces a run). */
   force?: boolean;
   /** What triggered this run ('cron' | 'manual' | a test tag) — observability. */
   trigger?: string;
-  /** Injectable embedder seam (tests: a deterministic embedder). */
+  /** Injectable embedder seam for the near-dupe extractor (tests: a deterministic embedder). */
   embed?: Embedder;
+  /** Injectable embedder seam for the arbiter extractor (defaults to `embed`). */
+  arbiterEmbed?: Embedder;
   /**
    * Injectable engine seams (for tests: a mocked backend, a stubbed cold-start
    * probe). Forwarded verbatim to `runExtractor`'s `deps`.
@@ -138,6 +154,29 @@ export async function runJanitor(
     deps,
   );
 
+  // 4b. FR-116 M2 (Decision #4A/#9): CO-DRIVE the arbiter contradiction extractor
+  //     sequentially, aggregating its counters into the SAME audit row. Only when
+  //     an arbiterConfig is supplied — the near-dupe path above is unchanged.
+  const arbiterStats: ArbiterRunStats = { proposed: 0, resolved: 0 };
+  let arbiterOutcome: JanitorRunResult['arbiter_outcome'];
+  if (options.arbiterConfig) {
+    const arbiterInstance = createArbiterInstance(options.arbiterConfig, {
+      embed: options.arbiterEmbed ?? options.embed,
+      stats: arbiterStats,
+    });
+    const arbiterExtractor = await runExtractor(
+      db,
+      arbiterInstance,
+      {
+        project,
+        trigger,
+        ...(force ? { force: true } : {}),
+      },
+      deps,
+    );
+    arbiterOutcome = arbiterExtractor.outcome;
+  }
+
   // 5. Close the audit row. When disabled (and not forced) the run is 'skipped'
   //    regardless of the extractor's own skip; otherwise mirror the extractor.
   const status = !config.enabled && !force ? 'skipped' : extractor.outcome;
@@ -153,6 +192,8 @@ export async function runJanitor(
                confidence_bumps = ?,
                stale_rejected = ?,
                re_eval_surfaced = ?,
+               contradictions_proposed = ?,
+               contradictions_resolved = ?,
                error_message = ?
          WHERE id = ?`,
       ).run(
@@ -162,6 +203,8 @@ export async function runJanitor(
         confidenceBumps,
         staleRejected,
         reEvalSurfaced,
+        arbiterStats.proposed,
+        arbiterStats.resolved,
         extractor.fail_reason ?? null,
         runRowId,
       );
@@ -178,6 +221,9 @@ export async function runJanitor(
     confidence_bumps: confidenceBumps,
     stale_rejected: staleRejected,
     re_eval_surfaced: reEvalSurfaced,
+    contradictions_proposed: arbiterStats.proposed,
+    contradictions_resolved: arbiterStats.resolved,
+    ...(arbiterOutcome ? { arbiter_outcome: arbiterOutcome } : {}),
     ...(reason ? { reason } : {}),
   };
 }

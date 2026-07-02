@@ -36,6 +36,7 @@ import {
   applyFlagForReview,
   applyMergeLearnings,
   applyReEvaluateRejection,
+  applyResolveContradiction,
   applyTickAc,
   type ActionResult,
 } from './kinds.js';
@@ -50,6 +51,8 @@ export const KNOWN_ACTION_KINDS = [
   // FR-119 janitor kinds:
   'merge_learnings',
   're_evaluate_rejection',
+  // FR-116 M2 arbiter kind:
+  'resolve_contradiction',
 ] as const;
 
 export type KnownActionKind = (typeof KNOWN_ACTION_KINDS)[number];
@@ -101,6 +104,8 @@ function dispatchKind(
         return applyMergeLearnings(db, params);
       case 're_evaluate_rejection':
         return applyReEvaluateRejection(params);
+      case 'resolve_contradiction':
+        return applyResolveContradiction(db, params);
       default:
         // GRACEFUL FALLBACK: an unknown kind is flagged for review (the safe
         // sink), not thrown. The operator still sees the suggestion; we record

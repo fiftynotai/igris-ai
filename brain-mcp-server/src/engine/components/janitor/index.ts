@@ -43,6 +43,7 @@ import { errMsg, successResult } from '../../helpers.js';
 import { DEFAULT_JANITOR_CONFIG, type JanitorConfig } from './types.js';
 import { janitorMigrations } from './schema.js';
 import { runJanitor } from './runner.js';
+import { resolveArbiterConfig } from '../arbiter/types.js';
 import { resolveLlmExtractorGlobalConfig } from '../subconscious/index.js';
 
 /** The well-known name used to detect an existing schedule on init. */
@@ -183,7 +184,7 @@ export function createJanitorComponent(): BrainComponent {
         {
           name: 'igris_janitor_run_now',
           description:
-            'Run the janitor memory-hygiene pipeline once (FR-119). Performs the deterministic sweep (TD-086 confidence bumps for re-discovered learnings, stale pending_review rejection, dormant re-evaluation surfacing) and then the near-duplicate MERGE LLM extractor: builds a cheap deterministic set of near-dupe learning pairs (normalized-fingerprint embedding neighbours at high cosine, minus pairs already pending a merge), runs an isolated LLM call on the resolved harness to judge keep/merge/false-positive, and QUEUES each proposed merge for operator review as a janitor suggestion (applied later via igris_suggestion_apply_action). Writes one brain_maintenance_runs audit row. Invoked by the cron schedule "janitor_engine" daily at 04:00; also fireable manually. Returns the run outcome plus the aggregated counters. Scope with project; force bypasses the cold-start plus candidate-size gate.',
+            'Run the janitor memory-hygiene pipeline once (FR-119/FR-116 M2). Performs the deterministic sweep (TD-086 confidence bumps for re-discovered learnings, stale pending_review rejection, dormant re-evaluation surfacing), then the near-duplicate MERGE LLM extractor (builds a cheap deterministic set of near-dupe learning pairs, judges keep/merge/false-positive, QUEUES each proposed merge as a janitor suggestion), and then the co-scheduled CONTRADICTION-RESOLUTION extractor (arbiter): builds a set of same-topic opposition pairs (high-cosine + a deterministic negation/antonym cue), judges newer-wins/both-valid-scope/evolved-merge/not-a-contradiction, and QUEUES each proposed resolution as an arbiter suggestion (applied later via igris_suggestion_apply_action). Both extractors ride the single cognition.janitor.enabled flag. Writes one brain_maintenance_runs audit row aggregating all counters. Invoked by the cron schedule "janitor_engine" daily at 04:00; also fireable manually. Returns the run outcome plus the aggregated counters. Scope with project; force bypasses the cold-start plus candidate-size gate.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -201,12 +202,18 @@ export function createJanitorComponent(): BrainComponent {
           },
           handler: async (args) => {
             const db = getDb();
-            const config = resolveJanitorConfig();
+            const igrisConfig = readIgrisConfig();
+            const config = resolveJanitorConfig(igrisConfig);
+            // FR-116 M2: the arbiter rides the SAME `cognition.janitor.enabled`
+            // flag (Decision #4A) — resolved from the same config object so its
+            // `enabled` gate stays in lockstep with the janitor's.
+            const arbiterConfig = resolveArbiterConfig(igrisConfig);
             const globalConfig = resolveLlmExtractorGlobalConfig();
             const project = typeof args.project === 'string' ? args.project : 'all';
             const force = args.force === true;
             const result = await runJanitor(db, project, {
               config,
+              arbiterConfig,
               globalConfig,
               force,
               trigger: 'manual',

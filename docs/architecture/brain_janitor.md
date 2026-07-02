@@ -131,9 +131,77 @@ flag gates the LLM engine, the `janitor_engine` cron, AND the deterministic swee
 — one on/off switch. Ships OFF; OPERATIONS flips it after the engine is verified
 live.
 
+## Contradiction resolution — the arbiter instance (FR-116 M2)
+
+The **arbiter** is the FIFTH cognition instance and the CLEAN mandate's second
+LLM duty. Where the janitor MERGES near-duplicates, the arbiter RESOLVES
+CONTRADICTIONS — two same-topic learnings that make opposing claims ("use X" vs
+"X is wrong, use Z"). It is a DISTINCT instance (its own candidate signal, prompt,
+and output verb) but is CO-SCHEDULED under the janitor runner (Decision #4A): it
+rides the SINGLE `cognition.janitor.enabled` flag + the `janitor_engine` cron +
+the shared `brain_maintenance_runs` audit row. No new flag, no new cron, no engine
+or registry edit — one barrel line in `cognition/extractors/index.ts` plus the
+component-internal modules under `components/arbiter/`.
+
+```
+components/arbiter/
+  types.ts       — ArbiterConfig + DEFAULT_ARBITER_CONFIG + ContradictionPair +
+                   ContradictionProposal + resolveArbiterConfig (nested-only,
+                   enabled DERIVED from cognition.janitor.enabled)
+  candidates.ts  — buildContradictionPairs: same-topic KNN band + opposition cue
+  prompts.ts     — resolve-contradiction system + user prompts
+  validator.ts   — validateArbiterResponse: cite-check + verdict allow-list
+
+cognition/extractors/arbiter.ts  — the LLM contradiction instance (6 slots)
+subconscious/actions/kinds.ts    — applyResolveContradiction
+janitor/runner.ts                — co-drives the arbiter after the near-dupe extractor
+```
+
+### Opposition candidate signal (Decision #7)
+
+`buildContradictionPairs` embeds each APPROVED learning's normalized fingerprint,
+runs a vec0 KNN, and keeps neighbours whose cosine is in the SAME-TOPIC band
+`[contradiction_cosine_floor` (0.80)`, contradiction_cosine_ceil` (0.995)`]` AND
+that fire a cheap deterministic OPPOSITION cue: **negation-polarity XOR** (exactly
+one side carries a negation cue like `not`/`avoid`/`wrong`/`deprecated`) OR an
+**antonym pair** (enable/disable, always/never). High cosine makes the pair
+comparable; the cue makes it likely opposing. The upper ceiling excludes
+near-identical restatements so the arbiter + janitor candidate sets stay disjoint.
+
+### The three resolutions (`applyResolveContradiction`)
+
+- **newer_wins** — the older claim is obsolete. Set the loser
+  `review_status='superseded'` (Decision #1 — a NEW review_status value auto-
+  excluded by every `='approved'` reader → ZERO read-path sweep, mirroring
+  `'merged'`), stamp the AUDIT-ONLY `deleted_at` + `superseded_by`, and write a
+  `supersedes` edge winner→loser (`supersedes` is ALREADY in `VALID_EDGE_TYPES` —
+  no vocabulary change in M2). The winner is untouched.
+- **both_valid_scope** — NOT a true conflict: both hold under different scopes.
+  NON-DESTRUCTIVE — append a `[valid-scope: …]` annotation to each learning's
+  content (NULLing its embedding for the FR-220 re-embed scan). Neither is deleted.
+- **evolved_merge** — the conflict resolves into a single evolved understanding:
+  write the synthesized content onto the winner, roll `seen_again_count`, and
+  supersede the loser (like newer_wins).
+
+Every path is a single transaction, idempotent (a no-op when the loser is already
+superseded / the scope already annotated), validates every target id resolves, and
+never throws. It fires ONLY via operator `igris_suggestion_apply_action` or the
+default-OFF `auto_resolve` fork (human-in-the-loop preserved).
+
+### Config (`cognition.janitor.contradiction.*`, nested-only, default OFF)
+
+`contradiction_cosine_floor` (0.80), `contradiction_cosine_ceil` (0.995), `top_k`
+(5), `max_pairs` (200), `auto_resolve` (false), `auto_resolve_threshold` (0.95),
+plus the envelope (`llm_timeout_ms`/`llm_daily_budget`/`min_input_bytes`/`harness`).
+`enabled` is DERIVED from `cognition.janitor.enabled` — one switch for the whole
+janitor pipeline. The v2 `'janitor'` migration adds
+`brain_maintenance_runs.contradictions_proposed`/`contradictions_resolved` (the
+arbiter counters, aggregated into the shared row) + `learnings.superseded_by`.
+
 ## Surfaces
 
-- `igris_janitor_run_now` — manual/cron run tool (tool #108).
+- `igris_janitor_run_now` — manual/cron run tool (tool #108). Runs the near-dupe
+  MERGE extractor AND the co-scheduled arbiter contradiction extractor.
 - `/scan` §6.9 + `/boot` — a janitor health line read from the
   `cognition.janitor.*` lifecycle events + the latest `brain_maintenance_runs`
   row, gated behind `cognition.janitor.enabled`.

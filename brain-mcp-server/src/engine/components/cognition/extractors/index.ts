@@ -20,6 +20,7 @@ import { perceptionInstance } from './perception.js';
 import { subconsciousInstance } from './subconscious.js';
 import { synapseInstance } from './synapse.js';
 import { janitorInstance } from './janitor.js';
+import { arbiterInstance } from './arbiter.js';
 
 /**
  * Every bundled cognition instance, in boot order. A new instance is added by
@@ -31,15 +32,18 @@ import { janitorInstance } from './janitor.js';
  * M2: import { subconsciousInstance } from './subconscious.js';
  * FR-211: import { synapseInstance } from './synapse.js';
  * FR-119: import { janitorInstance } from './janitor.js';
+ * FR-116 M2: import { arbiterInstance } from './arbiter.js';
  */
 export const EXTRACTOR_INSTANCES: readonly CognitionInstance[] = [
   perceptionInstance,
   subconsciousInstance,
   synapseInstance,
   janitorInstance,
+  arbiterInstance,
 ];
 
 export { perceptionInstance, createPerceptionInstance } from './perception.js';
 export { subconsciousInstance, createSubconsciousInstance } from './subconscious.js';
 export { synapseInstance, createSynapseInstance } from './synapse.js';
 export { janitorInstance, createJanitorInstance } from './janitor.js';
+export { arbiterInstance, createArbiterInstance } from './arbiter.js';

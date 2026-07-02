@@ -648,3 +648,273 @@ export function applyReEvaluateRejection(
     { data: { target_learning_id: targetId, concern, requires_operator_review: true } },
   );
 }
+
+// ---------------------------------------------------------------------------
+// resolve_contradiction — resolve two opposing learnings (FR-116 M2)
+// ---------------------------------------------------------------------------
+
+/** A `learnings` row the contradiction executor reads (identity + rollable counters). */
+interface ContradictionLearningRow {
+  id: number;
+  content: string;
+  seen_again_count: number | null;
+  review_status: string | null;
+}
+
+const KIND_RESOLVE = 'resolve_contradiction';
+
+/** Load a learning row (identity + counters) or undefined. */
+function loadContradictionRow(
+  db: Database.Database,
+  id: number,
+): ContradictionLearningRow | undefined {
+  return db
+    .prepare('SELECT id, content, seen_again_count, review_status FROM learnings WHERE id = ?')
+    .get(id) as ContradictionLearningRow | undefined;
+}
+
+/**
+ * Supersede a loser learning IN THE SURROUNDING TRANSACTION: set
+ * `review_status='superseded'` (Decision #1 — a NEW review_status value auto-
+ * excluded by every `='approved'` reader → ZERO read-path sweep), stamp the
+ * audit columns (`deleted_at` + `superseded_by` — AUDIT-ONLY, not a recall gate),
+ * and write a `supersedes` edge winner→loser (`supersedes` is ALREADY in
+ * VALID_EDGE_TYPES — no vocabulary change in M2). Throws on an edge failure so
+ * the caller's transaction rolls back nothing partial.
+ */
+function supersedeLoser(
+  db: Database.Database,
+  winnerId: number,
+  loserId: number,
+  justification: string | undefined,
+  source: string,
+): void {
+  db.prepare(
+    `UPDATE learnings
+       SET review_status = 'superseded',
+           deleted_at = datetime('now'),
+           superseded_by = ?,
+           updated_at = datetime('now')
+     WHERE id = ?`,
+  ).run(winnerId, loserId);
+
+  const edgeResult = handleEdgeCreate({
+    from_type: 'learning',
+    from_id: String(winnerId),
+    to_type: 'learning',
+    to_id: String(loserId),
+    edge_type: 'supersedes',
+    provenance: 'inferred',
+    confidence: 0.85,
+    metadata: {
+      source,
+      ...(justification ? { justification } : {}),
+    },
+  });
+  if (edgeResult.isError) {
+    throw new Error(
+      `supersedes edge creation failed: ${edgeResult.content[0]?.text ?? 'unknown'}`,
+    );
+  }
+}
+
+/**
+ * `resolve_contradiction` `{ resolution, ... }` — resolve two OPPOSING learnings
+ * (FR-116 M2). The `resolution` discriminator selects one of three executors:
+ *
+ *   - newer_wins        `{ winner_id, loser_id, justification }` — the older claim
+ *     is obsolete. Supersede the loser (`review_status='superseded'` + audit
+ *     columns), write a `supersedes` edge winner→loser. The winner is untouched.
+ *   - both_valid_scope  `{ learning_a_id, learning_b_id, scope_a?, scope_b? }` —
+ *     NOT a true conflict: both hold under different scopes. NON-DESTRUCTIVE —
+ *     append a `[valid-scope: …]` annotation to each learning's content (NULLing
+ *     its embedding so the FR-220 NULL-scan re-embeds). Neither is deleted.
+ *   - evolved_merge     `{ winner_id, loser_id, synthesized_content, justification }`
+ *     — the conflict resolves into a single evolved understanding: write the
+ *     synthesized content onto the winner (NULLing its embedding), roll
+ *     seen_again_count, and supersede the loser (like newer_wins).
+ *
+ * Every path is a single transaction, idempotent (a no-op when the loser is
+ * already superseded / the scope already annotated), validates every target id
+ * resolves (no hallucinated ids), and NEVER throws — a validation failure or a
+ * mid-transaction error returns `{ ok:false }` so the suggestion stays `pending`
+ * (or the auto_resolve fork counts nothing). Reuses the `supersedes` edge type
+ * (no VALID_EDGE_TYPES change in M2).
+ */
+export function applyResolveContradiction(
+  db: Database.Database,
+  params: Record<string, unknown>,
+): ActionResult {
+  const resolution = asString(params.resolution);
+  if (!resolution) {
+    return fail(KIND_RESOLVE, 'resolve_contradiction requires a "resolution"');
+  }
+  const justification = asString(params.justification);
+
+  // -------------------------------------------------------------------------
+  // both_valid_scope — non-destructive scope annotation (no delete).
+  // -------------------------------------------------------------------------
+  if (resolution === 'both_valid_scope') {
+    const aId = Number(params.learning_a_id);
+    const bId = Number(params.learning_b_id);
+    if (!Number.isInteger(aId) || aId <= 0 || !Number.isInteger(bId) || bId <= 0) {
+      return fail(
+        KIND_RESOLVE,
+        'both_valid_scope requires positive integer learning_a_id + learning_b_id',
+      );
+    }
+    if (aId === bId) {
+      return fail(KIND_RESOLVE, 'learning_a_id and learning_b_id must be distinct');
+    }
+    const a = loadContradictionRow(db, aId);
+    if (!a) return fail(KIND_RESOLVE, `learning ${aId} does not exist`);
+    const b = loadContradictionRow(db, bId);
+    if (!b) return fail(KIND_RESOLVE, `learning ${bId} does not exist`);
+
+    const scopeA = asString(params.scope_a);
+    const scopeB = asString(params.scope_b);
+    if (!scopeA && !scopeB) {
+      return fail(KIND_RESOLVE, 'both_valid_scope requires at least one of scope_a / scope_b');
+    }
+
+    // Idempotent per-side: only append an annotation not already present.
+    const annotate = (content: string, scope: string): string | null => {
+      const marker = `[valid-scope: ${scope.slice(0, 300)}]`;
+      if (content.includes(marker)) return null; // already annotated — no-op
+      return `${content}\n\n${marker}`;
+    };
+
+    try {
+      const runAnnotate = db.transaction(() => {
+        if (scopeA) {
+          const next = annotate(a.content, scopeA);
+          if (next !== null) {
+            db.prepare(
+              `UPDATE learnings
+                 SET content = ?, embedding = NULL, embedding_model = NULL,
+                     updated_at = datetime('now')
+               WHERE id = ?`,
+            ).run(next.slice(0, 1_000_000), aId);
+            try {
+              deleteEmbedding(db, aId);
+            } catch {
+              /* vec unavailable / row absent — the NULL BLOB alone triggers re-embed */
+            }
+          }
+        }
+        if (scopeB) {
+          const next = annotate(b.content, scopeB);
+          if (next !== null) {
+            db.prepare(
+              `UPDATE learnings
+                 SET content = ?, embedding = NULL, embedding_model = NULL,
+                     updated_at = datetime('now')
+               WHERE id = ?`,
+            ).run(next.slice(0, 1_000_000), bId);
+            try {
+              deleteEmbedding(db, bId);
+            } catch {
+              /* vec unavailable / row absent */
+            }
+          }
+        }
+      });
+      runAnnotate();
+    } catch (err) {
+      return fail(KIND_RESOLVE, `scope annotation failed: ${errMsg(err)}`);
+    }
+
+    return ok(
+      KIND_RESOLVE,
+      `Annotated scope for learnings ${aId} + ${bId} (both retained)`,
+      {
+        data: {
+          resolution,
+          learning_a_id: aId,
+          learning_b_id: bId,
+          ...(scopeA ? { scope_a: scopeA } : {}),
+          ...(scopeB ? { scope_b: scopeB } : {}),
+        },
+      },
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // newer_wins / evolved_merge — supersede the loser (destructive-but-reversible).
+  // -------------------------------------------------------------------------
+  if (resolution !== 'newer_wins' && resolution !== 'evolved_merge') {
+    return fail(KIND_RESOLVE, `unknown resolution "${resolution}"`);
+  }
+
+  const winnerId = Number(params.winner_id);
+  const loserId = Number(params.loser_id);
+  if (!Number.isInteger(winnerId) || winnerId <= 0) {
+    return fail(KIND_RESOLVE, `${resolution} requires a positive integer winner_id`);
+  }
+  if (!Number.isInteger(loserId) || loserId <= 0) {
+    return fail(KIND_RESOLVE, `${resolution} requires a positive integer loser_id`);
+  }
+  if (winnerId === loserId) {
+    return fail(KIND_RESOLVE, 'winner_id and loser_id must be distinct');
+  }
+
+  const winner = loadContradictionRow(db, winnerId);
+  if (!winner) return fail(KIND_RESOLVE, `winner learning ${winnerId} does not exist`);
+  const loser = loadContradictionRow(db, loserId);
+  if (!loser) return fail(KIND_RESOLVE, `loser learning ${loserId} does not exist`);
+
+  // IDEMPOTENT: re-applying when the loser is already superseded is a no-op.
+  if ((loser.review_status ?? 'approved') === 'superseded') {
+    return ok(KIND_RESOLVE, `learning ${loserId} already superseded; no-op`, {
+      data: { resolution, winner_id: winnerId, loser_id: loserId, already_superseded: true },
+    });
+  }
+
+  const synthesized = asString(params.synthesized_content);
+  if (resolution === 'evolved_merge' && !synthesized) {
+    return fail(KIND_RESOLVE, 'evolved_merge requires a non-empty synthesized_content');
+  }
+
+  const rolledSeenAgain =
+    (winner.seen_again_count ?? 0) + (loser.seen_again_count ?? 0) + 1;
+
+  try {
+    const runResolve = db.transaction(() => {
+      if (resolution === 'evolved_merge') {
+        // Evolve the winner: write the reconciled content + roll seen_again_count,
+        // NULL the embedding so the FR-220 post-change NULL-scan re-embeds it.
+        db.prepare(
+          `UPDATE learnings
+             SET content = ?, seen_again_count = ?, last_seen_at = datetime('now'),
+                 embedding = NULL, embedding_model = NULL, updated_at = datetime('now')
+           WHERE id = ?`,
+        ).run(synthesized!.slice(0, 1_000_000), rolledSeenAgain, winnerId);
+        try {
+          deleteEmbedding(db, winnerId);
+        } catch {
+          /* vec unavailable / row absent — the NULL BLOB alone drops it from recall */
+        }
+      }
+      // Both newer_wins + evolved_merge supersede the loser + write the edge.
+      supersedeLoser(db, winnerId, loserId, justification, KIND_RESOLVE);
+    });
+    runResolve();
+  } catch (err) {
+    return fail(KIND_RESOLVE, `resolve failed: ${errMsg(err)}`);
+  }
+
+  const message =
+    resolution === 'evolved_merge'
+      ? `Evolved learning ${winnerId} + superseded ${loserId} (seen_again_count rolled to ${rolledSeenAgain})`
+      : `Superseded learning ${loserId} in favour of ${winnerId}`;
+  return ok(KIND_RESOLVE, message, {
+    data: {
+      resolution,
+      winner_id: winnerId,
+      loser_id: loserId,
+      ...(resolution === 'evolved_merge'
+        ? { seen_again_count: rolledSeenAgain, content_synthesized: true }
+        : {}),
+    },
+  });
+}

@@ -41,7 +41,15 @@
       "auto_merge_threshold": 0.95,
       "rediscovery_bump_n": 3,
       "reject_recur_n": 5,
-      "stale_days": 14
+      "stale_days": 14,
+      "contradiction": {
+        "contradiction_cosine_floor": 0.80,
+        "contradiction_cosine_ceil": 0.995,
+        "top_k": 5,
+        "max_pairs": 200,
+        "auto_resolve": false,
+        "auto_resolve_threshold": 0.95
+      }
     }
   },
   "cli_targets": {{CLI_TARGETS_JSON}},
