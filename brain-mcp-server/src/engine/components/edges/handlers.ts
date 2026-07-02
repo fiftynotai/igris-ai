@@ -45,7 +45,21 @@ export const VALID_ENTITY_TYPES = [
   'decision',
 ] as const;
 
-/** Accepted edge type vocabulary. Stored as plain strings — extensible later. */
+/**
+ * Accepted edge type vocabulary. Stored as plain strings — extensible later.
+ *
+ * ROW-100 LOCKSTEP (MAINTAINING.md): the `igris_memory_store` `edges[]` enum
+ * (`memory/index.ts`) imports this constant directly, as do the traversal filters
+ * (`traversal.ts`) and every edge tool's inputSchema (`edges/index.ts`). Adding a
+ * literal here therefore flows into the store enum + traversal + tools with no
+ * further edit — they stay in lockstep by reference, never a hand-copied list.
+ *
+ * FR-116 M4 (Decision #3a): `cluster_member_of` — a member node → its cluster
+ * representative (the synthesized meta-learning). Written by the `cluster_meta`
+ * apply-action via `handleEdgeCreate` when the cartographer's cluster summary is
+ * applied; the community-detection primitive (`community.ts`) is a pure READ and
+ * writes NO edges itself.
+ */
 export const VALID_EDGE_TYPES = [
   'parent_of',
   'depends_on',
@@ -56,6 +70,7 @@ export const VALID_EDGE_TYPES = [
   'duplicates',
   'derived_from',
   'recurs_with',
+  'cluster_member_of',
 ] as const;
 
 /** Accepted provenance values. */

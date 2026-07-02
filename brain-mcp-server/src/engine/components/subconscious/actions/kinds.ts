@@ -1129,3 +1129,150 @@ export function applyPruneLearning(
     data: { verdict, learning_id: learningId },
   });
 }
+
+// ---------------------------------------------------------------------------
+// cluster_meta — synthesize a cluster of learnings into a meta-learning (FR-116 M4)
+// ---------------------------------------------------------------------------
+
+const KIND_CLUSTER_META = 'cluster_meta';
+
+/** Coerce an unknown into a de-duplicated array of positive-integer learning ids. */
+function asLearningIdList(v: unknown): number[] {
+  if (!Array.isArray(v)) return [];
+  const seen = new Set<number>();
+  for (const raw of v) {
+    const n = Number(raw);
+    if (Number.isInteger(n) && n > 0) seen.add(n);
+  }
+  return Array.from(seen);
+}
+
+/**
+ * `cluster_meta` `{ cluster_member_ids, title, synthesized_summary, confidence? }`
+ * — create a synthesized META-LEARNING that summarizes a cluster of related
+ * learnings and wire `cluster_member_of` edges from each member → the meta
+ * (FR-116 M4). The cartographer proposes it; the operator applies it (or the
+ * `auto_fork` fork applies it directly).
+ *
+ * Validation (no summarizing hallucinated / empty clusters):
+ *   1. `cluster_member_ids` must be an array of at least TWO distinct positive
+ *      integer learning ids.
+ *   2. `synthesized_summary` + `title` must be non-empty strings.
+ *   3. EVERY cited member must resolve to a real `learnings` row (node-existence
+ *      gate — don't wire a meta to a hallucinated member).
+ *
+ * Effect (single transaction — additive, never destructive):
+ *   1. INSERT a new meta-learning (project = the first member's project;
+ *      category='pattern'; review_status defaults to 'approved' so it is
+ *      recallable). Its content is the synthesized summary.
+ *   2. For each member, create a `cluster_member_of` edge member → meta via
+ *      `handleEdgeCreate` (learning #206 — never a direct edge INSERT).
+ *   3. Log ONE undo entry (`action_kind='cluster_meta'`, `learning_id`=the new
+ *      meta id) so `performUndo` can reverse the whole thing (delete the meta +
+ *      its `cluster_member_of` edges). `undoRunId` links it to a maintenance run
+ *      (the auto_fork fork passes it; the operator-apply path passes null → the
+ *      entry is undoable by entry_id).
+ *
+ * Never throws — a validation failure or a mid-transaction error returns
+ * `{ ok:false }` so the suggestion stays `pending` (or the auto_fork counts
+ * nothing).
+ */
+export function applyClusterMeta(
+  db: Database.Database,
+  params: Record<string, unknown>,
+  undoRunId: string | null = null,
+): ActionResult {
+  const memberIds = asLearningIdList(params.cluster_member_ids);
+  if (memberIds.length < 2) {
+    return fail(
+      KIND_CLUSTER_META,
+      'cluster_meta requires cluster_member_ids: an array of at least 2 distinct learning ids',
+    );
+  }
+  const summary = asString(params.synthesized_summary);
+  if (!summary) {
+    return fail(KIND_CLUSTER_META, 'cluster_meta requires a non-empty synthesized_summary');
+  }
+  const title = asString(params.title) ?? `Cluster meta-learning (${memberIds.length} members)`;
+  const confidenceRaw = Number(params.confidence);
+  const confidence =
+    Number.isFinite(confidenceRaw) && confidenceRaw >= 0 && confidenceRaw <= 1
+      ? confidenceRaw
+      : 0.7;
+
+  // Node-existence gate — every member must resolve to a real learnings row, and
+  // capture the first member's project for the meta-learning's project column.
+  let project = 'global';
+  let firstFound = false;
+  for (const id of memberIds) {
+    const row = db
+      .prepare('SELECT id, project FROM learnings WHERE id = ?')
+      .get(id) as { id: number; project: string } | undefined;
+    if (!row) {
+      return fail(KIND_CLUSTER_META, `cluster member learning ${id} does not exist`);
+    }
+    if (!firstFound) {
+      project = typeof row.project === 'string' && row.project.length > 0 ? row.project : 'global';
+      firstFound = true;
+    }
+  }
+
+  let metaId = 0;
+  try {
+    const runClusterMeta = db.transaction(() => {
+      // 1. Create the synthesized meta-learning. Only the NOT-NULL columns are set
+      //    explicitly; the rest take their schema defaults (scope='local',
+      //    review_status='approved', provenance='observed', source_extractor='manual')
+      //    so this INSERT is robust across brain schema versions.
+      const insert = db
+        .prepare(
+          `INSERT INTO learnings (project, category, title, content, confidence)
+           VALUES (?, 'pattern', ?, ?, ?)`,
+        )
+        .run(project, title.slice(0, 500), summary.slice(0, 1_000_000), confidence);
+      metaId = Number(insert.lastInsertRowid);
+
+      // 2. Wire cluster_member_of edges member → meta (via handleEdgeCreate — #206).
+      for (const memberId of memberIds) {
+        const edgeResult = handleEdgeCreate({
+          from_type: 'learning',
+          from_id: String(memberId),
+          to_type: 'learning',
+          to_id: String(metaId),
+          edge_type: 'cluster_member_of',
+          provenance: 'inferred',
+          confidence: 0.85,
+          metadata: { source: 'cluster_meta' },
+        });
+        if (edgeResult.isError) {
+          throw new Error(
+            `cluster_member_of edge creation failed: ${edgeResult.content[0]?.text ?? 'unknown'}`,
+          );
+        }
+      }
+
+      // 3. Log ONE undo entry keyed on the NEW meta id (logged AFTER the INSERT —
+      //    the meta had no pre-state; the inverse DELETES it + its edges). Fail-soft.
+      logUndoEntry(db, {
+        run_id: undoRunId,
+        action_kind: 'cluster_meta',
+        learning_id: metaId,
+      });
+    });
+    runClusterMeta();
+  } catch (err) {
+    return fail(KIND_CLUSTER_META, `cluster_meta failed: ${errMsg(err)}`);
+  }
+
+  return ok(
+    KIND_CLUSTER_META,
+    `Created meta-learning ${metaId} summarizing ${memberIds.length} learnings + wired cluster_member_of edges`,
+    {
+      data: {
+        meta_learning_id: metaId,
+        cluster_member_ids: memberIds,
+        member_count: memberIds.length,
+      },
+    },
+  );
+}

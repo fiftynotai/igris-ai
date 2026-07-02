@@ -31,6 +31,7 @@ import { errMsg, errorResult, successResult } from '../../../helpers.js';
 import type { Suggestion } from '../types.js';
 import {
   applyAddEdge,
+  applyClusterMeta,
   applyCreateBrief,
   applyDismissExisting,
   applyFlagForReview,
@@ -56,6 +57,8 @@ export const KNOWN_ACTION_KINDS = [
   'resolve_contradiction',
   // FR-116 M3 curator kind:
   'prune_learning',
+  // FR-116 M4 cartographer kind:
+  'cluster_meta',
 ] as const;
 
 export type KnownActionKind = (typeof KNOWN_ACTION_KINDS)[number];
@@ -113,6 +116,10 @@ function dispatchKind(
         // Operator-apply path: no run linkage (undoable by entry_id). The
         // auto_prune fork links the run id directly via applyPruneLearning.
         return applyPruneLearning(db, params);
+      case 'cluster_meta':
+        // Operator-apply path: no run linkage (undoable by entry_id). The
+        // auto_fork fork links the run id directly via applyClusterMeta.
+        return applyClusterMeta(db, params);
       default:
         // GRACEFUL FALLBACK: an unknown kind is flagged for review (the safe
         // sink), not thrown. The operator still sees the suggestion; we record

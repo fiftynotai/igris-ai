@@ -37,7 +37,11 @@ export type UndoActionKind =
   | 'resolve_contradiction'
   | 'prune_learning'
   | 'confidence_bump'
-  | 'lower_confidence';
+  | 'lower_confidence'
+  // FR-116 M4: reverse a cluster_meta by DELETING the created meta-learning +
+  // its cluster_member_of edges (the only kind that reverses a CREATE, not a
+  // mutation — `learning_id` is the meta id).
+  | 'cluster_meta';
 
 /**
  * One pre-state capture for a single mutated learning. Every `prior_*` field is
@@ -203,6 +207,28 @@ export function performUndo(
   try {
     const runUndo = db.transaction(() => {
       for (const row of rows) {
+        // FR-116 M4 — cluster_meta reverses a CREATE, not a mutation: DELETE the
+        // meta-learning + every cluster_member_of edge touching it (both
+        // directions), then stamp undone_at. It has no prior_* state to restore.
+        if (row.action_kind === 'cluster_meta') {
+          db.prepare(
+            `DELETE FROM entity_edges
+              WHERE edge_type = 'cluster_member_of'
+                AND ((to_type = 'learning'   AND to_id = ?)
+                  OR (from_type = 'learning' AND from_id = ?))`,
+          ).run(String(row.learning_id), String(row.learning_id));
+          db.prepare(`DELETE FROM learnings WHERE id = ?`).run(row.learning_id);
+          try {
+            deleteEmbedding(db, row.learning_id);
+          } catch {
+            /* vec unavailable / row absent — the learnings DELETE already landed */
+          }
+          db.prepare(
+            `UPDATE brain_maintenance_undo SET undone_at = datetime('now') WHERE id = ?`,
+          ).run(row.id);
+          continue;
+        }
+
         const restoreContent = row.prior_content !== null && row.prior_content !== undefined;
         // 1. Restore the learning row. deleted_at/merged_into/superseded_by are
         //    always cleared (their pre-mutation value on an approved row is null).

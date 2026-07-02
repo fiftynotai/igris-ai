@@ -269,16 +269,74 @@ cleanly.
 adds the `brain_maintenance_undo` table + `brain_maintenance_runs.outdated_proposed`/
 `outdated_pruned`/`undone` counters + `learnings.last_reviewed_at`.
 
+## Cluster meta-learnings — the cartographer instance (FR-116 M4)
+
+The **cartographer** is the SEVENTH cognition instance and the CLEAN mandate's
+fourth LLM duty. Where the janitor MERGES, the arbiter RESOLVES, and the curator
+PRUNES, the cartographer MAPS: it runs a DETERMINISTIC community-detection pass
+over the learning graph, groups densely-connected learnings into clusters, and
+synthesizes ONE meta-learning per cluster. It is a DISTINCT instance CO-SCHEDULED
+under the janitor runner (barrel line + component-internal modules under
+`components/cartographer/`), but with a DOUBLE gate — the janitor flag AND the
+`cognition.janitor.cluster.enabled` sub-toggle (DEFAULT OFF) — because the Leiden
+community pass is expensive.
+
+```
+components/edges/community.ts        — the SHARED deterministic Louvain primitive
+components/cartographer/{types,candidates,prompts,validator}.ts
+cognition/extractors/cartographer.ts — the LLM cluster-summary instance (6 slots)
+janitor/runner.ts                    — co-drives the cartographer after the curator
+```
+
+### Community detection (Decision #6) — deterministic + entity-agnostic
+
+`edges/community.ts:detectCommunities(db, { nodeType, edgeTypes, minClusterSize,
+resolution?, seed })` is a multi-level Louvain modularity optimizer implemented in
+TypeScript (NO external dependency) over an `entity_edges` adjacency projection. It
+is PARAMETERIZED by node-type + edge-type filters (never hard-codes `'learning'`)
+so BOTH FR-112 (briefs) and FR-116 (learnings) reuse it, and is a PURE READ (it
+NEVER mutates edges). DETERMINISM is engineered — a fixed node-id total order, an
+ascending community-id tie-break preferring the lowest id, and no randomness — so
+the same graph in yields byte-identical clusters out on every run (the #1
+correctness item; an idempotency test locks it).
+
+### The cluster-meta apply-action (`applyClusterMeta`)
+
+`buildContext` runs the primitive over the learning subgraph (default edge types
+`related_to`/`derived_from`/`duplicates`), filters each cluster to APPROVED
+members, and skips clusters already summarized (a member carries a
+`cluster_member_of` edge) or already pending. The LLM synthesizes one meta per
+cluster; `applyClusterMeta` (a NEW `cluster_meta` kind) CREATES the meta-learning
+(a plain approved learning) and wires `cluster_member_of` edges member → meta via
+`handleEdgeCreate` (#206, never a direct INSERT). `cluster_member_of` is the ONE
+`VALID_EDGE_TYPES` addition in M4 (Decision #3a) — the memory-store `edges[]` enum
+imports the vocabulary by reference, so the ROW-100 lockstep holds automatically.
+Its undo entry (`action_kind='cluster_meta'`) reverses by DELETING the meta + its
+edges (the only CREATE-reversing branch in `performUndo`).
+
+### Config (`cognition.janitor.cluster.*`, nested-only, DOUBLE gate, default OFF)
+
+`enabled` (DEFAULT OFF — the extra gate), `min_cluster_size` (3), `resolution`
+(1.0), `cadence_days` (7 — the runner throttles the expensive pass to at most once
+per window), `max_clusters` (20), `cluster_edge_types`
+([related_to, derived_from, duplicates]), `auto_fork` (false), plus the envelope.
+`enabled` = `cognition.janitor.enabled` AND `cluster.enabled`. The v4 `'janitor'`
+migration adds `brain_maintenance_runs.clusters_detected`/`meta_learnings_created`.
+M4 adds NO new MCP tool — the tool count stays 111.
+
 ## Surfaces
 
 - `igris_janitor_run_now` — manual/cron run tool. Runs the near-dupe MERGE
   extractor AND the co-scheduled arbiter contradiction + curator outdated-pruning
-  extractors, aggregating all counters into one `brain_maintenance_runs` row.
+  + cartographer cluster-summary extractors, aggregating all counters into one
+  `brain_maintenance_runs` row.
 - `igris_brain_maintenance_undo` / `_history` / `_config` — the FR-116 M3
   maintenance surface (tools #109–111): reverse an action, list runs, get/set the
-  pruning thresholds.
+  pruning thresholds. `_config` GET also returns the resolved cartographer
+  (`cluster`) config. M4 adds NO new tool.
 - `/scan` §6.9 + `/boot` — a janitor health line read from the
   `cognition.janitor.*` lifecycle events + the latest `brain_maintenance_runs`
   row, gated behind `cognition.janitor.enabled`.
-- Merge / contradiction / prune proposals render through the existing
-  `igris_suggestion_list` (`source_module='janitor'`/`'arbiter'`/`'curator'`).
+- Merge / contradiction / prune / cluster-meta proposals render through the
+  existing `igris_suggestion_list`
+  (`source_module='janitor'`/`'arbiter'`/`'curator'`/`'cartographer'`).

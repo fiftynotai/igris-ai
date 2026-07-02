@@ -201,10 +201,16 @@ export interface JanitorRunResult {
   undone: number;
   /** FR-116 M3: true when a single run's prune intent exceeded the anomaly threshold (safety-valve warning). */
   prune_anomaly: boolean;
+  /** FR-116 M4: learning clusters the deterministic community primitive surfaced (cartographer). */
+  clusters_detected: number;
+  /** FR-116 M4: cluster meta-learnings CREATED directly this run (cartographer auto_fork). */
+  meta_learnings_created: number;
   /** The terminal disposition of the arbiter co-run, when not succeeded. */
   arbiter_outcome?: 'succeeded' | 'failed' | 'skipped';
   /** The terminal disposition of the curator co-run, when not succeeded. */
   curator_outcome?: 'succeeded' | 'failed' | 'skipped';
+  /** FR-116 M4: the terminal disposition of the cartographer co-run ('skipped' when the cadence throttle blocks it). */
+  cartographer_outcome?: 'succeeded' | 'failed' | 'skipped';
   /** A human-readable anomaly warning surfaced when prune intent exceeded the threshold. */
   warning?: string;
   /** The near-dupe extractor's skip/fail reason, when not succeeded. */

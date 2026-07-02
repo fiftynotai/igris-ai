@@ -41,8 +41,13 @@ import {
   createCuratorInstance,
   type CuratorRunStats,
 } from '../cognition/extractors/curator.js';
+import {
+  createCartographerInstance,
+  type CartographerRunStats,
+} from '../cognition/extractors/cartographer.js';
 import type { ArbiterConfig } from '../arbiter/types.js';
 import type { CuratorConfig } from '../curator/types.js';
+import type { CartographerConfig } from '../cartographer/types.js';
 import type { Embedder } from './candidates.js';
 import {
   applyConfidenceBumps,
@@ -72,6 +77,18 @@ export interface RunJanitorOptions {
    * Production always passes it (gated by `cognition.janitor.enabled`); tests opt in.
    */
   curatorConfig?: CuratorConfig;
+  /**
+   * The resolved cartographer instance config (FR-116 M4, Decision #4A). When
+   * present, the runner CO-DRIVES the cartographer cluster-summary extractor
+   * sequentially after the curator, aggregating its counters into the SAME
+   * `brain_maintenance_runs` audit row. Absent → the cartographer is not driven
+   * (the paths above are byte-for-byte unchanged — additive). Its EXPENSIVE Leiden
+   * community pass is additionally CADENCE-THROTTLED (`cadence_days`): the runner
+   * skips it entirely (no `runExtractor`, no Leiden) when the last SUCCESSFUL
+   * cartographer run is within the cadence window. Production always passes it
+   * (gated by `cognition.janitor.enabled` AND the `cluster.enabled` sub-toggle).
+   */
+  cartographerConfig?: CartographerConfig;
   /** The global `llm_extractor` config (harness default + fallback order). */
   globalConfig?: LlmExtractorGlobalConfig;
   /** Bypass the cold-start + bytes cost gate (manual `*_run` forces a run). */
@@ -100,6 +117,33 @@ function lastFinishedAt(db: Database.Database): string | null {
     return row?.ts ?? null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * FR-116 M4 CADENCE THROTTLE — should the EXPENSIVE cartographer community pass
+ * run now? True when `cadence_days <= 0` (throttle disabled), when the cartographer
+ * has NEVER succeeded (no prior run), or when the last SUCCESSFUL cartographer run
+ * (`cognition.cartographer.run_succeeded` in `event_log`) is `>= cadence_days` old.
+ * Uses `julianday` for a timezone-safe age comparison against SQLite's
+ * `datetime('now')` format. Fail-soft: a query error returns true (run — the
+ * bytes/disabled gates still protect a needless run).
+ */
+function shouldRunCartographer(db: Database.Database, cadenceDays: number): boolean {
+  if (!Number.isFinite(cadenceDays) || cadenceDays <= 0) return true;
+  try {
+    const row = db
+      .prepare(
+        `SELECT (julianday('now') - julianday(MAX(created_at))) AS age_days
+           FROM event_log
+          WHERE event_name = 'cognition.cartographer.run_succeeded'`,
+      )
+      .get() as { age_days: number | null } | undefined;
+    const age = row?.age_days;
+    if (age === null || age === undefined) return true; // never succeeded — run
+    return age >= cadenceDays;
+  } catch {
+    return true;
   }
 }
 
@@ -215,6 +259,46 @@ export async function runJanitor(
     curatorOutcome = curatorExtractor.outcome;
   }
 
+  // 4d. FR-116 M4 (Decision #4A/#9): CO-DRIVE the cartographer cluster-summary
+  //     extractor sequentially, aggregating its counters into the SAME audit row.
+  //     Only when a cartographerConfig is supplied — the paths above are unchanged.
+  //     The EXPENSIVE Leiden community pass is CADENCE-THROTTLED: when enabled but
+  //     the last successful run is within the cadence window, the cartographer is
+  //     NOT driven at all (no runExtractor → no Leiden). The runId is threaded so
+  //     auto-forked metas are undoable by run (Decision #2).
+  const cartographerStats: CartographerRunStats = {
+    clusters_detected: 0,
+    proposed: 0,
+    meta_created: 0,
+  };
+  let cartographerOutcome: JanitorRunResult['cartographer_outcome'];
+  if (options.cartographerConfig) {
+    const cfg = options.cartographerConfig;
+    // When disabled, still call runExtractor (its disabled gate skips before the
+    // Leiden pass) for a consistent skip event. When ENABLED, apply the cadence
+    // throttle here so the expensive pass is not even built if it is not due.
+    const cadenceOk = !cfg.enabled || shouldRunCartographer(db, cfg.cadence_days);
+    if (cadenceOk) {
+      const cartographerInstance = createCartographerInstance(cfg, {
+        stats: cartographerStats,
+        runId,
+      });
+      const cartographerExtractor = await runExtractor(
+        db,
+        cartographerInstance,
+        {
+          project,
+          trigger,
+          ...(force ? { force: true } : {}),
+        },
+        deps,
+      );
+      cartographerOutcome = cartographerExtractor.outcome;
+    } else {
+      cartographerOutcome = 'skipped';
+    }
+  }
+
   // FR-116 M3: the anomaly safety-valve warning (Section F) — surfaced in the run
   // result AND stamped on the audit row when a single run's prune intent exceeds
   // the configured threshold.
@@ -243,6 +327,8 @@ export async function runJanitor(
                contradictions_resolved = ?,
                outdated_proposed = ?,
                outdated_pruned = ?,
+               clusters_detected = ?,
+               meta_learnings_created = ?,
                error_message = ?
          WHERE id = ?`,
       ).run(
@@ -256,6 +342,8 @@ export async function runJanitor(
         arbiterStats.resolved,
         curatorStats.proposed,
         curatorStats.pruned,
+        cartographerStats.clusters_detected,
+        cartographerStats.meta_created,
         extractor.fail_reason ?? null,
         runRowId,
       );
@@ -278,8 +366,11 @@ export async function runJanitor(
     outdated_pruned: curatorStats.pruned,
     undone: 0,
     prune_anomaly: curatorStats.anomaly,
+    clusters_detected: cartographerStats.clusters_detected,
+    meta_learnings_created: cartographerStats.meta_created,
     ...(arbiterOutcome ? { arbiter_outcome: arbiterOutcome } : {}),
     ...(curatorOutcome ? { curator_outcome: curatorOutcome } : {}),
+    ...(cartographerOutcome ? { cartographer_outcome: cartographerOutcome } : {}),
     ...(warning ? { warning } : {}),
     ...(reason ? { reason } : {}),
   };

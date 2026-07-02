@@ -57,6 +57,15 @@
         "max_candidates": 200,
         "auto_prune": false,
         "anomaly_threshold": 50
+      },
+      "cluster": {
+        "enabled": false,
+        "min_cluster_size": 3,
+        "resolution": 1.0,
+        "cadence_days": 7,
+        "max_clusters": 20,
+        "cluster_edge_types": ["related_to", "derived_from", "duplicates"],
+        "auto_fork": false
       }
     }
   },

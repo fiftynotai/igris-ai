@@ -68,6 +68,13 @@ import type { Migration } from '../../types.js';
  *     row reviewed within the stale window so a kept row is not re-flagged
  *     immediately. NOT a recall gate. The `review_status='pruned'` soft-delete is
  *     what the ~10 `='approved'` readers auto-exclude → ZERO read-path sweep.
+ * Version 4 (FR-116 M4, Decision #8): additive audit columns —
+ *   `brain_maintenance_runs.clusters_detected` (the number of learning clusters the
+ *   deterministic community primitive surfaced) / `.meta_learnings_created` (the
+ *   cluster-meta learnings created by the cartographer auto_fork) aggregated into
+ *   the shared audit row. No `learnings` change: the cluster meta is a plain
+ *   approved learning + `cluster_member_of` edges (edges-vocabulary change, not a
+ *   schema change).
  */
 export const janitorMigrations: Migration[] = [
   {
@@ -139,6 +146,15 @@ export const janitorMigrations: Migration[] = [
       ALTER TABLE brain_maintenance_runs ADD COLUMN undone INTEGER NOT NULL DEFAULT 0;
 
       ALTER TABLE learnings ADD COLUMN last_reviewed_at TEXT;
+    `,
+  },
+  {
+    version: 4,
+    description:
+      'FR-116 M4: brain_maintenance_runs.clusters_detected/meta_learnings_created (cartographer counters, Decision #8)',
+    sql: `
+      ALTER TABLE brain_maintenance_runs ADD COLUMN clusters_detected INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE brain_maintenance_runs ADD COLUMN meta_learnings_created INTEGER NOT NULL DEFAULT 0;
     `,
   },
 ];

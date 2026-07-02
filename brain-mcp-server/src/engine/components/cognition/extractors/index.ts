@@ -22,6 +22,7 @@ import { synapseInstance } from './synapse.js';
 import { janitorInstance } from './janitor.js';
 import { arbiterInstance } from './arbiter.js';
 import { curatorInstance } from './curator.js';
+import { cartographerInstance } from './cartographer.js';
 
 /**
  * Every bundled cognition instance, in boot order. A new instance is added by
@@ -35,6 +36,7 @@ import { curatorInstance } from './curator.js';
  * FR-119: import { janitorInstance } from './janitor.js';
  * FR-116 M2: import { arbiterInstance } from './arbiter.js';
  * FR-116 M3: import { curatorInstance } from './curator.js';
+ * FR-116 M4: import { cartographerInstance } from './cartographer.js';
  */
 export const EXTRACTOR_INSTANCES: readonly CognitionInstance[] = [
   perceptionInstance,
@@ -43,6 +45,7 @@ export const EXTRACTOR_INSTANCES: readonly CognitionInstance[] = [
   janitorInstance,
   arbiterInstance,
   curatorInstance,
+  cartographerInstance,
 ];
 
 export { perceptionInstance, createPerceptionInstance } from './perception.js';
@@ -51,3 +54,4 @@ export { synapseInstance, createSynapseInstance } from './synapse.js';
 export { janitorInstance, createJanitorInstance } from './janitor.js';
 export { arbiterInstance, createArbiterInstance } from './arbiter.js';
 export { curatorInstance, createCuratorInstance } from './curator.js';
+export { cartographerInstance, createCartographerInstance } from './cartographer.js';

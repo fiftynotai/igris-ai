@@ -46,6 +46,7 @@ import { runJanitor } from './runner.js';
 import { performUndo } from './undo.js';
 import { resolveArbiterConfig } from '../arbiter/types.js';
 import { resolveCuratorConfig } from '../curator/types.js';
+import { resolveCartographerConfig } from '../cartographer/types.js';
 import { resolveLlmExtractorGlobalConfig } from '../subconscious/index.js';
 
 /** The well-known name used to detect an existing schedule on init. */
@@ -218,7 +219,7 @@ export function createJanitorComponent(): BrainComponent {
         {
           name: 'igris_janitor_run_now',
           description:
-            'Run the janitor memory-hygiene pipeline once (FR-119/FR-116 M2/M3). Performs the deterministic sweep (TD-086 confidence bumps for re-discovered learnings, stale pending_review rejection, re-evaluation surfacing), the near-duplicate MERGE LLM extractor (judges keep/merge/false-positive, QUEUES each proposed merge as a janitor suggestion), the co-scheduled CONTRADICTION-RESOLUTION extractor (arbiter): same-topic opposition pairs judged newer-wins/both-valid-scope/evolved-merge/not-a-contradiction, and the co-scheduled OUTDATED-PRUNING extractor (curator): approved learnings flagged stale by the deterministic detector (old + unused, or deprecated-tech tag) judged keep/lower_confidence/prune, each QUEUED as a curator suggestion (applied later via igris_suggestion_apply_action). All extractors ride the single cognition.janitor.enabled flag. Writes one brain_maintenance_runs audit row aggregating all counters; a run whose prune intent exceeds the anomaly threshold surfaces a warning. Invoked by the cron schedule "janitor_engine" daily at 04:00; also fireable manually. Returns the run outcome plus the aggregated counters. Scope with project; force bypasses the cold-start plus candidate-size gate.',
+            'Run the janitor memory-hygiene pipeline once (FR-119/FR-116 M2/M3). Performs the deterministic sweep (TD-086 confidence bumps for re-discovered learnings, stale pending_review rejection, re-evaluation surfacing), the near-duplicate MERGE LLM extractor (judges keep/merge/false-positive, QUEUES each proposed merge as a janitor suggestion), the co-scheduled CONTRADICTION-RESOLUTION extractor (arbiter): same-topic opposition pairs judged newer-wins/both-valid-scope/evolved-merge/not-a-contradiction, and the co-scheduled OUTDATED-PRUNING extractor (curator): approved learnings flagged stale by the deterministic detector (old + unused, or deprecated-tech tag) judged keep/lower_confidence/prune, each QUEUED as a curator suggestion (applied later via igris_suggestion_apply_action), and the co-scheduled CLUSTER-SUMMARY extractor (cartographer): a deterministic community-detection pass over the learning graph groups related learnings into clusters, each summarized into ONE meta-learning QUEUED as a cartographer suggestion (applying it creates the meta-learning + cluster_member_of edges). The cartographer additionally rides the cognition.janitor.cluster.enabled sub-toggle (default OFF — the community pass is expensive) and a cadence throttle. All extractors ride the single cognition.janitor.enabled flag. Writes one brain_maintenance_runs audit row aggregating all counters; a run whose prune intent exceeds the anomaly threshold surfaces a warning. Invoked by the cron schedule "janitor_engine" daily at 04:00; also fireable manually. Returns the run outcome plus the aggregated counters. Scope with project; force bypasses the cold-start plus candidate-size gate.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -245,6 +246,10 @@ export function createJanitorComponent(): BrainComponent {
             // FR-116 M3: the curator rides the SAME `cognition.janitor.enabled`
             // flag (Decision #4A) — resolved from the same config object.
             const curatorConfig = resolveCuratorConfig(igrisConfig);
+            // FR-116 M4: the cartographer rides `cognition.janitor.enabled` AND
+            // the `cluster.enabled` sub-toggle (default OFF — Leiden is expensive)
+            // + a cadence throttle — resolved from the same config object.
+            const cartographerConfig = resolveCartographerConfig(igrisConfig);
             const globalConfig = resolveLlmExtractorGlobalConfig();
             const project = typeof args.project === 'string' ? args.project : 'all';
             const force = args.force === true;
@@ -252,6 +257,7 @@ export function createJanitorComponent(): BrainComponent {
               config,
               arbiterConfig,
               curatorConfig,
+              cartographerConfig,
               globalConfig,
               force,
               trigger: 'manual',
@@ -325,7 +331,7 @@ export function createJanitorComponent(): BrainComponent {
         {
           name: 'igris_brain_maintenance_config',
           description:
-            'Get or set the janitor-family maintenance thresholds (FR-116 M3). With no arguments: returns the resolved janitor + arbiter (contradiction) + curator (pruning) config from ~/.igris/config.json. With a "set" object: writes the given keys into cognition.janitor.pruning (the outdated-pruning thresholds — stale_months, max_access_count, deprecated_tags, max_candidates, auto_prune, anomaly_threshold), sibling-preserving, and returns the updated config. The enabled flag is NOT settable here (use the configure verb).',
+            'Get or set the janitor-family maintenance thresholds (FR-116 M3/M4). With no arguments: returns the resolved janitor + arbiter (contradiction) + curator (pruning) + cartographer (cluster) config from ~/.igris/config.json. With a "set" object: writes the given keys into cognition.janitor.pruning (the outdated-pruning thresholds — stale_months, max_access_count, deprecated_tags, max_candidates, auto_prune, anomaly_threshold), sibling-preserving, and returns the updated config. The enabled flag is NOT settable here (use the configure verb).',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -357,6 +363,7 @@ export function createJanitorComponent(): BrainComponent {
                   janitor: resolveJanitorConfig(igrisConfig),
                   contradiction: resolveArbiterConfig(igrisConfig),
                   pruning: resolveCuratorConfig(igrisConfig),
+                  cluster: resolveCartographerConfig(igrisConfig),
                 },
                 null,
                 2,
