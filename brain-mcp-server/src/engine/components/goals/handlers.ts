@@ -1,12 +1,13 @@
 /**
  * Brain Engine v7.0 — Goals Component Handlers
  *
- * Pure handlers for the five goal MCP tools:
- *   - igris_goal_create   — server-side GL-XXX allocation, atomic insert
- *   - igris_goal_list     — filtered query with optional upcoming_days
- *   - igris_goal_get      — goal + serving briefs/learnings (via entity_edges)
- *   - igris_goal_update   — partial patch with status->achieved auto-stamp
- *   - igris_goal_progress — count-based completion across serving briefs
+ * Pure handlers for the goal MCP tools:
+ *   - igris_goal_create    — server-side GL-XXX allocation, atomic insert
+ *   - igris_goal_list      — filtered query with optional upcoming_days
+ *   - igris_goal_get       — goal + serving briefs/learnings (via entity_edges)
+ *   - igris_goal_update    — partial patch with status->achieved auto-stamp
+ *   - igris_goal_progress  — count-based completion across serving briefs
+ *   - igris_goal_dashboard — status counts, upcoming deadlines, stalled goals
  *
  * Handlers are pure functions: they take Record<string, unknown> args,
  * validate at runtime, and return a ToolResult. They do NOT emit events;
