@@ -8,7 +8,8 @@
  *   - dedup vs already-pending (open) suggestions — no double-insert;
  *   - lifecycle events under the per-instance `cognition.subconscious.*`
  *     namespace (engine-written to event_log, NOT the legacy `subconscious.*`);
- *   - hallucinated citation → rejected (zero inserts, parse_error);
+ *   - hallucinated citation → dropped: well-formed array, all elements dropped →
+ *     succeeded (valid-empty), zero inserts (TD-294);
  *   - confidence > 0.85 → capped;
  *   - malformed JSON → run_failed reason=parse_error, zero inserts;
  *   - disabled / cli_missing → clean run_skipped, zero inserts.
@@ -195,7 +196,13 @@ describe('runSubconscious (FR-118 M2 — mocked backend)', () => {
     expect(result.outcome).toBe('succeeded');
   });
 
-  it('rejects a hallucinated citation → parse_error, zero inserts', async () => {
+  it('drops a hallucinated citation → succeeded (valid-empty), zero inserts (TD-294)', async () => {
+    // The response IS a well-formed JSON array, but its only element cites a brief
+    // that is not in the digest, so cite-check drops it → zero candidates. Under
+    // TD-294 the subconscious instance opts into isMalformedResponse, so a
+    // well-formed-but-all-dropped array is a VALID EMPTY judgment (succeeded,
+    // persisted 0), NOT a parse_error. (A truly malformed / non-array response
+    // would still be parse_error — see the validator unit tests.)
     const canned = JSON.stringify([
       {
         kind: 'x',
@@ -206,11 +213,12 @@ describe('runSubconscious (FR-118 M2 — mocked backend)', () => {
       },
     ]);
     const result = await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps: deps(canned) });
-    expect(result.outcome).toBe('failed');
-    expect(result.fail_reason).toBe('parse_error');
+    expect(result.outcome).toBe('succeeded');
+    expect(result.persisted).toBe(0);
     const count = db.prepare(`SELECT COUNT(*) AS n FROM suggestions`).get() as { n: number };
     expect(count.n).toBe(0);
-    expect(eventNames(db)).toContain('cognition.subconscious.run_failed');
+    expect(eventNames(db)).toContain('cognition.subconscious.run_succeeded');
+    expect(eventNames(db)).not.toContain('cognition.subconscious.run_failed');
   });
 
   it('caps confidence > 0.85', async () => {

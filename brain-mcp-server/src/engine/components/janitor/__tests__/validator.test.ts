@@ -10,7 +10,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { validateJanitorResponse, JANITOR_CONFIDENCE_CAP } from '../validator.js';
+import {
+  validateJanitorResponse,
+  isJanitorResponseWellFormed,
+  JANITOR_CONFIDENCE_CAP,
+} from '../validator.js';
 import type { DuplicatePair } from '../types.js';
 
 function pair(from_id: number, to_id: number, cosine = 0.97): DuplicatePair {
@@ -104,5 +108,23 @@ describe('validateJanitorResponse', () => {
     expect(validateJanitorResponse('', PAIRS)).toEqual([]);
     const selfLoop = JSON.stringify([{ from_id: 1, to_id: 1, verdict: 'keep_a', confidence: 0.5 }]);
     expect(validateJanitorResponse(selfLoop, PAIRS)).toEqual([]);
+  });
+});
+
+describe('isJanitorResponseWellFormed (TD-294)', () => {
+  it('a well-formed empty array is well-formed (valid-empty judgment)', () => {
+    expect(isJanitorResponseWellFormed('[]')).toBe(true);
+  });
+
+  it('a well-formed array whose elements are all dropped is still well-formed', () => {
+    expect(isJanitorResponseWellFormed('[{}]')).toBe(true);
+  });
+
+  it('non-JSON text is malformed', () => {
+    expect(isJanitorResponseWellFormed('not json')).toBe(false);
+  });
+
+  it('a blank/whitespace-only response is malformed', () => {
+    expect(isJanitorResponseWellFormed('   ')).toBe(false);
   });
 });

@@ -46,7 +46,10 @@ import {
   buildCartographerSystemPrompt,
   buildCartographerUserPrompt,
 } from '../../cartographer/prompts.js';
-import { validateCartographerResponse } from '../../cartographer/validator.js';
+import {
+  validateCartographerResponse,
+  isCartographerResponseWellFormed,
+} from '../../cartographer/validator.js';
 import {
   DEFAULT_CARTOGRAPHER_CONFIG,
   type CartographerConfig,
@@ -278,6 +281,10 @@ export function createCartographerInstance(
       const clusters = ctx?.clusters ?? currentCtx?.clusters ?? [];
       return validateCartographerResponse(raw, clusters);
     },
+
+    // TD-294 — a well-formed (possibly empty) array is a VALID EMPTY judgment
+    // ("no clusters worth summarizing"), not a parse_error. Consulted only on zero parse.
+    isMalformedResponse: (raw) => !isCartographerResponseWellFormed(raw),
 
     async persistCandidate(
       db: Database.Database,

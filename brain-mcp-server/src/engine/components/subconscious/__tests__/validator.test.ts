@@ -14,6 +14,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   validateSubconsciousResponse,
+  isSubconsciousResponseWellFormed,
   buildCitationIndex,
   SUBCONSCIOUS_CONFIDENCE_CAP,
 } from '../validator.js';
@@ -147,5 +148,23 @@ describe('validateSubconsciousResponse (FR-118 M2)', () => {
       { kind: 'x', title: 't', priority: 'urgent', confidence: 0.3, evidence: {} },
     ]);
     expect(validateSubconsciousResponse(raw, fixtureDigest())[0].priority).toBe('medium');
+  });
+});
+
+describe('isSubconsciousResponseWellFormed (TD-294)', () => {
+  it('a well-formed empty array is well-formed (valid-empty judgment)', () => {
+    expect(isSubconsciousResponseWellFormed('[]')).toBe(true);
+  });
+
+  it('a well-formed array whose elements are all dropped is still well-formed', () => {
+    expect(isSubconsciousResponseWellFormed('[{}]')).toBe(true);
+  });
+
+  it('non-JSON text is malformed', () => {
+    expect(isSubconsciousResponseWellFormed('not json')).toBe(false);
+  });
+
+  it('a blank/whitespace-only response is malformed', () => {
+    expect(isSubconsciousResponseWellFormed('   ')).toBe(false);
   });
 });

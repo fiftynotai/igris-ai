@@ -12,7 +12,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { validateCartographerResponse, CARTOGRAPHER_CONFIDENCE_CAP } from '../validator.js';
+import {
+  validateCartographerResponse,
+  isCartographerResponseWellFormed,
+  CARTOGRAPHER_CONFIDENCE_CAP,
+} from '../validator.js';
 import type { LearningCluster } from '../types.js';
 
 const clusters: LearningCluster[] = [
@@ -79,5 +83,23 @@ describe('FR-116 M4 validateCartographerResponse', () => {
   it('parses a fenced ```json array', () => {
     const raw = '```json\n[{"cluster_index":0,"title":"t","summary":"s","confidence":0.6}]\n```';
     expect(validateCartographerResponse(raw, clusters)).toHaveLength(1);
+  });
+});
+
+describe('isCartographerResponseWellFormed (TD-294)', () => {
+  it('a well-formed empty array is well-formed (valid-empty judgment)', () => {
+    expect(isCartographerResponseWellFormed('[]')).toBe(true);
+  });
+
+  it('a well-formed array whose elements are all dropped is still well-formed', () => {
+    expect(isCartographerResponseWellFormed('[{}]')).toBe(true);
+  });
+
+  it('non-JSON text is malformed', () => {
+    expect(isCartographerResponseWellFormed('not json')).toBe(false);
+  });
+
+  it('a blank/whitespace-only response is malformed', () => {
+    expect(isCartographerResponseWellFormed('   ')).toBe(false);
   });
 });

@@ -42,7 +42,10 @@ import {
   buildSubconsciousSystemPrompt,
   buildSubconsciousUserPrompt,
 } from '../../subconscious/prompts.js';
-import { validateSubconsciousResponse } from '../../subconscious/validator.js';
+import {
+  validateSubconsciousResponse,
+  isSubconsciousResponseWellFormed,
+} from '../../subconscious/validator.js';
 import {
   DEFAULT_SUBCONSCIOUS_CONFIG,
   type SubconsciousConfig,
@@ -266,6 +269,10 @@ export function createSubconsciousInstance(
       if (!digest) return [];
       return validateSubconsciousResponse(raw, digest);
     },
+
+    // TD-294 — a well-formed (possibly empty) array is a VALID EMPTY judgment
+    // ("nothing worth suggesting"), not a parse_error. Consulted only on zero parse.
+    isMalformedResponse: (raw) => !isSubconsciousResponseWellFormed(raw),
 
     async persistCandidate(
       db: Database.Database,

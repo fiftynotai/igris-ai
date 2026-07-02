@@ -16,7 +16,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { validateArbiterResponse, ARBITER_CONFIDENCE_CAP } from '../validator.js';
+import {
+  validateArbiterResponse,
+  isArbiterResponseWellFormed,
+  ARBITER_CONFIDENCE_CAP,
+} from '../validator.js';
 import type { ContradictionPair } from '../types.js';
 
 function pair(from: number, to: number, cosine = 0.9): ContradictionPair {
@@ -107,5 +111,23 @@ describe('validateArbiterResponse (FR-116 M2)', () => {
     expect(validateArbiterResponse('not json', PAIRS)).toEqual([]);
     expect(validateArbiterResponse('{"from_id":1}', PAIRS)).toEqual([]);
     expect(validateArbiterResponse('', PAIRS)).toEqual([]);
+  });
+});
+
+describe('isArbiterResponseWellFormed (TD-294)', () => {
+  it('a well-formed empty array is well-formed (valid-empty judgment)', () => {
+    expect(isArbiterResponseWellFormed('[]')).toBe(true);
+  });
+
+  it('a well-formed array whose elements are all dropped is still well-formed', () => {
+    expect(isArbiterResponseWellFormed('[{}]')).toBe(true);
+  });
+
+  it('non-JSON text is malformed', () => {
+    expect(isArbiterResponseWellFormed('not json')).toBe(false);
+  });
+
+  it('a blank/whitespace-only response is malformed', () => {
+    expect(isArbiterResponseWellFormed('   ')).toBe(false);
   });
 });

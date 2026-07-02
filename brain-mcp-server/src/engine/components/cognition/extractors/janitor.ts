@@ -48,7 +48,10 @@ import {
   buildJanitorSystemPrompt,
   buildJanitorUserPrompt,
 } from '../../janitor/prompts.js';
-import { validateJanitorResponse } from '../../janitor/validator.js';
+import {
+  validateJanitorResponse,
+  isJanitorResponseWellFormed,
+} from '../../janitor/validator.js';
 import {
   DEFAULT_JANITOR_CONFIG,
   type DuplicatePair,
@@ -273,6 +276,10 @@ export function createJanitorInstance(
       const pairs = ctx?.pairs ?? currentCtx?.pairs ?? [];
       return validateJanitorResponse(raw, pairs);
     },
+
+    // TD-294 — a well-formed (possibly empty) array is a VALID EMPTY judgment
+    // ("no real near-dupes"), not a parse_error. Consulted only on zero parse.
+    isMalformedResponse: (raw) => !isJanitorResponseWellFormed(raw),
 
     async persistCandidate(
       db: Database.Database,

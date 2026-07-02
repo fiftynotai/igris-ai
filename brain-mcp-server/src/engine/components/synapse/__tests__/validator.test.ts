@@ -10,7 +10,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { validateSynapseResponse, SYNAPSE_CONFIDENCE_CAP } from '../validator.js';
+import {
+  validateSynapseResponse,
+  isSynapseResponseWellFormed,
+  SYNAPSE_CONFIDENCE_CAP,
+} from '../validator.js';
 import type { CandidatePair } from '../types.js';
 
 function pair(from_id: number, to_id: number): CandidatePair {
@@ -95,5 +99,23 @@ describe('validateSynapseResponse', () => {
       { from_id: 'x', to_id: 2, edge_type: 'related_to', confidence: 0.5 },
     ]);
     expect(validateSynapseResponse(raw, PAIRS)).toHaveLength(0);
+  });
+});
+
+describe('isSynapseResponseWellFormed (TD-294)', () => {
+  it('a well-formed empty array is well-formed (valid-empty judgment)', () => {
+    expect(isSynapseResponseWellFormed('[]')).toBe(true);
+  });
+
+  it('a well-formed array whose elements are all dropped is still well-formed', () => {
+    expect(isSynapseResponseWellFormed('[{}]')).toBe(true);
+  });
+
+  it('non-JSON text is malformed', () => {
+    expect(isSynapseResponseWellFormed('not json')).toBe(false);
+  });
+
+  it('a blank/whitespace-only response is malformed', () => {
+    expect(isSynapseResponseWellFormed('   ')).toBe(false);
   });
 });

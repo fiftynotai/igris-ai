@@ -189,8 +189,13 @@ export interface CognitionInstance<TContext = unknown, TCandidate = unknown> {
 
   /**
    * Validate / coerce / cite-check the raw LLM response text into typed
-   * candidates. Never throws on malformed input — returns `[]` (the engine maps
-   * an empty parse of a NON-empty response to `fail_reason=parse_error`).
+   * candidates. Never throws on malformed input — returns `[]`. When the parse
+   * yields zero candidates the engine consults the OPTIONAL `isMalformedResponse`
+   * hook (TD-294) to disambiguate: a MALFORMED / non-array response maps to
+   * `fail_reason=parse_error`, whereas a WELL-FORMED (possibly empty) array — a
+   * legitimate "nothing to act on" judgment — settles to a SUCCESSFUL run with
+   * zero candidates. When the hook is absent the legacy rule applies (any zero
+   * parse → `parse_error`).
    */
   parseResponse(raw: string, ctx: TContext): TCandidate[];
 
@@ -220,4 +225,17 @@ export interface CognitionInstance<TContext = unknown, TCandidate = unknown> {
    * → the instance never self-reports empty (unchanged behavior).
    */
   isEmptyContext?(ctx: TContext): boolean;
+
+  /**
+   * Optional (TD-294) — consulted by the engine ONLY when `parseResponse`
+   * returned zero candidates, to distinguish a MALFORMED response from a VALID
+   * EMPTY judgment. Returns true when `raw` is NOT a well-formed response for
+   * this instance (→ `fail_reason=parse_error`); false when `raw` is well-formed
+   * but simply yielded nothing to act on (→ a SUCCESSFUL run with zero
+   * candidates). The instance owns this verdict because parse leniency (fenced
+   * code / envelopes) is instance-specific — it must use the SAME grammar its
+   * `parseResponse` accepts. Omitted → legacy behavior (zero parse →
+   * `parse_error`, unchanged).
+   */
+  isMalformedResponse?(raw: string): boolean;
 }

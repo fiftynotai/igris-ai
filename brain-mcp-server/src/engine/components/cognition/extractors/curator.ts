@@ -48,7 +48,10 @@ import {
   buildCuratorSystemPrompt,
   buildCuratorUserPrompt,
 } from '../../curator/prompts.js';
-import { validateCuratorResponse } from '../../curator/validator.js';
+import {
+  validateCuratorResponse,
+  isCuratorResponseWellFormed,
+} from '../../curator/validator.js';
 import {
   DEFAULT_CURATOR_CONFIG,
   type CuratorConfig,
@@ -308,6 +311,10 @@ export function createCuratorInstance(
       const candidates = ctx?.candidates ?? currentCtx?.candidates ?? [];
       return validateCuratorResponse(raw, candidates);
     },
+
+    // TD-294 — a well-formed (possibly empty) array is a VALID EMPTY judgment
+    // ("nothing outdated"), not a parse_error. Consulted only on zero parse.
+    isMalformedResponse: (raw) => !isCuratorResponseWellFormed(raw),
 
     async persistCandidate(
       db: Database.Database,

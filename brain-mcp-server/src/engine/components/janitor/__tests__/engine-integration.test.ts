@@ -247,6 +247,39 @@ describe('runJanitor (FR-119 — mocked backend)', () => {
     expect(names.filter((n) => /run_(succeeded|failed|skipped)$/.test(n))).toHaveLength(1);
   });
 
+  it.skipIf(!HAS_VEC)('TD-294: MERGE has candidate pairs but backend returns [] → succeeded, audit status non-failed', async () => {
+    // The valid-empty regression at the aggregate level: with real near-dupe
+    // candidate pairs present (isEmptyContext=false, so the engine DOES spawn),
+    // the model legitimately answers "no merges" as a well-formed empty array.
+    // Pre-TD-294 this stamped the shared brain_maintenance_runs row 'failed'
+    // (parse_error). The MERGE instance opts into isMalformedResponse, so the run
+    // now settles 'succeeded' and L337 (status = extractor.outcome) records it.
+    vi.clearAllMocks();
+    db = makeBrain(true);
+    vi.mocked(getDb).mockReturnValue(db as unknown as ReturnType<typeof getDb>);
+    db.prepare(
+      `INSERT INTO learnings (id, title, content) VALUES (1,'A','alpha rule'),(2,'B','alpha rule again')`,
+    ).run();
+    insertEmbeddingInto(db, 'learnings_vec', 1, unit(0));
+    insertEmbeddingInto(db, 'learnings_vec', 2, unit(0));
+
+    const result = await runJanitor(db, 'all', { config: RUNNABLE, embed: fakeEmbed, deps: deps('[]') });
+    expect(result.outcome).toBe('succeeded');
+    expect(result.merges_proposed).toBe(0);
+    expect(result.merges_applied).toBe(0);
+
+    const row = latestRun(db);
+    expect(row.status).toBe('succeeded');
+    expect(row.status).not.toBe('failed');
+
+    // Exactly one terminal lifecycle event, and it is a success (not a parse_error).
+    const names = (db.prepare(`SELECT event_name FROM event_log ORDER BY id`).all() as { event_name: string }[]).map(
+      (r) => r.event_name,
+    );
+    expect(names).toContain('cognition.janitor.run_succeeded');
+    expect(names.filter((n) => /run_(succeeded|failed|skipped)$/.test(n))).toHaveLength(1);
+  });
+
   it.skipIf(!HAS_VEC)('auto_merge fork applies the merge directly, no suggestion row', async () => {
     vi.clearAllMocks();
     db = makeBrain(true);

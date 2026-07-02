@@ -17,8 +17,11 @@
  *   3. CONFIDENCE CAP [0, 0.85]: out-of-range confidences are clamped.
  *
  * REJECT-MALFORMED-CLEANLY: a response that is not a JSON array (or whose elements
- * are all unusable) yields `[]`. The engine maps an empty parse of a NON-empty
- * response to `run_failed reason=parse_error` and persists nothing. Never throws
+ * are all unusable) yields `[]`. The engine disambiguates a zero parse via the
+ * instance's `isMalformedResponse` hook (TD-294, backed by
+ * `isCartographerResponseWellFormed` below): a MALFORMED / non-array response →
+ * `run_failed reason=parse_error`; a WELL-FORMED (possibly empty) array whose
+ * elements were all dropped → a SUCCESSFUL run with zero candidates. Never throws
  * (the `CognitionInstance.parseResponse` contract).
  *
  * @module engine/components/cartographer/validator
@@ -63,6 +66,15 @@ function parseJsonArray(raw: string): unknown[] | null {
   return null;
 }
 
+/**
+ * TD-294 — was the raw a well-formed JSON array (possibly empty)? Reuses the SAME
+ * lenient parse `validateCartographerResponse` used, so the verdict matches what
+ * was accepted. true → valid (possibly empty); false → malformed (→ parse_error).
+ */
+export function isCartographerResponseWellFormed(raw: string): boolean {
+  return parseJsonArray(raw) !== null;
+}
+
 /** Coerce + validate ONE raw element into a proposal, or null if unusable. */
 function validateOne(
   raw: unknown,
@@ -105,8 +117,11 @@ function validateOne(
 /**
  * Parse + validate the raw LLM response against the run's clusters. Returns the
  * valid cluster-meta proposals (out-of-range cluster_index dropped, blank summary
- * dropped, confidences capped). Returns `[]` when the response is not a JSON array.
- * Never throws (the parseResponse contract).
+ * dropped, confidences capped). Returns `[]` when the response is not a JSON array
+ * OR is a well-formed array whose elements were all dropped — the engine tells
+ * these apart via `isCartographerResponseWellFormed` (malformed → parse_error;
+ * well-formed empty → success with zero candidates, TD-294). Never throws (the
+ * parseResponse contract).
  *
  * @param raw      the raw LLM response text
  * @param clusters the clusters the response was generated from (cite whitelist)

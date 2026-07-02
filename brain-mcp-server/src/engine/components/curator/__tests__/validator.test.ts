@@ -9,7 +9,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { validateCuratorResponse, CURATOR_CONFIDENCE_CAP } from '../validator.js';
+import {
+  validateCuratorResponse,
+  isCuratorResponseWellFormed,
+  CURATOR_CONFIDENCE_CAP,
+} from '../validator.js';
 import type { StaleCandidate } from '../types.js';
 
 function cand(id: number): StaleCandidate {
@@ -89,5 +93,23 @@ describe('validateCuratorResponse (FR-116 M3)', () => {
   it('parses a fenced ```json array', () => {
     const raw = '```json\n[{"learning_id":1,"verdict":"keep","confidence":0.5,"justification":"ok"}]\n```';
     expect(validateCuratorResponse(raw, CANDIDATES)).toHaveLength(1);
+  });
+});
+
+describe('isCuratorResponseWellFormed (TD-294)', () => {
+  it('a well-formed empty array is well-formed (valid-empty judgment)', () => {
+    expect(isCuratorResponseWellFormed('[]')).toBe(true);
+  });
+
+  it('a well-formed array whose elements are all dropped is still well-formed', () => {
+    expect(isCuratorResponseWellFormed('[{}]')).toBe(true);
+  });
+
+  it('non-JSON text is malformed', () => {
+    expect(isCuratorResponseWellFormed('not json')).toBe(false);
+  });
+
+  it('a blank/whitespace-only response is malformed', () => {
+    expect(isCuratorResponseWellFormed('   ')).toBe(false);
   });
 });

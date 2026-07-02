@@ -273,10 +273,31 @@ export async function runExtractor<TContext, TCandidate>(
     return fail(backendResult.fail_reason ?? 'backend_error', { detail: backendResult.detail }, backend);
   }
 
-  // PARSE (instance-owned). A non-empty response that parses to [] is a parse_error.
+  // PARSE (instance-owned). Zero candidates is AMBIGUOUS: it may be a MALFORMED
+  // response (→ parse_error) OR a VALID EMPTY judgment (a well-formed array the
+  // model correctly returned with nothing to act on — e.g. "no items worth
+  // acting on" → []). The instance owns the well-formed verdict via the optional
+  // `isMalformedResponse` hook (TD-294), because parse leniency (fences /
+  // envelopes) is instance-specific. No hook (opt-out) → legacy: zero → parse_error.
   const candidates = instance.parseResponse(backendResult.text, ctx);
   if (candidates.length === 0) {
-    return fail('parse_error', { response_bytes: backendResult.text.length }, backend);
+    const malformed = instance.isMalformedResponse
+      ? instance.isMalformedResponse(backendResult.text)
+      : true;
+    if (malformed) {
+      return fail('parse_error', { response_bytes: backendResult.text.length }, backend);
+    }
+    // VALID EMPTY — a successful run that legitimately persisted zero candidates.
+    // Return BEFORE the persist loop so the `persisted === 0 → db_error` guard
+    // below is never reached for a valid-empty run.  <-- KEY db_error interaction
+    emitter.emit('run_succeeded', {
+      harness: backend.harness,
+      persisted: 0,
+      parsed: 0,
+      persist_errors: 0,
+      empty_judgment: true, // observability marker so live logs can filter these
+    });
+    return { instance_id: instanceId, outcome: 'succeeded', persisted: 0, parsed: 0, backend };
   }
 
   // PERSIST (slot 2 — OUTPUT). The instance owns its table; we count successes.

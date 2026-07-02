@@ -30,9 +30,12 @@ import type { ExtractorHarness } from '../types.js';
  * line-walking parser is format-agnostic (it recognises codex/claude JSON event
  * shapes and treats everything else as prose), so the same walk handles all five.
  *
- * Returns the concatenated text. An empty stdout yields `''` — the engine maps a
- * non-empty stdout that the INSTANCE then parses to `[]` as `parse_error`, while
- * a genuinely empty blob is a separate (empty-response) signal.
+ * Returns the concatenated text. An empty stdout yields `''`. When the INSTANCE
+ * then parses the blob to zero candidates, the engine disambiguates via the
+ * instance's `isMalformedResponse` hook (TD-294): a MALFORMED / non-array blob →
+ * `parse_error`; a WELL-FORMED (possibly empty) array — a legitimate "nothing to
+ * act on" answer — → a SUCCESSFUL run with zero candidates. A genuinely empty
+ * blob (well-formed check fails) remains a `parse_error` signal.
  *
  * Ported from `judge.ts:parseJudgeOutput:626-666` (the text-collection half; the
  * grade-regex half is left to the instance).

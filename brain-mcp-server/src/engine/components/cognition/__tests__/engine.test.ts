@@ -250,9 +250,11 @@ describe('runExtractor — empty-context short-circuit (TD-292)', () => {
     expect(r.outcome).toBe('succeeded');
   });
 
-  it('a NON-empty context whose parse yields [] still returns parse_error (not short-circuited)', async () => {
-    // isEmptyContext=false (there IS candidate work), but the LLM response is
-    // garbage that parses to [] — this is a genuine parse failure, NOT no_candidates.
+  it('a NON-empty context whose parse yields [] on an OPT-OUT instance returns parse_error (legacy, TD-294)', async () => {
+    // isEmptyContext=false (there IS candidate work), and the instance does NOT
+    // expose isMalformedResponse — so the engine keeps the legacy rule: any zero
+    // parse → parse_error. A garbage response that parses to [] is a genuine parse
+    // failure, NOT no_candidates.
     const inst = makeDummyInstance({ isEmptyContext: () => false });
     const r = await runExtractor(db, inst, {}, fakeDeps({ ok: true, text: 'not json at all' }));
     expect(r.outcome).toBe('failed');
@@ -306,9 +308,12 @@ describe('runExtractor — outcomes', () => {
     expect(r.fail_reason).toBe('non_zero_exit');
   });
 
-  it('PARSE ERROR: non-empty response that parses to [] → run_failed reason=parse_error', async () => {
+  it('PARSE ERROR (opt-out instance): a malformed response that parses to [] → run_failed reason=parse_error (TD-294)', async () => {
     const inst = makeDummyInstance();
-    // ok response but the body is not a JSON array → parseResponse returns []
+    // ok response but the body is not a JSON array → parseResponse returns [].
+    // The dummy does NOT expose isMalformedResponse, so the legacy rule holds:
+    // zero parse → parse_error. (The valid-empty vs malformed split for opt-in
+    // instances is covered in the dedicated TD-294 block below.)
     const r = await runExtractor(db, inst, {}, fakeDeps({ ok: true, text: 'not json at all' }));
     expect(r.outcome).toBe('failed');
     expect(r.fail_reason).toBe('parse_error');
@@ -352,6 +357,86 @@ describe('runExtractor — outcomes', () => {
     // a failure does NOT push
     await runExtractor(db, inst, {}, fakeDeps({ ok: false, text: '', fail_reason: 'timeout' }, { autoPush: () => { pushed += 1; } }));
     expect(pushed).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-294 — malformed vs valid-empty disposition (the isMalformedResponse hook)
+// ---------------------------------------------------------------------------
+
+describe('runExtractor — malformed vs valid-empty (TD-294)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeEventLogDb();
+  });
+  afterEach(() => db.close());
+
+  /** The opt-in disposition hook — malformed when the raw is not a JSON array. */
+  const optInMalformed = (r: string): boolean => {
+    try {
+      return !Array.isArray(JSON.parse(r));
+    } catch {
+      return true;
+    }
+  };
+
+  it('Case A — malformed, OPT-OUT instance → parse_error (legacy default preserved)', async () => {
+    const inst = makeDummyInstance(); // no isMalformedResponse
+    const r = await runExtractor(db, inst, {}, fakeDeps({ ok: true, text: 'not json at all' }));
+    expect(r.outcome).toBe('failed');
+    expect(r.fail_reason).toBe('parse_error');
+    expect(names(db)).toEqual([eventName('dummy', 'run_started'), eventName('dummy', 'run_failed')]);
+  });
+
+  it('Case B — malformed, OPT-IN instance → still parse_error (hook fails malformed)', async () => {
+    const inst = makeDummyInstance({ isMalformedResponse: optInMalformed });
+    const r = await runExtractor(db, inst, {}, fakeDeps({ ok: true, text: 'not json at all' }));
+    expect(r.outcome).toBe('failed');
+    expect(r.fail_reason).toBe('parse_error');
+    expect(names(db)).toEqual([eventName('dummy', 'run_started'), eventName('dummy', 'run_failed')]);
+  });
+
+  it('Case C — valid empty [], OPT-IN instance → succeeded, persisted:0, empty_judgment marker', async () => {
+    const inst = makeDummyInstance({ isMalformedResponse: optInMalformed });
+    const r = await runExtractor(db, inst, {}, fakeDeps({ ok: true, text: '[]' }));
+    expect(r.outcome).toBe('succeeded');
+    expect(r.persisted).toBe(0);
+    expect(r.parsed).toBe(0);
+    expect(names(db)).toEqual([
+      eventName('dummy', 'run_started'),
+      eventName('dummy', 'run_succeeded'),
+    ]);
+    const succ = JSON.parse(events(db)[1].payload) as { empty_judgment?: boolean; persisted: number };
+    expect(succ.empty_judgment).toBe(true);
+    expect(succ.persisted).toBe(0);
+  });
+
+  it('Case D — populated, OPT-IN instance → succeeded, persisted:1 (hook does not disturb persist)', async () => {
+    const persisted: string[] = [];
+    const inst = makeDummyInstance({
+      isMalformedResponse: optInMalformed,
+      persistCandidate: async (_db, c) => { persisted.push(c.title); },
+    });
+    const r = await runExtractor(db, inst, {}, fakeDeps({ ok: true, text: '[{"title":"x"}]' }));
+    expect(r.outcome).toBe('succeeded');
+    expect(r.persisted).toBe(1);
+    expect(persisted).toEqual(['x']);
+    expect(names(db)).toEqual([
+      eventName('dummy', 'run_started'),
+      eventName('dummy', 'run_succeeded'),
+    ]);
+  });
+
+  it('Case E — db_error still reachable: OPT-IN dummy whose persist throws on a POPULATED response', async () => {
+    const inst = makeDummyInstance({
+      isMalformedResponse: optInMalformed,
+      persistCandidate: async () => { throw new Error('insert blew up'); },
+    });
+    // A POPULATED response (real candidates) whose every persist throws must still
+    // reach the db_error guard — the valid-empty path did NOT cannibalize it.
+    const r = await runExtractor(db, inst, {}, fakeDeps(OK_RESPONSE));
+    expect(r.outcome).toBe('failed');
+    expect(r.fail_reason).toBe('db_error');
   });
 });
 

@@ -14,9 +14,12 @@
  *      ceiling encodes "this is inference from a digest, not verification".
  *
  *   3. REJECT-MALFORMED-CLEANLY: a response that is not a JSON array (or whose
- *      elements are all unusable) yields `[]`. The engine maps an empty parse
- *      of a NON-empty response to `run_failed reason=parse_error` and persists
- *      nothing. There is NO partial-parse rescue: a half-broken object is
+ *      elements are all unusable) yields `[]`. The engine disambiguates a zero
+ *      parse via the instance's `isMalformedResponse` hook (TD-294, backed by
+ *      `isSubconsciousResponseWellFormed` below): a MALFORMED / non-array
+ *      response → `run_failed reason=parse_error`; a WELL-FORMED (possibly empty)
+ *      array whose elements were all dropped → a SUCCESSFUL run with zero
+ *      candidates. There is NO partial-parse rescue: a half-broken object is
  *      dropped, not patched.
  *
  * The function NEVER throws (the `CognitionInstance.parseResponse` contract).
@@ -106,6 +109,15 @@ function parseJsonArray(raw: string): unknown[] | null {
   return null;
 }
 
+/**
+ * TD-294 — was the raw a well-formed JSON array (possibly empty)? Reuses the SAME
+ * lenient parse `validateSubconsciousResponse` used, so the verdict matches what
+ * was accepted. true → valid (possibly empty); false → malformed (→ parse_error).
+ */
+export function isSubconsciousResponseWellFormed(raw: string): boolean {
+  return parseJsonArray(raw) !== null;
+}
+
 /** Coerce + validate ONE raw element into a candidate, or null if unusable. */
 function validateOne(
   raw: unknown,
@@ -188,8 +200,10 @@ function validateOne(
 /**
  * Parse + validate the raw LLM response against the digest. Returns the valid
  * candidates (hallucinated citations dropped, confidences capped). Returns `[]`
- * when the response is not a JSON array — the engine treats an empty parse of a
- * non-empty response as `parse_error` and persists nothing.
+ * when the response is not a JSON array OR is a well-formed array whose elements
+ * were all dropped — the engine tells these apart via
+ * `isSubconsciousResponseWellFormed` (malformed → parse_error; well-formed empty
+ * → success with zero candidates, TD-294) and persists nothing in either case.
  *
  * Never throws (the parseResponse contract).
  *

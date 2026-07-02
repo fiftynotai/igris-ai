@@ -48,7 +48,10 @@ import {
   buildArbiterSystemPrompt,
   buildArbiterUserPrompt,
 } from '../../arbiter/prompts.js';
-import { validateArbiterResponse } from '../../arbiter/validator.js';
+import {
+  validateArbiterResponse,
+  isArbiterResponseWellFormed,
+} from '../../arbiter/validator.js';
 import {
   DEFAULT_ARBITER_CONFIG,
   type ArbiterConfig,
@@ -314,6 +317,10 @@ export function createArbiterInstance(
       const pairs = ctx?.pairs ?? currentCtx?.pairs ?? [];
       return validateArbiterResponse(raw, pairs);
     },
+
+    // TD-294 — a well-formed (possibly empty) array is a VALID EMPTY judgment
+    // ("no real contradictions"), not a parse_error. Consulted only on zero parse.
+    isMalformedResponse: (raw) => !isArbiterResponseWellFormed(raw),
 
     async persistCandidate(
       db: Database.Database,

@@ -17,6 +17,7 @@ import { createArbiterInstance, type ArbiterContext } from '../arbiter.js';
 import { createCuratorInstance, type CuratorContext } from '../curator.js';
 import { createCartographerInstance, type CartographerContext } from '../cartographer.js';
 import { createSynapseInstance, type SynapseContext } from '../synapse.js';
+import { createSubconsciousInstance } from '../subconscious.js';
 import type { DuplicatePair } from '../../../janitor/types.js';
 import type { ContradictionPair } from '../../../arbiter/types.js';
 import type { StaleCandidate } from '../../../curator/types.js';
@@ -131,6 +132,34 @@ describe('isEmptyContext (TD-293) — synapse edge inference', () => {
     };
     expect(inst.isEmptyContext?.(ctx)).toBe(false);
   });
+});
+
+// ---------------------------------------------------------------------------
+// TD-294 — the 6 janitor-family instances opt into isMalformedResponse: a
+// well-formed (possibly empty) array is a VALID EMPTY judgment (→ false), while
+// garbage is malformed (→ true). Asserts the real factories expose the hook and
+// wire it to their validator's own parse leniency.
+// ---------------------------------------------------------------------------
+
+describe('isMalformedResponse (TD-294) — the 6 janitor-family instances opt in', () => {
+  const instances = [
+    ['janitor', createJanitorInstance()],
+    ['arbiter', createArbiterInstance()],
+    ['curator', createCuratorInstance()],
+    ['cartographer', createCartographerInstance()],
+    ['synapse', createSynapseInstance()],
+    ['subconscious', createSubconsciousInstance()],
+  ] as const;
+
+  for (const [id, inst] of instances) {
+    it(`${id}: a well-formed empty array [] is NOT malformed (valid-empty judgment)`, () => {
+      expect(inst.isMalformedResponse?.('[]')).toBe(false);
+    });
+
+    it(`${id}: garbage IS malformed`, () => {
+      expect(inst.isMalformedResponse?.('garbage')).toBe(true);
+    });
+  }
 });
 
 describe('isEmptyContext (TD-292) — curator prune', () => {

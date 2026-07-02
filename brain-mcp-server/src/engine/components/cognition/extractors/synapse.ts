@@ -43,7 +43,10 @@ import {
   buildSynapseSystemPrompt,
   buildSynapseUserPrompt,
 } from '../../synapse/prompts.js';
-import { validateSynapseResponse } from '../../synapse/validator.js';
+import {
+  validateSynapseResponse,
+  isSynapseResponseWellFormed,
+} from '../../synapse/validator.js';
 import {
   DEFAULT_SYNAPSE_CONFIG,
   type CandidatePair,
@@ -252,6 +255,10 @@ export function createSynapseInstance(
       const pairs = ctx?.pairs ?? currentCtx?.pairs ?? [];
       return validateSynapseResponse(raw, pairs);
     },
+
+    // TD-294 — a well-formed (possibly empty) array is a VALID EMPTY judgment
+    // ("no typed edges to add"), not a parse_error. Consulted only on zero parse.
+    isMalformedResponse: (raw) => !isSynapseResponseWellFormed(raw),
 
     async persistCandidate(
       db: Database.Database,
