@@ -332,6 +332,11 @@ INTERNAL_TOOL_ALLOWLIST = {
     'igris_subconscious_run',
     'igris_suggestion_acted', 'igris_suggestion_dismiss', 'igris_suggestion_list',
     'igris_suggestion_apply_action',
+
+    # synapse edge-inference run tool (FR-211) — cron-driven LLM extractor, not a
+    # brain READ surface; proposals surface via igris_suggestion_list. Same class
+    # as igris_subconscious_run (default off, cognition.synapse.enabled=false).
+    'igris_synapse_run',
 }
 
 forward_misses = doc_names - gateway_names - DOC_ONLY_ALLOWLIST

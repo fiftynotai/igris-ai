@@ -223,3 +223,62 @@ describe("init-config — applyPerceptionDefault (nested cognition.perception)",
     expect(m.applyPerceptionDefault()).toBe("config_malformed");
   });
 });
+
+describe("init-config — applySynapseDefault (nested cognition.synapse, FR-211)", () => {
+  it("config.json absent → config_missing (no-op)", async () => {
+    const m = await import("../lib/init-config.js");
+    expect(m.applySynapseDefault()).toBe("config_missing");
+    expect(existsSync(join(tmpBrain, "config.json"))).toBe(false);
+  });
+
+  it("cognition.synapse absent → default_set, enabled becomes false", async () => {
+    writeConfig({});
+    const m = await import("../lib/init-config.js");
+    expect(m.applySynapseDefault()).toBe("default_set");
+
+    const cfg = readCfg() as { cognition?: { synapse?: { enabled?: boolean } } };
+    expect(cfg.cognition?.synapse?.enabled).toBe(false);
+  });
+
+  it("respects existing cognition.synapse.enabled=true (operator override)", async () => {
+    writeConfig({ cognition: { synapse: { enabled: true } } });
+    const m = await import("../lib/init-config.js");
+    expect(m.applySynapseDefault()).toBe("preserved");
+
+    const cfg = readCfg() as { cognition?: { synapse?: { enabled?: boolean } } };
+    expect(cfg.cognition?.synapse?.enabled).toBe(true);
+  });
+
+  it("cognition.synapse present without enabled → enabled set to false, siblings kept", async () => {
+    writeConfig({ cognition: { synapse: { cosine_floor: 0.9 } } });
+    const m = await import("../lib/init-config.js");
+    expect(m.applySynapseDefault()).toBe("default_set");
+
+    const cfg = readCfg() as {
+      cognition?: { synapse?: { enabled?: boolean; cosine_floor?: number } };
+    };
+    expect(cfg.cognition?.synapse?.enabled).toBe(false);
+    expect(cfg.cognition?.synapse?.cosine_floor).toBe(0.9);
+  });
+
+  it("preserves sibling cognition.subconscious across the synapse write", async () => {
+    writeConfig({ cognition: { subconscious: { enabled: false } } });
+    const m = await import("../lib/init-config.js");
+    expect(m.applySynapseDefault()).toBe("default_set");
+
+    const cfg = readCfg() as {
+      cognition?: {
+        synapse?: { enabled?: boolean };
+        subconscious?: { enabled?: boolean };
+      };
+    };
+    expect(cfg.cognition?.synapse?.enabled).toBe(false);
+    expect(cfg.cognition?.subconscious?.enabled).toBe(false);
+  });
+
+  it("malformed config.json → config_malformed (no-op)", async () => {
+    writeFileSync(join(tmpBrain, "config.json"), "{ this is not json");
+    const m = await import("../lib/init-config.js");
+    expect(m.applySynapseDefault()).toBe("config_malformed");
+  });
+});

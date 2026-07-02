@@ -84,12 +84,14 @@ describe('gateway tool count (TD-171 closeout)', () => {
   gateway.register(collectAllTools());
   const tools = gateway.listTools();
 
-  it('exposes exactly 106 tools (TD-171 closeout 126 − TD-265 worker-subsystem teardown: −13 task tools −7 coordination tools)', () => {
+  it('exposes exactly 107 tools (106 − TD-265 baseline + FR-211 synapse: +1 igris_synapse_run)', () => {
     // If this assertion fires, the registered surface drifted. Either a tool
     // was added/removed without bumping the count here, or the closeout
     // baseline shifted intentionally. In either case: open a brief, decide,
     // and update this literal in the same commit that moves the surface.
-    expect(tools.length).toBe(106);
+    // FR-211 added igris_synapse_run (edge inference) via the cognition
+    // composition (createSynapseComponent → createCognitionComponent), 106→107.
+    expect(tools.length).toBe(107);
   });
 
   it('every component factory contributes at least one tool', () => {

@@ -82,7 +82,7 @@ function readConfig(): Record<string, unknown> | null {
  * outcome so callers can log or surface in dry-run plans.
  */
 function applyCognitionDefault(
-  instance: "perception" | "subconscious",
+  instance: "perception" | "subconscious" | "synapse",
 ): CognitionDefaultOutcome {
   const cfg = readConfig();
   if (cfg === null) {
@@ -139,6 +139,15 @@ export function applySubconsciousDefault(): CognitionDefaultOutcome {
  */
 export function applyPerceptionDefault(): CognitionDefaultOutcome {
   return applyCognitionDefault("perception");
+}
+
+/**
+ * Apply the `cognition.synapse.enabled=false` default (FR-211). Mirrors the
+ * subconscious/perception guardrail; see {@link applyCognitionDefault} for the
+ * contract. Synapse is the edge-inference cognition instance — default OFF.
+ */
+export function applySynapseDefault(): CognitionDefaultOutcome {
+  return applyCognitionDefault("synapse");
 }
 
 // --------------------------------------------------------------------

@@ -39,6 +39,7 @@ import type {
 } from '../../types.js';
 import { createPerceptionComponent } from '../perception/index.js';
 import { createSubconsciousComponent } from '../subconscious/index.js';
+import { createSynapseComponent } from '../synapse/index.js';
 
 /**
  * Build the unified cognition component. Composes the perception + subconscious
@@ -52,6 +53,7 @@ import { createSubconsciousComponent } from '../subconscious/index.js';
 export function createCognitionComponent(): BrainComponent {
   const perception = createPerceptionComponent();
   const subconscious = createSubconsciousComponent();
+  const synapse = createSynapseComponent();
 
   return {
     name: 'cognition',
@@ -76,9 +78,9 @@ export function createCognitionComponent(): BrainComponent {
 
     tools(): ToolDefinition[] {
       // The full registered surface = perception's 8 tools + subconscious's 5
-      // tools. The collapse does NOT change the SET (same tools, one factory),
-      // so the gateway tool count is unchanged.
-      return [...perception.tools(), ...subconscious.tools()];
+      // tools + synapse's 1 tool (FR-211: igris_synapse_run). Synapse is composed
+      // here the same way subconscious is — the engine host is untouched (AC #1).
+      return [...perception.tools(), ...subconscious.tools(), ...synapse.tools()];
     },
 
     events(): { emits: EventDef[]; listens: EventDef[] } {
@@ -109,21 +111,32 @@ export function createCognitionComponent(): BrainComponent {
       if (subconsciousMigrations.length > 0) {
         ctx.storage.runMigrations('subconscious', subconsciousMigrations);
       }
+      // Synapse reuses `suggestions` + `entity_edges` — it declares NO schema of
+      // its own (schema() === []), so there is no migration to run under a
+      // synapse key. (Guarded for symmetry in case a future knob adds one.)
+      const synapseMigrations = synapse.schema();
+      if (synapseMigrations.length > 0) {
+        ctx.storage.runMigrations('synapse', synapseMigrations);
+      }
 
-      // 2. Delegate init to both inner factories: each resolves its instance
-      //    config, sets its handler context, and (subconscious) wires the
-      //    `subconscious_engine` schedule bootstrap on engine.ready.
+      // 2. Delegate init to the inner factories: each resolves its instance
+      //    config, sets its handler context, and (subconscious/synapse) wires its
+      //    schedule bootstrap on engine.ready.
       perception.init(ctx);
       subconscious.init(ctx);
+      synapse.init(ctx);
 
-      ctx.log.info('Cognition component initialized (perception + subconscious instances)');
+      ctx.log.info(
+        'Cognition component initialized (perception + subconscious + synapse instances)',
+      );
     },
 
     destroy(): void {
-      // Tear down both inner factories (subconscious unhooks its engine.ready
-      // listener; perception is stateless).
+      // Tear down all inner factories (subconscious + synapse unhook their
+      // engine.ready listeners; perception is stateless).
       perception.destroy();
       subconscious.destroy();
+      synapse.destroy();
     },
   };
 }
