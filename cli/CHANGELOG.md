@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`igris export <project>`** — new read-only verb that serializes a
+  project's brain slice (briefs + brief-graph + context docs + goals by
+  default; `+learnings/errors/concept-graph` at `--tier full`) into a
+  portable `.igris-pack.tar.gz` bundle for cross-installation handoff.
+  Supports `--out`, `--tier core|standard|full`, `--include`, `--since`.
+  Producer half of FR-229; the import/merge consumer (FR-230) and
+  `/handoff` skill (FR-231) are pending.
+
 - **`igris sync code` advisory for `.claude/*` real dirs** — warns
   (does not abort) when any of `.claude/{agents,rules,skills}/` is a
   real directory rather than a symlink. RSYNC_EXCLUDES treats these

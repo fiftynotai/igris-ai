@@ -35,7 +35,8 @@
 import Database from "better-sqlite3";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, sep } from "node:path";
 import { brainDbPath } from "./paths.js";
 import type {
   SessionFileRow,
@@ -1141,4 +1142,388 @@ export function mergePulledTables(
   })();
 
   return { totalMerged, perTable };
+}
+
+// ===========================================================================
+// FR-229 — `igris export` LOCAL-side project-slice readers + egress redaction
+// ===========================================================================
+//
+// The exporter (`verbs/export.ts`) serializes ONE project's brain slice into a
+// portable `.igris-pack.tar.gz`. It SELECTs only whitelisted columns per table,
+// scoped to the project, with the correct syncKey/strategy/timestampCol so the
+// bundle is self-describing for the FR-230 importer.
+//
+// `cli/` and `brain-mcp-server/` are separate npm packages with ZERO
+// cross-imports (the same boundary that drives BOOT_SYNC_PULL_TABLES above), so
+// the exporter cannot import `SYNC_TABLES`. `EXPORT_TABLES` reproduces the
+// export-scoped subset VERBATIM from the cited `sync.ts` line blocks — the same
+// "#213 trap" discipline (#849/#860): the authoritative column source is the
+// cited `sync.ts` block copied verbatim + pinned by the MAINTAINING row #100
+// egress contract, NOT a hand-invented list. A brain-side column change sweeps
+// this copy via that row.
+//
+// This is the SECOND CLI-side mirror of the SYNC_TABLES egress schema (after
+// BOOT_SYNC_PULL_TABLES) and the NEW egress choke point row #100's change
+// procedure names: `redactTablesForEgress` (below) MUST run over every row
+// BEFORE the exporter writes anything to disk.
+
+/**
+ * Config for one exportable table — extends {@link PullTableConfig} with the
+ * optional `redactCols` mirror of `SyncTableConfig.redactCols` (sync.ts:82) so
+ * redaction config travels with the column list from one source. None of the
+ * currently-exported tables carry `redactCols` (only `projects.path` /
+ * `instances.project_path` do, and neither is exported), so redaction is a
+ * defensive no-op today — kept wired for future tiers (the row-100 contract).
+ */
+export interface ExportTableConfig extends PullTableConfig {
+  redactCols?: string[];
+}
+
+/**
+ * The export-scoped subset of `SYNC_TABLES` (sync.ts:94-364). Each config is
+ * copied VERBATIM (syncKey / timestampCol / strategy / columns) from the cited
+ * `SYNC_TABLES` entry. Distinct from `BOOT_SYNC_PULL_TABLES` (pull-scoped:
+ * carries instances/session_files/definition_files, lacks brief_files/goals/
+ * entity_edges/graph_nodes/errors) — a separate export-scoped array keeps intent
+ * legible (plan §"Key architectural decision").
+ */
+export const EXPORT_TABLES: ExportTableConfig[] = [
+  // sync.ts:155-164 — whitelist already OMITS claimed_by/claimed_at (the
+  // claim-state strip is free; do NOT re-add them).
+  {
+    table: "brief_status",
+    syncKey: ["project", "brief_id"],
+    timestampCol: "updated_at",
+    strategy: "lww",
+    columns: [
+      "project", "brief_id", "brief_type", "title", "status",
+      "priority", "effort", "phase", "updated_at",
+    ],
+  },
+  // sync.ts:192-198 — carries content + content_hash inline.
+  {
+    table: "brief_files",
+    syncKey: ["project", "brief_id"],
+    timestampCol: "updated_at",
+    strategy: "lww",
+    columns: ["project", "brief_id", "filename", "content", "content_hash", "updated_at"],
+  },
+  // sync.ts:271-285 — brief↔brief subset filtered in readBriefBriefEdges; the
+  // concept-graph reuses this config for its concept-touching edges.
+  {
+    table: "entity_edges",
+    syncKey: ["from_type", "from_id", "to_type", "to_id", "edge_type"],
+    timestampCol: "created_at",
+    strategy: "append",
+    columns: [
+      "from_type", "from_id", "to_type", "to_id", "edge_type",
+      "confidence", "provenance", "created_at", "metadata",
+    ],
+  },
+  // sync.ts:301-317 — project_slug-scoped.
+  {
+    table: "goals",
+    syncKey: ["goal_id"],
+    timestampCol: "updated_at",
+    strategy: "lww",
+    columns: [
+      "goal_id", "project_slug", "title", "description", "outcome",
+      "deadline", "status", "priority", "created_at", "updated_at",
+      "achieved_at", "metadata",
+    ],
+  },
+  // sync.ts:96-118 — full tier only; readApprovedLearnings adds
+  // review_status='approved'.
+  {
+    table: "learnings",
+    syncKey: ["project", "category", "title"],
+    timestampCol: "created_at",
+    strategy: "lww",
+    mergeFields: { tags: "merge_tags" },
+    columns: [
+      "project", "category", "title", "content", "tags", "tech_stack",
+      "scope", "source_brief", "confidence", "created_at", "updated_at",
+      "access_count", "last_accessed_at",
+      "review_status", "provenance", "source_extractor",
+      "promoted_to_doc",
+    ],
+  },
+  // sync.ts:120-131 — full tier only; project-scoped. Embeddings are NOT a
+  // column here (they live in a separate vec0 table) so they are never exported.
+  {
+    table: "errors",
+    syncKey: ["project", "fingerprint"],
+    timestampCol: "last_seen_at",
+    strategy: "lww",
+    mergeFields: { occurrence_count: "max" },
+    columns: [
+      "project", "fingerprint", "message", "solution", "context",
+      "tech_stack", "scope", "occurrence_count", "first_seen_at",
+      "last_seen_at", "resolved_at",
+    ],
+  },
+  // sync.ts:286-300 — full tier only; the project concept-graph nodes
+  // (node_type='concept'), scoped in readConceptNodes.
+  {
+    table: "graph_nodes",
+    syncKey: ["node_type", "node_external_id"],
+    timestampCol: "created_at",
+    strategy: "append",
+    columns: [
+      "node_type", "node_external_id", "label", "properties", "created_at",
+    ],
+  },
+];
+
+/** Look up an {@link ExportTableConfig} by table name. Throws if unknown (a coding error). */
+export function exportTableConfig(table: string): ExportTableConfig {
+  const cfg = EXPORT_TABLES.find((t) => t.table === table);
+  if (cfg === undefined) {
+    throw new Error(`export: no EXPORT_TABLES config for table '${table}'`);
+  }
+  return cfg;
+}
+
+/**
+ * Generic whitelisted, create-never reader used by every export reader below.
+ *
+ * L-133 preflight: an absent table → `[]` (never a throw, never a CREATE).
+ * SELECTs ONLY the config's whitelisted columns that actually exist on this DB
+ * (an older DB missing a column degrades that column away rather than throwing),
+ * scoped by the caller's WHERE, honoring an optional `since` cutoff on the
+ * config's `timestampCol`. The `since` predicate + bind is appended AFTER the
+ * caller's, so the caller's placeholders bind first.
+ */
+function readExportRows(
+  config: ExportTableConfig,
+  where: string[],
+  params: unknown[],
+  since?: string,
+): Record<string, unknown>[] {
+  const handle = getDb();
+  if (!tableExists(handle, config.table)) return [];
+
+  const existing = tableColumns(handle, config.table);
+  const cols = config.columns.filter((c) => existing.has(c));
+  if (cols.length === 0) return [];
+
+  const conditions = [...where];
+  const bind = [...params];
+  if (since !== undefined && since.length > 0 && existing.has(config.timestampCol)) {
+    conditions.push(`${config.timestampCol} >= ?`);
+    bind.push(since);
+  }
+
+  const whereClause =
+    conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  return handle
+    .prepare(`SELECT ${cols.join(", ")} FROM ${config.table} ${whereClause}`)
+    .all(...bind) as Record<string, unknown>[];
+}
+
+/** Whitelisted brief_status rows for a project (claimed_* never present). */
+export function readBriefStatusRows(
+  slug: string,
+  since?: string,
+): Record<string, unknown>[] {
+  return readExportRows(
+    exportTableConfig("brief_status"),
+    ["project = ?"],
+    [slug],
+    since,
+  );
+}
+
+/** Whitelisted brief_files rows for a project (content + content_hash inline). */
+export function readBriefFilesRows(
+  slug: string,
+  since?: string,
+): Record<string, unknown>[] {
+  return readExportRows(
+    exportTableConfig("brief_files"),
+    ["project = ?"],
+    [slug],
+    since,
+  );
+}
+
+/**
+ * Brief↔brief `entity_edges` where BOTH endpoints are briefs of THIS project.
+ *
+ * Edges are only portable when both endpoints are this project's briefs (an
+ * edge to a foreign brief would dangle after import). The project's brief-id set
+ * is computed first from `brief_status`; an absent `entity_edges`/`brief_status`
+ * table or an empty brief set → `[]` (create-never).
+ */
+export function readBriefBriefEdges(
+  slug: string,
+  since?: string,
+): Record<string, unknown>[] {
+  const handle = getDb();
+  if (!tableExists(handle, "entity_edges")) return [];
+  if (!tableExists(handle, "brief_status")) return [];
+
+  const briefIds = (
+    handle
+      .prepare("SELECT brief_id FROM brief_status WHERE project = ?")
+      .all(slug) as { brief_id: string }[]
+  ).map((r) => r.brief_id);
+  if (briefIds.length === 0) return [];
+
+  const ph = briefIds.map(() => "?").join(", ");
+  return readExportRows(
+    exportTableConfig("entity_edges"),
+    [
+      "from_type = 'brief'",
+      "to_type = 'brief'",
+      `from_id IN (${ph})`,
+      `to_id IN (${ph})`,
+    ],
+    [...briefIds, ...briefIds],
+    since,
+  );
+}
+
+/** Whitelisted goals rows for a project (project_slug-scoped, all statuses). */
+export function readProjectGoals(
+  slug: string,
+  since?: string,
+): Record<string, unknown>[] {
+  return readExportRows(
+    exportTableConfig("goals"),
+    ["project_slug = ?"],
+    [slug],
+    since,
+  );
+}
+
+/** Whitelisted APPROVED learnings for a project (full tier). Pending/rejected excluded. */
+export function readApprovedLearnings(
+  slug: string,
+  since?: string,
+): Record<string, unknown>[] {
+  return readExportRows(
+    exportTableConfig("learnings"),
+    ["project = ?", "review_status = 'approved'"],
+    [slug],
+    since,
+  );
+}
+
+/** Whitelisted error fingerprints for a project (full tier; embeddings excluded). */
+export function readProjectErrors(
+  slug: string,
+  since?: string,
+): Record<string, unknown>[] {
+  return readExportRows(
+    exportTableConfig("errors"),
+    ["project = ?"],
+    [slug],
+    since,
+  );
+}
+
+/**
+ * Return this project's concept-node external ids.
+ *
+ * Scoping choice (conservative, noted per plan): `graph_nodes` has NO project
+ * column, so a concept node is attributed to a project via
+ * `json_extract(properties, '$.project')`. A concept node that carries no such
+ * property is NOT exported — this may under-include, but never bleeds a foreign
+ * project's concepts into the bundle (the safe failure direction). An absent
+ * `graph_nodes` table → `[]`.
+ */
+function conceptNodeIds(slug: string): string[] {
+  const handle = getDb();
+  if (!tableExists(handle, "graph_nodes")) return [];
+  const cols = tableColumns(handle, "graph_nodes");
+  if (!cols.has("node_type") || !cols.has("node_external_id") || !cols.has("properties")) {
+    return [];
+  }
+  return (
+    handle
+      .prepare(
+        "SELECT node_external_id FROM graph_nodes WHERE node_type = 'concept' AND json_extract(properties, '$.project') = ?",
+      )
+      .all(slug) as { node_external_id: string }[]
+  ).map((r) => r.node_external_id);
+}
+
+/** Whitelisted project concept nodes (node_type='concept', properties.project=slug). */
+export function readConceptNodes(
+  slug: string,
+  since?: string,
+): Record<string, unknown>[] {
+  return readExportRows(
+    exportTableConfig("graph_nodes"),
+    ["node_type = 'concept'", "json_extract(properties, '$.project') = ?"],
+    [slug],
+    since,
+  );
+}
+
+/**
+ * `entity_edges` touching THIS project's concept nodes (either endpoint is an
+ * in-scope concept node). Reuses the entity_edges config. Empty concept set or
+ * absent table → `[]`.
+ */
+export function readConceptEdges(
+  slug: string,
+  since?: string,
+): Record<string, unknown>[] {
+  const handle = getDb();
+  if (!tableExists(handle, "entity_edges")) return [];
+
+  const ids = conceptNodeIds(slug);
+  if (ids.length === 0) return [];
+
+  const ph = ids.map(() => "?").join(", ");
+  return readExportRows(
+    exportTableConfig("entity_edges"),
+    [
+      `((from_type = 'concept' AND from_id IN (${ph})) OR (to_type = 'concept' AND to_id IN (${ph})))`,
+    ],
+    [...ids, ...ids],
+    since,
+  );
+}
+
+/**
+ * Relativize an absolute LOCAL filesystem path so an exported bundle never
+ * carries the source machine's directory layout. VERBATIM CLI mirror of
+ * `relativizeEgressPath` (sync.ts:382-389). Idempotent.
+ */
+export function relativizeEgressPath(value: unknown): unknown {
+  if (typeof value !== "string" || value === "") return value;
+  const home = homedir();
+  if (value === home) return "~";
+  if (value.startsWith(home + sep)) return "~" + value.slice(home.length);
+  if (isAbsolute(value)) return basename(value);
+  return value;
+}
+
+/**
+ * Redact the `redactCols` of every table IN PLACE (via
+ * {@link relativizeEgressPath}). VERBATIM CLI mirror of `redactTablesForEgress`
+ * (sync.ts:401-414), keyed off {@link EXPORT_TABLES} instead of `SYNC_TABLES`.
+ *
+ * The exporter MUST call this at its egress choke point BEFORE writing any row
+ * to disk (row #100's "new egress choke point" clause). Mutating in place means
+ * the same row objects the exporter later serializes are already redacted.
+ * Idempotent. A no-op today (no exported table carries redactCols) — wired for
+ * future tiers.
+ */
+export function redactTablesForEgress(
+  tables: Record<string, Record<string, unknown>[]>,
+): Record<string, Record<string, unknown>[]> {
+  for (const [tableName, rows] of Object.entries(tables)) {
+    const cfg = EXPORT_TABLES.find((t) => t.table === tableName);
+    if (!cfg?.redactCols || cfg.redactCols.length === 0) continue;
+    for (const row of rows) {
+      for (const col of cfg.redactCols) {
+        if (col in row) row[col] = relativizeEgressPath(row[col]);
+      }
+    }
+  }
+  return tables;
 }

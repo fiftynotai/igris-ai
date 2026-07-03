@@ -464,6 +464,83 @@ export interface BootSyncDigest {
 }
 
 /**
+ * FR-229 — the `igris export` tier selector.
+ *
+ * - `core`     = brief_status + brief_files.
+ * - `standard` = core + entity_edges(brief↔brief) + goals + context_docs (DEFAULT).
+ * - `full`     = standard + learnings(approved) + errors + project concept-graph.
+ */
+export type ExportTier = "core" | "standard" | "full";
+
+/** FR-229 — options for the `igris export <project>` producer verb. */
+export interface ExportOptions {
+  /** Project slug to export (the positional `<project>`). */
+  project: string;
+  /** Output path; default `./<slug>.igris-pack.tar.gz`. */
+  out?: string;
+  /** Tier; default `standard`. */
+  tier?: ExportTier;
+  /** Extra store names to include on top of the tier. */
+  include?: string[];
+  /** Only rows at/after this cutoff (per each store's timestampCol). */
+  since?: string;
+  /** Emit the JSON digest to stdout (default ON). */
+  json?: boolean;
+}
+
+/**
+ * FR-229 — a per-store descriptor in the `.igris-pack` manifest. Carries the
+ * store's own column/syncKey/strategy/timestampCol + `table` (the target DB
+ * table) so the FR-230 importer needs no re-derivation. `context_docs` uses the
+ * file/hash shape (no columns/syncKey/table).
+ */
+export interface ExportStoreDescriptor {
+  /** Relative path of this store's data file inside the bundle. */
+  file?: string;
+  /** Row count (data stores) or file count (context_docs). */
+  count: number;
+  /** Target DB table for the FR-230 importer (absent for context_docs). */
+  table?: string;
+  columns?: string[];
+  syncKey?: string[];
+  strategy?: "lww" | "append";
+  timestampCol?: string;
+  /** brief_files only: per-brief `sha256(content)`. */
+  content_hashes?: Record<string, string>;
+  /** context_docs only: the raw doc files inside the bundle. */
+  files?: string[];
+  /** context_docs only: per-file `sha256`. */
+  hashes?: Record<string, string>;
+}
+
+/** FR-229 — the `.igris-pack/manifest.json` schema (format_version 1). */
+export interface ExportManifest {
+  format: "igris-pack";
+  format_version: 1;
+  created_at: string;
+  producer: { cli_version: string };
+  /** NO absolute path — only the slug (redaction/omission by construction). */
+  project: { slug: string };
+  tier: ExportTier;
+  filters: { since: string | null; include: string[] };
+  stores: Record<string, ExportStoreDescriptor>;
+  /** Self-describing list of stores that are NEVER exported. */
+  excluded: string[];
+  redaction: { applied: boolean; cols: Record<string, string[]> };
+  /** sha256 over the ordered payload (data files + context docs), NOT the manifest. */
+  checksum: string;
+}
+
+/** FR-229 — the JSON digest `igris export` prints to stdout on success. */
+export interface ExportDigest {
+  tier: ExportTier;
+  stores: string[];
+  counts: Record<string, number>;
+  out_path: string;
+  checksum: string;
+}
+
+/**
  * Lightweight manifest describing what a brain-core tarball delivers.
  * Currently a stub used by dry-run reporting and doctor's stale check;
  * may grow in M5 for delta-fetch optimization (currently out of scope).

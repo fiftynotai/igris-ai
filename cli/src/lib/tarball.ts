@@ -54,7 +54,9 @@ import {
 } from "node:stream";
 import { promisify } from "node:util";
 import { createGunzip } from "node:zlib";
-import { x as tarExtract } from "tar";
+import { c as tarCreate, x as tarExtract } from "tar";
+import { readdirSync } from "node:fs";
+import { join as pathJoin, relative as pathRelative } from "node:path";
 
 const pipeline = promisify(streamPipeline);
 
@@ -552,5 +554,63 @@ export async function hashTarballFile(filePath: string): Promise<string> {
 export function wipeDir(dir: string): void {
   if (existsSync(dir)) {
     rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FR-229 — deterministic gzip-tar PACK path (the `igris export` producer).
+// ---------------------------------------------------------------------------
+
+/** Recursively collect file paths under `dir`, relative to `dir`, sorted. */
+function walkFilesRelative(dir: string): string[] {
+  const out: string[] = [];
+  const visit = (abs: string): void => {
+    for (const entry of readdirSync(abs, { withFileTypes: true })) {
+      const childAbs = pathJoin(abs, entry.name);
+      if (entry.isDirectory()) {
+        visit(childAbs);
+      } else if (entry.isFile()) {
+        out.push(pathRelative(dir, childAbs));
+      }
+    }
+  };
+  visit(dir);
+  // Sort the full file list so the archive's entry order is reproducible across
+  // runs regardless of readdir's OS-dependent order (plan §Risks: tar
+  // non-determinism).
+  return out.sort();
+}
+
+/**
+ * Gzip-create a DETERMINISTIC tar of `srcDir` at `outPath` (the `.igris-pack`
+ * producer). A sorted, recursive file list + `portable`/`noMtime` strip the
+ * mtime/uid/gid noise so the same staged dir always packs to the same archive.
+ * Only the staged files are packed — no user-controlled paths reach the tar, so
+ * there is no repack-side path-injection surface. Wraps failures in
+ * {@link TarballError}. Leaves the extract-only path above untouched.
+ */
+export async function packDir(srcDir: string, outPath: string): Promise<void> {
+  if (!existsSync(srcDir) || !statSync(srcDir).isDirectory()) {
+    throw new TarballError(`pack source is not a directory: ${srcDir}`);
+  }
+  const outParent = dirname(outPath);
+  if (!existsSync(outParent)) mkdirSync(outParent, { recursive: true });
+
+  const entries = walkFilesRelative(srcDir);
+  try {
+    await tarCreate(
+      {
+        gzip: true,
+        file: outPath,
+        cwd: srcDir,
+        portable: true,
+        noMtime: true,
+      },
+      entries,
+    );
+  } catch (err) {
+    throw new TarballError(
+      `pack failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }

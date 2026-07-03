@@ -49,6 +49,8 @@ import { runInstance, type InstanceAction } from "./verbs/instance.js";
 import { runHousekeeping } from "./verbs/housekeeping.js";
 import { runAssess } from "./verbs/assess.js";
 import { runContextDocs, type ContextDocsAction } from "./verbs/context-docs.js";
+import { runExport } from "./verbs/export.js";
+import type { ExportTier } from "./types.js";
 import type { McpHarness } from "./lib/mcp-env-normalize.js";
 import { setVerbosity, info, error as logError } from "./lib/log.js";
 
@@ -1134,6 +1136,58 @@ async function main(argv: string[]): Promise<void> {
           action: action as ContextDocsAction,
           project: opts.project,
           json: opts.json === true,
+        });
+        process.exitCode = code;
+      },
+    );
+
+  program
+    .command("export <project>")
+    .description(
+      "FR-229: serialize ONE project's brain slice into a portable, self-" +
+        "describing <slug>.igris-pack.tar.gz (the handoff PRODUCER; no import/merge). " +
+        "Tiers: core (brief_status + brief_files), standard (DEFAULT — core + " +
+        "brief↔brief edges + goals + context docs), full (standard + approved " +
+        "learnings + errors + project concept-graph). --include adds named stores " +
+        "on top of the tier; --since filters rows by each store's timestamp. " +
+        "Egress paths are redacted and the manifest omits the project's absolute " +
+        "path. A missing brain DB is a hard failure (exit 1).",
+    )
+    .option(
+      "--out <path>",
+      "output archive path (default: ./<slug>.igris-pack.tar.gz)",
+    )
+    .option(
+      "--tier <tier>",
+      "export tier: core | standard | full (default: standard)",
+    )
+    .option(
+      "--include <stores...>",
+      "extra store names to include on top of the tier (space-separated)",
+    )
+    .option(
+      "--since <date>",
+      "only export rows at/after this cutoff (per each store's timestamp column)",
+    )
+    .option("--json", "emit the JSON digest to stdout (default on)", true)
+    .action(
+      async (
+        project: string,
+        opts: {
+          out?: string;
+          tier?: string;
+          include?: string[];
+          since?: string;
+          json?: boolean;
+        },
+      ): Promise<void> => {
+        const code = await runExport({
+          project,
+          out: opts.out,
+          tier: opts.tier as ExportTier | undefined,
+          include: opts.include,
+          since: opts.since,
+          json: opts.json !== false,
         });
         process.exitCode = code;
       },
