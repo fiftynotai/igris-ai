@@ -106,9 +106,33 @@ cp -R "$MCP_SRC/scripts" "$MCP_DEST/"
 # TD-298: prune vendored test source from the staged bundle. The wholesale
 # scripts/ copy drags in scripts/__tests__/ (8 *.test.ts) and scripts/fixtures/
 # (~150KB), which must never ship in the published tarball — and which vitest
-# globs out of dist/, producing phantom suite-collection failures. Runtime
-# scripts (backfill_brief_edges.ts, gen-egress-manifest.ts, etc.) are kept.
+# globs out of dist/, producing phantom suite-collection failures.
 rm -rf "$MCP_DEST/scripts/__tests__" "$MCP_DEST/scripts/fixtures"
+
+# TD-299: prune DEV-ONLY benchmark/eval/labeling scripts. These are never
+# invoked by the MCP server, a shipped hook, a skill, or a package.json script —
+# they are one-off developer tooling that only makes sense inside the source
+# repo (against dev fixtures + a labeled corpus). Shipping them is at best dead
+# weight and at worst broken: recall_bench.ts DEFAULTS --queryset to the
+# scripts/fixtures/ path pruned just above, so it throws immediately from the
+# published package. KEEP (runtime/ops, deliberately NOT listed here):
+#   - perception_extract_cli.ts     — invoked by core/hooks/shared/
+#                                      perception_extract_and_persist.sh
+#   - render_brief_graph.{ts,template.html} — the standalone CLI the `visualize`
+#                                      skill points users at
+#   - gen-egress-manifest.ts, backfill_brief_edges.ts — package.json scripts
+#   - fr219_embed_null_learnings.ts, td286_renormalize_backfill.ts,
+#     reap-stale-instances.ts       — operational one-off migrations/ops CLIs
+for dev_script in \
+  recall_bench.ts \
+  dedup_corpus_eval.ts \
+  td087_check_pair.ts \
+  td087_e2e_deterministic.ts \
+  td087_label_pairs.py \
+  td087_corpus_pairs_labeled.csv \
+  td285_dedup_recall_audit.ts; do
+  rm -f "$MCP_DEST/scripts/$dev_script"
+done
 
 # Fail loud if the staged entrypoint is missing — a publish with a broken
 # bundle must abort rather than ship a half-package.

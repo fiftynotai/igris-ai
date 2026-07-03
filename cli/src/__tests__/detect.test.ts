@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { HARNESS_ENV_MARKERS } from "../lib/detect.js";
 
 let tmpRoot: string;
 let savedEnv: NodeJS.ProcessEnv;
@@ -47,18 +48,9 @@ beforeEach(() => {
   savedEnv = { ...process.env };
   process.env.IGRIS_BRAIN_DIR = tmpRoot;
   // Neutralize harness markers + PATH so a test starts from a known floor.
-  for (const k of [
-    "CLAUDECODE",
-    "CLAUDE_CODE_ENTRYPOINT",
-    "ANTIGRAVITY",
-    "AGY_SESSION",
-    "GEMINI_CLI",
-    "GEMINI_SESSION",
-    "CODEX_SESSION",
-    "CODEX_HOME",
-    "OPENCODE",
-    "OPENCODE_SESSION",
-  ]) {
+  // Use the shared marker list so a live harness's ambient marker (incl. the
+  // Cursor markers this list previously omitted) cannot leak in (TD-299).
+  for (const k of HARNESS_ENV_MARKERS) {
     delete process.env[k];
   }
   // Empty PATH so sqlite3 is absent unless a test adds it.

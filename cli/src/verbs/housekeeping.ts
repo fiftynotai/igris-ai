@@ -227,12 +227,16 @@ function monthOf(date: Date): string {
 }
 
 /**
- * Derive an individual archive file's timestamp.
+ * Derive an individual archive file's timestamp — used ONLY for month-digest
+ * BUCKETING (which `<YYYY-MM>.md` a rolled file lands in), NOT for the retention
+ * age gate. Per session_protocol.md §1 the `<rested_at>` filename suffix exists
+ * to prevent collision when one instance rests repeatedly AND to bucket a rolled
+ * file under its calendar month — so bucketing prefers the suffix. Age/retention
+ * is a SEPARATE clock (see {@link archiveEntryMtimeMs}).
  *
- * SKILL.md §3.8 H2: prefer the `<rested_at>` suffix embedded in the filename
- * (`<id>-<ts>.md` or `CURRENT_SESSION-<ts>.md`), else fall back to the file's
- * mtime (`updated_at`). The suffix is the `YYYY-MM-DDTHHMMSS` shape tsSuffix
- * writes; parse it back to a Date for month bucketing + the age test.
+ * Prefer the `<rested_at>` suffix embedded in the filename (`<id>-<ts>.md` or
+ * `CURRENT_SESSION-<ts>.md`), else fall back to the file's mtime. The suffix is
+ * the `YYYY-MM-DDTHHMMSS` shape tsSuffix writes; parse it back to a Date.
  */
 function fileTimestamp(archiveDir: string, filename: string): Date {
   // Try the `-YYYY-MM-DDThhmmss.md` suffix first.
@@ -255,6 +259,30 @@ function fileTimestamp(archiveDir: string, filename: string): Date {
   }
   // Fall back to the on-disk mtime.
   return statSync(join(archiveDir, filename)).mtime;
+}
+
+/**
+ * The RETENTION age key for an individual archive file: its on-disk mtime —
+ * the file's last-write time. H0/H1 move a file in via renameSync (same
+ * filesystem — both under `session/` — so the mtime is preserved), meaning
+ * mtime tracks the session's rest/write time, NOT a fresh archival stamp.
+ * Retention ("the last 30 days of archived files are kept individually",
+ * session_protocol.md §5) keys on this mtime; the `<rested_at>` filename SUFFIX
+ * is used ONLY for month-digest bucketing (fileTimestamp), never the age gate.
+ *
+ * Why this matters (the TD-299 bug): keying H2's age gate on the SUFFIX folded a
+ * just-written archive file into its month digest in the SAME sweep whenever the
+ * suffix was >30 days old — even though the file itself had only just been
+ * written (a recently-active scratchpad archived under an old rest-timestamp).
+ * Keying on mtime keeps such a recently-written file for its retention window.
+ * (A genuinely dormant session — old mtime AND old suffix — can still roll in
+ * the same sweep; that is harmless: it lands in its correct rest-month digest,
+ * no data loss. Retention measured strictly from ARCHIVAL would need an explicit
+ * utimesSync stamp on the moved file — deferred.) H3 oldest-first ordering keys
+ * off mtime too.
+ */
+function archiveEntryMtimeMs(archiveDir: string, filename: string): number {
+  return statSync(join(archiveDir, filename)).mtimeMs;
 }
 
 /** Is `name` an individual archive file (NOT a YYYY-MM.md month digest)? */
@@ -321,8 +349,12 @@ function rollFileIntoDigest(archiveDir: string, filename: string): void {
  * H2 — 30-day digest roll. SKILL.md §3.8 H2.
  *
  * Enumerate the INDIVIDUAL files in `session/archive/*.md` (NOT the `YYYY-MM.md`
- * digests). Roll any whose timestamp is older than `rollDays` into its month
- * digest via {@link rollFileIntoDigest}. Returns the count rolled.
+ * digests). Roll any that have SAT IN THE ARCHIVE longer than `rollDays` (its
+ * mtime = archival time, see {@link archiveEntryMtimeMs}) into its month digest
+ * via {@link rollFileIntoDigest}. The digest a file lands in is still bucketed by
+ * its `<rested_at>` SUFFIX (fileTimestamp) — only the age GATE keys off mtime, so
+ * a session archived today survives its retention window even if its rest event
+ * was long ago (TD-299). Returns the count rolled.
  */
 function runH2(archiveDir: string, rollDays: number): number {
   if (!existsSync(archiveDir)) return 0;
@@ -332,8 +364,7 @@ function runH2(archiveDir: string, rollDays: number): number {
   const individual = readdirSync(archiveDir).filter(isIndividualArchiveFile);
   let rolled = 0;
   for (const name of individual) {
-    const ts = fileTimestamp(archiveDir, name);
-    if (now - ts.getTime() > cutoffMs) {
+    if (now - archiveEntryMtimeMs(archiveDir, name) > cutoffMs) {
       rollFileIntoDigest(archiveDir, name);
       rolled += 1;
     }
@@ -355,10 +386,11 @@ function runH3(archiveDir: string, ceiling: number): number {
   let individual = readdirSync(archiveDir).filter(isIndividualArchiveFile);
   if (individual.length <= ceiling) return 0;
 
-  // Sort oldest-first so we roll the oldest until we are at/under the ceiling.
+  // Sort oldest-first (by ARCHIVAL mtime, the same retention clock H2 uses) so
+  // we roll the files that have sat longest until we are at/under the ceiling.
   const withTs = individual.map((name) => ({
     name,
-    ts: fileTimestamp(archiveDir, name).getTime(),
+    ts: archiveEntryMtimeMs(archiveDir, name),
   }));
   withTs.sort((a, b) => a.ts - b.ts);
 

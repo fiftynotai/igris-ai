@@ -37,6 +37,39 @@ import { readRemoteBrainConfig } from "./mcp-client.js";
 import type { DetectResult } from "../types.js";
 
 /**
+ * The harness-marker table: ordered [env-var markers, harness] pairs. FIRST
+ * match wins, so the order encodes precedence:
+ *   - Antigravity (agy) is a gemini-family harness but sets its OWN marker, so
+ *     it is checked BEFORE gemini (the more-specific marker wins).
+ *   - Cursor (FR-192): cursor-agent sets CURSOR_AGENT=1 in every tool/shell
+ *     subprocess it spawns (verified `env:{CURSOR_AGENT:"1"}`); the launcher
+ *     wrapper additionally exports CURSOR_INVOKED_AS.
+ * SINGLE SOURCE OF TRUTH for the marker names — {@link HARNESS_ENV_MARKERS}
+ * (below) is derived from this table so a test can fully sandbox harness
+ * inference by clearing EVERY marker (clearing a partial set lets a live
+ * harness's ambient marker, e.g. CLAUDE_CODE_ENTRYPOINT, leak in — TD-299).
+ */
+const HARNESS_MARKER_TABLE: ReadonlyArray<
+  readonly [readonly string[], DetectResult["harness"]]
+> = [
+  [["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT"], "claude"],
+  [["ANTIGRAVITY", "AGY_SESSION"], "antigravity"],
+  [["GEMINI_CLI", "GEMINI_SESSION"], "gemini"],
+  [["CODEX_SESSION", "CODEX_HOME"], "codex"],
+  [["OPENCODE", "OPENCODE_SESSION"], "opencode"],
+  [["CURSOR_AGENT", "CURSOR_INVOKED_AS"], "cursor"],
+];
+
+/**
+ * Every env var {@link inferHarness} reads as a harness marker (flattened from
+ * {@link HARNESS_MARKER_TABLE}). Exported so tests fully sandbox harness
+ * inference — clear ALL of these in setup so an ambient marker from the live
+ * harness the suite runs inside cannot leak into a `detect` call (TD-299).
+ */
+export const HARNESS_ENV_MARKERS: readonly string[] =
+  HARNESS_MARKER_TABLE.flatMap(([markers]) => markers);
+
+/**
  * Infer the launching harness from environment markers.
  *
  * Best-effort and side-effect-free: each harness exports a distinctive env
@@ -46,31 +79,10 @@ import type { DetectResult } from "../types.js";
  */
 function inferHarness(): DetectResult["harness"] {
   const env = process.env;
-  // Claude Code exports CLAUDECODE=1 (and CLAUDE_CODE_* vars).
-  if (env.CLAUDECODE !== undefined || env.CLAUDE_CODE_ENTRYPOINT !== undefined) {
-    return "claude";
-  }
-  // Antigravity (agy) is a gemini-family harness but sets its own marker;
-  // check it BEFORE gemini so the more-specific marker wins.
-  if (env.ANTIGRAVITY !== undefined || env.AGY_SESSION !== undefined) {
-    return "antigravity";
-  }
-  if (env.GEMINI_CLI !== undefined || env.GEMINI_SESSION !== undefined) {
-    return "gemini";
-  }
-  if (env.CODEX_SESSION !== undefined || env.CODEX_HOME !== undefined) {
-    return "codex";
-  }
-  if (env.OPENCODE !== undefined || env.OPENCODE_SESSION !== undefined) {
-    return "opencode";
-  }
-  // Cursor (FR-192): cursor-agent sets CURSOR_AGENT=1 in the environment of every
-  // tool/shell subprocess it spawns (verified: `env:{CURSOR_AGENT:"1"}` in the
-  // agent's terminal executor — so an `igris detect` run as a Cursor tool call
-  // sees it); the launcher wrapper additionally `export`s CURSOR_INVOKED_AS.
-  // Either marks a Cursor-driven run. No overlap with the other harness markers.
-  if (env.CURSOR_AGENT !== undefined || env.CURSOR_INVOKED_AS !== undefined) {
-    return "cursor";
+  for (const [markers, harness] of HARNESS_MARKER_TABLE) {
+    if (markers.some((m) => env[m] !== undefined)) {
+      return harness;
+    }
   }
   return "unknown";
 }

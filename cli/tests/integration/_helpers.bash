@@ -55,3 +55,34 @@ stage_project() {
   mkdir -p "$dir/.claude"
   echo "$dir"
 }
+
+# stage_home — an isolated HOME with a CLEAN doctor baseline, so ONLY the drift a
+# test deliberately injects fires (never the ambient real ~/.claude state).
+# Writes:
+#   - $HOME/.claude.json          — valid igris-brain MCP entry (600) so
+#                                    mcp-unregistered + secret-perms stay silent.
+#   - $HOME/.claude/settings.json — the canonical global Igris hooks (a
+#                                    hooks-missing/stale test OVERWRITES this).
+#   - $IGRIS_BRAIN_DIR/config.json — opt-out `cli_targets:{}` (600) so
+#                                    bridge-missing never fires from a real CLI
+#                                    on the runner's PATH.
+# Echoes the HOME path. Run the CLI under it with `HOME="$h" run $CLI_BIN ...`.
+#
+# TD-299: the FR-212d global-hooks detector reads $HOME/.claude/settings.json via
+# homedir(); without this isolation `doctor` reads the runner's REAL ~/.claude
+# (which carries canonical hooks) and misses the injected drift → exit 0. Call
+# AFTER stage_brain (needs $IGRIS_BRAIN_DIR + its canonical-settings.json).
+stage_home() {
+  local home="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$home/.claude"
+  local mcpfile="$IGRIS_BRAIN_DIR/fake-bundled-mcp.js"
+  printf '// fake bundled mcp\n' > "$mcpfile"
+  cat > "$home/.claude.json" <<EOF
+{ "mcpServers": { "igris-brain": { "type": "stdio", "command": "node", "args": ["$mcpfile"], "env": {} } } }
+EOF
+  chmod 600 "$home/.claude.json"
+  cp "$IGRIS_BRAIN_DIR/core/hooks/canonical-settings.json" "$home/.claude/settings.json"
+  printf '{ "version": "7.0.0", "cli_targets": {} }\n' > "$IGRIS_BRAIN_DIR/config.json"
+  chmod 600 "$IGRIS_BRAIN_DIR/config.json"
+  echo "$home"
+}

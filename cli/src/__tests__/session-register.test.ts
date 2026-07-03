@@ -24,6 +24,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { RegisterDigest } from "../types.js";
+import { HARNESS_ENV_MARKERS } from "../lib/detect.js";
 
 let tmpRoot: string;
 let savedEnv: NodeJS.ProcessEnv;
@@ -184,7 +185,11 @@ beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "igris-cli-register-"));
   savedEnv = { ...process.env };
   process.env.IGRIS_BRAIN_DIR = tmpRoot;
-  for (const k of ["CLAUDECODE", "GEMINI_CLI", "CODEX_SESSION", "OPENCODE"]) {
+  // Fully sandbox harness inference: clear EVERY marker detect() reads, not a
+  // partial set — otherwise a live harness's ambient marker (e.g.
+  // CLAUDE_CODE_ENTRYPOINT when the suite runs inside a Claude Code session)
+  // leaks in and the default-harness assertion below flips to `claude` (TD-299).
+  for (const k of HARNESS_ENV_MARKERS) {
     delete process.env[k];
   }
 });
