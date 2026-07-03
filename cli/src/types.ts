@@ -540,6 +540,175 @@ export interface ExportDigest {
   checksum: string;
 }
 
+// ---------------------------------------------------------------------------
+// FR-230 — `igris import` (cross-owner merge ENGINE — the FR-229 ingress twin).
+// ---------------------------------------------------------------------------
+
+/**
+ * FR-230 — the `--on-conflict` policy. Governs the CONFLICT class ONLY (all
+ * other classes resolve deterministically): `ask` (interactive, DEFAULT) ·
+ * `theirs` (bundle wins) · `mine` (keep local) · `newer` (LWW by the store's
+ * timestampCol, opt-in + reported).
+ */
+export type OnConflictPolicy = "ask" | "theirs" | "mine" | "newer";
+
+/**
+ * FR-230 — the ancestor-based 3-way row classification (NOT timestamp LWW).
+ * `H_b` = bundle hash, `H_l` = local hash, `A` = ledger ancestor hash:
+ * NEW (no local) · UNCHANGED (H_l==H_b) · INCOMING (H_l==A, H_b!=A → theirs
+ * fast-forwards) · LOCAL_ONLY (H_b==A, H_l!=A → mine advanced, theirs stale) ·
+ * CONFLICT (both diverged from A, OR no A recorded → conservative).
+ */
+export type ImportClassification =
+  | "NEW"
+  | "UNCHANGED"
+  | "INCOMING"
+  | "LOCAL_ONLY"
+  | "CONFLICT";
+
+/** FR-230 — options for the `igris import <bundle>` consumer verb. */
+export interface ImportOptions {
+  /** Path to the `.igris-pack.tar.gz` bundle (the positional `<bundle>`). */
+  bundle: string;
+  /** Classify + preview only; write NOTHING to the DB. */
+  dryRun?: boolean;
+  /** Conflict-resolution policy; default `ask`. */
+  onConflict?: OnConflictPolicy;
+  /** Rewrite the scope key to this slug before lookup/classify/apply. */
+  as?: string;
+  /**
+   * Absolute/relative path recorded on a freshly auto-registered `projects` row
+   * for the target slug (C2). Defaults to `process.cwd()`. Ignored when the
+   * project already exists (its real path is preserved).
+   */
+  projectPath?: string;
+  /** Emit the JSON digest to stdout (default ON). */
+  json?: boolean;
+}
+
+/** FR-230 — one classified bundle row inside an {@link ImportStorePlan}. */
+export interface ImportRowPlan {
+  /** The syncKey values joined (`NUL`-separated) — the ledger + report key. */
+  key: string;
+  classification: ImportClassification;
+  /** sha256 of the bundle row's semantic columns (content_hashes for brief_files). */
+  bundleHash: string;
+  /** sha256 of the local row's semantic columns; absent when no local row. */
+  localHash?: string;
+  /** Ledger ancestor hash for (store,key); absent on first-ever import. */
+  ancestorHash?: string;
+  /** The slug-rewritten bundle row (the values the writer will apply). */
+  row: Record<string, unknown>;
+}
+
+/** FR-230 — the per-store classification result. */
+export interface ImportStorePlan {
+  /** Manifest store NAME (e.g. `concept_edges`, distinct from its `table`). */
+  store: string;
+  table: string;
+  strategy: "lww" | "append";
+  rows: ImportRowPlan[];
+  counts: Record<ImportClassification, number>;
+}
+
+/** FR-230 — the full classification plan (row stores only; context docs are separate). */
+export interface ImportPlan {
+  stores: ImportStorePlan[];
+  totals: Record<ImportClassification, number>;
+}
+
+/** FR-230 — the resolution chosen for one CONFLICT row (AC2 per-conflict report). */
+export interface ImportConflictResolution {
+  store: string;
+  key: string;
+  classification: ImportClassification;
+  chosen: "theirs" | "mine";
+}
+
+/** FR-230 — the new ancestor hash to seed for (store,key) after a successful apply. */
+export interface ImportAncestorUpdate {
+  store: string;
+  key: string;
+  hash: string;
+}
+
+/** FR-230 — per-store apply counts (mirrors {@link MergeRowsResult} in brain-db). */
+export interface ImportStoreResult {
+  inserted: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  failures?: { key: string; error: string }[];
+}
+
+/** FR-230 — the result of {@link applyImport} (per-store counts + conflict report). */
+export interface ImportResult {
+  perStore: Record<string, ImportStoreResult>;
+  conflicts: ImportConflictResolution[];
+  ancestorUpdates: ImportAncestorUpdate[];
+  /** True when a `projects` row was auto-registered for the target slug this run (C2). */
+  projectRegistered: boolean;
+}
+
+/** FR-230 — a per-bundle ledger record (the applied-bundle marker + provenance). */
+export interface ImportLedgerRecord {
+  checksum: string;
+  source_fingerprint: string;
+  imported_at: string;
+  as_slug: string;
+  rows: { store: string; key: string; hash: string }[];
+  /**
+   * True only when the apply was CLEAN (zero failed rows). Gates the idempotency
+   * short-circuit (C3): a PARTIAL apply still records provenance/ancestor for the
+   * rows that landed, but is NOT marked applied, so a corrective re-import
+   * re-classifies and lands the previously-failed rows.
+   */
+  clean: boolean;
+}
+
+/** FR-230 — a classified context doc (D5 pseudo-store). */
+export interface ImportContextDocPlan {
+  filename: string;
+  classification: "NEW" | "UNCHANGED" | "INCOMING" | "LOCAL_ONLY" | "CONFLICT";
+  bundleHash: string;
+  localHash?: string;
+  ancestorHash?: string;
+  content: string;
+}
+
+/** FR-230 — the JSON digest `igris import` prints to stdout. */
+export interface ImportDigest {
+  bundle: string;
+  target_slug: string;
+  policy: OnConflictPolicy;
+  dry_run: boolean;
+  already_imported: boolean;
+  /**
+   * Apply outcome: `full` (every decided row applied cleanly), `partial` (some
+   * rows failed — non-zero exit, bundle NOT marked applied), `none` (dry-run /
+   * non-TTY ask / aborted / already-imported → zero writes).
+   */
+  applied: "full" | "partial" | "none";
+  /** Total rows that failed to apply across all stores (0 unless `partial`). */
+  failed: number;
+  /** The target slug if a `projects` row was auto-registered this run, else null (C2). */
+  registered_project: string | null;
+  totals: Record<ImportClassification, number>;
+  per_store: Record<string, Record<ImportClassification, number>>;
+  result?: Record<string, ImportStoreResult>;
+  conflicts: ImportConflictResolution[];
+  context_docs: {
+    new: number;
+    unchanged: number;
+    conflict: number;
+    written: string[];
+    backed_up: string[];
+  };
+  source_fingerprint: string;
+  reembed_hint: string;
+  scope_note: string;
+}
+
 /**
  * Lightweight manifest describing what a brain-core tarball delivers.
  * Currently a stub used by dry-run reporting and doctor's stale check;

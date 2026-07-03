@@ -50,7 +50,8 @@ import { runHousekeeping } from "./verbs/housekeeping.js";
 import { runAssess } from "./verbs/assess.js";
 import { runContextDocs, type ContextDocsAction } from "./verbs/context-docs.js";
 import { runExport } from "./verbs/export.js";
-import type { ExportTier } from "./types.js";
+import { runImport } from "./verbs/import.js";
+import type { ExportTier, OnConflictPolicy } from "./types.js";
 import type { McpHarness } from "./lib/mcp-env-normalize.js";
 import { setVerbosity, info, error as logError } from "./lib/log.js";
 
@@ -1187,6 +1188,53 @@ async function main(argv: string[]): Promise<void> {
           tier: opts.tier as ExportTier | undefined,
           include: opts.include,
           since: opts.since,
+          json: opts.json !== false,
+        });
+        process.exitCode = code;
+      },
+    );
+
+  program
+    .command("import <bundle>")
+    .description(
+      "FR-230: import ONE project's brain slice from a portable .igris-pack.tar.gz " +
+        "(the handoff CONSUMER; the FR-229 producer's ingress twin). Verifies the " +
+        "checksum, rejects executable-surface stores, then classifies every row " +
+        "NEW/UNCHANGED/INCOMING/LOCAL_ONLY/CONFLICT via an ancestor-based 3-way " +
+        "compare (NOT timestamp LWW) and applies the chosen --on-conflict policy in " +
+        "ONE transaction. Always --dry-run first. --on-conflict: ask (DEFAULT, " +
+        "interactive) | theirs | mine | newer. --as <slug> imports under a different " +
+        "project slug. Provenance/ancestor/idempotency live in a CLI-local ledger. A " +
+        "corrupt/tampered bundle or missing brain DB is a hard failure (exit 1).",
+    )
+    .option("--dry-run", "classify + preview only; write NOTHING to the DB", false)
+    .option(
+      "--on-conflict <policy>",
+      "conflict policy: ask | theirs | mine | newer (default: ask)",
+    )
+    .option("--as <slug>", "import under this project slug (rewrites the scope key)")
+    .option(
+      "--project-path <path>",
+      "path recorded when auto-registering a new project row (default: cwd)",
+    )
+    .option("--json", "emit the JSON digest to stdout (default on)", true)
+    .action(
+      async (
+        bundle: string,
+        opts: {
+          dryRun?: boolean;
+          onConflict?: string;
+          as?: string;
+          projectPath?: string;
+          json?: boolean;
+        },
+      ): Promise<void> => {
+        const code = await runImport({
+          bundle,
+          dryRun: opts.dryRun === true,
+          onConflict: opts.onConflict as OnConflictPolicy | undefined,
+          as: opts.as,
+          projectPath: opts.projectPath,
           json: opts.json !== false,
         });
         process.exitCode = code;

@@ -444,6 +444,25 @@ export async function fetchAndExtractFromFile(
   });
 }
 
+/**
+ * Pure zip-slip predicate (factored out for reuse by {@link unpackBundle}):
+ * true when `relPath` would escape `destDir`. Rejects `..` segments and
+ * leading-`/` absolute paths BEFORE touching the filesystem, then
+ * absolute-resolves the would-be destination and verifies it stays under
+ * `destDir` (catches UTF-8 `..` lookalikes the regex misses). Shared by the
+ * `core/`-allowlist GitHub extractor ({@link isEntrySafe}) and the no-strip
+ * `.igris-pack` bundle extractor (FR-230 D4) so both enforce the SAME check.
+ */
+function pathEscapesRoot(relPath: string, destDir: string): boolean {
+  const normalized = relPath.replace(/\\/g, "/");
+  if (normalized.startsWith("/") || /(?:^|\/)\.\.(?:\/|$)/.test(normalized)) {
+    return true;
+  }
+  const wouldBeDest = pathResolve(destDir, normalized);
+  const destWithSep = destDir.endsWith(sep) ? destDir : destDir + sep;
+  return wouldBeDest !== destDir && !wouldBeDest.startsWith(destWithSep);
+}
+
 /** Internal: check if a tar entry path is safe to extract under destDir. */
 type EntryVerdict =
   | { kind: "accept" }
@@ -494,13 +513,10 @@ function isEntrySafe(entryPath: string, destDir: string): EntryVerdict {
 
   // Absolute-resolve the would-be destination and verify it stays
   // under destDir. This catches tricky cases like UTF-8 lookalikes
-  // for `..` that the regex above might miss.
-  const wouldBeDest = pathResolve(destDir, stripped);
-  const destWithSep = destDir.endsWith(sep) ? destDir : destDir + sep;
-  if (
-    wouldBeDest !== destDir &&
-    !wouldBeDest.startsWith(destWithSep)
-  ) {
+  // for `..` that the regex above might miss. (Shared predicate; the
+  // stripped path has no `..`/absolute prefix by construction, so this
+  // is byte-for-byte the same verdict as the prior inline resolve.)
+  if (pathEscapesRoot(stripped, destDir)) {
     return { kind: "reject-zip-slip", entryPath };
   }
 
@@ -613,4 +629,63 @@ export async function packDir(srcDir: string, outPath: string): Promise<void> {
       `pack failed: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// FR-230 — `.igris-pack` bundle UNPACK path (the `igris import` consumer).
+// ---------------------------------------------------------------------------
+
+/**
+ * Gunzip + extract a `.igris-pack.tar.gz` bundle into `destDir` (the `igris
+ * import` intake). UNLIKE {@link fetchAndExtract}, this does NO `strip` and has
+ * NO `core/` allowlist — a bundle's `manifest.json` / `data/` / `context/`
+ * live at the archive top level (FR-230 D4). It shares the SAME zip-slip
+ * predicate ({@link pathEscapesRoot}): any entry that escapes `destDir` poisons
+ * the whole extraction (all-or-nothing) and surfaces a typed {@link
+ * ZipSlipError} after the pipeline drains. AppleDouble (`._*`) noise is skipped.
+ * A corrupt gzip / malformed tar → {@link TarballError} (the caller treats a
+ * failed unpack as a hard failure with ZERO DB writes — nothing has touched the
+ * brain yet).
+ */
+export async function unpackBundle(
+  archivePath: string,
+  destDir: string,
+): Promise<void> {
+  if (!existsSync(archivePath)) {
+    throw new TarballError(`bundle not found: ${archivePath}`);
+  }
+  if (!statSync(archivePath).isFile()) {
+    throw new TarballError(`bundle path is not a file: ${archivePath}`);
+  }
+  ensureDestDir(destDir);
+
+  let slipReject: ZipSlipError | null = null;
+  const gunzip = createGunzip();
+  const extractStream = tarExtract({
+    cwd: destDir,
+    strict: true,
+    filter: (path: string): boolean => {
+      if (slipReject !== null) return false;
+      const normalized = path.replace(/\\/g, "/");
+      // Skip macOS AppleDouble metadata (`._*`) — noise, not a payload file.
+      const lastSeg = normalized.replace(/\/$/, "").split("/").pop() ?? "";
+      if (lastSeg.startsWith("._")) return false;
+      if (pathEscapesRoot(normalized, destDir)) {
+        slipReject = new ZipSlipError(normalized);
+        return false;
+      }
+      return true;
+    },
+  });
+
+  try {
+    await pipeline(createReadStream(archivePath), gunzip, extractStream);
+  } catch (err) {
+    if (slipReject !== null) throw slipReject;
+    if (err instanceof ZipSlipError) throw err;
+    throw new TarballError(
+      `bundle extraction failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (slipReject !== null) throw slipReject;
 }

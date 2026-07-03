@@ -45,6 +45,14 @@ import type {
   AssessGoal,
   ProjectProfile,
   ProjectProfileResult,
+  ImportClassification,
+  ImportRowPlan,
+  ImportStorePlan,
+  ImportPlan,
+  ImportConflictResolution,
+  ImportAncestorUpdate,
+  ImportStoreResult,
+  ImportResult,
 } from "../types.js";
 
 let db: Database.Database | null = null;
@@ -1526,4 +1534,565 @@ export function redactTablesForEgress(
     }
   }
   return tables;
+}
+
+// ===========================================================================
+// FR-230 — `igris import` classify + apply ENGINE (the FR-229 ingress twin)
+// ===========================================================================
+//
+// This is the INGRESS half of `EXPORT_TABLES` (MAINTAINING row #100): the same
+// verbatim `SYNC_TABLES` column mirror that governs egress now governs the
+// import WRITE allowlist (D3). The engine REUSES `mergeRows`' mechanics
+// (natural-key lookup, column-filtered INSERT, tag-union / max-counter UPDATE,
+// per-row try/catch) but NEVER its silent `remoteTs > localTs` LWW branch — the
+// engine decides each row's action BEFORE writing (ancestor-based classify +
+// explicit `--on-conflict` policy), and the writer only executes the decided
+// insert / update / skip. Nothing here calls `mergeRows`/`mergePulledTables`.
+//
+// Identity is 100% natural-keyed (autoincrement ids are excluded from the wire),
+// so there is no id-remapping — only classification + policy + provenance.
+
+/**
+ * name → target table for the importable ROW stores. `concept_edges` reuses the
+ * `entity_edges` table (its own manifest name so brief↔brief edges and
+ * concept-graph edges never collide). This fixed map is the security boundary
+ * (D3 / AC9): a manifest store NAME outside this map (skills/agents/hooks/…) has
+ * no import path, and the resolved table's column set is the write allowlist —
+ * a hand-crafted `columns` list in the manifest is never trusted.
+ */
+const IMPORTABLE_STORE_TABLES: Record<string, string> = {
+  brief_status: "brief_status",
+  brief_files: "brief_files",
+  entity_edges: "entity_edges",
+  goals: "goals",
+  learnings: "learnings",
+  errors: "errors",
+  graph_nodes: "graph_nodes",
+  concept_edges: "entity_edges",
+};
+
+/**
+ * Every manifest store NAME the importer accepts: the 8 row stores +
+ * `context_docs` (a disk-backed pseudo-store handled by `import.ts`, not a DB
+ * table). Any other store name in a bundle manifest → reject BEFORE any DB write
+ * (AC9 executable-surface reject). The producer never emits these (they ride
+ * `EXCLUDED_STORES`), so this only fires on a hand-crafted bundle.
+ */
+export const IMPORTABLE_STORES: ReadonlySet<string> = new Set<string>([
+  ...Object.keys(IMPORTABLE_STORE_TABLES),
+  "context_docs",
+]);
+
+/** Raised when a bundle declares a store the importer refuses to write (AC9). */
+export class ImportUnsupportedStoreError extends Error {
+  constructor(store: string) {
+    super(
+      `import: store '${store}' is not importable — unknown or executable-surface ` +
+        `(importable row stores: ${Object.keys(IMPORTABLE_STORE_TABLES).join(", ")}, or context_docs)`,
+    );
+    this.name = "ImportUnsupportedStoreError";
+  }
+}
+
+/**
+ * Resolve a manifest store NAME to its LOCAL {@link ExportTableConfig} — the
+ * write allowlist (D3). Throws {@link ImportUnsupportedStoreError} for a
+ * non-importable name. The importer writes ONLY `config.columns ∩ local
+ * tableColumns`, so `claimed_by`/`claimed_at` (absent from `EXPORT_TABLES`) are
+ * structurally unwriteable (AC7) and the manifest's declared columns are never
+ * trusted.
+ */
+export function importStoreConfig(store: string): ExportTableConfig {
+  const table = IMPORTABLE_STORE_TABLES[store];
+  if (table === undefined) {
+    throw new ImportUnsupportedStoreError(store);
+  }
+  return exportTableConfig(table);
+}
+
+/** Semantic-hash volatile columns dropped alongside syncKey + timestampCol. */
+const IMPORT_VOLATILE_COLUMNS = new Set<string>([
+  "access_count",
+  "last_accessed_at",
+  "occurrence_count",
+]);
+
+/**
+ * sha256 over the store's SEMANTIC columns — `config.columns` minus syncKey,
+ * minus `timestampCol`, minus volatile (`access_count`/`last_accessed_at`/
+ * `occurrence_count`). Sorted-key JSON so the hash is stable across producers.
+ * This is the 3-way-compare fingerprint; excluding syncKey (identity, not
+ * content) + volatile counters means a bumped `access_count` never reads as a
+ * content change, and a re-export of an unchanged row re-hashes identically.
+ */
+export function rowContentHash(
+  config: ExportTableConfig,
+  row: Record<string, unknown>,
+): string {
+  const semantic: Record<string, unknown> = {};
+  const cols: string[] = [];
+  for (const col of config.columns) {
+    if (config.syncKey.includes(col)) continue;
+    if (col === config.timestampCol) continue;
+    if (IMPORT_VOLATILE_COLUMNS.has(col)) continue;
+    semantic[col] = row[col] ?? null;
+    cols.push(col);
+  }
+  cols.sort();
+  // `cols` as the JSON replacer array both filters and orders keys.
+  return createHash("sha256").update(JSON.stringify(semantic, cols)).digest("hex");
+}
+
+/**
+ * Content hash for the LOCAL side of the 3-way compare. `brief_files` hashes its
+ * `content` column directly (bundle-authoritative via `descriptor.content_hashes`,
+ * plan Phase 2.1); every other store uses {@link rowContentHash}.
+ */
+function localRowContentHash(
+  store: string,
+  config: ExportTableConfig,
+  row: Record<string, unknown>,
+): string {
+  if (store === "brief_files") {
+    const content = typeof row.content === "string" ? row.content : "";
+    return createHash("sha256").update(content).digest("hex");
+  }
+  return rowContentHash(config, row);
+}
+
+/**
+ * Content hash for the BUNDLE side. `brief_files` is authoritative from the
+ * manifest's recomputed `content_hashes[brief_id]` (falls back to
+ * `sha256(content)`, which is equal by construction); every other store uses
+ * {@link rowContentHash}.
+ */
+function bundleRowContentHash(
+  store: string,
+  config: ExportTableConfig,
+  row: Record<string, unknown>,
+  contentHashes: Record<string, string> | undefined,
+): string {
+  if (store === "brief_files") {
+    const briefId = String(row.brief_id ?? "");
+    const declared = contentHashes?.[briefId];
+    if (declared !== undefined) return declared;
+    const content = typeof row.content === "string" ? row.content : "";
+    return createHash("sha256").update(content).digest("hex");
+  }
+  return rowContentHash(config, row);
+}
+
+/**
+ * The single composite-key separator for the import engine: a NUL byte, so it
+ * can never collide with a syncKey value (a learnings `title` may contain
+ * spaces). ONE constant joins syncKey values into a row key AND builds the
+ * CONFLICT decision-map key, so the classify side and the apply side agree.
+ */
+const IMPORT_KEY_SEP = "\u0000";
+
+/** The CONFLICT decision-map key for (store, rowKey) — single source for set + get. */
+export function importDecisionKey(store: string, rowKey: string): string {
+  return `${store}${IMPORT_KEY_SEP}${rowKey}`;
+}
+
+/** The syncKey values joined — the ledger + report key for a row. */
+function importRowKey(
+  config: ExportTableConfig,
+  row: Record<string, unknown>,
+): string {
+  return config.syncKey.map((k) => String(row[k] ?? "")).join(IMPORT_KEY_SEP);
+}
+
+
+/**
+ * Natural-key lookup of the LOCAL row for a store (verbatim `mergeRows`
+ * mechanic: `SELECT * … WHERE syncKey = ?`). Absent table → undefined
+ * (create-never). Scoped implicitly by the TARGET slug because the caller has
+ * already rewritten the row's scope column (`--as`, Phase 4).
+ */
+export function lookupLocalRow(
+  config: ExportTableConfig,
+  keyValues: unknown[],
+): Record<string, unknown> | undefined {
+  const handle = getDb();
+  if (!tableExists(handle, config.table)) return undefined;
+  const sql = `SELECT * FROM ${config.table} WHERE ${config.syncKey
+    .map((k) => `${k} = ?`)
+    .join(" AND ")}`;
+  return handle.prepare(sql).get(...keyValues) as
+    | Record<string, unknown>
+    | undefined;
+}
+
+/** One bundle store's rows + (brief_files only) its authoritative content hashes. */
+export interface ImportStoreInput {
+  /** Manifest store NAME (e.g. `concept_edges`). */
+  store: string;
+  /** The slug-rewritten (`--as`) rows from the bundle data file. */
+  rows: Record<string, unknown>[];
+  /** brief_files only: `descriptor.content_hashes` (brief_id → sha256(content)). */
+  contentHashes?: Record<string, string>;
+}
+
+/** Classification context — the CLI-local ledger ancestor lookup (D1). */
+export interface ImportClassifyCtx {
+  /** Ledger ancestor hash for (store, key); undefined = first-ever import. */
+  ancestor: (store: string, key: string) => string | undefined;
+}
+
+function emptyClassCounts(): Record<ImportClassification, number> {
+  return { NEW: 0, UNCHANGED: 0, INCOMING: 0, LOCAL_ONLY: 0, CONFLICT: 0 };
+}
+
+/**
+ * Classify every bundle row NEW/UNCHANGED/INCOMING/LOCAL_ONLY/CONFLICT via the
+ * ancestor-based 3-way compare (plan §Phase 2 truth table). NO writes. The
+ * discriminator is the ledger ancestor hash — NOT `updated_at` — so a newer
+ * timestamp on the LOCAL_ONLY side never flips it to an update (AC3). Append
+ * stores (`entity_edges`/`graph_nodes`) can only be NEW or UNCHANGED: the key IS
+ * the content, so conflict is structurally impossible (mirrors `mergeRows`'
+ * append branch).
+ */
+export function classifyImport(
+  stores: ImportStoreInput[],
+  ctx: ImportClassifyCtx,
+): ImportPlan {
+  const outStores: ImportStorePlan[] = [];
+  const totals = emptyClassCounts();
+
+  for (const input of stores) {
+    const config = importStoreConfig(input.store);
+    const counts = emptyClassCounts();
+    const rowPlans: ImportRowPlan[] = [];
+
+    for (const row of input.rows) {
+      const keyValues = config.syncKey.map((k) => row[k]);
+      const key = importRowKey(config, row);
+      const local = lookupLocalRow(config, keyValues);
+      const H_b = bundleRowContentHash(input.store, config, row, input.contentHashes);
+      const A = ctx.ancestor(input.store, key);
+
+      let classification: ImportClassification;
+      let H_l: string | undefined;
+      if (local === undefined) {
+        classification = "NEW";
+      } else {
+        H_l = localRowContentHash(input.store, config, local);
+        if (H_l === H_b) {
+          classification = "UNCHANGED";
+        } else if (config.strategy === "append") {
+          // Key IS the content for append stores → present means no-op.
+          classification = "UNCHANGED";
+        } else if (A !== undefined && H_l === A && H_b !== A) {
+          classification = "INCOMING";
+        } else if (A !== undefined && H_b === A && H_l !== A) {
+          classification = "LOCAL_ONLY";
+        } else {
+          // Both diverged from A, OR no A recorded → conservative CONFLICT
+          // (never silent-clobber; the whole point of the brief).
+          classification = "CONFLICT";
+        }
+      }
+
+      counts[classification]++;
+      totals[classification]++;
+      rowPlans.push({
+        key,
+        classification,
+        bundleHash: H_b,
+        localHash: H_l,
+        ancestorHash: A,
+        row,
+      });
+    }
+
+    outStores.push({
+      store: input.store,
+      table: config.table,
+      strategy: config.strategy ?? "lww",
+      rows: rowPlans,
+      counts,
+    });
+  }
+
+  return { stores: outStores, totals };
+}
+
+/** Apply context — the per-CONFLICT decisions resolved BEFORE the txn opens. */
+export interface ImportApplyCtx {
+  /** `importDecisionKey(store, key)` → the resolved side for a CONFLICT row. */
+  conflictDecisions: Map<string, "theirs" | "mine">;
+  /** The TARGET slug (the `--as` slug, else the manifest slug) to auto-register (C2). */
+  targetSlug: string;
+  /** Absolute project path recorded on a freshly auto-registered `projects` row (C2). */
+  projectPath: string;
+}
+
+/**
+ * Auto-register a minimal `projects` row for the target slug INSIDE the apply
+ * transaction, BEFORE the row inserts, so the `brief_status`/`sessions` FK to
+ * `projects(slug)` is satisfied atomically on a fresh-machine import (C2). ROW
+ * write, not DDL (create-never): `tableExists`-preflighted, `ON CONFLICT(slug)
+ * DO NOTHING` so a colleague who already owns the project keeps their real
+ * path/name. Returns true when a NEW row was inserted.
+ */
+function autoRegisterProject(
+  handle: Database.Database,
+  slug: string,
+  projectPath: string,
+): boolean {
+  if (!tableExists(handle, "projects")) return false;
+  const cols = tableColumns(handle, "projects");
+  if (!cols.has("slug") || !cols.has("name") || !cols.has("path")) return false;
+  const result = handle
+    .prepare(
+      `INSERT INTO projects (slug, name, path, status, registered_at)
+       VALUES (?, ?, ?, 'active', ?)
+       ON CONFLICT(slug) DO NOTHING`,
+    )
+    .run(
+      slug,
+      slug,
+      projectPath,
+      new Date().toISOString().replace("T", " ").substring(0, 19),
+    );
+  return result.changes > 0;
+}
+
+/**
+ * Rehydrate a JSON-decoded Buffer into a real `Buffer` before binding it.
+ *
+ * A legacy BLOB column (e.g. some `brief_files.content` rows — FR-111/TD-179/
+ * TD-277/TD-278) is a `Buffer` on the export side; FR-229's `JSON.stringify`
+ * serializes it as `{ "type": "Buffer", "data": [...] }`. Bound as a plain
+ * object, better-sqlite3 treats it as a NAMED-parameters map and throws "Too few
+ * parameter values were provided", so the row lands in `failed`. Detect that
+ * EXACT shape (`type === "Buffer"` + `Array.isArray(data)`) and rebuild the
+ * Buffer so the BLOB round-trips. Guarded tightly so a real JSON object value is
+ * never misread — but note `metadata`/`properties` are JSON *strings* in the
+ * schema, not objects, so they never reach this branch. Every other value passes
+ * through unchanged. Applied to ANY column value, so any BLOB column round-trips.
+ */
+function rehydrateBindValue(value: unknown): unknown {
+  if (
+    value !== null &&
+    typeof value === "object" &&
+    !Buffer.isBuffer(value) &&
+    (value as { type?: unknown }).type === "Buffer" &&
+    Array.isArray((value as { data?: unknown }).data)
+  ) {
+    return Buffer.from((value as { data: number[] }).data);
+  }
+  return value;
+}
+
+/** INSERT one row through the `EXPORT_TABLES` write allowlist (mergeRows insert mechanic). */
+function importInsertRow(
+  handle: Database.Database,
+  config: ExportTableConfig,
+  existingColumns: ReadonlySet<string>,
+  row: Record<string, unknown>,
+): void {
+  const cols = config.columns.filter(
+    (c) => row[c] !== undefined && existingColumns.has(c),
+  );
+  if (cols.length === 0) return;
+  const placeholders = cols.map(() => "?").join(", ");
+  handle
+    .prepare(
+      `INSERT INTO ${config.table} (${cols.join(", ")}) VALUES (${placeholders})`,
+    )
+    .run(...cols.map((c) => rehydrateBindValue(row[c] ?? null)));
+}
+
+/**
+ * UPDATE one row to the bundle's values — the `mergeRows` lww branch WITHOUT the
+ * `remoteTs > localTs` gate (policy already decided). Reuses the merge mechanics:
+ * `tags` merge_tags for learnings, `occurrence_count` max for errors; every other
+ * non-syncKey whitelisted column takes theirs.
+ */
+function importUpdateRow(
+  handle: Database.Database,
+  config: ExportTableConfig,
+  existingColumns: ReadonlySet<string>,
+  row: Record<string, unknown>,
+): void {
+  const keyValues = config.syncKey.map((k) => row[k]);
+  const existing = handle
+    .prepare(
+      `SELECT * FROM ${config.table} WHERE ${config.syncKey
+        .map((k) => `${k} = ?`)
+        .join(" AND ")}`,
+    )
+    .get(...keyValues) as Record<string, unknown> | undefined;
+
+  const setClauses: string[] = [];
+  const setValues: unknown[] = [];
+  for (const col of config.columns) {
+    if (config.syncKey.includes(col)) continue;
+    if (!existingColumns.has(col)) continue;
+    if (config.mergeFields?.[col] === "merge_tags") {
+      setClauses.push(`${col} = ?`);
+      setValues.push(
+        mergeTags((existing?.[col] as string) || "", (row[col] as string) || ""),
+      );
+    } else if (config.mergeFields?.[col] === "max") {
+      setClauses.push(`${col} = ?`);
+      setValues.push(
+        Math.max((existing?.[col] as number) || 0, (row[col] as number) || 0),
+      );
+    } else {
+      setClauses.push(`${col} = ?`);
+      setValues.push(rehydrateBindValue(row[col] ?? null));
+    }
+  }
+  if (setClauses.length === 0) return;
+  const whereClause = config.syncKey.map((k) => `${k} = ?`).join(" AND ");
+  handle
+    .prepare(`UPDATE ${config.table} SET ${setClauses.join(", ")} WHERE ${whereClause}`)
+    .run(...setValues, ...keyValues);
+}
+
+/**
+ * Apply the classified plan under the resolved policy in ONE `db.transaction()`
+ * across ALL stores (a hard mid-apply error rolls back → zero writes). Per-row
+ * try/catch records a bad row without poisoning its siblings (mergeRows
+ * mechanic). Deterministic action per class: NEW→insert, INCOMING→update,
+ * UNCHANGED/LOCAL_ONLY→skip, CONFLICT→the pre-resolved decision (default keep
+ * mine). After commit it recomputes each applied/unchanged row's resulting hash
+ * → the ancestor to seed for the NEXT import (merge_tags means the result differs
+ * from both sides, so it must be re-read, not assumed to be the bundle hash).
+ */
+export function applyImport(
+  plan: ImportPlan,
+  apply: ImportApplyCtx,
+): ImportResult {
+  const handle = getDb();
+  const perStore: Record<string, ImportStoreResult> = {};
+  const conflicts: ImportConflictResolution[] = [];
+  const seedRows: { store: string; rowPlan: ImportRowPlan }[] = [];
+  let projectRegistered = false;
+
+  // Enforce the same referential integrity the brain does (db.ts sets
+  // `foreign_keys = ON`) so the `brief_status`→`projects(slug)` FK is honored and
+  // the in-txn auto-register (C2) is load-bearing. Scoped to this apply — the CLI
+  // connection default is OFF; restore it after. Set BEFORE the transaction:
+  // SQLite ignores a `foreign_keys` PRAGMA issued inside an open transaction.
+  const prevForeignKeys = handle.pragma("foreign_keys", { simple: true });
+  handle.pragma("foreign_keys = ON");
+  try {
+    handle.transaction(() => {
+      // C2: register the target project FIRST so the FK is satisfied atomically
+      // with the brief inserts (a fresh-machine handoff carries no projects row).
+      projectRegistered = autoRegisterProject(
+        handle,
+        apply.targetSlug,
+        apply.projectPath,
+      );
+      for (const sp of plan.stores) {
+      const config = importStoreConfig(sp.store);
+      const res: ImportStoreResult = {
+        inserted: 0,
+        updated: 0,
+        skipped: 0,
+        failed: 0,
+      };
+      const failures: { key: string; error: string }[] = [];
+
+      // create-never: an absent target table means the store isn't importable
+      // on this DB — record every row as failed, NEVER run DDL.
+      if (!tableExists(handle, config.table)) {
+        res.failed = sp.rows.length;
+        for (const rp of sp.rows) {
+          failures.push({
+            key: rp.key,
+            error: `local table '${config.table}' absent — skipped (create-never)`,
+          });
+        }
+        res.failures = failures;
+        perStore[sp.store] = res;
+        continue;
+      }
+
+      const existingColumns = tableColumns(handle, config.table);
+      for (const rp of sp.rows) {
+        let action: "insert" | "update" | "skip";
+        switch (rp.classification) {
+          case "NEW":
+            action = "insert";
+            break;
+          case "INCOMING":
+            action = "update";
+            break;
+          case "UNCHANGED":
+          case "LOCAL_ONLY":
+            action = "skip";
+            break;
+          case "CONFLICT": {
+            const decision =
+              apply.conflictDecisions.get(importDecisionKey(sp.store, rp.key)) ?? "mine";
+            conflicts.push({
+              store: sp.store,
+              key: rp.key,
+              classification: "CONFLICT",
+              chosen: decision,
+            });
+            action = decision === "theirs" ? "update" : "skip";
+            break;
+          }
+          default:
+            action = "skip";
+        }
+
+        try {
+          if (action === "insert") {
+            importInsertRow(handle, config, existingColumns, rp.row);
+            res.inserted++;
+            seedRows.push({ store: sp.store, rowPlan: rp });
+          } else if (action === "update") {
+            importUpdateRow(handle, config, existingColumns, rp.row);
+            res.updated++;
+            seedRows.push({ store: sp.store, rowPlan: rp });
+          } else {
+            res.skipped++;
+            // UNCHANGED seeds the ancestor too (local == bundle already), so a
+            // later hand-back with a lost ledger still classifies cleanly.
+            if (rp.classification === "UNCHANGED") {
+              seedRows.push({ store: sp.store, rowPlan: rp });
+            }
+          }
+        } catch (rowErr) {
+          res.failed++;
+          failures.push({
+            key: rp.key,
+            error: rowErr instanceof Error ? rowErr.message : String(rowErr),
+          });
+        }
+      }
+
+      if (failures.length > 0) res.failures = failures;
+      perStore[sp.store] = res;
+      }
+    })();
+  } finally {
+    handle.pragma(`foreign_keys = ${prevForeignKeys ? "ON" : "OFF"}`);
+  }
+
+  // Post-commit: recompute the resulting local hash for every seeded row → the
+  // ancestor for the NEXT import (D1 lineage). Read pass only, outside the txn.
+  const ancestorUpdates: ImportAncestorUpdate[] = [];
+  for (const seed of seedRows) {
+    const config = importStoreConfig(seed.store);
+    const keyValues = config.syncKey.map((k) => seed.rowPlan.row[k]);
+    const local = lookupLocalRow(config, keyValues);
+    if (local !== undefined) {
+      ancestorUpdates.push({
+        store: seed.store,
+        key: seed.rowPlan.key,
+        hash: localRowContentHash(seed.store, config, local),
+      });
+    }
+  }
+
+  return { perStore, conflicts, ancestorUpdates, projectRegistered };
 }

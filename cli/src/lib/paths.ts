@@ -49,6 +49,18 @@ export function projectContextDir(slug: string): string {
   return join(brainDir(), "projects", slug, "context");
 }
 
+/**
+ * FR-230: absolute path to a project's CLI-local import ledger directory
+ * `~/.igris/projects/{slug}/imports/` — the provenance/ancestor/idempotency
+ * store the importer writes (index.json + per-bundle records + context-doc
+ * backups). Same class of local state as `context/` / `session/` / `plans/`;
+ * NO brain-schema change (create-never, D1). Honors IGRIS_BRAIN_DIR via
+ * brainDir(), the same sandbox seam every helper uses.
+ */
+export function projectImportsDir(slug: string): string {
+  return join(brainDir(), "projects", slug, "imports");
+}
+
 /** Absolute path to the canonical hooks JSON file in the runtime brain. */
 export function canonicalHooksPath(): string {
   return join(brainDir(), "core", "hooks", "canonical-settings.json");

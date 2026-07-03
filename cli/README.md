@@ -62,6 +62,8 @@ sections below are for contributors working on the CLI source.
 | `igris harness <compile\|check>` | Regenerate or drift-check the per-harness agent-prompt projections |
 | `igris loadout <action>` | Register Layer-2 personal customizations into the overlay (superseded by `igris add`) |
 | `igris sync <code\|data\|all\|status>` | Push code/data to the VPS brain |
+| `igris export <project> [--tier core\|standard\|full] [--since <date>]` | Serialize one project's brain slice into a portable `<slug>.igris-pack.tar.gz` (the handoff PRODUCER) |
+| `igris import <bundle> [--dry-run] [--on-conflict ask\|theirs\|mine\|newer] [--as <slug>] [--project-path <path>]` | Import a `.igris-pack` bundle with a reviewed, ancestor-based merge (the handoff CONSUMER) |
 | `igris doctor [--fix\|--remove-orphans]` | Diagnose and repair drift |
 
 `--dry-run` is supported on every state-changing verb.
@@ -225,6 +227,75 @@ each `npm publish`:
    0 in <1s.
 5. **Failure modes:** drop the `vps` block from config.json and confirm
    `igris sync code` exits 1 with an actionable error (config gate).
+
+## Project handoff — `igris export` / `igris import`
+
+`igris export <project>` and `igris import <bundle>` are the point-in-time
+project-handoff pair. Export serializes ONE project's brain slice into a
+portable, self-describing `<slug>.igris-pack.tar.gz`; import merges such a bundle
+back into a local brain with a **reviewed, ancestor-based** merge that is safe
+across owners.
+
+**Why import is not a plain sync.** The sync stack (`mergeRows`) is same-owner:
+natural-key upsert with SILENT timestamp last-writer-wins. For a colleague
+handoff that can clobber their edits based purely on `updated_at`. So `igris
+import` never uses that path — it classifies every row against a recorded
+**ancestor hash** and only writes what a policy explicitly decides.
+
+```bash
+# Always dry-run first: preview the merge, write nothing.
+igris import ./acme.igris-pack.tar.gz --dry-run
+
+# Apply with an explicit conflict policy (no prompt).
+igris import ./acme.igris-pack.tar.gz --on-conflict theirs
+
+# Import a colleague's bundle under a different local slug (all NEW).
+igris import ./acme.igris-pack.tar.gz --as acme-review
+```
+
+Each row is classified **NEW / UNCHANGED / INCOMING / LOCAL_ONLY / CONFLICT** by
+a 3-way compare (bundle hash vs local hash vs the ledger's recorded ancestor —
+NOT a naive `updated_at` compare). `--on-conflict` governs the **CONFLICT class
+only**:
+
+| Policy | CONFLICT behaviour |
+|---|---|
+| `ask` (default) | interactive per-conflict prompt on a TTY; on a pipe it applies NOTHING and asks you to pass an explicit policy |
+| `theirs` | the bundle row wins |
+| `mine` | the local row is kept |
+| `newer` | the row with the newer `updated_at` wins (opt-in LWW, reported per row) |
+
+NEW inserts, INCOMING fast-forwards to theirs, and LOCAL_ONLY always keeps mine —
+none of those are conflicts, so no policy reverts a non-conflicting local edit.
+
+- **Fresh-machine handoff.** If the target project isn't registered yet, the
+  `projects` row is auto-registered inside the apply transaction (so the
+  `brief_status` foreign key is satisfied atomically) — `--project-path <path>`
+  (default: cwd) sets its recorded path. An already-registered project keeps its
+  real path/name.
+- **Partial-apply safety.** If any row fails to apply, the run prints a loud
+  failure sample, exits with a distinct non-zero code (`3`), and does NOT mark the
+  bundle applied — so a corrective re-import re-classifies and lands the
+  previously-failed rows once the cause is fixed. The digest's `applied` field is
+  `full` / `partial` / `none`.
+- **Idempotent.** Re-importing the same bundle after a CLEAN apply is a no-op
+  (checksum-keyed applied-bundle marker; a lost ledger still no-ops because every
+  landed row re-classifies UNCHANGED).
+- **Provenance ledger.** Ancestor hashes, the source fingerprint, and the
+  applied-bundle set live in a CLI-local ledger under
+  `~/.igris/projects/{slug}/imports/` (no brain-schema change). Pre-overwrite
+  context-doc copies are backed up there.
+- **Security.** The bundle is untrusted data end-to-end: the checksum is verified
+  and executable-surface / unknown stores are rejected BEFORE any DB write; the
+  `EXPORT_TABLES` column set is the write allowlist, so `claimed_by`/`claimed_at`
+  can never be written. A corrupt/tampered bundle or a missing brain DB is a hard
+  failure (exit 1, zero writes).
+- **Re-embed.** Imported learnings/briefs land with NULL embeddings (embeddings
+  are never exported); the next brain interaction re-derives them via the FR-220
+  post-merge backfill.
+
+Continuous bidirectional co-management is out of scope for v1 — its answer is
+"both point at one VPS brain," not this feature.
 
 ## Tests
 
