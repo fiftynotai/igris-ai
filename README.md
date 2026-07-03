@@ -20,9 +20,16 @@ IGRIS is the workbench around the model. it makes the brief the contract, makes 
 
 | Spearhead | What changes |
 |-----------|--------------|
+| Bounded-role delivery pipeline | `/hunt` takes one brief through architect -> forger -> sentinel -> warden -> commit, each a separate role with its own tools. A failing test or a review REJECT loops back and re-verifies before anything lands. |
 | Cross-harness work-state handoff | A new harness resumes the actual work state: brief, phase, atomic claim, instance identity, supersession lifecycle, working tree, and agent log. |
-| Enforcement-as-code | Brief-first write gates, role tool restrictions, test phases, and review phases are installed as executable workflow constraints. |
+| Enforcement-as-code | Brief-first write gates, role tool restrictions, test phases, and review phases are installed as executable workflow constraints the agent cannot talk its way around. |
 | One brain across every harness | SQLite + FTS5 at `~/.igris/memory/knowledge.db` stores briefs, sessions, plans, learnings, claims, and sync state for every registered project. |
+| Learns while you work | Background cognition mines your sessions into reusable learnings, surfaces suggestions from the whole-brain digest, and keeps memory deduped and hygienic. The OS sharpens the more you run it. |
+| A graph, not just a list | Briefs, learnings, and decisions link through typed edges (`depends_on`, `supersedes`, `derived_from`), so dependency chains and the lineage of a decision stay queryable instead of scrolling off in a flat log. |
+| Grounded in your project | Per-project context docs (coding guidelines, architecture map, test standards) the agent consults before it writes and maintains when it changes them, so it follows your conventions, not generic defaults. |
+| Extends itself | `igris add skill\|agent\|mcp\|hook` grows the OS and projects the new surface to every harness at once; self-describing modules are auto-discovered, with no registry to hand-edit. |
+| Portable across machines and people | The brain syncs to a central store so your work follows you between machines, and `/handoff` exports a project slice as a portable bundle a colleague imports into their own install. |
+| Reuse before rewrite | A catalog of proven modules and templates (`/reuse`, `/harvest`) so the agent reaches for an existing block before rebuilding one. |
 
 First-class harnesses: Claude Code, OpenCode, and Antigravity. Codex and Gemini CLI are supported bridges.
 
