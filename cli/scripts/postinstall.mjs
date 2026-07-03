@@ -84,11 +84,25 @@ function main() {
     "igris-ai: installing igris-brain MCP dependencies...\n",
   );
 
+  // Sanitize the environment for the nested npm (BR-075). Under
+  // `npm install -g igris-ai`, npm sets `npm_config_global=true` (plus
+  // prefix/omit/etc.) in this hook's env. Inheriting it makes the nested
+  // `npm ci` run in GLOBAL mode and abort with ECIGLOBAL ("`npm ci` does
+  // not work for global packages"), leaving the bundle's node_modules empty
+  // and the igris-brain MCP unbootable. Strip every inherited `npm_config_*`
+  // var so npm runs as a clean LOCAL install in bundleDir, re-reading config
+  // from the user's npmrc + defaults.
+  const childEnv = { ...process.env };
+  for (const key of Object.keys(childEnv)) {
+    if (key.toLowerCase().startsWith("npm_config_")) delete childEnv[key];
+  }
+
   let result;
   try {
     result = spawnSync("npm", args, {
       cwd: bundleDir,
       stdio: "inherit",
+      env: childEnv,
       shell: process.platform === "win32",
     });
   } catch (err) {

@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [7.0.1] - 2026-07-03
+
+### Fixed
+
+- **Global install left the brain MCP unbootable (BR-075)** — `npm install -g igris-ai` sets `npm_config_global=true` in the postinstall's environment, which the bundled brain's nested `npm ci` inherited and aborted on (`ECIGLOBAL` — "`npm ci` does not work for global packages"), leaving `dist/brain-mcp-server/node_modules` empty so the `igris-brain` MCP crashed on spawn with `ERR_MODULE_NOT_FOUND`. The graceful-degrade postinstall masked it as a (buffered) warning, so `-g` installs looked successful with a dead brain. Fixed by sanitizing the child environment — stripping all inherited `npm_config_*` vars — so the nested install runs as a clean LOCAL install in the bundle dir. Verified end-to-end in a Docker clean-room (`npm install -g` → `igris init` → brain boots). (BR-075)
+
+---
+
 ## [7.0.0] - 2026-07-03
 
 > RELEASE AUDIT BYPASSED (IGRIS_BYPASS_RELEASE_AUDIT=1): FR-201
