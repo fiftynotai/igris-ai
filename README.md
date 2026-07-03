@@ -109,6 +109,26 @@ IGRIS is built like an OS so it can grow without rotting.
 
 that discipline is why the same brief, brain, and lifecycle work identically whether you boot Claude, OpenCode, or Antigravity.
 
+## the cognition layer.
+
+memory you tell it is half the story. the cognition layer is the other half — memory the OS infers.
+
+it's a host that runs small, single-purpose instances. each one observes the brain and proposes something for you to review. one job each:
+
+- **perception** — reads your session transcripts, proposes the learnings worth keeping.
+- **subconscious** — reads the brain's state, surfaces suggestions: a stalled brief, a gap, a pattern worth acting on.
+- **synapse** — infers the relationships between learnings and draws the edges.
+- **janitor** — finds near-duplicate learnings and proposes the merge.
+- **arbiter** — catches two learnings that contradict and resolves which one wins.
+- **curator** — flags learnings that have gone stale and proposes pruning them.
+- **cartographer** — clusters related learnings and distills each cluster into one meta-learning.
+
+nothing here writes to your memory behind your back. every instance proposes; you approve. the OS sharpens itself while you're away — you stay in control of what it learns.
+
+and the layer is open. a new instance is a new self-describing file; the host doesn't change. teaching the OS a new kind of reflection is the same move as adding a skill or an agent — drop it in, it's discovered, it runs.
+
+it ships **off by default** — nothing is observed until you turn it on. enable the instances you want in `~/.igris/config.json` (`cognition.<instance>.enabled: true`); the flags, budgets, and review-gate knobs are documented in [`docs/COGNITION.md`](docs/COGNITION.md).
+
 ## essential skills.
 
 | Need | Skills |
