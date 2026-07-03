@@ -26,6 +26,14 @@ First-class harnesses: Claude Code, OpenCode, and Antigravity. Codex and Gemini 
 
 Cursor remains an onboarding target, not a shipped surface.
 
+## the idea.
+
+most AI coding tools are a smarter autocomplete with memory bolted on. IGRIS inverts it: a persistent operating system the model runs inside.
+
+the model is the CPU. IGRIS is the OS. every session boots it, mounts your project, runs your work — then saves state back, so the next session picks up exactly where you left off.
+
+the payoff is an agent that actually knows your project — its conventions, its decisions, its open work, the mistakes already made — not for one chat, but across every session you run.
+
 ## install in three commands.
 
 ```bash
@@ -37,6 +45,29 @@ cd /path/to/your-project && igris install .
 `igris init` bootstraps the centralized brain and projects skills, agents, MCP, and hooks globally. `igris install .` is register-only: it records the project in the brain so the global surfaces apply, without copying IGRIS files into your repo.
 
 Restart your harness afterward so it loads the `igris-brain` MCP server, then run `/register feature "first brief"` and `/hunt BR-001`. Install matrix, verification commands, and upgrade paths live in [`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md) and [`docs/UPDATE_GUIDE.md`](docs/UPDATE_GUIDE.md).
+
+## the lifecycle.
+
+every session starts with `/boot` and ends with `/rest`. in between, the agent is grounded, not guessing.
+
+`/boot` runs the boot sequence:
+
+- **detect** — the harness (Claude, OpenCode, Antigravity, Codex, Gemini) and its capabilities.
+- **boot** — load the OS: who the agent is, how it must operate, what it can do.
+- **login** — load who you are and how you work.
+- **mount** — pull the brain, restore session state, surface where your work stands: active brief, phase, blockers, what's next.
+
+`/rest` closes the session: it writes your work-state — mode, active brief, next steps, the uncommitted lay of the land — to the brain and syncs it. nothing is a transcript; everything is state.
+
+so a `/boot` in a different harness resumes the actual work, not a summary of it. because the brain syncs to a central store, that state travels across machines too — full cross-machine handoff is the frontier we're proving now (see the edges below).
+
+## grounding.
+
+a fresh model writes generic code. a grounded one writes your code.
+
+`/ground` authors your project's context docs — coding guidelines, architecture map, design system, test standards, API patterns — and the OS consults the right one before it works. the agent follows your conventions and boundaries because they're written down and routed to it, not re-guessed every session.
+
+the brain holds the experience (what worked, what broke, why); the context docs hold the standards. a lesson that hardens into a standard graduates from one to the other. one fact, one home.
 
 ## the flagship proof.
 
@@ -66,6 +97,17 @@ $ /hunt TD-161
 
 result: ready for commit · 1 file changed · 0 retries · PASS
 ```
+
+## the architecture.
+
+IGRIS is built like an OS so it can grow without rotting.
+
+- **layers, not a monolith.** every concern — identity, conduct, capabilities, protocols, memory — is one layer with one job and one way to extend it. adding a skill, agent, harness, or doc-type is a known move, not a refactor.
+- **self-describing, self-assembling.** modules declare their own metadata; the OS discovers them and generates its own index. no hand-maintained registry to drift.
+- **contract vs. implementation.** what the model reads never names the code behind it, so any mechanism swaps without touching what the agent understands.
+- **agnostic core, per-harness adapters.** the skills and the OS are harness-neutral; each harness gets a thin adapter. one behavior, every surface.
+
+that discipline is why the same brief, brain, and lifecycle work identically whether you boot Claude, OpenCode, or Antigravity.
 
 ## essential skills.
 
