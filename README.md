@@ -1,3 +1,5 @@
+![igris — the engineering OS for AI coding agents](docs/images/igris-banner.png)
+
 # IGRIS
 
 they resume your chat — IGRIS resumes your work.
@@ -194,6 +196,26 @@ cd /path/to/your-project && igris install .
 `igris init` bootstraps the centralized brain and projects skills, agents, MCP, and hooks globally. `igris install .` is register-only: it records the project in the brain so the global surfaces apply, without copying IGRIS files into your repo.
 
 Restart your harness afterward so it loads the `igris-brain` MCP server, then run `/register feature "first brief"` and `/hunt BR-001`. Install matrix, verification commands, and upgrade paths live in [`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md) and [`docs/UPDATE_GUIDE.md`](docs/UPDATE_GUIDE.md).
+
+## project handoff.
+
+`/boot` and `/sync` move your work-state across your own machines through the central brain. `/handoff` moves a single project to someone else's installation — a colleague covering while you are out, a contractor, a fresh machine with its own brain — as a portable file. no shared brain required; the bundle is the transport.
+
+```text
+$ /handoff export igris-ai
+# -> igris-ai.igris-pack.tar.gz  (briefs + brief graph + context docs + goals)
+```
+
+hand the bundle over (slack, email, usb). on the other side:
+
+```text
+$ /handoff import igris-ai.igris-pack.tar.gz
+# preview: 604 new, 0 conflict -> confirm -> applied
+```
+
+what travels is a **project slice**, not your whole brain: the project's briefs and their dependency graph, its context docs, and its goals by default (`--tier core` for briefs only; `--tier full` adds learnings, error fingerprints, and the concept graph). machine-local state never leaves — no sessions, no instance claims, no metrics, no secrets, and no executable code.
+
+import is reviewed, never silent. it classifies every row as new, unchanged, or conflict against a local ancestor record, waits for your confirm, and applies the policy you choose (`--on-conflict theirs|mine|newer`). a row you and the other side both changed is flagged, not clobbered — so a hand-off today and a hand-back on your return each keep their own edits. re-importing the same bundle is a no-op. if the receiving machine does not know the project yet, import registers it automatically.
 
 ## essential skills.
 
